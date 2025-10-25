@@ -1,2 +1,1 @@
-bun run check:staged
-bun run check-types
+bun run check

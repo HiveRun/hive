@@ -15,10 +15,12 @@
     }
   },
   "scripts": {
-    "check": "turbo check",
+    "check": "bun run check:staged && bun run check:secrets && bun run check:audit && turbo check check-types --ui=stream",
+    "check:fresh": "bun run check --force",
     "check:biome": "biome check --write .",
     "check:staged": "lint-staged",
-    "pre-commit": "bun run check:staged && turbo check-types",
+    "check:secrets": "./scripts/check-secrets.sh",
+    "check:audit": "bun audit --audit-level high || echo '⚠️  Security audit found issues (see above)'",
     "ruler:apply": "bunx @intellectronica/ruler@latest apply --local-only",
     "dev": "turbo dev",
     "build": "turbo build",
