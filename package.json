@@ -15,7 +15,10 @@
     }
   },
   "scripts": {
-    "check": "biome check --write .",
+    "check": "turbo check",
+    "check:biome": "biome check --write .",
+    "check:staged": "lint-staged",
+    "pre-commit": "bun run check:staged && turbo check-types",
     "ruler:apply": "bunx @intellectronica/ruler@latest apply --local-only",
     "dev": "turbo dev",
     "build": "turbo build",

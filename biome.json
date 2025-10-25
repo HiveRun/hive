@@ -19,11 +19,21 @@
       "!**/.alchemy",
       "!**/.svelte-kit",
       "!**/wrangler.jsonc",
-      "!**/.source"
+      "!**/.source",
+      "!**/tsconfig*.json"
     ]
   },
-  "extends": [
-    "ultracite/core",
-    "ultracite/react"
+  "extends": ["ultracite/core", "ultracite/react"],
+  "overrides": [
+    {
+      "includes": ["**/router.tsx"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useConsistentTypeDefinitions": "off"
+          }
+        }
+      }
+    }
   ]
 }

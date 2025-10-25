@@ -1,2 +1,2 @@
-lint-staged
+bun run check:staged
 bun run check-types
