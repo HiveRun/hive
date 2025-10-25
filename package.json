@@ -15,8 +15,9 @@
     }
   },
   "scripts": {
-    "check": "bun run check:staged && bun run check:secrets && bun run check:audit && turbo check check-types --ui=stream",
-    "check:fresh": "bun run check --force",
+    "check": "bun run check:staged && bun run check:secrets && bun run check:audit && bun run test:run && turbo check check-types --ui=stream --force",
+    "test": "turbo test --ui=stream --force",
+    "test:run": "turbo test:run --ui=stream --force",
     "check:biome": "biome check --write .",
     "check:staged": "lint-staged",
     "check:secrets": "./scripts/check-secrets.sh",

@@ -11,10 +11,48 @@
       "dependsOn": ["^lint"]
     },
     "check-types": {
-      "dependsOn": ["^check-types"]
+      "dependsOn": ["^check-types"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "tsconfig.json",
+        "**/tsconfig.json",
+        "**/tsconfig.*.json",
+        "package.json",
+        "**/package.json"
+      ]
     },
     "check": {
-      "dependsOn": ["^check"]
+      "dependsOn": ["^check"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "biome.json",
+        ".biome.json",
+        "**/.biome.json",
+        "package.json",
+        "**/package.json",
+        ".biomejs.json",
+        "**/.biomejs.json"
+      ]
+    },
+    "test": {
+      "dependsOn": ["^test"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "**/vitest.config.*",
+        "**/vite.config.*",
+        "package.json",
+        "**/package.json"
+      ]
+    },
+    "test:run": {
+      "dependsOn": ["^test:run"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "**/vitest.config.*",
+        "**/vite.config.*",
+        "package.json",
+        "**/package.json"
+      ]
     },
     "dev": {
       "cache": false,
