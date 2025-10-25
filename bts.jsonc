@@ -15,7 +15,8 @@
   "addons": [
     "ruler",
     "turborepo",
-    "ultracite"
+    "ultracite",
+    "husky"
   ],
   "examples": [],
   "auth": "none",

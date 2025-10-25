@@ -48,7 +48,7 @@
       "biome check --write --files-ignore-unknown=true"
     ],
     "**/*.{json,jsonc}": [
-      "biome check --write --files-ignore-unknown=true"
+      "biome check --write --files-ignore-unknown=true --no-errors-on-unmatched"
     ]
   }
 }
