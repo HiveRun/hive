@@ -1,52 +1,26 @@
 # synthetic
 
-This project was created with [Better-T-Stack](https://github.com/AmanVarshney01/create-better-t-stack), a modern TypeScript stack that combines React, TanStack Start, Elysia, and more.
-
-## Features
-
-- **TypeScript** - For type safety and improved developer experience
-- **TanStack Start** - SSR framework with TanStack Router
-- **TailwindCSS** - Utility-first CSS for rapid UI development
-- **shadcn/ui** - Reusable UI components
-- **Elysia** - Type-safe, high-performance framework
-- **Bun** - Runtime environment
-- **Drizzle** - TypeScript-first ORM
-- **SQLite/Turso** - Database engine
-- **Turborepo** - Optimized monorepo build system
+Monorepo project with React + TanStack Start frontend and Elysia backend.
 
 ## Getting Started
 
-First, install the dependencies:
-
 ```bash
+# Install dependencies
 bun install
-```
-## Database Setup
 
-This project uses SQLite with Drizzle ORM.
-
-1. Start the local SQLite database:
-```bash
+# Start local SQLite database
 cd apps/server && bun db:local
-```
 
-
-2. Update your `.env` file in the `apps/server` directory with the appropriate connection details if needed.
-
-3. Apply the schema to your database:
-```bash
+# Apply database schema
 bun db:push
-```
 
-
-Then, run the development server:
-
-```bash
+# Run development servers
 bun dev
 ```
 
-Open [http://localhost:3001](http://localhost:3001) in your browser to see the web application.
-The API is running at [http://localhost:3000](http://localhost:3000).
+**URLs:**
+- Web: [http://localhost:3001](http://localhost:3001)
+- API: [http://localhost:3000](http://localhost:3000)
 
 
 

@@ -4,6 +4,10 @@
 # Default agents to run when --agents is not specified
 default_agents = ["amp", "claude", "codex", "gemini-cli", "opencode", "qwen", "jules", "openhands"]
 
+# Source files to include in generated agent context files
+# Only README.md - contains essential project info, testing docs, and workflows
+sources = ["README.md"]
+
 # --- Global MCP Server Configuration ---
 [mcp]
 # Enable/disable MCP propagation globally (default: true)
