@@ -9,13 +9,15 @@ import { defineConfig, devices } from "@playwright/test";
  * Key settings:
  * - trace: "retain-on-failure" - Captures detailed traces on first failure (for AI debugging)
  * - screenshot: "only-on-failure" - Takes screenshots when tests fail
- * - Snapshots stored in: e2e/ directory with -snapshots/ suffix
+ * - Snapshots stored in: e2e/__snapshots__/ directory
  * - Test artifacts in: test-results/ (gitignored, but readable by AI agents)
  *
  * See https://playwright.dev/docs/test-configuration
  */
 export default defineConfig({
   testDir: "./e2e",
+  snapshotPathTemplate:
+    "{testDir}/__snapshots__/{testFilePath}-snapshots/{arg}{-projectName}{-snapshotSuffix}{ext}",
   /* Run tests in files in parallel */
   fullyParallel: true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */
