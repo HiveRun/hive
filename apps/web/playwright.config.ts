@@ -1,7 +1,18 @@
 import { defineConfig, devices } from "@playwright/test";
 
 /**
- * See https://playwright.dev/docs/test-configuration.
+ * Playwright E2E Test Configuration
+ *
+ * This project uses visual snapshot testing exclusively for UI validation.
+ * Configuration optimized for both human and AI agent debugging.
+ *
+ * Key settings:
+ * - trace: "retain-on-failure" - Captures detailed traces on first failure (for AI debugging)
+ * - screenshot: "only-on-failure" - Takes screenshots when tests fail
+ * - Snapshots stored in: e2e/ directory with -snapshots/ suffix
+ * - Test artifacts in: test-results/ (gitignored, but readable by AI agents)
+ *
+ * See https://playwright.dev/docs/test-configuration
  */
 export default defineConfig({
   testDir: "./e2e",

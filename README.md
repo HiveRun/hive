@@ -127,6 +127,31 @@ bun test:e2e:update-snapshots
 4. Run `bun test:e2e:update-snapshots` to accept the new visuals
 5. Commit both your code changes AND the updated snapshot images
 
+#### Debugging Failed Snapshot Tests
+
+When snapshot tests fail, Playwright generates several artifacts to help debug:
+
+**Test Artifacts Location:** `apps/web/test-results/`
+
+For each failed test, you'll find:
+- **`*-actual.png`** - What was actually rendered
+- **`*-diff.png`** - Visual diff highlighting changes (red = pixels that changed)
+- **`trace.zip`** - Full test trace with network logs, console output, DOM snapshots
+- **`test-failed-*.png`** - Screenshot at the point of failure
+
+**For AI Agents:**
+All these files are accessible via the Read tool. When a test fails:
+1. Read the `-actual.png` to see what was rendered
+2. Read the `-diff.png` to see exactly what changed
+3. Compare with the expected snapshot in `e2e/**/__snapshots__/`
+4. Review the trace file for network/console errors if needed
+
+**For Humans:**
+Open the HTML report to view traces interactively:
+```bash
+npx playwright show-report
+```
+
 ### Git Hooks & Validation
 
 **Pre-commit** (`bun run check:commit`):
