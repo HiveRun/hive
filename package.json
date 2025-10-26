@@ -15,9 +15,15 @@
     }
   },
   "scripts": {
-    "check": "bun run check:staged && bun run check:secrets && bun run check:audit && bun run test:run && turbo check check-types --ui=stream --force",
+    "check": "bun run check:commit",
+    "check:commit": "bun run check:staged && bun run check:secrets && bun run check:audit && bun run test:run && turbo check check-types --ui=stream --force && bun run build",
+    "check:push": "bun run check:commit && bun run test:e2e",
     "test": "turbo test --ui=stream --force",
     "test:run": "turbo test:run --ui=stream --force",
+    "test:e2e": "turbo test:e2e --ui=stream",
+    "test:e2e:ui": "turbo -F web test:e2e:ui --ui=stream",
+    "test:e2e:headed": "turbo -F web test:e2e:headed --ui=stream",
+    "test:e2e:update-snapshots": "turbo -F web test:e2e:update-snapshots --ui=stream",
     "check:biome": "biome check --write .",
     "check:staged": "lint-staged",
     "check:secrets": "./scripts/check-secrets.sh",

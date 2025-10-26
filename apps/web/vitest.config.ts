@@ -1,14 +1,11 @@
 /// <reference types="vitest" />
 
-import react from "@vitejs/plugin-react";
-import tsconfigPaths from "vite-tsconfig-paths";
 import { defineConfig } from "vitest/config";
 
+// Frontend uses Playwright for UI testing (E2E + snapshots)
+// No unit tests configured - this file exists for monorepo compatibility
 export default defineConfig({
-  plugins: [react(), tsconfigPaths()],
   test: {
-    globals: true,
-    environment: "jsdom",
-    setupFiles: ["./src/test/setup.ts"],
+    include: [], // No unit tests to run
   },
 });

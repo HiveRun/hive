@@ -1,1 +1,1 @@
-bun run build && bun run test:run && bun run check
+bun run check:push

@@ -65,13 +65,82 @@ synthetic/
 │   ├── api/         # API layer / business logic
 ```
 
+## Testing
+
+This project uses a **hybrid testing philosophy**:
+
+### Backend Unit Tests (Vitest)
+API and business logic tested with Vitest.
+
+```bash
+# Run unit tests in watch mode
+bun test
+
+# Run unit tests once (CI mode)
+bun test:run
+```
+
+**Test location:** `apps/server/src/**/*.test.ts`
+
+### UI Testing (Playwright + Visual Snapshots)
+All UI testing is done through **E2E tests with visual regression testing**. No component unit tests - UI correctness is validated through snapshots across multiple viewports and themes.
+
+```bash
+# Run E2E tests
+bun test:e2e
+
+# Run with interactive UI (debugging)
+bun test:e2e:ui
+
+# Update visual snapshots (after intentional UI changes)
+bun test:e2e:update-snapshots
+```
+
+**Test location:** `apps/web/e2e/*.spec.ts`
+
+**Snapshot coverage:**
+- Light/Dark mode
+- Desktop/Tablet/Mobile viewports
+- All key user flows
+
+### Git Hooks & Validation
+
+**Pre-commit** (`bun run check:commit`):
+- Linting (Biome)
+- Type checking (TypeScript)
+- Unit tests (Vitest)
+- Security checks (secrets detection, dependency audit)
+- Build validation
+
+**Pre-push** (`bun run check:push`):
+- Everything from pre-commit
+- E2E tests (Playwright with visual snapshots)
+
 ## Available Scripts
 
+### Development
 - `bun dev`: Start all applications in development mode
-- `bun build`: Build all applications
 - `bun dev:web`: Start only the web application
 - `bun dev:server`: Start only the server
+
+### Building
+- `bun build`: Build all applications
+
+### Testing
+- `bun test`: Run unit tests in watch mode
+- `bun test:run`: Run unit tests once (CI mode)
+- `bun test:e2e`: Run E2E tests
+- `bun test:e2e:ui`: Run E2E tests with interactive UI
+- `bun test:e2e:headed`: Run E2E tests in headed mode (see browser)
+- `bun test:e2e:update-snapshots`: Update visual snapshots
+
+### Quality Checks
+- `bun check`: Run all pre-commit checks (alias for `check:commit`)
+- `bun check:commit`: Run all pre-commit checks (~5-10s)
+- `bun check:push`: Run all pre-push checks (~30-60s with E2E tests)
 - `bun check-types`: Check TypeScript types across all apps
+
+### Database
 - `bun db:push`: Push schema changes to database
 - `bun db:studio`: Open database studio UI
 - `cd apps/server && bun db:local`: Start the local SQLite database
