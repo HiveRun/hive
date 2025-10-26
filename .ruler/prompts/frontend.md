@@ -36,8 +36,6 @@ The backend is a separate **Elysia** server with a type-safe RPC client.
 Use **TanStack Query** with the RPC client for all backend communication:
 
 ```tsx
-"use client"
-
 const { data, isLoading } = useQuery({
   queryKey: ['resource'],
   queryFn: () => rpcClient.resource.get()
@@ -50,13 +48,6 @@ This provides:
 - Optimistic updates and mutations
 - Better devtools support
 
-### When to Use Server vs Client Components
-
-- **Client components** (`"use client"`) - Default for data fetching and interactivity
-- **Server components** - Static content, initial page shells, SEO-critical pages
-
-Since the backend is separate, there's no benefit to fetching data in server components - both require HTTP calls.
-
 ## State Management
 
 - **TanStack Query** - All server state (via RPC client)
@@ -65,8 +56,6 @@ Since the backend is separate, there's no benefit to fetching data in server com
 ## Component Structure
 
 ```tsx
-"use client"
-
 interface ButtonProps {
   variant?: "default" | "destructive"
   children: React.ReactNode
@@ -80,6 +69,5 @@ export const Button = ({ variant = "default", children }: ButtonProps) => {
 ## Best Practices
 
 - Use TypeScript for all components
-- Default to client components for data fetching
 - Keep components small and focused
 - Colocate related components in feature directories when appropriate
