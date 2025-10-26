@@ -40,7 +40,7 @@ lerna-debug.log*
 .alchemy
 
 # Ruler
-.ruler/rules.md
+.ruler/01-readme.md
 
 # Testing
 coverage

@@ -174,18 +174,19 @@ This project uses [Ruler](https://okigu.com/ruler) to propagate context to AI co
 
 ### Prompt Files Location
 
-All AI-specific prompts live in `llm/prompts/`:
+All AI-specific prompts live in `.ruler/prompts/`:
 
 ```
-llm/
-└── prompts/
-    ├── coding-guidelines.md    # Coding style and error handling
-    └── ...                     # Add more as needed
+.ruler/
+├── prompts/
+│   ├── coding-guidelines.md    # Coding style and error handling
+│   └── ...                     # Add more as needed
+└── ruler.toml                   # Ruler configuration
 ```
 
 ### Adding New Prompt Files
 
-1. **Create a new file** in `llm/prompts/` with a descriptive name (e.g., `architecture.md`, `api-design.md`)
+1. **Create a new file** in `.ruler/prompts/` with a descriptive name (e.g., `architecture.md`, `api-design.md`)
 
 2. **Start with an H1 title** so the concatenated output has clear sections:
    ```markdown
@@ -201,13 +202,14 @@ llm/
    ```
 
 This command:
-1. Concatenates `README.md` + all `llm/prompts/*.md` files → `.ruler/rules.md`
-2. Ruler reads `.ruler/rules.md` and propagates to all AI agent configs
+1. Copies `README.md` → `.ruler/01-readme.md` (prefixed with `01-` for ordering)
+2. Ruler automatically discovers all `.md` files in `.ruler/` recursively
+3. Propagates the combined content to all AI agent configs
 
 **Note:**
-- Generated files (`.ruler/rules.md`, `AGENTS.md`, `CLAUDE.md`, etc.) are gitignored
-- Only edit source files in `llm/prompts/` - never edit generated files directly
-- Ruler automatically reads `.ruler/rules.md` (no manual `sources` config needed)
+- Generated files (`.ruler/01-readme.md`, `AGENTS.md`, `CLAUDE.md`, etc.) are gitignored
+- Only edit source files in `.ruler/prompts/` - never edit generated files directly
+- Ruler automatically reads all `.md` files from `.ruler/` directory
 
 ### Prompt File Guidelines
 
