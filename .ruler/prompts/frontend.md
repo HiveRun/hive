@@ -9,23 +9,17 @@ This project uses **TanStack Start** (React-based meta-framework) with:
 
 ## UI Components - shadcn/ui
 
-We use **shadcn/ui** for UI components. These are not installed as dependencies but copied directly into the codebase for full customization.
+We use **shadcn/ui** for UI components.
 
 ### Adding Components
 
 ```bash
-# From project root
+# From monorepo root
 cd apps/web
 npx shadcn@latest add <component-name>
 ```
 
-Components are added to `apps/web/app/components/ui/` and can be freely modified.
-
-### Key Principles
-
-- **Customize freely** - shadcn components are meant to be edited to fit project needs
-- **Composition over configuration** - Build complex UIs by composing primitive components
-- **Accessibility first** - All shadcn components are built with Radix UI primitives
+Components are stored in `apps/web/app/components/ui/`
 
 ## Styling
 
