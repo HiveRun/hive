@@ -16,11 +16,11 @@ enabled = true
 merge_strategy = "merge"
 
 # --- MCP Server Definitions ---
-[mcp_servers.context7]
+# Exa Code MCP - Fast and efficient web context for coding agents
+# Searches GitHub repos, docs, StackOverflow, and more for coding context
+[mcp_servers.exa]
 command = "npx"
-args = ["-y", "@upstash/context7-mcp"]
-
-
+args = ["-y", "mcp-remote", "https://mcp.exa.ai/mcp"]
 
 [mcp_servers.shadcn]
 command = "npx"
