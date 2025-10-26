@@ -24,7 +24,7 @@ Components are stored in `apps/web/app/components/ui/`
 ## Styling
 
 - **Tailwind CSS** for styling
-- Dark mode support via `next-themes` (or similar)
+- Dark mode via `next-themes`
 - Component variants using `class-variance-authority` (cva)
 
 ## State Management
