@@ -22,10 +22,6 @@ merge_strategy = "merge"
 command = "npx"
 args = ["-y", "mcp-remote", "https://mcp.exa.ai/mcp"]
 
-[mcp_servers.shadcn]
-command = "npx"
-args = ["shadcn@latest", "mcp"]
-
 
 
 
