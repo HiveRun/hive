@@ -1,4 +1,5 @@
 import { createRouter as createTanStackRouter } from "@tanstack/react-router";
+import ErrorPage from "./components/error";
 import Loader from "./components/loader";
 import "./index.css";
 import { routeTree } from "./routeTree.gen";
@@ -10,6 +11,9 @@ export const getRouter = () => {
     defaultPreloadStaleTime: 0,
     context: {},
     defaultPendingComponent: () => <Loader />,
+    defaultErrorComponent: ({ error, reset }) => (
+      <ErrorPage error={error} reset={reset} />
+    ),
     defaultNotFoundComponent: () => <div>Not Found</div>,
     Wrap: ({ children }) => <>{children}</>,
   });

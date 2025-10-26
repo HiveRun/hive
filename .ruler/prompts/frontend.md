@@ -33,30 +33,11 @@ The backend is a separate **Elysia** server with a type-safe RPC client.
 
 ### Query Factories Pattern
 
-Define queries in centralized factory files instead of inline:
+Define queries in centralized factory files (`src/queries/`) instead of inline.
 
-```tsx
-// src/queries/users.ts
-export const userQueries = {
-  all: () => ({
-    queryKey: ['users'],
-    queryFn: () => rpcClient.users.list()
-  }),
-  detail: (id: string) => ({
-    queryKey: ['users', id],
-    queryFn: () => rpcClient.users.get(id)
-  }),
-  search: (term: string) => ({
-    queryKey: ['users', 'search', term],
-    queryFn: () => rpcClient.users.search(term)
-  })
-}
+**See `src/queries/example.ts` for a complete pattern example.**
 
-// In component
-const { data } = useQuery(userQueries.all())
-```
-
-Benefits: Type-safe, reusable, prevents queryKey typos, easier invalidation.
+Benefits: Type-safe, reusable, prevents queryKey typos, easier cache invalidation.
 
 ### Route-Level Data Loading
 
@@ -86,6 +67,82 @@ function Users() {
 - Browser back/forward works correctly
 - Better perceived performance
 
+## Error Handling
+
+### Global Error Component
+
+Global error and loading states configured in `src/router.tsx`:
+- `defaultErrorComponent` - Shown when route loaders fail
+- `defaultPendingComponent` - Shown while route loaders run
+
+**Implementation:** `src/components/error.tsx` and `src/components/loader.tsx`
+
+Override per-route only when special handling is needed via `errorComponent` option.
+
+### Mutation Errors
+
+For user action failures, use toast notifications:
+
+```tsx
+const mutation = useMutation({
+  mutationFn: rpcClient.users.create,
+  onError: (error) => {
+    toast.error(error.message ?? 'Failed to create user')
+  },
+  onSuccess: () => {
+    toast.success('User created successfully')
+  }
+})
+```
+
+**We use sonner for toasts** - already installed and configured.
+
+### Form Validation Errors
+
+Display field-level errors inline with TanStack Form:
+
+```tsx
+<form.Field name="email">
+  {(field) => (
+    <>
+      <input {...field.getInputProps()} />
+      {field.state.meta.errors && (
+        <span className="text-sm text-destructive">
+          {field.state.meta.errors[0]}
+        </span>
+      )}
+    </>
+  )}
+</form.Field>
+```
+
+## Loading States
+
+### Route-Level Loading
+
+Loading states handled automatically by `defaultPendingComponent` in router.
+
+Override per-route for custom skeletons:
+
+```tsx
+export const Route = createFileRoute('/users')({
+  loader: ...,
+  pendingComponent: () => <UsersTableSkeleton />
+})
+```
+
+### Component-Level Loading
+
+For component-specific async operations:
+
+```tsx
+const { data, isPending } = useQuery(userQueries.all())
+
+if (isPending) return <Skeleton />
+
+return <UsersList data={data} />
+```
+
 ## State Management & Persistence
 
 ### Persistence Strategy
@@ -109,22 +166,15 @@ function Users() {
 
 ### Type-Safe localStorage Wrapper
 
+**Implementation:** `src/lib/storage.ts`
+
 ```tsx
-// src/lib/storage.ts
-export const storage = {
-  get: <T>(key: string): T | null => {
-    const item = localStorage.getItem(key)
-    return item ? JSON.parse(item) : null
-  },
-  set: <T>(key: string, value: T) => {
-    localStorage.setItem(key, JSON.stringify(value))
-  },
-  remove: (key: string) => localStorage.removeItem(key)
-}
+import { storage } from '@/lib/storage'
 
 // Usage
 const draft = storage.get<PostFormData>('post-draft')
 storage.set('theme', 'dark')
+storage.remove('post-draft')
 ```
 
 ### Form Draft Pattern
@@ -151,6 +201,44 @@ useEffect(() => {
   return subscription
 }, [])
 ```
+
+### Optimistic Updates
+
+For instant UI feedback during mutations:
+
+```tsx
+const mutation = useMutation({
+  mutationFn: rpcClient.posts.update,
+  onMutate: async (newData) => {
+    // Cancel outgoing refetches
+    await queryClient.cancelQueries({ queryKey: ['posts'] })
+
+    // Snapshot previous value for rollback
+    const previous = queryClient.getQueryData(['posts'])
+
+    // Optimistically update cache
+    queryClient.setQueryData(['posts'], (old) =>
+      old.map(p => p.id === newData.id ? newData : p)
+    )
+
+    return { previous }
+  },
+  onError: (_err, _vars, context) => {
+    // Rollback on error
+    queryClient.setQueryData(['posts'], context.previous)
+    toast.error('Failed to update post')
+  },
+  onSettled: () => {
+    // Refetch to ensure sync with server
+    queryClient.invalidateQueries({ queryKey: ['posts'] })
+  }
+})
+```
+
+**Benefits:**
+- Instant UI feedback
+- Automatic rollback on error
+- Server sync on success
 
 ### TanStack Query Cache Persistence (Optional)
 
