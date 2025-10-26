@@ -27,18 +27,46 @@ Components are stored in `apps/web/app/components/ui/`
 - Dark mode via `next-themes`
 - Component variants using `class-variance-authority` (cva)
 
+## Backend Communication
+
+The backend is a separate **Elysia** server with a type-safe RPC client.
+
+### Data Fetching Pattern
+
+Use **TanStack Query** with the RPC client for all backend communication:
+
+```tsx
+"use client"
+
+const { data, isLoading } = useQuery({
+  queryKey: ['resource'],
+  queryFn: () => rpcClient.resource.get()
+})
+```
+
+This provides:
+- End-to-end type safety via RPC client
+- Automatic caching and revalidation
+- Optimistic updates and mutations
+- Better devtools support
+
+### When to Use Server vs Client Components
+
+- **Client components** (`"use client"`) - Default for data fetching and interactivity
+- **Server components** - Static content, initial page shells, SEO-critical pages
+
+Since the backend is separate, there's no benefit to fetching data in server components - both require HTTP calls.
+
 ## State Management
 
-- **React Server Components** for server state by default
-- **TanStack Query** for client-side async state (if needed)
-- Local component state with `useState`/`useReducer` for UI state
+- **TanStack Query** - All server state (via RPC client)
+- **Local state** (`useState`/`useReducer`) - UI state, forms, toggles
 
 ## Component Structure
 
-Prefer functional components with clear separation:
-
 ```tsx
-// Good: Clear, composable, typed
+"use client"
+
 interface ButtonProps {
   variant?: "default" | "destructive"
   children: React.ReactNode
@@ -52,6 +80,6 @@ export const Button = ({ variant = "default", children }: ButtonProps) => {
 ## Best Practices
 
 - Use TypeScript for all components
-- Prefer server components by default, opt into client components when needed (`"use client"`)
+- Default to client components for data fetching
 - Keep components small and focused
 - Colocate related components in feature directories when appropriate
