@@ -39,6 +39,9 @@ lerna-debug.log*
 # Better-T-Stack
 .alchemy
 
+# Ruler
+.ruler/rules.md
+
 # Testing
 coverage
 .nyc_output
