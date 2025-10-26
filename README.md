@@ -201,10 +201,13 @@ llm/
    ```
 
 This command:
-- Concatenates `README.md` + all `llm/prompts/*.md` files → `.ruler/rules.md`
-- Propagates the combined content to all AI agent configs
+1. Concatenates `README.md` + all `llm/prompts/*.md` files → `.ruler/rules.md`
+2. Ruler reads `.ruler/rules.md` and propagates to all AI agent configs
 
-**Note:** Generated files (`.ruler/rules.md`, `AGENTS.md`, `CLAUDE.md`, etc.) are gitignored. Only edit source files in `llm/prompts/`.
+**Note:**
+- Generated files (`.ruler/rules.md`, `AGENTS.md`, `CLAUDE.md`, etc.) are gitignored
+- Only edit source files in `llm/prompts/` - never edit generated files directly
+- Ruler automatically reads `.ruler/rules.md` (no manual `sources` config needed)
 
 ### Prompt File Guidelines
 
