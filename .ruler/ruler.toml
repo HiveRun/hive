@@ -4,11 +4,11 @@
 # Default agents to run when --agents is not specified
 default_agents = ["amp", "claude", "codex", "gemini-cli", "opencode", "qwen", "jules", "openhands"]
 
-# Source files (maintained in project root, synced to .ruler/rules.md via ruler:apply script)
+# Source files (maintained in llm/prompts/, synced to .ruler/rules.md via ruler:apply script)
 # README.md - essential project info, testing docs, and workflows
-# AGENT.md - coding guidelines and project-specific practices
+# llm/prompts/*.md - AI-specific prompt files (coding guidelines, architecture, etc.)
 # NOTE: Ruler reads markdown files from .ruler/ directory, not from this config.
-# The ruler:apply script concatenates README.md + AGENT.md into .ruler/rules.md
+# The ruler:apply script concatenates README.md + llm/prompts/*.md into .ruler/rules.md
 
 # --- Global MCP Server Configuration ---
 [mcp]

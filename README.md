@@ -167,3 +167,48 @@ npx playwright show-report
 - `bun db:push`: Push schema changes to database
 - `bun db:studio`: Open database studio UI
 - `cd apps/server && bun db:local`: Start the local SQLite database
+
+## AI/LLM Context Management
+
+This project uses [Ruler](https://okigu.com/ruler) to propagate context to AI coding agents (Claude Code, Cursor, Windsurf, etc.).
+
+### Prompt Files Location
+
+All AI-specific prompts live in `llm/prompts/`:
+
+```
+llm/
+└── prompts/
+    ├── coding-guidelines.md    # Coding style and error handling
+    └── ...                     # Add more as needed
+```
+
+### Adding New Prompt Files
+
+1. **Create a new file** in `llm/prompts/` with a descriptive name (e.g., `architecture.md`, `api-design.md`)
+
+2. **Start with an H1 title** so the concatenated output has clear sections:
+   ```markdown
+   # Architecture Guidelines
+
+   ## System Design
+   ...
+   ```
+
+3. **Regenerate agent context** after adding/editing prompt files:
+   ```bash
+   bun run ruler:apply
+   ```
+
+This command:
+- Concatenates `README.md` + all `llm/prompts/*.md` files → `.ruler/rules.md`
+- Propagates the combined content to all AI agent configs
+
+**Note:** Generated files (`.ruler/rules.md`, `AGENTS.md`, `CLAUDE.md`, etc.) are gitignored. Only edit source files in `llm/prompts/`.
+
+### Prompt File Guidelines
+
+- **Keep files focused** - One topic per file (coding, testing, architecture, etc.)
+- **Use clear section headers** - Make content scannable for both humans and AI
+- **Be concise but complete** - AI agents have token limits
+- **Include examples** where helpful - Concrete examples beat abstract rules
