@@ -82,8 +82,8 @@ bun test:run
 
 **Test location:** `apps/server/src/**/*.test.ts`
 
-### UI Testing (Playwright + Visual Snapshots)
-All UI testing is done through **E2E tests with visual regression testing**. No component unit tests - UI correctness is validated through snapshots across multiple viewports and themes.
+### UI Testing (Playwright - Visual Snapshots Only)
+All UI testing is done through **visual snapshot testing**. No component unit tests - UI correctness is validated entirely through snapshot comparisons across multiple viewports and themes.
 
 ```bash
 # Run E2E tests
@@ -92,16 +92,40 @@ bun test:e2e
 # Run with interactive UI (debugging)
 bun test:e2e:ui
 
-# Update visual snapshots (after intentional UI changes)
-bun test:e2e:update-snapshots
+# Run in headed mode (see browser)
+bun test:e2e:headed
 ```
 
 **Test location:** `apps/web/e2e/*.spec.ts`
+**Snapshots location:** `apps/web/e2e/**/__snapshots__/`
 
 **Snapshot coverage:**
 - Light/Dark mode
-- Desktop/Tablet/Mobile viewports
-- All key user flows
+- Desktop/Tablet/Mobile viewports (375x667, 768x1024, 1280x720)
+
+#### Updating Snapshots After UI Changes
+
+When you intentionally change the UI (styling, layout, content), snapshot tests will fail. This is expected.
+
+**To update snapshots:**
+
+```bash
+# Update all snapshots
+bun test:e2e:update-snapshots
+```
+
+**When to update:**
+- ✅ After intentional design changes
+- ✅ After adding/removing UI elements
+- ✅ After changing text content or images
+- ❌ Never update to "fix" a failing test without understanding why it failed
+
+**Workflow for UI changes:**
+1. Make your UI changes
+2. Run `bun test:e2e` - tests will fail showing visual diffs
+3. Review the diff images in `test-results/` to verify changes look correct
+4. Run `bun test:e2e:update-snapshots` to accept the new visuals
+5. Commit both your code changes AND the updated snapshot images
 
 ### Git Hooks & Validation
 
