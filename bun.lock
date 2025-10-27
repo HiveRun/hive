@@ -22,6 +22,7 @@
     "apps/server": {
       "name": "@synthetic/server",
       "dependencies": {
+        "@bogeychan/elysia-logger": "^0.1.10",
         "@elysiajs/cors": "^1.3.3",
         "@synthetic/db": "workspace:*",
         "dotenv": "catalog:",
@@ -183,6 +184,8 @@
     "@biomejs/cli-win32-arm64": ["@biomejs/cli-win32-arm64@2.3.0", "", { "os": "win32", "cpu": "arm64" }, "sha512-ynjmsJLIKrAjC3CCnKMMhzcnNy8dbQWjKfSU5YA0mIruTxBNMbkAJp+Pr2iV7/hFou+66ZSD/WV8hmLEmhUaXA=="],
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.3.0", "", { "os": "win32", "cpu": "x64" }, "sha512-zOCYmCRVkWXc9v8P7OLbLlGGMxQTKMvi+5IC4v7O8DkjLCOHRzRVK/Lno2pGZNo0lzKM60pcQOhH8HVkXMQdFg=="],
+
+    "@bogeychan/elysia-logger": ["@bogeychan/elysia-logger@0.1.10", "", { "peerDependencies": { "elysia": ">= 1.2.10", "pino": ">= 9.6.0" } }, "sha512-wFp3KUCNIkCV4zcbo70gifHH99ch7e4LNrP5Xa5e2MRO2MDyPgM92SWQmrzkng6PsSZk13+UKJskGNQ+ZuDZkQ=="],
 
     "@borewit/text-codec": ["@borewit/text-codec@0.1.1", "", {}, "sha512-5L/uBxmjaCIX5h8Z+uu+kA9BQLkc/Wl06UGR5ajNRxu+/XjonB5i8JpgFMrPj3LXTCPA0pv8yxUvbUi+QthGGA=="],
 

@@ -38,15 +38,9 @@ function HomeComponent() {
             <p className="text-destructive text-sm">Error: {error.message}</p>
           )}
           {data && (
-            <div className="mt-2 space-y-1 text-sm">
-              <p>
-                <span className="font-medium">Message:</span> {data.message}
-              </p>
-              <p>
-                <span className="font-medium">Timestamp:</span>{" "}
-                {new Date(data.timestamp).toLocaleString()}
-              </p>
-            </div>
+            <p className="mt-2 text-sm">
+              <span className="font-medium">Message:</span> {data.message}
+            </p>
           )}
         </section>
       </div>
