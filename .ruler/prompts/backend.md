@@ -20,4 +20,8 @@
 
 **Database**: Use Drizzle ORM for all database operations (`db.insert()`, `db.query.table.findMany()`, `db.update()`, `db.delete()`).
 
+**Transactions**: Multi-step operations that must succeed or fail together MUST use `db.transaction()`.
+
+**Design for rollback**: Operations modifying multiple resources should be designed to be reversible or compensatable.
+
 **Logging**: All requests are automatically logged via @bogeychan/elysia-logger. Only add custom logs (`log.info()`, `log.error()`) for important business logic.
