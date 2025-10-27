@@ -3,7 +3,7 @@
 ## Framework & Architecture
 
 This project uses **TanStack Start** (React-based meta-framework) with:
-- File-based routing in `apps/web/app/routes/`
+- File-based routing in `apps/web/src/routes/`
 - Server-side rendering (SSR) by default
 - Type-safe routing with TanStack Router
 
@@ -19,7 +19,7 @@ cd apps/web
 npx shadcn@latest add <component-name>
 ```
 
-Components are stored in `apps/web/app/components/ui/`
+Components are stored in `apps/web/src/components/ui/`
 
 ## Styling
 
@@ -266,7 +266,7 @@ const mutation = useMutation({
 For offline-first apps, persist the query cache:
 
 ```tsx
-// src/app/router.tsx
+// src/router.tsx
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister'
 
