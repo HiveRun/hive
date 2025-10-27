@@ -1,12 +1,28 @@
 import "dotenv/config";
+import { logger } from "@bogeychan/elysia-logger";
 import { cors } from "@elysiajs/cors";
 import { Elysia } from "elysia";
-import logixlysia from "logixlysia";
 
 const PORT = 3000;
 
 const app = new Elysia()
-  .use(logixlysia())
+  .use(
+    logger({
+      level: process.env.LOG_LEVEL || "info",
+      transport:
+        process.env.NODE_ENV !== "production"
+          ? {
+              target: "pino-pretty",
+              options: {
+                colorize: true,
+                translateTime: "HH:MM:ss.l",
+                ignore: "pid,hostname",
+                singleLine: false,
+              },
+            }
+          : undefined,
+    })
+  )
   .use(
     cors({
       origin: process.env.CORS_ORIGIN || "",
