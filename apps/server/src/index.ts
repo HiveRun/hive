@@ -18,11 +18,6 @@ const app = new Elysia()
                 translateTime: "HH:MM:ss.l",
                 ignore: "pid,hostname",
                 singleLine: false,
-                messageFormat:
-                  "{msg} {req.method} {req.url} {res.statusCode} {responseTime}ms",
-                customPrettifiers: {
-                  time: (timestamp: string) => `🕐 ${timestamp}`,
-                },
               },
             }
           : undefined,
