@@ -2,7 +2,7 @@
 
 ## Architecture
 
-**Database layer lives in a separate package** (`packages/api/`) - NOT in the Elysia server app.
+**Database layer lives in a separate package** (`packages/db/`) - NOT in the Elysia server app.
 
 This separation ensures:
 - Business logic is decoupled from HTTP concerns
