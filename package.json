@@ -15,6 +15,7 @@
     }
   },
   "scripts": {
+    "setup": "bun install && cd apps/server && bun db:push",
     "check": "bun run check:commit",
     "check:commit": "bun run check:staged && bun run check:secrets && bun run check:audit && bun run test:run && turbo check check-types --ui=stream --force && bun run build",
     "check:push": "bun run check:commit && bun run test:e2e",
@@ -35,10 +36,11 @@
     "dev:native": "turbo -F native dev",
     "dev:web": "turbo -F web dev",
     "dev:server": "turbo -F server dev",
-    "db:push": "turbo -F @synthetic/db db:push",
-    "db:studio": "turbo -F @synthetic/db db:studio",
-    "db:generate": "turbo -F @synthetic/db db:generate",
-    "db:migrate": "turbo -F @synthetic/db db:migrate",
+    "db:local": "cd apps/server && bun db:local",
+    "db:push": "turbo -F @synthetic/server db:push",
+    "db:studio": "turbo -F @synthetic/server db:studio",
+    "db:generate": "turbo -F @synthetic/server db:generate",
+    "db:migrate": "turbo -F @synthetic/server db:migrate",
     "prepare": "husky"
   },
   "dependencies": {
