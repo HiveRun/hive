@@ -1,8 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { exampleQueries } from "@/queries/example";
 
 export const Route = createFileRoute("/")({
+  loader: ({ context: { queryClient } }) =>
+    queryClient.ensureQueryData(exampleQueries.get()),
   component: HomeComponent,
 });
 
@@ -23,7 +25,7 @@ const TITLE_TEXT = `
  `;
 
 function HomeComponent() {
-  const { data, isPending, error } = useQuery(exampleQueries.get());
+  const { data } = useSuspenseQuery(exampleQueries.get());
 
   return (
     <div className="container mx-auto max-w-3xl px-4 py-2">
@@ -31,17 +33,9 @@ function HomeComponent() {
       <div className="grid gap-6">
         <section className="rounded-lg border p-4">
           <h2 className="mb-2 font-medium">API Status</h2>
-          {isPending && (
-            <p className="text-muted-foreground text-sm">Loading...</p>
-          )}
-          {error && (
-            <p className="text-destructive text-sm">Error: {error.message}</p>
-          )}
-          {data && (
-            <p className="mt-2 text-sm">
-              <span className="font-medium">Message:</span> {data.message}
-            </p>
-          )}
+          <p className="mt-2 text-sm">
+            <span className="font-medium">Message:</span> {data.message}
+          </p>
         </section>
       </div>
     </div>

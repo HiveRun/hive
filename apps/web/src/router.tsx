@@ -20,7 +20,9 @@ export const getRouter = () => {
     routeTree,
     scrollRestoration: true,
     defaultPreloadStaleTime: 0,
-    context: {},
+    context: {
+      queryClient,
+    },
     defaultPendingComponent: () => <Loader />,
     defaultErrorComponent: ({ error, reset }) => (
       <ErrorPage error={error} reset={reset} />
