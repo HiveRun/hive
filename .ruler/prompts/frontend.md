@@ -35,9 +35,30 @@ The backend is a separate **Elysia** server with a type-safe RPC client.
 
 Define queries in centralized factory files (`src/queries/`) instead of inline.
 
-**See `src/queries/example.ts` for a complete pattern example.**
-
 Benefits: Type-safe, reusable, prevents queryKey typos, easier cache invalidation.
+
+**Example pattern:**
+
+```tsx
+// src/queries/users.ts
+export const userQueries = {
+  all: () => ({
+    queryKey: ["users"] as const,
+    queryFn: () => rpcClient.users.list(),
+  }),
+
+  detail: (id: string) => ({
+    queryKey: ["users", id] as const,
+    queryFn: () => rpcClient.users.get(id),
+  }),
+};
+
+export const userMutations = {
+  create: {
+    mutationFn: (data: CreateUserInput) => rpcClient.users.create(data),
+  },
+};
+```
 
 ### Route-Level Data Loading
 
