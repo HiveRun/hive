@@ -4,7 +4,7 @@ import { Elysia } from "elysia";
 
 const PORT = 3000;
 
-new Elysia()
+const app = new Elysia()
   .use(
     cors({
       origin: process.env.CORS_ORIGIN || "",
@@ -12,4 +12,10 @@ new Elysia()
     })
   )
   .get("/", () => "OK")
+  .get("/api/example", () => ({
+    message: "Hello from Elysia!",
+    timestamp: Date.now(),
+  }))
   .listen(PORT);
+
+export type App = typeof app;

@@ -1,7 +1,13 @@
 {
-  "name": "server",
+  "name": "@synthetic/server",
   "main": "src/index.ts",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
   "scripts": {
     "build": "tsdown",
     "check-types": "tsc -b",
