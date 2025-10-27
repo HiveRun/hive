@@ -1,14 +1,5 @@
 # Backend Patterns
 
-## Architecture
-
-**Database layer lives in a separate package** (`packages/db/`) - NOT in the Elysia server app.
-
-This separation ensures:
-- Business logic is decoupled from HTTP concerns
-- Database operations can be reused across multiple apps (CLI tools, background jobs, etc.)
-- Elysia server (`apps/server/`) is purely for HTTP routing and middleware
-
 ## Tech Stack
 
 - **Framework**: Elysia (TypeScript backend framework built on Bun)

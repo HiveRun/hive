@@ -13,6 +13,11 @@
     "check-types": "tsc -b",
     "check": "biome check --write .",
     "compile": "bun build --compile --minify --sourcemap --bytecode ./src/index.ts --outfile server",
+    "db:local": "turso dev --db-file local.db",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
     "dev": "bun run --hot src/index.ts",
     "start": "bun run dist/index.js",
     "test": "vitest",
@@ -21,7 +26,8 @@
   "dependencies": {
     "@bogeychan/elysia-logger": "^0.1.10",
     "@elysiajs/cors": "^1.3.3",
-    "@synthetic/db": "workspace:*",
+    "@libsql/client": "^0.14.0",
+    "drizzle-orm": "^0.44.2",
     "dotenv": "catalog:",
     "elysia": "^1.3.21",
     "pino": "^10.1.0",
@@ -30,6 +36,7 @@
   },
   "devDependencies": {
     "@types/bun": "^1.2.6",
+    "drizzle-kit": "^0.31.2",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "^4.0.3"
