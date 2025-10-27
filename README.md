@@ -5,14 +5,11 @@ Monorepo project with React + TanStack Start frontend and Elysia backend.
 ## Getting Started
 
 ```bash
-# Install dependencies
-bun install
+# One-time setup (install deps + push database schema)
+bun setup
 
-# Start local SQLite database
-cd apps/server && bun db:local
-
-# Apply database schema
-bun db:push
+# Start local SQLite database (in a separate terminal)
+bun db:local
 
 # Run development servers
 bun dev
@@ -141,6 +138,9 @@ npx playwright show-report
 
 ## Available Scripts
 
+### Setup
+- `bun setup`: One-time setup (install dependencies + push database schema)
+
 ### Development
 - `bun dev`: Start all applications in development mode
 - `bun dev:web`: Start only the web application
@@ -164,9 +164,11 @@ npx playwright show-report
 - `bun check-types`: Check TypeScript types across all apps
 
 ### Database
+- `bun db:local`: Start the local SQLite database
 - `bun db:push`: Push schema changes to database
 - `bun db:studio`: Open database studio UI
-- `cd apps/server && bun db:local`: Start the local SQLite database
+- `bun db:generate`: Generate migrations from schema
+- `bun db:migrate`: Run migrations
 
 ## AI/LLM Context Management
 
