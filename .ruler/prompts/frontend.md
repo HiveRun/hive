@@ -29,11 +29,42 @@ Components are stored in `apps/web/src/components/ui/`
 
 ## Backend Communication
 
-The backend is a separate **Elysia** server with a type-safe RPC client.
+The backend is a separate **Elysia** server. Communication happens via **Eden Treaty RPC** which provides end-to-end type safety.
+
+**ALWAYS import from `@/lib/rpc`:**
+
+```typescript
+import { rpc } from "@/lib/rpc"
+```
+
+Eden Treaty provides automatic TypeScript inference from your Elysia backend. No manual typing needed.
+
+### Eden Treaty Usage
+
+```typescript
+// GET request
+const { data, error } = await rpc.api.users.get()
+if (error) throw new Error("Failed to fetch users")
+return data
+
+// POST request with body
+const { data, error } = await rpc.api.users.post({
+  name: "John",
+  email: "john@example.com"
+})
+
+// Path parameters
+const { data, error } = await rpc.api.users({ id: "123" }).get()
+
+// Query parameters
+const { data, error } = await rpc.api.users.get({
+  query: { limit: 10, page: 2 }
+})
+```
 
 ### Query Factories Pattern
 
-Define queries in centralized factory files (`src/queries/`) instead of inline.
+**ALWAYS define queries in centralized factory files** (`src/queries/`) instead of inline.
 
 Benefits: Type-safe, reusable, prevents queryKey typos, easier cache invalidation.
 
@@ -41,52 +72,89 @@ Benefits: Type-safe, reusable, prevents queryKey typos, easier cache invalidatio
 
 ```tsx
 // src/queries/users.ts
+import { rpc } from "@/lib/rpc"
+
 export const userQueries = {
   all: () => ({
     queryKey: ["users"] as const,
-    queryFn: () => rpcClient.users.list(),
+    queryFn: async () => {
+      const { data, error } = await rpc.api.users.get()
+      if (error) throw new Error("Failed to fetch users")
+      return data
+    },
   }),
 
   detail: (id: string) => ({
     queryKey: ["users", id] as const,
-    queryFn: () => rpcClient.users.get(id),
+    queryFn: async () => {
+      const { data, error } = await rpc.api.users({ id }).get()
+      if (error) throw new Error("User not found")
+      return data
+    },
   }),
-};
+}
 
 export const userMutations = {
   create: {
-    mutationFn: (data: CreateUserInput) => rpcClient.users.create(data),
+    mutationFn: async (input: CreateUserInput) => {
+      const { data, error } = await rpc.api.users.post(input)
+      if (error) throw new Error("Failed to create user")
+      return data
+    },
   },
-};
+}
 ```
 
 ### Route-Level Data Loading
 
-**Prefer route loaders over component-level queries.** Put state in the URL and let loaders handle it:
+**ALWAYS prefer route loaders over component-level queries.** Put state in the URL and let loaders handle it.
+
+**ALWAYS use `validateSearch` with Zod schemas** for type-safe search params:
 
 ```tsx
 // src/routes/users.tsx
+import { createFileRoute } from '@tanstack/react-router'
+import { useSuspenseQuery } from '@tanstack/react-query'
+import { z } from 'zod'
+import { userQueries } from '@/queries/users'
+
+// Define search param schema
+const userSearchSchema = z.object({
+  search: z.string().optional(),
+  page: z.number().min(1).default(1),
+  status: z.enum(['active', 'inactive']).optional()
+})
+
 export const Route = createFileRoute('/users')({
-  validateSearch: z.object({
-    search: z.string().optional(),
-    page: z.number().default(1)
-  }),
+  validateSearch: userSearchSchema,
   loader: ({ context: { queryClient }, search }) =>
-    queryClient.ensureQueryData(userQueries.search(search.search))
+    queryClient.ensureQueryData(userQueries.list(search))
 })
 
 function Users() {
-  const { search } = Route.useSearch()
+  const search = Route.useSearch() // Fully typed from Zod schema!
   // Uses cached data from loader - no loading spinner flash
-  const { data } = useQuery(userQueries.search(search.search))
+  const { data } = useSuspenseQuery(userQueries.list(search))
+
+  return <UsersList users={data} currentPage={search.page} />
 }
 ```
 
-**Why route loaders:**
-- Data loads before component mounts
-- Shareable/bookmarkable URLs
+**Why route loaders + search validation:**
+- Data loads **before** component mounts (no loading flicker)
+- Search params are validated and typed automatically
+- Invalid params are caught at runtime
+- Shareable/bookmarkable URLs with guaranteed valid state
 - Browser back/forward works correctly
 - Better perceived performance
+
+**Key pattern: `useSuspenseQuery` instead of `useQuery`**
+
+When using loaders, use `useSuspenseQuery` in components:
+- No need for `isPending` checks
+- No loading state JSX
+- Data is guaranteed to be available
+- Loading handled by router's `defaultPendingComponent`
 
 ## Error Handling
 
