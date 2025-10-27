@@ -1,4 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
+import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import {
   createRootRouteWithContext,
   HeadContent,
@@ -54,6 +55,7 @@ function RootDocument() {
           {isFetching ? <Loader /> : <Outlet />}
         </div>
         <Toaster richColors />
+        <ReactQueryDevtools buttonPosition="bottom-right" />
         <TanStackRouterDevtools position="bottom-left" />
         <Scripts />
       </body>
