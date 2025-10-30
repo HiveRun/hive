@@ -68,6 +68,11 @@ test("user can complete checkout", async ({ page }) => {
 2. Only update snapshots if the visual change is correct.
 3. Never blindly update snapshots to pass tests.
 
+**Workflow for intentional UI changes:**
+- Run the targeted spec (e.g. `bun -C apps/web run test:e2e -- e2e/error-states.spec.ts`) as soon as you touch the UI.
+- Review the diff images in `apps/web/test-results/`; if the visuals look right, accept them immediately with `bun -C apps/web run test:e2e:update-snapshots`.
+- Re-run the spec to confirm it passes, then commit both the code and the refreshed snapshots so the pre-push hook stays green.
+
 ## Git Hooks
 
 Run these scripts manually when you need to validate outside the hook flow.
