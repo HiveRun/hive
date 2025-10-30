@@ -5,6 +5,16 @@ import { Elysia } from "elysia";
 
 const PORT = 3000;
 
+const DEFAULT_CORS_ORIGINS = ["http://localhost:3001", "http://127.0.0.1:3001"];
+
+const resolvedCorsOrigins = (process.env.CORS_ORIGIN || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const allowedCorsOrigins =
+  resolvedCorsOrigins.length > 0 ? resolvedCorsOrigins : DEFAULT_CORS_ORIGINS;
+
 const app = new Elysia()
   .use(
     logger({
@@ -17,8 +27,9 @@ const app = new Elysia()
   )
   .use(
     cors({
-      origin: process.env.CORS_ORIGIN || "",
+      origin: allowedCorsOrigins,
       methods: ["GET", "POST", "OPTIONS"],
+      credentials: true,
     })
   )
   .get("/", () => "OK")

@@ -48,6 +48,7 @@ function RootDocument() {
     <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
+        <Scripts />
       </head>
       <body>
         <div className="grid h-svh grid-rows-[auto_1fr]">
@@ -57,7 +58,6 @@ function RootDocument() {
         <Toaster richColors />
         <ReactQueryDevtools buttonPosition="bottom-right" />
         <TanStackRouterDevtools position="bottom-left" />
-        <Scripts />
       </body>
     </html>
   );
