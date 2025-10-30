@@ -2,63 +2,31 @@ import type { QueryClient } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import {
   createRootRouteWithContext,
-  HeadContent,
   Outlet,
-  Scripts,
   useRouterState,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import Loader from "@/components/loader";
 import { Toaster } from "@/components/ui/sonner";
 import Header from "../components/header";
-import appCss from "../index.css?url";
 
 export type RouterAppContext = {
   queryClient: QueryClient;
 };
 
 export const Route = createRootRouteWithContext<RouterAppContext>()({
-  head: () => ({
-    meta: [
-      {
-        charSet: "utf-8",
-      },
-      {
-        name: "viewport",
-        content: "width=device-width, initial-scale=1",
-      },
-      {
-        title: "My App",
-      },
-    ],
-    links: [
-      {
-        rel: "stylesheet",
-        href: appCss,
-      },
-    ],
-  }),
-
-  component: RootDocument,
+  component: RootComponent,
 });
 
-function RootDocument() {
+function RootComponent() {
   const isFetching = useRouterState({ select: (s) => s.isLoading });
   return (
-    <html lang="en" suppressHydrationWarning>
-      <head>
-        <HeadContent />
-        <Scripts />
-      </head>
-      <body>
-        <div className="grid h-svh grid-rows-[auto_1fr]">
-          <Header />
-          {isFetching ? <Loader /> : <Outlet />}
-        </div>
-        <Toaster richColors />
-        <ReactQueryDevtools buttonPosition="bottom-right" />
-        <TanStackRouterDevtools position="bottom-left" />
-      </body>
-    </html>
+    <div className="grid h-svh grid-rows-[auto_1fr]">
+      <Header />
+      {isFetching ? <Loader /> : <Outlet />}
+      <Toaster richColors />
+      <ReactQueryDevtools buttonPosition="bottom-right" />
+      <TanStackRouterDevtools position="bottom-left" />
+    </div>
   );
 }

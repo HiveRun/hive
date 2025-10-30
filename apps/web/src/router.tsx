@@ -16,30 +16,27 @@ const queryClient = new QueryClient({
   },
 });
 
-export const getRouter = () => {
-  const router = createTanStackRouter({
-    routeTree,
-    scrollRestoration: true,
-    defaultPreloadStaleTime: 0,
-    context: {
-      queryClient,
-    },
-    defaultPendingComponent: () => <Loader />,
-    defaultErrorComponent: ({ error, reset }) => (
-      <ErrorPage error={error} reset={reset} />
-    ),
-    defaultNotFoundComponent: () => <div>Not Found</div>,
-    Wrap: ({ children }) => (
-      <QueryClientProvider client={queryClient}>
-        <ThemeProvider>{children}</ThemeProvider>
-      </QueryClientProvider>
-    ),
-  });
-  return router;
-};
+export const router = createTanStackRouter({
+  routeTree,
+  scrollRestoration: true,
+  defaultPreloadStaleTime: 0,
+  context: {
+    queryClient,
+  },
+  defaultPendingComponent: () => <Loader />,
+  defaultErrorComponent: ({ error, reset }) => (
+    <ErrorPage error={error} reset={reset} />
+  ),
+  defaultNotFoundComponent: () => <div>Not Found</div>,
+  Wrap: ({ children }) => (
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>{children}</ThemeProvider>
+    </QueryClientProvider>
+  ),
+});
 
 declare module "@tanstack/react-router" {
   interface Register {
-    router: ReturnType<typeof getRouter>;
+    router: typeof router;
   }
 }
