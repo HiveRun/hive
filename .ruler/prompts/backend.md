@@ -7,6 +7,13 @@
 - **Validation**: Elysia's built-in TypeBox validation
 - **Logging**: @bogeychan/elysia-logger + pino-pretty
 
+## Tooling & Commands
+
+- Start the backend in dev mode with `bun run dev:server` (Turbo fan-out) or `bun -C apps/server run dev` when working locally only.
+- Build the package via `bun -C apps/server run build`; compiled output lives in `dist/`.
+- Run Vitest in watch mode with `bun -C apps/server run test`; CI-style runs use `bun -C apps/server run test:run`.
+- Target a specific spec with `bun -C apps/server run test -- src/db.test.ts -t "creates user"` (adjust file and test name as needed).
+
 ## Key Patterns
 
 **ALWAYS use TypeBox validation** for all API endpoints that accept input:

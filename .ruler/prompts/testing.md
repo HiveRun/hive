@@ -10,9 +10,11 @@ API and business logic tested with Vitest.
 **Test location:** `apps/server/src/**/*.test.ts`
 
 ```bash
-bun test          # Watch mode
-bun test:run      # CI mode
+bun -C apps/server run test        # Watch mode
+bun -C apps/server run test:run    # CI mode
 ```
+
+Example targeted run: `bun -C apps/server run test -- src/db.test.ts -t "creates user"`.
 
 ### UI Testing (Playwright - Visual Snapshots Only)
 All UI testing is done through **visual snapshot testing**. No component unit tests - UI correctness is validated entirely through snapshot comparisons across multiple viewports and themes.
@@ -20,8 +22,9 @@ All UI testing is done through **visual snapshot testing**. No component unit te
 **Test location:** `apps/web/e2e/*.spec.ts`
 
 ```bash
-bun test:e2e                      # Run E2E tests
-bun test:e2e:update-snapshots     # Update snapshots after UI changes
+bun -C apps/web run test:e2e                                  # Run E2E tests
+bun -C apps/web run test:e2e -- e2e/error-states.spec.ts      # Target a single spec
+bun -C apps/web run test:e2e:update-snapshots                 # Update snapshots after UI changes
 ```
 
 **Snapshot coverage:**
@@ -65,6 +68,8 @@ test("user can complete checkout", async ({ page }) => {
 3. Never blindly update snapshots to pass tests
 
 ## Git Hooks
+
+Run these scripts manually when you need to validate outside the hook flow.
 
 **Pre-commit** (`bun run check:commit`):
 - Linting, type checking, unit tests, build validation

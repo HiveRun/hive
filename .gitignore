@@ -57,6 +57,8 @@ playwright/.cache/
 tmp
 temp
 
+
+
 # START Ruler Generated Files
 /.codex/config.json
 /.codex/config.json.bak

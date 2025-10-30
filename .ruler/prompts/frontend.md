@@ -7,6 +7,13 @@ This project uses **TanStack Start** (React-based meta-framework) with:
 - Server-side rendering (SSR) by default
 - Type-safe routing with TanStack Router
 
+## Tooling & Commands
+
+- Start the web dev server with `bun run dev:web`; it proxies through Turbo so API changes hot-reload alongside UI.
+- Build the frontend in isolation via `bun -C apps/web run build`; preview with `bun -C apps/web run serve` when needed.
+- Run Playwright suites through `bun -C apps/web run test:e2e`; scope to a spec (e.g. `bun -C apps/web run test:e2e -- e2e/error-states.spec.ts`).
+- Refresh snapshot baselines using `bun -C apps/web run test:e2e:update-snapshots` after reviewing diffs locally.
+
 ## UI Components - shadcn/ui
 
 We use **shadcn/ui** for UI components.

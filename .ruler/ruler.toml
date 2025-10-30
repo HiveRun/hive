@@ -15,14 +15,10 @@ enabled = true
 # Global merge strategy: 'merge' or 'overwrite' (default: 'merge')
 merge_strategy = "merge"
 
-# --- MCP Server Definitions ---
-# Exa Code MCP - Fast and efficient web context for coding agents
-# Searches GitHub repos, docs, StackOverflow, and more for coding context
+# Exa Code MCP provides code search context via mcp-remote
 [mcp_servers.exa]
-command = "npx"
-args = ["-y", "mcp-remote", "https://mcp.exa.ai/mcp"]
-
-
+command = "bunx"
+args = ["mcp-remote", "https://mcp.exa.ai/mcp"]
 
 
 
