@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRouter as createTanStackRouter } from "@tanstack/react-router";
 import ErrorPage from "./components/error";
 import Loader from "./components/loader";
+import { ThemeProvider } from "./components/theme-provider";
 import "./index.css";
 import { routeTree } from "./routeTree.gen";
 
@@ -29,7 +30,9 @@ export const getRouter = () => {
     ),
     defaultNotFoundComponent: () => <div>Not Found</div>,
     Wrap: ({ children }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>{children}</ThemeProvider>
+      </QueryClientProvider>
     ),
   });
   return router;
