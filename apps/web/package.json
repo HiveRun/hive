@@ -10,10 +10,10 @@
     "check-types": "tsc -b",
     "test": "echo '✓ Frontend uses Playwright for UI testing (E2E + snapshots). Run: bun test:e2e'",
     "test:run": "echo '✓ Frontend uses Playwright for UI testing (E2E + snapshots). No unit tests configured.'",
-    "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui",
-    "test:e2e:headed": "playwright test --headed",
-    "test:e2e:update-snapshots": "playwright test --update-snapshots"
+    "test:e2e": "npx --no playwright test",
+    "test:e2e:ui": "npx --no playwright test --ui",
+    "test:e2e:headed": "npx --no playwright test --headed",
+    "test:e2e:update-snapshots": "npx --no playwright test --update-snapshots"
   },
   "dependencies": {
     "@elysiajs/eden": "^1.4.4",

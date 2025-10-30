@@ -13,6 +13,7 @@ This project uses **TanStack Start** (React-based meta-framework) with:
 - Build the frontend in isolation via `bun -C apps/web run build`; preview with `bun -C apps/web run serve` when needed.
 - Run Playwright suites through `bun -C apps/web run test:e2e`; scope to a spec (e.g. `bun -C apps/web run test:e2e -- e2e/error-states.spec.ts`).
 - Refresh snapshot baselines using `bun -C apps/web run test:e2e:update-snapshots` after reviewing diffs locally.
+- Playwright commands invoke `npx --no playwright …`; install Node via `mise install` so the CLI is available alongside Bun.
 
 ## UI Components - shadcn/ui
 

@@ -23,7 +23,7 @@ All UI testing is done through **visual snapshot testing**. No component unit te
 **Baseline snapshots:** `apps/web/e2e/**/__snapshots__/`
 
 ```bash
-bun -C apps/web run test:e2e                                  # Run E2E tests
+bun -C apps/web run test:e2e                                  # Run E2E tests (calls npx playwright under the hood)
 bun -C apps/web run test:e2e -- e2e/error-states.spec.ts      # Target a single spec
 bun -C apps/web run test:e2e:update-snapshots                 # Update snapshots after UI changes
 ```
