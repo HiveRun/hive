@@ -81,3 +81,7 @@ temp
 /opencode.json
 /opencode.json.bak
 # END Ruler Generated Files
+
+# Track OpenCode config in repo
+!opencode.json
+
