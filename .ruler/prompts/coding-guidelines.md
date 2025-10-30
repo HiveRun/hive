@@ -15,6 +15,8 @@
 
 **Use imperative approaches** when functional/declarative patterns don't fit the problem or would add unnecessary complexity.
 
+**Trust the TypeScript types** for internal code paths; skip redundant runtime guards when the compiler already guarantees the shape. Reserve extra validation for external or untyped inputs, and when you do need it lean on dedicated schemas (TypeBox, Zod, etc.) instead of ad-hoc checks.
+
 ## Error Handling
 
 **Handle errors where you can do something reasonable about them.** Don't catch errors just to re-throw them or log without context.
