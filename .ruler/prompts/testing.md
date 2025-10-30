@@ -20,6 +20,7 @@ Example targeted run: `bun -C apps/server run test -- src/db.test.ts -t "creates
 All UI testing is done through **visual snapshot testing**. No component unit tests - UI correctness is validated entirely through snapshot comparisons across multiple viewports and themes.
 
 **Test location:** `apps/web/e2e/*.spec.ts`
+**Baseline snapshots:** `apps/web/e2e/**/__snapshots__/`
 
 ```bash
 bun -C apps/web run test:e2e                                  # Run E2E tests
@@ -63,9 +64,9 @@ test("user can complete checkout", async ({ page }) => {
 ```
 
 **When snapshots fail:**
-1. Review diff images in `test-results/` to verify changes are intentional
-2. Only update snapshots if the visual change is correct
-3. Never blindly update snapshots to pass tests
+1. Compare `test-results/**/*-diff.png` against the matching baseline in `apps/web/e2e/**/__snapshots__/`.
+2. Only update snapshots if the visual change is correct.
+3. Never blindly update snapshots to pass tests.
 
 ## Git Hooks
 
