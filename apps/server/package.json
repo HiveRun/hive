@@ -13,7 +13,7 @@
     "check-types": "tsc -b",
     "check": "biome check --write .",
     "compile": "bun build --compile --minify --sourcemap --bytecode ./src/index.ts --outfile server",
-    "db:local": "turso dev --db-file local.db",
+    "db:local": "echo 'Set DATABASE_URL=\"file:local.db\" to use local SQLite database'",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:generate": "drizzle-kit generate",

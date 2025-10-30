@@ -4,14 +4,31 @@ Monorepo project with React + TanStack Start frontend and Elysia backend.
 
 ## Getting Started
 
+### With Mise (Recommended)
+
+```bash
+# Install tools defined in .tool-versions
+mise install
+
+# One-time setup (install deps + push database schema)
+bun setup
+
+# Install Playwright browsers (for E2E testing)
+cd apps/web && bunx playwright install --with-deps
+
+# Set up local database (create .env with DATABASE_URL="file:local.db")
+# Then run development servers
+bun dev
+```
+
+### Manual Setup
+
 ```bash
 # One-time setup (install deps + push database schema)
 bun setup
 
-# Start local SQLite database (in a separate terminal)
-bun db:local
-
-# Run development servers
+# Set up local database (create .env with DATABASE_URL="file:local.db")  
+# Then run development servers
 bun dev
 ```
 
@@ -164,11 +181,13 @@ npx playwright show-report
 - `bun check-types`: Check TypeScript types across all apps
 
 ### Database
-- `bun db:local`: Start the local SQLite database
 - `bun db:push`: Push schema changes to database
 - `bun db:studio`: Open database studio UI
 - `bun db:generate`: Generate migrations from schema
 - `bun db:migrate`: Run migrations
+
+**Local Database Setup:**
+Create `.env` file with `DATABASE_URL="file:local.db"` to use local SQLite.
 
 ## AI/LLM Context Management
 
