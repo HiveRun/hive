@@ -3,7 +3,10 @@ import { Link } from "@tanstack/react-router";
 import { ThemeToggle } from "./theme-toggle";
 
 export default function Header() {
-  const links = [{ to: "/", label: "Home" }] as const;
+  const links = [
+    { to: "/", label: "Home" },
+    { to: "/example-dashboard", label: "Dashboard" },
+  ] as const;
 
   return (
     <div>
