@@ -1,3 +1,5 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig, devices } from "@playwright/test";
 
 /**
@@ -14,6 +16,13 @@ import { defineConfig, devices } from "@playwright/test";
  *
  * See https://playwright.dev/docs/test-configuration
  */
+const ROOT_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  ".."
+);
+const WEB_SERVER_TIMEOUT_MS = 120_000;
+
 export default defineConfig({
   testDir: "./e2e",
   snapshotPathTemplate:
@@ -51,5 +60,7 @@ export default defineConfig({
     command: "bun run dev",
     url: "http://localhost:3001",
     reuseExistingServer: !process.env.CI,
+    cwd: ROOT_DIR,
+    timeout: WEB_SERVER_TIMEOUT_MS,
   },
 });
