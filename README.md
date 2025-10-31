@@ -2,6 +2,10 @@
 
 Monorepo project with React + TanStack Start frontend and Elysia backend.
 
+## Legacy Context
+
+Synthetic is the successor to the earlier **Hive** platform (Elixir/Phoenix + Ash + React). We keep Hive's architectural and workflow documentation under `docs/historical/hive` as a reference when translating proven patterns into this Bun/TypeScript monorepo.
+
 ## Getting Started
 
 ### With Mise (Recommended)
