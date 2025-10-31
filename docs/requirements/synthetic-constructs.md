@@ -14,6 +14,7 @@
 
 ## Agent Orchestration
 - Anchor on the official OpenCode SDK for all agent interactions (init sessions, send prompts, stream tool events, fetch artifacts). Avoid TUI screen scraping.
+- Keep a local clone of https://github.com/sst/opencode in `vendor/opencode/` for reference only; production code must depend on the published `@opencode-ai/sdk` package, never the clone.
 - Run constructs directly in the host environment so agents share the user's credentials, PATH, and dependencies; no supervised pods for v1.
 - Require top-level user configuration of OpenCode workspace/API keys via `synthetic.config.ts`, then let each construct reuse those credentials alongside its default prompt.
 - Users author construct templates in the same config; the UI instantiates constructs from those templates by layering task-specific metadata (name, description, review notes).

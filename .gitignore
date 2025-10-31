@@ -56,7 +56,7 @@ playwright/.cache/
 .cache
 tmp
 temp
-
+vendor/opencode/
 
 
 # START Ruler Generated Files
