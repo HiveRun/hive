@@ -200,8 +200,25 @@ Templating supports `${env.VAR_NAME}` and `${constructDir}` to keep configs decl
 - **CI tiers**: run unit tests and lint on every push; run integration tests on PRs (matrix per OS); run smoke/E2E nightly. Failures must display clear cleanup instructions so the developer’s machine isn’t left in a bad state.
 
 ## UX Requirements
-- **Construct Workspace**: Show live agent transcript, pinned brief, status timeline, running services status, and quick actions (pause, nudge, terminate).
-- **Global Queue**: Present constructs waiting on human input sorted by wait time, with filters per provider and SLA indicators.
+
+### Constructs Dashboard
+- Present a searchable, filterable list of constructs with key stats (status, wait time, template, last updated). Allow grouping by status or template and pinning important constructs to the top.
+- Header should expose global actions (create construct, add workspace, open settings) and surface the user's active workspace context.
+- Keep a dedicated “Awaiting Input” queue module visible (sidebar or top bar) that shows count, time waiting, and quick jump links to constructs blocking on human feedback.
+- Provide lightweight inline actions (pause, mark complete, open diff) without forcing a full page transition when possible.
+
+### Construct Detail Workspace
+- Hero section summarises brief, owner, template used, current state, start/end timestamps, and quick action buttons (pause, terminate, escalate).
+- Sections for: agent chat (entry point + last message preview), running services (status, ports, open link buttons), diffs/changes (links into diff viewer), task metadata (acceptance criteria, related documents), and history timeline (state changes, human interactions).
+- Offer contextual navigation tabs or anchors (`Overview`, `Chat`, `Diffs`, `Services`) so the user can jump to the relevant payload quickly; remember scroll position if they return from another construct.
+
+### Construct Creation Flow
+- Stepper/form that walks through template selection, task metadata (name, description, acceptance criteria), optional canned responses, and service adjustments (enable/disable, override ports/env where allowed).
+- Display template-provided defaults alongside editable fields, with inline hints pulled from template metadata (e.g., expected services, required env vars).
+- Show a summary review step confirming services that will start, initial prompt/context that will be sent to the agent, and any missing credentials/config that must be resolved before creation.
+- Provide autosave/draft so long forms can be resumed, and validations that highlight missing fields before submission.
+
+### Shared UX Considerations
 - **Notifications**: Trigger desktop/in-app (and optional Slack/webhook) alerts when constructs block on human input, finish, or encounter errors; include deep links.
 - **Diff Review**: Provide inline/side-by-side diff viewer with file tree, syntax highlighting, quick accept/reject controls, and comment threads without leaving Synthetic.
 - **Context Switching Aids**: Recent activity feed, saved filters, keyboard shortcuts, and status badging to help regain context quickly.
