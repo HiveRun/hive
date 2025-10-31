@@ -134,7 +134,7 @@ export default defineSyntheticConfig({
 ```
 
 - `prompts`: template-scoped prompt fragments (files or globs) merged into the agent briefing in addition to the global prompt bundle.
-- `services`: each service can declare optional `setup` commands that run before its `run` command, plus optional `cwd`, `env`, regex `readyPattern`, and a `stop` command; `ports` is an array of port requests (`name`, optional `preferred`, optional `container` for docker) that Synthetic resolves to free host ports and exports as env vars (custom name via `env`). Templating like `${env.API_PORT}` is available to the service itself, other services, and the agent. `type` defaults to `process` but also supports `docker` (with `image`, `ports`, `volumes`, `command`) and `compose` (referencing a Docker Compose file translated into per-service units). Synthetic does not auto-stop long-running services—users stay in control via the defined `stop` or teardown commands.
+- `services`: each service can declare optional `setup` commands that run before its `run` command, plus optional `cwd`, `env`, regex `readyPattern`, and a `stop` command; `ports` is an array of port requests (`name`, optional `preferred`, optional `container` for docker) that Synthetic resolves to free host ports (probing the actual OS rather than relying solely on internal state) and exports as env vars (custom name via `env`). Templating like `${env.API_PORT}` is available to the service itself, other services, and the agent. `type` defaults to `process` but also supports `docker` (with `image`, `ports`, `volumes`, `command`) and `compose` (referencing a Docker Compose file translated into per-service units). Synthetic does not auto-stop long-running services—users stay in control via the defined `stop` or teardown commands.
 - `teardown`: optional commands to clean up services/resources when the construct stops.
 
 Templating supports `${env.VAR_NAME}` and `${constructDir}` to keep configs declarative; Synthetic resolves them before running setup, service, or teardown commands.
@@ -166,6 +166,12 @@ Templating supports `${env.VAR_NAME}` and `${constructDir}` to keep configs decl
 - Construct templates, histories, and artifacts remain isolated to their workspace; Synthetic never mixes constructs across projects.
 - Provide a simple “Add workspace” action (UI + CLI) that lets the operator point Synthetic at new repo roots at any time; removal simply deletes the registry entry without touching the underlying project.
 - Existing single-project users can continue registering only one workspace; adding more later just extends the registry without changing per-project configs.
+
+### Dogfooding Requirements
+- The Synthetic repository itself must be runnable as a workspace so the platform can build and test itself; templates and tooling must work when the app is under active development.
+- Port allocation always probes the real host (not just internal state) so constructs spawned inside Synthetic avoid collisions with the live instance.
+- Every construct operates in its own git worktree; installs and commands run in that worktree to prevent lockfile or artifact conflicts with the running workspace.
+- Templates reference paths relative to the workspace root so dogfooding instances inherit prompts, configs, and scripts without special casing.
 
 ### Single-User Assumptions
 - Synthetic assumes a single operator per workspace for v1; no shared accounts, concurrent edits, or cross-user notifications are supported.
