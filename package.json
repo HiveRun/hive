@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "setup": "bun install && ./scripts/dev/clone-opencode.sh && (cd apps/server && if [ -d src/schema ]; then bun db:push; else echo 'Skipping db:push (no schema found)'; fi)",
+    "setup": "bun install && ./scripts/dev/clone-opencode.sh",
     "check": "bun run check:commit",
     "check:commit": "bun run check:staged && bun run check:secrets && bun run check:audit && biome check --no-errors-on-unmatched --files-ignore-unknown=true && bun run test:run && turbo check check-types --ui=stream --force && bun run build",
     "check:push": "bun run check:commit && bun run test:e2e",
