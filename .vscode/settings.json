@@ -39,5 +39,12 @@
     "source.fixAll.biome": "explicit",
     "source.organizeImports.biome": "always",
     "source.organizeImports": "never"
-  }
+  },
+  "foam.edit.linkReferenceDefinitions": "withoutFileExtension",
+  "foam.edit.disableLinkReferenceDefinitionCreation": true,
+  "foam.supported.linkLanguages": ["markdown", "plaintext"],
+  "foam.notesDirectory": "docs",
+  "foam.openDailyNote.directory": "docs/daily",
+  "foam.openDailyNote.filenameFormat": "yyyy-MM-dd",
+  "foam.openDailyNote.titleFormat": "yyyy-MM-dd"
 }
