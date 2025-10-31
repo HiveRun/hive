@@ -19,6 +19,7 @@
 - Require top-level user configuration of OpenCode workspace/API keys via `synthetic.config.ts`, then let each construct reuse those credentials alongside its default prompt.
 - Users author construct templates in the same config; the UI instantiates constructs from those templates by layering task-specific metadata (name, description, review notes).
 - Prepare for future adapters by defining a provider interface, but only implement the OpenCode path in the initial release.
+- Before creating an OpenCode session, inspect the user's OpenCode config/auth store (`auth.json`) to confirm credentials exist for the provider the template demands; if missing, block the session and prompt the user to run `opencode auth login` (no additional runtime retries beyond surfacing the error toast).
 - Assemble each agent session prompt from a base Markdown primer describing Synthetic, constructs, and the agent's role; append construct-specific context (task brief, running services, resolved ports/URLs, constraints on external resources).
 - Maintain prompt source configuration so large knowledge bases can be composed from modular files rather than a single monolith.
 
