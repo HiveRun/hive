@@ -178,6 +178,11 @@ Templating supports `${env.VAR_NAME}` and `${constructDir}` to keep configs decl
 - For `type: "compose"`, point to a Compose file (`composePath`) and optional service filter; Synthetic parses the file, injects templated variables (including generated ports/env vars), and starts the selected services with the same status tracking/ready detection pipeline.
 - When Compose is involved, generated per-service shims expose the same lifecycle hooks (ready pattern, stop) to keep the UI consistent.
 
+## Platform Modalities
+- **Web app**: ship the full experience in the browser (SSR/SPA) for zero-install access.
+- **Desktop app (Electron)**: wrap the web UI in Electron to unlock native notifications, tray integration, and richer OS hooks while keeping JS tooling and Chromium rendering parity. We can explore Tauri later if bundle size becomes critical.
+- **Parity expectations**: desktop and web share features and code paths; desktop adds native notifications and future enhancements (tray, auto-launch, voice capture) without diverging UX.
+
 ## UX Requirements
 - **Construct Workspace**: Show live agent transcript, pinned brief, status timeline, running services status, and quick actions (pause, nudge, terminate).
 - **Global Queue**: Present constructs waiting on human input sorted by wait time, with filters per provider and SLA indicators.
