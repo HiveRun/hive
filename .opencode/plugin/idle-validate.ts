@@ -8,6 +8,7 @@ const OUTPUT_TAIL = 120;
 const LINE_SPLIT_REGEX = /\r?\n/;
 const STATUS_PREFIX_REGEX = /^[A-Z?]{1,2}\s+/;
 const COMMAND_NEEDS_QUOTES = /[\s"]/;
+const NOTIFICATION_EXPIRE_MS = 10_000;
 const BIOME_EXTENSIONS = new Set([
   "js",
   "mjs",
@@ -169,7 +170,9 @@ const notifyIdle = async ($: PluginInput["$"], sessionName: string) => {
   const summary = `Session ${sessionName} is idle.`;
 
   try {
-    await $`notify-send -u normal -t 0 ${title} ${summary}`.quiet().nothrow();
+    await $`notify-send -u normal -t ${NOTIFICATION_EXPIRE_MS} ${title} ${summary}`
+      .quiet()
+      .nothrow();
   } catch {
     // ignore notification failures
   }
@@ -279,7 +282,7 @@ export const IdleValidate: Plugin = ({ $, client, directory }) => {
         await handleIdle({ $, client, sessionID, sessionName });
       } catch (error) {
         debug("failure", error);
-        await $`notify-send -u normal ${sessionName} "Idle checks plugin failed"`
+        await $`notify-send -u normal -t ${NOTIFICATION_EXPIRE_MS} ${sessionName} "Idle checks plugin failed"`
           .quiet()
           .nothrow();
       } finally {
