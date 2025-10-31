@@ -203,9 +203,9 @@ Templating supports `${env.VAR_NAME}` and `${constructDir}` to keep configs decl
 
 ### Constructs Dashboard
 - Present a simple list or table of constructs showing name, current status, and template. Sorting/filtering by status or template is sufficient; avoid extra columns unless they prove useful.
-- Highlight constructs awaiting input with a dedicated queue module (sidebar or header badge) that shows count and quick jump links; no need to track elapsed wait time initially.
-- Keep the page header minimal (logo, theme toggle, active workspace/project context). Surface creation and navigation shortcuts via a command menu (keyboard friendly) rather than persistent buttons; the command menu should handle actions like “create construct”, “switch workspace”, and quick navigation to key routes.
-- Lightweight inline actions (open construct, mark complete) are enough for v1; defer pinning or complex grouping until it’s clearly needed.
+- Provide a dedicated “Awaiting Input” view accessible from the sidebar/command menu; within that route, show constructs blocking on feedback with quick links back to the main dashboard.
+- Keep the page header minimal (logo, theme toggle, active workspace/project context). Surface navigation and create actions via a command menu so keyboard users can jump straight to constructs, creation flow, or workspace switching.
+- Prioritise inline links over inline mutations: from the dashboard let users jump directly to agent chat, diff review, or construct detail. Actions like mark complete can live in the construct page for clarity.
 
 ### Construct Detail Workspace
 - Hero section summarises brief, owner, template used, current state, start/end timestamps, and quick action buttons (pause, terminate, escalate).
