@@ -1,13 +1,12 @@
-# Requirements
+# Requirements Index
 
-## Requirements List
-Track everything we want here. Use wiki links so navigation stays quick.
-- [[requirements/...]]
-- [[requirements/...]]
+## Constructs
+- [Overview](constructs/overview.md)
+- [Runtime](constructs/runtime.md)
+- [UX Overview](constructs/ux/overview.md)
+- [Agent Chat UX](constructs/ux/agent-chat.md)
 
-## By Theme
-Optional grouping when the list gets long—use the `theme-*` tags already living in the note frontmatter.
-- theme-platform
-  - [[requirements/...]]
-- theme-runtime
-  - [[requirements/...]]
+## Shared Concerns
+- [Workspace & Template Configuration](configuration.md)
+- [Testing Strategy](testing.md)
+- [Platform Modalities](platform.md)
