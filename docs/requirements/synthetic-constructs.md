@@ -202,10 +202,10 @@ Templating supports `${env.VAR_NAME}` and `${constructDir}` to keep configs decl
 ## UX Requirements
 
 ### Constructs Dashboard
-- Present a searchable, filterable list of constructs with key stats (status, wait time, template, last updated). Allow grouping by status or template and pinning important constructs to the top.
-- Header should expose global actions (create construct, add workspace, open settings) and surface the user's active workspace context.
-- Keep a dedicated “Awaiting Input” queue module visible (sidebar or top bar) that shows count, time waiting, and quick jump links to constructs blocking on human feedback.
-- Provide lightweight inline actions (pause, mark complete, open diff) without forcing a full page transition when possible.
+- Present a simple list or table of constructs showing name, current status, and template. Sorting/filtering by status or template is sufficient; avoid extra columns unless they prove useful.
+- Highlight constructs awaiting input with a dedicated queue module (sidebar or header badge) that shows count and quick jump links; no need to track elapsed wait time initially.
+- Header should expose global actions (create construct, add workspace, open settings) and surface the active workspace context.
+- Lightweight inline actions (open construct, mark complete) are enough for v1; defer pinning or complex grouping until it’s clearly needed.
 
 ### Construct Detail Workspace
 - Hero section summarises brief, owner, template used, current state, start/end timestamps, and quick action buttons (pause, terminate, escalate).
