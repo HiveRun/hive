@@ -191,6 +191,14 @@ Templating supports `${env.VAR_NAME}` and `${constructDir}` to keep configs decl
 - **Desktop app (Electron)**: wrap the web UI in Electron to unlock native notifications, tray integration, and richer OS hooks while keeping JS tooling and Chromium rendering parity. We can explore Tauri later if bundle size becomes critical.
 - **Parity expectations**: desktop and web share features and code paths; desktop adds native notifications and future enhancements (tray, auto-launch, voice capture) without diverging UX.
 
+## Testing Strategy
+- **Unit layer**: Vitest covers pure functions (config parsing, prompt assembly, port allocator). Import built-ins (`fs`, `path`, `Bun.spawn`) directly and rely on `vi.mock`/`vi.spyOn` when a call needs to be faked; only accept explicit dependency arguments for things like the OpenCode client.
+- **Integration layer**: provide a test harness that spins up isolated temp workspaces, fake agents, and stubbed service runners. Harness must create/clean git worktrees, assign ephemeral ports, and ensure all processes are terminated even on failure.
+- **Mocked OpenCode**: implement a mock SDK/server shim that reproduces session lifecycle, message streaming, and auth failures. Use it in integration tests so we never hit real LLMs during CI.
+- **Side-effect safety**: tests set `SYNTHETIC_TEST_MODE` (or equivalent) so service commands run lightweight stubs, docker invocations are replaced with no-ops, and resource limits prevent runaway processes. All writes happen under a temp root (e.g., `/tmp/synthetic-test-*`).
+- **Smoke/E2E**: maintain a small set of Playwright specs and CLI smoke tests that exercise construct creation, review queue, and transcript rendering. Keep them fast and run on nightly/release pipelines.
+- **CI tiers**: run unit tests and lint on every push; run integration tests on PRs (matrix per OS); run smoke/E2E nightly. Failures must display clear cleanup instructions so the developer’s machine isn’t left in a bad state.
+
 ## UX Requirements
 - **Construct Workspace**: Show live agent transcript, pinned brief, status timeline, running services status, and quick actions (pause, nudge, terminate).
 - **Global Queue**: Present constructs waiting on human input sorted by wait time, with filters per provider and SLA indicators.

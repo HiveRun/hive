@@ -34,6 +34,17 @@ bun -C apps/web run test:e2e:update-snapshots                 # Update snapshots
 
 ## Writing Tests
 
+### General Guidelines
+- Prefer pure functions. Keep core logic side-effect free; when you need IO helpers, accept only the specific helper you want to swap. For standard modules (`fs`, `path`, `Bun.spawn`), import them directly and use `vi.mock`/`vi.spyOn` in tests when necessary.
+- Use real behavior whenever it’s safe: temp directories via `fs.mkdtemp`, short-lived processes, and stub commands. Avoid blanket mocks—mock only when an external dependency can’t be safely exercised or would make tests flaky.
+- Every test that touches the host (files, services, ports) must clean up via `finally` blocks to keep the developer’s machine stable.
+- Surface errors directly. Tests can assert on the error payload in the view layer; no special retry logic needed.
+
+### Construct & Agent Tests
+- Use Vitest for construct logic. Import `fs`, `path`, `Bun.spawn`, etc. directly in production code, and in tests rely on `vi.mock`/`vi.spyOn` to swap only the calls you need (remember to `vi.restoreAllMocks()` in `afterEach`).
+- Keep explicit dependency arguments for things we truly swap (e.g., OpenCode client). Provide a tiny fake client in tests so worktree creation, port allocation, and service orchestration stay close to real behavior.
+- Template commands in tests should be safe stubs (`echo`, simple scripts) so integration specs exercise orchestration without heavy workloads.
+
 ### Backend Tests
 
 **Test business logic and API endpoints**, not implementation details:
