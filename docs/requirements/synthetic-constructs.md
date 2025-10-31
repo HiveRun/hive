@@ -208,7 +208,7 @@ Templating supports `${env.VAR_NAME}` and `${constructDir}` to keep configs decl
 
 ### Agent Chat Experience
 - **Simple transcript**: Chronological stream of user and agent messages—no special tooling visualization yet. Focus on reliable text display first.
-- **Stable scrolling**: Preserve scroll position when messages send/arrive and across refresh/navigation. Instead of auto-snapping, show a subtle down-arrow indicator when new messages land so the user can jump to the latest.
+- **Stable scrolling**: Preserve scroll position when messages send/arrive and across refresh/navigation. Display a down-arrow indicator whenever the user is not at the bottom—even if no new messages arrived—so they can jump back to the latest on demand.
 - **Persistent composer**: Keep the input contents intact across refresh/navigation. Provide an explicit “Clear input” action so the user controls when drafts are discarded.
 - **Sending shortcut**: Require `⌘ + Enter` / `Ctrl + Enter` to send. Plain `Enter` inserts a newline; indicate the shortcut directly in the UI.
 - **Interruptions**: Expose an Abort button and bind `Esc` to the same action so the user can cancel the agent quickly without losing draft text or scroll position. Visually flag messages that were cut off (e.g., “Message aborted”) so the history is clear.
