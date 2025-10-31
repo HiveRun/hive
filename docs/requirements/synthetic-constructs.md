@@ -5,9 +5,10 @@
 - Lower the cognitive overhead of juggling multiple agents by surfacing status, queues, and review artifacts in one UI.
 - Keep users inside Synthetic for review by embedding diffs, file browsing, and agent transcripts.
 - Treat Synthetic as an extension of the developer environment: agents inherit local toolchains, environment variables, and access to running services.
+- Optimize for a single operator managing their own project; multi-user coordination is out of scope for v1.
 
 ## Construct Model
-- **Definition**: A construct bundles the task brief, linked worktree, configured services, agent session, and history of actions. Constructs are instantiated from reusable templates defined in `synthetic.config.ts`.
+- **Definition**: A construct bundles the task brief, linked worktree, configured services, agent session, and history of actions. Constructs are instantiated from reusable templates defined in `synthetic.config.ts`; each construct is owned and operated by the same single user who controls the workspace.
 - **Lifecycle (v1)**: Draft brief → Template selection & provisioning (run setup tasks & services) → Active (agent executing) → Awaiting Review (agent paused / needs input) → Reviewing (human diff/feedback) → Complete or Parked (snapshot for later).
 - **State Capture**: Persist key metadata (task, status, timestamps), agent transcript, shell command log, and diff bundles for context restoration. Retain the template reference so users can rehydrate or clone constructs.
 
@@ -155,6 +156,10 @@ Templating supports `${env.VAR_NAME}` and `${constructDir}` to keep configs decl
 - Provide a CLI task (`synthetic prompts build`) that resolves the configured sources through the TypeScript config, deduplicates headings, and concatenates them into `AGENTS.md` (and other provider-specific outputs) consumed by constructs.
 - Rebuild prompt bundles during provisioning and whenever the config changes so agents always read the latest documentation snapshot.
 - Expose the generated bundle path in construct metadata so the agent prompt assembly pipeline can link or embed sections as needed.
+
+### Single-User Assumptions
+- Synthetic assumes a single operator per workspace for v1; no shared accounts, concurrent edits, or cross-user notifications are supported.
+- Construct ownership, notifications, and status changes target that operator alone; collaboration workflows remain future scope.
 
 
 ### Docker & Compose Support
