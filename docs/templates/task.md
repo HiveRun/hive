@@ -1,37 +1,20 @@
 ---
 id: TASK-{{date:YYYYMMDD}}-{{time:HHmm}}
 type: task
-created: {{date:YYYY-MM-DD}}
-status: todo
-assigned_to:
-due_date:
-tags: [task]
+status: todo # todo | doing | done
+tags: [task, theme-tbd]
 ---
 
 # {{title}}
 
-## Description
+> Replace `theme-tbd` with a `theme-` tag (e.g., `theme-platform`) so dashboards can group related tasks.
 
-## Subtasks
+## Why
+<!-- Brief reminder of the outcome. -->
+
+## Steps
 - [ ]
 
-## Context
-- Parent: [[]]
-- Related: [[]]
-
-## For AI Agent
-```yaml
-task_type: # feature|bugfix|refactor|documentation
-priority: # high|medium|low
-estimated_effort: # hours
-files_to_modify:
-  -
-test_requirements:
-  -
-```
-
-## Completion Criteria
-- [ ] Code implemented
-- [ ] Tests passing
-- [ ] Documentation updated
-- [ ] PR created
+## Reference
+- Requirement: [[]]
+- Notes: [[]]

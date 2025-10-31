@@ -1,9 +1,6 @@
 # Architecture Decisions
 
 ## Active ADRs
-```dataview
-TABLE status, created
-FROM "architecture"
-WHERE type = "architecture-decision"
-SORT created DESC
-```
+Maintain a bullet list of the ADRs in play—newest first keeps the log readable.
+- [[architecture/ADR-...]] (status)
+- [[architecture/ADR-...]] (status)

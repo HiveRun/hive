@@ -11,21 +11,14 @@ tags: [index, home]
 - [[agents/index|AI Agent Instructions]]
 
 ## Project Status
-```dataview
-TABLE status, priority, due_date
-FROM "tasks"
-WHERE status != "completed"
-SORT priority DESC
-LIMIT 10
-```
+Keep a short list of the work we’re actively moving through. Update it manually whenever priorities shift.
+- [ ] [[tasks/...]]
+- [ ] [[tasks/...]]
 
 ## Recent Updates
-```dataview
-LIST
-FROM ""
-SORT created DESC
-LIMIT 10
-```
+Jot timestamped bullet points when something noteworthy lands so everyone can scan the latest changes.
+- 2025-10-31 – Initial planning scaffolding in place
+- 
 
 ## Important Concepts
 - [[concepts/core-concepts|Core Concepts]]

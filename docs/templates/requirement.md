@@ -1,44 +1,25 @@
 ---
 id: REQ-{{date:YYYYMMDD}}-{{time:HHmm}}
 type: requirement
-created: {{date:YYYY-MM-DD}}
-status: draft
-priority: medium
-tags: [requirement]
+status: idea # idea | planned | in-progress | done
+priority: 1
+tags: [requirement, theme-tbd]
 ---
 
 # {{title}}
 
-## Context
-<!-- Why is this requirement needed? -->
+> Replace `theme-tbd` with a `theme-` tag (e.g., `theme-platform`) to group related work.
 
-## Description
-<!-- Detailed description of what needs to be implemented -->
+## Why
+<!-- What problem or outcome do we care about? -->
 
-## Acceptance Criteria
-- [ ]
-- [ ]
+## What
+<!-- Outline the capability or change we want. -->
 
-## Technical Specification
-```yaml
-affected_files:
-  -
-new_files:
-  -
-dependencies:
-  -
-test_requirements:
-  - Unit tests for
-  - Integration tests for
-```
+## Notes
+- 
+- 
 
-## Dependencies
-- [[]]
-
-## Notes for AI Agent
-<!-- Specific instructions or constraints for implementation -->
-
-## Links
-- Related: [[]]
-- Implements: [[]]
-- Blocks: [[]]
+## Related
+- Source: [[]]
+- Depends on: [[]]
