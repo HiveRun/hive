@@ -1,0 +1,14 @@
+{
+  "commitMessage": "docs: {{date}} vault update",
+  "autoCommitMessage": "docs: auto {{date}}",
+  "commitDateFormat": "YYYY-MM-DD HH:mm:ss",
+  "autoSaveInterval": 30,
+  "autoPushInterval": 0,
+  "autoPullInterval": 30,
+  "autoPullOnBoot": true,
+  "disablePush": false,
+  "pullBeforePush": true,
+  "disablePopups": false,
+  "currentBranch": "main",
+  "remote": "origin"
+}

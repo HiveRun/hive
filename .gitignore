@@ -58,6 +58,11 @@ tmp
 temp
 vendor/opencode/
 
+docs/.obsidian/workspace.json
+docs/.obsidian/workspace-mobile.json
+docs/.obsidian/cache
+docs/.obsidian/hotkeys.json
+docs/.obsidian/appearance.json
 
 # START Ruler Generated Files
 /.codex/config.json
