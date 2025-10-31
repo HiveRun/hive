@@ -22,7 +22,7 @@
 - Maintain prompt source configuration so large knowledge bases can be composed from modular files rather than a single monolith.
 
 ## Workspace Configuration
-- Locate a `synthetic.config.ts` at the repo root exporting strongly typed workspace settings.
+- Locate a `synthetic.config.ts` at the repo root exporting strongly typed workspace settings (one per project repository).
 - Ship a small runtime+types package (e.g., `@synthetic/config`) that exposes `defineSyntheticConfig` so users author configs like:
   ```ts
   import { defineSyntheticConfig } from "@synthetic/config"
@@ -46,6 +46,7 @@
 - `promptSources`: defines the reusable prompt fragments (files, directories, globs, ordering) that Synthetic concatenates into `AGENTS.md`; TypeScript ensures ergonomic autocompletion and highlights missing env bindings.
 - `templates`: reusable construct templates (inline for v1) that describe services, default teardown routines, and template-scoped prompt inclusions; the UI lets users pick a template when creating a construct instance.
 - Expose a `synthetic config lint` CLI to validate the emitted config (paths exist, duplicates resolved) before provisioning constructs, compiling the TS file on the fly.
+- Track registered projects in a global registry (e.g., `~/.synthetic/workspaces.json`) mapping friendly names to repo roots so the operator can hop between multiple codebases without co-locating configs.
 
 ## Persistence
 - Use SQLite as the primary store for constructs, transcripts, statuses, and metadata so we gain ACID writes with minimal setup.
@@ -156,6 +157,15 @@ Templating supports `${env.VAR_NAME}` and `${constructDir}` to keep configs decl
 - Provide a CLI task (`synthetic prompts build`) that resolves the configured sources through the TypeScript config, deduplicates headings, and concatenates them into `AGENTS.md` (and other provider-specific outputs) consumed by constructs.
 - Rebuild prompt bundles during provisioning and whenever the config changes so agents always read the latest documentation snapshot.
 - Expose the generated bundle path in construct metadata so the agent prompt assembly pipeline can link or embed sections as needed.
+
+### Workspace Discovery & Switching
+- On first launch, prompt the operator to choose a directory; if it contains a `synthetic.config.ts`, register it immediately.
+- When a directory contains multiple subdirectories, scan only the immediate children for `synthetic.config.ts` and offer those as registrable workspaces.
+- Persist registrations in the global workspace registry and surface all entries in a project dropdown (header or sidebar) so switching is a single click.
+- Switching workspaces updates the active repo context, constructs list, and services in-place; because Synthetic runs as a single instance, it can coordinate port assignments and avoid collisions automatically.
+- Construct templates, histories, and artifacts remain isolated to their workspace; Synthetic never mixes constructs across projects.
+- Provide a simple “Add workspace” action (UI + CLI) that lets the operator point Synthetic at new repo roots at any time; removal simply deletes the registry entry without touching the underlying project.
+- Existing single-project users can continue registering only one workspace; adding more later just extends the registry without changing per-project configs.
 
 ### Single-User Assumptions
 - Synthetic assumes a single operator per workspace for v1; no shared accounts, concurrent edits, or cross-user notifications are supported.
