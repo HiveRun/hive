@@ -17,10 +17,11 @@ This directory captures individual feature briefs referenced from the main const
 | [Sparse Constructs](sparse-constructs.md) | Phase 3 | Run agent-only constructs without services. |
 | [Reference Repos](reference-repos.md) | Phase 3 | Attach remote repositories as read-only references. |
 | [Compaction Logging](compaction-logging.md) | Phase 3 | Surface agent compaction events and token loss. |
-| [Terminal UI](terminal-ui.md) | Phase 3 | Provide a TUI front-end using OpenTUI. |
+| [Terminal UI](terminal-ui.md) | Phase 4 | Provide a TUI front-end using OpenTUI. |
 | [Configuration Editor](config-editor.md) | Phase 3 | UI for editing `synthetic.config.ts` (or companion format). |
 
 > _Phase definitions:_
 > - **Phase 1** – Post-MVP foundations.
 > - **Phase 2** – Collaboration & governance improvements.
 > - **Phase 3** – Advanced interaction and tooling.
+> - **Phase 4** – Terminal-first experience.

@@ -57,8 +57,10 @@ Construct status is computed from service + agent state. If any service is flagg
 - `Sparse constructs`: allow launching a construct with agent-only mode (no services) for light-weight exploratory work.
 - `Reference repos`: support cloning remote repositories into read-only worktrees so agents can learn from external code before planning/implementation.
 - `Compaction logging`: surface agent compaction events/tokens so users can monitor prompt degradation over long sessions.
-- `Terminal UI`: add a TUI front-end (via `@sst/opentui`) mirroring the web experience for terminal-first workflows.
 - `Config editor`: offer a UX for editing `synthetic.config.ts` (or a companion YAML/JSON) with validation, to be explored once the config API stabilizes.
+
+**Phase 4 – Terminal Experience**
+- `Terminal UI`: add a TUI front-end (via `@sst/opentui`) mirroring the web experience for terminal-first workflows.
 
 ## Open Questions
 - What retention policy should we adopt for persisted logs and artifacts to balance disk usage with traceability? (Likely answer: surface per-construct storage usage with manual cleanup controls, plus optional auto-prune thresholds.)
