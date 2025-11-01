@@ -10,7 +10,8 @@
 ## Features by Phase
 
 ### Phase 0: Core Infrastructure
-- [Agent Orchestration Engine](features/phase-0/agent-orchestration.md) - Core engine for managing agent sessions
+- [Agent Orchestration Engine](features/phase-0/agent-orchestration.md) - Core engine for managing agent sessions with integrated UX
+- [Construct Creation & Provisioning](features/phase-0/construct-creation.md) - Template selection and workspace setup
 - [Persistence Layer](features/phase-0/persistence-layer.md) - Reliable storage for constructs and artifacts
 - [Template Definition System](features/phase-0/template-definition-system.md) - System for defining construct templates
 - [Prompt Assembly Pipeline](features/phase-0/prompt-assembly-pipeline.md) - System for assembling agent prompts

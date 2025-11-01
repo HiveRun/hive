@@ -5,6 +5,8 @@ See also: [[runtime|Runtime]], [[../configuration|Workspace & Templates]], [[../
 ## Core Infrastructure
 The foundational features that enable all construct functionality:
 - [[features/phase-0/agent-orchestration|Agent Orchestration Engine]]
+- [[features/phase-0/construct-creation|Construct Creation & Provisioning]]
+- [[features/phase-0/agent-chat-ux|Agent Chat UX]]
 - [[features/phase-0/persistence-layer|Persistence Layer]] 
 - [[features/phase-0/template-definition-system|Template Definition System]]
 - [[features/phase-0/prompt-assembly-pipeline|Prompt Assembly Pipeline]]
@@ -46,6 +48,8 @@ Construct status is computed from service + agent state. If any service is flagg
 
 **Phase 0 – Foundation**
 - [[features/phase-0/agent-orchestration|Agent Orchestration Engine]]: core engine for managing agent sessions, authentication, and lifecycle events
+- [[features/phase-0/construct-creation|Construct Creation & Provisioning]]: template selection, workspace setup, and service initialization
+- [[features/phase-0/agent-chat-ux|Agent Chat UX]]: responsive chat interface for agent interactions
 - [[features/phase-0/persistence-layer|Persistence Layer]]: reliable storage for constructs, transcripts, and artifacts with SQLite
 - [[features/phase-0/template-definition-system|Template Definition System]]: flexible, type-safe system for defining construct templates
 - [[features/phase-0/prompt-assembly-pipeline|Prompt Assembly Pipeline]]: robust system for assembling agent prompts from multiple sources

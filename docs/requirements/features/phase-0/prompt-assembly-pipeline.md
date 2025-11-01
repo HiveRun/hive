@@ -3,7 +3,7 @@
 ## Goal
 Provide a robust system for assembling agent prompts from multiple sources with proper ordering, validation, and context injection.
 
-## Key Requirements
+## Requirements
 
 ### Source Management
 - **Prompt sources**: Read `promptSources` from `synthetic.config.ts`, supporting files, directories, or glob patterns (e.g., "docs/prompts/**/*.md").
@@ -43,9 +43,52 @@ Provide a robust system for assembling agent prompts from multiple sources with 
 - **Optimization suggestions**: Suggest prompt optimizations to reduce token usage while maintaining context.
 - **Error handling**: Clear error messages for missing files, invalid syntax, or circular references.
 
+## UX Requirements
+
+### Prompt Management Interface
+- **Source browser**: Display available prompt sources with their order and content preview
+- **Bundle preview**: Show assembled prompt bundles before they're sent to agents
+- **Token usage display**: Real-time token count and cost estimates for assembled prompts
+- **Validation feedback**: Clear error messages and warnings for prompt configuration issues
+
+### Configuration UI
+- **Visual ordering**: Drag-and-drop interface for arranging prompt sources
+- **Template variable editor**: Interface for defining and previewing template variables
+- **Context injection preview**: Show how runtime context will be injected into prompts
+- **Optimization suggestions**: UI for applying prompt optimization recommendations
+
+## Implementation Details
+
+### Source Resolution
+- Glob pattern matching and file discovery
+- Path resolution for relative and absolute references
+- Content deduplication and merging logic
+- Order validation and conflict resolution
+
+### Variable System
+- Template variable parser and resolver
+- Context injection engine for runtime data
+- Variable validation and type checking
+- Circular reference detection
+
+### Bundle Assembly
+- Markdown concatenation with heading deduplication
+- Content validation and formatting checks
+- Token counting and cost estimation
+- Bundle metadata generation
+
 ## Integration Points
 - **Agent Orchestration Engine**: Consumes assembled prompts for agent sessions
+- **Construct Creation/Provisioning**: Provides construct context for prompt assembly
 - **Template Definition System**: Accesses template-specific prompt configurations
 - **Planning-to-Implementation Handoff**: Provides planning vs implementation prompt variants
 - **Prompt Optimisation**: Uses pipeline data for optimization analysis
 - **Configuration validation**: Built into pipeline for source path validation and error handling
+
+## Testing Strategy
+- Test prompt source resolution and ordering
+- Verify variable substitution and context injection
+- Test bundle generation and validation
+- Validate token estimation accuracy
+- Test error handling for invalid configurations
+- Performance testing for large prompt assemblies

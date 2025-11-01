@@ -3,7 +3,7 @@
 ## Goal
 Provide a flexible, type-safe system for defining construct templates that describe services, environments, and configuration.
 
-## Key Requirements
+## Requirements
 
 ### Template Schema
 - **TypeScript definitions**: Ship a small runtime+types package (`@synthetic/config`) that exposes `defineSyntheticConfig` with full type safety and intellisense.
@@ -30,7 +30,7 @@ Provide a flexible, type-safe system for defining construct templates that descr
 - **Inheritance**: Global environment variables that all services inherit unless overridden.
 
 ### Lifecycle Management
-- **Setup commands**: Optional setup commands that run before the main `run` command for each service.
+- **Setup commands**: Optional setup commands that run before main `run` command for each service.
 - **Ready detection**: Regex `readyPattern` matching against service output to determine when a service is ready.
 - **Stop commands**: Optional stop commands for graceful service shutdown.
 - **Teardown routines**: Template-level `teardown` array for cleanup commands when construct stops.
@@ -40,13 +40,6 @@ Provide a flexible, type-safe system for defining construct templates that descr
 - **Template composition**: Ability to combine multiple template fragments (future enhancement).
 - **Conditional services**: Services that only start based on template variables or user input (future enhancement).
 
-## Integration Points
-- **Agent Orchestration Engine**: Uses service definitions for provisioning
-- **Prompt Assembly Pipeline**: Accesses template metadata for agent context
-- **Service Control**: Provides runtime management of defined services
-- **Docker & Compose Support**: Handles container-based service types
-- **Configuration validation**: Built into template system for schema compliance and path validation
-
 ## UX Requirements
 
 ### Construct Creation Flow
@@ -54,3 +47,45 @@ Provide a flexible, type-safe system for defining construct templates that descr
 - **Template defaults**: Display template-provided defaults alongside editable fields, with inline hints pulled from template metadata (e.g., expected services, required env vars).
 - **Summary review**: Show a summary review step confirming services that will start, initial prompt/context that will be sent to the agent, and any missing credentials/config that must be resolved before creation.
 - **Autosave/draft**: Provide autosave/draft so long forms can be resumed, and validations that highlight missing fields before submission.
+
+### Template Management Interface
+- **Template browser**: Display available templates with descriptions, resource requirements, and compatibility information
+- **Configuration validation**: Real-time validation with clear error messages for invalid template definitions
+- **Preview functionality**: Show what services and resources will be created before confirming
+- **Template editing**: Developer-friendly interface for creating and modifying templates
+
+## Implementation Details
+
+### Type System
+- TypeScript interfaces for all template configuration objects
+- Compile-time validation using TypeScript's type system
+- Runtime validation for user-provided template data
+- Intellisense support for template authors
+
+### Variable Resolution
+- Template variable parser and resolver
+- Environment variable injection and substitution
+- Path resolution for workspace-relative references
+- Secret handling with secure variable expansion
+
+### Service Management
+- Unified interface for different service types
+- Service lifecycle orchestration (setup, start, stop, teardown)
+- Health check and ready detection mechanisms
+- Port allocation and conflict resolution
+
+## Integration Points
+- **Construct Creation/Provisioning**: Uses template definitions for workspace and service setup
+- **Agent Orchestration Engine**: Uses service definitions for provisioning
+- **Prompt Assembly Pipeline**: Accesses template metadata for agent context
+- **Service Control**: Provides runtime management of defined services
+- **Docker & Compose Support**: Handles container-based service types
+- **Configuration validation**: Built into template system for schema compliance and path validation
+
+## Testing Strategy
+- Test template validation and type safety
+- Verify service lifecycle management for all service types
+- Test port allocation and conflict resolution
+- Validate variable resolution and environment injection
+- Test template inheritance and composition features
+- UX testing for template creation and management interfaces
