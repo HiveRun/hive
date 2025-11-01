@@ -14,6 +14,15 @@ See also: [Runtime](runtime.md), [UX Overview](ux/overview.md), [Agent Chat UX](
 - **Lifecycle (v1)**: Draft brief → Template selection & provisioning (run setup tasks & services) → Active (agent executing) → Awaiting Review (agent paused / needs input) → Reviewing (human diff/feedback) → Complete or Parked (snapshot for later).
 - **State Capture**: Persist key metadata (task, status, timestamps), agent transcript, shell command log, and diff bundles for context restoration. Retain the template reference so users can rehydrate or clone constructs.
 
+### Agent Lifecycle
+- **Starting**: services provisioned, prompts assembled, and a new agent session bootstrapped. The UI shows a spinner until we receive the first assistant message or readiness signal.
+- **Working**: the agent is actively processing the latest prompt. Services stay running and log output continues to stream.
+- **Awaiting Input**: the agent requested human feedback (e.g. “Need credentials” or “Please review diff”). The construct appears in the awaiting-input queue until the user replies.
+- **Suspended / Needs Resume**: Synthetic or the host restarted, or the user explicitly paused the agent. Services may need to be resumed (`synthetic services resume <construct>`). The UI surfaces a “Resume construct” CTA that restarts any missing services and replays the composed agent prompt before new messages are accepted.
+- **Completed**: the user marks the construct done (or the agent reports success). Services are stopped, the session is closed, and the construct becomes read-only until archived or cloned.
+- **Archived**: long-term storage. No services or agent sessions run, but transcripts and artifacts remain accessible.
+- **Error**: an unrecoverable failure (e.g., agent crash). Synthetic records the error, stops services, and prompts the user to resume or close out after investigating.
+
 ### Dogfooding Requirements
 - The Synthetic repository itself must be runnable as a workspace so the platform can build and test itself; templates and tooling must work when the app is under active development.
 - Port allocation always probes the real host (not just internal state) so constructs spawned inside Synthetic avoid collisions with the live instance.
