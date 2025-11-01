@@ -1,28 +1,28 @@
-# Design Guidelines - Forest Brutalism
+# Design Guidelines - Synthetic Biology Minimalism
 
 ## Theme Overview
 
-**Forest Brutalism** combines raw, brutalist architectural principles with organic forest elements. This creates a unique aesthetic that's both stark and natural, digital and primal.
+**Synthetic Biology Minimalism** combines clean, minimalist technical interfaces with engineered biological elements. This creates a unique aesthetic that's both precise and organic, computational and bio-crafted.
 
 ### Core Philosophy
 
-- **Raw honesty** - Show the structure, don't hide it
-- **Organic geometry** - Angular forms meet natural textures
-- **Monolithic presence** - Bold, unapologetic interfaces
-- **Forest integration** - Nature as structural element, not decoration
+- **Minimalist precision** - Clean, functional base design
+- **Bio-engineered flair** - Strategic biological decorative elements
+- **Synthetic authenticity** - Artificial systems with organic inspiration
+- **Laboratory aesthetic** - Clean, controlled, purposeful design
 
 ## Color Palette
 
 ### Primary Colors
-- **Deep Forest Green** - `#1a2f1a` (backgrounds, heavy elements)
-- **Bark Brown** - `#3d2817` (accents, borders)
-- **Moss Green** - `#4a5d4a` (secondary elements)
-- **Stone Gray** - `#6b7280` (neutral elements)
+- **Laboratory Silver** - Pure greys (0 chroma) for clean technical base
+- **Engineered Green** - Bio-engineered green accents for synthetic elements
+- **Sterile White** - Clean backgrounds and negative space
+- **Carbon Grey** - Dark technical elements and borders
 
 ### Accent Colors
-- **Sap Green** - `#5a7c5a` (interactive elements)
-- **Fern Green** - `#6b8e6b` (hover states)
-- **Lichen** - `#8b9d8b` (disabled states)
+- **DNA Green** - Bright bio-engineered green for interactive elements
+- **Cellular Green** - Medium green for hover states and secondary actions
+- **Petri Dish Green** - Subtle green for muted and disabled states
 
 ## Typography
 
@@ -66,10 +66,11 @@
 - **Layered shadows** - Multiple hard shadows for depth
 
 ### Textures & Patterns
-- **Wood grain** - Subtle organic textures
-- **Leaf patterns** - Geometric leaf silhouettes
-- **Rock textures** - Rough, stone-like surfaces
-- **Grid overlays** - Subtle grid patterns
+- **Microscopic patterns** - Subtle cellular structures
+- **DNA helix motifs** - Geometric biological patterns
+- **Petri dish textures** - Clean, circular organic forms
+- **Grid overlays** - Laboratory measurement grids
+- **Cellular borders** - Bio-engineered corner and edge treatments
 
 ## Interactive Elements
 
@@ -121,19 +122,21 @@
 
 ## Component Integration with shadcn/ui
 
-This design system extends **shadcn/ui** components with forest brutalism styling:
+This design system extends **shadcn/ui** components with synthetic biology styling:
 
 ### Core Components
-- **Card**: Override with heavy borders, no radius, hard shadows
-- **Button**: Override with uppercase text, hard shadow on hover
-- **Input**: Override with thick borders, raw appearance
-- **Dialog/Modal**: Override with heavy frame styling
-- **Sheet/Sidebar**: Override with thick border, slide animation
+- **Card**: Clean minimalist with subtle cellular corner accents
+- **Button**: Minimalist design with bio-engineered hover states
+- **Input**: Clean laboratory aesthetic with precise borders
+- **Dialog/Modal**: Clean frame with optional DNA helix border treatment
+- **Sheet/Sidebar**: Minimalist slide with subtle biological pattern accents
+- **Header**: Clean navigation with strategic bio-flair elements (DNA borders, cellular patterns)
 
 ### Implementation Approach
 - Use shadcn/ui as the base component library
-- Apply forest brutalism theming via CSS custom properties
+- Apply synthetic biology theming via CSS custom properties
 - Override component variants using `class-variance-authority` (cva)
+- Add bio-flair decorative elements strategically (headers, borders, accents)
 - Maintain shadcn/ui's accessibility and functionality
 
 ## Accessibility
@@ -164,9 +167,10 @@ This design system extends **shadcn/ui** components with forest brutalism stylin
 - **Natural Brutalism**: Peter Zumthor's thermal baths
 
 ### Mood Board Elements
-- **Concrete textures** - Raw, unfinished surfaces
-- **Tree cross-sections** - Growth rings as patterns
-- **Geometric leaves** - Stylized natural forms
-- **Rock formations** - Angular, solid structures
+- **Laboratory equipment** - Clean, precise instruments
+- **Microscopic imagery** - Cellular structures, DNA sequences
+- **Petri dishes** - Circular organic forms in controlled environments
+- **Genetic sequences** - Patterned biological data visualizations
+- **Bio-luminescence** - Soft organic glows and highlights
 
-This design system provides the foundation for building consistent, brutalist forest-themed interfaces that are both visually striking and functionally robust while integrating seamlessly with shadcn/ui components.
+This design system provides the foundation for building consistent, synthetic biology-themed interfaces that are both minimalist clean and organically inspired while integrating seamlessly with shadcn/ui components.
