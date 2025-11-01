@@ -6,7 +6,6 @@ tags: [index, home]
 
 ## Quick Links
 - [[requirements/index|Requirements Overview]]
-- [[historical/hive/README|Historical Hive Docs]]
 
 ## Notes
 Capture active priorities or important references here when needed.
