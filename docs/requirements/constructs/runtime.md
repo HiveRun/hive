@@ -33,6 +33,7 @@ This document covers the runtime behavior of constructs. For configuration detai
 ## File Changes & Diffs
 - Each construct runs in a dedicated git worktree/branch cloned from the user’s chosen base revision. We record that base commit so diffs remain stable even if `main` advances.
 - The agent (via OpenCode) writes directly to the worktree. Synthetic never auto-commits; instead we compute diffs on demand with `git diff --name-status <base>...` and cache the result in SQLite so the UI can render file trees and inline changes quickly.
+- For the per-file diff display we prefer semantic output: run [Difftastic](https://difftastic.wilfred.me.uk/) (`difft --background never <base> <rev>`) when it’s installed to produce syntax-aware hunks, and fall back to classic `git diff` output when it isn’t. Store both the structured hunk representation and the raw text so the UI can render nicely formatted code blocks.
 - After every agent turn we snapshot the diff metadata (files touched, summary stats) so the user can compare “before/after” for each interaction if needed.
 - Users and agents can ask to stage/revert files through CLI/MCP helpers (`synthetic diff stage <construct> <path>`, `synthetic diff discard <construct> <path>`). Staging simply marks the change as acknowledged; we still rely on git to hold the actual file content.
 - When a construct is completed, we leave the branch in place so the user can create a commit/PR manually or let Synthetic open one in the future.
