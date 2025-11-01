@@ -11,3 +11,7 @@ Help users quickly regain context when returning to constructs or switching betw
 - Quick links from dashboard to jump directly to agent chat, diff review, or construct detail.
 - Remember scroll position and UI state when users return from another construct.
 - Breadcrumbs showing navigation path and allowing quick back navigation.
+
+## Shared UX Considerations
+- **Notifications**: Trigger desktop/in-app (and optional Slack/webhook) alerts when constructs block on human input, finish, or encounter errors; include deep links.
+- **Cross-feature integration**: Work seamlessly with Diff Review, Activity Timeline, and other construct features to provide a cohesive user experience.

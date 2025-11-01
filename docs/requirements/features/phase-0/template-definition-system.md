@@ -46,3 +46,11 @@ Provide a flexible, type-safe system for defining construct templates that descr
 - **Service Control**: Provides runtime management of defined services
 - **Docker & Compose Support**: Handles container-based service types
 - **Configuration validation**: Built into template system for schema compliance and path validation
+
+## UX Requirements
+
+### Construct Creation Flow
+- **Stepper/form**: Walk through type selection (implementation/planning/manual), template selection, task metadata (name, description, acceptance criteria), optional canned responses, and service adjustments (enable/disable, override ports/env where allowed). Show a short description for each type so the user understands whether an agent will be launched.
+- **Template defaults**: Display template-provided defaults alongside editable fields, with inline hints pulled from template metadata (e.g., expected services, required env vars).
+- **Summary review**: Show a summary review step confirming services that will start, initial prompt/context that will be sent to the agent, and any missing credentials/config that must be resolved before creation.
+- **Autosave/draft**: Provide autosave/draft so long forms can be resumed, and validations that highlight missing fields before submission.

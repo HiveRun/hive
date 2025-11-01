@@ -15,9 +15,8 @@ This document covers the high-level concepts for workspace configuration. For de
 
 The configuration system is implemented through these features:
 
-- **[[features/template-definition-system|Template Definition System]]**: Provides the schema and type system for templates
-- **[[features/prompt-assembly-pipeline|Prompt Assembly Pipeline]]**: Manages prompt source resolution and assembly
-- **[[features/configuration-validation|Configuration Validation]]**: Validates configuration before use
+- **[[features/phase-0/template-definition-system|Template Definition System]]**: Provides the schema and type system for templates
+- **[[features/phase-0/prompt-assembly-pipeline|Prompt Assembly Pipeline]]**: Manages prompt source resolution and assembly
 
 ### Example Configuration
 ```ts
@@ -43,6 +42,5 @@ export default defineSyntheticConfig({
 ## Related Features
 
 For detailed implementation specifications, see:
-- **[[features/template-definition-system|Template Definition System]]**: Template schema, service definitions, and port management
-- **[[features/prompt-assembly-pipeline|Prompt Assembly Pipeline]]**: Source management, concatenation, and bundle building
-- **[[features/configuration-validation|Configuration Validation]]**: CLI linting, type safety, and error handling
+- **[[features/phase-0/template-definition-system|Template Definition System]]**: Template schema, service definitions, and port management
+- **[[features/phase-0/prompt-assembly-pipeline|Prompt Assembly Pipeline]]**: Source management, concatenation, and bundle building
