@@ -11,6 +11,7 @@ This file covers the primary construct-oriented screens. Refer to [Agent Chat UX
 ## Construct Detail Workspace
 - Hero section summarises brief, owner, template used, current state, start/end timestamps, and quick action buttons (pause, terminate, escalate).
 - Sections for: agent chat entry point (with last message preview), running services (status, ports, open link buttons), diffs/changes (links into diff viewer), task metadata (acceptance criteria, related documents), and history timeline (state changes, human interactions).
+- If services or the agent need to be restarted after a host restart, surface prominent “Resume services” / “Resume agent” banners that link to the manifest replay so the construct recovers quickly.
 - Offer contextual navigation tabs or anchors (`Overview`, `Chat`, `Diffs`, `Services`) so the user can jump to the relevant payload quickly; remember scroll position if they return from another construct.
 
 ## Construct Creation Flow
