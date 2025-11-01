@@ -13,7 +13,7 @@ This document covers the runtime behavior of constructs. For configuration detai
 - Use SQLite as the primary store for constructs, transcripts, statuses, and metadata so we gain ACID writes with minimal setup.
 - Persist large artifacts, command logs, and diff bundles as raw files on disk referenced from the SQLite tables for fast streaming in the UI.
 - Keep migration overhead light by versioning the schema alongside app releases and offering a simple `synthetic migrate` command.
-- Record running service state (command, cwd, env, last-known status). On startup, Synthetic should detect constructs marked active and offer a `synthetic services resume <construct>` command that reruns the manifest to restore those processes.
+- Record running service state (command, cwd, env, last-known status, pid if available). On startup, Synthetic should detect constructs marked active, probe each recorded PID with `kill -0` (does not terminate the process) to see which services survived, and offer a `synthetic services resume <construct>` command to replay the manifest for any missing processes.
 
 ## Workspace Discovery & Switching
 - On first launch, prompt the operator to choose a directory; if it contains a `synthetic.config.ts`, register it immediately.
