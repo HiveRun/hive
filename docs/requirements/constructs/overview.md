@@ -40,10 +40,15 @@ Construct status is computed from service + agent state. If any service is flagg
 - [[features/template-prompt-viewer|Template prompt viewer]]: provide a UI to preview a template's concatenated prompts, including estimated token count and the exact fragments that will be sent to the agent.
 - [[features/cross-construct-search|Cross-construct search]]: index transcripts, command logs, and artifacts so users can find prior solutions; ship with simple keyword search UI.
 - [[features/metrics-baseline|Metrics baseline]]: capture per-construct timing (active vs waiting) and human intervention count; expose read-only dashboard inside Synthetic.
+- [[features/docker-compose-support|Docker & Compose support]]: enable constructs to use Docker containers and Docker Compose for services.
+- [[features/service-control|Service control]]: comprehensive service management through UI, CLI, and MCP tools.
+- [[features/workspace-switching|Workspace discovery & switching]]: allow users to manage multiple workspaces and switch between them.
 
 **Phase 2 – Collaboration & Governance**
 - [[features/inline-prompt-editor|Inline prompt editor]]: optional rich markdown editor for prompt fragments (`docs/prompts/**/*.md`) so users can tweak agent briefing without leaving Synthetic. (Evaluate effort/benefit before building.)
 - [[features/linear-integration|Linear integration]]: create constructs directly from Linear issues and sync plan/implementation status back to Linear.
+- [[features/diff-review|Diff review]]: comprehensive diff review experience with Difftastic integration and staging/reverting capabilities.
+- [[features/activity-timeline|Activity timeline]]: chronological view of construct activity with diff summaries and filtering.
 
 **Phase 3 – Advanced Interaction**
 - [[features/voice-input|Voice input]]: add microphone capture, streaming transcription, and push-to-talk UX inside agent conversations; fall back to text if transcription fails.
@@ -55,6 +60,7 @@ Construct status is computed from service + agent state. If any service is flagg
 - [[features/reference-repos|Reference repos]]: support cloning remote repositories into read-only worktrees so agents can learn from external code before planning/implementation.
 - [[features/compaction-logging|Compaction logging]]: surface agent compaction events/tokens so users can monitor prompt degradation over long sessions.
 - [[features/config-editor|Config editor]]: offer a UX for editing `synthetic.config.ts` (or a companion YAML/JSON) with validation, to be explored once the config API stabilizes.
+- [[features/context-switching-aids|Context switching aids]]: help users quickly regain context when returning to constructs or switching between tasks.
 
 **Phase 4 – Terminal Experience**
 - [[features/terminal-ui|Terminal UI]]: add a TUI front-end (via `@sst/opentui`) mirroring the web experience for terminal-first workflows.
