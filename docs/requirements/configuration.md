@@ -16,6 +16,7 @@ This document covers authoring `synthetic.config.ts`, managing templates, and as
         id: "full-stack-dev",
         label: "Full Stack Dev Sandbox",
         summary: "Boot a web client, API, and database for general feature work",
+        type: "implementation", // or "planning" | "manual"
         prompts: ["docs/prompts/full-stack.md"],
         services: [/* ... */]
       }
@@ -26,6 +27,7 @@ This document covers authoring `synthetic.config.ts`, managing templates, and as
 - `opencode`: workspace ID and authentication token reference (direct value or pointer to env var) used by every construct session.
 - `promptSources`: defines the reusable prompt fragments (files, directories, globs, ordering) that Synthetic concatenates into `AGENTS.md`; TypeScript ensures ergonomic autocompletion and highlights missing env bindings.
 - `templates`: reusable construct templates (inline for v1) that describe services, default teardown routines, and template-scoped prompt inclusions; the UI lets users pick a template when creating a construct instance.
+- `type`: set to `"implementation"`, `"planning"`, or `"manual"` (default `"implementation"`). Implementation constructs launch a full agent session with the configured toolset. Planning constructs reuse the same agent but Synthetic injects planning-specific instructions (see runtime doc). Manual constructs skip agent creation entirely but still provision services, giving the user a fresh worktree to drive manually.
 - Expose a `synthetic config lint` CLI to validate the emitted config (paths exist, duplicates resolved) before provisioning constructs, compiling the TS file on the fly.
 
 ## Construct Template Definition (v1)

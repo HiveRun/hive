@@ -10,13 +10,13 @@ This file covers the primary construct-oriented screens. Refer to [Agent Chat UX
 
 ## Construct Detail Workspace
 - Hero section summarises brief, owner, template used, current state, start/end timestamps, and quick action buttons (pause, terminate, escalate).
-- Sections for: agent chat entry point (with last message preview), running services (status, ports, open link buttons), diffs/changes (links into diff viewer), task metadata (acceptance criteria, related documents), and history timeline (state changes, human interactions).
+- Sections for: agent chat entry point (with last message preview), running services (status, ports, open link buttons), diffs/changes (links into diff viewer), task metadata (acceptance criteria, related documents), and history timeline (state changes, human interactions). For manual constructs, hide the chat card entirely and focus on services/diffs.
 - If services or the agent need to be restarted after a host restart, surface a prominent “Resume construct” banner (with secondary options for services/agent individually) that triggers the manifest replay so everything comes back online together.
 - For each service, show status plus quick actions: `Restart`, `Stop`, and a copy-to-clipboard button for the underlying command/env. No embedded shell; users can manually rerun the copied command in their own terminal if needed.
 - Offer contextual navigation tabs or anchors (`Overview`, `Chat`, `Diffs`, `Services`) so the user can jump to the relevant payload quickly; remember scroll position if they return from another construct.
 
 ## Construct Creation Flow
-- Stepper/form that walks through template selection, task metadata (name, description, acceptance criteria), optional canned responses, and service adjustments (enable/disable, override ports/env where allowed).
+- Stepper/form that walks through type selection (implementation/planning/manual), template selection, task metadata (name, description, acceptance criteria), optional canned responses, and service adjustments (enable/disable, override ports/env where allowed). Show a short description for each type so the user understands whether an agent will be launched.
 - Display template-provided defaults alongside editable fields, with inline hints pulled from template metadata (e.g., expected services, required env vars).
 - Show a summary review step confirming services that will start, initial prompt/context that will be sent to the agent, and any missing credentials/config that must be resolved before creation.
 - Provide autosave/draft so long forms can be resumed, and validations that highlight missing fields before submission.

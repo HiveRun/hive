@@ -9,6 +9,11 @@ This document covers the runtime behavior of constructs. For configuration detai
 - Before creating an OpenCode session, inspect the user's OpenCode config/auth store (`auth.json`) to confirm credentials exist for the provider the template demands; if missing, block the session and prompt the user to run `opencode auth login` (no additional runtime retries beyond surfacing the error toast).
 - Assemble each agent session prompt from a base Markdown primer describing Synthetic, constructs, and the agent's role; append construct-specific context (task brief, running services, resolved ports/URLs, constraints on external resources).
 
+## Construct Types
+- **Implementation (default)**: launches the agent with the full tool/toolbox defined by the workspace. Use the standard prompt assembly pipeline and allow file writes, command execution, etc.
+- **Planning**: same as implementation, but Synthetic prepends a planning primer (e.g., “produce a work plan, store it in `PLAN.md`, avoid code changes until the plan is approved”). Planning templates can add additional prompt fragments via `prompts`.
+- **Manual**: skip agent creation entirely. Services still provision, the worktree is created, and Synthetic exposes diff/log views; the user drives work manually via their own editor/terminal.
+
 ## Persistence
 - Use SQLite as the primary store for constructs, transcripts, statuses, and metadata so we gain ACID writes with minimal setup.
 - Persist large artifacts, command logs, and diff bundles as raw files on disk referenced from the SQLite tables for fast streaming in the UI.
