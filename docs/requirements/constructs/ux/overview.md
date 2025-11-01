@@ -23,5 +23,6 @@ This file covers the primary construct-oriented screens. Refer to [Agent Chat UX
 
 ## Shared UX Considerations
 - **Notifications**: Trigger desktop/in-app (and optional Slack/webhook) alerts when constructs block on human input, finish, or encounter errors; include deep links.
-- **Diff Review**: Provide inline/side-by-side diff viewer with file tree, syntax highlighting, quick accept/reject controls, and comment threads without leaving Synthetic.
+- **Diff Review**: Show a file tree grouped by status (modified/added/deleted), with inline or side-by-side diff rendering powered by the git diff snapshot. Provide quick actions (`Copy diff`, `Stage`, `Discard change`) and clearly indicate the base commit the diff is computed against.
+- **Activity timeline**: Attach lightweight diff summaries to each agent turn (e.g., “+2 files / -10 lines”) so reviewers can jump to the relevant snapshot while reading the transcript.
 - **Context Switching Aids**: Recent activity feed, saved filters, keyboard shortcuts, and status badging to help regain context quickly.
