@@ -40,14 +40,24 @@ Construct status is computed from service + agent state. If any service is flagg
 - `Templates & snippets`: ship a library of reusable construct briefs/manifests with tagging and quick-start selection.
 - `Cross-construct search`: index transcripts, command logs, and artifacts so users can find prior solutions; ship with simple keyword search UI.
 - `Metrics baseline`: capture per-construct timing (active vs waiting) and human intervention count; expose read-only dashboard inside Synthetic.
+- `Template prompt viewer`: provide a UI to preview a template’s concatenated prompts, including estimated token count and the exact fragments that will be sent to the agent.
 
 **Phase 2 – Collaboration & Governance**
 - `Collaboration suite`: allow assigning owners, sharing read-only construct views, and pushing status updates to external trackers (linear/jira webhook).
 - `Security guardrails`: implement secret scanning on agent outputs, per-construct access controls, and configurable retention windows for transcripts/artifacts.
+- `Inline prompt editor`: optional rich markdown editor for prompt fragments (`docs/prompts/**/*.md`) so users can tweak agent briefing without leaving Synthetic. (Evaluate effort/benefit before building.)
+- `Linear integration`: create constructs directly from Linear issues and sync plan/implementation status back to Linear.
 
 **Phase 3 – Advanced Interaction**
 - `Voice input`: add microphone capture, streaming transcription, and push-to-talk UX inside agent conversations; fall back to text if transcription fails.
 - `Insight analytics`: evolve the metrics baseline into trend reporting (cycle time, agent idle time) with slice/dice filters and export.
+- `GitHub integration`: start constructs from non-main branches, detect existing PR branches, and optionally open PRs when a construct finishes. Support cloning a branch, working in an isolated copy, and linking construct status back to GitHub PRs.
+- `Plan export`: send planning outcomes to external systems (Linear tickets, GitHub issues, etc.) from within Synthetic.
+- `Sparse constructs`: allow launching a construct with agent-only mode (no services) for light-weight exploratory work.
+- `Reference repos`: support cloning remote repositories into read-only worktrees so agents can learn from external code before planning/implementation.
+- `Compaction logging`: surface agent compaction events/tokens so users can monitor prompt degradation over long sessions.
+- `Terminal UI`: add a TUI front-end (via `@sst/opentui`) mirroring the web experience for terminal-first workflows.
+- `Config editor`: offer a UX for editing `synthetic.config.ts` (or a companion YAML/JSON) with validation, to be explored once the config API stabilizes.
 
 ## Open Questions
 - What retention policy should we adopt for persisted logs and artifacts to balance disk usage with traceability?
