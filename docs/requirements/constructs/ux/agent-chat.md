@@ -1,6 +1,6 @@
 # Agent Chat UX
 
-- **Simple transcript**: Chronological stream of user and agent messages—no special tooling visualization yet. Focus on reliable text display first. Messages must remain selectable for copy/paste. Manual constructs skip this view entirely.
+- **Simple transcript**: Chronological stream of user and agent messages—no special tooling visualization yet. Focus on reliable text display first. Planning constructs show plan submissions as dedicated system messages (with links to the rendered plan); manual constructs skip this view entirely.
 - **Stable scrolling**: Preserve scroll position when messages send/arrive and across refresh/navigation. Display a down-arrow indicator whenever the user is not at the bottom—even with no new messages—so they can jump back to the latest on demand.
 - **Message states**: Highlight aborted/failed messages with a subtle status tag and muted styling so users can see where the agent stopped. Successful messages stay visually consistent.
 - **Persistent composer**: Keep the input contents intact across refresh/navigation. Provide an explicit “Clear input” action so the user controls when drafts are discarded.

@@ -11,8 +11,13 @@ This document covers the runtime behavior of constructs. For configuration detai
 
 ## Construct Types
 - **Implementation (default)**: launches the agent with the full tool/toolbox defined by the workspace. Use the standard prompt assembly pipeline and allow file writes, command execution, etc.
-- **Planning**: same as implementation, but Synthetic prepends a planning primer (e.g., “produce a work plan, store it in `PLAN.md`, avoid code changes until the plan is approved”). Planning templates can add additional prompt fragments via `prompts`.
-- **Manual**: skip agent creation entirely. Services still provision, the worktree is created, and Synthetic exposes diff/log views; the user drives work manually via their own editor/terminal.
+- **Planning**: launches OpenCode in plan mode (limited toolset). Synthetic injects the planning primer and exposes an MCP endpoint (e.g. `synthetic.plan.submit`) that the agent must call with the generated plan. Synthetic stores the plan (e.g. in SQLite + `PLAN.md`) and updates history snapshots. No direct code edits are expected while in this type.
+- **Manual**: skip agent creation entirely. Services still provision, the worktree is created, and Synthetic exposes diff/log views; the user drives work manually via their own editor/terminal or via MCP/CLI helpers.
+
+### Planning to Implementation Handoff
+- When a planning construct submits a plan via the MCP, mark it `awaiting_input` and surface the rendered plan to the user for approval.
+- Approval creates (or converts into) an implementation construct: Synthetic spawns a fresh implementation-mode agent seeded with the stored plan context and links the two constructs for traceability. Users can alternatively start a manual construct from the same plan if they want to execute changes themselves.
+- If revisions are requested, the plan agent continues in plan mode until the user approves; each submission overwrites the stored plan while retaining a history entry so reviewers can compare versions.
 
 ## Persistence
 - Use SQLite as the primary store for constructs, transcripts, statuses, and metadata so we gain ACID writes with minimal setup.

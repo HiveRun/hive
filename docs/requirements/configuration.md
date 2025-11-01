@@ -27,8 +27,9 @@ This document covers authoring `synthetic.config.ts`, managing templates, and as
 - `opencode`: workspace ID and authentication token reference (direct value or pointer to env var) used by every construct session.
 - `promptSources`: defines the reusable prompt fragments (files, directories, globs, ordering) that Synthetic concatenates into `AGENTS.md`; TypeScript ensures ergonomic autocompletion and highlights missing env bindings.
 - `templates`: reusable construct templates (inline for v1) that describe services, default teardown routines, and template-scoped prompt inclusions; the UI lets users pick a template when creating a construct instance.
-- `type`: set to `"implementation"`, `"planning"`, or `"manual"` (default `"implementation"`). Implementation constructs launch a full agent session with the configured toolset. Planning constructs reuse the same agent but Synthetic injects planning-specific instructions (see runtime doc). Manual constructs skip agent creation entirely but still provision services, giving the user a fresh worktree to drive manually.
+- `type`: set to "implementation", "planning", or "manual" (default "implementation"). Implementation constructs launch the full agent/toolbox. Planning constructs start the agent in OpenCode's plan mode and rely on an MCP call to submit the plan artefact (Synthetic persists it centrally). Manual constructs skip agent creation entirely but still provision services, giving the user a fresh worktree to drive manually or with the CLI/MCP helpers.
 - Expose a `synthetic config lint` CLI to validate the emitted config (paths exist, duplicates resolved) before provisioning constructs, compiling the TS file on the fly.
+
 
 ## Construct Template Definition (v1)
 Keep templates inline within `synthetic.config.ts` for v1 simplicity. Templates satisfy the `ConstructTemplate` type and the UI generates construct instances by layering task metadata (name, description, review notes) on top of them.

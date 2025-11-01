@@ -10,9 +10,10 @@ This file covers the primary construct-oriented screens. Refer to [Agent Chat UX
 
 ## Construct Detail Workspace
 - Hero section summarises brief, owner, template used, current state, start/end timestamps, and quick action buttons (pause, terminate, escalate).
-- Sections for: agent chat entry point (with last message preview), running services (status, ports, open link buttons), diffs/changes (links into diff viewer), task metadata (acceptance criteria, related documents), and history timeline (state changes, human interactions). For manual constructs, hide the chat card entirely and focus on services/diffs.
+- Sections for: agent chat entry point (with last message preview), running services (status, ports, open link buttons), diffs/changes (links into diff viewer), task metadata (acceptance criteria, related documents), and history timeline (state changes, human interactions). Planning constructs reuse the chat card but highlight plan submissions and show “Approve plan” / “Request revision” buttons that call the MCP or update status. Manual constructs hide the chat card entirely and focus on services/diffs.
 - If services or the agent need to be restarted after a host restart, surface a prominent “Resume construct” banner (with secondary options for services/agent individually) that triggers the manifest replay so everything comes back online together.
 - For each service, show status plus quick actions: `Restart`, `Stop`, and a copy-to-clipboard button for the underlying command/env. No embedded shell; users can manually rerun the copied command in their own terminal if needed.
+- When a plan is approved, surface a prominent “Start implementation” action that spins up the linked implementation construct (or “Start manual build” for manual follow-up). Show breadcrumbs/links between the planning construct and the derived implementation construct so context is not lost.
 - Offer contextual navigation tabs or anchors (`Overview`, `Chat`, `Diffs`, `Services`) so the user can jump to the relevant payload quickly; remember scroll position if they return from another construct.
 
 ## Construct Creation Flow
