@@ -3,7 +3,7 @@
 - [ ] Cross-Construct Search #status/planned #phase-2 #feature/advanced
 
 ## Goal
-Enable searching across transcripts, service logs, plans, and diff metadata so operators can reuse prior work or investigate historical context quickly.
+Enable searching across transcripts, service logs, plans, and diff metadata so operators can reuse prior work or investigate past context quickly.
 
 ## Key Requirements
 - Index construct transcripts, plan submissions, service logs, and diff summaries.

@@ -6,7 +6,7 @@
 - When adding new workflows, prefer short, action-focused bullets so the generated handbook stays compact (~20 lines).
 - Keep the OpenCode repository cloned in `vendor/opencode/` for reference only; production code and runtime integrations must depend on the published `@opencode-ai/sdk` package.
 - Project documentation is distributed across several key locations:
-  - `docs/` Obsidian vault - Requirements, implementation plans, project context, historical reference
+  - `docs/` Obsidian vault - Requirements, implementation plans, project context
   - `.ruler/prompts/` - AI agent guidance and coding standards  
   - `README.md` - Project overview and getting started
   When you need context, prioritize these markdown sources over external knowledge bases and update them when your work changes the project plan.
