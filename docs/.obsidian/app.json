@@ -13,5 +13,8 @@
   "defaultViewMode": "preview",
   "foldHeading": true,
   "foldIndent": true,
-  "showFrontmatter": true
+  "showFrontmatter": true,
+  "strictLineBreaks": false,
+  "rightToLeft": false,
+  "showUnsupportedFiles": false
 }
