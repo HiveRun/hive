@@ -2,6 +2,15 @@
 
 See also: [[runtime|Runtime]], [[ux/overview|UX Overview]], [[ux/agent-chat|Agent Chat UX]], [[../configuration|Workspace & Templates]], [[features/index|Construct Features Roadmap]], and [[../testing|Testing Strategy]].
 
+## Core Infrastructure
+The foundational features that enable all construct functionality:
+- [[features/agent-orchestration|Agent Orchestration Engine]]
+- [[features/persistence-layer|Persistence Layer]] 
+- [[features/template-definition-system|Template Definition System]]
+- [[features/prompt-assembly-pipeline|Prompt Assembly Pipeline]]
+- [[features/configuration-validation|Configuration Validation]]
+- [[features/planning-handoff|Planning-to-Implementation Handoff]]
+
 ## Vision & Goals
 - Centralize multi-agent coding work so each task runs inside an isolated "construct" with its own workspace, services, and context.
 - Lower the cognitive overhead of juggling multiple agents by surfacing status, queues, and review artifacts in one UI.
@@ -33,6 +42,16 @@ Construct status is computed from service + agent state. If any service is flagg
 ### Single-User Assumptions
 - Synthetic assumes a single operator per workspace for v1; no shared accounts, concurrent edits, or cross-user notifications are supported.
 - Construct ownership, notifications, and status changes target that operator alone; collaboration workflows remain future scope.
+
+## Core Infrastructure Features
+
+**Phase 0 – Foundation**
+- [[features/agent-orchestration|Agent Orchestration Engine]]: core engine for managing agent sessions, authentication, and lifecycle events
+- [[features/persistence-layer|Persistence Layer]]: reliable storage for constructs, transcripts, and artifacts with SQLite
+- [[features/template-definition-system|Template Definition System]]: flexible, type-safe system for defining construct templates
+- [[features/prompt-assembly-pipeline|Prompt Assembly Pipeline]]: robust system for assembling agent prompts from multiple sources
+- [[features/configuration-validation|Configuration Validation]]: comprehensive validation and linting for configuration files
+- [[features/planning-handoff|Planning-to-Implementation Handoff]]: workflow transitions between planning and implementation phases
 
 ## Future Extensions Roadmap
 
