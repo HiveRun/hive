@@ -29,7 +29,7 @@
     "check:staged": "lint-staged",
     "check:secrets": "./scripts/check-secrets.sh",
     "check:audit": "bun audit --audit-level high || echo '⚠️  Security audit found issues (see above)'",
-    "ruler:apply": "cp README.md .ruler/01-readme.md && bunx @intellectronica/ruler@latest apply --local-only",
+    "ruler:apply": "cp README.md .ruler/prompts/README.md && cp docs/requirements/design.md .ruler/prompts/design.md && bunx @intellectronica/ruler@latest apply --local-only",
     "dev": "turbo dev",
     "build": "turbo build",
     "check-types": "turbo check-types",
