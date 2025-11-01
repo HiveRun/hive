@@ -9,6 +9,6 @@
   "disablePush": false,
   "pullBeforePush": true,
   "disablePopups": false,
-  "currentBranch": "main",
+  "currentBranch": "planning/synthetic-constructs",
   "remote": "origin"
 }
