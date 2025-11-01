@@ -53,6 +53,7 @@ Construct status is computed from service + agent state. If any service is flagg
 - `Insight analytics`: evolve the metrics baseline into trend reporting (cycle time, agent idle time) with slice/dice filters and export.
 - `GitHub integration`: start constructs from non-main branches, detect existing PR branches, and optionally open PRs when a construct finishes. Support cloning a branch, working in an isolated copy, and linking construct status back to GitHub PRs.
 - `Plan export`: send planning outcomes to external systems (Linear tickets, GitHub issues, etc.) from within Synthetic.
+- `Prompt optimisation`: analyze prompt bundles for redundant context and token bloat, suggest pruning or consolidation before dispatching to agents, and surface token delta per edit.
 - `Sparse constructs`: allow launching a construct with agent-only mode (no services) for light-weight exploratory work.
 - `Reference repos`: support cloning remote repositories into read-only worktrees so agents can learn from external code before planning/implementation.
 - `Compaction logging`: surface agent compaction events/tokens so users can monitor prompt degradation over long sessions.
