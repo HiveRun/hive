@@ -61,4 +61,4 @@ Construct status is computed from service + agent state. If any service is flagg
 - `Config editor`: offer a UX for editing `synthetic.config.ts` (or a companion YAML/JSON) with validation, to be explored once the config API stabilizes.
 
 ## Open Questions
-- What retention policy should we adopt for persisted logs and artifacts to balance disk usage with traceability?
+- What retention policy should we adopt for persisted logs and artifacts to balance disk usage with traceability? (Likely answer: surface per-construct storage usage with manual cleanup controls, plus optional auto-prune thresholds.)
