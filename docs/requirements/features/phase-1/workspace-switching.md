@@ -1,5 +1,7 @@
 # Workspace Discovery & Switching
 
+- [ ] Workspace Discovery & Switching #status/planned #phase-1 #feature/ux
+
 ## Goal
 Allow users to easily manage multiple workspaces and switch between them within Synthetic.
 

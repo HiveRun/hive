@@ -1,5 +1,7 @@
 # Terminal UI
 
+- [ ] Terminal UI #status/planned #phase-4 #feature/advanced
+
 ## Goal
 Deliver a terminal-based frontend that mirrors the core Synthetic experience, powered by `@sst/opentui`.
 

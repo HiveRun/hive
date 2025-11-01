@@ -1,5 +1,7 @@
 # Configuration Editor
 
+- [ ] Configuration Editor #status/planned #phase-3 #feature/advanced
+
 ## Goal
 Provide a guided UI for editing `synthetic.config.ts` (or a future companion format) with validation and guardrails.
 

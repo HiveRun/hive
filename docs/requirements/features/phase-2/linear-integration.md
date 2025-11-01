@@ -1,5 +1,7 @@
 # Linear Integration
 
+- [ ] Linear Integration #status/planned #phase-2 #feature/advanced
+
 ## Goal
 Integrate Synthetic constructs with Linear so planning and implementation work can originate from and sync back to product tracking.
 

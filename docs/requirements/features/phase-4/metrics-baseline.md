@@ -1,5 +1,7 @@
 # Metrics Baseline
 
+- [ ] Metrics Baseline #status/planned #phase-4 #feature/advanced
+
 ## Goal
 Capture baseline metrics for each construct so we can measure effectiveness and identify bottlenecks.
 

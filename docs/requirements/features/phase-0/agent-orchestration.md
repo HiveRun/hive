@@ -1,5 +1,7 @@
 # Agent Orchestration Engine
 
+- [ ] Agent Orchestration Engine #status/planned #phase-0 #feature/core
+
 ## Goal
 Provide the core engine for managing agent sessions, authentication, and lifecycle events across all construct types.
 

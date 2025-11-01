@@ -1,5 +1,7 @@
 # Construct Creation & Provisioning
 
+- [ ] Construct Creation & Provisioning #status/planned #phase-0 #feature/core
+
 ## Goal
 Handle the complete workflow of creating and provisioning constructs from templates, including workspace setup, service initialization, and prompt assembly.
 

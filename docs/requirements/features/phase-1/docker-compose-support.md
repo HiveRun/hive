@@ -1,5 +1,7 @@
 # Docker & Compose Support
 
+- [ ] Docker & Compose Support #status/planned #phase-1 #feature/infrastructure
+
 ## Goal
 Enable constructs to use Docker containers and Docker Compose for services alongside regular process-based services.
 

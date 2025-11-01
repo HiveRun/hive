@@ -1,5 +1,7 @@
 # Voice Input
 
+- [ ] Voice Input #status/planned #phase-2 #feature/advanced
+
 ## Goal
 Add voice capture to agent chat so operators can speak prompts and have them transcribed into the conversation.
 

@@ -1,5 +1,7 @@
 # Template Prompt Viewer
 
+- [ ] Template Prompt Viewer #status/planned #phase-2 #feature/advanced
+
 ## Goal
 Allow operators to inspect the final prompt bundle generated for a construct template before launching it. This includes the concatenated prompt fragments and an estimated token count.
 

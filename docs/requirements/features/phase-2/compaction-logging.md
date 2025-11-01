@@ -1,5 +1,7 @@
 # Compaction Logging
 
+- [ ] Compaction Logging #status/planned #phase-2 #feature/advanced
+
 ## Goal
 Increase transparency around agent compaction events so users can understand context loss over long sessions.
 

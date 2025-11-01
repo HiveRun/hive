@@ -1,5 +1,7 @@
 # GitHub Integration
 
+- [ ] GitHub Integration #status/planned #phase-2 #feature/advanced
+
 ## Goal
 Connect constructs to GitHub workflows so work can start from arbitrary branches and sync back to pull requests.
 

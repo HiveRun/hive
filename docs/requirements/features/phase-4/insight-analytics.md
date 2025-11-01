@@ -1,5 +1,7 @@
 # Insight Analytics
 
+- [ ] Insight Analytics #status/planned #phase-4 #feature/advanced
+
 ## Goal
 Provide higher-level analytics on construct activity so teams can monitor throughput and identify optimisation opportunities.
 

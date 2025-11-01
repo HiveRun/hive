@@ -1,5 +1,7 @@
 # Plan Export
 
+- [ ] Plan Export #status/planned #phase-3 #feature/advanced
+
 ## Goal
 Let users push planning outcomes to external systems (Linear, GitHub Issues, etc.) directly from Synthetic.
 

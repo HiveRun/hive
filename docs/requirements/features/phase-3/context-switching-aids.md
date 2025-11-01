@@ -1,5 +1,7 @@
 # Context Switching Aids
 
+- [ ] Context Switching Aids #status/planned #phase-3 #feature/advanced
+
 ## Goal
 Help users quickly regain context when returning to constructs or switching between tasks.
 

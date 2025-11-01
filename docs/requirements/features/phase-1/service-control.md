@@ -1,5 +1,7 @@
 # Service Control
 
+- [ ] Service Control #status/planned #phase-1 #feature/infrastructure
+
 ## Goal
 Provide comprehensive service management capabilities for both users and agents through UI, CLI, and MCP tools.
 

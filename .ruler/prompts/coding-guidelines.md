@@ -24,3 +24,5 @@
 **Prioritize visibility** - ensure errors surface clearly where they occur. Stack traces and context are more valuable than silent failures.
 
 **Avoid overbearing error handling** that adds no value. Let errors bubble up to where they can be meaningfully addressed.
+
+

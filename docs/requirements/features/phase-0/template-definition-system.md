@@ -1,5 +1,7 @@
 # Template Definition System
 
+- [ ] Template Definition System #status/planned #phase-0 #feature/core
+
 ## Goal
 Provide a flexible, type-safe system for defining construct templates that describe services, environments, and configuration.
 

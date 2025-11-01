@@ -1,5 +1,7 @@
 # Prompt Optimisation
 
+- [ ] Prompt Optimisation #status/planned #phase-3 #feature/advanced
+
 ## Goal
 Analyse prompt bundles to minimise redundant context, reduce token usage, and improve agent responsiveness.
 

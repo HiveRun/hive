@@ -1,5 +1,7 @@
 # Sparse Constructs
 
+- [ ] Sparse Constructs #status/planned #phase-2 #feature/advanced
+
 ## Goal
 Allow launching constructs that run an agent without provisioning the full service stack, useful for lightweight planning or research tasks.
 

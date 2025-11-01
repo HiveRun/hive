@@ -1,5 +1,7 @@
 # Activity Timeline
 
+- [ ] Activity Timeline #status/planned #phase-4 #feature/advanced
+
 ## Goal
 Provide a chronological view of construct activity to help users understand what happened and when.
 

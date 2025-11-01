@@ -1,5 +1,7 @@
 # Prompt Assembly Pipeline
 
+- [ ] Prompt Assembly Pipeline #status/planned #phase-0 #feature/core
+
 ## Goal
 Provide a robust system for assembling agent prompts from multiple sources with proper ordering, validation, and context injection.
 

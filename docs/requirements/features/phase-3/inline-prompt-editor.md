@@ -1,5 +1,7 @@
 # Inline Prompt Editor
 
+- [ ] Inline Prompt Editor #status/planned #phase-3 #feature/advanced
+
 ## Goal
 Offer an optional rich markdown editor for prompt fragments so users can adjust agent guidance without leaving Synthetic.
 

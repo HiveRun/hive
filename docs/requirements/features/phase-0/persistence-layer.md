@@ -1,5 +1,7 @@
 # Persistence Layer
 
+- [ ] Persistence Layer #status/planned #phase-0 #feature/core
+
 ## Goal
 Provide reliable storage for constructs, transcripts, artifacts, and metadata with ACID guarantees and efficient access patterns.
 

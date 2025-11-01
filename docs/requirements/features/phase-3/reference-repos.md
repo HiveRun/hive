@@ -1,5 +1,7 @@
 # Reference Repositories
 
+- [ ] Reference Repositories #status/planned #phase-3 #feature/advanced
+
 ## Goal
 Let constructs attach remote repositories as read-only references so agents and humans can inspect external code while planning or implementing.
 
