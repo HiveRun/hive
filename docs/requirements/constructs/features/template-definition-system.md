@@ -41,8 +41,8 @@ Provide a flexible, type-safe system for defining construct templates that descr
 - **Conditional services**: Services that only start based on template variables or user input (future enhancement).
 
 ## Integration Points
-- **Configuration Validation**: Validates template structure and references
 - **Agent Orchestration Engine**: Uses service definitions for provisioning
 - **Prompt Assembly Pipeline**: Accesses template metadata for agent context
 - **Service Control**: Provides runtime management of defined services
 - **Docker & Compose Support**: Handles container-based service types
+- **Configuration validation**: Built into template system for schema compliance and path validation

@@ -50,38 +50,35 @@ Construct status is computed from service + agent state. If any service is flagg
 - [[features/persistence-layer|Persistence Layer]]: reliable storage for constructs, transcripts, and artifacts with SQLite
 - [[features/template-definition-system|Template Definition System]]: flexible, type-safe system for defining construct templates
 - [[features/prompt-assembly-pipeline|Prompt Assembly Pipeline]]: robust system for assembling agent prompts from multiple sources
-- [[features/configuration-validation|Configuration Validation]]: comprehensive validation and linting for configuration files
-- [[features/planning-handoff|Planning-to-Implementation Handoff]]: workflow transitions between planning and implementation phases
 
 ## Future Extensions Roadmap
 
-**Phase 1 – Post-MVP Foundations**
-- [[features/template-prompt-viewer|Template prompt viewer]]: provide a UI to preview a template's concatenated prompts, including estimated token count and the exact fragments that will be sent to the agent.
-- [[features/cross-construct-search|Cross-construct search]]: index transcripts, command logs, and artifacts so users can find prior solutions; ship with simple keyword search UI.
-- [[features/metrics-baseline|Metrics baseline]]: capture per-construct timing (active vs waiting) and human intervention count; expose read-only dashboard inside Synthetic.
+**Phase 1 – Core Runtime**
+- [[features/diff-review|Diff review]]: comprehensive diff review experience with Difftastic integration and staging/reverting capabilities.
 - [[features/docker-compose-support|Docker & Compose support]]: enable constructs to use Docker containers and Docker Compose for services.
 - [[features/service-control|Service control]]: comprehensive service management through UI, CLI, and MCP tools.
 - [[features/workspace-switching|Workspace discovery & switching]]: allow users to manage multiple workspaces and switch between them.
 
-**Phase 2 – Collaboration & Governance**
-- [[features/inline-prompt-editor|Inline prompt editor]]: optional rich markdown editor for prompt fragments (`docs/prompts/**/*.md`) so users can tweak agent briefing without leaving Synthetic. (Evaluate effort/benefit before building.)
-- [[features/linear-integration|Linear integration]]: create constructs directly from Linear issues and sync plan/implementation status back to Linear.
-- [[features/diff-review|Diff review]]: comprehensive diff review experience with Difftastic integration and staging/reverting capabilities.
-- [[features/activity-timeline|Activity timeline]]: chronological view of construct activity with diff summaries and filtering.
-
-**Phase 3 – Advanced Interaction**
+**Phase 2 – Advanced Interaction**
 - [[features/voice-input|Voice input]]: add microphone capture, streaming transcription, and push-to-talk UX inside agent conversations; fall back to text if transcription fails.
-- [[features/insight-analytics|Insight analytics]]: evolve the metrics baseline into trend reporting (cycle time, agent idle time) with slice/dice filters and export.
+- [[features/sparse-constructs|Sparse constructs]]: allow launching a construct with agent-only mode (no services) for light-weight exploratory work.
+- [[features/template-prompt-viewer|Template prompt viewer]]: provide a UI to preview a template's concatenated prompts, including estimated token count and the exact fragments that will be sent to the agent.
+- [[features/compaction-logging|Compaction logging]]: surface agent compaction events/tokens so users can monitor prompt degradation over long sessions.
+- [[features/linear-integration|Linear integration]]: create constructs directly from Linear issues and sync plan/implementation status back to Linear.
 - [[features/github-integration|GitHub integration]]: start constructs from non-main branches, detect existing PR branches, and optionally open PRs when a construct finishes. Support cloning a branch, working in an isolated copy, and linking construct status back to GitHub PRs.
+
+**Phase 3 – Planning & Collaboration**
+- [[features/planning-handoff|Planning-to-Implementation Handoff]]: workflow transitions between planning and implementation phases, including planning agent type and plan submission/approval
+- [[features/reference-repos|Reference repos]]: support cloning remote repositories into read-only worktrees so agents can learn from external code before planning/implementation.
+- [[features/config-editor|Config editor]]: offer a UX for editing `synthetic.config.ts` (or a companion YAML/JSON) with validation, to be explored once the config API stabilizes.
+- [[features/inline-prompt-editor|Inline prompt editor]]: optional rich markdown editor for prompt fragments (`docs/prompts/**/*.md`) so users can tweak agent briefing without leaving Synthetic. (Evaluate effort/benefit before building.)
+- [[features/context-switching-aids|Context switching aids]]: help users quickly regain context when returning to constructs or switching between tasks.
 - [[features/plan-export|Plan export]]: send planning outcomes to external systems (Linear tickets, GitHub issues, etc.) from within Synthetic.
 - [[features/prompt-optimisation|Prompt optimisation]]: analyze prompt bundles for redundant context and token bloat, suggest pruning or consolidation before dispatching to agents, and surface token delta per edit.
-- [[features/sparse-constructs|Sparse constructs]]: allow launching a construct with agent-only mode (no services) for light-weight exploratory work.
-- [[features/reference-repos|Reference repos]]: support cloning remote repositories into read-only worktrees so agents can learn from external code before planning/implementation.
-- [[features/compaction-logging|Compaction logging]]: surface agent compaction events/tokens so users can monitor prompt degradation over long sessions.
-- [[features/config-editor|Config editor]]: offer a UX for editing `synthetic.config.ts` (or a companion YAML/JSON) with validation, to be explored once the config API stabilizes.
-- [[features/context-switching-aids|Context switching aids]]: help users quickly regain context when returning to constructs or switching between tasks.
 
-**Phase 4 – Terminal Experience**
+**Phase 4 – Analytics & Terminal**
+- [[features/insight-analytics|Insight analytics]]: evolve the metrics baseline into trend reporting (cycle time, agent idle time) with slice/dice filters and export.
+- [[features/activity-timeline|Activity timeline]]: chronological view of construct activity with diff summaries and filtering.
 - [[features/terminal-ui|Terminal UI]]: add a TUI front-end (via `@sst/opentui`) mirroring the web experience for terminal-first workflows.
 
 ## Open Questions

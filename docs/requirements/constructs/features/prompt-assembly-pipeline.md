@@ -46,6 +46,6 @@ Provide a robust system for assembling agent prompts from multiple sources with 
 ## Integration Points
 - **Agent Orchestration Engine**: Consumes assembled prompts for agent sessions
 - **Template Definition System**: Accesses template-specific prompt configurations
-- **Configuration Validation**: Validates prompt source paths and references
 - **Planning-to-Implementation Handoff**: Provides planning vs implementation prompt variants
 - **Prompt Optimisation**: Uses pipeline data for optimization analysis
+- **Configuration validation**: Built into pipeline for source path validation and error handling
