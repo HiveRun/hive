@@ -1,6 +1,6 @@
 # Constructs Overview
 
-See also: [Runtime](runtime.md), [UX Overview](ux/overview.md), [Agent Chat UX](ux/agent-chat.md), [Workspace & Templates](../configuration.md), and [Testing Strategy](../testing.md).
+See also: [Runtime](runtime.md), [UX Overview](ux/overview.md), [Agent Chat UX](ux/agent-chat.md), [Workspace & Templates](../configuration.md), [Construct Features Roadmap](features/index.md), and [Testing Strategy](../testing.md).
 
 ## Vision & Goals
 - Centralize multi-agent coding work so each task runs inside an isolated "construct" with its own workspace, services, and context.
