@@ -1,6 +1,6 @@
 # Constructs Overview
 
-See also: [Runtime](runtime.md), [UX Overview](ux/overview.md), [Agent Chat UX](ux/agent-chat.md), [Workspace & Templates](../configuration.md), [Construct Features Roadmap](features/index.md), and [Testing Strategy](../testing.md).
+See also: [[runtime|Runtime]], [[ux/overview|UX Overview]], [[ux/agent-chat|Agent Chat UX]], [[../configuration|Workspace & Templates]], [[features/index|Construct Features Roadmap]], and [[../testing|Testing Strategy]].
 
 ## Vision & Goals
 - Centralize multi-agent coding work so each task runs inside an isolated "construct" with its own workspace, services, and context.
@@ -37,30 +37,27 @@ Construct status is computed from service + agent state. If any service is flagg
 ## Future Extensions Roadmap
 
 **Phase 1 – Post-MVP Foundations**
-- `Templates & snippets`: ship a library of reusable construct briefs/manifests with tagging and quick-start selection.
-- `Cross-construct search`: index transcripts, command logs, and artifacts so users can find prior solutions; ship with simple keyword search UI.
-- `Metrics baseline`: capture per-construct timing (active vs waiting) and human intervention count; expose read-only dashboard inside Synthetic.
-- `Template prompt viewer`: provide a UI to preview a template’s concatenated prompts, including estimated token count and the exact fragments that will be sent to the agent.
+- [[features/template-prompt-viewer|Template prompt viewer]]: provide a UI to preview a template's concatenated prompts, including estimated token count and the exact fragments that will be sent to the agent.
+- [[features/cross-construct-search|Cross-construct search]]: index transcripts, command logs, and artifacts so users can find prior solutions; ship with simple keyword search UI.
+- [[features/metrics-baseline|Metrics baseline]]: capture per-construct timing (active vs waiting) and human intervention count; expose read-only dashboard inside Synthetic.
 
 **Phase 2 – Collaboration & Governance**
-- `Collaboration suite`: allow assigning owners, sharing read-only construct views, and pushing status updates to external trackers (linear/jira webhook).
-- `Security guardrails`: implement secret scanning on agent outputs, per-construct access controls, and configurable retention windows for transcripts/artifacts.
-- `Inline prompt editor`: optional rich markdown editor for prompt fragments (`docs/prompts/**/*.md`) so users can tweak agent briefing without leaving Synthetic. (Evaluate effort/benefit before building.)
-- `Linear integration`: create constructs directly from Linear issues and sync plan/implementation status back to Linear.
+- [[features/inline-prompt-editor|Inline prompt editor]]: optional rich markdown editor for prompt fragments (`docs/prompts/**/*.md`) so users can tweak agent briefing without leaving Synthetic. (Evaluate effort/benefit before building.)
+- [[features/linear-integration|Linear integration]]: create constructs directly from Linear issues and sync plan/implementation status back to Linear.
 
 **Phase 3 – Advanced Interaction**
-- `Voice input`: add microphone capture, streaming transcription, and push-to-talk UX inside agent conversations; fall back to text if transcription fails.
-- `Insight analytics`: evolve the metrics baseline into trend reporting (cycle time, agent idle time) with slice/dice filters and export.
-- `GitHub integration`: start constructs from non-main branches, detect existing PR branches, and optionally open PRs when a construct finishes. Support cloning a branch, working in an isolated copy, and linking construct status back to GitHub PRs.
-- `Plan export`: send planning outcomes to external systems (Linear tickets, GitHub issues, etc.) from within Synthetic.
-- `Prompt optimisation`: analyze prompt bundles for redundant context and token bloat, suggest pruning or consolidation before dispatching to agents, and surface token delta per edit.
-- `Sparse constructs`: allow launching a construct with agent-only mode (no services) for light-weight exploratory work.
-- `Reference repos`: support cloning remote repositories into read-only worktrees so agents can learn from external code before planning/implementation.
-- `Compaction logging`: surface agent compaction events/tokens so users can monitor prompt degradation over long sessions.
-- `Config editor`: offer a UX for editing `synthetic.config.ts` (or a companion YAML/JSON) with validation, to be explored once the config API stabilizes.
+- [[features/voice-input|Voice input]]: add microphone capture, streaming transcription, and push-to-talk UX inside agent conversations; fall back to text if transcription fails.
+- [[features/insight-analytics|Insight analytics]]: evolve the metrics baseline into trend reporting (cycle time, agent idle time) with slice/dice filters and export.
+- [[features/github-integration|GitHub integration]]: start constructs from non-main branches, detect existing PR branches, and optionally open PRs when a construct finishes. Support cloning a branch, working in an isolated copy, and linking construct status back to GitHub PRs.
+- [[features/plan-export|Plan export]]: send planning outcomes to external systems (Linear tickets, GitHub issues, etc.) from within Synthetic.
+- [[features/prompt-optimisation|Prompt optimisation]]: analyze prompt bundles for redundant context and token bloat, suggest pruning or consolidation before dispatching to agents, and surface token delta per edit.
+- [[features/sparse-constructs|Sparse constructs]]: allow launching a construct with agent-only mode (no services) for light-weight exploratory work.
+- [[features/reference-repos|Reference repos]]: support cloning remote repositories into read-only worktrees so agents can learn from external code before planning/implementation.
+- [[features/compaction-logging|Compaction logging]]: surface agent compaction events/tokens so users can monitor prompt degradation over long sessions.
+- [[features/config-editor|Config editor]]: offer a UX for editing `synthetic.config.ts` (or a companion YAML/JSON) with validation, to be explored once the config API stabilizes.
 
 **Phase 4 – Terminal Experience**
-- `Terminal UI`: add a TUI front-end (via `@sst/opentui`) mirroring the web experience for terminal-first workflows.
+- [[features/terminal-ui|Terminal UI]]: add a TUI front-end (via `@sst/opentui`) mirroring the web experience for terminal-first workflows.
 
 ## Open Questions
 - What retention policy should we adopt for persisted logs and artifacts to balance disk usage with traceability? (Likely answer: surface per-construct storage usage with manual cleanup controls, plus optional auto-prune thresholds.)
