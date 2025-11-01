@@ -6,4 +6,5 @@
 - When adding new workflows, prefer short, action-focused bullets so the generated handbook stays compact (~20 lines).
 - Keep the OpenCode repository cloned in `vendor/opencode/` for reference only; production code and runtime integrations must depend on the published `@opencode-ai/sdk` package.
 - Documentation lives inside the `docs/` Obsidian vault. When you need context, open/inspect the markdown files there (agents, requirements, tasks, etc.) rather than expecting external knowledge bases, and update those docs when your work changes the project plan.
+- When the user requests a change to agent guidance or project docs, proactively locate the relevant file(s) and make the update without waiting for another reminder.
 - Commit prompt changes like any other source code so CI and Husky enforce lint/type/build checks.
