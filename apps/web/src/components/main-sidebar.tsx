@@ -116,10 +116,15 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="border-border border-t bg-sidebar text-[0.55rem] text-muted-foreground uppercase tracking-[0.28em]">
-        <div className="flex items-center justify-between gap-3 px-2 py-2 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-2 group-data-[collapsible=icon]:px-0">
-          <p className="px-0 text-left group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:opacity-0">
-            Press ⌘B to toggle
-          </p>
+        <div
+          className={cn(
+            "flex items-center justify-between gap-3 px-2 py-2",
+            sidebarState === "collapsed" && "justify-center px-0"
+          )}
+        >
+          {sidebarState !== "collapsed" && (
+            <p className="px-0 text-left">Press ⌘B to toggle</p>
+          )}
           <ModeToggle />
         </div>
       </SidebarFooter>
