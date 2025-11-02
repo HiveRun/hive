@@ -6,9 +6,8 @@ import {
   useRouterState,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
-import Loader from "@/components/loader";
+import { MainLayout } from "@/components/main-layout";
 import { Toaster } from "@/components/ui/sonner";
-import Header from "../components/header";
 
 export type RouterAppContext = {
   queryClient: QueryClient;
@@ -21,12 +20,13 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
 function RootComponent() {
   const isFetching = useRouterState({ select: (s) => s.isLoading });
   return (
-    <div className="grid h-svh grid-rows-[auto_1fr]">
-      <Header />
-      {isFetching ? <Loader /> : <Outlet />}
+    <>
+      <MainLayout isLoading={isFetching}>
+        <Outlet />
+      </MainLayout>
       <Toaster richColors />
       <ReactQueryDevtools buttonPosition="bottom-right" />
       <TanStackRouterDevtools position="bottom-left" />
-    </div>
+    </>
   );
 }

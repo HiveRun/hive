@@ -1,7 +1,10 @@
 import { expect, test } from "@playwright/test";
 
+import { setTheme } from "./utils/theme";
+
 test.describe("Homepage - Visual Snapshots", () => {
   test("should match homepage snapshot (light mode)", async ({ page }) => {
+    await setTheme(page, "light");
     await page.goto("/");
     await page.waitForLoadState("networkidle");
 
@@ -12,6 +15,7 @@ test.describe("Homepage - Visual Snapshots", () => {
   });
 
   test("should match homepage snapshot (dark mode)", async ({ page }) => {
+    await setTheme(page, "dark");
     await page.goto("/");
     await page.waitForLoadState("networkidle");
     await page.emulateMedia({ colorScheme: "dark" });
@@ -24,6 +28,7 @@ test.describe("Homepage - Visual Snapshots", () => {
 
   test("should match homepage snapshot (mobile)", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 667 });
+    await setTheme(page, "light");
     await page.goto("/");
     await page.waitForLoadState("networkidle");
 
@@ -35,6 +40,7 @@ test.describe("Homepage - Visual Snapshots", () => {
 
   test("should match homepage snapshot (tablet)", async ({ page }) => {
     await page.setViewportSize({ width: 768, height: 1024 });
+    await setTheme(page, "light");
     await page.goto("/");
     await page.waitForLoadState("networkidle");
 
