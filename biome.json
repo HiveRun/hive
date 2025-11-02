@@ -43,6 +43,23 @@
       "formatter": {
         "enabled": false
       }
+    },
+    {
+      "includes": ["packages/**"],
+      "linter": {
+        "rules": {
+          "performance": {
+            "noBarrelFile": "off"
+          },
+          "style": {
+            "noMagicNumbers": "off",
+            "useConsistentMemberAccessibility": "off"
+          },
+          "suspicious": {
+            "noExplicitAny": "warn"
+          }
+        }
+      }
     }
   ]
 }
