@@ -40,11 +40,11 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
         <div className="flex h-12 items-center gap-3 transition-none group-data-[collapsible=icon]:justify-center">
           <SidebarTrigger
             aria-label="Toggle sidebar"
-            className="size-9 rounded-none border-2 border-border bg-card text-foreground shadow-[3px_3px_0_rgba(0,0,0,0.45)] transition-none hover:bg-muted hover:text-foreground group-data-[collapsible=icon]:mx-auto"
+            className="size-9 rounded-none border-2 border-[#3d2817] bg-[#1a2f1a] text-[#f4f7f2] shadow-[3px_3px_0_rgba(0,0,0,0.65)] transition-none hover:bg-[#203820] hover:text-[#f4f7f2] group-data-[collapsible=icon]:mx-auto"
           />
           <Link
             aria-label="Synthetic home"
-            className="group flex h-full items-center gap-3 uppercase tracking-[0.28em] transition-none group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:opacity-0"
+            className="group flex h-full items-center gap-3 uppercase tracking-[0.28em] transition-none group-data-[collapsible=icon]:hidden"
             to="/"
           >
             <span
@@ -89,15 +89,18 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
                         "rounded-none border-2 border-transparent text-muted-foreground uppercase tracking-[0.18em] transition-none",
                         "data-[active=true]:border-[#5a7c5a] data-[active=true]:bg-card data-[active=true]:text-foreground",
                         "hover:border-border hover:bg-card/70 hover:text-foreground",
-                        "group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-2"
+                        "group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-2 group-data-[collapsible=icon]:text-foreground"
                       )}
                       isActive={isActive}
+                      tooltip={label}
                     >
                       <Link
+                        aria-label={label}
                         className="flex items-center gap-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0"
+                        title={label}
                         to={to}
                       >
-                        <Icon className="size-4" />
+                        <Icon aria-hidden className="size-4 shrink-0" />
                         <span
                           className={cn(
                             "text-xs",
@@ -125,7 +128,9 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
           {sidebarState !== "collapsed" && (
             <p className="px-0 text-left">Press ⌘B to toggle</p>
           )}
-          <ModeToggle />
+          <div className="shrink-0">
+            <ModeToggle />
+          </div>
         </div>
       </SidebarFooter>
     </Sidebar>
