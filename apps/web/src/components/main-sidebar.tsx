@@ -87,8 +87,8 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
                       asChild
                       className={cn(
                         "rounded-none border-2 border-transparent text-muted-foreground uppercase tracking-[0.18em] transition-none",
-                        "data-[active=true]:border-[#5a7c5a] data-[active=true]:bg-card data-[active=true]:text-foreground",
-                        "hover:border-border hover:bg-card/70 hover:text-foreground",
+                        "data-[active=true]:border-[#5a7c5a] data-[active=true]:bg-[#203020] data-[active=true]:text-[#f4f7f2]",
+                        "hover:border-[#5a7c5a] hover:bg-[#203020] hover:text-[#f4f7f2]",
                         "group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-2 group-data-[collapsible=icon]:text-foreground"
                       )}
                       isActive={isActive}
