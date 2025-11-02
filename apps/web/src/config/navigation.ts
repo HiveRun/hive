@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { Activity, Bug, Home } from "lucide-react";
+import { Activity, AlertTriangle, Home } from "lucide-react";
 
 export type MainNavItem = {
   label: string;
@@ -25,8 +25,8 @@ export const MAIN_NAV_ITEMS: MainNavItem[] = [
   },
   {
     to: "/test-error",
-    label: "Diagnostics",
-    icon: Bug,
+    label: "Example Error",
+    icon: AlertTriangle,
     description: "Intentional failure route for error flows",
   },
 ];
