@@ -31,7 +31,7 @@ export function ModeToggle() {
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="rounded-none border-2 border-[#3d2817] bg-background px-0 py-0 shadow-[4px_4px_0_rgba(0,0,0,0.45)]"
+        className="rounded-none border-2 border-border bg-background px-0 py-0 shadow-[4px_4px_0_rgba(0,0,0,0.45)]"
       >
         <DropdownMenuItem
           className="rounded-none uppercase tracking-[0.3em]"

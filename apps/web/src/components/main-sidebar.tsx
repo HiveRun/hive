@@ -30,7 +30,7 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
   return (
     <Sidebar
       className={cn(
-        "border-[#3d2817] border-r-4 bg-sidebar text-sidebar-foreground",
+        "border-[#284334] border-r-4 bg-sidebar text-sidebar-foreground",
         className
       )}
       collapsible="icon"
@@ -40,7 +40,7 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
         <div className="flex h-12 items-center gap-3 transition-none group-data-[collapsible=icon]:justify-center">
           <SidebarTrigger
             aria-label="Toggle sidebar"
-            className="size-9 rounded-none border-2 border-[#3d2817] bg-[#1a2f1a] text-[#f4f7f2] shadow-[3px_3px_0_rgba(0,0,0,0.65)] transition-none hover:bg-[#203820] hover:text-[#f4f7f2] group-data-[collapsible=icon]:mx-auto"
+            className="size-9 rounded-none border-2 border-[#284334] bg-[#1a2f1a] text-[#f4f7f2] shadow-[3px_3px_0_rgba(0,0,0,0.65)] transition-none hover:bg-[#203820] hover:text-[#f4f7f2] group-data-[collapsible=icon]:mx-auto"
           />
           <Link
             aria-label="Synthetic home"
@@ -87,8 +87,8 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
                       asChild
                       className={cn(
                         "rounded-none border-2 border-transparent text-muted-foreground uppercase tracking-[0.18em] transition-none",
-                        "data-[active=true]:border-[#5a7c5a] data-[active=true]:bg-[#203020] data-[active=true]:text-[#f4f7f2]",
-                        "hover:border-[#5a7c5a] hover:bg-[#203020] hover:text-[#f4f7f2]",
+                        "data-[active=true]:border-[#5a7c5a] data-[active=true]:bg-[#22382a] data-[active=true]:text-[#f4f7f2]",
+                        "hover:border-[#5a7c5a] hover:bg-[#22382a] hover:text-[#f4f7f2]",
                         "group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-2 group-data-[collapsible=icon]:text-foreground"
                       )}
                       isActive={isActive}

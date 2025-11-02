@@ -32,7 +32,7 @@ body {
   --muted-foreground: oklch(0.4 0 0);
   --accent: oklch(0.45 0.12 145);
   --accent-foreground: oklch(0.96 0 0);
-  --border: oklch(0.2 0 0);
+  --border: oklch(0.32 0.05 150);
   --input: oklch(0.92 0 0);
   --ring: oklch(0.55 0.15 145);
   --chart-1: oklch(0.5749 0.1118 145.2516);
@@ -46,7 +46,7 @@ body {
   --sidebar-primary-foreground: oklch(0.96 0 0);
   --sidebar-accent: oklch(0.55 0.15 145);
   --sidebar-accent-foreground: oklch(0.15 0 0);
-  --sidebar-border: oklch(0.2 0 0);
+  --sidebar-border: oklch(0.32 0.05 150);
   --sidebar-ring: oklch(0.55 0.15 145);
   --destructive-foreground: oklch(0.8902 0.0121 145.473);
   --font-sans: "Roboto Mono", monospace;
@@ -91,7 +91,7 @@ body {
   --muted-foreground: oklch(0.6 0 0);
   --accent: oklch(0.55 0.12 145);
   --accent-foreground: oklch(0.1 0 0);
-  --border: oklch(0.25 0 0);
+  --border: oklch(0.2 0.05 150);
   --input: oklch(0.13 0 0);
   --ring: oklch(0.65 0.12 145);
   --chart-1: oklch(0.5749 0.1118 145.2516);
@@ -105,7 +105,7 @@ body {
   --sidebar-primary-foreground: oklch(0.1 0 0);
   --sidebar-accent: oklch(0.65 0.12 145);
   --sidebar-accent-foreground: oklch(0.1 0 0);
-  --sidebar-border: oklch(0.25 0 0);
+  --sidebar-border: oklch(0.2 0.05 150);
   --sidebar-ring: oklch(0.65 0.12 145);
   --destructive-foreground: oklch(0.8902 0.0121 145.473);
   --radius: 0rem;
