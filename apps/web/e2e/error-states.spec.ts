@@ -1,11 +1,14 @@
 import { expect, test } from "@playwright/test";
 
+import { setTheme } from "./utils/theme";
+
 const TRY_AGAIN_BUTTON = /try again/i;
 
 test.describe("Error States - Visual Snapshots", () => {
   test("should match 404 not found page snapshot (light mode)", async ({
     page,
   }) => {
+    await setTheme(page, "light");
     await page.goto("/this-route-does-not-exist");
     await page.waitForLoadState("networkidle");
 
@@ -21,6 +24,7 @@ test.describe("Error States - Visual Snapshots", () => {
   test("should match 404 not found page snapshot (dark mode)", async ({
     page,
   }) => {
+    await setTheme(page, "dark");
     await page.goto("/this-route-does-not-exist");
     await page.waitForLoadState("networkidle");
     await page.emulateMedia({ colorScheme: "dark" });
@@ -37,6 +41,7 @@ test.describe("Error States - Visual Snapshots", () => {
   test("should match route loader error page snapshot (light mode)", async ({
     page,
   }) => {
+    await setTheme(page, "light");
     await page.goto("/test-error");
     await page.waitForLoadState("networkidle");
 
@@ -55,6 +60,7 @@ test.describe("Error States - Visual Snapshots", () => {
   test("should match route loader error page snapshot (dark mode)", async ({
     page,
   }) => {
+    await setTheme(page, "dark");
     await page.goto("/test-error");
     await page.waitForLoadState("networkidle");
     await page.emulateMedia({ colorScheme: "dark" });
@@ -73,6 +79,7 @@ test.describe("Error States - Visual Snapshots", () => {
 
   test("should match error page snapshot on mobile", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 667 });
+    await setTheme(page, "light");
     await page.goto("/test-error");
     await page.waitForLoadState("networkidle");
 
@@ -85,6 +92,7 @@ test.describe("Error States - Visual Snapshots", () => {
   });
 
   test("error page should have working reset button", async ({ page }) => {
+    await setTheme(page, "light");
     await page.goto("/test-error");
     await page.waitForLoadState("networkidle");
 

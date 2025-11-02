@@ -15,7 +15,7 @@
 
 ### Primary Colors
 - **Deep Forest Green** - `#1a2f1a` (backgrounds, heavy elements)
-- **Bark Brown** - `#3d2817` (accents, borders)
+- **Shadow Evergreen** - `#284334` (accents, borders)
 - **Moss Green** - `#4a5d4a` (secondary elements)
 - **Stone Gray** - `#6b7280` (neutral elements)
 
@@ -56,7 +56,7 @@
 ### Borders & Dividers
 - **Weight**: 2px minimum, 4px for structural elements
 - **Style**: Solid only (no dashed/dotted)
-- **Color**: Bark Brown (`#3d2817`) or Stone Gray (`#6b7280`)
+- **Color**: Shadow Evergreen (`#284334`) or Stone Gray (`#6b7280`)
 - **Corners**: 0px radius (no rounding)
 
 ### Shadows
