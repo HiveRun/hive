@@ -17,8 +17,8 @@ export function ModeToggle() {
       <DropdownMenuTrigger asChild>
         <Button
           className={cn(
-            "h-10 w-10 rounded-none border-2 border-[#3d2817] bg-[#1a2f1a] text-[#f4f7f2] shadow-[3px_3px_0_rgba(0,0,0,0.45)] transition-none",
-            "hover:bg-[#203820] hover:text-[#f4f7f2]",
+            "h-10 w-10 rounded-none border-2 border-border bg-card text-foreground shadow-[3px_3px_0_rgba(0,0,0,0.45)] transition-none",
+            "hover:bg-muted hover:text-foreground",
             "focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#5a7c5a] focus-visible:outline-offset-2"
           )}
           size="icon"
