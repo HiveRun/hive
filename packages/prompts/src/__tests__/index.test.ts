@@ -12,7 +12,7 @@ import {
   readPromptFragments,
   resolvePromptPaths,
   substituteVariables,
-} from "./index";
+} from "../index";
 
 let tempDir: string;
 

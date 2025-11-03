@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { createAgentOrchestrator } from "./index";
-import type { AgentOrchestrator, AgentSession } from "./types";
+import { createAgentOrchestrator } from "../index";
+import type { AgentOrchestrator, AgentSession } from "../types";
 
 let orchestrator: AgentOrchestrator;
 

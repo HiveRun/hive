@@ -7,7 +7,7 @@ import {
   serviceSchema,
   syntheticConfigSchema,
   templateSchema,
-} from "./schema";
+} from "../schema";
 
 describe("portRequestSchema", () => {
   it("validates a basic port request", () => {

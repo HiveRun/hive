@@ -6,8 +6,11 @@ import { join } from "node:path";
 import type { SyntheticConfig } from "@synthetic/config";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import { type DbInstance, schema } from "../db";
-import { provisionConstruct, startConstructAgent } from "./provisioner";
+import { type DbInstance, schema } from "../../db";
+import {
+  provisionConstruct,
+  startConstructAgent,
+} from "../../services/provisioner";
 
 let db: DbInstance;
 let tempDir: string;

@@ -1,6 +1,6 @@
 import type { PortRequest } from "@synthetic/config";
 import { describe, expect, it } from "vitest";
-import { allocatePorts, createPortEnv } from "./port-allocator";
+import { allocatePorts, createPortEnv } from "../../services/port-allocator";
 
 describe("allocatePorts", () => {
   it("allocates ports for requests", async () => {
