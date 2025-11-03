@@ -38,7 +38,7 @@ export type ProvisionedConstruct = {
  * Provision a new construct from a template
  */
 export async function provisionConstruct(
-  db: BetterSQLite3Database<typeof schema>,
+  db: BetterSQLite3Database,
   config: SyntheticConfig,
   input: ProvisionConstructConfig
 ): Promise<ProvisionedConstruct> {
@@ -145,7 +145,7 @@ export async function provisionConstruct(
  * Start an agent session for a construct
  */
 export async function startConstructAgent(
-  db: BetterSQLite3Database<typeof schema>,
+  db: BetterSQLite3Database,
   constructId: string,
   provider: "anthropic" | "openai" = "anthropic"
 ) {

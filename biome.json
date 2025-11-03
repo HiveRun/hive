@@ -72,6 +72,9 @@
             "noShadow": "off"
           }
         }
+      },
+      "javascript": {
+        "globals": ["Bun"]
       }
     }
   ]

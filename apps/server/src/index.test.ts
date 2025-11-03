@@ -17,7 +17,7 @@ describe("Server", () => {
     const app = createTestApp();
 
     const res = await app.handle(new Request("http://localhost/"));
-    const response = await res.text();
+    const response = await (res as Response).text();
 
     expect(response).toBe("OK");
   });
@@ -35,6 +35,6 @@ describe("Server", () => {
     );
 
     const CORS_PREFLIGHT_STATUS = 204;
-    expect(res.status).toBe(CORS_PREFLIGHT_STATUS);
+    expect((res as Response).status).toBe(CORS_PREFLIGHT_STATUS);
   });
 });

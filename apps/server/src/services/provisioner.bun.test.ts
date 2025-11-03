@@ -9,11 +9,6 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import { type DbInstance, schema } from "../db";
 import { provisionConstruct, startConstructAgent } from "./provisioner";
 
-// Declare Bun globals for Biome
-declare global {
-  const Bun: typeof import("bun");
-}
-
 let db: DbInstance;
 let tempDir: string;
 let workspaceDir: string;
