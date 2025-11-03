@@ -60,6 +60,19 @@
           }
         }
       }
+    },
+    {
+      "includes": ["apps/server/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noMagicNumbers": "off"
+          },
+          "nursery": {
+            "noShadow": "off"
+          }
+        }
+      }
     }
   ]
 }

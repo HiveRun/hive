@@ -5,5 +5,10 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/*.bun.test.ts", // Exclude Bun-specific tests
+    ],
   },
 });

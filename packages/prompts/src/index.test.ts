@@ -268,6 +268,7 @@ describe("buildPromptBundle", () => {
 
 describe("substituteVariables", () => {
   it("substitutes variables in content", () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: testing variable substitution
     const content = "Hello ${name}, your ID is ${id}";
     const variables = { name: "Alice", id: "123" };
 
@@ -277,15 +278,18 @@ describe("substituteVariables", () => {
   });
 
   it("handles missing variables gracefully", () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: testing variable substitution
     const content = "Hello ${name}";
     const variables = {};
 
     const result = substituteVariables(content, variables);
 
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: testing variable substitution
     expect(result).toBe("Hello ${name}");
   });
 
   it("handles multiple occurrences", () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: testing variable substitution
     const content = "${var} and ${var} again";
     const variables = { var: "test" };
 
@@ -298,6 +302,7 @@ describe("substituteVariables", () => {
 describe("injectConstructContext", () => {
   it("injects basic construct context", () => {
     const bundle = {
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: testing variable substitution
       content: "Construct: ${constructId}\nWorkspace: ${workspaceName}",
       fragments: [],
       tokenEstimate: 0,
@@ -345,6 +350,7 @@ describe("injectConstructContext", () => {
 
   it("handles environment variables", () => {
     const bundle = {
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: testing variable substitution
       content: "API URL: ${env.API_URL}",
       fragments: [],
       tokenEstimate: 0,

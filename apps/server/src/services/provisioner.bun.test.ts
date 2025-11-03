@@ -1,13 +1,20 @@
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SyntheticConfig } from "@synthetic/config";
-import { createDb, type schema } from "@synthetic/db";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { type DbInstance, schema } from "../db";
 import { provisionConstruct, startConstructAgent } from "./provisioner";
 
-let db: BetterSQLite3Database<typeof schema>;
+// Declare Bun globals for Biome
+declare global {
+  const Bun: typeof import("bun");
+}
+
+let db: DbInstance;
 let tempDir: string;
 let workspaceDir: string;
 
@@ -17,10 +24,13 @@ beforeEach(async () => {
   await mkdir(workspaceDir, { recursive: true });
 
   const dbPath = join(tempDir, "test.db");
-  db = createDb({ path: dbPath });
+  const sqlite = new Database(dbPath);
+  sqlite.exec("PRAGMA foreign_keys = ON");
+  db = drizzle(sqlite, { schema }) as unknown as DbInstance;
 
-  // Create tables
-  db.run(`
+  // Create tables using Drizzle's sql
+  await db.run(
+    sql.raw(`
     CREATE TABLE IF NOT EXISTS constructs (
       id TEXT PRIMARY KEY,
       template_id TEXT NOT NULL,
@@ -35,9 +45,11 @@ beforeEach(async () => {
       completed_at INTEGER,
       metadata TEXT
     )
-  `);
+  `)
+  );
 
-  db.run(`
+  await db.run(
+    sql.raw(`
     CREATE TABLE IF NOT EXISTS prompt_bundles (
       id TEXT PRIMARY KEY,
       construct_id TEXT NOT NULL,
@@ -47,9 +59,11 @@ beforeEach(async () => {
       metadata TEXT,
       FOREIGN KEY (construct_id) REFERENCES constructs(id) ON DELETE CASCADE
     )
-  `);
+  `)
+  );
 
-  db.run(`
+  await db.run(
+    sql.raw(`
     CREATE TABLE IF NOT EXISTS agent_sessions (
       id TEXT PRIMARY KEY,
       construct_id TEXT NOT NULL,
@@ -63,7 +77,8 @@ beforeEach(async () => {
       metadata TEXT,
       FOREIGN KEY (construct_id) REFERENCES constructs(id) ON DELETE CASCADE
     )
-  `);
+  `)
+  );
 });
 
 afterEach(async () => {
@@ -71,7 +86,7 @@ afterEach(async () => {
 });
 
 describe("provisionConstruct", () => {
-  it("provisions a basic construct", async () => {
+  test("provisions a basic construct", async () => {
     // Create a test prompt file
     const promptsDir = join(workspaceDir, "prompts");
     await mkdir(promptsDir, { recursive: true });
@@ -107,7 +122,7 @@ describe("provisionConstruct", () => {
     expect(result.template.id).toBe("test-template");
   });
 
-  it("allocates ports for services", async () => {
+  test("allocates ports for services", async () => {
     const promptsDir = join(workspaceDir, "prompts");
     await mkdir(promptsDir, { recursive: true });
     await Bun.write(join(promptsDir, "base.md"), "# Base");
@@ -120,6 +135,7 @@ describe("provisionConstruct", () => {
           id: "test-template",
           label: "Test Template",
           summary: "Test",
+          type: "implementation",
           services: [
             {
               type: "process",
@@ -141,10 +157,10 @@ describe("provisionConstruct", () => {
 
     expect(result.ports).toBeDefined();
     expect(result.ports.http).toBeDefined();
-    expect(result.env.PORT).toBe(result.ports.http.toString());
+    expect(result.env.PORT).toBe(result.ports.http?.toString());
   });
 
-  it("throws error for non-existent template", async () => {
+  test("throws error for non-existent template", async () => {
     const config: SyntheticConfig = {
       opencode: { workspaceId: "test" },
       promptSources: [],
@@ -162,7 +178,7 @@ describe("provisionConstruct", () => {
 });
 
 describe("startConstructAgent", () => {
-  it("starts an agent session for a construct", async () => {
+  test("starts an agent session for a construct", async () => {
     const promptsDir = join(workspaceDir, "prompts");
     await mkdir(promptsDir, { recursive: true });
     await Bun.write(join(promptsDir, "base.md"), "# Test");
@@ -175,6 +191,7 @@ describe("startConstructAgent", () => {
           id: "test-template",
           label: "Test",
           summary: "Test",
+          type: "planning",
         },
       ],
     };
@@ -196,7 +213,7 @@ describe("startConstructAgent", () => {
     expect(session.constructId).toBe(provisioned.constructId);
   });
 
-  it("throws error for non-existent construct", async () => {
+  test("throws error for non-existent construct", async () => {
     await expect(startConstructAgent(db, "non-existent")).rejects.toThrow(
       "Construct not found"
     );

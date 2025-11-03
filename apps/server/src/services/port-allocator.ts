@@ -1,5 +1,13 @@
 import type { PortRequest } from "@synthetic/config";
 
+declare const Bun: {
+  listen: (config: {
+    hostname: string;
+    port: number;
+    socket: Record<string, () => void>;
+  }) => { stop: () => void };
+};
+
 /**
  * Port allocation result
  */
@@ -16,10 +24,10 @@ export type AllocatedPort = {
  * to start if the port is actually in use, at which point we can retry
  * with a different port.
  */
-async function isPortAvailable(port: number): Promise<boolean> {
+function isPortAvailable(port: number): Promise<boolean> {
   // Skip check in test environment where Bun runtime might not be fully available
   if (typeof Bun === "undefined" || !Bun.listen) {
-    return true;
+    return Promise.resolve(true);
   }
 
   try {
@@ -27,25 +35,30 @@ async function isPortAvailable(port: number): Promise<boolean> {
       hostname: "localhost",
       port,
       socket: {
+        // biome-ignore lint/suspicious/noEmptyBlockStatements: required by Bun.listen interface
         data() {},
+        // biome-ignore lint/suspicious/noEmptyBlockStatements: required by Bun.listen interface
         open() {},
+        // biome-ignore lint/suspicious/noEmptyBlockStatements: required by Bun.listen interface
         close() {},
+        // biome-ignore lint/suspicious/noEmptyBlockStatements: required by Bun.listen interface
         drain() {},
+        // biome-ignore lint/suspicious/noEmptyBlockStatements: required by Bun.listen interface
         error() {},
       },
     });
 
     server.stop();
-    return true;
+    return Promise.resolve(true);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     if (
       errorMessage.includes("EADDRINUSE") ||
       errorMessage.includes("address already in use")
     ) {
-      return false;
+      return Promise.resolve(false);
     }
-    return false;
+    return Promise.resolve(false);
   }
 }
 

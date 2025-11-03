@@ -2,14 +2,15 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createAgentOrchestrator } from "@synthetic/agent";
 import type { SyntheticConfig, Template } from "@synthetic/config";
+import { buildPromptBundle, injectConstructContext } from "@synthetic/prompts";
+import { desc, eq } from "drizzle-orm";
 import {
+  type BetterSQLite3Database,
   createConstruct,
   generateId,
   schema,
   updateConstruct,
-} from "@synthetic/db";
-import { buildPromptBundle, injectConstructContext } from "@synthetic/prompts";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+} from "../db";
 import { allocatePorts, createPortEnv } from "./port-allocator";
 
 /**
@@ -37,7 +38,7 @@ export type ProvisionedConstruct = {
  * Provision a new construct from a template
  */
 export async function provisionConstruct(
-  db: BetterSQLite3Database<typeof schema.schema>,
+  db: BetterSQLite3Database<typeof schema>,
   config: SyntheticConfig,
   input: ProvisionConstructConfig
 ): Promise<ProvisionedConstruct> {
@@ -49,6 +50,7 @@ export async function provisionConstruct(
 
   // Create construct record
   const construct = await createConstruct(db, {
+    id: generateId(),
     templateId: input.templateId,
     name: input.name,
     description: input.description,
@@ -56,16 +58,18 @@ export async function provisionConstruct(
     workspacePath: input.workspacePath,
   });
 
+  if (!construct) {
+    throw new Error("Failed to create construct");
+  }
+
+  const constructId = construct.id;
+
   try {
     // Update status to provisioning
-    await updateConstruct(db, construct.id, { status: "provisioning" });
+    await updateConstruct(db, constructId, { status: "provisioning" });
 
     // Create construct directory
-    const constructPath = join(
-      input.workspacePath,
-      ".constructs",
-      construct.id
-    );
+    const constructPath = join(input.workspacePath, ".constructs", constructId);
     await mkdir(constructPath, { recursive: true });
 
     // Update with construct path
@@ -99,25 +103,27 @@ export async function provisionConstruct(
 
     // Inject construct context
     const prompt = injectConstructContext(promptBundle, {
-      constructId: construct.id,
+      constructId,
       workspaceName: input.workspacePath.split("/").pop() || "unknown",
       constructDir: constructPath,
       env,
     });
 
     // Store prompt bundle in database
-    await db.insert(schema.schema.promptBundles).values({
+    const now = Math.floor(Date.now() / 1000);
+    await db.insert(schema.promptBundles).values({
       id: generateId(),
-      constructId: construct.id,
+      constructId,
       content: prompt,
       tokenEstimate: promptBundle.tokenEstimate,
+      createdAt: now,
     });
 
     // Update status to active
-    await updateConstruct(db, construct.id, { status: "draft" });
+    await updateConstruct(db, constructId, { status: "draft" });
 
     return {
-      constructId: construct.id,
+      constructId,
       constructPath,
       template,
       ports: portMap,
@@ -125,11 +131,11 @@ export async function provisionConstruct(
     };
   } catch (error) {
     // Mark as error if provisioning fails
-    await updateConstruct(db, construct.id, {
+    await updateConstruct(db, constructId, {
       status: "error",
       metadata: {
         error: error instanceof Error ? error.message : String(error),
-      },
+      } as Record<string, unknown>,
     });
     throw error;
   }
@@ -139,25 +145,31 @@ export async function provisionConstruct(
  * Start an agent session for a construct
  */
 export async function startConstructAgent(
-  db: BetterSQLite3Database<typeof schema.schema>,
+  db: BetterSQLite3Database<typeof schema>,
   constructId: string,
   provider: "anthropic" | "openai" = "anthropic"
 ) {
   // Get construct
-  const construct = await db.query.constructs.findFirst({
-    where: (constructs, { eq }) => eq(constructs.id, constructId),
-  });
+  const constructs = await db
+    .select()
+    .from(schema.constructs)
+    .where(eq(schema.constructs.id, constructId))
+    .limit(1);
 
+  const construct = constructs[0];
   if (!construct) {
     throw new Error(`Construct not found: ${constructId}`);
   }
 
   // Get prompt bundle
-  const promptBundle = await db.query.promptBundles.findFirst({
-    where: (bundles, { eq }) => eq(bundles.constructId, constructId),
-    orderBy: (bundles, { desc }) => [desc(bundles.createdAt)],
-  });
+  const promptBundles = await db
+    .select()
+    .from(schema.promptBundles)
+    .where(eq(schema.promptBundles.constructId, constructId))
+    .orderBy(desc(schema.promptBundles.createdAt))
+    .limit(1);
 
+  const promptBundle = promptBundles[0];
   if (!promptBundle) {
     throw new Error(`No prompt bundle found for construct: ${constructId}`);
   }
@@ -172,12 +184,15 @@ export async function startConstructAgent(
   });
 
   // Store agent session in database
-  await db.insert(schema.schema.agentSessions).values({
+  const now = Math.floor(Date.now() / 1000);
+  await db.insert(schema.agentSessions).values({
     id: session.id,
     constructId,
     sessionId: session.id,
     provider,
     status: "starting",
+    createdAt: now,
+    updatedAt: now,
   });
 
   // Update construct status

@@ -17,8 +17,8 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
+    "@opencode-ai/sdk": "^1.0.15",
     "@synthetic/config": "workspace:*",
-    "@synthetic/db": "workspace:*",
     "@synthetic/prompts": "workspace:*",
     "zod": "catalog:"
   },

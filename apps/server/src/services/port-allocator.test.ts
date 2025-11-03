@@ -12,10 +12,10 @@ describe("allocatePorts", () => {
     const allocated = await allocatePorts(requests);
 
     expect(allocated).toHaveLength(2);
-    expect(allocated[0].name).toBe("api");
-    expect(allocated[0].port).toBeDefined();
-    expect(allocated[1].name).toBe("web");
-    expect(allocated[1].port).toBeDefined();
+    expect(allocated[0]?.name).toBe("api");
+    expect(allocated[0]?.port).toBeDefined();
+    expect(allocated[1]?.name).toBe("web");
+    expect(allocated[1]?.port).toBeDefined();
   });
 
   it("allocates different ports for each request", async () => {
@@ -39,8 +39,8 @@ describe("allocatePorts", () => {
 
     const allocated = await allocatePorts(requests);
 
-    expect(allocated[0].port).toBe(50_000);
-    expect(allocated[0].preferred).toBe(true);
+    expect(allocated[0]?.port).toBe(50_000);
+    expect(allocated[0]?.preferred).toBe(true);
   });
 });
 

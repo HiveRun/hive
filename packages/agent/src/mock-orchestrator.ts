@@ -13,6 +13,7 @@ class MockAgentSession implements AgentSession {
   public id: string;
   public constructId: string;
   public provider: AgentOrchestrator["createSession"] extends (
+    // biome-ignore lint/suspicious/noExplicitAny: type inference for provider from interface
     ...args: any[]
   ) => Promise<infer T>
     ? T extends AgentSession
@@ -53,7 +54,7 @@ class MockAgentSession implements AgentSession {
     }, 100);
   }
 
-  async sendMessage(content: string): Promise<void> {
+  sendMessage(content: string): Promise<void> {
     const userMessage: AgentMessage = {
       role: "user",
       content,
@@ -73,14 +74,18 @@ class MockAgentSession implements AgentSession {
       this.addMessage(response);
       this.setStatus("awaiting_input");
     }, 500);
+
+    // Return resolved promise to match interface
+    return Promise.resolve();
   }
 
-  async getMessages(): Promise<AgentMessage[]> {
-    return [...this.messages];
+  getMessages(): Promise<AgentMessage[]> {
+    return Promise.resolve([...this.messages]);
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
     this.setStatus("completed");
+    return Promise.resolve();
   }
 
   onStatusChange(callback: (status: AgentStatus) => void): () => void {
@@ -125,19 +130,21 @@ class MockAgentSession implements AgentSession {
 export class MockAgentOrchestrator implements AgentOrchestrator {
   private readonly sessions = new Map<string, MockAgentSession>();
 
-  async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+  createSession(config: AgentSessionConfig): Promise<AgentSession> {
     const session = new MockAgentSession(config);
     this.sessions.set(session.id, session);
-    return session;
+    return Promise.resolve(session);
   }
 
-  async getSession(sessionId: string): Promise<AgentSession | null> {
-    return this.sessions.get(sessionId) || null;
+  getSession(sessionId: string): Promise<AgentSession | null> {
+    return Promise.resolve(this.sessions.get(sessionId) || null);
   }
 
-  async listSessions(constructId: string): Promise<AgentSession[]> {
-    return Array.from(this.sessions.values()).filter(
-      (s) => s.constructId === constructId
+  listSessions(constructId: string): Promise<AgentSession[]> {
+    return Promise.resolve(
+      Array.from(this.sessions.values()).filter(
+        (s) => s.constructId === constructId
+      )
     );
   }
 

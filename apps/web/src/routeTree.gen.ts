@@ -10,17 +10,19 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TestErrorRouteImport } from './routes/test-error'
-import { Route as ExampleDashboardRouteImport } from './routes/example-dashboard'
+import { Route as ConstructsRouteImport } from './routes/constructs'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ConstructsNewRouteImport } from './routes/constructs.new'
+import { Route as ConstructsConstructIdRouteImport } from './routes/constructs.$constructId'
 
 const TestErrorRoute = TestErrorRouteImport.update({
   id: '/test-error',
   path: '/test-error',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ExampleDashboardRoute = ExampleDashboardRouteImport.update({
-  id: '/example-dashboard',
-  path: '/example-dashboard',
+const ConstructsRoute = ConstructsRouteImport.update({
+  id: '/constructs',
+  path: '/constructs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -28,34 +30,66 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConstructsNewRoute = ConstructsNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => ConstructsRoute,
+} as any)
+const ConstructsConstructIdRoute = ConstructsConstructIdRouteImport.update({
+  id: '/$constructId',
+  path: '/$constructId',
+  getParentRoute: () => ConstructsRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/example-dashboard': typeof ExampleDashboardRoute
+  '/constructs': typeof ConstructsRouteWithChildren
   '/test-error': typeof TestErrorRoute
+  '/constructs/$constructId': typeof ConstructsConstructIdRoute
+  '/constructs/new': typeof ConstructsNewRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/example-dashboard': typeof ExampleDashboardRoute
+  '/constructs': typeof ConstructsRouteWithChildren
   '/test-error': typeof TestErrorRoute
+  '/constructs/$constructId': typeof ConstructsConstructIdRoute
+  '/constructs/new': typeof ConstructsNewRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/example-dashboard': typeof ExampleDashboardRoute
+  '/constructs': typeof ConstructsRouteWithChildren
   '/test-error': typeof TestErrorRoute
+  '/constructs/$constructId': typeof ConstructsConstructIdRoute
+  '/constructs/new': typeof ConstructsNewRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/example-dashboard' | '/test-error'
+  fullPaths:
+    | '/'
+    | '/constructs'
+    | '/test-error'
+    | '/constructs/$constructId'
+    | '/constructs/new'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/example-dashboard' | '/test-error'
-  id: '__root__' | '/' | '/example-dashboard' | '/test-error'
+  to:
+    | '/'
+    | '/constructs'
+    | '/test-error'
+    | '/constructs/$constructId'
+    | '/constructs/new'
+  id:
+    | '__root__'
+    | '/'
+    | '/constructs'
+    | '/test-error'
+    | '/constructs/$constructId'
+    | '/constructs/new'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  ExampleDashboardRoute: typeof ExampleDashboardRoute
+  ConstructsRoute: typeof ConstructsRouteWithChildren
   TestErrorRoute: typeof TestErrorRoute
 }
 
@@ -68,11 +102,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TestErrorRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/example-dashboard': {
-      id: '/example-dashboard'
-      path: '/example-dashboard'
-      fullPath: '/example-dashboard'
-      preLoaderRoute: typeof ExampleDashboardRouteImport
+    '/constructs': {
+      id: '/constructs'
+      path: '/constructs'
+      fullPath: '/constructs'
+      preLoaderRoute: typeof ConstructsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -82,12 +116,40 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/constructs/new': {
+      id: '/constructs/new'
+      path: '/new'
+      fullPath: '/constructs/new'
+      preLoaderRoute: typeof ConstructsNewRouteImport
+      parentRoute: typeof ConstructsRoute
+    }
+    '/constructs/$constructId': {
+      id: '/constructs/$constructId'
+      path: '/$constructId'
+      fullPath: '/constructs/$constructId'
+      preLoaderRoute: typeof ConstructsConstructIdRouteImport
+      parentRoute: typeof ConstructsRoute
+    }
   }
 }
 
+interface ConstructsRouteChildren {
+  ConstructsConstructIdRoute: typeof ConstructsConstructIdRoute
+  ConstructsNewRoute: typeof ConstructsNewRoute
+}
+
+const ConstructsRouteChildren: ConstructsRouteChildren = {
+  ConstructsConstructIdRoute: ConstructsConstructIdRoute,
+  ConstructsNewRoute: ConstructsNewRoute,
+}
+
+const ConstructsRouteWithChildren = ConstructsRoute._addFileChildren(
+  ConstructsRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  ExampleDashboardRoute: ExampleDashboardRoute,
+  ConstructsRoute: ConstructsRouteWithChildren,
   TestErrorRoute: TestErrorRoute,
 }
 export const routeTree = rootRouteImport

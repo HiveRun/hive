@@ -9,7 +9,7 @@ test.describe("Sidebar Behaviour", () => {
     page,
   }) => {
     await page.setViewportSize(DESKTOP_VIEWPORT);
-    await page.goto("/example-dashboard");
+    await page.goto("/");
     await page.waitForLoadState("networkidle");
 
     const sidebarToggle = page.getByRole("button", {
@@ -24,9 +24,6 @@ test.describe("Sidebar Behaviour", () => {
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Toggle theme" })
-    ).toBeVisible();
-    await expect(
-      page.getByRole("link", { name: "Example Dashboard" })
     ).toBeVisible();
   });
 });
