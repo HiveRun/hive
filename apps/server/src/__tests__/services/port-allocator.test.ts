@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { allocatePorts, createPortEnv } from "../../services/port-allocator";
 
 describe("allocatePorts", () => {
-  it("allocates ports for requests", async () => {
+  it("allocates requested ports", async () => {
     const requests: PortRequest[] = [
       { name: "api", preferred: 50_000 },
       { name: "web", preferred: 50_001 },
@@ -18,7 +18,7 @@ describe("allocatePorts", () => {
     expect(allocated[1]?.port).toBeDefined();
   });
 
-  it("allocates different ports for each request", async () => {
+  it("allocates unique ports", async () => {
     const requests: PortRequest[] = [
       { name: "api" },
       { name: "web" },
@@ -26,33 +26,25 @@ describe("allocatePorts", () => {
     ];
 
     const allocated = await allocatePorts(requests);
-
-    // Verify we got the right number of allocations
     expect(allocated).toHaveLength(3);
 
-    // Extract all allocated ports
     const ports = allocated.map((a) => a.port);
 
-    // Verify all ports are valid numbers
     for (const port of ports) {
-      expect(port).toBeGreaterThan(1023); // Above privileged range
-      expect(port).toBeLessThan(65_536); // Below max port
+      expect(port).toBeGreaterThan(1023);
+      expect(port).toBeLessThan(65_536);
     }
 
-    // Verify all ports are unique
     const uniquePorts = new Set(ports);
     expect(uniquePorts.size).toBe(3);
 
-    // Verify each service got a port
     expect(allocated[0]?.port).toBeDefined();
     expect(allocated[1]?.port).toBeDefined();
     expect(allocated[2]?.port).toBeDefined();
   });
 
   it("uses preferred ports when available", async () => {
-    const requests: PortRequest[] = [
-      { name: "api", preferred: 50_000 }, // Unlikely to be in use
-    ];
+    const requests: PortRequest[] = [{ name: "api", preferred: 50_000 }];
 
     const allocated = await allocatePorts(requests);
 
@@ -62,7 +54,7 @@ describe("allocatePorts", () => {
 });
 
 describe("createPortEnv", () => {
-  it("creates environment variables from allocations", () => {
+  it("creates env vars from allocations", () => {
     const requests: PortRequest[] = [
       { name: "api", preferred: 3000, env: "API_PORT" },
       { name: "web", preferred: 3001, env: "WEB_PORT" },
@@ -81,10 +73,10 @@ describe("createPortEnv", () => {
     });
   });
 
-  it("skips ports without env names", () => {
+  it("skips ports without env vars", () => {
     const requests: PortRequest[] = [
       { name: "api", preferred: 3000, env: "API_PORT" },
-      { name: "web", preferred: 3001 }, // No env name
+      { name: "web", preferred: 3001 },
     ];
 
     const allocations = [

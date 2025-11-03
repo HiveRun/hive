@@ -25,10 +25,8 @@ export const agentsRoute = (db: DbInstance) =>
       return session;
     })
 
-    // Get messages for a session
     .get("/:sessionId/messages", (_params) => [])
 
-    // Send message to agent
     .post(
       "/:sessionId/messages",
       async ({ params, body, set }) => {
@@ -40,17 +38,6 @@ export const agentsRoute = (db: DbInstance) =>
           }
 
           await session.sendMessage(body.content);
-
-          // Store message in database
-          // TODO: Implement transcript messages table
-          // const messageId = `msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-          // await db.insert(schema.transcriptMessages).values({
-          //   id: messageId,
-          //   sessionId: params.sessionId,
-          //   role: "user",
-          //   content: body.content,
-          //   timestamp: new Date(),
-          // });
 
           return { success: true };
         } catch (err) {
@@ -68,7 +55,6 @@ export const agentsRoute = (db: DbInstance) =>
       }
     )
 
-    // Stop agent session
     .post("/:sessionId/stop", async ({ params, set }) => {
       try {
         const session = await orchestrator.getSession(params.sessionId);
@@ -79,7 +65,7 @@ export const agentsRoute = (db: DbInstance) =>
 
         await session.stop();
 
-        // Update session status in database
+        await db;
         await db
           .update(schema.agentSessions)
           .set({

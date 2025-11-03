@@ -59,7 +59,6 @@ function ConstructDetailPage() {
   });
   const typedMessages = messages as AgentMessage[];
 
-  // Services
   const servicesQuery = serviceQueries.byConstruct(constructId);
   const { data: services = [] } = useQuery(servicesQuery);
   const typedServices = services as ServiceStatus[];
@@ -98,7 +97,6 @@ function ConstructDetailPage() {
     },
   });
 
-  // Service mutations
   const startServiceMutation = useMutation({
     ...serviceMutations.start,
     onSuccess: () => {
@@ -264,7 +262,6 @@ function ConstructDetailPage() {
             </CardContent>
           </Card>
 
-          {/* Services Section */}
           {typedServices.length > 0 && (
             <Card>
               <CardHeader>

@@ -3,7 +3,6 @@ import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-// Tables
 export const constructs = sqliteTable("constructs", {
   id: text("id").primaryKey(),
   templateId: text("template_id").notNull(),
@@ -45,20 +44,20 @@ export const services = sqliteTable("services", {
   id: text("id").primaryKey(),
   constructId: text("construct_id").notNull(),
   serviceName: text("service_name").notNull(),
-  serviceType: text("service_type").notNull().default("process"), // "process" | "docker" | "compose"
-  status: text("status").notNull().default("stopped"), // "running" | "stopped" | "needs_resume" | "error"
-  pid: integer("pid"), // Process ID for process services
-  containerId: text("container_id"), // Container ID for Docker services
-  command: text("command"), // Command used to start the service
-  cwd: text("cwd"), // Working directory
-  env: text("env", { mode: "json" }), // Environment variables
-  ports: text("ports", { mode: "json" }), // Port mappings
-  volumes: text("volumes", { mode: "json" }), // Volume mappings
-  healthStatus: text("health_status").default("unknown"), // "healthy" | "unhealthy" | "unknown"
+  serviceType: text("service_type").notNull().default("process"),
+  status: text("status").notNull().default("stopped"),
+  pid: integer("pid"),
+  containerId: text("container_id"),
+  command: text("command"),
+  cwd: text("cwd"),
+  env: text("env", { mode: "json" }),
+  ports: text("ports", { mode: "json" }),
+  volumes: text("volumes", { mode: "json" }),
+  healthStatus: text("health_status").default("unknown"),
   lastHealthCheck: integer("last_health_check"),
-  cpuUsage: text("cpu_usage"), // CPU usage as string percentage
-  memoryUsage: text("memory_usage"), // Memory usage as string
-  diskUsage: text("disk_usage"), // Disk usage as string
+  cpuUsage: text("cpu_usage"),
+  memoryUsage: text("memory_usage"),
+  diskUsage: text("disk_usage"),
   errorMessage: text("error_message"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
@@ -67,7 +66,6 @@ export const services = sqliteTable("services", {
   metadata: text("metadata", { mode: "json" }),
 });
 
-// Schema
 export const schema = {
   constructs,
   promptBundles,
@@ -79,14 +77,10 @@ const client = createClient({
   url: process.env.DATABASE_URL || "",
 });
 
-// Types
 export type DbInstance = typeof db;
 export type BetterSQLite3Database = typeof db;
 
-// Initialize database with schema
 export const db = drizzle({ client, schema });
-
-// Database operations
 export async function createConstruct(
   db: DbInstance,
   construct: {
@@ -149,7 +143,6 @@ export async function deleteConstruct(db: DbInstance, id: string) {
   await db.delete(schema.constructs).where(eq(schema.constructs.id, id));
 }
 
-// Service operations
 export async function createService(
   db: DbInstance,
   service: {

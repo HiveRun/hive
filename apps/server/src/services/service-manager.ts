@@ -6,14 +6,8 @@ import { type BetterSQLite3Database, schema } from "../db";
 const execAsync = promisify(exec);
 const WHITESPACE_REGEX = /\s+/;
 
-/**
- * Database service record type
- */
 type ServiceRecord = typeof schema.services.$inferSelect;
 
-/**
- * Service configuration for starting a process
- */
 export type ServiceConfig = {
   id: string;
   constructId: string;
@@ -26,9 +20,6 @@ export type ServiceConfig = {
   volumes?: Record<string, string>;
 };
 
-/**
- * Service status information
- */
 export type ServiceStatus = {
   id: string;
   serviceName: string;
@@ -51,17 +42,10 @@ export type ServiceStatus = {
   stoppedAt?: number;
 };
 
-/**
- * Running process tracker
- */
 const runningProcesses = new Map<string, ChildProcess>();
 
-/**
- * Check if a process is running by PID
- */
 export async function isProcessRunning(pid: number): Promise<boolean> {
   try {
-    // Use kill -0 to check if process exists without terminating it
     await execAsync(`kill -0 ${pid}`);
     return true;
   } catch {

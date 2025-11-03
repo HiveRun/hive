@@ -13,10 +13,8 @@ let db: Awaited<ReturnType<typeof createTestDb>>;
 let workspaceDir: string;
 
 beforeEach(async () => {
-  // Create test database with proper schema
   db = await createTestDb();
 
-  // Create workspace directory
   const tempDir = join(tmpdir(), `constructs-test-${Date.now()}`);
   workspaceDir = join(tempDir, "workspace");
   await mkdir(workspaceDir, { recursive: true });
@@ -33,8 +31,7 @@ afterEach(async () => {
 });
 
 describe("provisionConstruct", () => {
-  test("provisions a basic construct", async () => {
-    // Create a test prompt file
+  test("creates construct with template", async () => {
     const promptsDir = join(workspaceDir, "prompts");
     await mkdir(promptsDir, { recursive: true });
     await Bun.write(
@@ -43,9 +40,7 @@ describe("provisionConstruct", () => {
     );
 
     const config: SyntheticConfig = {
-      opencode: {
-        workspaceId: "test-workspace",
-      },
+      opencode: { workspaceId: "test-workspace" },
       promptSources: ["prompts/*.md"],
       templates: [
         {
@@ -69,7 +64,7 @@ describe("provisionConstruct", () => {
     expect(result.template.id).toBe("test-template");
   });
 
-  test("allocates ports for services", async () => {
+  test("allocates service ports", async () => {
     const promptsDir = join(workspaceDir, "prompts");
     await mkdir(promptsDir, { recursive: true });
     await Bun.write(join(promptsDir, "base.md"), "# Base");
@@ -107,7 +102,7 @@ describe("provisionConstruct", () => {
     expect(result.env.PORT).toBe(result.ports.http?.toString());
   });
 
-  test("throws error for non-existent template", async () => {
+  test("rejects invalid template", async () => {
     const config: SyntheticConfig = {
       opencode: { workspaceId: "test" },
       promptSources: [],
@@ -125,7 +120,7 @@ describe("provisionConstruct", () => {
 });
 
 describe("startConstructAgent", () => {
-  test("starts an agent session for a construct", async () => {
+  test("creates agent session", async () => {
     const promptsDir = join(workspaceDir, "prompts");
     await mkdir(promptsDir, { recursive: true });
     await Bun.write(join(promptsDir, "base.md"), "# Test");
@@ -160,7 +155,7 @@ describe("startConstructAgent", () => {
     expect(session.constructId).toBe(provisioned.constructId);
   });
 
-  test("throws error for non-existent construct", async () => {
+  test("rejects invalid construct", async () => {
     await expect(
       startConstructAgent(db as any, "non-existent")
     ).rejects.toThrow("Construct not found");
