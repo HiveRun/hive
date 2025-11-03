@@ -7,6 +7,7 @@ import { Elysia } from "elysia";
 import { createDb } from "./db";
 import { agentsRoute } from "./routes/agents";
 import { constructsRoute } from "./routes/constructs";
+import { servicesRoutes } from "./routes/services";
 import { templatesRoute } from "./routes/templates";
 
 const PORT = 3000;
@@ -97,6 +98,7 @@ const app = new Elysia()
   .use(constructsRoute(db, config, workspacePath))
   .use(templatesRoute(config))
   .use(agentsRoute(db))
+  .use(servicesRoutes)
   .listen(PORT);
 
 export type App = typeof app;

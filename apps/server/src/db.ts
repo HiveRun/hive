@@ -39,6 +39,31 @@ export const schema = {
     errorMessage: text("error_message"),
     metadata: text("metadata", { mode: "json" }),
   }),
+  services: sqliteTable("services", {
+    id: text("id").primaryKey(),
+    constructId: text("construct_id").notNull(),
+    serviceName: text("service_name").notNull(),
+    serviceType: text("service_type").notNull().default("process"), // "process" | "docker" | "compose"
+    status: text("status").notNull().default("stopped"), // "running" | "stopped" | "needs_resume" | "error"
+    pid: integer("pid"), // Process ID for process services
+    containerId: text("container_id"), // Container ID for Docker services
+    command: text("command"), // Command used to start the service
+    cwd: text("cwd"), // Working directory
+    env: text("env", { mode: "json" }), // Environment variables
+    ports: text("ports", { mode: "json" }), // Port mappings
+    volumes: text("volumes", { mode: "json" }), // Volume mappings
+    healthStatus: text("health_status").default("unknown"), // "healthy" | "unhealthy" | "unknown"
+    lastHealthCheck: integer("last_health_check"),
+    cpuUsage: text("cpu_usage"), // CPU usage as string percentage
+    memoryUsage: text("memory_usage"), // Memory usage as string
+    diskUsage: text("disk_usage"), // Disk usage as string
+    errorMessage: text("error_message"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    startedAt: integer("started_at"),
+    stoppedAt: integer("stopped_at"),
+    metadata: text("metadata", { mode: "json" }),
+  }),
 };
 
 const client = createClient({
@@ -113,6 +138,88 @@ export async function updateConstruct(
 
 export async function deleteConstruct(db: DbInstance, id: string) {
   await db.delete(schema.constructs).where(eq(schema.constructs.id, id));
+}
+
+// Service operations
+export async function createService(
+  db: DbInstance,
+  service: {
+    id: string;
+    constructId: string;
+    serviceName: string;
+    serviceType?: string;
+    command?: string;
+    cwd?: string;
+    env?: Record<string, string>;
+    ports?: Record<string, number>;
+    volumes?: Record<string, string>;
+  }
+) {
+  const now = Math.floor(Date.now() / 1000);
+  const [result] = await db
+    .insert(schema.services)
+    .values({
+      ...service,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+  return result;
+}
+
+export async function getService(db: DbInstance, id: string) {
+  return await db.query.services.findFirst({
+    where: eq(schema.services.id, id),
+  });
+}
+
+export async function getServicesByConstruct(
+  db: DbInstance,
+  constructId: string
+) {
+  return await db.query.services.findMany({
+    where: eq(schema.services.constructId, constructId),
+  });
+}
+
+export async function updateService(
+  db: DbInstance,
+  id: string,
+  updates: Partial<{
+    status: string;
+    pid: number;
+    containerId: string;
+    healthStatus: string;
+    lastHealthCheck: number;
+    cpuUsage: string;
+    memoryUsage: string;
+    diskUsage: string;
+    errorMessage: string;
+    startedAt: number;
+    stoppedAt: number;
+    metadata: Record<string, unknown>;
+  }>
+) {
+  const now = Math.floor(Date.now() / 1000);
+  const [result] = await db
+    .update(schema.services)
+    .set({ ...updates, updatedAt: now })
+    .where(eq(schema.services.id, id))
+    .returning();
+  return result;
+}
+
+export async function deleteService(db: DbInstance, id: string) {
+  await db.delete(schema.services).where(eq(schema.services.id, id));
+}
+
+export async function deleteServicesByConstruct(
+  db: DbInstance,
+  constructId: string
+) {
+  await db
+    .delete(schema.services)
+    .where(eq(schema.services.constructId, constructId));
 }
 
 export async function completeConstruct(db: DbInstance, id: string) {

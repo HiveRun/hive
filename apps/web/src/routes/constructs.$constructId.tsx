@@ -2,11 +2,12 @@
 
 import { useMutation, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Play, Send, Square } from "lucide-react";
+import { Play, RefreshCw, Send, Square } from "lucide-react";
 import type { FormEvent } from "react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
+import { ServiceStatusCard } from "@/components/service-status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,10 +19,13 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { rpc } from "@/lib/rpc";
 import { agentMutations, agentQueries } from "@/queries/agents";
 import { constructMutations, constructQueries } from "@/queries/constructs";
+import { serviceMutations, serviceQueries } from "@/queries/services";
 import type { AgentMessage, AgentSession } from "@/types/agent";
 import type { Construct, ConstructStatus } from "@/types/construct";
+import type { ServiceStatus } from "@/types/service";
 
 const MESSAGE_POLL_INTERVAL_MS = 1000;
 
@@ -54,6 +58,11 @@ function ConstructDetailPage() {
       sessionData?.status === "working" ? MESSAGE_POLL_INTERVAL_MS : false,
   });
   const typedMessages = messages as AgentMessage[];
+
+  // Services
+  const servicesQuery = serviceQueries.byConstruct(constructId);
+  const { data: services = [] } = useQuery(servicesQuery);
+  const typedServices = services as ServiceStatus[];
 
   const [messageValue, setMessageValue] = useState("");
   const [messageError, setMessageError] = useState<string | null>(null);
@@ -89,6 +98,47 @@ function ConstructDetailPage() {
     },
   });
 
+  // Service mutations
+  const startServiceMutation = useMutation({
+    ...serviceMutations.start,
+    onSuccess: () => {
+      toast.success("Service started");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const stopServiceMutation = useMutation({
+    ...serviceMutations.stop,
+    onSuccess: () => {
+      toast.success("Service stopped");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const restartServiceMutation = useMutation({
+    ...serviceMutations.restart,
+    onSuccess: () => {
+      toast.success("Service restarted");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const checkAllServicesMutation = useMutation({
+    ...serviceMutations.checkAll,
+    onSuccess: () => {
+      toast.success("Service status updated");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
   const handleSendMessage = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -108,6 +158,18 @@ function ConstructDetailPage() {
       sessionId: sessionData.sessionId,
       content: result.data.content,
     });
+  };
+
+  const handleCopyServiceCommand = async (serviceId: string) => {
+    try {
+      const { data: info } = await rpc.api.services({ serviceId }).info.get();
+      if (info?.data) {
+        await navigator.clipboard.writeText(info.data.command);
+        toast.success("Command copied to clipboard");
+      }
+    } catch (_error) {
+      toast.error("Failed to copy command");
+    }
   };
 
   return (
@@ -142,7 +204,7 @@ function ConstructDetailPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-1">
+        <div className="space-y-6 lg:col-span-1">
           <Card>
             <CardHeader>
               <CardTitle>Agent Control</CardTitle>
@@ -201,6 +263,41 @@ function ConstructDetailPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* Services Section */}
+          {typedServices.length > 0 && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Services</CardTitle>
+                    <CardDescription>Manage construct services</CardDescription>
+                  </div>
+                  <Button
+                    disabled={checkAllServicesMutation.isPending}
+                    onClick={() => checkAllServicesMutation.mutate()}
+                    size="sm"
+                    variant="outline"
+                  >
+                    <RefreshCw className="mr-1 h-3 w-3" />
+                    Refresh
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {typedServices.map((service) => (
+                  <ServiceStatusCard
+                    key={service.id}
+                    onCopyCommand={() => handleCopyServiceCommand(service.id)}
+                    onRestart={() => restartServiceMutation.mutate(service.id)}
+                    onStart={() => startServiceMutation.mutate(service.id)}
+                    onStop={() => stopServiceMutation.mutate(service.id)}
+                    service={service}
+                  />
+                ))}
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         <div className="lg:col-span-2">

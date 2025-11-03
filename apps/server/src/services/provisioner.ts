@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createAgentOrchestrator } from "@synthetic/agent";
-import type { SyntheticConfig, Template } from "@synthetic/config";
+import type { Service, SyntheticConfig, Template } from "@synthetic/config";
 import { buildPromptBundle, injectConstructContext } from "@synthetic/prompts";
 import { desc, eq } from "drizzle-orm";
 import {
@@ -12,6 +12,7 @@ import {
   updateConstruct,
 } from "../db";
 import { allocatePorts, createPortEnv } from "./port-allocator";
+import { startService } from "./service-manager";
 
 /**
  * Construct provisioning configuration
@@ -35,6 +36,140 @@ export type ProvisionedConstruct = {
 };
 
 /**
+ * Find and validate template
+ */
+function findTemplate(config: SyntheticConfig, templateId: string) {
+  const template = config.templates.find((t) => t.id === templateId);
+  if (!template) {
+    throw new Error(`Template not found: ${templateId}`);
+  }
+  return template;
+}
+
+/**
+ * Create construct directory and update record
+ */
+async function setupConstructDirectory(
+  db: BetterSQLite3Database,
+  construct: { id: string },
+  workspacePath: string
+): Promise<string> {
+  const constructPath = join(workspacePath, ".constructs", construct.id);
+  await mkdir(constructPath, { recursive: true });
+  await updateConstruct(db, construct.id, { constructPath });
+  return constructPath;
+}
+
+/**
+ * Allocate ports and create environment mapping
+ */
+async function setupPortsAndEnvironment(
+  template: Template
+): Promise<{ portMap: Record<string, number>; env: Record<string, string> }> {
+  const allPortRequests =
+    template.services?.flatMap((s: Service) => s.ports || []) || [];
+  const allocatedPorts = await allocatePorts(allPortRequests);
+
+  const portMap: Record<string, number> = {};
+  for (const allocation of allocatedPorts) {
+    portMap[allocation.name] = allocation.port;
+  }
+
+  const portEnv = createPortEnv(allocatedPorts, allPortRequests);
+  const env = {
+    ...template.env,
+    ...portEnv,
+  };
+
+  return { portMap, env };
+}
+
+/**
+ * Bundle creation parameters
+ */
+type BundleParams = {
+  db: BetterSQLite3Database;
+  config: SyntheticConfig;
+  input: ProvisionConstructConfig;
+  constructId: string;
+  constructPath: string;
+  env: Record<string, string>;
+};
+
+/**
+ * Create and store prompt bundle
+ */
+async function createAndStorePromptBundle(params: BundleParams): Promise<void> {
+  const { db, config, input, constructId, constructPath, env } = params;
+
+  const promptBundle = await buildPromptBundle(
+    config.promptSources,
+    input.workspacePath
+  );
+
+  const prompt = injectConstructContext(promptBundle, {
+    constructId,
+    workspaceName: input.workspacePath.split("/").pop() || "unknown",
+    constructDir: constructPath,
+    env,
+  });
+
+  const now = Math.floor(Date.now() / 1000);
+  await db.insert(schema.promptBundles).values({
+    id: generateId(),
+    constructId,
+    content: prompt,
+    tokenEstimate: promptBundle.tokenEstimate,
+    createdAt: now,
+  });
+}
+
+/**
+ * Service startup parameters
+ */
+type ServiceStartParams = {
+  db: BetterSQLite3Database;
+  template: Template;
+  constructId: string;
+  constructPath: string;
+  templateEnv: Record<string, string>;
+  portMap: Record<string, number>;
+};
+
+/**
+ * Start template services
+ */
+async function startTemplateServices(
+  params: ServiceStartParams
+): Promise<void> {
+  const { db, template, constructId, constructPath, templateEnv, portMap } =
+    params;
+
+  if (!template.services || template.services.length === 0) {
+    return;
+  }
+
+  for (const service of template.services) {
+    if (service.type === "process" && service.run) {
+      try {
+        await startService(db, {
+          id: generateId(),
+          constructId,
+          serviceName: service.name,
+          serviceType: "process",
+          command: service.run,
+          cwd: service.cwd || constructPath,
+          env: { ...templateEnv, ...service.env },
+          ports: portMap,
+        });
+      } catch {
+        // Continue starting other services even if one fails
+      }
+    }
+  }
+}
+
+/**
  * Provision a new construct from a template
  */
 export async function provisionConstruct(
@@ -42,13 +177,8 @@ export async function provisionConstruct(
   config: SyntheticConfig,
   input: ProvisionConstructConfig
 ): Promise<ProvisionedConstruct> {
-  // Find template
-  const template = config.templates.find((t) => t.id === input.templateId);
-  if (!template) {
-    throw new Error(`Template not found: ${input.templateId}`);
-  }
+  const template = findTemplate(config, input.templateId);
 
-  // Create construct record
   const construct = await createConstruct(db, {
     id: generateId(),
     templateId: input.templateId,
@@ -65,61 +195,32 @@ export async function provisionConstruct(
   const constructId = construct.id;
 
   try {
-    // Update status to provisioning
     await updateConstruct(db, constructId, { status: "provisioning" });
 
-    // Create construct directory
-    const constructPath = join(input.workspacePath, ".constructs", constructId);
-    await mkdir(constructPath, { recursive: true });
-
-    // Update with construct path
-    await updateConstruct(db, construct.id, { constructPath });
-
-    // Allocate ports for all services
-    const allPortRequests =
-      template.services?.flatMap((s) => s.ports || []) || [];
-    const allocatedPorts = await allocatePorts(allPortRequests);
-
-    // Create port mapping
-    const portMap: Record<string, number> = {};
-    for (const allocation of allocatedPorts) {
-      portMap[allocation.name] = allocation.port;
-    }
-
-    // Create environment variables from ports
-    const portEnv = createPortEnv(allocatedPorts, allPortRequests);
-
-    // Merge with template-level environment
-    const env = {
-      ...template.env,
-      ...portEnv,
-    };
-
-    // Build prompt bundle
-    const promptBundle = await buildPromptBundle(
-      config.promptSources,
+    const constructPath = await setupConstructDirectory(
+      db,
+      construct,
       input.workspacePath
     );
+    const { portMap, env } = await setupPortsAndEnvironment(template);
 
-    // Inject construct context
-    const prompt = injectConstructContext(promptBundle, {
+    await createAndStorePromptBundle({
+      db,
+      config,
+      input,
       constructId,
-      workspaceName: input.workspacePath.split("/").pop() || "unknown",
-      constructDir: constructPath,
+      constructPath,
       env,
     });
-
-    // Store prompt bundle in database
-    const now = Math.floor(Date.now() / 1000);
-    await db.insert(schema.promptBundles).values({
-      id: generateId(),
+    await startTemplateServices({
+      db,
+      template,
       constructId,
-      content: prompt,
-      tokenEstimate: promptBundle.tokenEstimate,
-      createdAt: now,
+      constructPath,
+      templateEnv: template.env || {},
+      portMap,
     });
 
-    // Update status to active
     await updateConstruct(db, constructId, { status: "draft" });
 
     return {
@@ -130,7 +231,6 @@ export async function provisionConstruct(
       env,
     };
   } catch (error) {
-    // Mark as error if provisioning fails
     await updateConstruct(db, constructId, {
       status: "error",
       metadata: {

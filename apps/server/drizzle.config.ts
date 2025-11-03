@@ -6,7 +6,7 @@ dotenv.config({
 });
 
 export default defineConfig({
-  schema: "../../packages/db/src/schema.ts",
+  schema: "./src/db.ts",
   out: "./drizzle",
   dialect: "sqlite",
   dbCredentials: {

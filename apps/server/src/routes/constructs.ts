@@ -20,41 +20,10 @@ export const constructsRoute = (
 ) =>
   new Elysia({ prefix: "/api/constructs" })
     // List all constructs
-    .get(
-      "/",
-      async () => {
-        const constructs = await listConstructs(db);
-        // TODO: Apply filtering based on query params
-        return constructs;
-      },
-      {
-        // TODO: Implement query parameter filtering
-        // query: t.Object({
-        //   status: t.Optional(
-        //     t.Union([
-        //       t.Literal("draft"),
-        //       t.Literal("provisioning"),
-        //       t.Literal("active"),
-        //       t.Literal("awaiting_input"),
-        //       t.Literal("reviewing"),
-        //       t.Literal("completed"),
-        //       t.Literal("parked"),
-        //       t.Literal("archived"),
-        //       t.Literal("error"),
-        //     ])
-        //   ),
-        //   type: t.Optional(
-        //     t.Union([
-        //       t.Literal("implementation"),
-        //       t.Literal("planning"),
-        //       t.Literal("manual"),
-        //     ])
-        //   ),
-        //   limit: t.Optional(t.String()),
-        //   offset: t.Optional(t.String()),
-        // }),
-      }
-    )
+    .get("/", async () => {
+      const constructs = await listConstructs(db);
+      return constructs;
+    })
 
     // Get a single construct
     .get("/:id", async ({ params, set }) => {
