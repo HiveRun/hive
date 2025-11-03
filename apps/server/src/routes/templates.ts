@@ -3,7 +3,6 @@ import { Elysia } from "elysia";
 
 export const templatesRoute = (config: SyntheticConfig) =>
   new Elysia({ prefix: "/api/templates" })
-    // List all available templates
     .get("/", () =>
       config.templates.map((template) => ({
         id: template.id,
@@ -14,7 +13,6 @@ export const templatesRoute = (config: SyntheticConfig) =>
       }))
     )
 
-    // Get a single template with full details
     .get("/:id", ({ params, set }) => {
       const template = config.templates.find((t) => t.id === params.id);
       if (!template) {

@@ -19,13 +19,11 @@ export const constructsRoute = (
   workspacePath: string
 ) =>
   new Elysia({ prefix: "/api/constructs" })
-    // List all constructs
     .get("/", async () => {
       const constructs = await listConstructs(db);
       return constructs;
     })
 
-    // Get a single construct
     .get("/:id", async ({ params, set }) => {
       const construct = await getConstruct(db, params.id);
       if (!construct) {
@@ -35,7 +33,6 @@ export const constructsRoute = (
       return construct;
     })
 
-    // Create a new construct (provision it)
     .post(
       "/",
       async ({ body, set }) => {
@@ -67,7 +64,6 @@ export const constructsRoute = (
       }
     )
 
-    // Update construct
     .patch(
       "/:id",
       async ({ params, body, set }) => {
@@ -107,7 +103,6 @@ export const constructsRoute = (
       }
     )
 
-    // Mark construct as complete
     .post("/:id/complete", async ({ params, set }) => {
       try {
         const completed = await completeConstruct(db, params.id);
@@ -125,13 +120,11 @@ export const constructsRoute = (
       }
     })
 
-    // Delete construct
     .delete("/:id", async ({ params }) => {
       await deleteConstruct(db, params.id);
       return { success: true };
     })
 
-    // Start agent session for a construct
     .post(
       "/:id/agent/start",
       async ({ params, body, set }) => {

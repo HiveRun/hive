@@ -84,10 +84,7 @@ export const servicesRoutes = new Elysia({ prefix: "/api/services" })
     async ({ params, set }) => {
       const db = createDb();
       try {
-        // Get service info to restart it
         const info = await getServiceInfo(db, params.serviceId);
-
-        // Get service details from database
         const service = await db.query.services.findFirst({
           where: eq(schema.services.id, params.serviceId),
         });

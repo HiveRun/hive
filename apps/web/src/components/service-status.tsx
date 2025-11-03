@@ -94,7 +94,6 @@ export function ServiceStatusCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Service Info */}
         <div className="text-muted-foreground text-sm">
           <div className="flex items-center space-x-2">
             <Terminal className="h-4 w-4" />
@@ -107,7 +106,6 @@ export function ServiceStatusCard({
           )}
         </div>
 
-        {/* Resource Usage */}
         {service.status === "running" && (
           <div className="grid grid-cols-2 gap-4 text-sm">
             {service.cpuUsage && (
@@ -125,7 +123,6 @@ export function ServiceStatusCard({
           </div>
         )}
 
-        {/* Ports */}
         {service.ports && Object.keys(service.ports).length > 0 && (
           <div className="text-sm">
             <div className="mb-1 font-medium">Ports:</div>
@@ -143,7 +140,6 @@ export function ServiceStatusCard({
           </div>
         )}
 
-        {/* Actions */}
         <div className="flex space-x-2 pt-2">
           {service.status === "running" ? (
             <>
@@ -190,7 +186,6 @@ export function ServiceStatusCard({
           )}
         </div>
 
-        {/* Error Message */}
         {service.errorMessage && (
           <div className="rounded bg-red-50 p-2 text-red-600 text-sm">
             <div className="font-medium">Error:</div>

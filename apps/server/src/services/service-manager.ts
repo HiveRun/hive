@@ -61,7 +61,6 @@ export async function getProcessUsage(pid: number): Promise<{
   memoryUsage: string;
 }> {
   try {
-    // Get CPU and memory usage from ps
     const { stdout } = await execAsync(
       `ps -p ${pid} -o %cpu,%mem --no-headers`
     );
@@ -78,16 +77,12 @@ export async function getProcessUsage(pid: number): Promise<{
   }
 }
 
-/**
- * Start a service process
- */
 export async function startService(
   db: BetterSQLite3Database,
   config: ServiceConfig
 ): Promise<void> {
   const { id, command, cwd, env = {}, ports = {}, volumes = {} } = config;
 
-  // Check if service is already running
   const existingService = await db.query.services.findFirst({
     where: eq(schema.services.id, id),
   });
@@ -99,15 +94,12 @@ export async function startService(
     }
   }
 
-  // Prepare environment variables
   const processEnv = { ...process.env, ...env };
 
-  // Add port environment variables
   for (const [name, port] of Object.entries(ports)) {
     processEnv[name] = port.toString();
   }
 
-  // Start the process
   const child = spawn(command, [], {
     shell: true,
     cwd: cwd || process.cwd(),
@@ -116,7 +108,6 @@ export async function startService(
     stdio: "ignore",
   });
 
-  // Don't wait for the child process
   child.unref();
 
   if (!child.pid) {
@@ -125,10 +116,8 @@ export async function startService(
     );
   }
 
-  // Store the process reference
   runningProcesses.set(id, child);
 
-  // Update database with service information
   const now = Math.floor(Date.now() / 1000);
   await db
     .insert(schema.services)
@@ -167,12 +156,11 @@ export async function startService(
       },
     });
 
-  // Set up process exit handler
-  child.on("exit", (code, _signal) => {
+  child.on("exit", async (code, _signal) => {
     runningProcesses.delete(id);
 
-    // Update database when process exits
-    db.update(schema.services)
+    await db
+      .update(schema.services)
       .set({
         status: "stopped",
         updatedAt: Math.floor(Date.now() / 1000),
@@ -186,9 +174,6 @@ export async function startService(
   });
 }
 
-/**
- * Stop a service process
- */
 export async function stopService(
   db: BetterSQLite3Database,
   serviceId: string
@@ -202,31 +187,24 @@ export async function stopService(
   }
 
   if (service.status !== "running" || !service.pid) {
-    // Service is already stopped
     return;
   }
 
   try {
-    // Try graceful shutdown first
     await execAsync(`kill -TERM ${service.pid}`);
 
-    // Wait a bit for graceful shutdown
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
-    // Check if process is still running
     const isRunning = await isProcessRunning(service.pid);
     if (isRunning) {
-      // Force kill if still running
       await execAsync(`kill -KILL ${service.pid}`);
     }
   } catch {
     // Process may not exist, ignore error
   }
 
-  // Remove from running processes
   runningProcesses.delete(serviceId);
 
-  // Update database
   const now = Math.floor(Date.now() / 1000);
   await db
     .update(schema.services)
@@ -238,9 +216,6 @@ export async function stopService(
     .where(eq(schema.services.id, serviceId));
 }
 
-/**
- * Restart a service
- */
 export async function restartService(
   db: BetterSQLite3Database,
   serviceId: string
@@ -275,9 +250,6 @@ export async function restartService(
   }
 }
 
-/**
- * Check process health and update status if needed
- */
 async function checkProcessHealth(
   db: BetterSQLite3Database,
   service: ServiceRecord,
@@ -320,9 +292,6 @@ async function checkProcessHealth(
   return { actualStatus, healthStatus, cpuUsage, memoryUsage };
 }
 
-/**
- * Build service status response
- */
 function buildServiceStatusResponse(
   service: ServiceRecord,
   healthInfo: {
@@ -362,9 +331,6 @@ function buildServiceStatusResponse(
   };
 }
 
-/**
- * Get service status with real-time information
- */
 export async function getServiceStatus(
   db: BetterSQLite3Database,
   serviceId: string
@@ -381,9 +347,6 @@ export async function getServiceStatus(
   return buildServiceStatusResponse(service, healthInfo);
 }
 
-/**
- * Get all services for a construct with real-time status
- */
 export async function getConstructServices(
   db: BetterSQLite3Database,
   constructId: string
@@ -404,10 +367,6 @@ export async function getConstructServices(
   return statuses;
 }
 
-/**
- * Check all services and update their status
- * This should be called periodically to maintain accurate service state
- */
 export async function checkAllServices(
   db: BetterSQLite3Database
 ): Promise<void> {
@@ -419,7 +378,6 @@ export async function checkAllServices(
       const now = Math.floor(Date.now() / 1000);
 
       if (isRunning) {
-        // Update health status and resource usage
         const usage = await getProcessUsage(service.pid);
         await db
           .update(schema.services)
@@ -432,7 +390,6 @@ export async function checkAllServices(
           })
           .where(eq(schema.services.id, service.id));
       } else {
-        // Process died, mark as needs_resume
         await db
           .update(schema.services)
           .set({
@@ -446,10 +403,6 @@ export async function checkAllServices(
   }
 }
 
-/**
- * Get the exact command and environment used to start a service
- * Useful for users who want to run the command manually
- */
 export async function getServiceInfo(
   db: BetterSQLite3Database,
   serviceId: string
