@@ -1,8 +1,5 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { createAgentOrchestrator } from "@synthetic/agent";
-import type { Service, SyntheticConfig, Template } from "@synthetic/config";
-import { buildPromptBundle, injectConstructContext } from "@synthetic/prompts";
 import { desc, eq } from "drizzle-orm";
 import {
   type BetterSQLite3Database,
@@ -11,6 +8,9 @@ import {
   schema,
   updateConstruct,
 } from "../db";
+import { createAgentOrchestrator } from "../lib/agent";
+import { buildPromptBundle, injectConstructContext } from "../lib/prompts";
+import type { Service, SyntheticConfig, Template } from "../lib/schema";
 import { allocatePorts, createPortEnv } from "./port-allocator";
 import { startService } from "./service-manager";
 

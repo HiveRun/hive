@@ -10,9 +10,9 @@ import type {
  * Mock agent session for testing and development
  */
 class MockAgentSession implements AgentSession {
-  public id: string;
-  public constructId: string;
-  public provider: AgentOrchestrator["createSession"] extends (
+  id: string;
+  constructId: string;
+  provider: AgentOrchestrator["createSession"] extends (
     // biome-ignore lint/suspicious/noExplicitAny: type inference for provider from interface
     ...args: any[]
   ) => Promise<infer T>
@@ -20,9 +20,9 @@ class MockAgentSession implements AgentSession {
       ? T["provider"]
       : never
     : never;
-  public status: AgentStatus = "starting";
-  public createdAt: Date;
-  public updatedAt: Date;
+  status: AgentStatus = "starting";
+  createdAt: Date;
+  updatedAt: Date;
 
   private readonly messages: AgentMessage[] = [];
   private readonly statusCallbacks: Array<(status: AgentStatus) => void> = [];

@@ -1,5 +1,5 @@
-import type { SyntheticConfig } from "@synthetic/config";
 import { Elysia } from "elysia";
+import type { SyntheticConfig } from "../lib/schema";
 
 export const templatesRoute = (config: SyntheticConfig) =>
   new Elysia({ prefix: "/api/templates" })

@@ -4,8 +4,7 @@
   "type": "module",
   "workspaces": {
     "packages": [
-      "apps/*",
-      "packages/*"
+      "apps/*"
     ],
     "catalog": {
       "dotenv": "^17.2.2",
@@ -38,10 +37,10 @@
     "dev:web": "turbo -F web dev",
     "dev:server": "turbo -F server dev",
     "db:local": "cd apps/server && bun db:local",
-    "db:push": "turbo -F @synthetic/server db:push",
-    "db:studio": "turbo -F @synthetic/server db:studio",
-    "db:generate": "turbo -F @synthetic/server db:generate",
-    "db:migrate": "turbo -F @synthetic/server db:migrate",
+    "db:push": "turbo -F server db:push",
+    "db:studio": "turbo -F server db:studio",
+    "db:generate": "turbo -F server db:generate",
+    "db:migrate": "turbo -F server db:migrate",
     "prepare": "husky"
   },
   "dependencies": {

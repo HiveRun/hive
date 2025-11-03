@@ -1,5 +1,5 @@
-import type { PortRequest } from "@synthetic/config";
 import { describe, expect, it } from "vitest";
+import type { PortRequest } from "../../lib/schema";
 import { allocatePorts, createPortEnv } from "../../services/port-allocator";
 
 describe("allocatePorts", () => {

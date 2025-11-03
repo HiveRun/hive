@@ -1,4 +1,4 @@
-import type { PortRequest } from "@synthetic/config";
+import type { PortRequest } from "../lib/schema";
 
 declare const Bun: {
   listen: (config: {

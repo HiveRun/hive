@@ -1,4 +1,7 @@
-import { defineSyntheticConfig } from "@synthetic/config";
+// For user config files, import from the published package
+// import { defineSyntheticConfig } from "@synthetic/config";
+// For development, you can import directly from server:
+import { defineSyntheticConfig } from "./apps/server/src/lib/config";
 
 /**
  * Example Synthetic workspace configuration.

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SyntheticConfig } from "@synthetic/config";
+import type { SyntheticConfig } from "../../lib/schema";
 import {
   provisionConstruct,
   startConstructAgent,

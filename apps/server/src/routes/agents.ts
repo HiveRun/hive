@@ -1,7 +1,7 @@
-import { createAgentOrchestrator } from "@synthetic/agent";
 import { desc, eq } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { type DbInstance, schema } from "../db";
+import { createAgentOrchestrator } from "../lib/agent";
 
 const orchestrator = createAgentOrchestrator();
 

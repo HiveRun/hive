@@ -1,4 +1,3 @@
-import type { SyntheticConfig } from "@synthetic/config";
 import { Elysia, t } from "elysia";
 import {
   completeConstruct,
@@ -8,6 +7,7 @@ import {
   listConstructs,
   updateConstruct,
 } from "../db";
+import type { SyntheticConfig } from "../lib/schema";
 import {
   provisionConstruct,
   startConstructAgent,

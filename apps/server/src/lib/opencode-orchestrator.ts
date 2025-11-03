@@ -11,9 +11,9 @@ import type {
  * OpenCode agent session implementation
  */
 class OpenCodeAgentSession implements AgentSession {
-  public id: string;
-  public constructId: string;
-  public provider: AgentOrchestrator["createSession"] extends (
+  id: string;
+  constructId: string;
+  provider: AgentOrchestrator["createSession"] extends (
     // biome-ignore lint/suspicious/noExplicitAny: type inference for provider from interface
     ...args: any[]
   ) => Promise<infer T>
@@ -21,9 +21,9 @@ class OpenCodeAgentSession implements AgentSession {
       ? T["provider"]
       : never
     : never;
-  public status: AgentStatus = "starting";
-  public createdAt: Date;
-  public updatedAt: Date;
+  status: AgentStatus = "starting";
+  createdAt: Date;
+  updatedAt: Date;
 
   private readonly client: OpencodeClient;
   private readonly statusCallbacks: Array<(status: AgentStatus) => void> = [];
