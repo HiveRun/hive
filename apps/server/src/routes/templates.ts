@@ -1,5 +1,6 @@
 import { Elysia } from "elysia";
 import type { SyntheticConfig } from "../lib/schema";
+import { templateIdParamSchema } from "../lib/zod-schemas";
 
 export const templatesRoute = (config: SyntheticConfig) =>
   new Elysia({ prefix: "/api/templates" })
@@ -13,11 +14,17 @@ export const templatesRoute = (config: SyntheticConfig) =>
       }))
     )
 
-    .get("/:id", ({ params, set }) => {
-      const template = config.templates.find((t) => t.id === params.id);
-      if (!template) {
-        set.status = 404;
-        return { error: "Template not found" };
+    .get(
+      "/:id",
+      ({ params, set }) => {
+        const template = config.templates.find((t) => t.id === params.id);
+        if (!template) {
+          set.status = 404;
+          return { error: "Template not found" };
+        }
+        return template;
+      },
+      {
+        params: templateIdParamSchema,
       }
-      return template;
-    });
+    );

@@ -1,6 +1,10 @@
 import { eq } from "drizzle-orm";
-import { Elysia, t } from "elysia";
+import { Elysia } from "elysia";
 import { createDb, schema } from "../db";
+import {
+  constructIdParamSchema,
+  serviceIdParamSchema,
+} from "../lib/zod-schemas";
 import {
   checkAllServices,
   getConstructServices,
@@ -27,9 +31,7 @@ export const servicesRoutes = new Elysia({ prefix: "/api/services" })
       }
     },
     {
-      params: t.Object({
-        constructId: t.String(),
-      }),
+      params: constructIdParamSchema,
     }
   )
 
@@ -52,9 +54,7 @@ export const servicesRoutes = new Elysia({ prefix: "/api/services" })
       }
     },
     {
-      params: t.Object({
-        serviceId: t.String(),
-      }),
+      params: serviceIdParamSchema,
     }
   )
 
@@ -73,9 +73,7 @@ export const servicesRoutes = new Elysia({ prefix: "/api/services" })
       }
     },
     {
-      params: t.Object({
-        serviceId: t.String(),
-      }),
+      params: serviceIdParamSchema,
     }
   )
 
@@ -117,9 +115,7 @@ export const servicesRoutes = new Elysia({ prefix: "/api/services" })
       }
     },
     {
-      params: t.Object({
-        serviceId: t.String(),
-      }),
+      params: serviceIdParamSchema,
     }
   )
 
@@ -139,9 +135,7 @@ export const servicesRoutes = new Elysia({ prefix: "/api/services" })
       }
     },
     {
-      params: t.Object({
-        serviceId: t.String(),
-      }),
+      params: serviceIdParamSchema,
     }
   )
 
@@ -161,9 +155,7 @@ export const servicesRoutes = new Elysia({ prefix: "/api/services" })
       }
     },
     {
-      params: t.Object({
-        serviceId: t.String(),
-      }),
+      params: serviceIdParamSchema,
     }
   )
 

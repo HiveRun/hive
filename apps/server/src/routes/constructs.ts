@@ -1,4 +1,5 @@
-import { Elysia, t } from "elysia";
+import { Elysia } from "elysia";
+import { z } from "zod";
 import {
   completeConstruct,
   type DbInstance,
@@ -8,6 +9,10 @@ import {
   updateConstruct,
 } from "../db";
 import type { SyntheticConfig } from "../lib/schema";
+import {
+  createConstructRequestSchema,
+  updateConstructSchema,
+} from "../lib/zod-schemas";
 import {
   provisionConstruct,
   startConstructAgent,
@@ -56,11 +61,7 @@ export const constructsRoute = (
         }
       },
       {
-        body: t.Object({
-          name: t.String(),
-          description: t.Optional(t.String()),
-          templateId: t.String(),
-        }),
+        body: createConstructRequestSchema,
       }
     )
 
@@ -83,23 +84,7 @@ export const constructsRoute = (
         }
       },
       {
-        body: t.Object({
-          name: t.Optional(t.String()),
-          description: t.Optional(t.Union([t.String(), t.Null()])),
-          status: t.Optional(
-            t.Union([
-              t.Literal("draft"),
-              t.Literal("provisioning"),
-              t.Literal("active"),
-              t.Literal("awaiting_input"),
-              t.Literal("reviewing"),
-              t.Literal("completed"),
-              t.Literal("parked"),
-              t.Literal("archived"),
-              t.Literal("error"),
-            ])
-          ),
-        }),
+        body: updateConstructSchema,
       }
     )
 
@@ -146,10 +131,8 @@ export const constructsRoute = (
         }
       },
       {
-        body: t.Object({
-          provider: t.Optional(
-            t.Union([t.Literal("anthropic"), t.Literal("openai")])
-          ),
+        body: z.object({
+          provider: z.enum(["anthropic", "openai"]).optional(),
         }),
       }
     );
