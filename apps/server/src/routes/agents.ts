@@ -26,10 +26,7 @@ export const agentsRoute = (db: DbInstance) =>
     })
 
     // Get messages for a session
-    .get("/:sessionId/messages", (_params) => {
-      // TODO: Implement message storage and retrieval
-      return [];
-    })
+    .get("/:sessionId/messages", (_params) => [])
 
     // Send message to agent
     .post(
