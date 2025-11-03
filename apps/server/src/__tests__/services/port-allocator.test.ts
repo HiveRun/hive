@@ -27,9 +27,26 @@ describe("allocatePorts", () => {
 
     const allocated = await allocatePorts(requests);
 
+    // Verify we got the right number of allocations
+    expect(allocated).toHaveLength(3);
+
+    // Extract all allocated ports
     const ports = allocated.map((a) => a.port);
+
+    // Verify all ports are valid numbers
+    for (const port of ports) {
+      expect(port).toBeGreaterThan(1023); // Above privileged range
+      expect(port).toBeLessThan(65_536); // Below max port
+    }
+
+    // Verify all ports are unique
     const uniquePorts = new Set(ports);
-    expect(uniquePorts.size).toBe(ports.length);
+    expect(uniquePorts.size).toBe(3);
+
+    // Verify each service got a port
+    expect(allocated[0]?.port).toBeDefined();
+    expect(allocated[1]?.port).toBeDefined();
+    expect(allocated[2]?.port).toBeDefined();
   });
 
   it("uses preferred ports when available", async () => {

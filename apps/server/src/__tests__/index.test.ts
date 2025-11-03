@@ -16,16 +16,16 @@ describe("Server", () => {
   it("should respond with OK on GET /", async () => {
     const app = createTestApp();
 
-    const res = await app.handle(new Request("http://localhost/"));
-    const response = await (res as Response).text();
+    const response = await app.handle(new Request("http://localhost/"));
 
-    expect(response).toBe("OK");
+    expect(response).toBeInstanceOf(Response);
+    expect(await response.text()).toBe("OK");
   });
 
   it("should handle CORS preflight requests", async () => {
     const app = createTestApp();
 
-    const res = await app.handle(
+    const response = await app.handle(
       new Request("http://localhost/", {
         method: "OPTIONS",
         headers: {
@@ -35,6 +35,7 @@ describe("Server", () => {
     );
 
     const CORS_PREFLIGHT_STATUS = 204;
-    expect((res as Response).status).toBe(CORS_PREFLIGHT_STATUS);
+    expect(response).toBeInstanceOf(Response);
+    expect(response.status).toBe(CORS_PREFLIGHT_STATUS);
   });
 });

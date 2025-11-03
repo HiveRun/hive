@@ -1,86 +1,35 @@
-import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SyntheticConfig } from "@synthetic/config";
-import { sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/bun-sqlite";
-import { type DbInstance, schema } from "../../db";
 import {
   provisionConstruct,
   startConstructAgent,
 } from "../../services/provisioner";
+import { cleanupTestDb, createTestDb } from "../utils/test-db";
 
-let db: DbInstance;
-let tempDir: string;
+let db: Awaited<ReturnType<typeof createTestDb>>;
 let workspaceDir: string;
 
 beforeEach(async () => {
-  tempDir = join(tmpdir(), `constructs-test-${Date.now()}`);
+  // Create test database with proper schema
+  db = await createTestDb();
+
+  // Create workspace directory
+  const tempDir = join(tmpdir(), `constructs-test-${Date.now()}`);
   workspaceDir = join(tempDir, "workspace");
   await mkdir(workspaceDir, { recursive: true });
-
-  const dbPath = join(tempDir, "test.db");
-  const sqlite = new Database(dbPath);
-  sqlite.exec("PRAGMA foreign_keys = ON");
-  db = drizzle(sqlite, { schema }) as unknown as DbInstance;
-
-  // Create tables using Drizzle's sql
-  await db.run(
-    sql.raw(`
-    CREATE TABLE IF NOT EXISTS constructs (
-      id TEXT PRIMARY KEY,
-      template_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      description TEXT,
-      type TEXT NOT NULL DEFAULT 'implementation',
-      status TEXT NOT NULL DEFAULT 'draft',
-      workspace_path TEXT,
-      construct_path TEXT,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      completed_at INTEGER,
-      metadata TEXT
-    )
-  `)
-  );
-
-  await db.run(
-    sql.raw(`
-    CREATE TABLE IF NOT EXISTS prompt_bundles (
-      id TEXT PRIMARY KEY,
-      construct_id TEXT NOT NULL,
-      content TEXT NOT NULL,
-      token_estimate INTEGER NOT NULL,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      metadata TEXT,
-      FOREIGN KEY (construct_id) REFERENCES constructs(id) ON DELETE CASCADE
-    )
-  `)
-  );
-
-  await db.run(
-    sql.raw(`
-    CREATE TABLE IF NOT EXISTS agent_sessions (
-      id TEXT PRIMARY KEY,
-      construct_id TEXT NOT NULL,
-      session_id TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'starting',
-      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      completed_at INTEGER,
-      error_message TEXT,
-      metadata TEXT,
-      FOREIGN KEY (construct_id) REFERENCES constructs(id) ON DELETE CASCADE
-    )
-  `)
-  );
 });
 
 afterEach(async () => {
-  await rm(tempDir, { recursive: true, force: true });
+  await cleanupTestDb(db);
+});
+
+afterEach(async () => {
+  if (workspaceDir) {
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
 });
 
 describe("provisionConstruct", () => {
@@ -108,7 +57,7 @@ describe("provisionConstruct", () => {
       ],
     };
 
-    const result = await provisionConstruct(db, config, {
+    const result = await provisionConstruct(db as any, config, {
       name: "Test Construct",
       templateId: "test-template",
       workspacePath: workspaceDir,
@@ -147,7 +96,7 @@ describe("provisionConstruct", () => {
       ],
     };
 
-    const result = await provisionConstruct(db, config, {
+    const result = await provisionConstruct(db as any, config, {
       name: "Test Construct",
       templateId: "test-template",
       workspacePath: workspaceDir,
@@ -166,7 +115,7 @@ describe("provisionConstruct", () => {
     };
 
     await expect(
-      provisionConstruct(db, config, {
+      provisionConstruct(db as any, config, {
         name: "Test",
         templateId: "non-existent",
         workspacePath: workspaceDir,
@@ -194,14 +143,14 @@ describe("startConstructAgent", () => {
       ],
     };
 
-    const provisioned = await provisionConstruct(db, config, {
+    const provisioned = await provisionConstruct(db as any, config, {
       name: "Test Construct",
       templateId: "test-template",
       workspacePath: workspaceDir,
     });
 
     const session = await startConstructAgent(
-      db,
+      db as any,
       provisioned.constructId,
       "anthropic"
     );
@@ -212,8 +161,8 @@ describe("startConstructAgent", () => {
   });
 
   test("throws error for non-existent construct", async () => {
-    await expect(startConstructAgent(db, "non-existent")).rejects.toThrow(
-      "Construct not found"
-    );
+    await expect(
+      startConstructAgent(db as any, "non-existent")
+    ).rejects.toThrow("Construct not found");
   });
 });
