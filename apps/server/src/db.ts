@@ -2,6 +2,17 @@ import { createClient } from "@libsql/client";
 import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  agentStatusSchema,
+  type ConstructStatus,
+  constructStatusSchema,
+  constructStatusTransitions,
+  isValidConstructStatusTransition,
+  isValidServiceStatusTransition,
+  type ServiceStatus,
+  serviceStatusSchema,
+  serviceStatusTransitions,
+} from "./lib/schema";
 
 export const constructs = sqliteTable("constructs", {
   id: text("id").primaryKey(),
@@ -9,7 +20,14 @@ export const constructs = sqliteTable("constructs", {
   name: text("name").notNull(),
   description: text("description"),
   type: text("type").notNull().default("implementation"),
-  status: text("status").notNull().default("draft"),
+  status: text("status", {
+    enum: constructStatusSchema.options as unknown as readonly [
+      string,
+      ...string[],
+    ],
+  })
+    .notNull()
+    .default("draft"),
   workspacePath: text("workspace_path"),
   constructPath: text("construct_path"),
   createdAt: integer("created_at").notNull(),
@@ -32,7 +50,14 @@ export const agentSessions = sqliteTable("agent_sessions", {
   constructId: text("construct_id").notNull(),
   sessionId: text("session_id").notNull(),
   provider: text("provider").notNull(),
-  status: text("status").notNull().default("starting"),
+  status: text("status", {
+    enum: agentStatusSchema.options as unknown as readonly [
+      string,
+      ...string[],
+    ],
+  })
+    .notNull()
+    .default("starting"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
   completedAt: integer("completed_at"),
@@ -45,7 +70,14 @@ export const services = sqliteTable("services", {
   constructId: text("construct_id").notNull(),
   serviceName: text("service_name").notNull(),
   serviceType: text("service_type").notNull().default("process"),
-  status: text("status").notNull().default("stopped"),
+  status: text("status", {
+    enum: serviceStatusSchema.options as unknown as readonly [
+      string,
+      ...string[],
+    ],
+  })
+    .notNull()
+    .default("stopped"),
   pid: integer("pid"),
   containerId: text("container_id"),
   command: text("command"),
@@ -122,14 +154,32 @@ export async function updateConstruct(
   id: string,
   updates: Partial<{
     name: string;
-    description: string;
-    status: string;
-    workspacePath: string;
-    constructPath: string;
-    completedAt: number;
-    metadata: Record<string, unknown>;
+    description: string | null;
+    status: ConstructStatus;
+    workspacePath: string | null;
+    constructPath: string | null;
+    completedAt: number | null;
+    metadata: Record<string, unknown> | null;
   }>
 ) {
+  // Validate status transition if status is being updated
+  if (updates.status) {
+    const existing = await getConstruct(db, id);
+    if (
+      existing &&
+      existing.status !== updates.status &&
+      !isValidConstructStatusTransition(
+        existing.status as ConstructStatus,
+        updates.status
+      )
+    ) {
+      throw new Error(
+        `Invalid construct status transition: ${existing.status} → ${updates.status}. ` +
+          `Valid transitions from ${existing.status}: ${constructStatusTransitions[existing.status as ConstructStatus]?.join(", ") || "none"}`
+      );
+    }
+  }
+
   const now = Math.floor(Date.now() / 1000);
   const [result] = await db
     .update(schema.constructs)
@@ -188,7 +238,7 @@ export async function updateService(
   db: DbInstance,
   id: string,
   updates: Partial<{
-    status: string;
+    status: ServiceStatus;
     pid: number;
     containerId: string;
     healthStatus: string;
@@ -202,6 +252,24 @@ export async function updateService(
     metadata: Record<string, unknown>;
   }>
 ) {
+  // Validate status transition if status is being updated
+  if (updates.status) {
+    const existing = await getService(db, id);
+    if (
+      existing &&
+      existing.status !== updates.status &&
+      !isValidServiceStatusTransition(
+        existing.status as ServiceStatus,
+        updates.status
+      )
+    ) {
+      throw new Error(
+        `Invalid service status transition: ${existing.status} → ${updates.status}. ` +
+          `Valid transitions from ${existing.status}: ${serviceStatusTransitions[existing.status as ServiceStatus]?.join(", ") || "none"}`
+      );
+    }
+  }
+
   const now = Math.floor(Date.now() / 1000);
   const [result] = await db
     .update(schema.services)

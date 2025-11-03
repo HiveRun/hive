@@ -1,5 +1,112 @@
 import { z } from "zod";
 
+// Unified status enums - single source of truth
+export const constructStatusSchema = z.enum([
+  "draft",
+  "provisioning",
+  "active",
+  "awaiting_input",
+  "reviewing",
+  "completed",
+  "parked",
+  "archived",
+  "error",
+]);
+
+export type ConstructStatus = z.infer<typeof constructStatusSchema>;
+
+export const agentStatusSchema = z.enum([
+  "starting",
+  "running",
+  "stopped",
+  "completed",
+  "error",
+]);
+
+export type AgentStatus = z.infer<typeof agentStatusSchema>;
+
+export const serviceStatusSchema = z.enum([
+  "stopped",
+  "starting",
+  "running",
+  "stopping",
+  "error",
+  "unknown",
+]);
+
+export type ServiceStatus = z.infer<typeof serviceStatusSchema>;
+
+// State machine validation for construct status transitions
+export const constructStatusTransitions = {
+  draft: ["provisioning", "active", "archived", "error"],
+  provisioning: ["draft", "active", "error"],
+  active: ["awaiting_input", "reviewing", "completed", "parked", "error"],
+  awaiting_input: ["active", "reviewing", "parked", "error"],
+  reviewing: ["active", "completed", "parked", "error"],
+  completed: ["archived"],
+  parked: ["active", "archived"],
+  archived: [], // Terminal state
+  error: ["draft", "archived"], // Can retry or give up
+} as const;
+
+export function isValidConstructStatusTransition(
+  from: ConstructStatus,
+  to: ConstructStatus
+): boolean {
+  return (
+    (
+      constructStatusTransitions as Record<
+        ConstructStatus,
+        readonly ConstructStatus[]
+      >
+    )[from]?.includes(to) ?? false
+  );
+}
+
+// State machine validation for agent status transitions
+export const agentStatusTransitions = {
+  starting: ["running", "stopped", "error"],
+  running: ["stopped", "completed", "error"],
+  stopped: ["starting", "completed"],
+  completed: [], // Terminal state
+  error: ["starting"], // Can retry
+} as const;
+
+export function isValidAgentStatusTransition(
+  from: AgentStatus,
+  to: AgentStatus
+): boolean {
+  return (
+    (agentStatusTransitions as Record<AgentStatus, readonly AgentStatus[]>)[
+      from
+    ]?.includes(to) ?? false
+  );
+}
+
+// State machine validation for service status transitions
+export const serviceStatusTransitions = {
+  unknown: ["stopped", "starting", "error"],
+  stopped: ["starting", "error"],
+  starting: ["running", "stopped", "error"],
+  running: ["stopping", "error"],
+  stopping: ["stopped", "error"],
+  error: ["stopped", "starting"], // Can retry
+} as const;
+
+export function isValidServiceStatusTransition(
+  from: ServiceStatus,
+  to: ServiceStatus
+): boolean {
+  return (
+    (
+      serviceStatusTransitions as Record<
+        ServiceStatus,
+        readonly ServiceStatus[]
+      >
+    )[from]?.includes(to) ?? false
+  );
+}
+
 export const portRequestSchema = z.object({
   name: z.string(),
   preferred: z.number().int().min(1024).max(65_535).optional(),
@@ -101,3 +208,16 @@ export const syntheticConfigSchema = z.object({
 });
 
 export type SyntheticConfig = z.infer<typeof syntheticConfigSchema>;
+
+// Helper functions for TypeBox validation that use our unified enums
+export function createConstructStatusUnion() {
+  return constructStatusSchema.options;
+}
+
+export function createAgentStatusUnion() {
+  return agentStatusSchema.options;
+}
+
+export function createServiceStatusUnion() {
+  return serviceStatusSchema.options;
+}

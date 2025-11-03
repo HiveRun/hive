@@ -85,7 +85,7 @@ export const constructsRoute = (
       {
         body: t.Object({
           name: t.Optional(t.String()),
-          description: t.Optional(t.String()),
+          description: t.Optional(t.Union([t.String(), t.Null()])),
           status: t.Optional(
             t.Union([
               t.Literal("draft"),
