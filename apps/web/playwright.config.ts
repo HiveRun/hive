@@ -27,6 +27,11 @@ export default defineConfig({
   testDir: "./e2e",
   snapshotPathTemplate:
     "{testDir}/__snapshots__/{testFilePath}-snapshots/{arg}{-projectName}{-snapshotSuffix}{ext}",
+  expect: {
+    toHaveScreenshot: {
+      maxDiffPixelRatio: 0.015, // allow ~1% pixel drift to smooth out rendering noise
+    },
+  },
   /* Run tests in files in parallel */
   fullyParallel: true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */

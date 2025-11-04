@@ -105,8 +105,16 @@ export const schema = {
   services,
 };
 
+const databaseUrl = process.env.DATABASE_URL;
+
+if (!databaseUrl || databaseUrl.trim().length === 0) {
+  throw new Error(
+    "DATABASE_URL environment variable is required. For local development, set DATABASE_URL=file:./synthetic.db in apps/server/.env"
+  );
+}
+
 const client = createClient({
-  url: process.env.DATABASE_URL || "",
+  url: databaseUrl,
 });
 
 export type DbInstance = typeof db;
