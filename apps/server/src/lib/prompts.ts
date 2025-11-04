@@ -36,9 +36,19 @@ export async function resolvePromptPaths(
   baseDir: string
 ): Promise<{ path: string; order?: number }[]> {
   const resolved: { path: string; order?: number }[] = [];
+  const seen = new Set<string>();
 
   for (const source of sources) {
     const pattern = resolve(baseDir, source.path);
+
+    const addResolvedPath = (absolutePath: string) => {
+      const normalized = resolve(absolutePath);
+      if (seen.has(normalized)) {
+        return;
+      }
+      seen.add(normalized);
+      resolved.push({ path: normalized, order: source.order });
+    };
 
     if (pattern.includes("*")) {
       const matches = await fg(pattern, {
@@ -47,10 +57,10 @@ export async function resolvePromptPaths(
       });
 
       for (const match of matches) {
-        resolved.push({ path: match, order: source.order });
+        addResolvedPath(match);
       }
     } else {
-      resolved.push({ path: pattern, order: source.order });
+      addResolvedPath(pattern);
     }
   }
 

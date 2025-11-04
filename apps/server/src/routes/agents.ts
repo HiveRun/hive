@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { Elysia } from "elysia";
-import { type DbInstance, schema } from "../db";
+import { type DbInstance, listAgentMessages, schema } from "../db";
 import { createAgentOrchestrator } from "../lib/agent";
 import {
   constructIdParamSchema,
@@ -29,16 +29,39 @@ export const agentsRoute = (db: DbInstance) =>
           return { error: "No agent session found for this construct" };
         }
 
-        return session;
+        const toIso = (value: number | null) =>
+          value ? new Date(value * 1000).toISOString() : null;
+
+        return {
+          ...session,
+          createdAt: toIso(session.createdAt),
+          updatedAt: toIso(session.updatedAt),
+          completedAt: toIso(session.completedAt ?? null),
+        };
       },
+
       {
         params: constructIdParamSchema,
       }
     )
 
-    .get("/:sessionId/messages", (_params) => [], {
-      params: sessionIdParamSchema,
-    })
+    .get(
+      "/:sessionId/messages",
+      async ({ params }) => {
+        const messages = await listAgentMessages(db, params.sessionId);
+        return messages.map((message) => ({
+          id: message.id,
+          sessionId: message.sessionId,
+          role: message.role,
+          content: message.content,
+          timestamp: new Date(message.createdAt * 1000).toISOString(),
+          metadata: null,
+        }));
+      },
+      {
+        params: sessionIdParamSchema,
+      }
+    )
 
     .post(
       "/:sessionId/messages",
@@ -78,16 +101,6 @@ export const agentsRoute = (db: DbInstance) =>
           }
 
           await session.stop();
-
-          await db;
-          await db
-            .update(schema.agentSessions)
-            .set({
-              status: "completed",
-              completedAt: Math.floor(Date.now() / 1000),
-              updatedAt: Math.floor(Date.now() / 1000),
-            })
-            .where(eq(schema.agentSessions.sessionId, params.sessionId));
 
           return { success: true };
         } catch (err) {

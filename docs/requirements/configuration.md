@@ -6,7 +6,7 @@ This document covers the high-level concepts for workspace configuration. For de
 
 ### Workspace Configuration
 - Locate a `synthetic.config.ts` at the repo root exporting strongly typed workspace settings (one per project repository).
-- Ship a small runtime+types package (`@synthetic/config`) that exposes `defineSyntheticConfig` for type-safe configuration.
+- Provide a workspace helper (`defineSyntheticConfig`) exported from the server workspace for type-safe configuration without an external package.
 - `opencode`: workspace ID and authentication token reference used by every construct session.
 - `promptSources`: defines the reusable prompt fragments that Synthetic concatenates into agent prompts.
 - `templates`: reusable construct templates that describe services, environments, and agent types.
@@ -20,7 +20,7 @@ The configuration system is implemented through these features:
 
 ### Example Configuration
 ```ts
-import { defineSyntheticConfig } from "@synthetic/config"
+import { defineSyntheticConfig } from "./apps/server/src/lib/config"
 
 export default defineSyntheticConfig({
   opencode: { workspaceId: "workspace_123", token: process.env.OPENCODE_TOKEN },

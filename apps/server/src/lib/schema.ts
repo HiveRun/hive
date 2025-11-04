@@ -46,7 +46,7 @@ export const constructStatusTransitions = {
   completed: ["archived"],
   parked: ["active", "archived"],
   archived: [], // Terminal state
-  error: ["draft", "archived"], // Can retry or give up
+  error: ["draft", "active", "archived"], // Can retry or give up and resume work
 } as const;
 
 export function isValidConstructStatusTransition(

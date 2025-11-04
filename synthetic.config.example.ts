@@ -1,6 +1,4 @@
-// For user config files, import from the published package
-// import { defineSyntheticConfig } from "@synthetic/config";
-// For development, you can import directly from server:
+// Import the helper directly from the server workspace for type-safe config
 import { defineSyntheticConfig } from "./apps/server/src/lib/config";
 
 /**
@@ -16,9 +14,9 @@ export default defineSyntheticConfig({
 
   promptSources: [
     // Base prompt with highest priority
-    { path: "docs/agents/base-brief.md", order: 0 },
+    { path: "docs/prompts/base-brief.md", order: 0 },
     // Feature-specific prompts
-    "docs/prompts/**/*.md",
+    { path: "docs/prompts/**/*.md", order: 10 },
   ],
 
   templates: [

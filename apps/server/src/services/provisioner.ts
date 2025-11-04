@@ -6,11 +6,19 @@ import {
   createConstruct,
   generateId,
   schema,
+  storeAgentMessage,
+  updateAgentSession,
   updateConstruct,
 } from "../db";
 import { createAgentOrchestrator } from "../lib/agent";
 import { buildPromptBundle, injectConstructContext } from "../lib/prompts";
-import type { Service, SyntheticConfig, Template } from "../lib/schema";
+import type {
+  ConstructStatus,
+  Service,
+  SyntheticConfig,
+  Template,
+} from "../lib/schema";
+import type { AgentStatus } from "../lib/types";
 import { allocatePorts, createPortEnv } from "./port-allocator";
 import { startService } from "./service-manager";
 
@@ -290,12 +298,76 @@ export async function startConstructAgent(
     constructId,
     sessionId: session.id,
     provider,
-    status: "starting",
+    status: session.status,
     createdAt: now,
     updatedAt: now,
   });
 
-  // Update construct status
+  const persistMessage = async (message: {
+    role: string;
+    content: string;
+    timestamp: Date;
+  }) => {
+    await storeAgentMessage(db, {
+      sessionId: session.id,
+      constructId,
+      role: message.role,
+      content: message.content,
+      createdAt: Math.floor(message.timestamp.getTime() / 1000),
+    });
+  };
+
+  const existingMessages = await session.getMessages();
+  for (const message of existingMessages) {
+    await persistMessage(message);
+  }
+
+  session.onMessage(async (message) => {
+    try {
+      await persistMessage(message);
+    } catch {
+      // Swallow persistence errors to avoid crashing orchestration loop
+    }
+  });
+
+  session.onStatusChange(async (status) => {
+    const statusUpdate: Parameters<typeof updateAgentSession>[2] = {
+      status,
+    };
+    if (status === "completed") {
+      statusUpdate.completedAt = Math.floor(Date.now() / 1000);
+    }
+    if (status === "error") {
+      statusUpdate.errorMessage = "Agent reported an error";
+    } else {
+      statusUpdate.errorMessage = null;
+    }
+
+    try {
+      await updateAgentSession(db, session.id, statusUpdate);
+    } catch {
+      // Ignore persistence errors
+    }
+
+    const constructStatusMapping: Record<AgentStatus, ConstructStatus> = {
+      starting: "active",
+      working: "active",
+      awaiting_input: "awaiting_input",
+      completed: "completed",
+      error: "error",
+    };
+
+    const nextStatus = constructStatusMapping[status];
+    if (nextStatus) {
+      try {
+        await updateConstruct(db, constructId, { status: nextStatus });
+      } catch {
+        // Ignore persistence errors in status listener
+      }
+    }
+  });
+
+  // Ensure construct reflects active session on launch
   await updateConstruct(db, constructId, { status: "active" });
 
   return session;

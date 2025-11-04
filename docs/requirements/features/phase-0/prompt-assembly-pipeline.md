@@ -14,7 +14,7 @@ Provide a robust system for assembling agent prompts from multiple sources with 
 - **Deduplication**: Automatic detection and removal of duplicate prompt fragments.
 
 ### Base Brief Assembly
-- **Base template**: Store a repository-level Markdown template (`docs/agents/base-brief.md`) that explains Synthetic's purpose, construct concepts, guardrails, and escalation expectations.
+- **Base template**: Store a repository-level Markdown template (`docs/prompts/base-brief.md`) that explains Synthetic's purpose, construct concepts, guardrails, and escalation expectations.
 - **Construct context injection**: When provisioning a construct, concatenate the base brief with:
   - Task summary and acceptance criteria from construct metadata
   - Tabular list of configured services with resolved hostnames/ports and exposed env vars
@@ -28,10 +28,10 @@ Provide a robust system for assembling agent prompts from multiple sources with 
 - **Prompt inheritance**: Support for template-level prompt inheritance from base templates (future enhancement).
 
 ### Bundle Generation
-- **CLI integration**: Provide `synthetic prompts build` command that resolves configured sources through the TypeScript config.
-- **Concatenation**: Deduplicate headings and concatenate fragments into `AGENTS.md` and other provider-specific outputs.
-- **Rebuild triggers**: Rebuild prompt bundles during provisioning and whenever config changes.
-- **Bundle metadata**: Expose generated bundle path in construct metadata for agent prompt assembly.
+- **Provisioning hook**: Prompt bundles are compiled automatically as part of construct provisioning; no separate CLI is required.
+- **Concatenation**: Deduplicate headings and concatenate fragments into a single Markdown payload suitable for agent ingestion.
+- **Rebuild triggers**: Rebuild prompt bundles during provisioning and whenever configuration or source files change.
+- **Bundle metadata**: Expose generated bundle path and token estimate in construct metadata for agent prompt assembly.
 
 ### Context Injection
 - **Variable substitution**: Support template variable replacement in prompt fragments (e.g., `${constructId}`, `${workspaceName}`).

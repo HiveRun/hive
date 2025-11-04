@@ -8,34 +8,26 @@ Provide reliable storage for constructs, transcripts, artifacts, and metadata wi
 ## Requirements
 
 ### Database Schema
-- **Primary store**: Use SQLite as the primary database for constructs, transcripts, statuses, and metadata to gain ACID writes with minimal setup.
-- **Schema design**: Design normalized tables for constructs, sessions, transcripts, artifacts, and relationships.
-- **Migration system**: Version the schema alongside app releases with a simple `synthetic migrate` command.
-- **Indexing strategy**: Optimize queries for common access patterns (construct listings, transcript streaming, artifact retrieval).
+- **Primary store**: Use SQLite as the primary database for constructs, prompt bundles, agent sessions, and transcripts.
+- **Schema design**: Provide normalized tables for constructs, sessions, services, and agent messages with explicit foreign keys in application code.
+- **Migration system**: Version schema changes with Drizzle migrations committed to source control.
+- **Indexing strategy**: Optimise for construct listings and transcript lookups by session.
 
 ### Artifact Storage
-- **Large file handling**: Persist large artifacts, command logs, and diff bundles as raw files on disk referenced from SQLite tables for fast streaming.
-- **File organization**: Organize artifacts by construct ID and type for easy cleanup and backup.
-- **Compression**: Apply appropriate compression for text-based artifacts (transcripts, logs) to save disk space.
-- **Reference integrity**: Maintain foreign key relationships between database records and file system artifacts.
+- Phase 0 stores transcripts directly in SQLite; external artifact storage (logs, diff bundles) is deferred to a later phase.
 
 ### Data Access Patterns
-- **Construct queries**: Efficient listing, filtering, and searching of constructs by status, type, and metadata.
-- **Transcript streaming**: Chunked access to long transcripts for UI rendering without loading entire conversations into memory.
-- **Artifact serving**: Fast access to diff bundles, logs, and other artifacts with proper content-type handling.
-- **Cross-construct queries**: Support for searching across multiple constructs (for features like cross-construct search).
+- **Construct queries**: Provide straightforward listing of constructs ordered by recency and filterable by status.
+- **Transcript access**: Return transcripts chronologically for a given session so the UI can render chat history.
+- **Service state**: Expose current service status and configuration for each construct.
 
 ### Performance & Scaling
-- **Connection pooling**: Manage SQLite connections efficiently for concurrent access.
-- **Query optimization**: Use prepared statements and proper indexing for common queries.
-- **Cache strategy**: Implement appropriate caching for frequently accessed data (construct metadata, recent transcripts).
-- **Cleanup policies**: Support for configurable retention policies and cleanup of old artifacts.
+- **Connection management**: Reuse a single SQLite connection per process and keep operations lightweight.
+- **Query optimization**: Use prepared statements and indexes where needed to keep construct and transcript queries responsive.
+- **Cleanup policies**: Provide manual deletion APIs for constructs; automated retention policies are a later enhancement.
 
 ### Backup & Recovery
-- **Export functionality**: Ability to export individual constructs or entire workspaces for backup.
-- **Import capability**: Restore constructs from exported data with proper conflict resolution.
-- **Integrity checks**: Periodic validation of database consistency and file system references.
-- **Disaster recovery**: Documented procedures for recovering from database corruption.
+- Provide basic guidance on backing up the SQLite database file; advanced export/import tooling is deferred to a future phase.
 
 ## UX Requirements
 
@@ -76,9 +68,7 @@ Provide reliable storage for constructs, transcripts, artifacts, and metadata wi
 - **Metrics Baseline**: Stores timing and intervention data for analytics
 
 ## Testing Strategy
-- Test schema migrations and data integrity
-- Verify performance under load with large datasets
-- Test backup/restore functionality and data consistency
-- Validate cleanup policies and storage management
-- Test concurrent access and transaction handling
-- Performance testing for query optimization
+- Test schema migrations and ensure new tables (constructs, sessions, messages) apply cleanly to a fresh database.
+- Verify transcript persistence by exercising message flows through the mock orchestrator.
+- Confirm construct and service records update correctly as provisioning and agent lifecycles run.
+- Validate manual cleanup flows (construct deletion) remove related services, sessions, and transcripts.

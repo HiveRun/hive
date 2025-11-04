@@ -8,63 +8,43 @@ Handle the complete workflow of creating and provisioning constructs from templa
 ## Requirements
 
 ### Core Provisioning
-- **Template Selection**: Allow users to browse and select from available construct templates defined in `synthetic.config.ts`
-- **Workspace Provisioning**: Create isolated git worktrees for each construct to prevent conflicts with the main workspace
-- **Service Setup**: Initialize and configure required services (databases, APIs, etc.) as specified by the template
-- **Port Allocation**: Dynamically allocate and manage ports to avoid conflicts between constructs and the host system
-- **Prompt Assembly**: Compose the initial agent prompt from template fragments, task brief, and runtime context
-- **Environment Configuration**: Set up environment variables, dependencies, and toolchain access for the construct
+- **Template Selection**: Allow users to browse and select from available construct templates defined in `synthetic.config.ts`.
+- **Workspace Provisioning**: Create an isolated `.constructs/<construct-id>` directory for each construct so working files do not pollute the main repo.
+- **Service Setup**: Initialize process-based services declared on the template and record their runtime configuration.
+- **Port Allocation**: Dynamically allocate ports using best-effort probing to avoid collisions with host services.
+- **Prompt Assembly**: Compose the initial agent prompt from configured sources, template fragments, and construct context.
+- **Environment Configuration**: Export allocated ports and template environment variables to the service process.
 
 ## UX Requirements
 
 ### Template Selection Interface
-- Display available templates with descriptions, requirements, and estimated resource usage
-- Validate template compatibility with current workspace and user permissions
-- Show template-specific configuration options (e.g., service choices, agent types)
-- Provide clear feedback during template validation and selection process
+- Display available templates with label, summary, and type so users can pick the right workflow.
+- Provide a simple form for construct name, optional description, and template selection with client-side validation.
+- Redirect to the newly created construct on success and surface toast notifications for success or failure.
 
-### Provisioning Progress
-- Show real-time progress during workspace creation and service initialization
-- Display clear status indicators for each provisioning step
-- Provide estimated completion times and current operation details
-- Allow users to cancel provisioning operations with proper cleanup
-
-### Error Feedback
-- Surface provisioning errors with actionable guidance and recovery options
-- Show specific failure points (template validation, workspace creation, service startup)
-- Provide retry mechanisms for transient failures
-- Display rollback status when provisioning fails and needs cleanup
+### Provisioning Feedback
+- While provisioning runs on the server, keep the UI responsive and display any errors returned by the API.
+- When provisioning fails, surface the error message and allow the user to retry once issues are addressed.
 
 ## Implementation Details
 
 ### Template Selection Interface
-- Display available templates with descriptions, requirements, and estimated resource usage
-- Validate template compatibility with current workspace and user permissions
-- Show template-specific configuration options (e.g., service choices, agent types)
+- Source template definitions from `synthetic.config.ts` and expose them through the API for the web UI.
 
 ### Workspace Provisioning
-- Create git worktree in `.constructs/<construct-id>/` using `git worktree add`
-- Initialize construct-specific configuration files and directories
-- Set up isolated node_modules, dependencies, and toolchain access
-- Ensure proper permissions and ownership for the construct workspace
+- Create `.constructs/<construct-id>` on disk, update the construct record with the path, and ensure directories exist before service startup.
 
 ### Service Management
-- Parse template service requirements and initialize accordingly
-- Handle service dependencies and startup ordering
-- Provide service health checks and status monitoring
-- Manage service lifecycle (start, stop, restart) during construct operation
+- Iterate over process-based services, spawn them using `child_process.spawn`, and persist runtime metadata (command, cwd, env, ports).
+- Record service lifecycle transitions in the database so the UI can display current status.
 
 ### Port Allocation Strategy
-- Probe real host ports to avoid conflicts with running services
-- Maintain port allocation registry to prevent duplicate assignments
-- Support port ranges and specific port requirements from templates
-- Handle port cleanup when constructs are completed or archived
+- Probe host ports sequentially, preferring the template's requested ports when available.
+- Expose resolved port assignments via environment variables using the template's `env` mapping.
 
 ### Prompt Assembly Context
-- Collect runtime information: allocated ports, service URLs, workspace paths
-- Gather template-specific context and configuration
-- Assemble base prompt with Synthetic overview and construct role
-- Include task brief, constraints, and success criteria
+- Resolve prompt sources relative to the workspace, deduplicate files, and compute a token estimate for the assembled Markdown bundle.
+- Inject construct context (IDs, directories, env) into the assembled prompt before persisting it.
 
 ## Integration Points
 - **Template Definition System**: Provides template metadata and configuration schemas
@@ -73,9 +53,7 @@ Handle the complete workflow of creating and provisioning constructs from templa
 - **Persistence Layer**: Stores construct metadata and provisioning state
 
 ## Testing Strategy
-- Test template selection and validation workflows
-- Verify workspace provisioning and isolation
-- Test service initialization and health monitoring
-- Validate port allocation and conflict resolution
-- Test error handling and rollback mechanisms
-- Performance testing for large repositories and complex templates
+- Test template selection and validation workflows, including missing fields and invalid template IDs.
+- Verify workspace directory creation and prompt bundle persistence during provisioning.
+- Exercise service startup with mocked commands to ensure port allocation and environment injection behave as expected.
+- Validate error handling paths when templates are missing or services fail to start.

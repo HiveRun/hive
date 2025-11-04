@@ -3,8 +3,8 @@
 import { useMutation, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Play, RefreshCw, Send, Square } from "lucide-react";
-import type { FormEvent } from "react";
-import { useState } from "react";
+import type { FormEvent, KeyboardEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { ServiceStatusCard } from "@/components/service-status";
@@ -17,8 +17,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
 import { rpc } from "@/lib/rpc";
 import { agentMutations, agentQueries } from "@/queries/agents";
 import { constructMutations, constructQueries } from "@/queries/constructs";
@@ -33,70 +33,7 @@ const messageSchema = z.object({
   content: z.string().min(1, "Message cannot be empty"),
 });
 
-export const Route = createFileRoute("/constructs/$constructId")({
-  loader: ({ context: { queryClient }, params }) =>
-    queryClient.ensureQueryData(constructQueries.detail(params.constructId)),
-  component: ConstructDetailPage,
-});
-
-function ConstructDetailPage() {
-  const { constructId } = Route.useParams();
-  const { data: construct } = useSuspenseQuery(
-    constructQueries.detail(constructId)
-  );
-  const typedConstruct = construct as Construct;
-
-  const sessionQuery = agentQueries.session(constructId);
-  const { data: session } = useQuery(sessionQuery);
-  const sessionData = (session as AgentSession | undefined) ?? null;
-
-  const messagesQuery = agentQueries.messages(sessionData?.sessionId ?? "");
-  const { data: messages = [] } = useQuery({
-    ...messagesQuery,
-    enabled: Boolean(sessionData?.sessionId),
-    refetchInterval:
-      sessionData?.status === "working" ? MESSAGE_POLL_INTERVAL_MS : false,
-  });
-  const typedMessages = messages as AgentMessage[];
-
-  const servicesQuery = serviceQueries.byConstruct(constructId);
-  const { data: services = [] } = useQuery(servicesQuery);
-  const typedServices = services as ServiceStatus[];
-
-  const [messageValue, setMessageValue] = useState("");
-  const [messageError, setMessageError] = useState<string | null>(null);
-
-  const startAgentMutation = useMutation({
-    ...constructMutations.startAgent,
-    onSuccess: () => {
-      toast.success("Agent started successfully");
-    },
-    onError: (error) => {
-      toast.error(error.message);
-    },
-  });
-
-  const sendMessageMutation = useMutation({
-    ...agentMutations.sendMessage,
-    onSuccess: () => {
-      setMessageValue("");
-      setMessageError(null);
-    },
-    onError: (error) => {
-      toast.error(error.message);
-    },
-  });
-
-  const stopAgentMutation = useMutation({
-    ...agentMutations.stop,
-    onSuccess: () => {
-      toast.success("Agent stopped");
-    },
-    onError: (error) => {
-      toast.error(error.message);
-    },
-  });
-
+function useServiceMutations() {
   const startServiceMutation = useMutation({
     ...serviceMutations.start,
     onSuccess: () => {
@@ -137,25 +74,132 @@ function ConstructDetailPage() {
     },
   });
 
-  const handleSendMessage = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
+  return {
+    startServiceMutation,
+    stopServiceMutation,
+    restartServiceMutation,
+    checkAllServicesMutation,
+  };
+}
 
+export const Route = createFileRoute("/constructs/$constructId")({
+  loader: ({ context: { queryClient }, params }) =>
+    queryClient.ensureQueryData(constructQueries.detail(params.constructId)),
+  component: ConstructDetailPage,
+});
+
+function ConstructDetailPage() {
+  const { constructId } = Route.useParams();
+  const { data: construct } = useSuspenseQuery(
+    constructQueries.detail(constructId)
+  );
+  const typedConstruct = construct as Construct;
+
+  const sessionQuery = agentQueries.session(constructId);
+  const { data: session } = useQuery(sessionQuery);
+  const sessionData = (session as AgentSession | undefined) ?? null;
+
+  const messagesQuery = agentQueries.messages(sessionData?.sessionId ?? "");
+  const { data: messages = [] } = useQuery({
+    ...messagesQuery,
+    enabled: Boolean(sessionData?.sessionId),
+    refetchInterval:
+      sessionData?.status === "working" ? MESSAGE_POLL_INTERVAL_MS : false,
+  });
+  const typedMessages = messages as AgentMessage[];
+
+  const servicesQuery = serviceQueries.byConstruct(constructId);
+  const { data: services = [] } = useQuery(servicesQuery);
+  const typedServices = services as ServiceStatus[];
+
+  const [messageValue, setMessageValue] = useState("");
+  const [messageError, setMessageError] = useState<string | null>(null);
+  const messageContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (typedMessages.length >= 0 && messageContainerRef.current) {
+      messageContainerRef.current.scrollTop =
+        messageContainerRef.current.scrollHeight;
+    }
+  }, [typedMessages]);
+
+  const startAgentMutation = useMutation({
+    ...constructMutations.startAgent,
+    onSuccess: () => {
+      toast.success("Agent started successfully");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const sendMessageMutation = useMutation({
+    ...agentMutations.sendMessage,
+    onSuccess: () => {
+      setMessageValue("");
+      setMessageError(null);
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const stopAgentMutation = useMutation({
+    ...agentMutations.stop,
+    onSuccess: () => {
+      toast.success("Agent stopped");
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    },
+  });
+
+  const {
+    startServiceMutation,
+    stopServiceMutation,
+    restartServiceMutation,
+    checkAllServicesMutation,
+  } = useServiceMutations();
+
+  const submitMessage = () => {
     const result = messageSchema.safeParse({ content: messageValue });
     if (!result.success) {
       setMessageError(result.error.issues[0]?.message ?? "Message is required");
       return;
     }
 
-    if (!sessionData?.sessionId) {
+    const sessionId = sessionData?.sessionId;
+    if (!sessionId) {
       setMessageError("Start the agent before sending messages.");
       return;
     }
 
+    if (sessionData.status === "completed" || sendMessageMutation.isPending) {
+      return;
+    }
+
     sendMessageMutation.mutate({
-      sessionId: sessionData.sessionId,
+      sessionId,
       content: result.data.content,
     });
+  };
+
+  const handleSendMessage = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    submitMessage();
+  };
+
+  const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      submitMessage();
+    }
+  };
+
+  const clearComposer = () => {
+    setMessageValue("");
+    setMessageError(null);
   };
 
   const handleCopyServiceCommand = async (serviceId: string) => {
@@ -304,7 +348,10 @@ function ConstructDetailPage() {
               <CardDescription>Communicate with your AI agent</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-1 flex-col">
-              <div className="flex-1 space-y-4 overflow-y-auto rounded-lg border p-4">
+              <div
+                className="flex-1 space-y-4 overflow-y-auto rounded-lg border p-4"
+                ref={messageContainerRef}
+              >
                 {typedMessages.length === 0 ? (
                   <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
                     No messages yet. Start the agent to begin.
@@ -337,36 +384,47 @@ function ConstructDetailPage() {
                 )}
               </div>
 
-              <form className="mt-4" onSubmit={handleSendMessage}>
-                <div className="flex gap-2">
-                  <Input
-                    disabled={
-                      !sessionData || sessionData.status === "completed"
-                    }
-                    onChange={(event) => {
-                      setMessageValue(event.target.value);
-                      setMessageError(null);
-                    }}
-                    placeholder="Type a message..."
-                    value={messageValue}
-                  />
-                  <Button
-                    disabled={
-                      !sessionData ||
-                      sessionData.status === "completed" ||
-                      sendMessageMutation.isPending ||
-                      messageValue.trim().length === 0
-                    }
-                    type="submit"
-                  >
-                    <Send className="size-4" />
-                  </Button>
-                </div>
+              <form className="mt-4 space-y-2" onSubmit={handleSendMessage}>
+                <Textarea
+                  disabled={!sessionData || sessionData.status === "completed"}
+                  onChange={(event) => {
+                    setMessageValue(event.target.value);
+                    setMessageError(null);
+                  }}
+                  onKeyDown={handleComposerKeyDown}
+                  placeholder="Share instructions or ask a follow-up..."
+                  rows={4}
+                  value={messageValue}
+                />
                 {messageError && (
-                  <p className="mt-2 text-destructive text-sm">
-                    {messageError}
-                  </p>
+                  <p className="text-destructive text-sm">{messageError}</p>
                 )}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-muted-foreground text-xs">
+                    Press Ctrl+Enter (or ⌘+Enter) to send.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      disabled={messageValue.length === 0}
+                      onClick={clearComposer}
+                      type="button"
+                      variant="outline"
+                    >
+                      Clear
+                    </Button>
+                    <Button
+                      disabled={
+                        !sessionData ||
+                        sessionData.status === "completed" ||
+                        sendMessageMutation.isPending ||
+                        messageValue.trim().length === 0
+                      }
+                      type="submit"
+                    >
+                      <Send className="size-4" />
+                    </Button>
+                  </div>
+                </div>
               </form>
             </CardContent>
           </Card>

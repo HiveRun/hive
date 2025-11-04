@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { listAgentMessages } from "../../db";
 import type { SyntheticConfig } from "../../lib/schema";
 import {
   provisionConstruct,
@@ -153,6 +154,56 @@ describe("startConstructAgent", () => {
     expect(session).toBeDefined();
     expect(session.id).toBeDefined();
     expect(session.constructId).toBe(provisioned.constructId);
+  });
+
+  test("persists agent messages to the database", async () => {
+    const promptsDir = join(workspaceDir, "prompts");
+    await mkdir(promptsDir, { recursive: true });
+    await Bun.write(join(promptsDir, "base.md"), "# Test Prompt");
+
+    const config: SyntheticConfig = {
+      opencode: { workspaceId: "test" },
+      promptSources: ["prompts/*.md"],
+      templates: [
+        {
+          id: "test-template",
+          label: "Test",
+          summary: "Test",
+          type: "planning",
+        },
+      ],
+    };
+
+    const provisioned = await provisionConstruct(db as any, config, {
+      name: "Message Construct",
+      templateId: "test-template",
+      workspacePath: workspaceDir,
+    });
+
+    const session = await startConstructAgent(
+      db as any,
+      provisioned.constructId,
+      "anthropic"
+    );
+
+    // Allow the mock orchestrator to emit initial messages
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    let messages = await listAgentMessages(db as any, session.id);
+    expect(messages.length).toBeGreaterThanOrEqual(1);
+    expect(messages[0]?.role).toBe("system");
+
+    await session.sendMessage("Hello agent");
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    messages = await listAgentMessages(db as any, session.id);
+    const userMessage = messages.find((message) => message.role === "user");
+    const assistantReply = messages
+      .filter((message) => message.role === "assistant")
+      .pop();
+
+    expect(userMessage?.content).toBe("Hello agent");
+    expect(assistantReply?.content).toContain("Received: Hello agent");
   });
 
   test("rejects invalid construct", async () => {

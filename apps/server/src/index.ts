@@ -32,7 +32,10 @@ const config = defineSyntheticConfig({
     workspaceId: process.env.OPENCODE_WORKSPACE_ID || "dev-workspace",
     token: process.env.OPENCODE_TOKEN,
   },
-  promptSources: ["docs/prompts/**/*.md"],
+  promptSources: [
+    { path: "docs/prompts/base-brief.md", order: 0 },
+    { path: "docs/prompts/**/*.md", order: 10 },
+  ],
   templates: [
     {
       id: "full-stack-dev",

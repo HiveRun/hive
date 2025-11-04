@@ -1,5 +1,5 @@
 import { createClient } from "@libsql/client";
-import { desc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import {
@@ -65,6 +65,15 @@ export const agentSessions = sqliteTable("agent_sessions", {
   metadata: text("metadata", { mode: "json" }),
 });
 
+export const agentMessages = sqliteTable("agent_messages", {
+  id: text("id").primaryKey(),
+  sessionId: text("session_id").notNull(),
+  constructId: text("construct_id").notNull(),
+  role: text("role").notNull(),
+  content: text("content").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+
 export const services = sqliteTable("services", {
   id: text("id").primaryKey(),
   constructId: text("construct_id").notNull(),
@@ -102,6 +111,7 @@ export const schema = {
   constructs,
   promptBundles,
   agentSessions,
+  agentMessages,
   services,
 };
 
@@ -310,6 +320,60 @@ export async function completeConstruct(db: DbInstance, id: string) {
       updatedAt: now,
     })
     .where(eq(schema.constructs.id, id))
+    .returning();
+  return result;
+}
+
+export async function storeAgentMessage(
+  db: DbInstance,
+  message: {
+    sessionId: string;
+    constructId: string;
+    role: string;
+    content: string;
+    createdAt?: number;
+  }
+) {
+  const [result] = await db
+    .insert(schema.agentMessages)
+    .values({
+      id: generateId(),
+      sessionId: message.sessionId,
+      constructId: message.constructId,
+      role: message.role,
+      content: message.content,
+      createdAt: message.createdAt ?? Math.floor(Date.now() / 1000),
+    })
+    .returning();
+
+  return result;
+}
+
+export async function listAgentMessages(db: DbInstance, sessionId: string) {
+  return await db.query.agentMessages.findMany({
+    where: eq(schema.agentMessages.sessionId, sessionId),
+    orderBy: asc(schema.agentMessages.createdAt),
+  });
+}
+
+export async function updateAgentSession(
+  db: DbInstance,
+  sessionId: string,
+  updates: Partial<{
+    status: string;
+    completedAt: number | null;
+    errorMessage: string | null;
+    metadata: Record<string, unknown> | null;
+  }>
+) {
+  const now = Math.floor(Date.now() / 1000);
+  const [result] = await db
+    .update(schema.agentSessions)
+    .set({
+      ...updates,
+      updatedAt: now,
+    })
+    .where(eq(schema.agentSessions.sessionId, sessionId))
     .returning();
   return result;
 }

@@ -8,7 +8,7 @@ Provide a flexible, type-safe system for defining construct templates that descr
 ## Requirements
 
 ### Template Schema
-- **TypeScript definitions**: Ship a small runtime+types package (`@synthetic/config`) that exposes `defineSyntheticConfig` with full type safety and intellisense.
+- **TypeScript definitions**: Surface `defineSyntheticConfig` directly from the server workspace so users author `synthetic.config.ts` with full type safety and intellisense.
 - **Inline templates**: Keep templates inline within `synthetic.config.ts` for v1 simplicity, with support for external template files in future versions.
 - **Template metadata**: Each template requires `id`, `label`, `summary`, and optional `type` (implementation/planning/manual).
 - **Validation**: Compile-time validation of template structure and required fields.
