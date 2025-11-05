@@ -3,7 +3,7 @@ import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
 import { beforeEach, describe, expect, it } from "vitest";
 import { TemplateRepository } from "../../repositories/templates";
-import * as schema from "../../schema";
+import * as schema from "../../schema/templates";
 
 describe("TemplateRepository", () => {
   let db: ReturnType<typeof drizzle<typeof schema>>;

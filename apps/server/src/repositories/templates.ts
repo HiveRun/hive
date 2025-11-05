@@ -1,8 +1,11 @@
 import { eq } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
-import type * as schema from "../schema";
-import type { NewTemplate, Template } from "../schema";
-import { templates } from "../schema";
+import type * as schema from "../schema/templates";
+import {
+  templates,
+  type NewTemplate,
+  type Template,
+} from "../schema/templates";
 
 export class TemplateRepository {
   private readonly db: LibSQLDatabase<typeof schema>;

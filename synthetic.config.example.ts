@@ -1,4 +1,4 @@
-import { defineSyntheticConfig } from "./apps/server/src/config";
+import { defineSyntheticConfig } from "./apps/server/src/config/schema";
 
 export default defineSyntheticConfig({
   templates: {
