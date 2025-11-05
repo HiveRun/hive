@@ -1,8 +1,10 @@
 # Persistence Layer
 
-- [ ] Persistence Layer #status/planned #phase-0 #feature/core
+- [x] Persistence Layer #status/completed #phase-0 #feature/core
 
 > **Note**: Persistence is not a single PR. Instead, each PR adds only the database tables and queries it actually needs. This document describes the complete Phase 0 schema after all PRs are merged.
+
+> **Template Storage**: Templates are intentionally stored as files (`synthetic.config.ts`) rather than in the database. This architectural decision prioritizes version control, type safety, and developer experience over dynamic template management.
 
 ## Goal
 Provide reliable storage for constructs, transcripts, artifacts, and metadata with ACID guarantees and efficient access patterns.

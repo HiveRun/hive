@@ -31,7 +31,12 @@ function TemplatesPage() {
   return (
     <div className="container mx-auto p-6">
       <div className="mb-6">
-        <h1 className="font-bold text-3xl tracking-tight">Templates</h1>
+        <h1
+          className="font-bold text-3xl tracking-tight"
+          data-testid="templates-page-title"
+        >
+          Templates
+        </h1>
         <p className="text-muted-foreground">
           Browse available construct templates
         </p>
@@ -43,13 +48,17 @@ function TemplatesPage() {
           data.templates.map((template: TemplateResponse) => (
             <Card
               className="transition-colors hover:border-primary/50"
+              data-testid="template-card"
               key={template.id}
             >
               <CardHeader>
                 <CardTitle className="text-lg">{template.label}</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-muted-foreground text-xs">
+                <div
+                  className="text-muted-foreground text-xs"
+                  data-testid="template-id"
+                >
                   ID: {template.id}
                 </div>
               </CardContent>

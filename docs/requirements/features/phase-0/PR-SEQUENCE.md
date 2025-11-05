@@ -10,7 +10,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation.
 
 ---
 
-## PR #1: Template Definition System
+## PR #1: Template Definition System ✅ **COMPLETED**
 
 **Branch**: `feat/template-definition-system`
 
@@ -21,20 +21,24 @@ This document outlines the sequential PR strategy for Phase 0 implementation.
 - Basic template browser/listing in UI
 
 ### Persistence Added
-- `templates` table (id, label, summary, type, config_json, created_at)
-- Basic CRUD operations for templates
+- **File-based storage**: Templates stored in `synthetic.config.ts` (intentional architectural decision)
+- No database tables for templates (prioritizes version control and type safety)
+- Elysia RPC endpoint for template loading from config files
 
 ### Tests
 - Template schema validation
 - TypeScript type checking
-- In-memory template fixtures
+- Template loading from config files
 - UI rendering of template list
+- E2E tests for templates page
 
 ### Acceptance Criteria
-- [ ] Can define templates in `synthetic.config.ts` with intellisense
-- [ ] Templates validate at compile time
-- [ ] UI can list available templates
-- [ ] Tests pass with mock template data
+- [x] Can define templates in `synthetic.config.ts` with intellisense
+- [x] Templates validate at compile time
+- [x] UI can list available templates
+- [x] Tests pass with real template data
+- [x] File-based approach provides version control benefits
+- [x] E2E tests cover templates page functionality
 
 ---
 
