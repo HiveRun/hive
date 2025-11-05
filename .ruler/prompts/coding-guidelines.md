@@ -35,4 +35,6 @@
 
 **Avoid overbearing error handling** that adds no value. Let errors bubble up to where they can be meaningfully addressed.
 
+**Don't create custom Error classes** - Just throw `new Error("message")`. Custom error classes add complexity without benefit. If you need to distinguish error types, use error messages or codes.
+
 
