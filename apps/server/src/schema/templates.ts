@@ -1,12 +1,12 @@
 import { sql } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
+export const templateType = ["manual"] as const;
+
 export const templates = sqliteTable("templates", {
   id: text("id").primaryKey(),
   label: text("label").notNull(),
-  type: text("type", { enum: ["manual"] })
-    .notNull()
-    .default("manual"),
+  type: text("type", { enum: templateType }).notNull().default("manual"),
   configJson: text("config_json", { mode: "json" }).notNull(),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()

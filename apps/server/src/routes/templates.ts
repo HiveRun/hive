@@ -1,23 +1,23 @@
 import { Elysia, t } from "elysia";
-import { db } from "../db";
-import { TemplateRepository } from "../repositories/templates";
+import { db as database } from "../db";
+import { createTemplateQueries } from "../db/templates";
 
 const HTTP_STATUS = {
   NOT_FOUND: 404,
   BAD_REQUEST: 400,
 } as const;
 
-const templateRepo = new TemplateRepository(db);
+const db = createTemplateQueries(database);
 
 export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
   .get("/", async () => {
-    const templates = await templateRepo.findAll();
+    const templates = await db.findAll();
     return { templates };
   })
   .get(
     "/:id",
     async ({ params, set }) => {
-      const template = await templateRepo.findById(params.id);
+      const template = await db.findById(params.id);
       if (!template) {
         set.status = HTTP_STATUS.NOT_FOUND;
         return { message: "Template not found" };
@@ -34,7 +34,7 @@ export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
     "/",
     async ({ body, set }) => {
       try {
-        const template = await templateRepo.create({
+        const template = await db.create({
           id: body.id,
           label: body.label,
           type: body.type,
@@ -61,7 +61,7 @@ export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
   .delete(
     "/:id",
     async ({ params, set }) => {
-      const deleted = await templateRepo.delete(params.id);
+      const deleted = await db.delete(params.id);
       if (!deleted) {
         set.status = HTTP_STATUS.NOT_FOUND;
         return { message: "Template not found" };
