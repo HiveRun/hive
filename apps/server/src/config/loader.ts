@@ -10,9 +10,6 @@ export class ConfigError extends Error {
   }
 }
 
-/**
- * Load and validate synthetic.config.ts from the workspace root
- */
 export async function loadConfig(
   workspaceRoot: string
 ): Promise<SyntheticConfig> {
@@ -25,11 +22,8 @@ export async function loadConfig(
   }
 
   try {
-    // Dynamic import the config file
     const configModule = await import(configPath);
     const config = configModule.default || configModule;
-
-    // Validate against schema
     return syntheticConfigSchema.parse(config);
   } catch (error) {
     if (error instanceof Error) {
@@ -39,9 +33,6 @@ export async function loadConfig(
   }
 }
 
-/**
- * Validate a config object without loading from file
- */
 export function validateConfig(config: unknown): SyntheticConfig {
   return syntheticConfigSchema.parse(config);
 }

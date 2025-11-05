@@ -10,13 +10,9 @@ describe("TemplateRepository", () => {
   let repo: TemplateRepository;
 
   beforeEach(async () => {
-    // Create in-memory database for tests
     const client = createClient({ url: ":memory:" });
     db = drizzle({ client, schema });
-
-    // Run migrations
     await migrate(db, { migrationsFolder: "./src/migrations" });
-
     repo = new TemplateRepository(db);
   });
 

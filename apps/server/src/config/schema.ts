@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-// Service type definitions
 export const processServiceSchema = z.object({
   type: z.literal("process").default("process"),
   run: z.string().describe("Command to run the service"),
@@ -68,7 +67,6 @@ export const portRequestSchema = z.object({
     .describe("Container port for Docker services"),
 });
 
-// Template schema
 export const templateSchema = z.object({
   id: z.string().describe("Unique template identifier"),
   label: z.string().describe("Display name for the template"),
@@ -95,7 +93,6 @@ export const templateSchema = z.object({
     .describe("Cleanup commands on construct stop"),
 });
 
-// Synthetic config schema
 export const syntheticConfigSchema = z.object({
   templates: z
     .record(z.string(), templateSchema)
@@ -114,7 +111,6 @@ export const syntheticConfigSchema = z.object({
     .describe("Global prompt sources (files, directories, or globs)"),
 });
 
-// Type exports
 export type ProcessService = z.infer<typeof processServiceSchema>;
 export type DockerService = z.infer<typeof dockerServiceSchema>;
 export type ComposeService = z.infer<typeof composeServiceSchema>;
@@ -123,7 +119,6 @@ export type PortRequest = z.infer<typeof portRequestSchema>;
 export type Template = z.infer<typeof templateSchema>;
 export type SyntheticConfig = z.infer<typeof syntheticConfigSchema>;
 
-// Helper function for users to define their config
 export function defineSyntheticConfig(
   config: SyntheticConfig
 ): SyntheticConfig {

@@ -111,10 +111,9 @@ describe("defineSyntheticConfig", () => {
     expect(() =>
       defineSyntheticConfig({
         templates: {
-          // @ts-expect-error - Testing invalid config
+          // @ts-expect-error Testing invalid config
           invalid: {
             id: "test",
-            // missing required fields
           },
         },
       })
