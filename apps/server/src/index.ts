@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { logger } from "@bogeychan/elysia-logger";
 import { cors } from "@elysiajs/cors";
 import { Elysia } from "elysia";
-import { createDb } from "./db";
+import { createDb, ensureDatabase } from "./db";
 import { defineSyntheticConfig } from "./lib/config";
 import { agentsRoute } from "./routes/agents";
 import { constructsRoute } from "./routes/constructs";
@@ -23,6 +23,7 @@ const allowedCorsOrigins =
   resolvedCorsOrigins.length > 0 ? resolvedCorsOrigins : DEFAULT_CORS_ORIGINS;
 
 // Initialize database
+await ensureDatabase();
 const db = createDb();
 
 // Load workspace configuration

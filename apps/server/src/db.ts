@@ -1,6 +1,8 @@
+import { resolve } from "node:path";
 import { createClient } from "@libsql/client";
 import { asc, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
+import { migrate } from "drizzle-orm/libsql/migrator";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import {
   agentStatusSchema,
@@ -131,6 +133,20 @@ export type DbInstance = typeof db;
 export type BetterSQLite3Database = typeof db;
 
 export const db = drizzle({ client, schema });
+
+const migrationsFolder = resolve(process.cwd(), "drizzle");
+let migrationsPromise: Promise<void> | null = null;
+
+export async function ensureDatabase() {
+  if (!migrationsPromise) {
+    migrationsPromise = migrate(db, { migrationsFolder }).catch((error) => {
+      migrationsPromise = null;
+      throw new Error("Failed to apply database migrations", { cause: error });
+    });
+  }
+
+  await migrationsPromise;
+}
 export async function createConstruct(
   db: DbInstance,
   construct: {
