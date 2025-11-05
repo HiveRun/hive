@@ -81,9 +81,17 @@ function HomeComponent() {
                   Your latest development constructs
                 </CardDescription>
               </div>
-              <Button asChild size="sm" variant="outline">
-                <Link to="/constructs">View All</Link>
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button asChild size="sm" variant="outline">
+                  <Link to="/constructs">View All</Link>
+                </Button>
+                <Button asChild size="sm">
+                  <Link to="/constructs/new">
+                    <Plus className="mr-2 size-4" />
+                    New Construct
+                  </Link>
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
@@ -97,7 +105,7 @@ function HomeComponent() {
                 <Button asChild>
                   <Link to="/constructs/new">
                     <Plus className="mr-2 size-4" />
-                    Create Construct
+                    New Construct
                   </Link>
                 </Button>
               </div>
@@ -142,19 +150,19 @@ function HomeComponent() {
         <Card>
           <CardHeader>
             <CardTitle>Quick Actions</CardTitle>
-            <CardDescription>Common tasks and operations</CardDescription>
+            <CardDescription>Jump into common management tasks</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
-            <Button asChild className="w-full justify-start" variant="outline">
-              <Link to="/constructs/new">
-                <Plus className="mr-2 size-4" />
-                Create New Construct
-              </Link>
-            </Button>
             <Button asChild className="w-full justify-start" variant="outline">
               <Link to="/constructs">
                 <Box className="mr-2 size-4" />
                 View All Constructs
+              </Link>
+            </Button>
+            <Button asChild className="w-full justify-start" variant="outline">
+              <Link search={{ status: "active" }} to="/constructs">
+                <Box className="mr-2 size-4" />
+                See Active Sessions
               </Link>
             </Button>
           </CardContent>

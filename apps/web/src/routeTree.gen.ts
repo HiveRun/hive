@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as TestErrorRouteImport } from './routes/test-error'
 import { Route as ConstructsRouteImport } from './routes/constructs'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ConstructsIndexRouteImport } from './routes/constructs._index'
 import { Route as ConstructsNewRouteImport } from './routes/constructs.new'
 import { Route as ConstructsConstructIdRouteImport } from './routes/constructs.$constructId'
 
@@ -30,6 +31,10 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConstructsIndexRoute = ConstructsIndexRouteImport.update({
+  id: '/_index',
+  getParentRoute: () => ConstructsRoute,
+} as any)
 const ConstructsNewRoute = ConstructsNewRouteImport.update({
   id: '/new',
   path: '/new',
@@ -43,14 +48,14 @@ const ConstructsConstructIdRoute = ConstructsConstructIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/constructs': typeof ConstructsRouteWithChildren
+  '/constructs': typeof ConstructsIndexRoute
   '/test-error': typeof TestErrorRoute
   '/constructs/$constructId': typeof ConstructsConstructIdRoute
   '/constructs/new': typeof ConstructsNewRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/constructs': typeof ConstructsRouteWithChildren
+  '/constructs': typeof ConstructsIndexRoute
   '/test-error': typeof TestErrorRoute
   '/constructs/$constructId': typeof ConstructsConstructIdRoute
   '/constructs/new': typeof ConstructsNewRoute
@@ -61,6 +66,7 @@ export interface FileRoutesById {
   '/constructs': typeof ConstructsRouteWithChildren
   '/test-error': typeof TestErrorRoute
   '/constructs/$constructId': typeof ConstructsConstructIdRoute
+  '/constructs/_index': typeof ConstructsIndexRoute
   '/constructs/new': typeof ConstructsNewRoute
 }
 export interface FileRouteTypes {
@@ -84,6 +90,7 @@ export interface FileRouteTypes {
     | '/constructs'
     | '/test-error'
     | '/constructs/$constructId'
+    | '/constructs/_index'
     | '/constructs/new'
   fileRoutesById: FileRoutesById
 }
@@ -116,6 +123,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/constructs/_index': {
+      id: '/constructs/_index'
+      path: ''
+      fullPath: '/constructs'
+      preLoaderRoute: typeof ConstructsIndexRouteImport
+      parentRoute: typeof ConstructsRoute
+    }
     '/constructs/new': {
       id: '/constructs/new'
       path: '/new'
@@ -135,11 +149,13 @@ declare module '@tanstack/react-router' {
 
 interface ConstructsRouteChildren {
   ConstructsConstructIdRoute: typeof ConstructsConstructIdRoute
+  ConstructsIndexRoute: typeof ConstructsIndexRoute
   ConstructsNewRoute: typeof ConstructsNewRoute
 }
 
 const ConstructsRouteChildren: ConstructsRouteChildren = {
   ConstructsConstructIdRoute: ConstructsConstructIdRoute,
+  ConstructsIndexRoute: ConstructsIndexRoute,
   ConstructsNewRoute: ConstructsNewRoute,
 }
 
