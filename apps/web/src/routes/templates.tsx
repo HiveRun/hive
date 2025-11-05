@@ -1,36 +1,32 @@
-import { useQuery } from "@tanstack/react-query";
+import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
 import { rpc } from "@/lib/rpc";
+
+type TemplateResponse = {
+  id: string;
+  label: string;
+  type: string;
+  configJson: unknown;
+};
 
 export const Route = createFileRoute("/templates")({
   component: TemplatesPage,
 });
 
 function TemplatesPage() {
-  const { data, isLoading, error } = useQuery({
+  const { data } = useSuspenseQuery({
     queryKey: ["templates"],
     queryFn: async () => {
-      const response = await rpc.api.templates.get();
-      if (response.error) {
+      const { data: responseData, error } = await rpc.api.templates.get();
+
+      if (error) {
         throw new Error("Failed to fetch templates");
       }
-      return response.data;
+
+      return responseData;
     },
   });
-
-  if (error) {
-    return (
-      <div className="container mx-auto p-6">
-        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4">
-          <p className="text-destructive text-sm">
-            Failed to load templates. Please try again.
-          </p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="container mx-auto p-6">
@@ -42,17 +38,9 @@ function TemplatesPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {isLoading && (
-          <>
-            <TemplateSkeleton />
-            <TemplateSkeleton />
-            <TemplateSkeleton />
-          </>
-        )}
-        {!isLoading &&
-          data?.templates &&
+        {data?.templates &&
           data.templates.length > 0 &&
-          data.templates.map((template) => (
+          data.templates.map((template: TemplateResponse) => (
             <Card
               className="transition-colors hover:border-primary/50"
               key={template.id}
@@ -67,7 +55,7 @@ function TemplatesPage() {
               </CardContent>
             </Card>
           ))}
-        {!isLoading && (!data?.templates || data.templates.length === 0) && (
+        {(!data?.templates || data.templates.length === 0) && (
           <div className="col-span-full py-12 text-center">
             <p className="text-muted-foreground">No templates available</p>
             <p className="mt-2 text-muted-foreground text-sm">
@@ -81,18 +69,5 @@ function TemplatesPage() {
         )}
       </div>
     </div>
-  );
-}
-
-function TemplateSkeleton() {
-  return (
-    <Card>
-      <CardHeader>
-        <Skeleton className="h-6 w-3/4" />
-      </CardHeader>
-      <CardContent>
-        <Skeleton className="h-3 w-1/2" />
-      </CardContent>
-    </Card>
   );
 }

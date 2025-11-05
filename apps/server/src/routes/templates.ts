@@ -1,72 +1,48 @@
 import { Elysia, t } from "elysia";
-import { db as database } from "../db";
-import { createTemplateQueries } from "../db/templates";
+import { loadConfig } from "../config/loader";
+import type { SyntheticConfig, Template } from "../config/schema";
 
 const HTTP_STATUS = {
   NOT_FOUND: 404,
   BAD_REQUEST: 400,
 } as const;
 
-const db = createTemplateQueries(database);
+async function getConfig(): Promise<SyntheticConfig> {
+  const currentDir = process.cwd();
+  const workspaceRoot = currentDir.includes("/apps/")
+    ? currentDir.split("/apps/")[0] || currentDir
+    : currentDir;
+
+  return await loadConfig(workspaceRoot);
+}
+
+function templateToResponse(_id: string, template: Template) {
+  return {
+    id: template.id,
+    label: template.label,
+    type: template.type,
+    configJson: template,
+  };
+}
 
 export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
   .get("/", async () => {
-    const templates = await db.findAll();
+    const config = await getConfig();
+    const templates = Object.entries(config.templates).map(([id, template]) =>
+      templateToResponse(id, template)
+    );
     return { templates };
   })
   .get(
     "/:id",
     async ({ params, set }) => {
-      const template = await db.findById(params.id);
+      const config = await getConfig();
+      const template = config.templates[params.id];
       if (!template) {
         set.status = HTTP_STATUS.NOT_FOUND;
         return { message: "Template not found" };
       }
-      return template;
-    },
-    {
-      params: t.Object({
-        id: t.String(),
-      }),
-    }
-  )
-  .post(
-    "/",
-    async ({ body, set }) => {
-      try {
-        const template = await db.create({
-          id: body.id,
-          label: body.label,
-          type: body.type,
-          configJson: body.config,
-        });
-        return template;
-      } catch (err) {
-        set.status = HTTP_STATUS.BAD_REQUEST;
-        return {
-          message:
-            err instanceof Error ? err.message : "Failed to create template",
-        };
-      }
-    },
-    {
-      body: t.Object({
-        id: t.String(),
-        label: t.String(),
-        type: t.Literal("manual"),
-        config: t.Any(),
-      }),
-    }
-  )
-  .delete(
-    "/:id",
-    async ({ params, set }) => {
-      const deleted = await db.delete(params.id);
-      if (!deleted) {
-        set.status = HTTP_STATUS.NOT_FOUND;
-        return { message: "Template not found" };
-      }
-      return { success: true };
+      return templateToResponse(params.id, template);
     },
     {
       params: t.Object({
