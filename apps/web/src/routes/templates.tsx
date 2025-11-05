@@ -54,8 +54,8 @@ function TemplatesPage() {
           data.templates.length > 0 &&
           data.templates.map((template) => (
             <Card
-              key={template.id}
               className="transition-colors hover:border-primary/50"
+              key={template.id}
             >
               <CardHeader>
                 <CardTitle className="text-lg">{template.label}</CardTitle>

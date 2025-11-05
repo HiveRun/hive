@@ -19,7 +19,6 @@ export default defineSyntheticConfig({
         },
       },
       ports: [{ name: "API_PORT" }],
-      prompts: ["docs/api-guidelines.md"],
     },
     basic: {
       id: "basic",
@@ -27,8 +26,4 @@ export default defineSyntheticConfig({
       type: "manual",
     },
   },
-  promptSources: [
-    { path: "docs/prompts/base-brief.md", order: 1 },
-    "docs/prompts/**/*.md",
-  ],
 });

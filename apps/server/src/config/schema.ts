@@ -95,18 +95,6 @@ export const syntheticConfigSchema = z.object({
   templates: z
     .record(z.string(), templateSchema)
     .describe("Available construct templates"),
-  promptSources: z
-    .array(
-      z.union([
-        z.string(),
-        z.object({
-          path: z.string(),
-          order: z.number().optional(),
-        }),
-      ])
-    )
-    .optional()
-    .describe("Global prompt sources (files, directories, or globs)"),
 });
 
 export type ProcessService = z.infer<typeof processServiceSchema>;

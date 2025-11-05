@@ -3,38 +3,50 @@ import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createTemplateQueries } from "../../db/templates";
-import * as schema from "../../schema/templates";
+import type * as schemaModule from "../../schema/templates";
+import { templates, templateType } from "../../schema/templates";
+
+const schema: typeof schemaModule = {
+  templateType,
+  templates,
+};
+
+function setupTestDb() {
+  const client = createClient({ url: ":memory:" });
+  const database = drizzle<typeof schemaModule>({ client, schema });
+  return { database, db: createTemplateQueries(database) };
+}
 
 describe("Template queries", () => {
-  let database: ReturnType<typeof drizzle<typeof schema>>;
+  let database: ReturnType<typeof drizzle<typeof schemaModule>>;
   let db: ReturnType<typeof createTemplateQueries>;
 
   beforeEach(async () => {
-    const client = createClient({ url: ":memory:" });
-    database = drizzle({ client, schema });
+    ({ database, db } = setupTestDb());
     await migrate(database, { migrationsFolder: "./src/migrations" });
-    db = createTemplateQueries(database);
   });
 
   describe("create", () => {
     it("should create a template", async () => {
-      const template = await db.create({
+      const input = {
         id: "test-template",
         label: "Test Template",
-        type: "manual",
+        type: "manual" as const,
         configJson: { services: {} },
-      });
+      };
 
-      expect(template.id).toBe("test-template");
-      expect(template.label).toBe("Test Template");
-      expect(template.type).toBe("manual");
+      const template = await db.create(input);
+
+      expect(template.id).toBe(input.id);
+      expect(template.label).toBe(input.label);
+      expect(template.type).toBe(input.type);
     });
   });
 
   describe("findAll", () => {
     it("should return empty array when no templates exist", async () => {
-      const templates = await db.findAll();
-      expect(templates).toEqual([]);
+      const result = await db.findAll();
+      expect(result).toEqual([]);
     });
 
     it("should return all templates ordered by creation date", async () => {
@@ -52,10 +64,10 @@ describe("Template queries", () => {
         configJson: {},
       });
 
-      const templates = await db.findAll();
-      expect(templates).toHaveLength(2);
-      expect(templates[0]?.id).toBe("template-1");
-      expect(templates[1]?.id).toBe("template-2");
+      const allTemplates = await db.findAll();
+      expect(allTemplates).toHaveLength(2);
+      expect(allTemplates[0]?.id).toBe("template-1");
+      expect(allTemplates[1]?.id).toBe("template-2");
     });
   });
 
@@ -66,18 +78,20 @@ describe("Template queries", () => {
     });
 
     it("should return template when it exists", async () => {
-      await db.create({
+      const input = {
         id: "existing",
         label: "Existing",
-        type: "manual",
+        type: "manual" as const,
         configJson: { test: true },
-      });
+      };
 
-      const template = await db.findById("existing");
+      await db.create(input);
+      const template = await db.findById(input.id);
+
       expect(template).toBeDefined();
       if (template) {
-        expect(template.id).toBe("existing");
-        expect(template.configJson).toEqual({ test: true });
+        expect(template.id).toBe(input.id);
+        expect(template.configJson).toEqual(input.configJson);
       }
     });
   });
@@ -96,11 +110,10 @@ describe("Template queries", () => {
         configJson: {},
       });
 
-      const updated = await db.update("updateable", {
-        label: "Updated",
-      });
+      const newLabel = "Updated";
+      const updated = await db.update("updateable", { label: newLabel });
 
-      expect(updated?.label).toBe("Updated");
+      expect(updated?.label).toBe(newLabel);
     });
   });
 
@@ -111,17 +124,18 @@ describe("Template queries", () => {
     });
 
     it("should delete template and return true", async () => {
-      await db.create({
+      const input = {
         id: "deletable",
         label: "Deletable",
-        type: "manual",
+        type: "manual" as const,
         configJson: {},
-      });
+      };
 
-      const deleted = await db.delete("deletable");
+      await db.create(input);
+      const deleted = await db.delete(input.id);
       expect(deleted).toBe(true);
 
-      const found = await db.findById("deletable");
+      const found = await db.findById(input.id);
       expect(found).toBeUndefined();
     });
   });

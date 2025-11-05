@@ -64,16 +64,6 @@ describe("Synthetic Config Schema", () => {
     const result = syntheticConfigSchema.parse(config);
     expect(result.templates.basic).toBeDefined();
   });
-
-  it("should validate config with prompt sources", () => {
-    const config = {
-      templates: {},
-      promptSources: ["docs/prompts/**/*.md", { path: "README.md", order: 1 }],
-    };
-
-    const result = syntheticConfigSchema.parse(config);
-    expect(result.promptSources).toHaveLength(2);
-  });
 });
 
 describe("defineSyntheticConfig", () => {
