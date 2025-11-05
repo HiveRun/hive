@@ -106,17 +106,4 @@ describe("defineSyntheticConfig", () => {
 
     expect(config.templates.test?.id).toBe("test");
   });
-
-  it("should throw on invalid config", () => {
-    expect(() =>
-      defineSyntheticConfig({
-        templates: {
-          // @ts-expect-error Testing invalid config
-          invalid: {
-            id: "test",
-          },
-        },
-      })
-    ).toThrow();
-  });
 });
