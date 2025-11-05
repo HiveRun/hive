@@ -2,6 +2,8 @@
 
 - [ ] Persistence Layer #status/planned #phase-0 #feature/core
 
+> **Note**: Persistence is not a single PR. Instead, each PR adds only the database tables and queries it actually needs. This document describes the complete Phase 0 schema after all PRs are merged.
+
 ## Goal
 Provide reliable storage for constructs, transcripts, artifacts, and metadata with ACID guarantees and efficient access patterns.
 

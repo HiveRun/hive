@@ -2,6 +2,10 @@
 
 - [ ] Agent Orchestration Engine #status/planned #phase-0 #feature/core
 
+> **Note**: This feature is split across two PRs:
+> - **PR #7**: OpenCode Agent Integration (SDK, mock orchestrator, message streaming)
+> - **PR #8**: Agent Orchestration Engine (UI components, chat interface, glue logic)
+
 ## Goal
 Provide the core engine for managing agent sessions, authentication, and lifecycle events across all construct types.
 

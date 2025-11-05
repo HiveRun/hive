@@ -3,43 +3,82 @@
 ## Phase 0: Core Infrastructure
 
 ### Development Strategy
-**Approach**: Single progressive branch (`feature/phase-0-infrastructure`)
+**Approach**: Sequential PRs with incremental complexity
 
-**Rationale**: Due to tight 4-way coupling between Phase 0 features, use a single branch with sequential development.
+**Rationale**: Features have clear dependencies and benefit from focused review cycles. Each PR includes only the persistence layer it needs, growing the schema organically.
 
-### Development Order
-1. **Template Definition System** - Foundation for all other features
-2. **Prompt Assembly Pipeline** - Depends on templates
-3. **Persistence Layer** - Needs structured data from templates/prompts
-4. **Agent Orchestration Engine** - Integrates all three components
+### PR Sequence
 
-### Branch Workflow
-```bash
-# Start Phase 0
-git checkout -b feature/phase-0-infrastructure
+#### PR #1: Template Definition System
+- TypeScript config schema (`synthetic.config.ts`)
+- Template validation and type safety
+- Basic template browser/listing in UI
+- **Persistence**: `templates` table and basic CRUD operations
+- Tests with in-memory fixtures
 
-# Develop Templates (commit 1)
-git add . && git commit -m "feat: template definition system"
+#### PR #2: Prompt Assembly Pipeline
+- Prompt source resolution (files, globs, ordering)
+- Variable substitution and context injection
+- Bundle generation and token estimation
+- **Persistence**: `prompt_bundles` table to store assembled prompts
+- Tests with mock templates from PR #1
 
-# Develop Prompts (commit 2) 
-git add . && git commit -m "feat: prompt assembly pipeline"
+#### PR #3: Workspace & Construct Lifecycle
+- Create `.constructs/<id>` directories
+- Construct CRUD operations (create, list, delete)
+- Basic construct status (draft, provisioning, ready, error)
+- **Persistence**: `constructs` table with metadata (name, description, template_id, workspace_path, status)
+- UI for construct creation form and listing
+- Tests for directory creation and cleanup
 
-# Develop Persistence (commit 3)
-git add . && git commit -m "feat: persistence layer"
+#### PR #4: Port Allocation System
+- OS-level port probing (avoid collisions)
+- Port allocation strategy (preferred → fallback)
+- Port reservation tracking
+- **Persistence**: `port_allocations` table linking ports to constructs/services
+- Utility functions for claiming/releasing ports
+- Tests with mock port probing
 
-# Develop Orchestration (commit 4)
-git add . && git commit -m "feat: agent orchestration engine"
+#### PR #5: Service Management & Process Lifecycle
+- Parse service definitions from templates
+- Spawn child processes with `child_process.spawn`
+- Environment variable injection (including allocated ports)
+- Ready pattern detection (stdout/stderr scanning)
+- Graceful shutdown and cleanup
+- **Persistence**: `services` table with runtime state (pid, command, cwd, env, status, ready_pattern)
+- Service status transitions (starting → ready → stopped → error)
+- Tests with mock processes and real simple commands
 
-# Final integration testing
-# Create single PR to main
-```
+#### PR #6: Provisioning Orchestration
+- Wire together workspace + ports + services + prompts
+- Multi-step provisioning flow with rollback on failure
+- Provision API endpoint that coordinates everything
+- **Persistence**: Update construct status through provisioning stages
+- Error handling and cleanup on failed provisioning
+- Integration tests for full provisioning flow
 
-### Integration Testing
-After each feature, run the full test suite to ensure:
-1. **Template System** - Can define and validate construct templates
-2. **Prompt Pipeline** - Can assemble prompts from templates
-3. **Persistence** - Can store/retrieve templates and prompts
-4. **Orchestration** - Can coordinate the full workflow
+#### PR #7: OpenCode Agent Integration
+- `@opencode-ai/sdk` integration
+- Mock orchestrator fallback for development
+- Message streaming and state management
+- **Persistence**: `agent_sessions` and `agent_messages` tables
+- Tests using mock orchestrator
+
+#### PR #8: Agent Orchestration Engine (UI + Glue)
+- Chat interface components (transcript, composer)
+- Keyboard shortcuts (Cmd+Enter to send)
+- Status updates and lifecycle visualization
+- Wiring together constructs + agents + UI
+- **Persistence**: Any missing UI state (drafts, scroll positions if needed)
+- E2E tests for complete flows
+
+### Benefits of This Approach
+1. **Faster Review Cycles** - Each PR is 200-400 LOC, easier to review thoroughly
+2. **Easier Debugging** - Smaller surface area when issues arise
+3. **Progressive Testing** - Each layer validated before building on top
+4. **Organic Schema Growth** - Persistence grows with actual needs, not speculation
+5. **Reduced Merge Conflicts** - Less time between branch creation and merge
+6. **Clear Separation** - Agent SDK integration (PR #7) separate from UI orchestration (PR #8)
 
 ## Phase 1: Core Runtime
 

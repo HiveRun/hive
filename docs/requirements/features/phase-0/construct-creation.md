@@ -2,6 +2,12 @@
 
 - [ ] Construct Creation & Provisioning #status/planned #phase-0 #feature/core
 
+> **Note**: This feature is split across multiple PRs:
+> - **PR #3**: Workspace & Construct Lifecycle
+> - **PR #4**: Port Allocation System  
+> - **PR #5**: Service Management & Process Lifecycle
+> - **PR #6**: Provisioning Orchestration
+
 ## Goal
 Handle the complete workflow of creating and provisioning constructs from templates, including workspace setup, service initialization, and prompt assembly.
 
