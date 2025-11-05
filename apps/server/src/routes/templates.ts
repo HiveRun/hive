@@ -37,7 +37,6 @@ export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
         const template = await templateRepo.create({
           id: body.id,
           label: body.label,
-          summary: body.summary,
           type: body.type,
           configJson: body.config,
         });
@@ -54,12 +53,7 @@ export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
       body: t.Object({
         id: t.String(),
         label: t.String(),
-        summary: t.String(),
-        type: t.Union([
-          t.Literal("implementation"),
-          t.Literal("planning"),
-          t.Literal("manual"),
-        ]),
+        type: t.Literal("manual"),
         config: t.Any(),
       }),
     }

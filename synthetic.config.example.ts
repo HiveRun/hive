@@ -5,8 +5,7 @@ export default defineSyntheticConfig({
     "web-api": {
       id: "web-api",
       label: "Web API Server",
-      summary: "REST API with database",
-      type: "implementation",
+      type: "manual",
       services: {
         api: {
           type: "process",
@@ -16,22 +15,16 @@ export default defineSyntheticConfig({
             PORT: "3000",
             NODE_ENV: "development",
           },
-          readyPattern: "Server listening on",
+          readyTimeoutMs: 5000,
         },
       },
-      ports: [
-        {
-          name: "API_PORT",
-          preferred: 3000,
-        },
-      ],
+      ports: [{ name: "API_PORT" }],
       prompts: ["docs/api-guidelines.md"],
     },
-    planning: {
-      id: "planning",
-      label: "Planning Session",
-      summary: "Plan and design new features",
-      type: "planning",
+    basic: {
+      id: "basic",
+      label: "Basic Template",
+      type: "manual",
     },
   },
   promptSources: [

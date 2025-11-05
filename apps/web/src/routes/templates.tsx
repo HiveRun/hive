@@ -1,13 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { rpc } from "@/lib/rpc";
 
@@ -61,17 +54,11 @@ function TemplatesPage() {
           data.templates.length > 0 &&
           data.templates.map((template) => (
             <Card
-              className="transition-colors hover:border-primary/50"
               key={template.id}
+              className="transition-colors hover:border-primary/50"
             >
               <CardHeader>
-                <div className="flex items-start justify-between">
-                  <CardTitle className="text-lg">{template.label}</CardTitle>
-                  <Badge variant={getTypeBadgeVariant(template.type)}>
-                    {template.type}
-                  </Badge>
-                </div>
-                <CardDescription>{template.summary}</CardDescription>
+                <CardTitle className="text-lg">{template.label}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-muted-foreground text-xs">
@@ -102,26 +89,10 @@ function TemplateSkeleton() {
     <Card>
       <CardHeader>
         <Skeleton className="h-6 w-3/4" />
-        <Skeleton className="mt-2 h-4 w-full" />
       </CardHeader>
       <CardContent>
         <Skeleton className="h-3 w-1/2" />
       </CardContent>
     </Card>
   );
-}
-
-function getTypeBadgeVariant(
-  type: string
-): "default" | "secondary" | "outline" {
-  switch (type) {
-    case "implementation":
-      return "default";
-    case "planning":
-      return "secondary";
-    case "manual":
-      return "outline";
-    default:
-      return "default";
-  }
 }

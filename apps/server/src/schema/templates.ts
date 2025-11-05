@@ -4,12 +4,9 @@ import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 export const templates = sqliteTable("templates", {
   id: text("id").primaryKey(),
   label: text("label").notNull(),
-  summary: text("summary").notNull(),
-  type: text("type", {
-    enum: ["implementation", "planning", "manual"],
-  })
+  type: text("type", { enum: ["manual"] })
     .notNull()
-    .default("implementation"),
+    .default("manual"),
   configJson: text("config_json", { mode: "json" }).notNull(),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()

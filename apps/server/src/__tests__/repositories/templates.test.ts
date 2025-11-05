@@ -21,14 +21,13 @@ describe("TemplateRepository", () => {
       const template = await repo.create({
         id: "test-template",
         label: "Test Template",
-        summary: "A test template",
-        type: "implementation",
+        type: "manual",
         configJson: { services: {} },
       });
 
       expect(template.id).toBe("test-template");
       expect(template.label).toBe("Test Template");
-      expect(template.type).toBe("implementation");
+      expect(template.type).toBe("manual");
     });
   });
 
@@ -42,16 +41,14 @@ describe("TemplateRepository", () => {
       await repo.create({
         id: "template-1",
         label: "Template 1",
-        summary: "First",
-        type: "implementation",
+        type: "manual",
         configJson: {},
       });
 
       await repo.create({
         id: "template-2",
         label: "Template 2",
-        summary: "Second",
-        type: "planning",
+        type: "manual",
         configJson: {},
       });
 
@@ -72,7 +69,6 @@ describe("TemplateRepository", () => {
       await repo.create({
         id: "existing",
         label: "Existing",
-        summary: "Exists",
         type: "manual",
         configJson: { test: true },
       });
@@ -96,18 +92,15 @@ describe("TemplateRepository", () => {
       await repo.create({
         id: "updateable",
         label: "Original",
-        summary: "Original summary",
-        type: "implementation",
+        type: "manual",
         configJson: {},
       });
 
       const updated = await repo.update("updateable", {
         label: "Updated",
-        summary: "Updated summary",
       });
 
       expect(updated?.label).toBe("Updated");
-      expect(updated?.summary).toBe("Updated summary");
     });
   });
 
@@ -121,8 +114,7 @@ describe("TemplateRepository", () => {
       await repo.create({
         id: "deletable",
         label: "Deletable",
-        summary: "Will be deleted",
-        type: "implementation",
+        type: "manual",
         configJson: {},
       });
 

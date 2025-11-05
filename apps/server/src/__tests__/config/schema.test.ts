@@ -10,18 +10,18 @@ describe("Template Schema", () => {
     const template = {
       id: "test-template",
       label: "Test Template",
-      summary: "A test template",
+      type: "manual" as const,
     };
 
     const result = templateSchema.parse(template);
-    expect(result.type).toBe("implementation");
+    expect(result.type).toBe("manual");
   });
 
   it("should validate a template with services", () => {
     const template = {
       id: "web-app",
       label: "Web Application",
-      summary: "A web app with database",
+      type: "manual" as const,
       services: {
         api: {
           type: "process" as const,
@@ -40,26 +40,12 @@ describe("Template Schema", () => {
     const template = {
       id: "api-server",
       label: "API Server",
-      summary: "REST API",
-      ports: [
-        { name: "API_PORT", preferred: 3000 },
-        { name: "DB_PORT", preferred: 5432 },
-      ],
+      type: "manual" as const,
+      ports: [{ name: "API_PORT" }, { name: "DB_PORT" }],
     };
 
     const result = templateSchema.parse(template);
     expect(result.ports).toHaveLength(2);
-  });
-
-  it("should reject invalid template type", () => {
-    const template = {
-      id: "invalid",
-      label: "Invalid",
-      summary: "Invalid type",
-      type: "invalid-type",
-    };
-
-    expect(() => templateSchema.parse(template)).toThrow();
   });
 });
 
@@ -70,8 +56,7 @@ describe("Synthetic Config Schema", () => {
         basic: {
           id: "basic",
           label: "Basic",
-          summary: "Basic template",
-          type: "implementation" as const,
+          type: "manual" as const,
         },
       },
     };
@@ -98,8 +83,7 @@ describe("defineSyntheticConfig", () => {
         test: {
           id: "test",
           label: "Test",
-          summary: "Test template",
-          type: "implementation",
+          type: "manual",
         },
       },
     });

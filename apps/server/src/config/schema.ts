@@ -12,10 +12,10 @@ export const processServiceSchema = z.object({
     .record(z.string(), z.string())
     .optional()
     .describe("Environment variables"),
-  readyPattern: z
-    .string()
+  readyTimeoutMs: z
+    .number()
     .optional()
-    .describe("Regex pattern to detect when service is ready"),
+    .describe("Milliseconds to wait for service to be ready"),
   stop: z
     .string()
     .optional()
@@ -35,10 +35,10 @@ export const dockerServiceSchema = z.object({
     .optional()
     .describe("Environment variables"),
   volumes: z.array(z.string()).optional().describe("Volume mappings"),
-  readyPattern: z
-    .string()
+  readyTimeoutMs: z
+    .number()
     .optional()
-    .describe("Regex pattern to detect when service is ready"),
+    .describe("Milliseconds to wait for service to be ready"),
 });
 
 export const composeServiceSchema = z.object({
@@ -60,7 +60,6 @@ export const serviceSchema = z.discriminatedUnion("type", [
 // Port request schema
 export const portRequestSchema = z.object({
   name: z.string().describe("Environment variable name for the port"),
-  preferred: z.number().optional().describe("Preferred port number"),
   container: z
     .number()
     .optional()
@@ -70,10 +69,7 @@ export const portRequestSchema = z.object({
 export const templateSchema = z.object({
   id: z.string().describe("Unique template identifier"),
   label: z.string().describe("Display name for the template"),
-  summary: z.string().describe("Brief description of what this template does"),
-  type: z
-    .enum(["implementation", "planning", "manual"])
-    .default("implementation"),
+  type: z.literal("manual"),
   services: z
     .record(z.string(), serviceSchema)
     .optional()
@@ -86,7 +82,9 @@ export const templateSchema = z.object({
   prompts: z
     .array(z.string())
     .optional()
-    .describe("Template-specific prompt fragments"),
+    .describe(
+      "Paths to prompt files or directories (relative to workspace root)"
+    ),
   teardown: z
     .array(z.string())
     .optional()
