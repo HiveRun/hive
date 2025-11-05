@@ -4,7 +4,6 @@ import type { SyntheticConfig, Template } from "../config/schema";
 
 const HTTP_STATUS = {
   NOT_FOUND: 404,
-  BAD_REQUEST: 400,
 } as const;
 
 async function getConfig(): Promise<SyntheticConfig> {
@@ -26,13 +25,30 @@ function templateToResponse(_id: string, template: Template) {
 }
 
 export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
-  .get("/", async () => {
-    const config = await getConfig();
-    const templates = Object.entries(config.templates).map(([id, template]) =>
-      templateToResponse(id, template)
-    );
-    return { templates };
-  })
+  .get(
+    "/",
+    async () => {
+      const config = await getConfig();
+      const templates = Object.entries(config.templates).map(([id, template]) =>
+        templateToResponse(id, template)
+      );
+      return { templates };
+    },
+    {
+      response: {
+        200: t.Object({
+          templates: t.Array(
+            t.Object({
+              id: t.String(),
+              label: t.String(),
+              type: t.String(),
+              configJson: t.Any(),
+            })
+          ),
+        }),
+      },
+    }
+  )
   .get(
     "/:id",
     async ({ params, set }) => {
@@ -48,5 +64,16 @@ export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
       params: t.Object({
         id: t.String(),
       }),
+      response: {
+        200: t.Object({
+          id: t.String(),
+          label: t.String(),
+          type: t.String(),
+          configJson: t.Any(),
+        }),
+        404: t.Object({
+          message: t.String(),
+        }),
+      },
     }
   );
