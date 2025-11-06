@@ -31,6 +31,21 @@ test.describe("Constructs Page", () => {
     expect(hasTitle || hasButton).toBeTruthy();
   });
 
+  test("constructs route redirects to list", async ({ page }) => {
+    await page.goto("/constructs");
+    await expect(page).toHaveURL("/constructs/list");
+  });
+
+  test("constructs list page loads", async ({ page }) => {
+    await page.goto("/constructs/list");
+    await expect(page.locator('h1:has-text("Constructs")')).toBeVisible();
+  });
+
+  test("constructs new page loads independently", async ({ page }) => {
+    await page.goto("/constructs/new");
+    await expect(page.locator("text=Create New Construct")).toBeVisible();
+  });
+
   test("should match constructs page snapshot (light mode)", async ({
     page,
   }) => {
