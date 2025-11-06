@@ -4,15 +4,24 @@ This document covers the high-level runtime behavior of constructs. For detailed
 
 ## Core Concepts
 
-### Construct Types
-- **Implementation (default)**: launches the agent with the full tool/toolbox defined by the workspace. Use the standard prompt assembly pipeline and allow file writes, command execution, etc.
+### Construct Types (Rescoped)
+- **Basic**: Simple construct entity with metadata only (PR #2)
+- **With Worktree**: Basic construct + isolated git worktree (PR #3)
+- **With Agent**: Basic construct + worktree + OpenCode agent session (PR #4)
+
+### Future Construct Types (Phase 1A+)
+- **Implementation (full)**: launches the agent with the full tool/toolbox defined by the workspace. Use the standard prompt assembly pipeline and allow file writes, command execution, etc.
 - **Planning**: launches OpenCode in plan mode (limited toolset). See [[features/phase-3/planning-handoff|Planning-to-Implementation Handoff]] for detailed workflow.
 - **Manual**: skip agent creation entirely. Services still provision, the worktree is created, and Synthetic exposes diff/log views; the user drives work manually via their own editor/terminal or via MCP/CLI helpers.
 
-### Runtime Environment
-- Constructs run directly in the host environment so agents share the user's credentials, PATH, and dependencies; no supervised pods for v1.
-- Each construct operates in its own git worktree to prevent conflicts with other constructs and the main workspace.
+### Runtime Environment (Current)
+- Constructs run directly in host environment so agents share the user's credentials, PATH, and dependencies; no supervised pods for v1.
+- Each construct operates in its own git worktree (when enabled) to prevent conflicts with other constructs and the main workspace.
+- **Note**: Port allocation deferred to Phase 1A - not needed for basic agent functionality.
+
+### Runtime Environment (Future Phase 1A)
 - Port allocation probes the real host OS to avoid collisions between constructs and with running services.
+- Service management and process lifecycle for development environments.
 
 ## Implementation Features
 

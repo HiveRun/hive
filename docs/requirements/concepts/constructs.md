@@ -2,15 +2,19 @@
 
 See also: [[runtime|Runtime]], [[../configuration|Workspace & Templates]], [[../testing|Testing Strategy]], and [[../implementation-strategy|Implementation Strategy]].
 
-## Core Infrastructure
-The foundational features that enable all construct functionality:
-- [[features/phase-0/agent-orchestration|Agent Orchestration Engine]]
-- [[features/phase-0/construct-creation|Construct Creation & Provisioning]]
-- [[features/phase-0/agent-chat-ux|Agent Chat UX]]
-- [[features/phase-0/persistence-layer|Persistence Layer]] 
-- [[features/phase-0/template-definition-system|Template Definition System]]
-- [[features/phase-0/prompt-assembly-pipeline|Prompt Assembly Pipeline]]
-- [[features/phase-3/planning-handoff|Planning-to-Implementation Handoff]]
+## Core Infrastructure (Rescoped)
+The foundational features that enable core construct functionality:
+- [[features/phase-0/template-definition-system|Template Definition System]] ✅ **COMPLETED**
+- [[../core-functionality-path|Basic Construct Management]] 🔄 **PR #2**
+- [[../core-functionality-path|Git Worktree Integration]] 🔄 **PR #3**
+- [[../core-functionality-path|Agent Integration]] 🔄 **PR #4**
+
+### Deferred Features (Prepared but Not Implemented)
+- [[features/phase-0/agent-orchestration|Agent Orchestration Engine]] 🔄 **Deferred to Phase 1A**
+- [[features/phase-0/construct-creation|Construct Creation & Provisioning]] 🔄 **Deferred to Phase 1A**
+- [[features/phase-0/persistence-layer|Persistence Layer]] 🔄 **Deferred to Phase 1A**
+- [[features/phase-0/prompt-assembly-pipeline|Prompt Assembly Pipeline]] 🔄 **Deferred to Phase 1A**
+- [[features/phase-3/planning-handoff|Planning-to-Implementation Handoff]] 🔄 **Phase 3**
 
 ## Vision & Goals
 - Centralize multi-agent coding work so each task runs inside an isolated "construct" with its own workspace, services, and context.
@@ -19,10 +23,19 @@ The foundational features that enable all construct functionality:
 - Treat Synthetic as an extension of the developer environment: agents inherit local toolchains, environment variables, and access to running services.
 - Optimize for a single operator managing their own project; multi-user coordination is out of scope for v1.
 
-## Construct Model
-- **Definition**: A construct bundles the task brief, linked worktree, configured services, agent session, and history of actions. Constructs are instantiated from reusable templates defined in `synthetic.config.ts`; each construct is owned and operated by the same single user who controls the workspace.
-- **Lifecycle (v1)**: Draft brief → Template selection & provisioning (run setup tasks & services) → Active (agent executing) → Awaiting Review (agent paused / needs input) → Reviewing (human diff/feedback) → Complete or Parked (snapshot for later).
-- **State Capture**: Persist key metadata (task, status, timestamps), agent transcript, shell command log, and diff bundles for context restoration. Retain the template reference so users can rehydrate or clone constructs.
+## Construct Model (Rescoped)
+- **Definition**: A construct bundles basic metadata, optional worktree, and optional agent session. Constructs are instantiated from reusable templates defined in `synthetic.config.ts`; each construct is owned and operated by the same single user who controls the workspace.
+- **Core Lifecycle**: Create (basic entity) → Extend with worktree (optional) → Extend with agent session (optional)
+- **State Capture**: Persist basic metadata (name, description, template_id). Additional features (worktree, agent) extend this base entity.
+
+### Progressive Enhancement
+1. **PR #2**: Basic construct entity (name, description, template_id)
+2. **PR #3**: Add worktree capability (workspace_path)
+3. **PR #4**: Add agent capability (sessions, messages)
+
+### Future Full Lifecycle (Phase 1A)
+When deferred features are implemented, constructs will support:
+- Draft brief → Template selection & provisioning (run setup tasks & services) → Active (agent executing) → Awaiting Review (agent paused / needs input) → Reviewing (human diff/feedback) → Complete or Parked (snapshot for later)
 
 ### Agent Lifecycle
 - **Starting**: services provisioned, prompts assembled, and a new agent session bootstrapped. The UI shows a spinner until we receive the first assistant message or readiness signal.

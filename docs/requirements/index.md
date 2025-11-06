@@ -5,16 +5,23 @@
 - [Runtime](concepts/runtime.md) - Technical implementation details
 
 ## Implementation Strategy
-- [Development Strategy](implementation-strategy.md) - Phase-by-phase development approach
+- [Development Strategy (Rescoped)](implementation-strategy.md) - Phase-by-phase development approach focused on core value
+- [Core Functionality Path](core-functionality-path.md) - Detailed implementation guide for focused delivery
+- [Schema Status](schema-status.md) - Current implementation status of prepared schemas
 
 ## Features by Phase
 
-### Phase 0: Core Infrastructure
-- [ ] [Agent Orchestration Engine](features/phase-0/agent-orchestration.md) #status/planned #phase-0 #feature/core - Core engine for managing agent sessions with integrated UX
-- [ ] [Construct Creation & Provisioning](features/phase-0/construct-creation.md) #status/planned #phase-0 #feature/core - Template selection and workspace setup
-- [ ] [Persistence Layer](features/phase-0/persistence-layer.md) #status/planned #phase-0 #feature/core - Reliable storage for constructs and artifacts
-- [ ] [Template Definition System](features/phase-0/template-definition-system.md) #status/planned #phase-0 #feature/core - System for defining construct templates
-- [ ] [Prompt Assembly Pipeline](features/phase-0/prompt-assembly-pipeline.md) #status/planned #phase-0 #feature/core - System for assembling agent prompts
+### Phase 0: Core Infrastructure (Rescoped)
+- [x] [Template Definition System](features/phase-0/template-definition-system.md) #status/completed #phase-0 #feature/core - System for defining construct templates
+- [ ] [Basic Construct Management](features/phase-0/PR-SEQUENCE.md) #status/planned #phase-0 #feature/core - Real database entities for constructs (PR #2)
+- [ ] [Git Worktree Integration](features/phase-0/PR-SEQUENCE.md) #status/planned #phase-0 #feature/core - Isolated workspaces for constructs (PR #3)
+- [ ] [Agent Integration](features/phase-0/PR-SEQUENCE.md) #status/planned #phase-0 #feature/core - OpenCode SDK integration (PR #4)
+
+#### Deferred Features (Prepared but Not Implemented)
+- [ ] [Prompt Assembly Pipeline](features/phase-0/prompt-assembly-pipeline.md) #status/deferred #phase-0 #feature/advanced - System for assembling agent prompts
+- [ ] [Agent Orchestration Engine](features/phase-0/agent-orchestration.md) #status/deferred #phase-0 #feature/advanced - Core engine for managing agent sessions with integrated UX
+- [ ] [Construct Creation & Provisioning](features/phase-0/construct-creation.md) #status/deferred #phase-0 #feature/advanced - Template selection and workspace setup
+- [ ] [Persistence Layer](features/phase-0/persistence-layer.md) #status/deferred #phase-0 #feature/advanced - Reliable storage for constructs and artifacts
 
 ### Phase 1: Core Runtime
 - [ ] [Diff Review](features/phase-1/diff-review.md) #status/planned #phase-1 #feature/ux - Comprehensive diff review experience
@@ -59,9 +66,10 @@ All features use the **Obsidian Tasks** format for status tracking:
 - `[/]` - In progress  
 - `[x]` - Completed
 - `[-]` - Blocked
+- `[d]` - Deferred (prepared but not currently implemented)
 
 **Tags:**
-- `#status/planned/in-progress/completed/blocked` - Progress status
+- `#status/planned/in-progress/completed/blocked/deferred` - Progress status
 - `#phase-0/1/2/3/4` - Development phase (natural priority ordering)
 - `#feature/core/ux/infrastructure/advanced` - Feature categorization
 

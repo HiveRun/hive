@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "setup": "bun install && ./scripts/dev/clone-opencode.sh",
+    "setup": "bun install && ./scripts/dev/clone-opencode.sh && bun run db:migrate",
     "check": "bun run check:commit",
     "check:commit": "bun run check:staged && bun run check:secrets && bun run check:audit && biome check --no-errors-on-unmatched --files-ignore-unknown=true && bun run test:run && turbo check check-types --ui=stream --force && bun run build",
     "check:push": "bun run check:commit && bun run test:e2e",

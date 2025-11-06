@@ -1,13 +1,26 @@
 # Agent Orchestration Engine
 
-- [ ] Agent Orchestration Engine #status/planned #phase-0 #feature/core
+- [d] Agent Orchestration Engine #status/deferred #phase-0 #feature/advanced
 
-> **Note**: This feature is split across two PRs:
-> - **PR #7**: OpenCode Agent Integration (SDK, mock orchestrator, message streaming)
-> - **PR #8**: Agent Orchestration Engine (UI components, chat interface, glue logic)
+> **Note**: This feature is **deferred** to focus on core functionality. See [[PR-SEQUENCE.md]] for current implementation path.
+> 
+> **Original PRs** (prepared but not implemented):
+> - **PR #7**: OpenCode Agent Integration → Now **PR #4: Agent Integration** (simplified)
+> - **PR #8**: Agent Orchestration Engine → Deferred to Phase 1A (advanced orchestration)
 
 ## Goal
 Provide the core engine for managing agent sessions, authentication, and lifecycle events across all construct types.
+
+## Current Status: DEFERRED
+
+This feature represents **advanced agent orchestration** that was originally planned for Phase 0. It has been deferred to accelerate delivery of core functionality.
+
+### What's Implemented Instead
+- **PR #4**: Simplified agent integration with basic OpenCode SDK integration
+- Basic chat interface without advanced orchestration features
+
+### When This Will Be Implemented
+This comprehensive orchestration system will be implemented in **Phase 1A** after core functionality path is complete and validated.
 
 ## Requirements
 
