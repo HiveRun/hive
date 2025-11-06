@@ -14,6 +14,8 @@ import { Route as TemplatesRouteImport } from './routes/templates'
 import { Route as ExampleDashboardRouteImport } from './routes/example-dashboard'
 import { Route as ConstructsRouteImport } from './routes/constructs'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ConstructsNewRouteImport } from './routes/constructs/new'
+import { Route as ConstructsListRouteImport } from './routes/constructs/list'
 
 const TestErrorRoute = TestErrorRouteImport.update({
   id: '/test-error',
@@ -40,28 +42,44 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConstructsNewRoute = ConstructsNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => ConstructsRoute,
+} as any)
+const ConstructsListRoute = ConstructsListRouteImport.update({
+  id: '/list',
+  path: '/list',
+  getParentRoute: () => ConstructsRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/constructs': typeof ConstructsRoute
+  '/constructs': typeof ConstructsRouteWithChildren
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
+  '/constructs/list': typeof ConstructsListRoute
+  '/constructs/new': typeof ConstructsNewRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/constructs': typeof ConstructsRoute
+  '/constructs': typeof ConstructsRouteWithChildren
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
+  '/constructs/list': typeof ConstructsListRoute
+  '/constructs/new': typeof ConstructsNewRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/constructs': typeof ConstructsRoute
+  '/constructs': typeof ConstructsRouteWithChildren
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
+  '/constructs/list': typeof ConstructsListRoute
+  '/constructs/new': typeof ConstructsNewRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -71,8 +89,17 @@ export interface FileRouteTypes {
     | '/example-dashboard'
     | '/templates'
     | '/test-error'
+    | '/constructs/list'
+    | '/constructs/new'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/constructs' | '/example-dashboard' | '/templates' | '/test-error'
+  to:
+    | '/'
+    | '/constructs'
+    | '/example-dashboard'
+    | '/templates'
+    | '/test-error'
+    | '/constructs/list'
+    | '/constructs/new'
   id:
     | '__root__'
     | '/'
@@ -80,11 +107,13 @@ export interface FileRouteTypes {
     | '/example-dashboard'
     | '/templates'
     | '/test-error'
+    | '/constructs/list'
+    | '/constructs/new'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  ConstructsRoute: typeof ConstructsRoute
+  ConstructsRoute: typeof ConstructsRouteWithChildren
   ExampleDashboardRoute: typeof ExampleDashboardRoute
   TemplatesRoute: typeof TemplatesRoute
   TestErrorRoute: typeof TestErrorRoute
@@ -127,12 +156,40 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/constructs/new': {
+      id: '/constructs/new'
+      path: '/new'
+      fullPath: '/constructs/new'
+      preLoaderRoute: typeof ConstructsNewRouteImport
+      parentRoute: typeof ConstructsRoute
+    }
+    '/constructs/list': {
+      id: '/constructs/list'
+      path: '/list'
+      fullPath: '/constructs/list'
+      preLoaderRoute: typeof ConstructsListRouteImport
+      parentRoute: typeof ConstructsRoute
+    }
   }
 }
 
+interface ConstructsRouteChildren {
+  ConstructsListRoute: typeof ConstructsListRoute
+  ConstructsNewRoute: typeof ConstructsNewRoute
+}
+
+const ConstructsRouteChildren: ConstructsRouteChildren = {
+  ConstructsListRoute: ConstructsListRoute,
+  ConstructsNewRoute: ConstructsNewRoute,
+}
+
+const ConstructsRouteWithChildren = ConstructsRoute._addFileChildren(
+  ConstructsRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  ConstructsRoute: ConstructsRoute,
+  ConstructsRoute: ConstructsRouteWithChildren,
   ExampleDashboardRoute: ExampleDashboardRoute,
   TemplatesRoute: TemplatesRoute,
   TestErrorRoute: TestErrorRoute,

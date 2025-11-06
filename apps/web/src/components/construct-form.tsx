@@ -246,11 +246,12 @@ export function ConstructForm({
                     <SelectValue placeholder="Select a template" />
                   </SelectTrigger>
                   <SelectContent>
-                    {templates.map((template) => (
-                      <SelectItem key={template.id} value={template.id}>
-                        {template.label}
-                      </SelectItem>
-                    ))}
+                    {Array.isArray(templates) &&
+                      templates.map((template) => (
+                        <SelectItem key={template.id} value={template.id}>
+                          {template.label}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
                 {field.state.meta.errors.length > 0 && (

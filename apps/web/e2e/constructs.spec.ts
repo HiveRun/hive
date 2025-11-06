@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 
 import { setTheme } from "./utils/theme";
 
-const constructButton = 'button:has-text("New Construct")';
+const constructButton = 'a:has-text("New Construct")';
 
 async function navigateToConstructs(page: Page) {
   await page.goto("/constructs");
@@ -13,6 +13,13 @@ async function navigateToConstructs(page: Page) {
 
 test.describe("Constructs Page", () => {
   test("should display constructs page correctly", async ({ page }) => {
+    // Listen for console errors
+    page.on("console", (msg) => {
+      if (msg.type() === "error") {
+        console.error("Console error:", msg.text());
+      }
+    });
+
     await navigateToConstructs(page);
 
     const pageTitle = page.locator('h1:has-text("Constructs")');

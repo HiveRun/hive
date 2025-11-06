@@ -15,6 +15,9 @@ export const templateQueries = {
       if (error) {
         throw new Error("Failed to fetch templates");
       }
+      if (!(data && Array.isArray(data.templates))) {
+        throw new Error("Invalid templates response from server");
+      }
       return data.templates;
     },
   }),

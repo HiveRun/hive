@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Edit, Plus, Trash2 } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -11,13 +12,8 @@ import {
   constructQueries,
 } from "@/queries/constructs";
 import { templateQueries } from "@/queries/templates";
-import { ConstructForm } from "./construct-form";
 
 export function ConstructList() {
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [editingConstruct, setEditingConstruct] = useState<Construct | null>(
-    null
-  );
   const [pendingDelete, setPendingDelete] = useState<Construct | null>(null);
 
   const queryClient = useQueryClient();
@@ -66,11 +62,6 @@ export function ConstructList() {
       minute: "2-digit",
     });
 
-  const resetFormState = () => {
-    setShowCreateForm(false);
-    setEditingConstruct(null);
-  };
-
   if (isLoading) {
     return <div className="p-6">Loading constructs...</div>;
   }
@@ -85,27 +76,16 @@ export function ConstructList() {
     );
   }
 
-  if (showCreateForm || editingConstruct) {
-    return (
-      <div className="p-6">
-        <ConstructForm
-          construct={editingConstruct ?? undefined}
-          mode={editingConstruct ? "edit" : "create"}
-          onCancel={resetFormState}
-          onSuccess={resetFormState}
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <h1 className="font-bold text-3xl">Constructs</h1>
-        <Button onClick={() => setShowCreateForm(true)} type="button">
-          <Plus className="mr-2 h-4 w-4" />
-          New Construct
-        </Button>
+        <Link to="/constructs/new">
+          <Button type="button">
+            <Plus className="mr-2 h-4 w-4" />
+            New Construct
+          </Button>
+        </Link>
       </div>
 
       {pendingDelete && (
@@ -148,10 +128,12 @@ export function ConstructList() {
             <p className="mb-4 text-muted-foreground">
               Create your first construct to get started with Synthetic.
             </p>
-            <Button onClick={() => setShowCreateForm(true)} type="button">
-              <Plus className="mr-2 h-4 w-4" />
-              Create Construct
-            </Button>
+            <Link to="/constructs/new">
+              <Button type="button">
+                <Plus className="mr-2 h-4 w-4" />
+                Create Construct
+              </Button>
+            </Link>
           </CardContent>
         </Card>
       ) : (
@@ -168,14 +150,6 @@ export function ConstructList() {
                     {construct.name}
                   </CardTitle>
                   <div className="flex space-x-1">
-                    <Button
-                      onClick={() => setEditingConstruct(construct)}
-                      size="sm"
-                      type="button"
-                      variant="ghost"
-                    >
-                      <Edit className="h-4 w-4" />
-                    </Button>
                     <Button
                       data-testid="delete-construct"
                       disabled={deleteMutation.isPending}

@@ -1,10 +1,14 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { ConstructList } from "@/components/construct-list";
+import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/constructs")({
+  beforeLoad: ({ location }) => {
+    if (location.pathname === "/constructs") {
+      throw redirect({ to: "/constructs/list" });
+    }
+  },
   component: RouteComponent,
 });
 
 function RouteComponent() {
-  return <ConstructList />;
+  return <Outlet />;
 }
