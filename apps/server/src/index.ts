@@ -30,7 +30,7 @@ const app = new Elysia()
   .use(
     cors({
       origin: allowedCorsOrigins,
-      methods: ["GET", "POST", "OPTIONS"],
+      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
       credentials: true,
     })
   )
