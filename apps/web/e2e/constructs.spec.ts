@@ -78,3 +78,45 @@ test.describe("Constructs Page", () => {
     });
   });
 });
+
+test.describe("Construct New Page", () => {
+  async function navigateToConstructNew(page: Page) {
+    await page.goto("/constructs/new");
+    await page.waitForLoadState("networkidle");
+    await page.waitForSelector("text=Create New Construct");
+  }
+
+  test("should match construct new page snapshot (light mode)", async ({
+    page,
+  }) => {
+    await setTheme(page, "light");
+    await navigateToConstructNew(page);
+    await expect(page).toHaveScreenshot("construct-new-light.png", {
+      fullPage: true,
+      animations: "disabled",
+    });
+  });
+
+  test("should match construct new page snapshot (dark mode)", async ({
+    page,
+  }) => {
+    await setTheme(page, "dark");
+    await navigateToConstructNew(page);
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect(page).toHaveScreenshot("construct-new-dark.png", {
+      fullPage: true,
+      animations: "disabled",
+    });
+  });
+
+  test("should match construct new page snapshot (mobile)", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 667 });
+    await navigateToConstructNew(page);
+    await expect(page).toHaveScreenshot("construct-new-mobile.png", {
+      fullPage: true,
+      animations: "disabled",
+    });
+  });
+});
