@@ -15,7 +15,9 @@
 
 **Use imperative approaches** when functional/declarative patterns don't fit the problem or would add unnecessary complexity.
 
-**Use factory functions over classes** - Return objects with methods instead of using `class` and `new`. Factory functions are simpler, more flexible, and avoid `this` complexity.
+**ALWAYS use factory functions over classes** - Return objects with methods instead of using `class` and `new`. Factory functions are simpler, more flexible, and avoid `this` complexity.
+
+**NEVER use classes** - Do not create classes with `class` keyword or instantiate with `new`. Always prefer factory functions that return objects with methods. This is a strict rule for this codebase.
 
 **Trust the TypeScript types** for internal code paths; skip redundant runtime guards when the compiler already guarantees the shape. Reserve extra validation for external or untyped inputs, and when you do need it lean on dedicated schemas (TypeBox, Zod, etc.) instead of ad-hoc checks.
 

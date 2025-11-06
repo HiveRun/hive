@@ -4,6 +4,7 @@ import { cors } from "@elysiajs/cors";
 import { Elysia } from "elysia";
 import { constructsRoutes } from "./routes/constructs";
 import { templatesRoutes } from "./routes/templates";
+import { createWorktreeRoutes } from "./routes/worktrees";
 
 const PORT = 3000;
 
@@ -41,6 +42,7 @@ const app = new Elysia()
   }))
   .use(templatesRoutes)
   .use(constructsRoutes)
+  .use(createWorktreeRoutes())
   .listen(PORT);
 
 export type App = typeof app;

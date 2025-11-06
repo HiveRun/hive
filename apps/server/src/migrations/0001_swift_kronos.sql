@@ -1,0 +1,1 @@
+ALTER TABLE `constructs` ADD `workspace_path` text;
