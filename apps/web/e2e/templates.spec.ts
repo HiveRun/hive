@@ -1,20 +1,28 @@
 import { expect, test } from "@playwright/test";
 
+// Test constants
+const SELECTORS = {
+  pageTitle: '[data-testid="templates-page-title"]',
+  templateCard: '[data-testid="template-card"]',
+  templateId: '[data-testid="template-id"]',
+} as const;
+
+const TEXT = {
+  pageTitle: "Templates",
+  pageDescription: "Browse available construct templates",
+  noTemplates: "No templates available",
+  configFileHint: "Create a synthetic.config.ts file to define templates",
+} as const;
+
 test.describe("Templates Page", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/templates");
   });
 
   test("should display templates page header correctly", async ({ page }) => {
-    await page.waitForSelector('[data-testid="templates-page-title"]', {
-      state: "visible",
-    });
-    await expect(
-      page.locator('[data-testid="templates-page-title"]')
-    ).toBeVisible();
-    await expect(
-      page.getByText("Browse available construct templates")
-    ).toBeVisible();
+    await page.waitForSelector(SELECTORS.pageTitle, { state: "visible" });
+    await expect(page.locator(SELECTORS.pageTitle)).toBeVisible();
+    await expect(page.getByText(TEXT.pageDescription)).toBeVisible();
   });
 
   test("should display template cards when templates are available", async ({
