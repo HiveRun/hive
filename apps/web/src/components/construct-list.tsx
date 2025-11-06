@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
+  Copy,
   FolderOpen,
   GitBranch,
   Plus,
+  Terminal,
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
@@ -68,6 +70,19 @@ export function ConstructList() {
     });
 
   const hasWorktree = (construct: Construct) => !!construct.workspacePath;
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Copied to clipboard");
+    } catch (_error) {
+      toast.error("Failed to copy to clipboard");
+    }
+  };
+
+  const getNavigateCommand = (workspacePath: string) => {
+    return `cd "${workspacePath}"`;
+  };
 
   if (isLoading) {
     return <div className="p-6">Loading constructs...</div>;
@@ -207,8 +222,34 @@ export function ConstructList() {
                 {/* Workspace path */}
                 {construct.workspacePath && (
                   <div className="mb-4">
-                    <p className="text-muted-foreground text-xs">
-                      <span className="font-medium">Workspace:</span>{" "}
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-muted-foreground text-xs font-medium">
+                        Workspace:
+                      </p>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          data-testid="copy-workspace-command"
+                          onClick={() => copyToClipboard(getNavigateCommand(construct.workspacePath))}
+                          size="sm"
+                          title="Copy navigation command"
+                          type="button"
+                          variant="ghost"
+                        >
+                          <Terminal className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          data-testid="copy-workspace-path"
+                          onClick={() => copyToClipboard(construct.workspacePath)}
+                          size="sm"
+                          title="Copy workspace path"
+                          type="button"
+                          variant="ghost"
+                        >
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                    <p className="text-muted-foreground text-xs break-all font-mono bg-muted/50 p-2 rounded mt-1">
                       {construct.workspacePath}
                     </p>
                   </div>

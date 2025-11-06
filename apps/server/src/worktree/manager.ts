@@ -46,7 +46,8 @@ export function createWorktreeManager(
   baseDir: string = process.cwd()
 ): WorktreeManager {
   const git = simpleGit(baseDir);
-  const constructsDir = join(baseDir, ".constructs");
+  const homeDir = require("os").homedir();
+  const constructsDir = join(homeDir, ".synthetic", "constructs");
 
   /**
    * Initialize constructs directory if it doesn't exist
