@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { setTheme } from "./utils/theme";
+
 // Shared constants for E2E tests
 const SELECTORS = {
   pageTitle: '[data-testid="templates-page-title"]',
@@ -65,6 +67,7 @@ test.describe("Templates Page", () => {
   test("should match templates page snapshot (light mode)", async ({
     page,
   }) => {
+    await setTheme(page, "light");
     await page.waitForLoadState("networkidle");
     await expect(page).toHaveScreenshot("templates-light.png", {
       fullPage: true,
@@ -73,6 +76,7 @@ test.describe("Templates Page", () => {
   });
 
   test("should match templates page snapshot (dark mode)", async ({ page }) => {
+    await setTheme(page, "dark");
     await page.emulateMedia({ colorScheme: "dark" });
     await page.waitForLoadState("networkidle");
     await expect(page).toHaveScreenshot("templates-dark.png", {
