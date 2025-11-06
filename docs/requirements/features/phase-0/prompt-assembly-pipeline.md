@@ -1,9 +1,20 @@
 # Prompt Assembly Pipeline
 
-- [ ] Prompt Assembly Pipeline #status/planned #phase-0 #feature/core
+- [d] Prompt Assembly Pipeline #status/deferred #phase-0 #feature/advanced
 
 ## Goal
 Provide a robust system for assembling agent prompts from multiple sources with proper ordering, validation, and context injection.
+
+## Current Status: DEFERRED
+
+This feature represents **advanced prompt management** that was originally planned for Phase 0. It has been deferred to accelerate delivery of core functionality.
+
+### What's Implemented Instead
+- **PR #4**: Basic agent integration with simple prompt handling
+- Templates provide basic context without complex assembly
+
+### When This Will Be Implemented
+This sophisticated prompt assembly system will be implemented in **Phase 1A** after core functionality path is complete and validated.
 
 ## Requirements
 

@@ -1,12 +1,25 @@
-# Phase 0 PR Sequence
+# Phase 0 PR Sequence (Rescoped)
 
-This document outlines the sequential PR strategy for Phase 0 implementation.
+This document outlines the sequential PR strategy for Phase 0 implementation, **rescoped to focus on core functionality that delivers value quickly**.
 
 ## Strategy Overview
 
 **Approach**: Each PR is focused, reviewable (200-400 LOC), and includes only the persistence layer it needs.
 
 **Key Principle**: Persistence grows organically—we don't build the full schema upfront. Each PR adds tables/queries as needed.
+
+## Rescope Decision
+
+**New Focus**: Worktrees, OpenCode integration, and base construct capabilities
+**Deferred**: Service management, port allocation, complex provisioning orchestration
+
+**Rationale**: To get Synthetic useful quickly, we need:
+1. ✅ Template definitions (completed)
+2. 🔄 Git worktree management for isolated workspaces  
+3. 🔄 OpenCode SDK integration for agent sessions
+4. 🔄 Basic construct lifecycle (create, list, status)
+
+**Note**: All schemas, validation, and tests from the original plan remain in place but are marked as **PREPARED BUT NOT CURRENTLY USED** to enable faster implementation of the core path.
 
 ---
 
@@ -42,184 +55,92 @@ This document outlines the sequential PR strategy for Phase 0 implementation.
 
 ---
 
-## PR #2: Prompt Assembly Pipeline
+## PR #2: Basic Construct Management
 
-**Branch**: `feat/prompt-assembly-pipeline`
+**Branch**: `feat/basic-construct-management`
 
 ### Scope
-- Prompt source resolution (files, globs, ordering)
-- Variable substitution (`${constructId}`, `${workspaceName}`)
-- Context injection (services, ports, environment)
-- Bundle generation and token estimation
-- Markdown concatenation with deduplication
+- Construct creation form UI (name, description, template selection)
+- Construct listing page
+- **Real database persistence** for basic constructs
+- Construct CRUD operations (create, list, delete, update)
+- **No status tracking, no worktree, no services, no agents** - just basic construct entities
 
 ### Persistence Added
-- `prompt_bundles` table (id, construct_id, content, token_count, created_at)
-- Query to fetch latest bundle for a construct
+- `constructs` table (id, name, description, template_id, created_at, updated_at)
+- **Note**: workspace_path and status added later in PR #3
+- Queries: create, list, get by id, delete, update
 
 ### Tests
-- Glob pattern resolution
-- Variable substitution logic
-- Token estimation accuracy
-- Bundle generation with mock templates
+- Construct creation form validation
+- Database CRUD operations
+- UI component tests with real data
+- E2E tests for complete construct management workflow
 
 ### Dependencies
-- PR #1 (needs template definitions)
+- PR #1 (needs templates for construct creation form)
 
 ### Acceptance Criteria
-- [ ] Can resolve prompt sources from config
-- [ ] Variables substitute correctly
-- [ ] Token counts are accurate
-- [ ] Bundles store in database
+- [ ] Can create construct via UI form with real database storage
+- [ ] Construct list shows basic info from database
+- [ ] Can delete constructs from UI and database
+- [ ] Can update construct details (name, description)
+- [ ] E2E tests pass for full construct management workflow
+- [ ] Database schema ready for worktree extension in PR #3
 
 ---
 
-## PR #3: Workspace & Construct Lifecycle
+## PR #3: Git Worktree Integration
 
-**Branch**: `feat/workspace-construct-lifecycle`
+**Branch**: `feat/git-worktree-integration`
 
 ### Scope
-- Create `.constructs/<id>` directories
-- Construct CRUD operations (create, list, delete)
-- Basic construct status (draft, provisioning, ready, error)
-- Construct creation form UI
-- Construct listing page UI
+- **Extend existing constructs** with git worktree functionality
+- Add `workspace_path` to existing constructs
+- Create isolated git worktrees for each construct (`.constructs/<id>/`)
+- Worktree lifecycle management (create, list, prune, cleanup)
+- Worktree isolation and safety checks
+- **Extend existing UI** from PR #2 to show worktree information
 
-### Persistence Added
-- `constructs` table (id, name, description, template_id, workspace_path, status, created_at, updated_at)
-- Queries: list constructs, get by id, update status, delete cascade
+### Persistence Updates
+- **ALTER TABLE constructs ADD COLUMN workspace_path TEXT**
+- Update existing constructs to support worktree paths
+- Migration script to add workspace_path column
 
 ### Tests
-- Directory creation and cleanup
-- Construct CRUD operations
-- Status transitions
-- UI form validation
+- Git worktree creation and cleanup
+- Database migration testing
+- Worktree isolation verification
+- **Integration tests with existing UI from PR #2**
 
 ### Dependencies
 - PR #1 (needs templates for construct creation)
+- PR #2 (needs existing construct management)
 
 ### Acceptance Criteria
-- [ ] Can create construct with name/description
-- [ ] Workspace directory created at `.constructs/<id>`
-- [ ] Construct status tracked in database
-- [ ] UI shows construct list with status
+- [ ] Existing constructs can be extended with worktree functionality
+- [ ] Worktree created at `.constructs/<id>/` when requested
+- [ ] Worktree information displayed in UI
+- [ ] Worktree cleanup on construct deletion
+- [ ] Safety checks prevent worktree conflicts
+- [ ] Database migration works correctly
+- [ ] End-to-end test: UI → backend → worktree creation
 
 ---
 
-## PR #4: Port Allocation System
+## PR #4: Agent Integration
 
-**Branch**: `feat/port-allocation-system`
-
-### Scope
-- OS-level port probing (avoid collisions)
-- Port allocation strategy (preferred → fallback)
-- Port reservation tracking
-- Utility functions for claiming/releasing ports
-
-### Persistence Added
-- `port_allocations` table (id, construct_id, service_name, port, allocated_at)
-- Queries: allocate port, release port, list by construct
-
-### Tests
-- Port probing with mock OS calls
-- Allocation strategy with preferred ports
-- Port reservation and release
-- Conflict resolution
-
-### Dependencies
-- PR #3 (needs constructs to allocate ports for)
-
-### Acceptance Criteria
-- [ ] Can probe OS for free ports
-- [ ] Preferred ports used when available
-- [ ] Port allocations tracked per construct
-- [ ] Ports released on construct cleanup
-
----
-
-## PR #5: Service Management & Process Lifecycle
-
-**Branch**: `feat/service-management`
+**Branch**: `feat/agent-integration`
 
 ### Scope
-- Parse service definitions from templates
-- Spawn child processes with `child_process.spawn`
-- Environment variable injection (including allocated ports)
-- Ready pattern detection (stdout/stderr scanning)
-- Graceful shutdown and cleanup
-- Service status transitions
-
-### Persistence Added
-- `services` table (id, construct_id, name, type, command, cwd, env_json, pid, status, ready_pattern, started_at, stopped_at)
-- Queries: create service, update status, list by construct, cleanup
-
-### Tests
-- Service parsing from templates
-- Process spawning with mock commands
-- Environment variable injection
-- Ready pattern detection
-- Graceful shutdown
-
-### Dependencies
-- PR #1 (needs template service definitions)
-- PR #3 (needs constructs to attach services to)
-- PR #4 (needs allocated ports for env injection)
-
-### Acceptance Criteria
-- [ ] Can parse services from template config
-- [ ] Processes spawn with correct environment
-- [ ] Ready patterns detect service startup
-- [ ] Services shutdown gracefully
-- [ ] Service status tracked in database
-
----
-
-## PR #6: Provisioning Orchestration
-
-**Branch**: `feat/provisioning-orchestration`
-
-### Scope
-- Wire together workspace + ports + services + prompts
-- Multi-step provisioning flow with rollback on failure
-- Provision API endpoint that coordinates everything
-- Error handling and cleanup on failed provisioning
-- Provision progress tracking
-
-### Persistence Updates
-- Update `constructs` status through provisioning stages
-- Link constructs → services → ports → prompt_bundles
-
-### Tests
-- Full provisioning flow integration test
-- Rollback on failure scenarios
-- Error handling paths
-- Cleanup on abort
-
-### Dependencies
-- PR #2 (needs prompt assembly)
-- PR #3 (needs workspace creation)
-- PR #4 (needs port allocation)
-- PR #5 (needs service management)
-
-### Acceptance Criteria
-- [ ] Can provision full construct from template
-- [ ] Workspace + ports + services + prompt all created
-- [ ] Rollback works on failure
-- [ ] Construct status reflects provisioning progress
-- [ ] Integration tests pass end-to-end
-
----
-
-## PR #7: OpenCode Agent Integration
-
-**Branch**: `feat/opencode-agent-integration`
-
-### Scope
+- **Extend existing constructs** with agent functionality
 - `@opencode-ai/sdk` integration
 - Mock orchestrator fallback for development
 - Message streaming and state management
 - Session lifecycle (create, send, receive, stop)
 - Credential validation from OpenCode config
+- Agent session management in worktree context
+- **Extend existing UI** from PR #2 with chat interface
 
 ### Persistence Added
 - `agent_sessions` table (id, construct_id, provider, status, started_at, completed_at)
@@ -231,73 +152,85 @@ This document outlines the sequential PR strategy for Phase 0 implementation.
 - State transitions
 - Credential validation
 - Fallback to mock when no credentials
+- **Integration tests with existing UI from PR #2**
 
 ### Dependencies
-- PR #6 (needs provisioned constructs to run agents in)
+- PR #2 (needs existing construct management)
+- PR #3 (needs worktrees to run agents in)
 
 ### Acceptance Criteria
-- [ ] Can create OpenCode session with SDK
-- [ ] Messages stream in real-time
+- [ ] Can create OpenCode session with SDK via UI
+- [ ] Messages stream in real-time to UI chat interface
 - [ ] Mock orchestrator works without credentials
-- [ ] Session state tracked in database
-- [ ] Transcripts persist to database
+- [ ] Session state tracked in database and reflected in UI
+- [ ] Transcripts persist to database and display in UI
+- [ ] Agent operates within construct worktree
+- [ ] End-to-end test: UI → agent session → real responses
 
 ---
 
-## PR #8: Agent Orchestration Engine (UI + Glue)
+## Deferred Features (Future Phases)
 
-**Branch**: `feat/agent-orchestration-ui`
+The following features from the original plan are **deferred** to focus on core value:
 
-### Scope
-- Chat interface components (transcript, composer)
-- Keyboard shortcuts (Cmd+Enter to send, Esc to abort)
-- Status updates and lifecycle visualization
-- Scroll position management
-- Draft persistence across navigation
-- Wiring together constructs + agents + UI
+### 🔄 PR #2 (Original): Prompt Assembly Pipeline
+- **Status**: Schema prepared but not implemented
+- **Why deferred**: Basic agent sessions work without complex prompt bundling
+- **Future**: Will be needed for advanced context management
 
-### Persistence Updates
-- `composer_drafts` table (optional, for persisting draft input)
-- UI state preferences (scroll position, etc.)
+### 🔄 PR #4 (Original): Port Allocation System  
+- **Status**: Schema prepared but not implemented
+- **Why deferred**: Services not needed for initial agent functionality
+- **Future**: Essential when we add service management
 
-### Tests
-- Chat UI component tests
-- Keyboard shortcut handling
-- Scroll position preservation
-- Draft persistence
-- E2E tests for complete construct lifecycle
+### 🔄 PR #5 (Original): Service Management & Process Lifecycle
+- **Status**: Schema prepared but not implemented  
+- **Why deferred**: Complex, not needed for core agent functionality
+- **Future**: Will enable development environments within constructs
 
-### Dependencies
-- PR #7 (needs agent integration to orchestrate)
-
-### Acceptance Criteria
-- [ ] Chat interface renders transcript
-- [ ] Cmd+Enter sends messages
-- [ ] Esc aborts agent
-- [ ] Scroll position preserved
-- [ ] Draft input persists across refresh
-- [ ] E2E tests pass for full workflow
+### 🔄 PR #6 (Original): Provisioning Orchestration
+- **Status**: Logic prepared but not implemented
+- **Why deferred**: Complex orchestration not needed for simple worktree + agent
+- **Future**: Will coordinate all systems when services are added
 
 ---
 
-## Summary Timeline
+## Summary Timeline (Rescoped & Reordered)
 
 ```
-PR #1 (Templates)
+PR #1 (Templates) ✅ COMPLETED
   ↓
-PR #2 (Prompts)
+PR #2 (Basic Construct UI - Mock Backend)
   ↓
-PR #3 (Workspace) ────→ PR #4 (Ports)
-         ↓                    ↓
-         └──────→ PR #5 (Services)
-                       ↓
-                 PR #6 (Provisioning)
-                       ↓
-                 PR #7 (Agent SDK)
-                       ↓
-                 PR #8 (UI + Orchestration)
+PR #3 (Git Worktree Management)  
+  ↓
+PR #4 (OpenCode Agent Integration)
 ```
+
+### Immediate Value Path
+This rescoped sequence delivers a **functional agent workspace** in 4 PRs:
+
+1. ✅ **Template definitions** (completed)
+2. 🔄 **Basic construct management** (real database entities)
+3. 🔄 **Git worktree integration** (extends existing constructs)
+4. 🔄 **Agent integration** (extends existing constructs)
+
+### Why Basic Constructs First?
+- **Real entities**: Constructs exist in database from day 1
+- **Incremental complexity**: Each PR extends existing functionality
+- **Testing foundation**: Real database operations enable proper testing
+- **User value**: Users can create and manage constructs immediately
+- **Clear extension path**: Each feature builds on solid foundation
+
+### Deferred Complex Systems
+- Prompt assembly pipelines
+- Port allocation systems
+- Service management
+- Complex provisioning orchestration
 
 Each PR is approximately 200-400 LOC and takes 1-3 days to complete including tests and review.
 
-Total estimated timeline: **3-4 weeks** for Phase 0 completion.
+**New estimated timeline: 1-2 weeks** for core functionality completion.
+
+### Future Work
+Deferred features will be revisited in Phase 1+ when core functionality is proven and user feedback is collected.

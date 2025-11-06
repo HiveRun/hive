@@ -1,106 +1,139 @@
-# Implementation Strategy
+# Implementation Strategy (Rescoped)
 
-## Phase 0: Core Infrastructure
+## Phase 0: Core Infrastructure (Rescoped for Fast Value)
 
 ### Development Strategy
-**Approach**: Sequential PRs with incremental complexity
+**Approach**: Sequential PRs focused on delivering immediate value
 
-**Rationale**: Features have clear dependencies and benefit from focused review cycles. Each PR includes only the persistence layer it needs, growing the schema organically.
+**Rationale**: To get Synthetic useful quickly, we're focusing on the core path: **worktrees + OpenCode integration + basic constructs**. Complex service management and provisioning are deferred.
 
-### PR Sequence
+### Rescope Decision
+**New Focus**: Worktrees, OpenCode integration, and base construct capabilities
+**Deferred**: Service management, port allocation, complex provisioning orchestration
 
-#### PR #1: Template Definition System
+**Key Insight**: Users can get value from isolated agent workspaces without complex service orchestration. The deferred features remain prepared (schemas, tests) but aren't blocking initial delivery.
+
+### PR Sequence (Rescoped)
+
+#### PR #1: Template Definition System ✅ **COMPLETED**
 - TypeScript config schema (`synthetic.config.ts`)
 - Template validation and type safety
 - Basic template browser/listing in UI
-- **Persistence**: `templates` table and basic CRUD operations
+- **Persistence**: File-based storage in `synthetic.config.ts` (intentional)
 - Tests with in-memory fixtures
 
-#### PR #2: Prompt Assembly Pipeline
-- Prompt source resolution (files, globs, ordering)
-- Variable substitution and context injection
-- Bundle generation and token estimation
-- **Persistence**: `prompt_bundles` table to store assembled prompts
-- Tests with mock templates from PR #1
+#### PR #2: Git Worktree Management
+- Create isolated git worktrees for each construct (`.constructs/<id>/`)
+- Worktree lifecycle management (create, list, prune, cleanup)
+- Basic construct CRUD operations and status tracking
+- **Persistence**: `constructs` table with metadata
+- Tests for worktree creation and isolation
 
-#### PR #3: Workspace & Construct Lifecycle
-- Create `.constructs/<id>` directories
-- Construct CRUD operations (create, list, delete)
-- Basic construct status (draft, provisioning, ready, error)
-- **Persistence**: `constructs` table with metadata (name, description, template_id, workspace_path, status)
-- UI for construct creation form and listing
-- Tests for directory creation and cleanup
-
-#### PR #4: Port Allocation System
-- OS-level port probing (avoid collisions)
-- Port allocation strategy (preferred → fallback)
-- Port reservation tracking
-- **Persistence**: `port_allocations` table linking ports to constructs/services
-- Utility functions for claiming/releasing ports
-- Tests with mock port probing
-
-#### PR #5: Service Management & Process Lifecycle
-- Parse service definitions from templates
-- Spawn child processes with `child_process.spawn`
-- Environment variable injection (including allocated ports)
-- Ready pattern detection (stdout/stderr scanning)
-- Graceful shutdown and cleanup
-- **Persistence**: `services` table with runtime state (pid, command, cwd, env, status, ready_pattern)
-- Service status transitions (starting → ready → stopped → error)
-- Tests with mock processes and real simple commands
-
-#### PR #6: Provisioning Orchestration
-- Wire together workspace + ports + services + prompts
-- Multi-step provisioning flow with rollback on failure
-- Provision API endpoint that coordinates everything
-- **Persistence**: Update construct status through provisioning stages
-- Error handling and cleanup on failed provisioning
-- Integration tests for full provisioning flow
-
-#### PR #7: OpenCode Agent Integration
+#### PR #3: OpenCode Agent Integration  
 - `@opencode-ai/sdk` integration
 - Mock orchestrator fallback for development
-- Message streaming and state management
+- Message streaming and session management
 - **Persistence**: `agent_sessions` and `agent_messages` tables
 - Tests using mock orchestrator
 
-#### PR #8: Agent Orchestration Engine (UI + Glue)
-- Chat interface components (transcript, composer)
-- Keyboard shortcuts (Cmd+Enter to send)
-- Status updates and lifecycle visualization
-- Wiring together constructs + agents + UI
-- **Persistence**: Any missing UI state (drafts, scroll positions if needed)
-- E2E tests for complete flows
+#### PR #4: Basic Construct UI & Orchestration
+- Construct creation form and listing UI
+- Basic chat interface (transcript, composer)
+- Keyboard shortcuts and lifecycle visualization
+- **Persistence**: Minimal UI state
+- E2E tests for complete workflow
 
-### Benefits of This Approach
-1. **Faster Review Cycles** - Each PR is 200-400 LOC, easier to review thoroughly
-2. **Easier Debugging** - Smaller surface area when issues arise
-3. **Progressive Testing** - Each layer validated before building on top
-4. **Organic Schema Growth** - Persistence grows with actual needs, not speculation
-5. **Reduced Merge Conflicts** - Less time between branch creation and merge
-6. **Clear Separation** - Agent SDK integration (PR #7) separate from UI orchestration (PR #8)
+### Deferred Features (Prepared but Not Implemented)
 
-## Phase 1: Core Runtime
+The following features have complete schemas and test plans but are deferred to accelerate delivery:
+
+#### PR #2 (Original): Prompt Assembly Pipeline
+- **Status**: Schema prepared, implementation deferred
+- **Why**: Basic agent sessions work without complex prompt bundling
+- **Future**: Will be essential for advanced context management
+
+#### PR #4 (Original): Port Allocation System
+- **Status**: Schema prepared, implementation deferred  
+- **Why**: Services not needed for initial agent functionality
+- **Future**: Essential when we add service management
+
+#### PR #5 (Original): Service Management & Process Lifecycle
+- **Status**: Schema prepared, implementation deferred
+- **Why**: Complex, not needed for core agent functionality
+- **Future**: Will enable development environments within constructs
+
+#### PR #6 (Original): Provisioning Orchestration
+- **Status**: Logic prepared, implementation deferred
+- **Why**: Complex orchestration not needed for simple worktree + agent
+- **Future**: Will coordinate all systems when services are added
+
+### Benefits of Rescoped Approach
+1. **Faster Time to Value** - Core functionality delivered in 4 PRs vs 8
+2. **Reduced Complexity** - Focus on essential path first
+3. **User Feedback Sooner** - Real usage can guide deferred feature implementation
+4. **Lower Risk** - Fewer moving parts in initial release
+5. **Preserved Investment** - All schemas and test designs remain available
+6. **Clear Migration Path** - Deferred features have clear integration points
+
+## Phase 1: Enhanced Runtime (Post-Rescope)
 
 ### Development Strategy
-**Approach**: Parallel feature branches with integration branch
+**Approach**: Implement deferred features + new capabilities
 
-**Rationale**: Features have moderate dependencies but can be developed independently.
+**Rationale**: After core functionality is proven, we can add the complex systems that were deferred from Phase 0.
+
+### Phase 1A: Complete the Original Vision
+Implement the deferred Phase 0 features:
+
+#### PR #1A: Prompt Assembly Pipeline
+- Implement the prepared prompt bundling system
+- Variable substitution and context injection
+- Token estimation and bundle generation
+
+#### PR #2A: Service Management & Process Lifecycle  
+- Implement the prepared service management system
+- Process spawning, environment injection, ready patterns
+- Port allocation integration
+
+#### PR #3A: Advanced Provisioning Orchestration
+- Complete the prepared provisioning system
+- Wire together all systems with rollback capabilities
+
+### Phase 1B: New Runtime Features
+Add capabilities that build on the now-complete foundation:
+
+#### PR #4B: Diff Review & Code Visualization
+- Visual diff displays for agent changes
+- Code review interface within constructs
+- Change approval/rejection workflows
+
+#### PR #5B: Docker Compose Support
+- Docker service definitions in templates
+- Container lifecycle management
+- Volume and networking configuration
+
+#### PR #6C: Service Control Interface
+- Start/stop/restart service controls
+- Service logs and monitoring
+- Health check visualization
+
+#### PR #7D: Workspace Switching
+- Multiple workspace management
+- Quick context switching between constructs
+- Workspace-scoped templates and settings
 
 ### Branch Workflow
 ```bash
-# Create feature branches
+# Phase 1A - Complete original vision
+git checkout -b feature/prompt-assembly-pipeline
+git checkout -b feature/service-management  
+git checkout -b feature/provisioning-orchestration
+
+# Phase 1B - Add new capabilities (can be parallel)
 git checkout -b feature/diff-review
 git checkout -b feature/docker-support
 git checkout -b feature/service-control
 git checkout -b feature/workspace-switching
-
-# Develop in parallel, then integrate
-git checkout -b integrate/phase-1-runtime
-git merge feature/diff-review
-git merge feature/docker-support
-git merge feature/service-control
-git merge feature/workspace-switching
 ```
 
 ## Phase 2: Advanced Interaction
