@@ -84,41 +84,103 @@ export function createWorktreeManager(
       return;
     }
 
-    const filesToCopy: string[] = [];
+    const fs = require("fs");
+    const path = require("path");
+    
+    // Read .gitignore and parse patterns
+    let gitignoreContent: string;
+    try {
+      gitignoreContent = fs.readFileSync(gitignorePath, "utf8");
+    } catch (_error) {
+      return;
+    }
 
-    // Common files that should be copied even if gitignored
-    const commonFiles = [
+    const gitignorePatterns = gitignoreContent
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line && !line.startsWith("#"));
+
+    // Essential files that should always be copied if they exist
+    const essentialFiles = [
       ".env.example",
       ".env.local",
-      ".env.development.local",
+      ".env.development.local", 
       ".env.test.local",
       ".env.production.local",
       "package-lock.json",
       "yarn.lock",
       "bun.lock",
       "bun.lockb",
-      "node_modules/.cache",
     ];
 
-    for (const file of commonFiles) {
+    const filesToCopy: string[] = [];
+
+    // Check essential files first
+    for (const file of essentialFiles) {
       const sourcePath = join(mainRepoPath, file);
       if (existsSync(sourcePath)) {
         filesToCopy.push(file);
       }
     }
 
-    // Copy the files
+    // Check gitignored patterns for existing files/directories
+    for (const pattern of gitignorePatterns) {
+      // Skip patterns that are already in essential files
+      if (essentialFiles.includes(pattern)) {
+        continue;
+      }
+
+      const sourcePath = join(mainRepoPath, pattern);
+      if (existsSync(sourcePath)) {
+        filesToCopy.push(pattern);
+      }
+    }
+
+    // Copy the files and directories
     for (const file of filesToCopy) {
       const sourcePath = join(mainRepoPath, file);
       const targetPath = join(worktreePath, file);
 
       try {
-        // Ensure target directory exists
-        const targetDir = join(targetPath, "..");
-        await mkdir(targetDir, { recursive: true });
-        await copyFile(sourcePath, targetPath);
+        const stat = fs.statSync(sourcePath);
+        
+        if (stat.isDirectory()) {
+          // For directories, we need to copy recursively
+          await copyDirectory(sourcePath, targetPath);
+        } else {
+          // For files, copy directly
+          const targetDir = path.dirname(targetPath);
+          await mkdir(targetDir, { recursive: true });
+          await copyFile(sourcePath, targetPath);
+        }
       } catch (_error) {
         // Ignore copy errors for non-essential files
+        console.warn(`Failed to copy ${file}:`, _error);
+      }
+    }
+  }
+
+  /**
+   * Copy directory recursively
+   */
+  async function copyDirectory(source: string, target: string): Promise<void> {
+    const fs = require("fs");
+    const path = require("path");
+    
+    // Create target directory
+    await mkdir(target, { recursive: true });
+    
+    // Read source directory
+    const entries = fs.readdirSync(source, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      const sourcePath = path.join(source, entry.name);
+      const targetPath = path.join(target, entry.name);
+      
+      if (entry.isDirectory()) {
+        await copyDirectory(sourcePath, targetPath);
+      } else {
+        await copyFile(sourcePath, targetPath);
       }
     }
   }

@@ -2,10 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   Copy,
-  FolderOpen,
-  GitBranch,
   Plus,
-  Terminal,
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
@@ -69,8 +66,6 @@ export function ConstructList() {
       minute: "2-digit",
     });
 
-  const hasWorktree = (construct: Construct) => !!construct.workspacePath;
-
   const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -78,10 +73,6 @@ export function ConstructList() {
     } catch (_error) {
       toast.error("Failed to copy to clipboard");
     }
-  };
-
-  const getNavigateCommand = (workspacePath: string) => {
-    return `cd "${workspacePath}"`;
   };
 
   if (isLoading) {
@@ -198,26 +189,7 @@ export function ConstructList() {
                   </p>
                 )}
 
-                {/* Worktree status */}
-                <div className="mb-4 flex items-center gap-2">
-                  {hasWorktree(construct) ? (
-                    <Badge
-                      className="flex items-center gap-1"
-                      variant="default"
-                    >
-                      <GitBranch className="h-3 w-3" />
-                      Worktree Ready
-                    </Badge>
-                  ) : (
-                    <Badge
-                      className="flex items-center gap-1"
-                      variant="outline"
-                    >
-                      <FolderOpen className="h-3 w-3" />
-                      Initializing
-                    </Badge>
-                  )}
-                </div>
+
 
                 {/* Workspace path */}
                 {construct.workspacePath && (
@@ -226,28 +198,16 @@ export function ConstructList() {
                       <p className="text-muted-foreground text-xs font-medium">
                         Workspace:
                       </p>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          data-testid="copy-workspace-command"
-                          onClick={() => copyToClipboard(getNavigateCommand(construct.workspacePath))}
-                          size="sm"
-                          title="Copy navigation command"
-                          type="button"
-                          variant="ghost"
-                        >
-                          <Terminal className="h-3 w-3" />
-                        </Button>
-                        <Button
-                          data-testid="copy-workspace-path"
-                          onClick={() => copyToClipboard(construct.workspacePath)}
-                          size="sm"
-                          title="Copy workspace path"
-                          type="button"
-                          variant="ghost"
-                        >
-                          <Copy className="h-3 w-3" />
-                        </Button>
-                      </div>
+                      <Button
+                        data-testid="copy-workspace-path"
+                        onClick={() => copyToClipboard(construct.workspacePath)}
+                        size="sm"
+                        title="Copy workspace path"
+                        type="button"
+                        variant="ghost"
+                      >
+                        <Copy className="h-3 w-3" />
+                      </Button>
                     </div>
                     <p className="text-muted-foreground text-xs break-all font-mono bg-muted/50 p-2 rounded mt-1">
                       {construct.workspacePath}
