@@ -22,7 +22,7 @@ This document outlines the focused implementation path for delivering core Synth
 
 ## Implementation Sequence
 
-### Step 1: Basic Construct Management (PR #2)
+### Step 1: Basic Construct Management (Step 2)
 
 **Branch**: `feat/basic-construct-management`
 **Status**: ✅ Completed

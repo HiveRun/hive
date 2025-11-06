@@ -4,11 +4,11 @@
 
 > **Note**: This feature is **deferred** to focus on core functionality. See [[PR-SEQUENCE.md]] for current implementation path.
 > 
-> **Original PRs** (prepared but not implemented):
-> - **PR #3**: Workspace & Construct Lifecycle → Now **PR #2: Basic Construct Management**
-> - **PR #4**: Port Allocation System → Deferred to Phase 1A
-> - **PR #5**: Service Management & Process Lifecycle → Deferred to Phase 1A  
-> - **PR #6**: Provisioning Orchestration → Deferred to Phase 1A
+> **Original Steps** (prepared but not implemented):
+> - **Step 3**: Workspace & Construct Lifecycle → Now **Step 2: Basic Construct Management**
+> - **Deferred**: Port Allocation System → Deferred to Phase 1A
+> - **Deferred**: Service Management & Process Lifecycle → Deferred to Phase 1A  
+> - **Deferred**: Provisioning Orchestration → Deferred to Phase 1A
 
 ## Goal
 Handle the complete workflow of creating and provisioning constructs from templates, including workspace setup, service initialization, and prompt assembly.
@@ -18,9 +18,9 @@ Handle the complete workflow of creating and provisioning constructs from templa
 This feature represents the **full provisioning orchestration** that was originally planned for Phase 0. It has been deferred to accelerate delivery of core functionality.
 
 ### What's Implemented Instead
-- **PR #2**: Basic construct management (real database entities)
-- **PR #3**: Git worktree integration (extends existing constructs)
-- **PR #4**: Agent integration (extends existing constructs)
+- **Step 2**: Basic construct management (real database entities)
+- **Step 3**: Git worktree integration (extends existing constructs)
+- **Step 4**: Agent integration (extends existing constructs)
 
 ### When This Will Be Implemented
 This comprehensive provisioning system will be implemented in **Phase 1A** after the core functionality path is complete and validated.

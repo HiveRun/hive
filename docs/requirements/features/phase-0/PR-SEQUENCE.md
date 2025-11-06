@@ -23,7 +23,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 
 ---
 
-## PR #1: Template Definition System ✅ **COMPLETED**
+## Step 1: Template Definition System ✅ **COMPLETED**
 
 **Branch**: `feat/template-definition-system`
 
@@ -55,7 +55,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 
 ---
 
-## PR #2: Basic Construct Management
+## Step 2: Basic Construct Management ✅ **COMPLETED**
 
 **Branch**: `feat/basic-construct-management`
 
@@ -78,7 +78,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - E2E tests for complete construct management workflow
 
 ### Dependencies
-- PR #1 (needs templates for construct creation form)
+- Step 1 (needs templates for construct creation form)
 
 ### Acceptance Criteria
 - [x] Can create construct via UI form with real database storage
@@ -90,7 +90,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 
 ---
 
-## PR #3: Git Worktree Integration
+## Step 3: Git Worktree Integration
 
 **Branch**: `feat/git-worktree-integration`
 
@@ -100,7 +100,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - Create isolated git worktrees for each construct (`.constructs/<id>/`)
 - Worktree lifecycle management (create, list, prune, cleanup)
 - Worktree isolation and safety checks
-- **Extend existing UI** from PR #2 to show worktree information
+- **Extend existing UI** from Step 2 to show worktree information
 
 ### Persistence Updates
 - **ALTER TABLE constructs ADD COLUMN workspace_path TEXT**
@@ -111,11 +111,11 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - Git worktree creation and cleanup
 - Database migration testing
 - Worktree isolation verification
-- **Integration tests with existing UI from PR #2**
+- **Integration tests with existing UI from Step 2**
 
 ### Dependencies
-- PR #1 (needs templates for construct creation)
-- PR #2 (needs existing construct management)
+- Step 1 (needs templates for construct creation)
+- Step 2 (needs existing construct management)
 
 ### Acceptance Criteria
 - [ ] Existing constructs can be extended with worktree functionality
@@ -128,7 +128,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 
 ---
 
-## PR #4: Agent Integration
+## Step 4: Agent Integration
 
 **Branch**: `feat/agent-integration`
 
@@ -140,7 +140,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - Session lifecycle (create, send, receive, stop)
 - Credential validation from OpenCode config
 - Agent session management in worktree context
-- **Extend existing UI** from PR #2 with chat interface
+- **Extend existing UI** from Step 2 with chat interface
 
 ### Persistence Added
 - `agent_sessions` table (id, construct_id, provider, status, started_at, completed_at)
@@ -152,11 +152,11 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - State transitions
 - Credential validation
 - Fallback to mock when no credentials
-- **Integration tests with existing UI from PR #2**
+- **Integration tests with existing UI from Step 2**
 
 ### Dependencies
-- PR #2 (needs existing construct management)
-- PR #3 (needs worktrees to run agents in)
+- Step 2 (needs existing construct management)
+- Step 3 (needs worktrees to run agents in)
 
 ### Acceptance Criteria
 - [ ] Can create OpenCode session with SDK via UI
@@ -173,22 +173,22 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 
 The following features from the original plan are **deferred** to focus on core value:
 
-### 🔄 PR #2 (Original): Prompt Assembly Pipeline
+### 🔄 Deferred: Prompt Assembly Pipeline
 - **Status**: Schema prepared but not implemented
 - **Why deferred**: Basic agent sessions work without complex prompt bundling
 - **Future**: Will be needed for advanced context management
 
-### 🔄 PR #4 (Original): Port Allocation System  
+### 🔄 Deferred: Port Allocation System  
 - **Status**: Schema prepared but not implemented
 - **Why deferred**: Services not needed for initial agent functionality
 - **Future**: Essential when we add service management
 
-### 🔄 PR #5 (Original): Service Management & Process Lifecycle
+### 🔄 Deferred: Service Management & Process Lifecycle
 - **Status**: Schema prepared but not implemented  
 - **Why deferred**: Complex, not needed for core agent functionality
 - **Future**: Will enable development environments within constructs
 
-### 🔄 PR #6 (Original): Provisioning Orchestration
+### 🔄 Deferred: Provisioning Orchestration
 - **Status**: Logic prepared but not implemented
 - **Why deferred**: Complex orchestration not needed for simple worktree + agent
 - **Future**: Will coordinate all systems when services are added
@@ -198,20 +198,20 @@ The following features from the original plan are **deferred** to focus on core 
 ## Summary Timeline (Rescoped & Reordered)
 
 ```
-PR #1 (Templates) ✅ COMPLETED
+Step 1 (Templates) ✅ COMPLETED
   ↓
-PR #2 (Basic Construct UI - Mock Backend)
+Step 2 (Basic Construct Management) ✅ COMPLETED
   ↓
-PR #3 (Git Worktree Management)  
+Step 3 (Git Worktree Management)  
   ↓
-PR #4 (OpenCode Agent Integration)
+Step 4 (OpenCode Agent Integration)
 ```
 
 ### Immediate Value Path
-This rescoped sequence delivers a **functional agent workspace** in 4 PRs:
+This rescoped sequence delivers a **functional agent workspace** in 4 steps:
 
 1. ✅ **Template definitions** (completed)
-2. 🔄 **Basic construct management** (real database entities)
+2. ✅ **Basic construct management** (real database entities)
 3. 🔄 **Git worktree integration** (extends existing constructs)
 4. 🔄 **Agent integration** (extends existing constructs)
 

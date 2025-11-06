@@ -5,9 +5,9 @@ See also: [[runtime|Runtime]], [[../configuration|Workspace & Templates]], [[../
 ## Core Infrastructure (Rescoped)
 The foundational features that enable core construct functionality:
 - [[features/phase-0/template-definition-system|Template Definition System]] ✅ **COMPLETED**
-- [[../core-functionality-path|Basic Construct Management]] ✅ **PR #2**
-- [[../core-functionality-path|Git Worktree Integration]] 🔄 **PR #3**
-- [[../core-functionality-path|Agent Integration]] 🔄 **PR #4**
+- [[../core-functionality-path|Basic Construct Management]] ✅ **Step 2**
+- [[../core-functionality-path|Git Worktree Integration]] 🔄 **Step 3**
+- [[../core-functionality-path|Agent Integration]] 🔄 **Step 4**
 
 ### Deferred Features (Prepared but Not Implemented)
 - [[features/phase-0/agent-orchestration|Agent Orchestration Engine]] 🔄 **Deferred to Phase 1A**
@@ -29,9 +29,9 @@ The foundational features that enable core construct functionality:
 - **State Capture**: Persist basic metadata (name, description, template_id). Additional features (worktree, agent) extend this base entity.
 
 ### Progressive Enhancement
-1. **PR #2**: Basic construct entity (name, description, template_id)
-2. **PR #3**: Add worktree capability (workspace_path)
-3. **PR #4**: Add agent capability (sessions, messages)
+1. **Step 2**: Basic construct entity (name, description, template_id)
+2. **Step 3**: Add worktree capability (workspace_path)
+3. **Step 4**: Add agent capability (sessions, messages)
 
 ### Future Full Lifecycle (Phase 1A)
 When deferred features are implemented, constructs will support:
