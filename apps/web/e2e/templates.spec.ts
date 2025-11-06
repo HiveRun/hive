@@ -77,8 +77,9 @@ test.describe("Templates Page", () => {
 
   test("should match templates page snapshot (dark mode)", async ({ page }) => {
     await setTheme(page, "dark");
-    await page.emulateMedia({ colorScheme: "dark" });
+    await page.goto("/templates");
     await page.waitForLoadState("networkidle");
+    await page.emulateMedia({ colorScheme: "dark" });
     await expect(page).toHaveScreenshot("templates-dark.png", {
       fullPage: true,
       animations: "disabled",
