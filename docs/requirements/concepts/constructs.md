@@ -5,9 +5,9 @@ See also: [[runtime|Runtime]], [[../configuration|Workspace & Templates]], [[../
 ## Core Infrastructure (Rescoped)
 The foundational features that enable core construct functionality:
 - [[features/phase-0/template-definition-system|Template Definition System]] ✅ **COMPLETED**
-- [[../core-functionality-path|Basic Construct Management]] ✅ **Step 2**
-- [[../core-functionality-path|Git Worktree Integration]] 🔄 **Step 3**
-- [[../core-functionality-path|Agent Integration]] 🔄 **Step 4**
+- [[../core-functionality-path|Basic Construct Management]] ✅ **PR #2**
+- [[../core-functionality-path|Git Worktree Integration]] 🔄 **PR #3**
+- [[../core-functionality-path|Agent Integration]] 🔄 **PR #4**
 
 ### Deferred Features (Prepared but Not Implemented)
 - [[features/phase-0/agent-orchestration|Agent Orchestration Engine]] 🔄 **Deferred to Phase 1A**

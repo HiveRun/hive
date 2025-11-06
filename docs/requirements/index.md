@@ -13,9 +13,9 @@
 
 ### Phase 0: Core Infrastructure (Rescoped)
 - [x] [Template Definition System](features/phase-0/template-definition-system.md) #status/completed #phase-0 #feature/core - System for defining construct templates
-- [x] [Basic Construct Management](features/phase-0/PR-SEQUENCE.md) #status/completed #phase-0 #feature/core - Real database entities for constructs (Step 2)
-- [ ] [Git Worktree Integration](features/phase-0/PR-SEQUENCE.md) #status/planned #phase-0 #feature/core - Isolated workspaces for constructs (Step 3)
-- [ ] [Agent Integration](features/phase-0/PR-SEQUENCE.md) #status/planned #phase-0 #feature/core - OpenCode SDK integration (Step 4)
+- [x] [Basic Construct Management](features/phase-0/PR-SEQUENCE.md) #status/completed #phase-0 #feature/core - Real database entities for constructs (PR #2)
+- [ ] [Git Worktree Integration](features/phase-0/PR-SEQUENCE.md) #status/planned #phase-0 #feature/core - Isolated workspaces for constructs (PR #3)
+- [ ] [Agent Integration](features/phase-0/PR-SEQUENCE.md) #status/planned #phase-0 #feature/core - OpenCode SDK integration (PR #4)
 
 #### Deferred Features (Prepared but Not Implemented)
 - [ ] [Prompt Assembly Pipeline](features/phase-0/prompt-assembly-pipeline.md) #status/deferred #phase-0 #feature/advanced - System for assembling agent prompts
