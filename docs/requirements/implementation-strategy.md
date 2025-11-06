@@ -15,49 +15,48 @@
 
 ### PR Sequence (Rescoped)
 
-#### PR #1: Template Definition System ✅ **COMPLETED**
+#### Step 1: Template Definition System ✅ **COMPLETED**
 - TypeScript config schema (`synthetic.config.ts`)
 - Template validation and type safety
 - Basic template browser/listing in UI
 - **Persistence**: File-based storage in `synthetic.config.ts` (intentional)
 - Tests with in-memory fixtures
 
-#### PR #2: Git Worktree Management
+#### Step 2: Basic Construct Management ✅ **COMPLETED**
+- Construct creation form and listing UI
+- Basic construct CRUD operations (create, list, delete, update)
+- **Persistence**: `constructs` table with metadata
+- E2E tests for complete workflow
+
+#### Step 3: Git Worktree Management
 - Create isolated git worktrees for each construct (`.constructs/<id>/`)
 - Worktree lifecycle management (create, list, prune, cleanup)
-- Basic construct CRUD operations and status tracking
-- **Persistence**: `constructs` table with metadata
+- Extend existing constructs with worktree functionality
+- **Persistence**: Add `workspace_path` to constructs table
 - Tests for worktree creation and isolation
 
-#### PR #3: OpenCode Agent Integration  
+#### Step 4: OpenCode Agent Integration  
 - `@opencode-ai/sdk` integration
 - Mock orchestrator fallback for development
 - Message streaming and session management
 - **Persistence**: `agent_sessions` and `agent_messages` tables
 - Tests using mock orchestrator
 
-#### PR #4: Basic Construct UI & Orchestration
-- Construct creation form and listing UI
-- Basic chat interface (transcript, composer)
-- Keyboard shortcuts and lifecycle visualization
-- **Persistence**: Minimal UI state
-- E2E tests for complete workflow
-
 ### Deferred Features (Prepared but Not Implemented)
 
 The following features have complete schemas and test plans but are deferred to accelerate delivery:
 
-#### PR #2 (Original): Prompt Assembly Pipeline
+#### Deferred: Prompt Assembly Pipeline
 - **Status**: Schema prepared, implementation deferred
 - **Why**: Basic agent sessions work without complex prompt bundling
 - **Future**: Will be essential for advanced context management
 
-#### PR #4 (Original): Port Allocation System
+#### Deferred: Port Allocation System
 - **Status**: Schema prepared, implementation deferred  
 - **Why**: Services not needed for initial agent functionality
 - **Future**: Essential when we add service management
 
-#### PR #5 (Original): Service Management & Process Lifecycle
+#### Deferred: Service Management & Process Lifecycle
 - **Status**: Schema prepared, implementation deferred
 - **Why**: Complex, not needed for core agent functionality
 - **Future**: Will enable development environments within constructs
@@ -85,39 +84,39 @@ The following features have complete schemas and test plans but are deferred to 
 ### Phase 1A: Complete the Original Vision
 Implement the deferred Phase 0 features:
 
-#### PR #1A: Prompt Assembly Pipeline
+#### Step 1A: Prompt Assembly Pipeline
 - Implement the prepared prompt bundling system
 - Variable substitution and context injection
 - Token estimation and bundle generation
 
-#### PR #2A: Service Management & Process Lifecycle  
+#### Step 2A: Service Management & Process Lifecycle  
 - Implement the prepared service management system
 - Process spawning, environment injection, ready patterns
 - Port allocation integration
 
-#### PR #3A: Advanced Provisioning Orchestration
+#### Step 3A: Advanced Provisioning Orchestration
 - Complete the prepared provisioning system
 - Wire together all systems with rollback capabilities
 
 ### Phase 1B: New Runtime Features
 Add capabilities that build on the now-complete foundation:
 
-#### PR #4B: Diff Review & Code Visualization
+#### Step 4B: Diff Review & Code Visualization
 - Visual diff displays for agent changes
 - Code review interface within constructs
 - Change approval/rejection workflows
 
-#### PR #5B: Docker Compose Support
+#### Step 5B: Docker Compose Support
 - Docker service definitions in templates
 - Container lifecycle management
 - Volume and networking configuration
 
-#### PR #6C: Service Control Interface
+#### Step 6C: Service Control Interface
 - Start/stop/restart service controls
 - Service logs and monitoring
 - Health check visualization
 
-#### PR #7D: Workspace Switching
+#### Step 7D: Workspace Switching
 - Multiple workspace management
 - Quick context switching between constructs
 - Workspace-scoped templates and settings

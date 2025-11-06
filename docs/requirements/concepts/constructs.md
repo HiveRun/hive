@@ -29,9 +29,9 @@ The foundational features that enable core construct functionality:
 - **State Capture**: Persist basic metadata (name, description, template_id). Additional features (worktree, agent) extend this base entity.
 
 ### Progressive Enhancement
-1. **PR #2**: Basic construct entity (name, description, template_id)
-2. **PR #3**: Add worktree capability (workspace_path)
-3. **PR #4**: Add agent capability (sessions, messages)
+1. **Step 2**: Basic construct entity (name, description, template_id)
+2. **Step 3**: Add worktree capability (workspace_path)
+3. **Step 4**: Add agent capability (sessions, messages)
 
 ### Future Full Lifecycle (Phase 1A)
 When deferred features are implemented, constructs will support:

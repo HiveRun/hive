@@ -5,9 +5,9 @@ This document covers the high-level runtime behavior of constructs. For detailed
 ## Core Concepts
 
 ### Construct Types (Rescoped)
-- **Basic**: Simple construct entity with metadata only (PR #2)
-- **With Worktree**: Basic construct + isolated git worktree (PR #3)
-- **With Agent**: Basic construct + worktree + OpenCode agent session (PR #4)
+- **Basic**: Simple construct entity with metadata only (Step 2)
+- **With Worktree**: Basic construct + isolated git worktree (Step 3)
+- **With Agent**: Basic construct + worktree + OpenCode agent session (Step 4)
 
 ### Future Construct Types (Phase 1A+)
 - **Implementation (full)**: launches the agent with the full tool/toolbox defined by the workspace. Use the standard prompt assembly pipeline and allow file writes, command execution, etc.

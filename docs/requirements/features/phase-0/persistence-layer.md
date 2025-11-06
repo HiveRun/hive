@@ -7,9 +7,9 @@
 > **Current Approach**: Each PR adds only the database tables and queries it actually needs. This document describes the complete schema that was originally planned for Phase 0.
 > 
 > **What's Implemented Instead**:
-> - **PR #2**: Basic `constructs` table (minimal schema)
-> - **PR #4**: `agent_sessions` and `agent_messages` tables
-> - **PR #3**: Adds `workspace_path` to constructs table
+> - **Step 2**: Basic `constructs` table (minimal schema)
+> - **Step 4**: `agent_sessions` and `agent_messages` tables
+> - **Step 3**: Adds `workspace_path` to constructs table
 
 > **Template Storage**: Templates are intentionally stored as files (`synthetic.config.ts`) rather than in the database. This architectural decision prioritizes version control, type safety, and developer experience over dynamic template management.
 
@@ -21,9 +21,9 @@ Provide reliable storage for constructs, transcripts, artifacts, and metadata wi
 This feature represents the **comprehensive persistence system** that was originally planned for Phase 0. It has been deferred to accelerate delivery of core functionality.
 
 ### What's Implemented Instead
-- **PR #2**: Basic `constructs` table with minimal schema
-- **PR #3**: Adds `workspace_path` column for worktree support
-- **PR #4**: `agent_sessions` and `agent_messages` tables for agent functionality
+- **Step 2**: Basic `constructs` table with minimal schema
+- **Step 3**: Adds `workspace_path` column for worktree support
+- **Step 4**: `agent_sessions` and `agent_messages` tables for agent functionality
 
 ### When This Will Be Implemented
 The complete persistence system with all tables, indexes, and optimizations will be implemented in **Phase 1A** after core functionality path is complete and validated.

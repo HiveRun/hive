@@ -20,22 +20,22 @@ This document tracks the current status of prepared schemas, validation, and tes
 
 ### 🔄 Currently Implementing
 
-#### Git Worktree Management
+#### Basic Construct Management
 - **Schema**: `constructs` table
-- **Status**: 🔄 In progress (PR #2)
+- **Status**: ✅ Completed (Step 2)
+- **Usage**: Basic construct CRUD operations
+- **Tests**: ✅ Implemented and passing
+
+#### Git Worktree Management
+- **Schema**: `constructs` table (extended)
+- **Status**: 🔄 Next up (Step 3)
 - **Usage**: Worktree lifecycle and construct tracking
-- **Tests**: 🔄 Being implemented
+- **Tests**: 🔄 Planned
 
 #### OpenCode Agent Integration
 - **Schema**: `agent_sessions`, `agent_messages` tables  
-- **Status**: 🔄 Next up (PR #3)
+- **Status**: 🔄 Planned (Step 4)
 - **Usage**: Agent session management
-- **Tests**: 🔄 Planned
-
-#### Basic Construct UI
-- **Schema**: Minimal UI state
-- **Status**: 🔄 Planned (PR #4)
-- **Usage**: Construct creation and chat interface
 - **Tests**: 🔄 Planned
 
 ## 📦 Prepared But Not Currently Implemented
