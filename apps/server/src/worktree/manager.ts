@@ -46,7 +46,7 @@ export function createWorktreeManager(
   baseDir: string = process.cwd()
 ): WorktreeManager {
   const git = simpleGit(baseDir);
-  const homeDir = require("os").homedir();
+  const homeDir = require("node:os").homedir();
   const constructsDir = join(homeDir, ".synthetic", "constructs");
 
   /**
@@ -74,37 +74,36 @@ export function createWorktreeManager(
   }
 
   /**
-   * Copy gitignored files from main repo to worktree
+   * Read and parse .gitignore patterns
    */
-  async function copyGitignoredFiles(worktreePath: string): Promise<void> {
-    const mainRepoPath = getMainRepoPath();
+  function getGitignorePatterns(mainRepoPath: string): string[] {
     const gitignorePath = join(mainRepoPath, ".gitignore");
 
     if (!existsSync(gitignorePath)) {
-      return;
+      return [];
     }
 
-    const fs = require("fs");
-    const path = require("path");
-    
-    // Read .gitignore and parse patterns
-    let gitignoreContent: string;
+    const fs = require("node:fs");
+
     try {
-      gitignoreContent = fs.readFileSync(gitignorePath, "utf8");
+      const gitignoreContent = fs.readFileSync(gitignorePath, "utf8");
+      return gitignoreContent
+        .split("\n")
+        .map((line: string) => line.trim())
+        .filter((line: string) => line && !line.startsWith("#"));
     } catch (_error) {
-      return;
+      return [];
     }
+  }
 
-    const gitignorePatterns = gitignoreContent
-      .split("\n")
-      .map(line => line.trim())
-      .filter(line => line && !line.startsWith("#"));
-
-    // Essential files that should always be copied if they exist
-    const essentialFiles = [
+  /**
+   * Get essential files that should always be copied
+   */
+  function getEssentialFiles(): string[] {
+    return [
       ".env.example",
       ".env.local",
-      ".env.development.local", 
+      ".env.development.local",
       ".env.test.local",
       ".env.production.local",
       "package-lock.json",
@@ -112,7 +111,14 @@ export function createWorktreeManager(
       "bun.lock",
       "bun.lockb",
     ];
+  }
 
+  /**
+   * Collect files to copy from main repo
+   */
+  function collectFilesToCopy(mainRepoPath: string): string[] {
+    const essentialFiles = getEssentialFiles();
+    const gitignorePatterns = getGitignorePatterns(mainRepoPath);
     const filesToCopy: string[] = [];
 
     // Check essential files first
@@ -136,27 +142,50 @@ export function createWorktreeManager(
       }
     }
 
+    return filesToCopy;
+  }
+
+  /**
+   * Copy a single file or directory to worktree
+   */
+  async function copyToWorktree(
+    mainRepoPath: string,
+    worktreePath: string,
+    file: string
+  ): Promise<void> {
+    const fs = require("node:fs");
+    const path = require("node:path");
+
+    const sourcePath = join(mainRepoPath, file);
+    const targetPath = join(worktreePath, file);
+
+    try {
+      const stat = fs.statSync(sourcePath);
+
+      if (stat.isDirectory()) {
+        // For directories, we need to copy recursively
+        await copyDirectory(sourcePath, targetPath);
+      } else {
+        // For files, copy directly
+        const targetDir = path.dirname(targetPath);
+        await mkdir(targetDir, { recursive: true });
+        await copyFile(sourcePath, targetPath);
+      }
+    } catch (_error) {
+      // Ignore copy errors for non-essential files
+    }
+  }
+
+  /**
+   * Copy gitignored files from main repo to worktree
+   */
+  async function copyGitignoredFiles(worktreePath: string): Promise<void> {
+    const mainRepoPath = getMainRepoPath();
+    const filesToCopy = collectFilesToCopy(mainRepoPath);
+
     // Copy the files and directories
     for (const file of filesToCopy) {
-      const sourcePath = join(mainRepoPath, file);
-      const targetPath = join(worktreePath, file);
-
-      try {
-        const stat = fs.statSync(sourcePath);
-        
-        if (stat.isDirectory()) {
-          // For directories, we need to copy recursively
-          await copyDirectory(sourcePath, targetPath);
-        } else {
-          // For files, copy directly
-          const targetDir = path.dirname(targetPath);
-          await mkdir(targetDir, { recursive: true });
-          await copyFile(sourcePath, targetPath);
-        }
-      } catch (_error) {
-        // Ignore copy errors for non-essential files
-        console.warn(`Failed to copy ${file}:`, _error);
-      }
+      await copyToWorktree(mainRepoPath, worktreePath, file);
     }
   }
 
@@ -164,19 +193,19 @@ export function createWorktreeManager(
    * Copy directory recursively
    */
   async function copyDirectory(source: string, target: string): Promise<void> {
-    const fs = require("fs");
-    const path = require("path");
-    
+    const fs = require("node:fs");
+    const path = require("node:path");
+
     // Create target directory
     await mkdir(target, { recursive: true });
-    
+
     // Read source directory
     const entries = fs.readdirSync(source, { withFileTypes: true });
-    
+
     for (const entry of entries) {
       const sourcePath = path.join(source, entry.name);
       const targetPath = path.join(target, entry.name);
-      
+
       if (entry.isDirectory()) {
         await copyDirectory(sourcePath, targetPath);
       } else {
@@ -225,16 +254,23 @@ export function createWorktreeManager(
    * Resolve or create branch for worktree
    */
   async function resolveBranch(
+    constructId: string,
     options: WorktreeCreateOptions
   ): Promise<string> {
     if (options.branch) {
-      return await ensureBranchExists(options.branch);
+      const branch = await ensureBranchExists(options.branch);
+      if (!branch) {
+        throw new Error(`Failed to create or find branch: ${options.branch}`);
+      }
+      return branch;
     }
 
-    const currentBranch = await getCurrentBranch();
-    const constructBranch = `construct-${options.constructId || "unknown"}`;
-
-    return (await ensureBranchExists(constructBranch)) || currentBranch;
+    const constructBranch = `construct-${constructId}`;
+    const branch = await ensureBranchExists(constructBranch);
+    if (!branch) {
+      throw new Error(`Failed to create or find branch: ${constructBranch}`);
+    }
+    return branch;
   }
 
   /**
@@ -305,10 +341,10 @@ export function createWorktreeManager(
       const worktreePath = join(constructsDir, constructId);
 
       // Handle existing worktree
-      await handleExistingWorktree(worktreePath, options.force);
+      await handleExistingWorktree(worktreePath, options.force ?? false);
 
       // Resolve branch
-      const branch = await resolveBranch({ ...options, constructId });
+      const branch = await resolveBranch(constructId, options);
 
       try {
         // Create worktree

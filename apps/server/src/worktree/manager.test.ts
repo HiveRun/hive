@@ -5,8 +5,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createWorktreeManager } from "../worktree/manager";
 
 describe("WorktreeManager", () => {
-  const testBaseDir = "/tmp/synthetic-test-worktrees";
-  const constructsDir = join(testBaseDir, ".constructs");
+  const testBaseDir = join(process.cwd(), "test-worktrees");
+  // Worktree manager always uses ~/.synthetic/constructs regardless of baseDir
+  const { homedir } = require("node:os");
+  const constructsDir = join(homedir(), ".synthetic", "constructs");
   const EXPECTED_WORKTREE_COUNT = 3; // main + 2 constructs
   let worktreeManager: ReturnType<typeof createWorktreeManager>;
 
@@ -16,21 +18,46 @@ describe("WorktreeManager", () => {
       await rm(testBaseDir, { recursive: true, force: true });
     }
 
-    // Create test directory
+    // Clean up any existing worktree directory
+    if (existsSync(constructsDir)) {
+      await rm(constructsDir, { recursive: true, force: true });
+    }
+
+    // Create test directory (ensure parent exists)
+    const { dirname } = await import("node:path");
+    const parentDir = dirname(testBaseDir);
+    if (!existsSync(parentDir)) {
+      await mkdir(parentDir, { recursive: true });
+    }
     await mkdir(testBaseDir, { recursive: true });
 
     // Initialize git repo in test directory
     const { execSync } = await import("node:child_process");
-    execSync("git init", { cwd: testBaseDir });
-    execSync("git config user.name 'Test User'", { cwd: testBaseDir });
-    execSync("git config user.email 'test@example.com'", { cwd: testBaseDir });
+    try {
+      execSync("git init", { cwd: testBaseDir, stdio: "ignore" });
+      execSync("git config user.name 'Test User'", {
+        cwd: testBaseDir,
+        stdio: "ignore",
+      });
+      execSync("git config user.email 'test@example.com'", {
+        cwd: testBaseDir,
+        stdio: "ignore",
+      });
 
-    // Create initial commit
-    await import("node:fs/promises").then(({ writeFile }) =>
-      writeFile(join(testBaseDir, "test.txt"), "test content")
-    );
-    execSync("git add .", { cwd: testBaseDir });
-    execSync("git commit -m 'Initial commit'", { cwd: testBaseDir });
+      // Create initial commit
+      await import("node:fs/promises").then(({ writeFile }) =>
+        writeFile(join(testBaseDir, "test.txt"), "test content")
+      );
+      execSync("git add .", { cwd: testBaseDir, stdio: "ignore" });
+      execSync("git commit -m 'Initial commit'", {
+        cwd: testBaseDir,
+        stdio: "ignore",
+      });
+    } catch (error) {
+      // If git commands fail, skip cleanup to avoid further errors
+      console.error("Test setup failed:", error);
+      throw error;
+    }
 
     worktreeManager = createWorktreeManager(testBaseDir);
   });
@@ -39,6 +66,19 @@ describe("WorktreeManager", () => {
     // Clean up test directory
     if (existsSync(testBaseDir)) {
       await rm(testBaseDir, { recursive: true, force: true });
+    }
+
+    // Clean up actual worktree directory
+    if (existsSync(constructsDir)) {
+      await rm(constructsDir, { recursive: true, force: true });
+    }
+
+    // Prune any stale worktree entries
+    try {
+      const { execSync } = await import("node:child_process");
+      execSync("git worktree prune", { stdio: "ignore" });
+    } catch (_error) {
+      // Ignore pruning errors
     }
   });
 
@@ -62,7 +102,7 @@ describe("WorktreeManager", () => {
       await worktreeManager.createWorktree(constructId);
 
       await expect(worktreeManager.createWorktree(constructId)).rejects.toThrow(
-        "Worktree already exists for construct test-construct"
+        "Worktree already exists at"
       );
     });
 

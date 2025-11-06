@@ -127,7 +127,7 @@ export function ConstructForm({
       name: construct?.name ?? "",
       description: construct?.description ?? "",
       templateId: construct?.templateId ?? "",
-      branch: construct?.branch ?? "",
+      branch: "",
     }),
     [construct]
   );

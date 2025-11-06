@@ -10,8 +10,6 @@ export type Construct = {
   updatedAt: string;
 };
 
-const HTTP_STATUS_NOT_FOUND = 404;
-
 export type CreateConstructInput = {
   name: string;
   description?: string;
@@ -110,5 +108,3 @@ export const constructMutations = {
     },
   },
 };
-
-

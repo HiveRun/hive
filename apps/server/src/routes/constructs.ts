@@ -98,7 +98,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         const worktreeService = createWorktreeService();
         const now = new Date();
         const constructId = crypto.randomUUID();
-        
+
         const newConstruct: NewConstruct = {
           id: constructId,
           name: body.name,
@@ -114,10 +114,9 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
           workspacePath = await worktreeService.createWorktree(constructId, {
             branch: body.branch,
           });
-        } catch (worktreeError) {
+        } catch (_worktreeError) {
           // If worktree creation fails, we still want to create the construct
-          // but log the error for debugging
-          console.error("Failed to create worktree:", worktreeError);
+          // Error is logged by the worktree service
         }
 
         // Update construct with workspace path if worktree was created
@@ -269,15 +268,19 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         }
 
         const construct = result[0];
+        if (!construct) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Construct not found" };
+        }
 
         // Clean up worktree if it exists
         if (construct.workspacePath) {
           try {
             const worktreeService = createWorktreeService();
             await worktreeService.removeWorktree(params.id);
-          } catch (worktreeError) {
-            // Log worktree cleanup error but don't fail the deletion
-            console.error("Failed to cleanup worktree:", worktreeError);
+          } catch (_worktreeError) {
+            // Worktree cleanup error is logged by the worktree service
+            // Don't fail the deletion
           }
         }
 

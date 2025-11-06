@@ -1,10 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import {
-  Copy,
-  Plus,
-  Trash2,
-} from "lucide-react";
+import { Copy, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -189,18 +185,19 @@ export function ConstructList() {
                   </p>
                 )}
 
-
-
                 {/* Workspace path */}
                 {construct.workspacePath && (
                   <div className="mb-4">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="text-muted-foreground text-xs font-medium">
+                      <p className="font-medium text-muted-foreground text-xs">
                         Workspace:
                       </p>
                       <Button
                         data-testid="copy-workspace-path"
-                        onClick={() => copyToClipboard(construct.workspacePath)}
+                        onClick={() =>
+                          construct.workspacePath &&
+                          copyToClipboard(construct.workspacePath)
+                        }
                         size="sm"
                         title="Copy workspace path"
                         type="button"
@@ -209,7 +206,7 @@ export function ConstructList() {
                         <Copy className="h-3 w-3" />
                       </Button>
                     </div>
-                    <p className="text-muted-foreground text-xs break-all font-mono bg-muted/50 p-2 rounded mt-1">
+                    <p className="mt-1 break-all rounded bg-muted/50 p-2 font-mono text-muted-foreground text-xs">
                       {construct.workspacePath}
                     </p>
                   </div>
