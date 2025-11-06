@@ -1,0 +1,267 @@
+import { eq } from "drizzle-orm";
+import { Elysia, t } from "elysia";
+import { db } from "../db";
+import { constructs, type NewConstruct } from "../schema/constructs";
+
+const HTTP_STATUS = {
+  OK: 200,
+  CREATED: 201,
+  NOT_FOUND: 404,
+  INTERNAL_ERROR: 500,
+} as const;
+
+function constructToResponse(construct: typeof constructs.$inferSelect) {
+  return {
+    id: construct.id,
+    name: construct.name,
+    description: construct.description,
+    templateId: construct.templateId,
+    createdAt: construct.createdAt.toISOString(),
+    updatedAt: construct.updatedAt.toISOString(),
+  };
+}
+
+export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
+  .get(
+    "/",
+    async () => {
+      const allConstructs = await db.select().from(constructs);
+      return { constructs: allConstructs.map(constructToResponse) };
+    },
+    {
+      response: {
+        200: t.Object({
+          constructs: t.Array(
+            t.Object({
+              id: t.String(),
+              name: t.String(),
+              description: t.Union([t.String(), t.Null()]),
+              templateId: t.String(),
+              createdAt: t.String(),
+              updatedAt: t.String(),
+            })
+          ),
+        }),
+      },
+    }
+  )
+  .get(
+    "/:id",
+    async ({ params, set }) => {
+      const result = await db
+        .select()
+        .from(constructs)
+        .where(eq(constructs.id, params.id))
+        .limit(1);
+
+      if (result.length === 0) {
+        set.status = HTTP_STATUS.NOT_FOUND;
+        return { message: "Construct not found" };
+      }
+
+      const [construct] = result;
+      if (!construct) {
+        set.status = HTTP_STATUS.INTERNAL_ERROR;
+        return { message: "Failed to load construct" };
+      }
+
+      return constructToResponse(construct);
+    },
+    {
+      params: t.Object({
+        id: t.String(),
+      }),
+      response: {
+        200: t.Object({
+          id: t.String(),
+          name: t.String(),
+          description: t.Union([t.String(), t.Null()]),
+          templateId: t.String(),
+          createdAt: t.String(),
+          updatedAt: t.String(),
+        }),
+        404: t.Object({
+          message: t.String(),
+        }),
+      },
+    }
+  )
+  .post(
+    "/",
+    async ({ body, set }) => {
+      try {
+        const now = new Date();
+        const newConstruct: NewConstruct = {
+          id: crypto.randomUUID(),
+          name: body.name,
+          description: body.description ?? null,
+          templateId: body.templateId,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        const [created] = await db
+          .insert(constructs)
+          .values(newConstruct)
+          .returning();
+
+        if (!created) {
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          return { message: "Failed to create construct" };
+        }
+
+        set.status = HTTP_STATUS.CREATED;
+        return constructToResponse(created);
+      } catch (_error) {
+        set.status = HTTP_STATUS.INTERNAL_ERROR;
+        return { message: "Failed to create construct" };
+      }
+    },
+    {
+      body: t.Object({
+        name: t.String({
+          minLength: 1,
+          maxLength: 255,
+        }),
+        description: t.Optional(
+          t.String({
+            maxLength: 1000,
+          })
+        ),
+        templateId: t.String({
+          minLength: 1,
+        }),
+      }),
+      response: {
+        201: t.Object({
+          id: t.String(),
+          name: t.String(),
+          description: t.Union([t.String(), t.Null()]),
+          templateId: t.String(),
+          createdAt: t.String(),
+          updatedAt: t.String(),
+        }),
+        400: t.Object({
+          message: t.String(),
+        }),
+        500: t.Object({
+          message: t.String(),
+        }),
+      },
+    }
+  )
+  .put(
+    "/:id",
+    async ({ params, body, set }) => {
+      try {
+        const existing = await db
+          .select()
+          .from(constructs)
+          .where(eq(constructs.id, params.id))
+          .limit(1);
+
+        if (existing.length === 0) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Construct not found" };
+        }
+
+        const updatedConstruct = {
+          name: body.name,
+          description: body.description ?? null,
+          templateId: body.templateId,
+          updatedAt: new Date(),
+        };
+
+        const [updated] = await db
+          .update(constructs)
+          .set(updatedConstruct)
+          .where(eq(constructs.id, params.id))
+          .returning();
+
+        if (!updated) {
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          return { message: "Failed to update construct" };
+        }
+
+        return constructToResponse(updated);
+      } catch (_error) {
+        set.status = HTTP_STATUS.INTERNAL_ERROR;
+        return { message: "Failed to update construct" };
+      }
+    },
+    {
+      params: t.Object({
+        id: t.String(),
+      }),
+      body: t.Object({
+        name: t.String({
+          minLength: 1,
+          maxLength: 255,
+        }),
+        description: t.Optional(
+          t.String({
+            maxLength: 1000,
+          })
+        ),
+        templateId: t.String({
+          minLength: 1,
+        }),
+      }),
+      response: {
+        200: t.Object({
+          id: t.String(),
+          name: t.String(),
+          description: t.Union([t.String(), t.Null()]),
+          templateId: t.String(),
+          createdAt: t.String(),
+          updatedAt: t.String(),
+        }),
+        404: t.Object({
+          message: t.String(),
+        }),
+        500: t.Object({
+          message: t.String(),
+        }),
+      },
+    }
+  )
+  .delete(
+    "/:id",
+    async ({ params, set }) => {
+      try {
+        const existing = await db
+          .select()
+          .from(constructs)
+          .where(eq(constructs.id, params.id))
+          .limit(1);
+
+        if (existing.length === 0) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Construct not found" };
+        }
+
+        await db.delete(constructs).where(eq(constructs.id, params.id));
+
+        return { message: "Construct deleted successfully" };
+      } catch (_error) {
+        set.status = HTTP_STATUS.INTERNAL_ERROR;
+        return { message: "Failed to delete construct" };
+      }
+    },
+    {
+      params: t.Object({
+        id: t.String(),
+      }),
+      response: {
+        200: t.Object({
+          message: t.String(),
+        }),
+        404: t.Object({
+          message: t.String(),
+        }),
+        500: t.Object({
+          message: t.String(),
+        }),
+      },
+    }
+  );

@@ -5,7 +5,7 @@ See also: [[runtime|Runtime]], [[../configuration|Workspace & Templates]], [[../
 ## Core Infrastructure (Rescoped)
 The foundational features that enable core construct functionality:
 - [[features/phase-0/template-definition-system|Template Definition System]] ✅ **COMPLETED**
-- [[../core-functionality-path|Basic Construct Management]] 🔄 **PR #2**
+- [[../core-functionality-path|Basic Construct Management]] ✅ **PR #2**
 - [[../core-functionality-path|Git Worktree Integration]] 🔄 **PR #3**
 - [[../core-functionality-path|Agent Integration]] 🔄 **PR #4**
 

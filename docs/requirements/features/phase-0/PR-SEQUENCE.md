@@ -81,12 +81,12 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - PR #1 (needs templates for construct creation form)
 
 ### Acceptance Criteria
-- [ ] Can create construct via UI form with real database storage
-- [ ] Construct list shows basic info from database
-- [ ] Can delete constructs from UI and database
-- [ ] Can update construct details (name, description)
-- [ ] E2E tests pass for full construct management workflow
-- [ ] Database schema ready for worktree extension in PR #3
+- [x] Can create construct via UI form with real database storage
+- [x] Construct list shows basic info from database
+- [x] Can delete constructs from UI and database
+- [x] Can update construct details (name, description)
+- [x] E2E tests pass for full construct management workflow
+- [x] Database schema ready for worktree extension in PR #3
 
 ---
 

@@ -6,7 +6,7 @@ This document outlines the focused implementation path for delivering core Synth
 
 **Goal**: A user should be able to:
 1. ✅ Define templates in `synthetic.config.ts` (completed)
-2. Create and manage basic constructs through UI (real database)
+2. ✅ Create and manage basic constructs through UI (real database)
 3. Provision worktrees for existing constructs
 4. Start agent sessions in construct worktrees
 5. Chat with agents through web interface
@@ -25,6 +25,7 @@ This document outlines the focused implementation path for delivering core Synth
 ### Step 1: Basic Construct Management (PR #2)
 
 **Branch**: `feat/basic-construct-management`
+**Status**: ✅ Completed
 
 #### Core Components
 ```typescript
