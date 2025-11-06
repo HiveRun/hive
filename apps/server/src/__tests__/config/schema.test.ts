@@ -35,18 +35,6 @@ describe("Template Schema", () => {
     const result = templateSchema.parse(template);
     expect(result.services?.api?.type).toBe("process");
   });
-
-  it("should validate a template with port requests", () => {
-    const template = {
-      id: "api-server",
-      label: "API Server",
-      type: "manual" as const,
-      ports: [{ name: "API_PORT" }, { name: "DB_PORT" }],
-    };
-
-    const result = templateSchema.parse(template);
-    expect(result.ports).toHaveLength(2);
-  });
 });
 
 describe("Synthetic Config Schema", () => {

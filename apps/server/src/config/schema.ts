@@ -2,12 +2,12 @@ import { z } from "zod";
 
 export const processServiceSchema = z.object({
   type: z.literal("process").default("process"),
-  run: z.string().describe("Command to run the service"),
+  run: z.string().describe("Command to run service"),
   setup: z
     .array(z.string())
     .optional()
-    .describe("Setup commands to run before the main command"),
-  cwd: z.string().optional().describe("Working directory for the service"),
+    .describe("Setup commands to run before main command"),
+  cwd: z.string().optional().describe("Working directory for service"),
   env: z
     .record(z.string(), z.string())
     .optional()
@@ -16,16 +16,13 @@ export const processServiceSchema = z.object({
     .number()
     .optional()
     .describe("Milliseconds to wait for service to be ready"),
-  stop: z
-    .string()
-    .optional()
-    .describe("Command to gracefully stop the service"),
+  stop: z.string().optional().describe("Command to gracefully stop service"),
 });
 
 export const dockerServiceSchema = z.object({
   type: z.literal("docker"),
   image: z.string().describe("Docker image to use"),
-  command: z.string().optional().describe("Command to override the default"),
+  command: z.string().optional().describe("Command to override default"),
   ports: z
     .array(z.string())
     .optional()
@@ -57,24 +54,14 @@ export const serviceSchema = z.discriminatedUnion("type", [
   composeServiceSchema,
 ]);
 
-// Port request schema
-export const portRequestSchema = z.object({
-  name: z.string().describe("Environment variable name for the port"),
-  container: z
-    .number()
-    .optional()
-    .describe("Container port for Docker services"),
-});
-
 export const templateSchema = z.object({
   id: z.string().describe("Unique template identifier"),
-  label: z.string().describe("Display name for the template"),
+  label: z.string().describe("Display name for template"),
   type: z.literal("manual"),
   services: z
     .record(z.string(), serviceSchema)
     .optional()
     .describe("Services required by this template"),
-  ports: z.array(portRequestSchema).optional().describe("Ports to allocate"),
   env: z
     .record(z.string(), z.string())
     .optional()
@@ -101,7 +88,6 @@ export type ProcessService = z.infer<typeof processServiceSchema>;
 export type DockerService = z.infer<typeof dockerServiceSchema>;
 export type ComposeService = z.infer<typeof composeServiceSchema>;
 export type Service = z.infer<typeof serviceSchema>;
-export type PortRequest = z.infer<typeof portRequestSchema>;
 export type Template = z.infer<typeof templateSchema>;
 export type SyntheticConfig = z.infer<typeof syntheticConfigSchema>;
 

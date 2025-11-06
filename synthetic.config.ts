@@ -13,7 +13,6 @@ export default defineSyntheticConfig({
           cwd: "./apps/web",
           env: {
             NODE_ENV: "development",
-            PORT: "5173",
           },
           readyTimeoutMs: 3000,
         },
@@ -23,16 +22,11 @@ export default defineSyntheticConfig({
           cwd: "./apps/server",
           env: {
             NODE_ENV: "development",
-            PORT: "3000",
             DATABASE_URL: "./dev.db",
           },
           readyTimeoutMs: 5000,
         },
       },
-      ports: [
-        { name: "WEB_PORT", service: "web", port: 5173 },
-        { name: "API_PORT", service: "server", port: 3000 },
-      ],
     },
     "web-api": {
       id: "web-api",
@@ -44,13 +38,11 @@ export default defineSyntheticConfig({
           run: "bun run dev",
           cwd: "./api",
           env: {
-            PORT: "3000",
             NODE_ENV: "development",
           },
           readyTimeoutMs: 5000,
         },
       },
-      ports: [{ name: "API_PORT" }],
     },
     basic: {
       id: "basic",
