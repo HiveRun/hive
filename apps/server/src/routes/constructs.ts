@@ -95,15 +95,35 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
     "/",
     async ({ body, set }) => {
       try {
+        const worktreeService = createWorktreeService();
         const now = new Date();
+        const constructId = crypto.randomUUID();
+        
         const newConstruct: NewConstruct = {
-          id: crypto.randomUUID(),
+          id: constructId,
           name: body.name,
           description: body.description ?? null,
           templateId: body.templateId,
           createdAt: now,
           updatedAt: now,
         };
+
+        // Create worktree first
+        let workspacePath: string | null = null;
+        try {
+          workspacePath = await worktreeService.createWorktree(constructId, {
+            branch: body.branch,
+          });
+        } catch (worktreeError) {
+          // If worktree creation fails, we still want to create the construct
+          // but log the error for debugging
+          console.error("Failed to create worktree:", worktreeError);
+        }
+
+        // Update construct with workspace path if worktree was created
+        if (workspacePath) {
+          newConstruct.workspacePath = workspacePath;
+        }
 
         const [created] = await db
           .insert(constructs)
@@ -136,6 +156,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         templateId: t.String({
           minLength: 1,
         }),
+        branch: t.Optional(t.String()),
       }),
       response: {
         201: t.Object({
@@ -236,15 +257,28 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
     "/:id",
     async ({ params, set }) => {
       try {
-        const existing = await db
+        const result = await db
           .select()
           .from(constructs)
           .where(eq(constructs.id, params.id))
           .limit(1);
 
-        if (existing.length === 0) {
+        if (result.length === 0) {
           set.status = HTTP_STATUS.NOT_FOUND;
           return { message: "Construct not found" };
+        }
+
+        const construct = result[0];
+
+        // Clean up worktree if it exists
+        if (construct.workspacePath) {
+          try {
+            const worktreeService = createWorktreeService();
+            await worktreeService.removeWorktree(params.id);
+          } catch (worktreeError) {
+            // Log worktree cleanup error but don't fail the deletion
+            console.error("Failed to cleanup worktree:", worktreeError);
+          }
         }
 
         await db.delete(constructs).where(eq(constructs.id, params.id));
@@ -262,194 +296,6 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
       response: {
         200: t.Object({
           message: t.String(),
-        }),
-        404: t.Object({
-          message: t.String(),
-        }),
-        500: t.Object({
-          message: t.String(),
-        }),
-      },
-    }
-  )
-  .post(
-    "/:id/worktree",
-    async ({ params, body, set }) => {
-      try {
-        const worktreeService = createWorktreeService();
-
-        // Check if construct exists
-        const existing = await db
-          .select()
-          .from(constructs)
-          .where(eq(constructs.id, params.id))
-          .limit(1);
-
-        if (existing.length === 0) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Construct not found" };
-        }
-
-        const construct = existing[0];
-
-        // Check if worktree already exists
-        if (construct?.workspacePath) {
-          const exists = await worktreeService.worktreeExists(params.id);
-          if (exists && !body.force) {
-            set.status = HTTP_STATUS.CONFLICT;
-            return { message: "Worktree already exists for this construct" };
-          }
-        }
-
-        // Create worktree
-        const worktreePath = await worktreeService.createWorktree(params.id, {
-          branch: body.branch,
-          force: body.force,
-        });
-
-        // Update construct with workspace path
-        await db
-          .update(constructs)
-          .set({
-            workspacePath: worktreePath,
-            updatedAt: new Date(),
-          })
-          .where(eq(constructs.id, params.id));
-
-        set.status = HTTP_STATUS.CREATED;
-        return {
-          message: "Worktree created successfully",
-          constructId: params.id,
-          workspacePath: worktreePath,
-        };
-      } catch (_error) {
-        set.status = HTTP_STATUS.INTERNAL_ERROR;
-        return { message: "Failed to create worktree" };
-      }
-    },
-    {
-      params: t.Object({
-        id: t.String(),
-      }),
-      body: t.Object({
-        branch: t.Optional(t.String()),
-        force: t.Optional(t.Boolean()),
-      }),
-      response: {
-        201: t.Object({
-          message: t.String(),
-          constructId: t.String(),
-          workspacePath: t.String(),
-        }),
-        404: t.Object({
-          message: t.String(),
-        }),
-        409: t.Object({
-          message: t.String(),
-        }),
-        500: t.Object({
-          message: t.String(),
-        }),
-      },
-    }
-  )
-  .delete(
-    "/:id/worktree",
-    async ({ params, set }) => {
-      try {
-        const worktreeService = createWorktreeService();
-
-        // Check if construct exists
-        const existing = await db
-          .select()
-          .from(constructs)
-          .where(eq(constructs.id, params.id))
-          .limit(1);
-
-        if (existing.length === 0) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Construct not found" };
-        }
-
-        // Remove worktree
-        await worktreeService.removeWorktree(params.id);
-
-        // Update construct to remove workspace path
-        await db
-          .update(constructs)
-          .set({
-            workspacePath: null,
-            updatedAt: new Date(),
-          })
-          .where(eq(constructs.id, params.id));
-
-        return {
-          message: "Worktree removed successfully",
-          constructId: params.id,
-        };
-      } catch (error) {
-        if (error instanceof Error && error.message.includes("not found")) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: error.message };
-        }
-
-        set.status = HTTP_STATUS.INTERNAL_ERROR;
-        return { message: "Failed to remove worktree" };
-      }
-    },
-    {
-      params: t.Object({
-        id: t.String(),
-      }),
-      response: {
-        200: t.Object({
-          message: t.String(),
-          constructId: t.String(),
-        }),
-        404: t.Object({
-          message: t.String(),
-        }),
-        500: t.Object({
-          message: t.String(),
-        }),
-      },
-    }
-  )
-  .get(
-    "/:id/worktree",
-    async ({ params, set }) => {
-      try {
-        const worktreeService = createWorktreeService();
-        const worktreeInfo = await worktreeService.getWorktreeInfo(params.id);
-
-        if (!worktreeInfo) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Worktree not found" };
-        }
-
-        return {
-          id: worktreeInfo.id,
-          path: worktreeInfo.path,
-          branch: worktreeInfo.branch,
-          commit: worktreeInfo.commit,
-          isMain: worktreeInfo.isMain,
-        };
-      } catch (_error) {
-        set.status = HTTP_STATUS.INTERNAL_ERROR;
-        return { message: "Failed to get worktree info" };
-      }
-    },
-    {
-      params: t.Object({
-        id: t.String(),
-      }),
-      response: {
-        200: t.Object({
-          id: t.String(),
-          path: t.String(),
-          branch: t.String(),
-          commit: t.String(),
-          isMain: t.Boolean(),
         }),
         404: t.Object({
           message: t.String(),

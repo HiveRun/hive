@@ -38,6 +38,7 @@ const constructSchema = z.object({
     .max(DESCRIPTION_MAX_LENGTH, "Description too long")
     .optional(),
   templateId: z.string().min(1, "Template is required"),
+  branch: z.string().optional(),
 });
 
 const validateName = (value: string) => {
@@ -126,6 +127,7 @@ export function ConstructForm({
       name: construct?.name ?? "",
       description: construct?.description ?? "",
       templateId: construct?.templateId ?? "",
+      branch: construct?.branch ?? "",
     }),
     [construct]
   );
@@ -259,6 +261,25 @@ export function ConstructForm({
                     {field.state.meta.errors[0]}
                   </p>
                 )}
+              </div>
+            )}
+          </form.Field>
+
+          <form.Field name="branch">
+            {(field) => (
+              <div className="space-y-2">
+                <Label htmlFor={field.name}>Branch (optional)</Label>
+                <Input
+                  disabled={mutation.isPending}
+                  id={field.name}
+                  onChange={(event) => field.handleChange(event.target.value)}
+                  placeholder="Leave empty for auto-generated branch"
+                  value={field.state.value}
+                />
+                <p className="text-muted-foreground text-xs">
+                  Specify a branch for the worktree, or leave empty to create a
+                  unique branch automatically
+                </p>
               </div>
             )}
           </form.Field>

@@ -3,7 +3,6 @@ import { Link } from "@tanstack/react-router";
 import {
   FolderOpen,
   GitBranch,
-  GitBranchPlus,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -16,8 +15,6 @@ import {
   type Construct,
   constructMutations,
   constructQueries,
-  worktreeMutations,
-  worktreeQueries,
 } from "@/queries/constructs";
 import { templateQueries } from "@/queries/templates";
 
@@ -32,14 +29,12 @@ export function ConstructList() {
     error,
   } = useQuery(constructQueries.all());
   const { data: templates } = useQuery(templateQueries.all());
-  const { data: worktrees } = useQuery(worktreeQueries.all());
 
   const deleteMutation = useMutation({
     ...constructMutations.delete,
     onSuccess: () => {
       toast.success("Construct deleted successfully");
       queryClient.invalidateQueries({ queryKey: ["constructs"] });
-      queryClient.invalidateQueries({ queryKey: ["worktrees"] });
       setPendingDelete(null);
     },
     onError: (unknownError) => {
@@ -47,38 +42,6 @@ export function ConstructList() {
         unknownError instanceof Error
           ? unknownError.message
           : "Failed to delete construct";
-      toast.error(message);
-    },
-  });
-
-  const createWorktreeMutation = useMutation({
-    ...worktreeMutations.create,
-    onSuccess: (_data, variables) => {
-      toast.success(`Worktree created for ${variables.constructId}`);
-      queryClient.invalidateQueries({ queryKey: ["worktrees"] });
-      queryClient.invalidateQueries({ queryKey: ["constructs"] });
-    },
-    onError: (unknownError) => {
-      const message =
-        unknownError instanceof Error
-          ? unknownError.message
-          : "Failed to create worktree";
-      toast.error(message);
-    },
-  });
-
-  const removeWorktreeMutation = useMutation({
-    ...worktreeMutations.remove,
-    onSuccess: (_, constructId) => {
-      toast.success(`Worktree removed for ${constructId}`);
-      queryClient.invalidateQueries({ queryKey: ["worktrees"] });
-      queryClient.invalidateQueries({ queryKey: ["constructs"] });
-    },
-    onError: (unknownError) => {
-      const message =
-        unknownError instanceof Error
-          ? unknownError.message
-          : "Failed to remove worktree";
       toast.error(message);
     },
   });
@@ -104,19 +67,7 @@ export function ConstructList() {
       minute: "2-digit",
     });
 
-  const getWorktreeForConstruct = (constructId: string) =>
-    worktrees?.find((wt) => wt.id === constructId && !wt.isMain);
-
-  const hasWorktree = (constructId: string) =>
-    !!getWorktreeForConstruct(constructId);
-
-  const handleCreateWorktree = (constructId: string) => {
-    createWorktreeMutation.mutate({ constructId });
-  };
-
-  const handleRemoveWorktree = (constructId: string) => {
-    removeWorktreeMutation.mutate(constructId);
-  };
+  const hasWorktree = (construct: Construct) => !!construct.workspacePath;
 
   if (isLoading) {
     return <div className="p-6">Loading constructs...</div>;
@@ -206,31 +157,6 @@ export function ConstructList() {
                     {construct.name}
                   </CardTitle>
                   <div className="flex space-x-1">
-                    {hasWorktree(construct.id) ? (
-                      <Button
-                        data-testid="remove-worktree"
-                        disabled={removeWorktreeMutation.isPending}
-                        onClick={() => handleRemoveWorktree(construct.id)}
-                        size="sm"
-                        title="Remove worktree"
-                        type="button"
-                        variant="ghost"
-                      >
-                        <GitBranch className="h-4 w-4" />
-                      </Button>
-                    ) : (
-                      <Button
-                        data-testid="create-worktree"
-                        disabled={createWorktreeMutation.isPending}
-                        onClick={() => handleCreateWorktree(construct.id)}
-                        size="sm"
-                        title="Create worktree"
-                        type="button"
-                        variant="ghost"
-                      >
-                        <GitBranchPlus className="h-4 w-4" />
-                      </Button>
-                    )}
                     <Button
                       data-testid="delete-construct"
                       disabled={deleteMutation.isPending}
@@ -259,13 +185,13 @@ export function ConstructList() {
 
                 {/* Worktree status */}
                 <div className="mb-4 flex items-center gap-2">
-                  {hasWorktree(construct.id) ? (
+                  {hasWorktree(construct) ? (
                     <Badge
                       className="flex items-center gap-1"
                       variant="default"
                     >
                       <GitBranch className="h-3 w-3" />
-                      Worktree Active
+                      Worktree Ready
                     </Badge>
                   ) : (
                     <Badge
@@ -273,7 +199,7 @@ export function ConstructList() {
                       variant="outline"
                     >
                       <FolderOpen className="h-3 w-3" />
-                      No Worktree
+                      Initializing
                     </Badge>
                   )}
                 </div>

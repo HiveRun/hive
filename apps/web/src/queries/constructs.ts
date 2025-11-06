@@ -16,6 +16,7 @@ export type CreateConstructInput = {
   name: string;
   description?: string;
   templateId: string;
+  branch?: string;
 };
 
 export type UpdateConstructInput = {
@@ -110,101 +111,4 @@ export const constructMutations = {
   },
 };
 
-// Worktree types
-export type WorktreeInfo = {
-  id: string;
-  path: string;
-  branch: string;
-  commit: string;
-  isMain: boolean;
-};
 
-export type CreateWorktreeInput = {
-  branch?: string;
-  force?: boolean;
-};
-
-export const worktreeQueries = {
-  all: () => ({
-    queryKey: ["worktrees"] as const,
-    queryFn: async (): Promise<WorktreeInfo[]> => {
-      const { data, error } = await rpc.api.worktrees.get();
-      if (error) {
-        throw new Error("Failed to fetch worktrees");
-      }
-      return data.worktrees;
-    },
-  }),
-
-  forConstruct: (constructId: string) => ({
-    queryKey: ["worktrees", constructId] as const,
-    queryFn: async (): Promise<WorktreeInfo | null> => {
-      const { data, error } = await rpc.api.worktrees({ constructId }).get();
-
-      if (error) {
-        const status = (error as { status?: number }).status;
-        if (status === HTTP_STATUS_NOT_FOUND) {
-          return null;
-        }
-        throw new Error("Failed to fetch worktree for construct");
-      }
-
-      if ("message" in data) {
-        return null;
-      }
-
-      return data;
-    },
-  }),
-};
-
-export const worktreeMutations = {
-  create: {
-    mutationFn: async ({
-      constructId,
-      ...input
-    }: CreateWorktreeInput & { constructId: string }): Promise<{
-      message: string;
-      path: string;
-    }> => {
-      const { data, error } = await rpc.api
-        .constructs({ id: constructId })
-        .worktree.post(input);
-      if (error) {
-        throw new Error("Failed to create worktree");
-      }
-
-      if ("message" in data) {
-        const message =
-          typeof data.message === "string"
-            ? data.message
-            : "Failed to create worktree";
-        throw new Error(message);
-      }
-
-      return data;
-    },
-  },
-
-  remove: {
-    mutationFn: async (constructId: string): Promise<{ message: string }> => {
-      const { data, error } = await rpc.api
-        .constructs({ id: constructId })
-        .worktree.delete();
-      if (error) {
-        throw new Error("Failed to remove worktree");
-      }
-      return data;
-    },
-  },
-
-  prune: {
-    mutationFn: async (): Promise<{ message: string }> => {
-      const { data, error } = await rpc.api.worktrees.prune.post();
-      if (error) {
-        throw new Error("Failed to prune worktrees");
-      }
-      return data;
-    },
-  },
-};
