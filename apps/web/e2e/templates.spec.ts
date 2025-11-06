@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-// Test constants
+// Shared constants for E2E tests
 const SELECTORS = {
   pageTitle: '[data-testid="templates-page-title"]',
   templateCard: '[data-testid="template-card"]',

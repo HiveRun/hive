@@ -5,47 +5,16 @@ import {
   templateSchema,
 } from "../../config/schema";
 
-// Test input definitions
-const INPUTS = {
-  minimalTemplate: {
-    id: "test-template",
-    label: "Test Template",
-    type: "manual" as const,
-  },
-  templateWithServices: {
-    id: "web-app",
-    label: "Web Application",
-    type: "manual" as const,
-    services: {
-      api: {
-        type: "process" as const,
-        run: "bun run dev",
-        cwd: "./api",
-        env: { PORT: "3000" },
-      },
-    },
-  },
-  minimalConfig: {
-    templates: {
-      basic: {
-        id: "basic",
-        label: "Basic",
-        type: "manual" as const,
-      },
-    },
-  },
-  configForValidation: {
-    templates: {
-      test: {
-        id: "test",
-        label: "Test",
-        type: "manual",
-      },
-    },
+// Shared test data
+const SHARED_INPUTS = {
+  commonServiceConfig: {
+    type: "process" as const,
+    run: "bun run dev",
+    env: { NODE_ENV: "development" },
   },
 } as const;
 
-// Expected output keys
+// Expected output constants
 const EXPECTED = {
   templateType: "manual",
   serviceType: "process",
@@ -55,26 +24,65 @@ const EXPECTED = {
 
 describe("Template Schema", () => {
   it("should validate a minimal template", () => {
-    const result = templateSchema.parse(INPUTS.minimalTemplate);
+    const minimalTemplate = {
+      id: "test-template",
+      label: "Test Template",
+      type: "manual" as const,
+    };
+
+    const result = templateSchema.parse(minimalTemplate);
     expect(result.type).toBe(EXPECTED.templateType);
   });
 
   it("should validate a template with services", () => {
-    const result = templateSchema.parse(INPUTS.templateWithServices);
+    const templateWithServices = {
+      id: "web-app",
+      label: "Web Application",
+      type: "manual" as const,
+      services: {
+        api: {
+          ...SHARED_INPUTS.commonServiceConfig,
+          cwd: "./api",
+          env: { ...SHARED_INPUTS.commonServiceConfig.env, PORT: "3000" },
+        },
+      },
+    };
+
+    const result = templateSchema.parse(templateWithServices);
     expect(result.services?.api?.type).toBe(EXPECTED.serviceType);
   });
 });
 
 describe("Synthetic Config Schema", () => {
   it("should validate a minimal config", () => {
-    const result = syntheticConfigSchema.parse(INPUTS.minimalConfig);
+    const minimalConfig = {
+      templates: {
+        basic: {
+          id: "basic",
+          label: "Basic",
+          type: "manual" as const,
+        },
+      },
+    };
+
+    const result = syntheticConfigSchema.parse(minimalConfig);
     expect(result.templates[EXPECTED.configKey]).toBeDefined();
   });
 });
 
 describe("defineSyntheticConfig", () => {
   it("should return validated config", () => {
-    const config = defineSyntheticConfig(INPUTS.configForValidation);
+    const configForValidation = {
+      templates: {
+        test: {
+          id: "test",
+          label: "Test",
+          type: "manual" as const,
+        },
+      },
+    };
+
+    const config = defineSyntheticConfig(configForValidation);
     expect(config.templates.test?.id).toBe(EXPECTED.templateId);
   });
 });
