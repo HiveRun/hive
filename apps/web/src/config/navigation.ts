@@ -1,9 +1,9 @@
 import type { LucideIcon } from "lucide-react";
-import { Activity, AlertTriangle, FileText, Home } from "lucide-react";
+import { Activity, AlertTriangle, FileText, Home, Layers } from "lucide-react";
 
 export type MainNavItem = {
+  to: "/" | "/example-dashboard" | "/test-error" | "/templates" | "/constructs";
   label: string;
-  to: "/" | "/example-dashboard" | "/test-error" | "/templates";
   description?: string;
   icon: LucideIcon;
   exact?: boolean;
@@ -16,6 +16,12 @@ export const MAIN_NAV_ITEMS: MainNavItem[] = [
     icon: Home,
     exact: true,
     description: "System status and API health",
+  },
+  {
+    to: "/constructs",
+    label: "Constructs",
+    icon: Layers,
+    description: "Manage your constructs",
   },
   {
     to: "/templates",

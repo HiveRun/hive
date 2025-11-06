@@ -13,7 +13,7 @@
 
 ### Phase 0: Core Infrastructure (Rescoped)
 - [x] [Template Definition System](features/phase-0/template-definition-system.md) #status/completed #phase-0 #feature/core - System for defining construct templates
-- [ ] [Basic Construct Management](features/phase-0/PR-SEQUENCE.md) #status/planned #phase-0 #feature/core - Real database entities for constructs (PR #2)
+- [x] [Basic Construct Management](features/phase-0/PR-SEQUENCE.md) #status/completed #phase-0 #feature/core - Real database entities for constructs (PR #2)
 - [ ] [Git Worktree Integration](features/phase-0/PR-SEQUENCE.md) #status/planned #phase-0 #feature/core - Isolated workspaces for constructs (PR #3)
 - [ ] [Agent Integration](features/phase-0/PR-SEQUENCE.md) #status/planned #phase-0 #feature/core - OpenCode SDK integration (PR #4)
 

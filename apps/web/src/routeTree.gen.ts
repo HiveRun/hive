@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as TestErrorRouteImport } from './routes/test-error'
 import { Route as TemplatesRouteImport } from './routes/templates'
 import { Route as ExampleDashboardRouteImport } from './routes/example-dashboard'
+import { Route as ConstructsRouteImport } from './routes/constructs'
 import { Route as IndexRouteImport } from './routes/index'
 
 const TestErrorRoute = TestErrorRouteImport.update({
@@ -29,6 +30,11 @@ const ExampleDashboardRoute = ExampleDashboardRouteImport.update({
   path: '/example-dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConstructsRoute = ConstructsRouteImport.update({
+  id: '/constructs',
+  path: '/constructs',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -37,12 +43,14 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/constructs': typeof ConstructsRoute
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/constructs': typeof ConstructsRoute
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
@@ -50,20 +58,33 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/constructs': typeof ConstructsRoute
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/example-dashboard' | '/templates' | '/test-error'
+  fullPaths:
+    | '/'
+    | '/constructs'
+    | '/example-dashboard'
+    | '/templates'
+    | '/test-error'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/example-dashboard' | '/templates' | '/test-error'
-  id: '__root__' | '/' | '/example-dashboard' | '/templates' | '/test-error'
+  to: '/' | '/constructs' | '/example-dashboard' | '/templates' | '/test-error'
+  id:
+    | '__root__'
+    | '/'
+    | '/constructs'
+    | '/example-dashboard'
+    | '/templates'
+    | '/test-error'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ConstructsRoute: typeof ConstructsRoute
   ExampleDashboardRoute: typeof ExampleDashboardRoute
   TemplatesRoute: typeof TemplatesRoute
   TestErrorRoute: typeof TestErrorRoute
@@ -92,6 +113,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ExampleDashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/constructs': {
+      id: '/constructs'
+      path: '/constructs'
+      fullPath: '/constructs'
+      preLoaderRoute: typeof ConstructsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -104,6 +132,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ConstructsRoute: ConstructsRoute,
   ExampleDashboardRoute: ExampleDashboardRoute,
   TemplatesRoute: TemplatesRoute,
   TestErrorRoute: TestErrorRoute,
