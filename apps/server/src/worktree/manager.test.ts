@@ -248,7 +248,16 @@ describe("WorktreeManager", () => {
 
   describe("pruneWorktrees", () => {
     it("should prune without errors", async () => {
-      await expect(worktreeManager.pruneWorktrees()).resolves.not.toThrow();
+      // The pruneWorktrees method should handle git errors gracefully
+      // We just need to ensure it doesn't throw unhandled exceptions
+      try {
+        await worktreeManager.pruneWorktrees();
+        // If it completes without throwing, test passes
+        expect(true).toBe(true);
+      } catch (error) {
+        // If it throws, that's unexpected behavior
+        expect.fail(`pruneWorktrees threw an error: ${error}`);
+      }
     });
   });
 });
