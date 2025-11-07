@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { copyFile, mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import type { Template } from "../config/schema";
 
 // Git worktree parsing constants
@@ -37,11 +37,36 @@ export type WorktreeManager = {
   removeWorktree(constructId: string): void;
 };
 
+const DEFAULT_INCLUDE_PATTERNS = [
+  ".env*", // Environment files
+  "*.local", // Local configuration files
+];
+
 export function createWorktreeManager(
   baseDir: string = process.cwd(),
   syntheticConfig?: { templates: Record<string, Template> }
 ): WorktreeManager {
   const constructsDir = join(homedir(), ".synthetic", "constructs");
+
+  /**
+   * Verify we're in a git repository
+   */
+  function ensureGitRepo(): void {
+    try {
+      execSync("git rev-parse --git-dir", {
+        encoding: "utf8",
+        cwd: baseDir,
+        stdio: "pipe",
+      });
+    } catch {
+      throw new Error(
+        `Not a git repository: ${baseDir}. Worktree manager requires a git repository.`
+      );
+    }
+  }
+
+  // Fail fast if not in a git repo
+  ensureGitRepo();
 
   /**
    * Internal logger for non-critical warnings
@@ -77,12 +102,7 @@ export function createWorktreeManager(
    * Get the main repository path
    */
   function getMainRepoPath(): string {
-    try {
-      return git("rev-parse", "--show-toplevel");
-    } catch (_error) {
-      // Fallback to baseDir if git command fails (e.g., in tests)
-      return baseDir;
-    }
+    return git("rev-parse", "--show-toplevel");
   }
 
   /**
@@ -91,28 +111,17 @@ export function createWorktreeManager(
    */
   function getIncludePatterns(templateId?: string): string[] {
     if (!(templateId && syntheticConfig)) {
-      return getDefaultIncludePatterns();
+      return DEFAULT_INCLUDE_PATTERNS;
     }
 
     const template = syntheticConfig.templates[templateId] as
       | Template
       | undefined;
     if (!template?.includePatterns) {
-      return getDefaultIncludePatterns();
+      return DEFAULT_INCLUDE_PATTERNS;
     }
 
     return template.includePatterns;
-  }
-
-  /**
-   * Get default include patterns for worktree copying
-   * Only copy essential gitignored files like .env
-   */
-  function getDefaultIncludePatterns(): string[] {
-    return [
-      ".env*", // Environment files
-      "*.local", // Local configuration files
-    ];
   }
 
   /**
@@ -231,12 +240,7 @@ export function createWorktreeManager(
    * Get the current branch name
    */
   function getCurrentBranch(): string {
-    try {
-      return git("rev-parse", "--abbrev-ref", "HEAD");
-    } catch {
-      // Fallback for non-git environments (tests, etc.)
-      return "main";
-    }
+    return git("rev-parse", "--abbrev-ref", "HEAD");
   }
 
   /**
@@ -307,48 +311,32 @@ export function createWorktreeManager(
   }
 
   /**
-   * Extract construct ID from worktree path
-   */
-  function extractConstructId(worktreePath: string): string {
-    const relativePath = relative(constructsDir, worktreePath);
-    return relativePath.includes("..") ? "main" : relativePath;
-  }
-
-  /**
-   * Find worktree info for a construct ID by listing all worktrees
+   * Find worktree info for a construct ID by checking expected path
    */
   function findWorktreeInfo(constructId: string): WorktreeInfo | null {
-    try {
-      const worktreeList = git("worktree", "list", "--porcelain");
-      const mainRepoPath = getMainRepoPath();
+    const expectedPath = join(constructsDir, constructId);
+    const worktreeList = git("worktree", "list", "--porcelain");
+    const sections = worktreeList.trim().split("\n\n");
 
-      const sections = worktreeList.trim().split("\n\n");
-
-      for (const section of sections) {
-        const parsed = parseWorktreeSection(section);
-        if (!parsed) {
-          continue;
-        }
-
-        const isMain = parsed.path === mainRepoPath;
-        const id = isMain ? "main" : extractConstructId(parsed.path);
-
-        if (id === constructId) {
-          return {
-            id,
-            path: parsed.path,
-            branch: parsed.branch,
-            commit: parsed.commit,
-            isMain,
-          };
-        }
+    for (const section of sections) {
+      const parsed = parseWorktreeSection(section);
+      if (!parsed) {
+        continue;
       }
 
-      return null;
-    } catch {
-      // Fallback for non-git environments
-      return null;
+      // Match by expected path
+      if (parsed.path === expectedPath) {
+        return {
+          id: constructId,
+          path: parsed.path,
+          branch: parsed.branch,
+          commit: parsed.commit,
+          isMain: false,
+        };
+      }
     }
+
+    return null;
   }
 
   return {
