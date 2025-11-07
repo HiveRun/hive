@@ -1,27 +1,9 @@
 import { rpc } from "@/lib/rpc";
-
-export type Construct = {
-  id: string;
-  name: string;
-  description: string | null;
-  templateId: string;
-  workspacePath: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type CreateConstructInput = {
-  name: string;
-  description?: string;
-  templateId: string;
-  branch?: string;
-};
-
-export type UpdateConstructInput = {
-  name: string;
-  description?: string;
-  templateId: string;
-};
+import type {
+  Construct,
+  CreateConstructInput,
+  UpdateConstructInput,
+} from "@/types/constructs";
 
 export const constructQueries = {
   all: () => ({

@@ -15,13 +15,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  type Construct,
-  type CreateConstructInput,
-  constructMutations,
-  type UpdateConstructInput,
-} from "@/queries/constructs";
+import { constructMutations } from "@/queries/constructs";
 import { templateQueries } from "@/queries/templates";
+import type {
+  Construct,
+  CreateConstructInput,
+  UpdateConstructInput,
+} from "@/types/constructs";
 
 type ConstructFormValues = CreateConstructInput;
 

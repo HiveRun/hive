@@ -6,12 +6,9 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  type Construct,
-  constructMutations,
-  constructQueries,
-} from "@/queries/constructs";
+import { constructMutations, constructQueries } from "@/queries/constructs";
 import { templateQueries } from "@/queries/templates";
+import type { Construct } from "@/types/constructs";
 
 export function ConstructList() {
   const [pendingDelete, setPendingDelete] = useState<Construct | null>(null);
