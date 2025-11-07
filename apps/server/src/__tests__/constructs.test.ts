@@ -137,68 +137,6 @@ describe("Constructs CRUD Operations", () => {
     });
   });
 
-  describe("Update", () => {
-    let constructId: string;
-
-    beforeEach(async () => {
-      const [created] = await testDb
-        .insert(constructs)
-        .values({
-          id: "construct-to-update",
-          name: "Original Name",
-          description: "Original description",
-          templateId: "basic",
-          workspacePath: "/tmp/test-worktree-update",
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .returning();
-
-      if (!created) {
-        throw new Error("Failed to insert construct for update tests");
-      }
-
-      constructId = created.id;
-    });
-
-    it("should update construct details", async () => {
-      const updateData = {
-        name: "Updated Name",
-        description: "Updated description",
-        templateId: "web-api",
-        updatedAt: new Date(),
-      };
-
-      const [updated] = await testDb
-        .update(constructs)
-        .set(updateData)
-        .where(eq(constructs.id, constructId))
-        .returning();
-
-      expect(updated).toBeDefined();
-      if (!updated) {
-        throw new Error("Update did not return construct");
-      }
-
-      expect(updated).toMatchObject({
-        id: constructId,
-        name: updateData.name,
-        description: updateData.description,
-        templateId: updateData.templateId,
-      });
-    });
-
-    it("should not update non-existent construct", async () => {
-      const result = await testDb
-        .update(constructs)
-        .set({ name: "New Name", updatedAt: new Date() })
-        .where(eq(constructs.id, "non-existent"))
-        .returning();
-
-      expect(result).toHaveLength(0);
-    });
-  });
-
   describe("Delete", () => {
     let constructId: string;
 

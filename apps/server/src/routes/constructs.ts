@@ -5,7 +5,6 @@ import {
   ConstructListResponseSchema,
   ConstructResponseSchema,
   CreateConstructSchema,
-  UpdateConstructSchema,
 } from "../schema/api";
 import { constructs, type NewConstruct } from "../schema/constructs";
 import { createWorktreeManager } from "../worktree/manager";
@@ -119,61 +118,6 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
       response: {
         201: ConstructResponseSchema,
         400: t.Object({
-          message: t.String(),
-        }),
-        500: t.Object({
-          message: t.String(),
-        }),
-      },
-    }
-  )
-  .put(
-    "/:id",
-    async ({ params, body, set }) => {
-      try {
-        const existing = await db
-          .select()
-          .from(constructs)
-          .where(eq(constructs.id, params.id))
-          .limit(1);
-
-        if (existing.length === 0) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Construct not found" };
-        }
-
-        const updatedConstruct = {
-          name: body.name,
-          description: body.description ?? null,
-          templateId: body.templateId,
-          updatedAt: new Date(),
-        };
-
-        const [updated] = await db
-          .update(constructs)
-          .set(updatedConstruct)
-          .where(eq(constructs.id, params.id))
-          .returning();
-
-        if (!updated) {
-          set.status = HTTP_STATUS.INTERNAL_ERROR;
-          return { message: "Failed to update construct" };
-        }
-
-        return constructToResponse(updated);
-      } catch (_error) {
-        set.status = HTTP_STATUS.INTERNAL_ERROR;
-        return { message: "Failed to update construct" };
-      }
-    },
-    {
-      params: t.Object({
-        id: t.String(),
-      }),
-      body: UpdateConstructSchema,
-      response: {
-        200: ConstructResponseSchema,
-        404: t.Object({
           message: t.String(),
         }),
         500: t.Object({

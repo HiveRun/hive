@@ -30,21 +30,6 @@ export const CreateConstructSchema = t.Object({
   }),
 });
 
-export const UpdateConstructSchema = t.Object({
-  name: t.String({
-    minLength: 1,
-    maxLength: 255,
-  }),
-  description: t.Optional(
-    t.String({
-      maxLength: 1000,
-    })
-  ),
-  templateId: t.String({
-    minLength: 1,
-  }),
-});
-
 // Template schemas
 export const TemplateResponseSchema = t.Object({
   id: t.String(),

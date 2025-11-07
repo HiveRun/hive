@@ -1,8 +1,4 @@
-import {
-  type CreateConstructInput,
-  rpc,
-  type UpdateConstructInput,
-} from "@/lib/rpc";
+import { type CreateConstructInput, rpc } from "@/lib/rpc";
 
 export const constructQueries = {
   all: () => ({
@@ -50,31 +46,6 @@ export const constructMutations = {
           typeof data.message === "string"
             ? data.message
             : "Failed to create construct";
-        throw new Error(message);
-      }
-
-      return data;
-    },
-  },
-
-  update: {
-    mutationFn: async ({
-      id,
-      body,
-    }: {
-      id: string;
-      body: UpdateConstructInput;
-    }) => {
-      const { data, error } = await rpc.api.constructs({ id }).put(body);
-      if (error) {
-        throw new Error("Failed to update construct");
-      }
-
-      if ("message" in data) {
-        const message =
-          typeof data.message === "string"
-            ? data.message
-            : "Failed to update construct";
         throw new Error(message);
       }
 

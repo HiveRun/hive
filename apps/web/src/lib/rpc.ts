@@ -9,6 +9,3 @@ export const rpc = treaty<App>(API_URL);
 export type CreateConstructInput = Parameters<
   typeof rpc.api.constructs.post
 >[0];
-export type UpdateConstructInput = Parameters<
-  ReturnType<typeof rpc.api.constructs>["put"]
->[0];
