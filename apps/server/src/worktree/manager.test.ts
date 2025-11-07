@@ -46,10 +46,25 @@ describe("WorktreeManager", () => {
 
       // Copy .gitignore from main repo to test directory
       const { copyFile } = await import("node:fs/promises");
-      const mainGitignorePath = join(process.cwd(), ".gitignore");
+      const repoRoot = join(process.cwd(), "..", "..");
+
+      const mainGitignorePath = join(repoRoot, ".gitignore");
       const testGitignorePath = join(testBaseDir, ".gitignore");
       if (existsSync(mainGitignorePath)) {
         await copyFile(mainGitignorePath, testGitignorePath);
+      }
+
+      // Copy nested gitignore files used by collectFilesToCopy
+      const serverGitignorePath = join(process.cwd(), ".gitignore");
+      const testServerGitignorePath = join(
+        testBaseDir,
+        "apps",
+        "server",
+        ".gitignore"
+      );
+      if (existsSync(serverGitignorePath)) {
+        await mkdir(join(testBaseDir, "apps", "server"), { recursive: true });
+        await copyFile(serverGitignorePath, testServerGitignorePath);
       }
 
       // Create initial commit

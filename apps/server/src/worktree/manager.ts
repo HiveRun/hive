@@ -73,98 +73,30 @@ export function createWorktreeManager(
   }
 
   /**
-   * Read and parse .gitignore patterns
+   * List all ignored (gitignored) paths using git itself
    */
-  function getGitignorePatterns(mainRepoPath: string): string[] {
-    const gitignorePath = join(mainRepoPath, ".gitignore");
-
-    if (!existsSync(gitignorePath)) {
-      return [];
-    }
-
-    const fs = require("node:fs");
-
+  async function getIgnoredPaths(mainRepoPath: string): Promise<string[]> {
     try {
-      const gitignoreContent = fs.readFileSync(gitignorePath, "utf8");
-      return gitignoreContent
-        .split("\n")
-        .map((line: string) => line.trim())
-        .filter((line: string) => line && !line.startsWith("#"));
+      const repoGit = simpleGit({ baseDir: mainRepoPath });
+      const output = await repoGit.raw([
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "-z",
+      ]);
+
+      if (!output) {
+        return [];
+      }
+
+      return output
+        .split("\0")
+        .map((path) => path.trim())
+        .filter((path) => path.length > 0);
     } catch (_error) {
       return [];
     }
-  }
-
-  /**
-   * Get essential files that should always be copied
-   */
-  function getEssentialFiles(): string[] {
-    return [
-      ".env",
-      ".env.example",
-      ".env.local",
-      ".env.development.local",
-      ".env.test.local",
-      ".env.production.local",
-      "package-lock.json",
-      "yarn.lock",
-      "bun.lock",
-      "bun.lockb",
-    ];
-  }
-
-  /**
-   * Collect files to copy from main repo
-   */
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Complex file pattern matching and scanning logic
-  function collectFilesToCopy(mainRepoPath: string): string[] {
-    const essentialFiles = getEssentialFiles();
-    const gitignorePatterns = getGitignorePatterns(mainRepoPath);
-    const filesToCopy: string[] = [];
-
-    // Check essential files first
-    for (const file of essentialFiles) {
-      const sourcePath = join(mainRepoPath, file);
-      if (existsSync(sourcePath)) {
-        filesToCopy.push(file);
-      }
-    }
-
-    // Check gitignored patterns for existing files/directories
-    for (const pattern of gitignorePatterns) {
-      // Skip patterns that are already in essential files
-      if (essentialFiles.includes(pattern)) {
-        continue;
-      }
-
-      // Handle simple glob patterns
-      if (pattern.includes("*")) {
-        // For glob patterns like .env*, check for matching files
-        const fs = require("node:fs");
-        try {
-          const entries = fs.readdirSync(mainRepoPath, { withFileTypes: true });
-          for (const entry of entries) {
-            if (entry.isFile()) {
-              // Simple glob matching
-              const regex = new RegExp(pattern.replace(/\*/g, ".*"));
-              if (regex.test(entry.name)) {
-                filesToCopy.push(entry.name);
-              }
-            }
-          }
-        } catch (_error) {
-          // Ignore directory read errors
-        }
-      } else {
-        // For non-glob patterns, check exact file/directory
-        const sourcePath = join(mainRepoPath, pattern);
-        if (existsSync(sourcePath)) {
-          filesToCopy.push(pattern);
-        }
-      }
-    }
-
-    return filesToCopy;
   }
 
   /**
@@ -203,33 +135,10 @@ export function createWorktreeManager(
    */
   async function copyGitignoredFiles(worktreePath: string): Promise<void> {
     const mainRepoPath = getMainRepoPath();
+    const ignoredPaths = await getIgnoredPaths(mainRepoPath);
 
-    // Copy from root
-    const rootFilesToCopy = collectFilesToCopy(mainRepoPath);
-    for (const file of rootFilesToCopy) {
-      await copyToWorktree(mainRepoPath, worktreePath, file);
-    }
-
-    // Copy from apps/server
-    const serverPath = join(mainRepoPath, "apps", "server");
-    if (existsSync(serverPath)) {
-      const serverFilesToCopy = collectFilesToCopy(serverPath);
-      for (const file of serverFilesToCopy) {
-        await copyToWorktree(
-          serverPath,
-          join(worktreePath, "apps", "server"),
-          file
-        );
-      }
-    }
-
-    // Copy from apps/web
-    const webPath = join(mainRepoPath, "apps", "web");
-    if (existsSync(webPath)) {
-      const webFilesToCopy = collectFilesToCopy(webPath);
-      for (const file of webFilesToCopy) {
-        await copyToWorktree(webPath, join(worktreePath, "apps", "web"), file);
-      }
+    for (const relativePath of ignoredPaths) {
+      await copyToWorktree(mainRepoPath, worktreePath, relativePath);
     }
   }
 
