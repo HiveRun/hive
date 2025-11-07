@@ -5,7 +5,7 @@ export const constructs = sqliteTable("constructs", {
   name: text("name").notNull(),
   description: text("description"),
   templateId: text("template_id").notNull(),
-  workspacePath: text("workspace_path"),
+  workspacePath: text("workspace_path").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });

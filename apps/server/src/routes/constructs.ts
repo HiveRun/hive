@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { db } from "../db";
 import { constructs, type NewConstruct } from "../schema/constructs";
-import { createWorktreeService } from "../worktree/service";
+import { createWorktreeManager } from "../worktree/manager";
 
 const HTTP_STATUS = {
   OK: 200,
@@ -11,6 +11,17 @@ const HTTP_STATUS = {
   CONFLICT: 409,
   INTERNAL_ERROR: 500,
 } as const;
+
+// Extracted common construct response schema
+const ConstructResponseSchema = t.Object({
+  id: t.String(),
+  name: t.String(),
+  description: t.Union([t.String(), t.Null()]),
+  templateId: t.String(),
+  workspacePath: t.String(),
+  createdAt: t.String(),
+  updatedAt: t.String(),
+});
 
 function constructToResponse(construct: typeof constructs.$inferSelect) {
   return {
@@ -34,17 +45,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
     {
       response: {
         200: t.Object({
-          constructs: t.Array(
-            t.Object({
-              id: t.String(),
-              name: t.String(),
-              description: t.Union([t.String(), t.Null()]),
-              templateId: t.String(),
-              workspacePath: t.Union([t.String(), t.Null()]),
-              createdAt: t.String(),
-              updatedAt: t.String(),
-            })
-          ),
+          constructs: t.Array(ConstructResponseSchema),
         }),
       },
     }
@@ -76,15 +77,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         id: t.String(),
       }),
       response: {
-        200: t.Object({
-          id: t.String(),
-          name: t.String(),
-          description: t.Union([t.String(), t.Null()]),
-          templateId: t.String(),
-          workspacePath: t.Union([t.String(), t.Null()]),
-          createdAt: t.String(),
-          updatedAt: t.String(),
-        }),
+        200: ConstructResponseSchema,
         404: t.Object({
           message: t.String(),
         }),
@@ -95,7 +88,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
     "/",
     async ({ body, set }) => {
       try {
-        const worktreeService = createWorktreeService();
+        const worktreeService = createWorktreeManager();
         const now = new Date();
         const constructId = crypto.randomUUID();
 
@@ -108,19 +101,9 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
           updatedAt: now,
         };
 
-        // Create worktree first
-        let workspacePath: string | null = null;
-        try {
-          workspacePath = await worktreeService.createWorktree(constructId);
-        } catch (_worktreeError) {
-          // If worktree creation fails, we still want to create construct
-          // Error is logged by worktree service
-        }
-
-        // Update construct with workspace path if worktree was created
-        if (workspacePath) {
-          newConstruct.workspacePath = workspacePath;
-        }
+        // Create worktree first - this must succeed
+        const workspacePath = await worktreeService.createWorktree(constructId);
+        newConstruct.workspacePath = workspacePath;
 
         const [created] = await db
           .insert(constructs)
@@ -155,15 +138,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         }),
       }),
       response: {
-        201: t.Object({
-          id: t.String(),
-          name: t.String(),
-          description: t.Union([t.String(), t.Null()]),
-          templateId: t.String(),
-          workspacePath: t.Union([t.String(), t.Null()]),
-          createdAt: t.String(),
-          updatedAt: t.String(),
-        }),
+        201: ConstructResponseSchema,
         400: t.Object({
           message: t.String(),
         }),
@@ -231,15 +206,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         }),
       }),
       response: {
-        200: t.Object({
-          id: t.String(),
-          name: t.String(),
-          description: t.Union([t.String(), t.Null()]),
-          templateId: t.String(),
-          workspacePath: t.Union([t.String(), t.Null()]),
-          createdAt: t.String(),
-          updatedAt: t.String(),
-        }),
+        200: ConstructResponseSchema,
         404: t.Object({
           message: t.String(),
         }),
@@ -270,16 +237,9 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
           return { message: "Construct not found" };
         }
 
-        // Clean up worktree if it exists
-        if (construct.workspacePath) {
-          try {
-            const worktreeService = createWorktreeService();
-            await worktreeService.removeWorktree(params.id);
-          } catch (_worktreeError) {
-            // Worktree cleanup error is logged by the worktree service
-            // Don't fail the deletion
-          }
-        }
+        // Clean up worktree - this must succeed
+        const worktreeService = createWorktreeManager();
+        await worktreeService.removeWorktree(params.id);
 
         await db.delete(constructs).where(eq(constructs.id, params.id));
 
