@@ -2,7 +2,6 @@ import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { simpleGit } from "simple-git";
 import type { Template } from "../config/schema";
 
 // Git worktree parsing constants
@@ -34,22 +33,31 @@ export type WorktreeManager = {
     constructId: string,
     options?: WorktreeCreateOptions
   ): Promise<string>;
-  listWorktrees(): Promise<WorktreeInfo[]>;
-  getWorktreeInfo(constructId: string): Promise<WorktreeInfo | null>;
-  removeWorktree(constructId: string): Promise<void>;
-  pruneWorktrees(): Promise<void>;
-  worktreeExists(constructId: string): Promise<boolean>;
+  listWorktrees(): WorktreeInfo[];
+  getWorktreeInfo(constructId: string): WorktreeInfo | null;
+  removeWorktree(constructId: string): void;
+  pruneWorktrees(): void;
+  worktreeExists(constructId: string): boolean;
   getWorktreePath(constructId: string): string;
-  cleanupAllWorktrees(): Promise<void>;
+  cleanupAllWorktrees(): void;
 };
 
 export function createWorktreeManager(
   baseDir: string = process.cwd(),
   syntheticConfig?: { templates: Record<string, Template> }
 ): WorktreeManager {
-  const git = simpleGit(baseDir);
   const homeDir = require("node:os").homedir();
   const constructsDir = join(homeDir, ".synthetic", "constructs");
+
+  /**
+   * Execute a git command and return output
+   */
+  function git(...args: string[]): string {
+    return execSync(`git ${args.join(" ")}`, {
+      encoding: "utf8",
+      cwd: baseDir,
+    }).trim();
+  }
 
   /**
    * Initialize constructs directory if it doesn't exist
@@ -65,10 +73,7 @@ export function createWorktreeManager(
    */
   function getMainRepoPath(): string {
     try {
-      return execSync("git rev-parse --show-toplevel", {
-        encoding: "utf8",
-        cwd: baseDir,
-      }).trim();
+      return git("rev-parse", "--show-toplevel");
     } catch (_error) {
       // Fallback to baseDir if git command fails (e.g., in tests)
       return baseDir;
@@ -128,19 +133,18 @@ export function createWorktreeManager(
   /**
    * List gitignored paths that match include patterns
    */
-  async function getIncludedPaths(
+  function getIncludedPaths(
     mainRepoPath: string,
     includePatterns: string[]
-  ): Promise<string[]> {
+  ): string[] {
     try {
-      const repoGit = simpleGit({ baseDir: mainRepoPath });
-      const output = await repoGit.raw([
-        "ls-files",
-        "--others",
-        "--ignored",
-        "--exclude-standard",
-        "-z",
-      ]);
+      const output = execSync(
+        "git ls-files --others --ignored --exclude-standard -z",
+        {
+          encoding: "utf8",
+          cwd: mainRepoPath,
+        }
+      );
 
       if (!output) {
         return [];
@@ -195,7 +199,7 @@ export function createWorktreeManager(
     includePatterns: string[]
   ): Promise<void> {
     const mainRepoPath = getMainRepoPath();
-    const includedPaths = await getIncludedPaths(mainRepoPath, includePatterns);
+    const includedPaths = getIncludedPaths(mainRepoPath, includePatterns);
 
     for (const relativePath of includedPaths) {
       await copyToWorktree(mainRepoPath, worktreePath, relativePath);
@@ -230,10 +234,9 @@ export function createWorktreeManager(
   /**
    * Get the current branch name
    */
-  async function getCurrentBranch(): Promise<string> {
+  function getCurrentBranch(): string {
     try {
-      const status = await git.status();
-      return status.current || "main";
+      return git("rev-parse", "--abbrev-ref", "HEAD");
     } catch (_error) {
       return "main";
     }
@@ -252,7 +255,7 @@ export function createWorktreeManager(
 
     if (force) {
       try {
-        await git.raw(["worktree", "remove", "--force", worktreePath]);
+        git("worktree", "remove", "--force", worktreePath);
       } catch (_error) {
         // If removal fails, try removing the directory directly
         const { rm } = await import("node:fs/promises");
@@ -266,9 +269,9 @@ export function createWorktreeManager(
   /**
    * Create unique branch for worktree
    */
-  async function createBranch(constructId: string): Promise<string> {
+  function createBranch(constructId: string): string {
     const constructBranch = `construct-${constructId}`;
-    const branch = await ensureBranchExists(constructBranch);
+    const branch = ensureBranchExists(constructBranch);
     if (!branch) {
       throw new Error(`Failed to create branch: ${constructBranch}`);
     }
@@ -278,16 +281,14 @@ export function createWorktreeManager(
   /**
    * Ensure branch exists, create if needed
    */
-  async function ensureBranchExists(
-    branchName: string
-  ): Promise<string | null> {
+  function ensureBranchExists(branchName: string): string | null {
     try {
-      await git.raw(["show-ref", "--verify", `refs/heads/${branchName}`]);
+      git("show-ref", "--verify", `refs/heads/${branchName}`);
       return branchName;
     } catch {
       try {
-        const currentBranch = await getCurrentBranch();
-        await git.raw(["branch", branchName, currentBranch]);
+        const currentBranch = getCurrentBranch();
+        git("branch", branchName, currentBranch);
         return branchName;
       } catch (_error) {
         return null;
@@ -346,11 +347,11 @@ export function createWorktreeManager(
       await handleExistingWorktree(worktreePath, options.force ?? false);
 
       // Create unique branch
-      const branch = await createBranch(constructId);
+      const branch = createBranch(constructId);
 
       try {
         // Create worktree
-        await git.raw(["worktree", "add", worktreePath, branch]);
+        git("worktree", "add", worktreePath, branch);
 
         // Copy included gitignored files using template-specific include patterns
         const includePatterns = getIncludePatterns(options.templateId);
@@ -360,7 +361,7 @@ export function createWorktreeManager(
       } catch (error) {
         // Clean up on failure
         if (existsSync(worktreePath)) {
-          await git.raw(["worktree", "remove", "--force", worktreePath]);
+          git("worktree", "remove", "--force", worktreePath);
         }
         throw error;
       }
@@ -369,9 +370,9 @@ export function createWorktreeManager(
     /**
      * List all worktrees in the repository
      */
-    async listWorktrees(): Promise<WorktreeInfo[]> {
+    listWorktrees(): WorktreeInfo[] {
       try {
-        const worktreeList = await git.raw(["worktree", "list", "--porcelain"]);
+        const worktreeList = git("worktree", "list", "--porcelain");
         const mainRepoPath = getMainRepoPath();
 
         const sections = worktreeList.trim().split("\n\n");
@@ -407,7 +408,7 @@ export function createWorktreeManager(
           {
             id: "main",
             path: mainRepoPath,
-            branch: await getCurrentBranch(),
+            branch: getCurrentBranch(),
             commit: "HEAD",
             isMain: true,
           },
@@ -418,16 +419,16 @@ export function createWorktreeManager(
     /**
      * Get worktree info for a specific construct
      */
-    async getWorktreeInfo(constructId: string): Promise<WorktreeInfo | null> {
-      const worktrees = await this.listWorktrees();
+    getWorktreeInfo(constructId: string): WorktreeInfo | null {
+      const worktrees = this.listWorktrees();
       return worktrees.find((wt) => wt.id === constructId) || null;
     },
 
     /**
      * Remove a worktree (prune and delete)
      */
-    async removeWorktree(constructId: string): Promise<void> {
-      const worktreeInfo = await this.getWorktreeInfo(constructId);
+    removeWorktree(constructId: string): void {
+      const worktreeInfo = this.getWorktreeInfo(constructId);
 
       if (!worktreeInfo) {
         throw new Error(`Worktree not found for construct ${constructId}`);
@@ -439,10 +440,10 @@ export function createWorktreeManager(
 
       try {
         // Remove the worktree
-        await git.raw(["worktree", "remove", "--force", worktreeInfo.path]);
+        git("worktree", "remove", "--force", worktreeInfo.path);
 
         // Prune stale worktrees
-        await git.raw(["worktree", "prune"]);
+        git("worktree", "prune");
       } catch (error) {
         throw new Error(
           `Failed to remove worktree for construct ${constructId}: ${error}`
@@ -453,9 +454,9 @@ export function createWorktreeManager(
     /**
      * Prune stale worktrees
      */
-    async pruneWorktrees(): Promise<void> {
+    pruneWorktrees(): void {
       try {
-        await git.raw(["worktree", "prune"]);
+        git("worktree", "prune");
       } catch (_error) {
         // Ignore prune errors
       }
@@ -464,8 +465,8 @@ export function createWorktreeManager(
     /**
      * Check if a worktree exists for a construct
      */
-    async worktreeExists(constructId: string): Promise<boolean> {
-      const worktreeInfo = await this.getWorktreeInfo(constructId);
+    worktreeExists(constructId: string): boolean {
+      const worktreeInfo = this.getWorktreeInfo(constructId);
       return worktreeInfo !== null && !worktreeInfo.isMain;
     },
 
@@ -479,13 +480,13 @@ export function createWorktreeManager(
     /**
      * Clean up all construct worktrees (useful for testing)
      */
-    async cleanupAllWorktrees(): Promise<void> {
-      const worktrees = await this.listWorktrees();
+    cleanupAllWorktrees(): void {
+      const worktrees = this.listWorktrees();
 
       for (const worktree of worktrees) {
         if (!worktree.isMain) {
           try {
-            await this.removeWorktree(worktree.id);
+            this.removeWorktree(worktree.id);
           } catch (_error) {
             // Ignore cleanup errors
           }
