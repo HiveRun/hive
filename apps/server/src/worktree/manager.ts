@@ -1,7 +1,8 @@
 import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { copyFile, mkdir } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { copyFile, mkdir, rm } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join, relative } from "node:path";
 import type { Template } from "../config/schema";
 
 // Git worktree parsing constants
@@ -33,21 +34,14 @@ export type WorktreeManager = {
     constructId: string,
     options?: WorktreeCreateOptions
   ): Promise<string>;
-  listWorktrees(): WorktreeInfo[];
-  getWorktreeInfo(constructId: string): WorktreeInfo | null;
   removeWorktree(constructId: string): void;
-  pruneWorktrees(): void;
-  worktreeExists(constructId: string): boolean;
-  getWorktreePath(constructId: string): string;
-  cleanupAllWorktrees(): void;
 };
 
 export function createWorktreeManager(
   baseDir: string = process.cwd(),
   syntheticConfig?: { templates: Record<string, Template> }
 ): WorktreeManager {
-  const homeDir = require("node:os").homedir();
-  const constructsDir = join(homeDir, ".synthetic", "constructs");
+  const constructsDir = join(homedir(), ".synthetic", "constructs");
 
   /**
    * Execute a git command and return output
@@ -155,7 +149,8 @@ export function createWorktreeManager(
         .map((path) => path.trim())
         .filter((path) => path.length > 0)
         .filter((path) => shouldIncludeFromCopy(path, includePatterns));
-    } catch (_error) {
+    } catch {
+      // Non-critical: If we can't list gitignored files, just don't copy them
       return [];
     }
   }
@@ -168,26 +163,21 @@ export function createWorktreeManager(
     worktreePath: string,
     file: string
   ): Promise<void> {
-    const fs = require("node:fs");
-    const path = require("node:path");
-
     const sourcePath = join(mainRepoPath, file);
     const targetPath = join(worktreePath, file);
 
     try {
-      const stat = fs.statSync(sourcePath);
+      const stat = statSync(sourcePath);
 
       if (stat.isDirectory()) {
-        // For directories, we need to copy recursively
         await copyDirectory(sourcePath, targetPath);
       } else {
-        // For files, copy directly
-        const targetDir = path.dirname(targetPath);
+        const targetDir = dirname(targetPath);
         await mkdir(targetDir, { recursive: true });
         await copyFile(sourcePath, targetPath);
       }
-    } catch (_error) {
-      // Ignore copy errors for non-essential files
+    } catch {
+      // Non-critical: Files like .env are optional, ignore copy failures
     }
   }
 
@@ -210,18 +200,13 @@ export function createWorktreeManager(
    * Copy directory recursively
    */
   async function copyDirectory(source: string, target: string): Promise<void> {
-    const fs = require("node:fs");
-    const path = require("node:path");
-
-    // Create target directory
     await mkdir(target, { recursive: true });
 
-    // Read source directory
-    const entries = fs.readdirSync(source, { withFileTypes: true });
+    const entries = readdirSync(source, { withFileTypes: true });
 
     for (const entry of entries) {
-      const sourcePath = path.join(source, entry.name);
-      const targetPath = path.join(target, entry.name);
+      const sourcePath = join(source, entry.name);
+      const targetPath = join(target, entry.name);
 
       if (entry.isDirectory()) {
         await copyDirectory(sourcePath, targetPath);
@@ -237,7 +222,8 @@ export function createWorktreeManager(
   function getCurrentBranch(): string {
     try {
       return git("rev-parse", "--abbrev-ref", "HEAD");
-    } catch (_error) {
+    } catch {
+      // Fallback for non-git environments (tests, etc.)
       return "main";
     }
   }
@@ -256,9 +242,8 @@ export function createWorktreeManager(
     if (force) {
       try {
         git("worktree", "remove", "--force", worktreePath);
-      } catch (_error) {
-        // If removal fails, try removing the directory directly
-        const { rm } = await import("node:fs/promises");
+      } catch {
+        // Git command failed, try filesystem removal as fallback
         await rm(worktreePath, { recursive: true, force: true });
       }
     } else {
@@ -269,30 +254,14 @@ export function createWorktreeManager(
   /**
    * Create unique branch for worktree
    */
-  function createBranch(constructId: string): string {
-    const constructBranch = `construct-${constructId}`;
-    const branch = ensureBranchExists(constructBranch);
-    if (!branch) {
-      throw new Error(`Failed to create branch: ${constructBranch}`);
-    }
-    return branch;
-  }
-
-  /**
-   * Ensure branch exists, create if needed
-   */
-  function ensureBranchExists(branchName: string): string | null {
+  function ensureBranchExists(branchName: string): string {
     try {
       git("show-ref", "--verify", `refs/heads/${branchName}`);
       return branchName;
     } catch {
-      try {
-        const currentBranch = getCurrentBranch();
-        git("branch", branchName, currentBranch);
-        return branchName;
-      } catch (_error) {
-        return null;
-      }
+      const currentBranch = getCurrentBranch();
+      git("branch", branchName, currentBranch);
+      return branchName;
     }
   }
 
@@ -331,6 +300,43 @@ export function createWorktreeManager(
     return relativePath.includes("..") ? "main" : relativePath;
   }
 
+  /**
+   * Find worktree info for a construct ID by listing all worktrees
+   */
+  function findWorktreeInfo(constructId: string): WorktreeInfo | null {
+    try {
+      const worktreeList = git("worktree", "list", "--porcelain");
+      const mainRepoPath = getMainRepoPath();
+
+      const sections = worktreeList.trim().split("\n\n");
+
+      for (const section of sections) {
+        const parsed = parseWorktreeSection(section);
+        if (!parsed) {
+          continue;
+        }
+
+        const isMain = parsed.path === mainRepoPath;
+        const id = isMain ? "main" : extractConstructId(parsed.path);
+
+        if (id === constructId) {
+          return {
+            id,
+            path: parsed.path,
+            branch: parsed.branch,
+            commit: parsed.commit,
+            isMain,
+          };
+        }
+      }
+
+      return null;
+    } catch {
+      // Fallback for non-git environments
+      return null;
+    }
+  }
+
   return {
     /**
      * Create a new worktree for a construct
@@ -347,7 +353,7 @@ export function createWorktreeManager(
       await handleExistingWorktree(worktreePath, options.force ?? false);
 
       // Create unique branch
-      const branch = createBranch(constructId);
+      const branch = ensureBranchExists(`construct-${constructId}`);
 
       try {
         // Create worktree
@@ -368,67 +374,10 @@ export function createWorktreeManager(
     },
 
     /**
-     * List all worktrees in the repository
-     */
-    listWorktrees(): WorktreeInfo[] {
-      try {
-        const worktreeList = git("worktree", "list", "--porcelain");
-        const mainRepoPath = getMainRepoPath();
-
-        const sections = worktreeList.trim().split("\n\n");
-        const parsedWorktrees: Array<{
-          path: string;
-          commit: string;
-          branch: string;
-        }> = [];
-
-        // Parse each section
-        for (const section of sections) {
-          const parsed = parseWorktreeSection(section);
-          if (parsed) {
-            parsedWorktrees.push(parsed);
-          }
-        }
-
-        // Convert to WorktreeInfo format
-        return parsedWorktrees.map((worktree) => {
-          const isMain = worktree.path === mainRepoPath;
-          return {
-            id: isMain ? "main" : extractConstructId(worktree.path),
-            path: worktree.path,
-            branch: worktree.branch,
-            commit: worktree.commit,
-            isMain,
-          };
-        });
-      } catch (_error) {
-        // Fallback: return only main worktree
-        const mainRepoPath = getMainRepoPath();
-        return [
-          {
-            id: "main",
-            path: mainRepoPath,
-            branch: getCurrentBranch(),
-            commit: "HEAD",
-            isMain: true,
-          },
-        ];
-      }
-    },
-
-    /**
-     * Get worktree info for a specific construct
-     */
-    getWorktreeInfo(constructId: string): WorktreeInfo | null {
-      const worktrees = this.listWorktrees();
-      return worktrees.find((wt) => wt.id === constructId) || null;
-    },
-
-    /**
      * Remove a worktree (prune and delete)
      */
     removeWorktree(constructId: string): void {
-      const worktreeInfo = this.getWorktreeInfo(constructId);
+      const worktreeInfo = findWorktreeInfo(constructId);
 
       if (!worktreeInfo) {
         throw new Error(`Worktree not found for construct ${constructId}`);
@@ -439,58 +388,12 @@ export function createWorktreeManager(
       }
 
       try {
-        // Remove the worktree
         git("worktree", "remove", "--force", worktreeInfo.path);
-
-        // Prune stale worktrees
         git("worktree", "prune");
       } catch (error) {
         throw new Error(
           `Failed to remove worktree for construct ${constructId}: ${error}`
         );
-      }
-    },
-
-    /**
-     * Prune stale worktrees
-     */
-    pruneWorktrees(): void {
-      try {
-        git("worktree", "prune");
-      } catch (_error) {
-        // Ignore prune errors
-      }
-    },
-
-    /**
-     * Check if a worktree exists for a construct
-     */
-    worktreeExists(constructId: string): boolean {
-      const worktreeInfo = this.getWorktreeInfo(constructId);
-      return worktreeInfo !== null && !worktreeInfo.isMain;
-    },
-
-    /**
-     * Get the path to a construct's worktree
-     */
-    getWorktreePath(constructId: string): string {
-      return join(constructsDir, constructId);
-    },
-
-    /**
-     * Clean up all construct worktrees (useful for testing)
-     */
-    cleanupAllWorktrees(): void {
-      const worktrees = this.listWorktrees();
-
-      for (const worktree of worktrees) {
-        if (!worktree.isMain) {
-          try {
-            this.removeWorktree(worktree.id);
-          } catch (_error) {
-            // Ignore cleanup errors
-          }
-        }
       }
     },
   };
