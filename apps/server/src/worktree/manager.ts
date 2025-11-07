@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { copyFile, mkdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { simpleGit } from "simple-git";
+import type { Template } from "../config/schema";
 
 // Git worktree parsing constants
 const WORKTREE_PREFIX = "worktree ";
@@ -25,6 +26,7 @@ export type WorktreeInfo = {
 
 export type WorktreeCreateOptions = {
   force?: boolean;
+  templateId?: string;
 };
 
 export type WorktreeManager = {
@@ -42,7 +44,8 @@ export type WorktreeManager = {
 };
 
 export function createWorktreeManager(
-  baseDir: string = process.cwd()
+  baseDir: string = process.cwd(),
+  syntheticConfig?: { templates: Record<string, Template> }
 ): WorktreeManager {
   const git = simpleGit(baseDir);
   const homeDir = require("node:os").homedir();
@@ -73,33 +76,45 @@ export function createWorktreeManager(
   }
 
   /**
-   * Check if a path should be excluded from worktree copy
-   * Similar to Hive's exclude patterns for dependencies and build artifacts
+   * Get include patterns from synthetic config for a specific template
+   * Falls back to default patterns if template not found or has no patterns
    */
-  function shouldExcludeFromCopy(path: string): boolean {
-    const excludePatterns = [
-      "node_modules", // Dependencies (handled by package manager)
-      ".turbo", // Build cache
-      "dist", // Build outputs
-      "build", // Build outputs
-      ".pnpm-debug.log*", // Debug logs
-      "npm-debug.log*", // Debug logs
-      "yarn-debug.log*", // Debug logs
-      "lerna-debug.log*", // Debug logs
-      "test-results/", // Test artifacts
-      "playwright-report/", // Test artifacts
-      "coverage", // Coverage reports
-      ".cache", // Cache directories
-      "tmp", // Temp directories
-      "temp", // Temp directories
-    ];
+  function getIncludePatterns(templateId?: string): string[] {
+    if (!(templateId && syntheticConfig)) {
+      return getDefaultIncludePatterns();
+    }
 
-    // Check if path matches any exclude pattern
-    return excludePatterns.some((pattern) => {
-      if (pattern.endsWith("/")) {
-        // Directory pattern - check if path starts with pattern
-        return path.startsWith(pattern) || path === pattern.slice(0, -1);
-      }
+    const template = syntheticConfig.templates[templateId] as
+      | Template
+      | undefined;
+    if (!template?.includePatterns) {
+      return getDefaultIncludePatterns();
+    }
+
+    return template.includePatterns;
+  }
+
+  /**
+   * Get default include patterns for worktree copying
+   * Only copy essential gitignored files like .env
+   */
+  function getDefaultIncludePatterns(): string[] {
+    return [
+      ".env*", // Environment files
+      "*.local", // Local configuration files
+    ];
+  }
+
+  /**
+   * Check if a path should be included from worktree copy
+   * Only copy files that match include patterns
+   */
+  function shouldIncludeFromCopy(
+    path: string,
+    includePatterns: string[]
+  ): boolean {
+    // Check if path matches any include pattern
+    return includePatterns.some((pattern) => {
       if (pattern.includes("*")) {
         // Wildcard pattern - simple glob matching
         const regex = new RegExp(pattern.replace(/\*/g, ".*"));
@@ -111,9 +126,12 @@ export function createWorktreeManager(
   }
 
   /**
-   * List all ignored (gitignored) paths using git itself
+   * List gitignored paths that match include patterns
    */
-  async function getIgnoredPaths(mainRepoPath: string): Promise<string[]> {
+  async function getIncludedPaths(
+    mainRepoPath: string,
+    includePatterns: string[]
+  ): Promise<string[]> {
     try {
       const repoGit = simpleGit({ baseDir: mainRepoPath });
       const output = await repoGit.raw([
@@ -132,7 +150,7 @@ export function createWorktreeManager(
         .split("\0")
         .map((path) => path.trim())
         .filter((path) => path.length > 0)
-        .filter((path) => !shouldExcludeFromCopy(path));
+        .filter((path) => shouldIncludeFromCopy(path, includePatterns));
     } catch (_error) {
       return [];
     }
@@ -170,13 +188,16 @@ export function createWorktreeManager(
   }
 
   /**
-   * Copy gitignored files from main repo to worktree
+   * Copy included gitignored files from main repo to worktree
    */
-  async function copyGitignoredFiles(worktreePath: string): Promise<void> {
+  async function copyIncludedFiles(
+    worktreePath: string,
+    includePatterns: string[]
+  ): Promise<void> {
     const mainRepoPath = getMainRepoPath();
-    const ignoredPaths = await getIgnoredPaths(mainRepoPath);
+    const includedPaths = await getIncludedPaths(mainRepoPath, includePatterns);
 
-    for (const relativePath of ignoredPaths) {
+    for (const relativePath of includedPaths) {
       await copyToWorktree(mainRepoPath, worktreePath, relativePath);
     }
   }
@@ -331,8 +352,9 @@ export function createWorktreeManager(
         // Create worktree
         await git.raw(["worktree", "add", worktreePath, branch]);
 
-        // Copy gitignored files
-        await copyGitignoredFiles(worktreePath);
+        // Copy included gitignored files using template-specific include patterns
+        const includePatterns = getIncludePatterns(options.templateId);
+        await copyIncludedFiles(worktreePath, includePatterns);
 
         return worktreePath;
       } catch (error) {
