@@ -15,22 +15,23 @@ Git worktree functionality has been successfully implemented to provide isolated
    - Migration: `0001_swift_kronos.sql`
    - Stores the path to the construct's worktree when active
 
-2. **WorktreeManager Service** (`apps/server/src/worktree/`)
+2. **WorktreeManager Service** (`apps/server/src/worktree/manager.ts`)
    - Factory function pattern (no classes, per coding guidelines)
-   - Core operations:
-     - `createWorktree()`: Creates isolated worktrees in `.constructs/<id>`
-     - `listWorktrees()`: Lists all worktrees with branch info
-     - `removeWorktree()`: Safely removes worktrees with prune
-     - `worktreeExists()`: Checks worktree existence
+   - **Public API (2 methods)**:
+     - `createWorktree(constructId, options)`: Creates isolated worktrees in `~/.synthetic/constructs/<id>`
+     - `removeWorktree(constructId)`: Safely removes worktrees with automatic prune
+   - **Internal helpers**:
+     - `findWorktreeInfo()`: Locates worktree by construct ID
+     - Direct git command execution via `execSync` (no external dependencies)
    - Automatic branch management: Creates unique branches (`construct-{id}`) to avoid conflicts
-   - Gitignored files copying: Preserves `.env` files and lockfiles
+   - Gitignored files copying: Template-based include patterns (defaults to `.env*`, `*.local`)
+   - Error logging: Non-critical failures logged to stderr (silent in tests)
 
-3. **API Endpoints**
-   - `GET /api/worktrees` - List all worktrees
-   - `POST /api/constructs/:id/worktree` - Create worktree for construct
-   - `DELETE /api/constructs/:id/worktree` - Remove worktree for construct
-   - `POST /api/worktrees/prune` - Clean up stale worktrees
+3. **API Integration**
+   - Worktree creation integrated into `POST /api/constructs` endpoint
+   - Worktree removal integrated into `DELETE /api/constructs/:id` endpoint
    - Full TypeBox validation on all endpoints
+   - Automatic cleanup on construct deletion
 
 ### Frontend Implementation
 
@@ -53,78 +54,96 @@ Git worktree functionality has been successfully implemented to provide isolated
 
 ## Technical Decisions
 
-### Library Choice: simple-git
-- **Chosen over**: isomorphic-git
-- **Reasons**: Better TypeScript support, more mature git worktree API, simpler error handling
-- **Trade-offs**: Node.js only (acceptable for server-side implementation)
+### No External Git Libraries
+- **Removed**: simple-git dependency (as of refactor)
+- **Current approach**: Direct `execSync()` calls to git CLI
+- **Benefits**: 
+  - -1 npm dependency (~400KB)
+  - Simpler, more explicit code
+  - Easier to debug (raw git commands visible)
+  - No abstraction layer to learn
+- **Trade-offs**: Less abstraction, but git is stable and well-documented
+
+### Worktree Storage Location
+- **Location**: `~/.synthetic/constructs/<construct-id>`
+- **Rationale**: 
+  - Keeps worktrees outside main repo for safety
+  - Consistent location across projects
+  - Easy to find and manage manually
 
 ### Branch Management Strategy
 - **Automatic branch creation**: Each worktree gets unique branch `construct-{id}`
 - **Conflict prevention**: Avoids multiple worktrees on same branch
-- **Fallback handling**: Graceful degradation if branch creation fails
+- **Error handling**: Logged to stderr with graceful fallbacks
 
 ### Factory Function Pattern
 - **Follows coding guidelines**: No classes, use factory functions
-- **Clean separation**: Easy testing and dependency injection
+- **Minimal public API**: Only 2 public methods (create/remove)
+- **Internal helpers**: Encapsulated implementation details
 - **Type safety**: Proper TypeScript interfaces throughout
+
+### Error Handling Philosophy
+- **Non-critical failures**: Logged to stderr via `logWarn()` helper
+- **Silent in tests**: Respects `NODE_ENV=test` to avoid noise
+- **Meaningful fallbacks**: `.env` copy failures don't block worktree creation
+- **Developer-friendly**: Clear error messages for debugging
 
 ## File Structure
 
 ```
 apps/server/src/
 ├── worktree/
-│   ├── manager.ts          # Core worktree management logic
-│   ├── service.ts         # Service factory wrapper
-│   └── *.test.ts         # Comprehensive test suite
+│   └── manager.ts          # Core worktree management (398 lines, 19.16 KB built)
 ├── routes/
-│   ├── worktrees.ts       # Standalone worktree API routes
-│   └── constructs.ts     # Extended with worktree endpoints
+│   └── constructs.ts       # Integrated worktree lifecycle with CRUD
 └── migrations/
     └── 0001_swift_kronos.sql  # Database schema update
 
 apps/web/src/
 ├── components/
-│   └── construct-list.tsx  # Updated with worktree UI
+│   ├── construct-list.tsx  # Shows workspace paths
+│   └── construct-form.tsx  # Create construct → auto-creates worktree
 ├── queries/
-│   └── constructs.ts        # Worktree queries/mutations
+│   └── constructs.ts       # CRUD queries (worktree lifecycle included)
 └── e2e/
-    └── worktrees.spec.ts     # E2E test coverage
+    └── constructs.spec.ts  # E2E coverage including worktree workflows
 ```
 
 ## API Examples
 
-### Create Worktree
+### Create Construct (Auto-creates Worktree)
 ```bash
-curl -X POST http://localhost:3000/api/constructs/my-construct/worktree \
+curl -X POST http://localhost:3000/api/constructs \
   -H "Content-Type: application/json" \
-  -d '{"branch": "feature-branch"}'
+  -d '{
+    "name": "My Feature",
+    "description": "Working on new feature",
+    "templateId": "full-stack"
+  }'
+# Returns: {"id": "...", "workspacePath": "~/.synthetic/constructs/<id>", ...}
 ```
 
-### List Worktrees
+### Delete Construct (Auto-removes Worktree)
 ```bash
-curl http://localhost:3000/api/worktrees
-# Returns: {"worktrees": [{"id": "main", ...}, {"id": "my-construct", ...}]}
-```
-
-### Remove Worktree
-```bash
-curl -X DELETE http://localhost:3000/api/constructs/my-construct/worktree
+curl -X DELETE http://localhost:3000/api/constructs/<id>
+# Automatically removes worktree and prunes stale entries
 ```
 
 ## Testing Coverage
 
-- **Unit Tests**: 17/17 passing (WorktreeManager)
-- **Integration Tests**: 11/11 passing (API endpoints)
-- **E2E Tests**: 4/4 passing (UI workflows)
-- **Visual Snapshots**: All updated to include new UI elements
+- **Backend Unit Tests**: 34/34 passing (includes construct CRUD with worktree lifecycle)
+- **E2E Tests**: 29/29 passing (UI workflows with visual snapshots)
+- **Visual Snapshots**: Light/Dark mode × Desktop/Tablet/Mobile viewports
+- **Error Logging**: Silent in tests (`NODE_ENV=test`)
 
 ## Usage Workflow
 
-1. **Create Construct**: User fills form, construct saved to database
-2. **Create Worktree**: Click worktree button → creates `.constructs/{id}` directory
-3. **Work Isolated**: Git worktree provides isolated workspace with unique branch
-4. **Track Changes**: All work happens in isolated environment
-5. **Clean Up**: Remove worktree when done, automatically prunes stale worktrees
+1. **Create Construct**: User fills form → construct saved to database
+2. **Auto-create Worktree**: Worktree automatically created at `~/.synthetic/constructs/<id>`
+3. **Work Isolated**: Git worktree provides isolated workspace with unique branch `construct-<id>`
+4. **Copy Config Files**: Template-based include patterns copy `.env*`, `*.local` files
+5. **Track Changes**: All work happens in isolated environment
+6. **Clean Up**: Delete construct → automatically removes worktree and prunes
 
 ## Benefits Achieved
 
@@ -132,16 +151,33 @@ curl -X DELETE http://localhost:3000/api/constructs/my-construct/worktree
 - **No Conflicts**: Multiple constructs can be worked on simultaneously
 - **Git Integration**: Native git workflow with proper branching
 - **Clean Management**: Automatic cleanup and pruning of stale worktrees
-- **Type Safety**: End-to-end TypeScript integration
-- **User-Friendly**: Simple UI controls with clear feedback
+- **Type Safety**: End-to-end TypeScript integration via Eden Treaty
+- **Minimal Dependencies**: No external git libraries (uses git CLI directly)
+- **Developer-Friendly**: Error logging helps debug .env copy issues and git failures
+- **Lightweight**: 19.16 KB built output for worktree manager
+
+## Recent Refactoring (Nov 2024)
+
+**Commits:**
+1. `67e8b18` - Simplified database URL configuration (removed `file:` prefix)
+2. `9df7767` - Removed simple-git dependency (use direct git commands)
+3. `3c9bd86` - Simplified manager (removed unused methods, 20% code reduction)
+4. `5e2dd0b` - Added proper error logging (stderr with test silence)
+
+**Impact:**
+- -1 npm dependency (simple-git removed)
+- -99 lines of code (497 → 398 lines)
+- Build size: 20.43 KB → 19.16 KB
+- Cleaner API: 8 public methods → 2 public methods
+- Better debuggability: Non-critical errors logged to stderr
 
 ## Future Enhancements (Phase 1+)
 
-- **Worktree Templates**: Pre-configured worktree setups
-- **Advanced Branching**: More sophisticated branch management
-- **Workspace Sync**: Sync changes between worktrees
-- **Collaboration**: Multi-user worktree sharing
+- **Template-specific patterns**: More sophisticated include/exclude patterns per template
+- **Sparse worktrees**: Only checkout necessary files for faster creation
+- **Workspace sync**: Sync changes between worktrees
 - **Performance**: Optimized worktree creation for large repos
+- **Multi-repo support**: Handle monorepo worktree strategies
 
 ## Integration Status
 
