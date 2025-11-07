@@ -24,7 +24,6 @@ export type WorktreeInfo = {
 };
 
 export type WorktreeCreateOptions = {
-  branch?: string;
   force?: boolean;
 };
 
@@ -181,11 +180,33 @@ export function createWorktreeManager(
    */
   async function copyGitignoredFiles(worktreePath: string): Promise<void> {
     const mainRepoPath = getMainRepoPath();
-    const filesToCopy = collectFilesToCopy(mainRepoPath);
 
-    // Copy the files and directories
-    for (const file of filesToCopy) {
+    // Copy from root
+    const rootFilesToCopy = collectFilesToCopy(mainRepoPath);
+    for (const file of rootFilesToCopy) {
       await copyToWorktree(mainRepoPath, worktreePath, file);
+    }
+
+    // Copy from apps/server
+    const serverPath = join(mainRepoPath, "apps", "server");
+    if (existsSync(serverPath)) {
+      const serverFilesToCopy = collectFilesToCopy(serverPath);
+      for (const file of serverFilesToCopy) {
+        await copyToWorktree(
+          serverPath,
+          join(worktreePath, "apps", "server"),
+          file
+        );
+      }
+    }
+
+    // Copy from apps/web
+    const webPath = join(mainRepoPath, "apps", "web");
+    if (existsSync(webPath)) {
+      const webFilesToCopy = collectFilesToCopy(webPath);
+      for (const file of webFilesToCopy) {
+        await copyToWorktree(webPath, join(worktreePath, "apps", "web"), file);
+      }
     }
   }
 
@@ -251,24 +272,13 @@ export function createWorktreeManager(
   }
 
   /**
-   * Resolve or create branch for worktree
+   * Create unique branch for worktree
    */
-  async function resolveBranch(
-    constructId: string,
-    options: WorktreeCreateOptions
-  ): Promise<string> {
-    if (options.branch) {
-      const branch = await ensureBranchExists(options.branch);
-      if (!branch) {
-        throw new Error(`Failed to create or find branch: ${options.branch}`);
-      }
-      return branch;
-    }
-
+  async function createBranch(constructId: string): Promise<string> {
     const constructBranch = `construct-${constructId}`;
     const branch = await ensureBranchExists(constructBranch);
     if (!branch) {
-      throw new Error(`Failed to create or find branch: ${constructBranch}`);
+      throw new Error(`Failed to create branch: ${constructBranch}`);
     }
     return branch;
   }
@@ -343,8 +353,8 @@ export function createWorktreeManager(
       // Handle existing worktree
       await handleExistingWorktree(worktreePath, options.force ?? false);
 
-      // Resolve branch
-      const branch = await resolveBranch(constructId, options);
+      // Create unique branch
+      const branch = await createBranch(constructId);
 
       try {
         // Create worktree

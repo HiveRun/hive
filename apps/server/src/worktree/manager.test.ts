@@ -117,25 +117,15 @@ describe("WorktreeManager", () => {
       expect(worktreePath).toBe(join(constructsDir, constructId));
     });
 
-    it("should create worktree on specific branch", async () => {
+    it("should create worktree with unique branch", async () => {
       const constructId = "test-construct";
 
-      // Create a new branch first
-      const { execSync } = await import("node:child_process");
-      execSync("git checkout -b feature-branch", { cwd: testBaseDir });
-      execSync("git commit --allow-empty -m 'Feature branch commit'", {
-        cwd: testBaseDir,
-      });
-      execSync("git checkout main", { cwd: testBaseDir });
-
-      const worktreePath = await worktreeManager.createWorktree(constructId, {
-        branch: "feature-branch",
-      });
+      const worktreePath = await worktreeManager.createWorktree(constructId);
       expect(worktreePath).toBe(join(constructsDir, constructId));
 
       const worktrees = await worktreeManager.listWorktrees();
       const worktree = worktrees.find((wt) => wt.id === constructId);
-      expect(worktree?.branch).toBe("feature-branch");
+      expect(worktree?.branch).toBe(`construct-${constructId}`);
     });
   });
 

@@ -111,12 +111,10 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         // Create worktree first
         let workspacePath: string | null = null;
         try {
-          workspacePath = await worktreeService.createWorktree(constructId, {
-            branch: body.branch,
-          });
+          workspacePath = await worktreeService.createWorktree(constructId);
         } catch (_worktreeError) {
-          // If worktree creation fails, we still want to create the construct
-          // Error is logged by the worktree service
+          // If worktree creation fails, we still want to create construct
+          // Error is logged by worktree service
         }
 
         // Update construct with workspace path if worktree was created
@@ -155,7 +153,6 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         templateId: t.String({
           minLength: 1,
         }),
-        branch: t.Optional(t.String()),
       }),
       response: {
         201: t.Object({
