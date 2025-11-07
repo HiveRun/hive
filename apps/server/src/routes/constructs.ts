@@ -12,7 +12,6 @@ const HTTP_STATUS = {
   INTERNAL_ERROR: 500,
 } as const;
 
-// Extracted common construct response schema
 const ConstructResponseSchema = t.Object({
   id: t.String(),
   name: t.String(),
@@ -92,7 +91,6 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         const now = new Date();
         const constructId = crypto.randomUUID();
 
-        // Create worktree first - this must succeed
         const workspacePath = await worktreeService.createWorktree(constructId);
 
         const newConstruct: NewConstruct = {
@@ -237,7 +235,6 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
           return { message: "Construct not found" };
         }
 
-        // Clean up worktree - this must succeed
         const worktreeService = createWorktreeManager();
         await worktreeService.removeWorktree(params.id);
 
