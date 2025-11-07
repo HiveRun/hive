@@ -100,6 +100,7 @@ export function createWorktreeManager(
    */
   function getEssentialFiles(): string[] {
     return [
+      ".env",
       ".env.example",
       ".env.local",
       ".env.development.local",
@@ -115,6 +116,7 @@ export function createWorktreeManager(
   /**
    * Collect files to copy from main repo
    */
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Complex file pattern matching and scanning logic
   function collectFilesToCopy(mainRepoPath: string): string[] {
     const essentialFiles = getEssentialFiles();
     const gitignorePatterns = getGitignorePatterns(mainRepoPath);
@@ -135,9 +137,30 @@ export function createWorktreeManager(
         continue;
       }
 
-      const sourcePath = join(mainRepoPath, pattern);
-      if (existsSync(sourcePath)) {
-        filesToCopy.push(pattern);
+      // Handle simple glob patterns
+      if (pattern.includes("*")) {
+        // For glob patterns like .env*, check for matching files
+        const fs = require("node:fs");
+        try {
+          const entries = fs.readdirSync(mainRepoPath, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.isFile()) {
+              // Simple glob matching
+              const regex = new RegExp(pattern.replace(/\*/g, ".*"));
+              if (regex.test(entry.name)) {
+                filesToCopy.push(entry.name);
+              }
+            }
+          }
+        } catch (_error) {
+          // Ignore directory read errors
+        }
+      } else {
+        // For non-glob patterns, check exact file/directory
+        const sourcePath = join(mainRepoPath, pattern);
+        if (existsSync(sourcePath)) {
+          filesToCopy.push(pattern);
+        }
       }
     }
 

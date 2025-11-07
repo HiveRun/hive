@@ -44,6 +44,14 @@ describe("WorktreeManager", () => {
         stdio: "ignore",
       });
 
+      // Copy .gitignore from main repo to test directory
+      const { copyFile } = await import("node:fs/promises");
+      const mainGitignorePath = join(process.cwd(), ".gitignore");
+      const testGitignorePath = join(testBaseDir, ".gitignore");
+      if (existsSync(mainGitignorePath)) {
+        await copyFile(mainGitignorePath, testGitignorePath);
+      }
+
       // Create initial commit
       await import("node:fs/promises").then(({ writeFile }) =>
         writeFile(join(testBaseDir, "test.txt"), "test content")
@@ -95,6 +103,45 @@ describe("WorktreeManager", () => {
       const worktree = worktrees.find((wt) => wt.id === constructId);
       expect(worktree).toBeDefined();
       expect(worktree?.path).toBe(worktreePath);
+    });
+
+    it("should copy gitignored files including .env files", async () => {
+      const constructId = "test-construct-env";
+
+      // Create test .env files in various locations
+      const rootEnvPath = join(testBaseDir, ".env");
+      const serverEnvPath = join(testBaseDir, "apps", "server", ".env");
+
+      // Ensure directories exist
+      await mkdir(join(testBaseDir, "apps", "server"), { recursive: true });
+
+      // Create test .env files
+      await import("node:fs/promises").then(({ writeFile }) =>
+        writeFile(rootEnvPath, "ROOT_VAR=root_value\n")
+      );
+      await import("node:fs/promises").then(({ writeFile }) =>
+        writeFile(serverEnvPath, "SERVER_VAR=server_value\n")
+      );
+
+      const worktreePath = await worktreeManager.createWorktree(constructId);
+
+      // Verify .env files were copied
+      const rootEnvCopyPath = join(worktreePath, ".env");
+      const serverEnvCopyPath = join(worktreePath, "apps", "server", ".env");
+
+      expect(existsSync(rootEnvCopyPath)).toBe(true);
+      expect(existsSync(serverEnvCopyPath)).toBe(true);
+
+      // Verify content
+      const rootEnvContent = await import("node:fs/promises").then(
+        ({ readFile }) => readFile(rootEnvCopyPath, "utf8")
+      );
+      const serverEnvContent = await import("node:fs/promises").then(
+        ({ readFile }) => readFile(serverEnvCopyPath, "utf8")
+      );
+
+      expect(rootEnvContent).toContain("ROOT_VAR=root_value");
+      expect(serverEnvContent).toContain("SERVER_VAR=server_value");
     });
 
     it("should throw error if worktree already exists", async () => {
