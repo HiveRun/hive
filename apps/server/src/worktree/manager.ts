@@ -73,6 +73,44 @@ export function createWorktreeManager(
   }
 
   /**
+   * Check if a path should be excluded from worktree copy
+   * Similar to Hive's exclude patterns for dependencies and build artifacts
+   */
+  function shouldExcludeFromCopy(path: string): boolean {
+    const excludePatterns = [
+      "node_modules", // Dependencies (handled by package manager)
+      ".turbo", // Build cache
+      "dist", // Build outputs
+      "build", // Build outputs
+      ".pnpm-debug.log*", // Debug logs
+      "npm-debug.log*", // Debug logs
+      "yarn-debug.log*", // Debug logs
+      "lerna-debug.log*", // Debug logs
+      "test-results/", // Test artifacts
+      "playwright-report/", // Test artifacts
+      "coverage", // Coverage reports
+      ".cache", // Cache directories
+      "tmp", // Temp directories
+      "temp", // Temp directories
+    ];
+
+    // Check if path matches any exclude pattern
+    return excludePatterns.some((pattern) => {
+      if (pattern.endsWith("/")) {
+        // Directory pattern - check if path starts with pattern
+        return path.startsWith(pattern) || path === pattern.slice(0, -1);
+      }
+      if (pattern.includes("*")) {
+        // Wildcard pattern - simple glob matching
+        const regex = new RegExp(pattern.replace(/\*/g, ".*"));
+        return regex.test(path);
+      }
+      // Exact match
+      return path === pattern;
+    });
+  }
+
+  /**
    * List all ignored (gitignored) paths using git itself
    */
   async function getIgnoredPaths(mainRepoPath: string): Promise<string[]> {
@@ -93,7 +131,8 @@ export function createWorktreeManager(
       return output
         .split("\0")
         .map((path) => path.trim())
-        .filter((path) => path.length > 0);
+        .filter((path) => path.length > 0)
+        .filter((path) => !shouldExcludeFromCopy(path));
     } catch (_error) {
       return [];
     }
