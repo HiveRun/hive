@@ -25,6 +25,7 @@ describe("Constructs CRUD Operations", () => {
         name: "Test Construct",
         description: "A test construct",
         templateId: "basic",
+        workspacePath: "/tmp/test-worktree-1",
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -52,6 +53,7 @@ describe("Constructs CRUD Operations", () => {
         id: "test-construct-2",
         name: "Minimal Construct",
         templateId: "basic",
+        workspacePath: "/tmp/test-worktree-2",
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -79,6 +81,7 @@ describe("Constructs CRUD Operations", () => {
           name: "First Construct",
           description: "First test construct",
           templateId: "basic",
+          workspacePath: "/tmp/test-worktree-1",
           createdAt: new Date(),
           updatedAt: new Date(),
         },
@@ -87,6 +90,7 @@ describe("Constructs CRUD Operations", () => {
           name: "Second Construct",
           description: "Second test construct",
           templateId: "web-api",
+          workspacePath: "/tmp/test-worktree-2",
           createdAt: new Date(),
           updatedAt: new Date(),
         },
@@ -144,6 +148,7 @@ describe("Constructs CRUD Operations", () => {
           name: "Original Name",
           description: "Original description",
           templateId: "basic",
+          workspacePath: "/tmp/test-worktree-update",
           createdAt: new Date(),
           updatedAt: new Date(),
         })
@@ -204,6 +209,7 @@ describe("Constructs CRUD Operations", () => {
           id: "construct-to-delete",
           name: "To Delete",
           templateId: "basic",
+          workspacePath: "/tmp/test-worktree-delete",
           createdAt: new Date(),
           updatedAt: new Date(),
         })

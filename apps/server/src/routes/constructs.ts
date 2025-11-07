@@ -92,18 +92,18 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         const now = new Date();
         const constructId = crypto.randomUUID();
 
+        // Create worktree first - this must succeed
+        const workspacePath = await worktreeService.createWorktree(constructId);
+
         const newConstruct: NewConstruct = {
           id: constructId,
           name: body.name,
           description: body.description ?? null,
           templateId: body.templateId,
+          workspacePath,
           createdAt: now,
           updatedAt: now,
         };
-
-        // Create worktree first - this must succeed
-        const workspacePath = await worktreeService.createWorktree(constructId);
-        newConstruct.workspacePath = workspacePath;
 
         const [created] = await db
           .insert(constructs)
