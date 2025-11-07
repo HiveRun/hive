@@ -25,7 +25,6 @@ function constructToResponse(construct: typeof constructs.$inferSelect) {
     templateId: construct.templateId,
     workspacePath: construct.workspacePath,
     createdAt: construct.createdAt.toISOString(),
-    updatedAt: construct.updatedAt.toISOString(),
   };
 }
 
@@ -93,7 +92,6 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
           templateId: body.templateId,
           workspacePath,
           createdAt: now,
-          updatedAt: now,
         };
 
         const [created] = await db

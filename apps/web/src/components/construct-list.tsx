@@ -214,7 +214,6 @@ export function ConstructList() {
 
                 <div className="text-muted-foreground text-xs">
                   <p>Created: {formatDate(construct.createdAt)}</p>
-                  <p>Updated: {formatDate(construct.updatedAt)}</p>
                 </div>
               </CardContent>
             </Card>

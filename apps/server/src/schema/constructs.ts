@@ -7,7 +7,6 @@ export const constructs = sqliteTable("constructs", {
   templateId: text("template_id").notNull(),
   workspacePath: text("workspace_path").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
-  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });
 
 export type Construct = typeof constructs.$inferSelect;

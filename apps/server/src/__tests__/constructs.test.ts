@@ -27,7 +27,6 @@ describe("Constructs CRUD Operations", () => {
         templateId: "basic",
         workspacePath: "/tmp/test-worktree-1",
         createdAt: new Date(),
-        updatedAt: new Date(),
       };
 
       const [created] = await testDb
@@ -55,7 +54,6 @@ describe("Constructs CRUD Operations", () => {
         templateId: "basic",
         workspacePath: "/tmp/test-worktree-2",
         createdAt: new Date(),
-        updatedAt: new Date(),
       };
 
       const [created] = await testDb
@@ -83,7 +81,6 @@ describe("Constructs CRUD Operations", () => {
           templateId: "basic",
           workspacePath: "/tmp/test-worktree-1",
           createdAt: new Date(),
-          updatedAt: new Date(),
         },
         {
           id: "construct-2",
@@ -92,7 +89,6 @@ describe("Constructs CRUD Operations", () => {
           templateId: "web-api",
           workspacePath: "/tmp/test-worktree-2",
           createdAt: new Date(),
-          updatedAt: new Date(),
         },
       ]);
     });
@@ -149,7 +145,6 @@ describe("Constructs CRUD Operations", () => {
           templateId: "basic",
           workspacePath: "/tmp/test-worktree-delete",
           createdAt: new Date(),
-          updatedAt: new Date(),
         })
         .returning();
 

@@ -15,6 +15,13 @@
       "when": 1762465482139,
       "tag": "0001_swift_kronos",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1762559480075,
+      "tag": "0002_charming_nicolaos",
+      "breakpoints": true
     }
   ]
 }

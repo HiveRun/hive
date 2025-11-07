@@ -8,7 +8,6 @@ export const ConstructResponseSchema = t.Object({
   templateId: t.String(),
   workspacePath: t.String(),
   createdAt: t.String(),
-  updatedAt: t.String(),
 });
 
 export const ConstructListResponseSchema = t.Object({
