@@ -92,3 +92,8 @@ export const constructMutations = {
     },
   },
 };
+
+// Export inferred types for use in components
+export type Construct = Awaited<
+  ReturnType<ReturnType<typeof constructQueries.detail>["queryFn"]>
+>;

@@ -6,13 +6,12 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { constructMutations, constructQueries } from "@/queries/constructs";
+import {
+  type Construct,
+  constructMutations,
+  constructQueries,
+} from "@/queries/constructs";
 import { templateQueries } from "@/queries/templates";
-
-// Infer Construct type from the query
-type Construct = Awaited<
-  ReturnType<ReturnType<typeof constructQueries.detail>["queryFn"]>
->;
 
 export function ConstructList() {
   const [pendingDelete, setPendingDelete] = useState<Construct | null>(null);

@@ -15,17 +15,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type { CreateConstructInput, UpdateConstructInput } from "@/lib/rpc";
-import {
-  constructMutations,
-  type constructQueries,
-} from "@/queries/constructs";
+import type { CreateConstructInput } from "@/lib/rpc";
+import { type Construct, constructMutations } from "@/queries/constructs";
 import { templateQueries } from "@/queries/templates";
 
-// Infer Construct type from query return type
-type Construct = Awaited<
-  ReturnType<ReturnType<typeof constructQueries.detail>["queryFn"]>
->;
 type ConstructFormValues = CreateConstructInput;
 
 const NAME_MAX_LENGTH = 255;
@@ -97,7 +90,7 @@ export function ConstructForm({
 
         return constructMutations.update.mutationFn({
           id: construct.id,
-          body: values as UpdateConstructInput,
+          body: values,
         });
       }
 
