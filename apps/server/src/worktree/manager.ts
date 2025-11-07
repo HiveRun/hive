@@ -44,6 +44,17 @@ export function createWorktreeManager(
   const constructsDir = join(homedir(), ".synthetic", "constructs");
 
   /**
+   * Internal logger for non-critical warnings
+   * Uses stderr to avoid polluting stdout, respects NODE_ENV
+   */
+  function logWarn(message: string, error?: unknown): void {
+    if (process.env.NODE_ENV !== "test") {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[worktree] ${message}: ${errorMsg}\n`);
+    }
+  }
+
+  /**
    * Execute a git command and return output
    */
   function git(...args: string[]): string {
@@ -149,8 +160,8 @@ export function createWorktreeManager(
         .map((path) => path.trim())
         .filter((path) => path.length > 0)
         .filter((path) => shouldIncludeFromCopy(path, includePatterns));
-    } catch {
-      // Non-critical: If we can't list gitignored files, just don't copy them
+    } catch (error) {
+      logWarn(`Failed to list gitignored files in ${mainRepoPath}`, error);
       return [];
     }
   }
@@ -176,8 +187,8 @@ export function createWorktreeManager(
         await mkdir(targetDir, { recursive: true });
         await copyFile(sourcePath, targetPath);
       }
-    } catch {
-      // Non-critical: Files like .env are optional, ignore copy failures
+    } catch (error) {
+      logWarn(`Failed to copy ${file} to worktree`, error);
     }
   }
 
@@ -242,8 +253,11 @@ export function createWorktreeManager(
     if (force) {
       try {
         git("worktree", "remove", "--force", worktreePath);
-      } catch {
-        // Git command failed, try filesystem removal as fallback
+      } catch (error) {
+        logWarn(
+          "Git worktree remove failed, falling back to filesystem removal",
+          error
+        );
         await rm(worktreePath, { recursive: true, force: true });
       }
     } else {
