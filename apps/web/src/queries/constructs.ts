@@ -1,14 +1,13 @@
-import { rpc } from "@/lib/rpc";
-import type {
-  Construct,
-  CreateConstructInput,
-  UpdateConstructInput,
-} from "@/types/constructs";
+import {
+  type CreateConstructInput,
+  rpc,
+  type UpdateConstructInput,
+} from "@/lib/rpc";
 
 export const constructQueries = {
   all: () => ({
     queryKey: ["constructs"] as const,
-    queryFn: async (): Promise<Construct[]> => {
+    queryFn: async () => {
       const { data, error } = await rpc.api.constructs.get();
       if (error) {
         throw new Error("Failed to fetch constructs");
@@ -19,7 +18,7 @@ export const constructQueries = {
 
   detail: (id: string) => ({
     queryKey: ["constructs", id] as const,
-    queryFn: async (): Promise<Construct> => {
+    queryFn: async () => {
       const { data, error } = await rpc.api.constructs({ id }).get();
       if (error) {
         throw new Error("Construct not found");
@@ -40,7 +39,7 @@ export const constructQueries = {
 
 export const constructMutations = {
   create: {
-    mutationFn: async (input: CreateConstructInput): Promise<Construct> => {
+    mutationFn: async (input: CreateConstructInput) => {
       const { data, error } = await rpc.api.constructs.post(input);
       if (error) {
         throw new Error("Failed to create construct");
@@ -61,9 +60,12 @@ export const constructMutations = {
   update: {
     mutationFn: async ({
       id,
-      ...input
-    }: UpdateConstructInput & { id: string }): Promise<Construct> => {
-      const { data, error } = await rpc.api.constructs({ id }).put(input);
+      body,
+    }: {
+      id: string;
+      body: UpdateConstructInput;
+    }) => {
+      const { data, error } = await rpc.api.constructs({ id }).put(body);
       if (error) {
         throw new Error("Failed to update construct");
       }
@@ -81,7 +83,7 @@ export const constructMutations = {
   },
 
   delete: {
-    mutationFn: async (id: string): Promise<{ message: string }> => {
+    mutationFn: async (id: string) => {
       const { data, error } = await rpc.api.constructs({ id }).delete();
       if (error) {
         throw new Error("Failed to delete construct");

@@ -1,6 +1,12 @@
 import { eq } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { db } from "../db";
+import {
+  ConstructListResponseSchema,
+  ConstructResponseSchema,
+  CreateConstructSchema,
+  UpdateConstructSchema,
+} from "../schema/api";
 import { constructs, type NewConstruct } from "../schema/constructs";
 import { createWorktreeManager } from "../worktree/manager";
 
@@ -11,16 +17,6 @@ const HTTP_STATUS = {
   CONFLICT: 409,
   INTERNAL_ERROR: 500,
 } as const;
-
-const ConstructResponseSchema = t.Object({
-  id: t.String(),
-  name: t.String(),
-  description: t.Union([t.String(), t.Null()]),
-  templateId: t.String(),
-  workspacePath: t.String(),
-  createdAt: t.String(),
-  updatedAt: t.String(),
-});
 
 function constructToResponse(construct: typeof constructs.$inferSelect) {
   return {
@@ -43,9 +39,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
     },
     {
       response: {
-        200: t.Object({
-          constructs: t.Array(ConstructResponseSchema),
-        }),
+        200: ConstructListResponseSchema,
       },
     }
   )
@@ -121,20 +115,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
       }
     },
     {
-      body: t.Object({
-        name: t.String({
-          minLength: 1,
-          maxLength: 255,
-        }),
-        description: t.Optional(
-          t.String({
-            maxLength: 1000,
-          })
-        ),
-        templateId: t.String({
-          minLength: 1,
-        }),
-      }),
+      body: CreateConstructSchema,
       response: {
         201: ConstructResponseSchema,
         400: t.Object({
@@ -189,20 +170,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
       params: t.Object({
         id: t.String(),
       }),
-      body: t.Object({
-        name: t.String({
-          minLength: 1,
-          maxLength: 255,
-        }),
-        description: t.Optional(
-          t.String({
-            maxLength: 1000,
-          })
-        ),
-        templateId: t.String({
-          minLength: 1,
-        }),
-      }),
+      body: UpdateConstructSchema,
       response: {
         200: ConstructResponseSchema,
         404: t.Object({

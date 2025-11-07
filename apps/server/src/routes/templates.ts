@@ -1,6 +1,10 @@
 import { Elysia, t } from "elysia";
 import { loadConfig } from "../config/loader";
 import type { SyntheticConfig, Template } from "../config/schema";
+import {
+  TemplateListResponseSchema,
+  TemplateResponseSchema,
+} from "../schema/api";
 
 const HTTP_STATUS = {
   NOT_FOUND: 404,
@@ -36,16 +40,7 @@ export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
     },
     {
       response: {
-        200: t.Object({
-          templates: t.Array(
-            t.Object({
-              id: t.String(),
-              label: t.String(),
-              type: t.String(),
-              configJson: t.Any(),
-            })
-          ),
-        }),
+        200: TemplateListResponseSchema,
       },
     }
   )
@@ -65,12 +60,7 @@ export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
         id: t.String(),
       }),
       response: {
-        200: t.Object({
-          id: t.String(),
-          label: t.String(),
-          type: t.String(),
-          configJson: t.Any(),
-        }),
+        200: TemplateResponseSchema,
         404: t.Object({
           message: t.String(),
         }),
