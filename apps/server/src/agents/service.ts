@@ -445,18 +445,6 @@ async function resolveOpencodeSession({
     }
   }
 
-  if (!force) {
-    const list = await client.session.list({ query: directoryQuery });
-    if (!list.error && list.data?.length) {
-      const latest = [...list.data].sort(
-        (a, b) => b.time.updated - a.time.updated
-      )[0];
-      if (latest) {
-        return { session: latest, created: false };
-      }
-    }
-  }
-
   const created = await client.session.create({
     body: {
       title: construct.name,
