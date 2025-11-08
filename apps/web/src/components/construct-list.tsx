@@ -171,50 +171,55 @@ export function ConstructList() {
     <div className="space-y-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="font-bold text-3xl">Constructs</h1>
-        <div className="flex flex-wrap gap-2">
-          {constructs && constructs.length > 0 && (
-            <Button
-              data-testid="toggle-select-all-global"
-              onClick={handleSelectAllToggle}
-              type="button"
-              variant="outline"
-            >
-              Select All
-            </Button>
-          )}
-          {hasSelection && (
-            <>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end">
+          <div className="flex flex-wrap justify-end gap-2">
+            {constructs && constructs.length > 0 && (
               <Button
-                data-testid="clear-selection"
-                onClick={handleClearSelection}
+                data-testid="toggle-select-all-global"
+                onClick={handleSelectAllToggle}
                 type="button"
                 variant="outline"
               >
-                Clear Selection
+                Select All
               </Button>
-              <Button
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                data-testid="delete-selected"
-                onClick={() => setIsBulkDialogOpen(true)}
-                type="button"
-                variant="destructive"
-              >
-                Delete Selected
-                <span
-                  className="ml-2 inline-flex h-5 min-w-[2rem] items-center justify-center rounded-sm border border-destructive-foreground/40 bg-destructive-foreground/10 px-1 font-mono text-xs tabular-nums"
-                  data-testid="delete-selected-count"
-                >
-                  {selectedCount}
-                </span>
+            )}
+            <Link to="/constructs/new">
+              <Button type="button">
+                <Plus className="mr-2 h-4 w-4" />
+                New Construct
               </Button>
-            </>
-          )}
-          <Link to="/constructs/new">
-            <Button type="button">
-              <Plus className="mr-2 h-4 w-4" />
-              New Construct
+            </Link>
+          </div>
+          <div
+            className={cn(
+              "flex min-h-[2.5rem] flex-wrap justify-end gap-2 transition-all duration-150",
+              hasSelection ? "visible opacity-100" : "invisible opacity-0"
+            )}
+          >
+            <Button
+              data-testid="clear-selection"
+              onClick={handleClearSelection}
+              type="button"
+              variant="outline"
+            >
+              Clear Selection
             </Button>
-          </Link>
+            <Button
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              data-testid="delete-selected"
+              onClick={() => setIsBulkDialogOpen(true)}
+              type="button"
+              variant="destructive"
+            >
+              Delete Selected
+              <span
+                className="ml-2 inline-flex h-5 min-w-[2rem] items-center justify-center rounded-sm border border-destructive-foreground/40 bg-destructive-foreground/10 px-1 font-mono text-xs tabular-nums"
+                data-testid="delete-selected-count"
+              >
+                {selectedCount}
+              </span>
+            </Button>
+          </div>
         </div>
       </div>
 
