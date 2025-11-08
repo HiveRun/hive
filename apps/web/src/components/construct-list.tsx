@@ -170,29 +170,11 @@ export function ConstructList() {
   return (
     <div className="space-y-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="font-bold text-3xl">Constructs</h1>
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end">
-          <div className="flex flex-wrap justify-end gap-2">
-            {constructs && constructs.length > 0 && (
-              <Button
-                data-testid="toggle-select-all-global"
-                onClick={handleSelectAllToggle}
-                type="button"
-                variant="outline"
-              >
-                Select All
-              </Button>
-            )}
-            <Link to="/constructs/new">
-              <Button type="button">
-                <Plus className="mr-2 h-4 w-4" />
-                New Construct
-              </Button>
-            </Link>
-          </div>
+        <div className="flex flex-col gap-2">
+          <h1 className="font-bold text-3xl">Constructs</h1>
           <div
             className={cn(
-              "flex min-h-[2.5rem] flex-wrap justify-end gap-2 transition-all duration-150",
+              "flex min-h-[2.5rem] flex-wrap items-center gap-2 transition-all duration-150",
               hasSelection ? "visible opacity-100" : "invisible opacity-0"
             )}
           >
@@ -220,6 +202,24 @@ export function ConstructList() {
               </span>
             </Button>
           </div>
+        </div>
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          {constructs && constructs.length > 0 && (
+            <Button
+              data-testid="toggle-select-all-global"
+              onClick={handleSelectAllToggle}
+              type="button"
+              variant="outline"
+            >
+              Select All
+            </Button>
+          )}
+          <Link to="/constructs/new">
+            <Button type="button">
+              <Plus className="mr-2 h-4 w-4" />
+              New Construct
+            </Button>
+          </Link>
         </div>
       </div>
 
