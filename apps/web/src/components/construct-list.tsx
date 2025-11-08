@@ -168,12 +168,14 @@ export function ConstructList() {
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div className="flex w-full flex-col gap-2 md:w-auto">
-          <h1 className="font-bold text-3xl">Constructs</h1>
-          <div className="flex min-h-[2.5rem] flex-wrap items-center gap-2">
+    <div className="space-y-6 p-4 md:p-6">
+      <div className="flex flex-col gap-4">
+        <h1 className="font-bold text-2xl md:text-3xl">Constructs</h1>
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
+              className="flex-1 sm:flex-none"
               data-testid="clear-selection"
               disabled={!hasSelection}
               onClick={handleClearSelection}
@@ -183,7 +185,7 @@ export function ConstructList() {
               Clear Selection
             </Button>
             <Button
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="flex-1 bg-destructive text-destructive-foreground hover:bg-destructive/90 sm:flex-none"
               data-testid="delete-selected"
               disabled={!hasSelection}
               onClick={() => hasSelection && setIsBulkDialogOpen(true)}
@@ -199,24 +201,26 @@ export function ConstructList() {
               </span>
             </Button>
           </div>
-        </div>
-        <div className="flex w-full flex-wrap items-center justify-end gap-2 text-right md:ml-auto md:w-auto">
-          {constructs && constructs.length > 0 && (
-            <Button
-              data-testid="toggle-select-all-global"
-              onClick={handleSelectAllToggle}
-              type="button"
-              variant="outline"
-            >
-              Select All
-            </Button>
-          )}
-          <Link to="/constructs/new">
-            <Button type="button">
-              <Plus className="mr-2 h-4 w-4" />
-              New Construct
-            </Button>
-          </Link>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {constructs && constructs.length > 0 && (
+              <Button
+                className="flex-1 sm:flex-none"
+                data-testid="toggle-select-all-global"
+                onClick={handleSelectAllToggle}
+                type="button"
+                variant="outline"
+              >
+                Select All
+              </Button>
+            )}
+            <Link className="flex-1 sm:flex-none" to="/constructs/new">
+              <Button className="w-full" type="button">
+                <Plus className="mr-2 h-4 w-4" />
+                New Construct
+              </Button>
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -233,7 +237,7 @@ export function ConstructList() {
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <h3 className="mb-2 font-semibold text-lg">No constructs yet</h3>
-            <p className="mb-4 text-muted-foreground">
+            <p className="mb-4 text-center text-muted-foreground">
               Create your first construct to get started with Synthetic.
             </p>
             <Link to="/constructs/new">
@@ -245,7 +249,7 @@ export function ConstructList() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
           {constructs?.map((construct) => (
             <ConstructCard
               construct={construct}
@@ -355,31 +359,36 @@ function ConstructCard({
       )}
       data-testid="construct-card"
     >
-      <CardHeader>
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-3">
-            <Checkbox
-              aria-label={`Select construct ${construct.name}`}
-              checked={isSelected}
-              className="h-5 w-5 border-2 border-muted-foreground data-[state=checked]:border-primary data-[state=checked]:bg-primary"
-              data-construct-id={construct.id}
-              data-testid="construct-select"
-              disabled={disableSelection}
-              onCheckedChange={() => onToggleSelect()}
-            />
-            <CardTitle className="text-lg" data-testid="construct-name">
-              {construct.name}
-            </CardTitle>
-          </div>
+      <CardHeader className="space-y-3">
+        <div className="flex items-start gap-3">
+          <Checkbox
+            aria-label={`Select construct ${construct.name}`}
+            checked={isSelected}
+            className="mt-0.5 h-5 w-5 shrink-0 border-2 border-muted-foreground data-[state=checked]:border-primary data-[state=checked]:bg-primary"
+            data-construct-id={construct.id}
+            data-testid="construct-select"
+            disabled={disableSelection}
+            onCheckedChange={() => onToggleSelect()}
+          />
+          <CardTitle
+            className="break-words text-lg leading-tight"
+            data-testid="construct-name"
+          >
+            {construct.name}
+          </CardTitle>
         </div>
-        <Badge data-testid="construct-template" variant="secondary">
+        <Badge
+          className="w-fit"
+          data-testid="construct-template"
+          variant="secondary"
+        >
           {templateLabel}
         </Badge>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
         {construct.description && (
           <p
-            className="mb-4 line-clamp-3 text-muted-foreground text-sm"
+            className="line-clamp-3 break-words text-muted-foreground text-sm"
             data-testid="construct-description"
           >
             {construct.description}
@@ -387,12 +396,13 @@ function ConstructCard({
         )}
 
         {construct.workspacePath && (
-          <div className="mb-4">
+          <div>
             <div className="flex items-center justify-between gap-2">
               <p className="font-medium text-muted-foreground text-xs">
                 Workspace:
               </p>
               <Button
+                className="h-7 w-7 p-0"
                 data-testid="copy-workspace-path"
                 onClick={() => onCopyWorkspace(construct.workspacePath)}
                 size="sm"
@@ -403,7 +413,7 @@ function ConstructCard({
                 <Copy className="h-3 w-3" />
               </Button>
             </div>
-            <p className="mt-1 break-all rounded bg-muted/50 p-2 font-mono text-muted-foreground text-xs">
+            <p className="mt-1 overflow-hidden break-all rounded bg-muted/50 p-2 font-mono text-muted-foreground text-xs">
               {construct.workspacePath}
             </p>
           </div>
