@@ -65,6 +65,7 @@ export default defineConfig({
     env: {
       ...process.env,
       VITE_ENABLE_DEVTOOLS: "false",
+      REACT_APP_SHOW_DEV_TOOLS: "false",
     },
   },
 });

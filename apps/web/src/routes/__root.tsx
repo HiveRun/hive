@@ -13,8 +13,16 @@ export type RouterAppContext = {
   queryClient: QueryClient;
 };
 
+const rawDevtoolsFlag =
+  (import.meta.env as Record<string, string | undefined>)
+    .VITE_ENABLE_DEVTOOLS ??
+  (import.meta.env as Record<string, string | undefined>)
+    .REACT_APP_SHOW_DEV_TOOLS;
+
 const DEVTOOLS_ENABLED =
-  import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEVTOOLS !== "false";
+  typeof rawDevtoolsFlag === "string"
+    ? rawDevtoolsFlag !== "false" && rawDevtoolsFlag !== "0"
+    : import.meta.env.DEV;
 
 export const Route = createRootRouteWithContext<RouterAppContext>()({
   component: RootComponent,
