@@ -175,7 +175,7 @@ const notifyIdle = async ($: PluginInput["$"], sessionName: string) => {
       .nothrow();
 
     // Play a sound using paplay (PulseAudio)
-    await $`paplay /usr/share/sounds/freedesktop/stereo/message-new-instant.oga`
+    await $`paplay /usr/share/sounds/Pop/stereo/notification/complete.oga`
       .quiet()
       .nothrow();
   } catch {
@@ -292,7 +292,7 @@ export const IdleValidate: Plugin = ({ $, client, directory }) => {
           .nothrow();
 
         // Play a sound using paplay (PulseAudio)
-        await $`paplay /usr/share/sounds/freedesktop/stereo/message-new-instant.oga`
+        await $`paplay /usr/share/sounds/Pop/stereo/notification/complete.oga`
           .quiet()
           .nothrow();
       } finally {
