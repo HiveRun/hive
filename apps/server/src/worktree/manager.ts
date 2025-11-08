@@ -16,6 +16,11 @@ const WORKTREE_PREFIX_LENGTH = WORKTREE_PREFIX.length;
 const HEAD_PREFIX_LENGTH = HEAD_PREFIX.length;
 const BRANCH_PREFIX_LENGTH = BRANCH_PREFIX.length;
 
+// Buffer size constants
+const BYTES_PER_KB = 1024;
+const KB_PER_MB = 1024;
+const GIT_COMMAND_BUFFER_SIZE = BYTES_PER_KB * KB_PER_MB; // 1MB
+
 export type WorktreeInfo = {
   id: string;
   path: string;
@@ -125,26 +130,6 @@ export function createWorktreeManager(
   }
 
   /**
-   * Check if a path should be included from worktree copy
-   * Only copy files that match include patterns
-   */
-  function shouldIncludeFromCopy(
-    path: string,
-    includePatterns: string[]
-  ): boolean {
-    // Check if path matches any include pattern
-    return includePatterns.some((pattern) => {
-      if (pattern.includes("*")) {
-        // Wildcard pattern - simple glob matching
-        const regex = new RegExp(pattern.replace(/\*/g, ".*"));
-        return regex.test(path);
-      }
-      // Exact match
-      return path === pattern;
-    });
-  }
-
-  /**
    * List gitignored paths that match include patterns
    */
   function getIncludedPaths(
@@ -152,23 +137,35 @@ export function createWorktreeManager(
     includePatterns: string[]
   ): string[] {
     try {
-      const output = execSync(
-        "git ls-files --others --ignored --exclude-standard -z",
-        {
-          encoding: "utf8",
-          cwd: mainRepoPath,
-        }
-      );
+      const includedPaths: string[] = [];
 
-      if (!output) {
-        return [];
+      // Check each include pattern individually to avoid buffer overflow
+      for (const pattern of includePatterns) {
+        try {
+          const output = execSync(
+            `git ls-files --others --ignored --exclude-standard -z -- "${pattern}"`,
+            {
+              encoding: "utf8",
+              cwd: mainRepoPath,
+              maxBuffer: GIT_COMMAND_BUFFER_SIZE,
+            }
+          );
+
+          if (output) {
+            const paths = output
+              .split("\0")
+              .map((path) => path.trim())
+              .filter((path) => path.length > 0);
+
+            includedPaths.push(...paths);
+          }
+        } catch (patternError) {
+          // Continue with other patterns if one fails
+          logWarn(`Failed to check pattern "${pattern}"`, patternError);
+        }
       }
 
-      return output
-        .split("\0")
-        .map((path) => path.trim())
-        .filter((path) => path.length > 0)
-        .filter((path) => shouldIncludeFromCopy(path, includePatterns));
+      return [...new Set(includedPaths)]; // Remove duplicates
     } catch (error) {
       logWarn(`Failed to list gitignored files in ${mainRepoPath}`, error);
       return [];
@@ -368,8 +365,12 @@ export function createWorktreeManager(
         return worktreePath;
       } catch (error) {
         // Clean up on failure
-        if (existsSync(worktreePath)) {
-          git("worktree", "remove", "--force", worktreePath);
+        try {
+          if (existsSync(worktreePath)) {
+            git("worktree", "remove", "--force", worktreePath);
+          }
+        } catch (cleanupError) {
+          logWarn("Failed to cleanup worktree after failure", cleanupError);
         }
         throw error;
       }
