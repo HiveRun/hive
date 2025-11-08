@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./utils/app-test";
 
 const DESKTOP_VIEWPORT = { width: 1280, height: 960 } as const;
 
