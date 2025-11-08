@@ -27,6 +27,7 @@ export const CreateConstructSchema = t.Object({
   templateId: t.String({
     minLength: 1,
   }),
+  useMock: t.Optional(t.Boolean()),
 });
 
 export const DeleteConstructsSchema = t.Object({

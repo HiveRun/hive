@@ -142,6 +142,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - Session lifecycle (create, send, receive, stop)
 - Credential validation from OpenCode config
 - Agent session management in worktree context
+- Construct creation automatically provisions the agent session (with mock fallback) and fails fast if provisioning cannot complete
 - **Extend existing UI** from Step 2 with chat interface
 
 ### Persistence Added
@@ -165,6 +166,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - [/] Messages stream in real-time to UI chat interface
 - [/] Mock orchestrator works without credentials
 - [/] Session status reflected in UI via runtime + OpenCode session metadata
+- [/] Construct creation provisions an agent session automatically (and rolls back on failure)
 - [/] Transcripts persist through OpenCode and display in UI
 - [/] Agent operates within construct worktree
 - [/] End-to-end test: UI → agent session → real responses

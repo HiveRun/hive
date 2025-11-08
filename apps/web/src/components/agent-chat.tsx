@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { DEFAULT_USE_MOCK_AGENT } from "@/config/agent";
 import {
   type AgentMessage,
   type AgentSession,
@@ -15,8 +16,7 @@ import {
 } from "@/queries/agents";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
-const DEFAULT_USE_MOCK =
-  import.meta.env.VITE_AGENT_DEFAULT_MODE === "mock" || import.meta.env.DEV;
+const DEFAULT_USE_MOCK = DEFAULT_USE_MOCK_AGENT;
 
 type AgentChatProps = {
   constructId: string;

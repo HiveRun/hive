@@ -1,6 +1,7 @@
 import { logger } from "@bogeychan/elysia-logger";
 import { eq, inArray } from "drizzle-orm";
 import { Elysia, t } from "elysia";
+import { ensureAgentSession } from "../agents/service";
 import { db } from "../db";
 import {
   ConstructListResponseSchema,
@@ -91,12 +92,44 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
   .post(
     "/",
     async ({ body, set, log }) => {
-      try {
-        const worktreeService = createWorktreeManager();
-        const now = new Date();
-        const constructId = crypto.randomUUID();
+      const worktreeService = createWorktreeManager();
+      const now = new Date();
+      const constructId = crypto.randomUUID();
+      let worktreeCreated = false;
+      let recordCreated = false;
 
-        const workspacePath = await worktreeService.createWorktree(constructId);
+      const cleanupResources = async () => {
+        if (worktreeCreated) {
+          try {
+            worktreeService.removeWorktree(constructId);
+          } catch (cleanupError) {
+            log.warn(
+              { cleanupError },
+              "Failed to remove worktree during construct creation cleanup"
+            );
+          }
+        }
+
+        if (recordCreated) {
+          try {
+            await db.delete(constructs).where(eq(constructs.id, constructId));
+          } catch (cleanupError) {
+            log.warn(
+              { cleanupError },
+              "Failed to delete construct row during cleanup"
+            );
+          }
+        }
+      };
+
+      try {
+        const workspacePath = await worktreeService.createWorktree(
+          constructId,
+          {
+            templateId: body.templateId,
+          }
+        );
+        worktreeCreated = true;
 
         const newConstruct: NewConstruct = {
           id: constructId,
@@ -113,18 +146,27 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
           .returning();
 
         if (!created) {
-          set.status = HTTP_STATUS.INTERNAL_ERROR;
-          return { message: "Failed to create construct" };
+          throw new Error("Failed to create construct record");
         }
+
+        recordCreated = true;
+
+        await ensureAgentSession(constructId, {
+          useMock: body.useMock,
+        });
 
         set.status = HTTP_STATUS.CREATED;
         return constructToResponse(created);
       } catch (error) {
+        await cleanupResources();
+
         if (error instanceof Error) {
           log.error(error, "Failed to create construct");
-        } else {
-          log.error({ error }, "Failed to create construct");
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          return { message: error.message };
         }
+
+        log.error({ error }, "Failed to create construct");
         set.status = HTTP_STATUS.INTERNAL_ERROR;
         return { message: "Failed to create construct" };
       }

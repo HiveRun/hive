@@ -39,6 +39,7 @@
 - `@opencode-ai/sdk` integration
 - Mock orchestrator fallback for development
 - Message streaming and session management
+- Construct creation automatically provisions the agent session (mock vs provider based on selection) and fails fast with cleanup if provisioning cannot complete
 - **Persistence**: `constructs` table stores `opencode_session_id`; transcripts remain in OpenCode's datastore (no local agent tables)
 - Tests using mock orchestrator
 

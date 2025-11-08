@@ -60,6 +60,7 @@ This comprehensive orchestration system will be implemented in **Phase 1A** afte
 - Handle session lifecycle: creation, activation, suspension, termination
 - Provide session recovery mechanisms for interrupted constructs
 - Treat OpenCode's built-in session store as the source of truth; API keeps only an in-memory registry and rehydrates by querying OpenCode on demand
+- Construct creation automatically provisions an agent session (mock or provider-backed based on user selection) so every construct is born with an attached agent
 
 ### Authentication & Security
 - Validate OpenCode credentials before session creation
