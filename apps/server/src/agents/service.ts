@@ -72,7 +72,13 @@ async function readProviderCredentials(): Promise<Record<string, unknown>> {
   }
 }
 
+const PROVIDERS_NOT_REQUIRING_AUTH = new Set(["zen"]);
+
 async function ensureProviderCredentials(providerId: string): Promise<void> {
+  if (PROVIDERS_NOT_REQUIRING_AUTH.has(providerId)) {
+    return;
+  }
+
   const authEntries = await readProviderCredentials();
   if (!authEntries[providerId]) {
     throw new Error(
