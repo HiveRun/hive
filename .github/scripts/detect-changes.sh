@@ -3,7 +3,7 @@ set -e
 
 # Detects which parts of the monorepo changed for intelligent CI job filtering
 # Usage: ./detect-changes.sh <base-ref>
-# Outputs: Sets GitHub Actions outputs for skip_all, run_web, run_server, run_e2e
+# Outputs: Sets GitHub Actions outputs for skip_all, run_web, run_server, run_e2e, run_audit
 
 BASE_REF=$1
 
@@ -20,6 +20,15 @@ else
   echo "skip_all=true" >> "$GITHUB_OUTPUT"
   echo "✓ Only docs/config files changed, skipping all jobs"
   exit 0
+fi
+
+# Detect dependency changes (for security audit)
+if echo "$CHANGED_FILES" | grep -qE '^(package\.json|bun\.lock|apps/.*/package\.json)'; then
+  echo "run_audit=true" >> "$GITHUB_OUTPUT"
+  echo "✓ Dependency changes detected, will run security audit"
+else
+  echo "run_audit=false" >> "$GITHUB_OUTPUT"
+  echo "✓ No dependency changes, skipping security audit"
 fi
 
 # Detect web changes (apps/web or root config affecting web)

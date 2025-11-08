@@ -21,6 +21,7 @@ jobs:
       run_web: ${{ steps.detect.outputs.run_web }}
       run_server: ${{ steps.detect.outputs.run_server }}
       run_e2e: ${{ steps.detect.outputs.run_e2e }}
+      run_audit: ${{ steps.detect.outputs.run_audit }}
     steps:
       - name: Skip if draft PR
         id: check_draft
@@ -60,6 +61,7 @@ jobs:
         run: bun run check:secrets
 
       - name: Security audit
+        if: needs.detect-changes.outputs.run_audit == 'true'
         run: bun run check:audit
 
       - name: Run Biome check
