@@ -170,7 +170,12 @@ const notifyIdle = async ($: PluginInput["$"], sessionName: string) => {
   const summary = `Session ${sessionName} is idle.`;
 
   try {
-    await $`notify-send -u normal -t ${NOTIFICATION_EXPIRE_MS} ${title} ${summary}`
+    await $`notify-send -u normal -t ${NOTIFICATION_EXPIRE_MS} --hint=string:sound-name:message-new-instant ${title} ${summary}`
+      .quiet()
+      .nothrow();
+
+    // Play a sound using paplay (PulseAudio) or aplay (ALSA) as fallback
+    await $`paplay /usr/share/sounds/freedesktop/stereo/message-new-instant.oga || aplay /usr/share/sounds/freedesktop/stereo/bell.oga`
       .quiet()
       .nothrow();
   } catch {
@@ -282,7 +287,12 @@ export const IdleValidate: Plugin = ({ $, client, directory }) => {
         await handleIdle({ $, client, sessionID, sessionName });
       } catch (error) {
         debug("failure", error);
-        await $`notify-send -u normal -t ${NOTIFICATION_EXPIRE_MS} ${sessionName} "Idle checks plugin failed"`
+        await $`notify-send -u normal -t ${NOTIFICATION_EXPIRE_MS} --hint=string:sound-name:message-new-instant ${sessionName} "Idle checks plugin failed"`
+          .quiet()
+          .nothrow();
+
+        // Play a sound using paplay (PulseAudio) or aplay (ALSA) as fallback
+        await $`paplay /usr/share/sounds/freedesktop/stereo/message-new-instant.oga || aplay /usr/share/sounds/freedesktop/stereo/bell.oga`
           .quiet()
           .nothrow();
       } finally {
