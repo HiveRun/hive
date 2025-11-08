@@ -1,12 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Copy, Plus, Trash2 } from "lucide-react";
+import { Copy, Plus, SquareCheck, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import {
   type Construct,
@@ -424,15 +423,20 @@ function ConstructCard({
     >
       <CardHeader>
         <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-3">
-            <Checkbox
-              aria-label={`Select construct ${construct.name}`}
-              checked={isSelected}
+          <div className="flex flex-1 items-center gap-3">
+            <Button
+              aria-pressed={isSelected}
               data-construct-id={construct.id}
-              data-testid="construct-select"
+              data-testid="construct-select-toggle"
               disabled={disableSelection}
-              onCheckedChange={onToggleSelect}
-            />
+              onClick={onToggleSelect}
+              size="sm"
+              type="button"
+              variant={isSelected ? "default" : "outline"}
+            >
+              <SquareCheck className="mr-1 h-3.5 w-3.5" />
+              {isSelected ? "Selected" : "Select"}
+            </Button>
             <CardTitle className="text-lg" data-testid="construct-name">
               {construct.name}
             </CardTitle>
