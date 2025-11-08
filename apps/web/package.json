@@ -6,6 +6,7 @@
     "build": "vite build",
     "serve": "vite preview",
     "dev": "vite dev --port=3001",
+    "dev:e2e": "VITE_DISABLE_DEVTOOLS=true vite dev --port=3001",
     "check": "biome check --write .",
     "check-types": "tsc -b",
     "test": "echo '✓ Frontend uses Playwright for UI testing (E2E + snapshots). Run: bun test:e2e'",

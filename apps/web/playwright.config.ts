@@ -56,15 +56,20 @@ export default defineConfig({
   ],
 
   /* Run your local dev server before starting the tests */
-  webServer: {
-    command: "bun run dev",
-    url: "http://localhost:3001",
-    reuseExistingServer: !process.env.CI,
-    cwd: ROOT_DIR,
-    timeout: WEB_SERVER_TIMEOUT_MS,
-    env: {
-      ...process.env,
-      VITE_DISABLE_DEVTOOLS: "true",
+  webServer: [
+    {
+      command: "bun run dev",
+      url: "http://localhost:3000",
+      reuseExistingServer: !process.env.CI,
+      cwd: path.join(ROOT_DIR, "apps", "server"),
+      timeout: WEB_SERVER_TIMEOUT_MS,
     },
-  },
+    {
+      command: "bun run dev:e2e",
+      url: "http://localhost:3001",
+      reuseExistingServer: !process.env.CI,
+      cwd: path.join(ROOT_DIR, "apps", "web"),
+      timeout: WEB_SERVER_TIMEOUT_MS,
+    },
+  ],
 });
