@@ -84,13 +84,13 @@ export const agentMutations = {
   },
   sendMessage: {
     mutationFn: async (input: { sessionId: string; content: string }) => {
-      const { data, error } = await rpc.api.agents
+      const { error } = await rpc.api.agents
         .sessions({ id: input.sessionId })
         .messages.post({ content: input.content });
       if (error) {
         throw new Error("Failed to send agent message");
       }
-      return data as AgentMessage;
+      return true;
     },
   },
   respondPermission: {

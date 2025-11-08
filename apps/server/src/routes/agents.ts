@@ -16,7 +16,6 @@ import type {
 } from "../agents/types";
 import {
   AgentMessageListResponseSchema,
-  AgentMessageSchema,
   AgentSessionByConstructResponseSchema,
   AgentSessionSchema,
   CreateAgentSessionSchema,
@@ -93,8 +92,8 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     "/sessions/:id/messages",
     async ({ params, body, set }) => {
       try {
-        const message = await sendAgentMessage(params.id, body.content);
-        return formatMessage(message);
+        await sendAgentMessage(params.id, body.content);
+        return { ok: true };
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;
         return {
@@ -109,7 +108,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
       params: t.Object({ id: t.String() }),
       body: SendAgentMessageSchema,
       response: {
-        200: AgentMessageSchema,
+        200: t.Object({ ok: t.Boolean() }),
         400: t.Object({ message: t.String() }),
       },
     }

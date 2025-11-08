@@ -43,7 +43,7 @@ type RuntimeHandle = {
   server: { close(): void };
   abortController: AbortController;
   status: AgentSessionStatus;
-  sendMessage: (content: string) => Promise<AgentMessageRecord>;
+  sendMessage: (content: string) => Promise<void>;
   stop: () => Promise<void>;
 };
 
@@ -156,9 +156,9 @@ export async function fetchAgentMessages(
 export async function sendAgentMessage(
   sessionId: string,
   content: string
-): Promise<AgentMessageRecord> {
+): Promise<void> {
   const runtime = await ensureRuntimeForSession(sessionId);
-  return runtime.sendMessage(content);
+  await runtime.sendMessage(content);
 }
 
 export async function stopAgentSession(sessionId: string): Promise<void> {
@@ -309,7 +309,7 @@ function startMockRuntime(construct: Construct): Promise<RuntimeHandle> {
       emitMockMessageEvents(runtime, assistantMessage);
       setRuntimeStatus(runtime, "awaiting_input");
 
-      return Promise.resolve(userMessage);
+      return Promise.resolve();
     },
 
     stop() {
@@ -377,8 +377,6 @@ async function startOpencodeRuntime({
     abortController,
     status: "idle",
     async sendMessage(content) {
-      const userMessage = createLocalUserMessage(session.id, content);
-
       setRuntimeStatus(runtime, "working");
 
       const response = await client.session.prompt({
@@ -403,8 +401,6 @@ async function startOpencodeRuntime({
         setRuntimeStatus(runtime, "error", errorMessage);
         throw new Error(errorMessage);
       }
-
-      return userMessage;
     },
     async stop() {
       abortController.abort();

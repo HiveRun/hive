@@ -64,11 +64,8 @@ export function AgentChat({ constructId }: AgentChatProps) {
 
   const sendMessageMutation = useMutation({
     ...agentMutations.sendMessage,
-    onSuccess: (newMessage) => {
+    onSuccess: () => {
       setMessage("");
-      if (session?.id) {
-        upsertMessageRecord(newMessage);
-      }
     },
     onError: (error) => {
       const errorMessage =
