@@ -1,20 +1,10 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 
+import { constructSnapshotFixture } from "./utils/construct-fixture";
 import { setTheme } from "./utils/theme";
 
 const constructButton = 'a:has-text("New Construct")';
-
-const constructSnapshotFixture = [
-  {
-    id: "snapshot-construct",
-    name: "Snapshot Construct",
-    description: "Deterministic fixture used for visual regression tests.",
-    templateId: "synthetic-dev",
-    workspacePath: "/home/synthetic/.synthetic/constructs/snapshot-construct",
-    createdAt: "2024-01-01T12:00:00.000Z",
-  },
-];
 
 async function mockConstructsApi(page: Page) {
   await page.route("**/api/constructs", async (route) => {

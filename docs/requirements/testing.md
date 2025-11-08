@@ -17,7 +17,12 @@ This document outlines our approach to testing Synthetic across constructs and s
 - Implement a mock OpenCode SDK/server shim that reproduces session lifecycle, message streaming, and auth failures. Use it in integration tests so we never hit real LLMs during CI.
 - Tests should set `SYNTHETIC_TEST_MODE` (or equivalent) so service commands run lightweight stubs, docker invocations are replaced with no-ops, and resource limits prevent runaway processes. All writes happen under a temp root (e.g., `/tmp/synthetic-test-*`).
 
-## Smoke & E2E
+## Visual Regression (Playwright)
+- Browser automation lives under `apps/web/e2e/` and serves as a **visual regression harness** rather than a pure end-to-end suite. Specs hit the real router, but critical API calls are intercepted with deterministic fixtures so screenshots remain stable.
+- Shared fixture builders live in `apps/web/e2e/utils/`, use seeded Faker, and are typed via the Eden/TanStack query client (which mirrors our Elysia TypeBox schemas). Update those helpers when the backend contract changes—never hand-roll JSON per spec.
+- If we need fully integrated journeys, layer a separate suite that seeds the db instead of stubbing HTTP; keep the current visual harness focused on pixel diffs.
+
+## Smoke & Visual Regression
 - Maintain a small set of Playwright specs and CLI smoke tests that exercise construct creation, review queue, and transcript rendering. Keep them fast and run on nightly/release pipelines.
 
 ## CI Tiers
