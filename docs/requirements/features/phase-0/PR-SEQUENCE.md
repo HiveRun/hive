@@ -76,6 +76,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - Database CRUD operations
 - UI component tests with real data
 - E2E tests for complete construct management workflow
+- [x] Playwright snapshots mock API responses with deterministic Faker fixtures
 
 ### Dependencies
 - Step 1 (needs templates for construct creation form)
