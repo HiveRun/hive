@@ -64,16 +64,20 @@ test.describe("Constructs Page", () => {
     await navigateToConstructs(page);
     const deleteButton = page.getByTestId("delete-selected");
     const clearButton = page.getByTestId("clear-selection");
+    const countBadge = page.getByTestId("selection-count");
     await page.getByTestId("construct-select").first().click();
     await expect(deleteButton).toBeVisible();
     await expect(clearButton).toBeVisible();
-    await expect(deleteButton).toContainText("Delete Selected (1)");
+    await expect(deleteButton).toHaveText("Delete Selected");
+    await expect(countBadge).toHaveText("1 selected");
     await clearButton.click();
     await expect(deleteButton).toHaveCount(0);
+    await expect(countBadge).toHaveCount(0);
     await page.getByTestId("construct-select").first().click();
     await page.getByTestId("construct-select").nth(1).click();
     await expect(deleteButton).toBeVisible();
-    await expect(deleteButton).toContainText("Delete All (2)");
+    await expect(deleteButton).toHaveText("Delete Selected");
+    await expect(countBadge).toHaveText("2 selected");
     await deleteButton.click();
     await expect(
       page.getByRole("heading", { name: "Delete 2 constructs?" })

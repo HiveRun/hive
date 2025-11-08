@@ -68,12 +68,6 @@ export function ConstructList() {
     [];
   const selectedCount = selectedConstructs.length;
   const hasSelection = selectedCount > 0;
-  const isAllSelected = Boolean(
-    constructs?.length && selectedCount === constructs.length
-  );
-  const bulkDeleteButtonLabel = isAllSelected
-    ? `Delete All (${selectedCount})`
-    : `Delete Selected (${selectedCount})`;
 
   useEffect(() => {
     if (!hasSelection) {
@@ -205,8 +199,11 @@ export function ConstructList() {
                 type="button"
                 variant="destructive"
               >
-                {bulkDeleteButtonLabel}
+                Delete Selected
               </Button>
+              <Badge data-testid="selection-count" variant="outline">
+                {selectedCount} selected
+              </Badge>
             </>
           )}
           <Link to="/constructs/new">
