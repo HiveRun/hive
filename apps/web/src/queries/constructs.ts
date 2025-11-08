@@ -62,6 +62,25 @@ export const constructMutations = {
       return data;
     },
   },
+
+  deleteMany: {
+    mutationFn: async (ids: string[]) => {
+      const { data, error } = await rpc.api.constructs.delete({ ids });
+      if (error) {
+        throw new Error("Failed to delete constructs");
+      }
+
+      if ("message" in data) {
+        const message =
+          typeof data.message === "string"
+            ? data.message
+            : "Failed to delete constructs";
+        throw new Error(message);
+      }
+
+      return data;
+    },
+  },
 };
 
 // Export inferred types for use in components

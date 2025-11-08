@@ -1,8 +1,14 @@
 import { expect, type Page, test } from "./utils/app-test";
 
+import {
+  constructSnapshotFixture,
+  createConstructFixture,
+} from "./utils/construct-fixture";
+import { mockAppApi } from "./utils/mock-api";
 import { setTheme } from "./utils/theme";
 
 const constructButton = 'a:has-text("New Construct")';
+const DELETE_SELECTED_REGEX = /Delete Selected/;
 
 async function navigateToConstructs(page: Page) {
   await page.goto("/constructs");
@@ -38,6 +44,47 @@ test.describe("Constructs Page", () => {
   test("constructs list page loads", async ({ page }) => {
     await page.goto("/constructs/list");
     await expect(page.locator('h1:has-text("Constructs")')).toBeVisible();
+  });
+
+  test("shows bulk delete dialog when selecting constructs", async ({
+    page,
+  }) => {
+    await mockAppApi(page, {
+      constructs: [
+        constructSnapshotFixture[0],
+        createConstructFixture({
+          id: "secondary-construct",
+          name: "Secondary Construct",
+          workspacePath:
+            "/home/synthetic/.synthetic/constructs/secondary-construct",
+          createdAt: "2024-02-01T10:00:00.000Z",
+        }),
+      ],
+    });
+
+    await navigateToConstructs(page);
+    const deleteButton = page.getByTestId("delete-selected");
+    const clearButton = page.getByTestId("clear-selection");
+    const countBadge = page.getByTestId("delete-selected-count");
+    await page.getByTestId("construct-select").first().click();
+    await expect(deleteButton).toBeVisible();
+    await expect(clearButton).toBeVisible();
+    await expect(deleteButton).toHaveText(DELETE_SELECTED_REGEX);
+    await expect(countBadge).toHaveText("1");
+    await clearButton.click();
+    await expect(deleteButton).toBeDisabled();
+    await expect(countBadge).toHaveText("0");
+    await page.getByTestId("construct-select").first().click();
+    await page.getByTestId("construct-select").nth(1).click();
+    await expect(deleteButton).toBeVisible();
+    await expect(deleteButton).toHaveText(DELETE_SELECTED_REGEX);
+    await expect(countBadge).toHaveText("2");
+    await deleteButton.click();
+    await expect(
+      page.getByRole("heading", { name: "Delete 2 constructs?" })
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await expect(deleteButton).toBeVisible();
   });
 
   test("constructs new page loads independently", async ({ page }) => {

@@ -1,10 +1,11 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { db } from "../db";
 import {
   ConstructListResponseSchema,
   ConstructResponseSchema,
   CreateConstructSchema,
+  DeleteConstructsSchema,
 } from "../schema/api";
 import { constructs, type NewConstruct } from "../schema/constructs";
 import { createWorktreeManager } from "../worktree/manager";
@@ -12,6 +13,7 @@ import { createWorktreeManager } from "../worktree/manager";
 const HTTP_STATUS = {
   OK: 200,
   CREATED: 201,
+  BAD_REQUEST: 400,
   NOT_FOUND: 404,
   CONFLICT: 409,
   INTERNAL_ERROR: 500,
@@ -116,6 +118,58 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
       response: {
         201: ConstructResponseSchema,
         400: t.Object({
+          message: t.String(),
+        }),
+        500: t.Object({
+          message: t.String(),
+        }),
+      },
+    }
+  )
+  .delete(
+    "/",
+    async ({ body, set }) => {
+      try {
+        const uniqueIds = [...new Set(body.ids)];
+
+        const constructsToDelete = await db
+          .select({
+            id: constructs.id,
+          })
+          .from(constructs)
+          .where(inArray(constructs.id, uniqueIds));
+
+        if (constructsToDelete.length === 0) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "No constructs found for provided ids" };
+        }
+
+        const worktreeService = createWorktreeManager();
+
+        for (const construct of constructsToDelete) {
+          worktreeService.removeWorktree(construct.id);
+        }
+
+        const idsToDelete = constructsToDelete.map((construct) => construct.id);
+
+        await db.delete(constructs).where(inArray(constructs.id, idsToDelete));
+
+        return { deletedIds: idsToDelete };
+      } catch (_error) {
+        set.status = HTTP_STATUS.INTERNAL_ERROR;
+        return { message: "Failed to delete constructs" };
+      }
+    },
+    {
+      body: DeleteConstructsSchema,
+      response: {
+        200: t.Object({
+          deletedIds: t.Array(t.String()),
+        }),
+        400: t.Object({
+          message: t.String(),
+        }),
+        404: t.Object({
           message: t.String(),
         }),
         500: t.Object({
