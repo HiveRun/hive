@@ -22,6 +22,13 @@ This document outlines our approach to testing Synthetic across constructs and s
 - Shared fixture builders live in `apps/web/e2e/utils/`, use seeded Faker, and are typed via the Eden/TanStack query client (which mirrors our Elysia TypeBox schemas). Update those helpers when the backend contract changes—never hand-roll JSON per spec.
 - If we need fully integrated journeys, layer a separate suite that seeds the db instead of stubbing HTTP; keep the current visual harness focused on pixel diffs.
 
+## TODO: Full-Stack Playwright Flow (Frozen Clock)
+- Goal: run the **actual** server + database + git worktree creation while keeping screenshots deterministic.
+- Boot the API with temp roots: `WORKTREE_ROOT=/tmp/synthetic-e2e-<uuid>` and `DATABASE_URL=file:/tmp/synthetic-e2e-<uuid>.db`. Playwright’s `globalSetup` should create these dirs, run migrations/seeds, and export the env for both the server process and the tests.
+- Freeze time via [`timekeeper`](https://www.npmjs.com/package/timekeeper) in the backend entrypoint: if `SYNTHETIC_FIXED_TIME` is set, call `timekeeper.freeze(new Date(value))`. Every timestamp the UI creates stays stable, yet the server still executes real logic.
+- Optional hardening: run the API inside Docker/bubblewrap with the temp directory bind-mounted. That allows `git worktree` to run for real while ensuring the host repo is untouched and everything disappears after teardown.
+- Snapshot strategy: start from an empty DB (zero constructs), take the “empty state” screenshot, drive the actual creation form, wait for success, then capture the “single construct” view. Because the clock is frozen and the DB/worktree roots are ephemeral, screenshots don’t drift between runs.
+
 ## Smoke & Visual Regression
 - Maintain a small set of Playwright specs and CLI smoke tests that exercise construct creation, review queue, and transcript rendering. Keep them fast and run on nightly/release pipelines.
 
