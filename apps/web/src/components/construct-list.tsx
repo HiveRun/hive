@@ -428,6 +428,7 @@ function ConstructCard({
             <Checkbox
               aria-label={`Select construct ${construct.name}`}
               checked={isSelected}
+              className="h-5 w-5 border-2 border-muted-foreground data-[state=checked]:border-primary data-[state=checked]:bg-primary"
               data-construct-id={construct.id}
               data-testid="construct-select"
               disabled={disableSelection}
