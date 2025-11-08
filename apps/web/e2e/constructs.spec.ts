@@ -1,9 +1,24 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 
+import { constructSnapshotFixture } from "./utils/construct-fixture";
 import { setTheme } from "./utils/theme";
 
 const constructButton = 'a:has-text("New Construct")';
+
+async function mockConstructsApi(page: Page) {
+  await page.route("**/api/constructs", async (route) => {
+    if (route.request().method() !== "GET") {
+      return route.continue();
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ constructs: constructSnapshotFixture }),
+    });
+  });
+}
 
 async function navigateToConstructs(page: Page) {
   await page.goto("/constructs");
@@ -12,6 +27,10 @@ async function navigateToConstructs(page: Page) {
 }
 
 test.describe("Constructs Page", () => {
+  test.beforeEach(async ({ page }) => {
+    await mockConstructsApi(page);
+  });
+
   test("should display constructs page correctly", async ({ page }) => {
     // Listen for console errors
     page.on("console", (msg) => {

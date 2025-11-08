@@ -11,7 +11,7 @@ export const Route = createFileRoute("/constructs/new")({
 function RouteComponent() {
   return (
     <div className="p-6">
-      <ConstructForm mode="create" onSuccess={() => window.history.back()} />
+      <ConstructForm onSuccess={() => window.history.back()} />
     </div>
   );
 }

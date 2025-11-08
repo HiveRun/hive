@@ -15,12 +15,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  type Construct,
-  type CreateConstructInput,
-  constructMutations,
-  type UpdateConstructInput,
-} from "@/queries/constructs";
+import type { CreateConstructInput } from "@/lib/rpc";
+import { constructMutations } from "@/queries/constructs";
 import { templateQueries } from "@/queries/templates";
 
 type ConstructFormValues = CreateConstructInput;
@@ -62,22 +58,12 @@ const validateTemplateId = (value: string) => {
 };
 
 type ConstructFormProps = {
-  construct?: Construct;
-  mode?: "create" | "edit";
   onSuccess?: () => void;
   onCancel?: () => void;
 };
 
-export function ConstructForm({
-  construct,
-  mode = "create",
-  onSuccess,
-  onCancel,
-}: ConstructFormProps) {
+export function ConstructForm({ onSuccess, onCancel }: ConstructFormProps) {
   const queryClient = useQueryClient();
-  const isEdit = mode === "edit";
-  const submitLabel = isEdit ? "Save Changes" : "Create Construct";
-  const pendingLabel = isEdit ? "Saving..." : "Creating...";
 
   const {
     data: templates,
@@ -86,48 +72,27 @@ export function ConstructForm({
   } = useQuery(templateQueries.all());
 
   const mutation = useMutation({
-    mutationFn: (values: ConstructFormValues) => {
-      if (isEdit) {
-        if (!construct) {
-          throw new Error("Construct data is required to update");
-        }
-
-        return constructMutations.update.mutationFn({
-          id: construct.id,
-          ...(values as UpdateConstructInput),
-        });
-      }
-
-      return constructMutations.create.mutationFn(values);
-    },
+    mutationFn: constructMutations.create.mutationFn,
     onSuccess: () => {
-      toast.success(
-        isEdit
-          ? "Construct updated successfully"
-          : "Construct created successfully"
-      );
+      toast.success("Construct created successfully");
       queryClient.invalidateQueries({ queryKey: ["constructs"] });
-      if (!isEdit) {
-        form.reset();
-      }
+      form.reset();
       onSuccess?.();
     },
     onError: (error) => {
-      const fallback = isEdit
-        ? "Failed to update construct"
-        : "Failed to create construct";
-      const message = error instanceof Error ? error.message : fallback;
+      const message =
+        error instanceof Error ? error.message : "Failed to create construct";
       toast.error(message);
     },
   });
 
   const defaultValues = useMemo(
     () => ({
-      name: construct?.name ?? "",
-      description: construct?.description ?? "",
-      templateId: construct?.templateId ?? "",
+      name: "",
+      description: "",
+      templateId: "",
     }),
-    [construct]
+    []
   );
 
   const form = useForm({
@@ -163,9 +128,7 @@ export function ConstructForm({
   return (
     <Card className="w-full max-w-2xl">
       <CardHeader>
-        <CardTitle>
-          {isEdit ? "Edit Construct" : "Create New Construct"}
-        </CardTitle>
+        <CardTitle>Create New Construct</CardTitle>
       </CardHeader>
       <CardContent>
         <form
@@ -275,7 +238,7 @@ export function ConstructForm({
               </Button>
             )}
             <Button disabled={mutation.isPending} type="submit">
-              {mutation.isPending ? pendingLabel : submitLabel}
+              {mutation.isPending ? "Creating..." : "Create Construct"}
             </Button>
           </div>
         </form>

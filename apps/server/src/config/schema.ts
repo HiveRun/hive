@@ -76,6 +76,12 @@ export const templateSchema = z.object({
     .array(z.string())
     .optional()
     .describe("Cleanup commands on construct stop"),
+  includePatterns: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Patterns to include from gitignored files for worktree copying (e.g., '.env', '*.local')"
+    ),
 });
 
 export const syntheticConfigSchema = z.object({

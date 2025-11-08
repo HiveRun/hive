@@ -6,6 +6,7 @@ export default defineSyntheticConfig({
       id: "synthetic-dev",
       label: "Synthetic Development Environment",
       type: "manual",
+      includePatterns: [".env*"],
       services: {
         web: {
           type: "process",
@@ -32,6 +33,7 @@ export default defineSyntheticConfig({
       id: "web-api",
       label: "Web API Server",
       type: "manual",
+      includePatterns: [".env*", "*.db"],
       services: {
         api: {
           type: "process",
@@ -48,6 +50,7 @@ export default defineSyntheticConfig({
       id: "basic",
       label: "Basic Template",
       type: "manual",
+      includePatterns: [".env*"],
     },
   },
 });

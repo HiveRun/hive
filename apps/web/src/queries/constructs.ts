@@ -1,30 +1,9 @@
-import { rpc } from "@/lib/rpc";
-
-export type Construct = {
-  id: string;
-  name: string;
-  description: string | null;
-  templateId: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type CreateConstructInput = {
-  name: string;
-  description?: string;
-  templateId: string;
-};
-
-export type UpdateConstructInput = {
-  name: string;
-  description?: string;
-  templateId: string;
-};
+import { type CreateConstructInput, rpc } from "@/lib/rpc";
 
 export const constructQueries = {
   all: () => ({
     queryKey: ["constructs"] as const,
-    queryFn: async (): Promise<Construct[]> => {
+    queryFn: async () => {
       const { data, error } = await rpc.api.constructs.get();
       if (error) {
         throw new Error("Failed to fetch constructs");
@@ -35,7 +14,7 @@ export const constructQueries = {
 
   detail: (id: string) => ({
     queryKey: ["constructs", id] as const,
-    queryFn: async (): Promise<Construct> => {
+    queryFn: async () => {
       const { data, error } = await rpc.api.constructs({ id }).get();
       if (error) {
         throw new Error("Construct not found");
@@ -56,7 +35,7 @@ export const constructQueries = {
 
 export const constructMutations = {
   create: {
-    mutationFn: async (input: CreateConstructInput): Promise<Construct> => {
+    mutationFn: async (input: CreateConstructInput) => {
       const { data, error } = await rpc.api.constructs.post(input);
       if (error) {
         throw new Error("Failed to create construct");
@@ -74,30 +53,8 @@ export const constructMutations = {
     },
   },
 
-  update: {
-    mutationFn: async ({
-      id,
-      ...input
-    }: UpdateConstructInput & { id: string }): Promise<Construct> => {
-      const { data, error } = await rpc.api.constructs({ id }).put(input);
-      if (error) {
-        throw new Error("Failed to update construct");
-      }
-
-      if ("message" in data) {
-        const message =
-          typeof data.message === "string"
-            ? data.message
-            : "Failed to update construct";
-        throw new Error(message);
-      }
-
-      return data;
-    },
-  },
-
   delete: {
-    mutationFn: async (id: string): Promise<{ message: string }> => {
+    mutationFn: async (id: string) => {
       const { data, error } = await rpc.api.constructs({ id }).delete();
       if (error) {
         throw new Error("Failed to delete construct");
@@ -106,3 +63,8 @@ export const constructMutations = {
     },
   },
 };
+
+// Export inferred types for use in components
+export type Construct = Awaited<
+  ReturnType<ReturnType<typeof constructQueries.detail>["queryFn"]>
+>;

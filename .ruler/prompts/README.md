@@ -24,7 +24,7 @@ bun setup
 # Install Playwright browsers (for E2E testing)
 cd apps/web && bunx playwright install --with-deps
 
-# Set up local database (create .env with DATABASE_URL="file:local.db")
+# Set up local database (create .env with DATABASE_URL="local.db")
 # Then run development servers
 bun dev
 ```
@@ -35,7 +35,7 @@ bun dev
 # One-time setup (install deps + push database schema)
 bun setup
 
-# Set up local database (create .env with DATABASE_URL="file:local.db")  
+# Set up local database (create .env with DATABASE_URL="local.db")  
 # Then run development servers
 bun dev
 ```
@@ -195,7 +195,7 @@ npx playwright show-report
 - `bun db:migrate`: Run migrations
 
 **Local Database Setup:**
-Create `.env` file with `DATABASE_URL="file:local.db"` to use local SQLite.
+Create `.env` file with `DATABASE_URL="local.db"` to use local SQLite.
 
 ## AI/LLM Context Management
 

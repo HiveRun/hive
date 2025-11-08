@@ -13,6 +13,9 @@ export type RouterAppContext = {
   queryClient: QueryClient;
 };
 
+const DEVTOOLS_ENABLED =
+  import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEVTOOLS !== "false";
+
 export const Route = createRootRouteWithContext<RouterAppContext>()({
   component: RootComponent,
 });
@@ -25,8 +28,12 @@ function RootComponent() {
         <Outlet />
       </MainLayout>
       <Toaster richColors />
-      <ReactQueryDevtools buttonPosition="bottom-right" />
-      <TanStackRouterDevtools position="bottom-left" />
+      {DEVTOOLS_ENABLED ? (
+        <>
+          <ReactQueryDevtools buttonPosition="bottom-right" />
+          <TanStackRouterDevtools position="bottom-left" />
+        </>
+      ) : null}
     </>
   );
 }

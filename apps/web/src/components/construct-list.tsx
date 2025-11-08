@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Plus, Trash2 } from "lucide-react";
+import { Copy, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -61,6 +61,15 @@ export function ConstructList() {
       hour: "2-digit",
       minute: "2-digit",
     });
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Copied to clipboard");
+    } catch (_error) {
+      toast.error("Failed to copy to clipboard");
+    }
+  };
 
   if (isLoading) {
     return <div className="p-6">Loading constructs...</div>;
@@ -175,9 +184,36 @@ export function ConstructList() {
                     {construct.description}
                   </p>
                 )}
+
+                {/* Workspace path */}
+                {construct.workspacePath && (
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-medium text-muted-foreground text-xs">
+                        Workspace:
+                      </p>
+                      <Button
+                        data-testid="copy-workspace-path"
+                        onClick={() =>
+                          construct.workspacePath &&
+                          copyToClipboard(construct.workspacePath)
+                        }
+                        size="sm"
+                        title="Copy workspace path"
+                        type="button"
+                        variant="ghost"
+                      >
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                    </div>
+                    <p className="mt-1 break-all rounded bg-muted/50 p-2 font-mono text-muted-foreground text-xs">
+                      {construct.workspacePath}
+                    </p>
+                  </div>
+                )}
+
                 <div className="text-muted-foreground text-xs">
                   <p>Created: {formatDate(construct.createdAt)}</p>
-                  <p>Updated: {formatDate(construct.updatedAt)}</p>
                 </div>
               </CardContent>
             </Card>

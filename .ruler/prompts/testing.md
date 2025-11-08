@@ -32,6 +32,12 @@ bun -C apps/web run test:e2e:update-snapshots                 # Update snapshots
 - Light/Dark mode
 - Desktop/Tablet/Mobile viewports (375x667, 768x1024, 1280x720)
 
+> These Playwright specs are **visual regression tests**, not full E2E flows. They run the real browser shell but stub backend responses with deterministic fixtures so pixel diffs stay meaningful.
+>
+> - Shared fixture builders live under `apps/web/e2e/utils/` and use seeded Faker plus the Eden/TanStack query types (which mirror the Elysia TypeBox schemas). When the API contract changes, fix the builder once and re-run snapshots.
+> - Any route interception must go through those helpers; avoid per-spec JSON blobs.
+> - If/when we need “true” E2E coverage, add a separate suite that seeds the database instead of intercepting HTTP.
+
 ## Writing Tests
 
 ### General Guidelines
