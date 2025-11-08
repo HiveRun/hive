@@ -486,7 +486,7 @@ function ConstructCard({
               onClick={onDelete}
               size="sm"
               type="button"
-              variant="ghost"
+              variant="destructive"
             >
               <Trash2 className="h-4 w-4" />
             </Button>
