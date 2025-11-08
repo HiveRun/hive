@@ -131,10 +131,6 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
     async ({ body, set }) => {
       try {
         const uniqueIds = [...new Set(body.ids)];
-        if (uniqueIds.length === 0) {
-          set.status = HTTP_STATUS.BAD_REQUEST;
-          return { message: "At least one construct id is required" };
-        }
 
         const constructsToDelete = await db
           .select({
