@@ -169,8 +169,8 @@ export function ConstructList() {
 
   return (
     <div className="space-y-6 p-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex w-full flex-col gap-2 md:w-auto">
           <h1 className="font-bold text-3xl">Constructs</h1>
           <div className="flex min-h-[2.5rem] flex-wrap items-center gap-2">
             <Button
@@ -200,7 +200,7 @@ export function ConstructList() {
             </Button>
           </div>
         </div>
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-2 text-right">
+        <div className="flex w-full flex-wrap items-center justify-end gap-2 text-right md:ml-auto md:w-auto">
           {constructs && constructs.length > 0 && (
             <Button
               data-testid="toggle-select-all-global"
