@@ -125,40 +125,20 @@ async function ensureApiGuard(page: Page) {
 }
 
 function createConstructRouteHandler(mockData: MockApiData) {
-  return async (route: Route) => {
-    if (route.request().method() !== "GET") {
-      return route.continue();
-    }
-
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ constructs: mockData.constructs }),
-    });
-  };
+  return createGetJsonHandler(() => ({
+    body: { constructs: mockData.constructs },
+  }));
 }
 
 function createTemplateListHandler(mockData: MockApiData) {
-  return async (route: Route) => {
-    if (route.request().method() !== "GET") {
-      return route.continue();
-    }
-
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ templates: mockData.templates }),
-    });
-  };
+  return createGetJsonHandler(() => ({
+    body: { templates: mockData.templates },
+  }));
 }
 
 function createTemplateDetailHandler(mockData: MockApiData) {
-  return async (route: Route) => {
-    if (route.request().method() !== "GET") {
-      return route.continue();
-    }
-
-    const requestUrl = new URL(route.request().url());
+  return createGetJsonHandler((request) => {
+    const requestUrl = new URL(request.url());
     const segments = requestUrl.pathname.split("/").filter(Boolean);
     const templateId = segments.at(-1);
 
@@ -166,32 +146,50 @@ function createTemplateDetailHandler(mockData: MockApiData) {
       (entry) => entry.id === templateId
     );
     if (!template) {
-      await route.fulfill({
+      return {
         status: 404,
-        contentType: "application/json",
-        body: JSON.stringify({ message: "Template not found" }),
-      });
-      return;
+        body: { message: "Template not found" },
+      };
     }
 
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(template),
-    });
-  };
+    return { body: template };
+  });
 }
 
 function createExampleRouteHandler(mockData: MockApiData) {
+  return createGetJsonHandler(() => ({ body: mockData.example }));
+}
+
+type RouteRequest = ReturnType<Route["request"]>;
+
+function createGetJsonHandler(
+  resolve: (request: RouteRequest) =>
+    | {
+        status?: number;
+        body: unknown;
+        contentType?: string;
+      }
+    | Promise<{
+        status?: number;
+        body: unknown;
+        contentType?: string;
+      }>
+) {
   return async (route: Route) => {
     if (route.request().method() !== "GET") {
       return route.continue();
     }
 
+    const {
+      status = 200,
+      body,
+      contentType = "application/json",
+    } = await resolve(route.request());
+
     await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(mockData.example),
+      status,
+      contentType,
+      body: JSON.stringify(body),
     });
   };
 }
