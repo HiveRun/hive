@@ -172,14 +172,10 @@ export function ConstructList() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex flex-col gap-2">
           <h1 className="font-bold text-3xl">Constructs</h1>
-          <div
-            className={cn(
-              "flex min-h-[2.5rem] flex-wrap items-center gap-2 transition-all duration-150",
-              hasSelection ? "visible opacity-100" : "invisible opacity-0"
-            )}
-          >
+          <div className="flex min-h-[2.5rem] flex-wrap items-center gap-2">
             <Button
               data-testid="clear-selection"
+              disabled={!hasSelection}
               onClick={handleClearSelection}
               type="button"
               variant="outline"
@@ -189,7 +185,8 @@ export function ConstructList() {
             <Button
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               data-testid="delete-selected"
-              onClick={() => setIsBulkDialogOpen(true)}
+              disabled={!hasSelection}
+              onClick={() => hasSelection && setIsBulkDialogOpen(true)}
               type="button"
               variant="destructive"
             >
@@ -203,7 +200,7 @@ export function ConstructList() {
             </Button>
           </div>
         </div>
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2 text-right">
           {constructs && constructs.length > 0 && (
             <Button
               data-testid="toggle-select-all-global"

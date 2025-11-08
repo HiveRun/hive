@@ -72,8 +72,8 @@ test.describe("Constructs Page", () => {
     await expect(deleteButton).toHaveText(DELETE_SELECTED_REGEX);
     await expect(countBadge).toHaveText("1");
     await clearButton.click();
-    await expect(deleteButton).not.toBeVisible();
-    await expect(countBadge).not.toBeVisible();
+    await expect(deleteButton).toBeDisabled();
+    await expect(countBadge).toHaveText("0");
     await page.getByTestId("construct-select").first().click();
     await page.getByTestId("construct-select").nth(1).click();
     await expect(deleteButton).toBeVisible();
