@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Copy, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -33,7 +32,7 @@ export function ConstructList() {
   const [selectedConstructIds, setSelectedConstructIds] = useState<Set<string>>(
     () => new Set()
   );
-  const [isClientReady, setIsClientReady] = useState(false);
+  const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
 
   const queryClient = useQueryClient();
 
@@ -43,11 +42,6 @@ export function ConstructList() {
     error,
   } = useQuery(constructQueries.all());
   const { data: templates } = useQuery(templateQueries.all());
-
-  useEffect(() => {
-    setIsClientReady(true);
-    return () => setIsClientReady(false);
-  }, []);
 
   useEffect(() => {
     if (!constructs) {
@@ -78,6 +72,15 @@ export function ConstructList() {
   const isAllSelected = Boolean(
     constructs?.length && selectedCount === constructs.length
   );
+  const bulkDeleteButtonLabel = isAllSelected
+    ? `Delete All (${selectedCount})`
+    : `Delete Selected (${selectedCount})`;
+
+  useEffect(() => {
+    if (!hasSelection) {
+      setIsBulkDialogOpen(false);
+    }
+  }, [hasSelection]);
 
   const deleteMutation = useMutation({
     ...constructMutations.delete,
@@ -103,6 +106,7 @@ export function ConstructList() {
       toast.success(`Deleted ${count} ${label}`);
       queryClient.invalidateQueries({ queryKey: ["constructs"] });
       setSelectedConstructIds(new Set());
+      setIsBulkDialogOpen(false);
     },
     onError: (unknownError) => {
       const message =
@@ -130,10 +134,6 @@ export function ConstructList() {
     }
 
     bulkDeleteMutation.mutate(Array.from(selectedConstructIds));
-  };
-
-  const handleClearSelection = () => {
-    setSelectedConstructIds(new Set());
   };
 
   const handleSelectAllToggle = () => {
@@ -212,6 +212,16 @@ export function ConstructList() {
               {isAllSelected ? "Clear Selection" : "Select All"}
             </Button>
           )}
+          {hasSelection && (
+            <Button
+              data-testid="delete-selected"
+              onClick={() => setIsBulkDialogOpen(true)}
+              type="button"
+              variant="destructive"
+            >
+              {bulkDeleteButtonLabel}
+            </Button>
+          )}
           <Link to="/constructs/new">
             <Button type="button">
               <Plus className="mr-2 h-4 w-4" />
@@ -221,18 +231,14 @@ export function ConstructList() {
         </div>
       </div>
 
-      {hasSelection && (
-        <BulkDeleteToolbar
-          disableActions={bulkDeleteMutation.isPending}
-          isAllSelected={isAllSelected}
-          isClientReady={isClientReady}
-          onClearSelection={handleClearSelection}
-          onConfirmDelete={handleBulkDelete}
-          onToggleSelectAll={handleSelectAllToggle}
-          selectedConstructs={selectedConstructs}
-          selectedCount={selectedCount}
-        />
-      )}
+      <BulkDeleteDialog
+        disableActions={bulkDeleteMutation.isPending}
+        isOpen={isBulkDialogOpen && hasSelection}
+        onConfirmDelete={handleBulkDelete}
+        onOpenChange={setIsBulkDialogOpen}
+        selectedConstructs={selectedConstructs}
+        selectedCount={selectedCount}
+      />
 
       <PendingDeleteDialog
         disabled={mutationsDisabled}
@@ -278,103 +284,68 @@ export function ConstructList() {
   );
 }
 
-type BulkDeleteToolbarProps = {
+type BulkDeleteDialogProps = {
+  disableActions: boolean;
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirmDelete: () => void;
   selectedConstructs: Construct[];
   selectedCount: number;
-  isAllSelected: boolean;
-  disableActions: boolean;
-  isClientReady: boolean;
-  onToggleSelectAll: () => void;
-  onClearSelection: () => void;
-  onConfirmDelete: () => void;
 };
 
-function BulkDeleteToolbar({
+function BulkDeleteDialog({
   disableActions,
-  isAllSelected,
-  isClientReady,
-  onClearSelection,
+  isOpen,
+  onOpenChange,
   onConfirmDelete,
-  onToggleSelectAll,
   selectedConstructs,
   selectedCount,
-}: BulkDeleteToolbarProps) {
+}: BulkDeleteDialogProps) {
+  if (!selectedCount) {
+    return null;
+  }
+
   const selectionPreview = selectedConstructs.slice(0, MAX_SELECTION_PREVIEW);
   const overflowCount = selectedCount - selectionPreview.length;
 
-  if (!isClientReady) {
-    return null;
-  }
-
-  const portalTarget = typeof document !== "undefined" ? document.body : null;
-  if (!portalTarget) {
-    return null;
-  }
-
-  const content = (
-    <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
-      <Card
-        aria-live="polite"
-        className="pointer-events-auto w-full max-w-4xl border border-primary bg-background shadow-2xl"
-        data-testid="bulk-delete-toolbar"
-        role="region"
-      >
-        <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-primary">
-            <Trash2 className="h-4 w-4" />
+  return (
+    <AlertDialog onOpenChange={onOpenChange} open={isOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
             Delete {selectedCount}{" "}
             {selectedCount === 1 ? "construct" : "constructs"}?
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-2 text-muted-foreground text-sm md:mr-auto">
-            <p>
-              This action permanently removes the selected constructs and their
-              metadata.
-            </p>
-            <ul className="list-disc pl-5 text-muted-foreground">
-              {selectionPreview.map((construct) => (
-                <li key={construct.id}>{construct.name}</li>
-              ))}
-              {overflowCount > 0 && <li>+{overflowCount} more</li>}
-            </ul>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              data-testid="select-all"
-              disabled={disableActions}
-              onClick={onToggleSelectAll}
-              type="button"
-              variant="secondary"
-            >
-              {isAllSelected ? "Clear All" : "Select All"}
-            </Button>
-            <Button
-              data-testid="clear-selection"
-              disabled={disableActions}
-              onClick={onClearSelection}
-              type="button"
-              variant="outline"
-            >
-              Cancel
-            </Button>
-            <Button
-              data-testid="confirm-bulk-delete"
-              disabled={disableActions}
-              onClick={onConfirmDelete}
-              type="button"
-              variant="destructive"
-            >
-              {disableActions ? "Deleting..." : `Delete ${selectedCount}`}
-              <Trash2 className="ml-2 h-4 w-4" />
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            This action permanently removes the selected constructs and their
+            metadata. This cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="rounded-md border border-muted bg-muted/30 p-4 text-sm">
+          <p className="font-semibold">Selection Summary</p>
+          <ul className="list-disc pl-5 text-muted-foreground">
+            {selectionPreview.map((construct) => (
+              <li key={construct.id}>{construct.name}</li>
+            ))}
+            {overflowCount > 0 && <li>+{overflowCount} more</li>}
+          </ul>
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={disableActions} type="button">
+            Cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            data-testid="confirm-bulk-delete"
+            disabled={disableActions}
+            onClick={onConfirmDelete}
+          >
+            {disableActions ? "Deleting..." : `Delete ${selectedCount}`}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
-
-  return createPortal(content, portalTarget);
 }
 
 type PendingDeleteDialogProps = {

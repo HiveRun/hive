@@ -4,6 +4,7 @@ import {
   constructSnapshotFixture,
   createConstructFixture,
 } from "./utils/construct-fixture";
+import { mockAppApi } from "./utils/mock-api";
 import { setTheme } from "./utils/theme";
 
 const constructButton = 'a:has-text("New Construct")';
@@ -44,11 +45,10 @@ test.describe("Constructs Page", () => {
     await expect(page.locator('h1:has-text("Constructs")')).toBeVisible();
   });
 
-  test("shows bulk delete toolbar when selecting constructs", async ({
-    mockApi,
+  test("shows bulk delete dialog when selecting constructs", async ({
     page,
   }) => {
-    await mockApi({
+    await mockAppApi(page, {
       constructs: [
         constructSnapshotFixture[0],
         createConstructFixture({
@@ -62,15 +62,18 @@ test.describe("Constructs Page", () => {
     });
 
     await navigateToConstructs(page);
-    const toolbar = page.getByTestId("bulk-delete-toolbar");
+    const deleteButton = page.getByTestId("delete-selected");
     await page.getByTestId("construct-select").first().click();
-    await expect(toolbar).toBeVisible();
+    await expect(deleteButton).toBeVisible();
+    await expect(deleteButton).toContainText("Delete Selected (1)");
     await page.getByTestId("construct-select").nth(1).click();
-    await expect(page.getByTestId("confirm-bulk-delete")).toContainText(
-      "Delete 2"
-    );
-    await page.getByTestId("clear-selection").click();
-    await expect(toolbar).toHaveCount(0);
+    await expect(deleteButton).toContainText("Delete All (2)");
+    await deleteButton.click();
+    await expect(
+      page.getByRole("heading", { name: "Delete 2 constructs?" })
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await expect(deleteButton).toBeVisible();
   });
 
   test("constructs new page loads independently", async ({ page }) => {
