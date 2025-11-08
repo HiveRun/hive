@@ -173,9 +173,10 @@ ALTER TABLE constructs
 - Integrate `@opencode-ai/sdk` for real OpenCode sessions
 - Implement mock orchestrator for development without credentials
 - Set working directory to construct's worktree (from PR #3)
-- Stream messages in real-time to UI
+- Stream messages in real-time to UI using the same `message.updated` / `message.part.updated` / `permission.updated` events that OpenCode’s TUI exposes
 - Handle session lifecycle (starting → running → completed/error)
 - Construct creation automatically provisions the agent session (mock vs provider based on form input) and rolls back the worktree/DB row if provisioning fails
+- Surface permission prompts directly in the chat so agents can request file/network access without falling back to the CLI
 - **Extend existing UI** with chat interface
 
 #### Acceptance Tests
@@ -184,6 +185,7 @@ ALTER TABLE constructs
 - Messages stream correctly to UI
 - Session operates within construct worktree
 - Construct creation fails with actionable error if agent provisioning fails (e.g., missing credentials) and leaves no orphaned worktree
+- Permission prompts can be approved/denied from the chat UI (no fallback to CLI banners)
 - Transcripts persist via OpenCode's datastore (Synthetic can rehydrate by session ID)
 - **Integration tests with existing UI from Step 1**
 

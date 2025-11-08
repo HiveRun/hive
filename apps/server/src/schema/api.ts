@@ -92,3 +92,11 @@ export const AgentSessionByConstructResponseSchema = t.Object({
 export const SendAgentMessageSchema = t.Object({
   content: t.String({ minLength: 1 }),
 });
+
+export const RespondPermissionSchema = t.Object({
+  response: t.Union([
+    t.Literal("once"),
+    t.Literal("always"),
+    t.Literal("reject"),
+  ]),
+});

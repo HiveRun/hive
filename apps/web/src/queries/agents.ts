@@ -12,6 +12,14 @@ export type AgentSession = {
   completedAt?: string;
 };
 
+export type AgentMessagePart = {
+  id: string;
+  sessionID: string;
+  messageID: string;
+  type: string;
+  text?: string;
+};
+
 export type AgentMessage = {
   id: string;
   sessionId: string;
@@ -19,7 +27,7 @@ export type AgentMessage = {
   content: string | null;
   state: string;
   createdAt: string;
-  parts: unknown[];
+  parts: AgentMessagePart[];
 };
 
 export const agentQueries = {
@@ -83,6 +91,22 @@ export const agentMutations = {
         throw new Error("Failed to send agent message");
       }
       return data as AgentMessage;
+    },
+  },
+  respondPermission: {
+    mutationFn: async (input: {
+      sessionId: string;
+      permissionId: string;
+      response: "once" | "always" | "reject";
+    }) => {
+      const { error } = await rpc.api.agents
+        .sessions({ id: input.sessionId })
+        .permissions({ permissionId: input.permissionId })
+        .post({ response: input.response });
+      if (error) {
+        throw new Error("Failed to update permission");
+      }
+      return true;
     },
   },
 };

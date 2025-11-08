@@ -5,6 +5,7 @@ import {
   fetchAgentMessages,
   fetchAgentSession,
   fetchAgentSessionForConstruct,
+  respondAgentPermission,
   sendAgentMessage,
   stopAgentSession,
 } from "../agents/service";
@@ -19,6 +20,7 @@ import {
   AgentSessionByConstructResponseSchema,
   AgentSessionSchema,
   CreateAgentSessionSchema,
+  RespondPermissionSchema,
   SendAgentMessageSchema,
 } from "../schema/api";
 
@@ -143,7 +145,19 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
         yield sse({ event: "history", data: { messages: history } });
 
         for await (const event of iterator) {
-          yield sse({ event: event.type, data: event });
+          if (event.type === "history") {
+            continue;
+          }
+
+          if (event.type === "status") {
+            yield sse({
+              event: "status",
+              data: { status: event.status, error: event.error },
+            });
+            continue;
+          }
+
+          yield sse({ event: event.type, data: event.properties });
         }
       }
 
@@ -153,6 +167,35 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
       params: t.Object({ id: t.String() }),
       response: {
         200: t.Any(),
+      },
+    }
+  )
+  .post(
+    "/sessions/:id/permissions/:permissionId",
+    async ({ params, body, set }) => {
+      try {
+        await respondAgentPermission(
+          params.id,
+          params.permissionId,
+          body.response
+        );
+        return { ok: true };
+      } catch (error) {
+        set.status = HTTP_STATUS.BAD_REQUEST;
+        return {
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to respond to permission",
+        };
+      }
+    },
+    {
+      params: t.Object({ id: t.String(), permissionId: t.String() }),
+      body: RespondPermissionSchema,
+      response: {
+        200: t.Object({ ok: t.Boolean() }),
+        400: t.Object({ message: t.String() }),
       },
     }
   )

@@ -1,4 +1,4 @@
-import type { Part } from "@opencode-ai/sdk";
+import type { Event as OpencodeEvent, Part } from "@opencode-ai/sdk";
 
 export const agentSessionStatuses = [
   "starting",
@@ -37,6 +37,6 @@ export type AgentMessageRecord = {
 };
 
 export type AgentStreamEvent =
-  | { type: "message"; message: AgentMessageRecord }
+  | { type: "history"; messages: AgentMessageRecord[] }
   | { type: "status"; status: AgentSessionStatus; error?: string }
-  | { type: "history"; messages: AgentMessageRecord[] };
+  | OpencodeEvent;

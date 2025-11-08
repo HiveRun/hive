@@ -172,6 +172,25 @@ export async function stopAgentSession(sessionId: string): Promise<void> {
   constructSessionMap.delete(runtime.construct.id);
 }
 
+export async function respondAgentPermission(
+  sessionId: string,
+  permissionId: string,
+  response: "once" | "always" | "reject"
+): Promise<void> {
+  const runtime = await ensureRuntimeForSession(sessionId);
+  const result = await runtime.client.postSessionIdPermissionsPermissionId({
+    path: { id: sessionId, permissionID: permissionId },
+    query: runtime.directoryQuery,
+    body: { response },
+  });
+
+  if (result.error) {
+    throw new Error(
+      getRpcErrorMessage(result.error, "Failed to respond to permission")
+    );
+  }
+}
+
 export async function ensureRuntimeForSession(
   sessionId: string
 ): Promise<RuntimeHandle> {
@@ -269,26 +288,25 @@ function startMockRuntime(construct: Construct): Promise<RuntimeHandle> {
     status: "idle",
     sendMessage(content) {
       const userMessage = createLocalUserMessage(session.id, content);
-      publishAgentEvent(session.id, { type: "message", message: userMessage });
+      emitMockMessageEvents(runtime, userMessage);
 
       setRuntimeStatus(runtime, "working");
 
       const assistantContent = `Mock response for construct ${construct.name}:\n${content}`;
+      const assistantMessageId = randomUUID();
       const assistantMessage: AgentMessageRecord = {
-        id: randomUUID(),
+        id: assistantMessageId,
         sessionId: session.id,
         role: "assistant",
         content: assistantContent,
-        parts: [],
+        parts: [
+          createTextPart(session.id, assistantMessageId, assistantContent),
+        ],
         state: "completed",
         createdAt: new Date().toISOString(),
       };
 
-      publishAgentEvent(session.id, {
-        type: "message",
-        message: assistantMessage,
-      });
-
+      emitMockMessageEvents(runtime, assistantMessage);
       setRuntimeStatus(runtime, "awaiting_input");
 
       return Promise.resolve(userMessage);
@@ -360,7 +378,6 @@ async function startOpencodeRuntime({
     status: "idle",
     async sendMessage(content) {
       const userMessage = createLocalUserMessage(session.id, content);
-      publishAgentEvent(session.id, { type: "message", message: userMessage });
 
       setRuntimeStatus(runtime, "working");
 
@@ -483,12 +500,13 @@ async function startEventStream({
     });
 
     for await (const event of events.stream) {
-      await handleOpencodeEvent({
-        event,
-        runtime,
-        client,
-        directoryQuery,
-      });
+      const eventSessionId = getEventSessionId(event);
+      if (eventSessionId && eventSessionId !== runtime.session.id) {
+        continue;
+      }
+
+      publishAgentEvent(runtime.session.id, event);
+      updateRuntimeStatusFromEvent(runtime, event);
     }
   } catch (error) {
     // biome-ignore lint/suspicious/noConsole: fallback logging until structured logger is wired up.
@@ -496,65 +514,58 @@ async function startEventStream({
   }
 }
 
-type HandleEventArgs = {
-  event: Event;
-  runtime: RuntimeHandle;
-  client: ReturnType<typeof createOpencodeClient>;
-  directoryQuery: DirectoryQuery;
-};
-
-async function handleOpencodeEvent({
-  event,
-  runtime,
-  client,
-  directoryQuery,
-}: HandleEventArgs) {
-  if (
-    event.type === "message.updated" ||
-    event.type === "message.part.updated"
-  ) {
-    await syncRemoteMessage({
-      runtime,
-      client,
-      directoryQuery,
-      messageId:
-        event.type === "message.updated"
-          ? event.properties.info.id
-          : event.properties.part.messageID,
-    });
-  } else if (event.type === "session.error") {
-    const message = extractErrorMessage(event);
-    setRuntimeStatus(runtime, "error", message);
+function getEventSessionId(event: Event): string | null {
+  switch (event.type) {
+    case "message.updated":
+      return event.properties.info.sessionID;
+    case "message.part.updated":
+      return event.properties.part.sessionID;
+    case "message.part.removed":
+      return event.properties.sessionID ?? null;
+    case "permission.updated":
+      return event.properties.sessionID ?? null;
+    case "permission.replied":
+      return event.properties.sessionID ?? null;
+    case "todo.updated":
+      return event.properties.sessionID ?? null;
+    case "session.compacted":
+    case "session.diff":
+    case "session.error":
+    case "session.idle":
+      return event.properties.sessionID ?? null;
+    default:
+      return null;
   }
 }
 
-type SyncArgs = {
-  runtime: RuntimeHandle;
-  client: ReturnType<typeof createOpencodeClient>;
-  directoryQuery: DirectoryQuery;
-  messageId: string;
-};
-
-async function syncRemoteMessage({
-  runtime,
-  client,
-  directoryQuery,
-  messageId,
-}: SyncArgs) {
-  const response = await client.session.message({
-    path: { id: runtime.session.id, messageID: messageId },
-    query: directoryQuery,
-  });
-
-  if (response.error || !response.data) {
+function updateRuntimeStatusFromEvent(
+  runtime: RuntimeHandle,
+  event: Event
+): void {
+  if (event.type === "session.error") {
+    const message = extractErrorMessage(event);
+    setRuntimeStatus(runtime, "error", message);
     return;
   }
 
-  const message = serializeMessage(response.data.info, response.data.parts);
-  publishAgentEvent(runtime.session.id, { type: "message", message });
+  if (event.type === "session.idle") {
+    setRuntimeStatus(runtime, "idle");
+    return;
+  }
 
-  if (message.state === "completed") {
-    setRuntimeStatus(runtime, "awaiting_input");
+  if (event.type !== "message.updated") {
+    return;
+  }
+
+  const info = event.properties.info;
+  if (info.role === "user") {
+    setRuntimeStatus(runtime, "working");
+    return;
+  }
+
+  if (info.role === "assistant") {
+    const status = info.time.completed ? "awaiting_input" : "working";
+    setRuntimeStatus(runtime, status);
   }
 }
 
@@ -618,16 +629,93 @@ function determineMessageState(message: Message): AgentMessageState {
   return "completed";
 }
 
+function createTextPart(
+  sessionId: string,
+  messageId: string,
+  text: string
+): Part {
+  const now = Date.now();
+  return {
+    id: randomUUID(),
+    sessionID: sessionId,
+    messageID: messageId,
+    type: "text",
+    text,
+    time: {
+      start: now,
+      end: now,
+    },
+  } as Part;
+}
+
+function emitMockMessageEvents(
+  runtime: RuntimeHandle,
+  record: AgentMessageRecord
+): void {
+  const info = toSdkMessage(record, runtime);
+  publishAgentEvent(runtime.session.id, {
+    type: "message.updated",
+    properties: { info },
+  });
+
+  for (const part of record.parts) {
+    publishAgentEvent(runtime.session.id, {
+      type: "message.part.updated",
+      properties: { part },
+    });
+  }
+}
+
+function toSdkMessage(
+  record: AgentMessageRecord,
+  runtime: RuntimeHandle
+): Message {
+  const created = Date.parse(record.createdAt) || Date.now();
+  if (record.role === "user") {
+    return {
+      id: record.id,
+      sessionID: record.sessionId,
+      role: "user",
+      time: { created },
+    } satisfies Message;
+  }
+
+  return {
+    id: record.id,
+    sessionID: record.sessionId,
+    role: "assistant",
+    time: { created, completed: created },
+    parentID: "",
+    modelID: runtime.modelId ?? "mock",
+    providerID: runtime.providerId,
+    mode: "build",
+    path: {
+      cwd: runtime.construct.workspacePath,
+      root: runtime.construct.workspacePath,
+    },
+    summary: false,
+    cost: 0,
+    tokens: {
+      input: 0,
+      output: 0,
+      reasoning: 0,
+      cache: { read: 0, write: 0 },
+    },
+  } satisfies Message;
+}
+
 function createLocalUserMessage(
   sessionId: string,
   content: string
 ): AgentMessageRecord {
+  const id = randomUUID();
+  const part = createTextPart(sessionId, id, content);
   return {
-    id: randomUUID(),
+    id,
     sessionId,
     role: "user",
     content,
-    parts: [],
+    parts: [part],
     state: "completed",
     createdAt: new Date().toISOString(),
   };
