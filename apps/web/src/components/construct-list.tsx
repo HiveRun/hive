@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Copy, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -32,6 +33,7 @@ export function ConstructList() {
   const [selectedConstructIds, setSelectedConstructIds] = useState<Set<string>>(
     () => new Set()
   );
+  const [isClientReady, setIsClientReady] = useState(false);
 
   const queryClient = useQueryClient();
 
@@ -41,6 +43,11 @@ export function ConstructList() {
     error,
   } = useQuery(constructQueries.all());
   const { data: templates } = useQuery(templateQueries.all());
+
+  useEffect(() => {
+    setIsClientReady(true);
+    return () => setIsClientReady(false);
+  }, []);
 
   useEffect(() => {
     if (!constructs) {
@@ -218,6 +225,7 @@ export function ConstructList() {
         <BulkDeleteToolbar
           disableActions={bulkDeleteMutation.isPending}
           isAllSelected={isAllSelected}
+          isClientReady={isClientReady}
           onClearSelection={handleClearSelection}
           onConfirmDelete={handleBulkDelete}
           onToggleSelectAll={handleSelectAllToggle}
@@ -275,6 +283,7 @@ type BulkDeleteToolbarProps = {
   selectedCount: number;
   isAllSelected: boolean;
   disableActions: boolean;
+  isClientReady: boolean;
   onToggleSelectAll: () => void;
   onClearSelection: () => void;
   onConfirmDelete: () => void;
@@ -283,6 +292,7 @@ type BulkDeleteToolbarProps = {
 function BulkDeleteToolbar({
   disableActions,
   isAllSelected,
+  isClientReady,
   onClearSelection,
   onConfirmDelete,
   onToggleSelectAll,
@@ -292,64 +302,79 @@ function BulkDeleteToolbar({
   const selectionPreview = selectedConstructs.slice(0, MAX_SELECTION_PREVIEW);
   const overflowCount = selectedCount - selectionPreview.length;
 
-  return (
-    <Card
-      className="border border-primary bg-primary/5"
-      data-testid="bulk-delete-toolbar"
-    >
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-primary">
-          <Trash2 className="h-4 w-4" />
-          Delete {selectedCount}{" "}
-          {selectedCount === 1 ? "construct" : "constructs"}?
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div className="space-y-2 text-muted-foreground text-sm md:mr-auto">
-          <p>
-            This action permanently removes the selected constructs and their
-            metadata.
-          </p>
-          <ul className="list-disc pl-5 text-muted-foreground">
-            {selectionPreview.map((construct) => (
-              <li key={construct.id}>{construct.name}</li>
-            ))}
-            {overflowCount > 0 && <li>+{overflowCount} more</li>}
-          </ul>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            data-testid="select-all"
-            disabled={disableActions}
-            onClick={onToggleSelectAll}
-            type="button"
-            variant="secondary"
-          >
-            {isAllSelected ? "Clear All" : "Select All"}
-          </Button>
-          <Button
-            data-testid="clear-selection"
-            disabled={disableActions}
-            onClick={onClearSelection}
-            type="button"
-            variant="outline"
-          >
-            Cancel
-          </Button>
-          <Button
-            data-testid="confirm-bulk-delete"
-            disabled={disableActions}
-            onClick={onConfirmDelete}
-            type="button"
-            variant="destructive"
-          >
-            {disableActions ? "Deleting..." : `Delete ${selectedCount}`}
-            <Trash2 className="ml-2 h-4 w-4" />
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+  if (!isClientReady) {
+    return null;
+  }
+
+  const portalTarget = typeof document !== "undefined" ? document.body : null;
+  if (!portalTarget) {
+    return null;
+  }
+
+  const content = (
+    <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
+      <Card
+        aria-live="polite"
+        className="pointer-events-auto w-full max-w-4xl border border-primary bg-background shadow-2xl"
+        data-testid="bulk-delete-toolbar"
+        role="region"
+      >
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-primary">
+            <Trash2 className="h-4 w-4" />
+            Delete {selectedCount}{" "}
+            {selectedCount === 1 ? "construct" : "constructs"}?
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="space-y-2 text-muted-foreground text-sm md:mr-auto">
+            <p>
+              This action permanently removes the selected constructs and their
+              metadata.
+            </p>
+            <ul className="list-disc pl-5 text-muted-foreground">
+              {selectionPreview.map((construct) => (
+                <li key={construct.id}>{construct.name}</li>
+              ))}
+              {overflowCount > 0 && <li>+{overflowCount} more</li>}
+            </ul>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              data-testid="select-all"
+              disabled={disableActions}
+              onClick={onToggleSelectAll}
+              type="button"
+              variant="secondary"
+            >
+              {isAllSelected ? "Clear All" : "Select All"}
+            </Button>
+            <Button
+              data-testid="clear-selection"
+              disabled={disableActions}
+              onClick={onClearSelection}
+              type="button"
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Button
+              data-testid="confirm-bulk-delete"
+              disabled={disableActions}
+              onClick={onConfirmDelete}
+              type="button"
+              variant="destructive"
+            >
+              {disableActions ? "Deleting..." : `Delete ${selectedCount}`}
+              <Trash2 className="ml-2 h-4 w-4" />
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
+
+  return createPortal(content, portalTarget);
 }
 
 type PendingDeleteDialogProps = {
