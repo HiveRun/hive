@@ -200,10 +200,13 @@ export function ConstructList() {
                 variant="destructive"
               >
                 Delete Selected
+                <span
+                  className="ml-2 inline-flex h-5 min-w-[2rem] items-center justify-center rounded-sm border border-destructive-foreground/40 bg-destructive-foreground/10 px-1 font-mono text-xs tabular-nums"
+                  data-testid="delete-selected-count"
+                >
+                  {selectedCount}
+                </span>
               </Button>
-              <Badge data-testid="selection-count" variant="outline">
-                {selectedCount} selected
-              </Badge>
             </>
           )}
           <Link to="/constructs/new">

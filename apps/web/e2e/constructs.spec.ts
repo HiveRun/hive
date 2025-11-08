@@ -8,6 +8,7 @@ import { mockAppApi } from "./utils/mock-api";
 import { setTheme } from "./utils/theme";
 
 const constructButton = 'a:has-text("New Construct")';
+const DELETE_SELECTED_REGEX = /Delete Selected/;
 
 async function navigateToConstructs(page: Page) {
   await page.goto("/constructs");
@@ -64,20 +65,20 @@ test.describe("Constructs Page", () => {
     await navigateToConstructs(page);
     const deleteButton = page.getByTestId("delete-selected");
     const clearButton = page.getByTestId("clear-selection");
-    const countBadge = page.getByTestId("selection-count");
+    const countBadge = page.getByTestId("delete-selected-count");
     await page.getByTestId("construct-select").first().click();
     await expect(deleteButton).toBeVisible();
     await expect(clearButton).toBeVisible();
-    await expect(deleteButton).toHaveText("Delete Selected");
-    await expect(countBadge).toHaveText("1 selected");
+    await expect(deleteButton).toHaveText(DELETE_SELECTED_REGEX);
+    await expect(countBadge).toHaveText("1");
     await clearButton.click();
     await expect(deleteButton).toHaveCount(0);
     await expect(countBadge).toHaveCount(0);
     await page.getByTestId("construct-select").first().click();
     await page.getByTestId("construct-select").nth(1).click();
     await expect(deleteButton).toBeVisible();
-    await expect(deleteButton).toHaveText("Delete Selected");
-    await expect(countBadge).toHaveText("2 selected");
+    await expect(deleteButton).toHaveText(DELETE_SELECTED_REGEX);
+    await expect(countBadge).toHaveText("2");
     await deleteButton.click();
     await expect(
       page.getByRole("heading", { name: "Delete 2 constructs?" })
