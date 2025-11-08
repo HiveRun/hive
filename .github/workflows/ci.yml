@@ -22,9 +22,32 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       skip: ${{ steps.check.outputs.skip }}
+      skip_e2e: ${{ steps.check_e2e.outputs.skip_e2e }}
     steps:
       - id: check
         run: echo "skip=${{ github.event.pull_request.draft == true }}" >> $GITHUB_OUTPUT
+
+      - name: Checkout code
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Skip E2E if only docs/config files changed
+      - id: check_e2e
+        if: github.event_name == 'pull_request'
+        run: |
+          # Get list of changed files
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+
+          # Check if any non-docs/config files changed
+          if echo "$CHANGED_FILES" | grep -qvE '^(README\.md|docs/|\.github/|\.husky/|\.vscode/|.*\.md$|LICENSE|\.gitignore|\.editorconfig)'; then
+            echo "skip_e2e=false" >> $GITHUB_OUTPUT
+          else
+            echo "skip_e2e=true" >> $GITHUB_OUTPUT
+            echo "Only docs/config files changed, skipping E2E tests"
+          fi
+        continue-on-error: true
 
   # Combine lint, typecheck, security, and unit tests into one job
   # This reduces setup overhead (checkout + bun setup + install) from 4x to 1x
@@ -41,6 +64,17 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.2.20
+
+      # Cache bun dependencies
+      - name: Cache bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -74,8 +108,28 @@ jobs:
         with:
           bun-version: 1.2.20
 
+      # Cache bun dependencies
+      - name: Cache bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # Cache Turbo build outputs
+      - name: Cache Turbo
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-
 
       - name: Build project
         run: bun run build
@@ -84,7 +138,7 @@ jobs:
     name: E2E Tests
     runs-on: blacksmith-2vcpu-ubuntu-2204
     needs: [check-skip, build]
-    if: needs.check-skip.outputs.skip != 'true'
+    if: needs.check-skip.outputs.skip != 'true' && needs.check-skip.outputs.skip_e2e != 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -94,8 +148,28 @@ jobs:
         with:
           bun-version: 1.2.20
 
+      # Cache bun dependencies
+      - name: Cache bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # Cache Playwright browsers
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
 
       - name: Install Playwright browsers
         run: bunx playwright install --with-deps
