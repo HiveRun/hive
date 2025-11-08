@@ -3,6 +3,16 @@ import { Link } from "@tanstack/react-router";
 import { Copy, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -216,14 +226,12 @@ export function ConstructList() {
         />
       )}
 
-      {pendingDelete && (
-        <PendingDeleteCard
-          disabled={mutationsDisabled}
-          onCancel={() => setPendingDelete(null)}
-          onConfirm={handleConfirmDelete}
-          pendingDelete={pendingDelete}
-        />
-      )}
+      <PendingDeleteDialog
+        disabled={mutationsDisabled}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={handleConfirmDelete}
+        pendingDelete={pendingDelete}
+      />
 
       {constructs && constructs.length === 0 ? (
         <Card>
@@ -344,50 +352,72 @@ function BulkDeleteToolbar({
   );
 }
 
-type PendingDeleteCardProps = {
-  pendingDelete: Construct;
+type PendingDeleteDialogProps = {
+  pendingDelete: Construct | null;
   disabled: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 };
 
-function PendingDeleteCard({
+function PendingDeleteDialog({
   disabled,
   onCancel,
   onConfirm,
   pendingDelete,
-}: PendingDeleteCardProps) {
+}: PendingDeleteDialogProps) {
+  if (!pendingDelete) {
+    return null;
+  }
+
   return (
-    <Card className="border border-destructive bg-destructive/5">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-destructive">
-          Delete "{pendingDelete.name}"?
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4 md:flex-row md:items-center md:justify-end">
-        <p className="text-muted-foreground text-sm md:mr-auto">
-          This action permanently removes the construct and its metadata.
-        </p>
-        <div className="flex gap-2">
-          <Button
-            disabled={disabled}
-            onClick={onCancel}
-            type="button"
-            variant="outline"
-          >
-            Cancel
-          </Button>
-          <Button
+    <AlertDialog
+      onOpenChange={(isOpen) => {
+        if (!isOpen) {
+          onCancel();
+        }
+      }}
+      open
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete "{pendingDelete.name}"?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This action permanently removes the construct and its related
+            metadata. This cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="rounded-md border border-muted bg-muted/30 p-4 text-sm">
+          <p className="font-semibold">Construct Summary</p>
+          <p className="text-muted-foreground">
+            Template: {pendingDelete.templateId}
+          </p>
+          {pendingDelete.workspacePath ? (
+            <p className="text-muted-foreground">
+              Workspace: {pendingDelete.workspacePath}
+            </p>
+          ) : null}
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel asChild>
+            <Button
+              disabled={disabled}
+              onClick={onCancel}
+              type="button"
+              variant="outline"
+            >
+              Cancel
+            </Button>
+          </AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             disabled={disabled}
             onClick={onConfirm}
-            type="button"
-            variant="destructive"
           >
             {disabled ? "Deleting..." : "Delete"}
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
