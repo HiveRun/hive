@@ -63,9 +63,9 @@ test.describe("Constructs Page", () => {
 
     await navigateToConstructs(page);
     const toolbar = page.getByTestId("bulk-delete-toolbar");
-    await page.getByTestId("construct-select-toggle").first().click();
+    await page.getByTestId("construct-select").first().click();
     await expect(toolbar).toBeVisible();
-    await page.getByTestId("construct-select-toggle").nth(1).click();
+    await page.getByTestId("construct-select").nth(1).click();
     await expect(page.getByTestId("confirm-bulk-delete")).toContainText(
       "Delete 2"
     );
