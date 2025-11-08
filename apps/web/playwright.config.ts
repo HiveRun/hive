@@ -60,14 +60,14 @@ export default defineConfig({
     {
       command: "bun run dev",
       url: "http://localhost:3000",
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       cwd: path.join(ROOT_DIR, "apps", "server"),
       timeout: WEB_SERVER_TIMEOUT_MS,
     },
     {
       command: "bun run dev:e2e",
       url: "http://localhost:3001",
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       cwd: path.join(ROOT_DIR, "apps", "web"),
       timeout: WEB_SERVER_TIMEOUT_MS,
     },
