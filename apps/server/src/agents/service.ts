@@ -291,8 +291,9 @@ function startMockRuntime(construct: Construct): Promise<RuntimeHandle> {
 
       setRuntimeStatus(runtime, "awaiting_input");
 
-      return Promise.resolve(assistantMessage);
+      return Promise.resolve(userMessage);
     },
+
     stop() {
       setRuntimeStatus(runtime, "completed");
       return Promise.resolve();
@@ -377,7 +378,7 @@ async function startOpencodeRuntime({
         },
       });
 
-      if (response.error || !response.data) {
+      if (response.error) {
         const errorMessage = getRpcErrorMessage(
           response.error,
           "Agent prompt failed"
@@ -386,21 +387,7 @@ async function startOpencodeRuntime({
         throw new Error(errorMessage);
       }
 
-      const assistantMessage = serializeMessage(
-        response.data.info,
-        response.data.parts
-      );
-
-      publishAgentEvent(session.id, {
-        type: "message",
-        message: assistantMessage,
-      });
-
-      if (assistantMessage.state === "completed") {
-        setRuntimeStatus(runtime, "awaiting_input");
-      }
-
-      return assistantMessage;
+      return userMessage;
     },
     async stop() {
       abortController.abort();
