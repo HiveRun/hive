@@ -84,10 +84,20 @@ export const templateSchema = z.object({
     ),
 });
 
+export const defaultsSchema = z.object({
+  templateId: z
+    .string()
+    .optional()
+    .describe("Default template to use when creating constructs"),
+});
+
 export const syntheticConfigSchema = z.object({
   templates: z
     .record(z.string(), templateSchema)
     .describe("Available construct templates"),
+  defaults: defaultsSchema
+    .optional()
+    .describe("Default values for construct creation"),
 });
 
 export type ProcessService = z.infer<typeof processServiceSchema>;
@@ -95,6 +105,7 @@ export type DockerService = z.infer<typeof dockerServiceSchema>;
 export type ComposeService = z.infer<typeof composeServiceSchema>;
 export type Service = z.infer<typeof serviceSchema>;
 export type Template = z.infer<typeof templateSchema>;
+export type Defaults = z.infer<typeof defaultsSchema>;
 export type SyntheticConfig = z.infer<typeof syntheticConfigSchema>;
 
 export function defineSyntheticConfig(

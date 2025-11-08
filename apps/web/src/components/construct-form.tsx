@@ -66,10 +66,13 @@ export function ConstructForm({ onSuccess, onCancel }: ConstructFormProps) {
   const queryClient = useQueryClient();
 
   const {
-    data: templates,
+    data: templatesData,
     isLoading: templatesLoading,
     error: templatesError,
   } = useQuery(templateQueries.all());
+
+  const templates = templatesData?.templates;
+  const defaults = templatesData?.defaults;
 
   const mutation = useMutation({
     mutationFn: constructMutations.create.mutationFn,
@@ -90,9 +93,9 @@ export function ConstructForm({ onSuccess, onCancel }: ConstructFormProps) {
     () => ({
       name: "",
       description: "",
-      templateId: "",
+      templateId: defaults?.templateId ?? "",
     }),
-    []
+    [defaults?.templateId]
   );
 
   const form = useForm({

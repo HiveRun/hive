@@ -48,6 +48,11 @@ export const TemplateResponseSchema = t.Object({
   configJson: t.Any(),
 });
 
+export const DefaultsResponseSchema = t.Object({
+  templateId: t.Optional(t.String()),
+});
+
 export const TemplateListResponseSchema = t.Object({
   templates: t.Array(TemplateResponseSchema),
+  defaults: t.Optional(DefaultsResponseSchema),
 });

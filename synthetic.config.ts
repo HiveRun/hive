@@ -1,6 +1,9 @@
 import { defineSyntheticConfig } from "./apps/server/src/config/schema";
 
 export default defineSyntheticConfig({
+  defaults: {
+    templateId: "synthetic-dev",
+  },
   templates: {
     "synthetic-dev": {
       id: "synthetic-dev",

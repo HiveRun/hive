@@ -92,6 +92,21 @@ test.describe("Constructs Page", () => {
     await expect(page.locator("text=Create New Construct")).toBeVisible();
   });
 
+  test("construct form uses default template from config", async ({ page }) => {
+    await mockAppApi(page);
+    await page.goto("/constructs/new");
+    await page.waitForLoadState("networkidle");
+
+    // The template select should have the default template pre-selected
+    const templateSelect = page.getByTestId("template-select");
+    await expect(templateSelect).toBeVisible();
+
+    // Check that the select has a value (the default template)
+    const selectValue = await templateSelect.locator("button").textContent();
+    expect(selectValue).toBeTruthy();
+    expect(selectValue).not.toBe("Select a template");
+  });
+
   test("should match constructs page snapshot (light mode)", async ({
     page,
   }) => {

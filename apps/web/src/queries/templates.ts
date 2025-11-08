@@ -7,10 +7,19 @@ export type Template = {
   configJson: unknown;
 };
 
+export type Defaults = {
+  templateId?: string;
+};
+
+export type TemplatesResponse = {
+  templates: Template[];
+  defaults?: Defaults;
+};
+
 export const templateQueries = {
   all: () => ({
     queryKey: ["templates"] as const,
-    queryFn: async (): Promise<Template[]> => {
+    queryFn: async (): Promise<TemplatesResponse> => {
       const { data, error } = await rpc.api.templates.get();
       if (error) {
         throw new Error("Failed to fetch templates");
@@ -18,7 +27,10 @@ export const templateQueries = {
       if (!(data && Array.isArray(data.templates))) {
         throw new Error("Invalid templates response from server");
       }
-      return data.templates;
+      return {
+        templates: data.templates,
+        defaults: data.defaults,
+      };
     },
   }),
 
