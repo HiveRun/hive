@@ -16,11 +16,6 @@ const WORKTREE_PREFIX_LENGTH = WORKTREE_PREFIX.length;
 const HEAD_PREFIX_LENGTH = HEAD_PREFIX.length;
 const BRANCH_PREFIX_LENGTH = BRANCH_PREFIX.length;
 
-// Buffer size constants
-const BYTES_PER_KB = 1024;
-const KB_PER_MB = 1024;
-const GIT_COMMAND_BUFFER_SIZE = BYTES_PER_KB * KB_PER_MB; // 1MB
-
 export type WorktreeInfo = {
   id: string;
   path: string;
@@ -130,46 +125,37 @@ export function createWorktreeManager(
   }
 
   /**
-   * List gitignored paths that match include patterns
+   * Find paths that match include patterns using glob matching
    */
   function getIncludedPaths(
     mainRepoPath: string,
     includePatterns: string[]
   ): string[] {
-    try {
-      const includedPaths: string[] = [];
+    const includedPaths: Set<string> = new Set();
 
-      // Check each include pattern individually to avoid buffer overflow
-      for (const pattern of includePatterns) {
-        try {
-          const output = execSync(
-            `git ls-files --others --ignored --exclude-standard -z -- "${pattern}"`,
-            {
-              encoding: "utf8",
-              cwd: mainRepoPath,
-              maxBuffer: GIT_COMMAND_BUFFER_SIZE,
-            }
-          );
+    for (const pattern of includePatterns) {
+      try {
+        // Convert glob pattern to regex for simple matching
+        const regexPattern = pattern
+          .replace(/\./g, "\\.") // Escape dots
+          .replace(/\*/g, ".*"); // Convert * to .*
 
-          if (output) {
-            const paths = output
-              .split("\0")
-              .map((path) => path.trim())
-              .filter((path) => path.length > 0);
+        const regex = new RegExp(`^${regexPattern}$`);
 
-            includedPaths.push(...paths);
+        // Check if pattern matches any files/directories in root
+        const entries = readdirSync(mainRepoPath, { withFileTypes: true });
+
+        for (const entry of entries) {
+          if (regex.test(entry.name)) {
+            includedPaths.add(entry.name);
           }
-        } catch (patternError) {
-          // Continue with other patterns if one fails
-          logWarn(`Failed to check pattern "${pattern}"`, patternError);
         }
+      } catch (error) {
+        logWarn(`Failed to match pattern "${pattern}"`, error);
       }
-
-      return [...new Set(includedPaths)]; // Remove duplicates
-    } catch (error) {
-      logWarn(`Failed to list gitignored files in ${mainRepoPath}`, error);
-      return [];
     }
+
+    return Array.from(includedPaths);
   }
 
   /**
