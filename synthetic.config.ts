@@ -3,9 +3,8 @@ import { defineSyntheticConfig } from "./apps/server/src/config/schema";
 export default defineSyntheticConfig({
   opencode: {
     workspaceId: "synthetic-dev",
-    token: process.env.OPENCODE_TOKEN,
-    defaultProvider: "openai",
-    defaultModel: "gpt-5-codex-high",
+    defaultProvider: "zen",
+    defaultModel: "big-pickle",
   },
   promptSources: ["docs/prompts/**/*.md"],
   templates: {
@@ -15,8 +14,8 @@ export default defineSyntheticConfig({
       type: "manual",
       includePatterns: [".env*"],
       agent: {
-        providerId: "openai",
-        modelId: "gpt-5-codex-high",
+        providerId: "zen",
+        modelId: "big-pickle",
       },
       services: {
         web: {
@@ -46,8 +45,8 @@ export default defineSyntheticConfig({
       type: "manual",
       includePatterns: [".env*", "*.db"],
       agent: {
-        providerId: "openai",
-        modelId: "gpt-5-codex-medium",
+        providerId: "zen",
+        modelId: "big-pickle",
       },
       services: {
         api: {
@@ -67,8 +66,8 @@ export default defineSyntheticConfig({
       type: "manual",
       includePatterns: [".env*"],
       agent: {
-        providerId: "openai",
-        modelId: "gpt-5-codex-low",
+        providerId: "zen",
+        modelId: "big-pickle",
       },
     },
   },

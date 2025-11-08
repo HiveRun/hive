@@ -16,9 +16,8 @@ const SHARED_INPUTS = {
 
 const SAMPLE_OPENCODE_CONFIG = {
   workspaceId: "workspace_123",
-  token: "token_abc",
-  defaultProvider: "openai",
-  defaultModel: "gpt-5-codex-high",
+  defaultProvider: "zen",
+  defaultModel: "big-pickle",
 } as const;
 
 // Expected output constants
@@ -65,13 +64,13 @@ describe("Template Schema", () => {
       label: "Agent Template",
       type: "manual" as const,
       agent: {
-        providerId: "openai",
-        modelId: "gpt-5-codex-medium",
+        providerId: "zen",
+        modelId: "big-pickle",
       },
     };
 
     const result = templateSchema.parse(templateWithAgent);
-    expect(result.agent?.providerId).toBe("openai");
+    expect(result.agent?.providerId).toBe("zen");
   });
 });
 
@@ -111,6 +110,6 @@ describe("defineSyntheticConfig", () => {
 
     const config = defineSyntheticConfig(configForValidation);
     expect(config.templates.test?.id).toBe(EXPECTED.templateId);
-    expect(config.opencode.defaultProvider).toBe("openai");
+    expect(config.opencode.defaultProvider).toBe("zen");
   });
 });
