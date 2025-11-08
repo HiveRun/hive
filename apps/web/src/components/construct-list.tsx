@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Copy, Plus, Trash2 } from "lucide-react";
+import { Copy, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -28,7 +28,6 @@ import { templateQueries } from "@/queries/templates";
 const MAX_SELECTION_PREVIEW = 3;
 
 export function ConstructList() {
-  const [pendingDelete, setPendingDelete] = useState<Construct | null>(null);
   const [selectedConstructIds, setSelectedConstructIds] = useState<Set<string>>(
     () => new Set()
   );
@@ -82,22 +81,6 @@ export function ConstructList() {
     }
   }, [hasSelection]);
 
-  const deleteMutation = useMutation({
-    ...constructMutations.delete,
-    onSuccess: () => {
-      toast.success("Construct deleted successfully");
-      queryClient.invalidateQueries({ queryKey: ["constructs"] });
-      setPendingDelete(null);
-    },
-    onError: (unknownError) => {
-      const message =
-        unknownError instanceof Error
-          ? unknownError.message
-          : "Failed to delete construct";
-      toast.error(message);
-    },
-  });
-
   const bulkDeleteMutation = useMutation({
     ...constructMutations.deleteMany,
     onSuccess: (data: { deletedIds: string[] }) => {
@@ -116,17 +99,6 @@ export function ConstructList() {
       toast.error(message);
     },
   });
-
-  const mutationsDisabled =
-    deleteMutation.isPending || bulkDeleteMutation.isPending;
-
-  const handleConfirmDelete = () => {
-    if (!pendingDelete) {
-      return;
-    }
-
-    deleteMutation.mutate(pendingDelete.id);
-  };
 
   const handleBulkDelete = () => {
     if (!hasSelection) {
@@ -255,13 +227,6 @@ export function ConstructList() {
         selectedCount={selectedCount}
       />
 
-      <PendingDeleteDialog
-        disabled={mutationsDisabled}
-        onCancel={() => setPendingDelete(null)}
-        onConfirm={handleConfirmDelete}
-        pendingDelete={pendingDelete}
-      />
-
       {constructs && constructs.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
@@ -283,12 +248,10 @@ export function ConstructList() {
             <ConstructCard
               construct={construct}
               createdLabel={formatDate(construct.createdAt)}
-              disableDelete={mutationsDisabled}
               disableSelection={bulkDeleteMutation.isPending}
               isSelected={selectedConstructIds.has(construct.id)}
               key={construct.id}
               onCopyWorkspace={copyToClipboard}
-              onDelete={() => setPendingDelete(construct)}
               onToggleSelect={() => toggleConstructSelection(construct.id)}
               templateLabel={getTemplateLabel(construct.templateId)}
             />
@@ -363,95 +326,22 @@ function BulkDeleteDialog({
   );
 }
 
-type PendingDeleteDialogProps = {
-  pendingDelete: Construct | null;
-  disabled: boolean;
-  onCancel: () => void;
-  onConfirm: () => void;
-};
-
-function PendingDeleteDialog({
-  disabled,
-  onCancel,
-  onConfirm,
-  pendingDelete,
-}: PendingDeleteDialogProps) {
-  if (!pendingDelete) {
-    return null;
-  }
-
-  return (
-    <AlertDialog
-      onOpenChange={(isOpen) => {
-        if (!isOpen) {
-          onCancel();
-        }
-      }}
-      open
-    >
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete "{pendingDelete.name}"?</AlertDialogTitle>
-          <AlertDialogDescription>
-            This action permanently removes the construct and its related
-            metadata. This cannot be undone.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <div className="rounded-md border border-muted bg-muted/30 p-4 text-sm">
-          <p className="font-semibold">Construct Summary</p>
-          <p className="text-muted-foreground">
-            Template: {pendingDelete.templateId}
-          </p>
-          {pendingDelete.workspacePath ? (
-            <p className="text-muted-foreground">
-              Workspace: {pendingDelete.workspacePath}
-            </p>
-          ) : null}
-        </div>
-        <AlertDialogFooter>
-          <AlertDialogCancel asChild>
-            <Button
-              disabled={disabled}
-              onClick={onCancel}
-              type="button"
-              variant="outline"
-            >
-              Cancel
-            </Button>
-          </AlertDialogCancel>
-          <AlertDialogAction
-            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            disabled={disabled}
-            onClick={onConfirm}
-          >
-            {disabled ? "Deleting..." : "Delete"}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
-
 type ConstructCardProps = {
   construct: Construct;
   templateLabel: string;
   createdLabel: string;
   isSelected: boolean;
   disableSelection: boolean;
-  disableDelete: boolean;
   onToggleSelect: () => void;
-  onDelete: () => void;
   onCopyWorkspace: (path: string) => void;
 };
 
 function ConstructCard({
   construct,
   createdLabel,
-  disableDelete,
   disableSelection,
   isSelected,
   onCopyWorkspace,
-  onDelete,
   onToggleSelect,
   templateLabel,
 }: ConstructCardProps) {
@@ -478,18 +368,6 @@ function ConstructCard({
             <CardTitle className="text-lg" data-testid="construct-name">
               {construct.name}
             </CardTitle>
-          </div>
-          <div className="flex space-x-1">
-            <Button
-              data-testid="delete-construct"
-              disabled={disableDelete}
-              onClick={onDelete}
-              size="sm"
-              type="button"
-              variant="destructive"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
           </div>
         </div>
         <Badge data-testid="construct-template" variant="secondary">
