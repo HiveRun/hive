@@ -271,6 +271,7 @@ export function ChartAreaInteractive() {
             <Area
               dataKey="mobile"
               fill="url(#fillMobile)"
+              isAnimationActive={false}
               stackId="a"
               stroke="var(--color-mobile)"
               type="natural"
@@ -278,6 +279,7 @@ export function ChartAreaInteractive() {
             <Area
               dataKey="desktop"
               fill="url(#fillDesktop)"
+              isAnimationActive={false}
               stackId="a"
               stroke="var(--color-desktop)"
               type="natural"

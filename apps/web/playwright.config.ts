@@ -62,5 +62,9 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     cwd: ROOT_DIR,
     timeout: WEB_SERVER_TIMEOUT_MS,
+    env: {
+      ...process.env,
+      VITE_ENABLE_DEVTOOLS: "false",
+    },
   },
 });

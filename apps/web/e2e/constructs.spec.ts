@@ -5,6 +5,31 @@ import { setTheme } from "./utils/theme";
 
 const constructButton = 'a:has-text("New Construct")';
 
+const constructSnapshotFixture = [
+  {
+    id: "snapshot-construct",
+    name: "Snapshot Construct",
+    description: "Deterministic fixture used for visual regression tests.",
+    templateId: "synthetic-dev",
+    workspacePath: "/home/synthetic/.synthetic/constructs/snapshot-construct",
+    createdAt: "2024-01-01T12:00:00.000Z",
+  },
+];
+
+async function mockConstructsApi(page: Page) {
+  await page.route("**/api/constructs", async (route) => {
+    if (route.request().method() !== "GET") {
+      return route.continue();
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ constructs: constructSnapshotFixture }),
+    });
+  });
+}
+
 async function navigateToConstructs(page: Page) {
   await page.goto("/constructs");
   await page.waitForLoadState("networkidle");
@@ -12,6 +37,10 @@ async function navigateToConstructs(page: Page) {
 }
 
 test.describe("Constructs Page", () => {
+  test.beforeEach(async ({ page }) => {
+    await mockConstructsApi(page);
+  });
+
   test("should display constructs page correctly", async ({ page }) => {
     // Listen for console errors
     page.on("console", (msg) => {
