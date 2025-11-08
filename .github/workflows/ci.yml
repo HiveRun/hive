@@ -1,10 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches:
-      - main
-      - master
   pull_request:
     branches:
       - main
@@ -13,7 +9,7 @@ on:
 
 # Cancel in-progress runs when a new commit is pushed
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -37,7 +33,7 @@ jobs:
           echo "skip_all=false" >> $GITHUB_OUTPUT
 
       - name: Checkout code
-        if: steps.check_draft.outputs.skip_all != 'true' && github.event_name == 'pull_request'
+        if: steps.check_draft.outputs.skip_all != 'true'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -46,15 +42,6 @@ jobs:
         id: detect
         if: steps.check_draft.outputs.skip_all != 'true'
         run: |
-          # For pushes to main/master, run everything
-          if [ "${{ github.event_name }}" == "push" ]; then
-            echo "run_web=true" >> $GITHUB_OUTPUT
-            echo "run_server=true" >> $GITHUB_OUTPUT
-            echo "run_e2e=true" >> $GITHUB_OUTPUT
-            echo "skip_all=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
           # Get changed files
           CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
 
