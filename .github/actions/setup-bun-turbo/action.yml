@@ -1,0 +1,36 @@
+name: 'Setup Bun with Turborepo Cache'
+description: 'Sets up Bun, installs dependencies, and configures Turborepo remote caching'
+
+inputs:
+  bun-version:
+    description: 'Bun version to install'
+    required: false
+    default: '1.2.20'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: ${{ inputs.bun-version }}
+
+    # Cache bun dependencies - includes all workspace node_modules
+    - name: Cache bun dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.bun/install/cache
+          node_modules
+          apps/*/node_modules
+        key: ${{ runner.os }}-bun-${{ hashFiles('bun.lockb') }}
+        restore-keys: |
+          ${{ runner.os }}-bun-
+
+    - name: Install dependencies
+      shell: bash
+      run: bun install --frozen-lockfile
+
+    # Enable Turborepo remote caching using GitHub Actions cache
+    - name: Setup Turborepo cache
+      uses: rharkor/caching-for-turbo@v2.2.1

@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Detect which parts of the monorepo changed
+  # Detect which parts of the monorepo changed to optimize job execution
   detect-changes:
     runs-on: ubuntu-latest
     outputs:
@@ -41,40 +41,9 @@ jobs:
       - name: Detect changed paths
         id: detect
         if: steps.check_draft.outputs.skip_all != 'true'
-        run: |
-          # Get changed files
-          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+        run: .github/scripts/detect-changes.sh ${{ github.base_ref }}
 
-          # Check if only docs/config changed
-          if echo "$CHANGED_FILES" | grep -qvE '^(README\.md|docs/|\.github/|\.husky/|\.vscode/|\.zed/|\.ruler/|.*\.md$|LICENSE|\.gitignore|\.editorconfig)'; then
-            echo "skip_all=false" >> $GITHUB_OUTPUT
-          else
-            echo "skip_all=true" >> $GITHUB_OUTPUT
-            echo "Only docs/config files changed, skipping all jobs"
-            exit 0
-          fi
-
-          # Detect web changes (apps/web or root config affecting web)
-          if echo "$CHANGED_FILES" | grep -qE '^(apps/web/|package\.json|turbo\.json|tsconfig.*\.json|biome\.json|bun\.lock)'; then
-            echo "run_web=true" >> $GITHUB_OUTPUT
-            echo "run_e2e=true" >> $GITHUB_OUTPUT
-            echo "Web changes detected"
-          else
-            echo "run_web=false" >> $GITHUB_OUTPUT
-            echo "run_e2e=false" >> $GITHUB_OUTPUT
-            echo "No web changes detected"
-          fi
-
-          # Detect server changes (apps/server or root config affecting server)
-          if echo "$CHANGED_FILES" | grep -qE '^(apps/server/|package\.json|turbo\.json|tsconfig.*\.json|biome\.json|bun\.lock)'; then
-            echo "run_server=true" >> $GITHUB_OUTPUT
-            echo "Server changes detected"
-          else
-            echo "run_server=false" >> $GITHUB_OUTPUT
-            echo "No server changes detected"
-          fi
-
-  # Quality checks - runs on any code changes
+  # Lint, type check, security checks, and unit tests
   quality-checks:
     name: Quality Checks
     runs-on: blacksmith-2vcpu-ubuntu-2204
@@ -84,29 +53,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.2.20
-
-      # Cache bun dependencies - includes all workspace node_modules
-      - name: Cache bun dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.bun/install/cache
-            node_modules
-            apps/*/node_modules
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lockb') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      # Enable Turborepo remote caching using GitHub Actions cache
-      - name: Setup Turborepo cache
-        uses: rharkor/caching-for-turbo@v2.2.1
+      - name: Setup Bun with Turborepo cache
+        uses: ./.github/actions/setup-bun-turbo
 
       - name: Check for secrets
         run: bun run check:secrets
@@ -120,16 +68,15 @@ jobs:
       - name: Check types
         run: bun run check-types
 
-      # Server tests - only if server code changed
       - name: Run server tests
         if: needs.detect-changes.outputs.run_server == 'true'
         run: bun run --filter=@synthetic/server test:run
 
-      # Web tests - only if web code changed (currently just a placeholder)
       - name: Run web tests
         if: needs.detect-changes.outputs.run_web == 'true'
         run: bun run --filter=web test:run
 
+  # Build all packages
   build:
     name: Build
     runs-on: blacksmith-2vcpu-ubuntu-2204
@@ -139,34 +86,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.2.20
-
-      # Cache bun dependencies - includes all workspace node_modules
-      - name: Cache bun dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.bun/install/cache
-            node_modules
-            apps/*/node_modules
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lockb') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      # Enable Turborepo remote caching using GitHub Actions cache
-      - name: Setup Turborepo cache
-        uses: rharkor/caching-for-turbo@v2.2.1
+      - name: Setup Bun with Turborepo cache
+        uses: ./.github/actions/setup-bun-turbo
 
       - name: Build project
         run: bun run build
 
-  # E2E tests - only run when apps/web changes (visual regression tests with mocked data)
+  # E2E visual regression tests (only run when apps/web changes)
   e2e:
     name: E2E Tests (Visual Regression)
     runs-on: blacksmith-2vcpu-ubuntu-2204
@@ -176,31 +102,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.2.20
+      - name: Setup Bun with Turborepo cache
+        uses: ./.github/actions/setup-bun-turbo
 
-      # Cache bun dependencies - includes all workspace node_modules
-      - name: Cache bun dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.bun/install/cache
-            node_modules
-            apps/*/node_modules
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lockb') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      # Enable Turborepo remote caching using GitHub Actions cache
-      - name: Setup Turborepo cache
-        uses: rharkor/caching-for-turbo@v2.2.1
-
-      # Cache Playwright browsers
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
