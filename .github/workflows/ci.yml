@@ -17,45 +17,82 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Skip CI on draft PRs
-  check-skip:
+  # Detect which parts of the monorepo changed
+  detect-changes:
     runs-on: ubuntu-latest
     outputs:
-      skip: ${{ steps.check.outputs.skip }}
-      skip_e2e: ${{ steps.check_e2e.outputs.skip_e2e }}
+      skip_all: ${{ steps.detect.outputs.skip_all }}
+      run_web: ${{ steps.detect.outputs.run_web }}
+      run_server: ${{ steps.detect.outputs.run_server }}
+      run_e2e: ${{ steps.detect.outputs.run_e2e }}
     steps:
-      - id: check
-        run: echo "skip=${{ github.event.pull_request.draft == true }}" >> $GITHUB_OUTPUT
+      - name: Skip if draft PR
+        id: check_draft
+        run: |
+          if [ "${{ github.event.pull_request.draft }}" == "true" ]; then
+            echo "skip_all=true" >> $GITHUB_OUTPUT
+            echo "Draft PR detected, skipping all CI"
+            exit 0
+          fi
+          echo "skip_all=false" >> $GITHUB_OUTPUT
 
       - name: Checkout code
-        if: github.event_name == 'pull_request'
+        if: steps.check_draft.outputs.skip_all != 'true' && github.event_name == 'pull_request'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Skip E2E if only docs/config files changed
-      - id: check_e2e
-        if: github.event_name == 'pull_request'
+      - name: Detect changed paths
+        id: detect
+        if: steps.check_draft.outputs.skip_all != 'true'
         run: |
-          # Get list of changed files
+          # For pushes to main/master, run everything
+          if [ "${{ github.event_name }}" == "push" ]; then
+            echo "run_web=true" >> $GITHUB_OUTPUT
+            echo "run_server=true" >> $GITHUB_OUTPUT
+            echo "run_e2e=true" >> $GITHUB_OUTPUT
+            echo "skip_all=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Get changed files
           CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
 
-          # Check if any non-docs/config files changed
-          if echo "$CHANGED_FILES" | grep -qvE '^(README\.md|docs/|\.github/|\.husky/|\.vscode/|.*\.md$|LICENSE|\.gitignore|\.editorconfig)'; then
-            echo "skip_e2e=false" >> $GITHUB_OUTPUT
+          # Check if only docs/config changed
+          if echo "$CHANGED_FILES" | grep -qvE '^(README\.md|docs/|\.github/|\.husky/|\.vscode/|\.zed/|\.ruler/|.*\.md$|LICENSE|\.gitignore|\.editorconfig)'; then
+            echo "skip_all=false" >> $GITHUB_OUTPUT
           else
-            echo "skip_e2e=true" >> $GITHUB_OUTPUT
-            echo "Only docs/config files changed, skipping E2E tests"
+            echo "skip_all=true" >> $GITHUB_OUTPUT
+            echo "Only docs/config files changed, skipping all jobs"
+            exit 0
           fi
-        continue-on-error: true
 
-  # Combine lint, typecheck, security, and unit tests into one job
-  # This reduces setup overhead (checkout + bun setup + install) from 4x to 1x
+          # Detect web changes (apps/web or root config affecting web)
+          if echo "$CHANGED_FILES" | grep -qE '^(apps/web/|package\.json|turbo\.json|tsconfig.*\.json|biome\.json|bun\.lock)'; then
+            echo "run_web=true" >> $GITHUB_OUTPUT
+            echo "run_e2e=true" >> $GITHUB_OUTPUT
+            echo "Web changes detected"
+          else
+            echo "run_web=false" >> $GITHUB_OUTPUT
+            echo "run_e2e=false" >> $GITHUB_OUTPUT
+            echo "No web changes detected"
+          fi
+
+          # Detect server changes (apps/server or root config affecting server)
+          if echo "$CHANGED_FILES" | grep -qE '^(apps/server/|package\.json|turbo\.json|tsconfig.*\.json|biome\.json|bun\.lock)'; then
+            echo "run_server=true" >> $GITHUB_OUTPUT
+            echo "Server changes detected"
+          else
+            echo "run_server=false" >> $GITHUB_OUTPUT
+            echo "No server changes detected"
+          fi
+
+  # Quality checks - runs on any code changes
   quality-checks:
     name: Quality Checks
     runs-on: blacksmith-2vcpu-ubuntu-2204
-    needs: check-skip
-    if: needs.check-skip.outputs.skip != 'true'
+    needs: detect-changes
+    if: needs.detect-changes.outputs.skip_all != 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -91,14 +128,21 @@ jobs:
       - name: Check types
         run: bun run check-types
 
-      - name: Run unit tests
-        run: bun run test:run
+      # Server tests - only if server code changed
+      - name: Run server tests
+        if: needs.detect-changes.outputs.run_server == 'true'
+        run: bun run --filter=@synthetic/server test:run
+
+      # Web tests - only if web code changed (currently just a placeholder)
+      - name: Run web tests
+        if: needs.detect-changes.outputs.run_web == 'true'
+        run: bun run --filter=web test:run
 
   build:
     name: Build
     runs-on: blacksmith-2vcpu-ubuntu-2204
-    needs: check-skip
-    if: needs.check-skip.outputs.skip != 'true'
+    needs: detect-changes
+    if: needs.detect-changes.outputs.skip_all != 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -134,11 +178,12 @@ jobs:
       - name: Build project
         run: bun run build
 
+  # E2E tests - only run when apps/web changes (visual regression tests with mocked data)
   e2e:
-    name: E2E Tests
+    name: E2E Tests (Visual Regression)
     runs-on: blacksmith-2vcpu-ubuntu-2204
-    needs: [check-skip, build]
-    if: needs.check-skip.outputs.skip != 'true' && needs.check-skip.outputs.skip_e2e != 'true'
+    needs: [detect-changes, build]
+    if: needs.detect-changes.outputs.skip_all != 'true' && needs.detect-changes.outputs.run_e2e == 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
