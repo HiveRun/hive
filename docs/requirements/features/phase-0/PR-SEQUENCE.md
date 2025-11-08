@@ -85,6 +85,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - [x] Can create construct via UI form with real database storage
 - [x] Construct list shows basic info from database
 - [x] Can delete constructs from UI and database
+- [x] Can bulk delete constructs from UI and database
 - [x] Can update construct details (name, description)
 - [x] E2E tests pass for full construct management workflow
 - [x] Database schema ready for worktree extension in PR #3

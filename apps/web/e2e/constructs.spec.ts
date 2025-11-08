@@ -1,5 +1,9 @@
 import { expect, type Page, test } from "./utils/app-test";
 
+import {
+  constructSnapshotFixture,
+  createConstructFixture,
+} from "./utils/construct-fixture";
 import { setTheme } from "./utils/theme";
 
 const constructButton = 'a:has-text("New Construct")';
@@ -38,6 +42,35 @@ test.describe("Constructs Page", () => {
   test("constructs list page loads", async ({ page }) => {
     await page.goto("/constructs/list");
     await expect(page.locator('h1:has-text("Constructs")')).toBeVisible();
+  });
+
+  test("shows bulk delete toolbar when selecting constructs", async ({
+    mockApi,
+    page,
+  }) => {
+    await mockApi({
+      constructs: [
+        constructSnapshotFixture[0],
+        createConstructFixture({
+          id: "secondary-construct",
+          name: "Secondary Construct",
+          workspacePath:
+            "/home/synthetic/.synthetic/constructs/secondary-construct",
+          createdAt: "2024-02-01T10:00:00.000Z",
+        }),
+      ],
+    });
+
+    await navigateToConstructs(page);
+    const toolbar = page.getByTestId("bulk-delete-toolbar");
+    await page.getByTestId("construct-select").first().click();
+    await expect(toolbar).toBeVisible();
+    await page.getByTestId("construct-select").nth(1).click();
+    await expect(page.getByTestId("confirm-bulk-delete")).toContainText(
+      "Delete 2"
+    );
+    await page.getByTestId("clear-selection").click();
+    await expect(toolbar).toHaveCount(0);
   });
 
   test("constructs new page loads independently", async ({ page }) => {
