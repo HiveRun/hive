@@ -136,6 +136,10 @@ export function ConstructList() {
     bulkDeleteMutation.mutate(Array.from(selectedConstructIds));
   };
 
+  const handleClearSelection = () => {
+    setSelectedConstructIds(new Set());
+  };
+
   const handleSelectAllToggle = () => {
     if (!constructs?.length) {
       return;
@@ -213,14 +217,25 @@ export function ConstructList() {
             </Button>
           )}
           {hasSelection && (
-            <Button
-              data-testid="delete-selected"
-              onClick={() => setIsBulkDialogOpen(true)}
-              type="button"
-              variant="destructive"
-            >
-              {bulkDeleteButtonLabel}
-            </Button>
+            <>
+              <Button
+                data-testid="clear-selection"
+                onClick={handleClearSelection}
+                type="button"
+                variant="outline"
+              >
+                Clear Selection
+              </Button>
+              <Button
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                data-testid="delete-selected"
+                onClick={() => setIsBulkDialogOpen(true)}
+                type="button"
+                variant="destructive"
+              >
+                {bulkDeleteButtonLabel}
+              </Button>
+            </>
           )}
           <Link to="/constructs/new">
             <Button type="button">

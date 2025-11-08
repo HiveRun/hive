@@ -63,10 +63,16 @@ test.describe("Constructs Page", () => {
 
     await navigateToConstructs(page);
     const deleteButton = page.getByTestId("delete-selected");
+    const clearButton = page.getByTestId("clear-selection");
     await page.getByTestId("construct-select").first().click();
     await expect(deleteButton).toBeVisible();
+    await expect(clearButton).toBeVisible();
     await expect(deleteButton).toContainText("Delete Selected (1)");
+    await clearButton.click();
+    await expect(deleteButton).toHaveCount(0);
+    await page.getByTestId("construct-select").first().click();
     await page.getByTestId("construct-select").nth(1).click();
+    await expect(deleteButton).toBeVisible();
     await expect(deleteButton).toContainText("Delete All (2)");
     await deleteButton.click();
     await expect(
