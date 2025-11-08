@@ -77,59 +77,98 @@ export function AgentChat({ constructId }: AgentChatProps) {
       `${API_BASE}/api/agents/sessions/${session.id}/events`
     );
 
-    eventSource.onmessage = (event) => {
+    const handleHistory = (event: MessageEvent<string>) => {
       try {
-        const payload = JSON.parse(event.data) as
-          | { type: "message"; message: AgentMessage }
-          | { type: "status"; status: string };
+        const payload = JSON.parse(event.data) as {
+          messages: AgentMessage[];
+        };
+        const normalized = payload.messages.map(normalizeMessage);
+        queryClient.setQueryData(messagesKey, normalized);
+      } catch (error) {
+        const title =
+          error instanceof Error
+            ? error.message
+            : "Failed to process agent history";
+        toast.error(title);
+      }
+    };
 
-        if (payload.type === "message") {
-          const normalizedMessage = normalizeMessage(payload.message);
-          queryClient.setQueryData<AgentMessage[] | undefined>(
-            messagesKey,
-            (prev) => {
-              if (!prev) {
-                return [normalizedMessage];
-              }
-              const index = prev.findIndex(
-                (existing) => existing.id === normalizedMessage.id
-              );
-              if (index === -1) {
-                return [...prev, normalizedMessage];
-              }
-              const next = [...prev];
-              next[index] = normalizedMessage;
-              return next;
+    const handleMessage = (event: MessageEvent<string>) => {
+      try {
+        const payload = JSON.parse(event.data) as {
+          type: "message";
+          message: AgentMessage;
+        };
+        const normalizedMessage = normalizeMessage(payload.message);
+        queryClient.setQueryData<AgentMessage[] | undefined>(
+          messagesKey,
+          (prev) => {
+            if (!prev) {
+              return [normalizedMessage];
             }
-          );
-        } else if (payload.type === "status") {
-          queryClient.setQueryData<AgentSession | null | undefined>(
-            sessionKey,
-            (prev) => {
-              if (!prev) {
-                return prev;
-              }
-              return {
-                ...prev,
-                status: payload.status,
-              };
+            const index = prev.findIndex(
+              (existing) => existing.id === normalizedMessage.id
+            );
+            if (index === -1) {
+              return [...prev, normalizedMessage];
             }
-          );
+            const next = [...prev];
+            next[index] = normalizedMessage;
+            return next;
+          }
+        );
+      } catch (error) {
+        const title =
+          error instanceof Error
+            ? error.message
+            : "Failed to process agent message";
+        toast.error(title);
+      }
+    };
+
+    const handleStatus = (event: MessageEvent<string>) => {
+      try {
+        const payload = JSON.parse(event.data) as {
+          type: "status";
+          status: string;
+          error?: string;
+        };
+        queryClient.setQueryData<AgentSession | null | undefined>(
+          sessionKey,
+          (prev) => {
+            if (!prev) {
+              return prev;
+            }
+            return {
+              ...prev,
+              status: payload.status,
+            };
+          }
+        );
+        if (payload.error) {
+          toast.error(payload.error);
         }
       } catch (error) {
         const title =
           error instanceof Error
             ? error.message
-            : "Failed to process agent event";
+            : "Failed to process agent status";
         toast.error(title);
       }
     };
+
+    eventSource.addEventListener("history", handleHistory);
+    eventSource.addEventListener("message", handleMessage);
+    eventSource.addEventListener("status", handleStatus);
 
     eventSource.onerror = () => {
       eventSource.close();
     };
 
     return () => {
+      eventSource.removeEventListener("history", handleHistory);
+      eventSource.removeEventListener("message", handleMessage);
+      eventSource.removeEventListener("status", handleStatus);
       eventSource.close();
     };
   }, [constructId, queryClient, session?.id]);

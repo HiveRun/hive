@@ -1,3 +1,4 @@
+import { logger } from "@bogeychan/elysia-logger";
 import { eq, inArray } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { db } from "../db";
@@ -19,6 +20,15 @@ const HTTP_STATUS = {
   INTERNAL_ERROR: 500,
 } as const;
 
+const LOGGER_CONFIG = {
+  level: process.env.LOG_LEVEL || "info",
+  autoLogging: false,
+  transport:
+    process.env.NODE_ENV !== "production"
+      ? { target: "pino-pretty" as const }
+      : undefined,
+} as const;
+
 function constructToResponse(construct: typeof constructs.$inferSelect) {
   return {
     id: construct.id,
@@ -31,6 +41,7 @@ function constructToResponse(construct: typeof constructs.$inferSelect) {
 }
 
 export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
+  .use(logger(LOGGER_CONFIG))
   .get(
     "/",
     async () => {
@@ -79,7 +90,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
   )
   .post(
     "/",
-    async ({ body, set }) => {
+    async ({ body, set, log }) => {
       try {
         const worktreeService = createWorktreeManager();
         const now = new Date();
@@ -108,7 +119,12 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
 
         set.status = HTTP_STATUS.CREATED;
         return constructToResponse(created);
-      } catch (_error) {
+      } catch (error) {
+        if (error instanceof Error) {
+          log.error(error, "Failed to create construct");
+        } else {
+          log.error({ error }, "Failed to create construct");
+        }
         set.status = HTTP_STATUS.INTERNAL_ERROR;
         return { message: "Failed to create construct" };
       }
@@ -128,7 +144,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
   )
   .delete(
     "/",
-    async ({ body, set }) => {
+    async ({ body, set, log }) => {
       try {
         const uniqueIds = [...new Set(body.ids)];
 
@@ -155,7 +171,12 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         await db.delete(constructs).where(inArray(constructs.id, idsToDelete));
 
         return { deletedIds: idsToDelete };
-      } catch (_error) {
+      } catch (error) {
+        if (error instanceof Error) {
+          log.error(error, "Failed to delete constructs");
+        } else {
+          log.error({ error }, "Failed to delete constructs");
+        }
         set.status = HTTP_STATUS.INTERNAL_ERROR;
         return { message: "Failed to delete constructs" };
       }
@@ -180,7 +201,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
   )
   .delete(
     "/:id",
-    async ({ params, set }) => {
+    async ({ params, set, log }) => {
       try {
         const result = await db
           .select()
@@ -205,7 +226,12 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         await db.delete(constructs).where(eq(constructs.id, params.id));
 
         return { message: "Construct deleted successfully" };
-      } catch (_error) {
+      } catch (error) {
+        if (error instanceof Error) {
+          log.error(error, "Failed to delete construct");
+        } else {
+          log.error({ error }, "Failed to delete construct");
+        }
         set.status = HTTP_STATUS.INTERNAL_ERROR;
         return { message: "Failed to delete construct" };
       }

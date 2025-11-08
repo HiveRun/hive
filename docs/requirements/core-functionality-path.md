@@ -162,25 +162,11 @@ interface ChatInterface {
 
 #### Database Schema
 ```sql
-CREATE TABLE agent_sessions (
-  id TEXT PRIMARY KEY,
-  construct_id TEXT NOT NULL,
-  provider TEXT NOT NULL DEFAULT 'opencode',
-  status TEXT NOT NULL DEFAULT 'starting',
-  started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  completed_at DATETIME,
-  FOREIGN KEY (construct_id) REFERENCES constructs(id)
-);
-
-CREATE TABLE agent_messages (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL,
-  role TEXT NOT NULL, -- 'user' | 'assistant' | 'system'
-  content TEXT NOT NULL,
-  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (session_id) REFERENCES agent_sessions(id)
-);
+ALTER TABLE constructs
+  ADD COLUMN opencode_session_id TEXT NULL;
 ```
+
+> Agent transcripts and message history live inside OpenCode's own datastore. Synthetic keeps only the `opencode_session_id` pointer so it can rehydrate sessions on demand.
 
 #### Key Implementation Details
 - **Extend existing constructs** with agent functionality
@@ -196,7 +182,7 @@ CREATE TABLE agent_messages (
 - Mock orchestrator works without credentials
 - Messages stream correctly to UI
 - Session operates within construct worktree
-- Transcripts persist to database
+- Transcripts persist via OpenCode's datastore (Synthetic can rehydrate by session ID)
 - **Integration tests with existing UI from Step 1**
 
 ---

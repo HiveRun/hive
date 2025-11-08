@@ -6,33 +6,27 @@ import {
   createOpencodeClient,
   createOpencodeServer,
   type Event,
+  type Message,
   type Part,
+  type Session,
 } from "@opencode-ai/sdk";
+import { eq } from "drizzle-orm";
 import { loadConfig } from "../config/loader";
 import type { SyntheticConfig, Template } from "../config/schema";
-import type { constructs } from "../schema/constructs";
-import { publishAgentEvent, subscribeAgentEvents } from "./events";
-import {
-  createAgentMessageRecord,
-  createAgentSessionRecord,
-  getAgentSessionByConstructId,
-  getAgentSessionById,
-  getConstructById,
-  linkLatestUserMessageToOpencode,
-  listAgentMessages,
-  updateAgentSessionStatus,
-  upsertAgentMessageRecord,
-} from "./store";
+import { db } from "../db";
+import { type Construct, constructs } from "../schema/constructs";
+import { publishAgentEvent } from "./events";
 import type {
   AgentMessageRecord,
   AgentMessageState,
   AgentSessionRecord,
-  AgentStreamEvent,
+  AgentSessionStatus,
 } from "./types";
 
 const AUTH_PATH = join(homedir(), ".local", "share", "opencode", "auth.json");
 
 const runtimeRegistry = new Map<string, RuntimeHandle>();
+const constructSessionMap = new Map<string, string>();
 let cachedConfigPromise: Promise<SyntheticConfig> | null = null;
 
 type DirectoryQuery = {
@@ -40,6 +34,15 @@ type DirectoryQuery = {
 };
 
 type RuntimeHandle = {
+  session: Session;
+  construct: Construct;
+  providerId: string;
+  modelId?: string;
+  directoryQuery: DirectoryQuery;
+  client: ReturnType<typeof createOpencodeClient>;
+  server: { close(): void };
+  abortController: AbortController;
+  status: AgentSessionStatus;
   sendMessage: (content: string) => Promise<AgentMessageRecord>;
   stop: () => Promise<void>;
 };
@@ -109,18 +112,98 @@ export async function ensureAgentSession(
   constructId: string,
   options?: { force?: boolean; useMock?: boolean }
 ): Promise<AgentSessionRecord> {
-  const wantsMock = options?.useMock === true;
+  const runtime = await ensureRuntimeForConstruct(constructId, options);
+  return toSessionRecord(runtime);
+}
 
-  if (!options?.force) {
-    const existing = await getAgentSessionByConstructId(constructId);
-    if (existing && (!wantsMock || existing.provider === "mock")) {
-      return existing;
+export async function fetchAgentSession(
+  sessionId: string
+): Promise<AgentSessionRecord | null> {
+  try {
+    const runtime = await ensureRuntimeForSession(sessionId);
+    return toSessionRecord(runtime);
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchAgentSessionForConstruct(
+  constructId: string
+): Promise<AgentSessionRecord | null> {
+  try {
+    const runtime = await ensureRuntimeForConstruct(constructId, {
+      force: false,
+    });
+    return toSessionRecord(runtime);
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchAgentMessages(
+  sessionId: string
+): Promise<AgentMessageRecord[]> {
+  const runtime = await ensureRuntimeForSession(sessionId);
+  return loadRemoteMessages(runtime);
+}
+
+export async function sendAgentMessage(
+  sessionId: string,
+  content: string
+): Promise<AgentMessageRecord> {
+  const runtime = await ensureRuntimeForSession(sessionId);
+  return runtime.sendMessage(content);
+}
+
+export async function stopAgentSession(sessionId: string): Promise<void> {
+  const runtime = runtimeRegistry.get(sessionId);
+  if (!runtime) {
+    return;
+  }
+
+  await runtime.stop();
+  runtimeRegistry.delete(sessionId);
+  constructSessionMap.delete(runtime.construct.id);
+}
+
+export async function ensureRuntimeForSession(
+  sessionId: string
+): Promise<RuntimeHandle> {
+  const existing = runtimeRegistry.get(sessionId);
+  if (existing) {
+    return existing;
+  }
+
+  const construct = await getConstructBySessionId(sessionId);
+  if (!construct) {
+    throw new Error("Agent session not found");
+  }
+
+  const runtime = await ensureRuntimeForConstruct(construct.id, {
+    force: false,
+  });
+  return runtime;
+}
+
+async function ensureRuntimeForConstruct(
+  constructId: string,
+  options?: { force?: boolean; useMock?: boolean }
+): Promise<RuntimeHandle> {
+  const currentSessionId = constructSessionMap.get(constructId);
+  if (currentSessionId && !options?.force) {
+    const activeRuntime = runtimeRegistry.get(currentSessionId);
+    if (activeRuntime) {
+      return activeRuntime;
     }
   }
 
   const construct = await getConstructById(constructId);
   if (!construct) {
     throw new Error("Construct not found");
+  }
+
+  if (options?.useMock) {
+    return startMockRuntime(construct);
   }
 
   const config = await getSyntheticConfig();
@@ -139,176 +222,98 @@ export async function ensureAgentSession(
     await ensureProviderCredentials(agentConfig.providerId);
   }
 
-  if (agentConfig.providerId === "mock") {
-    return startMockSession({
-      construct,
-      providerId: agentConfig.providerId,
-    });
-  }
-
-  return startOpencodeSession({
+  const runtime = await startOpencodeRuntime({
     construct,
-    template,
     providerId: agentConfig.providerId,
     modelId: agentConfig.modelId,
+    force: options?.force ?? false,
   });
+
+  constructSessionMap.set(construct.id, runtime.session.id);
+  runtimeRegistry.set(runtime.session.id, runtime);
+
+  return runtime;
 }
 
-export function fetchAgentSession(
-  sessionId: string
-): Promise<AgentSessionRecord | null> {
-  return getAgentSessionById(sessionId);
-}
-
-export function fetchAgentSessionForConstruct(
-  constructId: string
-): Promise<AgentSessionRecord | null> {
-  return getAgentSessionByConstructId(constructId);
-}
-
-export function fetchAgentMessages(sessionId: string) {
-  return listAgentMessages(sessionId);
-}
-
-export function sendAgentMessage(
-  sessionId: string,
-  content: string
-): Promise<AgentMessageRecord> {
-  const runtime = runtimeRegistry.get(sessionId);
-  if (!runtime) {
-    throw new Error(
-      "Agent session is not active. Restart the session to continue."
-    );
-  }
-
-  return runtime.sendMessage(content);
-}
-
-export async function stopAgentSession(sessionId: string): Promise<void> {
-  const runtime = runtimeRegistry.get(sessionId);
-  if (runtime) {
-    await runtime.stop();
-    runtimeRegistry.delete(sessionId);
-  }
-
-  await updateAgentSessionStatus(sessionId, "completed", { completed: true });
-  publishAgentEvent(sessionId, { type: "status", status: "completed" });
-}
-
-export function createAgentEventStream(
-  sessionId: string,
-  signal: AbortSignal
-): Response {
-  let unsubscribe: (() => void) | null = null;
-  let abortHandler: (() => void) | null = null;
-
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const encoder = new TextEncoder();
-      const send = (event: AgentStreamEvent) => {
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
-        );
-      };
-
-      unsubscribe = subscribeAgentEvents(sessionId, send);
-      abortHandler = () => {
-        unsubscribe?.();
-        controller.close();
-      };
-
-      signal.addEventListener("abort", abortHandler, { once: true });
+function startMockRuntime(construct: Construct): Promise<RuntimeHandle> {
+  const session: Session = {
+    id: `mock-${randomUUID()}`,
+    projectID: construct.id,
+    directory: construct.workspacePath,
+    title: construct.name,
+    version: "mock",
+    time: {
+      created: Date.now(),
+      updated: Date.now(),
     },
-    cancel() {
-      unsubscribe?.();
-      unsubscribe = null;
-      if (abortHandler) {
-        signal.removeEventListener("abort", abortHandler);
-        abortHandler = null;
-      }
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
-}
-
-async function startMockSession({
-  construct,
-  providerId,
-}: {
-  construct: typeof constructs.$inferSelect;
-  providerId: string;
-}): Promise<AgentSessionRecord> {
-  const session = await createAgentSessionRecord({
-    constructId: construct.id,
-    templateId: construct.templateId,
-    workspacePath: construct.workspacePath,
-    provider: providerId,
-    status: "idle",
-    opencodeSessionId: `mock-${randomUUID()}`,
-  });
+  };
 
   const runtime: RuntimeHandle = {
-    async sendMessage(content) {
-      const userMessage = await createAgentMessageRecord({
-        sessionId: session.id,
-        role: "user",
-        content,
-        state: "completed",
-      });
+    session,
+    construct,
+    providerId: "mock",
+    directoryQuery: { directory: construct.workspacePath },
+    client: createOpencodeClient(),
+    server: {
+      close: async () => {
+        /* no-op */
+      },
+    },
+    abortController: new AbortController(),
+    status: "idle",
+    sendMessage(content) {
+      const userMessage = createLocalUserMessage(session.id, content);
       publishAgentEvent(session.id, { type: "message", message: userMessage });
 
-      await updateAgentSessionStatus(session.id, "working");
-      publishAgentEvent(session.id, { type: "status", status: "working" });
+      setRuntimeStatus(runtime, "working");
 
       const assistantContent = `Mock response for construct ${construct.name}:\n${content}`;
-      const assistantMessage = await createAgentMessageRecord({
+      const assistantMessage: AgentMessageRecord = {
+        id: randomUUID(),
         sessionId: session.id,
         role: "assistant",
         content: assistantContent,
+        parts: [],
         state: "completed",
-      });
+        createdAt: new Date().toISOString(),
+      };
 
-      await updateAgentSessionStatus(session.id, "awaiting_input");
       publishAgentEvent(session.id, {
         type: "message",
         message: assistantMessage,
       });
-      publishAgentEvent(session.id, {
-        type: "status",
-        status: "awaiting_input",
-      });
 
-      return assistantMessage;
+      setRuntimeStatus(runtime, "awaiting_input");
+
+      return Promise.resolve(assistantMessage);
     },
-    async stop() {
-      // no-op
+    stop() {
+      setRuntimeStatus(runtime, "completed");
+      return Promise.resolve();
     },
   };
 
+  setRuntimeStatus(runtime, "idle");
+
   runtimeRegistry.set(session.id, runtime);
-  return session;
+  constructSessionMap.set(construct.id, session.id);
+
+  return Promise.resolve(runtime);
 }
 
-type OpenCodeSessionArgs = {
-  construct: typeof constructs.$inferSelect;
-  template: Template;
+type StartRuntimeArgs = {
+  construct: Construct;
   providerId: string;
   modelId?: string;
+  force: boolean;
 };
 
-async function startOpencodeSession({
+async function startOpencodeRuntime({
   construct,
-  template,
   providerId,
   modelId,
-}: OpenCodeSessionArgs): Promise<AgentSessionRecord> {
+  force,
+}: StartRuntimeArgs): Promise<RuntimeHandle> {
   const server = await createOpencodeServer({
     hostname: "127.0.0.1",
     port: 0,
@@ -319,92 +324,41 @@ async function startOpencodeSession({
   });
 
   const directoryQuery: DirectoryQuery = { directory: construct.workspacePath };
-
-  const sessionResult = await client.session.create({
-    body: {
-      title: construct.name,
-    },
-    query: directoryQuery,
+  const { session, created } = await resolveOpencodeSession({
+    client,
+    construct,
+    directoryQuery,
+    force,
   });
 
-  if (sessionResult.error || !sessionResult.data) {
-    await server.close();
-    throw new Error(
-      getRpcErrorMessage(
-        sessionResult.error,
-        "Failed to create OpenCode session"
-      )
-    );
+  if (created || construct.opencodeSessionId !== session.id) {
+    await db
+      .update(constructs)
+      .set({ opencodeSessionId: session.id })
+      .where(eq(constructs.id, construct.id));
+    construct.opencodeSessionId = session.id;
   }
 
-  const remoteSessionId = sessionResult.data.id;
-  const session = await createAgentSessionRecord({
-    constructId: construct.id,
-    templateId: template.id,
-    workspacePath: construct.workspacePath,
-    provider: providerId,
-    status: "starting",
-    opencodeSessionId: remoteSessionId,
-  });
-
-  const runtime = createOpencodeRuntime({
-    session,
-    server,
-    client,
-    directoryQuery,
-    providerId,
-    modelId,
-  });
-
-  runtimeRegistry.set(session.id, runtime);
-
-  await updateAgentSessionStatus(session.id, "idle");
-  publishAgentEvent(session.id, { type: "status", status: "idle" });
-
-  return session;
-}
-
-type CreateRuntimeArgs = {
-  session: AgentSessionRecord;
-  server: { close: () => void };
-  client: ReturnType<typeof createOpencodeClient>;
-  directoryQuery: DirectoryQuery;
-  providerId: string;
-  modelId?: string;
-};
-
-function createOpencodeRuntime({
-  session,
-  server,
-  client,
-  directoryQuery,
-  providerId,
-  modelId,
-}: CreateRuntimeArgs): RuntimeHandle {
   const abortController = new AbortController();
 
-  startEventStream({
+  const runtime: RuntimeHandle = {
     session,
-    client,
+    construct,
+    providerId,
+    modelId,
     directoryQuery,
+    client,
+    server,
     abortController,
-  });
-
-  return {
+    status: "idle",
     async sendMessage(content) {
-      const userMessage = await createAgentMessageRecord({
-        sessionId: session.id,
-        role: "user",
-        content,
-        state: "completed",
-      });
+      const userMessage = createLocalUserMessage(session.id, content);
       publishAgentEvent(session.id, { type: "message", message: userMessage });
 
-      await updateAgentSessionStatus(session.id, "working");
-      publishAgentEvent(session.id, { type: "status", status: "working" });
+      setRuntimeStatus(runtime, "working");
 
       const response = await client.session.prompt({
-        path: { id: session.opencodeSessionId },
+        path: { id: session.id },
         query: directoryQuery,
         body: {
           parts: [{ type: "text", text: content }],
@@ -422,26 +376,14 @@ function createOpencodeRuntime({
           response.error,
           "Agent prompt failed"
         );
-        await updateAgentSessionStatus(session.id, "error", {
-          error: errorMessage,
-        });
-        publishAgentEvent(session.id, {
-          type: "status",
-          status: "error",
-          error: errorMessage,
-        });
+        setRuntimeStatus(runtime, "error", errorMessage);
         throw new Error(errorMessage);
       }
 
-      const partsJson = JSON.stringify(response.data.parts ?? []);
-      const assistantMessage = await upsertAgentMessageRecord({
-        sessionId: session.id,
-        opencodeMessageId: response.data.info.id,
-        role: "assistant",
-        content: extractTextFromParts(response.data.parts),
-        parts: partsJson,
-        state: response.data.info.time?.completed ? "completed" : "streaming",
-      });
+      const assistantMessage = serializeMessage(
+        response.data.info,
+        response.data.parts
+      );
 
       publishAgentEvent(session.id, {
         type: "message",
@@ -449,11 +391,7 @@ function createOpencodeRuntime({
       });
 
       if (assistantMessage.state === "completed") {
-        await updateAgentSessionStatus(session.id, "awaiting_input");
-        publishAgentEvent(session.id, {
-          type: "status",
-          status: "awaiting_input",
-        });
+        setRuntimeStatus(runtime, "awaiting_input");
       }
 
       return assistantMessage;
@@ -461,23 +399,102 @@ function createOpencodeRuntime({
     async stop() {
       abortController.abort();
       await server.close();
+      setRuntimeStatus(runtime, "completed");
     },
   };
+
+  setRuntimeStatus(runtime, "idle");
+
+  startEventStream({
+    runtime,
+    client,
+    directoryQuery,
+    abortController,
+  });
+
+  return runtime;
 }
 
-type EventStreamArgs = {
-  session: AgentSessionRecord;
+type ResolveSessionArgs = {
   client: ReturnType<typeof createOpencodeClient>;
+  construct: Construct;
   directoryQuery: DirectoryQuery;
-  abortController: AbortController;
+  force: boolean;
 };
 
+async function resolveOpencodeSession({
+  client,
+  construct,
+  directoryQuery,
+  force,
+}: ResolveSessionArgs): Promise<{ session: Session; created: boolean }> {
+  if (!force && construct.opencodeSessionId) {
+    const existing = await getRemoteSession(
+      client,
+      directoryQuery,
+      construct.opencodeSessionId
+    );
+    if (existing) {
+      return { session: existing, created: false };
+    }
+  }
+
+  if (!force) {
+    const list = await client.session.list({ query: directoryQuery });
+    if (!list.error && list.data?.length) {
+      const latest = [...list.data].sort(
+        (a, b) => b.time.updated - a.time.updated
+      )[0];
+      if (latest) {
+        return { session: latest, created: false };
+      }
+    }
+  }
+
+  const created = await client.session.create({
+    body: {
+      title: construct.name,
+    },
+    query: directoryQuery,
+  });
+
+  if (created.error || !created.data) {
+    throw new Error(
+      getRpcErrorMessage(created.error, "Failed to create OpenCode session")
+    );
+  }
+
+  return { session: created.data, created: true };
+}
+
+async function getRemoteSession(
+  client: ReturnType<typeof createOpencodeClient>,
+  directoryQuery: DirectoryQuery,
+  sessionId: string
+): Promise<Session | null> {
+  const response = await client.session.get({
+    path: { id: sessionId },
+    query: directoryQuery,
+  });
+
+  if (response.error || !response.data) {
+    return null;
+  }
+
+  return response.data;
+}
+
 async function startEventStream({
-  session,
+  runtime,
   client,
   directoryQuery,
   abortController,
-}: EventStreamArgs) {
+}: {
+  runtime: RuntimeHandle;
+  client: ReturnType<typeof createOpencodeClient>;
+  directoryQuery: DirectoryQuery;
+  abortController: AbortController;
+}) {
   try {
     const events = await client.event.subscribe({
       query: directoryQuery,
@@ -487,7 +504,7 @@ async function startEventStream({
     for await (const event of events.stream) {
       await handleOpencodeEvent({
         event,
-        session,
+        runtime,
         client,
         directoryQuery,
       });
@@ -500,57 +517,51 @@ async function startEventStream({
 
 type HandleEventArgs = {
   event: Event;
-  session: AgentSessionRecord;
+  runtime: RuntimeHandle;
   client: ReturnType<typeof createOpencodeClient>;
   directoryQuery: DirectoryQuery;
 };
 
 async function handleOpencodeEvent({
   event,
-  session,
+  runtime,
   client,
   directoryQuery,
 }: HandleEventArgs) {
-  if (event.type === "message.updated") {
+  if (
+    event.type === "message.updated" ||
+    event.type === "message.part.updated"
+  ) {
     await syncRemoteMessage({
-      session,
+      runtime,
       client,
       directoryQuery,
-      messageId: event.properties.info.id,
-    });
-  } else if (event.type === "message.part.updated") {
-    await syncRemoteMessage({
-      session,
-      client,
-      directoryQuery,
-      messageId: event.properties.part.messageID,
+      messageId:
+        event.type === "message.updated"
+          ? event.properties.info.id
+          : event.properties.part.messageID,
     });
   } else if (event.type === "session.error") {
     const message = extractErrorMessage(event);
-    await updateAgentSessionStatus(session.id, "error", { error: message });
-    publishAgentEvent(session.id, {
-      type: "status",
-      status: "error",
-      error: message,
-    });
+    setRuntimeStatus(runtime, "error", message);
   }
 }
 
 type SyncArgs = {
-  session: AgentSessionRecord;
+  runtime: RuntimeHandle;
   client: ReturnType<typeof createOpencodeClient>;
   directoryQuery: DirectoryQuery;
   messageId: string;
 };
 
 async function syncRemoteMessage({
-  session,
+  runtime,
   client,
   directoryQuery,
   messageId,
 }: SyncArgs) {
   const response = await client.session.message({
-    path: { id: session.opencodeSessionId, messageID: messageId },
+    path: { id: runtime.session.id, messageID: messageId },
     query: directoryQuery,
   });
 
@@ -558,37 +569,42 @@ async function syncRemoteMessage({
     return;
   }
 
-  const parts = response.data.parts ?? [];
-  const content = extractTextFromParts(parts);
-  const serializedParts = JSON.stringify(parts);
-  const state = determineMessageState(response.data.info as MessageInfo);
+  const message = serializeMessage(response.data.info, response.data.parts);
+  publishAgentEvent(runtime.session.id, { type: "message", message });
 
-  if (response.data.info.role === "user") {
-    await linkLatestUserMessageToOpencode(session.id, response.data.info.id, {
-      content,
-      parts: serializedParts,
-    });
-    return;
+  if (message.state === "completed") {
+    setRuntimeStatus(runtime, "awaiting_input");
   }
+}
 
-  const updatedMessage = await upsertAgentMessageRecord({
-    sessionId: session.id,
-    opencodeMessageId: response.data.info.id,
-    role: "assistant",
-    content,
-    parts: serializedParts,
-    state,
+async function loadRemoteMessages(
+  runtime: RuntimeHandle
+): Promise<AgentMessageRecord[]> {
+  const response = await runtime.client.session.messages({
+    path: { id: runtime.session.id },
+    query: runtime.directoryQuery,
   });
 
-  publishAgentEvent(session.id, { type: "message", message: updatedMessage });
-
-  if (state === "completed") {
-    await updateAgentSessionStatus(session.id, "awaiting_input");
-    publishAgentEvent(session.id, {
-      type: "status",
-      status: "awaiting_input",
-    });
+  if (response.error || !response.data) {
+    throw new Error(
+      getRpcErrorMessage(response.error, "Failed to load agent messages")
+    );
   }
+
+  return response.data.map(({ info, parts }) => serializeMessage(info, parts));
+}
+
+function serializeMessage(info: Message, parts: Part[]): AgentMessageRecord {
+  const contentText = extractTextFromParts(parts);
+  return {
+    id: info.id,
+    sessionId: info.sessionID,
+    role: info.role,
+    content: contentText.length ? contentText : null,
+    parts,
+    state: determineMessageState(info),
+    createdAt: new Date(info.time.created).toISOString(),
+  };
 }
 
 function extractTextFromParts(parts: Part[] | undefined): string {
@@ -611,22 +627,51 @@ function extractTextFromParts(parts: Part[] | undefined): string {
     .join("\n");
 }
 
-type MessageInfo = {
-  time?: {
-    completed?: number;
-    created?: number;
-  };
-  error?: unknown;
-};
-
-function determineMessageState(message: MessageInfo): AgentMessageState {
-  if (message?.error) {
+function determineMessageState(message: Message): AgentMessageState {
+  if (message.role === "assistant" && message.error) {
     return "error";
   }
-  if (message?.time?.completed) {
-    return "completed";
+  if (message.role === "assistant" && !message.time.completed) {
+    return "streaming";
   }
-  return "streaming";
+  return "completed";
+}
+
+function createLocalUserMessage(
+  sessionId: string,
+  content: string
+): AgentMessageRecord {
+  return {
+    id: randomUUID(),
+    sessionId,
+    role: "user",
+    content,
+    parts: [],
+    state: "completed",
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function toSessionRecord(runtime: RuntimeHandle): AgentSessionRecord {
+  return {
+    id: runtime.session.id,
+    constructId: runtime.construct.id,
+    templateId: runtime.construct.templateId,
+    provider: runtime.providerId,
+    status: runtime.status,
+    workspacePath: runtime.construct.workspacePath,
+    createdAt: new Date(runtime.session.time.created).toISOString(),
+    updatedAt: new Date(runtime.session.time.updated).toISOString(),
+  };
+}
+
+function setRuntimeStatus(
+  runtime: RuntimeHandle,
+  status: AgentSessionStatus,
+  error?: string
+) {
+  runtime.status = status;
+  publishAgentEvent(runtime.session.id, { type: "status", status, error });
 }
 
 function extractErrorMessage(event: Event): string {
@@ -656,4 +701,24 @@ function getRpcErrorMessage(error: unknown, fallback: string): string {
     }
   }
   return fallback;
+}
+
+async function getConstructById(id: string): Promise<Construct | null> {
+  const [construct] = await db
+    .select()
+    .from(constructs)
+    .where(eq(constructs.id, id))
+    .limit(1);
+  return construct ?? null;
+}
+
+async function getConstructBySessionId(
+  sessionId: string
+): Promise<Construct | null> {
+  const [construct] = await db
+    .select()
+    .from(constructs)
+    .where(eq(constructs.opencodeSessionId, sessionId))
+    .limit(1);
+  return construct ?? null;
 }

@@ -1,3 +1,4 @@
+import type { ExecException } from "node:child_process";
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { cp, mkdir, rm } from "node:fs/promises";
@@ -83,14 +84,48 @@ export function createWorktreeManager(
     }
   }
 
+  type ExecError = ExecException & {
+    stdout?: Buffer | string;
+    stderr?: Buffer | string;
+  };
+
+  function formatExecError(command: string, error: unknown): Error {
+    if (error && typeof error === "object") {
+      const execError = error as ExecError;
+      const stderr = execError.stderr
+        ? execError.stderr.toString().trim()
+        : undefined;
+      const stdout = execError.stdout
+        ? execError.stdout.toString().trim()
+        : undefined;
+      const baseMessage = execError.message ?? String(error);
+      const details = [stderr, stdout].filter(Boolean).join(" | ");
+      return new Error(
+        [
+          `Git command failed: git ${command}`,
+          baseMessage,
+          details ? `DETAILS: ${details}` : undefined,
+        ]
+          .filter(Boolean)
+          .join(" | ")
+      );
+    }
+    return new Error(`Git command failed: git ${command} | ${String(error)}`);
+  }
+
   /**
    * Execute a git command and return output
    */
   function git(...args: string[]): string {
-    return execSync(`git ${args.join(" ")}`, {
-      encoding: "utf8",
-      cwd: baseDir,
-    }).trim();
+    const command = args.join(" ");
+    try {
+      return execSync(`git ${command}`, {
+        encoding: "utf8",
+        cwd: baseDir,
+      }).trim();
+    } catch (error) {
+      throw formatExecError(command, error);
+    }
   }
 
   /**

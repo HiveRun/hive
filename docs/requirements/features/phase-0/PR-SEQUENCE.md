@@ -145,8 +145,8 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - **Extend existing UI** from Step 2 with chat interface
 
 ### Persistence Added
-- `agent_sessions` table (id, construct_id, provider, status, started_at, completed_at)
-- `agent_messages` table (id, session_id, role, content, timestamp)
+- `constructs` table gains `opencode_session_id`
+- Agent transcripts/messages remain inside OpenCode's datastore (Synthetic rehydrates via stored session ID)
 
 ### Tests
 - Session creation with mock orchestrator
@@ -164,8 +164,8 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - [/] Can create OpenCode session with SDK via UI
 - [/] Messages stream in real-time to UI chat interface
 - [/] Mock orchestrator works without credentials
-- [/] Session state tracked in database and reflected in UI
-- [/] Transcripts persist to database and display in UI
+- [/] Session status reflected in UI via runtime + OpenCode session metadata
+- [/] Transcripts persist through OpenCode and display in UI
 - [/] Agent operates within construct worktree
 - [/] End-to-end test: UI → agent session → real responses
 

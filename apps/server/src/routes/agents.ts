@@ -1,6 +1,6 @@
-import { Elysia, t } from "elysia";
+import { Elysia, sse, t } from "elysia";
+import { subscribeAgentEvents } from "../agents/events";
 import {
-  createAgentEventStream,
   ensureAgentSession,
   fetchAgentMessages,
   fetchAgentSession,
@@ -8,7 +8,11 @@ import {
   sendAgentMessage,
   stopAgentSession,
 } from "../agents/service";
-import type { AgentMessageRecord, AgentSessionRecord } from "../agents/types";
+import type {
+  AgentMessageRecord,
+  AgentSessionRecord,
+  AgentStreamEvent,
+} from "../agents/types";
 import {
   AgentMessageListResponseSchema,
   AgentMessageSchema,
@@ -131,7 +135,20 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   )
   .get(
     "/sessions/:id/events",
-    ({ params, request }) => createAgentEventStream(params.id, request.signal),
+    async ({ params, request }) => {
+      const history = await fetchAgentMessages(params.id);
+      const iterator = createEventIterator(params.id, request.signal);
+
+      async function* stream() {
+        yield sse({ event: "history", data: { messages: history } });
+
+        for await (const event of iterator) {
+          yield sse({ event: event.type, data: event });
+        }
+      }
+
+      return stream();
+    },
     {
       params: t.Object({ id: t.String() }),
       response: {
@@ -167,11 +184,9 @@ function formatSession(session: AgentSessionRecord) {
     provider: session.provider,
     status: session.status,
     workspacePath: session.workspacePath,
-    createdAt: session.createdAt.toISOString(),
-    updatedAt: session.updatedAt.toISOString(),
-    completedAt: session.completedAt
-      ? session.completedAt.toISOString()
-      : undefined,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    completedAt: session.completedAt,
   };
 }
 
@@ -182,19 +197,66 @@ function formatMessage(message: AgentMessageRecord) {
     role: message.role,
     content: message.content ?? null,
     state: message.state,
-    createdAt: message.createdAt.toISOString(),
-    parts: parseMessageParts(message.parts),
+    createdAt: message.createdAt,
+    parts: message.parts,
   };
 }
 
-function parseMessageParts(parts: string | null | undefined) {
-  if (!parts) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(parts);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+function createEventIterator(sessionId: string, signal: AbortSignal) {
+  const queue: AgentStreamEvent[] = [];
+  let resolver: ((value: AgentStreamEvent | null) => void) | null = null;
+  let finished = false;
+
+  const unsubscribe = subscribeAgentEvents(sessionId, (event) => {
+    if (resolver) {
+      resolver(event);
+      resolver = null;
+    } else {
+      queue.push(event);
+    }
+  });
+
+  const cleanup = () => {
+    if (finished) {
+      return;
+    }
+    finished = true;
+    unsubscribe();
+    if (resolver) {
+      resolver(null);
+      resolver = null;
+    }
+  };
+
+  signal.addEventListener("abort", cleanup, { once: true });
+
+  return {
+    async *[Symbol.asyncIterator]() {
+      try {
+        while (!finished) {
+          if (queue.length) {
+            const queued = queue.shift();
+            if (queued) {
+              yield queued;
+              continue;
+            }
+          }
+
+          const nextEvent = await new Promise<AgentStreamEvent | null>(
+            (resolve) => {
+              resolver = resolve;
+            }
+          );
+
+          if (!nextEvent) {
+            break;
+          }
+
+          yield nextEvent;
+        }
+      } finally {
+        cleanup();
+      }
+    },
+  };
 }

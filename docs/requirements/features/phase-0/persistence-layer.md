@@ -8,7 +8,7 @@
 > 
 > **What's Implemented Instead**:
 > - **Step 2**: Basic `constructs` table (minimal schema)
-> - **Step 4**: `agent_sessions` and `agent_messages` tables
+> - **Step 4**: `constructs` table stores `opencode_session_id` (OpenCode persists transcripts)
 > - **Step 3**: Adds `workspace_path` to constructs table
 
 > **Template Storage**: Templates are intentionally stored as files (`synthetic.config.ts`) rather than in the database. This architectural decision prioritizes version control, type safety, and developer experience over dynamic template management.
@@ -23,7 +23,7 @@ This feature represents the **comprehensive persistence system** that was origin
 ### What's Implemented Instead
 - **Step 2**: Basic `constructs` table with minimal schema
 - **Step 3**: Adds `workspace_path` column for worktree support
-- **Step 4**: `agent_sessions` and `agent_messages` tables for agent functionality
+- Agent transcript persistence now lives entirely inside OpenCode's store. Synthetic no longer creates local `agent_sessions` / `agent_messages` tables; the backend proxies directly to OpenCode when transcript history is needed.
 
 ### When This Will Be Implemented
 The complete persistence system with all tables, indexes, and optimizations will be implemented in **Phase 1A** after core functionality path is complete and validated.

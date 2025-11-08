@@ -39,7 +39,7 @@
 - `@opencode-ai/sdk` integration
 - Mock orchestrator fallback for development
 - Message streaming and session management
-- **Persistence**: `agent_sessions` and `agent_messages` tables
+- **Persistence**: `constructs` table stores `opencode_session_id`; transcripts remain in OpenCode's datastore (no local agent tables)
 - Tests using mock orchestrator
 
 ### Deferred Features (Prepared but Not Implemented)

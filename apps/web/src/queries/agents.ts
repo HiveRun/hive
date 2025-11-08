@@ -42,7 +42,6 @@ export const agentQueries = {
   messages: (sessionId: string | null) => ({
     queryKey: ["agent-messages", sessionId] as const,
     enabled: Boolean(sessionId),
-    refetchInterval: 2000,
     queryFn: async (): Promise<AgentMessage[]> => {
       if (!sessionId) {
         return [];

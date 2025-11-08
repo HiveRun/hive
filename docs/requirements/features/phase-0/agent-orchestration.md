@@ -18,6 +18,7 @@ This feature represents **advanced agent orchestration** that was originally pla
 ### What's Implemented Instead
 - **PR #4**: Simplified agent integration with basic OpenCode SDK integration
 - Basic chat interface without advanced orchestration features
+- Agent transcripts persist inside OpenCode's data store; Synthetic keeps no local `agent_sessions`/`agent_messages` tables and rehydrates from OpenCode when needed
 
 ### When This Will Be Implemented
 This comprehensive orchestration system will be implemented in **Phase 1A** after core functionality path is complete and validated.
@@ -58,6 +59,7 @@ This comprehensive orchestration system will be implemented in **Phase 1A** afte
 - Maintain session registry with status tracking for all active constructs
 - Handle session lifecycle: creation, activation, suspension, termination
 - Provide session recovery mechanisms for interrupted constructs
+- Treat OpenCode's built-in session store as the source of truth; API keeps only an in-memory registry and rehydrates by querying OpenCode on demand
 
 ### Authentication & Security
 - Validate OpenCode credentials before session creation
