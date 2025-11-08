@@ -64,8 +64,7 @@ export default defineConfig({
     timeout: WEB_SERVER_TIMEOUT_MS,
     env: {
       ...process.env,
-      VITE_ENABLE_DEVTOOLS: "false",
-      REACT_APP_SHOW_DEV_TOOLS: "false",
+      VITE_DISABLE_DEVTOOLS: "true",
     },
   },
 });
