@@ -1,8 +1,9 @@
 import { execSync } from "node:child_process";
+import type { Dirent } from "node:fs";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { copyFile, mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import type { Template } from "../config/schema";
 
 // Git worktree parsing constants
@@ -15,6 +16,19 @@ const REFS_HEADS_PREFIX = "refs/heads/";
 const WORKTREE_PREFIX_LENGTH = WORKTREE_PREFIX.length;
 const HEAD_PREFIX_LENGTH = HEAD_PREFIX.length;
 const BRANCH_PREFIX_LENGTH = BRANCH_PREFIX.length;
+
+const POSIX_SEPARATOR = "/";
+const IGNORED_DIRECTORIES = new Set([
+  ".git",
+  "node_modules",
+  ".synthetic",
+  ".turbo",
+]);
+
+type DirectoryFrame = {
+  absPath: string;
+  relativePath: string;
+};
 
 export type WorktreeInfo = {
   id: string;
@@ -125,37 +139,115 @@ export function createWorktreeManager(
   }
 
   /**
-   * Find paths that match include patterns using glob matching
+   * Find paths that match include patterns recursively
    */
   function getIncludedPaths(
     mainRepoPath: string,
     includePatterns: string[]
   ): string[] {
-    const includedPaths: Set<string> = new Set();
-
-    for (const pattern of includePatterns) {
-      try {
-        // Convert glob pattern to regex for simple matching
-        const regexPattern = pattern
-          .replace(/\./g, "\\.") // Escape dots
-          .replace(/\*/g, ".*"); // Convert * to .*
-
-        const regex = new RegExp(`^${regexPattern}$`);
-
-        // Check if pattern matches any files/directories in root
-        const entries = readdirSync(mainRepoPath, { withFileTypes: true });
-
-        for (const entry of entries) {
-          if (regex.test(entry.name)) {
-            includedPaths.add(entry.name);
-          }
-        }
-      } catch (error) {
-        logWarn(`Failed to match pattern "${pattern}"`, error);
-      }
+    if (includePatterns.length === 0) {
+      return [];
     }
 
+    const includedPaths = new Set<string>();
+    const matchers = includePatterns.map(createPatternMatcher);
+
+    function shouldInclude(path: string, basename: string): boolean {
+      return matchers.some((matcher) => matcher(path, basename));
+    }
+
+    walkRepository(mainRepoPath, (relativePath, basename) => {
+      const normalizedPath = toPosixPath(relativePath);
+      if (shouldInclude(normalizedPath, basename)) {
+        includedPaths.add(normalizedPath);
+      }
+    });
+
     return Array.from(includedPaths);
+  }
+
+  function walkRepository(
+    rootPath: string,
+    visitFile: (relativePath: string, basename: string) => void
+  ): void {
+    const stack: DirectoryFrame[] = [{ absPath: rootPath, relativePath: "" }];
+
+    while (stack.length > 0) {
+      const frame = stack.pop();
+      if (!frame) {
+        continue;
+      }
+
+      processDirectoryFrame(frame, stack, visitFile);
+    }
+  }
+
+  function processDirectoryFrame(
+    frame: DirectoryFrame,
+    stack: DirectoryFrame[],
+    visitFile: (relativePath: string, basename: string) => void
+  ): void {
+    const entries = readDirectoryEntries(frame.absPath);
+    if (!entries) {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)) {
+        continue;
+      }
+
+      const entryRelativePath = frame.relativePath
+        ? join(frame.relativePath, entry.name)
+        : entry.name;
+
+      if (entry.isDirectory()) {
+        stack.push({
+          absPath: join(frame.absPath, entry.name),
+          relativePath: entryRelativePath,
+        });
+        continue;
+      }
+
+      visitFile(entryRelativePath, entry.name);
+    }
+  }
+
+  function readDirectoryEntries(dirPath: string): Dirent[] | null {
+    try {
+      return readdirSync(dirPath, { withFileTypes: true });
+    } catch (error) {
+      logWarn(`Failed to read directory ${dirPath}`, error);
+      return null;
+    }
+  }
+
+  function createPatternMatcher(
+    pattern: string
+  ): (path: string, basename: string) => boolean {
+    const normalizedPattern = toPosixPath(pattern);
+    const isBasenamePattern = !normalizedPattern.includes(POSIX_SEPARATOR);
+    const regex = globToRegex(normalizedPattern);
+
+    if (isBasenamePattern) {
+      return (_path, basename) => regex.test(basename);
+    }
+
+    return (path) => regex.test(path);
+  }
+
+  function globToRegex(pattern: string): RegExp {
+    const escaped = pattern
+      .replace(/[-[\]{}()+?.,\\^$|#\s]/g, "\\$&")
+      .replace(/\*\*/g, "§§DOUBLESTAR§§")
+      .replace(/\*/g, "[^/]*")
+      .replace(/§§DOUBLESTAR§§/g, ".*");
+
+    return new RegExp(`^${escaped}$`);
+  }
+
+  function toPosixPath(value: string): string {
+    return value.split(sep).join(POSIX_SEPARATOR);
   }
 
   /**
