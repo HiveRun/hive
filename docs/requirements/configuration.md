@@ -7,9 +7,9 @@ This document covers the high-level concepts for workspace configuration. For de
 ### Workspace Configuration
 - Locate a `synthetic.config.ts` at the repo root exporting strongly typed workspace settings (one per project repository).
 - Ship a small runtime+types package (`@synthetic/config`) that exposes `defineSyntheticConfig` for type-safe configuration.
-- `opencode`: workspace ID and authentication token reference used by every construct session.
+- `opencode`: defines the workspace ID, optional token reference, and default provider/model used when launching agent sessions (`workspaceId`, `token`, `defaultProvider`, `defaultModel`).
 - `promptSources`: defines the reusable prompt fragments that Synthetic concatenates into agent prompts.
-- `templates`: reusable construct templates that describe services, environments, and agent types.
+- `templates`: reusable construct templates that describe services, environments, and agent types. Each template can now include an `agent` block `{ providerId, modelId? }` to override the global defaults.
 
 ### Configuration Features
 

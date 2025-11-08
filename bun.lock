@@ -24,6 +24,7 @@
       "dependencies": {
         "@bogeychan/elysia-logger": "^0.1.10",
         "@elysiajs/cors": "^1.3.3",
+        "@opencode-ai/sdk": "^1.0.45",
         "dotenv": "catalog:",
         "drizzle-orm": "^0.44.2",
         "elysia": "^1.3.21",
@@ -380,6 +381,8 @@
     "@oozcitak/url": ["@oozcitak/url@1.0.4", "", { "dependencies": { "@oozcitak/infra": "1.0.8", "@oozcitak/util": "8.3.8" } }, "sha512-kDcD8y+y3FCSOvnBI6HJgl00viO/nGbQoCINmQ0h98OhnGITrWR3bOGfwYCthgcrV8AnTJz8MzslTQbC3SOAmw=="],
 
     "@oozcitak/util": ["@oozcitak/util@8.3.8", "", {}, "sha512-T8TbSnGsxo6TDBJx/Sgv/BlVJL3tshxZP7Aq5R1mSnM5OcHY2dQaxLMu2+E8u3gN0MLOzdjurqN4ZRVuzQycOQ=="],
+
+    "@opencode-ai/sdk": ["@opencode-ai/sdk@1.0.45", "", {}, "sha512-8IgL2kvApmKpyjt0+GV/UUQUXYbBjuu5REErgNidlrvWyQa+9tFJM/sJvB7MbPKWLo73URqJ+NWpkCw9hh0gMQ=="],
 
     "@oxc-project/types": ["@oxc-project/types@0.95.0", "", {}, "sha512-vACy7vhpMPhjEJhULNxrdR0D943TkA/MigMpJCHmBHvMXxRStRi/dPtTlfQ3uDwWSzRpT8z+7ImjZVf8JWBocQ=="],
 

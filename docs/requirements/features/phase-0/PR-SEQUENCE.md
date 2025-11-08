@@ -161,13 +161,13 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - Step 3 (needs worktrees to run agents in)
 
 ### Acceptance Criteria
-- [ ] Can create OpenCode session with SDK via UI
-- [ ] Messages stream in real-time to UI chat interface
-- [ ] Mock orchestrator works without credentials
-- [ ] Session state tracked in database and reflected in UI
-- [ ] Transcripts persist to database and display in UI
-- [ ] Agent operates within construct worktree
-- [ ] End-to-end test: UI → agent session → real responses
+- [/] Can create OpenCode session with SDK via UI
+- [/] Messages stream in real-time to UI chat interface
+- [/] Mock orchestrator works without credentials
+- [/] Session state tracked in database and reflected in UI
+- [/] Transcripts persist to database and display in UI
+- [/] Agent operates within construct worktree
+- [/] End-to-end test: UI → agent session → real responses
 
 ---
 

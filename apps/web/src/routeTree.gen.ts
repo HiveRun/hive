@@ -16,6 +16,7 @@ import { Route as ConstructsRouteImport } from './routes/constructs'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ConstructsNewRouteImport } from './routes/constructs/new'
 import { Route as ConstructsListRouteImport } from './routes/constructs/list'
+import { Route as ConstructsConstructIdRouteImport } from './routes/constructs/$constructId'
 
 const TestErrorRoute = TestErrorRouteImport.update({
   id: '/test-error',
@@ -52,6 +53,11 @@ const ConstructsListRoute = ConstructsListRouteImport.update({
   path: '/list',
   getParentRoute: () => ConstructsRoute,
 } as any)
+const ConstructsConstructIdRoute = ConstructsConstructIdRouteImport.update({
+  id: '/$constructId',
+  path: '/$constructId',
+  getParentRoute: () => ConstructsRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -59,6 +65,7 @@ export interface FileRoutesByFullPath {
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
+  '/constructs/$constructId': typeof ConstructsConstructIdRoute
   '/constructs/list': typeof ConstructsListRoute
   '/constructs/new': typeof ConstructsNewRoute
 }
@@ -68,6 +75,7 @@ export interface FileRoutesByTo {
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
+  '/constructs/$constructId': typeof ConstructsConstructIdRoute
   '/constructs/list': typeof ConstructsListRoute
   '/constructs/new': typeof ConstructsNewRoute
 }
@@ -78,6 +86,7 @@ export interface FileRoutesById {
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
+  '/constructs/$constructId': typeof ConstructsConstructIdRoute
   '/constructs/list': typeof ConstructsListRoute
   '/constructs/new': typeof ConstructsNewRoute
 }
@@ -89,6 +98,7 @@ export interface FileRouteTypes {
     | '/example-dashboard'
     | '/templates'
     | '/test-error'
+    | '/constructs/$constructId'
     | '/constructs/list'
     | '/constructs/new'
   fileRoutesByTo: FileRoutesByTo
@@ -98,6 +108,7 @@ export interface FileRouteTypes {
     | '/example-dashboard'
     | '/templates'
     | '/test-error'
+    | '/constructs/$constructId'
     | '/constructs/list'
     | '/constructs/new'
   id:
@@ -107,6 +118,7 @@ export interface FileRouteTypes {
     | '/example-dashboard'
     | '/templates'
     | '/test-error'
+    | '/constructs/$constructId'
     | '/constructs/list'
     | '/constructs/new'
   fileRoutesById: FileRoutesById
@@ -170,15 +182,24 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConstructsListRouteImport
       parentRoute: typeof ConstructsRoute
     }
+    '/constructs/$constructId': {
+      id: '/constructs/$constructId'
+      path: '/$constructId'
+      fullPath: '/constructs/$constructId'
+      preLoaderRoute: typeof ConstructsConstructIdRouteImport
+      parentRoute: typeof ConstructsRoute
+    }
   }
 }
 
 interface ConstructsRouteChildren {
+  ConstructsConstructIdRoute: typeof ConstructsConstructIdRoute
   ConstructsListRoute: typeof ConstructsListRoute
   ConstructsNewRoute: typeof ConstructsNewRoute
 }
 
 const ConstructsRouteChildren: ConstructsRouteChildren = {
+  ConstructsConstructIdRoute: ConstructsConstructIdRoute,
   ConstructsListRoute: ConstructsListRoute,
   ConstructsNewRoute: ConstructsNewRoute,
 }

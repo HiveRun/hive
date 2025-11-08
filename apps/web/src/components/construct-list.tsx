@@ -422,6 +422,16 @@ function ConstructCard({
         <div className="text-muted-foreground text-xs">
           <p>Created: {createdLabel}</p>
         </div>
+        <div className="flex justify-end">
+          <Link
+            params={{ constructId: construct.id }}
+            to="/constructs/$constructId"
+          >
+            <Button size="sm" type="button" variant="outline">
+              Open
+            </Button>
+          </Link>
+        </div>
       </CardContent>
     </Card>
   );

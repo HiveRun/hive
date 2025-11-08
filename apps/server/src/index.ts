@@ -2,6 +2,7 @@ import "dotenv/config";
 import { logger } from "@bogeychan/elysia-logger";
 import { cors } from "@elysiajs/cors";
 import { Elysia } from "elysia";
+import { agentsRoutes } from "./routes/agents";
 import { constructsRoutes } from "./routes/constructs";
 import { templatesRoutes } from "./routes/templates";
 
@@ -41,6 +42,7 @@ const app = new Elysia()
   }))
   .use(templatesRoutes)
   .use(constructsRoutes)
+  .use(agentsRoutes)
   .listen(PORT);
 
 export type App = typeof app;
