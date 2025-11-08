@@ -213,7 +213,7 @@ export function ConstructList() {
               type="button"
               variant="outline"
             >
-              {isAllSelected ? "Clear Selection" : "Select All"}
+              Select All
             </Button>
           )}
           {hasSelection && (
