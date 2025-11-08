@@ -1,9 +1,9 @@
 import { execSync } from "node:child_process";
-import type { Dirent } from "node:fs";
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { copyFile, mkdir, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { cp, mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, sep } from "node:path";
+import { join, sep } from "node:path";
+import { glob } from "tinyglobby";
 import type { Template } from "../config/schema";
 
 // Git worktree parsing constants
@@ -18,17 +18,7 @@ const HEAD_PREFIX_LENGTH = HEAD_PREFIX.length;
 const BRANCH_PREFIX_LENGTH = BRANCH_PREFIX.length;
 
 const POSIX_SEPARATOR = "/";
-const IGNORED_DIRECTORIES = new Set([
-  ".git",
-  "node_modules",
-  ".synthetic",
-  ".turbo",
-]);
-
-type DirectoryFrame = {
-  absPath: string;
-  relativePath: string;
-};
+const IGNORED_DIRECTORIES = [".git", "node_modules", ".synthetic", ".turbo"];
 
 export type WorktreeInfo = {
   id: string;
@@ -139,140 +129,38 @@ export function createWorktreeManager(
   }
 
   /**
-   * Find paths that match include patterns recursively
+   * Find paths that match include patterns recursively using tinyglobby
    */
-  function getIncludedPaths(
+  async function getIncludedPaths(
     mainRepoPath: string,
     includePatterns: string[]
-  ): string[] {
+  ): Promise<string[]> {
     if (includePatterns.length === 0) {
       return [];
     }
 
-    const includedPaths = new Set<string>();
-    const matchers = includePatterns.map(createPatternMatcher);
-
-    function shouldInclude(path: string, basename: string): boolean {
-      return matchers.some((matcher) => matcher(path, basename));
-    }
-
-    walkRepository(mainRepoPath, (relativePath, basename) => {
-      const normalizedPath = toPosixPath(relativePath);
-      if (shouldInclude(normalizedPath, basename)) {
-        includedPaths.add(normalizedPath);
-      }
-    });
-
-    return Array.from(includedPaths);
-  }
-
-  function walkRepository(
-    rootPath: string,
-    visitFile: (relativePath: string, basename: string) => void
-  ): void {
-    const stack: DirectoryFrame[] = [{ absPath: rootPath, relativePath: "" }];
-
-    while (stack.length > 0) {
-      const frame = stack.pop();
-      if (!frame) {
-        continue;
-      }
-
-      processDirectoryFrame(frame, stack, visitFile);
-    }
-  }
-
-  function processDirectoryFrame(
-    frame: DirectoryFrame,
-    stack: DirectoryFrame[],
-    visitFile: (relativePath: string, basename: string) => void
-  ): void {
-    const entries = readDirectoryEntries(frame.absPath);
-    if (!entries) {
-      return;
-    }
-
-    for (const entry of entries) {
-      if (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)) {
-        continue;
-      }
-
-      const entryRelativePath = frame.relativePath
-        ? join(frame.relativePath, entry.name)
-        : entry.name;
-
-      if (entry.isDirectory()) {
-        stack.push({
-          absPath: join(frame.absPath, entry.name),
-          relativePath: entryRelativePath,
-        });
-        continue;
-      }
-
-      visitFile(entryRelativePath, entry.name);
-    }
-  }
-
-  function readDirectoryEntries(dirPath: string): Dirent[] | null {
     try {
-      return readdirSync(dirPath, { withFileTypes: true });
+      // Expand patterns to include recursive matching for nested files
+      const expandedPatterns = includePatterns.flatMap((pattern) => {
+        // If pattern doesn't contain a path separator, add both root and recursive versions
+        if (!pattern.includes("/")) {
+          return [pattern, `**/${pattern}`];
+        }
+        return [pattern];
+      });
+
+      const files = await glob(expandedPatterns, {
+        cwd: mainRepoPath,
+        absolute: false,
+        ignore: IGNORED_DIRECTORIES.map((dir) => `**/${dir}/**`),
+        dot: true, // Include dot files like .env
+      });
+
+      // Convert to POSIX paths for consistency
+      return files.map((file: string) => file.split(sep).join(POSIX_SEPARATOR));
     } catch (error) {
-      logWarn(`Failed to read directory ${dirPath}`, error);
-      return null;
-    }
-  }
-
-  function createPatternMatcher(
-    pattern: string
-  ): (path: string, basename: string) => boolean {
-    const normalizedPattern = toPosixPath(pattern);
-    const isBasenamePattern = !normalizedPattern.includes(POSIX_SEPARATOR);
-    const regex = globToRegex(normalizedPattern);
-
-    if (isBasenamePattern) {
-      return (_path, basename) => regex.test(basename);
-    }
-
-    return (path) => regex.test(path);
-  }
-
-  function globToRegex(pattern: string): RegExp {
-    const escaped = pattern
-      .replace(/[-[\]{}()+?.,\\^$|#\s]/g, "\\$&")
-      .replace(/\*\*/g, "§§DOUBLESTAR§§")
-      .replace(/\*/g, "[^/]*")
-      .replace(/§§DOUBLESTAR§§/g, ".*");
-
-    return new RegExp(`^${escaped}$`);
-  }
-
-  function toPosixPath(value: string): string {
-    return value.split(sep).join(POSIX_SEPARATOR);
-  }
-
-  /**
-   * Copy a single file or directory to worktree
-   */
-  async function copyToWorktree(
-    mainRepoPath: string,
-    worktreePath: string,
-    file: string
-  ): Promise<void> {
-    const sourcePath = join(mainRepoPath, file);
-    const targetPath = join(worktreePath, file);
-
-    try {
-      const stat = statSync(sourcePath);
-
-      if (stat.isDirectory()) {
-        await copyDirectory(sourcePath, targetPath);
-      } else {
-        const targetDir = dirname(targetPath);
-        await mkdir(targetDir, { recursive: true });
-        await copyFile(sourcePath, targetPath);
-      }
-    } catch (error) {
-      logWarn(`Failed to copy ${file} to worktree`, error);
+      logWarn("Failed to match include patterns", error);
+      return [];
     }
   }
 
@@ -284,7 +172,7 @@ export function createWorktreeManager(
     includePatterns: string[]
   ): Promise<void> {
     const mainRepoPath = getMainRepoPath();
-    const includedPaths = getIncludedPaths(mainRepoPath, includePatterns);
+    const includedPaths = await getIncludedPaths(mainRepoPath, includePatterns);
 
     for (const relativePath of includedPaths) {
       await copyToWorktree(mainRepoPath, worktreePath, relativePath);
@@ -292,22 +180,21 @@ export function createWorktreeManager(
   }
 
   /**
-   * Copy directory recursively
+   * Copy a single file or directory to worktree using Node.js built-in cp
    */
-  async function copyDirectory(source: string, target: string): Promise<void> {
-    await mkdir(target, { recursive: true });
+  async function copyToWorktree(
+    mainRepoPath: string,
+    worktreePath: string,
+    file: string
+  ): Promise<void> {
+    const sourcePath = join(mainRepoPath, file);
+    const targetPath = join(worktreePath, file);
 
-    const entries = readdirSync(source, { withFileTypes: true });
-
-    for (const entry of entries) {
-      const sourcePath = join(source, entry.name);
-      const targetPath = join(target, entry.name);
-
-      if (entry.isDirectory()) {
-        await copyDirectory(sourcePath, targetPath);
-      } else {
-        await copyFile(sourcePath, targetPath);
-      }
+    try {
+      // Use Node.js built-in cp for recursive copying
+      await cp(sourcePath, targetPath, { recursive: true });
+    } catch (error) {
+      logWarn(`Failed to copy ${file} to worktree`, error);
     }
   }
 
