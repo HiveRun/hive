@@ -225,6 +225,21 @@ export function AgentChat({ constructId }: AgentChatProps) {
       }
     };
 
+    const handleLegacyMessage = (event: MessageEvent<string>) => {
+      try {
+        const payload = JSON.parse(event.data) as {
+          message: AgentMessage;
+        };
+        upsertMessageRecord(payload.message);
+      } catch (error) {
+        const title =
+          error instanceof Error
+            ? error.message
+            : "Failed to process agent message";
+        toast.error(title);
+      }
+    };
+
     const handleMessageUpdated = (event: MessageEvent<string>) => {
       try {
         const payload = JSON.parse(event.data) as {
@@ -341,6 +356,7 @@ export function AgentChat({ constructId }: AgentChatProps) {
     };
 
     eventSource.addEventListener("history", handleHistory);
+    eventSource.addEventListener("message", handleLegacyMessage);
     eventSource.addEventListener("message.updated", handleMessageUpdated);
     eventSource.addEventListener(
       "message.part.updated",
@@ -360,6 +376,7 @@ export function AgentChat({ constructId }: AgentChatProps) {
 
     return () => {
       eventSource.removeEventListener("history", handleHistory);
+      eventSource.removeEventListener("message", handleLegacyMessage);
       eventSource.removeEventListener("message.updated", handleMessageUpdated);
       eventSource.removeEventListener(
         "message.part.updated",
@@ -385,6 +402,7 @@ export function AgentChat({ constructId }: AgentChatProps) {
     queryClient,
     session?.id,
     applyMessageFromInfo,
+    upsertMessageRecord,
     upsertPartRecord,
     removePartRecord,
   ]);
