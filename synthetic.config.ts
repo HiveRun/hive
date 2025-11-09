@@ -2,7 +2,6 @@ import { defineSyntheticConfig } from "./apps/server/src/config/schema";
 
 export default defineSyntheticConfig({
   opencode: {
-    workspaceId: "synthetic-dev",
     defaultProvider: "zen",
     defaultModel: "big-pickle",
   },

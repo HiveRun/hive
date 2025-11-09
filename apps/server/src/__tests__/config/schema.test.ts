@@ -15,7 +15,6 @@ const SHARED_INPUTS = {
 } as const;
 
 const SAMPLE_OPENCODE_CONFIG = {
-  workspaceId: "workspace_123",
   defaultProvider: "zen",
   defaultModel: "big-pickle",
 } as const;
@@ -90,7 +89,7 @@ describe("Synthetic Config Schema", () => {
 
     const result = syntheticConfigSchema.parse(minimalConfig);
     expect(result.templates[EXPECTED.configKey]).toBeDefined();
-    expect(result.opencode.workspaceId).toBe("workspace_123");
+    expect(result.opencode.defaultProvider).toBe("zen");
   });
 });
 

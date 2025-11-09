@@ -97,10 +97,6 @@ export const templateSchema = z.object({
 });
 
 const opencodeConfigSchema = z.object({
-  workspaceId: z
-    .string()
-    .min(1)
-    .describe("OpenCode workspace identifier used when creating sessions"),
   token: z
     .string()
     .optional()
