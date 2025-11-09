@@ -15,9 +15,12 @@ import { Route as OpencodeTestRouteImport } from './routes/opencode-test'
 import { Route as ExampleDashboardRouteImport } from './routes/example-dashboard'
 import { Route as ConstructsRouteImport } from './routes/constructs'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as OpencodeTestIndexRouteImport } from './routes/opencode-test/index'
+import { Route as OpencodeTestSessionIdRouteImport } from './routes/opencode-test/$sessionId'
 import { Route as ConstructsNewRouteImport } from './routes/constructs/new'
 import { Route as ConstructsListRouteImport } from './routes/constructs/list'
 import { Route as ConstructsConstructIdRouteImport } from './routes/constructs/$constructId'
+import { Route as OpencodeTestSessionIdEventsRouteImport } from './routes/opencode-test/$sessionId.events'
 
 const TestErrorRoute = TestErrorRouteImport.update({
   id: '/test-error',
@@ -49,6 +52,16 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OpencodeTestIndexRoute = OpencodeTestIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => OpencodeTestRoute,
+} as any)
+const OpencodeTestSessionIdRoute = OpencodeTestSessionIdRouteImport.update({
+  id: '/$sessionId',
+  path: '/$sessionId',
+  getParentRoute: () => OpencodeTestRoute,
+} as any)
 const ConstructsNewRoute = ConstructsNewRouteImport.update({
   id: '/new',
   path: '/new',
@@ -64,40 +77,54 @@ const ConstructsConstructIdRoute = ConstructsConstructIdRouteImport.update({
   path: '/$constructId',
   getParentRoute: () => ConstructsRoute,
 } as any)
+const OpencodeTestSessionIdEventsRoute =
+  OpencodeTestSessionIdEventsRouteImport.update({
+    id: '/events',
+    path: '/events',
+    getParentRoute: () => OpencodeTestSessionIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/constructs': typeof ConstructsRouteWithChildren
   '/example-dashboard': typeof ExampleDashboardRoute
-  '/opencode-test': typeof OpencodeTestRoute
+  '/opencode-test': typeof OpencodeTestRouteWithChildren
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
   '/constructs/$constructId': typeof ConstructsConstructIdRoute
   '/constructs/list': typeof ConstructsListRoute
   '/constructs/new': typeof ConstructsNewRoute
+  '/opencode-test/$sessionId': typeof OpencodeTestSessionIdRouteWithChildren
+  '/opencode-test/': typeof OpencodeTestIndexRoute
+  '/opencode-test/$sessionId/events': typeof OpencodeTestSessionIdEventsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/constructs': typeof ConstructsRouteWithChildren
   '/example-dashboard': typeof ExampleDashboardRoute
-  '/opencode-test': typeof OpencodeTestRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
   '/constructs/$constructId': typeof ConstructsConstructIdRoute
   '/constructs/list': typeof ConstructsListRoute
   '/constructs/new': typeof ConstructsNewRoute
+  '/opencode-test/$sessionId': typeof OpencodeTestSessionIdRouteWithChildren
+  '/opencode-test': typeof OpencodeTestIndexRoute
+  '/opencode-test/$sessionId/events': typeof OpencodeTestSessionIdEventsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/constructs': typeof ConstructsRouteWithChildren
   '/example-dashboard': typeof ExampleDashboardRoute
-  '/opencode-test': typeof OpencodeTestRoute
+  '/opencode-test': typeof OpencodeTestRouteWithChildren
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
   '/constructs/$constructId': typeof ConstructsConstructIdRoute
   '/constructs/list': typeof ConstructsListRoute
   '/constructs/new': typeof ConstructsNewRoute
+  '/opencode-test/$sessionId': typeof OpencodeTestSessionIdRouteWithChildren
+  '/opencode-test/': typeof OpencodeTestIndexRoute
+  '/opencode-test/$sessionId/events': typeof OpencodeTestSessionIdEventsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -111,17 +138,22 @@ export interface FileRouteTypes {
     | '/constructs/$constructId'
     | '/constructs/list'
     | '/constructs/new'
+    | '/opencode-test/$sessionId'
+    | '/opencode-test/'
+    | '/opencode-test/$sessionId/events'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/constructs'
     | '/example-dashboard'
-    | '/opencode-test'
     | '/templates'
     | '/test-error'
     | '/constructs/$constructId'
     | '/constructs/list'
     | '/constructs/new'
+    | '/opencode-test/$sessionId'
+    | '/opencode-test'
+    | '/opencode-test/$sessionId/events'
   id:
     | '__root__'
     | '/'
@@ -133,13 +165,16 @@ export interface FileRouteTypes {
     | '/constructs/$constructId'
     | '/constructs/list'
     | '/constructs/new'
+    | '/opencode-test/$sessionId'
+    | '/opencode-test/'
+    | '/opencode-test/$sessionId/events'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ConstructsRoute: typeof ConstructsRouteWithChildren
   ExampleDashboardRoute: typeof ExampleDashboardRoute
-  OpencodeTestRoute: typeof OpencodeTestRoute
+  OpencodeTestRoute: typeof OpencodeTestRouteWithChildren
   TemplatesRoute: typeof TemplatesRoute
   TestErrorRoute: typeof TestErrorRoute
 }
@@ -188,6 +223,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/opencode-test/': {
+      id: '/opencode-test/'
+      path: '/'
+      fullPath: '/opencode-test/'
+      preLoaderRoute: typeof OpencodeTestIndexRouteImport
+      parentRoute: typeof OpencodeTestRoute
+    }
+    '/opencode-test/$sessionId': {
+      id: '/opencode-test/$sessionId'
+      path: '/$sessionId'
+      fullPath: '/opencode-test/$sessionId'
+      preLoaderRoute: typeof OpencodeTestSessionIdRouteImport
+      parentRoute: typeof OpencodeTestRoute
+    }
     '/constructs/new': {
       id: '/constructs/new'
       path: '/new'
@@ -209,6 +258,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConstructsConstructIdRouteImport
       parentRoute: typeof ConstructsRoute
     }
+    '/opencode-test/$sessionId/events': {
+      id: '/opencode-test/$sessionId/events'
+      path: '/events'
+      fullPath: '/opencode-test/$sessionId/events'
+      preLoaderRoute: typeof OpencodeTestSessionIdEventsRouteImport
+      parentRoute: typeof OpencodeTestSessionIdRoute
+    }
   }
 }
 
@@ -228,11 +284,38 @@ const ConstructsRouteWithChildren = ConstructsRoute._addFileChildren(
   ConstructsRouteChildren,
 )
 
+interface OpencodeTestSessionIdRouteChildren {
+  OpencodeTestSessionIdEventsRoute: typeof OpencodeTestSessionIdEventsRoute
+}
+
+const OpencodeTestSessionIdRouteChildren: OpencodeTestSessionIdRouteChildren = {
+  OpencodeTestSessionIdEventsRoute: OpencodeTestSessionIdEventsRoute,
+}
+
+const OpencodeTestSessionIdRouteWithChildren =
+  OpencodeTestSessionIdRoute._addFileChildren(
+    OpencodeTestSessionIdRouteChildren,
+  )
+
+interface OpencodeTestRouteChildren {
+  OpencodeTestSessionIdRoute: typeof OpencodeTestSessionIdRouteWithChildren
+  OpencodeTestIndexRoute: typeof OpencodeTestIndexRoute
+}
+
+const OpencodeTestRouteChildren: OpencodeTestRouteChildren = {
+  OpencodeTestSessionIdRoute: OpencodeTestSessionIdRouteWithChildren,
+  OpencodeTestIndexRoute: OpencodeTestIndexRoute,
+}
+
+const OpencodeTestRouteWithChildren = OpencodeTestRoute._addFileChildren(
+  OpencodeTestRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ConstructsRoute: ConstructsRouteWithChildren,
   ExampleDashboardRoute: ExampleDashboardRoute,
-  OpencodeTestRoute: OpencodeTestRoute,
+  OpencodeTestRoute: OpencodeTestRouteWithChildren,
   TemplatesRoute: TemplatesRoute,
   TestErrorRoute: TestErrorRoute,
 }

@@ -63,6 +63,16 @@
           }
         }
       }
+    },
+    {
+      "includes": ["**/routes/**/$*.tsx"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useFilenamingConvention": "off"
+          }
+        }
+      }
     }
   ]
 }
