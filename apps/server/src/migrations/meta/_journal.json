@@ -43,20 +43,6 @@
       "when": 1762710775709,
       "tag": "0005_mute_manta",
       "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "6",
-      "when": 1762722295182,
-      "tag": "0006_loud_ego",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "6",
-      "when": 1762722558190,
-      "tag": "0007_magical_starfox",
-      "breakpoints": true
     }
   ]
 }

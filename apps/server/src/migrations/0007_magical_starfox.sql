@@ -1,1 +1,0 @@
-ALTER TABLE `constructs` DROP COLUMN `opencode_server_pid`;
