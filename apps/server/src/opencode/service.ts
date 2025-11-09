@@ -21,6 +21,9 @@ const activeInstances = new Map<string, OpencodeInstance>();
 
 /**
  * Create a new OpenCode server instance
+ *
+ * Uses OS-assigned port allocation (port: 0) to guarantee no port conflicts.
+ * The OS will automatically assign an available port from the ephemeral port range.
  */
 export async function createOpencodeServer(
   config?: OpencodeServerConfig
