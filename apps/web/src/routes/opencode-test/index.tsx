@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { opencodeMutations, opencodeQueries } from "@/queries/opencode";
 import { useOpencodeContext } from "../opencode-test";
 import { COPY_FEEDBACK_DURATION, SESSIONS_REFETCH_INTERVAL } from "./types";
@@ -17,7 +18,9 @@ export const Route = createFileRoute("/opencode-test/")({
 function SessionListPage() {
   const { serverUrl } = useOpencodeContext();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [sessionTitle, setSessionTitle] = useState("");
+  const [initialMessage, setInitialMessage] = useState("");
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
 
   const { data: sessions, refetch: refetchSessions } = useQuery({
@@ -32,6 +35,25 @@ function SessionListPage() {
       setSessionTitle("");
       queryClient.invalidateQueries({
         queryKey: ["opencode", "sessions", serverUrl],
+      });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const createSessionWithMessageMutation = useMutation({
+    ...opencodeMutations.createSessionWithMessage,
+    onSuccess: (data) => {
+      toast.success("Session created with initial message!");
+      setSessionTitle("");
+      setInitialMessage("");
+      queryClient.invalidateQueries({
+        queryKey: ["opencode", "sessions", serverUrl],
+      });
+      // Navigate to the chat page
+      navigate({
+        to: "/opencode-test/$sessionId",
+        params: { sessionId: data.sessionId },
+        search: { sessionTitle: data.title },
       });
     },
     onError: (error) => toast.error(error.message),
@@ -78,6 +100,41 @@ function SessionListPage() {
               }
             >
               {createSessionMutation.isPending ? "Creating..." : "Create"}
+            </Button>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="initialMessage">Or Create with Initial Message</Label>
+          <Textarea
+            id="initialMessage"
+            onChange={(e) => setInitialMessage(e.target.value)}
+            placeholder="Enter your first message here..."
+            rows={3}
+            value={initialMessage}
+          />
+          <div className="flex gap-2">
+            <Input
+              onChange={(e) => setSessionTitle(e.target.value)}
+              placeholder="Session title (optional)"
+              value={sessionTitle}
+            />
+            <Button
+              disabled={
+                !initialMessage.trim() ||
+                createSessionWithMessageMutation.isPending
+              }
+              onClick={() =>
+                createSessionWithMessageMutation.mutate({
+                  baseUrl: serverUrl,
+                  title: sessionTitle || undefined,
+                  message: initialMessage,
+                })
+              }
+            >
+              {createSessionWithMessageMutation.isPending
+                ? "Creating..."
+                : "Create & Send"}
             </Button>
           </div>
         </div>

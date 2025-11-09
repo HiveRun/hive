@@ -178,6 +178,78 @@ export const opencodeMutations = {
     },
   },
 
+  createSessionWithMessage: {
+    mutationFn: async ({
+      baseUrl,
+      title,
+      message,
+      directory,
+      agent,
+      model,
+    }: {
+      baseUrl: string;
+      title?: string;
+      message: string;
+      directory?: string;
+      agent?: string;
+      model?: {
+        providerID: string;
+        modelID: string;
+      };
+    }) => {
+      const client = createOpencodeClient({ baseUrl });
+
+      // Step 1: Create session
+      const sessionResult = await client.session.create({
+        body: { title },
+      });
+
+      if (sessionResult.error) {
+        throw new Error("Failed to create session");
+      }
+
+      const session = sessionResult.data;
+
+      // Step 2: Send initial message to the session
+      const query: SessionPromptInput["query"] = directory
+        ? { directory }
+        : undefined;
+      const body: NonNullable<SessionPromptInput["body"]> = {
+        parts: [
+          {
+            type: "text",
+            text: message,
+          },
+        ],
+      };
+
+      if (agent) {
+        body.agent = agent;
+      }
+
+      if (model) {
+        body.model = model;
+      }
+
+      const promptResult = await client.session.prompt({
+        path: { id: session.id },
+        query,
+        body,
+      });
+
+      if (promptResult.error) {
+        throw new Error(
+          `Session created but failed to send message: ${JSON.stringify(promptResult.error)}`
+        );
+      }
+
+      return {
+        sessionId: session.id,
+        title: session.title,
+      };
+    },
+  },
+
   sendMessage: {
     mutationFn: async ({
       baseUrl,
