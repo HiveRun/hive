@@ -78,10 +78,21 @@ export function closeInstance(key: string): void {
   if (instance) {
     try {
       instance.server.close();
-    } catch {
-      // Ignore cleanup errors
+    } finally {
+      activeInstances.delete(key);
     }
-    activeInstances.delete(key);
+  }
+}
+
+/**
+ * Close all active OpenCode server instances
+ * Used during graceful shutdown
+ */
+export function closeAllInstances(): void {
+  const keys = Array.from(activeInstances.keys());
+
+  for (const key of keys) {
+    closeInstance(key);
   }
 }
 

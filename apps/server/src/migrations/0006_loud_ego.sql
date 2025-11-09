@@ -1,0 +1,1 @@
+ALTER TABLE `constructs` ADD `opencode_server_pid` integer;
