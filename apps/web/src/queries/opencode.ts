@@ -1,6 +1,10 @@
 import { createOpencodeClient } from "@opencode-ai/sdk";
 import { rpc } from "@/lib/rpc";
 
+type SessionPromptInput = Parameters<
+  ReturnType<typeof createOpencodeClient>["session"]["prompt"]
+>[0];
+
 export const opencodeQueries = {
   status: (port?: number) => ({
     queryKey: ["opencode", "status", port] as const,
@@ -82,6 +86,38 @@ export const opencodeQueries = {
       return data;
     },
   }),
+
+  config: (baseUrl: string, directory?: string) => ({
+    queryKey: ["opencode", "config", baseUrl, directory] as const,
+    queryFn: async () => {
+      const client = createOpencodeClient({ baseUrl });
+      const query = directory ? { directory } : undefined;
+
+      const { data, error } = await client.config.get({
+        query,
+      });
+
+      if (error) {
+        throw new Error("Failed to fetch OpenCode config");
+      }
+
+      return data;
+    },
+  }),
+
+  providers: (baseUrl: string) => ({
+    queryKey: ["opencode", "providers", baseUrl] as const,
+    queryFn: async () => {
+      const client = createOpencodeClient({ baseUrl });
+      const { data, error } = await client.config.providers();
+
+      if (error) {
+        throw new Error("Failed to fetch OpenCode providers");
+      }
+
+      return data;
+    },
+  }),
 };
 
 export const opencodeMutations = {
@@ -147,29 +183,59 @@ export const opencodeMutations = {
       baseUrl,
       sessionId,
       text,
+      directory,
+      agent,
+      model,
     }: {
       baseUrl: string;
       sessionId: string;
       text: string;
+      directory?: string;
+      agent?: string;
+      model?: {
+        providerID: string;
+        modelID: string;
+      };
     }) => {
       const client = createOpencodeClient({ baseUrl });
-      const { data, error } = await client.session.prompt({
-        path: { id: sessionId },
-        body: {
-          parts: [
-            {
-              type: "text",
-              text,
-            },
-          ],
-        },
-      });
+      const query: SessionPromptInput["query"] = directory
+        ? { directory }
+        : undefined;
+      const body: NonNullable<SessionPromptInput["body"]> = {
+        parts: [
+          {
+            type: "text",
+            text,
+          },
+        ],
+      };
 
-      if (error) {
-        throw new Error("Failed to send message");
+      if (agent) {
+        body.agent = agent;
       }
 
-      return data;
+      if (model) {
+        body.model = model;
+      }
+
+      // Force responseStyle to get the full response object so we can inspect errors
+      const result = await client.session.prompt({
+        path: { id: sessionId },
+        query,
+        body,
+      });
+
+      if (result.error) {
+        throw new Error(
+          `Failed to send message: ${JSON.stringify(result.error)}`
+        );
+      }
+
+      if (!result.data) {
+        throw new Error("No data returned from OpenCode server");
+      }
+
+      return result.data;
     },
   },
 };

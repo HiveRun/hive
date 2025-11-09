@@ -42,7 +42,7 @@ export const opencodeTestRoutes = new Elysia({ prefix: "/api/opencode-test" })
           hostname: DEFAULT_HOSTNAME,
           port,
           config: {
-            model: "zen/big-pickle",
+            model: "opencode/big-pickle",
           },
         });
 

@@ -99,6 +99,14 @@ export function useSessionChatMessages(
           } else if (part.text) {
             messageTexts.set(part.messageID, part.text);
           }
+
+          if (!messageInfo.has(part.messageID)) {
+            messageInfo.set(part.messageID, {
+              role: "assistant",
+              completed: false,
+              timestamp: part.time?.start || Date.now(),
+            });
+          }
         }
       }
 
@@ -125,19 +133,26 @@ export function useSessionChatMessages(
       }
     }
 
+    const messageIds = new Set([...messageInfo.keys(), ...messageTexts.keys()]);
+
     const newMessages: ChatMessage[] = [];
-    for (const [messageId, info] of messageInfo.entries()) {
+    for (const messageId of messageIds) {
       const text = messageTexts.get(messageId);
-      if (text) {
-        newMessages.push({
-          id: messageId,
-          role: info.role,
-          text,
-          timestamp: info.timestamp,
-          isComplete: info.completed,
-        });
+      if (!text) {
+        continue;
       }
+
+      const info = messageInfo.get(messageId);
+      newMessages.push({
+        id: messageId,
+        role: info?.role ?? "assistant",
+        text,
+        timestamp: info?.timestamp ?? Date.now(),
+        isComplete: info?.completed ?? false,
+      });
     }
+
+    newMessages.sort((a, b) => a.timestamp - b.timestamp);
 
     setMessages(newMessages);
   }, [events, initialMessages]);

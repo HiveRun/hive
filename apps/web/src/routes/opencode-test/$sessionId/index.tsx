@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,11 @@ function SessionChatPage() {
 
   const sessionDirectory = sessionDetail?.directory;
 
+  const { data: opencodeConfig } = useQuery({
+    ...opencodeQueries.config(serverUrl, sessionDirectory),
+    enabled: isServerActive,
+  });
+
   const { data: initialMessages } = useQuery({
     ...opencodeQueries.sessionMessages(serverUrl, sessionId, sessionDirectory),
     enabled: isServerActive,
@@ -50,11 +55,42 @@ function SessionChatPage() {
   const sessionTitle =
     detailTitle || search.sessionTitle?.trim() || "Untitled Session";
 
+  const resolvedAgent = useMemo(() => {
+    if (!opencodeConfig?.agent) {
+      return "build";
+    }
+
+    if (opencodeConfig.agent.build) {
+      return "build";
+    }
+
+    const availableAgents = Object.keys(opencodeConfig.agent).filter(Boolean);
+    return availableAgents[0] ?? "build";
+  }, [opencodeConfig?.agent]);
+
+  const resolvedModel = useMemo(() => {
+    const modelString = opencodeConfig?.model?.trim();
+    if (!modelString) {
+      return;
+    }
+
+    const [providerID, ...rest] = modelString.split("/");
+    const modelID = rest.join("/");
+
+    if (!(providerID && modelID)) {
+      return;
+    }
+
+    return {
+      providerID,
+      modelID,
+    };
+  }, [opencodeConfig?.model]);
+
   const sendMessageMutation = useMutation({
     ...opencodeMutations.sendMessage,
     onSuccess: () => {
       setMessageText("");
-      toast.success("Message sent!");
     },
     onError: (error) => {
       toast.error(`Failed to send message: ${error.message}`);
@@ -71,6 +107,9 @@ function SessionChatPage() {
       baseUrl: serverUrl,
       sessionId,
       text: messageText,
+      directory: sessionDirectory,
+      agent: resolvedAgent,
+      model: resolvedModel,
     });
   };
 
@@ -80,6 +119,12 @@ function SessionChatPage() {
         <div>
           <h2 className="font-semibold text-xl">{sessionTitle}</h2>
           <p className="text-muted-foreground text-sm">ID: {sessionId}</p>
+          <p className="text-muted-foreground text-xs">
+            Agent: {resolvedAgent} · Model:{" "}
+            {resolvedModel
+              ? `${resolvedModel.providerID}/${resolvedModel.modelID}`
+              : "server default"}
+          </p>
         </div>
         <div className="flex gap-2">
           <Link
