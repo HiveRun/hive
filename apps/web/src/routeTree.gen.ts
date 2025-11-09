@@ -22,6 +22,7 @@ import { Route as ConstructsListRouteImport } from './routes/constructs/list'
 import { Route as ConstructsConstructIdRouteImport } from './routes/constructs/$constructId'
 import { Route as OpencodeTestSessionIdIndexRouteImport } from './routes/opencode-test/$sessionId/index'
 import { Route as OpencodeTestSessionIdEventsRouteImport } from './routes/opencode-test/$sessionId/events'
+import { Route as ConstructsConstructIdChatRouteImport } from './routes/constructs/$constructId/chat'
 
 const TestErrorRoute = TestErrorRouteImport.update({
   id: '/test-error',
@@ -90,6 +91,12 @@ const OpencodeTestSessionIdEventsRoute =
     path: '/events',
     getParentRoute: () => OpencodeTestSessionIdRoute,
   } as any)
+const ConstructsConstructIdChatRoute =
+  ConstructsConstructIdChatRouteImport.update({
+    id: '/chat',
+    path: '/chat',
+    getParentRoute: () => ConstructsConstructIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -98,11 +105,12 @@ export interface FileRoutesByFullPath {
   '/opencode-test': typeof OpencodeTestRouteWithChildren
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
-  '/constructs/$constructId': typeof ConstructsConstructIdRoute
+  '/constructs/$constructId': typeof ConstructsConstructIdRouteWithChildren
   '/constructs/list': typeof ConstructsListRoute
   '/constructs/new': typeof ConstructsNewRoute
   '/opencode-test/$sessionId': typeof OpencodeTestSessionIdRouteWithChildren
   '/opencode-test/': typeof OpencodeTestIndexRoute
+  '/constructs/$constructId/chat': typeof ConstructsConstructIdChatRoute
   '/opencode-test/$sessionId/events': typeof OpencodeTestSessionIdEventsRoute
   '/opencode-test/$sessionId/': typeof OpencodeTestSessionIdIndexRoute
 }
@@ -112,10 +120,11 @@ export interface FileRoutesByTo {
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
-  '/constructs/$constructId': typeof ConstructsConstructIdRoute
+  '/constructs/$constructId': typeof ConstructsConstructIdRouteWithChildren
   '/constructs/list': typeof ConstructsListRoute
   '/constructs/new': typeof ConstructsNewRoute
   '/opencode-test': typeof OpencodeTestIndexRoute
+  '/constructs/$constructId/chat': typeof ConstructsConstructIdChatRoute
   '/opencode-test/$sessionId/events': typeof OpencodeTestSessionIdEventsRoute
   '/opencode-test/$sessionId': typeof OpencodeTestSessionIdIndexRoute
 }
@@ -127,11 +136,12 @@ export interface FileRoutesById {
   '/opencode-test': typeof OpencodeTestRouteWithChildren
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
-  '/constructs/$constructId': typeof ConstructsConstructIdRoute
+  '/constructs/$constructId': typeof ConstructsConstructIdRouteWithChildren
   '/constructs/list': typeof ConstructsListRoute
   '/constructs/new': typeof ConstructsNewRoute
   '/opencode-test/$sessionId': typeof OpencodeTestSessionIdRouteWithChildren
   '/opencode-test/': typeof OpencodeTestIndexRoute
+  '/constructs/$constructId/chat': typeof ConstructsConstructIdChatRoute
   '/opencode-test/$sessionId/events': typeof OpencodeTestSessionIdEventsRoute
   '/opencode-test/$sessionId/': typeof OpencodeTestSessionIdIndexRoute
 }
@@ -149,6 +159,7 @@ export interface FileRouteTypes {
     | '/constructs/new'
     | '/opencode-test/$sessionId'
     | '/opencode-test/'
+    | '/constructs/$constructId/chat'
     | '/opencode-test/$sessionId/events'
     | '/opencode-test/$sessionId/'
   fileRoutesByTo: FileRoutesByTo
@@ -162,6 +173,7 @@ export interface FileRouteTypes {
     | '/constructs/list'
     | '/constructs/new'
     | '/opencode-test'
+    | '/constructs/$constructId/chat'
     | '/opencode-test/$sessionId/events'
     | '/opencode-test/$sessionId'
   id:
@@ -177,6 +189,7 @@ export interface FileRouteTypes {
     | '/constructs/new'
     | '/opencode-test/$sessionId'
     | '/opencode-test/'
+    | '/constructs/$constructId/chat'
     | '/opencode-test/$sessionId/events'
     | '/opencode-test/$sessionId/'
   fileRoutesById: FileRoutesById
@@ -283,17 +296,37 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OpencodeTestSessionIdEventsRouteImport
       parentRoute: typeof OpencodeTestSessionIdRoute
     }
+    '/constructs/$constructId/chat': {
+      id: '/constructs/$constructId/chat'
+      path: '/chat'
+      fullPath: '/constructs/$constructId/chat'
+      preLoaderRoute: typeof ConstructsConstructIdChatRouteImport
+      parentRoute: typeof ConstructsConstructIdRoute
+    }
   }
 }
 
+interface ConstructsConstructIdRouteChildren {
+  ConstructsConstructIdChatRoute: typeof ConstructsConstructIdChatRoute
+}
+
+const ConstructsConstructIdRouteChildren: ConstructsConstructIdRouteChildren = {
+  ConstructsConstructIdChatRoute: ConstructsConstructIdChatRoute,
+}
+
+const ConstructsConstructIdRouteWithChildren =
+  ConstructsConstructIdRoute._addFileChildren(
+    ConstructsConstructIdRouteChildren,
+  )
+
 interface ConstructsRouteChildren {
-  ConstructsConstructIdRoute: typeof ConstructsConstructIdRoute
+  ConstructsConstructIdRoute: typeof ConstructsConstructIdRouteWithChildren
   ConstructsListRoute: typeof ConstructsListRoute
   ConstructsNewRoute: typeof ConstructsNewRoute
 }
 
 const ConstructsRouteChildren: ConstructsRouteChildren = {
-  ConstructsConstructIdRoute: ConstructsConstructIdRoute,
+  ConstructsConstructIdRoute: ConstructsConstructIdRouteWithChildren,
   ConstructsListRoute: ConstructsListRoute,
   ConstructsNewRoute: ConstructsNewRoute,
 }

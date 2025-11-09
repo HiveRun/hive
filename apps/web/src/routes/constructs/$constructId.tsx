@@ -1,4 +1,3 @@
-// biome-ignore lint/style/useFilenamingConvention: TanStack dynamic params require camelCase filenames.
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { AgentChat } from "@/components/agent-chat";

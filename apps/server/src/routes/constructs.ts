@@ -42,6 +42,9 @@ function constructToResponse(construct: typeof constructs.$inferSelect) {
     description: construct.description,
     templateId: construct.templateId,
     workspacePath: construct.workspacePath,
+    opencodeSessionId: construct.opencodeSessionId,
+    opencodeServerUrl: construct.opencodeServerUrl,
+    opencodeServerPort: construct.opencodeServerPort,
     createdAt: construct.createdAt.toISOString(),
   };
 }
