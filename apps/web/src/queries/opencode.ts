@@ -47,6 +47,22 @@ export const opencodeQueries = {
       return data;
     },
   }),
+
+  sessionDetail: (baseUrl: string, sessionId: string) => ({
+    queryKey: ["opencode", "session", baseUrl, sessionId] as const,
+    queryFn: async () => {
+      const client = createOpencodeClient({ baseUrl });
+      const { data, error } = await client.session.get({
+        path: { id: sessionId },
+      });
+
+      if (error) {
+        throw new Error("Failed to fetch session details");
+      }
+
+      return data;
+    },
+  }),
 };
 
 export const opencodeMutations = {

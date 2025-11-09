@@ -1,6 +1,8 @@
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { opencodeQueries } from "@/queries/opencode";
 import { useOpencodeContext } from "../opencode-test";
 import { useSessionEventStream } from "./hooks";
 
@@ -12,6 +14,11 @@ function SessionEventsPage() {
   const { sessionId } = Route.useParams();
   const { serverUrl, isServerActive } = useOpencodeContext();
 
+  const { data: sessionDetail } = useQuery({
+    ...opencodeQueries.sessionDetail(serverUrl, sessionId),
+    enabled: isServerActive,
+  });
+
   const { events, isStreaming, clearEvents } = useSessionEventStream(
     serverUrl,
     sessionId,
@@ -21,7 +28,12 @@ function SessionEventsPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-xl">Session Events</h2>
+        <div>
+          <h2 className="font-semibold text-xl">
+            {sessionDetail?.title || "Session Events"}
+          </h2>
+          <p className="text-muted-foreground text-sm">ID: {sessionId}</p>
+        </div>
         <div className="flex gap-2">
           <Link params={{ sessionId }} to="/opencode-test/$sessionId">
             <Button variant="outline">View Chat</Button>

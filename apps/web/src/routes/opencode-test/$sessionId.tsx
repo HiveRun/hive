@@ -19,6 +19,11 @@ function SessionChatPage() {
   const { serverUrl, isServerActive } = useOpencodeContext();
   const [messageText, setMessageText] = useState("");
 
+  const { data: sessionDetail } = useQuery({
+    ...opencodeQueries.sessionDetail(serverUrl, sessionId),
+    enabled: isServerActive,
+  });
+
   const { data: initialMessages } = useQuery({
     ...opencodeQueries.sessionMessages(serverUrl, sessionId),
     enabled: isServerActive,
@@ -59,7 +64,12 @@ function SessionChatPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-xl">Session Chat</h2>
+        <div>
+          <h2 className="font-semibold text-xl">
+            {sessionDetail?.title || "Session Chat"}
+          </h2>
+          <p className="text-muted-foreground text-sm">ID: {sessionId}</p>
+        </div>
         <div className="flex gap-2">
           <Link params={{ sessionId }} to="/opencode-test/$sessionId/events">
             <Button variant="outline">View Events</Button>
