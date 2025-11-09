@@ -1,17 +1,24 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { opencodeQueries } from "@/queries/opencode";
-import { useOpencodeContext } from "../opencode-test";
-import { useSessionEventStream } from "./hooks";
+import { useOpencodeContext } from "../../opencode-test";
+import { useSessionEventStream } from "../hooks";
+
+const sessionSearchSchema = z.object({
+  sessionTitle: z.string().optional(),
+});
 
 export const Route = createFileRoute("/opencode-test/$sessionId/events")({
   component: SessionEventsPage,
+  validateSearch: sessionSearchSchema,
 });
 
 function SessionEventsPage() {
   const { sessionId } = Route.useParams();
+  const search = Route.useSearch();
   const { serverUrl, isServerActive } = useOpencodeContext();
 
   const { data: sessionDetail } = useQuery({
@@ -25,17 +32,23 @@ function SessionEventsPage() {
     isServerActive
   );
 
+  const detailTitle = sessionDetail?.title?.trim();
+  const sessionTitle =
+    detailTitle || search.sessionTitle?.trim() || "Untitled Session";
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="font-semibold text-xl">
-            {sessionDetail?.title || "Session Events"}
-          </h2>
+          <h2 className="font-semibold text-xl">{sessionTitle}</h2>
           <p className="text-muted-foreground text-sm">ID: {sessionId}</p>
         </div>
         <div className="flex gap-2">
-          <Link params={{ sessionId }} to="/opencode-test/$sessionId">
+          <Link
+            params={{ sessionId }}
+            search={{ sessionTitle }}
+            to="/opencode-test/$sessionId"
+          >
             <Button variant="outline">View Chat</Button>
           </Link>
           <Link to="/opencode-test">

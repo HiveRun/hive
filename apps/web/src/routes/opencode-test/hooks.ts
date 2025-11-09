@@ -7,6 +7,17 @@ type SessionEventSubscription = Awaited<
   ReturnType<ReturnType<typeof createOpencodeClient>["event"]["subscribe"]>
 >;
 
+type ReadablePart = {
+  type?: string;
+  synthetic?: boolean;
+  text?: string;
+};
+
+const READABLE_PART_TYPES = new Set(["text", "reasoning"]);
+
+const isReadableTextPart = (part?: ReadablePart) =>
+  Boolean(part && !part.synthetic && READABLE_PART_TYPES.has(part.type ?? ""));
+
 export function useSessionChatMessages(
   events: OpencodeEvent[],
   initialMessages?: Array<{
@@ -41,11 +52,12 @@ export function useSessionChatMessages(
     // Load initial messages
     if (initialMessages) {
       for (const msg of initialMessages) {
-        // Combine all text parts for this message
-        const textParts = msg.parts.filter(
-          (p) => p.type === "text" && !p.synthetic
-        );
-        const fullText = textParts.map((p) => p.text || "").join("");
+        // Combine all readable text parts for this message
+        const textParts = msg.parts.filter(isReadableTextPart);
+        const fullText = textParts
+          .map((p) => p.text || "")
+          .filter(Boolean)
+          .join("\n");
 
         if (fullText) {
           messageTexts.set(msg.info.id, fullText);
@@ -80,7 +92,7 @@ export function useSessionChatMessages(
             }
           | undefined;
 
-        if (part?.type === "text" && !part.synthetic) {
+        if (part && isReadableTextPart(part)) {
           if (delta) {
             const existingText = messageTexts.get(part.messageID) || "";
             messageTexts.set(part.messageID, existingText + delta);

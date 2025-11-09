@@ -86,43 +86,51 @@ function SessionListPage() {
           <div className="space-y-2">
             <Label>Existing Sessions</Label>
             <div className="space-y-2">
-              {sessions.map((session) => (
-                <div className="rounded-md border p-3" key={session.id}>
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <p className="font-medium text-sm">
-                        {session.title || "Untitled Session"}
-                      </p>
-                      <p className="font-mono text-muted-foreground text-xs">
-                        {session.id}
-                      </p>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        onClick={() => handleCopySessionId(session.id)}
-                        size="sm"
-                        variant="outline"
-                      >
-                        {copiedCommand === session.id ? "Copied!" : "Copy ID"}
-                      </Button>
-                      <Link
-                        params={{ sessionId: session.id }}
-                        to="/opencode-test/$sessionId"
-                      >
-                        <Button size="sm">View Chat</Button>
-                      </Link>
-                      <Link
-                        params={{ sessionId: session.id }}
-                        to="/opencode-test/$sessionId/events"
-                      >
-                        <Button size="sm" variant="outline">
-                          View Events
+              {sessions.map((session) => {
+                const sessionDisplayName =
+                  session.title?.trim() || "Untitled Session";
+
+                return (
+                  <div className="rounded-md border p-3" key={session.id}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <p className="font-medium text-sm">
+                          {sessionDisplayName}
+                        </p>
+
+                        <p className="font-mono text-muted-foreground text-xs">
+                          {session.id}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => handleCopySessionId(session.id)}
+                          size="sm"
+                          variant="outline"
+                        >
+                          {copiedCommand === session.id ? "Copied!" : "Copy ID"}
                         </Button>
-                      </Link>
+                        <Link
+                          params={{ sessionId: session.id }}
+                          search={{ sessionTitle: sessionDisplayName }}
+                          to="/opencode-test/$sessionId"
+                        >
+                          <Button size="sm">View Chat</Button>
+                        </Link>
+                        <Link
+                          params={{ sessionId: session.id }}
+                          search={{ sessionTitle: sessionDisplayName }}
+                          to="/opencode-test/$sessionId/events"
+                        >
+                          <Button size="sm" variant="outline">
+                            View Events
+                          </Button>
+                        </Link>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ) : (

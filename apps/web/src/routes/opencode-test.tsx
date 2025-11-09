@@ -147,15 +147,15 @@ function OpencodeTestLayout() {
 
             {isServerActive && (
               <div className="space-y-2">
-                <Label>Connect from TUI</Label>
+                <Label>Attach from TUI</Label>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 rounded bg-muted px-3 py-2 font-mono text-sm">
-                    opencode connect {serverUrl}
+                    opencode attach {serverUrl}
                   </code>
                   <Button
                     onClick={() => {
                       navigator.clipboard.writeText(
-                        `opencode connect ${serverUrl}`
+                        `opencode attach ${serverUrl}`
                       );
                       toast.success("Command copied to clipboard!");
                     }}

@@ -27,24 +27,43 @@ export const opencodeQueries = {
         throw new Error("Failed to fetch sessions");
       }
 
-      return data;
+      return (data ?? []).filter((session) => !session.parentID);
     },
   }),
 
-  sessionMessages: (baseUrl: string, sessionId: string) => ({
-    queryKey: ["opencode", "messages", baseUrl, sessionId] as const,
+  sessionMessages: (
+    baseUrl: string,
+    sessionId: string,
+    directory?: string
+  ) => ({
+    queryKey: ["opencode", "messages", baseUrl, sessionId, directory] as const,
     queryFn: async () => {
       const client = createOpencodeClient({ baseUrl });
-      const { data, error } = await client.session.messages({
-        path: { id: sessionId },
-        query: { limit: 100 },
-      });
 
-      if (error) {
-        throw new Error("Failed to fetch session messages");
+      const fetchMessages = async (dir?: string) => {
+        const query: { limit: number; directory?: string } = { limit: 100 };
+        if (dir) {
+          query.directory = dir;
+        }
+
+        const { data, error } = await client.session.messages({
+          path: { id: sessionId },
+          query,
+        });
+
+        if (error) {
+          throw new Error("Failed to fetch session messages");
+        }
+
+        return data;
+      };
+
+      const primary = await fetchMessages(directory);
+      if (directory && primary.length === 0) {
+        return fetchMessages();
       }
 
-      return data;
+      return primary;
     },
   }),
 

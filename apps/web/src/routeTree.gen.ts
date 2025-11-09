@@ -20,7 +20,8 @@ import { Route as OpencodeTestSessionIdRouteImport } from './routes/opencode-tes
 import { Route as ConstructsNewRouteImport } from './routes/constructs/new'
 import { Route as ConstructsListRouteImport } from './routes/constructs/list'
 import { Route as ConstructsConstructIdRouteImport } from './routes/constructs/$constructId'
-import { Route as OpencodeTestSessionIdEventsRouteImport } from './routes/opencode-test/$sessionId.events'
+import { Route as OpencodeTestSessionIdIndexRouteImport } from './routes/opencode-test/$sessionId/index'
+import { Route as OpencodeTestSessionIdEventsRouteImport } from './routes/opencode-test/$sessionId/events'
 
 const TestErrorRoute = TestErrorRouteImport.update({
   id: '/test-error',
@@ -77,6 +78,12 @@ const ConstructsConstructIdRoute = ConstructsConstructIdRouteImport.update({
   path: '/$constructId',
   getParentRoute: () => ConstructsRoute,
 } as any)
+const OpencodeTestSessionIdIndexRoute =
+  OpencodeTestSessionIdIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => OpencodeTestSessionIdRoute,
+  } as any)
 const OpencodeTestSessionIdEventsRoute =
   OpencodeTestSessionIdEventsRouteImport.update({
     id: '/events',
@@ -97,6 +104,7 @@ export interface FileRoutesByFullPath {
   '/opencode-test/$sessionId': typeof OpencodeTestSessionIdRouteWithChildren
   '/opencode-test/': typeof OpencodeTestIndexRoute
   '/opencode-test/$sessionId/events': typeof OpencodeTestSessionIdEventsRoute
+  '/opencode-test/$sessionId/': typeof OpencodeTestSessionIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -107,9 +115,9 @@ export interface FileRoutesByTo {
   '/constructs/$constructId': typeof ConstructsConstructIdRoute
   '/constructs/list': typeof ConstructsListRoute
   '/constructs/new': typeof ConstructsNewRoute
-  '/opencode-test/$sessionId': typeof OpencodeTestSessionIdRouteWithChildren
   '/opencode-test': typeof OpencodeTestIndexRoute
   '/opencode-test/$sessionId/events': typeof OpencodeTestSessionIdEventsRoute
+  '/opencode-test/$sessionId': typeof OpencodeTestSessionIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -125,6 +133,7 @@ export interface FileRoutesById {
   '/opencode-test/$sessionId': typeof OpencodeTestSessionIdRouteWithChildren
   '/opencode-test/': typeof OpencodeTestIndexRoute
   '/opencode-test/$sessionId/events': typeof OpencodeTestSessionIdEventsRoute
+  '/opencode-test/$sessionId/': typeof OpencodeTestSessionIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -141,6 +150,7 @@ export interface FileRouteTypes {
     | '/opencode-test/$sessionId'
     | '/opencode-test/'
     | '/opencode-test/$sessionId/events'
+    | '/opencode-test/$sessionId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -151,9 +161,9 @@ export interface FileRouteTypes {
     | '/constructs/$constructId'
     | '/constructs/list'
     | '/constructs/new'
-    | '/opencode-test/$sessionId'
     | '/opencode-test'
     | '/opencode-test/$sessionId/events'
+    | '/opencode-test/$sessionId'
   id:
     | '__root__'
     | '/'
@@ -168,6 +178,7 @@ export interface FileRouteTypes {
     | '/opencode-test/$sessionId'
     | '/opencode-test/'
     | '/opencode-test/$sessionId/events'
+    | '/opencode-test/$sessionId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -258,6 +269,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConstructsConstructIdRouteImport
       parentRoute: typeof ConstructsRoute
     }
+    '/opencode-test/$sessionId/': {
+      id: '/opencode-test/$sessionId/'
+      path: '/'
+      fullPath: '/opencode-test/$sessionId/'
+      preLoaderRoute: typeof OpencodeTestSessionIdIndexRouteImport
+      parentRoute: typeof OpencodeTestSessionIdRoute
+    }
     '/opencode-test/$sessionId/events': {
       id: '/opencode-test/$sessionId/events'
       path: '/events'
@@ -286,10 +304,12 @@ const ConstructsRouteWithChildren = ConstructsRoute._addFileChildren(
 
 interface OpencodeTestSessionIdRouteChildren {
   OpencodeTestSessionIdEventsRoute: typeof OpencodeTestSessionIdEventsRoute
+  OpencodeTestSessionIdIndexRoute: typeof OpencodeTestSessionIdIndexRoute
 }
 
 const OpencodeTestSessionIdRouteChildren: OpencodeTestSessionIdRouteChildren = {
   OpencodeTestSessionIdEventsRoute: OpencodeTestSessionIdEventsRoute,
+  OpencodeTestSessionIdIndexRoute: OpencodeTestSessionIdIndexRoute,
 }
 
 const OpencodeTestSessionIdRouteWithChildren =

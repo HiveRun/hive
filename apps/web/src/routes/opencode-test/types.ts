@@ -6,6 +6,7 @@ export const SESSIONS_REFETCH_INTERVAL = 5000;
 export type Session = {
   id: string;
   title?: string;
+  parentID?: string;
 };
 
 export type OpencodeEvent = {
