@@ -4,10 +4,8 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { DEFAULT_USE_MOCK_AGENT } from "@/config/agent";
 import {
   type AgentMessage,
   type AgentMessagePart,
@@ -17,7 +15,6 @@ import {
 } from "@/queries/agents";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
-const DEFAULT_USE_MOCK = DEFAULT_USE_MOCK_AGENT;
 
 type PermissionRequest = {
   id: string;
@@ -41,7 +38,6 @@ export function AgentChat({ constructId }: AgentChatProps) {
   const session = sessionQuery.data ?? null;
   const messagesQuery = useQuery(agentQueries.messages(session?.id ?? null));
   const [message, setMessage] = useState("");
-  const [useMock, setUseMock] = useState(DEFAULT_USE_MOCK);
 
   const startAgentMutation = useMutation({
     ...agentMutations.start,
@@ -407,7 +403,6 @@ export function AgentChat({ constructId }: AgentChatProps) {
   const handleStartSession = () => {
     startAgentMutation.mutate({
       constructId,
-      useMock,
     });
   };
 
@@ -443,16 +438,6 @@ export function AgentChat({ constructId }: AgentChatProps) {
             No agent is currently running for this construct. Start a session to
             chat with the workspace agent.
           </p>
-          <div className="flex items-center space-x-3">
-            <Checkbox
-              checked={useMock}
-              id="use-mock-agent"
-              onCheckedChange={(checked) => setUseMock(Boolean(checked))}
-            />
-            <Label className="text-sm" htmlFor="use-mock-agent">
-              Use mock agent (no OpenCode credentials required)
-            </Label>
-          </div>
           <Button
             disabled={isStarting}
             onClick={handleStartSession}

@@ -188,9 +188,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
 
         recordCreated = true;
 
-        await ensureAgentSession(constructId, {
-          useMock: body.useMock,
-        });
+        await ensureAgentSession(constructId);
 
         set.status = HTTP_STATUS.CREATED;
         return constructToResponse(created);

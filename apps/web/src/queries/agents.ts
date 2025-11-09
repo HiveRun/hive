@@ -70,11 +70,7 @@ export const agentQueries = {
 
 export const agentMutations = {
   start: {
-    mutationFn: async (input: {
-      constructId: string;
-      useMock?: boolean;
-      force?: boolean;
-    }) => {
+    mutationFn: async (input: { constructId: string; force?: boolean }) => {
       const { data, error } = await rpc.api.agents.sessions.post(input);
       if (error) {
         throw new Error("Failed to start agent session");

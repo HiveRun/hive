@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -94,13 +93,8 @@ type TemplateAgentConfig = {
 
 function resolveTemplateAgentConfig(
   template: Template,
-  config: SyntheticConfig,
-  useMock: boolean | undefined
+  config: SyntheticConfig
 ): TemplateAgentConfig {
-  if (useMock) {
-    return { providerId: "mock" };
-  }
-
   if (template.agent) {
     return {
       providerId: template.agent.providerId,
@@ -116,7 +110,7 @@ function resolveTemplateAgentConfig(
 
 export async function ensureAgentSession(
   constructId: string,
-  options?: { force?: boolean; useMock?: boolean }
+  options?: { force?: boolean }
 ): Promise<AgentSessionRecord> {
   const runtime = await ensureRuntimeForConstruct(constructId, options);
   return toSessionRecord(runtime);
@@ -212,7 +206,7 @@ export async function ensureRuntimeForSession(
 
 async function ensureRuntimeForConstruct(
   constructId: string,
-  options?: { force?: boolean; useMock?: boolean }
+  options?: { force?: boolean }
 ): Promise<RuntimeHandle> {
   const currentSessionId = constructSessionMap.get(constructId);
   if (currentSessionId && !options?.force) {
@@ -227,25 +221,15 @@ async function ensureRuntimeForConstruct(
     throw new Error("Construct not found");
   }
 
-  if (options?.useMock) {
-    return startMockRuntime(construct);
-  }
-
   const config = await getSyntheticConfig();
   const template = config.templates[construct.templateId];
   if (!template) {
     throw new Error("Construct template configuration not found");
   }
 
-  const agentConfig = resolveTemplateAgentConfig(
-    template,
-    config,
-    options?.useMock
-  );
+  const agentConfig = resolveTemplateAgentConfig(template, config);
 
-  if (agentConfig.providerId !== "mock") {
-    await ensureProviderCredentials(agentConfig.providerId);
-  }
+  await ensureProviderCredentials(agentConfig.providerId);
 
   const runtime = await startOpencodeRuntime({
     construct,
@@ -258,72 +242,6 @@ async function ensureRuntimeForConstruct(
   runtimeRegistry.set(runtime.session.id, runtime);
 
   return runtime;
-}
-
-function startMockRuntime(construct: Construct): Promise<RuntimeHandle> {
-  const session: Session = {
-    id: `mock-${randomUUID()}`,
-    projectID: construct.id,
-    directory: construct.workspacePath,
-    title: construct.name,
-    version: "mock",
-    time: {
-      created: Date.now(),
-      updated: Date.now(),
-    },
-  };
-
-  const runtime: RuntimeHandle = {
-    session,
-    construct,
-    providerId: "mock",
-    directoryQuery: { directory: construct.workspacePath },
-    client: createOpencodeClient(),
-    server: {
-      close: async () => {
-        /* no-op */
-      },
-    },
-    abortController: new AbortController(),
-    status: "idle",
-    sendMessage(content) {
-      const userMessage = createLocalUserMessage(session.id, content);
-      emitMockMessageEvents(runtime, userMessage);
-
-      setRuntimeStatus(runtime, "working");
-
-      const assistantContent = `Mock response for construct ${construct.name}:\n${content}`;
-      const assistantMessageId = randomUUID();
-      const assistantMessage: AgentMessageRecord = {
-        id: assistantMessageId,
-        sessionId: session.id,
-        role: "assistant",
-        content: assistantContent,
-        parts: [
-          createTextPart(session.id, assistantMessageId, assistantContent),
-        ],
-        state: "completed",
-        createdAt: new Date().toISOString(),
-      };
-
-      emitMockMessageEvents(runtime, assistantMessage);
-      setRuntimeStatus(runtime, "awaiting_input");
-
-      return Promise.resolve();
-    },
-
-    stop() {
-      setRuntimeStatus(runtime, "completed");
-      return Promise.resolve();
-    },
-  };
-
-  setRuntimeStatus(runtime, "idle");
-
-  runtimeRegistry.set(session.id, runtime);
-  constructSessionMap.set(construct.id, session.id);
-
-  return Promise.resolve(runtime);
 }
 
 type StartRuntimeArgs = {
@@ -623,98 +541,6 @@ function determineMessageState(message: Message): AgentMessageState {
     return "streaming";
   }
   return "completed";
-}
-
-function createTextPart(
-  sessionId: string,
-  messageId: string,
-  text: string
-): Part {
-  const now = Date.now();
-  return {
-    id: randomUUID(),
-    sessionID: sessionId,
-    messageID: messageId,
-    type: "text",
-    text,
-    time: {
-      start: now,
-      end: now,
-    },
-  } as Part;
-}
-
-function emitMockMessageEvents(
-  runtime: RuntimeHandle,
-  record: AgentMessageRecord
-): void {
-  const info = toSdkMessage(record, runtime);
-  publishAgentEvent(runtime.session.id, {
-    type: "message.updated",
-    properties: { info },
-  });
-
-  for (const part of record.parts) {
-    publishAgentEvent(runtime.session.id, {
-      type: "message.part.updated",
-      properties: { part },
-    });
-  }
-}
-
-function toSdkMessage(
-  record: AgentMessageRecord,
-  runtime: RuntimeHandle
-): Message {
-  const created = Date.parse(record.createdAt) || Date.now();
-  if (record.role === "user") {
-    return {
-      id: record.id,
-      sessionID: record.sessionId,
-      role: "user",
-      time: { created },
-    } satisfies Message;
-  }
-
-  return {
-    id: record.id,
-    sessionID: record.sessionId,
-    role: "assistant",
-    time: { created, completed: created },
-    parentID: "",
-    modelID: runtime.modelId ?? "mock",
-    providerID: runtime.providerId,
-    mode: "build",
-    path: {
-      cwd: runtime.construct.workspacePath,
-      root: runtime.construct.workspacePath,
-    },
-    summary: false,
-    cost: 0,
-    tokens: {
-      input: 0,
-      output: 0,
-      reasoning: 0,
-      cache: { read: 0, write: 0 },
-    },
-  } satisfies Message;
-}
-
-function createLocalUserMessage(
-  sessionId: string,
-  content: string
-): AgentMessageRecord {
-  const id = randomUUID();
-  const part = createTextPart(sessionId, id, content);
-  return {
-    id,
-    sessionId,
-    role: "user",
-    content,
-    parts: [part],
-    state: "completed",
-    createdAt: new Date().toISOString(),
-  };
 }
 
 function toSessionRecord(runtime: RuntimeHandle): AgentSessionRecord {

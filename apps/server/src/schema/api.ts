@@ -30,7 +30,6 @@ export const CreateConstructSchema = t.Object({
   templateId: t.String({
     minLength: 1,
   }),
-  useMock: t.Optional(t.Boolean()),
 });
 
 export const DeleteConstructsSchema = t.Object({
@@ -71,7 +70,6 @@ export const AgentSessionSchema = t.Object({
 export const CreateAgentSessionSchema = t.Object({
   constructId: t.String(),
   force: t.Optional(t.Boolean()),
-  useMock: t.Optional(t.Boolean()),
 });
 
 export const AgentMessageSchema = t.Object({

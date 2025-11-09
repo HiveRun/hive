@@ -5,7 +5,6 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -16,7 +15,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { DEFAULT_USE_MOCK_AGENT } from "@/config/agent";
 import type { CreateConstructInput } from "@/lib/rpc";
 import { constructMutations } from "@/queries/constructs";
 import { templateQueries } from "@/queries/templates";
@@ -36,7 +34,6 @@ const constructSchema = z.object({
     .max(DESCRIPTION_MAX_LENGTH, "Description too long")
     .optional(),
   templateId: z.string().min(1, "Template is required"),
-  useMock: z.boolean().optional(),
 });
 
 const validateName = (value: string) => {
@@ -94,7 +91,6 @@ export function ConstructForm({ onSuccess, onCancel }: ConstructFormProps) {
       name: "",
       description: "",
       templateId: "",
-      useMock: DEFAULT_USE_MOCK_AGENT,
     }),
     []
   );
@@ -226,24 +222,6 @@ export function ConstructForm({ onSuccess, onCancel }: ConstructFormProps) {
                     {field.state.meta.errors[0]}
                   </p>
                 )}
-              </div>
-            )}
-          </form.Field>
-
-          <form.Field name="useMock">
-            {(field) => (
-              <div className="flex items-center space-x-3">
-                <Checkbox
-                  checked={Boolean(field.state.value)}
-                  disabled={mutation.isPending}
-                  id="use-mock-agent"
-                  onCheckedChange={(checked) =>
-                    field.handleChange(Boolean(checked))
-                  }
-                />
-                <Label className="text-sm" htmlFor="use-mock-agent">
-                  Use mock agent (no OpenCode credentials required)
-                </Label>
               </div>
             )}
           </form.Field>

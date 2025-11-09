@@ -36,7 +36,6 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
       try {
         const session = await ensureAgentSession(body.constructId, {
           force: body.force,
-          useMock: body.useMock,
         });
         return formatSession(session);
       } catch (error) {
