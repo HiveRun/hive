@@ -164,6 +164,7 @@ export function useSessionEventStream(
     let subscription: SessionEventSubscription | null = null;
 
     const extractSessionId = (properties?: Record<string, unknown>) =>
+      (properties?.sessionID as string | undefined) ||
       (properties?.sessionId as string | undefined) ||
       (properties?.session_id as string | undefined) ||
       (properties?.session as { id?: string } | undefined)?.id;
