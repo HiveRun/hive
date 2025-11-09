@@ -13,6 +13,17 @@ export default defineConfig({
     tanstackRouter(),
     viteReact(),
   ],
+  resolve: {
+    alias: {
+      // Prevent OpenCode SDK server code from being bundled (browser incompatible)
+      "@opencode-ai/sdk/dist/server.js": "@opencode-ai/sdk",
+    },
+  },
+  build: {
+    rollupOptions: {
+      external: ["node:child_process"],
+    },
+  },
   server: {
     proxy: {
       "/api": {

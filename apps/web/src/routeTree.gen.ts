@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TestErrorRouteImport } from './routes/test-error'
 import { Route as TemplatesRouteImport } from './routes/templates'
+import { Route as OpencodeTestRouteImport } from './routes/opencode-test'
 import { Route as ExampleDashboardRouteImport } from './routes/example-dashboard'
 import { Route as ConstructsRouteImport } from './routes/constructs'
 import { Route as IndexRouteImport } from './routes/index'
@@ -26,6 +27,11 @@ const TestErrorRoute = TestErrorRouteImport.update({
 const TemplatesRoute = TemplatesRouteImport.update({
   id: '/templates',
   path: '/templates',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OpencodeTestRoute = OpencodeTestRouteImport.update({
+  id: '/opencode-test',
+  path: '/opencode-test',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ExampleDashboardRoute = ExampleDashboardRouteImport.update({
@@ -63,6 +69,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/constructs': typeof ConstructsRouteWithChildren
   '/example-dashboard': typeof ExampleDashboardRoute
+  '/opencode-test': typeof OpencodeTestRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
   '/constructs/$constructId': typeof ConstructsConstructIdRoute
@@ -73,6 +80,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/constructs': typeof ConstructsRouteWithChildren
   '/example-dashboard': typeof ExampleDashboardRoute
+  '/opencode-test': typeof OpencodeTestRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
   '/constructs/$constructId': typeof ConstructsConstructIdRoute
@@ -84,6 +92,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/constructs': typeof ConstructsRouteWithChildren
   '/example-dashboard': typeof ExampleDashboardRoute
+  '/opencode-test': typeof OpencodeTestRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
   '/constructs/$constructId': typeof ConstructsConstructIdRoute
@@ -96,6 +105,7 @@ export interface FileRouteTypes {
     | '/'
     | '/constructs'
     | '/example-dashboard'
+    | '/opencode-test'
     | '/templates'
     | '/test-error'
     | '/constructs/$constructId'
@@ -106,6 +116,7 @@ export interface FileRouteTypes {
     | '/'
     | '/constructs'
     | '/example-dashboard'
+    | '/opencode-test'
     | '/templates'
     | '/test-error'
     | '/constructs/$constructId'
@@ -116,6 +127,7 @@ export interface FileRouteTypes {
     | '/'
     | '/constructs'
     | '/example-dashboard'
+    | '/opencode-test'
     | '/templates'
     | '/test-error'
     | '/constructs/$constructId'
@@ -127,6 +139,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ConstructsRoute: typeof ConstructsRouteWithChildren
   ExampleDashboardRoute: typeof ExampleDashboardRoute
+  OpencodeTestRoute: typeof OpencodeTestRoute
   TemplatesRoute: typeof TemplatesRoute
   TestErrorRoute: typeof TestErrorRoute
 }
@@ -145,6 +158,13 @@ declare module '@tanstack/react-router' {
       path: '/templates'
       fullPath: '/templates'
       preLoaderRoute: typeof TemplatesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/opencode-test': {
+      id: '/opencode-test'
+      path: '/opencode-test'
+      fullPath: '/opencode-test'
+      preLoaderRoute: typeof OpencodeTestRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/example-dashboard': {
@@ -212,6 +232,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ConstructsRoute: ConstructsRouteWithChildren,
   ExampleDashboardRoute: ExampleDashboardRoute,
+  OpencodeTestRoute: OpencodeTestRoute,
   TemplatesRoute: TemplatesRoute,
   TestErrorRoute: TestErrorRoute,
 }
