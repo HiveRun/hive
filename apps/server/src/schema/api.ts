@@ -1,4 +1,8 @@
 import { t } from "elysia";
+import {
+  AgentMessageRecordSchema,
+  AgentSessionRecordSchema,
+} from "../agents/types";
 
 // Construct schemas
 export const ConstructResponseSchema = t.Object({
@@ -55,39 +59,21 @@ export const TemplateListResponseSchema = t.Object({
   templates: t.Array(TemplateResponseSchema),
 });
 
-export const AgentSessionSchema = t.Object({
-  id: t.String(),
-  constructId: t.String(),
-  templateId: t.String(),
-  provider: t.String(),
-  status: t.String(),
-  workspacePath: t.String(),
-  createdAt: t.String(),
-  updatedAt: t.String(),
-  completedAt: t.Optional(t.String()),
-});
+export const AgentSessionSchema = AgentSessionRecordSchema;
 
 export const CreateAgentSessionSchema = t.Object({
   constructId: t.String(),
   force: t.Optional(t.Boolean()),
 });
 
-export const AgentMessageSchema = t.Object({
-  id: t.String(),
-  sessionId: t.String(),
-  role: t.String(),
-  content: t.Union([t.String(), t.Null()]),
-  state: t.String(),
-  createdAt: t.String(),
-  parts: t.Array(t.Any()),
-});
+export const AgentMessageSchema = AgentMessageRecordSchema;
 
 export const AgentMessageListResponseSchema = t.Object({
-  messages: t.Array(AgentMessageSchema),
+  messages: t.Array(AgentMessageRecordSchema),
 });
 
 export const AgentSessionByConstructResponseSchema = t.Object({
-  session: t.Union([AgentSessionSchema, t.Null()]),
+  session: t.Union([AgentSessionRecordSchema, t.Null()]),
 });
 
 export const SendAgentMessageSchema = t.Object({
