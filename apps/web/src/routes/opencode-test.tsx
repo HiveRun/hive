@@ -144,6 +144,29 @@ function OpencodeTestLayout() {
               <Label>Status Message</Label>
               <p className="text-muted-foreground text-sm">{status?.message}</p>
             </div>
+
+            {isServerActive && (
+              <div className="space-y-2">
+                <Label>Connect from TUI</Label>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 rounded bg-muted px-3 py-2 font-mono text-sm">
+                    opencode connect {serverUrl}
+                  </code>
+                  <Button
+                    onClick={() => {
+                      navigator.clipboard.writeText(
+                        `opencode connect ${serverUrl}`
+                      );
+                      toast.success("Command copied to clipboard!");
+                    }}
+                    size="sm"
+                    variant="outline"
+                  >
+                    Copy
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
