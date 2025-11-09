@@ -7,6 +7,8 @@ export const constructs = sqliteTable("constructs", {
   templateId: text("template_id").notNull(),
   workspacePath: text("workspace_path").notNull(),
   opencodeSessionId: text("opencode_session_id"),
+  opencodeServerUrl: text("opencode_server_url"),
+  opencodeServerPort: integer("opencode_server_port"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 });
 

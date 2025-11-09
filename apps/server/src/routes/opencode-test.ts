@@ -1,6 +1,9 @@
-import type { OpencodeClient } from "@opencode-ai/sdk";
-import { createOpencode } from "@opencode-ai/sdk";
 import { Elysia, t } from "elysia";
+import {
+  closeInstance,
+  createOpencodeServer,
+  getInstance,
+} from "../opencode/service";
 
 const HTTP_STATUS = {
   OK: 200,
@@ -9,44 +12,37 @@ const HTTP_STATUS = {
 } as const;
 
 const DEFAULT_PORT = 5006;
-const DEFAULT_HOSTNAME = "127.0.0.1";
 
-type OpencodeInstance = {
-  server: {
-    url: string;
-    close: () => void;
-  };
-  client: OpencodeClient;
-};
-
-const activeInstances = new Map<number, OpencodeInstance>();
+// For test route compatibility, we track instances by port
+const portToKey = new Map<number, string>();
+const keyToPort = new Map<string, number>();
 
 export const opencodeTestRoutes = new Elysia({ prefix: "/api/opencode-test" })
   .post(
     "/init",
     async ({ body, set }) => {
       const port = body.port || DEFAULT_PORT;
+      const key = `test-port-${port}`;
 
       try {
-        const existingInstance = activeInstances.get(port);
-
-        if (existingInstance) {
-          return {
-            reused: true,
-            serverUrl: existingInstance.server.url,
-            message: "Reusing existing OpenCode server",
-          };
+        const existingKey = portToKey.get(port);
+        if (existingKey) {
+          const existingInstance = getInstance(existingKey);
+          if (existingInstance) {
+            return {
+              reused: true,
+              serverUrl: existingInstance.server.url,
+              message: "Reusing existing OpenCode server",
+            };
+          }
         }
 
-        const newInstance = await createOpencode({
-          hostname: DEFAULT_HOSTNAME,
-          port,
-          config: {
-            model: "opencode/big-pickle",
-          },
+        const newInstance = await createOpencodeServer({
+          model: "opencode/big-pickle",
         });
 
-        activeInstances.set(port, newInstance);
+        portToKey.set(port, key);
+        keyToPort.set(key, port);
 
         return {
           reused: false,
@@ -56,15 +52,11 @@ export const opencodeTestRoutes = new Elysia({ prefix: "/api/opencode-test" })
       } catch (error) {
         set.status = HTTP_STATUS.INTERNAL_ERROR;
 
-        const errorPort = body.port || DEFAULT_PORT;
-        const instanceToCleanup = activeInstances.get(errorPort);
-        if (instanceToCleanup) {
-          try {
-            instanceToCleanup.server.close();
-          } catch {
-            // Ignore cleanup errors
-          }
-          activeInstances.delete(errorPort);
+        const cleanupKey = portToKey.get(port);
+        if (cleanupKey) {
+          closeInstance(cleanupKey);
+          portToKey.delete(port);
+          keyToPort.delete(cleanupKey);
         }
 
         return {
@@ -95,9 +87,9 @@ export const opencodeTestRoutes = new Elysia({ prefix: "/api/opencode-test" })
     "/shutdown",
     ({ query, set }) => {
       const port = query.port || DEFAULT_PORT;
+      const key = portToKey.get(port);
 
-      const instance = activeInstances.get(port);
-      if (!instance) {
+      if (!key) {
         set.status = HTTP_STATUS.BAD_REQUEST;
         return {
           message: `No active OpenCode server on port ${port}`,
@@ -105,8 +97,9 @@ export const opencodeTestRoutes = new Elysia({ prefix: "/api/opencode-test" })
       }
 
       try {
-        instance.server.close();
-        activeInstances.delete(port);
+        closeInstance(key);
+        portToKey.delete(port);
+        keyToPort.delete(key);
 
         return {
           message: `OpenCode server on port ${port} shut down successfully`,
@@ -142,8 +135,17 @@ export const opencodeTestRoutes = new Elysia({ prefix: "/api/opencode-test" })
     "/status",
     ({ query, set }) => {
       const port = query.port || DEFAULT_PORT;
+      const key = portToKey.get(port);
 
-      const instance = activeInstances.get(port);
+      if (!key) {
+        set.status = HTTP_STATUS.BAD_REQUEST;
+        return {
+          active: false,
+          message: `No active OpenCode server on port ${port}`,
+        };
+      }
+
+      const instance = getInstance(key);
       if (!instance) {
         set.status = HTTP_STATUS.BAD_REQUEST;
         return {
