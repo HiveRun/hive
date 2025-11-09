@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { opencodeMutations, opencodeQueries } from "@/queries/opencode";
 import { useOpencodeContext } from "../opencode-test";
 import { COPY_FEEDBACK_DURATION, SESSIONS_REFETCH_INTERVAL } from "./types";
@@ -19,7 +18,6 @@ function SessionListPage() {
   const { serverUrl } = useOpencodeContext();
   const queryClient = useQueryClient();
   const [sessionTitle, setSessionTitle] = useState("");
-  const [initialMessage, setInitialMessage] = useState("");
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
 
   const { data: sessions, refetch: refetchSessions } = useQuery({
@@ -28,48 +26,10 @@ function SessionListPage() {
   });
 
   const createSessionMutation = useMutation({
-    mutationFn: async ({
-      title,
-      initialMessageText,
-    }: {
-      title?: string;
-      initialMessageText?: string;
-    }) => {
-      const session = await opencodeMutations.createSession.mutationFn({
-        baseUrl: serverUrl,
-        title,
-      });
-
-      const messageText = initialMessageText?.trim();
-      if (session && messageText) {
-        try {
-          await opencodeMutations.sendMessage.mutationFn({
-            baseUrl: serverUrl,
-            sessionId: session.id,
-            text: messageText,
-          });
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error
-              ? error.message
-              : "Failed to send the initial message";
-          toast.error(
-            `Session created but the initial message failed: ${errorMessage}`
-          );
-        }
-      }
-
-      return session;
-    },
+    ...opencodeMutations.createSession,
     onSuccess: (data) => {
-      if (!data) {
-        toast.error("Session creation returned no data");
-        return;
-      }
-
       toast.success(`Session created: ${data.title || data.id}`);
       setSessionTitle("");
-      setInitialMessage("");
       queryClient.invalidateQueries({
         queryKey: ["opencode", "sessions", serverUrl],
       });
@@ -99,42 +59,26 @@ function SessionListPage() {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="space-y-3">
-          <div className="space-y-2">
-            <Label htmlFor="sessionTitle">Create New Session</Label>
-            <div className="flex flex-col gap-2 md:flex-row">
-              <Input
-                id="sessionTitle"
-                onChange={(e) => setSessionTitle(e.target.value)}
-                placeholder="Session title (optional)"
-                value={sessionTitle}
-              />
-              <Button
-                className="md:min-w-[120px]"
-                disabled={createSessionMutation.isPending}
-                onClick={() =>
-                  createSessionMutation.mutate({
-                    title: sessionTitle || undefined,
-                    initialMessageText: initialMessage || undefined,
-                  })
-                }
-              >
-                {createSessionMutation.isPending ? "Creating..." : "Create"}
-              </Button>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <Label htmlFor="initialMessage">Initial message (optional)</Label>
-            <Textarea
-              id="initialMessage"
-              onChange={(event) => setInitialMessage(event.target.value)}
-              placeholder="Describe what you want the agent to do. We'll send it as soon as the session spawns."
-              value={initialMessage}
+        <div className="space-y-2">
+          <Label htmlFor="sessionTitle">Create New Session</Label>
+          <div className="flex gap-2">
+            <Input
+              id="sessionTitle"
+              onChange={(e) => setSessionTitle(e.target.value)}
+              placeholder="Session title (optional)"
+              value={sessionTitle}
             />
-            <p className="text-muted-foreground text-xs">
-              Leave this blank to start the session without sending a prompt.
-            </p>
+            <Button
+              disabled={createSessionMutation.isPending}
+              onClick={() =>
+                createSessionMutation.mutate({
+                  baseUrl: serverUrl,
+                  title: sessionTitle || undefined,
+                })
+              }
+            >
+              {createSessionMutation.isPending ? "Creating..." : "Create"}
+            </Button>
           </div>
         </div>
 
