@@ -210,7 +210,7 @@ export const opencodeMutations = {
 
       const session = sessionResult.data;
 
-      // Step 2: Send initial message to the session
+      // Step 2: Send initial message to the session (fire-and-forget)
       const query: SessionPromptInput["query"] = directory
         ? { directory }
         : undefined;
@@ -231,17 +231,13 @@ export const opencodeMutations = {
         body.model = model;
       }
 
-      const promptResult = await client.session.prompt({
+      // Don't await - fire and forget so UI can navigate immediately
+      // The SSE stream will handle showing the response in real-time
+      client.session.prompt({
         path: { id: session.id },
         query,
         body,
       });
-
-      if (promptResult.error) {
-        throw new Error(
-          `Session created but failed to send message: ${JSON.stringify(promptResult.error)}`
-        );
-      }
 
       return {
         sessionId: session.id,
