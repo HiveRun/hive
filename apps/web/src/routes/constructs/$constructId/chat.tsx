@@ -6,12 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { constructQueries } from "@/queries/constructs";
-import { opencodeMutations, opencodeQueries } from "@/queries/opencode";
 import {
   useSessionChatMessages,
   useSessionEventStream,
-} from "@/routes/opencode-test/hooks";
+} from "@/hooks/use-opencode-chat";
+import { constructQueries } from "@/queries/constructs";
+import { opencodeMutations, opencodeQueries } from "@/queries/opencode";
 
 export const Route = createFileRoute("/constructs/$constructId/chat")({
   component: ConstructChatPage,

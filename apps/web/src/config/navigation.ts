@@ -1,12 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import {
-  Activity,
-  AlertTriangle,
-  FileText,
-  Home,
-  Layers,
-  Terminal,
-} from "lucide-react";
+import { Activity, AlertTriangle, FileText, Home, Layers } from "lucide-react";
 
 export type MainNavItem = {
   to:
@@ -14,8 +7,7 @@ export type MainNavItem = {
     | "/example-dashboard"
     | "/test-error"
     | "/templates"
-    | "/constructs/list"
-    | "/opencode-test";
+    | "/constructs/list";
   label: string;
   description?: string;
   icon: LucideIcon;
@@ -53,11 +45,5 @@ export const MAIN_NAV_ITEMS: MainNavItem[] = [
     label: "Example Error",
     icon: AlertTriangle,
     description: "Intentional failure route for error flows",
-  },
-  {
-    to: "/opencode-test",
-    label: "OpenCode Test",
-    icon: Terminal,
-    description: "Spawn and manage OpenCode servers",
   },
 ];

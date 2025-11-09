@@ -7,7 +7,6 @@ import { cleanupOrphanedServers } from "./opencode/cleanup";
 import { closeAllInstances } from "./opencode/service";
 import { agentsRoutes } from "./routes/agents";
 import { constructsRoutes } from "./routes/constructs";
-import { opencodeTestRoutes } from "./routes/opencode-test";
 import { templatesRoutes } from "./routes/templates";
 import { constructs } from "./schema/constructs";
 
@@ -81,7 +80,6 @@ const app = new Elysia()
   .use(templatesRoutes)
   .use(constructsRoutes)
   .use(agentsRoutes)
-  .use(opencodeTestRoutes)
   .listen(PORT);
 
 export type App = typeof app;

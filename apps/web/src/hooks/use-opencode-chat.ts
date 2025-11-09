@@ -1,7 +1,6 @@
 import { createOpencodeClient } from "@opencode-ai/sdk";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import type { ChatMessage, OpencodeEvent } from "./types";
 
 type SessionEventSubscription = Awaited<
   ReturnType<ReturnType<typeof createOpencodeClient>["event"]["subscribe"]>
@@ -11,6 +10,20 @@ type ReadablePart = {
   type?: string;
   synthetic?: boolean;
   text?: string;
+};
+
+export type OpencodeEvent = {
+  type: string;
+  properties?: Record<string, unknown>;
+  timestamp: number;
+};
+
+export type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  timestamp: number;
+  isComplete: boolean;
 };
 
 const READABLE_PART_TYPES = new Set(["text", "reasoning"]);
