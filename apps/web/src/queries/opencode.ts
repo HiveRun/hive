@@ -30,6 +30,23 @@ export const opencodeQueries = {
       return data;
     },
   }),
+
+  sessionMessages: (baseUrl: string, sessionId: string) => ({
+    queryKey: ["opencode", "messages", baseUrl, sessionId] as const,
+    queryFn: async () => {
+      const client = createOpencodeClient({ baseUrl });
+      const { data, error } = await client.session.messages({
+        path: { id: sessionId },
+        query: { limit: 100 },
+      });
+
+      if (error) {
+        throw new Error("Failed to fetch session messages");
+      }
+
+      return data;
+    },
+  }),
 };
 
 export const opencodeMutations = {

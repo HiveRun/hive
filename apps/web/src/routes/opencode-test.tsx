@@ -41,7 +41,23 @@ type SessionEventSubscription = Awaited<
   ReturnType<ReturnType<typeof createOpencodeClient>["event"]["subscribe"]>
 >;
 
-function useSessionChatMessages(events: OpencodeEvent[]) {
+function useSessionChatMessages(
+  events: OpencodeEvent[],
+  initialMessages?: Array<{
+    info: {
+      id: string;
+      role: "user" | "assistant";
+      time: { created: number; completed?: number };
+    };
+    parts: Array<{
+      id: string;
+      messageID: string;
+      type: string;
+      text?: string;
+      synthetic?: boolean;
+    }>;
+  }>
+) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: processing event stream requires branching
@@ -56,6 +72,31 @@ function useSessionChatMessages(events: OpencodeEvent[]) {
       }
     >();
 
+    // Load initial messages
+    if (initialMessages) {
+      for (const msg of initialMessages) {
+        // Combine all text parts for this message
+        const textParts = msg.parts.filter(
+          (p) => p.type === "text" && !p.synthetic
+        );
+        const fullText = textParts.map((p) => p.text || "").join("");
+
+        if (fullText) {
+          messageTexts.set(msg.info.id, fullText);
+        }
+
+        messageInfo.set(msg.info.id, {
+          role: msg.info.role,
+          completed:
+            msg.info.role === "user"
+              ? true
+              : msg.info.time.completed !== undefined,
+          timestamp: msg.info.time.completed || msg.info.time.created,
+        });
+      }
+    }
+
+    // Process streaming events (these will override/update initial messages)
     for (const event of events) {
       if (event.type === "message.part.updated") {
         const delta = event.properties?.delta as string | undefined;
@@ -121,7 +162,7 @@ function useSessionChatMessages(events: OpencodeEvent[]) {
     }
 
     setMessages(newMessages);
-  }, [events]);
+  }, [events, initialMessages]);
 
   return messages;
 }
@@ -225,13 +266,18 @@ function OpencodeTestComponent() {
     refetchInterval: status?.active ? SESSIONS_REFETCH_INTERVAL : false,
   });
 
+  const { data: initialMessages } = useQuery({
+    ...opencodeQueries.sessionMessages(serverUrl, selectedSessionId || ""),
+    enabled: Boolean(status?.active && selectedSessionId),
+  });
+
   const { events, isStreaming, clearEvents } = useSessionEventStream(
     serverUrl,
     selectedSessionId,
     status?.active ?? false
   );
 
-  const chatMessages = useSessionChatMessages(events);
+  const chatMessages = useSessionChatMessages(events, initialMessages);
 
   const initMutation = useMutation({
     ...opencodeMutations.init,
