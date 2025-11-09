@@ -106,4 +106,35 @@ export const opencodeMutations = {
       return data;
     },
   },
+
+  sendMessage: {
+    mutationFn: async ({
+      baseUrl,
+      sessionId,
+      text,
+    }: {
+      baseUrl: string;
+      sessionId: string;
+      text: string;
+    }) => {
+      const client = createOpencodeClient({ baseUrl });
+      const { data, error } = await client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          parts: [
+            {
+              type: "text",
+              text,
+            },
+          ],
+        },
+      });
+
+      if (error) {
+        throw new Error("Failed to send message");
+      }
+
+      return data;
+    },
+  },
 };

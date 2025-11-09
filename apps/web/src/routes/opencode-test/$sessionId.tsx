@@ -1,8 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { opencodeQueries } from "@/queries/opencode";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { opencodeMutations, opencodeQueries } from "@/queries/opencode";
 import { useOpencodeContext } from "../opencode-test";
 import { useSessionChatMessages, useSessionEventStream } from "./hooks";
 
@@ -13,6 +17,7 @@ export const Route = createFileRoute("/opencode-test/$sessionId")({
 function SessionChatPage() {
   const { sessionId } = Route.useParams();
   const { serverUrl, isServerActive } = useOpencodeContext();
+  const [messageText, setMessageText] = useState("");
 
   const { data: initialMessages } = useQuery({
     ...opencodeQueries.sessionMessages(serverUrl, sessionId),
@@ -26,6 +31,30 @@ function SessionChatPage() {
   );
 
   const chatMessages = useSessionChatMessages(events, initialMessages);
+
+  const sendMessageMutation = useMutation({
+    ...opencodeMutations.sendMessage,
+    onSuccess: () => {
+      setMessageText("");
+      toast.success("Message sent!");
+    },
+    onError: (error) => {
+      toast.error(`Failed to send message: ${error.message}`);
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!messageText.trim()) {
+      return;
+    }
+
+    sendMessageMutation.mutate({
+      baseUrl: serverUrl,
+      sessionId,
+      text: messageText,
+    });
+  };
 
   return (
     <div className="space-y-4">
@@ -111,6 +140,32 @@ function SessionChatPage() {
               </div>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Send Message</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form className="space-y-4" onSubmit={handleSubmit}>
+            <div className="space-y-2">
+              <Label htmlFor="message">Message</Label>
+              <Input
+                disabled={sendMessageMutation.isPending}
+                id="message"
+                onChange={(e) => setMessageText(e.target.value)}
+                placeholder="Type your message here..."
+                value={messageText}
+              />
+            </div>
+            <Button
+              disabled={!messageText.trim() || sendMessageMutation.isPending}
+              type="submit"
+            >
+              {sendMessageMutation.isPending ? "Sending..." : "Send Message"}
+            </Button>
+          </form>
         </CardContent>
       </Card>
     </div>
