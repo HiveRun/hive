@@ -428,7 +428,7 @@ function ConstructCard({
             to="/constructs/$constructId"
           >
             <Button size="sm" type="button" variant="outline">
-              Open
+              Open Chat
             </Button>
           </Link>
         </div>
