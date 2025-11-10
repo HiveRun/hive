@@ -1,31 +1,25 @@
 const STATUS_APPEARANCES: Record<string, { badge: string }> = {
   working: {
-    badge:
-      "border-[var(--chat-status-working-border)] bg-[var(--chat-status-working-bg)] text-[var(--chat-status-working-text)]",
+    badge: "border border-primary bg-primary/10 text-primary-foreground",
   },
   starting: {
-    badge:
-      "border-[var(--chat-status-starting-border)] bg-[var(--chat-status-starting-bg)] text-[var(--chat-status-starting-text)]",
+    badge: "border border-secondary bg-secondary/20 text-secondary-foreground",
   },
   awaiting_input: {
-    badge:
-      "border-[var(--chat-status-awaiting-border)] bg-[var(--chat-status-awaiting-bg)] text-[var(--chat-status-awaiting-text)]",
+    badge: "border border-muted bg-muted text-muted-foreground",
   },
   completed: {
-    badge:
-      "border-[var(--chat-status-completed-border)] bg-[var(--chat-status-completed-bg)] text-[var(--chat-status-completed-text)]",
+    badge: "border border-primary/70 bg-primary/15 text-primary-foreground",
   },
   idle: {
-    badge:
-      "border-[var(--chat-status-idle-border)] bg-[var(--chat-status-idle-bg)] text-[var(--chat-status-idle-text)]",
+    badge: "border border-border bg-card text-muted-foreground",
   },
   error: {
     badge:
-      "border-[var(--chat-status-error-border)] bg-[var(--chat-status-error-bg)] text-[var(--chat-status-error-text)]",
+      "border border-destructive bg-destructive/10 text-destructive-foreground",
   },
   default: {
-    badge:
-      "border-[var(--chat-status-idle-border)] bg-[var(--chat-status-idle-bg)] text-[var(--chat-status-idle-text)]",
+    badge: "border border-border bg-card text-muted-foreground",
   },
 };
 

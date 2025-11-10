@@ -102,7 +102,7 @@ export function AgentChat({ constructId }: AgentChatProps) {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden border-2 border-[var(--chat-border)] bg-[var(--chat-surface)] text-[var(--chat-neutral-100)]">
+    <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden border-2 border-border bg-background text-foreground">
       <AgentChatHeader constructId={constructId} session={session} />
       <div className="flex flex-1 flex-col gap-0 overflow-hidden lg:flex-row">
         <ConversationPanel
@@ -128,7 +128,7 @@ export function AgentChat({ constructId }: AgentChatProps) {
 
 function LoadingState() {
   return (
-    <div className="flex h-full items-center justify-center border-2 border-[var(--chat-border)] bg-[var(--chat-surface)] text-[var(--chat-neutral-300)] text-sm">
+    <div className="flex h-full items-center justify-center border-2 border-border bg-card text-muted-foreground text-sm">
       Loading agent session...
     </div>
   );
@@ -142,18 +142,18 @@ function NoSessionState({
   onStart: () => void;
 }) {
   return (
-    <div className="flex h-full flex-col justify-center gap-4 border-2 border-[var(--chat-border)] bg-[var(--chat-surface)] px-4 py-6 text-[var(--chat-neutral-100)]">
+    <div className="flex h-full flex-col justify-center gap-4 border-2 border-border bg-card px-4 py-6 text-foreground">
       <div>
-        <p className="text-[var(--chat-neutral-450)] text-xs uppercase tracking-[0.3em]">
+        <p className="text-muted-foreground text-xs uppercase tracking-[0.3em]">
           Agent Session
         </p>
-        <p className="text-[var(--chat-neutral-300)] text-sm">
+        <p className="text-muted-foreground text-sm">
           No agent is currently running for this construct. Start a session to
           chat with the workspace agent.
         </p>
       </div>
       <Button
-        className="self-start border-2 border-[var(--chat-accent)] bg-transparent px-4 text-[var(--chat-neutral-50)] hover:bg-[var(--chat-accent-dark)]"
+        className="self-start border border-primary bg-primary px-4 text-primary-foreground hover:bg-primary/90"
         disabled={isStarting}
         onClick={onStart}
         type="button"

@@ -50,7 +50,7 @@ export function ComposePanel({
   });
 
   return (
-    <section className="min-h-0 w-full overflow-y-auto border-[var(--chat-divider)] border-t-2 bg-[var(--chat-surface-alt)] p-3 text-[10px] text-[var(--chat-neutral-450)] uppercase tracking-[0.25em] lg:w-80 lg:border-t-0 lg:border-l-2">
+    <section className="min-h-0 w-full overflow-y-auto border border-border/60 bg-card p-3 text-[10px] text-muted-foreground uppercase tracking-[0.25em] lg:w-80 lg:border-l-2">
       <div className="flex items-center justify-between">
         <span>Send Instructions</span>
         <span>{provider}</span>
@@ -65,7 +65,7 @@ export function ComposePanel({
                 <FormLabel>Message</FormLabel>
                 <FormControl>
                   <Textarea
-                    className="min-h-[140px] border-2 border-[var(--chat-textarea-border)] bg-transparent text-[var(--chat-neutral-50)] text-sm placeholder:text-[var(--chat-neutral-450)] focus-visible:ring-[var(--chat-accent)]"
+                    className="min-h-[140px] border border-input bg-background text-foreground text-sm placeholder:text-muted-foreground focus-visible:ring-primary"
                     disabled={isSending}
                     onKeyDown={(event) => {
                       if (
@@ -91,7 +91,7 @@ export function ComposePanel({
               Ctrl+Enter to send
             </span>
             <Button
-              className="border-2 border-[var(--chat-accent)] bg-[var(--chat-accent-dark)] px-3 py-1 text-[var(--chat-neutral-50)] text-xs hover:bg-[var(--chat-hover)] focus-visible:ring-[var(--chat-accent)]"
+              className="border border-primary bg-primary px-3 py-1 text-primary-foreground text-xs hover:bg-primary/90 focus-visible:ring-primary"
               disabled={isSending || !form.formState.isValid}
               type="submit"
             >

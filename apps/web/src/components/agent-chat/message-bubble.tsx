@@ -4,19 +4,18 @@ import type { AgentMessage } from "@/queries/agents";
 const LEADING_WHITESPACE = /^\s+/;
 
 const ASSISTANT_THEME = {
-  container:
-    "border-2 border-[var(--chat-assistant-border)] bg-[var(--chat-assistant-bg)] text-[var(--chat-assistant-text)]",
-  label: "text-[var(--chat-assistant-label)]",
-  content: "text-[var(--chat-assistant-text)]",
-  placeholder: "text-[var(--chat-assistant-label)]",
+  container: "border border-primary/40 bg-primary/10 text-foreground",
+  label: "text-xs font-semibold uppercase tracking-[0.2em] text-primary",
+  content: "text-foreground",
+  placeholder: "text-muted-foreground",
 };
 
 const USER_THEME = {
-  container:
-    "border-2 border-[var(--chat-user-border)] bg-[var(--chat-user-bg)] text-[var(--chat-user-text)]",
-  label: "text-[var(--chat-user-label)]",
-  content: "text-[var(--chat-user-text)]",
-  placeholder: "text-[var(--chat-user-label)]",
+  container: "border border-border bg-muted text-foreground",
+  label:
+    "text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground",
+  content: "text-foreground",
+  placeholder: "text-muted-foreground",
 };
 
 export function MessageBubble({ message }: { message: AgentMessage }) {
