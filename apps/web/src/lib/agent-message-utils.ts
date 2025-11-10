@@ -20,6 +20,7 @@ export type OpenCodePartPayload = AgentMessagePart & {
   type: string;
   text?: string;
   messageID: string;
+  delta?: string;
 };
 
 export function normalizeMessage(message: AgentMessage): AgentMessage {

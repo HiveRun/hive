@@ -69,22 +69,38 @@ export function useAgentEventStream(
   );
 
   const upsertPartRecord = useCallback(
-    (part: OpenCodePartPayload) => {
+    (part: OpenCodePartPayload, delta?: string) => {
       const current = messagePartsRef.current.get(part.messageID) ?? [];
       const index = current.findIndex((existing) => existing.id === part.id);
+      const existingPart = index === -1 ? undefined : current[index];
+
+      const hasDelta = typeof delta === "string" && delta.length > 0;
+      const baseText = existingPart?.text ?? part.text ?? "";
+      const text = hasDelta
+        ? `${baseText}${delta}`
+        : (part.text ?? existingPart?.text);
+
+      const updatedPart: AgentMessagePart = {
+        ...existingPart,
+        ...part,
+        text: text ?? undefined,
+      };
+
       const nextParts = [...current];
       if (index === -1) {
-        nextParts.push(part);
+        nextParts.push(updatedPart);
       } else {
-        nextParts[index] = part;
+        nextParts[index] = updatedPart;
       }
       messagePartsRef.current.set(part.messageID, nextParts);
+
       const info = messageStoreRef.current.get(part.messageID);
       if (info) {
+        const nextContent = extractTextFromParts(nextParts);
         messageStoreRef.current.set(part.messageID, {
           ...info,
           parts: nextParts,
-          content: extractTextFromParts(nextParts),
+          content: nextContent.length ? nextContent : null,
         });
         updateMessagesCache();
       }
@@ -184,8 +200,9 @@ export function useAgentEventStream(
       try {
         const payload = JSON.parse(event.data) as {
           part: OpenCodePartPayload;
+          delta?: string;
         };
-        upsertPartRecord(payload.part);
+        upsertPartRecord(payload.part, payload.delta);
       } catch (error) {
         const title =
           error instanceof Error

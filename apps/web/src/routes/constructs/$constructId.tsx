@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { AgentChat } from "@/components/agent-chat";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { constructQueries } from "@/queries/constructs";
 import { templateQueries } from "@/queries/templates";
 
@@ -28,36 +27,43 @@ function ConstructDetail() {
 
   if (!construct) {
     return (
-      <div className="space-y-4 p-6">
-        <Card>
-          <CardContent className="p-6">
-            Unable to load construct. It may have been deleted.
-          </CardContent>
-        </Card>
+      <div className="flex h-full w-full flex-1 overflow-hidden">
+        <div className="flex min-h-0 flex-1 items-center justify-center border-2 border-[#1f1f1c] bg-[#080908] p-6 text-[#b1b3ab] text-sm">
+          Unable to load construct. It may have been deleted.
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-2xl">{construct.name}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm">
-          <p className="text-muted-foreground">{construct.description}</p>
-          <p>
-            <span className="font-semibold">Template:</span>{" "}
-            {templateLabel ?? construct.templateId}
-          </p>
-          <p>
-            <span className="font-semibold">Workspace:</span>{" "}
-            {construct.workspacePath}
-          </p>
-        </CardContent>
-      </Card>
+    <div className="flex h-full w-full flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 lg:p-6">
+        <section className="w-full shrink-0 border-2 border-[#1f1f1c] bg-[#080908] px-4 py-3 text-[#b1b3ab] text-sm">
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="font-semibold text-2xl text-[#f8f8f3] tracking-wide">
+                {construct.name}
+              </h1>
+              <span className="text-[#7b7e76] text-[11px] uppercase tracking-[0.3em]">
+                {construct.id}
+              </span>
+            </div>
+            {construct.description ? (
+              <p className="max-w-3xl text-[#8e9088] text-sm">
+                {construct.description}
+              </p>
+            ) : null}
+            <div className="flex flex-wrap gap-4 text-[#8e9088] text-[11px] uppercase tracking-[0.2em]">
+              <span>Template · {templateLabel ?? construct.templateId}</span>
+              <span>Workspace · {construct.workspacePath}</span>
+            </div>
+          </div>
+        </section>
 
-      <AgentChat constructId={constructId} />
+        <div className="flex min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-[#1f1f1c] bg-[#050505]">
+          <AgentChat constructId={constructId} />
+        </div>
+      </div>
     </div>
   );
 }
