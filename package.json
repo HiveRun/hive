@@ -61,7 +61,7 @@
   "packageManager": "bun@1.2.20",
   "lint-staged": {
     "**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue,astro,svelte}": [
-      "biome check --write --files-ignore-unknown=true"
+      "biome check --write --files-ignore-unknown=true --no-errors-on-unmatched"
     ],
     "**/*.{json,jsonc}": [
       "biome check --write --files-ignore-unknown=true --no-errors-on-unmatched"

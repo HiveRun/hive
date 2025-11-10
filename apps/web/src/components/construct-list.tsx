@@ -425,14 +425,6 @@ function ConstructCard({
         <div className="flex justify-end gap-2">
           <Link
             params={{ constructId: construct.id }}
-            to="/constructs/$constructId/chat"
-          >
-            <Button size="sm" type="button" variant="outline">
-              Chat
-            </Button>
-          </Link>
-          <Link
-            params={{ constructId: construct.id }}
             to="/constructs/$constructId"
           >
             <Button size="sm" type="button" variant="outline">
