@@ -22,23 +22,13 @@ const GRACEFUL_SHUTDOWN_DELAY_MS = 1000;
  */
 async function findProcessOnPort(port: number): Promise<number | null> {
   try {
-    // Try lsof first (more portable)
     const { stdout } = await execAsync(
       `lsof -ti:${port} -sTCP:LISTEN 2>/dev/null || true`
     );
     const pid = stdout.trim();
     return pid ? Number.parseInt(pid, 10) : null;
   } catch {
-    // If lsof fails, try fuser as fallback
-    try {
-      const { stdout } = await execAsync(
-        `fuser ${port}/tcp 2>/dev/null || true`
-      );
-      const pid = stdout.trim();
-      return pid ? Number.parseInt(pid, 10) : null;
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
