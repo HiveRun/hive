@@ -17,9 +17,6 @@ const GRACEFUL_SHUTDOWN_DELAY_MS = 1000;
  * then kill any processes still listening on those ports.
  */
 
-/**
- * Find the PID of the process listening on a specific port
- */
 async function findProcessOnPort(port: number): Promise<number | null> {
   try {
     const { stdout } = await execAsync(
@@ -32,26 +29,19 @@ async function findProcessOnPort(port: number): Promise<number | null> {
   }
 }
 
-/**
- * Kill a process by PID
- */
 async function killProcess(pid: number): Promise<boolean> {
   try {
-    // Try graceful shutdown first (SIGTERM)
     await execAsync(`kill -TERM ${pid} 2>/dev/null || true`);
 
-    // Wait a bit for graceful shutdown
     await new Promise((resolve) =>
       setTimeout(resolve, GRACEFUL_SHUTDOWN_DELAY_MS)
     );
 
-    // Check if still running, force kill if needed
     try {
       await execAsync(`kill -0 ${pid} 2>/dev/null`);
-      // Still running, force kill
       await execAsync(`kill -KILL ${pid} 2>/dev/null || true`);
     } catch {
-      // Process already dead (kill -0 failed)
+      // Process already terminated
     }
 
     return true;
@@ -60,21 +50,15 @@ async function killProcess(pid: number): Promise<boolean> {
   }
 }
 
-/**
- * Clean up orphaned OpenCode server on a specific port
- */
 export async function cleanupOrphanedServer(port: number): Promise<boolean> {
   const pid = await findProcessOnPort(port);
   if (!pid) {
-    return false; // No process found
+    return false;
   }
 
   return killProcess(pid);
 }
 
-/**
- * Clean up all orphaned OpenCode servers for given ports
- */
 export async function cleanupOrphanedServers(
   ports: number[]
 ): Promise<{ cleaned: number[]; failed: number[] }> {

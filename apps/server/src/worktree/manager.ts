@@ -7,13 +7,11 @@ import { join, sep } from "node:path";
 import { glob } from "tinyglobby";
 import type { Template } from "../config/schema";
 
-// Git worktree parsing constants
 const WORKTREE_PREFIX = "worktree ";
 const HEAD_PREFIX = "HEAD ";
 const BRANCH_PREFIX = "branch ";
 const REFS_HEADS_PREFIX = "refs/heads/";
 
-// String prefix lengths
 const WORKTREE_PREFIX_LENGTH = WORKTREE_PREFIX.length;
 const HEAD_PREFIX_LENGTH = HEAD_PREFIX.length;
 const BRANCH_PREFIX_LENGTH = BRANCH_PREFIX.length;
@@ -42,10 +40,7 @@ export type WorktreeManager = {
   removeWorktree(constructId: string): void;
 };
 
-const DEFAULT_INCLUDE_PATTERNS = [
-  ".env*", // Environment files
-  "*.local", // Local configuration files
-];
+const DEFAULT_INCLUDE_PATTERNS = [".env*", "*.local"];
 
 export function createWorktreeManager(
   baseDir: string = process.cwd(),
@@ -53,9 +48,6 @@ export function createWorktreeManager(
 ): WorktreeManager {
   const constructsDir = join(homedir(), ".synthetic", "constructs");
 
-  /**
-   * Verify we're in a git repository
-   */
   function ensureGitRepo(): void {
     try {
       execSync("git rev-parse --git-dir", {
@@ -70,13 +62,8 @@ export function createWorktreeManager(
     }
   }
 
-  // Fail fast if not in a git repo
   ensureGitRepo();
 
-  /**
-   * Internal logger for non-critical warnings
-   * Uses stderr to avoid polluting stdout, respects NODE_ENV
-   */
   function logWarn(message: string, error?: unknown): void {
     if (process.env.NODE_ENV !== "test") {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -113,9 +100,6 @@ export function createWorktreeManager(
     return new Error(`Git command failed: git ${command} | ${String(error)}`);
   }
 
-  /**
-   * Execute a git command and return output
-   */
   function git(...args: string[]): string {
     const command = args.join(" ");
     try {
@@ -128,26 +112,16 @@ export function createWorktreeManager(
     }
   }
 
-  /**
-   * Initialize constructs directory if it doesn't exist
-   */
   async function ensureConstructsDir(): Promise<void> {
     if (!existsSync(constructsDir)) {
       await mkdir(constructsDir, { recursive: true });
     }
   }
 
-  /**
-   * Get the main repository path
-   */
   function getMainRepoPath(): string {
     return git("rev-parse", "--show-toplevel");
   }
 
-  /**
-   * Get include patterns from synthetic config for a specific template
-   * Falls back to default patterns if template not found or has no patterns
-   */
   function getIncludePatterns(templateId?: string): string[] {
     if (!(templateId && syntheticConfig)) {
       return DEFAULT_INCLUDE_PATTERNS;
@@ -163,9 +137,6 @@ export function createWorktreeManager(
     return template.includePatterns;
   }
 
-  /**
-   * Find paths that match include patterns recursively using tinyglobby
-   */
   async function getIncludedPaths(
     mainRepoPath: string,
     includePatterns: string[]
@@ -177,7 +148,6 @@ export function createWorktreeManager(
     try {
       // Expand patterns to include recursive matching for nested files
       const expandedPatterns = includePatterns.flatMap((pattern) => {
-        // If pattern doesn't contain a path separator, add both root and recursive versions
         if (!pattern.includes("/")) {
           return [pattern, `**/${pattern}`];
         }
@@ -188,10 +158,9 @@ export function createWorktreeManager(
         cwd: mainRepoPath,
         absolute: false,
         ignore: IGNORED_DIRECTORIES.map((dir) => `**/${dir}/**`),
-        dot: true, // Include dot files like .env
+        dot: true,
       });
 
-      // Convert to POSIX paths for consistency
       return files.map((file: string) => file.split(sep).join(POSIX_SEPARATOR));
     } catch (error) {
       logWarn("Failed to match include patterns", error);
@@ -199,9 +168,6 @@ export function createWorktreeManager(
     }
   }
 
-  /**
-   * Copy included gitignored files from main repo to worktree
-   */
   async function copyIncludedFiles(
     worktreePath: string,
     includePatterns: string[]
@@ -214,9 +180,6 @@ export function createWorktreeManager(
     }
   }
 
-  /**
-   * Copy a single file or directory to worktree using Node.js built-in cp
-   */
   async function copyToWorktree(
     mainRepoPath: string,
     worktreePath: string,
@@ -226,23 +189,16 @@ export function createWorktreeManager(
     const targetPath = join(worktreePath, file);
 
     try {
-      // Use Node.js built-in cp for recursive copying
       await cp(sourcePath, targetPath, { recursive: true });
     } catch (error) {
       logWarn(`Failed to copy ${file} to worktree`, error);
     }
   }
 
-  /**
-   * Get the current branch name
-   */
   function getCurrentBranch(): string {
     return git("rev-parse", "--abbrev-ref", "HEAD");
   }
 
-  /**
-   * Handle existing worktree removal
-   */
   async function handleExistingWorktree(
     worktreePath: string,
     force: boolean
@@ -266,9 +222,6 @@ export function createWorktreeManager(
     }
   }
 
-  /**
-   * Create unique branch for worktree
-   */
   function ensureBranchExists(branchName: string): string {
     try {
       git("show-ref", "--verify", `refs/heads/${branchName}`);
@@ -280,9 +233,6 @@ export function createWorktreeManager(
     }
   }
 
-  /**
-   * Parse worktree section from git output
-   */
   function parseWorktreeSection(section: string): {
     path: string;
     commit: string;
@@ -307,9 +257,6 @@ export function createWorktreeManager(
     return path && commit ? { path, commit, branch: branch || "HEAD" } : null;
   }
 
-  /**
-   * Find worktree info for a construct ID by checking expected path
-   */
   function findWorktreeInfo(constructId: string): WorktreeInfo | null {
     const expectedPath = join(constructsDir, constructId);
     const worktreeList = git("worktree", "list", "--porcelain");
@@ -321,7 +268,6 @@ export function createWorktreeManager(
         continue;
       }
 
-      // Match by expected path
       if (parsed.path === expectedPath) {
         return {
           id: constructId,
@@ -337,9 +283,6 @@ export function createWorktreeManager(
   }
 
   return {
-    /**
-     * Create a new worktree for a construct
-     */
     async createWorktree(
       constructId: string,
       options: WorktreeCreateOptions = {}
@@ -348,23 +291,18 @@ export function createWorktreeManager(
 
       const worktreePath = join(constructsDir, constructId);
 
-      // Handle existing worktree
       await handleExistingWorktree(worktreePath, options.force ?? false);
 
-      // Create unique branch
       const branch = ensureBranchExists(`construct-${constructId}`);
 
       try {
-        // Create worktree
         git("worktree", "add", worktreePath, branch);
 
-        // Copy included gitignored files using template-specific include patterns
         const includePatterns = getIncludePatterns(options.templateId);
         await copyIncludedFiles(worktreePath, includePatterns);
 
         return worktreePath;
       } catch (error) {
-        // Clean up on failure
         try {
           if (existsSync(worktreePath)) {
             git("worktree", "remove", "--force", worktreePath);
@@ -376,9 +314,6 @@ export function createWorktreeManager(
       }
     },
 
-    /**
-     * Remove a worktree (prune and delete)
-     */
     removeWorktree(constructId: string): void {
       const worktreeInfo = findWorktreeInfo(constructId);
 

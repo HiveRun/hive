@@ -157,7 +157,6 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
 
         recordCreated = true;
 
-        // Start agent session (this creates the OpenCode server)
         await ensureAgentSession(constructId);
 
         set.status = HTTP_STATUS.CREATED;

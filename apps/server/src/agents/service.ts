@@ -166,9 +166,6 @@ export async function stopAgentSession(sessionId: string): Promise<void> {
   constructSessionMap.delete(runtime.construct.id);
 }
 
-/**
- * Close agent session for a specific construct
- */
 export async function closeAgentSession(constructId: string): Promise<void> {
   const sessionId = constructSessionMap.get(constructId);
   if (!sessionId) {
@@ -178,10 +175,6 @@ export async function closeAgentSession(constructId: string): Promise<void> {
   await stopAgentSession(sessionId);
 }
 
-/**
- * Close all active agent sessions
- * Used during graceful shutdown
- */
 export async function closeAllAgentSessions(): Promise<void> {
   const sessionIds = Array.from(runtimeRegistry.keys());
 
@@ -446,9 +439,8 @@ async function startEventStream({
       publishAgentEvent(runtime.session.id, event);
       updateRuntimeStatusFromEvent(runtime, event);
     }
-  } catch (error) {
-    // biome-ignore lint/suspicious/noConsole: fallback logging until structured logger is wired up.
-    console.error("Agent event stream exited", error);
+  } catch {
+    // Event stream closed
   }
 }
 

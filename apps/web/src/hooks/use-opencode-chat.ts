@@ -87,7 +87,6 @@ export function useSessionChatMessages(
       }
     }
 
-    // Process streaming events (these will override/update initial messages)
     for (const event of events) {
       if (event.type === "message.part.updated") {
         const delta = event.properties?.delta as string | undefined;
@@ -107,8 +106,10 @@ export function useSessionChatMessages(
 
         if (part && isReadableTextPart(part)) {
           if (delta) {
-            const existingText = messageTexts.get(part.messageID) || "";
-            messageTexts.set(part.messageID, existingText + delta);
+            messageTexts.set(
+              part.messageID,
+              (messageTexts.get(part.messageID) || "") + delta
+            );
           } else if (part.text) {
             messageTexts.set(part.messageID, part.text);
           }
