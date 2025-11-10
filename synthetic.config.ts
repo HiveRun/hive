@@ -2,7 +2,7 @@ import { defineSyntheticConfig } from "./apps/server/src/config/schema";
 
 export default defineSyntheticConfig({
   opencode: {
-    defaultProvider: "zen",
+    defaultProvider: "opencode",
     defaultModel: "big-pickle",
   },
   promptSources: ["docs/prompts/**/*.md"],
@@ -13,7 +13,7 @@ export default defineSyntheticConfig({
       type: "manual",
       includePatterns: [".env*"],
       agent: {
-        providerId: "zen",
+        providerId: "opencode",
         modelId: "big-pickle",
       },
       services: {
@@ -44,7 +44,7 @@ export default defineSyntheticConfig({
       type: "manual",
       includePatterns: [".env*", "*.db"],
       agent: {
-        providerId: "zen",
+        providerId: "opencode",
         modelId: "big-pickle",
       },
       services: {
@@ -65,7 +65,7 @@ export default defineSyntheticConfig({
       type: "manual",
       includePatterns: [".env*"],
       agent: {
-        providerId: "zen",
+        providerId: "opencode",
         modelId: "big-pickle",
       },
     },
