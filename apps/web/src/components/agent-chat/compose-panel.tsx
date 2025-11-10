@@ -1,65 +1,105 @@
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
 import { Textarea } from "@/components/ui/textarea";
+
+const MESSAGE_MAX_LENGTH = 5000;
+
+const formSchema = z.object({
+  message: z
+    .string()
+    .trim()
+    .min(1, "Message is required")
+    .max(MESSAGE_MAX_LENGTH, "Message is too long"),
+});
 
 type ComposePanelProps = {
   provider: string;
-  message: string;
   isSending: boolean;
-  onMessageChange: (value: string) => void;
-  onSend: () => void;
+  onSend: (content: string) => Promise<void>;
+};
+
+type ComposeValues = z.infer<typeof formSchema>;
+
+const validateMessage = (value: string) => {
+  const result = formSchema.shape.message.safeParse(value);
+  return result.success || result.error.issues[0]?.message;
 };
 
 export function ComposePanel({
   provider,
-  message,
   isSending,
-  onMessageChange,
   onSend,
 }: ComposePanelProps) {
+  const form = useForm<ComposeValues>({
+    defaultValues: { message: "" },
+    mode: "onChange",
+  });
+
+  const handleSubmit = form.handleSubmit(async (values) => {
+    await onSend(values.message.trim());
+    form.reset();
+  });
+
   return (
     <section className="min-h-0 w-full overflow-y-auto border-[var(--chat-divider)] border-t-2 bg-[var(--chat-surface-alt)] p-3 text-[10px] text-[var(--chat-neutral-450)] uppercase tracking-[0.25em] lg:w-80 lg:border-t-0 lg:border-l-2">
       <div className="flex items-center justify-between">
         <span>Send Instructions</span>
         <span>{provider}</span>
       </div>
-      <div className="mt-2 space-y-1.5">
-        <Label
-          className="text-[10px] text-[var(--chat-neutral-450)] uppercase tracking-[0.2em]"
-          htmlFor="agent-message"
-        >
-          Message
-        </Label>
-        <Textarea
-          className="min-h-[140px] border-2 border-[var(--chat-textarea-border)] bg-transparent text-[var(--chat-neutral-50)] text-sm placeholder:text-[var(--chat-neutral-450)] focus-visible:ring-[var(--chat-accent)]"
-          disabled={isSending}
-          id="agent-message"
-          onChange={(event) => onMessageChange(event.target.value)}
-          onKeyDown={(event) => {
-            if (
-              (event.ctrlKey || event.metaKey) &&
-              event.key === "Enter" &&
-              !isSending
-            ) {
-              event.preventDefault();
-              onSend();
-            }
-          }}
-          placeholder="Describe the work you want completed"
-          value={message}
-        />
-        <div className="flex items-center justify-between">
-          <span>Ctrl+Enter to send</span>
-          <Button
-            className="border-2 border-[var(--chat-accent)] bg-[var(--chat-accent-dark)] px-3 py-1 text-[var(--chat-neutral-50)] text-xs hover:bg-[var(--chat-hover)] focus-visible:ring-[var(--chat-accent)]"
-            disabled={isSending || !message.trim()}
-            onClick={onSend}
-            type="button"
-          >
-            {isSending ? "Sending..." : "Send"}
-          </Button>
-        </div>
-      </div>
+      <Form {...form}>
+        <form className="mt-2 space-y-3" onSubmit={handleSubmit}>
+          <FormField
+            control={form.control}
+            name="message"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Message</FormLabel>
+                <FormControl>
+                  <Textarea
+                    className="min-h-[140px] border-2 border-[var(--chat-textarea-border)] bg-transparent text-[var(--chat-neutral-50)] text-sm placeholder:text-[var(--chat-neutral-450)] focus-visible:ring-[var(--chat-accent)]"
+                    disabled={isSending}
+                    onKeyDown={(event) => {
+                      if (
+                        (event.ctrlKey || event.metaKey) &&
+                        event.key === "Enter" &&
+                        !isSending
+                      ) {
+                        event.preventDefault();
+                        handleSubmit();
+                      }
+                    }}
+                    placeholder="Describe the work you want completed"
+                    {...field}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+            rules={{ validate: validateMessage }}
+          />
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
+              Ctrl+Enter to send
+            </span>
+            <Button
+              className="border-2 border-[var(--chat-accent)] bg-[var(--chat-accent-dark)] px-3 py-1 text-[var(--chat-neutral-50)] text-xs hover:bg-[var(--chat-hover)] focus-visible:ring-[var(--chat-accent)]"
+              disabled={isSending || !form.formState.isValid}
+              type="submit"
+            >
+              {isSending ? "Sending..." : "Send"}
+            </Button>
+          </div>
+        </form>
+      </Form>
     </section>
   );
 }

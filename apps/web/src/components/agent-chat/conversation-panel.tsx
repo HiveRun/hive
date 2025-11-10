@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { AgentPermissions } from "@/components/agent-permissions";
 import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import type { PermissionRequest } from "@/hooks/use-agent-event-stream";
 import type { AgentMessage } from "@/queries/agents";
 import { MessageBubble } from "./message-bubble";
@@ -73,7 +74,7 @@ export function ConversationPanel({
 
   return (
     <section className="flex min-h-0 flex-1 flex-col border-[var(--chat-divider)] border-b-2 p-2 lg:border-r-2 lg:border-b-0">
-      <div className="flex flex-wrap items-center gap-2 text-[10px] text-[var(--chat-neutral-450)] uppercase tracking-[0.2em]">
+      <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
         <span>
           {totalMessages} message{totalMessages === 1 ? "" : "s"}
         </span>
@@ -89,13 +90,13 @@ export function ConversationPanel({
           placeholder="Search conversation"
           value={searchQuery}
         />
-        <span className="whitespace-nowrap text-[10px] text-[var(--chat-neutral-450)] uppercase tracking-[0.25em]">
+        <span className="whitespace-nowrap text-[10px] text-muted-foreground uppercase tracking-[0.25em]">
           Conversation Log
         </span>
       </div>
-      <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-1">
+      <ScrollArea className="mt-2 min-h-0 flex-1 pr-1">
         {conversationContent}
-      </div>
+      </ScrollArea>
       {permissions.length > 0 ? (
         <div className="mt-2">
           <AgentPermissions permissions={permissions} sessionId={sessionId} />

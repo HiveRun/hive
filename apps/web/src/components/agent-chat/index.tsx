@@ -17,7 +17,6 @@ export function AgentChat({ constructId }: AgentChatProps) {
   const sessionQuery = useQuery(agentQueries.sessionByConstruct(constructId));
   const session = sessionQuery.data ?? null;
   const messagesQuery = useQuery(agentQueries.messages(session?.id ?? null));
-  const [message, setMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
   const { permissions } = useAgentEventStream(session?.id ?? null, constructId);
@@ -66,9 +65,6 @@ export function AgentChat({ constructId }: AgentChatProps) {
 
   const sendMessageMutation = useMutation({
     ...agentMutations.sendMessage,
-    onSuccess: () => {
-      setMessage("");
-    },
     onError: (error) => {
       const errorMessage =
         error instanceof Error ? error.message : "Failed to send message";
@@ -82,13 +78,13 @@ export function AgentChat({ constructId }: AgentChatProps) {
     });
   };
 
-  const handleSendMessage = () => {
-    if (!(session?.id && message.trim())) {
+  const handleSendMessage = async (content: string) => {
+    if (!(session?.id && content.trim())) {
       return;
     }
-    sendMessageMutation.mutate({
+    await sendMessageMutation.mutateAsync({
       sessionId: session.id,
-      content: message.trim(),
+      content: content.trim(),
     });
   };
 
@@ -122,8 +118,6 @@ export function AgentChat({ constructId }: AgentChatProps) {
         />
         <ComposePanel
           isSending={isSending}
-          message={message}
-          onMessageChange={setMessage}
           onSend={handleSendMessage}
           provider={session.provider}
         />
