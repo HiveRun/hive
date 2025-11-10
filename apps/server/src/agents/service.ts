@@ -166,6 +166,30 @@ export async function stopAgentSession(sessionId: string): Promise<void> {
   constructSessionMap.delete(runtime.construct.id);
 }
 
+/**
+ * Close agent session for a specific construct
+ */
+export async function closeAgentSession(constructId: string): Promise<void> {
+  const sessionId = constructSessionMap.get(constructId);
+  if (!sessionId) {
+    return;
+  }
+
+  await stopAgentSession(sessionId);
+}
+
+/**
+ * Close all active agent sessions
+ * Used during graceful shutdown
+ */
+export async function closeAllAgentSessions(): Promise<void> {
+  const sessionIds = Array.from(runtimeRegistry.keys());
+
+  for (const sessionId of sessionIds) {
+    await stopAgentSession(sessionId);
+  }
+}
+
 export async function respondAgentPermission(
   sessionId: string,
   permissionId: string,

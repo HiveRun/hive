@@ -2,9 +2,9 @@ import "dotenv/config";
 import { logger } from "@bogeychan/elysia-logger";
 import { cors } from "@elysiajs/cors";
 import { Elysia } from "elysia";
+import { cleanupOrphanedServers } from "./agents/cleanup";
+import { closeAllAgentSessions } from "./agents/service";
 import { db } from "./db";
-import { cleanupOrphanedServers } from "./opencode/cleanup";
-import { closeAllInstances } from "./opencode/service";
 import { agentsRoutes } from "./routes/agents";
 import { constructsRoutes } from "./routes/constructs";
 import { templatesRoutes } from "./routes/templates";
@@ -88,7 +88,7 @@ function handleShutdown(signal: string) {
   process.stderr.write(`\n${signal} received. Shutting down gracefully...\n`);
 
   try {
-    closeAllInstances();
+    closeAllAgentSessions();
     process.stderr.write("Cleanup completed. Exiting.\n");
     process.exit(0);
   } catch (error) {

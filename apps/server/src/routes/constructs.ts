@@ -1,13 +1,8 @@
 import { logger } from "@bogeychan/elysia-logger";
 import { eq, inArray } from "drizzle-orm";
 import { Elysia, t } from "elysia";
-import { ensureAgentSession } from "../agents/service";
+import { closeAgentSession, ensureAgentSession } from "../agents/service";
 import { db } from "../db";
-import {
-  closeInstance,
-  createOpencodeServer,
-  createSessionWithMessage,
-} from "../opencode/service";
 import {
   ConstructListResponseSchema,
   ConstructResponseSchema,
@@ -104,21 +99,9 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
       const now = new Date();
       const constructId = crypto.randomUUID();
       let worktreeCreated = false;
-      let opencodeServerCreated = false;
       let recordCreated = false;
 
       const cleanupResources = async () => {
-        if (opencodeServerCreated) {
-          try {
-            closeInstance(constructId);
-          } catch (cleanupError) {
-            log.warn(
-              { cleanupError },
-              "Failed to close OpenCode server during cleanup"
-            );
-          }
-        }
-
         if (worktreeCreated) {
           try {
             worktreeService.removeWorktree(constructId);
@@ -151,29 +134,15 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         );
         worktreeCreated = true;
 
-        // Create OpenCode server for this construct
-        const opencodeInstance = await createOpencodeServer({
-          directory: workspacePath,
-        });
-        opencodeServerCreated = true;
-
-        // Create session and send description as initial message
-        const { sessionId } = await createSessionWithMessage({
-          client: opencodeInstance.client,
-          title: body.name,
-          message: body.description || undefined,
-          directory: workspacePath,
-        });
-
         const newConstruct: NewConstruct = {
           id: constructId,
           name: body.name,
           description: body.description ?? null,
           templateId: body.templateId,
           workspacePath,
-          opencodeSessionId: sessionId,
-          opencodeServerUrl: opencodeInstance.server.url,
-          opencodeServerPort: opencodeInstance.server.port,
+          opencodeSessionId: null,
+          opencodeServerUrl: null,
+          opencodeServerPort: null,
           createdAt: now,
         };
 
@@ -188,6 +157,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
 
         recordCreated = true;
 
+        // Start agent session (this creates the OpenCode server)
         await ensureAgentSession(constructId);
 
         set.status = HTTP_STATUS.CREATED;
@@ -240,7 +210,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         const worktreeService = createWorktreeManager();
 
         for (const construct of constructsToDelete) {
-          closeInstance(construct.id);
+          await closeAgentSession(construct.id);
           worktreeService.removeWorktree(construct.id);
         }
 
@@ -298,7 +268,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
           return { message: "Construct not found" };
         }
 
-        closeInstance(params.id);
+        await closeAgentSession(params.id);
 
         const worktreeService = createWorktreeManager();
         await worktreeService.removeWorktree(params.id);
