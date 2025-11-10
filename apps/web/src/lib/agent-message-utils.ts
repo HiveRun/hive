@@ -62,3 +62,47 @@ export function extractTextFromParts(parts: unknown): string {
     .filter(Boolean)
     .join("\n");
 }
+
+export function mergePartWithDelta(
+  incoming: OpenCodePartPayload,
+  existing?: AgentMessagePart,
+  delta?: string
+): AgentMessagePart {
+  const hasDelta = typeof delta === "string" && delta.length > 0;
+  const baseText = existing?.text ?? incoming.text ?? "";
+  const text = hasDelta
+    ? `${baseText}${delta}`
+    : (incoming.text ?? existing?.text);
+
+  return {
+    ...existing,
+    ...incoming,
+    text: text ?? undefined,
+  };
+}
+
+export function upsertPartWithDelta(
+  parts: AgentMessagePart[],
+  incoming: OpenCodePartPayload,
+  delta?: string
+): AgentMessagePart[] {
+  const nextParts = [...parts];
+  const index = nextParts.findIndex((part) => part.id === incoming.id);
+  const existing = index === -1 ? undefined : nextParts[index];
+  const updatedPart = mergePartWithDelta(incoming, existing, delta);
+
+  if (index === -1) {
+    nextParts.push(updatedPart);
+  } else {
+    nextParts[index] = updatedPart;
+  }
+
+  return nextParts;
+}
+
+export function computeContentFromParts(
+  parts: AgentMessagePart[]
+): string | null {
+  const text = extractTextFromParts(parts);
+  return text.length ? text : null;
+}
