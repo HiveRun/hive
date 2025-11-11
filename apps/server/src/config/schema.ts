@@ -54,6 +54,15 @@ export const serviceSchema = z.discriminatedUnion("type", [
   composeServiceSchema,
 ]);
 
+const templateAgentSchema = z.object({
+  providerId: z.string().describe("OpenCode provider identifier"),
+  modelId: z
+    .string()
+    .optional()
+    .describe("Model identifier within the provider"),
+  agentId: z.string().optional().describe("Agent preset identifier"),
+});
+
 export const templateSchema = z.object({
   id: z.string().describe("Unique template identifier"),
   label: z.string().describe("Display name for template"),
@@ -72,6 +81,9 @@ export const templateSchema = z.object({
     .describe(
       "Paths to prompt files or directories (relative to workspace root)"
     ),
+  agent: templateAgentSchema
+    .optional()
+    .describe("Agent configuration for this template"),
   teardown: z
     .array(z.string())
     .optional()
@@ -84,6 +96,22 @@ export const templateSchema = z.object({
     ),
 });
 
+const opencodeConfigSchema = z.object({
+  token: z
+    .string()
+    .optional()
+    .describe("Authentication token or environment reference for OpenCode"),
+  defaultProvider: z
+    .string()
+    .min(1)
+    .default("openai")
+    .describe("Default provider identifier when templates omit one"),
+  defaultModel: z
+    .string()
+    .optional()
+    .describe("Fallback model identifier used when templates omit one"),
+});
+
 export const defaultsSchema = z.object({
   templateId: z
     .string()
@@ -92,6 +120,15 @@ export const defaultsSchema = z.object({
 });
 
 export const syntheticConfigSchema = z.object({
+  opencode: opencodeConfigSchema.describe(
+    "Global OpenCode configuration shared across templates"
+  ),
+  promptSources: z
+    .array(z.string())
+    .default([])
+    .describe(
+      "Glob patterns pointing to prompt fragments used when assembling agent briefs"
+    ),
   templates: z
     .record(z.string(), templateSchema)
     .describe("Available construct templates"),
@@ -104,7 +141,9 @@ export type ProcessService = z.infer<typeof processServiceSchema>;
 export type DockerService = z.infer<typeof dockerServiceSchema>;
 export type ComposeService = z.infer<typeof composeServiceSchema>;
 export type Service = z.infer<typeof serviceSchema>;
+export type TemplateAgent = z.infer<typeof templateAgentSchema>;
 export type Template = z.infer<typeof templateSchema>;
+export type OpencodeConfig = z.infer<typeof opencodeConfigSchema>;
 export type Defaults = z.infer<typeof defaultsSchema>;
 export type SyntheticConfig = z.infer<typeof syntheticConfigSchema>;
 

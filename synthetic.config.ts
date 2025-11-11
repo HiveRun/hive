@@ -1,6 +1,11 @@
 import { defineSyntheticConfig } from "./apps/server/src/config/schema";
 
 export default defineSyntheticConfig({
+  opencode: {
+    defaultProvider: "opencode",
+    defaultModel: "big-pickle",
+  },
+  promptSources: ["docs/prompts/**/*.md"],
   defaults: {
     templateId: "synthetic-dev",
   },
@@ -10,6 +15,10 @@ export default defineSyntheticConfig({
       label: "Synthetic Development Environment",
       type: "manual",
       includePatterns: [".env*"],
+      agent: {
+        providerId: "opencode",
+        modelId: "big-pickle",
+      },
       services: {
         web: {
           type: "process",
@@ -37,6 +46,10 @@ export default defineSyntheticConfig({
       label: "Web API Server",
       type: "manual",
       includePatterns: [".env*", "*.db"],
+      agent: {
+        providerId: "opencode",
+        modelId: "big-pickle",
+      },
       services: {
         api: {
           type: "process",
@@ -54,6 +67,10 @@ export default defineSyntheticConfig({
       label: "Basic Template",
       type: "manual",
       includePatterns: [".env*"],
+      agent: {
+        providerId: "opencode",
+        modelId: "big-pickle",
+      },
     },
   },
 });

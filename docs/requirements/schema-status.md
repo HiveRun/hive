@@ -33,10 +33,10 @@ This document tracks the current status of prepared schemas, validation, and tes
 - **Tests**: 🔄 Planned
 
 #### OpenCode Agent Integration
-- **Schema**: `agent_sessions`, `agent_messages` tables  
-- **Status**: 🔄 Planned (Step 4)
-- **Usage**: Agent session management
-- **Tests**: 🔄 Planned
+- **Schema Update**: `constructs.opencode_session_id` column (maps constructs → OpenCode session)
+- **Status**: ✅ Completed (Step 4)
+- **Usage**: Backend rehydrates agent runtime by looking up the stored OpenCode session ID; transcripts live inside OpenCode's datastore
+- **Tests**: 🔄 Remote-session recovery tests planned
 
 ## 📦 Prepared But Not Currently Implemented
 
@@ -73,7 +73,17 @@ This document tracks the current status of prepared schemas, validation, and tes
 ### Active Tables
 ```sql
 -- Currently implemented and used
-constructs (id, name, description, template_id, workspace_path, status, created_at, updated_at)
+constructs (
+  id,
+  name,
+  description,
+  template_id,
+  workspace_path,
+  opencode_session_id,
+  status,
+  created_at,
+  updated_at
+)
 ```
 
 ### Prepared Tables (Not Currently Used)
@@ -82,8 +92,6 @@ constructs (id, name, description, template_id, workspace_path, status, created_
 prompt_bundles (id, construct_id, content, token_count, created_at)
 port_allocations (id, construct_id, service_name, port, allocated_at)
 services (id, construct_id, name, type, command, cwd, env_json, pid, status, ready_pattern, started_at, stopped_at)
-agent_sessions (id, construct_id, provider, status, started_at, completed_at)
-agent_messages (id, session_id, role, content, timestamp)
 ```
 
 ## Test Status

@@ -7,6 +7,9 @@ export const ConstructResponseSchema = t.Object({
   description: t.Union([t.String(), t.Null()]),
   templateId: t.String(),
   workspacePath: t.String(),
+  opencodeSessionId: t.Union([t.String(), t.Null()]),
+  opencodeServerUrl: t.Union([t.String(), t.Null()]),
+  opencodeServerPort: t.Union([t.Number(), t.Null()]),
   createdAt: t.String(),
 });
 
@@ -55,4 +58,51 @@ export const DefaultsResponseSchema = t.Object({
 export const TemplateListResponseSchema = t.Object({
   templates: t.Array(TemplateResponseSchema),
   defaults: t.Optional(DefaultsResponseSchema),
+});
+
+export const AgentSessionSchema = t.Object({
+  id: t.String(),
+  constructId: t.String(),
+  templateId: t.String(),
+  provider: t.String(),
+  status: t.String(),
+  workspacePath: t.String(),
+  createdAt: t.String(),
+  updatedAt: t.String(),
+  completedAt: t.Optional(t.String()),
+});
+
+export const CreateAgentSessionSchema = t.Object({
+  constructId: t.String(),
+  force: t.Optional(t.Boolean()),
+});
+
+export const AgentMessageSchema = t.Object({
+  id: t.String(),
+  sessionId: t.String(),
+  role: t.String(),
+  content: t.Union([t.String(), t.Null()]),
+  state: t.String(),
+  createdAt: t.String(),
+  parts: t.Array(t.Any()), // Part[] from OpenCode SDK - complex union type
+});
+
+export const AgentMessageListResponseSchema = t.Object({
+  messages: t.Array(AgentMessageSchema),
+});
+
+export const AgentSessionByConstructResponseSchema = t.Object({
+  session: t.Union([AgentSessionSchema, t.Null()]),
+});
+
+export const SendAgentMessageSchema = t.Object({
+  content: t.String({ minLength: 1 }),
+});
+
+export const RespondPermissionSchema = t.Object({
+  response: t.Union([
+    t.Literal("once"),
+    t.Literal("always"),
+    t.Literal("reject"),
+  ]),
 });
