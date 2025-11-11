@@ -19,9 +19,9 @@ function ConstructDetail() {
   const templatesQuery = useQuery(templateQueries.all());
 
   const construct = constructQuery.data;
-  const templates = templatesQuery.data;
+  const templates = templatesQuery.data?.templates ?? [];
 
-  const templateLabel = templates?.find(
+  const templateLabel = templates.find(
     (template) => template.id === construct?.templateId
   )?.label;
 

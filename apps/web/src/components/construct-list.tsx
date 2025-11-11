@@ -40,7 +40,8 @@ export function ConstructList() {
     isLoading,
     error,
   } = useQuery(constructQueries.all());
-  const { data: templates } = useQuery(templateQueries.all());
+  const { data: templatesData } = useQuery(templateQueries.all());
+  const templates = templatesData?.templates;
 
   useEffect(() => {
     if (!constructs) {

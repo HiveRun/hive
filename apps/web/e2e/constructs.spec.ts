@@ -92,6 +92,19 @@ test.describe("Constructs Page", () => {
     await expect(page.locator("text=Create New Construct")).toBeVisible();
   });
 
+  test("construct form uses default template from config", async ({ page }) => {
+    await mockAppApi(page);
+    await page.goto("/constructs/new");
+    await page.waitForLoadState("networkidle");
+
+    const templateSelect = page.getByTestId("template-select");
+    await expect(templateSelect).toBeVisible();
+
+    const selectValue = await templateSelect.locator("button").textContent();
+    expect(selectValue).toBeTruthy();
+    expect(selectValue).not.toBe("Select a template");
+  });
+
   test("should match constructs page snapshot (light mode)", async ({
     page,
   }) => {

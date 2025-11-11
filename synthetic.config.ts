@@ -6,6 +6,9 @@ export default defineSyntheticConfig({
     defaultModel: "big-pickle",
   },
   promptSources: ["docs/prompts/**/*.md"],
+  defaults: {
+    templateId: "synthetic-dev",
+  },
   templates: {
     "synthetic-dev": {
       id: "synthetic-dev",
