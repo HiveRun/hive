@@ -6,10 +6,16 @@ on:
       - main
       - master
     types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: 'Enable debug mode'
+        required: false
+        default: 'false'
 
 # Cancel in-progress runs when a new commit is pushed
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -42,7 +48,18 @@ jobs:
       - name: Detect changed paths
         id: detect
         if: steps.check_draft.outputs.skip_all != 'true'
-        run: .github/scripts/detect-changes.sh ${{ github.base_ref }}
+        run: |
+          # For manual dispatch, run everything
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "skip_all=false" >> $GITHUB_OUTPUT
+            echo "run_web=true" >> $GITHUB_OUTPUT
+            echo "run_server=true" >> $GITHUB_OUTPUT
+            echo "run_e2e=true" >> $GITHUB_OUTPUT
+            echo "run_audit=true" >> $GITHUB_OUTPUT
+            echo "✓ Manual trigger - running all checks"
+          else
+            .github/scripts/detect-changes.sh ${{ github.base_ref }}
+          fi
 
   # Lint, type check, security checks, and unit tests
   quality-checks:
