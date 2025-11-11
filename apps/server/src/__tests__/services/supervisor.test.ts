@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { constructs } from "../../schema/constructs";
@@ -95,6 +96,32 @@ describe("service supervisor", () => {
       releasePorts: true,
     });
     await Promise.all(harness.processes.map((proc) => proc.handle.exited));
+  });
+
+  it("creates log files inside construct workspace", async () => {
+    const workspace = await createWorkspaceDir();
+    const construct = await insertConstruct(workspace, "template-web");
+
+    const harness = createHarness();
+
+    await harness.supervisor.ensureConstructServices({
+      construct,
+      template: {
+        id: "template-web",
+        label: "Template",
+        type: "manual",
+        services: {
+          web: {
+            type: "process",
+            run: "bun run dev",
+            cwd: ".",
+          },
+        },
+      },
+    });
+
+    const expectedLogPath = resolve(workspace, ".synthetic/logs/web.log");
+    expect(existsSync(expectedLogPath)).toBe(true);
   });
 
   it("restores persisted services during bootstrap", async () => {
@@ -215,8 +242,8 @@ describe("service supervisor", () => {
 
     const spawnProcess: SpawnProcess = (options) => {
       let exit!: (code: number) => void;
-      const exited = new Promise<number>((resolve) => {
-        exit = resolve;
+      const exited = new Promise<number>((resolveExit) => {
+        exit = resolveExit;
       });
 
       const handle: ProcessHandle = {

@@ -1,3 +1,6 @@
+import { promises as fs } from "node:fs";
+import { createConnection } from "node:net";
+import { resolve as resolvePath } from "node:path";
 import { logger } from "@bogeychan/elysia-logger";
 import { eq, inArray } from "drizzle-orm";
 import { Elysia, t } from "elysia";
@@ -6,12 +9,15 @@ import { db } from "../db";
 import {
   ConstructListResponseSchema,
   ConstructResponseSchema,
+  ConstructServiceListResponseSchema,
   CreateConstructSchema,
   DeleteConstructsSchema,
 } from "../schema/api";
 import { constructs, type NewConstruct } from "../schema/constructs";
+import { constructServices } from "../schema/services";
 import {
   ensureServicesForConstruct,
+  isProcessAlive,
   stopServicesForConstruct,
 } from "../services/supervisor";
 import { createWorktreeManager } from "../worktree/manager";
@@ -25,6 +31,12 @@ const HTTP_STATUS = {
   INTERNAL_ERROR: 500,
 } as const;
 
+const LOG_TAIL_MAX_BYTES = 64_000;
+const LOG_TAIL_MAX_LINES = 200;
+const LOG_LINE_SPLIT_RE = /\r?\n/;
+const SERVICE_LOG_DIR = ".synthetic/logs";
+const PORT_CHECK_TIMEOUT_MS = 500;
+
 const LOGGER_CONFIG = {
   level: process.env.LOG_LEVEL || "info",
   autoLogging: false,
@@ -33,6 +45,29 @@ const LOGGER_CONFIG = {
       ? { target: "pino-pretty" as const }
       : undefined,
 } as const;
+
+function isPortActive(port?: number | null): Promise<boolean> {
+  if (!port) {
+    return Promise.resolve(false);
+  }
+
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: "127.0.0.1", port })
+      .once("connect", () => {
+        socket.end();
+        resolve(true);
+      })
+      .once("error", () => {
+        resolve(false);
+      })
+      .once("timeout", () => {
+        socket.destroy();
+        resolve(false);
+      });
+
+    socket.setTimeout(PORT_CHECK_TIMEOUT_MS);
+  });
+}
 
 function constructToResponse(construct: typeof constructs.$inferSelect) {
   return {
@@ -93,6 +128,90 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         404: t.Object({
           message: t.String(),
         }),
+      },
+    }
+  )
+  .get(
+    "/:id/services",
+    async ({ params, set }) => {
+      const constructResult = await db
+        .select()
+        .from(constructs)
+        .where(eq(constructs.id, params.id))
+        .limit(1);
+
+      if (constructResult.length === 0) {
+        set.status = HTTP_STATUS.NOT_FOUND;
+        return { message: "Construct not found" };
+      }
+
+      const rows = await db
+        .select({ service: constructServices, construct: constructs })
+        .from(constructServices)
+        .innerJoin(constructs, eq(constructs.id, constructServices.constructId))
+        .where(eq(constructServices.constructId, params.id));
+
+      const services = await Promise.all(
+        rows.map(async ({ service, construct }) => {
+          const logPath = computeServiceLogPath(
+            construct.workspacePath,
+            service.name
+          );
+          const recentLogs = await readLogTail(logPath);
+          const processAlive = isProcessAlive(service.pid);
+          const portActive = service.port
+            ? await isPortActive(service.port)
+            : true;
+          const shouldFlagError =
+            service.status === "running" && !(processAlive && portActive);
+
+          let derivedStatus = service.status;
+          let derivedLastKnownError = service.lastKnownError;
+
+          if (shouldFlagError) {
+            derivedStatus = "error";
+            derivedLastKnownError =
+              service.lastKnownError ??
+              (processAlive
+                ? "Service port is not accepting connections"
+                : "Process exited unexpectedly");
+
+            await db
+              .update(constructServices)
+              .set({
+                status: derivedStatus,
+                lastKnownError: derivedLastKnownError,
+                pid: processAlive ? service.pid : null,
+                updatedAt: new Date(),
+              })
+              .where(eq(constructServices.id, service.id));
+          }
+
+          return {
+            id: service.id,
+            name: service.name,
+            type: service.type,
+            status: derivedStatus,
+            port: service.port ?? undefined,
+            pid: service.pid ?? undefined,
+            command: service.command,
+            cwd: service.cwd,
+            logPath,
+            lastKnownError: derivedLastKnownError,
+            env: service.env,
+            updatedAt: service.updatedAt.toISOString(),
+            recentLogs,
+          };
+        })
+      );
+
+      return { services };
+    },
+    {
+      params: t.Object({ id: t.String() }),
+      response: {
+        200: ConstructServiceListResponseSchema,
+        404: t.Object({ message: t.String() }),
       },
     }
   )
@@ -338,3 +457,43 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
       },
     }
   );
+
+async function readLogTail(logPath?: string | null): Promise<string | null> {
+  if (!logPath) {
+    return null;
+  }
+
+  try {
+    const file = await fs.open(logPath, "r");
+    try {
+      const stats = await file.stat();
+      const totalBytes = Number(stats.size ?? 0);
+      if (totalBytes === 0) {
+        return "";
+      }
+      const bytesToRead = Math.min(totalBytes, LOG_TAIL_MAX_BYTES);
+      const start = totalBytes - bytesToRead;
+      const buffer = Buffer.alloc(bytesToRead);
+      await file.read(buffer, 0, bytesToRead, start);
+      const lines = buffer.toString("utf8").split(LOG_LINE_SPLIT_RE);
+      return lines.slice(-LOG_TAIL_MAX_LINES).join("\n").trimEnd();
+    } finally {
+      await file.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+function computeServiceLogPath(
+  workspacePath: string,
+  serviceName: string
+): string {
+  const safe = sanitizeServiceNameForLogs(serviceName);
+  return resolvePath(workspacePath, SERVICE_LOG_DIR, `${safe}.log`);
+}
+
+function sanitizeServiceNameForLogs(name: string): string {
+  const normalized = name.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
+  return normalized.length > 0 ? normalized : "service";
+}

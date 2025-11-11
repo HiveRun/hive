@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { constants as osConstants } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { and, eq } from "drizzle-orm";
 import { getSyntheticConfig } from "../config/context";
@@ -27,6 +27,20 @@ const STOP_TIMEOUT_MS = 2000;
 const FORCE_KILL_DELAY_MS = 250;
 const DEFAULT_SHELL = process.env.SHELL || "/bin/bash";
 const SIGNAL_CODES = osConstants?.signals ?? {};
+const SERVICE_LOG_DIR = ".synthetic/logs";
+
+export function isProcessAlive(pid?: number | null): boolean {
+  if (!pid) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function resolveSignalValue(signal?: number | string): number | undefined {
   if (typeof signal === "string") {
@@ -373,6 +387,13 @@ export function createServiceSupervisor(
       portMap: portLookup,
     });
 
+    const logPath = computeServiceLogPath(
+      row.construct.workspacePath,
+      row.service.name
+    );
+    ensureLogFile(logPath);
+    const commandWithLogging = wrapCommandWithLogging(definition.run, logPath);
+
     await db
       .update(constructServices)
       .set({
@@ -393,7 +414,7 @@ export function createServiceSupervisor(
       }
 
       const handle = spawnProcess({
-        command: definition.run,
+        command: commandWithLogging,
         cwd,
         env,
       });
@@ -564,6 +585,7 @@ export function createServiceSupervisor(
   ): Promise<ConstructService> {
     const timestamp = now();
     const env = buildBaseEnv({ serviceName: name, construct });
+    ensureLogFile(computeServiceLogPath(construct.workspacePath, name));
 
     const [record] = await db
       .insert(constructServices)
@@ -823,6 +845,30 @@ function buildServiceEnv({
     SERVICE_PORT: portString,
     [`${upper}_PORT`]: portString,
   };
+}
+
+function computeServiceLogPath(
+  workspacePath: string,
+  serviceName: string
+): string {
+  const safeName = sanitizeServiceName(serviceName).toLowerCase() || "service";
+  const logsDir = resolve(workspacePath, SERVICE_LOG_DIR);
+  return resolve(logsDir, `${safeName}.log`);
+}
+
+function ensureLogFile(logPath: string): void {
+  const directory = dirname(logPath);
+  mkdirSync(directory, { recursive: true });
+  if (!existsSync(logPath)) {
+    writeFileSync(logPath, "");
+  }
+}
+
+function wrapCommandWithLogging(command: string, logPath: string): string {
+  const directory = dirname(logPath);
+  const quotedDir = JSON.stringify(directory);
+  const quotedPath = JSON.stringify(logPath);
+  return `set -o pipefail; mkdir -p ${quotedDir} && touch ${quotedPath} && ( ${command} ) 2>&1 | tee -a ${quotedPath}`;
 }
 
 function isPortFree(port: number): Promise<boolean> {

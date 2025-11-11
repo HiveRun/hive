@@ -17,11 +17,18 @@ PATTERNS=(
 
 FOUND_SECRETS=false
 
+STAGED_FILES=$(git diff --cached --name-only | grep -v -E "\.(lock|sum)$|package-lock\.json$|yarn\.lock$|bun\.lock$" | grep -v "routeTree\.gen\.ts")
+
 for pattern in "${PATTERNS[@]}"; do
-    # Search in staged files only, excluding lockfiles and package integrity hashes
-    if git diff --cached --name-only | grep -v -E "\.(lock|sum)$|package-lock\.json$|yarn\.lock$|bun\.lock$" | xargs grep -l -E -i "$pattern" 2>/dev/null; then
+    # Skip when there are no staged files to scan
+    if [ -z "$STAGED_FILES" ]; then
+        break
+    fi
+
+    # Search in staged files only, excluding lockfiles, package integrity hashes, and generated route trees
+    if echo "$STAGED_FILES" | xargs grep -l -E -i "$pattern" 2>/dev/null; then
         echo "⚠️  Potential secret found matching pattern: $pattern"
-        git diff --cached --name-only | grep -v -E "\.(lock|sum)$|package-lock\.json$|yarn\.lock$|bun\.lock$" | xargs grep -n -E -i "$pattern" 2>/dev/null
+        echo "$STAGED_FILES" | xargs grep -n -E -i "$pattern" 2>/dev/null
         FOUND_SECRETS=true
     fi
 done

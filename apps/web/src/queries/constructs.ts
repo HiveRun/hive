@@ -31,6 +31,26 @@ export const constructQueries = {
       return data;
     },
   }),
+
+  services: (id: string) => ({
+    queryKey: ["constructs", id, "services"] as const,
+    queryFn: async () => {
+      const { data, error } = await rpc.api.constructs({ id }).services.get();
+      if (error) {
+        throw new Error("Failed to load services");
+      }
+
+      if ("message" in data) {
+        const message =
+          typeof data.message === "string"
+            ? data.message
+            : "Construct not found";
+        throw new Error(message);
+      }
+
+      return data.services;
+    },
+  }),
 };
 
 export const constructMutations = {
@@ -87,3 +107,7 @@ export const constructMutations = {
 export type Construct = Awaited<
   ReturnType<ReturnType<typeof constructQueries.detail>["queryFn"]>
 >;
+
+export type ConstructServiceSummary = Awaited<
+  ReturnType<ReturnType<typeof constructQueries.services>["queryFn"]>
+>[number];
