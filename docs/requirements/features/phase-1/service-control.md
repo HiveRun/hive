@@ -2,6 +2,7 @@
 
 - [/] Service Control #status/active #phase-1 #feature/infrastructure
   - [x] Split construct detail into dedicated `/constructs/$id/chat` and `/constructs/$id/services` routes linked from construct cards
+  - [x] Add per-service start/stop controls with backend enforcement of unhealthy states
 
 ## Goal
 Provide comprehensive service management capabilities for both users and agents through UI, CLI, and MCP tools.

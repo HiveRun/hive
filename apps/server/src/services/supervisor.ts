@@ -74,6 +74,11 @@ export type ServiceSupervisor = {
     construct: Construct;
     template?: Template;
   }): Promise<void>;
+  startConstructService(serviceId: string): Promise<void>;
+  stopConstructService(
+    serviceId: string,
+    options?: { releasePorts?: boolean }
+  ): Promise<void>;
   stopConstructServices(
     constructId: string,
     options?: { releasePorts?: boolean }
@@ -577,6 +582,19 @@ export function createServiceSupervisor(
     return record;
   }
 
+  async function getServiceRowById(
+    serviceId: string
+  ): Promise<ServiceRow | undefined> {
+    const [row] = await db
+      .select()
+      .from(constructServices)
+      .innerJoin(constructs, eq(constructs.id, constructServices.constructId))
+      .where(eq(constructServices.id, serviceId))
+      .limit(1);
+
+    return row ? mapRow(row) : undefined;
+  }
+
   async function createServiceRecord(
     construct: Construct,
     name: string,
@@ -597,6 +615,8 @@ export function createServiceSupervisor(
         command: definition.run,
         cwd,
         env,
+        port: null,
+        pid: null,
         status: "pending",
         readyTimeoutMs: definition.readyTimeoutMs ?? null,
         definition,
@@ -654,9 +674,47 @@ export function createServiceSupervisor(
     }
   }
 
+  async function startConstructServiceById(serviceId: string): Promise<void> {
+    const row = await getServiceRowById(serviceId);
+    if (!row) {
+      throw new Error(`Service ${serviceId} not found`);
+    }
+
+    const template = await loadTemplateCached(row.construct.templateId);
+    const templateEnv = template?.env ?? {};
+
+    const siblings = await db
+      .select({ service: constructServices })
+      .from(constructServices)
+      .where(eq(constructServices.constructId, row.construct.id));
+    const portMap = new Map<string, number>();
+    for (const sibling of siblings) {
+      const siblingService = sibling.service;
+      if (siblingService.port) {
+        portMap.set(siblingService.name, siblingService.port);
+      }
+    }
+
+    await startService(row, undefined, templateEnv, portMap);
+  }
+
+  async function stopConstructServiceById(
+    serviceId: string,
+    options?: { releasePorts?: boolean }
+  ): Promise<void> {
+    const row = await getServiceRowById(serviceId);
+    if (!row) {
+      return;
+    }
+
+    await stopService(row, options?.releasePorts ?? false);
+  }
+
   return {
     bootstrap,
     ensureConstructServices,
+    startConstructService: startConstructServiceById,
+    stopConstructService: stopConstructServiceById,
     stopConstructServices,
     stopAll,
   };
@@ -892,6 +950,12 @@ export const ensureServicesForConstruct = (
   template?: Template
 ): Promise<void> =>
   defaultSupervisor.ensureConstructServices({ construct, template });
+export const startServiceById = (serviceId: string): Promise<void> =>
+  defaultSupervisor.startConstructService(serviceId);
+export const stopServiceById = (
+  serviceId: string,
+  options?: { releasePorts?: boolean }
+): Promise<void> => defaultSupervisor.stopConstructService(serviceId, options);
 export const stopServicesForConstruct = (
   constructId: string,
   options?: { releasePorts?: boolean }

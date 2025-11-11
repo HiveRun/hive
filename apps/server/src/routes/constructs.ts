@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import { createConnection } from "node:net";
 import { resolve as resolvePath } from "node:path";
 import { logger } from "@bogeychan/elysia-logger";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { closeAgentSession, ensureAgentSession } from "../agents/service";
 import { db } from "../db";
@@ -10,6 +10,7 @@ import {
   ConstructListResponseSchema,
   ConstructResponseSchema,
   ConstructServiceListResponseSchema,
+  ConstructServiceSchema,
   CreateConstructSchema,
   DeleteConstructsSchema,
 } from "../schema/api";
@@ -18,6 +19,8 @@ import { constructServices } from "../schema/services";
 import {
   ensureServicesForConstruct,
   isProcessAlive,
+  startServiceById,
+  stopServiceById,
   stopServicesForConstruct,
 } from "../services/supervisor";
 import { createWorktreeManager } from "../worktree/manager";
@@ -134,83 +137,72 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
   .get(
     "/:id/services",
     async ({ params, set }) => {
-      const constructResult = await db
-        .select()
-        .from(constructs)
-        .where(eq(constructs.id, params.id))
-        .limit(1);
-
-      if (constructResult.length === 0) {
+      const construct = await loadConstructById(params.id);
+      if (!construct) {
         set.status = HTTP_STATUS.NOT_FOUND;
         return { message: "Construct not found" };
       }
 
-      const rows = await db
-        .select({ service: constructServices, construct: constructs })
-        .from(constructServices)
-        .innerJoin(constructs, eq(constructs.id, constructServices.constructId))
-        .where(eq(constructServices.constructId, params.id));
-
-      const services = await Promise.all(
-        rows.map(async ({ service, construct }) => {
-          const logPath = computeServiceLogPath(
-            construct.workspacePath,
-            service.name
-          );
-          const recentLogs = await readLogTail(logPath);
-          const processAlive = isProcessAlive(service.pid);
-          const portActive = service.port
-            ? await isPortActive(service.port)
-            : true;
-          const shouldFlagError =
-            service.status === "running" && !(processAlive && portActive);
-
-          let derivedStatus = service.status;
-          let derivedLastKnownError = service.lastKnownError;
-
-          if (shouldFlagError) {
-            derivedStatus = "error";
-            derivedLastKnownError =
-              service.lastKnownError ??
-              (processAlive
-                ? "Service port is not accepting connections"
-                : "Process exited unexpectedly");
-
-            await db
-              .update(constructServices)
-              .set({
-                status: derivedStatus,
-                lastKnownError: derivedLastKnownError,
-                pid: processAlive ? service.pid : null,
-                updatedAt: new Date(),
-              })
-              .where(eq(constructServices.id, service.id));
-          }
-
-          return {
-            id: service.id,
-            name: service.name,
-            type: service.type,
-            status: derivedStatus,
-            port: service.port ?? undefined,
-            pid: service.pid ?? undefined,
-            command: service.command,
-            cwd: service.cwd,
-            logPath,
-            lastKnownError: derivedLastKnownError,
-            env: service.env,
-            updatedAt: service.updatedAt.toISOString(),
-            recentLogs,
-          };
-        })
-      );
-
+      const rows = await fetchServiceRows(params.id);
+      const services = await Promise.all(rows.map(serializeService));
       return { services };
     },
     {
       params: t.Object({ id: t.String() }),
       response: {
         200: ConstructServiceListResponseSchema,
+        404: t.Object({ message: t.String() }),
+      },
+    }
+  )
+  .post(
+    "/:id/services/:serviceId/start",
+    async ({ params, set }) => {
+      const row = await fetchServiceRow(params.id, params.serviceId);
+      if (!row) {
+        set.status = HTTP_STATUS.NOT_FOUND;
+        return { message: "Service not found" };
+      }
+
+      await startServiceById(params.serviceId);
+      const updated = await fetchServiceRow(params.id, params.serviceId);
+      if (!updated) {
+        set.status = HTTP_STATUS.NOT_FOUND;
+        return { message: "Service not found" };
+      }
+
+      return serializeService(updated);
+    },
+    {
+      params: t.Object({ id: t.String(), serviceId: t.String() }),
+      response: {
+        200: ConstructServiceSchema,
+        404: t.Object({ message: t.String() }),
+      },
+    }
+  )
+  .post(
+    "/:id/services/:serviceId/stop",
+    async ({ params, set }) => {
+      const row = await fetchServiceRow(params.id, params.serviceId);
+      if (!row) {
+        set.status = HTTP_STATUS.NOT_FOUND;
+        return { message: "Service not found" };
+      }
+
+      await stopServiceById(params.serviceId);
+      const updated = await fetchServiceRow(params.id, params.serviceId);
+      if (!updated) {
+        set.status = HTTP_STATUS.NOT_FOUND;
+        return { message: "Service not found" };
+      }
+
+      return serializeService(updated);
+    },
+    {
+      params: t.Object({ id: t.String(), serviceId: t.String() }),
+      response: {
+        200: ConstructServiceSchema,
         404: t.Object({ message: t.String() }),
       },
     }
@@ -397,18 +389,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
     "/:id",
     async ({ params, set, log }) => {
       try {
-        const result = await db
-          .select()
-          .from(constructs)
-          .where(eq(constructs.id, params.id))
-          .limit(1);
-
-        if (result.length === 0) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Construct not found" };
-        }
-
-        const construct = result[0];
+        const construct = await loadConstructById(params.id);
         if (!construct) {
           set.status = HTTP_STATUS.NOT_FOUND;
           return { message: "Construct not found" };
@@ -457,6 +438,93 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
       },
     }
   );
+
+async function loadConstructById(
+  constructId: string
+): Promise<typeof constructs.$inferSelect | null> {
+  const [construct] = await db
+    .select()
+    .from(constructs)
+    .where(eq(constructs.id, constructId))
+    .limit(1);
+
+  return construct ?? null;
+}
+
+function fetchServiceRows(constructId: string) {
+  return db
+    .select({ service: constructServices, construct: constructs })
+    .from(constructServices)
+    .innerJoin(constructs, eq(constructs.id, constructServices.constructId))
+    .where(eq(constructServices.constructId, constructId));
+}
+
+async function fetchServiceRow(constructId: string, serviceId: string) {
+  const [row] = await db
+    .select({ service: constructServices, construct: constructs })
+    .from(constructServices)
+    .innerJoin(constructs, eq(constructs.id, constructServices.constructId))
+    .where(
+      and(
+        eq(constructServices.constructId, constructId),
+        eq(constructServices.id, serviceId)
+      )
+    )
+    .limit(1);
+
+  return row ?? null;
+}
+
+async function serializeService(row: {
+  service: typeof constructServices.$inferSelect;
+  construct: typeof constructs.$inferSelect;
+}) {
+  const { service, construct } = row;
+  const logPath = computeServiceLogPath(construct.workspacePath, service.name);
+  const recentLogs = await readLogTail(logPath);
+  const processAlive = isProcessAlive(service.pid);
+  const portActive = service.port ? await isPortActive(service.port) : true;
+  const shouldFlagError =
+    service.status === "running" && !(processAlive && portActive);
+
+  let derivedStatus = service.status;
+  let derivedLastKnownError = service.lastKnownError;
+
+  if (shouldFlagError) {
+    derivedStatus = "error";
+    derivedLastKnownError =
+      service.lastKnownError ??
+      (processAlive
+        ? "Service port is not accepting connections"
+        : "Process exited unexpectedly");
+
+    await db
+      .update(constructServices)
+      .set({
+        status: derivedStatus,
+        lastKnownError: derivedLastKnownError,
+        pid: processAlive ? service.pid : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(constructServices.id, service.id));
+  }
+
+  return {
+    id: service.id,
+    name: service.name,
+    type: service.type,
+    status: derivedStatus,
+    port: service.port ?? undefined,
+    pid: service.pid ?? undefined,
+    command: service.command,
+    cwd: service.cwd,
+    logPath,
+    lastKnownError: derivedLastKnownError,
+    env: service.env,
+    updatedAt: service.updatedAt.toISOString(),
+    recentLogs,
+  };
+}
 
 async function readLogTail(logPath?: string | null): Promise<string | null> {
   if (!logPath) {

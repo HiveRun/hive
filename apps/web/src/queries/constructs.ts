@@ -53,6 +53,12 @@ export const constructQueries = {
   }),
 };
 
+type ServiceActionInput = {
+  constructId: string;
+  serviceId: string;
+  serviceName: string;
+};
+
 export const constructMutations = {
   create: {
     mutationFn: async (input: CreateConstructInput) => {
@@ -98,6 +104,32 @@ export const constructMutations = {
         throw new Error(message);
       }
 
+      return data;
+    },
+  },
+
+  startService: {
+    mutationFn: async ({ constructId, serviceId }: ServiceActionInput) => {
+      const { data, error } = await rpc.api
+        .constructs({ id: constructId })
+        .services({ serviceId })
+        .start.post();
+      if (error) {
+        throw new Error("Failed to start service");
+      }
+      return data;
+    },
+  },
+
+  stopService: {
+    mutationFn: async ({ constructId, serviceId }: ServiceActionInput) => {
+      const { data, error } = await rpc.api
+        .constructs({ id: constructId })
+        .services({ serviceId })
+        .stop.post();
+      if (error) {
+        throw new Error("Failed to stop service");
+      }
       return data;
     },
   },

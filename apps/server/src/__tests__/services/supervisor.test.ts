@@ -124,6 +124,60 @@ describe("service supervisor", () => {
     expect(existsSync(expectedLogPath)).toBe(true);
   });
 
+  it("can stop and restart a single service", async () => {
+    const workspace = await createWorkspaceDir();
+    const construct = await insertConstruct(workspace, "template-restart");
+
+    const harness = createHarness();
+
+    await harness.supervisor.ensureConstructServices({
+      construct,
+      template: {
+        id: "template-restart",
+        label: "Template",
+        type: "manual",
+        services: {
+          web: {
+            type: "process",
+            run: "bun run dev",
+            cwd: ".",
+          },
+        },
+      },
+    });
+
+    const [service] = await testDb
+      .select()
+      .from(constructServices)
+      .where(eq(constructServices.constructId, construct.id));
+
+    expect(service?.status).toBe("running");
+    if (!service) {
+      throw new Error("Missing service record");
+    }
+
+    await harness.supervisor.stopConstructService(service.id);
+
+    const [stopped] = await testDb
+      .select()
+      .from(constructServices)
+      .where(eq(constructServices.id, service.id));
+    expect(stopped?.status).toBe("stopped");
+
+    await harness.supervisor.startConstructService(service.id);
+
+    const [restarted] = await testDb
+      .select()
+      .from(constructServices)
+      .where(eq(constructServices.id, service.id));
+    expect(restarted?.status).toBe("running");
+
+    await harness.supervisor.stopConstructServices(construct.id, {
+      releasePorts: true,
+    });
+    await Promise.all(harness.processes.map((proc) => proc.handle.exited));
+  });
+
   it("restores persisted services during bootstrap", async () => {
     const workspace = await createWorkspaceDir();
     const construct = await insertConstruct(workspace, "template-bootstrap");
