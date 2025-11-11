@@ -173,6 +173,11 @@ const notifyIdle = async ($: PluginInput["$"], sessionName: string) => {
     await $`notify-send -u normal -t ${NOTIFICATION_EXPIRE_MS} ${title} ${summary}`
       .quiet()
       .nothrow();
+
+    // Play a sound using paplay (PulseAudio)
+    await $`paplay /usr/share/sounds/Pop/stereo/notification/complete.oga`
+      .quiet()
+      .nothrow();
   } catch {
     // ignore notification failures
   }
@@ -283,6 +288,11 @@ export const IdleValidate: Plugin = ({ $, client, directory }) => {
       } catch (error) {
         debug("failure", error);
         await $`notify-send -u normal -t ${NOTIFICATION_EXPIRE_MS} ${sessionName} "Idle checks plugin failed"`
+          .quiet()
+          .nothrow();
+
+        // Play a sound using paplay (PulseAudio)
+        await $`paplay /usr/share/sounds/Pop/stereo/notification/complete.oga`
           .quiet()
           .nothrow();
       } finally {
