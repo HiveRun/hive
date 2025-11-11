@@ -47,6 +47,14 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
 
+  /* Visual snapshot testing configuration */
+  expect: {
+    toHaveScreenshot: {
+      /* Allow small pixel differences to account for font rendering and anti-aliasing differences between environments */
+      maxDiffPixelRatio: 0.05,
+    },
+  },
+
   /* Configure projects for major browsers */
   projects: [
     {
