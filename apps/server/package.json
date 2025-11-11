@@ -9,7 +9,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown",
+    "build": "tsdown && cp -r src/migrations dist/src/migrations",
     "check-types": "tsc -b",
     "check": "biome check --write .",
     "compile": "bun build --compile --minify --sourcemap --bytecode ./src/index.ts --outfile server",
