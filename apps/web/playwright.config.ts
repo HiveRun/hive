@@ -63,6 +63,9 @@ export default defineConfig({
       reuseExistingServer: false,
       cwd: path.join(ROOT_DIR, "apps", "server"),
       timeout: WEB_SERVER_TIMEOUT_MS,
+      env: {
+        DATABASE_URL: process.env.DATABASE_URL || "e2e-test.db",
+      },
     },
     {
       command: "bun run dev:e2e",

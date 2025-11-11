@@ -136,6 +136,8 @@ jobs:
         run: bunx playwright install --with-deps
 
       - name: Run E2E tests
+        env:
+          DATABASE_URL: e2e-test.db
         run: bun run test:e2e
 
       - name: Upload test results
