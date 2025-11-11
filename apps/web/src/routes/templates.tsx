@@ -2,52 +2,15 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { rpc } from "@/lib/rpc";
-
-type TemplateResponse = {
-  id: string;
-  label: string;
-  type: string;
-  configJson: {
-    services?: Record<
-      string,
-      {
-        type: string;
-        run?: string;
-        image?: string;
-        file?: string;
-        cwd?: string;
-        env?: Record<string, string>;
-        ports?: string[];
-        volumes?: string[];
-        setup?: string[];
-        stop?: string;
-        readyTimeoutMs?: number;
-      }
-    >;
-    env?: Record<string, string>;
-    prompts?: string[];
-    teardown?: string[];
-  };
-};
+import { type Template, templateQueries } from "@/queries/templates";
 
 export const Route = createFileRoute("/templates")({
   component: TemplatesPage,
 });
 
 function TemplatesPage() {
-  const { data } = useSuspenseQuery({
-    queryKey: ["templates"],
-    queryFn: async () => {
-      const { data: responseData, error } = await rpc.api.templates.get();
-
-      if (error) {
-        throw new Error("Failed to fetch templates");
-      }
-
-      return responseData;
-    },
-  });
+  const { data } = useSuspenseQuery(templateQueries.all());
+  const templates = data.templates ?? [];
 
   const getServiceIcon = (type: string) => {
     switch (type) {
@@ -90,9 +53,8 @@ function TemplatesPage() {
       </div>
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {data?.templates &&
-          data.templates.length > 0 &&
-          data.templates.map((template: TemplateResponse) => (
+        {templates.length > 0 &&
+          templates.map((template: Template) => (
             <Card
               className="transition-colors hover:border-primary/50"
               data-testid="template-card"
@@ -213,7 +175,7 @@ function TemplatesPage() {
               </CardContent>
             </Card>
           ))}
-        {(!data?.templates || data.templates.length === 0) && (
+        {templates.length === 0 && (
           <div className="col-span-full py-12 text-center">
             <p className="text-muted-foreground">No templates available</p>
             <p className="mt-2 text-muted-foreground text-sm">

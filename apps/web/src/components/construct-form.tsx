@@ -66,10 +66,13 @@ export function ConstructForm({ onSuccess, onCancel }: ConstructFormProps) {
   const queryClient = useQueryClient();
 
   const {
-    data: templates,
+    data: templatesData,
     isLoading: templatesLoading,
     error: templatesError,
   } = useQuery(templateQueries.all());
+
+  const templates = templatesData?.templates;
+  const defaults = templatesData?.defaults;
 
   const mutation = useMutation({
     mutationFn: constructMutations.create.mutationFn,
@@ -90,9 +93,9 @@ export function ConstructForm({ onSuccess, onCancel }: ConstructFormProps) {
     () => ({
       name: "",
       description: "",
-      templateId: "",
+      templateId: defaults?.templateId ?? "",
     }),
-    []
+    [defaults?.templateId]
   );
 
   const form = useForm({
@@ -199,24 +202,25 @@ export function ConstructForm({ onSuccess, onCancel }: ConstructFormProps) {
             {(field) => (
               <div className="space-y-2">
                 <Label htmlFor={field.name}>Template</Label>
-                <Select
-                  data-testid="template-select"
-                  disabled={mutation.isPending}
-                  onValueChange={(value) => field.handleChange(value)}
-                  value={field.state.value}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a template" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Array.isArray(templates) &&
-                      templates.map((template) => (
-                        <SelectItem key={template.id} value={template.id}>
-                          {template.label}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
+                <div data-testid="template-select">
+                  <Select
+                    disabled={mutation.isPending}
+                    onValueChange={(value) => field.handleChange(value)}
+                    value={field.state.value}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a template" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.isArray(templates) &&
+                        templates.map((template) => (
+                          <SelectItem key={template.id} value={template.id}>
+                            {template.label}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 {field.state.meta.errors.length > 0 && (
                   <p className="text-red-600 text-sm">
                     {field.state.meta.errors[0]}

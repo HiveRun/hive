@@ -132,7 +132,12 @@ function createConstructRouteHandler(mockData: MockApiData) {
 
 function createTemplateListHandler(mockData: MockApiData) {
   return createGetJsonHandler(() => ({
-    body: { templates: mockData.templates },
+    body: {
+      templates: mockData.templates,
+      defaults: {
+        templateId: mockData.templates[0]?.id,
+      },
+    },
   }));
 }
 

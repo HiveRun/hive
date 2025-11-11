@@ -112,6 +112,13 @@ const opencodeConfigSchema = z.object({
     .describe("Fallback model identifier used when templates omit one"),
 });
 
+export const defaultsSchema = z.object({
+  templateId: z
+    .string()
+    .optional()
+    .describe("Default template to use when creating constructs"),
+});
+
 export const syntheticConfigSchema = z.object({
   opencode: opencodeConfigSchema.describe(
     "Global OpenCode configuration shared across templates"
@@ -125,6 +132,9 @@ export const syntheticConfigSchema = z.object({
   templates: z
     .record(z.string(), templateSchema)
     .describe("Available construct templates"),
+  defaults: defaultsSchema
+    .optional()
+    .describe("Default values for construct creation"),
 });
 
 export type ProcessService = z.infer<typeof processServiceSchema>;
@@ -134,6 +144,7 @@ export type Service = z.infer<typeof serviceSchema>;
 export type TemplateAgent = z.infer<typeof templateAgentSchema>;
 export type Template = z.infer<typeof templateSchema>;
 export type OpencodeConfig = z.infer<typeof opencodeConfigSchema>;
+export type Defaults = z.infer<typeof defaultsSchema>;
 export type SyntheticConfig = z.infer<typeof syntheticConfigSchema>;
 
 export function defineSyntheticConfig(

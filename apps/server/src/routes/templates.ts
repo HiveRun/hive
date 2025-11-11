@@ -36,7 +36,10 @@ export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
       const templates = Object.entries(config.templates).map(([id, template]) =>
         templateToResponse(id, template)
       );
-      return { templates };
+      return {
+        templates,
+        defaults: config.defaults,
+      };
     },
     {
       response: {
