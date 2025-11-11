@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import dotenv from "dotenv";
-import { type Config, defineConfig } from "drizzle-kit";
+import { defineConfig } from "drizzle-kit";
 
 dotenv.config({
   path: "./.env",
@@ -16,16 +16,13 @@ const normalizedPath = databaseUrl.startsWith("file:")
   ? databaseUrl.replace(/^file:/, "")
   : databaseUrl;
 
-const config = defineConfig({
+export default defineConfig({
   schema: "./src/schema",
   out: "./src/migrations",
   dialect: "sqlite",
-  driver: "better-sqlite",
   dbCredentials: {
     url: resolve(normalizedPath),
   },
   strict: true,
   verbose: true,
-} as Config);
-
-export default config;
+});
