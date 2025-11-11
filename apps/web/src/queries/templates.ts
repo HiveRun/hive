@@ -1,10 +1,31 @@
 import { rpc } from "@/lib/rpc";
 
+export type TemplateService = {
+  type: string;
+  run?: string;
+  image?: string;
+  file?: string;
+  cwd?: string;
+  env?: Record<string, string>;
+  ports?: string[];
+  volumes?: string[];
+  setup?: string[];
+  stop?: string;
+  readyTimeoutMs?: number;
+};
+
+export type TemplateConfig = {
+  services?: Record<string, TemplateService>;
+  env?: Record<string, string>;
+  prompts?: string[];
+  teardown?: string[];
+};
+
 export type Template = {
   id: string;
   label: string;
   type: string;
-  configJson: unknown;
+  configJson: TemplateConfig;
 };
 
 export type Defaults = {
