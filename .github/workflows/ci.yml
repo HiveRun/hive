@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: 'Enable debug mode'
+        required: false
+        default: 'false'
+
+# Cancel in-progress runs when a new commit is pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Detect which parts of the monorepo changed to optimize job execution
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      skip_all: ${{ steps.detect.outputs.skip_all }}
+      run_web: ${{ steps.detect.outputs.run_web }}
+      run_server: ${{ steps.detect.outputs.run_server }}
+      run_e2e: ${{ steps.detect.outputs.run_e2e }}
+      run_audit: ${{ steps.detect.outputs.run_audit }}
+    steps:
+      - name: Skip if draft PR
+        id: check_draft
+        run: |
+          if [ "${{ github.event.pull_request.draft }}" == "true" ]; then
+            echo "skip_all=true" >> $GITHUB_OUTPUT
+            echo "Draft PR detected, skipping all CI"
+            exit 0
+          fi
+          echo "skip_all=false" >> $GITHUB_OUTPUT
+
+      - name: Checkout code
+        if: steps.check_draft.outputs.skip_all != 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed paths
+        id: detect
+        if: steps.check_draft.outputs.skip_all != 'true'
+        run: |
+          # For manual dispatch, run everything
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "skip_all=false" >> $GITHUB_OUTPUT
+            echo "run_web=true" >> $GITHUB_OUTPUT
+            echo "run_server=true" >> $GITHUB_OUTPUT
+            echo "run_e2e=true" >> $GITHUB_OUTPUT
+            echo "run_audit=true" >> $GITHUB_OUTPUT
+            echo "✓ Manual trigger - running all checks"
+          else
+            .github/scripts/detect-changes.sh ${{ github.base_ref }}
+          fi
+
+  # Lint, type check, security checks, and unit tests
+  quality-checks:
+    name: Quality Checks
+    runs-on: blacksmith-2vcpu-ubuntu-2204
+    needs: detect-changes
+    if: needs.detect-changes.outputs.skip_all != 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun with Turborepo cache
+        uses: ./.github/actions/setup-bun-turbo
+
+      - name: Check for secrets
+        run: bun run check:secrets
+
+      - name: Security audit
+        if: needs.detect-changes.outputs.run_audit == 'true'
+        run: bun run check:audit
+
+      - name: Run Biome check
+        run: bun run check:biome
+
+      - name: Check types
+        run: bun run check-types
+
+      - name: Run server tests
+        if: needs.detect-changes.outputs.run_server == 'true'
+        run: bun run --filter=@synthetic/server test:run
+
+      - name: Run web tests
+        if: needs.detect-changes.outputs.run_web == 'true'
+        run: bun run --filter=web test:run
+
+  # Build all packages
+  build:
+    name: Build
+    runs-on: blacksmith-2vcpu-ubuntu-2204
+    needs: detect-changes
+    if: needs.detect-changes.outputs.skip_all != 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun with Turborepo cache
+        uses: ./.github/actions/setup-bun-turbo
+
+      - name: Build project
+        run: bun run build
+
+  # E2E visual regression tests (only run when apps/web changes)
+  e2e:
+    name: E2E Tests (Visual Regression)
+    runs-on: blacksmith-2vcpu-ubuntu-2204
+    needs: [detect-changes, build]
+    if: needs.detect-changes.outputs.skip_all != 'true' && needs.detect-changes.outputs.run_e2e == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun with Turborepo cache
+        uses: ./.github/actions/setup-bun-turbo
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('apps/web/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install Playwright browsers
+        run: bunx playwright install --with-deps
+
+      - name: Run E2E tests
+        run: bun run test:e2e
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7
