@@ -5,8 +5,8 @@
   "scripts": {
     "build": "vite build",
     "serve": "vite preview",
-    "dev": "vite dev --port=3001",
-    "dev:e2e": "VITE_DISABLE_DEVTOOLS=true vite dev --port=3001",
+    "dev": "vite dev",
+    "dev:e2e": "VITE_DISABLE_DEVTOOLS=true vite dev",
     "check": "biome check --write .",
     "check-types": "tsc -b",
     "test": "vitest",

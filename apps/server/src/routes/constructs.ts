@@ -10,6 +10,10 @@ import {
   DeleteConstructsSchema,
 } from "../schema/api";
 import { constructs, type NewConstruct } from "../schema/constructs";
+import {
+  ensureServicesForConstruct,
+  stopServicesForConstruct,
+} from "../services/supervisor";
 import { createWorktreeManager } from "../worktree/manager";
 
 const HTTP_STATUS = {
@@ -100,8 +104,20 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
       const constructId = crypto.randomUUID();
       let worktreeCreated = false;
       let recordCreated = false;
+      let servicesStarted = false;
 
       const cleanupResources = async () => {
+        if (servicesStarted) {
+          try {
+            await stopServicesForConstruct(constructId, { releasePorts: true });
+          } catch (cleanupError) {
+            log.warn(
+              { cleanupError },
+              "Failed to stop services during construct creation cleanup"
+            );
+          }
+        }
+
         if (worktreeCreated) {
           try {
             worktreeService.removeWorktree(constructId);
@@ -158,6 +174,8 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         recordCreated = true;
 
         await ensureAgentSession(constructId);
+        await ensureServicesForConstruct(created);
+        servicesStarted = true;
 
         set.status = HTTP_STATUS.CREATED;
         return constructToResponse(created);
@@ -210,6 +228,16 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
 
         for (const construct of constructsToDelete) {
           await closeAgentSession(construct.id);
+          try {
+            await stopServicesForConstruct(construct.id, {
+              releasePorts: true,
+            });
+          } catch (error) {
+            log.warn(
+              { error, constructId: construct.id },
+              "Failed to stop services before deletion"
+            );
+          }
           worktreeService.removeWorktree(construct.id);
         }
 
@@ -268,6 +296,14 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         }
 
         await closeAgentSession(params.id);
+        try {
+          await stopServicesForConstruct(params.id, { releasePorts: true });
+        } catch (error) {
+          log.warn(
+            { error, constructId: params.id },
+            "Failed to stop services before construct removal"
+          );
+        }
 
         const worktreeService = createWorktreeManager();
         await worktreeService.removeWorktree(params.id);

@@ -9,8 +9,13 @@ import { agentsRoutes } from "./routes/agents";
 import { constructsRoutes } from "./routes/constructs";
 import { templatesRoutes } from "./routes/templates";
 import { constructs } from "./schema/constructs";
+import {
+  bootstrapServiceSupervisor,
+  stopAllServices,
+} from "./services/supervisor";
 
-const PORT = 3000;
+const DEFAULT_SERVER_PORT = 3000;
+const PORT = Number(process.env.PORT ?? DEFAULT_SERVER_PORT);
 
 async function startupCleanup() {
   process.stderr.write("Checking for orphaned OpenCode processes...\n");
@@ -43,7 +48,11 @@ async function startupCleanup() {
   }
 }
 
-const DEFAULT_CORS_ORIGINS = ["http://localhost:3001", "http://127.0.0.1:3001"];
+const DEFAULT_WEB_PORT = process.env.WEB_PORT ?? "3001";
+const DEFAULT_CORS_ORIGINS = [
+  `http://localhost:${DEFAULT_WEB_PORT}`,
+  `http://127.0.0.1:${DEFAULT_WEB_PORT}`,
+];
 
 const resolvedCorsOrigins = (process.env.CORS_ORIGIN || "")
   .split(",")
@@ -54,6 +63,15 @@ const allowedCorsOrigins =
   resolvedCorsOrigins.length > 0 ? resolvedCorsOrigins : DEFAULT_CORS_ORIGINS;
 
 await startupCleanup();
+
+try {
+  await bootstrapServiceSupervisor();
+  process.stderr.write("Service supervisor initialized.\n");
+} catch (error) {
+  process.stderr.write(
+    `Failed to bootstrap service supervisor: ${error instanceof Error ? error.message : String(error)}\n`
+  );
+}
 
 const app = new Elysia()
   .use(
@@ -84,11 +102,19 @@ const app = new Elysia()
 
 export type App = typeof app;
 
-function handleShutdown(signal: string) {
+let shuttingDown = false;
+
+async function handleShutdown(signal: string) {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+
   process.stderr.write(`\n${signal} received. Shutting down gracefully...\n`);
 
   try {
-    closeAllAgentSessions();
+    await stopAllServices();
+    await closeAllAgentSessions();
     process.stderr.write("Cleanup completed. Exiting.\n");
     process.exit(0);
   } catch (error) {
@@ -97,5 +123,13 @@ function handleShutdown(signal: string) {
   }
 }
 
-process.on("SIGTERM", () => handleShutdown("SIGTERM"));
-process.on("SIGINT", () => handleShutdown("SIGINT"));
+process.on("SIGTERM", () => {
+  handleShutdown("SIGTERM").catch((error) => {
+    process.stderr.write(`Failed to handle SIGTERM: ${error}\n`);
+  });
+});
+process.on("SIGINT", () => {
+  handleShutdown("SIGINT").catch((error) => {
+    process.stderr.write(`Failed to handle SIGINT: ${error}\n`);
+  });
+});
