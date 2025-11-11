@@ -23,6 +23,9 @@
       "!**/tsconfig*.json"
     ]
   },
+  "javascript": {
+    "globals": ["Bun"]
+  },
   "extends": ["ultracite/core", "ultracite/react"],
   "overrides": [
     {
@@ -53,10 +56,20 @@
               "level": "error",
               "options": {
                 "paths": {
-                  "@playwright/test": "Import the shared fixture from ./utils/app-test instead"
+                  "@playwright/test": "Import shared fixture from ./utils/app-test instead"
                 }
               }
             }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["**/routes/**/$*.tsx"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useFilenamingConvention": "off"
           }
         }
       }

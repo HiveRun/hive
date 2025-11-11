@@ -11,7 +11,8 @@
       "dotenv": "^17.2.2",
       "zod": "^4.1.11",
       "typescript": "^5.8.2",
-      "tsdown": "^0.15.5"
+      "tsdown": "^0.15.5",
+      "@opencode-ai/sdk": "^1.0.51"
     }
   },
   "scripts": {
@@ -61,7 +62,7 @@
   "packageManager": "bun@1.2.20",
   "lint-staged": {
     "**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue,astro,svelte}": [
-      "biome check --write --files-ignore-unknown=true"
+      "biome check --write --files-ignore-unknown=true --no-errors-on-unmatched"
     ],
     "**/*.{json,jsonc}": [
       "biome check --write --files-ignore-unknown=true --no-errors-on-unmatched"
