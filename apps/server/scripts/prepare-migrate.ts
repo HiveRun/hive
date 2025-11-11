@@ -18,19 +18,68 @@ if (!existsSync(resolvedPath)) {
   process.exit(0);
 }
 
-const db = new Database(resolvedPath);
-const hasMigrationsTable = db
-  .query(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations'"
-  )
-  .get();
-db.close();
+const expectedMigrations = await readExpectedMigrationCount();
 
-if (hasMigrationsTable) {
-  process.exit(0);
+const db = new Database(resolvedPath);
+const hasMigrationsTable = Boolean(
+  db
+    .query(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations'"
+    )
+    .get()
+);
+
+if (!hasMigrationsTable) {
+  db.close();
+  await dropDatabase(resolvedPath, "drizzle metadata table was missing");
 }
 
-await rm(resolvedPath);
-console.log(
-  `[db:migrate] Removed ${resolvedPath} before running migrations because the drizzle metadata table was missing.`
-);
+const appliedMigrationsRow = db
+  .query("SELECT COUNT(*) as count FROM __drizzle_migrations")
+  .get() as { count?: number } | undefined;
+const userTablesRow = db
+  .query(
+    "SELECT COUNT(*) as count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '__drizzle_%'"
+  )
+  .get() as { count?: number } | undefined;
+db.close();
+
+const appliedMigrations = Number(appliedMigrationsRow?.count ?? 0);
+const userTables = Number(userTablesRow?.count ?? 0);
+
+if (
+  expectedMigrations > 0 &&
+  userTables > 0 &&
+  appliedMigrations < expectedMigrations
+) {
+  await dropDatabase(
+    resolvedPath,
+    `only ${appliedMigrations}/${expectedMigrations} migrations were recorded`
+  );
+}
+
+async function readExpectedMigrationCount(): Promise<number> {
+  try {
+    const journalPath = resolve(
+      process.cwd(),
+      "src/migrations/meta/_journal.json"
+    );
+    const raw = await Bun.file(journalPath).json();
+    if (raw && Array.isArray(raw.entries)) {
+      return raw.entries.length;
+    }
+  } catch (error) {
+    console.warn(
+      `[db:migrate] Unable to read migration journal: ${error instanceof Error ? error.message : error}`
+    );
+  }
+  return 0;
+}
+
+async function dropDatabase(path: string, reason: string) {
+  await rm(path, { force: true });
+  console.log(
+    `[db:migrate] Removed ${path} before running migrations: ${reason}.`
+  );
+  process.exit(0);
+}
