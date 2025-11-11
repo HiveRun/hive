@@ -17,9 +17,9 @@ type MainLayoutProps = {
 
 export function MainLayout({ children, isLoading = false }: MainLayoutProps) {
   return (
-    <SidebarProvider className="relative min-h-svh bg-background text-foreground transition-colors">
+    <SidebarProvider className="relative h-full bg-background text-foreground transition-colors">
       <MainSidebar />
-      <SidebarInset className="relative flex min-h-svh flex-col overflow-hidden bg-transparent">
+      <SidebarInset className="relative flex h-full flex-col overflow-hidden bg-transparent">
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(148,163,184,0.18),_transparent_70%),_radial-gradient(circle_at_bottom_right,_rgba(30,41,59,0.18),_transparent_70%)]"
@@ -36,12 +36,12 @@ export function MainLayout({ children, isLoading = false }: MainLayoutProps) {
           </div>
           <ModeToggle />
         </div>
-        <div className="relative z-10 flex flex-1 flex-col">
+        <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden">
           <div
             aria-hidden
             className="pointer-events-none absolute inset-x-6 top-0 h-px bg-border/60"
           />
-          <div className="relative flex flex-1 flex-col">
+          <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
             {children}
             {isLoading ? (
               <div className="absolute inset-0 grid place-items-center bg-background/85 backdrop-blur-sm">

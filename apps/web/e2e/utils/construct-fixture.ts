@@ -2,6 +2,7 @@ import { base, en, Faker } from "@faker-js/faker";
 import type { Construct } from "@/queries/constructs";
 
 const FIXTURE_SEED = 20_251_108;
+const DEFAULT_OPENCODE_PORT = 5000;
 
 const constructFaker = new Faker({ locale: [en, base] });
 
@@ -35,6 +36,10 @@ export function createConstructFixture(
     templateId: overrides.templateId ?? "synthetic-dev",
     workspacePath:
       overrides.workspacePath ?? `/home/synthetic/.synthetic/constructs/${id}`,
+    opencodeSessionId:
+      overrides.opencodeSessionId ?? constructFaker.string.uuid(),
+    opencodeServerUrl: overrides.opencodeServerUrl ?? "http://127.0.0.1:5000",
+    opencodeServerPort: overrides.opencodeServerPort ?? DEFAULT_OPENCODE_PORT,
     createdAt:
       overrides.createdAt ??
       constructFaker.date

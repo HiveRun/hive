@@ -14,6 +14,11 @@ const SHARED_INPUTS = {
   },
 } as const;
 
+const SAMPLE_OPENCODE_CONFIG = {
+  defaultProvider: "zen",
+  defaultModel: "big-pickle",
+} as const;
+
 // Expected output constants
 const EXPECTED = {
   templateType: "manual",
@@ -51,11 +56,28 @@ describe("Template Schema", () => {
     const result = templateSchema.parse(templateWithServices);
     expect(result.services?.api?.type).toBe(EXPECTED.serviceType);
   });
+
+  it("should accept agent configuration metadata", () => {
+    const templateWithAgent = {
+      id: "agent-template",
+      label: "Agent Template",
+      type: "manual" as const,
+      agent: {
+        providerId: "zen",
+        modelId: "big-pickle",
+      },
+    };
+
+    const result = templateSchema.parse(templateWithAgent);
+    expect(result.agent?.providerId).toBe("zen");
+  });
 });
 
 describe("Synthetic Config Schema", () => {
   it("should validate a minimal config", () => {
     const minimalConfig = {
+      opencode: SAMPLE_OPENCODE_CONFIG,
+      promptSources: ["docs/prompts/**/*.md"],
       templates: {
         basic: {
           id: "basic",
@@ -67,12 +89,15 @@ describe("Synthetic Config Schema", () => {
 
     const result = syntheticConfigSchema.parse(minimalConfig);
     expect(result.templates[EXPECTED.configKey]).toBeDefined();
+    expect(result.opencode.defaultProvider).toBe("zen");
   });
 });
 
 describe("defineSyntheticConfig", () => {
   it("should return validated config", () => {
     const configForValidation = {
+      opencode: SAMPLE_OPENCODE_CONFIG,
+      promptSources: [],
       templates: {
         test: {
           id: "test",
@@ -84,5 +109,6 @@ describe("defineSyntheticConfig", () => {
 
     const config = defineSyntheticConfig(configForValidation);
     expect(config.templates.test?.id).toBe(EXPECTED.templateId);
+    expect(config.opencode.defaultProvider).toBe("zen");
   });
 });

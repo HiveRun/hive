@@ -1,5 +1,7 @@
+import { logger } from "@bogeychan/elysia-logger";
 import { eq, inArray } from "drizzle-orm";
 import { Elysia, t } from "elysia";
+import { closeAgentSession, ensureAgentSession } from "../agents/service";
 import { db } from "../db";
 import {
   ConstructListResponseSchema,
@@ -19,6 +21,15 @@ const HTTP_STATUS = {
   INTERNAL_ERROR: 500,
 } as const;
 
+const LOGGER_CONFIG = {
+  level: process.env.LOG_LEVEL || "info",
+  autoLogging: false,
+  transport:
+    process.env.NODE_ENV !== "production"
+      ? { target: "pino-pretty" as const }
+      : undefined,
+} as const;
+
 function constructToResponse(construct: typeof constructs.$inferSelect) {
   return {
     id: construct.id,
@@ -26,11 +37,15 @@ function constructToResponse(construct: typeof constructs.$inferSelect) {
     description: construct.description,
     templateId: construct.templateId,
     workspacePath: construct.workspacePath,
+    opencodeSessionId: construct.opencodeSessionId,
+    opencodeServerUrl: construct.opencodeServerUrl,
+    opencodeServerPort: construct.opencodeServerPort,
     createdAt: construct.createdAt.toISOString(),
   };
 }
 
 export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
+  .use(logger(LOGGER_CONFIG))
   .get(
     "/",
     async () => {
@@ -79,13 +94,45 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
   )
   .post(
     "/",
-    async ({ body, set }) => {
-      try {
-        const worktreeService = createWorktreeManager();
-        const now = new Date();
-        const constructId = crypto.randomUUID();
+    async ({ body, set, log }) => {
+      const worktreeService = createWorktreeManager();
+      const now = new Date();
+      const constructId = crypto.randomUUID();
+      let worktreeCreated = false;
+      let recordCreated = false;
 
-        const workspacePath = await worktreeService.createWorktree(constructId);
+      const cleanupResources = async () => {
+        if (worktreeCreated) {
+          try {
+            worktreeService.removeWorktree(constructId);
+          } catch (cleanupError) {
+            log.warn(
+              { cleanupError },
+              "Failed to remove worktree during construct creation cleanup"
+            );
+          }
+        }
+
+        if (recordCreated) {
+          try {
+            await db.delete(constructs).where(eq(constructs.id, constructId));
+          } catch (cleanupError) {
+            log.warn(
+              { cleanupError },
+              "Failed to delete construct row during cleanup"
+            );
+          }
+        }
+      };
+
+      try {
+        const workspacePath = await worktreeService.createWorktree(
+          constructId,
+          {
+            templateId: body.templateId,
+          }
+        );
+        worktreeCreated = true;
 
         const newConstruct: NewConstruct = {
           id: constructId,
@@ -93,6 +140,9 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
           description: body.description ?? null,
           templateId: body.templateId,
           workspacePath,
+          opencodeSessionId: null,
+          opencodeServerUrl: null,
+          opencodeServerPort: null,
           createdAt: now,
         };
 
@@ -102,13 +152,25 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
           .returning();
 
         if (!created) {
-          set.status = HTTP_STATUS.INTERNAL_ERROR;
-          return { message: "Failed to create construct" };
+          throw new Error("Failed to create construct record");
         }
+
+        recordCreated = true;
+
+        await ensureAgentSession(constructId);
 
         set.status = HTTP_STATUS.CREATED;
         return constructToResponse(created);
-      } catch (_error) {
+      } catch (error) {
+        await cleanupResources();
+
+        if (error instanceof Error) {
+          log.error(error, "Failed to create construct");
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          return { message: error.message };
+        }
+
+        log.error({ error }, "Failed to create construct");
         set.status = HTTP_STATUS.INTERNAL_ERROR;
         return { message: "Failed to create construct" };
       }
@@ -128,7 +190,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
   )
   .delete(
     "/",
-    async ({ body, set }) => {
+    async ({ body, set, log }) => {
       try {
         const uniqueIds = [...new Set(body.ids)];
 
@@ -147,6 +209,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         const worktreeService = createWorktreeManager();
 
         for (const construct of constructsToDelete) {
+          await closeAgentSession(construct.id);
           worktreeService.removeWorktree(construct.id);
         }
 
@@ -155,7 +218,12 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         await db.delete(constructs).where(inArray(constructs.id, idsToDelete));
 
         return { deletedIds: idsToDelete };
-      } catch (_error) {
+      } catch (error) {
+        if (error instanceof Error) {
+          log.error(error, "Failed to delete constructs");
+        } else {
+          log.error({ error }, "Failed to delete constructs");
+        }
         set.status = HTTP_STATUS.INTERNAL_ERROR;
         return { message: "Failed to delete constructs" };
       }
@@ -180,7 +248,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
   )
   .delete(
     "/:id",
-    async ({ params, set }) => {
+    async ({ params, set, log }) => {
       try {
         const result = await db
           .select()
@@ -199,13 +267,20 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
           return { message: "Construct not found" };
         }
 
+        await closeAgentSession(params.id);
+
         const worktreeService = createWorktreeManager();
         await worktreeService.removeWorktree(params.id);
 
         await db.delete(constructs).where(eq(constructs.id, params.id));
 
         return { message: "Construct deleted successfully" };
-      } catch (_error) {
+      } catch (error) {
+        if (error instanceof Error) {
+          log.error(error, "Failed to delete construct");
+        } else {
+          log.error({ error }, "Failed to delete construct");
+        }
         set.status = HTTP_STATUS.INTERNAL_ERROR;
         return { message: "Failed to delete construct" };
       }

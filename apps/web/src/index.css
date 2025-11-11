@@ -9,7 +9,7 @@
 
 html,
 body {
-  @apply bg-white dark:bg-gray-950;
+  @apply h-full bg-white dark:bg-gray-950;
 
   @media (prefers-color-scheme: dark) {
     color-scheme: dark;
@@ -209,6 +209,9 @@ body {
   body {
     @apply bg-background text-foreground;
     letter-spacing: var(--tracking-normal);
+  }
+  #root {
+    @apply h-full;
   }
   [data-slot="sidebar-gap"],
   [data-slot="sidebar-container"],

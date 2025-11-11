@@ -18,6 +18,7 @@ This feature represents **advanced agent orchestration** that was originally pla
 ### What's Implemented Instead
 - **PR #4**: Simplified agent integration with basic OpenCode SDK integration
 - Basic chat interface without advanced orchestration features
+- Agent transcripts persist inside OpenCode's data store; Synthetic keeps no local `agent_sessions`/`agent_messages` tables and rehydrates from OpenCode when needed
 
 ### When This Will Be Implemented
 This comprehensive orchestration system will be implemented in **Phase 1A** after core functionality path is complete and validated.
@@ -41,6 +42,7 @@ This comprehensive orchestration system will be implemented in **Phase 1A** afte
 - **Stable scrolling**: Preserve scroll position when messages send/arrive and across refresh/navigation. Display a down-arrow indicator whenever the user is not at the bottom—even with no new messages—so they can jump back to the latest on demand.
 - **Message states**: Highlight aborted/failed messages with a subtle status tag and muted styling so users can see where the agent stopped. Successful messages stay visually consistent.
 - **Persistent composer**: Keep the input contents intact across refresh/navigation. Provide an explicit "Clear input" action so the user controls when drafts are discarded.
+- **Permission prompts**: Surface OpenCode `permission.updated` events inline with clear Allow/Always Allow/Reject actions so the agent can continue without shell access.
 
 ### Input Controls
 - **Sending shortcut**: Require `⌘ + Enter` / `Ctrl + Enter` to send. Plain `Enter` inserts a newline; indicate the shortcut directly in the UI and keep focus in the composer after sending.
@@ -58,6 +60,9 @@ This comprehensive orchestration system will be implemented in **Phase 1A** afte
 - Maintain session registry with status tracking for all active constructs
 - Handle session lifecycle: creation, activation, suspension, termination
 - Provide session recovery mechanisms for interrupted constructs
+- Treat OpenCode's built-in session store as the source of truth; API keeps only an in-memory registry and rehydrates by querying OpenCode on demand
+- Construct creation automatically provisions an agent session (mock or provider-backed based on user selection) so every construct is born with an attached agent
+- Synthetic proxies OpenCode's SSE feed (`message.updated`, `message.part.updated`, `permission.updated`, etc.) so the UI consumes the same real-time events as the TUI
 
 ### Authentication & Security
 - Validate OpenCode credentials before session creation
