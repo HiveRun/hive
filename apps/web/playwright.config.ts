@@ -22,6 +22,8 @@ const ROOT_DIR = path.resolve(
   ".."
 );
 const WEB_SERVER_TIMEOUT_MS = 120_000;
+const API_SERVER_PORT = process.env.API_E2E_PORT ?? "3100";
+const WEB_APP_PORT = process.env.WEB_E2E_PORT ?? "3101";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -40,7 +42,7 @@ export default defineConfig({
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Base URL to use in actions like `await page.goto('/')`. */
-    baseURL: "http://localhost:3001",
+    baseURL: `http://localhost:${WEB_APP_PORT}`,
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: "retain-on-failure",
     /* Screenshot on failure */
@@ -59,17 +61,25 @@ export default defineConfig({
   webServer: [
     {
       command: "bun run dev",
-      url: "http://localhost:3000",
+      url: `http://localhost:${API_SERVER_PORT}`,
       reuseExistingServer: false,
       cwd: path.join(ROOT_DIR, "apps", "server"),
       timeout: WEB_SERVER_TIMEOUT_MS,
+      env: {
+        PORT: API_SERVER_PORT,
+        WEB_PORT: WEB_APP_PORT,
+      },
     },
     {
       command: "bun run dev:e2e",
-      url: "http://localhost:3001",
+      url: `http://localhost:${WEB_APP_PORT}`,
       reuseExistingServer: false,
       cwd: path.join(ROOT_DIR, "apps", "web"),
       timeout: WEB_SERVER_TIMEOUT_MS,
+      env: {
+        PORT: WEB_APP_PORT,
+        SERVER_PORT: API_SERVER_PORT,
+      },
     },
   ],
 });
