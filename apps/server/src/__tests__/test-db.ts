@@ -1,14 +1,12 @@
-import { createClient } from "@libsql/client";
-import { drizzle } from "drizzle-orm/libsql";
-import { migrate } from "drizzle-orm/libsql/migrator";
+import { Database } from "bun:sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { schema } from "../schema";
 
-export const testDb = drizzle({
-  client: createClient({
-    url: "file::memory:",
-  }),
-  schema,
-});
+// Use in-memory SQLite database for tests (same as production, but in-memory)
+const sqlite = new Database(":memory:");
+
+export const testDb = drizzle({ client: sqlite, schema });
 
 // Set up test database schema
 export async function setupTestDb() {
