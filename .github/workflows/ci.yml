@@ -21,7 +21,7 @@ concurrency:
 jobs:
   # Detect which parts of the monorepo changed to optimize job execution
   detect-changes:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     outputs:
       skip_all: ${{ steps.detect.outputs.skip_all }}
       run_web: ${{ steps.detect.outputs.run_web }}
@@ -136,10 +136,6 @@ jobs:
         run: bunx playwright install --with-deps
 
       - name: Run E2E tests
-        env: {
-          ...process.env,
-          DATABASE_URL: e2e-test.db
-          }
         run: bun run test:e2e
 
       - name: Upload test results
