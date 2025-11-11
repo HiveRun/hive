@@ -64,6 +64,7 @@ export default defineConfig({
       cwd: path.join(ROOT_DIR, "apps", "server"),
       timeout: WEB_SERVER_TIMEOUT_MS,
       env: {
+        ...process.env,
         DATABASE_URL: process.env.DATABASE_URL || "e2e-test.db",
       },
     },
