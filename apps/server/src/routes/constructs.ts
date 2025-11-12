@@ -22,6 +22,7 @@ import {
   type NewConstruct,
 } from "../schema/constructs";
 import { constructServices } from "../schema/services";
+import { subscribeToServiceEvents } from "../services/events";
 import {
   CommandExecutionError,
   ensureServicesForConstruct,
@@ -76,6 +77,7 @@ const LOG_TAIL_MAX_LINES = 200;
 const LOG_LINE_SPLIT_RE = /\r?\n/;
 const SERVICE_LOG_DIR = ".synthetic/logs";
 const PORT_CHECK_TIMEOUT_MS = 500;
+const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
 
 const LOGGER_CONFIG = {
   level: process.env.LOG_LEVEL || "info",
@@ -213,8 +215,83 @@ export function createConstructsRoutes(
         },
       }
     )
+    .get(
+      "/:id/services/stream",
+      async ({ params, set, log }) => {
+        const construct = await loadConstructById(database, params.id);
+        if (!construct) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Construct not found" };
+        }
+
+        const encoder = new TextEncoder();
+        let cleanup: (() => void) | undefined;
+
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            const sendEvent = (event: string, data: string) => {
+              controller.enqueue(encoder.encode(`event: ${event}\n`));
+              controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+            };
+
+            const pushSnapshot = async (serviceId: string) => {
+              try {
+                const row = await fetchServiceRow(
+                  database,
+                  params.id,
+                  serviceId
+                );
+                if (!row) {
+                  return;
+                }
+                const payload = await serializeService(database, row);
+                sendEvent("service", JSON.stringify(payload));
+              } catch (error) {
+                log.error(
+                  { error, serviceId },
+                  "Failed to stream service update"
+                );
+              }
+            };
+
+            const unsubscribe = subscribeToServiceEvents(params.id, (event) => {
+              pushSnapshot(event.serviceId).catch(() => {
+                /* errors already logged inside pushSnapshot */
+              });
+            });
+
+            const heartbeat = setInterval(() => {
+              sendEvent("heartbeat", JSON.stringify(Date.now()));
+            }, SSE_HEARTBEAT_INTERVAL_MS);
+
+            sendEvent("ready", JSON.stringify({ timestamp: Date.now() }));
+
+            cleanup = () => {
+              unsubscribe();
+              clearInterval(heartbeat);
+            };
+          },
+          cancel() {
+            cleanup?.();
+          },
+        });
+
+        return new Response(body, {
+          headers: {
+            "Cache-Control": "no-cache",
+            "Content-Type": "text/event-stream",
+            Connection: "keep-alive",
+          },
+        });
+      },
+      {
+        params: t.Object({ id: t.String() }),
+      }
+    )
+
     .post(
       "/:id/services/:serviceId/start",
+
       async ({ params, set }) => {
         const row = await fetchServiceRow(
           database,

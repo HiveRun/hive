@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { useServiceStream } from "@/hooks/use-service-stream";
 import { cn } from "@/lib/utils";
 import {
   type ConstructServiceSummary,
@@ -20,6 +21,8 @@ function ConstructServices() {
   const { constructId } = Route.useParams();
   const servicesQuery = useQuery(constructQueries.services(constructId));
   const queryClient = useQueryClient();
+
+  useServiceStream(constructId, servicesQuery.isSuccess);
 
   const serviceList = servicesQuery.data ?? [];
   let serviceErrorMessage: string | undefined;

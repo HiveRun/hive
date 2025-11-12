@@ -50,33 +50,7 @@ export const constructQueries = {
 
       return data.services;
     },
-    refetchInterval: (query: ServiceQueryState) => {
-      const services = query.state.data;
-      if (!services || services.length === 0) {
-        return IDLE_SERVICE_REFRESH_INTERVAL_MS;
-      }
-
-      const hasActiveService = services.some((service) =>
-        ACTIVE_SERVICE_STATES.has(service.status.toLowerCase())
-      );
-
-      return hasActiveService
-        ? ACTIVE_SERVICE_REFRESH_INTERVAL_MS
-        : IDLE_SERVICE_REFRESH_INTERVAL_MS;
-    },
-    refetchIntervalInBackground: true,
   }),
-};
-
-const ACTIVE_SERVICE_STATES = new Set(["running", "starting", "pending"]);
-
-const ACTIVE_SERVICE_REFRESH_INTERVAL_MS = 2000;
-const IDLE_SERVICE_REFRESH_INTERVAL_MS = 8000;
-
-type ServiceQueryState = {
-  state: {
-    data?: Array<{ status: string }>;
-  };
 };
 
 type ServiceActionInput = {

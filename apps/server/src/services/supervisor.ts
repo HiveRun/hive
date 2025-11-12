@@ -15,6 +15,7 @@ import {
   constructServices,
   type ServiceStatus,
 } from "../schema/services";
+import { emitServiceUpdate } from "./events";
 
 const AUTO_RESTART_STATUSES: ReadonlySet<ServiceStatus> = new Set([
   "pending",
@@ -457,8 +458,10 @@ export function createServiceSupervisor(
     if (!existsSync(cwd)) {
       await markServiceError(
         row.service.id,
+        row.construct.id,
         "Service working directory not found"
       );
+
       logger.error("Service directory missing", {
         serviceId: row.service.id,
         cwd,
@@ -494,6 +497,8 @@ export function createServiceSupervisor(
       })
       .where(eq(constructServices.id, row.service.id));
 
+    notifyServiceUpdate(row);
+
     try {
       if (definition.setup?.length) {
         for (const setupCommand of definition.setup) {
@@ -518,6 +523,8 @@ export function createServiceSupervisor(
         })
         .where(eq(constructServices.id, row.service.id));
 
+      notifyServiceUpdate(row);
+
       handle.exited
         .then(async (code) => {
           activeServices.delete(row.service.id);
@@ -531,6 +538,8 @@ export function createServiceSupervisor(
               updatedAt: now(),
             })
             .where(eq(constructServices.id, row.service.id));
+
+          notifyServiceUpdate(row);
         })
         .catch((error) => {
           activeServices.delete(row.service.id);
@@ -543,6 +552,7 @@ export function createServiceSupervisor(
       activeServices.delete(row.service.id);
       await markServiceError(
         row.service.id,
+        row.construct.id,
         error instanceof Error ? error.message : String(error)
       );
       throw error;
@@ -584,6 +594,8 @@ export function createServiceSupervisor(
         updatedAt: now(),
       })
       .where(eq(constructServices.id, row.service.id));
+
+    notifyServiceUpdate(row);
 
     if (releasePort) {
       releasePortFor(row.service.id);
@@ -715,6 +727,13 @@ export function createServiceSupervisor(
     return record;
   }
 
+  function notifyServiceUpdate(row: ServiceRow): void {
+    emitServiceUpdate({
+      constructId: row.construct.id,
+      serviceId: row.service.id,
+    });
+  }
+
   async function loadTemplateCached(
     templateId: string
   ): Promise<Template | undefined> {
@@ -804,6 +823,7 @@ export function createServiceSupervisor(
 
   async function markServiceError(
     serviceId: string,
+    constructId: string,
     message: string
   ): Promise<void> {
     await db
@@ -815,6 +835,8 @@ export function createServiceSupervisor(
         updatedAt: now(),
       })
       .where(eq(constructServices.id, serviceId));
+
+    emitServiceUpdate({ constructId, serviceId });
   }
 
   async function terminateHandle(handle: ProcessHandle): Promise<void> {
