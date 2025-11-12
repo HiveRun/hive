@@ -8,7 +8,7 @@ export const constructQueries = {
       if (error) {
         throw new Error("Failed to fetch constructs");
       }
-      return data.constructs;
+      return data.constructs.map(normalizeConstruct);
     },
   }),
 
@@ -28,7 +28,7 @@ export const constructQueries = {
         throw new Error(message);
       }
 
-      return data;
+      return normalizeConstruct(data);
     },
   }),
 
@@ -72,10 +72,15 @@ export const constructMutations = {
           typeof data.message === "string"
             ? data.message
             : "Failed to create construct";
-        throw new Error(message);
+        const details =
+          "details" in data && typeof data.details === "string"
+            ? data.details.trim()
+            : "";
+        const formatted = details ? `${message}\n\n${details}` : message;
+        throw new Error(formatted);
       }
 
-      return data;
+      return normalizeConstruct(data);
     },
   },
 
@@ -135,10 +140,22 @@ export const constructMutations = {
   },
 };
 
+const normalizeConstruct = <T extends { status: string }>(
+  construct: T
+): T & { status: ConstructStatus } => ({
+  ...construct,
+  status: construct.status as ConstructStatus,
+});
+
 // Export inferred types for use in components
+export type ConstructStatus = "pending" | "ready" | "error";
+
 export type Construct = Awaited<
   ReturnType<ReturnType<typeof constructQueries.detail>["queryFn"]>
->;
+> & {
+  status: ConstructStatus;
+  lastSetupError?: string;
+};
 
 export type ConstructServiceSummary = Awaited<
   ReturnType<ReturnType<typeof constructQueries.services>["queryFn"]>

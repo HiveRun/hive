@@ -46,6 +46,8 @@ export function createConstructFixture(
       constructFaker.date
         .past({ years: 1, refDate: "2024-01-01T00:00:00.000Z" })
         .toISOString(),
+    status: overrides.status ?? "ready",
+    lastSetupError: overrides.lastSetupError,
   };
 
   return { ...constructBase, ...overrides };

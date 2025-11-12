@@ -71,7 +71,7 @@ export function ConstructList() {
           queryKey: config.queryKey,
           queryFn: config.queryFn,
           select: summarizeServices,
-          enabled: Boolean(construct.id),
+          enabled: construct.status === "ready" && Boolean(construct.id),
           staleTime: 15_000,
         };
       }) ?? [],
@@ -435,7 +435,13 @@ function ConstructCard({
         >
           {templateLabel}
         </Badge>
-        <ServiceStatusIndicator status={serviceStatus} />
+        <ConstructStatusNotice
+          lastSetupError={construct.lastSetupError}
+          status={construct.status}
+        />
+        {construct.status === "ready" && (
+          <ServiceStatusIndicator status={serviceStatus} />
+        )}
       </CardHeader>
 
       <CardContent className="space-y-4">
@@ -496,6 +502,39 @@ function ConstructCard({
       </CardContent>
     </Card>
   );
+}
+
+function ConstructStatusNotice({
+  status,
+  lastSetupError,
+}: Pick<Construct, "status" | "lastSetupError">) {
+  if (status === "error") {
+    return (
+      <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/10 p-3">
+        <p className="font-semibold text-[11px] text-destructive uppercase tracking-[0.3em]">
+          Setup failed
+        </p>
+        {lastSetupError && (
+          <p className="line-clamp-4 whitespace-pre-wrap text-destructive text-xs">
+            {lastSetupError}
+          </p>
+        )}
+        <p className="text-[11px] text-destructive/70 uppercase tracking-[0.3em]">
+          Fix workspace and rerun setup
+        </p>
+      </div>
+    );
+  }
+
+  if (status === "pending") {
+    return (
+      <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+        Provisioning…
+      </p>
+    );
+  }
+
+  return null;
 }
 
 function ServiceStatusIndicator({ status }: { status?: ServiceStatusState }) {

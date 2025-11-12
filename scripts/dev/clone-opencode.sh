@@ -11,6 +11,11 @@ if [ -d "$TARGET_DIR/.git" ]; then
   echo "Updating existing OpenCode checkout..."
   git -C "$TARGET_DIR" pull --ff-only
 else
+  if [ -e "$TARGET_DIR" ]; then
+    echo "Removing stale OpenCode directory..."
+    rm -rf "$TARGET_DIR"
+  fi
+
   echo "Cloning OpenCode repository..."
   git clone --depth 1 "$REPO_URL" "$TARGET_DIR"
 fi

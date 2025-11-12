@@ -29,6 +29,44 @@ const DEFAULT_SHELL = process.env.SHELL || "/bin/bash";
 const SIGNAL_CODES = osConstants?.signals ?? {};
 const SERVICE_LOG_DIR = ".synthetic/logs";
 
+export class CommandExecutionError extends Error {
+  readonly command: string;
+  readonly cwd: string;
+  readonly exitCode: number;
+
+  constructor(params: { command: string; cwd: string; exitCode: number }) {
+    super(
+      `Command "${params.command}" failed with exit code ${params.exitCode} (cwd: ${params.cwd})`
+    );
+    this.name = "CommandExecutionError";
+    this.command = params.command;
+    this.cwd = params.cwd;
+    this.exitCode = params.exitCode;
+  }
+}
+
+export class TemplateSetupError extends Error {
+  readonly command: string;
+  readonly templateId: string;
+  readonly workspacePath: string;
+
+  constructor(params: {
+    command: string;
+    templateId: string;
+    workspacePath: string;
+    cause?: unknown;
+  }) {
+    super(
+      `Template setup command "${params.command}" failed for template "${params.templateId}"`,
+      { cause: params.cause }
+    );
+    this.name = "TemplateSetupError";
+    this.command = params.command;
+    this.templateId = params.templateId;
+    this.workspacePath = params.workspacePath;
+  }
+}
+
 export function isProcessAlive(pid?: number | null): boolean {
   if (!pid) {
     return false;
@@ -160,7 +198,11 @@ const createDefaultRunCommand =
 
     const exitCode = await proc.exited;
     if (exitCode !== 0) {
-      throw new Error(`Command "${command}" exited with code ${exitCode}`);
+      throw new CommandExecutionError({
+        command,
+        cwd: options.cwd,
+        exitCode,
+      });
     }
   };
 
@@ -290,10 +332,19 @@ export function createServiceSupervisor(
     };
 
     for (const command of template.setup) {
-      await runCommand(command, {
-        cwd: construct.workspacePath,
-        env,
-      });
+      try {
+        await runCommand(command, {
+          cwd: construct.workspacePath,
+          env,
+        });
+      } catch (error) {
+        throw new TemplateSetupError({
+          command,
+          templateId: template.id,
+          workspacePath: construct.workspacePath,
+          cause: error,
+        });
+      }
     }
   }
 

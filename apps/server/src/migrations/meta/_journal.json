@@ -36,6 +36,13 @@
       "when": 1762886478000,
       "tag": "0004_service_management",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "8",
+      "when": 1763300000000,
+      "tag": "0005_construct_provisioning_status",
+      "breakpoints": true
     }
   ]
 }

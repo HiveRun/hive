@@ -34,10 +34,6 @@ export default defineSyntheticConfig({
           type: "process",
           run: "bun run dev",
           cwd: "./apps/server",
-          env: {
-            NODE_ENV: "development",
-            DATABASE_URL: "./dev.db",
-          },
           readyTimeoutMs: 5000,
         },
       },

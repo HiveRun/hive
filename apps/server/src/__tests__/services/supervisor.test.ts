@@ -305,6 +305,8 @@ describe("service supervisor", () => {
         opencodeServerUrl: null,
         opencodeServerPort: null,
         createdAt: new Date(),
+        status: "ready",
+        lastSetupError: null,
       })
       .returning();
 
