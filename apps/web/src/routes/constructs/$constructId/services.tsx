@@ -89,7 +89,6 @@ function ConstructServices() {
       <ServicesPanel
         errorMessage={serviceErrorMessage}
         isLoading={servicesQuery.isPending}
-        onRefresh={() => servicesQuery.refetch()}
         onStartService={handleStart}
         onStopService={handleStop}
         pendingStartId={pendingStartId}
@@ -104,7 +103,6 @@ function ServicesPanel({
   services,
   isLoading,
   errorMessage,
-  onRefresh,
   onStartService,
   onStopService,
   pendingStartId,
@@ -113,7 +111,6 @@ function ServicesPanel({
   services: ConstructServiceSummary[];
   isLoading: boolean;
   errorMessage?: string;
-  onRefresh: () => void;
   onStartService: (service: ConstructServiceSummary) => void;
   onStopService: (service: ConstructServiceSummary) => void;
   pendingStartId?: string;
@@ -159,13 +156,6 @@ function ServicesPanel({
             Runtime status per construct
           </p>
         </div>
-        <button
-          className="rounded-sm border border-[#2b2f28] px-3 py-1 text-[#b1b3ab] text-[11px] uppercase tracking-[0.3em] hover:border-[#3b4036]"
-          onClick={onRefresh}
-          type="button"
-        >
-          Refresh
-        </button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto pb-2">{body}</div>
     </section>
