@@ -38,9 +38,8 @@ function ConstructServices() {
 
   const startServiceMutation = useMutation({
     mutationFn: constructMutations.startService.mutationFn,
-    onSuccess: (_data, variables) => {
+    onSuccess: () => {
       invalidateServices();
-      toast.success(`Started ${variables.serviceName}`);
     },
     onError: (error, variables) => {
       const message =
