@@ -1,8 +1,9 @@
 import { base, en, Faker } from "@faker-js/faker";
-import type { Construct } from "@/queries/constructs";
+import type { Construct, ConstructServiceSummary } from "@/queries/constructs";
 
 const FIXTURE_SEED = 20_251_108;
 const DEFAULT_OPENCODE_PORT = 5000;
+const DEFAULT_SERVICE_PORT = 3000;
 
 const constructFaker = new Faker({ locale: [en, base] });
 
@@ -59,3 +60,49 @@ export const constructSnapshotFixture: ConstructFixture[] = [
     createdAt: "2024-01-01T12:00:00.000Z",
   }),
 ];
+
+export type ConstructServiceFixture = ConstructServiceSummary;
+
+export function createServiceFixture(
+  overrides: Partial<ConstructServiceFixture> = {}
+): ConstructServiceFixture {
+  const id = overrides.id ?? constructFaker.string.uuid();
+  return {
+    id,
+    name: overrides.name ?? "web",
+    type: overrides.type ?? "process",
+    status: overrides.status ?? "running",
+    port: overrides.port ?? DEFAULT_SERVICE_PORT,
+    pid:
+      overrides.pid ?? constructFaker.number.int({ min: 10_000, max: 20_000 }),
+    command: overrides.command ?? "bun run dev",
+    cwd: overrides.cwd ?? ".",
+    logPath:
+      overrides.logPath ??
+      `/home/synthetic/.synthetic/constructs/${id}/logs/${overrides.name ?? "web"}.log`,
+    lastKnownError: overrides.lastKnownError ?? null,
+    updatedAt: overrides.updatedAt ?? new Date().toISOString(),
+    env: overrides.env ?? {},
+    recentLogs: overrides.recentLogs ?? "No log output yet.",
+  };
+}
+
+export const constructServiceSnapshotFixture: Record<
+  string,
+  ConstructServiceFixture[]
+> = {
+  "snapshot-construct": [
+    createServiceFixture({
+      id: "snapshot-service-web",
+      name: "web",
+      status: "running",
+    }),
+    createServiceFixture({
+      id: "snapshot-service-server",
+      name: "server",
+      status: "error",
+      lastKnownError: "Exited with code 1",
+      recentLogs: "error: Cannot find module 'pino'",
+    }),
+  ],
+};

@@ -124,6 +124,32 @@ describe("service supervisor", () => {
     expect(existsSync(expectedLogPath)).toBe(true);
   });
 
+  it("runs template setup commands before starting services", async () => {
+    const workspace = await createWorkspaceDir();
+    const construct = await insertConstruct(workspace, "template-setup");
+
+    const harness = createHarness();
+
+    await harness.supervisor.ensureConstructServices({
+      construct,
+      template: {
+        id: "template-setup",
+        label: "Template",
+        type: "manual",
+        setup: ["echo template-setup"],
+        services: {
+          web: {
+            type: "process",
+            run: "bun run dev",
+            cwd: ".",
+          },
+        },
+      },
+    });
+
+    expect(harness.runCommandCalls).toEqual(["echo template-setup"]);
+  });
+
   it("can stop and restart a single service", async () => {
     const workspace = await createWorkspaceDir();
     const construct = await insertConstruct(workspace, "template-restart");
@@ -291,6 +317,7 @@ describe("service supervisor", () => {
 
   function createHarness() {
     const processes: FakeProcess[] = [];
+    const runCommandCalls: string[] = [];
     let pidCounter = 10_000;
     let clock = Date.now();
 
@@ -310,7 +337,10 @@ describe("service supervisor", () => {
       return handle;
     };
 
-    const runCommand: RunCommand = () => Promise.resolve();
+    const runCommand: RunCommand = (command) => {
+      runCommandCalls.push(command);
+      return Promise.resolve();
+    };
 
     const supervisor = createServiceSupervisor({
       db: testDb,
@@ -320,7 +350,7 @@ describe("service supervisor", () => {
       logger: silentLogger,
     });
 
-    return { supervisor, processes };
+    return { supervisor, processes, runCommandCalls };
   }
 
   async function createWorkspaceDir() {

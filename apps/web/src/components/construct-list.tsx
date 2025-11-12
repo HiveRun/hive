@@ -437,6 +437,7 @@ function ConstructCard({
         </Badge>
         <ServiceStatusIndicator status={serviceStatus} />
       </CardHeader>
+
       <CardContent className="space-y-4">
         {construct.description && (
           <p

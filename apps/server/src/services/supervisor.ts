@@ -222,11 +222,17 @@ export function createServiceSupervisor(
     const resolvedTemplate =
       template ?? (await loadTemplateCached(construct.templateId));
 
-    if (!resolvedTemplate?.services) {
+    if (!resolvedTemplate) {
       return;
     }
 
     const templateEnv = resolvedTemplate.env ?? {};
+    await runTemplateSetupCommands(construct, resolvedTemplate, templateEnv);
+
+    if (!resolvedTemplate.services) {
+      return;
+    }
+
     const prepared: Array<{ row: ServiceRow; definition: ProcessService }> = [];
 
     for (const [name, definition] of Object.entries(
@@ -262,6 +268,32 @@ export function createServiceSupervisor(
         });
         throw error;
       }
+    }
+  }
+
+  async function runTemplateSetupCommands(
+    construct: Construct,
+    template: Template,
+    templateEnv: Record<string, string>
+  ): Promise<void> {
+    if (!template.setup?.length) {
+      return;
+    }
+
+    if (!construct.workspacePath) {
+      throw new Error("Construct workspace path missing");
+    }
+
+    const env = {
+      ...buildBaseEnv({ serviceName: template.id, construct }),
+      ...templateEnv,
+    };
+
+    for (const command of template.setup) {
+      await runCommand(command, {
+        cwd: construct.workspacePath,
+        env,
+      });
     }
   }
 

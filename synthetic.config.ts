@@ -19,6 +19,7 @@ export default defineSyntheticConfig({
         providerId: "opencode",
         modelId: "big-pickle",
       },
+      setup: ["bun install"],
       services: {
         web: {
           type: "process",

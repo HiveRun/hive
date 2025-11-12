@@ -5,7 +5,9 @@ import { logger } from "@bogeychan/elysia-logger";
 import { and, eq, inArray } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 import { closeAgentSession, ensureAgentSession } from "../agents/service";
+import { getSyntheticConfig } from "../config/context";
 import { db } from "../db";
+
 import {
   ConstructListResponseSchema,
   ConstructResponseSchema,
@@ -210,7 +212,17 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
   .post(
     "/",
     async ({ body, set, log }) => {
-      const worktreeService = createWorktreeManager();
+      const syntheticConfig = await getSyntheticConfig();
+      const template = syntheticConfig.templates[body.templateId];
+      if (!template) {
+        set.status = HTTP_STATUS.BAD_REQUEST;
+        return { message: "Template not found" };
+      }
+
+      const worktreeService = createWorktreeManager(
+        process.cwd(),
+        syntheticConfig
+      );
       const now = new Date();
       const constructId = crypto.randomUUID();
       let worktreeCreated = false;
@@ -285,7 +297,7 @@ export const constructsRoutes = new Elysia({ prefix: "/api/constructs" })
         recordCreated = true;
 
         await ensureAgentSession(constructId);
-        await ensureServicesForConstruct(created);
+        await ensureServicesForConstruct(created, template);
         servicesStarted = true;
 
         set.status = HTTP_STATUS.CREATED;

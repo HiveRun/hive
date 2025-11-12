@@ -17,6 +17,7 @@ export type TemplateService = {
 export type TemplateConfig = {
   services?: Record<string, TemplateService>;
   env?: Record<string, string>;
+  setup?: string[];
   prompts?: string[];
   teardown?: string[];
 };

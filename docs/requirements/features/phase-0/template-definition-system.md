@@ -34,6 +34,7 @@ The template definition system has been successfully implemented using a **file-
 - **TypeScript definitions**: Ship a small runtime+types package (`@synthetic/config`) that exposes `defineSyntheticConfig` with full type safety and intellisense.
 - **Inline templates**: Keep templates inline within `synthetic.config.ts` for v1 simplicity, with support for external template files in future versions.
 - **Template metadata**: Each template requires `id`, `label`, `summary`, and optional `type` (implementation/planning/manual).
+- **Workspace setup**: Templates can specify a `setup` array that runs once inside the worktree before services start.
 - **Validation**: Compile-time validation of template structure and required fields.
 
 ### Service Definitions
@@ -55,7 +56,8 @@ The template definition system has been successfully implemented using a **file-
 - **Inheritance**: Global environment variables that all services inherit unless overridden.
 
 ### Lifecycle Management
-- **Setup commands**: Optional setup commands that run before main `run` command for each service.
+- **Setup commands**: Optional setup commands that run before the main `run` command for each service.
+- **Template setup**: Optional template-level `setup` array executed once after the worktree is provisioned and before any services start.
 - **Ready detection**: Regex `readyPattern` matching against service output to determine when a service is ready.
 - **Stop commands**: Optional stop commands for graceful service shutdown.
 - **Teardown routines**: Template-level `teardown` array for cleanup commands when construct stops.
