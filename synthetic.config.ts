@@ -19,11 +19,11 @@ export default defineSyntheticConfig({
         providerId: "opencode",
         modelId: "big-pickle",
       },
-      setup: ["bun install"],
+      setup: ["bun setup"],
       services: {
         web: {
           type: "process",
-          run: "bun run dev",
+          run: "bun run dev -- --port $PORT --host 0.0.0.0",
           cwd: "./apps/web",
           env: {
             NODE_ENV: "development",

@@ -69,6 +69,8 @@ function createServiceFixture(
   };
 }
 
+const DEFAULT_TEMPLATE_SETUP = ["bun setup"] as const;
+
 function buildTemplateConfigFixture(
   id: string,
   label: string,
@@ -107,7 +109,7 @@ function buildTemplateConfigFixture(
       API_URL: "http://localhost:3000",
       STORAGE_ROOT: `/var/synthetic/${id}`,
     },
-    setup: overrides.setup ?? ["bun install"],
+    setup: overrides.setup ?? [...DEFAULT_TEMPLATE_SETUP],
     prompts: overrides.prompts ?? [
       templateFaker.hacker.phrase(),
       templateFaker.company.catchPhrase(),
@@ -202,7 +204,7 @@ export const templateSnapshotFixture: TemplateFixture[] = [
         API_URL: "http://localhost:3000",
         STORAGE_ROOT: "/var/synthetic/synthetic-dev",
       },
-      setup: ["bun install"],
+      setup: ["bun setup"],
       prompts: ["Synchronize runtime state", "Validate construct scaffolding"],
       teardown: ["bun run cleanup", "rm -rf .synthetic/synthetic-dev"],
     },

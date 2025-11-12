@@ -34,7 +34,7 @@ The template definition system has been successfully implemented using a **file-
 - **TypeScript definitions**: Ship a small runtime+types package (`@synthetic/config`) that exposes `defineSyntheticConfig` with full type safety and intellisense.
 - **Inline templates**: Keep templates inline within `synthetic.config.ts` for v1 simplicity, with support for external template files in future versions.
 - **Template metadata**: Each template requires `id`, `label`, `summary`, and optional `type` (implementation/planning/manual).
-- **Workspace setup**: Templates can specify a `setup` array that runs once inside the worktree before services start.
+- **Workspace setup**: Templates can specify a `setup` array that runs once inside the worktree before services start (e.g., `bun setup` to install deps and run migrations).
 - **Validation**: Compile-time validation of template structure and required fields.
 
 ### Service Definitions
