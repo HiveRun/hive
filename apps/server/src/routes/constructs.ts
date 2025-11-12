@@ -266,6 +266,22 @@ export function createConstructsRoutes(
 
             sendEvent("ready", JSON.stringify({ timestamp: Date.now() }));
 
+            const pushAllSnapshots = async () => {
+              try {
+                const rows = await fetchServiceRows(database, params.id);
+                for (const row of rows) {
+                  const payload = await serializeService(database, row);
+                  sendEvent("service", JSON.stringify(payload));
+                }
+              } catch (error) {
+                log.error({ error }, "Failed to stream service snapshot");
+              }
+            };
+
+            pushAllSnapshots().catch(() => {
+              /* errors already logged inside pushAllSnapshots */
+            });
+
             cleanup = () => {
               unsubscribe();
               clearInterval(heartbeat);
