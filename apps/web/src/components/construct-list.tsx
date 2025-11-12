@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Copy, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -20,12 +25,27 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import {
   type Construct,
+  type ConstructServiceSummary,
   constructMutations,
   constructQueries,
 } from "@/queries/constructs";
 import { templateQueries } from "@/queries/templates";
 
 const MAX_SELECTION_PREVIEW = 3;
+
+type ServiceStatusSummary = {
+  total: number;
+  running: number;
+  pending: number;
+  stopped: number;
+  error: number;
+};
+
+type ServiceStatusState = {
+  summary?: ServiceStatusSummary;
+  isLoading: boolean;
+  isError: boolean;
+};
 
 export function ConstructList() {
   const [selectedConstructIds, setSelectedConstructIds] = useState<Set<string>>(
@@ -42,6 +62,33 @@ export function ConstructList() {
   } = useQuery(constructQueries.all());
   const { data: templatesData } = useQuery(templateQueries.all());
   const templates = templatesData?.templates;
+
+  const serviceStatusQueries = useQueries({
+    queries:
+      constructs?.map((construct) => {
+        const config = constructQueries.services(construct.id);
+        return {
+          queryKey: config.queryKey,
+          queryFn: config.queryFn,
+          select: summarizeServices,
+          enabled: Boolean(construct.id),
+          staleTime: 15_000,
+        };
+      }) ?? [],
+  });
+
+  const serviceStatusMap = new Map<string, ServiceStatusState>();
+  constructs?.forEach((construct, index) => {
+    const query = serviceStatusQueries[index];
+    if (!query) {
+      return;
+    }
+    serviceStatusMap.set(construct.id, {
+      summary: query.data,
+      isLoading: query.isLoading,
+      isError: query.isError,
+    });
+  });
 
   useEffect(() => {
     if (!constructs) {
@@ -260,6 +307,7 @@ export function ConstructList() {
               key={construct.id}
               onCopyWorkspace={copyToClipboard}
               onToggleSelect={() => toggleConstructSelection(construct.id)}
+              serviceStatus={serviceStatusMap.get(construct.id)}
               templateLabel={getTemplateLabel(construct.templateId)}
             />
           ))}
@@ -341,6 +389,7 @@ type ConstructCardProps = {
   disableSelection: boolean;
   onToggleSelect: () => void;
   onCopyWorkspace: (path: string) => void;
+  serviceStatus?: ServiceStatusState;
 };
 
 function ConstructCard({
@@ -351,6 +400,7 @@ function ConstructCard({
   onCopyWorkspace,
   onToggleSelect,
   templateLabel,
+  serviceStatus,
 }: ConstructCardProps) {
   return (
     <Card
@@ -385,6 +435,7 @@ function ConstructCard({
         >
           {templateLabel}
         </Badge>
+        <ServiceStatusIndicator status={serviceStatus} />
       </CardHeader>
       <CardContent className="space-y-4">
         {construct.description && (
@@ -444,4 +495,121 @@ function ConstructCard({
       </CardContent>
     </Card>
   );
+}
+
+function ServiceStatusIndicator({ status }: { status?: ServiceStatusState }) {
+  if (!status) {
+    return null;
+  }
+
+  if (status.isLoading) {
+    return (
+      <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+        Checking services…
+      </p>
+    );
+  }
+
+  if (status.isError) {
+    return (
+      <p className="text-[#f19b7f] text-[11px] uppercase tracking-[0.3em]">
+        Service status unavailable
+      </p>
+    );
+  }
+
+  const summary = status.summary;
+  if (!summary || summary.total === 0) {
+    return (
+      <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+        No services configured
+      </p>
+    );
+  }
+
+  const health = describeServiceHealth(summary);
+
+  return (
+    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.3em]">
+      <span
+        className={cn("inline-flex h-2 w-2 rounded-full", health.dotClass)}
+      />
+      <span className={health.textClass}>{health.label}</span>
+    </div>
+  );
+}
+
+function summarizeServices(
+  services: ConstructServiceSummary[]
+): ServiceStatusSummary {
+  const summary: ServiceStatusSummary = {
+    total: services.length,
+    running: 0,
+    pending: 0,
+    stopped: 0,
+    error: 0,
+  };
+
+  for (const service of services) {
+    const normalized = service.status.toLowerCase();
+    if (normalized === "running") {
+      summary.running += 1;
+      continue;
+    }
+    if (normalized === "error") {
+      summary.error += 1;
+      continue;
+    }
+    if (
+      normalized === "starting" ||
+      normalized === "pending" ||
+      normalized === "needs_resume"
+    ) {
+      summary.pending += 1;
+      continue;
+    }
+    summary.stopped += 1;
+  }
+
+  return summary;
+}
+
+function describeServiceHealth(summary: ServiceStatusSummary) {
+  if (summary.error > 0) {
+    return {
+      label: `${summary.error}/${summary.total} error`,
+      dotClass: "bg-[#ff9b9b]",
+      textClass: "text-[#ff9b9b]",
+    };
+  }
+
+  if (summary.pending > 0) {
+    return {
+      label: `Starting ${summary.pending}/${summary.total}`,
+      dotClass: "bg-[#f5dd7e]",
+      textClass: "text-[#f5dd7e]",
+    };
+  }
+
+  if (summary.running === summary.total && summary.total > 0) {
+    return {
+      label: "All services running",
+      dotClass: "bg-[#0b3c1f]",
+      textClass: "text-[#7ef5a3]",
+    };
+  }
+
+  if (summary.running === 0) {
+    return {
+      label: "Services stopped",
+      dotClass: "bg-[#232323]",
+      textClass: "text-[#a2a2a2]",
+    };
+  }
+
+  return {
+    label: `${summary.running}/${summary.total} running`,
+    dotClass: "bg-[#4a5d4a]",
+    textClass: "text-[#8b9d8b]",
+  };
 }
