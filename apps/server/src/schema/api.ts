@@ -11,10 +11,34 @@ export const ConstructResponseSchema = t.Object({
   opencodeServerUrl: t.Union([t.String(), t.Null()]),
   opencodeServerPort: t.Union([t.Number(), t.Null()]),
   createdAt: t.String(),
+  status: t.String(),
+  lastSetupError: t.Optional(t.String()),
 });
 
 export const ConstructListResponseSchema = t.Object({
   constructs: t.Array(ConstructResponseSchema),
+});
+
+export const ConstructServiceSchema = t.Object({
+  id: t.String(),
+  name: t.String(),
+  type: t.String(),
+  status: t.String(),
+  port: t.Optional(t.Number()),
+  pid: t.Optional(t.Number()),
+  command: t.String(),
+  cwd: t.String(),
+  logPath: t.Union([t.String(), t.Null()]),
+  lastKnownError: t.Union([t.String(), t.Null()]),
+  updatedAt: t.String(),
+  env: t.Record(t.String(), t.String()),
+  recentLogs: t.Union([t.String(), t.Null()]),
+  processAlive: t.Optional(t.Boolean()),
+  portReachable: t.Optional(t.Boolean()),
+});
+
+export const ConstructServiceListResponseSchema = t.Object({
+  services: t.Array(ConstructServiceSchema),
 });
 
 export const CreateConstructSchema = t.Object({

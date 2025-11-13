@@ -2,6 +2,8 @@ import { base, en, Faker } from "@faker-js/faker";
 import type { Page, Route } from "@playwright/test";
 import {
   type ConstructFixture,
+  type ConstructServiceFixture,
+  constructServiceSnapshotFixture,
   constructSnapshotFixture,
 } from "./construct-fixture";
 import {
@@ -20,11 +22,14 @@ const exampleStatus = {
 };
 
 const API_ROUTE_PATTERNS = [
+  "**/api/constructs/*/services",
   "**/api/constructs",
   "**/api/templates/*",
   "**/api/templates",
   "**/api/example",
 ] as const;
+
+const CONSTRUCT_SERVICES_REGEX = /\/api\/constructs\/[^/]+\/services$/;
 
 const API_ROUTE_MATCHERS = [
   {
@@ -32,6 +37,12 @@ const API_ROUTE_MATCHERS = [
     match: (url: URL, method: string) =>
       method === "GET" && url.pathname === "/api/constructs",
   },
+  {
+    description: "GET /api/constructs/:id/services",
+    match: (url: URL, method: string) =>
+      method === "GET" && CONSTRUCT_SERVICES_REGEX.test(url.pathname),
+  },
+
   {
     description: "GET /api/templates",
     match: (url: URL, method: string) =>
@@ -54,12 +65,14 @@ const apiGuardedPages = new WeakSet<Page>();
 type MockApiData = {
   constructs: ConstructFixture[];
   templates: TemplateFixture[];
+  services: Record<string, ConstructServiceFixture[]>;
   example: typeof exampleStatus;
 };
 
 const defaultMockData: MockApiData = {
   constructs: constructSnapshotFixture,
   templates: templateSnapshotFixture,
+  services: constructServiceSnapshotFixture,
   example: exampleStatus,
 };
 
@@ -75,10 +88,15 @@ export async function mockAppApi(
   const mockData: MockApiData = {
     constructs: overrides.constructs ?? defaultMockData.constructs,
     templates: overrides.templates ?? defaultMockData.templates,
+    services: overrides.services ?? defaultMockData.services,
     example: overrides.example ?? defaultMockData.example,
   };
 
   await page.route("**/api/constructs", createConstructRouteHandler(mockData));
+  await page.route(
+    "**/api/constructs/*/services",
+    createConstructServicesHandler(mockData)
+  );
   await page.route("**/api/templates/*", createTemplateDetailHandler(mockData));
   await page.route("**/api/templates", createTemplateListHandler(mockData));
   await page.route("**/api/example", createExampleRouteHandler(mockData));
@@ -128,6 +146,38 @@ function createConstructRouteHandler(mockData: MockApiData) {
   return createGetJsonHandler(() => ({
     body: { constructs: mockData.constructs },
   }));
+}
+
+function createConstructServicesHandler(mockData: MockApiData) {
+  return createGetJsonHandler((request) => {
+    const requestUrl = new URL(request.url());
+    const segments = requestUrl.pathname.split("/").filter(Boolean);
+    const constructId = segments.at(2);
+
+    if (!constructId) {
+      return {
+        status: 404,
+        body: { message: "Construct not found" },
+      };
+    }
+
+    const constructExists = mockData.constructs.some(
+      (construct) => construct.id === constructId
+    );
+
+    if (!constructExists) {
+      return {
+        status: 404,
+        body: { message: "Construct not found" },
+      };
+    }
+
+    return {
+      body: {
+        services: mockData.services[constructId] ?? [],
+      },
+    };
+  });
 }
 
 function createTemplateListHandler(mockData: MockApiData) {

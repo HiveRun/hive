@@ -17,6 +17,8 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ConstructsNewRouteImport } from './routes/constructs/new'
 import { Route as ConstructsListRouteImport } from './routes/constructs/list'
 import { Route as ConstructsConstructIdRouteImport } from './routes/constructs/$constructId'
+import { Route as ConstructsConstructIdServicesRouteImport } from './routes/constructs/$constructId/services'
+import { Route as ConstructsConstructIdChatRouteImport } from './routes/constructs/$constructId/chat'
 
 const TestErrorRoute = TestErrorRouteImport.update({
   id: '/test-error',
@@ -58,6 +60,18 @@ const ConstructsConstructIdRoute = ConstructsConstructIdRouteImport.update({
   path: '/$constructId',
   getParentRoute: () => ConstructsRoute,
 } as any)
+const ConstructsConstructIdServicesRoute =
+  ConstructsConstructIdServicesRouteImport.update({
+    id: '/services',
+    path: '/services',
+    getParentRoute: () => ConstructsConstructIdRoute,
+  } as any)
+const ConstructsConstructIdChatRoute =
+  ConstructsConstructIdChatRouteImport.update({
+    id: '/chat',
+    path: '/chat',
+    getParentRoute: () => ConstructsConstructIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -65,9 +79,11 @@ export interface FileRoutesByFullPath {
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
-  '/constructs/$constructId': typeof ConstructsConstructIdRoute
+  '/constructs/$constructId': typeof ConstructsConstructIdRouteWithChildren
   '/constructs/list': typeof ConstructsListRoute
   '/constructs/new': typeof ConstructsNewRoute
+  '/constructs/$constructId/chat': typeof ConstructsConstructIdChatRoute
+  '/constructs/$constructId/services': typeof ConstructsConstructIdServicesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -75,9 +91,11 @@ export interface FileRoutesByTo {
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
-  '/constructs/$constructId': typeof ConstructsConstructIdRoute
+  '/constructs/$constructId': typeof ConstructsConstructIdRouteWithChildren
   '/constructs/list': typeof ConstructsListRoute
   '/constructs/new': typeof ConstructsNewRoute
+  '/constructs/$constructId/chat': typeof ConstructsConstructIdChatRoute
+  '/constructs/$constructId/services': typeof ConstructsConstructIdServicesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -86,9 +104,11 @@ export interface FileRoutesById {
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
-  '/constructs/$constructId': typeof ConstructsConstructIdRoute
+  '/constructs/$constructId': typeof ConstructsConstructIdRouteWithChildren
   '/constructs/list': typeof ConstructsListRoute
   '/constructs/new': typeof ConstructsNewRoute
+  '/constructs/$constructId/chat': typeof ConstructsConstructIdChatRoute
+  '/constructs/$constructId/services': typeof ConstructsConstructIdServicesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -101,6 +121,8 @@ export interface FileRouteTypes {
     | '/constructs/$constructId'
     | '/constructs/list'
     | '/constructs/new'
+    | '/constructs/$constructId/chat'
+    | '/constructs/$constructId/services'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -111,6 +133,8 @@ export interface FileRouteTypes {
     | '/constructs/$constructId'
     | '/constructs/list'
     | '/constructs/new'
+    | '/constructs/$constructId/chat'
+    | '/constructs/$constructId/services'
   id:
     | '__root__'
     | '/'
@@ -121,6 +145,8 @@ export interface FileRouteTypes {
     | '/constructs/$constructId'
     | '/constructs/list'
     | '/constructs/new'
+    | '/constructs/$constructId/chat'
+    | '/constructs/$constructId/services'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -189,17 +215,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConstructsConstructIdRouteImport
       parentRoute: typeof ConstructsRoute
     }
+    '/constructs/$constructId/services': {
+      id: '/constructs/$constructId/services'
+      path: '/services'
+      fullPath: '/constructs/$constructId/services'
+      preLoaderRoute: typeof ConstructsConstructIdServicesRouteImport
+      parentRoute: typeof ConstructsConstructIdRoute
+    }
+    '/constructs/$constructId/chat': {
+      id: '/constructs/$constructId/chat'
+      path: '/chat'
+      fullPath: '/constructs/$constructId/chat'
+      preLoaderRoute: typeof ConstructsConstructIdChatRouteImport
+      parentRoute: typeof ConstructsConstructIdRoute
+    }
   }
 }
 
+interface ConstructsConstructIdRouteChildren {
+  ConstructsConstructIdChatRoute: typeof ConstructsConstructIdChatRoute
+  ConstructsConstructIdServicesRoute: typeof ConstructsConstructIdServicesRoute
+}
+
+const ConstructsConstructIdRouteChildren: ConstructsConstructIdRouteChildren = {
+  ConstructsConstructIdChatRoute: ConstructsConstructIdChatRoute,
+  ConstructsConstructIdServicesRoute: ConstructsConstructIdServicesRoute,
+}
+
+const ConstructsConstructIdRouteWithChildren =
+  ConstructsConstructIdRoute._addFileChildren(
+    ConstructsConstructIdRouteChildren,
+  )
+
 interface ConstructsRouteChildren {
-  ConstructsConstructIdRoute: typeof ConstructsConstructIdRoute
+  ConstructsConstructIdRoute: typeof ConstructsConstructIdRouteWithChildren
   ConstructsListRoute: typeof ConstructsListRoute
   ConstructsNewRoute: typeof ConstructsNewRoute
 }
 
 const ConstructsRouteChildren: ConstructsRouteChildren = {
-  ConstructsConstructIdRoute: ConstructsConstructIdRoute,
+  ConstructsConstructIdRoute: ConstructsConstructIdRouteWithChildren,
   ConstructsListRoute: ConstructsListRoute,
   ConstructsNewRoute: ConstructsNewRoute,
 }

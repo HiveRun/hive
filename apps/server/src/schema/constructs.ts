@@ -1,5 +1,8 @@
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
+export const constructStatusValues = ["pending", "ready", "error"] as const;
+export type ConstructStatus = (typeof constructStatusValues)[number];
+
 export const constructs = sqliteTable("constructs", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -10,6 +13,8 @@ export const constructs = sqliteTable("constructs", {
   opencodeServerUrl: text("opencode_server_url"),
   opencodeServerPort: integer("opencode_server_port"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  status: text("status").notNull().default("ready"),
+  lastSetupError: text("last_setup_error"),
 });
 
 export type Construct = typeof constructs.$inferSelect;

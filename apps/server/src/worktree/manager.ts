@@ -17,7 +17,13 @@ const HEAD_PREFIX_LENGTH = HEAD_PREFIX.length;
 const BRANCH_PREFIX_LENGTH = BRANCH_PREFIX.length;
 
 const POSIX_SEPARATOR = "/";
-const IGNORED_DIRECTORIES = [".git", "node_modules", ".synthetic", ".turbo"];
+const IGNORED_DIRECTORIES = [
+  ".git",
+  "node_modules",
+  ".synthetic",
+  ".turbo",
+  "vendor",
+];
 
 export type WorktreeInfo = {
   id: string;
@@ -40,7 +46,7 @@ export type WorktreeManager = {
   removeWorktree(constructId: string): void;
 };
 
-const DEFAULT_INCLUDE_PATTERNS = [".env*", "*.local"];
+const DEFAULT_INCLUDE_PATTERNS: string[] = [];
 
 export function createWorktreeManager(
   baseDir: string = process.cwd(),
@@ -172,6 +178,10 @@ export function createWorktreeManager(
     worktreePath: string,
     includePatterns: string[]
   ): Promise<void> {
+    if (includePatterns.length === 0) {
+      return;
+    }
+
     const mainRepoPath = getMainRepoPath();
     const includedPaths = await getIncludedPaths(mainRepoPath, includePatterns);
 

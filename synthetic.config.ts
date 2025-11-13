@@ -19,10 +19,11 @@ export default defineSyntheticConfig({
         providerId: "opencode",
         modelId: "big-pickle",
       },
+      setup: ["bun setup"],
       services: {
         web: {
           type: "process",
-          run: "bun run dev",
+          run: "bun run dev -- --port $PORT --host 0.0.0.0",
           cwd: "./apps/web",
           env: {
             NODE_ENV: "development",
@@ -33,10 +34,6 @@ export default defineSyntheticConfig({
           type: "process",
           run: "bun run dev",
           cwd: "./apps/server",
-          env: {
-            NODE_ENV: "development",
-            DATABASE_URL: "./dev.db",
-          },
           readyTimeoutMs: 5000,
         },
       },

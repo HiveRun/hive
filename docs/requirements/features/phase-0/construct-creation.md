@@ -99,3 +99,7 @@ This comprehensive provisioning system will be implemented in **Phase 1A** after
 - Validate port allocation and conflict resolution
 - Test error handling and rollback mechanisms
 - Performance testing for large repositories and complex templates
+
+## Tasks
+- [x] Surface template setup failures with detailed API/UI error context (2025-11-12)
+- [x] Preserve failed constructs and expose provisioning status for manual recovery (2025-11-12)

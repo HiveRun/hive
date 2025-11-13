@@ -76,8 +76,17 @@ export function ConstructForm({ onSuccess, onCancel }: ConstructFormProps) {
 
   const mutation = useMutation({
     mutationFn: constructMutations.create.mutationFn,
-    onSuccess: () => {
-      toast.success("Construct created successfully");
+    onSuccess: (construct) => {
+      if (construct.status === "error") {
+        toast.warning("Construct created with setup errors", {
+          description:
+            construct.lastSetupError ??
+            "Open the construct to rerun the setup commands manually.",
+        });
+      } else {
+        toast.success("Construct created successfully");
+      }
+
       queryClient.invalidateQueries({ queryKey: ["constructs"] });
       form.reset();
       onSuccess?.();
@@ -85,7 +94,11 @@ export function ConstructForm({ onSuccess, onCancel }: ConstructFormProps) {
     onError: (error) => {
       const message =
         error instanceof Error ? error.message : "Failed to create construct";
-      toast.error(message);
+      const [headline, ...rest] = message.split("\n");
+      const description = rest.join("\n").trim();
+      toast.error(headline || "Failed to create construct", {
+        description: description || undefined,
+      });
     },
   });
 
@@ -104,6 +117,9 @@ export function ConstructForm({ onSuccess, onCancel }: ConstructFormProps) {
       mutation.mutate(value as ConstructFormValues);
     },
   });
+
+  const mutationErrorMessage =
+    mutation.error instanceof Error ? mutation.error.message : undefined;
 
   if (templatesLoading) {
     return <div>Loading templates...</div>;
@@ -134,6 +150,14 @@ export function ConstructForm({ onSuccess, onCancel }: ConstructFormProps) {
         <CardTitle>Create New Construct</CardTitle>
       </CardHeader>
       <CardContent>
+        {mutation.isError && mutationErrorMessage && (
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-destructive text-sm">
+            <p className="font-semibold">Construct creation failed</p>
+            <pre className="mt-2 whitespace-pre-wrap text-destructive text-xs">
+              {mutationErrorMessage}
+            </pre>
+          </div>
+        )}
         <form
           className="space-y-6"
           onSubmit={(event) => {

@@ -1,6 +1,8 @@
 # Service Control
 
-- [ ] Service Control #status/planned #phase-1 #feature/infrastructure
+- [/] Service Control #status/active #phase-1 #feature/infrastructure
+  - [x] Split construct detail into dedicated `/constructs/$id/chat` and `/constructs/$id/services` routes linked from construct cards
+  - [x] Add per-service start/stop controls with backend enforcement of unhealthy states
 
 ## Goal
 Provide comprehensive service management capabilities for both users and agents through UI, CLI, and MCP tools.
@@ -46,6 +48,13 @@ Provide comprehensive service management capabilities for both users and agents 
 - **Error handling**: Clear error messages and exit codes
 
 ## Implementation Details
+
+### Current Progress (Service Supervisor)
+- Template-defined process services are persisted per construct with command, cwd, env, PID, and status tracking
+- Dynamic port discovery assigns unused ports per service and injects `{SERVICE}_PORT` plus shared port env vars across the construct
+- Service metadata is stored in SQLite so the supervisor can restart services automatically on Synthetic boot and mark failures that need resume
+- Worktree cleanup paths stop services and release reserved ports before tearing down constructs to prevent orphaned processes
+- Construct detail view now surfaces live service status plus recent log output (on a dedicated Services tab separate from the chat pane)
 
 ### Service State Engine
 - Process monitoring and PID tracking

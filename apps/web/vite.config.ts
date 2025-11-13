@@ -4,6 +4,14 @@ import viteReact from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 
+const DEFAULT_DEV_SERVER_PORT = 3001;
+const DEFAULT_API_SERVER_PORT = "3000";
+const resolvedDevPort = Number(process.env.PORT ?? DEFAULT_DEV_SERVER_PORT);
+const devServerPort = Number.isNaN(resolvedDevPort)
+  ? DEFAULT_DEV_SERVER_PORT
+  : resolvedDevPort;
+const apiServerPort = process.env.SERVER_PORT ?? DEFAULT_API_SERVER_PORT;
+
 export default defineConfig({
   plugins: [
     tsconfigPaths({
@@ -25,9 +33,10 @@ export default defineConfig({
     },
   },
   server: {
+    port: devServerPort,
     proxy: {
       "/api": {
-        target: "http://localhost:3000",
+        target: `http://localhost:${apiServerPort}`,
         changeOrigin: true,
       },
     },

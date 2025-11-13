@@ -1,22 +1,39 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
-import { AgentChat } from "@/components/agent-chat";
+import {
+  createFileRoute,
+  Link,
+  Outlet,
+  redirect,
+  useRouterState,
+} from "@tanstack/react-router";
+import { Button } from "@/components/ui/button";
 import { constructQueries } from "@/queries/constructs";
 import { templateQueries } from "@/queries/templates";
 
 export const Route = createFileRoute("/constructs/$constructId")({
+  beforeLoad: ({ params, location }) => {
+    if (location.pathname === `/constructs/${params.constructId}`) {
+      throw redirect({
+        to: "/constructs/$constructId/chat",
+        params,
+      });
+    }
+  },
   loader: ({ params, context: { queryClient } }) =>
     Promise.all([
       queryClient.ensureQueryData(constructQueries.detail(params.constructId)),
       queryClient.ensureQueryData(templateQueries.all()),
     ]),
-  component: ConstructDetail,
+  component: ConstructLayout,
 });
 
-function ConstructDetail() {
+function ConstructLayout() {
   const { constructId } = Route.useParams();
   const constructQuery = useQuery(constructQueries.detail(constructId));
   const templatesQuery = useQuery(templateQueries.all());
+  const activeRouteId = useRouterState({
+    select: (state) => state.matches.at(-1)?.routeId ?? undefined,
+  });
 
   const construct = constructQuery.data;
   const templates = templatesQuery.data?.templates ?? [];
@@ -24,6 +41,18 @@ function ConstructDetail() {
   const templateLabel = templates.find(
     (template) => template.id === construct?.templateId
   )?.label;
+  const navItems = [
+    {
+      routeId: "/constructs/$constructId/services",
+      label: "Services",
+      to: "/constructs/$constructId/services",
+    },
+    {
+      routeId: "/constructs/$constructId/chat",
+      label: "Chat",
+      to: "/constructs/$constructId/chat",
+    },
+  ];
 
   if (!construct) {
     return (
@@ -60,8 +89,22 @@ function ConstructDetail() {
           </div>
         </section>
 
-        <div className="flex min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-[#1f1f1c] bg-[#050505]">
-          <AgentChat constructId={constructId} />
+        <div className="flex flex-wrap justify-end gap-2">
+          {navItems.map((item) => (
+            <Link key={item.routeId} params={{ constructId }} to={item.to}>
+              <Button
+                variant={
+                  activeRouteId === item.routeId ? "secondary" : "outline"
+                }
+              >
+                {item.label}
+              </Button>
+            </Link>
+          ))}
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <Outlet />
         </div>
       </div>
     </div>

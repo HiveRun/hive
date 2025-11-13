@@ -10,7 +10,7 @@ import {
   type Session,
 } from "@opencode-ai/sdk";
 import { eq } from "drizzle-orm";
-import { loadConfig } from "../config/loader";
+import { getSyntheticConfig } from "../config/context";
 import type { SyntheticConfig, Template } from "../config/schema";
 import { db } from "../db";
 import { type Construct, constructs } from "../schema/constructs";
@@ -26,8 +26,6 @@ const AUTH_PATH = join(homedir(), ".local", "share", "opencode", "auth.json");
 
 const runtimeRegistry = new Map<string, RuntimeHandle>();
 const constructSessionMap = new Map<string, string>();
-let cachedConfigPromise: Promise<SyntheticConfig> | null = null;
-
 type DirectoryQuery = {
   directory?: string;
 };
@@ -45,22 +43,6 @@ type RuntimeHandle = {
   sendMessage: (content: string) => Promise<void>;
   stop: () => Promise<void>;
 };
-
-function resolveWorkspaceRoot(): string {
-  const currentDir = process.cwd();
-  if (currentDir.includes("/apps/")) {
-    const [root] = currentDir.split("/apps/");
-    return root || currentDir;
-  }
-  return currentDir;
-}
-
-function getSyntheticConfig(): Promise<SyntheticConfig> {
-  if (!cachedConfigPromise) {
-    cachedConfigPromise = loadConfig(resolveWorkspaceRoot());
-  }
-  return cachedConfigPromise;
-}
 
 async function readProviderCredentials(): Promise<Record<string, unknown>> {
   try {

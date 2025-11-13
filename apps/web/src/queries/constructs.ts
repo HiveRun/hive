@@ -8,7 +8,7 @@ export const constructQueries = {
       if (error) {
         throw new Error("Failed to fetch constructs");
       }
-      return data.constructs;
+      return data.constructs.map(normalizeConstruct);
     },
   }),
 
@@ -28,9 +28,35 @@ export const constructQueries = {
         throw new Error(message);
       }
 
-      return data;
+      return normalizeConstruct(data);
     },
   }),
+
+  services: (id: string) => ({
+    queryKey: ["constructs", id, "services"] as const,
+    queryFn: async () => {
+      const { data, error } = await rpc.api.constructs({ id }).services.get();
+      if (error) {
+        throw new Error("Failed to load services");
+      }
+
+      if ("message" in data) {
+        const message =
+          typeof data.message === "string"
+            ? data.message
+            : "Construct not found";
+        throw new Error(message);
+      }
+
+      return data.services;
+    },
+  }),
+};
+
+type ServiceActionInput = {
+  constructId: string;
+  serviceId: string;
+  serviceName: string;
 };
 
 export const constructMutations = {
@@ -46,10 +72,15 @@ export const constructMutations = {
           typeof data.message === "string"
             ? data.message
             : "Failed to create construct";
-        throw new Error(message);
+        const details =
+          "details" in data && typeof data.details === "string"
+            ? data.details.trim()
+            : "";
+        const formatted = details ? `${message}\n\n${details}` : message;
+        throw new Error(formatted);
       }
 
-      return data;
+      return normalizeConstruct(data);
     },
   },
 
@@ -81,9 +112,51 @@ export const constructMutations = {
       return data;
     },
   },
+
+  startService: {
+    mutationFn: async ({ constructId, serviceId }: ServiceActionInput) => {
+      const { data, error } = await rpc.api
+        .constructs({ id: constructId })
+        .services({ serviceId })
+        .start.post();
+      if (error) {
+        throw new Error("Failed to start service");
+      }
+      return data;
+    },
+  },
+
+  stopService: {
+    mutationFn: async ({ constructId, serviceId }: ServiceActionInput) => {
+      const { data, error } = await rpc.api
+        .constructs({ id: constructId })
+        .services({ serviceId })
+        .stop.post();
+      if (error) {
+        throw new Error("Failed to stop service");
+      }
+      return data;
+    },
+  },
 };
 
+const normalizeConstruct = <T extends { status: string }>(
+  construct: T
+): T & { status: ConstructStatus } => ({
+  ...construct,
+  status: construct.status as ConstructStatus,
+});
+
 // Export inferred types for use in components
+export type ConstructStatus = "pending" | "ready" | "error";
+
 export type Construct = Awaited<
   ReturnType<ReturnType<typeof constructQueries.detail>["queryFn"]>
->;
+> & {
+  status: ConstructStatus;
+  lastSetupError?: string;
+};
+
+export type ConstructServiceSummary = Awaited<
+  ReturnType<ReturnType<typeof constructQueries.services>["queryFn"]>
+>[number];
