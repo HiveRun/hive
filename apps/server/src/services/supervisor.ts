@@ -1,21 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
 import { constants as osConstants } from "node:os";
 import { dirname, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { and, eq } from "drizzle-orm";
 import { getSyntheticConfig } from "../config/context";
 import type { ProcessService, Template } from "../config/schema";
 import { db as defaultDb } from "../db";
 import type { Construct } from "../schema/constructs";
-import { constructs } from "../schema/constructs";
-import {
-  type ConstructService,
-  constructServices,
-  type ServiceStatus,
-} from "../schema/services";
+import type { ConstructService, ServiceStatus } from "../schema/services";
 import { emitServiceUpdate } from "./events";
+import { createPortManager } from "./port-manager";
+import { createServiceRepository } from "./repository";
 
 const AUTO_RESTART_STATUSES: ReadonlySet<ServiceStatus> = new Set([
   "pending",
@@ -218,18 +213,15 @@ export function createServiceSupervisor(
   const now = overrides.now ?? (() => new Date());
 
   const activeServices = new Map<string, ActiveServiceHandle>();
-  const servicePortMap = new Map<string, number>();
-  const reservedPorts = new Set<number>();
+  const repository = createServiceRepository(db, now);
+  const portManager = createPortManager({ db, now });
   const templateCache = new Map<string, Template | undefined>();
 
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: needs to orchestrate multi-service restart
   async function bootstrap(): Promise<void> {
-    const rows = await db
-      .select()
-      .from(constructServices)
-      .innerJoin(constructs, eq(constructs.id, constructServices.constructId));
-
-    const grouped = groupServicesByConstruct(rows.map(mapRow));
+    const grouped = groupServicesByConstruct(
+      await repository.fetchAllServices()
+    );
 
     for (const { construct, rows: constructRows } of grouped.values()) {
       const template = await loadTemplateCached(construct.templateId);
@@ -354,7 +346,7 @@ export function createServiceSupervisor(
     name: string,
     definition: ProcessService
   ): Promise<ServiceRow> {
-    let record = await findServiceRecord(construct.id, name);
+    let record = await repository.findByConstructAndName(construct.id, name);
     const resolvedCwd = resolveServiceCwd(
       construct.workspacePath,
       definition.cwd
@@ -367,32 +359,35 @@ export function createServiceSupervisor(
         resolvedCwd
       );
       if (shouldUpdate) {
-        await db
-          .update(constructServices)
-          .set({
+        record =
+          (await repository.updateService(record.id, {
             command: definition.run,
             cwd: resolvedCwd,
             readyTimeoutMs: definition.readyTimeoutMs ?? null,
             definition,
-            updatedAt: now(),
-          })
-          .where(eq(constructServices.id, record.id));
-
-        record = {
-          ...record,
-          command: definition.run,
-          cwd: resolvedCwd,
-          readyTimeoutMs: definition.readyTimeoutMs ?? null,
-          definition,
-        };
+          })) ?? record;
       }
     } else {
-      record = await createServiceRecord(
-        construct,
+      record = await repository.insertService(construct, {
+        id: randomUUID(),
         name,
+        type: definition.type,
+        command: definition.run,
+        cwd: resolvedCwd,
+        env: buildBaseEnv({ serviceName: name, construct }),
+        port: null,
+        pid: null,
+        status: "pending",
+        readyTimeoutMs: definition.readyTimeoutMs ?? null,
         definition,
-        resolvedCwd
-      );
+        lastKnownError: null,
+      });
+
+      ensureLogFile(computeServiceLogPath(construct.workspacePath, name));
+    }
+
+    if (!record) {
+      throw new Error("Failed to ensure service record");
     }
 
     rememberPort(record);
@@ -403,25 +398,18 @@ export function createServiceSupervisor(
     constructId: string,
     options?: { releasePorts?: boolean }
   ): Promise<void> {
-    const rows = await db
-      .select()
-      .from(constructServices)
-      .innerJoin(constructs, eq(constructs.id, constructServices.constructId))
-      .where(eq(constructServices.constructId, constructId));
+    const rows = await repository.fetchServicesForConstruct(constructId);
 
     for (const row of rows) {
-      await stopService(mapRow(row), options?.releasePorts ?? false);
+      await stopService(row, options?.releasePorts ?? false);
     }
   }
 
   async function stopAll(): Promise<void> {
-    const rows = await db
-      .select()
-      .from(constructServices)
-      .innerJoin(constructs, eq(constructs.id, constructServices.constructId));
+    const rows = await repository.fetchAllServices();
 
     for (const row of rows) {
-      await stopService(mapRow(row), true);
+      await stopService(row, true);
     }
   }
 
@@ -450,7 +438,7 @@ export function createServiceSupervisor(
 
     const port =
       portLookup?.get(row.service.name) ??
-      (await ensureServicePort(row.service));
+      (await portManager.ensureServicePort(row.service));
     row.service.port = port;
 
     const cwd = resolveServiceCwd(row.construct.workspacePath, definition.cwd);
@@ -485,17 +473,13 @@ export function createServiceSupervisor(
     ensureLogFile(logPath);
     const commandWithLogging = wrapCommandWithLogging(definition.run, logPath);
 
-    await db
-      .update(constructServices)
-      .set({
-        status: "starting",
-        env,
-        port,
-        pid: null,
-        lastKnownError: null,
-        updatedAt: now(),
-      })
-      .where(eq(constructServices.id, row.service.id));
+    await repository.updateService(row.service.id, {
+      status: "starting",
+      env,
+      port,
+      pid: null,
+      lastKnownError: null,
+    });
 
     notifyServiceUpdate(row);
 
@@ -514,30 +498,22 @@ export function createServiceSupervisor(
 
       activeServices.set(row.service.id, { handle });
 
-      await db
-        .update(constructServices)
-        .set({
-          status: "running",
-          pid: handle.pid,
-          updatedAt: now(),
-        })
-        .where(eq(constructServices.id, row.service.id));
+      await repository.updateService(row.service.id, {
+        status: "running",
+        pid: handle.pid,
+      });
 
       notifyServiceUpdate(row);
 
       handle.exited
         .then(async (code) => {
           activeServices.delete(row.service.id);
-          await db
-            .update(constructServices)
-            .set({
-              status: code === 0 ? "stopped" : "error",
-              pid: null,
-              lastKnownError:
-                code === 0 ? null : `Exited with code ${code ?? -1}`,
-              updatedAt: now(),
-            })
-            .where(eq(constructServices.id, row.service.id));
+          await repository.updateService(row.service.id, {
+            status: code === 0 ? "stopped" : "error",
+            pid: null,
+            lastKnownError:
+              code === 0 ? null : `Exited with code ${code ?? -1}`,
+          });
 
           notifyServiceUpdate(row);
         })
@@ -586,14 +562,10 @@ export function createServiceSupervisor(
       await terminatePid(row.service.pid);
     }
 
-    await db
-      .update(constructServices)
-      .set({
-        status: "stopped",
-        pid: null,
-        updatedAt: now(),
-      })
-      .where(eq(constructServices.id, row.service.id));
+    await repository.updateService(row.service.id, {
+      status: "stopped",
+      pid: null,
+    });
 
     notifyServiceUpdate(row);
 
@@ -602,37 +574,13 @@ export function createServiceSupervisor(
     }
   }
 
-  async function ensureServicePort(service: ConstructService): Promise<number> {
-    const existing = service.port ?? servicePortMap.get(service.id);
-
-    if (typeof existing === "number") {
-      const available = await ensurePortAvailable(existing, service.pid);
-      if (available) {
-        rememberSpecificPort(service.id, existing);
-        return existing;
-      }
-
-      releasePortFor(service.id);
-    }
-
-    const port = await findFreePort();
-    rememberSpecificPort(service.id, port);
-
-    await db
-      .update(constructServices)
-      .set({ port, updatedAt: now() })
-      .where(eq(constructServices.id, service.id));
-
-    return port;
-  }
-
   async function buildPortMap(
     rows: ServiceRow[]
   ): Promise<Map<string, number>> {
     const ports = new Map<string, number>();
 
     for (const row of rows) {
-      const port = await ensureServicePort(row.service);
+      const port = await portManager.ensureServicePort(row.service);
       row.service.port = port;
       ports.set(row.service.name, port);
     }
@@ -642,89 +590,12 @@ export function createServiceSupervisor(
 
   function rememberPort(service: ConstructService): void {
     if (typeof service.port === "number") {
-      rememberSpecificPort(service.id, service.port);
+      portManager.rememberSpecificPort(service.id, service.port);
     }
-  }
-
-  function rememberSpecificPort(serviceId: string, port: number): void {
-    servicePortMap.set(serviceId, port);
-    reservedPorts.add(port);
   }
 
   function releasePortFor(serviceId: string): void {
-    const port = servicePortMap.get(serviceId);
-    if (typeof port === "number") {
-      reservedPorts.delete(port);
-      servicePortMap.delete(serviceId);
-    }
-  }
-
-  async function findServiceRecord(
-    constructId: string,
-    serviceName: string
-  ): Promise<ConstructService | undefined> {
-    const [record] = await db
-      .select()
-      .from(constructServices)
-      .where(
-        and(
-          eq(constructServices.constructId, constructId),
-          eq(constructServices.name, serviceName)
-        )
-      )
-      .limit(1);
-
-    return record;
-  }
-
-  async function getServiceRowById(
-    serviceId: string
-  ): Promise<ServiceRow | undefined> {
-    const [row] = await db
-      .select()
-      .from(constructServices)
-      .innerJoin(constructs, eq(constructs.id, constructServices.constructId))
-      .where(eq(constructServices.id, serviceId))
-      .limit(1);
-
-    return row ? mapRow(row) : undefined;
-  }
-
-  async function createServiceRecord(
-    construct: Construct,
-    name: string,
-    definition: ProcessService,
-    cwd: string
-  ): Promise<ConstructService> {
-    const timestamp = now();
-    const env = buildBaseEnv({ serviceName: name, construct });
-    ensureLogFile(computeServiceLogPath(construct.workspacePath, name));
-
-    const [record] = await db
-      .insert(constructServices)
-      .values({
-        id: randomUUID(),
-        constructId: construct.id,
-        name,
-        type: definition.type,
-        command: definition.run,
-        cwd,
-        env,
-        port: null,
-        pid: null,
-        status: "pending",
-        readyTimeoutMs: definition.readyTimeoutMs ?? null,
-        definition,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      })
-      .returning();
-
-    if (!record) {
-      throw new Error("Failed to create service record");
-    }
-
-    return record;
+    portManager.releasePortFor(serviceId);
   }
 
   function notifyServiceUpdate(row: ServiceRow): void {
@@ -750,34 +621,8 @@ export function createServiceSupervisor(
     return config.templates[templateId];
   }
 
-  async function ensurePortAvailable(
-    port: number,
-    pid: number | null
-  ): Promise<boolean> {
-    const available = await isPortFree(port);
-    if (available) {
-      return true;
-    }
-
-    if (pid) {
-      await terminatePid(pid);
-      return isPortFree(port);
-    }
-
-    return false;
-  }
-
-  async function findFreePort(): Promise<number> {
-    while (true) {
-      const candidate = await allocatePort();
-      if (!reservedPorts.has(candidate)) {
-        return candidate;
-      }
-    }
-  }
-
   async function startConstructServiceById(serviceId: string): Promise<void> {
-    const row = await getServiceRowById(serviceId);
+    const row = await repository.fetchServiceRowById(serviceId);
     if (!row) {
       throw new Error(`Service ${serviceId} not found`);
     }
@@ -785,15 +630,13 @@ export function createServiceSupervisor(
     const template = await loadTemplateCached(row.construct.templateId);
     const templateEnv = template?.env ?? {};
 
-    const siblings = await db
-      .select({ service: constructServices })
-      .from(constructServices)
-      .where(eq(constructServices.constructId, row.construct.id));
+    const siblings = await repository.fetchServicesForConstruct(
+      row.construct.id
+    );
     const portMap = new Map<string, number>();
     for (const sibling of siblings) {
-      const siblingService = sibling.service;
-      if (siblingService.port) {
-        portMap.set(siblingService.name, siblingService.port);
+      if (sibling.service.port) {
+        portMap.set(sibling.service.name, sibling.service.port);
       }
     }
 
@@ -804,7 +647,7 @@ export function createServiceSupervisor(
     serviceId: string,
     options?: { releasePorts?: boolean }
   ): Promise<void> {
-    const row = await getServiceRowById(serviceId);
+    const row = await repository.fetchServiceRowById(serviceId);
     if (!row) {
       return;
     }
@@ -826,16 +669,7 @@ export function createServiceSupervisor(
     constructId: string,
     message: string
   ): Promise<void> {
-    await db
-      .update(constructServices)
-      .set({
-        status: "error",
-        pid: null,
-        lastKnownError: message,
-        updatedAt: now(),
-      })
-      .where(eq(constructServices.id, serviceId));
-
+    await repository.markError(serviceId, message);
     emitServiceUpdate({ constructId, serviceId });
   }
 
@@ -877,54 +711,26 @@ export function createServiceSupervisor(
       // Process already stopped
     }
   }
+}
 
-  function allocatePort(): Promise<number> {
-    return new Promise((resolvePort, rejectPort) => {
-      const server = createServer();
-      server.once("error", (error) => {
-        server.close(() => rejectPort(error));
-      });
-      server.listen(0, () => {
-        const address = server.address();
-        if (address && typeof address === "object") {
-          const port = address.port;
-          server.close(() => resolvePort(port));
-        } else {
-          server.close(() => resolvePort(0));
-        }
-      });
-    });
-  }
+function groupServicesByConstruct(
+  rows: ServiceRow[]
+): Map<string, { construct: Construct; rows: ServiceRow[] }> {
+  const grouped = new Map<
+    string,
+    { construct: Construct; rows: ServiceRow[] }
+  >();
 
-  function mapRow(row: {
-    construct_services: ConstructService;
-    constructs: Construct;
-  }): ServiceRow {
-    return {
-      service: row.construct_services,
-      construct: row.constructs,
-    };
-  }
-
-  function groupServicesByConstruct(
-    rows: ServiceRow[]
-  ): Map<string, { construct: Construct; rows: ServiceRow[] }> {
-    const grouped = new Map<
-      string,
-      { construct: Construct; rows: ServiceRow[] }
-    >();
-
-    for (const row of rows) {
-      const existing = grouped.get(row.construct.id);
-      if (existing) {
-        existing.rows.push(row);
-        continue;
-      }
-      grouped.set(row.construct.id, { construct: row.construct, rows: [row] });
+  for (const row of rows) {
+    const existing = grouped.get(row.construct.id);
+    if (existing) {
+      existing.rows.push(row);
+      continue;
     }
-
-    return grouped;
+    grouped.set(row.construct.id, { construct: row.construct, rows: [row] });
   }
+
+  return grouped;
 }
 
 function needsDefinitionUpdate(
@@ -1032,18 +838,6 @@ function wrapCommandWithLogging(command: string, logPath: string): string {
   const quotedDir = JSON.stringify(directory);
   const quotedPath = JSON.stringify(logPath);
   return `set -o pipefail; mkdir -p ${quotedDir} && touch ${quotedPath} && ( ${command} ) 2>&1 | tee -a ${quotedPath}`;
-}
-
-function isPortFree(port: number): Promise<boolean> {
-  return new Promise((resolvePort) => {
-    const server = createServer();
-    server.once("error", () => {
-      server.close(() => resolvePort(false));
-    });
-    server.listen(port, "127.0.0.1", () => {
-      server.close(() => resolvePort(true));
-    });
-  });
 }
 
 const defaultSupervisor = createServiceSupervisor();
