@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import dotenv from "dotenv";
 import { defineConfig } from "drizzle-kit";
 
@@ -12,17 +11,11 @@ if (!databaseUrl) {
   throw new Error("DATABASE_URL is required for drizzle config");
 }
 
-const normalizedPath = databaseUrl.startsWith("file:")
-  ? databaseUrl.replace(/^file:/, "")
-  : databaseUrl;
-
 export default defineConfig({
   schema: "./src/schema",
   out: "./src/migrations",
   dialect: "sqlite",
   dbCredentials: {
-    url: resolve(normalizedPath),
+    url: databaseUrl,
   },
-  strict: true,
-  verbose: true,
 });
