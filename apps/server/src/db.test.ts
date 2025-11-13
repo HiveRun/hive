@@ -1,24 +1,27 @@
+import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, it } from "vitest";
 
 describe("Database", () => {
   beforeAll(() => {
-    // Set test DATABASE_URL if not already set
     if (!process.env.DATABASE_URL) {
       process.env.DATABASE_URL = ":memory:";
     }
   });
 
-  it("should initialize db client without errors", async () => {
+  it("initializes a Bun-powered sqlite client", async () => {
     const { db } = await import("./db");
     expect(db).toBeDefined();
     expect(db).toHaveProperty("query");
+    expect(db).toHaveProperty("insert");
+    expect(db).toHaveProperty("select");
   });
 
-  it("should have database client methods", async () => {
+  it("executes queries end-to-end", async () => {
     const { db } = await import("./db");
-    expect(db).toHaveProperty("insert");
-    expect(db).toHaveProperty("update");
-    expect(db).toHaveProperty("delete");
-    expect(db).toHaveProperty("select");
+    const client = (db as typeof db & { $client: Database }).$client;
+    const row = client.query("select 'hello world' as text").get() as {
+      text: string;
+    };
+    expect(row.text).toBe("hello world");
   });
 });
