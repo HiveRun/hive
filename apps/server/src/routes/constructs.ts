@@ -273,6 +273,10 @@ export function createConstructsRoutes(
                   const payload = await serializeService(database, row);
                   sendEvent("service", JSON.stringify(payload));
                 }
+                sendEvent(
+                  "snapshot",
+                  JSON.stringify({ timestamp: Date.now() })
+                );
               } catch (error) {
                 log.error({ error }, "Failed to stream service snapshot");
               }

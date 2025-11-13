@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
@@ -8,45 +8,27 @@ import { cn } from "@/lib/utils";
 import {
   type ConstructServiceSummary,
   constructMutations,
-  constructQueries,
 } from "@/queries/constructs";
 
 export const Route = createFileRoute("/constructs/$constructId/services")({
-  loader: ({ params, context: { queryClient } }) =>
-    queryClient.ensureQueryData(constructQueries.services(params.constructId)),
   component: ConstructServices,
 });
 
 function ConstructServices() {
   const { constructId } = Route.useParams();
-  const servicesQuery = useQuery(constructQueries.services(constructId));
-  const queryClient = useQueryClient();
-
-  useServiceStream(constructId, servicesQuery.isSuccess);
-
-  const serviceList = servicesQuery.data ?? [];
-  let serviceErrorMessage: string | undefined;
-  if (servicesQuery.isError) {
-    serviceErrorMessage =
-      servicesQuery.error instanceof Error
-        ? servicesQuery.error.message
-        : "Failed to load services";
-  }
-
-  const invalidateServices = () => {
-    queryClient.invalidateQueries({
-      queryKey: constructQueries.services(constructId).queryKey,
-    });
-  };
+  const {
+    services,
+    isLoading,
+    error: streamError,
+  } = useServiceStream(constructId);
 
   const startServiceMutation = useMutation({
     mutationFn: constructMutations.startService.mutationFn,
-    onSuccess: () => {
-      invalidateServices();
-    },
-    onError: (error, variables) => {
+    onError: (mutationError, variables) => {
       const message =
-        error instanceof Error ? error.message : "Failed to start service";
+        mutationError instanceof Error
+          ? mutationError.message
+          : "Failed to start service";
       toast.error(message || `Failed to start ${variables.serviceName}`);
     },
   });
@@ -54,12 +36,13 @@ function ConstructServices() {
   const stopServiceMutation = useMutation({
     mutationFn: constructMutations.stopService.mutationFn,
     onSuccess: (_data, variables) => {
-      invalidateServices();
       toast.success(`Stopped ${variables.serviceName}`);
     },
-    onError: (error, variables) => {
+    onError: (mutationError, variables) => {
       const message =
-        error instanceof Error ? error.message : "Failed to stop service";
+        mutationError instanceof Error
+          ? mutationError.message
+          : "Failed to stop service";
       toast.error(message || `Failed to stop ${variables.serviceName}`);
     },
   });
@@ -90,13 +73,13 @@ function ConstructServices() {
   return (
     <div className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-[#1f1f1c] bg-[#060706]">
       <ServicesPanel
-        errorMessage={serviceErrorMessage}
-        isLoading={servicesQuery.isPending}
+        errorMessage={streamError}
+        isLoading={isLoading}
         onStartService={handleStart}
         onStopService={handleStop}
         pendingStartId={pendingStartId}
         pendingStopId={pendingStopId}
-        services={serviceList}
+        services={services}
       />
     </div>
   );

@@ -1,40 +1,37 @@
-import { useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
-import {
-  type ConstructServiceSummary,
-  constructQueries,
-} from "@/queries/constructs";
+import { useEffect, useState } from "react";
+import type { ConstructServiceSummary } from "@/queries/constructs";
 
-export function useServiceStream(constructId: string, enabled: boolean): void {
-  const queryClient = useQueryClient();
+export function useServiceStream(constructId: string) {
+  const [services, setServices] = useState<ConstructServiceSummary[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | undefined>();
 
   useEffect(() => {
-    if (!enabled || typeof window === "undefined") {
+    if (!constructId || typeof window === "undefined") {
       return;
     }
+
+    let isActive = true;
+    setServices([]);
+    setIsLoading(true);
+    setError(undefined);
 
     const source = new EventSource(
       `/api/constructs/${constructId}/services/stream`
     );
 
     const upsertService = (service: ConstructServiceSummary) => {
-      queryClient.setQueryData<ConstructServiceSummary[] | undefined>(
-        constructQueries.services(constructId).queryKey,
-        (current) => {
-          if (!current || current.length === 0) {
-            return [service];
-          }
-
-          const index = current.findIndex((item) => item.id === service.id);
-          if (index === -1) {
-            return [...current, service];
-          }
-
-          const next = current.slice();
-          next[index] = service;
-          return next;
+      setServices((current) => {
+        const index = current.findIndex((item) => item.id === service.id);
+        if (index === -1) {
+          return [...current, service];
         }
-      );
+        const next = current.slice();
+        next[index] = service;
+        return next;
+      });
+      setIsLoading(false);
+      setError(undefined);
     };
 
     const serviceListener = (event: MessageEvent<string>) => {
@@ -42,20 +39,34 @@ export function useServiceStream(constructId: string, enabled: boolean): void {
         const payload = JSON.parse(event.data) as ConstructServiceSummary;
         upsertService(payload);
       } catch {
-        // ignore malformed events
+        /* ignore malformed events */
+      }
+    };
+
+    const snapshotListener = () => {
+      if (isActive) {
+        setIsLoading(false);
+      }
+    };
+
+    const errorListener = () => {
+      if (isActive) {
+        setError("Lost connection to service stream");
       }
     };
 
     source.addEventListener("service", serviceListener as EventListener);
-    source.addEventListener("error", () => {
-      queryClient.invalidateQueries({
-        queryKey: constructQueries.services(constructId).queryKey,
-      });
-    });
+    source.addEventListener("snapshot", snapshotListener);
+    source.addEventListener("error", errorListener);
 
     return () => {
+      isActive = false;
       source.removeEventListener("service", serviceListener as EventListener);
+      source.removeEventListener("snapshot", snapshotListener);
+      source.removeEventListener("error", errorListener);
       source.close();
     };
-  }, [constructId, enabled, queryClient]);
+  }, [constructId]);
+
+  return { services, isLoading, error };
 }
