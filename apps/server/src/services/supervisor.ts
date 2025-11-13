@@ -143,6 +143,14 @@ type ActiveServiceHandle = {
   handle: ProcessHandle;
 };
 
+type ServiceProcessOptions = {
+  row: ServiceRow;
+  definition: ProcessService;
+  env: Record<string, string>;
+  cwd: string;
+  commandWithLogging: string;
+};
+
 function createDefaultLogger(): ServiceLogger {
   return {
     info(message, context) {
@@ -217,7 +225,6 @@ export function createServiceSupervisor(
   const portManager = createPortManager({ db, now });
   const templateCache = new Map<string, Template | undefined>();
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: needs to orchestrate multi-service restart
   async function bootstrap(): Promise<void> {
     const grouped = groupServicesByConstruct(
       await repository.fetchAllServices()
@@ -228,25 +235,38 @@ export function createServiceSupervisor(
       const templateEnv = template?.env ?? {};
       const portMap = await buildPortMap(constructRows);
 
-      for (const row of constructRows) {
-        if (!AUTO_RESTART_STATUSES.has(row.service.status)) {
-          continue;
-        }
+      await restartServicesForConstruct({
+        rows: constructRows,
+        portMap,
+        templateEnv,
+      });
+    }
+  }
 
-        try {
-          await startService(row, undefined, templateEnv, portMap);
-        } catch (error) {
-          logger.error("Failed to restart service", {
-            serviceId: row.service.id,
-            constructId: row.construct.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
+  async function restartServicesForConstruct(args: {
+    rows: ServiceRow[];
+    portMap: Map<string, number>;
+    templateEnv: Record<string, string>;
+  }) {
+    const { rows, portMap, templateEnv } = args;
+
+    for (const row of rows) {
+      if (!AUTO_RESTART_STATUSES.has(row.service.status)) {
+        continue;
+      }
+
+      try {
+        await startService(row, undefined, templateEnv, portMap);
+      } catch (error) {
+        logger.error("Failed to restart service", {
+          serviceId: row.service.id,
+          constructId: row.construct.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   }
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: consolidates template validation with creation
   async function ensureConstructServices({
     construct,
     template,
@@ -268,11 +288,25 @@ export function createServiceSupervisor(
       return;
     }
 
+    const prepared = await prepareProcessServices(construct, resolvedTemplate);
+    if (!prepared.length) {
+      return;
+    }
+
+    const portMap = await buildPortMap(prepared.map((entry) => entry.row));
+
+    for (const { row, definition } of prepared) {
+      await startOrFail(row, definition, templateEnv, portMap);
+    }
+  }
+
+  async function prepareProcessServices(
+    construct: Construct,
+    template: Template
+  ): Promise<Array<{ row: ServiceRow; definition: ProcessService }>> {
     const prepared: Array<{ row: ServiceRow; definition: ProcessService }> = [];
 
-    for (const [name, definition] of Object.entries(
-      resolvedTemplate.services
-    )) {
+    for (const [name, definition] of Object.entries(template.services ?? {})) {
       if (definition.type !== "process") {
         logger.warn("Unsupported service type. Skipping.", {
           constructId: construct.id,
@@ -286,23 +320,24 @@ export function createServiceSupervisor(
       prepared.push({ row, definition });
     }
 
-    if (!prepared.length) {
-      return;
-    }
+    return prepared;
+  }
 
-    const portMap = await buildPortMap(prepared.map((entry) => entry.row));
-
-    for (const { row, definition } of prepared) {
-      try {
-        await startService(row, definition, templateEnv, portMap);
-      } catch (error) {
-        logger.error("Failed to start service", {
-          serviceId: row.service.id,
-          constructId: row.construct.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      }
+  async function startOrFail(
+    row: ServiceRow,
+    definition: ProcessService,
+    templateEnv: Record<string, string>,
+    portMap: Map<string, number>
+  ) {
+    try {
+      await startService(row, definition, templateEnv, portMap);
+    } catch (error) {
+      logger.error("Failed to start service", {
+        serviceId: row.service.id,
+        constructId: row.construct.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     }
   }
 
@@ -413,12 +448,10 @@ export function createServiceSupervisor(
     }
   }
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: service startup requires sequencing setup, env, and monitoring
   async function startService(
     row: ServiceRow,
     definitionOverride?: ProcessService,
     templateEnv: Record<string, string> = {},
-
     portLookup?: Map<string, number>
   ): Promise<void> {
     const definition =
@@ -436,24 +469,10 @@ export function createServiceSupervisor(
       return;
     }
 
-    const port =
-      portLookup?.get(row.service.name) ??
-      (await portManager.ensureServicePort(row.service));
-    row.service.port = port;
-
+    const port = await prepareServicePort(row, portLookup);
     const cwd = resolveServiceCwd(row.construct.workspacePath, definition.cwd);
 
-    if (!existsSync(cwd)) {
-      await markServiceError(
-        row.service.id,
-        row.construct.id,
-        "Service working directory not found"
-      );
-
-      logger.error("Service directory missing", {
-        serviceId: row.service.id,
-        cwd,
-      });
+    if (!(await ensureServiceDirectory(row, cwd))) {
       return;
     }
 
@@ -466,12 +485,7 @@ export function createServiceSupervisor(
       portMap: portLookup,
     });
 
-    const logPath = computeServiceLogPath(
-      row.construct.workspacePath,
-      row.service.name
-    );
-    ensureLogFile(logPath);
-    const commandWithLogging = wrapCommandWithLogging(definition.run, logPath);
+    const commandWithLogging = prepareLoggingCommand(row, definition.run);
 
     await repository.updateService(row.service.id, {
       status: "starting",
@@ -483,12 +497,57 @@ export function createServiceSupervisor(
 
     notifyServiceUpdate(row);
 
+    await runServiceProcess({ row, definition, env, cwd, commandWithLogging });
+  }
+
+  async function prepareServicePort(
+    row: ServiceRow,
+    portLookup?: Map<string, number>
+  ) {
+    const port =
+      portLookup?.get(row.service.name) ??
+      (await portManager.ensureServicePort(row.service));
+    row.service.port = port;
+    return port;
+  }
+
+  async function ensureServiceDirectory(row: ServiceRow, cwd: string) {
+    if (existsSync(cwd)) {
+      return true;
+    }
+
+    await markServiceError(
+      row.service.id,
+      row.construct.id,
+      "Service working directory not found"
+    );
+
+    logger.error("Service directory missing", {
+      serviceId: row.service.id,
+      cwd,
+    });
+
+    return false;
+  }
+
+  function prepareLoggingCommand(row: ServiceRow, command: string) {
+    const logPath = computeServiceLogPath(
+      row.construct.workspacePath,
+      row.service.name
+    );
+    ensureLogFile(logPath);
+    return wrapCommandWithLogging(command, logPath);
+  }
+
+  async function runServiceProcess({
+    row,
+    definition,
+    env,
+    cwd,
+    commandWithLogging,
+  }: ServiceProcessOptions) {
     try {
-      if (definition.setup?.length) {
-        for (const setupCommand of definition.setup) {
-          await runCommand(setupCommand, { cwd, env });
-        }
-      }
+      await runServiceSetup(definition, cwd, env);
 
       const handle = spawnProcess({
         command: commandWithLogging,
@@ -532,6 +591,20 @@ export function createServiceSupervisor(
         error instanceof Error ? error.message : String(error)
       );
       throw error;
+    }
+  }
+
+  async function runServiceSetup(
+    definition: ProcessService,
+    cwd: string,
+    env: Record<string, string>
+  ) {
+    if (!definition.setup?.length) {
+      return;
+    }
+
+    for (const setupCommand of definition.setup) {
+      await runCommand(setupCommand, { cwd, env });
     }
   }
 

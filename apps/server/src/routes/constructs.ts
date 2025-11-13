@@ -1,11 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { createConnection } from "node:net";
 import { resolve as resolvePath } from "node:path";
 import { logger } from "@bogeychan/elysia-logger";
 import { and, eq, inArray } from "drizzle-orm";
-import { Elysia, t } from "elysia";
+import { Elysia, type Static, t } from "elysia";
 import { closeAgentSession, ensureAgentSession } from "../agents/service";
 import { getSyntheticConfig } from "../config/context";
+import type { Template } from "../config/schema";
 import { db } from "../db";
 
 import {
@@ -126,6 +128,11 @@ function constructToResponse(construct: typeof constructs.$inferSelect) {
     lastSetupError: construct.lastSetupError ?? undefined,
   };
 }
+
+type ErrorPayload = {
+  message: string;
+  details?: string;
+};
 
 export function createConstructsRoutes(
   overrides: Partial<ConstructRouteDependencies> = {}
@@ -380,189 +387,20 @@ export function createConstructsRoutes(
     )
     .post(
       "/",
-      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provisioning flow requires coordinated cleanup and recovery branches
       async ({ body, set, log }) => {
-        const syntheticConfig = await loadSyntheticConfig();
-        const template = syntheticConfig.templates[body.templateId];
-        if (!template) {
-          set.status = HTTP_STATUS.BAD_REQUEST;
-          return { message: "Template not found" };
-        }
+        const result = await handleConstructCreationRequest({
+          body,
+          database,
+          ensureSession,
+          ensureServices,
+          stopConstructServices: stopConstructServicesFn,
+          buildWorktreeManager,
+          loadSyntheticConfig,
+          log,
+        });
 
-        const worktreeService = buildWorktreeManager(
-          process.cwd(),
-          syntheticConfig
-        );
-        const now = new Date();
-        const constructId = crypto.randomUUID();
-        let worktreeCreated = false;
-        let recordCreated = false;
-        let servicesStarted = false;
-        let createdConstruct: typeof constructs.$inferSelect | null = null;
-
-        const stopServicesIfNeeded = async () => {
-          if (!servicesStarted) {
-            return;
-          }
-
-          try {
-            await stopConstructServicesFn(constructId, {
-              releasePorts: true,
-            });
-          } catch (cleanupError) {
-            log.warn(
-              { cleanupError },
-              "Failed to stop services during construct creation cleanup"
-            );
-          }
-        };
-
-        const removeWorktreeIfNeeded = () => {
-          if (!worktreeCreated) {
-            return;
-          }
-
-          try {
-            worktreeService.removeWorktree(constructId);
-          } catch (cleanupError) {
-            log.warn(
-              { cleanupError },
-              "Failed to remove worktree during construct creation cleanup"
-            );
-          }
-        };
-
-        const deleteRecordIfNeeded = async () => {
-          if (!recordCreated) {
-            return;
-          }
-
-          try {
-            await database
-              .delete(constructs)
-              .where(eq(constructs.id, constructId));
-          } catch (cleanupError) {
-            log.warn(
-              { cleanupError },
-              "Failed to delete construct row during cleanup"
-            );
-          }
-        };
-
-        const cleanupResources = async (
-          options: { preserveRecord?: boolean; preserveWorktree?: boolean } = {}
-        ) => {
-          await stopServicesIfNeeded();
-
-          if (!options.preserveWorktree) {
-            removeWorktreeIfNeeded();
-          }
-
-          if (!options.preserveRecord) {
-            await deleteRecordIfNeeded();
-          }
-        };
-
-        try {
-          const workspacePath = await worktreeService.createWorktree(
-            constructId,
-            {
-              templateId: body.templateId,
-            }
-          );
-          worktreeCreated = true;
-
-          const newConstruct: NewConstruct = {
-            id: constructId,
-            name: body.name,
-            description: body.description ?? null,
-            templateId: body.templateId,
-            workspacePath,
-            opencodeSessionId: null,
-            opencodeServerUrl: null,
-            opencodeServerPort: null,
-            createdAt: now,
-            status: "pending",
-            lastSetupError: null,
-          };
-
-          const [created] = await database
-            .insert(constructs)
-            .values(newConstruct)
-            .returning();
-
-          if (!created) {
-            throw new Error("Failed to create construct record");
-          }
-
-          createdConstruct = created;
-          recordCreated = true;
-
-          await ensureSession(constructId);
-          await ensureServices(created, template);
-
-          servicesStarted = true;
-          await updateConstructProvisioningStatus(
-            database,
-            constructId,
-            "ready"
-          );
-
-          set.status = HTTP_STATUS.CREATED;
-          return constructToResponse({
-            ...created,
-            status: "ready",
-            lastSetupError: null,
-          });
-        } catch (error) {
-          const payload = buildConstructCreationErrorPayload(error);
-          const preserveResources = shouldPreserveConstructWorkspace(error);
-
-          if (preserveResources && recordCreated && createdConstruct) {
-            const lastSetupError = deriveSetupErrorDetails(payload);
-
-            await updateConstructProvisioningStatus(
-              database,
-              constructId,
-              "error",
-              lastSetupError
-            );
-
-            await cleanupResources({
-              preserveRecord: true,
-              preserveWorktree: true,
-            });
-
-            const erroredConstruct = {
-              ...createdConstruct,
-              status: "error",
-              lastSetupError,
-            };
-
-            if (error instanceof Error) {
-              log.error(error, "Construct setup failed; workspace preserved");
-            } else {
-              log.error(
-                { error },
-                "Construct setup failed; workspace preserved"
-              );
-            }
-
-            set.status = HTTP_STATUS.CREATED;
-            return constructToResponse(erroredConstruct);
-          }
-
-          await cleanupResources();
-
-          if (error instanceof Error) {
-            log.error(error, "Failed to create construct");
-          } else {
-            log.error({ error }, "Failed to create construct");
-          }
-
-          set.status = HTTP_STATUS.INTERNAL_ERROR;
-          return payload;
-        }
+        set.status = result.status;
+        return result.payload;
       },
       {
         body: CreateConstructSchema,
@@ -701,10 +539,299 @@ export function createConstructsRoutes(
 
 export const constructsRoutes = createConstructsRoutes();
 
-type ErrorPayload = {
-  message: string;
-  details?: string;
+type ConstructCreationResult = {
+  status: number;
+  payload: ConstructCreationPayload;
 };
+
+type ConstructCreationPayload =
+  | ReturnType<typeof constructToResponse>
+  | ErrorPayload;
+
+type ConstructCreationArgs = {
+  body: Static<typeof CreateConstructSchema>;
+  database: typeof db;
+  ensureSession: typeof ensureAgentSession;
+  ensureServices: typeof ensureServicesForConstruct;
+  stopConstructServices: typeof stopServicesForConstruct;
+  buildWorktreeManager: typeof createWorktreeManager;
+  loadSyntheticConfig: typeof getSyntheticConfig;
+  log: LoggerLike;
+};
+
+async function handleConstructCreationRequest(
+  args: ConstructCreationArgs
+): Promise<ConstructCreationResult> {
+  const {
+    body,
+    database,
+    ensureSession,
+    ensureServices,
+    stopConstructServices,
+    buildWorktreeManager,
+    loadSyntheticConfig,
+    log,
+  } = args;
+
+  const syntheticConfig = await loadSyntheticConfig();
+  const template = syntheticConfig.templates[body.templateId];
+  if (!template) {
+    return {
+      status: HTTP_STATUS.BAD_REQUEST,
+      payload: { message: "Template not found" },
+    };
+  }
+
+  const worktreeService = buildWorktreeManager(process.cwd(), syntheticConfig);
+  const context = createProvisionContext({
+    body,
+    template,
+    database,
+    ensureSession,
+    ensureServices,
+    stopConstructServices,
+    worktreeService,
+    log,
+  });
+
+  try {
+    const construct = await createConstructWithServices(context);
+    return {
+      status: HTTP_STATUS.CREATED,
+      payload: constructToResponse(construct),
+    };
+  } catch (error) {
+    return recoverConstructCreationFailure(context, error);
+  }
+}
+
+type ProvisionContext = {
+  body: Static<typeof CreateConstructSchema>;
+  template: Template;
+  database: typeof db;
+  ensureSession: typeof ensureAgentSession;
+  ensureServices: typeof ensureServicesForConstruct;
+  stopConstructServices: typeof stopServicesForConstruct;
+  worktreeService: ReturnType<typeof createWorktreeManager>;
+  log: LoggerLike;
+  state: ConstructProvisionState;
+};
+
+type ConstructProvisionState = {
+  constructId: string;
+  worktreeCreated: boolean;
+  recordCreated: boolean;
+  servicesStarted: boolean;
+  workspacePath: string | null;
+  createdConstruct: typeof constructs.$inferSelect | null;
+};
+
+function createProvisionContext(args: {
+  body: Static<typeof CreateConstructSchema>;
+  template: Template;
+  database: typeof db;
+  ensureSession: typeof ensureAgentSession;
+  ensureServices: typeof ensureServicesForConstruct;
+  stopConstructServices: typeof stopServicesForConstruct;
+  worktreeService: ReturnType<typeof createWorktreeManager>;
+  log: LoggerLike;
+}): ProvisionContext {
+  return {
+    ...args,
+    state: {
+      constructId: randomUUID(),
+      worktreeCreated: false,
+      recordCreated: false,
+      servicesStarted: false,
+      workspacePath: null,
+      createdConstruct: null,
+    },
+  };
+}
+
+async function createConstructWithServices(
+  context: ProvisionContext
+): Promise<typeof constructs.$inferSelect> {
+  const {
+    body,
+    template,
+    database,
+    ensureSession,
+    ensureServices,
+    worktreeService,
+    state,
+  } = context;
+
+  const workspacePath = await worktreeService.createWorktree(
+    state.constructId,
+    {
+      templateId: body.templateId,
+    }
+  );
+  state.worktreeCreated = true;
+  state.workspacePath = workspacePath;
+
+  const timestamp = new Date();
+  const newConstruct: NewConstruct = {
+    id: state.constructId,
+    name: body.name,
+    description: body.description ?? null,
+    templateId: body.templateId,
+    workspacePath,
+    opencodeSessionId: null,
+    opencodeServerUrl: null,
+    opencodeServerPort: null,
+    createdAt: timestamp,
+    status: "pending",
+    lastSetupError: null,
+  };
+
+  const [created] = await database
+    .insert(constructs)
+    .values(newConstruct)
+    .returning();
+
+  if (!created) {
+    throw new Error("Failed to create construct record");
+  }
+
+  state.recordCreated = true;
+  state.createdConstruct = created;
+
+  await ensureSession(state.constructId);
+  await ensureServices(created, template);
+
+  state.servicesStarted = true;
+
+  await updateConstructProvisioningStatus(database, state.constructId, "ready");
+
+  const readyRecord = { ...created, status: "ready", lastSetupError: null };
+  state.createdConstruct = readyRecord;
+  return readyRecord;
+}
+
+async function recoverConstructCreationFailure(
+  context: ProvisionContext,
+  error: unknown
+): Promise<ConstructCreationResult> {
+  const payload = buildConstructCreationErrorPayload(error);
+  const preserveResources = shouldPreserveConstructWorkspace(error);
+
+  if (
+    preserveResources &&
+    context.state.recordCreated &&
+    context.state.createdConstruct
+  ) {
+    const lastSetupError = deriveSetupErrorDetails(payload);
+
+    await updateConstructProvisioningStatus(
+      context.database,
+      context.state.constructId,
+      "error",
+      lastSetupError
+    );
+
+    await cleanupProvisionResources(context, {
+      preserveRecord: true,
+      preserveWorktree: true,
+    });
+
+    const erroredConstruct = {
+      ...context.state.createdConstruct,
+      status: "error",
+      lastSetupError,
+    };
+
+    context.state.createdConstruct = erroredConstruct;
+
+    return {
+      status: HTTP_STATUS.CREATED,
+      payload: constructToResponse(erroredConstruct),
+    };
+  }
+
+  await cleanupProvisionResources(context);
+
+  if (error instanceof Error) {
+    context.log.error(error, "Failed to create construct");
+  } else {
+    context.log.error({ error }, "Failed to create construct");
+  }
+
+  return { status: HTTP_STATUS.INTERNAL_ERROR, payload };
+}
+
+async function cleanupProvisionResources(
+  context: ProvisionContext,
+  options: { preserveRecord?: boolean; preserveWorktree?: boolean } = {}
+) {
+  await stopServicesIfStarted(context);
+
+  if (!options.preserveWorktree) {
+    await removeWorktreeIfCreated(context);
+  }
+
+  if (!options.preserveRecord) {
+    await deleteConstructRecordIfCreated(context);
+  }
+}
+
+async function stopServicesIfStarted(context: ProvisionContext) {
+  if (!context.state.servicesStarted) {
+    return;
+  }
+
+  try {
+    await context.stopConstructServices(context.state.constructId, {
+      releasePorts: true,
+    });
+  } catch (cleanupError) {
+    context.log.warn(
+      { cleanupError },
+      "Failed to stop services during construct creation cleanup"
+    );
+  } finally {
+    context.state.servicesStarted = false;
+  }
+}
+
+async function removeWorktreeIfCreated(context: ProvisionContext) {
+  if (!(context.state.worktreeCreated && context.state.workspacePath)) {
+    return;
+  }
+
+  await removeConstructWorkspace(
+    context.worktreeService,
+    {
+      id: context.state.constructId,
+      workspacePath: context.state.workspacePath,
+    },
+    context.log
+  );
+
+  context.state.worktreeCreated = false;
+  context.state.workspacePath = null;
+}
+
+async function deleteConstructRecordIfCreated(context: ProvisionContext) {
+  if (!context.state.recordCreated) {
+    return;
+  }
+
+  try {
+    await context.database
+      .delete(constructs)
+      .where(eq(constructs.id, context.state.constructId));
+  } catch (cleanupError) {
+    context.log.warn(
+      { cleanupError },
+      "Failed to delete construct row during cleanup"
+    );
+  } finally {
+    context.state.recordCreated = false;
+    context.state.createdConstruct = null;
+  }
+}
 
 type ConstructWorkspaceRecord = Pick<
   typeof constructs.$inferSelect,
@@ -713,6 +840,7 @@ type ConstructWorkspaceRecord = Pick<
 
 type LoggerLike = {
   warn: (obj: Record<string, unknown>, message?: string) => void;
+  error: (obj: Record<string, unknown> | Error, message?: string) => void;
 };
 
 function shouldPreserveConstructWorkspace(
