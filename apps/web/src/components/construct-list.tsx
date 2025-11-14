@@ -9,6 +9,10 @@ import { Copy, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
+  formatStatus,
+  getStatusAppearance,
+} from "@/components/agent-chat/status-theme";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -23,6 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
+import { agentQueries } from "@/queries/agents";
 import {
   type Construct,
   type ConstructServiceSummary,
@@ -78,16 +83,16 @@ export function ConstructList() {
   });
 
   const serviceStatusMap = new Map<string, ServiceStatusState>();
+
   constructs?.forEach((construct, index) => {
-    const query = serviceStatusQueries[index];
-    if (!query) {
-      return;
+    const serviceQuery = serviceStatusQueries[index];
+    if (serviceQuery) {
+      serviceStatusMap.set(construct.id, {
+        summary: serviceQuery.data,
+        isLoading: serviceQuery.isLoading,
+        isError: serviceQuery.isError,
+      });
     }
-    serviceStatusMap.set(construct.id, {
-      summary: query.data,
-      isLoading: query.isLoading,
-      isError: query.isError,
-    });
   });
 
   useEffect(() => {
@@ -402,6 +407,12 @@ function ConstructCard({
   templateLabel,
   serviceStatus,
 }: ConstructCardProps) {
+  const sessionQueryConfig = agentQueries.sessionByConstruct(construct.id);
+  const agentSessionQuery = useQuery({
+    ...sessionQueryConfig,
+    enabled: construct.status === "ready" && Boolean(construct.id),
+    staleTime: 30_000,
+  });
   return (
     <Card
       className={cn(
@@ -440,7 +451,14 @@ function ConstructCard({
           status={construct.status}
         />
         {construct.status === "ready" && (
-          <ServiceStatusIndicator status={serviceStatus} />
+          <>
+            <AgentStatusIndicator
+              isError={agentSessionQuery.isError}
+              isLoading={agentSessionQuery.isLoading}
+              session={agentSessionQuery.data ?? null}
+            />
+            <ServiceStatusIndicator status={serviceStatus} />
+          </>
         )}
       </CardHeader>
 
@@ -535,6 +553,73 @@ function ConstructStatusNotice({
   }
 
   return null;
+}
+
+function AgentStatusIndicator({
+  session,
+  isLoading,
+  isError,
+}: {
+  session: import("@/queries/agents").AgentSession | null;
+  isLoading: boolean;
+  isError: boolean;
+}) {
+  if (isLoading) {
+    return (
+      <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+        Checking agent…
+      </p>
+    );
+  }
+
+  if (isError) {
+    return (
+      <p className="text-[#f19b7f] text-[11px] uppercase tracking-[0.3em]">
+        Agent unavailable
+      </p>
+    );
+  }
+
+  if (!session) {
+    return (
+      <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+        No agent running
+      </p>
+    );
+  }
+
+  const statusTheme = getStatusAppearance(session.status);
+
+  return (
+    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.3em]">
+      <span
+        className={cn(
+          "inline-flex h-2 w-2 rounded-full",
+          getStatusDotClass(session.status)
+        )}
+      />
+      <span className={statusTheme.badge}>
+        Agent {formatStatus(session.status)}
+      </span>
+    </div>
+  );
+}
+
+function getStatusDotClass(status: string): string {
+  switch (status) {
+    case "working":
+      return "bg-[#0b3c1f]";
+    case "awaiting_input":
+      return "bg-[#f5dd7e]";
+    case "completed":
+      return "bg-[#7ef5a3]";
+    case "error":
+      return "bg-[#ff9b9b]";
+    case "starting":
+      return "bg-[#4a5d4a]";
+    default:
+      return "bg-[#232323]";
+  }
 }
 
 function ServiceStatusIndicator({ status }: { status?: ServiceStatusState }) {

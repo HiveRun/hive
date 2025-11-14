@@ -292,7 +292,7 @@ async function startOpencodeRuntime({
     client,
     server,
     abortController,
-    status: "idle",
+    status: "awaiting_input",
     async sendMessage(content) {
       setRuntimeStatus(runtime, "working");
 
@@ -326,7 +326,7 @@ async function startOpencodeRuntime({
     },
   };
 
-  setRuntimeStatus(runtime, "idle");
+  setRuntimeStatus(runtime, "awaiting_input");
 
   startEventStream({
     runtime,
@@ -454,31 +454,36 @@ function updateRuntimeStatusFromEvent(
   runtime: RuntimeHandle,
   event: Event
 ): void {
+  const update = resolveRuntimeStatusFromEvent(event);
+  if (!update) {
+    return;
+  }
+
+  setRuntimeStatus(runtime, update.status, update.error);
+}
+
+export function resolveRuntimeStatusFromEvent(
+  event: Event
+): { status: AgentSessionStatus; error?: string } | null {
   if (event.type === "session.error") {
     const message = extractErrorMessage(event);
-    setRuntimeStatus(runtime, "error", message);
-    return;
+    return { status: "error", error: message };
   }
 
   if (event.type === "session.idle") {
-    setRuntimeStatus(runtime, "idle");
-    return;
+    return { status: "awaiting_input" };
   }
 
   if (event.type !== "message.updated") {
-    return;
+    return null;
   }
 
   const info = event.properties.info;
-  if (info.role === "user") {
-    setRuntimeStatus(runtime, "working");
-    return;
+  if (info.role === "assistant") {
+    return { status: "working" };
   }
 
-  if (info.role === "assistant") {
-    const status = info.time.completed ? "awaiting_input" : "working";
-    setRuntimeStatus(runtime, status);
-  }
+  return null;
 }
 
 async function loadRemoteMessages(
