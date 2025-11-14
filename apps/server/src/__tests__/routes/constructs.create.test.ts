@@ -58,7 +58,7 @@ describe("POST /api/constructs", () => {
           constructId,
           templateId,
           provider: "opencode",
-          status: "idle",
+          status: "awaiting_input",
           workspacePath,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),

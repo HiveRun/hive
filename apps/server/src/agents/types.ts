@@ -20,7 +20,6 @@ export const agentSessionStatuses = [
   "starting",
   "working",
   "awaiting_input",
-  "idle",
   "completed",
   "error",
 ] as const;

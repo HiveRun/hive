@@ -5,14 +5,11 @@ const STATUS_APPEARANCES: Record<string, { badge: string }> = {
   starting: {
     badge: "border border-secondary bg-secondary/20 text-secondary-foreground",
   },
-  awaiting_input: {
-    badge: "border border-muted bg-muted text-muted-foreground",
-  },
   completed: {
     badge: "border border-primary/70 bg-primary/15 text-primary-foreground",
   },
-  idle: {
-    badge: "border border-border bg-card text-muted-foreground",
+  awaiting_input: {
+    badge: "border border-muted bg-muted text-muted-foreground",
   },
   error: {
     badge:
