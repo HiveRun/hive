@@ -49,15 +49,15 @@ export const MAIN_NAV_ITEMS: MainNavItem[] = [
     description: "Interactive telemetry and analytics",
   },
   {
-    to: "/debug-notifications",
-    label: "Debug Notifications",
-    icon: Bell,
-    description: "Open the Tauri notification trigger",
-  },
-  {
     to: "/test-error",
     label: "Example Error",
     icon: AlertTriangle,
     description: "Intentional failure route for error flows",
+  },
+  {
+    to: "/debug-notifications",
+    label: "Debug Notifications",
+    icon: Bell,
+    description: "Open the Tauri notification trigger",
   },
 ];
