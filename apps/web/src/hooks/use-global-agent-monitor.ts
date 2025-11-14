@@ -10,7 +10,11 @@ const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
 const NOTIFICATION_SOUND_PATH = "/sounds/agent-awaiting-input.wav";
 const NOTIFICATION_SOUND_VOLUME = 0.2;
 
-export function useGlobalAgentMonitor() {
+type GlobalAgentMonitorOptions = {
+  onNavigateToConstruct?: (constructId: string) => void;
+};
+
+export function useGlobalAgentMonitor(options: GlobalAgentMonitorOptions = {}) {
   const queryClient = useQueryClient();
   const { data: constructs } = useQuery(constructQueries.all());
   const sessionStreams = useRef<
@@ -102,7 +106,11 @@ export function useGlobalAgentMonitor() {
               payload.status === "awaiting_input" &&
               previousStatus !== "awaiting_input"
             ) {
-              notifyAwaitingInput(construct, windowFocusedRef.current);
+              dispatchAwaitingInputNotification({
+                construct,
+                isWindowFocused: windowFocusedRef.current,
+                onNavigate: options.onNavigateToConstruct,
+              });
             }
           } catch {
             // ignore malformed events
@@ -139,48 +147,65 @@ export function useGlobalAgentMonitor() {
       sessionStreams.current.clear();
       lastStatuses.current.clear();
     };
-  }, [constructs, queryClient]);
+  }, [constructs, queryClient, options.onNavigateToConstruct]);
 }
 
-function notifyAwaitingInput(construct: Construct, isWindowFocused: boolean) {
+type AwaitingInputNotificationOptions = {
+  construct: Construct;
+  isWindowFocused: boolean;
+  onNavigate?: (constructId: string) => void;
+};
+
+function dispatchAwaitingInputNotification(
+  options: AwaitingInputNotificationOptions
+) {
+  const { construct, isWindowFocused, onNavigate } = options;
   const label = construct.name || construct.id;
   const message = `${label} agent needs your response`;
   const shouldUseDesktop = hasTauriBridge() && !isWindowFocused;
 
   playNotificationSound();
 
+  const showToast = () => {
+    toast.info(message, {
+      action: onNavigate
+        ? {
+            label: "Open chat",
+            onClick: () => onNavigate(construct.id),
+          }
+        : undefined,
+    });
+  };
+
   if (shouldUseDesktop) {
     import("@tauri-apps/plugin-notification")
-      .then(
-        async ({
-          isPermissionGranted,
-          requestPermission,
-          sendNotification,
-        }) => {
-          let granted = await isPermissionGranted();
-          if (!granted) {
-            const permission = await requestPermission();
-            granted = permission === "granted";
-          }
-
-          if (granted) {
-            await sendNotification({
-              title: "Agent Awaiting Input",
-              body: message,
-            });
-            return;
-          }
-
-          toast.info(message);
+      .then(async ({ isPermissionGranted, requestPermission }) => {
+        let granted = await isPermissionGranted();
+        if (!granted) {
+          const permission = await requestPermission();
+          granted = permission === "granted";
         }
-      )
+
+        if (granted) {
+          const notification = new window.Notification("Agent Awaiting Input", {
+            body: message,
+          });
+          notification.onclick = () => {
+            onNavigate?.(construct.id);
+            window.focus();
+          };
+          return;
+        }
+
+        showToast();
+      })
       .catch(() => {
-        toast.info(message);
+        showToast();
       });
     return;
   }
 
-  toast.info(message);
+  showToast();
 }
 
 let notificationAudio: HTMLAudioElement | null = null;
