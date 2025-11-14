@@ -32,9 +32,18 @@ const toneClassMap: Record<StatusTone, string> = {
   error: "text-destructive",
 };
 
-const hasTauriBridge = () =>
-  typeof window !== "undefined" &&
-  Boolean((window as Window & { __TAURI_IPC__?: unknown }).__TAURI_IPC__);
+export const hasTauriBridge = () => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const candidate = window as Window & {
+    __TAURI__?: unknown;
+    __TAURI_IPC__?: unknown;
+  };
+
+  return Boolean(candidate.__TAURI__ ?? candidate.__TAURI_IPC__);
+};
 
 function DebugNotificationsRoute() {
   const [status, setStatus] = useState<StatusState>(initialStatus);
