@@ -7,10 +7,8 @@ import type { Construct } from "@/queries/constructs";
 import { constructQueries } from "@/queries/constructs";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
-const NOTIFICATION_TONE_FREQUENCY = 880;
-const NOTIFICATION_TONE_DURATION = 0.25;
-const NOTIFICATION_TONE_VOLUME = 0.06;
-const NOTIFICATION_TONE_DECAY = 0.0001;
+const NOTIFICATION_SOUND_PATH = "/sounds/agent-awaiting-input.wav";
+const NOTIFICATION_SOUND_VOLUME = 0.2;
 
 export function useGlobalAgentMonitor() {
   const queryClient = useQueryClient();
@@ -185,45 +183,26 @@ function notifyAwaitingInput(construct: Construct, isWindowFocused: boolean) {
   toast.info(message);
 }
 
-let audioContext: AudioContext | null = null;
+let notificationAudio: HTMLAudioElement | null = null;
 
 function playNotificationSound() {
   if (typeof window === "undefined") {
     return;
   }
 
-  try {
-    if (!audioContext || audioContext.state === "closed") {
-      audioContext = new AudioContext();
-    }
+  if (!notificationAudio) {
+    notificationAudio = new Audio(NOTIFICATION_SOUND_PATH);
+    notificationAudio.volume = NOTIFICATION_SOUND_VOLUME;
+  }
 
-    const context = audioContext;
-    if (context.state === "suspended") {
-      context.resume().catch(() => {
-        /* noop */
+  try {
+    notificationAudio.currentTime = 0;
+    const playResult = notificationAudio.play();
+    if (playResult instanceof Promise) {
+      playResult.catch(() => {
+        /* ignore autoplay restrictions */
       });
     }
-
-    const oscillator = context.createOscillator();
-    const gainNode = context.createGain();
-
-    oscillator.type = "triangle";
-    oscillator.frequency.value = NOTIFICATION_TONE_FREQUENCY;
-
-    gainNode.gain.value = NOTIFICATION_TONE_VOLUME;
-
-    oscillator.connect(gainNode);
-    gainNode.connect(context.destination);
-
-    const now = context.currentTime;
-    gainNode.gain.setValueAtTime(NOTIFICATION_TONE_VOLUME, now);
-    gainNode.gain.exponentialRampToValueAtTime(
-      NOTIFICATION_TONE_DECAY,
-      now + NOTIFICATION_TONE_DURATION
-    );
-
-    oscillator.start(now);
-    oscillator.stop(now + NOTIFICATION_TONE_DURATION);
   } catch {
     // Ignore audio errors
   }
