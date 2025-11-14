@@ -1,5 +1,12 @@
 import type { LucideIcon } from "lucide-react";
-import { Activity, AlertTriangle, FileText, Home, Layers } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  Bell,
+  FileText,
+  Home,
+  Layers,
+} from "lucide-react";
 
 export type MainNavItem = {
   to:
@@ -7,7 +14,8 @@ export type MainNavItem = {
     | "/example-dashboard"
     | "/test-error"
     | "/templates"
-    | "/constructs/list";
+    | "/constructs/list"
+    | "/debug-notifications";
   label: string;
   description?: string;
   icon: LucideIcon;
@@ -45,5 +53,11 @@ export const MAIN_NAV_ITEMS: MainNavItem[] = [
     label: "Example Error",
     icon: AlertTriangle,
     description: "Intentional failure route for error flows",
+  },
+  {
+    to: "/debug-notifications",
+    label: "Debug Notifications",
+    icon: Bell,
+    description: "Open the Tauri notification trigger",
   },
 ];

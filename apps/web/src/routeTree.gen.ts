@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as TestErrorRouteImport } from './routes/test-error'
 import { Route as TemplatesRouteImport } from './routes/templates'
 import { Route as ExampleDashboardRouteImport } from './routes/example-dashboard'
+import { Route as DebugNotificationsRouteImport } from './routes/debug-notifications'
 import { Route as ConstructsRouteImport } from './routes/constructs'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ConstructsNewRouteImport } from './routes/constructs/new'
@@ -33,6 +34,11 @@ const TemplatesRoute = TemplatesRouteImport.update({
 const ExampleDashboardRoute = ExampleDashboardRouteImport.update({
   id: '/example-dashboard',
   path: '/example-dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DebugNotificationsRoute = DebugNotificationsRouteImport.update({
+  id: '/debug-notifications',
+  path: '/debug-notifications',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConstructsRoute = ConstructsRouteImport.update({
@@ -76,6 +82,7 @@ const ConstructsConstructIdChatRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/constructs': typeof ConstructsRouteWithChildren
+  '/debug-notifications': typeof DebugNotificationsRoute
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
@@ -88,6 +95,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/constructs': typeof ConstructsRouteWithChildren
+  '/debug-notifications': typeof DebugNotificationsRoute
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
@@ -101,6 +109,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/constructs': typeof ConstructsRouteWithChildren
+  '/debug-notifications': typeof DebugNotificationsRoute
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
@@ -115,6 +124,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/constructs'
+    | '/debug-notifications'
     | '/example-dashboard'
     | '/templates'
     | '/test-error'
@@ -127,6 +137,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/constructs'
+    | '/debug-notifications'
     | '/example-dashboard'
     | '/templates'
     | '/test-error'
@@ -139,6 +150,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/constructs'
+    | '/debug-notifications'
     | '/example-dashboard'
     | '/templates'
     | '/test-error'
@@ -152,6 +164,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ConstructsRoute: typeof ConstructsRouteWithChildren
+  DebugNotificationsRoute: typeof DebugNotificationsRoute
   ExampleDashboardRoute: typeof ExampleDashboardRoute
   TemplatesRoute: typeof TemplatesRoute
   TestErrorRoute: typeof TestErrorRoute
@@ -178,6 +191,13 @@ declare module '@tanstack/react-router' {
       path: '/example-dashboard'
       fullPath: '/example-dashboard'
       preLoaderRoute: typeof ExampleDashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/debug-notifications': {
+      id: '/debug-notifications'
+      path: '/debug-notifications'
+      fullPath: '/debug-notifications'
+      preLoaderRoute: typeof DebugNotificationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/constructs': {
@@ -266,6 +286,7 @@ const ConstructsRouteWithChildren = ConstructsRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ConstructsRoute: ConstructsRouteWithChildren,
+  DebugNotificationsRoute: DebugNotificationsRoute,
   ExampleDashboardRoute: ExampleDashboardRoute,
   TemplatesRoute: TemplatesRoute,
   TestErrorRoute: TestErrorRoute,
