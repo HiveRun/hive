@@ -2,13 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { hasTauriBridge } from "./debug-notifications";
 
-declare global {
-  // biome-ignore lint/style/useConsistentTypeDefinitions: augment built-in Window type
-  interface Window {
-    __TAURI__?: unknown;
-    __TAURI_IPC__?: unknown;
-  }
-}
+type TauriGlobal = typeof import("@tauri-apps/api");
 
 const getWindow = () => {
   const globalRef = globalThis as typeof globalThis & {
@@ -33,7 +27,7 @@ describe("hasTauriBridge", () => {
 
   it("returns true when __TAURI__ exists", () => {
     const win = getWindow();
-    win.__TAURI__ = {};
+    win.__TAURI__ = {} as TauriGlobal;
     expect(hasTauriBridge()).toBe(true);
   });
 
