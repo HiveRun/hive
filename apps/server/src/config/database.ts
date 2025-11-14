@@ -1,13 +1,40 @@
+import { dirname, resolve } from "node:path";
+import { fileURLToPath, URL } from "node:url";
 import dotenv from "dotenv";
 
+const moduleDir = dirname(fileURLToPath(import.meta.url));
+const serverEnvPath = resolve(moduleDir, "../../.env");
+
+// Allow Bun to populate env vars automatically while keeping Node tooling working.
 dotenv.config({
-  path: "./.env",
+  path: serverEnvPath,
+  override: false,
 });
 
-const envDatabaseUrl = process.env.DATABASE_URL;
+type BunRuntime = { env?: Record<string, string | undefined> };
+const bunEnv = (globalThis as { Bun?: BunRuntime }).Bun?.env;
+const envDatabaseUrl = bunEnv?.DATABASE_URL ?? process.env.DATABASE_URL;
 
 if (!envDatabaseUrl) {
   throw new Error("DATABASE_URL environment variable is required");
 }
 
-export const databaseUrl: string = envDatabaseUrl;
+const SQLITE_MEMORY_URLS = new Set([":memory:", "file::memory:?cache=shared"]);
+
+const stripFilePrefix = (value: string) => {
+  if (!value.startsWith("file:")) {
+    return value;
+  }
+  if (value.startsWith("file://")) {
+    return fileURLToPath(new URL(value));
+  }
+
+  const withoutPrefix = value.slice("file:".length);
+  const [pathOnly] = withoutPrefix.split("?");
+  return pathOnly;
+};
+
+export const databaseUrl = envDatabaseUrl;
+export const sqliteDatabasePath = SQLITE_MEMORY_URLS.has(envDatabaseUrl)
+  ? ":memory:"
+  : stripFilePrefix(envDatabaseUrl);

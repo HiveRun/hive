@@ -1,0 +1,936 @@
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { constants as osConstants } from "node:os";
+import { dirname, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { getSyntheticConfig } from "../config/context";
+import type { ProcessService, Template } from "../config/schema";
+import { db as defaultDb } from "../db";
+import type { Construct } from "../schema/constructs";
+import type { ConstructService, ServiceStatus } from "../schema/services";
+import { emitServiceUpdate } from "./events";
+import { createPortManager } from "./port-manager";
+import { createServiceRepository } from "./repository";
+
+const AUTO_RESTART_STATUSES: ReadonlySet<ServiceStatus> = new Set([
+  "pending",
+  "starting",
+  "running",
+  "needs_resume",
+]);
+
+const STOP_TIMEOUT_MS = 2000;
+const FORCE_KILL_DELAY_MS = 250;
+const DEFAULT_SHELL = process.env.SHELL || "/bin/bash";
+const SIGNAL_CODES = osConstants?.signals ?? {};
+const SERVICE_LOG_DIR = ".synthetic/logs";
+
+export class CommandExecutionError extends Error {
+  readonly command: string;
+  readonly cwd: string;
+  readonly exitCode: number;
+
+  constructor(params: { command: string; cwd: string; exitCode: number }) {
+    super(
+      `Command "${params.command}" failed with exit code ${params.exitCode} (cwd: ${params.cwd})`
+    );
+    this.name = "CommandExecutionError";
+    this.command = params.command;
+    this.cwd = params.cwd;
+    this.exitCode = params.exitCode;
+  }
+}
+
+export class TemplateSetupError extends Error {
+  readonly command: string;
+  readonly templateId: string;
+  readonly workspacePath: string;
+
+  constructor(params: {
+    command: string;
+    templateId: string;
+    workspacePath: string;
+    cause?: unknown;
+  }) {
+    super(
+      `Template setup command "${params.command}" failed for template "${params.templateId}"`,
+      { cause: params.cause }
+    );
+    this.name = "TemplateSetupError";
+    this.command = params.command;
+    this.templateId = params.templateId;
+    this.workspacePath = params.workspacePath;
+  }
+}
+
+export function isProcessAlive(pid?: number | null): boolean {
+  if (!pid) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveSignalValue(signal?: number | string): number | undefined {
+  if (typeof signal === "string") {
+    return SIGNAL_CODES[signal as keyof typeof SIGNAL_CODES];
+  }
+  return signal;
+}
+
+export type SpawnProcessOptions = {
+  command: string;
+  cwd: string;
+  env: Record<string, string>;
+};
+
+export type ProcessHandle = {
+  pid: number;
+  kill: (signal?: number | string) => void;
+  exited: Promise<number>;
+};
+
+export type SpawnProcess = (options: SpawnProcessOptions) => ProcessHandle;
+
+export type RunCommand = (
+  command: string,
+  options: { cwd: string; env: Record<string, string> }
+) => Promise<void>;
+
+export type ServiceSupervisor = {
+  bootstrap(): Promise<void>;
+  ensureConstructServices(args: {
+    construct: Construct;
+    template?: Template;
+  }): Promise<void>;
+  startConstructService(serviceId: string): Promise<void>;
+  stopConstructService(
+    serviceId: string,
+    options?: { releasePorts?: boolean }
+  ): Promise<void>;
+  stopConstructServices(
+    constructId: string,
+    options?: { releasePorts?: boolean }
+  ): Promise<void>;
+  stopAll(): Promise<void>;
+};
+
+export type SupervisorDependencies = {
+  db: typeof defaultDb;
+  spawnProcess: SpawnProcess;
+  runCommand: RunCommand;
+  now: () => Date;
+  logger: ServiceLogger;
+};
+
+type ServiceLogger = {
+  info(message: string, context?: Record<string, unknown>): void;
+  warn(message: string, context?: Record<string, unknown>): void;
+  error(message: string, context?: Record<string, unknown>): void;
+};
+
+type ServiceRow = {
+  service: ConstructService;
+  construct: Construct;
+};
+
+type ActiveServiceHandle = {
+  handle: ProcessHandle;
+};
+
+type ServiceProcessOptions = {
+  row: ServiceRow;
+  definition: ProcessService;
+  env: Record<string, string>;
+  cwd: string;
+  commandWithLogging: string;
+};
+
+function createDefaultLogger(): ServiceLogger {
+  return {
+    info(message, context) {
+      process.stderr.write(
+        `[services] ${message}${context ? ` ${JSON.stringify(context)}` : ""}\n`
+      );
+    },
+    warn(message, context) {
+      process.stderr.write(
+        `[services] WARN ${message}${context ? ` ${JSON.stringify(context)}` : ""}\n`
+      );
+    },
+    error(message, context) {
+      process.stderr.write(
+        `[services] ERROR ${message}${context ? ` ${JSON.stringify(context)}` : ""}\n`
+      );
+    },
+  };
+}
+
+const defaultSpawnProcess: SpawnProcess = ({ command, cwd, env }) => {
+  const child = Bun.spawn({
+    cmd: [DEFAULT_SHELL, "-lc", command],
+    cwd,
+    env: { ...process.env, ...env },
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+
+  const kill: ProcessHandle["kill"] = (signal) => {
+    const resolved = resolveSignalValue(signal);
+    child.kill(resolved);
+  };
+
+  return {
+    pid: child.pid,
+    kill,
+    exited: child.exited,
+  };
+};
+
+const createDefaultRunCommand =
+  (spawnProcess: SpawnProcess): RunCommand =>
+  async (command, options) => {
+    const proc = spawnProcess({
+      command,
+      cwd: options.cwd,
+      env: options.env,
+    });
+
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      throw new CommandExecutionError({
+        command,
+        cwd: options.cwd,
+        exitCode,
+      });
+    }
+  };
+
+export function createServiceSupervisor(
+  overrides: Partial<SupervisorDependencies> = {}
+): ServiceSupervisor {
+  const db = overrides.db ?? defaultDb;
+  const logger = overrides.logger ?? createDefaultLogger();
+  const spawnProcess = overrides.spawnProcess ?? defaultSpawnProcess;
+  const runCommand =
+    overrides.runCommand ?? createDefaultRunCommand(spawnProcess);
+  const now = overrides.now ?? (() => new Date());
+
+  const activeServices = new Map<string, ActiveServiceHandle>();
+  const repository = createServiceRepository(db, now);
+  const portManager = createPortManager({ db, now });
+  const templateCache = new Map<string, Template | undefined>();
+
+  async function bootstrap(): Promise<void> {
+    const grouped = groupServicesByConstruct(
+      await repository.fetchAllServices()
+    );
+
+    for (const { construct, rows: constructRows } of grouped.values()) {
+      const template = await loadTemplateCached(construct.templateId);
+      const templateEnv = template?.env ?? {};
+      const portMap = await buildPortMap(constructRows);
+
+      await restartServicesForConstruct({
+        rows: constructRows,
+        portMap,
+        templateEnv,
+      });
+    }
+  }
+
+  async function restartServicesForConstruct(args: {
+    rows: ServiceRow[];
+    portMap: Map<string, number>;
+    templateEnv: Record<string, string>;
+  }) {
+    const { rows, portMap, templateEnv } = args;
+
+    for (const row of rows) {
+      if (!AUTO_RESTART_STATUSES.has(row.service.status)) {
+        continue;
+      }
+
+      try {
+        await startService(row, undefined, templateEnv, portMap);
+      } catch (error) {
+        logger.error("Failed to restart service", {
+          serviceId: row.service.id,
+          constructId: row.construct.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  async function ensureConstructServices({
+    construct,
+    template,
+  }: {
+    construct: Construct;
+    template?: Template;
+  }): Promise<void> {
+    const resolvedTemplate =
+      template ?? (await loadTemplateCached(construct.templateId));
+
+    if (!resolvedTemplate) {
+      return;
+    }
+
+    const templateEnv = resolvedTemplate.env ?? {};
+    await runTemplateSetupCommands(construct, resolvedTemplate, templateEnv);
+
+    if (!resolvedTemplate.services) {
+      return;
+    }
+
+    const prepared = await prepareProcessServices(construct, resolvedTemplate);
+    if (!prepared.length) {
+      return;
+    }
+
+    const portMap = await buildPortMap(prepared.map((entry) => entry.row));
+
+    for (const { row, definition } of prepared) {
+      await startOrFail(row, definition, templateEnv, portMap);
+    }
+  }
+
+  async function prepareProcessServices(
+    construct: Construct,
+    template: Template
+  ): Promise<Array<{ row: ServiceRow; definition: ProcessService }>> {
+    const prepared: Array<{ row: ServiceRow; definition: ProcessService }> = [];
+
+    for (const [name, definition] of Object.entries(template.services ?? {})) {
+      if (definition.type !== "process") {
+        logger.warn("Unsupported service type. Skipping.", {
+          constructId: construct.id,
+          service: name,
+          type: definition.type,
+        });
+        continue;
+      }
+
+      const row = await ensureService(construct, name, definition);
+      prepared.push({ row, definition });
+    }
+
+    return prepared;
+  }
+
+  async function startOrFail(
+    row: ServiceRow,
+    definition: ProcessService,
+    templateEnv: Record<string, string>,
+    portMap: Map<string, number>
+  ) {
+    try {
+      await startService(row, definition, templateEnv, portMap);
+    } catch (error) {
+      logger.error("Failed to start service", {
+        serviceId: row.service.id,
+        constructId: row.construct.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  async function runTemplateSetupCommands(
+    construct: Construct,
+    template: Template,
+    templateEnv: Record<string, string>
+  ): Promise<void> {
+    if (!template.setup?.length) {
+      return;
+    }
+
+    if (!construct.workspacePath) {
+      throw new Error("Construct workspace path missing");
+    }
+
+    const env = {
+      ...buildBaseEnv({ serviceName: template.id, construct }),
+      ...templateEnv,
+    };
+
+    for (const command of template.setup) {
+      try {
+        await runCommand(command, {
+          cwd: construct.workspacePath,
+          env,
+        });
+      } catch (error) {
+        throw new TemplateSetupError({
+          command,
+          templateId: template.id,
+          workspacePath: construct.workspacePath,
+          cause: error,
+        });
+      }
+    }
+  }
+
+  async function ensureService(
+    construct: Construct,
+    name: string,
+    definition: ProcessService
+  ): Promise<ServiceRow> {
+    let record = await repository.findByConstructAndName(construct.id, name);
+    const resolvedCwd = resolveServiceCwd(
+      construct.workspacePath,
+      definition.cwd
+    );
+
+    if (record) {
+      const shouldUpdate = needsDefinitionUpdate(
+        record,
+        definition,
+        resolvedCwd
+      );
+      if (shouldUpdate) {
+        record =
+          (await repository.updateService(record.id, {
+            command: definition.run,
+            cwd: resolvedCwd,
+            readyTimeoutMs: definition.readyTimeoutMs ?? null,
+            definition,
+          })) ?? record;
+      }
+    } else {
+      record = await repository.insertService(construct, {
+        id: randomUUID(),
+        name,
+        type: definition.type,
+        command: definition.run,
+        cwd: resolvedCwd,
+        env: buildBaseEnv({ serviceName: name, construct }),
+        port: null,
+        pid: null,
+        status: "pending",
+        readyTimeoutMs: definition.readyTimeoutMs ?? null,
+        definition,
+        lastKnownError: null,
+      });
+
+      ensureLogFile(computeServiceLogPath(construct.workspacePath, name));
+    }
+
+    if (!record) {
+      throw new Error("Failed to ensure service record");
+    }
+
+    rememberPort(record);
+    return { service: record, construct };
+  }
+
+  async function stopConstructServices(
+    constructId: string,
+    options?: { releasePorts?: boolean }
+  ): Promise<void> {
+    const rows = await repository.fetchServicesForConstruct(constructId);
+
+    for (const row of rows) {
+      await stopService(row, options?.releasePorts ?? false);
+    }
+  }
+
+  async function stopAll(): Promise<void> {
+    const rows = await repository.fetchAllServices();
+
+    for (const row of rows) {
+      await stopService(row, true);
+    }
+  }
+
+  async function startService(
+    row: ServiceRow,
+    definitionOverride?: ProcessService,
+    templateEnv: Record<string, string> = {},
+    portLookup?: Map<string, number>
+  ): Promise<void> {
+    const definition =
+      definitionOverride ?? (row.service.definition as ProcessService | null);
+
+    if (!definition || definition.type !== "process") {
+      logger.warn("Cannot start non-process service", {
+        serviceId: row.service.id,
+        constructId: row.construct.id,
+      });
+      return;
+    }
+
+    if (activeServices.has(row.service.id)) {
+      return;
+    }
+
+    const port = await prepareServicePort(row, portLookup);
+    const cwd = resolveServiceCwd(row.construct.workspacePath, definition.cwd);
+
+    if (!(await ensureServiceDirectory(row, cwd))) {
+      return;
+    }
+
+    const env = buildServiceEnv({
+      serviceName: row.service.name,
+      port,
+      templateEnv,
+      serviceEnv: definition.env ?? {},
+      construct: row.construct,
+      portMap: portLookup,
+    });
+
+    const commandWithLogging = prepareLoggingCommand(row, definition.run);
+
+    await repository.updateService(row.service.id, {
+      status: "starting",
+      env,
+      port,
+      pid: null,
+      lastKnownError: null,
+    });
+
+    notifyServiceUpdate(row);
+
+    await runServiceProcess({ row, definition, env, cwd, commandWithLogging });
+  }
+
+  async function prepareServicePort(
+    row: ServiceRow,
+    portLookup?: Map<string, number>
+  ) {
+    const port =
+      portLookup?.get(row.service.name) ??
+      (await portManager.ensureServicePort(row.service));
+    row.service.port = port;
+    return port;
+  }
+
+  async function ensureServiceDirectory(row: ServiceRow, cwd: string) {
+    if (existsSync(cwd)) {
+      return true;
+    }
+
+    await markServiceError(
+      row.service.id,
+      row.construct.id,
+      "Service working directory not found"
+    );
+
+    logger.error("Service directory missing", {
+      serviceId: row.service.id,
+      cwd,
+    });
+
+    return false;
+  }
+
+  function prepareLoggingCommand(row: ServiceRow, command: string) {
+    const logPath = computeServiceLogPath(
+      row.construct.workspacePath,
+      row.service.name
+    );
+    ensureLogFile(logPath);
+    return wrapCommandWithLogging(command, logPath);
+  }
+
+  async function runServiceProcess({
+    row,
+    definition,
+    env,
+    cwd,
+    commandWithLogging,
+  }: ServiceProcessOptions) {
+    try {
+      await runServiceSetup(definition, cwd, env);
+
+      const handle = spawnProcess({
+        command: commandWithLogging,
+        cwd,
+        env,
+      });
+
+      activeServices.set(row.service.id, { handle });
+
+      await repository.updateService(row.service.id, {
+        status: "running",
+        pid: handle.pid,
+      });
+
+      notifyServiceUpdate(row);
+
+      handle.exited
+        .then(async (code) => {
+          activeServices.delete(row.service.id);
+          await repository.updateService(row.service.id, {
+            status: code === 0 ? "stopped" : "error",
+            pid: null,
+            lastKnownError:
+              code === 0 ? null : `Exited with code ${code ?? -1}`,
+          });
+
+          notifyServiceUpdate(row);
+        })
+        .catch((error) => {
+          activeServices.delete(row.service.id);
+          logger.error("Service exited with error", {
+            serviceId: row.service.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+    } catch (error) {
+      activeServices.delete(row.service.id);
+      await markServiceError(
+        row.service.id,
+        row.construct.id,
+        error instanceof Error ? error.message : String(error)
+      );
+      throw error;
+    }
+  }
+
+  async function runServiceSetup(
+    definition: ProcessService,
+    cwd: string,
+    env: Record<string, string>
+  ) {
+    if (!definition.setup?.length) {
+      return;
+    }
+
+    for (const setupCommand of definition.setup) {
+      await runCommand(setupCommand, { cwd, env });
+    }
+  }
+
+  async function stopService(
+    row: ServiceRow,
+    releasePort: boolean
+  ): Promise<void> {
+    const definition = row.service.definition as ProcessService | null;
+    const env = row.service.env;
+    const cwd = resolveServiceCwd(row.construct.workspacePath, definition?.cwd);
+    const active = activeServices.get(row.service.id);
+
+    try {
+      if (definition?.type === "process" && definition.stop) {
+        await runCommand(definition.stop, { cwd, env });
+      }
+    } catch (error) {
+      logger.warn("Service stop command failed", {
+        serviceId: row.service.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    if (active) {
+      await terminateHandle(active.handle);
+      activeServices.delete(row.service.id);
+    } else if (row.service.pid) {
+      await terminatePid(row.service.pid);
+    }
+
+    await repository.updateService(row.service.id, {
+      status: "stopped",
+      pid: null,
+    });
+
+    notifyServiceUpdate(row);
+
+    if (releasePort) {
+      releasePortFor(row.service.id);
+    }
+  }
+
+  async function buildPortMap(
+    rows: ServiceRow[]
+  ): Promise<Map<string, number>> {
+    const ports = new Map<string, number>();
+
+    for (const row of rows) {
+      const port = await portManager.ensureServicePort(row.service);
+      row.service.port = port;
+      ports.set(row.service.name, port);
+    }
+
+    return ports;
+  }
+
+  function rememberPort(service: ConstructService): void {
+    if (typeof service.port === "number") {
+      portManager.rememberSpecificPort(service.id, service.port);
+    }
+  }
+
+  function releasePortFor(serviceId: string): void {
+    portManager.releasePortFor(serviceId);
+  }
+
+  function notifyServiceUpdate(row: ServiceRow): void {
+    emitServiceUpdate({
+      constructId: row.construct.id,
+      serviceId: row.service.id,
+    });
+  }
+
+  async function loadTemplateCached(
+    templateId: string
+  ): Promise<Template | undefined> {
+    if (!templateCache.has(templateId)) {
+      templateCache.set(templateId, await loadTemplate(templateId));
+    }
+    return templateCache.get(templateId);
+  }
+
+  async function loadTemplate(
+    templateId: string
+  ): Promise<Template | undefined> {
+    const config = await getSyntheticConfig();
+    return config.templates[templateId];
+  }
+
+  async function startConstructServiceById(serviceId: string): Promise<void> {
+    const row = await repository.fetchServiceRowById(serviceId);
+    if (!row) {
+      throw new Error(`Service ${serviceId} not found`);
+    }
+
+    const template = await loadTemplateCached(row.construct.templateId);
+    const templateEnv = template?.env ?? {};
+
+    const siblings = await repository.fetchServicesForConstruct(
+      row.construct.id
+    );
+    const portMap = new Map<string, number>();
+    for (const sibling of siblings) {
+      if (sibling.service.port) {
+        portMap.set(sibling.service.name, sibling.service.port);
+      }
+    }
+
+    await startService(row, undefined, templateEnv, portMap);
+  }
+
+  async function stopConstructServiceById(
+    serviceId: string,
+    options?: { releasePorts?: boolean }
+  ): Promise<void> {
+    const row = await repository.fetchServiceRowById(serviceId);
+    if (!row) {
+      return;
+    }
+
+    await stopService(row, options?.releasePorts ?? false);
+  }
+
+  return {
+    bootstrap,
+    ensureConstructServices,
+    startConstructService: startConstructServiceById,
+    stopConstructService: stopConstructServiceById,
+    stopConstructServices,
+    stopAll,
+  };
+
+  async function markServiceError(
+    serviceId: string,
+    constructId: string,
+    message: string
+  ): Promise<void> {
+    await repository.markError(serviceId, message);
+    emitServiceUpdate({ constructId, serviceId });
+  }
+
+  async function terminateHandle(handle: ProcessHandle): Promise<void> {
+    try {
+      handle.kill("SIGTERM");
+    } catch {
+      // Process already stopped
+    }
+
+    const exit = await Promise.race([
+      handle.exited,
+      delay(STOP_TIMEOUT_MS).then(() => -1),
+    ]);
+
+    if (exit === -1) {
+      try {
+        handle.kill("SIGKILL");
+      } catch {
+        // Process already stopped
+      }
+      await handle.exited.catch(() => {
+        /* swallow errors when waiting for exit */
+      });
+    }
+  }
+
+  async function terminatePid(pid: number): Promise<void> {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // Process already stopped
+    }
+    await delay(FORCE_KILL_DELAY_MS);
+    try {
+      process.kill(pid, 0);
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Process already stopped
+    }
+  }
+}
+
+function groupServicesByConstruct(
+  rows: ServiceRow[]
+): Map<string, { construct: Construct; rows: ServiceRow[] }> {
+  const grouped = new Map<
+    string,
+    { construct: Construct; rows: ServiceRow[] }
+  >();
+
+  for (const row of rows) {
+    const existing = grouped.get(row.construct.id);
+    if (existing) {
+      existing.rows.push(row);
+      continue;
+    }
+    grouped.set(row.construct.id, { construct: row.construct, rows: [row] });
+  }
+
+  return grouped;
+}
+
+function needsDefinitionUpdate(
+  record: ConstructService,
+  definition: ProcessService,
+  cwd: string
+): boolean {
+  if (
+    record.command !== definition.run ||
+    record.cwd !== cwd ||
+    (record.readyTimeoutMs ?? null) !== (definition.readyTimeoutMs ?? null)
+  ) {
+    return true;
+  }
+
+  const existingDefinition = JSON.stringify(record.definition);
+  const nextDefinition = JSON.stringify(definition);
+  return existingDefinition !== nextDefinition;
+}
+
+function resolveServiceCwd(workspacePath: string, cwd?: string): string {
+  if (!cwd) {
+    return workspacePath;
+  }
+
+  if (cwd.startsWith("/")) {
+    return cwd;
+  }
+
+  return resolve(workspacePath, cwd);
+}
+
+function sanitizeServiceName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9]/g, "_").toUpperCase();
+}
+
+function buildBaseEnv({
+  serviceName,
+  construct,
+}: {
+  serviceName: string;
+  construct: Construct;
+}): Record<string, string> {
+  return {
+    SYNTHETIC_CONSTRUCT_ID: construct.id,
+    SYNTHETIC_SERVICE: serviceName,
+  };
+}
+
+function buildServiceEnv({
+  serviceName,
+  port,
+  templateEnv,
+  serviceEnv,
+  construct,
+  portMap,
+}: {
+  serviceName: string;
+  port: number;
+  templateEnv: Record<string, string>;
+  serviceEnv: Record<string, string>;
+  construct: Construct;
+  portMap?: Map<string, number>;
+}): Record<string, string> {
+  const upper = sanitizeServiceName(serviceName);
+  const portString = String(port);
+
+  const sharedPorts: Record<string, string> = {};
+  if (portMap) {
+    for (const [name, value] of portMap.entries()) {
+      sharedPorts[`${sanitizeServiceName(name)}_PORT`] = String(value);
+    }
+  }
+
+  return {
+    ...buildBaseEnv({ serviceName, construct }),
+    ...templateEnv,
+    ...serviceEnv,
+    ...sharedPorts,
+    PORT: portString,
+    SERVICE_PORT: portString,
+    [`${upper}_PORT`]: portString,
+  };
+}
+
+function computeServiceLogPath(
+  workspacePath: string,
+  serviceName: string
+): string {
+  const safeName = sanitizeServiceName(serviceName).toLowerCase() || "service";
+  const logsDir = resolve(workspacePath, SERVICE_LOG_DIR);
+  return resolve(logsDir, `${safeName}.log`);
+}
+
+function ensureLogFile(logPath: string): void {
+  const directory = dirname(logPath);
+  mkdirSync(directory, { recursive: true });
+  if (!existsSync(logPath)) {
+    writeFileSync(logPath, "");
+  }
+}
+
+function wrapCommandWithLogging(command: string, logPath: string): string {
+  const directory = dirname(logPath);
+  const quotedDir = JSON.stringify(directory);
+  const quotedPath = JSON.stringify(logPath);
+  return `set -o pipefail; mkdir -p ${quotedDir} && touch ${quotedPath} && ( ${command} ) 2>&1 | tee -a ${quotedPath}`;
+}
+
+const defaultSupervisor = createServiceSupervisor();
+
+export const bootstrapServiceSupervisor = (): Promise<void> =>
+  defaultSupervisor.bootstrap();
+export const ensureServicesForConstruct = (
+  construct: Construct,
+  template?: Template
+): Promise<void> =>
+  defaultSupervisor.ensureConstructServices({ construct, template });
+export const startServiceById = (serviceId: string): Promise<void> =>
+  defaultSupervisor.startConstructService(serviceId);
+export const stopServiceById = (
+  serviceId: string,
+  options?: { releasePorts?: boolean }
+): Promise<void> => defaultSupervisor.stopConstructService(serviceId, options);
+export const stopServicesForConstruct = (
+  constructId: string,
+  options?: { releasePorts?: boolean }
+): Promise<void> =>
+  defaultSupervisor.stopConstructServices(constructId, options);
+export const stopAllServices = (): Promise<void> => defaultSupervisor.stopAll();

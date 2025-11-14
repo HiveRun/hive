@@ -29,6 +29,7 @@ type TemplateConfigFixture = {
   includePatterns?: string[];
   services?: Record<string, TemplateServiceFixture>;
   env?: Record<string, string>;
+  setup?: string[];
   prompts?: string[];
   teardown?: string[];
 };
@@ -68,6 +69,68 @@ function createServiceFixture(
   };
 }
 
+const DEFAULT_TEMPLATE_SETUP = ["bun setup"] as const;
+
+function buildTemplateConfigFixture(
+  id: string,
+  label: string,
+  type: string,
+  overrides: Partial<TemplateConfigFixture> = {}
+): TemplateConfigFixture {
+  const primaryServiceName = `${templateFaker.helpers.arrayElement(
+    SERVICE_NAMES
+  )}-${templateFaker.helpers.arrayElement(SERVICE_SUFFIXES)}`;
+  const supportServiceName = `${templateFaker.helpers.arrayElement(
+    SUPPORT_SERVICE_NAMES
+  )}-${templateFaker.helpers.arrayElement(SERVICE_SUFFIXES)}`;
+
+  const baseConfig: TemplateConfigFixture = {
+    id,
+    label,
+    type,
+    summary:
+      overrides.summary ?? templateFaker.lorem.sentence({ min: 6, max: 12 }),
+    includePatterns: overrides.includePatterns ?? [".env*", "*.local"],
+    services: overrides.services ?? {
+      [primaryServiceName]: createServiceFixture(),
+      [supportServiceName]: createServiceFixture({
+        type: "docker",
+        run: undefined,
+        cwd: undefined,
+        image: "ghcr.io/synthetic/runtime:latest",
+        ports: ["5432:5432"],
+        env: {
+          NODE_ENV: "production",
+          DATABASE_URL: "postgres://synthetic@localhost:5432/runtime",
+        },
+      }),
+    },
+    env: overrides.env ?? {
+      API_URL: "http://localhost:3000",
+      STORAGE_ROOT: `/var/synthetic/${id}`,
+    },
+    setup: overrides.setup ?? [...DEFAULT_TEMPLATE_SETUP],
+    prompts: overrides.prompts ?? [
+      templateFaker.hacker.phrase(),
+      templateFaker.company.catchPhrase(),
+    ],
+    teardown: overrides.teardown ?? [
+      "bun run cleanup",
+      `rm -rf .synthetic/${id}`,
+    ],
+  };
+
+  return {
+    ...baseConfig,
+    includePatterns: overrides.includePatterns ?? baseConfig.includePatterns,
+    services: overrides.services ?? baseConfig.services,
+    env: overrides.env ?? baseConfig.env,
+    setup: overrides.setup ?? baseConfig.setup,
+    prompts: overrides.prompts ?? baseConfig.prompts,
+    teardown: overrides.teardown ?? baseConfig.teardown,
+  };
+}
+
 export function createTemplateFixture(
   overrides: Partial<TemplateFixture> = {}
 ): TemplateFixture {
@@ -89,72 +152,24 @@ export function createTemplateFixture(
       "planning",
     ]);
 
-  const primaryServiceName = `${templateFaker.helpers.arrayElement(
-    SERVICE_NAMES
-  )}-${templateFaker.helpers.arrayElement(SERVICE_SUFFIXES)}`;
-  const supportServiceName = `${templateFaker.helpers.arrayElement(
-    SUPPORT_SERVICE_NAMES
-  )}-${templateFaker.helpers.arrayElement(SERVICE_SUFFIXES)}`;
-
-  const baseConfig: TemplateConfigFixture = {
+  const configJson = buildTemplateConfigFixture(
     id,
     label,
     type,
-    summary:
-      overrides.configJson?.summary ??
-      templateFaker.lorem.sentence({ min: 6, max: 12 }),
-    includePatterns: overrides.configJson?.includePatterns ?? [
-      ".env*",
-      "*.local",
-    ],
-    services: overrides.configJson?.services ?? {
-      [primaryServiceName]: createServiceFixture(),
-      [supportServiceName]: createServiceFixture({
-        type: "docker",
-        run: undefined,
-        cwd: undefined,
-        image: "ghcr.io/synthetic/runtime:latest",
-        ports: ["5432:5432"],
-        env: {
-          NODE_ENV: "production",
-          DATABASE_URL: "postgres://synthetic@localhost:5432/runtime",
-        },
-      }),
-    },
-    env: overrides.configJson?.env ?? {
-      API_URL: "http://localhost:3000",
-      STORAGE_ROOT: `/var/synthetic/${id}`,
-    },
-    prompts: overrides.configJson?.prompts ?? [
-      templateFaker.hacker.phrase(),
-      templateFaker.company.catchPhrase(),
-    ],
-    teardown: overrides.configJson?.teardown ?? [
-      "bun run cleanup",
-      `rm -rf .synthetic/${id}`,
-    ],
-  };
+    overrides.configJson
+  );
 
   const baseFixture: TemplateFixture = {
     id,
     label,
     type,
-    configJson: baseConfig,
+    configJson,
   };
 
   return {
     ...baseFixture,
     ...overrides,
-    configJson: {
-      ...baseConfig,
-      ...overrides.configJson,
-      includePatterns:
-        overrides.configJson?.includePatterns ?? baseConfig.includePatterns,
-      services: overrides.configJson?.services ?? baseConfig.services,
-      env: overrides.configJson?.env ?? baseConfig.env,
-      prompts: overrides.configJson?.prompts ?? baseConfig.prompts,
-      teardown: overrides.configJson?.teardown ?? baseConfig.teardown,
-    },
+    configJson,
   };
 }
 
@@ -189,6 +204,7 @@ export const templateSnapshotFixture: TemplateFixture[] = [
         API_URL: "http://localhost:3000",
         STORAGE_ROOT: "/var/synthetic/synthetic-dev",
       },
+      setup: ["bun setup"],
       prompts: ["Synchronize runtime state", "Validate construct scaffolding"],
       teardown: ["bun run cleanup", "rm -rf .synthetic/synthetic-dev"],
     },

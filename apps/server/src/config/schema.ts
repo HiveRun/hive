@@ -75,6 +75,10 @@ export const templateSchema = z.object({
     .record(z.string(), z.string())
     .optional()
     .describe("Global environment variables"),
+  setup: z
+    .array(z.string())
+    .optional()
+    .describe("Commands to run once before starting template services"),
   prompts: z
     .array(z.string())
     .optional()
