@@ -37,8 +37,8 @@ const DIFF_MODE_META: Record<
     description: "Uncommitted changes (working tree)",
   },
   branch: {
-    button: "Since Base",
-    description: "Commits since construct was created",
+    button: "From Base",
+    description: "All changes since construct base",
   },
 };
 

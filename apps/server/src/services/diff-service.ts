@@ -125,7 +125,7 @@ function buildRangeArgs(mode: DiffMode, baseCommit: string | null): string[] {
   if (!baseCommit) {
     throw new Error("Base commit is required for branch diff mode");
   }
-  return [baseCommit, WORKSPACE_REF];
+  return [baseCommit];
 }
 
 function splitLines(payload: string): string[] {
@@ -243,7 +243,7 @@ export async function getConstructDiffSummary(args: {
   const statsMap = parseNumstatOutput(numstatOutput.stdout);
   const statusMap = parseStatusOutput(statusOutput.stdout);
 
-  if (mode === "workspace") {
+  if (mode === "workspace" || mode === "branch") {
     await includeUntrackedFiles(workspacePath, statsMap, statusMap);
   }
 
@@ -314,19 +314,13 @@ async function buildFileDetail(args: {
   }));
 
   const beforeRef = resolveBeforeRef(mode, baseCommit);
-  const afterRef = mode === "workspace" ? null : WORKSPACE_REF;
 
-  const [beforeContent, afterContentFromGit, workingContent] =
-    await Promise.all([
-      readFileAtRef(workspacePath, beforeRef, summary.path),
-      readFileAtRef(workspacePath, afterRef, summary.path),
-      mode === "workspace"
-        ? readWorkingTreeFile(workspacePath, summary.path)
-        : Promise.resolve(null),
-    ]);
+  const [beforeContent, workingContent] = await Promise.all([
+    readFileAtRef(workspacePath, beforeRef, summary.path),
+    readWorkingTreeFile(workspacePath, summary.path),
+  ]);
 
-  const afterContent =
-    mode === "workspace" ? workingContent : afterContentFromGit;
+  const afterContent = workingContent;
   const isDeleted = summary.status === "deleted";
   const isAdded = summary.status === "added";
 
