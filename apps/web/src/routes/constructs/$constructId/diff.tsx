@@ -1,3 +1,5 @@
+import { parseDiffFromFile } from "@pierre/precision-diffs";
+import { FileDiff as PrecisionFileDiff } from "@pierre/precision-diffs/react";
 import {
   useQuery,
   useQueryClient,
@@ -387,18 +389,39 @@ function DiffPreview({
   detail: DiffFileDetail;
   view: "semantic" | "patch";
 }) {
+  const semanticDiff = useMemo(() => {
+    if (!(detail.beforeContent || detail.afterContent)) {
+      return null;
+    }
+    try {
+      return parseDiffFromFile(
+        { name: detail.path, contents: detail.beforeContent ?? "" },
+        { name: detail.path, contents: detail.afterContent ?? "" }
+      );
+    } catch {
+      return null;
+    }
+  }, [detail.afterContent, detail.beforeContent, detail.path]);
+
   if (view === "semantic") {
-    if (detail.patch) {
+    if (semanticDiff) {
       return (
-        <div className="flex flex-1 flex-col gap-2 text-[#8f9188]">
-          <p>Semantic rendering is not available yet. Showing patch output.</p>
-          <pre className="flex-1 overflow-auto whitespace-pre rounded-sm border border-[#1c1d17] bg-[#090909] p-3 font-mono text-[#d9dbd2] text-xs leading-relaxed">
-            {detail.patch}
-          </pre>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-sm border border-[#1c1d17] bg-[#090909]">
+          <PrecisionFileDiff
+            className="precision-diff h-full"
+            fileDiff={semanticDiff}
+            options={{
+              theme: "github-dark-default",
+              diffStyle: "unified",
+              disableFileHeader: true,
+              diffIndicators: "bars",
+              lineDiffType: "word-alt",
+            }}
+          />
         </div>
       );
     }
-    return <StatusMessage>No diff data available.</StatusMessage>;
+    return <StatusMessage>Semantic diff not available.</StatusMessage>;
   }
 
   if (detail.patch) {
