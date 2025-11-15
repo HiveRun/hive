@@ -406,7 +406,7 @@ function DiffPreview({
   if (view === "semantic") {
     if (semanticDiff) {
       return (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-sm border border-[#1c1d17] bg-[#090909]">
+        <div className="flex min-h-0 flex-1 flex-col overflow-auto rounded-sm border border-[#1c1d17] bg-[#090909]">
           <PrecisionFileDiff
             className="precision-diff h-full"
             fileDiff={semanticDiff}
@@ -416,6 +416,7 @@ function DiffPreview({
               disableFileHeader: true,
               diffIndicators: "bars",
               lineDiffType: "word-alt",
+              overflow: "scroll",
             }}
           />
         </div>
@@ -426,7 +427,7 @@ function DiffPreview({
 
   if (detail.patch) {
     return (
-      <pre className="flex-1 overflow-auto whitespace-pre rounded-sm border border-[#1c1d17] bg-[#090909] p-3 font-mono text-[#d9dbd2] text-xs leading-relaxed">
+      <pre className="flex-1 overflow-auto whitespace-pre-wrap rounded-sm border border-[#1c1d17] bg-[#090909] p-3 font-mono text-[#d9dbd2] text-xs leading-relaxed">
         {detail.patch}
       </pre>
     );
