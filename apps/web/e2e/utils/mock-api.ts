@@ -1,8 +1,11 @@
 import { base, en, Faker } from "@faker-js/faker";
 import type { Page, Route } from "@playwright/test";
+import type { ConstructDiffResponse, DiffMode } from "@/queries/constructs";
 import {
+  type ConstructDiffFixture,
   type ConstructFixture,
   type ConstructServiceFixture,
+  constructDiffSnapshotFixture,
   constructServiceSnapshotFixture,
   constructSnapshotFixture,
 } from "./construct-fixture";
@@ -21,16 +24,22 @@ const exampleStatus = {
   message: exampleFaker.hacker.phrase(),
 };
 
-const API_ROUTE_PATTERNS = [
+const CONSTRUCT_DETAIL_PATTERN = /\/api\/constructs\/[^/]+$/;
+const CONSTRUCT_DIFF_ROUTE_PATTERN = /\/api\/constructs\/[^/]+\/diff(?:\?.*)?$/;
+
+const API_ROUTE_PATTERNS: (string | RegExp)[] = [
   "**/api/constructs/*/services",
+  CONSTRUCT_DIFF_ROUTE_PATTERN,
+  CONSTRUCT_DETAIL_PATTERN,
   "**/api/constructs",
   "**/api/templates/*",
   "**/api/templates",
   "**/api/example",
   "**/api/agents/sessions/**",
-] as const;
+];
 
 const CONSTRUCT_SERVICES_REGEX = /\/api\/constructs\/[^/]+\/services$/;
+const CONSTRUCT_DIFF_REGEX = /\/api\/constructs\/[^/]+\/diff$/;
 const AGENT_EVENTS_REGEX = /\/api\/agents\/sessions\/.+\/events$/;
 
 const API_ROUTE_MATCHERS = [
@@ -44,9 +53,20 @@ const API_ROUTE_MATCHERS = [
     match: (url: URL, method: string) =>
       method === "GET" && CONSTRUCT_SERVICES_REGEX.test(url.pathname),
   },
+  {
+    description: "GET /api/constructs/:id/diff",
+    match: (url: URL, method: string) =>
+      method === "GET" && CONSTRUCT_DIFF_REGEX.test(url.pathname),
+  },
+  {
+    description: "GET /api/constructs/:id",
+    match: (url: URL, method: string) =>
+      method === "GET" && CONSTRUCT_DETAIL_PATTERN.test(url.pathname),
+  },
 
   {
     description: "GET /api/templates",
+
     match: (url: URL, method: string) =>
       method === "GET" && url.pathname === "/api/templates",
   },
@@ -75,10 +95,11 @@ const API_ROUTE_MATCHERS = [
 
 const apiGuardedPages = new WeakSet<Page>();
 
-type MockApiData = {
+export type MockApiData = {
   constructs: ConstructFixture[];
   templates: TemplateFixture[];
   services: Record<string, ConstructServiceFixture[]>;
+  diffs: ConstructDiffFixture;
   example: typeof exampleStatus;
 };
 
@@ -86,6 +107,7 @@ const defaultMockData: MockApiData = {
   constructs: constructSnapshotFixture,
   templates: templateSnapshotFixture,
   services: constructServiceSnapshotFixture,
+  diffs: constructDiffSnapshotFixture,
   example: exampleStatus,
 };
 
@@ -102,6 +124,7 @@ export async function mockAppApi(
     constructs: overrides.constructs ?? defaultMockData.constructs,
     templates: overrides.templates ?? defaultMockData.templates,
     services: overrides.services ?? defaultMockData.services,
+    diffs: overrides.diffs ?? defaultMockData.diffs,
     example: overrides.example ?? defaultMockData.example,
   };
 
@@ -110,6 +133,15 @@ export async function mockAppApi(
     "**/api/constructs/*/services",
     createConstructServicesHandler(mockData)
   );
+  await page.route(
+    CONSTRUCT_DIFF_ROUTE_PATTERN,
+    createConstructDiffHandler(mockData)
+  );
+  await page.route(
+    CONSTRUCT_DETAIL_PATTERN,
+    createConstructDetailHandler(mockData)
+  );
+
   await page.route("**/api/templates/*", createTemplateDetailHandler(mockData));
   await page.route("**/api/templates", createTemplateListHandler(mockData));
   await page.route("**/api/example", createExampleRouteHandler(mockData));
@@ -167,6 +199,79 @@ function createConstructRouteHandler(mockData: MockApiData) {
   return createGetJsonHandler(() => ({
     body: { constructs: mockData.constructs },
   }));
+}
+
+function createConstructDetailHandler(mockData: MockApiData) {
+  return createGetJsonHandler((request) => {
+    const requestUrl = new URL(request.url());
+    const segments = requestUrl.pathname.split("/").filter(Boolean);
+    const constructId = segments.at(2);
+
+    if (!constructId) {
+      return {
+        status: 404,
+        body: { message: "Construct not found" },
+      };
+    }
+
+    const construct = mockData.constructs.find(
+      (entry) => entry.id === constructId
+    );
+
+    if (!construct) {
+      return {
+        status: 404,
+        body: { message: "Construct not found" },
+      };
+    }
+
+    return { body: construct };
+  });
+}
+
+function createConstructDiffHandler(mockData: MockApiData) {
+  return createGetJsonHandler((request) => {
+    const requestUrl = new URL(request.url());
+    const segments = requestUrl.pathname.split("/").filter(Boolean);
+    const constructId = segments.at(2);
+
+    if (!constructId) {
+      return {
+        status: 404,
+        body: { message: "Construct not found" },
+      };
+    }
+
+    const diff = mockData.diffs[constructId];
+    if (!diff) {
+      return {
+        status: 404,
+        body: { message: "Diff not found" },
+      };
+    }
+
+    const modeParam = requestUrl.searchParams.get("mode");
+    const filesParam = requestUrl.searchParams.get("files");
+    const requestedFiles = filesParam
+      ? filesParam
+          .split(",")
+          .map((entry) => entry.trim())
+          .filter(Boolean)
+      : [];
+
+    const nextDiff: ConstructDiffResponse = {
+      ...diff,
+      mode: (modeParam as DiffMode) ?? diff.mode,
+      details:
+        requestedFiles.length > 0
+          ? diff.details?.filter((detail) =>
+              requestedFiles.includes(detail.path)
+            )
+          : undefined,
+    };
+
+    return { body: nextDiff };
+  });
 }
 
 function createConstructServicesHandler(mockData: MockApiData) {
@@ -323,5 +428,3 @@ function createGetJsonHandler(
     });
   };
 }
-
-export type { MockApiData };

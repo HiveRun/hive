@@ -23,7 +23,6 @@ import {
 const diffSearchSchema = z.object({
   mode: z.enum(["workspace", "branch"]).optional(),
   file: z.string().optional(),
-  view: z.enum(["semantic", "patch"]).optional(),
 });
 
 type DiffSearch = z.infer<typeof diffSearchSchema>;
@@ -49,11 +48,11 @@ function ConstructDiffRoute() {
   const [filter, setFilter] = useState("");
 
   const mode = (search.mode ?? "workspace") as DiffMode;
-  const view = search.view ?? "semantic";
 
-  const { data: summary } = useSuspenseQuery<ConstructDiffResponse>(
+  const summaryQuery = useSuspenseQuery(
     constructDiffQueries.summary(constructId, mode)
   );
+  const summary = summaryQuery.data;
 
   const constructQuery = useQuery(constructQueries.detail(constructId));
   const branchAvailable = Boolean(constructQuery.data?.baseCommit);
@@ -66,7 +65,7 @@ function ConstructDiffRoute() {
     return summary.files.filter((file) =>
       file.path.toLowerCase().includes(query)
     );
-  }, [filter, summary.files]);
+  }, [filter, summary]);
 
   const selectedFile = search.file ?? summary.files[0]?.path ?? null;
   const detailQuery = useQuery({
@@ -88,7 +87,7 @@ function ConstructDiffRoute() {
         }),
         { additions: 0, deletions: 0 }
       ),
-    [summary.files]
+    [summary]
   );
 
   const updateSearch = (updater: (prev: DiffSearch) => DiffSearch) => {
@@ -108,16 +107,6 @@ function ConstructDiffRoute() {
       ...prev,
       mode: nextMode,
       file: undefined,
-    }));
-  };
-
-  const handleViewChange = (nextView: "semantic" | "patch") => {
-    if (nextView === view) {
-      return;
-    }
-    updateSearch((prev) => ({
-      ...prev,
-      view: nextView,
     }));
   };
 
@@ -162,9 +151,7 @@ function ConstructDiffRoute() {
           detail={detail}
           detailPending={detailQuery.isPending}
           hasChanges={hasChanges}
-          onViewChange={handleViewChange}
           selectedFile={selectedFile}
-          view={view}
         />
       </div>
     </div>
@@ -307,8 +294,6 @@ function FileSidebar({
 }
 
 type DiffViewerProps = {
-  view: "semantic" | "patch";
-  onViewChange: (view: "semantic" | "patch") => void;
   detail: DiffFileDetail | null;
   detailPending: boolean;
   hasChanges: boolean;
@@ -316,8 +301,6 @@ type DiffViewerProps = {
 };
 
 function DiffViewer({
-  view,
-  onViewChange,
   detail,
   detailPending,
   hasChanges,
@@ -334,7 +317,7 @@ function DiffViewer({
       return <StatusMessage>Loading diff…</StatusMessage>;
     }
     if (detail) {
-      return <DiffPreview detail={detail} view={view} />;
+      return <DiffPreview detail={detail} />;
     }
     return <StatusMessage>Unable to load diff for this file.</StatusMessage>;
   };
@@ -352,23 +335,8 @@ function DiffViewer({
             </span>
           ) : null}
         </div>
-        <div className="flex gap-2">
-          <Button
-            onClick={() => onViewChange("semantic")}
-            size="sm"
-            variant={view === "semantic" ? "secondary" : "outline"}
-          >
-            Semantic
-          </Button>
-          <Button
-            onClick={() => onViewChange("patch")}
-            size="sm"
-            variant={view === "patch" ? "secondary" : "outline"}
-          >
-            Patch
-          </Button>
-        </div>
       </div>
+
       {renderState()}
     </section>
   );
@@ -382,13 +350,22 @@ function StatusMessage({ children }: { children: React.ReactNode }) {
   );
 }
 
-function DiffPreview({
-  detail,
-  view,
+const DiffScrollContainer = ({
+  children,
+  testId,
 }: {
-  detail: DiffFileDetail;
-  view: "semantic" | "patch";
-}) {
+  children: React.ReactNode;
+  testId: string;
+}) => (
+  <div
+    className="flex min-h-0 w-full min-w-0 flex-1 overflow-auto rounded-sm border border-[#1a1a17] bg-[#090909]"
+    data-testid={testId}
+  >
+    <div className="w-full">{children}</div>
+  </div>
+);
+
+function DiffPreview({ detail }: { detail: DiffFileDetail }) {
   const semanticDiff = useMemo(() => {
     if (!(detail.beforeContent || detail.afterContent)) {
       return null;
@@ -403,33 +380,32 @@ function DiffPreview({
     }
   }, [detail.afterContent, detail.beforeContent, detail.path]);
 
-  if (view === "semantic") {
-    if (semanticDiff) {
-      return (
-        <div className="flex min-h-0 flex-1 flex-col overflow-auto rounded-sm border border-[#1c1d17] bg-[#090909]">
-          <PrecisionFileDiff
-            className="precision-diff h-full"
-            fileDiff={semanticDiff}
-            options={{
-              theme: "github-dark-default",
-              diffStyle: "unified",
-              disableFileHeader: true,
-              diffIndicators: "bars",
-              lineDiffType: "word-alt",
-              overflow: "scroll",
-            }}
-          />
-        </div>
-      );
-    }
-    return <StatusMessage>Semantic diff not available.</StatusMessage>;
+  if (semanticDiff) {
+    return (
+      <DiffScrollContainer testId="diff-semantic-view">
+        <PrecisionFileDiff
+          className="precision-diff"
+          fileDiff={semanticDiff}
+          options={{
+            theme: "github-dark-default",
+            diffStyle: "unified",
+            disableFileHeader: true,
+            diffIndicators: "bars",
+            lineDiffType: "word-alt",
+            overflow: "wrap",
+          }}
+        />
+      </DiffScrollContainer>
+    );
   }
 
   if (detail.patch) {
     return (
-      <pre className="flex-1 overflow-auto whitespace-pre-wrap rounded-sm border border-[#1c1d17] bg-[#090909] p-3 font-mono text-[#d9dbd2] text-xs leading-relaxed">
-        {detail.patch}
-      </pre>
+      <DiffScrollContainer testId="diff-patch-view">
+        <pre className="whitespace-pre-wrap p-3 font-mono text-[#d9dbd2] text-xs leading-relaxed">
+          {detail.patch}
+        </pre>
+      </DiffScrollContainer>
     );
   }
 

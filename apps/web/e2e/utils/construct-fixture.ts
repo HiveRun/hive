@@ -1,5 +1,9 @@
 import { base, en, Faker } from "@faker-js/faker";
-import type { Construct, ConstructServiceSummary } from "@/queries/constructs";
+import type {
+  Construct,
+  ConstructDiffResponse,
+  ConstructServiceSummary,
+} from "@/queries/constructs";
 
 const FIXTURE_SEED = 20_251_108;
 const DEFAULT_OPENCODE_PORT = 5000;
@@ -108,3 +112,56 @@ export const constructServiceSnapshotFixture: Record<
     }),
   ],
 };
+
+const DIFF_LONG_LINE_REPEAT = 60;
+const LONG_LINE_BEFORE = `const renderOutput = "${"initial-value-".repeat(DIFF_LONG_LINE_REPEAT)}";`;
+const LONG_LINE_AFTER = `const renderOutput = "${"initial-value-".repeat(DIFF_LONG_LINE_REPEAT)}_diff";`;
+
+export const constructDiffSnapshotFixture: Record<
+  string,
+  ConstructDiffResponse
+> = {
+  "snapshot-construct": {
+    mode: "workspace",
+    baseCommit: "abc1234",
+    headCommit: "def5678",
+    files: [
+      {
+        path: "src/app/long-file.ts",
+        status: "modified",
+        additions: 2,
+        deletions: 1,
+      },
+      {
+        path: "README.md",
+        status: "added",
+        additions: 5,
+        deletions: 0,
+      },
+    ],
+    details: [
+      {
+        path: "src/app/long-file.ts",
+        status: "modified",
+        additions: 2,
+        deletions: 1,
+        beforeContent: LONG_LINE_BEFORE,
+        afterContent: LONG_LINE_AFTER,
+        patch: `diff --git a/src/app/long-file.ts b/src/app/long-file.ts\n@@ -1,2 +1,2 @@\n-${LONG_LINE_BEFORE}\n+${LONG_LINE_AFTER}\n`,
+      },
+      {
+        path: "README.md",
+        status: "added",
+        additions: 5,
+        deletions: 0,
+        beforeContent: "",
+        afterContent:
+          "# Snapshot\n\nNew content for the README diff example.\n",
+        patch:
+          "diff --git a/README.md b/README.md\n@@ -0,0 +1,3 @@\n+# Snapshot\n+\n+New content for the README diff example.\n",
+      },
+    ],
+  },
+};
+
+export type ConstructDiffFixture = typeof constructDiffSnapshotFixture;
