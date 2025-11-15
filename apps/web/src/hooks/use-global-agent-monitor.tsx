@@ -9,6 +9,9 @@ import { constructQueries } from "@/queries/constructs";
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
 const NOTIFICATION_SOUND_PATH = "/sounds/agent-awaiting-input.wav";
 const NOTIFICATION_SOUND_VOLUME = 0.2;
+const TOAST_CONTENT_CLASS = "flex flex-col gap-2 text-sm text-foreground";
+const TOAST_BUTTON_CLASS =
+  "self-start rounded border border-[#5a7c5a] px-3 py-1 text-xs uppercase tracking-[0.2em] text-[#5a7c5a] transition hover:bg-[#5a7c5a] hover:text-black";
 
 type GlobalAgentMonitorOptions = {
   onNavigateToConstruct?: (constructId: string) => void;
@@ -167,14 +170,26 @@ function dispatchAwaitingInputNotification(
   playNotificationSound();
 
   const showToast = () => {
-    toast.info(message, {
-      action: onNavigate
-        ? {
-            label: "Open chat",
-            onClick: () => onNavigate(construct.id),
-          }
-        : undefined,
-    });
+    if (onNavigate) {
+      toast.custom((toastId) => (
+        <div className={TOAST_CONTENT_CLASS}>
+          <p>{message}</p>
+          <button
+            className={TOAST_BUTTON_CLASS}
+            onClick={() => {
+              onNavigate(construct.id);
+              toast.dismiss(toastId);
+            }}
+            type="button"
+          >
+            Open chat →
+          </button>
+        </div>
+      ));
+      return;
+    }
+
+    toast.info(message);
   };
 
   if (shouldUseDesktop) {
