@@ -66,7 +66,11 @@ describe("POST /api/constructs", () => {
       closeAgentSession: (_constructId: string) => Promise.resolve(),
       createWorktreeManager: () => ({
         createWorktree(_constructId: string) {
-          return Promise.resolve(workspacePath);
+          return Promise.resolve({
+            path: workspacePath,
+            branch: "construct-branch",
+            baseCommit: "abc123",
+          });
         },
         removeWorktree(_constructId: string) {
           removeWorktreeCalls += 1;

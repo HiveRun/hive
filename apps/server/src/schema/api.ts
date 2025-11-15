@@ -13,6 +13,8 @@ export const ConstructResponseSchema = t.Object({
   createdAt: t.String(),
   status: t.String(),
   lastSetupError: t.Optional(t.String()),
+  branchName: t.Optional(t.String()),
+  baseCommit: t.Optional(t.String()),
 });
 
 export const ConstructListResponseSchema = t.Object({
@@ -39,6 +41,37 @@ export const ConstructServiceSchema = t.Object({
 
 export const ConstructServiceListResponseSchema = t.Object({
   services: t.Array(ConstructServiceSchema),
+});
+
+const DiffStatusSchema = t.Union([
+  t.Literal("modified"),
+  t.Literal("added"),
+  t.Literal("deleted"),
+]);
+
+export const DiffFileSummarySchema = t.Object({
+  path: t.String(),
+  status: DiffStatusSchema,
+  additions: t.Number(),
+  deletions: t.Number(),
+});
+
+export const DiffFileDetailSchema = t.Object({
+  path: t.String(),
+  status: DiffStatusSchema,
+  additions: t.Number(),
+  deletions: t.Number(),
+  beforeContent: t.Optional(t.String()),
+  afterContent: t.Optional(t.String()),
+  patch: t.Optional(t.String()),
+});
+
+export const ConstructDiffResponseSchema = t.Object({
+  mode: t.Union([t.Literal("workspace"), t.Literal("branch")]),
+  baseCommit: t.Optional(t.Union([t.String(), t.Null()])),
+  headCommit: t.Optional(t.Union([t.String(), t.Null()])),
+  files: t.Array(DiffFileSummarySchema),
+  details: t.Optional(t.Array(DiffFileDetailSchema)),
 });
 
 export const CreateConstructSchema = t.Object({

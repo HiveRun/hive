@@ -140,6 +140,39 @@ export const constructMutations = {
   },
 };
 
+export const constructDiffQueries = {
+  summary: (constructId: string, mode: DiffMode) => ({
+    queryKey: ["construct-diff", constructId, mode, "summary"] as const,
+    queryFn: async (): Promise<ConstructDiffResponse> => {
+      const { data, error } = await rpc.api
+        .constructs({ id: constructId })
+        .diff.get({ query: { mode } });
+      if (error) {
+        throw new Error("Failed to load construct diff");
+      }
+      return data as ConstructDiffResponse;
+    },
+  }),
+  detail: (constructId: string, mode: DiffMode, file: string) => ({
+    queryKey: ["construct-diff", constructId, mode, "detail", file] as const,
+    queryFn: async (): Promise<DiffFileDetail | null> => {
+      const { data, error } = await rpc.api
+        .constructs({ id: constructId })
+        .diff.get({
+          query: {
+            mode,
+            files: file,
+          },
+        });
+      if (error) {
+        throw new Error(`Failed to load diff for ${file}`);
+      }
+      const details = (data.details as DiffFileDetail[] | undefined) ?? [];
+      return details.find((detail) => detail.path === file) ?? null;
+    },
+  }),
+};
+
 const normalizeConstruct = <T extends { status: string }>(
   construct: T
 ): T & { status: ConstructStatus } => ({
@@ -155,8 +188,33 @@ export type Construct = Awaited<
 > & {
   status: ConstructStatus;
   lastSetupError?: string;
+  branchName?: string | null;
+  baseCommit?: string | null;
 };
 
 export type ConstructServiceSummary = Awaited<
   ReturnType<ReturnType<typeof constructQueries.services>["queryFn"]>
 >[number];
+
+export type DiffMode = "workspace" | "branch";
+
+export type DiffFileSummary = {
+  path: string;
+  status: "modified" | "added" | "deleted";
+  additions: number;
+  deletions: number;
+};
+
+export type DiffFileDetail = DiffFileSummary & {
+  beforeContent?: string | null;
+  afterContent?: string | null;
+  patch?: string | null;
+};
+
+export type ConstructDiffResponse = {
+  mode: DiffMode;
+  baseCommit?: string | null;
+  headCommit?: string | null;
+  files: DiffFileSummary[];
+  details?: DiffFileDetail[];
+};

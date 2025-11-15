@@ -43,6 +43,13 @@
       "when": 1763300000000,
       "tag": "0005_construct_provisioning_status",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "8",
+      "when": 1763500000000,
+      "tag": "0006_construct_diff_metadata",
+      "breakpoints": true
     }
   ]
 }

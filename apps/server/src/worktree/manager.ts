@@ -38,11 +38,17 @@ export type WorktreeCreateOptions = {
   templateId?: string;
 };
 
+export type WorktreeLocation = {
+  path: string;
+  branch: string;
+  baseCommit: string;
+};
+
 export type WorktreeManager = {
   createWorktree(
     constructId: string,
     options?: WorktreeCreateOptions
-  ): Promise<string>;
+  ): Promise<WorktreeLocation>;
   removeWorktree(constructId: string): void;
 };
 
@@ -296,7 +302,7 @@ export function createWorktreeManager(
     async createWorktree(
       constructId: string,
       options: WorktreeCreateOptions = {}
-    ): Promise<string> {
+    ): Promise<WorktreeLocation> {
       await ensureConstructsDir();
 
       const worktreePath = join(constructsDir, constructId);
@@ -311,7 +317,12 @@ export function createWorktreeManager(
         const includePatterns = getIncludePatterns(options.templateId);
         await copyIncludedFiles(worktreePath, includePatterns);
 
-        return worktreePath;
+        const baseCommit = git("rev-parse", branch);
+        return {
+          path: worktreePath,
+          branch,
+          baseCommit,
+        };
       } catch (error) {
         try {
           if (existsSync(worktreePath)) {

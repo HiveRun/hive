@@ -48,6 +48,11 @@ function ConstructLayout() {
       to: "/constructs/$constructId/services",
     },
     {
+      routeId: "/constructs/$constructId/diff",
+      label: "Diff",
+      to: "/constructs/$constructId/diff",
+    },
+    {
       routeId: "/constructs/$constructId/chat",
       label: "Chat",
       to: "/constructs/$constructId/chat",

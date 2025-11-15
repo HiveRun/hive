@@ -293,6 +293,12 @@ export function useAgentEventStream(
     eventSource.addEventListener("status", handleStatus);
     eventSource.addEventListener("permission.updated", handlePermissionUpdated);
     eventSource.addEventListener("permission.replied", handlePermissionReplied);
+    const handleSessionDiff = () => {
+      queryClient.invalidateQueries({
+        queryKey: ["construct-diff", constructId],
+      });
+    };
+    eventSource.addEventListener("session.diff", handleSessionDiff);
 
     eventSource.onerror = () => {
       eventSource.close();
@@ -319,6 +325,7 @@ export function useAgentEventStream(
         "permission.replied",
         handlePermissionReplied
       );
+      eventSource.removeEventListener("session.diff", handleSessionDiff);
       eventSource.close();
     };
   }, [

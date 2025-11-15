@@ -11,6 +11,7 @@ import type { Template } from "../config/schema";
 import { db } from "../db";
 
 import {
+  ConstructDiffResponseSchema,
   ConstructListResponseSchema,
   ConstructResponseSchema,
   ConstructServiceListResponseSchema,
@@ -24,6 +25,11 @@ import {
   type NewConstruct,
 } from "../schema/constructs";
 import { constructServices } from "../schema/services";
+import type { DiffMode } from "../services/diff-service";
+import {
+  getConstructDiffDetails,
+  getConstructDiffSummary,
+} from "../services/diff-service";
 import { subscribeToServiceEvents } from "../services/events";
 import {
   CommandExecutionError,
@@ -90,6 +96,12 @@ const LOGGER_CONFIG = {
       : undefined,
 } as const;
 
+const DiffModeSchema = t.Union([t.Literal("workspace"), t.Literal("branch")]);
+const DiffQuerySchema = t.Object({
+  mode: t.Optional(DiffModeSchema),
+  files: t.Optional(t.String()),
+});
+
 function isPortActive(port?: number | null): Promise<boolean> {
   if (!port) {
     return Promise.resolve(false);
@@ -126,6 +138,48 @@ function constructToResponse(construct: typeof constructs.$inferSelect) {
     createdAt: construct.createdAt.toISOString(),
     status: construct.status,
     lastSetupError: construct.lastSetupError ?? undefined,
+    branchName: construct.branchName ?? undefined,
+    baseCommit: construct.baseCommit ?? undefined,
+  };
+}
+
+type ParsedDiffRequest = {
+  mode: DiffMode;
+  files: string[];
+};
+
+type DiffRequestParseResult =
+  | { ok: true; value: ParsedDiffRequest }
+  | { ok: false; status: number; message: string };
+
+function parseDiffRequest(
+  construct: typeof constructs.$inferSelect,
+  query: Static<typeof DiffQuerySchema>
+): DiffRequestParseResult {
+  const mode = (query.mode ?? "workspace") as DiffMode;
+  if (mode === "branch" && !construct.baseCommit) {
+    return {
+      ok: false,
+      status: HTTP_STATUS.BAD_REQUEST,
+      message: "Construct is missing base commit metadata",
+    };
+  }
+
+  const files = Array.from(
+    new Set(
+      (query.files ?? "")
+        .split(",")
+        .map((file) => file.trim())
+        .filter(Boolean)
+    )
+  );
+
+  return {
+    ok: true,
+    value: {
+      mode,
+      files,
+    },
   };
 }
 
@@ -313,6 +367,63 @@ export function createConstructsRoutes(
       },
       {
         params: t.Object({ id: t.String() }),
+      }
+    )
+    .get(
+      "/:id/diff",
+      async ({ params, query, set }) => {
+        const construct = await loadConstructById(database, params.id);
+        if (!construct) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Construct not found" };
+        }
+
+        const parsed = parseDiffRequest(construct, query);
+        if (!parsed.ok) {
+          set.status = parsed.status;
+          return { message: parsed.message };
+        }
+
+        try {
+          const summary = await getConstructDiffSummary({
+            workspacePath: construct.workspacePath,
+            mode: parsed.value.mode,
+            baseCommit: construct.baseCommit ?? null,
+          });
+
+          const details = parsed.value.files.length
+            ? await getConstructDiffDetails({
+                workspacePath: construct.workspacePath,
+                mode: parsed.value.mode,
+                baseCommit: summary.baseCommit,
+                files: parsed.value.files,
+                summaryFiles: summary.files,
+              })
+            : undefined;
+
+          return {
+            mode: parsed.value.mode,
+            baseCommit: summary.baseCommit,
+            headCommit: summary.headCommit,
+            files: summary.files,
+            details,
+          };
+        } catch (error) {
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          return {
+            message:
+              error instanceof Error ? error.message : "Failed to compute diff",
+          };
+        }
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        query: DiffQuerySchema,
+        response: {
+          200: ConstructDiffResponseSchema,
+          400: t.Object({ message: t.String() }),
+          404: t.Object({ message: t.String() }),
+        },
       }
     )
 
@@ -623,6 +734,8 @@ type ConstructProvisionState = {
   recordCreated: boolean;
   servicesStarted: boolean;
   workspacePath: string | null;
+  branchName: string | null;
+  baseCommit: string | null;
   createdConstruct: typeof constructs.$inferSelect | null;
 };
 
@@ -644,6 +757,8 @@ function createProvisionContext(args: {
       recordCreated: false,
       servicesStarted: false,
       workspacePath: null,
+      branchName: null,
+      baseCommit: null,
       createdConstruct: null,
     },
   };
@@ -662,14 +777,13 @@ async function createConstructWithServices(
     state,
   } = context;
 
-  const workspacePath = await worktreeService.createWorktree(
-    state.constructId,
-    {
-      templateId: body.templateId,
-    }
-  );
+  const worktree = await worktreeService.createWorktree(state.constructId, {
+    templateId: body.templateId,
+  });
   state.worktreeCreated = true;
-  state.workspacePath = workspacePath;
+  state.workspacePath = worktree.path;
+  state.branchName = worktree.branch;
+  state.baseCommit = worktree.baseCommit;
 
   const timestamp = new Date();
   const newConstruct: NewConstruct = {
@@ -677,7 +791,9 @@ async function createConstructWithServices(
     name: body.name,
     description: body.description ?? null,
     templateId: body.templateId,
-    workspacePath,
+    workspacePath: worktree.path,
+    branchName: worktree.branch,
+    baseCommit: worktree.baseCommit,
     opencodeSessionId: null,
     opencodeServerUrl: null,
     opencodeServerPort: null,

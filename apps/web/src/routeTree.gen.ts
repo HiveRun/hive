@@ -19,6 +19,7 @@ import { Route as ConstructsNewRouteImport } from './routes/constructs/new'
 import { Route as ConstructsListRouteImport } from './routes/constructs/list'
 import { Route as ConstructsConstructIdRouteImport } from './routes/constructs/$constructId'
 import { Route as ConstructsConstructIdServicesRouteImport } from './routes/constructs/$constructId/services'
+import { Route as ConstructsConstructIdDiffRouteImport } from './routes/constructs/$constructId/diff'
 import { Route as ConstructsConstructIdChatRouteImport } from './routes/constructs/$constructId/chat'
 
 const TestErrorRoute = TestErrorRouteImport.update({
@@ -72,6 +73,12 @@ const ConstructsConstructIdServicesRoute =
     path: '/services',
     getParentRoute: () => ConstructsConstructIdRoute,
   } as any)
+const ConstructsConstructIdDiffRoute =
+  ConstructsConstructIdDiffRouteImport.update({
+    id: '/diff',
+    path: '/diff',
+    getParentRoute: () => ConstructsConstructIdRoute,
+  } as any)
 const ConstructsConstructIdChatRoute =
   ConstructsConstructIdChatRouteImport.update({
     id: '/chat',
@@ -90,6 +97,7 @@ export interface FileRoutesByFullPath {
   '/constructs/list': typeof ConstructsListRoute
   '/constructs/new': typeof ConstructsNewRoute
   '/constructs/$constructId/chat': typeof ConstructsConstructIdChatRoute
+  '/constructs/$constructId/diff': typeof ConstructsConstructIdDiffRoute
   '/constructs/$constructId/services': typeof ConstructsConstructIdServicesRoute
 }
 export interface FileRoutesByTo {
@@ -103,6 +111,7 @@ export interface FileRoutesByTo {
   '/constructs/list': typeof ConstructsListRoute
   '/constructs/new': typeof ConstructsNewRoute
   '/constructs/$constructId/chat': typeof ConstructsConstructIdChatRoute
+  '/constructs/$constructId/diff': typeof ConstructsConstructIdDiffRoute
   '/constructs/$constructId/services': typeof ConstructsConstructIdServicesRoute
 }
 export interface FileRoutesById {
@@ -117,6 +126,7 @@ export interface FileRoutesById {
   '/constructs/list': typeof ConstructsListRoute
   '/constructs/new': typeof ConstructsNewRoute
   '/constructs/$constructId/chat': typeof ConstructsConstructIdChatRoute
+  '/constructs/$constructId/diff': typeof ConstructsConstructIdDiffRoute
   '/constructs/$constructId/services': typeof ConstructsConstructIdServicesRoute
 }
 export interface FileRouteTypes {
@@ -132,6 +142,7 @@ export interface FileRouteTypes {
     | '/constructs/list'
     | '/constructs/new'
     | '/constructs/$constructId/chat'
+    | '/constructs/$constructId/diff'
     | '/constructs/$constructId/services'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -145,6 +156,7 @@ export interface FileRouteTypes {
     | '/constructs/list'
     | '/constructs/new'
     | '/constructs/$constructId/chat'
+    | '/constructs/$constructId/diff'
     | '/constructs/$constructId/services'
   id:
     | '__root__'
@@ -158,6 +170,7 @@ export interface FileRouteTypes {
     | '/constructs/list'
     | '/constructs/new'
     | '/constructs/$constructId/chat'
+    | '/constructs/$constructId/diff'
     | '/constructs/$constructId/services'
   fileRoutesById: FileRoutesById
 }
@@ -242,6 +255,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConstructsConstructIdServicesRouteImport
       parentRoute: typeof ConstructsConstructIdRoute
     }
+    '/constructs/$constructId/diff': {
+      id: '/constructs/$constructId/diff'
+      path: '/diff'
+      fullPath: '/constructs/$constructId/diff'
+      preLoaderRoute: typeof ConstructsConstructIdDiffRouteImport
+      parentRoute: typeof ConstructsConstructIdRoute
+    }
     '/constructs/$constructId/chat': {
       id: '/constructs/$constructId/chat'
       path: '/chat'
@@ -254,11 +274,13 @@ declare module '@tanstack/react-router' {
 
 interface ConstructsConstructIdRouteChildren {
   ConstructsConstructIdChatRoute: typeof ConstructsConstructIdChatRoute
+  ConstructsConstructIdDiffRoute: typeof ConstructsConstructIdDiffRoute
   ConstructsConstructIdServicesRoute: typeof ConstructsConstructIdServicesRoute
 }
 
 const ConstructsConstructIdRouteChildren: ConstructsConstructIdRouteChildren = {
   ConstructsConstructIdChatRoute: ConstructsConstructIdChatRoute,
+  ConstructsConstructIdDiffRoute: ConstructsConstructIdDiffRoute,
   ConstructsConstructIdServicesRoute: ConstructsConstructIdServicesRoute,
 }
 
