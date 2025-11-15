@@ -28,6 +28,19 @@ const diffSearchSchema = z.object({
 type DiffSearch = z.infer<typeof diffSearchSchema>;
 
 const COMMIT_PREVIEW_LENGTH = 8;
+const DIFF_MODE_META: Record<
+  DiffMode,
+  { button: string; description: string }
+> = {
+  workspace: {
+    button: "Uncommitted",
+    description: "Uncommitted changes (working tree)",
+  },
+  branch: {
+    button: "Since Base",
+    description: "Commits since construct was created",
+  },
+};
 
 export const Route = createFileRoute("/constructs/$constructId/diff")({
   validateSearch: (search) => diffSearchSchema.parse(search),
@@ -193,7 +206,7 @@ function DiffHeader({
           Construct Diff
         </p>
         <div className="flex flex-wrap gap-4 text-[#8e9088] text-[11px] uppercase tracking-[0.2em]">
-          <span>Mode · {mode === "workspace" ? "Workspace" : "Branch"}</span>
+          <span>Mode · {DIFF_MODE_META[mode].description}</span>
           {renderCommitStats("Base", summary.baseCommit)}
           {renderCommitStats("Head", summary.headCommit)}
           <span>
@@ -207,7 +220,7 @@ function DiffHeader({
           size="sm"
           variant={mode === "workspace" ? "secondary" : "outline"}
         >
-          Workspace
+          {DIFF_MODE_META.workspace.button}
         </Button>
         <Button
           disabled={!branchAvailable}
@@ -215,7 +228,7 @@ function DiffHeader({
           size="sm"
           variant={mode === "branch" ? "secondary" : "outline"}
         >
-          Branch
+          {DIFF_MODE_META.branch.button}
         </Button>
         <Button onClick={onRefresh} size="sm" variant="outline">
           Refresh
