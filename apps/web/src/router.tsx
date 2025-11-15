@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRouter as createTanStackRouter } from "@tanstack/react-router";
 import ErrorPage from "./components/error";
+import { GlobalAgentMonitor } from "./components/global-agent-monitor";
 import Loader from "./components/loader";
 import { ThemeProvider } from "./components/theme-provider";
 import "./index.css";
@@ -30,7 +31,10 @@ export const router = createTanStackRouter({
   defaultNotFoundComponent: () => <div>Not Found</div>,
   Wrap: ({ children }) => (
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider>{children}</ThemeProvider>
+      <ThemeProvider>
+        <GlobalAgentMonitor />
+        {children}
+      </ThemeProvider>
     </QueryClientProvider>
   ),
 });

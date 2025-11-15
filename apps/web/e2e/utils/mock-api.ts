@@ -31,6 +31,7 @@ const API_ROUTE_PATTERNS = [
 ] as const;
 
 const CONSTRUCT_SERVICES_REGEX = /\/api\/constructs\/[^/]+\/services$/;
+const AGENT_EVENTS_REGEX = /\/api\/agents\/sessions\/.+\/events$/;
 
 const API_ROUTE_MATCHERS = [
   {
@@ -64,6 +65,11 @@ const API_ROUTE_MATCHERS = [
     match: (url: URL, method: string) =>
       method === "GET" &&
       url.pathname.startsWith("/api/agents/sessions/byConstruct/"),
+  },
+  {
+    description: "GET /api/agents/sessions/:id/events",
+    match: (url: URL, method: string) =>
+      method === "GET" && AGENT_EVENTS_REGEX.test(url.pathname),
   },
 ] as const;
 
@@ -110,6 +116,10 @@ export async function mockAppApi(
   await page.route(
     "**/api/agents/sessions/byConstruct/*",
     createAgentSessionByConstructHandler()
+  );
+  await page.route(
+    "**/api/agents/sessions/*/events",
+    createAgentEventStreamHandler()
   );
 
   return mockData;
@@ -248,6 +258,36 @@ function createAgentSessionByConstructHandler() {
       },
     };
   });
+}
+
+function createAgentEventStreamHandler() {
+  return async (route: Route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+
+    const historyPayload = JSON.stringify({ messages: [] });
+    const statusPayload = JSON.stringify({ status: "awaiting_input" });
+    const body = [
+      "event: history",
+      `data: ${historyPayload}`,
+      "",
+      "event: status",
+      `data: ${statusPayload}`,
+      "",
+    ].join("\n");
+
+    await route.fulfill({
+      status: 200,
+      headers: {
+        "content-type": "text/event-stream",
+        connection: "keep-alive",
+        "cache-control": "no-cache",
+      },
+      body,
+    });
+  };
 }
 
 type RouteRequest = ReturnType<Route["request"]>;
