@@ -24,6 +24,8 @@ export function useGlobalAgentMonitor() {
       return;
     }
 
+    // Track whether the window is in focus so we can decide between desktop
+    // notifications (when unfocused) and toast notifications (when focused).
     const handleFocus = () => {
       windowFocusedRef.current = true;
     };
