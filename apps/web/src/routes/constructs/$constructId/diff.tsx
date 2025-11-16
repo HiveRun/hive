@@ -753,7 +753,7 @@ function StackedDiffList({
         if (entry.isPending) {
           diffContent = <InlineMessage>Loading diff…</InlineMessage>;
         } else if (entry.detail) {
-          diffContent = <DiffPreview detail={entry.detail} />;
+          diffContent = <DiffPreview detail={entry.detail} variant="stacked" />;
         } else {
           diffContent = (
             <InlineMessage>Unable to load diff for this file.</InlineMessage>
@@ -815,19 +815,32 @@ function StatusMessage({ children }: { children: ReactNode }) {
 const DiffScrollContainer = ({
   children,
   testId,
+  overflowY = "auto",
 }: {
   children: ReactNode;
   testId: string;
+  overflowY?: "auto" | "visible";
 }) => (
   <div
-    className="flex min-h-0 w-full min-w-0 flex-1 overflow-auto rounded-sm border border-[#1a1a17] bg-[#090909]"
+    className={cn(
+      "flex min-h-0 w-full min-w-0 flex-1 rounded-sm border border-[#1a1a17] bg-[#090909]",
+      overflowY === "auto"
+        ? "overflow-auto"
+        : "overflow-x-auto overflow-y-visible"
+    )}
     data-testid={testId}
   >
     <div className="w-full">{children}</div>
   </div>
 );
 
-function DiffPreview({ detail }: { detail: DiffFileDetail }) {
+function DiffPreview({
+  detail,
+  variant = "standalone",
+}: {
+  detail: DiffFileDetail;
+  variant?: "standalone" | "stacked";
+}) {
   const semanticDiff = useMemo(() => {
     if (!(detail.beforeContent || detail.afterContent)) {
       return null;
@@ -842,9 +855,9 @@ function DiffPreview({ detail }: { detail: DiffFileDetail }) {
     }
   }, [detail.afterContent, detail.beforeContent, detail.path]);
 
-  if (semanticDiff) {
-    return (
-      <DiffScrollContainer testId="diff-semantic-view">
+  const content = (() => {
+    if (semanticDiff) {
+      return (
         <PrecisionFileDiff
           className="precision-diff"
           fileDiff={semanticDiff}
@@ -857,21 +870,34 @@ function DiffPreview({ detail }: { detail: DiffFileDetail }) {
             overflow: "wrap",
           }}
         />
-      </DiffScrollContainer>
-    );
-  }
+      );
+    }
 
-  if (detail.patch) {
-    return (
-      <DiffScrollContainer testId="diff-patch-view">
+    if (detail.patch) {
+      return (
         <pre className="whitespace-pre-wrap p-3 font-mono text-[#d9dbd2] text-xs leading-relaxed">
           {detail.patch}
         </pre>
-      </DiffScrollContainer>
-    );
+      );
+    }
+
+    return null;
+  })();
+
+  if (!content) {
+    return <StatusMessage>No diff data available.</StatusMessage>;
   }
 
-  return <StatusMessage>No diff data available.</StatusMessage>;
+  const testId = semanticDiff ? "diff-semantic-view" : "diff-patch-view";
+
+  return (
+    <DiffScrollContainer
+      overflowY={variant === "stacked" ? "visible" : "auto"}
+      testId={testId}
+    >
+      {content}
+    </DiffScrollContainer>
+  );
 }
 
 function sortFiles(
