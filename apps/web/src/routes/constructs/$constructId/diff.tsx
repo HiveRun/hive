@@ -6,11 +6,14 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+
 import {
   type ConstructDiffResponse,
   constructDiffQueries,
@@ -42,6 +45,9 @@ const DIFF_MODE_META: Record<
   },
 };
 
+const DIRECTORY_INDENT_PX = 12;
+const FILE_INDENT_OFFSET_PX = 16;
+
 export const Route = createFileRoute("/constructs/$constructId/diff")({
   validateSearch: (search) => diffSearchSchema.parse(search),
   loader: async ({ params, context: { queryClient } }) => {
@@ -70,6 +76,8 @@ function ConstructDiffRoute() {
   const constructQuery = useQuery(constructQueries.detail(constructId));
   const branchAvailable = Boolean(constructQuery.data?.baseCommit);
 
+  const selectedFile = search.file ?? summary.files[0]?.path ?? null;
+
   const files = useMemo(() => {
     if (!filter.trim()) {
       return summary.files;
@@ -78,9 +86,35 @@ function ConstructDiffRoute() {
     return summary.files.filter((file) =>
       file.path.toLowerCase().includes(query)
     );
-  }, [filter, summary]);
+  }, [filter, summary.files]);
 
-  const selectedFile = search.file ?? summary.files[0]?.path ?? null;
+  const fileTree = useMemo(() => buildFileTree(files), [files]);
+  const topLevelDirs = useMemo(() => getTopLevelDirs(fileTree), [fileTree]);
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const filterActive = filter.trim().length > 0;
+    if (filterActive) {
+      setExpandedDirs(expandAllDirectories(fileTree));
+      return;
+    }
+
+    const required = buildRequiredDirectories(topLevelDirs, selectedFile);
+    setExpandedDirs((prev) => ensureRequiredDirectories(prev, required));
+  }, [fileTree, filter, selectedFile, topLevelDirs]);
+
+  const toggleDirectory = useCallback((path: string) => {
+    setExpandedDirs((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }, []);
+
   const detailQuery = useQuery({
     ...constructDiffQueries.detail(
       constructId,
@@ -153,12 +187,14 @@ function ConstructDiffRoute() {
       />
       <div className="flex min-h-0 flex-1 gap-4">
         <FileSidebar
-          files={files}
+          expandedDirs={expandedDirs}
           filter={filter}
           onFilterChange={setFilter}
           onSelectFile={handleFileSelect}
+          onToggleDir={toggleDirectory}
           selectedFile={selectedFile}
-          totalCount={summary.files.length}
+          totalCount={files.length}
+          tree={fileTree}
         />
         <DiffViewer
           detail={detail}
@@ -239,24 +275,28 @@ function DiffHeader({
 }
 
 type FileSidebarProps = {
-  files: DiffFileSummary[];
+  tree: FileTreeNode[];
   totalCount: number;
   filter: string;
   selectedFile: string | null;
+  expandedDirs: Set<string>;
   onFilterChange: (value: string) => void;
   onSelectFile: (path: string) => void;
+  onToggleDir: (path: string) => void;
 };
 
 function FileSidebar({
-  files,
+  tree,
   totalCount,
   filter,
   selectedFile,
+  expandedDirs,
   onFilterChange,
   onSelectFile,
+  onToggleDir,
 }: FileSidebarProps) {
   return (
-    <aside className="flex w-full max-w-xs flex-col gap-3 border border-[#1a1a17] bg-[#080808] p-3">
+    <aside className="flex w-full max-w-xs flex-col gap-3 border border-[#1f1f1a] bg-[#080808] p-3">
       <Input
         className="border-[#1f1f1a] bg-[#040404] text-[#d7d9cf]"
         onChange={(event) => onFilterChange(event.target.value)}
@@ -267,42 +307,113 @@ function FileSidebar({
         Files ({totalCount})
       </div>
       <div className="flex-1 overflow-auto pr-1">
-        {files.length === 0 ? (
+        {tree.length === 0 ? (
           <p className="text-[#7b7d75] text-xs">No files match filter.</p>
         ) : (
-          <ul className="space-y-1">
-            {files.map((file) => (
-              <li key={file.path}>
-                <button
-                  className={cn(
-                    "w-full cursor-pointer border border-transparent px-2 py-2 text-left text-xs",
-                    selectedFile === file.path
-                      ? "border-[#3b3c33] bg-[#11110f]"
-                      : "hover:border-[#292926] hover:bg-[#0b0b0a]"
-                  )}
-                  onClick={() => onSelectFile(file.path)}
-                  type="button"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 flex-col">
-                      <span className="break-words text-[#f3f4ed]">
-                        {file.path}
-                      </span>
-                      <span className="text-[#808279] text-[10px] uppercase tracking-[0.25em]">
-                        {file.status}
-                      </span>
-                    </div>
-                    <div className="shrink-0 text-[#8f9189] text-[11px]">
-                      +{file.additions} / -{file.deletions}
-                    </div>
-                  </div>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <FileTreeList
+            expandedDirs={expandedDirs}
+            nodes={tree}
+            onSelectFile={onSelectFile}
+            onToggleDir={onToggleDir}
+            selectedFile={selectedFile}
+          />
         )}
       </div>
     </aside>
+  );
+}
+
+function FileTreeList({
+  nodes,
+  expandedDirs,
+  onToggleDir,
+  onSelectFile,
+  selectedFile,
+  depth = 0,
+}: {
+  nodes: FileTreeNode[];
+  expandedDirs: Set<string>;
+  onToggleDir: (path: string) => void;
+  onSelectFile: (path: string) => void;
+  selectedFile: string | null;
+  depth?: number;
+}) {
+  if (nodes.length === 0) {
+    return null;
+  }
+
+  return (
+    <ul className="space-y-1">
+      {nodes.map((node) => {
+        const paddingLeft = depth * DIRECTORY_INDENT_PX;
+        if (node.type === "dir") {
+          const isExpanded = expandedDirs.has(node.path);
+          return (
+            <li key={node.path}>
+              <button
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-sm border border-transparent px-2 py-1 text-left text-xs uppercase tracking-[0.25em]",
+                  "text-[#a1a399] hover:border-[#292926] hover:bg-[#0b0b0a]"
+                )}
+                onClick={() => onToggleDir(node.path)}
+                style={{ paddingLeft }}
+                type="button"
+              >
+                {isExpanded ? (
+                  <ChevronDown className="h-3 w-3" />
+                ) : (
+                  <ChevronRight className="h-3 w-3" />
+                )}
+                <span className="text-[#d2d4cb]">{node.name}</span>
+                <span className="text-[#6f7169] text-[10px] tracking-[0.2em]">
+                  {node.fileCount} {node.fileCount === 1 ? "file" : "files"}
+                </span>
+              </button>
+              {isExpanded && node.children.length > 0 ? (
+                <FileTreeList
+                  depth={depth + 1}
+                  expandedDirs={expandedDirs}
+                  nodes={node.children}
+                  onSelectFile={onSelectFile}
+                  onToggleDir={onToggleDir}
+                  selectedFile={selectedFile}
+                />
+              ) : null}
+            </li>
+          );
+        }
+
+        return (
+          <li key={node.path}>
+            <button
+              className={cn(
+                "w-full cursor-pointer border border-transparent px-2 py-2 text-left text-xs",
+                selectedFile === node.path
+                  ? "border-[#3b3c33] bg-[#11110f]"
+                  : "hover:border-[#292926] hover:bg-[#0b0b0a]"
+              )}
+              onClick={() => onSelectFile(node.path)}
+              style={{ paddingLeft: paddingLeft + FILE_INDENT_OFFSET_PX }}
+              type="button"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 flex-col">
+                  <span className="break-words text-[#f3f4ed]">
+                    {node.name}
+                  </span>
+                  <span className="text-[#808279] text-[10px] uppercase tracking-[0.25em]">
+                    {node.summary.status}
+                  </span>
+                </div>
+                <div className="shrink-0 text-[#8f9189] text-[11px]">
+                  +{node.summary.additions} / -{node.summary.deletions}
+                </div>
+              </div>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -312,6 +423,21 @@ type DiffViewerProps = {
   hasChanges: boolean;
   selectedFile: string | null;
 };
+
+type FileTreeNode =
+  | {
+      type: "dir";
+      name: string;
+      path: string;
+      children: FileTreeNode[];
+      fileCount: number;
+    }
+  | {
+      type: "file";
+      name: string;
+      path: string;
+      summary: DiffFileSummary;
+    };
 
 function DiffViewer({
   detail,
@@ -423,4 +549,148 @@ function DiffPreview({ detail }: { detail: DiffFileDetail }) {
   }
 
   return <StatusMessage>No diff data available.</StatusMessage>;
+}
+
+function buildFileTree(files: DiffFileSummary[]): FileTreeNode[] {
+  type InternalNode =
+    | {
+        type: "dir";
+        name: string;
+        path: string;
+        children: Map<string, InternalNode>;
+      }
+    | {
+        type: "file";
+        name: string;
+        path: string;
+        summary: DiffFileSummary;
+      };
+
+  const root: Map<string, InternalNode> = new Map();
+
+  for (const file of files) {
+    const parts = file.path.split("/");
+    let cursor = root;
+    let pathSoFar = "";
+    parts.forEach((part, index) => {
+      pathSoFar = pathSoFar ? `${pathSoFar}/${part}` : part;
+      const isLeaf = index === parts.length - 1;
+
+      if (isLeaf) {
+        cursor.set(part, {
+          type: "file",
+          name: part,
+          path: file.path,
+          summary: file,
+        });
+        return;
+      }
+
+      const existing = cursor.get(part);
+      if (!existing || existing.type === "file") {
+        const dirNode: InternalNode = {
+          type: "dir",
+          name: part,
+          path: pathSoFar,
+          children: new Map(),
+        };
+        cursor.set(part, dirNode);
+        cursor = dirNode.children;
+        return;
+      }
+
+      cursor = existing.children;
+    });
+  }
+
+  const normalize = (map: Map<string, InternalNode>): FileTreeNode[] =>
+    Array.from(map.values())
+      .map<FileTreeNode>((node) => {
+        if (node.type === "dir") {
+          const children = normalize(node.children);
+          const fileCount = children.reduce(
+            (count, child) =>
+              count + (child.type === "dir" ? child.fileCount : 1),
+            0
+          );
+          return {
+            type: "dir",
+            name: node.name,
+            path: node.path,
+            children,
+            fileCount,
+          };
+        }
+        return node;
+      })
+      .sort((a, b) => {
+        if (a.type === b.type) {
+          return a.name.localeCompare(b.name);
+        }
+        return a.type === "dir" ? -1 : 1;
+      });
+
+  return normalize(root);
+}
+
+function getTopLevelDirs(tree: FileTreeNode[]): string[] {
+  const dirs: string[] = [];
+  for (const node of tree) {
+    if (node.type === "dir") {
+      dirs.push(node.path);
+    }
+  }
+  return dirs;
+}
+
+function expandAllDirectories(tree: FileTreeNode[]): Set<string> {
+  const allDirs = new Set<string>();
+  collectDirectoryPaths(tree, allDirs);
+  return allDirs;
+}
+
+function buildRequiredDirectories(
+  topLevelDirs: string[],
+  selectedFile: string | null
+): Set<string> {
+  const required = new Set<string>(topLevelDirs);
+  if (selectedFile) {
+    for (const dir of gatherAncestorPaths(selectedFile)) {
+      required.add(dir);
+    }
+  }
+  return required;
+}
+
+function ensureRequiredDirectories(
+  current: Set<string>,
+  required: Set<string>
+): Set<string> {
+  let changed = false;
+  const next = new Set(current);
+  for (const dir of required) {
+    if (!next.has(dir)) {
+      next.add(dir);
+      changed = true;
+    }
+  }
+  return changed ? next : current;
+}
+
+function collectDirectoryPaths(nodes: FileTreeNode[], target: Set<string>) {
+  for (const node of nodes) {
+    if (node.type === "dir") {
+      target.add(node.path);
+      collectDirectoryPaths(node.children, target);
+    }
+  }
+}
+
+function gatherAncestorPaths(filePath: string): string[] {
+  const parts = filePath.split("/");
+  const ancestors: string[] = [];
+  for (let i = 1; i < parts.length; i += 1) {
+    ancestors.push(parts.slice(0, i).join("/"));
+  }
+  return ancestors;
 }
