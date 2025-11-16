@@ -58,6 +58,10 @@ function loadTranscriber(modelId: string) {
   return cached;
 }
 
+export async function preloadLocalTranscriber(modelId: string) {
+  await loadTranscriber(modelId);
+}
+
 function decodeWaveform(audioBytes: Uint8Array): Float32Array {
   const wav = new WaveFile(audioBytes);
   wav.toBitDepth("32f");

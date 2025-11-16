@@ -8,7 +8,7 @@ import { db } from "./db";
 import { agentsRoutes } from "./routes/agents";
 import { constructsRoutes } from "./routes/constructs";
 import { templatesRoutes } from "./routes/templates";
-import { voiceRoutes } from "./routes/voice";
+import { preloadVoiceTranscriptionModels, voiceRoutes } from "./routes/voice";
 import { constructs } from "./schema/constructs";
 import {
   bootstrapServiceSupervisor,
@@ -73,6 +73,8 @@ try {
     `Failed to bootstrap service supervisor: ${error instanceof Error ? error.message : String(error)}\n`
   );
 }
+
+await preloadVoiceTranscriptionModels();
 
 const app = new Elysia()
   .use(

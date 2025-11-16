@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,13 @@ type ComposePanelProps = {
 
 type ComposeValues = z.infer<typeof formSchema>;
 
+const combineSegments = (...segments: string[]) =>
+  segments
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
 const validateMessage = (value: string) => {
   const result = formSchema.shape.message.safeParse(value);
   return result.success || result.error.issues[0]?.message;
@@ -51,19 +58,83 @@ export function ComposePanel({
   const voiceConfigQuery = useQuery(voiceQueries.config());
   const voiceConfig = voiceConfigQuery.data;
 
-  const handleTranscriptionInsert = (transcript: string) => {
-    const trimmed = transcript.trim();
-    if (!trimmed) {
+  const streamingSessionRef = useRef<{
+    original: string;
+    base: string;
+    appended: string;
+  } | null>(null);
+
+  const beginStreamingInsert = useCallback(() => {
+    const currentValue = form.getValues("message") ?? "";
+    streamingSessionRef.current = {
+      original: currentValue,
+      base: currentValue.trim(),
+      appended: "",
+    };
+  }, [form]);
+
+  const insertStreamingChunk = useCallback(
+    (partial: string) => {
+      const trimmed = partial.trim();
+      if (!(trimmed && streamingSessionRef.current)) {
+        return;
+      }
+      const session = streamingSessionRef.current;
+      session.appended = session.appended
+        ? `${session.appended} ${trimmed}`
+        : trimmed;
+      const combined = combineSegments(session.base, session.appended);
+      form.setValue("message", combined, {
+        shouldDirty: true,
+        shouldTouch: true,
+        shouldValidate: true,
+      });
+    },
+    [form]
+  );
+
+  const resetStreamingInsert = useCallback(() => {
+    if (!streamingSessionRef.current) {
       return;
     }
-    const existing = form.getValues("message")?.trim();
-    const nextValue = existing ? `${existing} ${trimmed}`.trim() : trimmed;
-    form.setValue("message", nextValue, {
+    form.setValue("message", streamingSessionRef.current.original, {
       shouldDirty: true,
       shouldTouch: true,
       shouldValidate: true,
     });
-  };
+    streamingSessionRef.current = null;
+  }, [form]);
+
+  const handleTranscriptionInsert = useCallback(
+    (transcript: string) => {
+      const trimmed = transcript.trim();
+      if (!trimmed) {
+        streamingSessionRef.current = null;
+        return;
+      }
+
+      if (streamingSessionRef.current) {
+        const session = streamingSessionRef.current;
+        const combined = combineSegments(session.base, trimmed);
+        form.setValue("message", combined, {
+          shouldDirty: true,
+          shouldTouch: true,
+          shouldValidate: true,
+        });
+        streamingSessionRef.current = null;
+        return;
+      }
+
+      const existing = form.getValues("message")?.trim();
+      const nextValue = existing ? `${existing} ${trimmed}`.trim() : trimmed;
+      form.setValue("message", nextValue, {
+        shouldDirty: true,
+        shouldTouch: true,
+        shouldValidate: true,
+      });
+    },
+    [form]
+  );
 
   const voiceSummary = useMemo(() => {
     if (!voiceConfig?.enabled) {
@@ -139,6 +210,9 @@ export function ComposePanel({
                   <VoiceRecorderButton
                     config={voiceConfig}
                     disabled={isSending}
+                    onStreamingError={resetStreamingInsert}
+                    onStreamingPartial={insertStreamingChunk}
+                    onStreamingStart={beginStreamingInsert}
                     onTranscription={handleTranscriptionInsert}
                   />
                 ) : null}

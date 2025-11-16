@@ -14,32 +14,33 @@ const PREFERRED_MIME_TYPES = [
   "audio/mp4",
 ];
 
-type RecorderStatus = "idle" | "recording" | "processing";
+const STREAMING_TIMESLICE_MS = 1200;
 
-const STATUS_LABELS: Record<RecorderStatus, string> = {
-  idle: "Push-to-talk",
-  recording: "Recording… tap to stop",
-  processing: "Transcribing audio…",
-};
+type RecorderStatus = "idle" | "recording" | "processing";
 
 export type VoiceRecorderButtonProps = {
   config?: VoiceConfig;
   disabled?: boolean;
+  onStreamingError?: () => void;
+  onStreamingPartial?: (text: string) => void;
+  onStreamingStart?: () => void;
   onTranscription: (text: string) => void;
 };
 
 export function VoiceRecorderButton({
   config,
   disabled,
+  onStreamingError,
+  onStreamingPartial,
+  onStreamingStart,
   onTranscription,
 }: VoiceRecorderButtonProps) {
   const [status, setStatus] = useState<RecorderStatus>("idle");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [lastPreview, setLastPreview] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const streamingQueueRef = useRef(Promise.resolve());
   const transcribeMutation = useMutation(voiceMutations.transcribe);
 
   const isSupported = useMemo(() => {
@@ -58,6 +59,10 @@ export function VoiceRecorderButton({
   const canUseVoice = Boolean(
     config?.enabled && config.allowBrowserRecording && isSupported
   );
+
+  const handleStreamingFailure = useCallback(() => {
+    onStreamingError?.();
+  }, [onStreamingError]);
 
   const getAudioContext = useCallback(() => {
     if (typeof window === "undefined") {
@@ -93,45 +98,84 @@ export function VoiceRecorderButton({
     }
   }, []);
 
-  const transcribeChunks = useCallback(
+  const enqueueStreamingSnapshot = useCallback(
+    (snapshot: Blob) => {
+      if (!onStreamingPartial) {
+        return;
+      }
+      streamingQueueRef.current = streamingQueueRef.current
+        .then(async () => {
+          const base64 = await convertBlobToWavBase64(
+            snapshot,
+            getAudioContext
+          );
+          const response = await voiceMutations.transcribe.mutationFn({
+            audioBase64: base64,
+            mimeType: "audio/wav",
+          });
+          const partialText = response.text?.trim();
+          if (partialText) {
+            onStreamingPartial(partialText);
+          }
+        })
+        .catch((error) => {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Failed to transcribe audio"
+          );
+          handleStreamingFailure();
+        });
+    },
+    [getAudioContext, handleStreamingFailure, onStreamingPartial]
+  );
+
+  const transcribeRecording = useCallback(
     async (chunks: Blob[]) => {
       setStatus("processing");
       try {
+        await streamingQueueRef.current.catch(() => {
+          /* ignore streaming queue errors before final transcription */
+        });
         const blob = new Blob(chunks, { type: "audio/webm" });
         const base64 = await convertBlobToWavBase64(blob, getAudioContext);
         const response = await transcribeMutation.mutateAsync({
           audioBase64: base64,
           mimeType: "audio/wav",
         });
-        setLastPreview(response.text);
-        setErrorMessage(null);
-        if (response.text.trim()) {
-          onTranscription(response.text.trim());
-          toast.success("Voice transcription added to message");
+        const trimmed = response.text.trim();
+        if (trimmed) {
+          onTranscription(trimmed);
         } else {
           toast.info("No speech detected in recording");
+          onStreamingError?.();
         }
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Failed to transcribe audio";
-        setErrorMessage(message);
-        toast.error(message);
+        toast.error(
+          error instanceof Error ? error.message : "Failed to transcribe audio"
+        );
+        handleStreamingFailure();
       } finally {
         chunksRef.current = [];
         setStatus("idle");
       }
     },
-    [getAudioContext, onTranscription, transcribeMutation]
+    [
+      getAudioContext,
+      handleStreamingFailure,
+      onStreamingError,
+      onTranscription,
+      transcribeMutation,
+    ]
   );
 
   const startRecording = useCallback(async () => {
     if (!canUseVoice) {
-      setErrorMessage("Voice controls unavailable in this environment");
+      toast.error("Voice controls unavailable in this environment");
       return;
     }
 
     try {
-      setErrorMessage(null);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       const options: MediaRecorderOptions = {};
@@ -144,23 +188,31 @@ export function VoiceRecorderButton({
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           chunks.push(event.data);
+          if (recorder.state === "recording") {
+            enqueueStreamingSnapshot(
+              new Blob(chunks, { type: recorder.mimeType })
+            );
+          }
         }
       };
+
       recorder.onstop = async () => {
         mediaRecorderRef.current = null;
         stopStream();
         if (chunks.length === 0) {
           setStatus("idle");
-          setErrorMessage("No audio captured");
+          toast.info("No audio captured");
+          onStreamingError?.();
           return;
         }
-        await transcribeChunks(chunks);
+        await transcribeRecording(chunks);
       };
 
       mediaRecorderRef.current = recorder;
       chunksRef.current = chunks;
-      recorder.start();
+      recorder.start(STREAMING_TIMESLICE_MS);
       setStatus("recording");
+      onStreamingStart?.();
     } catch (error) {
       stopStream();
       mediaRecorderRef.current = null;
@@ -172,12 +224,20 @@ export function VoiceRecorderButton({
       } else if (error instanceof Error) {
         message = error.message;
       }
-
-      setErrorMessage(message);
       toast.error(message);
+      handleStreamingFailure();
       setStatus("idle");
     }
-  }, [canUseVoice, stopStream, transcribeChunks]);
+  }, [
+    canUseVoice,
+    enqueueStreamingSnapshot,
+
+    handleStreamingFailure,
+    onStreamingError,
+    onStreamingStart,
+    stopStream,
+    transcribeRecording,
+  ]);
 
   const handleClick = useCallback(async () => {
     if (status === "processing" || disabled) {
@@ -206,16 +266,6 @@ export function VoiceRecorderButton({
     [stopRecordingInternal, stopStream]
   );
 
-  const label = (() => {
-    if (errorMessage) {
-      return errorMessage;
-    }
-    if (lastPreview && status === "idle") {
-      return `Preview: ${truncateText(lastPreview)}`;
-    }
-    return STATUS_LABELS[status];
-  })();
-
   return (
     <div className="flex flex-col items-end gap-1">
       <Button
@@ -233,9 +283,6 @@ export function VoiceRecorderButton({
         )}
         {status === "recording" ? "Stop" : "Voice"}
       </Button>
-      <span className="text-right text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
-        {label}
-      </span>
     </div>
   );
 }
@@ -284,11 +331,4 @@ function arrayBufferToBase64(buffer: ArrayBuffer) {
     binary += String.fromCharCode(...chunk);
   }
   return btoa(binary);
-}
-
-function truncateText(value: string, max = 50) {
-  if (value.length <= max) {
-    return value;
-  }
-  return `${value.slice(0, max - 1)}…`;
 }

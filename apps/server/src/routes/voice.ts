@@ -12,7 +12,10 @@ import {
   VoiceTranscriptionRequestSchema,
   VoiceTranscriptionResponseSchema,
 } from "../schema/api";
-import { transcribeLocalAudio } from "../voice/local-transcriber";
+import {
+  preloadLocalTranscriber,
+  transcribeLocalAudio,
+} from "../voice/local-transcriber";
 
 const HTTP_STATUS = {
   BAD_REQUEST: 400,
@@ -27,6 +30,22 @@ const DEFAULT_PROVIDER_ENV: Record<string, string> = {
 const ErrorResponseSchema = t.Object({
   message: t.String(),
 });
+
+export async function preloadVoiceTranscriptionModels() {
+  try {
+    const config = await getSyntheticConfig();
+    if (config.voice?.enabled && config.voice.transcription.mode === "local") {
+      await preloadLocalTranscriber(config.voice.transcription.model);
+      process.stderr.write(
+        `Voice model preloaded: ${config.voice.transcription.model}\n`
+      );
+    }
+  } catch (error) {
+    process.stderr.write(
+      `Failed to preload voice model: ${error instanceof Error ? error.message : String(error)}\n`
+    );
+  }
+}
 
 export const voiceRoutes = new Elysia({ prefix: "/api/voice" })
   .get(
