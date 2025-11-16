@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -91,11 +91,20 @@ function ConstructDiffRoute() {
   const fileTree = useMemo(() => buildFileTree(files), [files]);
   const topLevelDirs = useMemo(() => getTopLevelDirs(fileTree), [fileTree]);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
+  const hasInitializedDirs = useRef(false);
 
   useEffect(() => {
     const filterActive = filter.trim().length > 0;
+    const expandedAll = expandAllDirectories(fileTree);
+
+    if (!hasInitializedDirs.current) {
+      setExpandedDirs(expandedAll);
+      hasInitializedDirs.current = true;
+      return;
+    }
+
     if (filterActive) {
-      setExpandedDirs(expandAllDirectories(fileTree));
+      setExpandedDirs(expandedAll);
       return;
     }
 
