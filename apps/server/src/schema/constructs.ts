@@ -15,6 +15,8 @@ export const constructs = sqliteTable("constructs", {
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   status: text("status").notNull().default("ready"),
   lastSetupError: text("last_setup_error"),
+  branchName: text("branch_name"),
+  baseCommit: text("base_commit"),
 });
 
 export type Construct = typeof constructs.$inferSelect;
