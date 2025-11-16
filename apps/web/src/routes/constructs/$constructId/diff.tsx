@@ -687,6 +687,7 @@ function DiffViewer({
         <StackedDiffList
           entries={stackedEntries}
           hasVisibleFiles={hasVisibleFiles}
+          selectedFile={selectedFile}
         />
       )}
     </section>
@@ -719,10 +720,24 @@ function DiffViewModeToggle({
 function StackedDiffList({
   entries,
   hasVisibleFiles,
+  selectedFile,
 }: {
   entries: StackedDiffEntry[];
   hasVisibleFiles: boolean;
+  selectedFile: string | null;
 }) {
+  const entryRefs = useRef<Record<string, HTMLElement | null>>({});
+
+  useEffect(() => {
+    if (!selectedFile) {
+      return;
+    }
+    const target = entryRefs.current[selectedFile];
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [selectedFile]);
+
   if (!hasVisibleFiles) {
     return <StatusMessage>No files match the current filters.</StatusMessage>;
   }
@@ -745,10 +760,22 @@ function StackedDiffList({
           );
         }
 
+        const isSelected = entry.path === selectedFile;
+
         return (
           <article
-            className="flex min-h-0 flex-col gap-2 border border-[#1a1a17] bg-[#080808] p-3"
+            className={cn(
+              "flex min-h-0 flex-col gap-2 border border-[#1a1a17] bg-[#080808] p-3",
+              isSelected && "border-[#3b3c33] bg-[#0c0c0a]"
+            )}
             key={entry.path}
+            ref={(node) => {
+              if (node) {
+                entryRefs.current[entry.path] = node;
+              } else {
+                delete entryRefs.current[entry.path];
+              }
+            }}
           >
             <div className="flex flex-wrap items-center justify-between gap-2 border-[#12120f] border-b pb-2">
               <div className="flex flex-col">
