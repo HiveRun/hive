@@ -1,25 +1,12 @@
-import { type Static, t } from "elysia";
+import type { Static } from "elysia";
 
+import type { DiffQuerySchema } from "../schema/api";
 import type { Construct } from "../schema/constructs";
 import {
   type DiffMode,
   getConstructDiffDetails,
   getConstructDiffSummary,
 } from "./diff-service";
-
-export const DiffModeSchema = t.Union([
-  t.Literal("workspace"),
-  t.Literal("branch"),
-]);
-export const DiffSummaryModeSchema = t.Union([
-  t.Literal("full"),
-  t.Literal("none"),
-]);
-export const DiffQuerySchema = t.Object({
-  mode: t.Optional(DiffModeSchema),
-  files: t.Optional(t.String()),
-  summary: t.Optional(DiffSummaryModeSchema),
-});
 
 export type ParsedDiffRequest = {
   mode: DiffMode;

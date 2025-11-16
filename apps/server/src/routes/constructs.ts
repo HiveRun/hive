@@ -18,6 +18,7 @@ import {
   ConstructServiceSchema,
   CreateConstructSchema,
   DeleteConstructsSchema,
+  DiffQuerySchema,
 } from "../schema/api";
 import {
   type ConstructStatus,
@@ -27,7 +28,6 @@ import {
 import { constructServices } from "../schema/services";
 import {
   buildConstructDiffPayload,
-  DiffQuerySchema,
   parseDiffRequest,
 } from "../services/diff-route-helpers";
 import { subscribeToServiceEvents } from "../services/events";

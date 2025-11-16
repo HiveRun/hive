@@ -49,6 +49,22 @@ const DiffStatusSchema = t.Union([
   t.Literal("deleted"),
 ]);
 
+export const DiffModeSchema = t.Union([
+  t.Literal("workspace"),
+  t.Literal("branch"),
+]);
+
+export const DiffSummaryModeSchema = t.Union([
+  t.Literal("full"),
+  t.Literal("none"),
+]);
+
+export const DiffQuerySchema = t.Object({
+  mode: t.Optional(DiffModeSchema),
+  files: t.Optional(t.String()),
+  summary: t.Optional(DiffSummaryModeSchema),
+});
+
 export const DiffFileSummarySchema = t.Object({
   path: t.String(),
   status: DiffStatusSchema,
@@ -67,7 +83,7 @@ export const DiffFileDetailSchema = t.Object({
 });
 
 export const ConstructDiffResponseSchema = t.Object({
-  mode: t.Union([t.Literal("workspace"), t.Literal("branch")]),
+  mode: DiffModeSchema,
   baseCommit: t.Optional(t.Union([t.String(), t.Null()])),
   headCommit: t.Optional(t.Union([t.String(), t.Null()])),
   files: t.Array(DiffFileSummarySchema),
