@@ -753,9 +753,7 @@ function StackedDiffList({
         if (entry.isPending) {
           diffContent = <InlineMessage>Loading diff…</InlineMessage>;
         } else if (entry.detail) {
-          diffContent = (
-            <DiffPreview detail={entry.detail} disableScrollContainer />
-          );
+          diffContent = <DiffPreview detail={entry.detail} />;
         } else {
           diffContent = (
             <InlineMessage>Unable to load diff for this file.</InlineMessage>
@@ -817,30 +815,19 @@ function StatusMessage({ children }: { children: ReactNode }) {
 const DiffScrollContainer = ({
   children,
   testId,
-  disableScroll = false,
 }: {
   children: ReactNode;
   testId: string;
-  disableScroll?: boolean;
 }) => (
   <div
-    className={cn(
-      "flex min-h-0 w-full min-w-0 flex-1 rounded-sm border border-[#1a1a17] bg-[#090909]",
-      disableScroll ? "overflow-visible" : "overflow-auto"
-    )}
+    className="flex min-h-0 w-full min-w-0 flex-1 overflow-auto rounded-sm border border-[#1a1a17] bg-[#090909]"
     data-testid={testId}
   >
     <div className="w-full">{children}</div>
   </div>
 );
 
-function DiffPreview({
-  detail,
-  disableScrollContainer = false,
-}: {
-  detail: DiffFileDetail;
-  disableScrollContainer?: boolean;
-}) {
+function DiffPreview({ detail }: { detail: DiffFileDetail }) {
   const semanticDiff = useMemo(() => {
     if (!(detail.beforeContent || detail.afterContent)) {
       return null;
@@ -855,9 +842,9 @@ function DiffPreview({
     }
   }, [detail.afterContent, detail.beforeContent, detail.path]);
 
-  const content = (() => {
-    if (semanticDiff) {
-      return (
+  if (semanticDiff) {
+    return (
+      <DiffScrollContainer testId="diff-semantic-view">
         <PrecisionFileDiff
           className="precision-diff"
           fileDiff={semanticDiff}
@@ -870,31 +857,21 @@ function DiffPreview({
             overflow: "wrap",
           }}
         />
-      );
-    }
+      </DiffScrollContainer>
+    );
+  }
 
-    if (detail.patch) {
-      return (
+  if (detail.patch) {
+    return (
+      <DiffScrollContainer testId="diff-patch-view">
         <pre className="whitespace-pre-wrap p-3 font-mono text-[#d9dbd2] text-xs leading-relaxed">
           {detail.patch}
         </pre>
-      );
-    }
-
-    return null;
-  })();
-
-  if (!content) {
-    return <StatusMessage>No diff data available.</StatusMessage>;
+      </DiffScrollContainer>
+    );
   }
 
-  const testId = semanticDiff ? "diff-semantic-view" : "diff-patch-view";
-
-  return (
-    <DiffScrollContainer disableScroll={disableScrollContainer} testId={testId}>
-      {content}
-    </DiffScrollContainer>
-  );
+  return <StatusMessage>No diff data available.</StatusMessage>;
 }
 
 function sortFiles(
