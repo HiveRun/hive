@@ -815,19 +815,12 @@ function StatusMessage({ children }: { children: ReactNode }) {
 const DiffScrollContainer = ({
   children,
   testId,
-  overflowY = "auto",
 }: {
   children: ReactNode;
   testId: string;
-  overflowY?: "auto" | "visible";
 }) => (
   <div
-    className={cn(
-      "flex min-h-0 w-full min-w-0 flex-1 rounded-sm border border-[#1a1a17] bg-[#090909]",
-      overflowY === "auto"
-        ? "overflow-auto"
-        : "overflow-x-auto overflow-y-visible"
-    )}
+    className="flex min-h-0 w-full min-w-0 flex-1 overflow-auto rounded-sm border border-[#1a1a17] bg-[#090909]"
     data-testid={testId}
   >
     <div className="w-full">{children}</div>
@@ -888,16 +881,17 @@ function DiffPreview({
     return <StatusMessage>No diff data available.</StatusMessage>;
   }
 
+  if (variant === "stacked") {
+    return (
+      <div className="rounded-sm border border-[#1a1a17] bg-[#090909]">
+        <div className="w-full overflow-x-auto">{content}</div>
+      </div>
+    );
+  }
+
   const testId = semanticDiff ? "diff-semantic-view" : "diff-patch-view";
 
-  return (
-    <DiffScrollContainer
-      overflowY={variant === "stacked" ? "visible" : "auto"}
-      testId={testId}
-    >
-      {content}
-    </DiffScrollContainer>
-  );
+  return <DiffScrollContainer testId={testId}>{content}</DiffScrollContainer>;
 }
 
 function sortFiles(
