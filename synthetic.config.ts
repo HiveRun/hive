@@ -6,6 +6,17 @@ export default defineSyntheticConfig({
     defaultModel: "big-pickle",
   },
   promptSources: ["docs/prompts/**/*.md"],
+  voice: {
+    enabled: true,
+    transcription: {
+      mode: "remote",
+      provider: "openai",
+      model: "whisper-1",
+      language: "en",
+      apiKeyEnv: "OPENAI_API_KEY",
+      // baseUrl: "http://localhost:11434/v1",
+    },
+  },
   defaults: {
     templateId: "synthetic-dev",
   },

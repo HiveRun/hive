@@ -1,6 +1,6 @@
 # Voice Input
 
-- [ ] Voice Input #status/planned #phase-2 #feature/advanced
+- [/] Voice Input #status/in-progress #phase-2 #feature/advanced
 
 ## Goal
 Add voice capture to agent chat so operators can speak prompts and have them transcribed into the conversation.
@@ -70,6 +70,13 @@ Add voice capture to agent chat so operators can speak prompts and have them tra
 - **Agent Chat UX**: Integrates voice controls into chat interface
 - **Persistence Layer**: Stores audio settings and privacy preferences
 - **Configuration System**: Manages transcription service settings
+
+## Current Progress
+- Push-to-talk controls land in the agent chat compose panel with a transcription preview + status messaging.
+- Transcription is handled through the Vercel AI SDK `experimental_transcribe` helper and runs through a new `/api/voice/transcriptions` endpoint so API keys remain server-side.
+- `synthetic.config.ts` now exposes a `voice` stanza that selects remote (hosted) or local (custom base URL) transcription models, with support for OpenAI-compatible stacks and Groq out of the box.
+- Sanitized voice metadata is exposed over `/api/voice/config` so the web UI knows whether to render the voice controls and which model is active.
+- Audio blobs are deleted once the transcript is returned; there is no persistent audio storage in this first iteration.
 
 ## Testing Strategy
 - Test voice capture across different microphones and environments

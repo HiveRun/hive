@@ -120,6 +120,31 @@ bun test:e2e:update-snapshots
 4. Run `bun test:e2e:update-snapshots` to accept the new visuals
 5. Commit both your code changes AND the updated snapshot images
 
+## Voice Input (Beta)
+
+Synthetic now ships optional push-to-talk controls in the agent chat experience. To enable voice input:
+
+1. Update `synthetic.config.ts` with a `voice` block that selects a provider/model and whether it is a remote or local (self-hosted/OpenAI-compatible) endpoint.
+2. Provide the matching API key via the referenced environment variable (defaults are `OPENAI_API_KEY` or `GROQ_API_KEY`). For self-hosted/local deployments set `mode: "local"` and point `baseUrl` at your compatible endpoint (for example `http://localhost:11434/v1`).
+3. Restart the server so `/api/voice/config` and `/api/voice/transcriptions` pick up the new settings.
+4. Visit the agent chat UI — a microphone button appears inside the compose panel when browser recording is allowed.
+
+```ts
+voice: {
+  enabled: true,
+  transcription: {
+    mode: "remote", // or "local" when pointing at a custom base URL
+    provider: "openai", // "groq" is also supported out of the box
+    model: "whisper-1",
+    language: "en",
+    apiKeyEnv: "OPENAI_API_KEY",
+    // baseUrl: "http://localhost:11434/v1", // enable local models
+  },
+},
+```
+
+All audio is captured in-browser, sent once to `/api/voice/transcriptions` for processing through the Vercel AI SDK, and discarded when a transcript is returned.
+
 #### Debugging Failed Snapshot Tests
 
 When snapshot tests fail, Playwright generates several artifacts to help debug:

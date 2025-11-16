@@ -179,3 +179,37 @@ export const RespondPermissionSchema = t.Object({
     t.Literal("reject"),
   ]),
 });
+
+export const VoiceModeSchema = t.Union([
+  t.Literal("remote"),
+  t.Literal("local"),
+]);
+
+export const VoiceConfigResponseSchema = t.Object({
+  voice: t.Object({
+    enabled: t.Boolean(),
+    allowBrowserRecording: t.Boolean(),
+    mode: t.Union([VoiceModeSchema, t.Null()]),
+    provider: t.Union([t.String(), t.Null()]),
+    model: t.Union([t.String(), t.Null()]),
+    language: t.Union([t.String(), t.Null()]),
+  }),
+});
+
+export const VoiceTranscriptionRequestSchema = t.Object({
+  audioBase64: t.String({ minLength: 1 }),
+  mimeType: t.Optional(t.String()),
+});
+
+export const VoiceTranscriptionResponseSchema = t.Object({
+  text: t.String(),
+  language: t.Union([t.String(), t.Null()]),
+  durationInSeconds: t.Union([t.Number(), t.Null()]),
+  segments: t.Array(
+    t.Object({
+      text: t.String(),
+      start: t.Union([t.Number(), t.Null()]),
+      end: t.Union([t.Number(), t.Null()]),
+    })
+  ),
+});

@@ -100,6 +100,59 @@ export const templateSchema = z.object({
     ),
 });
 
+const transcriptionModeSchema = z.enum(["remote", "local"]);
+
+const transcriptionProviderSchema = z.enum(["openai", "groq"]);
+
+const DEFAULT_TRANSCRIPTION_TIMEOUT_MS = 60_000;
+
+export const voiceTranscriptionSchema = z
+  .object({
+    mode: transcriptionModeSchema.default("remote"),
+    provider: transcriptionProviderSchema,
+    model: z
+      .string()
+      .min(1)
+      .describe("Model identifier understood by the selected provider"),
+    language: z
+      .string()
+      .optional()
+      .describe("Language hint passed directly to the provider (ISO-639-1)"),
+    apiKeyEnv: z
+      .string()
+      .optional()
+      .describe("Environment variable that contains the provider API key"),
+    baseUrl: z
+      .string()
+      .url()
+      .optional()
+      .describe("Custom base URL for OpenAI-compatible providers"),
+    timeoutMs: z
+      .number()
+      .int()
+      .positive()
+      .default(DEFAULT_TRANSCRIPTION_TIMEOUT_MS)
+      .describe("Maximum transcription time before the request is aborted"),
+  })
+  .superRefine((value, ctx) => {
+    if (value.mode === "local" && !value.baseUrl) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "baseUrl is required when using local transcription mode",
+        path: ["baseUrl"],
+      });
+    }
+  });
+
+export const voiceConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  allowBrowserRecording: z
+    .boolean()
+    .default(true)
+    .describe("Whether the UI should expose microphone controls"),
+  transcription: voiceTranscriptionSchema,
+});
+
 const opencodeConfigSchema = z.object({
   token: z
     .string()
@@ -136,6 +189,9 @@ export const syntheticConfigSchema = z.object({
   templates: z
     .record(z.string(), templateSchema)
     .describe("Available construct templates"),
+  voice: voiceConfigSchema
+    .optional()
+    .describe("Voice input configuration shared by all constructs"),
   defaults: defaultsSchema
     .optional()
     .describe("Default values for construct creation"),
@@ -147,6 +203,8 @@ export type ComposeService = z.infer<typeof composeServiceSchema>;
 export type Service = z.infer<typeof serviceSchema>;
 export type TemplateAgent = z.infer<typeof templateAgentSchema>;
 export type Template = z.infer<typeof templateSchema>;
+export type VoiceTranscriptionConfig = z.infer<typeof voiceTranscriptionSchema>;
+export type VoiceConfig = z.infer<typeof voiceConfigSchema>;
 export type OpencodeConfig = z.infer<typeof opencodeConfigSchema>;
 export type Defaults = z.infer<typeof defaultsSchema>;
 export type SyntheticConfig = z.infer<typeof syntheticConfigSchema>;

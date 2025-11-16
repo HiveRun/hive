@@ -24,9 +24,12 @@
     "test:run": "bun test"
   },
   "dependencies": {
+    "@ai-sdk/groq": "^2.0.29",
+    "@ai-sdk/openai": "^2.0.67",
     "@bogeychan/elysia-logger": "^0.1.10",
     "@elysiajs/cors": "^1.3.3",
     "@opencode-ai/sdk": "catalog:",
+    "ai": "^5.0.93",
     "dotenv": "catalog:",
     "drizzle-orm": "^0.44.2",
     "elysia": "^1.3.21",

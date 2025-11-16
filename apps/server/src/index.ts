@@ -8,6 +8,7 @@ import { db } from "./db";
 import { agentsRoutes } from "./routes/agents";
 import { constructsRoutes } from "./routes/constructs";
 import { templatesRoutes } from "./routes/templates";
+import { voiceRoutes } from "./routes/voice";
 import { constructs } from "./schema/constructs";
 import {
   bootstrapServiceSupervisor,
@@ -98,6 +99,7 @@ const app = new Elysia()
   .use(templatesRoutes)
   .use(constructsRoutes)
   .use(agentsRoutes)
+  .use(voiceRoutes)
   .listen(PORT);
 
 export type App = typeof app;

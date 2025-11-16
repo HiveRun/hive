@@ -19,6 +19,8 @@ const SAMPLE_OPENCODE_CONFIG = {
   defaultModel: "big-pickle",
 } as const;
 
+const BASE_URL_ERROR_REGEX = /baseUrl/;
+
 // Expected output constants
 const EXPECTED = {
   templateType: "manual",
@@ -90,6 +92,63 @@ describe("Synthetic Config Schema", () => {
     const result = syntheticConfigSchema.parse(minimalConfig);
     expect(result.templates[EXPECTED.configKey]).toBeDefined();
     expect(result.opencode.defaultProvider).toBe("zen");
+  });
+
+  it("should accept a local transcription configuration", () => {
+    const configWithVoice = {
+      opencode: SAMPLE_OPENCODE_CONFIG,
+      promptSources: [],
+      templates: {
+        basic: {
+          id: "basic",
+          label: "Basic",
+          type: "manual" as const,
+        },
+      },
+      voice: {
+        enabled: true,
+        transcription: {
+          mode: "local" as const,
+          provider: "openai" as const,
+          model: "whisper-1",
+          baseUrl: "http://localhost:11434/v1",
+          language: "en",
+        },
+      },
+    };
+
+    const result = syntheticConfigSchema.parse(configWithVoice);
+    expect(result.voice?.enabled).toBe(true);
+    expect(result.voice?.transcription.mode).toBe("local");
+    expect(result.voice?.transcription.baseUrl).toBe(
+      "http://localhost:11434/v1"
+    );
+  });
+
+  it("should reject local transcription config without baseUrl", () => {
+    const invalidVoiceConfig = {
+      opencode: SAMPLE_OPENCODE_CONFIG,
+      promptSources: [],
+      templates: {
+        basic: {
+          id: "basic",
+          label: "Basic",
+          type: "manual" as const,
+        },
+      },
+      voice: {
+        enabled: true,
+        transcription: {
+          mode: "local" as const,
+          provider: "openai" as const,
+          model: "whisper-1",
+        },
+      },
+    } as const;
+
+    expect(() => syntheticConfigSchema.parse(invalidVoiceConfig)).toThrow(
+      BASE_URL_ERROR_REGEX
+    );
   });
 });
 
