@@ -817,12 +817,17 @@ function StatusMessage({ children }: { children: ReactNode }) {
 const DiffScrollContainer = ({
   children,
   testId,
+  disableScroll = false,
 }: {
   children: ReactNode;
   testId: string;
+  disableScroll?: boolean;
 }) => (
   <div
-    className="flex min-h-0 w-full min-w-0 flex-1 overflow-auto rounded-sm border border-[#1a1a17] bg-[#090909]"
+    className={cn(
+      "flex min-h-0 w-full min-w-0 flex-1 rounded-sm border border-[#1a1a17] bg-[#090909]",
+      disableScroll ? "overflow-visible" : "overflow-auto"
+    )}
     data-testid={testId}
   >
     <div className="w-full">{children}</div>
@@ -883,17 +888,13 @@ function DiffPreview({
     return <StatusMessage>No diff data available.</StatusMessage>;
   }
 
-  if (disableScrollContainer) {
-    return (
-      <div className="rounded-sm border border-[#1a1a17] bg-[#090909]">
-        {content}
-      </div>
-    );
-  }
-
   const testId = semanticDiff ? "diff-semantic-view" : "diff-patch-view";
 
-  return <DiffScrollContainer testId={testId}>{content}</DiffScrollContainer>;
+  return (
+    <DiffScrollContainer disableScroll={disableScrollContainer} testId={testId}>
+      {content}
+    </DiffScrollContainer>
+  );
 }
 
 function sortFiles(
