@@ -81,9 +81,6 @@ Provide a comprehensive diff review experience within Synthetic so users can rev
 - Test staging and commit workflows
 - Cross-browser compatibility testing for diff rendering
 
-## Testing Strategy
-*This section needs to be filled in with specific testing approaches for diff review functionality.*
-
 ## Investigation Notes (2025-11-15)
 
 ### Diff Engines
