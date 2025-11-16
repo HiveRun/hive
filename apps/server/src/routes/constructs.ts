@@ -97,9 +97,11 @@ const LOGGER_CONFIG = {
 } as const;
 
 const DiffModeSchema = t.Union([t.Literal("workspace"), t.Literal("branch")]);
+const DiffSummaryModeSchema = t.Union([t.Literal("full"), t.Literal("none")]);
 const DiffQuerySchema = t.Object({
   mode: t.Optional(DiffModeSchema),
   files: t.Optional(t.String()),
+  summary: t.Optional(DiffSummaryModeSchema),
 });
 
 function isPortActive(port?: number | null): Promise<boolean> {
@@ -146,6 +148,7 @@ function constructToResponse(construct: typeof constructs.$inferSelect) {
 type ParsedDiffRequest = {
   mode: DiffMode;
   files: string[];
+  includeSummary: boolean;
 };
 
 type DiffRequestParseResult =
@@ -174,12 +177,52 @@ function parseDiffRequest(
     )
   );
 
+  const includeSummary = query.summary !== "none";
+
   return {
     ok: true,
     value: {
       mode,
       files,
+      includeSummary,
     },
+  };
+}
+
+async function buildConstructDiffPayload(
+  construct: typeof constructs.$inferSelect,
+  request: ParsedDiffRequest
+) {
+  const { mode, files, includeSummary } = request;
+  const requestedBaseCommit =
+    mode === "branch" ? (construct.baseCommit ?? null) : null;
+
+  const summary = includeSummary
+    ? await getConstructDiffSummary({
+        workspacePath: construct.workspacePath,
+        mode,
+        baseCommit: requestedBaseCommit,
+      })
+    : null;
+
+  const resolvedBaseCommit = summary?.baseCommit ?? requestedBaseCommit ?? null;
+
+  const details = files.length
+    ? await getConstructDiffDetails({
+        workspacePath: construct.workspacePath,
+        mode,
+        baseCommit: resolvedBaseCommit,
+        files,
+        summaryFiles: summary?.files,
+      })
+    : undefined;
+
+  return {
+    mode,
+    baseCommit: summary?.baseCommit ?? resolvedBaseCommit,
+    headCommit: summary?.headCommit ?? null,
+    files: summary?.files ?? [],
+    details,
   };
 }
 
@@ -385,29 +428,7 @@ export function createConstructsRoutes(
         }
 
         try {
-          const summary = await getConstructDiffSummary({
-            workspacePath: construct.workspacePath,
-            mode: parsed.value.mode,
-            baseCommit: construct.baseCommit ?? null,
-          });
-
-          const details = parsed.value.files.length
-            ? await getConstructDiffDetails({
-                workspacePath: construct.workspacePath,
-                mode: parsed.value.mode,
-                baseCommit: summary.baseCommit,
-                files: parsed.value.files,
-                summaryFiles: summary.files,
-              })
-            : undefined;
-
-          return {
-            mode: parsed.value.mode,
-            baseCommit: summary.baseCommit,
-            headCommit: summary.headCommit,
-            files: summary.files,
-            details,
-          };
+          return await buildConstructDiffPayload(construct, parsed.value);
         } catch (error) {
           set.status = HTTP_STATUS.INTERNAL_ERROR;
           return {

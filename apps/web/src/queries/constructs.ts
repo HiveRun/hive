@@ -141,12 +141,20 @@ export const constructMutations = {
 };
 
 export const constructDiffQueries = {
-  summary: (constructId: string, mode: DiffMode) => ({
+  summary: (
+    constructId: string,
+    mode: DiffMode,
+    options: { files?: string[] } = {}
+  ) => ({
     queryKey: ["construct-diff", constructId, mode, "summary"] as const,
     queryFn: async (): Promise<ConstructDiffResponse> => {
+      const query: Record<string, string> = { mode };
+      if (options.files?.length) {
+        query.files = options.files.join(",");
+      }
       const { data, error } = await rpc.api
         .constructs({ id: constructId })
-        .diff.get({ query: { mode } });
+        .diff.get({ query });
       if (error) {
         throw new Error("Failed to load construct diff");
       }
@@ -162,6 +170,7 @@ export const constructDiffQueries = {
           query: {
             mode,
             files: file,
+            summary: "none",
           },
         });
       if (error) {

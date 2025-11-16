@@ -262,7 +262,7 @@ export async function getConstructDiffDetails(args: {
   mode: DiffMode;
   files: string[];
   baseCommit: string | null;
-  summaryFiles: DiffFileSummary[];
+  summaryFiles?: DiffFileSummary[];
 }): Promise<DiffFileDetail[]> {
   const { workspacePath, mode, files, baseCommit, summaryFiles } = args;
 
@@ -271,12 +271,21 @@ export async function getConstructDiffDetails(args: {
   }
 
   const uniqueFiles = Array.from(new Set(files));
-  const summaryMap = new Map(summaryFiles.map((file) => [file.path, file]));
+  const summaryMap = summaryFiles
+    ? new Map(summaryFiles.map((file) => [file.path, file]))
+    : null;
   const rangeArgs = buildRangeArgs(mode, baseCommit);
 
   const details = await Promise.all(
-    uniqueFiles.map((path) => {
-      const summary = summaryMap.get(path);
+    uniqueFiles.map(async (path) => {
+      const summary = summaryMap?.get(path)
+        ? summaryMap.get(path)
+        : await computeSingleFileSummary({
+            workspacePath,
+            mode,
+            baseCommit,
+            path,
+          });
       if (!summary) {
         return null;
       }
@@ -291,6 +300,69 @@ export async function getConstructDiffDetails(args: {
   );
 
   return details.filter((detail): detail is DiffFileDetail => Boolean(detail));
+}
+
+async function computeSingleFileSummary(args: {
+  workspacePath: string;
+  mode: DiffMode;
+  baseCommit: string | null;
+  path: string;
+}): Promise<DiffFileSummary | null> {
+  const { workspacePath, mode, baseCommit, path } = args;
+  const rangeArgs = buildRangeArgs(mode, baseCommit);
+  const numstatArgs = ["diff", "--numstat", ...rangeArgs, "--", path];
+  const statusArgs = ["diff", "--name-status", ...rangeArgs, "--", path];
+
+  const [numstatResult, statusResult] = await Promise.allSettled([
+    runGit(numstatArgs, workspacePath),
+    runGit(statusArgs, workspacePath),
+  ]);
+
+  let statsMap: StatsMap = new Map();
+  let statusMap: StatusMap = new Map();
+
+  if (numstatResult.status === "fulfilled") {
+    statsMap = parseNumstatOutput(numstatResult.value.stdout);
+  }
+  if (statusResult.status === "fulfilled") {
+    statusMap = parseStatusOutput(statusResult.value.stdout);
+  }
+
+  const stats = statsMap.get(path);
+  const status = statusMap.get(path);
+
+  if (stats || status) {
+    return {
+      path,
+      status: status ?? "modified",
+      additions: stats?.additions ?? 0,
+      deletions: stats?.deletions ?? 0,
+    };
+  }
+
+  const untracked = await isUntrackedFile(workspacePath, path);
+  if (untracked) {
+    const workingContent = await readWorkingTreeFile(workspacePath, path);
+    return {
+      path,
+      status: "added",
+      additions: countLines(workingContent),
+      deletions: 0,
+    };
+  }
+
+  return null;
+}
+
+async function isUntrackedFile(
+  workspacePath: string,
+  path: string
+): Promise<boolean> {
+  const { stdout } = await runGit(
+    ["ls-files", ...UNTRACKED_EXCLUDES, "--", path],
+    workspacePath
+  );
+  return stdout.trim().length > 0;
 }
 
 async function buildFileDetail(args: {

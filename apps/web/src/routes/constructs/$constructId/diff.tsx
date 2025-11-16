@@ -83,9 +83,12 @@ type DiffSortMode = keyof typeof DIFF_SORT_OPTIONS;
 
 export const Route = createFileRoute("/constructs/$constructId/diff")({
   validateSearch: (search) => diffSearchSchema.parse(search),
-  loader: async ({ params, context: { queryClient } }) => {
+  loaderDeps: ({ search }) => ({
+    mode: (search?.mode ?? "workspace") as DiffMode,
+  }),
+  loader: async ({ params, context: { queryClient }, deps }) => {
     await queryClient.ensureQueryData(
-      constructDiffQueries.summary(params.constructId, "workspace")
+      constructDiffQueries.summary(params.constructId, deps.mode)
     );
     return null;
   },
@@ -99,6 +102,8 @@ function ConstructDiffRoute() {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState("");
   const [sortMode, setSortMode] = useState<DiffSortMode>(DEFAULT_SORT_MODE);
+  const detailCacheRef = useRef<Map<string, DiffFileDetail>>(new Map());
+  const [, setDetailCacheVersion] = useState(0);
 
   const mode = (search.mode ?? "workspace") as DiffMode;
 
@@ -106,6 +111,14 @@ function ConstructDiffRoute() {
     constructDiffQueries.summary(constructId, mode)
   );
   const summary = summaryQuery.data;
+
+  useEffect(() => {
+    detailCacheRef.current.clear();
+    for (const fileDetail of summary.details ?? []) {
+      detailCacheRef.current.set(fileDetail.path, fileDetail);
+    }
+    setDetailCacheVersion((version) => version + 1);
+  }, [summary]);
 
   const constructQuery = useQuery(constructQueries.detail(constructId));
   const branchAvailable = Boolean(constructQuery.data?.baseCommit);
@@ -167,15 +180,40 @@ function ConstructDiffRoute() {
     });
   }, []);
 
+  const cachedDetail = selectedFile
+    ? (detailCacheRef.current.get(selectedFile) ?? null)
+    : null;
+
+  const needsDetailFetch = Boolean(selectedFile && !cachedDetail);
+
   const detailQuery = useQuery({
-    ...constructDiffQueries.detail(
-      constructId,
-      mode,
-      selectedFile ?? "__none__"
-    ),
-    enabled: Boolean(selectedFile),
+    ...(selectedFile
+      ? constructDiffQueries.detail(constructId, mode, selectedFile)
+      : {
+          queryKey: [
+            "construct-diff",
+            constructId,
+            mode,
+            "detail",
+            "__none__",
+          ] as const,
+          queryFn: async () => null,
+        }),
+    enabled: needsDetailFetch,
   });
-  const detail = selectedFile ? (detailQuery.data ?? null) : null;
+
+  useEffect(() => {
+    if (!detailQuery.data) {
+      return;
+    }
+    if (detailCacheRef.current.has(detailQuery.data.path)) {
+      return;
+    }
+    detailCacheRef.current.set(detailQuery.data.path, detailQuery.data);
+    setDetailCacheVersion((version) => version + 1);
+  }, [detailQuery.data]);
+
+  const detail = cachedDetail ?? detailQuery.data ?? null;
 
   const totals = useMemo(
     () =>
@@ -252,7 +290,7 @@ function ConstructDiffRoute() {
         />
         <DiffViewer
           detail={detail}
-          detailPending={detailQuery.isPending}
+          detailPending={needsDetailFetch ? detailQuery.isPending : false}
           hasVisibleFiles={hasVisibleFiles}
           selectedFile={selectedFile}
         />
