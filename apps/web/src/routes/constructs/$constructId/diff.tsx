@@ -817,17 +817,12 @@ function StatusMessage({ children }: { children: ReactNode }) {
 const DiffScrollContainer = ({
   children,
   testId,
-  disableScroll = false,
 }: {
   children: ReactNode;
   testId: string;
-  disableScroll?: boolean;
 }) => (
   <div
-    className={cn(
-      "flex min-h-0 w-full min-w-0 flex-1 rounded-sm border border-[#1a1a17] bg-[#090909]",
-      disableScroll ? "overflow-visible" : "overflow-auto"
-    )}
+    className="flex min-h-0 w-full min-w-0 flex-1 overflow-auto rounded-sm border border-[#1a1a17] bg-[#090909]"
     data-testid={testId}
   >
     <div className="w-full">{children}</div>
@@ -855,12 +850,9 @@ function DiffPreview({
     }
   }, [detail.afterContent, detail.beforeContent, detail.path]);
 
-  if (semanticDiff) {
-    return (
-      <DiffScrollContainer
-        disableScroll={disableScrollContainer}
-        testId="diff-semantic-view"
-      >
+  const content = (() => {
+    if (semanticDiff) {
+      return (
         <PrecisionFileDiff
           className="precision-diff"
           fileDiff={semanticDiff}
@@ -873,24 +865,35 @@ function DiffPreview({
             overflow: "wrap",
           }}
         />
-      </DiffScrollContainer>
-    );
-  }
+      );
+    }
 
-  if (detail.patch) {
-    return (
-      <DiffScrollContainer
-        disableScroll={disableScrollContainer}
-        testId="diff-patch-view"
-      >
+    if (detail.patch) {
+      return (
         <pre className="whitespace-pre-wrap p-3 font-mono text-[#d9dbd2] text-xs leading-relaxed">
           {detail.patch}
         </pre>
-      </DiffScrollContainer>
+      );
+    }
+
+    return null;
+  })();
+
+  if (!content) {
+    return <StatusMessage>No diff data available.</StatusMessage>;
+  }
+
+  if (disableScrollContainer) {
+    return (
+      <div className="rounded-sm border border-[#1a1a17] bg-[#090909]">
+        {content}
+      </div>
     );
   }
 
-  return <StatusMessage>No diff data available.</StatusMessage>;
+  const testId = semanticDiff ? "diff-semantic-view" : "diff-patch-view";
+
+  return <DiffScrollContainer testId={testId}>{content}</DiffScrollContainer>;
 }
 
 function sortFiles(
