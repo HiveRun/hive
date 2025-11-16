@@ -1,7 +1,6 @@
 import { parseDiffFromFile } from "@pierre/precision-diffs";
 import { FileDiff as PrecisionFileDiff } from "@pierre/precision-diffs/react";
 import {
-  useQueries,
   useQuery,
   useQueryClient,
   useSuspenseQuery,
@@ -78,22 +77,9 @@ const DIFF_SORT_OPTIONS = {
   },
 } as const;
 
-const DIFF_VIEW_MODE_META = {
-  single: {
-    label: "Focused",
-    description: "View one file at a time",
-  },
-  stacked: {
-    label: "All files",
-    description: "Show every diff sequentially",
-  },
-} as const;
-
 const DEFAULT_SORT_MODE = "impact-desc" as const;
-const DEFAULT_VIEW_MODE = "single" as const;
 
 type DiffSortMode = keyof typeof DIFF_SORT_OPTIONS;
-type DiffViewMode = keyof typeof DIFF_VIEW_MODE_META;
 
 export const Route = createFileRoute("/constructs/$constructId/diff")({
   validateSearch: (search) => diffSearchSchema.parse(search),
@@ -113,7 +99,6 @@ function ConstructDiffRoute() {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState("");
   const [sortMode, setSortMode] = useState<DiffSortMode>(DEFAULT_SORT_MODE);
-  const [viewMode, setViewMode] = useState<DiffViewMode>(DEFAULT_VIEW_MODE);
 
   const mode = (search.mode ?? "workspace") as DiffMode;
 
@@ -192,30 +177,6 @@ function ConstructDiffRoute() {
   });
   const detail = selectedFile ? (detailQuery.data ?? null) : null;
 
-  const stackedQueryConfigs = useMemo(() => {
-    if (viewMode !== "stacked") {
-      return [];
-    }
-    return sortedFiles.map((file) => ({
-      ...constructDiffQueries.detail(constructId, mode, file.path),
-      enabled: true,
-    }));
-  }, [constructId, mode, sortedFiles, viewMode]);
-
-  const stackedQueries = useQueries({ queries: stackedQueryConfigs });
-
-  const stackedEntries = useMemo(() => {
-    if (viewMode !== "stacked") {
-      return [];
-    }
-    return sortedFiles.map((file, index) => ({
-      path: file.path,
-      summary: file,
-      detail: (stackedQueries[index]?.data ?? null) as DiffFileDetail | null,
-      isPending: stackedQueries[index]?.isPending ?? false,
-    }));
-  }, [sortedFiles, stackedQueries, viewMode]);
-
   const totals = useMemo(
     () =>
       summary.files.reduce(
@@ -293,10 +254,7 @@ function ConstructDiffRoute() {
           detail={detail}
           detailPending={detailQuery.isPending}
           hasVisibleFiles={hasVisibleFiles}
-          onViewModeChange={setViewMode}
           selectedFile={selectedFile}
-          stackedEntries={stackedEntries}
-          viewMode={viewMode}
         />
       </div>
     </div>
@@ -615,33 +573,20 @@ type FileTreeNode =
       impact: number;
     };
 
-type StackedDiffEntry = {
-  path: string;
-  summary: DiffFileSummary;
-  detail: DiffFileDetail | null;
-  isPending: boolean;
-};
-
 type DiffViewerProps = {
   detail: DiffFileDetail | null;
   detailPending: boolean;
   hasVisibleFiles: boolean;
-  onViewModeChange: (mode: DiffViewMode) => void;
   selectedFile: string | null;
-  stackedEntries: StackedDiffEntry[];
-  viewMode: DiffViewMode;
 };
 
 function DiffViewer({
   detail,
   detailPending,
   hasVisibleFiles,
-  onViewModeChange,
   selectedFile,
-  stackedEntries,
-  viewMode,
 }: DiffViewerProps) {
-  const renderSingleState = () => {
+  const renderState = () => {
     if (!hasVisibleFiles) {
       return <StatusMessage>No files match the current filters.</StatusMessage>;
     }
@@ -657,150 +602,23 @@ function DiffViewer({
     return <StatusMessage>Unable to load diff for this file.</StatusMessage>;
   };
 
-  const headerLabel =
-    viewMode === "single" ? selectedFile || "No file selected" : "All files";
-
   return (
     <section className="flex min-h-0 flex-1 flex-col gap-3 border border-[#1a1a17] bg-[#060606] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2 border-[#12120f] border-b pb-2">
         <div className="flex flex-col">
           <span className="text-[#6c6e66] text-xs uppercase tracking-[0.3em]">
-            {headerLabel}
+            {selectedFile || "No file selected"}
           </span>
-          {viewMode === "single" && detail ? (
+          {detail ? (
             <span className="text-[#96988f] text-[11px]">
               +{detail.additions} / -{detail.deletions}
             </span>
           ) : null}
-          {viewMode === "stacked" ? (
-            <span className="text-[#808279] text-[11px] uppercase tracking-[0.2em]">
-              {stackedEntries.length} file(s)
-            </span>
-          ) : null}
         </div>
-        <DiffViewModeToggle onModeChange={onViewModeChange} value={viewMode} />
       </div>
 
-      {viewMode === "single" ? (
-        renderSingleState()
-      ) : (
-        <StackedDiffList
-          entries={stackedEntries}
-          hasVisibleFiles={hasVisibleFiles}
-          selectedFile={selectedFile}
-        />
-      )}
+      {renderState()}
     </section>
-  );
-}
-
-function DiffViewModeToggle({
-  onModeChange,
-  value,
-}: {
-  onModeChange: (mode: DiffViewMode) => void;
-  value: DiffViewMode;
-}) {
-  return (
-    <div className="flex gap-2">
-      {(Object.keys(DIFF_VIEW_MODE_META) as DiffViewMode[]).map((modeKey) => (
-        <Button
-          key={modeKey}
-          onClick={() => onModeChange(modeKey)}
-          size="sm"
-          variant={value === modeKey ? "secondary" : "outline"}
-        >
-          {DIFF_VIEW_MODE_META[modeKey].label}
-        </Button>
-      ))}
-    </div>
-  );
-}
-
-function StackedDiffList({
-  entries,
-  hasVisibleFiles,
-  selectedFile,
-}: {
-  entries: StackedDiffEntry[];
-  hasVisibleFiles: boolean;
-  selectedFile: string | null;
-}) {
-  const entryRefs = useRef<Record<string, HTMLElement | null>>({});
-
-  useEffect(() => {
-    if (!selectedFile) {
-      return;
-    }
-    const target = entryRefs.current[selectedFile];
-    if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-  }, [selectedFile]);
-
-  if (!hasVisibleFiles) {
-    return <StatusMessage>No files match the current filters.</StatusMessage>;
-  }
-
-  if (entries.length === 0) {
-    return <StatusMessage>No files available.</StatusMessage>;
-  }
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto pr-1">
-      {entries.map((entry) => {
-        let diffContent: ReactNode;
-        if (entry.isPending) {
-          diffContent = <InlineMessage>Loading diff…</InlineMessage>;
-        } else if (entry.detail) {
-          diffContent = <DiffPreview detail={entry.detail} variant="stacked" />;
-        } else {
-          diffContent = (
-            <InlineMessage>Unable to load diff for this file.</InlineMessage>
-          );
-        }
-
-        const isSelected = entry.path === selectedFile;
-
-        return (
-          <article
-            className={cn(
-              "flex min-h-0 flex-col gap-2 border border-[#1a1a17] bg-[#080808] p-3",
-              isSelected && "border-[#3b3c33] bg-[#0c0c0a]"
-            )}
-            key={entry.path}
-            ref={(node) => {
-              if (node) {
-                entryRefs.current[entry.path] = node;
-              } else {
-                delete entryRefs.current[entry.path];
-              }
-            }}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2 border-[#12120f] border-b pb-2">
-              <div className="flex flex-col">
-                <span className="text-[#f3f4ed] text-xs uppercase tracking-[0.3em]">
-                  {entry.path}
-                </span>
-                <span className="text-[#808279] text-[10px] uppercase tracking-[0.25em]">
-                  {entry.summary.status} · +{entry.summary.additions} / -
-                  {entry.summary.deletions}
-                </span>
-              </div>
-            </div>
-            {diffContent}
-          </article>
-        );
-      })}
-    </div>
-  );
-}
-
-function InlineMessage({ children }: { children: ReactNode }) {
-  return (
-    <div className="rounded-sm border border-[#1a1a17] bg-[#090909] p-3 text-[#8b8d85] text-xs">
-      {children}
-    </div>
   );
 }
 
