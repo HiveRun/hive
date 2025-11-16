@@ -284,11 +284,10 @@ function FileSidebar({
                   type="button"
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <div className="flex flex-col">
+                    <div className="flex min-w-0 flex-col">
                       <span className="break-words text-[#f3f4ed]">
                         {file.path}
                       </span>
-
                       <span className="text-[#808279] text-[10px] uppercase tracking-[0.25em]">
                         {file.status}
                       </span>
