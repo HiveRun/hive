@@ -25,11 +25,11 @@ import {
   type NewConstruct,
 } from "../schema/constructs";
 import { constructServices } from "../schema/services";
-import type { DiffMode } from "../services/diff-service";
 import {
-  getConstructDiffDetails,
-  getConstructDiffSummary,
-} from "../services/diff-service";
+  buildConstructDiffPayload,
+  DiffQuerySchema,
+  parseDiffRequest,
+} from "../services/diff-route-helpers";
 import { subscribeToServiceEvents } from "../services/events";
 import {
   CommandExecutionError,
@@ -96,14 +96,6 @@ const LOGGER_CONFIG = {
       : undefined,
 } as const;
 
-const DiffModeSchema = t.Union([t.Literal("workspace"), t.Literal("branch")]);
-const DiffSummaryModeSchema = t.Union([t.Literal("full"), t.Literal("none")]);
-const DiffQuerySchema = t.Object({
-  mode: t.Optional(DiffModeSchema),
-  files: t.Optional(t.String()),
-  summary: t.Optional(DiffSummaryModeSchema),
-});
-
 function isPortActive(port?: number | null): Promise<boolean> {
   if (!port) {
     return Promise.resolve(false);
@@ -142,87 +134,6 @@ function constructToResponse(construct: typeof constructs.$inferSelect) {
     lastSetupError: construct.lastSetupError ?? undefined,
     branchName: construct.branchName ?? undefined,
     baseCommit: construct.baseCommit ?? undefined,
-  };
-}
-
-type ParsedDiffRequest = {
-  mode: DiffMode;
-  files: string[];
-  includeSummary: boolean;
-};
-
-type DiffRequestParseResult =
-  | { ok: true; value: ParsedDiffRequest }
-  | { ok: false; status: number; message: string };
-
-function parseDiffRequest(
-  construct: typeof constructs.$inferSelect,
-  query: Static<typeof DiffQuerySchema>
-): DiffRequestParseResult {
-  const mode = (query.mode ?? "workspace") as DiffMode;
-  if (mode === "branch" && !construct.baseCommit) {
-    return {
-      ok: false,
-      status: HTTP_STATUS.BAD_REQUEST,
-      message: "Construct is missing base commit metadata",
-    };
-  }
-
-  const files = Array.from(
-    new Set(
-      (query.files ?? "")
-        .split(",")
-        .map((file) => file.trim())
-        .filter(Boolean)
-    )
-  );
-
-  const includeSummary = query.summary !== "none";
-
-  return {
-    ok: true,
-    value: {
-      mode,
-      files,
-      includeSummary,
-    },
-  };
-}
-
-async function buildConstructDiffPayload(
-  construct: typeof constructs.$inferSelect,
-  request: ParsedDiffRequest
-) {
-  const { mode, files, includeSummary } = request;
-  const requestedBaseCommit =
-    mode === "branch" ? (construct.baseCommit ?? null) : null;
-
-  const summary = includeSummary
-    ? await getConstructDiffSummary({
-        workspacePath: construct.workspacePath,
-        mode,
-        baseCommit: requestedBaseCommit,
-      })
-    : null;
-
-  const resolvedBaseCommit = summary?.baseCommit ?? requestedBaseCommit ?? null;
-
-  const details = files.length
-    ? await getConstructDiffDetails({
-        workspacePath: construct.workspacePath,
-        mode,
-        baseCommit: resolvedBaseCommit,
-        files,
-        summaryFiles: summary?.files,
-      })
-    : undefined;
-
-  return {
-    mode,
-    baseCommit: summary?.baseCommit ?? resolvedBaseCommit,
-    headCommit: summary?.headCommit ?? null,
-    files: summary?.files ?? [],
-    details,
   };
 }
 

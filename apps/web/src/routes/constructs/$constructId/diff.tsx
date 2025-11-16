@@ -81,22 +81,30 @@ const DEFAULT_SORT_MODE = "impact-desc" as const;
 
 type DiffSortMode = keyof typeof DIFF_SORT_OPTIONS;
 
+type DiffLoaderData = {
+  initialFiles: string[];
+};
+
 export const Route = createFileRoute("/constructs/$constructId/diff")({
   validateSearch: (search) => diffSearchSchema.parse(search),
   loaderDeps: ({ search }) => ({
     mode: (search?.mode ?? "workspace") as DiffMode,
+    initialFiles: search?.file ? [search.file] : [],
   }),
   loader: async ({ params, context: { queryClient }, deps }) => {
     await queryClient.ensureQueryData(
-      constructDiffQueries.summary(params.constructId, deps.mode)
+      constructDiffQueries.summary(params.constructId, deps.mode, {
+        files: deps.initialFiles,
+      })
     );
-    return null;
+    return { initialFiles: deps.initialFiles } satisfies DiffLoaderData;
   },
   component: ConstructDiffRoute,
 });
 
 function ConstructDiffRoute() {
   const { constructId } = Route.useParams();
+  const { initialFiles } = Route.useLoaderData() as DiffLoaderData;
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const queryClient = useQueryClient();
@@ -108,7 +116,9 @@ function ConstructDiffRoute() {
   const mode = (search.mode ?? "workspace") as DiffMode;
 
   const summaryQuery = useSuspenseQuery(
-    constructDiffQueries.summary(constructId, mode)
+    constructDiffQueries.summary(constructId, mode, {
+      files: initialFiles,
+    })
   );
   const summary = summaryQuery.data;
 

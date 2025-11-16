@@ -47,9 +47,7 @@ bun dev
 
 
 
-
 ## Project Structure
-
 
 ```
 synthetic/
