@@ -12,6 +12,7 @@ import {
   VoiceTranscriptionRequestSchema,
   VoiceTranscriptionResponseSchema,
 } from "../schema/api";
+import { transcribeLocalAudio } from "../voice/local-transcriber";
 
 const HTTP_STATUS = {
   BAD_REQUEST: 400,
@@ -57,8 +58,27 @@ export const voiceRoutes = new Elysia({ prefix: "/api/voice" })
         return { message: "Audio payload is empty" };
       }
 
+      if (voice.transcription.mode === "local") {
+        try {
+          const result = await transcribeLocalAudio({
+            audio: audioBytes,
+            model: voice.transcription.model,
+            language: voice.transcription.language,
+          });
+          return serializeTranscription(result);
+        } catch (error) {
+          set.status = HTTP_STATUS.SERVICE_UNAVAILABLE;
+          return {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to transcribe audio",
+          };
+        }
+      }
+
       try {
-        const { model, providerOptions, timeoutMs } = createModelFactory(
+        const { model, providerOptions, timeoutMs } = createRemoteModelFactory(
           voice.transcription
         );
         const result = await transcribe({
@@ -71,7 +91,16 @@ export const voiceRoutes = new Elysia({ prefix: "/api/voice" })
               : undefined,
         });
 
-        return serializeTranscription(result);
+        return serializeTranscription({
+          text: result.text,
+          language: result.language ?? null,
+          durationInSeconds: result.durationInSeconds ?? null,
+          segments: (result.segments ?? []).map((segment) => ({
+            text: segment.text,
+            startSecond: segment.startSecond ?? null,
+            endSecond: segment.endSecond ?? null,
+          })),
+        });
       } catch (error) {
         set.status = HTTP_STATUS.SERVICE_UNAVAILABLE;
         return {
@@ -105,11 +134,15 @@ function serializeVoiceConfig(voice?: VoiceConfig) {
   }
 
   const { transcription } = voice;
+  const providerLabel =
+    transcription.mode === "local"
+      ? "local"
+      : (transcription.provider as string | null);
   return {
     enabled: voice.enabled,
     allowBrowserRecording: voice.allowBrowserRecording,
     mode: voice.enabled ? transcription.mode : null,
-    provider: voice.enabled ? transcription.provider : null,
+    provider: voice.enabled ? providerLabel : null,
     model: voice.enabled ? transcription.model : null,
     language: transcription.language ?? null,
   } as const;
@@ -126,6 +159,11 @@ function decodeAudio(audioBase64: string) {
   return new Uint8Array(buffer);
 }
 
+type RemoteVoiceTranscriptionConfig = Extract<
+  VoiceTranscriptionConfig,
+  { mode: "remote" }
+>;
+
 type ProviderOptionsMap = Record<string, Record<string, JSONValue>>;
 
 type ModelFactoryResult = {
@@ -134,8 +172,8 @@ type ModelFactoryResult = {
   timeoutMs: number;
 };
 
-function createModelFactory(
-  transcription: VoiceTranscriptionConfig
+function createRemoteModelFactory(
+  transcription: RemoteVoiceTranscriptionConfig
 ): ModelFactoryResult {
   const apiKeyEnv =
     transcription.apiKeyEnv ??
@@ -143,7 +181,7 @@ function createModelFactory(
     undefined;
   const apiKey = apiKeyEnv ? Bun.env[apiKeyEnv] : undefined;
 
-  if (!apiKey && transcription.mode === "remote" && apiKeyEnv) {
+  if (!apiKey && apiKeyEnv) {
     throw new Error(
       `Missing API key for ${transcription.provider}. Set ${apiKeyEnv}.`
     );
@@ -163,7 +201,7 @@ function createModelFactory(
 }
 
 function createOpenAIModel(
-  transcription: VoiceTranscriptionConfig,
+  transcription: RemoteVoiceTranscriptionConfig,
   apiKey?: string
 ): ModelFactoryResult {
   const options: Parameters<typeof createOpenAI>[0] = {};
@@ -172,9 +210,6 @@ function createOpenAIModel(
   }
   if (transcription.baseUrl) {
     options.baseURL = transcription.baseUrl;
-  }
-  if (transcription.mode === "local") {
-    options.name = "local-openai";
   }
 
   const openai = createOpenAI(options);
@@ -186,7 +221,7 @@ function createOpenAIModel(
 }
 
 function createGroqModel(
-  transcription: VoiceTranscriptionConfig,
+  transcription: RemoteVoiceTranscriptionConfig,
   apiKey?: string
 ): ModelFactoryResult {
   const options: Parameters<typeof createGroq>[0] = {};
@@ -206,7 +241,7 @@ function createGroqModel(
 }
 
 function buildProviderOptions(
-  transcription: VoiceTranscriptionConfig
+  transcription: RemoteVoiceTranscriptionConfig
 ): ProviderOptionsMap | undefined {
   if (!transcription.language) {
     return;
@@ -217,10 +252,14 @@ function buildProviderOptions(
 }
 
 function serializeTranscription(result: {
-  text: string;
-  segments: Array<{ text: string; startSecond: number; endSecond: number }>;
-  language?: string;
-  durationInSeconds?: number;
+  text?: string;
+  segments?: Array<{
+    text: string;
+    startSecond?: number | null;
+    endSecond?: number | null;
+  }>;
+  language?: string | null;
+  durationInSeconds?: number | null;
 }) {
   return {
     text: result.text ?? "",

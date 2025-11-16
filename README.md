@@ -124,26 +124,36 @@ bun test:e2e:update-snapshots
 
 Synthetic now ships optional push-to-talk controls in the agent chat experience. To enable voice input:
 
-1. Update `synthetic.config.ts` with a `voice` block that selects a provider/model and whether it is a remote or local (self-hosted/OpenAI-compatible) endpoint.
-2. Provide the matching API key via the referenced environment variable (defaults are `OPENAI_API_KEY` or `GROQ_API_KEY`). For self-hosted/local deployments set `mode: "local"` and point `baseUrl` at your compatible endpoint (for example `http://localhost:11434/v1`).
+1. Update `synthetic.config.ts` with a `voice` block. Local mode is the default and spins up a bundled Whisper (Transformers.js) transcriber on demand. Remote mode forwards the audio to providers such as OpenAI or Groq via the Vercel AI SDK.
+2. If you pick a remote provider, expose the API key via the referenced environment variable (defaults are `OPENAI_API_KEY` or `GROQ_API_KEY`).
 3. Restart the server so `/api/voice/config` and `/api/voice/transcriptions` pick up the new settings.
 4. Visit the agent chat UI — a microphone button appears inside the compose panel when browser recording is allowed.
 
 ```ts
+// Local (default)
 voice: {
   enabled: true,
   transcription: {
-    mode: "remote", // or "local" when pointing at a custom base URL
-    provider: "openai", // "groq" is also supported out of the box
+    mode: "local",
+    model: "Xenova/whisper-small",
+    language: "en",
+  },
+},
+
+// Remote example
+voice: {
+  enabled: true,
+  transcription: {
+    mode: "remote",
+    provider: "openai", // or "groq"
     model: "whisper-1",
     language: "en",
     apiKeyEnv: "OPENAI_API_KEY",
-    // baseUrl: "http://localhost:11434/v1", // enable local models
   },
 },
 ```
 
-All audio is captured in-browser, sent once to `/api/voice/transcriptions` for processing through the Vercel AI SDK, and discarded when a transcript is returned.
+Local models are cached under `.synthetic/models` and the first transcription run downloads them automatically. All audio is captured in-browser, converted to WAV, sent once to `/api/voice/transcriptions`, and discarded when a transcript is returned.
 
 #### Debugging Failed Snapshot Tests
 

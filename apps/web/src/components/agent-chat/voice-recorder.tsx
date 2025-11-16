@@ -1,4 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
+import audioBufferToWav from "audiobuffer-to-wav";
 import { Mic, Square } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -38,6 +39,7 @@ export function VoiceRecorderButton({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const audioContextRef = useRef<AudioContext | null>(null);
   const transcribeMutation = useMutation(voiceMutations.transcribe);
 
   const isSupported = useMemo(() => {
@@ -57,6 +59,24 @@ export function VoiceRecorderButton({
     config?.enabled && config.allowBrowserRecording && isSupported
   );
 
+  const getAudioContext = useCallback(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    const contextWindow = window as typeof window & {
+      webkitAudioContext?: typeof AudioContext;
+    };
+    const AudioContextConstructor =
+      contextWindow.AudioContext ?? contextWindow.webkitAudioContext;
+    if (!AudioContextConstructor) {
+      return null;
+    }
+    if (!audioContextRef.current) {
+      audioContextRef.current = new AudioContextConstructor();
+    }
+    return audioContextRef.current;
+  }, []);
+
   const stopStream = useCallback(() => {
     if (streamRef.current) {
       for (const track of streamRef.current.getTracks()) {
@@ -74,14 +94,14 @@ export function VoiceRecorderButton({
   }, []);
 
   const transcribeChunks = useCallback(
-    async (mimeType: string, chunks: Blob[]) => {
+    async (chunks: Blob[]) => {
       setStatus("processing");
       try {
-        const blob = new Blob(chunks, { type: mimeType || "audio/webm" });
-        const base64 = await blobToBase64(blob);
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        const base64 = await convertBlobToWavBase64(blob, getAudioContext);
         const response = await transcribeMutation.mutateAsync({
           audioBase64: base64,
-          mimeType: blob.type,
+          mimeType: "audio/wav",
         });
         setLastPreview(response.text);
         setErrorMessage(null);
@@ -101,7 +121,7 @@ export function VoiceRecorderButton({
         setStatus("idle");
       }
     },
-    [onTranscription, transcribeMutation]
+    [getAudioContext, onTranscription, transcribeMutation]
   );
 
   const startRecording = useCallback(async () => {
@@ -134,7 +154,7 @@ export function VoiceRecorderButton({
           setErrorMessage("No audio captured");
           return;
         }
-        await transcribeChunks(recorder.mimeType, chunks);
+        await transcribeChunks(chunks);
       };
 
       mediaRecorderRef.current = recorder;
@@ -176,6 +196,12 @@ export function VoiceRecorderButton({
     () => () => {
       stopRecordingInternal();
       stopStream();
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {
+          /* ignore close errors */
+        });
+        audioContextRef.current = null;
+      }
     },
     [stopRecordingInternal, stopStream]
   );
@@ -226,11 +252,33 @@ function getSupportedMimeType() {
   );
 }
 
-async function blobToBase64(blob: Blob) {
+async function convertBlobToWavBase64(
+  blob: Blob,
+  ensureAudioContext: () => AudioContext | null
+) {
+  const audioContext = ensureAudioContext();
+  if (!audioContext) {
+    throw new Error("Audio APIs are not supported in this environment");
+  }
   const buffer = await blob.arrayBuffer();
+  const audioBuffer = await decodeToAudioBuffer(audioContext, buffer);
+  const wavBuffer = audioBufferToWav(audioBuffer);
+  return arrayBufferToBase64(wavBuffer);
+}
+
+function decodeToAudioBuffer(
+  audioContext: AudioContext,
+  buffer: ArrayBuffer
+): Promise<AudioBuffer> {
+  return new Promise((resolve, reject) => {
+    audioContext.decodeAudioData(buffer.slice(0), resolve, reject);
+  });
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer) {
   const bytes = new Uint8Array(buffer);
   let binary = "";
-  const chunkSize = 32_768;
+  const chunkSize = 0x80_00;
   for (let i = 0; i < bytes.length; i += chunkSize) {
     const chunk = bytes.subarray(i, i + chunkSize);
     binary += String.fromCharCode(...chunk);

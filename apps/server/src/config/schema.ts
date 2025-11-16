@@ -100,49 +100,62 @@ export const templateSchema = z.object({
     ),
 });
 
-const transcriptionModeSchema = z.enum(["remote", "local"]);
-
 const transcriptionProviderSchema = z.enum(["openai", "groq"]);
 
 const DEFAULT_TRANSCRIPTION_TIMEOUT_MS = 60_000;
 
-export const voiceTranscriptionSchema = z
-  .object({
-    mode: transcriptionModeSchema.default("remote"),
-    provider: transcriptionProviderSchema,
-    model: z
-      .string()
-      .min(1)
-      .describe("Model identifier understood by the selected provider"),
-    language: z
-      .string()
-      .optional()
-      .describe("Language hint passed directly to the provider (ISO-639-1)"),
-    apiKeyEnv: z
-      .string()
-      .optional()
-      .describe("Environment variable that contains the provider API key"),
-    baseUrl: z
-      .string()
-      .url()
-      .optional()
-      .describe("Custom base URL for OpenAI-compatible providers"),
-    timeoutMs: z
-      .number()
-      .int()
-      .positive()
-      .default(DEFAULT_TRANSCRIPTION_TIMEOUT_MS)
-      .describe("Maximum transcription time before the request is aborted"),
-  })
-  .superRefine((value, ctx) => {
-    if (value.mode === "local" && !value.baseUrl) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "baseUrl is required when using local transcription mode",
-        path: ["baseUrl"],
-      });
-    }
-  });
+const remoteTranscriptionSchema = z.object({
+  mode: z.literal("remote"),
+  provider: transcriptionProviderSchema,
+  model: z
+    .string()
+    .min(1)
+    .describe("Model identifier understood by the selected provider"),
+  language: z
+    .string()
+    .optional()
+    .describe("Language hint passed directly to the provider (ISO-639-1)"),
+  apiKeyEnv: z
+    .string()
+    .optional()
+    .describe("Environment variable that contains the provider API key"),
+  baseUrl: z
+    .string()
+    .url()
+    .optional()
+    .describe("Custom base URL for OpenAI-compatible providers"),
+  timeoutMs: z
+    .number()
+    .int()
+    .positive()
+    .default(DEFAULT_TRANSCRIPTION_TIMEOUT_MS)
+    .describe("Maximum transcription time before the request is aborted"),
+});
+
+const localTranscriptionSchema = z.object({
+  mode: z.literal("local"),
+  provider: z.literal("local").default("local"),
+  model: z
+    .string()
+    .min(1)
+    .default("Xenova/whisper-tiny.en")
+    .describe("Local model identifier supported by Transformers.js"),
+  language: z
+    .string()
+    .optional()
+    .describe("Language hint passed directly to Whisper"),
+  timeoutMs: z
+    .number()
+    .int()
+    .positive()
+    .default(DEFAULT_TRANSCRIPTION_TIMEOUT_MS)
+    .describe("Maximum transcription time before the request is aborted"),
+});
+
+export const voiceTranscriptionSchema = z.discriminatedUnion("mode", [
+  remoteTranscriptionSchema,
+  localTranscriptionSchema,
+]);
 
 export const voiceConfigSchema = z.object({
   enabled: z.boolean().default(false),
