@@ -18,6 +18,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 import {
@@ -54,6 +61,25 @@ const DIFF_MODE_META: Record<
 const DIRECTORY_INDENT_PX = 12;
 const FILE_INDENT_OFFSET_PX = 16;
 
+const DIFF_SORT_OPTIONS = {
+  "impact-desc": {
+    label: "Impact ↓",
+    description: "Most changed first",
+  },
+  "impact-asc": {
+    label: "Impact ↑",
+    description: "Least changed first",
+  },
+  path: {
+    label: "Path",
+    description: "A → Z",
+  },
+} as const;
+
+const DEFAULT_SORT_MODE = "impact-desc" as const;
+
+type DiffSortMode = keyof typeof DIFF_SORT_OPTIONS;
+
 export const Route = createFileRoute("/constructs/$constructId/diff")({
   validateSearch: (search) => diffSearchSchema.parse(search),
   loader: async ({ params, context: { queryClient } }) => {
@@ -71,6 +97,7 @@ function ConstructDiffRoute() {
   const navigate = Route.useNavigate();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState("");
+  const [sortMode, setSortMode] = useState<DiffSortMode>(DEFAULT_SORT_MODE);
 
   const mode = (search.mode ?? "workspace") as DiffMode;
 
@@ -82,20 +109,28 @@ function ConstructDiffRoute() {
   const constructQuery = useQuery(constructQueries.detail(constructId));
   const branchAvailable = Boolean(constructQuery.data?.baseCommit);
 
-  const selectedFile = search.file ?? summary.files[0]?.path ?? null;
-
-  const files = useMemo(() => {
+  const filteredFiles = useMemo(() => {
     if (!filter.trim()) {
-      return sortFilesByImpact(summary.files);
+      return summary.files;
     }
     const query = filter.trim().toLowerCase();
-    const filtered = summary.files.filter((file) =>
+    return summary.files.filter((file) =>
       file.path.toLowerCase().includes(query)
     );
-    return sortFilesByImpact(filtered);
   }, [filter, summary.files]);
 
-  const fileTree = useMemo(() => buildFileTree(files), [files]);
+  const sortedFiles = useMemo(
+    () => sortFiles(filteredFiles, sortMode),
+    [filteredFiles, sortMode]
+  );
+
+  const selectedFile = search.file ?? sortedFiles[0]?.path ?? null;
+
+  const fileTree = useMemo(
+    () => buildFileTree(sortedFiles, sortMode),
+    [sortedFiles, sortMode]
+  );
+
   const topLevelDirs = useMemo(() => getTopLevelDirs(fileTree), [fileTree]);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const hasInitializedDirs = useRef(false);
@@ -207,9 +242,11 @@ function ConstructDiffRoute() {
           filter={filter}
           onFilterChange={setFilter}
           onSelectFile={handleFileSelect}
+          onSortModeChange={setSortMode}
           onToggleDir={toggleDirectory}
           selectedFile={selectedFile}
-          totalCount={files.length}
+          sortMode={sortMode}
+          totalCount={sortedFiles.length}
           tree={fileTree}
         />
         <DiffViewer
@@ -296,8 +333,10 @@ type FileSidebarProps = {
   filter: string;
   selectedFile: string | null;
   expandedDirs: Set<string>;
+  sortMode: DiffSortMode;
   onFilterChange: (value: string) => void;
   onSelectFile: (path: string) => void;
+  onSortModeChange: (mode: DiffSortMode) => void;
   onToggleDir: (path: string) => void;
 };
 
@@ -307,8 +346,10 @@ function FileSidebar({
   filter,
   selectedFile,
   expandedDirs,
+  sortMode,
   onFilterChange,
   onSelectFile,
+  onSortModeChange,
   onToggleDir,
 }: FileSidebarProps) {
   return (
@@ -319,8 +360,32 @@ function FileSidebar({
         placeholder="Filter files"
         value={filter}
       />
-      <div className="text-[#6f7169] text-[11px] uppercase tracking-[0.2em]">
-        Files ({totalCount})
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-[#6f7169] text-[11px] uppercase tracking-[0.2em]">
+          Files ({totalCount})
+        </div>
+        <Select
+          onValueChange={(value) => onSortModeChange(value as DiffSortMode)}
+          value={sortMode}
+        >
+          <SelectTrigger className="h-8 border-[#1f1f1a] bg-[#040404] text-[#d7d9cf]">
+            <SelectValue placeholder="Sort" />
+          </SelectTrigger>
+          <SelectContent className="border-[#1f1f1a] bg-[#050505] text-[#d7d9cf]">
+            {Object.entries(DIFF_SORT_OPTIONS).map(([value, option]) => (
+              <SelectItem key={value} value={value}>
+                <span className="flex flex-col">
+                  <span className="text-xs uppercase tracking-[0.2em]">
+                    {option.label}
+                  </span>
+                  <span className="text-[#8b8d85] text-[10px]">
+                    {option.description}
+                  </span>
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <div className="flex-1 overflow-auto pr-1">
         {tree.length === 0 ? (
@@ -626,13 +691,21 @@ function DiffPreview({ detail }: { detail: DiffFileDetail }) {
   return <StatusMessage>No diff data available.</StatusMessage>;
 }
 
-function sortFilesByImpact(files: DiffFileSummary[]): DiffFileSummary[] {
+function sortFiles(
+  files: DiffFileSummary[],
+  sortMode: DiffSortMode
+): DiffFileSummary[] {
+  if (sortMode === "path") {
+    return [...files].sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  const impactDirection = sortMode === "impact-asc" ? 1 : -1;
   return [...files].sort((a, b) => {
-    const impactDiff = getFileImpact(b) - getFileImpact(a);
-    if (impactDiff === 0) {
-      return a.path.localeCompare(b.path);
+    const diff = (getFileImpact(a) - getFileImpact(b)) * impactDirection;
+    if (diff !== 0) {
+      return diff;
     }
-    return impactDiff;
+    return a.path.localeCompare(b.path);
   });
 }
 
@@ -640,7 +713,10 @@ function getFileImpact(file: DiffFileSummary): number {
   return file.additions + file.deletions;
 }
 
-function buildFileTree(files: DiffFileSummary[]): FileTreeNode[] {
+function buildFileTree(
+  files: DiffFileSummary[],
+  sortMode: DiffSortMode
+): FileTreeNode[] {
   type InternalNode =
     | {
         type: "dir";
@@ -692,6 +768,8 @@ function buildFileTree(files: DiffFileSummary[]): FileTreeNode[] {
     });
   }
 
+  const compareNodes = createNodeComparator(sortMode);
+
   const normalize = (map: Map<string, InternalNode>): FileTreeNode[] =>
     Array.from(map.values())
       .map<FileTreeNode>((node) => {
@@ -720,17 +798,32 @@ function buildFileTree(files: DiffFileSummary[]): FileTreeNode[] {
           impact: getFileImpact(node.summary),
         };
       })
-      .sort((a, b) => {
-        if (a.impact === b.impact) {
-          if (a.type === b.type) {
-            return a.name.localeCompare(b.name);
-          }
-          return a.type === "dir" ? -1 : 1;
-        }
-        return b.impact - a.impact;
-      });
+      .sort(compareNodes);
 
   return normalize(root);
+}
+
+function createNodeComparator(sortMode: DiffSortMode) {
+  if (sortMode === "path") {
+    return (a: FileTreeNode, b: FileTreeNode) => {
+      if (a.type === b.type) {
+        return a.path.localeCompare(b.path);
+      }
+      return a.type === "dir" ? -1 : 1;
+    };
+  }
+
+  const impactDirection = sortMode === "impact-asc" ? 1 : -1;
+  return (a: FileTreeNode, b: FileTreeNode) => {
+    const diff = (a.impact - b.impact) * impactDirection;
+    if (diff !== 0) {
+      return diff;
+    }
+    if (a.type === b.type) {
+      return a.name.localeCompare(b.name);
+    }
+    return a.type === "dir" ? -1 : 1;
+  };
 }
 
 function getTopLevelDirs(tree: FileTreeNode[]): string[] {
