@@ -333,6 +333,11 @@ export function VoiceRecorderButton({
           <Mic className="mr-2 h-4 w-4" />
         )}
         {status === "recording" ? "Stop" : "Voice"}
+        {status === "processing" ? (
+          <span className="ml-2 animate-pulse text-[9px] text-muted-foreground uppercase tracking-[0.2em]">
+            Processing…
+          </span>
+        ) : null}
       </Button>
       <div className="flex w-full items-center gap-2 text-[9px] text-muted-foreground uppercase tracking-[0.2em]">
         <div className="relative h-1 w-20 rounded bg-muted-foreground/20">
