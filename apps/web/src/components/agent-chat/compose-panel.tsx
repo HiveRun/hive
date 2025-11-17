@@ -111,26 +111,28 @@ export function ComposePanel({
             rules={{ validate: validateMessage }}
           />
           <div className="flex flex-col gap-2">
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <span className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
                 Ctrl+Enter to send
               </span>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-                {voiceConfig?.enabled && voiceConfig.allowBrowserRecording ? (
-                  <VoiceRecorderButton
-                    config={voiceConfig}
-                    disabled={isSending}
-                    encodeAsWav={voiceConfig.mode === "local"}
-                    onTranscription={handleTranscriptionInsert}
-                  />
-                ) : null}
+              <div className="flex flex-col items-end gap-2">
                 <Button
-                  className="border border-primary bg-primary px-3 py-1 text-primary-foreground text-xs hover:bg-primary/90 focus-visible:ring-primary"
+                  className="w-full border border-primary bg-primary px-3 py-1 text-primary-foreground text-xs hover:bg-primary/90 focus-visible:ring-primary sm:w-40"
                   disabled={isSending || !form.formState.isValid}
                   type="submit"
                 >
                   {isSending ? "Sending..." : "Send"}
                 </Button>
+                {voiceConfig?.enabled && voiceConfig.allowBrowserRecording ? (
+                  <div className="w-full sm:w-40">
+                    <VoiceRecorderButton
+                      config={voiceConfig}
+                      disabled={isSending}
+                      encodeAsWav={voiceConfig.mode === "local"}
+                      onTranscription={handleTranscriptionInsert}
+                    />
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
