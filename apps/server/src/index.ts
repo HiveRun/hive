@@ -8,6 +8,7 @@ import { db } from "./db";
 import { agentsRoutes } from "./routes/agents";
 import { constructsRoutes } from "./routes/constructs";
 import { templatesRoutes } from "./routes/templates";
+import { preloadVoiceTranscriptionModels, voiceRoutes } from "./routes/voice";
 import { constructs } from "./schema/constructs";
 import {
   bootstrapServiceSupervisor,
@@ -73,6 +74,8 @@ try {
   );
 }
 
+await preloadVoiceTranscriptionModels();
+
 const app = new Elysia()
   .use(
     logger({
@@ -98,6 +101,7 @@ const app = new Elysia()
   .use(templatesRoutes)
   .use(constructsRoutes)
   .use(agentsRoutes)
+  .use(voiceRoutes)
   .listen(PORT);
 
 export type App = typeof app;

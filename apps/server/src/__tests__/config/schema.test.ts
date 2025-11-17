@@ -91,6 +91,38 @@ describe("Synthetic Config Schema", () => {
     expect(result.templates[EXPECTED.configKey]).toBeDefined();
     expect(result.opencode.defaultProvider).toBe("zen");
   });
+
+  it("should accept a local transcription configuration", () => {
+    const configWithVoice = {
+      opencode: SAMPLE_OPENCODE_CONFIG,
+      promptSources: [],
+      templates: {
+        basic: {
+          id: "basic",
+          label: "Basic",
+          type: "manual" as const,
+        },
+      },
+      voice: {
+        enabled: true,
+        transcription: {
+          mode: "local" as const,
+          model: "Xenova/whisper-small",
+          language: "en",
+        },
+      },
+    };
+
+    const result = syntheticConfigSchema.parse(configWithVoice);
+    expect(result.voice?.enabled).toBe(true);
+    const transcription = result.voice?.transcription;
+    expect(transcription?.mode).toBe("local");
+    if (transcription?.mode !== "local") {
+      throw new Error("Expected local transcription configuration");
+    }
+    expect(transcription.model).toBe("Xenova/whisper-small");
+    expect(transcription.provider).toBe("local");
+  });
 });
 
 describe("defineSyntheticConfig", () => {

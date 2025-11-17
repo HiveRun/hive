@@ -1,3 +1,5 @@
+import { useQuery } from "@tanstack/react-query";
+import { useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -10,6 +12,8 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Textarea } from "@/components/ui/textarea";
+import { voiceQueries } from "@/queries/voice";
+import { VoiceRecorderButton } from "./voice-recorder";
 
 const MESSAGE_MAX_LENGTH = 5000;
 
@@ -35,7 +39,7 @@ const validateMessage = (value: string) => {
 };
 
 export function ComposePanel({
-  provider,
+  provider: agentProvider,
   isSending,
   onSend,
 }: ComposePanelProps) {
@@ -43,6 +47,26 @@ export function ComposePanel({
     defaultValues: { message: "" },
     mode: "onChange",
   });
+
+  const voiceConfigQuery = useQuery(voiceQueries.config());
+  const voiceConfig = voiceConfigQuery.data;
+
+  const handleTranscriptionInsert = useCallback(
+    (transcript: string) => {
+      const trimmed = transcript.trim();
+      if (!trimmed) {
+        return;
+      }
+      const existing = form.getValues("message")?.trim();
+      const nextValue = existing ? `${existing} ${trimmed}`.trim() : trimmed;
+      form.setValue("message", nextValue, {
+        shouldDirty: true,
+        shouldTouch: true,
+        shouldValidate: true,
+      });
+    },
+    [form]
+  );
 
   const handleSubmit = form.handleSubmit(async (values) => {
     await onSend(values.message.trim());
@@ -53,7 +77,7 @@ export function ComposePanel({
     <section className="min-h-0 w-full overflow-y-auto border border-border/60 bg-card p-3 text-[10px] text-muted-foreground uppercase tracking-[0.25em] lg:w-80 lg:border-l-2">
       <div className="flex items-center justify-between">
         <span>Send Instructions</span>
-        <span>{provider}</span>
+        <span>{agentProvider}</span>
       </div>
       <Form {...form}>
         <form className="mt-2 space-y-3" onSubmit={handleSubmit}>
@@ -86,17 +110,31 @@ export function ComposePanel({
             )}
             rules={{ validate: validateMessage }}
           />
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
-              Ctrl+Enter to send
-            </span>
-            <Button
-              className="border border-primary bg-primary px-3 py-1 text-primary-foreground text-xs hover:bg-primary/90 focus-visible:ring-primary"
-              disabled={isSending || !form.formState.isValid}
-              type="submit"
-            >
-              {isSending ? "Sending..." : "Send"}
-            </Button>
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
+                Ctrl+Enter to send
+              </span>
+              <div className="flex flex-col items-end gap-2">
+                <Button
+                  className="w-full border border-primary bg-primary px-3 py-1 text-primary-foreground text-xs hover:bg-primary/90 focus-visible:ring-primary sm:w-40"
+                  disabled={isSending || !form.formState.isValid}
+                  type="submit"
+                >
+                  {isSending ? "Sending..." : "Send"}
+                </Button>
+                {voiceConfig?.enabled && voiceConfig.allowBrowserRecording ? (
+                  <div className="w-full sm:w-40">
+                    <VoiceRecorderButton
+                      config={voiceConfig}
+                      disabled={isSending}
+                      encodeAsWav={voiceConfig.mode === "local"}
+                      onTranscription={handleTranscriptionInsert}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            </div>
           </div>
         </form>
       </Form>

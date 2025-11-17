@@ -6,6 +6,15 @@ export default defineSyntheticConfig({
     defaultModel: "big-pickle",
   },
   promptSources: ["docs/prompts/**/*.md"],
+  voice: {
+    enabled: true,
+    transcription: {
+      mode: "local", // Set to "remote" to forward to OpenAI or Groq
+      model: "Xenova/whisper-small",
+      language: "en",
+      timeoutMs: 90_000,
+    },
+  },
   templates: {
     basic: {
       id: "basic",
