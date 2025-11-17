@@ -100,13 +100,13 @@ export const templateSchema = z.object({
     ),
 });
 
-const transcriptionProviderSchema = z.enum(["openai", "groq"]);
+const transcriptionProviderSchema = z.literal("openai");
 
 const DEFAULT_TRANSCRIPTION_TIMEOUT_MS = 60_000;
 
 const remoteTranscriptionSchema = z.object({
   mode: z.literal("remote"),
-  provider: transcriptionProviderSchema,
+  provider: transcriptionProviderSchema.default("openai"),
   language: z
     .string()
     .optional()
