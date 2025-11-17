@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -33,13 +33,6 @@ type ComposePanelProps = {
 
 type ComposeValues = z.infer<typeof formSchema>;
 
-const combineSegments = (...segments: string[]) =>
-  segments
-    .map((segment) => segment.trim())
-    .filter(Boolean)
-    .join(" ")
-    .trim();
-
 const validateMessage = (value: string) => {
   const result = formSchema.shape.message.safeParse(value);
   return result.success || result.error.issues[0]?.message;
@@ -57,74 +50,14 @@ export function ComposePanel({
 
   const voiceConfigQuery = useQuery(voiceQueries.config());
   const voiceConfig = voiceConfigQuery.data;
-
-  const streamingSessionRef = useRef<{
-    original: string;
-    base: string;
-    appended: string;
-  } | null>(null);
-
-  const beginStreamingInsert = useCallback(() => {
-    const currentValue = form.getValues("message") ?? "";
-    streamingSessionRef.current = {
-      original: currentValue,
-      base: currentValue.trim(),
-      appended: "",
-    };
-  }, [form]);
-
-  const insertStreamingChunk = useCallback(
-    (partial: string) => {
-      const trimmed = partial.trim();
-      if (!(trimmed && streamingSessionRef.current)) {
-        return;
-      }
-      const session = streamingSessionRef.current;
-      session.appended = session.appended
-        ? `${session.appended} ${trimmed}`
-        : trimmed;
-      const combined = combineSegments(session.base, session.appended);
-      form.setValue("message", combined, {
-        shouldDirty: true,
-        shouldTouch: true,
-        shouldValidate: true,
-      });
-    },
-    [form]
-  );
-
-  const resetStreamingInsert = useCallback(() => {
-    if (!streamingSessionRef.current) {
-      return;
-    }
-    form.setValue("message", streamingSessionRef.current.original, {
-      shouldDirty: true,
-      shouldTouch: true,
-      shouldValidate: true,
-    });
-    streamingSessionRef.current = null;
-  }, [form]);
+  const [isVoiceProcessing, setIsVoiceProcessing] = useState(false);
 
   const handleTranscriptionInsert = useCallback(
     (transcript: string) => {
       const trimmed = transcript.trim();
       if (!trimmed) {
-        streamingSessionRef.current = null;
         return;
       }
-
-      if (streamingSessionRef.current) {
-        const session = streamingSessionRef.current;
-        const combined = combineSegments(session.base, trimmed);
-        form.setValue("message", combined, {
-          shouldDirty: true,
-          shouldTouch: true,
-          shouldValidate: true,
-        });
-        streamingSessionRef.current = null;
-        return;
-      }
-
       const existing = form.getValues("message")?.trim();
       const nextValue = existing ? `${existing} ${trimmed}`.trim() : trimmed;
       form.setValue("message", nextValue, {
@@ -207,14 +140,21 @@ export function ComposePanel({
               </span>
               <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center sm:gap-3">
                 {voiceConfig?.enabled && voiceConfig.allowBrowserRecording ? (
-                  <VoiceRecorderButton
-                    config={voiceConfig}
-                    disabled={isSending}
-                    onStreamingError={resetStreamingInsert}
-                    onStreamingPartial={insertStreamingChunk}
-                    onStreamingStart={beginStreamingInsert}
-                    onTranscription={handleTranscriptionInsert}
-                  />
+                  <div className="flex flex-col items-end gap-1">
+                    <VoiceRecorderButton
+                      config={voiceConfig}
+                      disabled={isSending}
+                      encodeAsWav={voiceConfig.mode === "local"}
+                      onProcessingEnd={() => setIsVoiceProcessing(false)}
+                      onProcessingStart={() => setIsVoiceProcessing(true)}
+                      onTranscription={handleTranscriptionInsert}
+                    />
+                    {isVoiceProcessing ? (
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
+                        Transcribing voice…
+                      </span>
+                    ) : null}
+                  </div>
                 ) : null}
                 <Button
                   className="border border-primary bg-primary px-3 py-1 text-primary-foreground text-xs hover:bg-primary/90 focus-visible:ring-primary"

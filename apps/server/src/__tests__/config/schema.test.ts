@@ -115,9 +115,13 @@ describe("Synthetic Config Schema", () => {
 
     const result = syntheticConfigSchema.parse(configWithVoice);
     expect(result.voice?.enabled).toBe(true);
-    expect(result.voice?.transcription.mode).toBe("local");
-    expect(result.voice?.transcription.model).toBe("Xenova/whisper-small");
-    expect(result.voice?.transcription.provider).toBe("local");
+    const transcription = result.voice?.transcription;
+    expect(transcription?.mode).toBe("local");
+    if (transcription?.mode !== "local") {
+      throw new Error("Expected local transcription configuration");
+    }
+    expect(transcription.model).toBe("Xenova/whisper-small");
+    expect(transcription.provider).toBe("local");
   });
 });
 

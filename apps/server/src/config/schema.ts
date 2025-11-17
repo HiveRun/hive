@@ -107,10 +107,6 @@ const DEFAULT_TRANSCRIPTION_TIMEOUT_MS = 60_000;
 const remoteTranscriptionSchema = z.object({
   mode: z.literal("remote"),
   provider: transcriptionProviderSchema,
-  model: z
-    .string()
-    .min(1)
-    .describe("Model identifier understood by the selected provider"),
   language: z
     .string()
     .optional()
@@ -138,7 +134,7 @@ const localTranscriptionSchema = z.object({
   model: z
     .string()
     .min(1)
-    .default("Xenova/whisper-tiny.en")
+    .default("Xenova/whisper-small")
     .describe("Local model identifier supported by Transformers.js"),
   language: z
     .string()

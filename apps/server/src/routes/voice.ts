@@ -27,6 +27,11 @@ const DEFAULT_PROVIDER_ENV: Record<string, string> = {
   groq: "GROQ_API_KEY",
 };
 
+const REMOTE_PROVIDER_MODEL: Record<"openai" | "groq", string> = {
+  openai: "whisper-1",
+  groq: "whisper-large-v3-turbo",
+};
+
 const ErrorResponseSchema = t.Object({
   message: t.String(),
 });
@@ -157,12 +162,18 @@ function serializeVoiceConfig(voice?: VoiceConfig) {
     transcription.mode === "local"
       ? "local"
       : (transcription.provider as string | null);
+
+  const modelLabel =
+    transcription.mode === "local"
+      ? transcription.model
+      : REMOTE_PROVIDER_MODEL[transcription.provider];
+
   return {
     enabled: voice.enabled,
     allowBrowserRecording: voice.allowBrowserRecording,
     mode: voice.enabled ? transcription.mode : null,
     provider: voice.enabled ? providerLabel : null,
-    model: voice.enabled ? transcription.model : null,
+    model: voice.enabled ? modelLabel : null,
     language: transcription.language ?? null,
   } as const;
 }
@@ -232,8 +243,9 @@ function createOpenAIModel(
   }
 
   const openai = createOpenAI(options);
+  const modelId = REMOTE_PROVIDER_MODEL.openai;
   return {
-    model: openai.transcription(transcription.model),
+    model: openai.transcription(modelId),
     providerOptions: buildProviderOptions(transcription),
     timeoutMs: transcription.timeoutMs,
   } satisfies ModelFactoryResult;
@@ -252,8 +264,9 @@ function createGroqModel(
   }
 
   const groq = createGroq(options);
+  const modelId = REMOTE_PROVIDER_MODEL.groq;
   return {
-    model: groq.transcription(transcription.model),
+    model: groq.transcription(modelId),
     providerOptions: buildProviderOptions(transcription),
     timeoutMs: transcription.timeoutMs,
   } satisfies ModelFactoryResult;

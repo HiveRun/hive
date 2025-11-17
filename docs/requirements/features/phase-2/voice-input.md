@@ -9,7 +9,7 @@ Add voice capture to agent chat so operators can speak prompts and have them tra
 
 ### Voice Capture
 - Provide push-to-talk controls in the chat UI (web and future TUI).
-- Use a local or cloud transcription service with configurable model selection.
+- Use a local or cloud transcription service. Local mode should expose the model choice, while remote mode automatically picks our recommended Whisper variant per provider.
 - Display transcription for confirmation before sending to the agent.
 - Respect privacy: allow opting out of audio capture and purge recordings after transcription.
 
@@ -34,7 +34,7 @@ Add voice capture to agent chat so operators can speak prompts and have them tra
 - **Keyboard shortcuts**: Global hotkeys for voice activation and control
 
 ### Settings & Configuration
-- **Transcription settings**: Model selection, language, and accuracy preferences
+- **Transcription settings**: Local model selection, remote provider selection, language, and accuracy preferences
 - **Audio settings**: Microphone selection, gain, and noise cancellation
 - **Privacy settings**: Audio retention, recording permissions, and data handling
 - **Accessibility**: Screen reader support and keyboard alternatives
@@ -56,7 +56,7 @@ Add voice capture to agent chat so operators can speak prompts and have them tra
 ### Transcription Integration
 - Multiple transcription service support (local/cloud)
 - API integration for real-time transcription
-- Language detection and model selection
+- Language detection and provider/model selection heuristics (local configurable, remote opinionated defaults)
 - Confidence scoring and alternative generation
 
 ### Privacy & Security
@@ -74,7 +74,7 @@ Add voice capture to agent chat so operators can speak prompts and have them tra
 ## Current Progress
 - Push-to-talk controls land in the agent chat compose panel with a transcription preview + status messaging.
 - Transcription is handled through the Vercel AI SDK `experimental_transcribe` helper and runs through a new `/api/voice/transcriptions` endpoint so API keys remain server-side.
-- `synthetic.config.ts` now exposes a `voice` stanza that selects remote (hosted) providers or the bundled local Transformers.js Whisper pipeline, with support for OpenAI-compatible stacks and Groq out of the box.
+- `synthetic.config.ts` now exposes a `voice` stanza that selects remote (hosted) providers or the bundled local Transformers.js Whisper pipeline, with support for OpenAI-compatible stacks and Groq out of the box. Remote mode pins to our recommended Whisper model per provider so operators only choose the provider, not the SKU.
 - Local mode downloads/caches models into `.synthetic/models` automatically so operators do not have to run a separate transcription server.
 - Sanitized voice metadata is exposed over `/api/voice/config` so the web UI knows whether to render the voice controls and which model is active.
 - Audio blobs are deleted once the transcript is returned; there is no persistent audio storage in this first iteration.

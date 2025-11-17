@@ -14,33 +14,31 @@ const PREFERRED_MIME_TYPES = [
   "audio/mp4",
 ];
 
-const STREAMING_TIMESLICE_MS = 1200;
-
 type RecorderStatus = "idle" | "recording" | "processing";
 
 export type VoiceRecorderButtonProps = {
   config?: VoiceConfig;
   disabled?: boolean;
-  onStreamingError?: () => void;
-  onStreamingPartial?: (text: string) => void;
-  onStreamingStart?: () => void;
+  encodeAsWav?: boolean;
+  onProcessingEnd?: () => void;
+  onProcessingStart?: () => void;
   onTranscription: (text: string) => void;
 };
 
 export function VoiceRecorderButton({
   config,
   disabled,
-  onStreamingError,
-  onStreamingPartial,
-  onStreamingStart,
+  encodeAsWav = false,
+  onProcessingEnd,
+  onProcessingStart,
   onTranscription,
 }: VoiceRecorderButtonProps) {
   const [status, setStatus] = useState<RecorderStatus>("idle");
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const streamingQueueRef = useRef(Promise.resolve());
   const transcribeMutation = useMutation(voiceMutations.transcribe);
 
   const isSupported = useMemo(() => {
@@ -60,12 +58,8 @@ export function VoiceRecorderButton({
     config?.enabled && config.allowBrowserRecording && isSupported
   );
 
-  const handleStreamingFailure = useCallback(() => {
-    onStreamingError?.();
-  }, [onStreamingError]);
-
-  const getAudioContext = useCallback(() => {
-    if (typeof window === "undefined") {
+  const ensureAudioContext = useCallback(() => {
+    if (!encodeAsWav || typeof window === "undefined") {
       return null;
     }
     const contextWindow = window as typeof window & {
@@ -80,7 +74,7 @@ export function VoiceRecorderButton({
       audioContextRef.current = new AudioContextConstructor();
     }
     return audioContextRef.current;
-  }, []);
+  }, [encodeAsWav]);
 
   const stopStream = useCallback(() => {
     if (streamRef.current) {
@@ -91,79 +85,63 @@ export function VoiceRecorderButton({
     }
   }, []);
 
-  const stopRecordingInternal = useCallback(() => {
-    const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state === "recording") {
-      recorder.stop();
-    }
-  }, []);
-
-  const enqueueStreamingSnapshot = useCallback(
-    (snapshot: Blob) => {
-      if (!onStreamingPartial) {
-        return;
+  const encodeRecording = useCallback(
+    async (blob: Blob) => {
+      if (!encodeAsWav) {
+        const buffer = await blob.arrayBuffer();
+        return {
+          base64: arrayBufferToBase64(buffer),
+          mimeType: blob.type || "audio/webm",
+        } as const;
       }
-      streamingQueueRef.current = streamingQueueRef.current
-        .then(async () => {
-          const base64 = await convertBlobToWavBase64(
-            snapshot,
-            getAudioContext
-          );
-          const response = await voiceMutations.transcribe.mutationFn({
-            audioBase64: base64,
-            mimeType: "audio/wav",
-          });
-          const partialText = response.text?.trim();
-          if (partialText) {
-            onStreamingPartial(partialText);
-          }
-        })
-        .catch((error) => {
-          toast.error(
-            error instanceof Error
-              ? error.message
-              : "Failed to transcribe audio"
-          );
-          handleStreamingFailure();
-        });
+
+      const audioContext = ensureAudioContext();
+      if (!audioContext) {
+        throw new Error("Audio APIs are not supported in this environment");
+      }
+      const buffer = await blob.arrayBuffer();
+      const audioBuffer = await decodeToAudioBuffer(audioContext, buffer);
+      const wavBuffer = audioBufferToWav(audioBuffer);
+      return {
+        base64: arrayBufferToBase64(wavBuffer),
+        mimeType: "audio/wav",
+      } as const;
     },
-    [getAudioContext, handleStreamingFailure, onStreamingPartial]
+    [encodeAsWav, ensureAudioContext]
   );
 
-  const transcribeRecording = useCallback(
-    async (chunks: Blob[]) => {
+  const transcribeChunks = useCallback(
+    async (chunks: Blob[], mimeType?: string) => {
       setStatus("processing");
+      onProcessingStart?.();
       try {
-        await streamingQueueRef.current.catch(() => {
-          /* ignore streaming queue errors before final transcription */
-        });
-        const blob = new Blob(chunks, { type: "audio/webm" });
-        const base64 = await convertBlobToWavBase64(blob, getAudioContext);
+        const blob = new Blob(chunks, { type: mimeType || "audio/webm" });
+        const { base64, mimeType: encodedMime } = await encodeRecording(blob);
         const response = await transcribeMutation.mutateAsync({
           audioBase64: base64,
-          mimeType: "audio/wav",
+          mimeType: encodedMime,
         });
         const trimmed = response.text.trim();
         if (trimmed) {
           onTranscription(trimmed);
+          toast.success("Voice transcription added to message");
         } else {
           toast.info("No speech detected in recording");
-          onStreamingError?.();
         }
       } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Failed to transcribe audio"
-        );
-        handleStreamingFailure();
+        const message =
+          error instanceof Error ? error.message : "Failed to transcribe audio";
+        toast.error(message);
       } finally {
         chunksRef.current = [];
         setStatus("idle");
+        onProcessingEnd?.();
       }
     },
     [
-      getAudioContext,
-      handleStreamingFailure,
-      onStreamingError,
+      encodeRecording,
+      onProcessingEnd,
+      onProcessingStart,
       onTranscription,
       transcribeMutation,
     ]
@@ -188,31 +166,24 @@ export function VoiceRecorderButton({
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           chunks.push(event.data);
-          if (recorder.state === "recording") {
-            enqueueStreamingSnapshot(
-              new Blob(chunks, { type: recorder.mimeType })
-            );
-          }
         }
       };
-
       recorder.onstop = async () => {
         mediaRecorderRef.current = null;
         stopStream();
         if (chunks.length === 0) {
-          setStatus("idle");
           toast.info("No audio captured");
-          onStreamingError?.();
+          setStatus("idle");
+          onProcessingEnd?.();
           return;
         }
-        await transcribeRecording(chunks);
+        await transcribeChunks(chunks, recorder.mimeType);
       };
 
       mediaRecorderRef.current = recorder;
       chunksRef.current = chunks;
-      recorder.start(STREAMING_TIMESLICE_MS);
+      recorder.start();
       setStatus("recording");
-      onStreamingStart?.();
     } catch (error) {
       stopStream();
       mediaRecorderRef.current = null;
@@ -224,20 +195,18 @@ export function VoiceRecorderButton({
       } else if (error instanceof Error) {
         message = error.message;
       }
+
       toast.error(message);
-      handleStreamingFailure();
       setStatus("idle");
     }
-  }, [
-    canUseVoice,
-    enqueueStreamingSnapshot,
+  }, [canUseVoice, onProcessingEnd, stopStream, transcribeChunks]);
 
-    handleStreamingFailure,
-    onStreamingError,
-    onStreamingStart,
-    stopStream,
-    transcribeRecording,
-  ]);
+  const stopRecordingInternal = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state === "recording") {
+      recorder.stop();
+    }
+  }, []);
 
   const handleClick = useCallback(async () => {
     if (status === "processing" || disabled) {
@@ -250,7 +219,7 @@ export function VoiceRecorderButton({
     }
 
     await startRecording();
-  }, [status, disabled, startRecording, stopRecordingInternal]);
+  }, [disabled, startRecording, status, stopRecordingInternal]);
 
   useEffect(
     () => () => {
@@ -267,23 +236,21 @@ export function VoiceRecorderButton({
   );
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      <Button
-        aria-pressed={status === "recording"}
-        className="border border-primary bg-transparent px-3 py-1 text-primary text-xs uppercase tracking-[0.2em] hover:bg-primary/10"
-        disabled={!canUseVoice || disabled || status === "processing"}
-        onClick={handleClick}
-        type="button"
-        variant="ghost"
-      >
-        {status === "recording" ? (
-          <Square className="mr-2 h-4 w-4" />
-        ) : (
-          <Mic className="mr-2 h-4 w-4" />
-        )}
-        {status === "recording" ? "Stop" : "Voice"}
-      </Button>
-    </div>
+    <Button
+      aria-pressed={status === "recording"}
+      className="border border-primary bg-transparent px-3 py-1 text-primary text-xs uppercase tracking-[0.2em] hover:bg-primary/10"
+      disabled={!canUseVoice || disabled || status === "processing"}
+      onClick={handleClick}
+      type="button"
+      variant="ghost"
+    >
+      {status === "recording" ? (
+        <Square className="mr-2 h-4 w-4" />
+      ) : (
+        <Mic className="mr-2 h-4 w-4" />
+      )}
+      {status === "recording" ? "Stop" : "Voice"}
+    </Button>
   );
 }
 
@@ -297,20 +264,6 @@ function getSupportedMimeType() {
   return PREFERRED_MIME_TYPES.find((type) =>
     window.MediaRecorder.isTypeSupported?.(type)
   );
-}
-
-async function convertBlobToWavBase64(
-  blob: Blob,
-  ensureAudioContext: () => AudioContext | null
-) {
-  const audioContext = ensureAudioContext();
-  if (!audioContext) {
-    throw new Error("Audio APIs are not supported in this environment");
-  }
-  const buffer = await blob.arrayBuffer();
-  const audioBuffer = await decodeToAudioBuffer(audioContext, buffer);
-  const wavBuffer = audioBufferToWav(audioBuffer);
-  return arrayBufferToBase64(wavBuffer);
 }
 
 function decodeToAudioBuffer(
