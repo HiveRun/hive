@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,6 @@ import {
 } from "@/components/ui/form";
 import { Textarea } from "@/components/ui/textarea";
 import { voiceQueries } from "@/queries/voice";
-import type { RecorderStatus } from "./voice-recorder";
 import { VoiceRecorderButton } from "./voice-recorder";
 
 const MESSAGE_MAX_LENGTH = 5000;
@@ -51,7 +50,6 @@ export function ComposePanel({
 
   const voiceConfigQuery = useQuery(voiceQueries.config());
   const voiceConfig = voiceConfigQuery.data;
-  const [voiceStatus, setVoiceStatus] = useState<RecorderStatus>("idle");
 
   const voiceSummary = useMemo(() => {
     if (!voiceConfig?.enabled) {
@@ -84,16 +82,6 @@ export function ComposePanel({
     },
     [form]
   );
-
-  const voiceStatusLabel = useMemo(() => {
-    if (voiceStatus === "recording") {
-      return "Listening…";
-    }
-    if (voiceStatus === "processing") {
-      return "Transcribing voice…";
-    }
-    return null;
-  }, [voiceStatus]);
 
   const handleSubmit = form.handleSubmit(async (values) => {
     await onSend(values.message.trim());
@@ -149,20 +137,12 @@ export function ComposePanel({
               </span>
               <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center sm:gap-3">
                 {voiceConfig?.enabled && voiceConfig.allowBrowserRecording ? (
-                  <div className="flex flex-col items-end gap-1">
-                    <VoiceRecorderButton
-                      config={voiceConfig}
-                      disabled={isSending}
-                      encodeAsWav={voiceConfig.mode === "local"}
-                      onStatusChange={setVoiceStatus}
-                      onTranscription={handleTranscriptionInsert}
-                    />
-                    {voiceStatusLabel ? (
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
-                        {voiceStatusLabel}
-                      </span>
-                    ) : null}
-                  </div>
+                  <VoiceRecorderButton
+                    config={voiceConfig}
+                    disabled={isSending}
+                    encodeAsWav={voiceConfig.mode === "local"}
+                    onTranscription={handleTranscriptionInsert}
+                  />
                 ) : null}
                 <Button
                   className="border border-primary bg-primary px-3 py-1 text-primary-foreground text-xs hover:bg-primary/90 focus-visible:ring-primary"

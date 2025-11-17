@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import audioBufferToWav from "audiobuffer-to-wav";
-import { Mic, Square } from "lucide-react";
+import { Loader2, Mic, Square } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -28,7 +28,6 @@ export type VoiceRecorderButtonProps = {
   config?: VoiceConfig;
   disabled?: boolean;
   encodeAsWav?: boolean;
-  onStatusChange?: (status: RecorderStatus) => void;
   onTranscription: (text: string) => void;
 };
 
@@ -36,14 +35,9 @@ export function VoiceRecorderButton({
   config,
   disabled,
   encodeAsWav = false,
-  onStatusChange,
   onTranscription,
 }: VoiceRecorderButtonProps) {
   const [status, setStatus] = useState<RecorderStatus>("idle");
-
-  useEffect(() => {
-    onStatusChange?.(status);
-  }, [onStatusChange, status]);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -307,15 +301,33 @@ export function VoiceRecorderButton({
     Math.min(volumeLevel * VOLUME_MULTIPLIER, 1) * MAX_PERCENT;
   const meterOpacity =
     status === "recording" ? ACTIVE_OPACITY : INACTIVE_OPACITY;
-  const statusLabel = useMemo(() => {
+
+  const renderButtonContent = () => {
     if (status === "recording") {
-      return "Listening";
+      return (
+        <>
+          <Square className="mr-2 h-4 w-4" />
+          Stop
+        </>
+      );
     }
+
     if (status === "processing") {
-      return "Processing";
+      return (
+        <>
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          Processing…
+        </>
+      );
     }
-    return "";
-  }, [status]);
+
+    return (
+      <>
+        <Mic className="mr-2 h-4 w-4" />
+        Voice
+      </>
+    );
+  };
 
   return (
     <div className="flex w-full flex-col items-end gap-1">
@@ -327,17 +339,7 @@ export function VoiceRecorderButton({
         type="button"
         variant="ghost"
       >
-        {status === "recording" ? (
-          <Square className="mr-2 h-4 w-4" />
-        ) : (
-          <Mic className="mr-2 h-4 w-4" />
-        )}
-        {status === "recording" ? "Stop" : "Voice"}
-        {status === "processing" ? (
-          <span className="ml-2 animate-pulse text-[9px] text-muted-foreground uppercase tracking-[0.2em]">
-            Processing…
-          </span>
-        ) : null}
+        {renderButtonContent()}
       </Button>
       <div className="flex w-full items-center gap-2 text-[9px] text-muted-foreground uppercase tracking-[0.2em]">
         <div className="relative h-1 w-20 rounded bg-muted-foreground/20">
@@ -346,7 +348,6 @@ export function VoiceRecorderButton({
             style={{ width: `${volumePercent}%`, opacity: meterOpacity }}
           />
         </div>
-        <span className="text-[9px] text-muted-foreground">{statusLabel}</span>
       </div>
     </div>
   );
