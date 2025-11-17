@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/form";
 import { Textarea } from "@/components/ui/textarea";
 import { voiceQueries } from "@/queries/voice";
+import type { RecorderStatus } from "./voice-recorder";
 import { VoiceRecorderButton } from "./voice-recorder";
 
 const MESSAGE_MAX_LENGTH = 5000;
@@ -50,7 +51,22 @@ export function ComposePanel({
 
   const voiceConfigQuery = useQuery(voiceQueries.config());
   const voiceConfig = voiceConfigQuery.data;
-  const [isVoiceProcessing, setIsVoiceProcessing] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState<RecorderStatus>("idle");
+
+  const voiceSummary = useMemo(() => {
+    if (!voiceConfig?.enabled) {
+      return null;
+    }
+    let modeLabel = "Voice";
+    if (voiceConfig.mode === "local") {
+      modeLabel = "Local";
+    } else if (voiceConfig.mode === "remote") {
+      modeLabel = "Remote";
+    }
+    const provider = voiceConfig.provider ?? "-";
+    const model = voiceConfig.model ?? "-";
+    return `${modeLabel} • ${provider} • ${model}`;
+  }, [voiceConfig]);
 
   const handleTranscriptionInsert = useCallback(
     (transcript: string) => {
@@ -69,22 +85,15 @@ export function ComposePanel({
     [form]
   );
 
-  const voiceSummary = useMemo(() => {
-    if (!voiceConfig?.enabled) {
-      return null;
+  const voiceStatusLabel = useMemo(() => {
+    if (voiceStatus === "recording") {
+      return "Listening…";
     }
-
-    let modeLabel = "Voice";
-    if (voiceConfig.mode === "local") {
-      modeLabel = "Local";
-    } else if (voiceConfig.mode === "remote") {
-      modeLabel = "Remote";
+    if (voiceStatus === "processing") {
+      return "Transcribing voice…";
     }
-
-    const providerLabel = voiceConfig.provider ?? "-";
-    const modelLabel = voiceConfig.model ?? "-";
-    return `${modeLabel} • ${providerLabel} • ${modelLabel}`;
-  }, [voiceConfig]);
+    return null;
+  }, [voiceStatus]);
 
   const handleSubmit = form.handleSubmit(async (values) => {
     await onSend(values.message.trim());
@@ -145,13 +154,12 @@ export function ComposePanel({
                       config={voiceConfig}
                       disabled={isSending}
                       encodeAsWav={voiceConfig.mode === "local"}
-                      onProcessingEnd={() => setIsVoiceProcessing(false)}
-                      onProcessingStart={() => setIsVoiceProcessing(true)}
+                      onStatusChange={setVoiceStatus}
                       onTranscription={handleTranscriptionInsert}
                     />
-                    {isVoiceProcessing ? (
+                    {voiceStatusLabel ? (
                       <span className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
-                        Transcribing voice…
+                        {voiceStatusLabel}
                       </span>
                     ) : null}
                   </div>

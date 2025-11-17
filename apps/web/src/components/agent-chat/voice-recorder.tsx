@@ -14,14 +14,21 @@ const PREFERRED_MIME_TYPES = [
   "audio/mp4",
 ];
 
-type RecorderStatus = "idle" | "recording" | "processing";
+const MICROPHONE_FFT_SIZE = 512;
+const PCM_MIDPOINT = 128;
+const VOLUME_MULTIPLIER = 2;
+const MAX_PERCENT = 100;
+const ACTIVE_OPACITY = 1;
+const INACTIVE_OPACITY = 0.2;
+const BASE64_CHUNK_SIZE = 0x80_00;
+
+export type RecorderStatus = "idle" | "recording" | "processing";
 
 export type VoiceRecorderButtonProps = {
   config?: VoiceConfig;
   disabled?: boolean;
   encodeAsWav?: boolean;
-  onProcessingEnd?: () => void;
-  onProcessingStart?: () => void;
+  onStatusChange?: (status: RecorderStatus) => void;
   onTranscription: (text: string) => void;
 };
 
@@ -29,16 +36,23 @@ export function VoiceRecorderButton({
   config,
   disabled,
   encodeAsWav = false,
-  onProcessingEnd,
-  onProcessingStart,
+  onStatusChange,
   onTranscription,
 }: VoiceRecorderButtonProps) {
   const [status, setStatus] = useState<RecorderStatus>("idle");
+
+  useEffect(() => {
+    onStatusChange?.(status);
+  }, [onStatusChange, status]);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const [volumeLevel, setVolumeLevel] = useState(0);
   const transcribeMutation = useMutation(voiceMutations.transcribe);
 
   const isSupported = useMemo(() => {
@@ -59,7 +73,7 @@ export function VoiceRecorderButton({
   );
 
   const ensureAudioContext = useCallback(() => {
-    if (!encodeAsWav || typeof window === "undefined") {
+    if (typeof window === "undefined") {
       return null;
     }
     const contextWindow = window as typeof window & {
@@ -73,8 +87,61 @@ export function VoiceRecorderButton({
     if (!audioContextRef.current) {
       audioContextRef.current = new AudioContextConstructor();
     }
-    return audioContextRef.current;
-  }, [encodeAsWav]);
+    const context = audioContextRef.current;
+    if (context?.state === "suspended") {
+      context.resume().catch(() => {
+        /* ignore resume errors */
+      });
+    }
+    return context;
+  }, []);
+
+  const stopLevelMeter = useCallback(() => {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    if (sourceNodeRef.current) {
+      sourceNodeRef.current.disconnect();
+      sourceNodeRef.current = null;
+    }
+    if (analyserRef.current) {
+      analyserRef.current.disconnect();
+      analyserRef.current = null;
+    }
+    setVolumeLevel(0);
+  }, []);
+
+  const startLevelMeter = useCallback(
+    (stream: MediaStream) => {
+      const audioContext = ensureAudioContext();
+      if (!audioContext) {
+        return;
+      }
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = MICROPHONE_FFT_SIZE;
+      source.connect(analyser);
+      sourceNodeRef.current = source;
+      analyserRef.current = analyser;
+      const data = new Uint8Array(analyser.fftSize);
+
+      const update = () => {
+        analyser.getByteTimeDomainData(data);
+        let sumSquares = 0;
+        for (const sample of data) {
+          const value = sample - PCM_MIDPOINT;
+          sumSquares += value * value;
+        }
+        const rms = Math.sqrt(sumSquares / data.length) / PCM_MIDPOINT;
+        setVolumeLevel(rms);
+        animationFrameRef.current = requestAnimationFrame(update);
+      };
+
+      update();
+    },
+    [ensureAudioContext]
+  );
 
   const stopStream = useCallback(() => {
     if (streamRef.current) {
@@ -113,7 +180,6 @@ export function VoiceRecorderButton({
   const transcribeChunks = useCallback(
     async (chunks: Blob[], mimeType?: string) => {
       setStatus("processing");
-      onProcessingStart?.();
       try {
         const blob = new Blob(chunks, { type: mimeType || "audio/webm" });
         const { base64, mimeType: encodedMime } = await encodeRecording(blob);
@@ -135,16 +201,9 @@ export function VoiceRecorderButton({
       } finally {
         chunksRef.current = [];
         setStatus("idle");
-        onProcessingEnd?.();
       }
     },
-    [
-      encodeRecording,
-      onProcessingEnd,
-      onProcessingStart,
-      onTranscription,
-      transcribeMutation,
-    ]
+    [encodeRecording, onTranscription, transcribeMutation]
   );
 
   const startRecording = useCallback(async () => {
@@ -170,11 +229,11 @@ export function VoiceRecorderButton({
       };
       recorder.onstop = async () => {
         mediaRecorderRef.current = null;
+        stopLevelMeter();
         stopStream();
         if (chunks.length === 0) {
           toast.info("No audio captured");
           setStatus("idle");
-          onProcessingEnd?.();
           return;
         }
         await transcribeChunks(chunks, recorder.mimeType);
@@ -183,8 +242,10 @@ export function VoiceRecorderButton({
       mediaRecorderRef.current = recorder;
       chunksRef.current = chunks;
       recorder.start();
+      startLevelMeter(stream);
       setStatus("recording");
     } catch (error) {
+      stopLevelMeter();
       stopStream();
       mediaRecorderRef.current = null;
       chunksRef.current = [];
@@ -199,7 +260,13 @@ export function VoiceRecorderButton({
       toast.error(message);
       setStatus("idle");
     }
-  }, [canUseVoice, onProcessingEnd, stopStream, transcribeChunks]);
+  }, [
+    canUseVoice,
+    startLevelMeter,
+    stopLevelMeter,
+    stopStream,
+    transcribeChunks,
+  ]);
 
   const stopRecordingInternal = useCallback(() => {
     const recorder = mediaRecorderRef.current;
@@ -224,6 +291,7 @@ export function VoiceRecorderButton({
   useEffect(
     () => () => {
       stopRecordingInternal();
+      stopLevelMeter();
       stopStream();
       if (audioContextRef.current) {
         audioContextRef.current.close().catch(() => {
@@ -232,25 +300,50 @@ export function VoiceRecorderButton({
         audioContextRef.current = null;
       }
     },
-    [stopRecordingInternal, stopStream]
+    [stopLevelMeter, stopRecordingInternal, stopStream]
   );
 
+  const volumePercent =
+    Math.min(volumeLevel * VOLUME_MULTIPLIER, 1) * MAX_PERCENT;
+  const meterOpacity =
+    status === "recording" ? ACTIVE_OPACITY : INACTIVE_OPACITY;
+  const statusLabel = useMemo(() => {
+    if (status === "recording") {
+      return "Listening";
+    }
+    if (status === "processing") {
+      return "Processing";
+    }
+    return "";
+  }, [status]);
+
   return (
-    <Button
-      aria-pressed={status === "recording"}
-      className="border border-primary bg-transparent px-3 py-1 text-primary text-xs uppercase tracking-[0.2em] hover:bg-primary/10"
-      disabled={!canUseVoice || disabled || status === "processing"}
-      onClick={handleClick}
-      type="button"
-      variant="ghost"
-    >
-      {status === "recording" ? (
-        <Square className="mr-2 h-4 w-4" />
-      ) : (
-        <Mic className="mr-2 h-4 w-4" />
-      )}
-      {status === "recording" ? "Stop" : "Voice"}
-    </Button>
+    <div className="flex w-full flex-col items-end gap-1">
+      <Button
+        aria-pressed={status === "recording"}
+        className="border border-primary bg-transparent px-3 py-1 text-primary text-xs uppercase tracking-[0.2em] hover:bg-primary/10"
+        disabled={!canUseVoice || disabled || status === "processing"}
+        onClick={handleClick}
+        type="button"
+        variant="ghost"
+      >
+        {status === "recording" ? (
+          <Square className="mr-2 h-4 w-4" />
+        ) : (
+          <Mic className="mr-2 h-4 w-4" />
+        )}
+        {status === "recording" ? "Stop" : "Voice"}
+      </Button>
+      <div className="flex w-full items-center gap-2 text-[9px] text-muted-foreground uppercase tracking-[0.2em]">
+        <div className="relative h-1 w-20 rounded bg-muted-foreground/20">
+          <div
+            className="absolute inset-y-0 left-0 rounded bg-primary transition-[opacity,width] duration-100"
+            style={{ width: `${volumePercent}%`, opacity: meterOpacity }}
+          />
+        </div>
+        <span className="text-[9px] text-muted-foreground">{statusLabel}</span>
+      </div>
+    </div>
   );
 }
 
@@ -278,9 +371,8 @@ function decodeToAudioBuffer(
 function arrayBufferToBase64(buffer: ArrayBuffer) {
   const bytes = new Uint8Array(buffer);
   let binary = "";
-  const chunkSize = 0x80_00;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
+  for (let i = 0; i < bytes.length; i += BASE64_CHUNK_SIZE) {
+    const chunk = bytes.subarray(i, i + BASE64_CHUNK_SIZE);
     binary += String.fromCharCode(...chunk);
   }
   return btoa(binary);
