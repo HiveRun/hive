@@ -38,7 +38,6 @@ export function VoiceRecorderButton({
   onTranscription,
 }: VoiceRecorderButtonProps) {
   const [status, setStatus] = useState<RecorderStatus>("idle");
-
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -90,6 +89,15 @@ export function VoiceRecorderButton({
     return context;
   }, []);
 
+  const stopStream = useCallback(() => {
+    if (streamRef.current) {
+      for (const track of streamRef.current.getTracks()) {
+        track.stop();
+      }
+      streamRef.current = null;
+    }
+  }, []);
+
   const stopLevelMeter = useCallback(() => {
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
@@ -136,15 +144,6 @@ export function VoiceRecorderButton({
     },
     [ensureAudioContext]
   );
-
-  const stopStream = useCallback(() => {
-    if (streamRef.current) {
-      for (const track of streamRef.current.getTracks()) {
-        track.stop();
-      }
-      streamRef.current = null;
-    }
-  }, []);
 
   const encodeRecording = useCallback(
     async (blob: Blob) => {
@@ -263,11 +262,15 @@ export function VoiceRecorderButton({
   ]);
 
   const stopRecordingInternal = useCallback(() => {
+    stopLevelMeter();
+    stopStream();
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state === "recording") {
       recorder.stop();
+    } else {
+      setStatus("idle");
     }
-  }, []);
+  }, [stopLevelMeter, stopStream]);
 
   const handleClick = useCallback(async () => {
     if (status === "processing" || disabled) {
@@ -333,7 +336,7 @@ export function VoiceRecorderButton({
     <div className="flex w-full flex-col items-end gap-1">
       <Button
         aria-pressed={status === "recording"}
-        className="border border-primary bg-transparent px-3 py-1 text-primary text-xs uppercase tracking-[0.2em] hover:bg-primary/10"
+        className="w-full border border-primary bg-transparent px-3 py-1 text-primary text-xs uppercase tracking-[0.2em] hover:bg-primary/10"
         disabled={!canUseVoice || disabled || status === "processing"}
         onClick={handleClick}
         type="button"
@@ -342,7 +345,7 @@ export function VoiceRecorderButton({
         {renderButtonContent()}
       </Button>
       <div className="flex w-full items-center gap-2 text-[9px] text-muted-foreground uppercase tracking-[0.2em]">
-        <div className="relative h-1 w-20 rounded bg-muted-foreground/20">
+        <div className="relative h-1 w-full rounded bg-muted-foreground/20">
           <div
             className="absolute inset-y-0 left-0 rounded bg-primary transition-[opacity,width] duration-100"
             style={{ width: `${volumePercent}%`, opacity: meterOpacity }}
