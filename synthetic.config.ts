@@ -9,9 +9,10 @@ export default defineSyntheticConfig({
   voice: {
     enabled: true,
     transcription: {
-      mode: "local",
-      model: "Xenova/whisper-small",
+      mode: "remote",
+      provider: "openai",
       language: "en",
+      apiKeyEnv: "OPENAI_API_KEY",
     },
   },
   defaults: {
