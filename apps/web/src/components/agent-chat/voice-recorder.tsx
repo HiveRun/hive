@@ -1,5 +1,4 @@
 import { useMutation } from "@tanstack/react-query";
-import audioBufferToWav from "audiobuffer-to-wav";
 import { Loader2, Mic, Square } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -161,7 +160,7 @@ export function VoiceRecorderButton({
       }
       const buffer = await blob.arrayBuffer();
       const audioBuffer = await decodeToAudioBuffer(audioContext, buffer);
-      const wavBuffer = audioBufferToWav(audioBuffer);
+      const wavBuffer = audioBufferToWavBuffer(audioBuffer);
       return {
         base64: arrayBufferToBase64(wavBuffer),
         mimeType: "audio/wav",
@@ -366,6 +365,83 @@ function getSupportedMimeType() {
   return PREFERRED_MIME_TYPES.find((type) =>
     window.MediaRecorder.isTypeSupported?.(type)
   );
+}
+
+const WAV_HEADER_SIZE = 44;
+const WAV_FMT_CHUNK_SIZE = 16;
+const WAV_RIFF_HEADER_ADJUST = 8;
+const UINT32_BYTES = 4;
+const UINT16_BYTES = 2;
+const PCM_BYTES_PER_SAMPLE = 2;
+const BITS_PER_BYTE = 8;
+const PCM_BITS_PER_SAMPLE = PCM_BYTES_PER_SAMPLE * BITS_PER_BYTE;
+const PCM_FORMAT = 1;
+const PCM_POSITIVE_SCALE = 0x7f_ff;
+const PCM_NEGATIVE_SCALE = 0x80_00;
+
+function audioBufferToWavBuffer(audioBuffer: AudioBuffer) {
+  const numChannels = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const blockAlign = numChannels * PCM_BYTES_PER_SAMPLE;
+  const bufferLength = audioBuffer.length * blockAlign;
+  const totalLength = WAV_HEADER_SIZE + bufferLength;
+  const arrayBuffer = new ArrayBuffer(totalLength);
+  const view = new DataView(arrayBuffer);
+
+  let offset = 0;
+  writeString(view, offset, "RIFF");
+  offset += UINT32_BYTES;
+  view.setUint32(
+    offset,
+    WAV_HEADER_SIZE - WAV_RIFF_HEADER_ADJUST + bufferLength,
+    true
+  );
+  offset += UINT32_BYTES;
+  writeString(view, offset, "WAVE");
+  offset += UINT32_BYTES;
+  writeString(view, offset, "fmt ");
+  offset += UINT32_BYTES;
+  view.setUint32(offset, WAV_FMT_CHUNK_SIZE, true);
+  offset += UINT32_BYTES;
+  view.setUint16(offset, PCM_FORMAT, true);
+  offset += UINT16_BYTES;
+  view.setUint16(offset, numChannels, true);
+  offset += UINT16_BYTES;
+  view.setUint32(offset, sampleRate, true);
+  offset += UINT32_BYTES;
+  view.setUint32(offset, sampleRate * blockAlign, true);
+  offset += UINT32_BYTES;
+  view.setUint16(offset, blockAlign, true);
+  offset += UINT16_BYTES;
+  view.setUint16(offset, PCM_BITS_PER_SAMPLE, true);
+  offset += UINT16_BYTES;
+  writeString(view, offset, "data");
+  offset += UINT32_BYTES;
+  view.setUint32(offset, bufferLength, true);
+  offset += UINT32_BYTES;
+
+  const channelData = new Array<Float32Array>(numChannels);
+  for (let channel = 0; channel < numChannels; channel += 1) {
+    channelData[channel] = audioBuffer.getChannelData(channel);
+  }
+
+  for (let i = 0; i < audioBuffer.length; i += 1) {
+    for (let channel = 0; channel < numChannels; channel += 1) {
+      const sample = Math.max(-1, Math.min(1, channelData[channel][i]));
+      const value =
+        sample < 0 ? sample * PCM_NEGATIVE_SCALE : sample * PCM_POSITIVE_SCALE;
+      view.setInt16(offset, value, true);
+      offset += PCM_BYTES_PER_SAMPLE;
+    }
+  }
+
+  return arrayBuffer;
+}
+
+function writeString(view: DataView, offset: number, str: string) {
+  for (let i = 0; i < str.length; i += 1) {
+    view.setUint8(offset + i, str.charCodeAt(i));
+  }
 }
 
 function decodeToAudioBuffer(
