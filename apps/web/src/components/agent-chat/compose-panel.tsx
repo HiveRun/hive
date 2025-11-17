@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useMemo } from "react";
+import { useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -50,21 +50,6 @@ export function ComposePanel({
 
   const voiceConfigQuery = useQuery(voiceQueries.config());
   const voiceConfig = voiceConfigQuery.data;
-
-  const voiceSummary = useMemo(() => {
-    if (!voiceConfig?.enabled) {
-      return null;
-    }
-    let modeLabel = "Voice";
-    if (voiceConfig.mode === "local") {
-      modeLabel = "Local";
-    } else if (voiceConfig.mode === "remote") {
-      modeLabel = "Remote";
-    }
-    const provider = voiceConfig.provider ?? "-";
-    const model = voiceConfig.model ?? "-";
-    return `${modeLabel} • ${provider} • ${model}`;
-  }, [voiceConfig]);
 
   const handleTranscriptionInsert = useCallback(
     (transcript: string) => {
@@ -126,16 +111,11 @@ export function ComposePanel({
             rules={{ validate: validateMessage }}
           />
           <div className="flex flex-col gap-2">
-            {voiceSummary ? (
-              <span className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
-                Voice Model · {voiceSummary}
-              </span>
-            ) : null}
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <span className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
                 Ctrl+Enter to send
               </span>
-              <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center sm:gap-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
                 {voiceConfig?.enabled && voiceConfig.allowBrowserRecording ? (
                   <VoiceRecorderButton
                     config={voiceConfig}
