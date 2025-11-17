@@ -1,0 +1,354 @@
+import { randomUUID } from "node:crypto";
+import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, join, resolve } from "node:path";
+
+const REGISTRY_FILE_NAME = "workspaces.json";
+const SYNTHETIC_HOME_ENV = "SYNTHETIC_HOME";
+const REGISTRY_VERSION = 1;
+
+export type WorkspaceRecord = {
+  id: string;
+  label: string;
+  path: string;
+  addedAt: string;
+  lastOpenedAt?: string;
+};
+
+type RegistryFile = {
+  version: number;
+  workspaces: WorkspaceRecord[];
+  activeWorkspaceId?: string | null;
+};
+
+export type WorkspaceRegistry = {
+  workspaces: WorkspaceRecord[];
+  activeWorkspaceId?: string | null;
+};
+
+type RegisterWorkspaceInput = {
+  path: string;
+  label?: string;
+};
+
+type RegisterWorkspaceOptions = {
+  setActive?: boolean;
+};
+
+type UpdateWorkspaceLabelInput = {
+  id: string;
+  label: string;
+};
+
+function resolveSyntheticHome(): string {
+  return process.env[SYNTHETIC_HOME_ENV] || join(homedir(), ".synthetic");
+}
+
+function resolveRegistryPath(): string {
+  return join(resolveSyntheticHome(), REGISTRY_FILE_NAME);
+}
+
+async function ensureRegistryDir(): Promise<void> {
+  const syntheticHome = resolveSyntheticHome();
+  await mkdir(syntheticHome, { recursive: true });
+}
+
+function normalizePath(path: string): string {
+  return resolve(path);
+}
+
+async function validateWorkspaceDirectory(path: string): Promise<string> {
+  const absolutePath = normalizePath(path);
+  let stats: Awaited<ReturnType<typeof stat>>;
+  try {
+    stats = await stat(absolutePath);
+  } catch (error) {
+    throw new Error(
+      `Workspace path does not exist: ${absolutePath} (${error instanceof Error ? error.message : error})`
+    );
+  }
+
+  if (!stats.isDirectory()) {
+    throw new Error(`Workspace path is not a directory: ${absolutePath}`);
+  }
+
+  const configPath = join(absolutePath, "synthetic.config.ts");
+  try {
+    await access(configPath);
+  } catch {
+    throw new Error(`synthetic.config.ts not found in ${absolutePath}`);
+  }
+
+  return absolutePath;
+}
+
+async function readRegistryFile(): Promise<RegistryFile> {
+  const registryPath = resolveRegistryPath();
+
+  try {
+    const contents = await readFile(registryPath, "utf8");
+    const parsed = JSON.parse(contents) as Partial<RegistryFile>;
+    if (!parsed || typeof parsed !== "object") {
+      throw new Error("Invalid registry format");
+    }
+
+    const workspaces = Array.isArray(parsed.workspaces)
+      ? parsed.workspaces
+          .map((workspace) => sanitizeWorkspaceRecord(workspace))
+          .filter((record): record is WorkspaceRecord => Boolean(record))
+      : [];
+
+    const activeWorkspaceId =
+      typeof parsed.activeWorkspaceId === "string" &&
+      workspaces.some((workspace) => workspace.id === parsed.activeWorkspaceId)
+        ? parsed.activeWorkspaceId
+        : null;
+
+    return {
+      version:
+        typeof parsed.version === "number" ? parsed.version : REGISTRY_VERSION,
+      workspaces,
+      activeWorkspaceId,
+    };
+  } catch (error) {
+    if (isFileMissingError(error)) {
+      return {
+        version: REGISTRY_VERSION,
+        workspaces: [],
+        activeWorkspaceId: null,
+      };
+    }
+
+    throw new Error(
+      `Failed to read workspace registry: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+async function writeRegistryFile(data: RegistryFile): Promise<void> {
+  const registryPath = resolveRegistryPath();
+  await ensureRegistryDir();
+  await writeFile(registryPath, JSON.stringify(data, null, 2));
+}
+
+function isFileMissingError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: string }).code === "ENOENT"
+  );
+}
+
+function sanitizeWorkspaceRecord(record: unknown): WorkspaceRecord | null {
+  if (!record || typeof record !== "object") {
+    return null;
+  }
+
+  const { id, label, path, addedAt, lastOpenedAt } =
+    record as Partial<WorkspaceRecord>;
+  if (!(id && label)) {
+    return null;
+  }
+  if (!(path && addedAt)) {
+    return null;
+  }
+
+  return {
+    id,
+    label,
+    path,
+    addedAt,
+    ...(lastOpenedAt ? { lastOpenedAt } : {}),
+  };
+}
+
+function mergeWorkspace(
+  existing: WorkspaceRecord | undefined,
+  update: Partial<WorkspaceRecord>
+): WorkspaceRecord {
+  return {
+    id: existing?.id ?? randomUUID(),
+    label: update.label ?? existing?.label ?? "",
+    path: update.path ?? existing?.path ?? "",
+    addedAt: existing?.addedAt ?? new Date().toISOString(),
+    lastOpenedAt: update.lastOpenedAt ?? existing?.lastOpenedAt,
+  };
+}
+
+function deriveLabelFromPath(path: string): string {
+  const base = basename(path);
+  return base || path;
+}
+
+function sortWorkspaces(workspaces: WorkspaceRecord[]): WorkspaceRecord[] {
+  return [...workspaces].sort((a, b) => {
+    if (a.lastOpenedAt && b.lastOpenedAt) {
+      return b.lastOpenedAt.localeCompare(a.lastOpenedAt);
+    }
+    if (a.lastOpenedAt) {
+      return -1;
+    }
+    if (b.lastOpenedAt) {
+      return 1;
+    }
+    return b.addedAt.localeCompare(a.addedAt);
+  });
+}
+
+export async function getWorkspaceRegistry(): Promise<WorkspaceRegistry> {
+  const registry = await readRegistryFile();
+  return {
+    workspaces: sortWorkspaces(registry.workspaces),
+    activeWorkspaceId: registry.activeWorkspaceId ?? null,
+  };
+}
+
+export async function listWorkspaces(): Promise<WorkspaceRecord[]> {
+  const registry = await getWorkspaceRegistry();
+  return registry.workspaces;
+}
+
+export async function registerWorkspace(
+  input: RegisterWorkspaceInput,
+  options: RegisterWorkspaceOptions = {}
+): Promise<WorkspaceRecord> {
+  const absolutePath = await validateWorkspaceDirectory(input.path);
+  const registry = await readRegistryFile();
+  const now = new Date().toISOString();
+  const existing = registry.workspaces.find(
+    (entry) => entry.path === absolutePath
+  );
+  const label =
+    input.label?.trim() || existing?.label || deriveLabelFromPath(absolutePath);
+
+  const workspace = mergeWorkspace(existing, {
+    label,
+    path: absolutePath,
+    lastOpenedAt: options.setActive ? now : existing?.lastOpenedAt,
+  });
+
+  let workspaceWithAddedAt: WorkspaceRecord = workspace;
+  if (!existing) {
+    workspaceWithAddedAt = { ...workspace, addedAt: now };
+  }
+
+  const workspaces = existing
+    ? registry.workspaces.map((entry) =>
+        entry.id === workspaceWithAddedAt.id ? workspaceWithAddedAt : entry
+      )
+    : [...registry.workspaces, workspaceWithAddedAt];
+
+  let activeWorkspaceId = registry.activeWorkspaceId ?? null;
+  if (options.setActive || registry.workspaces.length === 0) {
+    activeWorkspaceId = workspaceWithAddedAt.id;
+  }
+
+  await writeRegistryFile({
+    version: REGISTRY_VERSION,
+    workspaces,
+    activeWorkspaceId,
+  });
+  return workspaceWithAddedAt;
+}
+
+export async function removeWorkspace(id: string): Promise<boolean> {
+  const registry = await readRegistryFile();
+  const initialLength = registry.workspaces.length;
+  const workspaces = registry.workspaces.filter(
+    (workspace) => workspace.id !== id
+  );
+
+  if (workspaces.length === initialLength) {
+    return false;
+  }
+
+  let activeWorkspaceId = registry.activeWorkspaceId ?? null;
+  if (activeWorkspaceId === id) {
+    activeWorkspaceId = workspaces[0]?.id ?? null;
+  }
+
+  await writeRegistryFile({
+    version: REGISTRY_VERSION,
+    workspaces,
+    activeWorkspaceId,
+  });
+  return true;
+}
+
+export async function updateWorkspaceLabel({
+  id,
+  label,
+}: UpdateWorkspaceLabelInput): Promise<WorkspaceRecord | null> {
+  const registry = await readRegistryFile();
+  const trimmedLabel = label.trim();
+  if (!trimmedLabel) {
+    throw new Error("Workspace label cannot be empty");
+  }
+
+  const index = registry.workspaces.findIndex(
+    (workspace) => workspace.id === id
+  );
+  if (index === -1) {
+    return null;
+  }
+
+  const currentWorkspace = registry.workspaces[index];
+  if (!currentWorkspace) {
+    return null;
+  }
+
+  const updatedWorkspace: WorkspaceRecord = {
+    ...currentWorkspace,
+    label: trimmedLabel,
+  };
+
+  registry.workspaces[index] = updatedWorkspace;
+  await writeRegistryFile({
+    version: REGISTRY_VERSION,
+    workspaces: registry.workspaces,
+    activeWorkspaceId: registry.activeWorkspaceId ?? null,
+  });
+  return updatedWorkspace;
+}
+
+export async function activateWorkspace(
+  id: string
+): Promise<WorkspaceRecord | null> {
+  const registry = await readRegistryFile();
+  const index = registry.workspaces.findIndex(
+    (workspace) => workspace.id === id
+  );
+  if (index === -1) {
+    return null;
+  }
+
+  const currentWorkspace = registry.workspaces[index];
+  if (!currentWorkspace) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  const updatedWorkspace: WorkspaceRecord = {
+    ...currentWorkspace,
+    lastOpenedAt: now,
+  };
+
+  registry.workspaces[index] = updatedWorkspace;
+  await writeRegistryFile({
+    version: REGISTRY_VERSION,
+    workspaces: registry.workspaces,
+    activeWorkspaceId: updatedWorkspace.id,
+  });
+  return updatedWorkspace;
+}
+
+export async function ensureWorkspaceRegistered(
+  path: string,
+  options: { label?: string } = {}
+): Promise<WorkspaceRecord> {
+  return await registerWorkspace(
+    { path, label: options.label },
+    { setActive: true }
+  );
+}

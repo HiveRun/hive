@@ -201,6 +201,18 @@ export const VoiceTranscriptionRequestSchema = t.Object({
   mimeType: t.Optional(t.String()),
 });
 
+export const WorkspaceDirectoryEntrySchema = t.Object({
+  name: t.String(),
+  path: t.String(),
+  hasConfig: t.Boolean(),
+});
+
+export const WorkspaceBrowseResponseSchema = t.Object({
+  path: t.String(),
+  parentPath: t.Optional(t.Union([t.String(), t.Null()])),
+  directories: t.Array(WorkspaceDirectoryEntrySchema),
+});
+
 export const VoiceTranscriptionResponseSchema = t.Object({
   text: t.String(),
   language: t.Union([t.String(), t.Null()]),

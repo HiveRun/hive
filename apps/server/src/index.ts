@@ -4,16 +4,19 @@ import { cors } from "@elysiajs/cors";
 import { Elysia } from "elysia";
 import { cleanupOrphanedServers } from "./agents/cleanup";
 import { closeAllAgentSessions } from "./agents/service";
+import { resolveWorkspaceRoot } from "./config/context";
 import { db } from "./db";
 import { agentsRoutes } from "./routes/agents";
 import { constructsRoutes } from "./routes/constructs";
 import { templatesRoutes } from "./routes/templates";
 import { preloadVoiceTranscriptionModels, voiceRoutes } from "./routes/voice";
+import { workspacesRoutes } from "./routes/workspaces";
 import { constructs } from "./schema/constructs";
 import {
   bootstrapServiceSupervisor,
   stopAllServices,
 } from "./services/supervisor";
+import { ensureWorkspaceRegistered } from "./workspaces/registry";
 
 const DEFAULT_SERVER_PORT = 3000;
 const PORT = Number(process.env.PORT ?? DEFAULT_SERVER_PORT);
@@ -65,6 +68,16 @@ const allowedCorsOrigins =
 
 await startupCleanup();
 
+const workspaceRoot = resolveWorkspaceRoot();
+try {
+  await ensureWorkspaceRegistered(workspaceRoot);
+  process.stderr.write(`Workspace registered: ${workspaceRoot}\n`);
+} catch (error) {
+  process.stderr.write(
+    `Warning: Failed to register workspace ${workspaceRoot}: ${error instanceof Error ? error.message : String(error)}\n`
+  );
+}
+
 try {
   await bootstrapServiceSupervisor();
   process.stderr.write("Service supervisor initialized.\n");
@@ -99,6 +112,7 @@ const app = new Elysia()
     timestamp: Date.now(),
   }))
   .use(templatesRoutes)
+  .use(workspacesRoutes)
   .use(constructsRoutes)
   .use(agentsRoutes)
   .use(voiceRoutes)

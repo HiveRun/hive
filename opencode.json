@@ -111,5 +111,8 @@
       "enabled": true,
       "command": ["bunx", "mcp-remote", "https://mcp.exa.ai/mcp"]
     }
+  },
+  "permission": {
+    "external_directory": "ask"
   }
 }

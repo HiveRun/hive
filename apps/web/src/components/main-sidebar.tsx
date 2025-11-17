@@ -16,6 +16,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { MAIN_NAV_ITEMS } from "@/config/navigation";
 import { cn } from "@/lib/utils";
 
@@ -58,6 +59,12 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
         </div>
       </SidebarHeader>
       <SidebarContent className="gap-6 bg-transparent">
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <WorkspaceSwitcher collapsed={sidebarState === "collapsed"} />
+          </SidebarGroupContent>
+        </SidebarGroup>
+
         <SidebarGroup>
           <SidebarGroupLabel
             className={cn(
