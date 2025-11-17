@@ -111,7 +111,7 @@ export function ComposePanel({
             rules={{ validate: validateMessage }}
           />
           <div className="flex flex-col gap-2">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-2">
               <span className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
                 Ctrl+Enter to send
               </span>
