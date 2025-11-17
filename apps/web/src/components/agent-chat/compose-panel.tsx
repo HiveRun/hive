@@ -131,7 +131,7 @@ export function ComposePanel({
                 Voice Model · {voiceSummary}
               </span>
             ) : null}
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <span className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
                 Ctrl+Enter to send
               </span>
