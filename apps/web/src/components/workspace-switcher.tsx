@@ -244,21 +244,15 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
               />
               <div className="flex flex-col gap-3 rounded border border-border border-dashed bg-card/60 p-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-sm uppercase tracking-[0.2em]">
+                  <h3 className="font-semibold text-muted-foreground text-sm uppercase tracking-[0.2em]">
                     Register Workspace
                   </h3>
-                  <Button
-                    className={cn(
-                      "uppercase tracking-[0.2em]",
-                      registerOpen ? "border-[#5a7c5a]" : undefined
-                    )}
-                    onClick={() => setRegisterOpen((prev) => !prev)}
-                    type="button"
-                    variant="outline"
-                  >
-                    {registerOpen ? "Close" : "Register workspace"}
-                  </Button>
+                  <RegisterToggleButton
+                    isOpen={registerOpen}
+                    onToggle={() => setRegisterOpen((prev) => !prev)}
+                  />
                 </div>
+
                 {registerOpen ? (
                   <WorkspaceRegisterForm
                     explorerEntries={browseEntries}
@@ -287,7 +281,7 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                   />
                 ) : (
                   <p className="text-muted-foreground text-sm">
-                    Click "Register workspace" to add another project.
+                    Click "Register new workspace" to add another project.
                   </p>
                 )}
               </div>
@@ -313,6 +307,40 @@ type WorkspaceDirectoryExplorerProps = {
   parentPath?: string | null;
   selectedPath: string;
 };
+
+type RegisterToggleButtonProps = {
+  isOpen: boolean;
+  onToggle: () => void;
+};
+
+function RegisterToggleButton({ isOpen, onToggle }: RegisterToggleButtonProps) {
+  return (
+    <div className="relative inline-flex">
+      <Button
+        className={cn(
+          "min-w-[220px] uppercase tracking-[0.2em] transition-opacity",
+          isOpen ? "opacity-0" : "opacity-100"
+        )}
+        onClick={onToggle}
+        type="button"
+        variant="outline"
+      >
+        Register new workspace
+      </Button>
+      <Button
+        className={cn(
+          "absolute inset-0 min-w-[220px] uppercase tracking-[0.2em] transition-opacity",
+          isOpen ? "opacity-100" : "pointer-events-none opacity-0"
+        )}
+        onClick={onToggle}
+        type="button"
+        variant="outline"
+      >
+        Close
+      </Button>
+    </div>
+  );
+}
 
 function WorkspaceDirectoryExplorer({
   currentPath,
