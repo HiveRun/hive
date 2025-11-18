@@ -314,29 +314,32 @@ type RegisterToggleButtonProps = {
 };
 
 function RegisterToggleButton({ isOpen, onToggle }: RegisterToggleButtonProps) {
+  const baseClasses =
+    "min-w-[220px] flex flex-col text-left uppercase tracking-[0.2em] transition-opacity";
+
   return (
     <div className="relative inline-flex">
       <Button
-        className={cn(
-          "min-w-[220px] uppercase tracking-[0.2em] transition-opacity",
-          isOpen ? "opacity-0" : "opacity-100"
-        )}
+        className={cn(baseClasses, isOpen ? "opacity-0" : "opacity-100")}
         onClick={onToggle}
         type="button"
         variant="outline"
       >
-        Register new workspace
+        <span>Register new</span>
+        <span>workspace</span>
       </Button>
       <Button
         className={cn(
-          "absolute inset-0 min-w-[220px] uppercase tracking-[0.2em] transition-opacity",
+          baseClasses,
+          "absolute inset-0",
           isOpen ? "opacity-100" : "pointer-events-none opacity-0"
         )}
         onClick={onToggle}
         type="button"
         variant="outline"
       >
-        Close
+        <span>Close</span>
+        <span>form</span>
       </Button>
     </div>
   );
