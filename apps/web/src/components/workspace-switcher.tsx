@@ -138,7 +138,6 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
     registerWorkspace.mutate({
       path: trimmedPath,
       label: derivedLabel,
-      activate: true,
     });
   };
 
