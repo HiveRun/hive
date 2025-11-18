@@ -47,6 +47,25 @@ type WorkspaceSwitcherProps = {
   collapsed: boolean;
 };
 
+type WorkspaceRegisterFormProps = {
+  path: string;
+  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  onClear: () => void;
+  registering: boolean;
+  explorerPathLabel: string;
+  explorerEntries: WorkspaceBrowseEntry[];
+  isExplorerLoading: boolean;
+  explorerError: unknown;
+  onExplorerSelect: (path: string) => void;
+  onExplorerOpen: (path: string) => void;
+  onExplorerUp: () => void;
+  onExplorerRefresh: () => void;
+  explorerFilter: string;
+  onExplorerFilterChange: (value: string) => void;
+  parentPath?: string | null;
+  selectedPath: string;
+};
+
 export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [selectedDirectory, setSelectedDirectory] = useState<string>("");
@@ -271,13 +290,11 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                     onExplorerRefresh={() => workspaceBrowseQuery.refetch()}
                     onExplorerSelect={handleDirectorySelect}
                     onExplorerUp={handleBrowseUp}
-                    onPathChange={setSelectedDirectory}
                     onSubmit={handleRegister}
                     parentPath={workspaceBrowseQuery.data?.parentPath}
                     path={selectedDirectory}
                     registering={registerWorkspace.isPending}
                     selectedPath={selectedDirectory}
-                    suggestions={browseEntries}
                   />
                 ) : (
                   <p className="text-muted-foreground text-sm">
@@ -466,30 +483,8 @@ function WorkspaceDirectoryExplorer({
   );
 }
 
-type WorkspaceRegisterFormProps = {
-  path: string;
-  onPathChange: (value: string) => void;
-  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
-  onClear: () => void;
-  registering: boolean;
-  explorerPathLabel: string;
-  explorerEntries: WorkspaceBrowseEntry[];
-  isExplorerLoading: boolean;
-  explorerError: unknown;
-  onExplorerSelect: (path: string) => void;
-  onExplorerOpen: (path: string) => void;
-  onExplorerUp: () => void;
-  onExplorerRefresh: () => void;
-  explorerFilter: string;
-  onExplorerFilterChange: (value: string) => void;
-  parentPath?: string | null;
-  selectedPath: string;
-  suggestions: WorkspaceBrowseEntry[];
-};
-
 function WorkspaceRegisterForm({
   path,
-  onPathChange,
   onSubmit,
   onClear,
   registering,
@@ -505,7 +500,6 @@ function WorkspaceRegisterForm({
   onExplorerFilterChange,
   parentPath,
   selectedPath,
-  suggestions,
 }: WorkspaceRegisterFormProps) {
   return (
     <div className="flex flex-col gap-3 rounded border border-border border-dashed bg-card/60 p-4">
@@ -519,55 +513,12 @@ function WorkspaceRegisterForm({
       </div>
       <form className="space-y-4" onSubmit={onSubmit}>
         <div>
-          <Label>Workspace Path</Label>
-          <div className="flex items-center gap-2">
-            <div className="flex flex-1 flex-col rounded border border-border bg-background/60 px-3 py-2 text-sm">
-              <span className="text-[0.6rem] text-muted-foreground uppercase tracking-[0.3em]">
-                Selected directory
-              </span>
-              <span className="font-mono text-sm">
-                {path || explorerPathLabel || "None selected"}
-              </span>
-            </div>
-            <Button
-              className="uppercase tracking-[0.2em]"
-              onClick={() => {
-                onPathChange(explorerPathLabel);
-                onExplorerFilterChange("");
-              }}
-              type="button"
-              variant="outline"
-            >
-              Use current
-            </Button>
-            <Button
-              aria-label="Reset selection"
-              onClick={() => {
-                onPathChange("");
-                onExplorerFilterChange("");
-              }}
-              size="icon"
-              type="button"
-              variant="ghost"
-            >
-              <FolderOpen className="size-4" />
-            </Button>
+          <Label>Selected Directory</Label>
+          <div className="flex flex-col rounded border border-border bg-background/60 px-3 py-2 text-sm">
+            <span className="font-mono text-sm">
+              {path || explorerPathLabel || "None selected"}
+            </span>
           </div>
-          {suggestions.length ? (
-            <div className="flex flex-wrap gap-2 pt-2 text-xs">
-              <span className="text-muted-foreground">Current folder:</span>
-              {suggestions.map((entry) => (
-                <button
-                  className="rounded border border-border px-2 py-0.5 text-muted-foreground uppercase tracking-[0.2em] transition-colors hover:border-[#5a7c5a] hover:text-[#f4f7f2]"
-                  key={entry.path}
-                  onClick={() => onPathChange(entry.path)}
-                  type="button"
-                >
-                  {entry.name}
-                </button>
-              ))}
-            </div>
-          ) : null}
         </div>
         <WorkspaceDirectoryExplorer
           currentPath={explorerPathLabel}
