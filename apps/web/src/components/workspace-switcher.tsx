@@ -49,7 +49,7 @@ type WorkspaceSwitcherProps = {
 
 export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [path, setPath] = useState("");
+  const [selectedDirectory, setSelectedDirectory] = useState<string>("");
   const [registerOpen, setRegisterOpen] = useState(false);
   const [browsePath, setBrowsePath] = useState<string | undefined>(undefined);
   const [browseFilter, setBrowseFilter] = useState<string>("");
@@ -67,7 +67,7 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
     mutationFn: workspaceMutations.register.mutationFn,
     onSuccess: (workspace) => {
       toast.success(`Registered ${workspace.label}`);
-      setPath("");
+      setSelectedDirectory("");
       setBrowseFilter("");
       invalidate();
     },
@@ -130,9 +130,9 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
 
   const handleRegister = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const trimmedPath = path.trim();
+    const trimmedPath = selectedDirectory.trim();
     if (!trimmedPath) {
-      toast.error("Workspace path is required");
+      toast.error("Select a directory to register");
       return;
     }
     const derivedLabel =
@@ -161,7 +161,7 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
   };
 
   const handleDirectorySelect = (dirPath: string) => {
-    setPath(dirPath);
+    setSelectedDirectory(dirPath);
   };
 
   const handleBrowseFilterChange = (value: string) => {
@@ -261,7 +261,7 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                     explorerPathLabel={explorerPathLabel}
                     isExplorerLoading={isBrowseLoading}
                     onClear={() => {
-                      setPath("");
+                      setSelectedDirectory("");
                       setBrowseFilter("");
                       setBrowsePath(undefined);
                       setRegisterOpen(false);
@@ -271,13 +271,13 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                     onExplorerRefresh={() => workspaceBrowseQuery.refetch()}
                     onExplorerSelect={handleDirectorySelect}
                     onExplorerUp={handleBrowseUp}
-                    onPathChange={setPath}
+                    onPathChange={setSelectedDirectory}
                     onSubmit={handleRegister}
                     parentPath={workspaceBrowseQuery.data?.parentPath}
-                    path={path}
+                    path={selectedDirectory}
                     registering={registerWorkspace.isPending}
-                    selectedPath={path}
-                    suggestions={sortedWorkspaces}
+                    selectedPath={selectedDirectory}
+                    suggestions={browseEntries}
                   />
                 ) : (
                   <p className="text-muted-foreground text-sm">
@@ -484,7 +484,7 @@ type WorkspaceRegisterFormProps = {
   onExplorerFilterChange: (value: string) => void;
   parentPath?: string | null;
   selectedPath: string;
-  suggestions: WorkspaceSummary[];
+  suggestions: WorkspaceBrowseEntry[];
 };
 
 function WorkspaceRegisterForm({
@@ -519,52 +519,51 @@ function WorkspaceRegisterForm({
       </div>
       <form className="space-y-4" onSubmit={onSubmit}>
         <div>
-          <Label htmlFor="workspace-path">Workspace Path</Label>
-          <div className="flex gap-2">
-            <Input
-              className="flex-1"
-              id="workspace-path"
-              list="workspace-suggestions"
-              onChange={(event) => onPathChange(event.currentTarget.value)}
-              placeholder="/home/user/projects/amazing-app"
-              required
-              value={path}
-            />
-            <datalist id="workspace-suggestions">
-              {suggestions.map((workspace) => (
-                <option key={workspace.id} value={workspace.path}>
-                  {workspace.label}
-                </option>
-              ))}
-            </datalist>
+          <Label>Workspace Path</Label>
+          <div className="flex items-center gap-2">
+            <div className="flex flex-1 flex-col rounded border border-border bg-background/60 px-3 py-2 text-sm">
+              <span className="text-[0.6rem] text-muted-foreground uppercase tracking-[0.3em]">
+                Selected directory
+              </span>
+              <span className="font-mono text-sm">
+                {path || explorerPathLabel || "None selected"}
+              </span>
+            </div>
             <Button
-              aria-label="Reset to workspace root"
+              className="uppercase tracking-[0.2em]"
+              onClick={() => {
+                onPathChange(explorerPathLabel);
+                onExplorerFilterChange("");
+              }}
+              type="button"
+              variant="outline"
+            >
+              Use current
+            </Button>
+            <Button
+              aria-label="Reset selection"
               onClick={() => {
                 onPathChange("");
                 onExplorerFilterChange("");
-                onExplorerOpen("/");
               }}
               size="icon"
               type="button"
-              variant="outline"
+              variant="ghost"
             >
               <FolderOpen className="size-4" />
             </Button>
           </div>
-          <p className="mt-1 truncate text-muted-foreground text-xs">
-            {explorerPathLabel || "Select a directory"}
-          </p>
           {suggestions.length ? (
             <div className="flex flex-wrap gap-2 pt-2 text-xs">
-              <span className="text-muted-foreground">Recent:</span>
-              {suggestions.map((workspace) => (
+              <span className="text-muted-foreground">Current folder:</span>
+              {suggestions.map((entry) => (
                 <button
                   className="rounded border border-border px-2 py-0.5 text-muted-foreground uppercase tracking-[0.2em] transition-colors hover:border-[#5a7c5a] hover:text-[#f4f7f2]"
-                  key={workspace.id}
-                  onClick={() => onPathChange(workspace.path)}
+                  key={entry.path}
+                  onClick={() => onPathChange(entry.path)}
                   type="button"
                 >
-                  {workspace.label}
+                  {entry.name}
                 </button>
               ))}
             </div>
