@@ -50,7 +50,6 @@ type WorkspaceSwitcherProps = {
 export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [path, setPath] = useState("");
-  const [isExplorerVisible, setIsExplorerVisible] = useState(false);
   const [registerOpen, setRegisterOpen] = useState(false);
   const [browsePath, setBrowsePath] = useState<string | undefined>(undefined);
   const [browseFilter, setBrowseFilter] = useState<string>("");
@@ -58,7 +57,6 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
   const workspaceListQuery = useQuery(workspaceQueries.list());
   const workspaceBrowseQuery = useQuery({
     ...workspaceQueries.browse(browsePath, browseFilter),
-    enabled: isExplorerVisible,
   });
   const invalidate = () =>
     queryClient.invalidateQueries({
@@ -153,17 +151,6 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
 
   const handleRemove = (id: string) => {
     removeWorkspace.mutate({ id });
-  };
-
-  const toggleExplorer = () => {
-    setIsExplorerVisible((prev) => {
-      const next = !prev;
-      if (next) {
-        setBrowsePath(undefined);
-        setBrowseFilter("");
-      }
-      return next;
-    });
   };
 
   const handleBrowseUp = () => {
@@ -276,7 +263,6 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                   explorerError={browseError}
                   explorerFilter={browseFilter}
                   explorerPathLabel={explorerPathLabel}
-                  explorerVisible={isExplorerVisible}
                   isExplorerLoading={isBrowseLoading}
                   onClear={() => {
                     setPath("");
@@ -288,7 +274,6 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                   onExplorerOpen={handleDirectoryOpen}
                   onExplorerRefresh={() => workspaceBrowseQuery.refetch()}
                   onExplorerSelect={handleDirectorySelect}
-                  onExplorerToggle={toggleExplorer}
                   onExplorerUp={handleBrowseUp}
                   onPathChange={setPath}
                   onSubmit={handleRegister}
@@ -296,6 +281,7 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                   path={path}
                   registering={registerWorkspace.isPending}
                   selectedPath={path}
+                  suggestions={sortedWorkspaces}
                 />
               ) : null}
             </div>
@@ -451,8 +437,6 @@ type WorkspaceRegisterFormProps = {
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
   onClear: () => void;
   registering: boolean;
-  explorerVisible: boolean;
-  onExplorerToggle: () => void;
   explorerPathLabel: string;
   explorerEntries: WorkspaceBrowseEntry[];
   isExplorerLoading: boolean;
@@ -465,6 +449,7 @@ type WorkspaceRegisterFormProps = {
   onExplorerFilterChange: (value: string) => void;
   parentPath?: string | null;
   selectedPath: string;
+  suggestions: WorkspaceSummary[];
 };
 
 function WorkspaceRegisterForm({
@@ -473,8 +458,6 @@ function WorkspaceRegisterForm({
   onSubmit,
   onClear,
   registering,
-  explorerVisible,
-  onExplorerToggle,
   explorerPathLabel,
   explorerEntries,
   isExplorerLoading,
@@ -487,6 +470,7 @@ function WorkspaceRegisterForm({
   onExplorerFilterChange,
   parentPath,
   selectedPath,
+  suggestions,
 }: WorkspaceRegisterFormProps) {
   return (
     <div className="flex flex-col gap-3 rounded border border-border border-dashed bg-card/60 p-4">
@@ -505,14 +489,26 @@ function WorkspaceRegisterForm({
             <Input
               className="flex-1"
               id="workspace-path"
+              list="workspace-suggestions"
               onChange={(event) => onPathChange(event.currentTarget.value)}
               placeholder="/home/user/projects/amazing-app"
               required
               value={path}
             />
+            <datalist id="workspace-suggestions">
+              {suggestions.map((workspace) => (
+                <option key={workspace.id} value={workspace.path}>
+                  {workspace.label}
+                </option>
+              ))}
+            </datalist>
             <Button
-              aria-label="Browse directories"
-              onClick={onExplorerToggle}
+              aria-label="Reset to workspace root"
+              onClick={() => {
+                onPathChange("");
+                onExplorerFilterChange("");
+                onExplorerOpen("/");
+              }}
               size="icon"
               type="button"
               variant="outline"
@@ -520,28 +516,39 @@ function WorkspaceRegisterForm({
               <FolderOpen className="size-4" />
             </Button>
           </div>
-          {explorerVisible ? (
-            <p className="mt-1 truncate text-muted-foreground text-xs">
-              {explorerPathLabel || "Select a directory"}
-            </p>
+          <p className="mt-1 truncate text-muted-foreground text-xs">
+            {explorerPathLabel || "Select a directory"}
+          </p>
+          {suggestions.length ? (
+            <div className="flex flex-wrap gap-2 pt-2 text-xs">
+              <span className="text-muted-foreground">Recent:</span>
+              {suggestions.map((workspace) => (
+                <button
+                  className="rounded border border-border px-2 py-0.5 text-muted-foreground uppercase tracking-[0.2em] transition-colors hover:border-[#5a7c5a] hover:text-[#f4f7f2]"
+                  key={workspace.id}
+                  onClick={() => onPathChange(workspace.path)}
+                  type="button"
+                >
+                  {workspace.label}
+                </button>
+              ))}
+            </div>
           ) : null}
         </div>
-        {explorerVisible ? (
-          <WorkspaceDirectoryExplorer
-            currentPath={explorerPathLabel}
-            entries={explorerEntries}
-            error={explorerError}
-            filter={explorerFilter}
-            isLoading={isExplorerLoading}
-            onFilterChange={onExplorerFilterChange}
-            onOpenDirectory={onExplorerOpen}
-            onRefresh={onExplorerRefresh}
-            onSelect={onExplorerSelect}
-            onUp={onExplorerUp}
-            parentPath={parentPath}
-            selectedPath={selectedPath}
-          />
-        ) : null}
+        <WorkspaceDirectoryExplorer
+          currentPath={explorerPathLabel}
+          entries={explorerEntries}
+          error={explorerError}
+          filter={explorerFilter}
+          isLoading={isExplorerLoading}
+          onFilterChange={onExplorerFilterChange}
+          onOpenDirectory={onExplorerOpen}
+          onRefresh={onExplorerRefresh}
+          onSelect={onExplorerSelect}
+          onUp={onExplorerUp}
+          parentPath={parentPath}
+          selectedPath={selectedPath}
+        />
         <div className="flex flex-wrap gap-2">
           <Button className="flex-1" disabled={registering} type="submit">
             {registering ? (
