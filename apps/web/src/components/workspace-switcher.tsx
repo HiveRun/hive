@@ -25,7 +25,6 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -51,7 +50,6 @@ type WorkspaceSwitcherProps = {
 export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [path, setPath] = useState("");
-  const [activateImmediately, setActivateImmediately] = useState(true);
   const [isExplorerVisible, setIsExplorerVisible] = useState(false);
   const [browsePath, setBrowsePath] = useState<string | undefined>(undefined);
   const [browseFilter, setBrowseFilter] = useState<string>("");
@@ -72,7 +70,6 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
       toast.success(`Registered ${workspace.label}`);
       setPath("");
       setBrowseFilter("");
-      setActivateImmediately(true);
       invalidate();
     },
     onError: (error: Error) => {
@@ -141,7 +138,7 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
     registerWorkspace.mutate({
       path: trimmedPath,
       label: derivedLabel,
-      activate: activateImmediately,
+      activate: true,
     });
   };
 
@@ -280,7 +277,6 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                 </ScrollArea>
               </div>
               <WorkspaceRegisterForm
-                activateImmediately={activateImmediately}
                 explorerEntries={browseEntries}
                 explorerError={browseError}
                 explorerFilter={browseFilter}
@@ -291,7 +287,6 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                   setPath("");
                   setBrowseFilter("");
                   setBrowsePath(undefined);
-                  setActivateImmediately(true);
                 }}
                 onExplorerFilterChange={handleBrowseFilterChange}
                 onExplorerOpen={handleDirectoryOpen}
@@ -301,7 +296,6 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                 onExplorerUp={handleBrowseUp}
                 onPathChange={setPath}
                 onSubmit={handleRegister}
-                onToggleActive={setActivateImmediately}
                 parentPath={workspaceBrowseQuery.data?.parentPath}
                 path={path}
                 registering={registerWorkspace.isPending}
@@ -456,9 +450,7 @@ function WorkspaceDirectoryExplorer({
 
 type WorkspaceRegisterFormProps = {
   path: string;
-  activateImmediately: boolean;
   onPathChange: (value: string) => void;
-  onToggleActive: (value: boolean) => void;
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
   onClear: () => void;
   registering: boolean;
@@ -480,9 +472,7 @@ type WorkspaceRegisterFormProps = {
 
 function WorkspaceRegisterForm({
   path,
-  activateImmediately,
   onPathChange,
-  onToggleActive,
   onSubmit,
   onClear,
   registering,
@@ -548,17 +538,6 @@ function WorkspaceRegisterForm({
             selectedPath={selectedPath}
           />
         ) : null}
-        <Label
-          className="flex items-center gap-2 text-sm"
-          htmlFor="workspace-activate"
-        >
-          <Checkbox
-            checked={activateImmediately}
-            id="workspace-activate"
-            onCheckedChange={(next) => onToggleActive(Boolean(next))}
-          />
-          Set as active workspace after registering
-        </Label>
         <div className="flex flex-wrap gap-2">
           <Button className="flex-1" disabled={registering} type="submit">
             {registering ? (
