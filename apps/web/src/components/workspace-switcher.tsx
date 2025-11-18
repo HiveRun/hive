@@ -213,27 +213,40 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
             </SheetDescription>
           </SheetHeader>
           <div className="flex flex-1 flex-col gap-4 p-4">
-            <div className="grid flex-1 gap-6 lg:grid-cols-[1fr,1fr]">
-              <div className="flex flex-col gap-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-3">
-                    <h3 className="font-semibold text-muted-foreground text-sm uppercase tracking-[0.2em]">
-                      Registered Workspaces
-                    </h3>
-                    <Button
-                      aria-label="Refresh"
-                      className="border border-border"
-                      onClick={() => workspaceListQuery.refetch()}
-                      size="icon"
-                      variant="ghost"
-                    >
-                      {workspaceListQuery.isRefetching ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <RefreshCcw className="size-4" />
-                      )}
-                    </Button>
-                  </div>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold text-muted-foreground text-sm uppercase tracking-[0.2em]">
+                  Registered Workspaces
+                </h3>
+                <Button
+                  aria-label="Refresh"
+                  className="border border-border"
+                  onClick={() => workspaceListQuery.refetch()}
+                  size="icon"
+                  variant="ghost"
+                >
+                  {workspaceListQuery.isRefetching ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <RefreshCcw className="size-4" />
+                  )}
+                </Button>
+              </div>
+              <WorkspaceListPanel
+                activating={activateWorkspace.isPending}
+                activeId={activeId}
+                activeWorkspace={activeWorkspace}
+                allWorkspaces={sortedWorkspaces}
+                onActivate={handleActivate}
+                onRemove={handleRemove}
+                otherWorkspaces={otherWorkspaces}
+                removing={removeWorkspace.isPending}
+              />
+              <div className="flex flex-col gap-3 rounded border border-border border-dashed bg-card/60 p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold text-sm uppercase tracking-[0.2em]">
+                    Register Workspace
+                  </h3>
                   <Button
                     className={cn(
                       "uppercase tracking-[0.2em]",
@@ -246,44 +259,38 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                     {registerOpen ? "Close" : "Register workspace"}
                   </Button>
                 </div>
-                <WorkspaceListPanel
-                  activating={activateWorkspace.isPending}
-                  activeId={activeId}
-                  activeWorkspace={activeWorkspace}
-                  allWorkspaces={sortedWorkspaces}
-                  onActivate={handleActivate}
-                  onRemove={handleRemove}
-                  otherWorkspaces={otherWorkspaces}
-                  removing={removeWorkspace.isPending}
-                />
+                {registerOpen ? (
+                  <WorkspaceRegisterForm
+                    explorerEntries={browseEntries}
+                    explorerError={browseError}
+                    explorerFilter={browseFilter}
+                    explorerPathLabel={explorerPathLabel}
+                    isExplorerLoading={isBrowseLoading}
+                    onClear={() => {
+                      setPath("");
+                      setBrowseFilter("");
+                      setBrowsePath(undefined);
+                      setRegisterOpen(false);
+                    }}
+                    onExplorerFilterChange={handleBrowseFilterChange}
+                    onExplorerOpen={handleDirectoryOpen}
+                    onExplorerRefresh={() => workspaceBrowseQuery.refetch()}
+                    onExplorerSelect={handleDirectorySelect}
+                    onExplorerUp={handleBrowseUp}
+                    onPathChange={setPath}
+                    onSubmit={handleRegister}
+                    parentPath={workspaceBrowseQuery.data?.parentPath}
+                    path={path}
+                    registering={registerWorkspace.isPending}
+                    selectedPath={path}
+                    suggestions={sortedWorkspaces}
+                  />
+                ) : (
+                  <p className="text-muted-foreground text-sm">
+                    Click "Register workspace" to add another project.
+                  </p>
+                )}
               </div>
-              {registerOpen ? (
-                <WorkspaceRegisterForm
-                  explorerEntries={browseEntries}
-                  explorerError={browseError}
-                  explorerFilter={browseFilter}
-                  explorerPathLabel={explorerPathLabel}
-                  isExplorerLoading={isBrowseLoading}
-                  onClear={() => {
-                    setPath("");
-                    setBrowseFilter("");
-                    setBrowsePath(undefined);
-                    setRegisterOpen(false);
-                  }}
-                  onExplorerFilterChange={handleBrowseFilterChange}
-                  onExplorerOpen={handleDirectoryOpen}
-                  onExplorerRefresh={() => workspaceBrowseQuery.refetch()}
-                  onExplorerSelect={handleDirectorySelect}
-                  onExplorerUp={handleBrowseUp}
-                  onPathChange={setPath}
-                  onSubmit={handleRegister}
-                  parentPath={workspaceBrowseQuery.data?.parentPath}
-                  path={path}
-                  registering={registerWorkspace.isPending}
-                  selectedPath={path}
-                  suggestions={sortedWorkspaces}
-                />
-              ) : null}
             </div>
           </div>
         </SheetContent>
