@@ -122,6 +122,10 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
     [workspaces]
   );
   const activeId = workspaceListQuery.data?.activeWorkspaceId ?? null;
+  const otherWorkspaces = useMemo(
+    () => sortedWorkspaces.filter((workspace) => workspace.id !== activeId),
+    [sortedWorkspaces, activeId]
+  );
   const isLoading =
     workspaceListQuery.isPending || workspaceListQuery.isRefetching;
 
@@ -254,29 +258,16 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                     </Button>
                   </div>
                 </div>
-                <ScrollArea className="min-h-[260px] flex-1 rounded border border-border bg-card/40 p-3">
-                  {workspaces.length === 0 ? (
-                    <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-muted-foreground text-sm">
-                      <FolderGit2 className="size-6 opacity-70" />
-                      <p>No workspaces registered yet.</p>
-                      <p>Add the current repo path to get started.</p>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-3">
-                      {sortedWorkspaces.map((workspace) => (
-                        <WorkspaceRow
-                          activating={activateWorkspace.isPending}
-                          isActive={workspace.id === activeId}
-                          key={workspace.id}
-                          onActivate={handleActivate}
-                          onRemove={handleRemove}
-                          removing={removeWorkspace.isPending}
-                          workspace={workspace}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </ScrollArea>
+                <WorkspaceListPanel
+                  activating={activateWorkspace.isPending}
+                  activeId={activeId}
+                  activeWorkspace={activeWorkspace}
+                  allWorkspaces={sortedWorkspaces}
+                  onActivate={handleActivate}
+                  onRemove={handleRemove}
+                  otherWorkspaces={otherWorkspaces}
+                  removing={removeWorkspace.isPending}
+                />
               </div>
               {registerOpen ? (
                 <WorkspaceRegisterForm
@@ -521,23 +512,30 @@ function WorkspaceRegisterForm({
       <form className="space-y-4" onSubmit={onSubmit}>
         <div>
           <Label htmlFor="workspace-path">Workspace Path</Label>
-          <Input
-            id="workspace-path"
-            onChange={(event) => onPathChange(event.currentTarget.value)}
-            placeholder="/home/user/projects/amazing-app"
-            required
-            value={path}
-          />
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-            <Button onClick={onExplorerToggle} type="button" variant="outline">
-              {explorerVisible ? "Hide explorer" : "Browse directories"}
+          <div className="flex gap-2">
+            <Input
+              className="flex-1"
+              id="workspace-path"
+              onChange={(event) => onPathChange(event.currentTarget.value)}
+              placeholder="/home/user/projects/amazing-app"
+              required
+              value={path}
+            />
+            <Button
+              aria-label="Browse directories"
+              onClick={onExplorerToggle}
+              size="icon"
+              type="button"
+              variant="outline"
+            >
+              <FolderOpen className="size-4" />
             </Button>
-            {explorerVisible ? (
-              <span className="truncate text-muted-foreground">
-                {explorerPathLabel || "Select a directory"}
-              </span>
-            ) : null}
           </div>
+          {explorerVisible ? (
+            <p className="mt-1 truncate text-muted-foreground text-xs">
+              {explorerPathLabel || "Select a directory"}
+            </p>
+          ) : null}
         </div>
         {explorerVisible ? (
           <WorkspaceDirectoryExplorer
@@ -691,6 +689,92 @@ function WorkspaceRow({
         </AlertDialog>
       </div>
     </div>
+  );
+}
+
+type WorkspaceListPanelProps = {
+  activeWorkspace?: WorkspaceSummary;
+  otherWorkspaces: WorkspaceSummary[];
+  allWorkspaces: WorkspaceSummary[];
+  activeId: string | null;
+  onActivate: (id: string) => void;
+  onRemove: (id: string) => void;
+  activating: boolean;
+  removing: boolean;
+};
+
+function WorkspaceListPanel({
+  activeWorkspace,
+  otherWorkspaces,
+  allWorkspaces,
+  activeId,
+  onActivate,
+  onRemove,
+  activating,
+  removing,
+}: WorkspaceListPanelProps) {
+  if (allWorkspaces.length === 0) {
+    return (
+      <ScrollArea className="min-h-[260px] flex-1 rounded border border-border bg-card/40 p-3">
+        <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-muted-foreground text-sm">
+          <FolderGit2 className="size-6 opacity-70" />
+          <p>No workspaces registered yet.</p>
+          <p>Add the current repo path to get started.</p>
+        </div>
+      </ScrollArea>
+    );
+  }
+
+  const secondaryWorkspaces = activeWorkspace ? otherWorkspaces : allWorkspaces;
+
+  return (
+    <ScrollArea className="min-h-[260px] flex-1 rounded border border-border bg-card/40 p-3">
+      <div className="flex flex-col gap-4">
+        {activeWorkspace ? (
+          <div className="space-y-2">
+            <p className="text-[0.6rem] text-muted-foreground uppercase tracking-[0.3em]">
+              Active workspace
+            </p>
+            <WorkspaceRow
+              activating={activating}
+              isActive
+              key={activeWorkspace.id}
+              onActivate={onActivate}
+              onRemove={onRemove}
+              removing={removing}
+              workspace={activeWorkspace}
+            />
+          </div>
+        ) : null}
+
+        {secondaryWorkspaces.length ? (
+          <div className="space-y-2">
+            {activeWorkspace ? (
+              <p className="text-[0.6rem] text-muted-foreground uppercase tracking-[0.3em]">
+                Other workspaces
+              </p>
+            ) : null}
+            <div className="flex flex-col gap-3">
+              {secondaryWorkspaces.map((workspace) => (
+                <WorkspaceRow
+                  activating={activating}
+                  isActive={workspace.id === activeId}
+                  key={workspace.id}
+                  onActivate={onActivate}
+                  onRemove={onRemove}
+                  removing={removing}
+                  workspace={workspace}
+                />
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="text-center text-muted-foreground text-sm">
+            No other workspaces yet.
+          </p>
+        )}
+      </div>
+    </ScrollArea>
   );
 }
 
