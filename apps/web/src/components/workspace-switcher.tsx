@@ -51,6 +51,7 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [path, setPath] = useState("");
   const [isExplorerVisible, setIsExplorerVisible] = useState(false);
+  const [registerOpen, setRegisterOpen] = useState(false);
   const [browsePath, setBrowsePath] = useState<string | undefined>(undefined);
   const [browseFilter, setBrowseFilter] = useState<string>("");
   const queryClient = useQueryClient();
@@ -220,36 +221,38 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
             </SheetDescription>
           </SheetHeader>
           <div className="flex flex-1 flex-col gap-4 p-4">
-            <div className="rounded border border-border bg-card/70 p-4 shadow-[3px_3px_0_rgba(0,0,0,0.35)]">
-              <p className="text-[0.65rem] text-muted-foreground uppercase tracking-[0.25em]">
-                Active Workspace
-              </p>
-              <p className="font-semibold text-foreground">
-                {activeWorkspace?.label ?? "Not set"}
-              </p>
-              <p className="truncate text-muted-foreground text-sm">
-                {activeWorkspace?.path ?? "Register a workspace to begin"}
-              </p>
-            </div>
             <div className="grid flex-1 gap-6 lg:grid-cols-[1fr,1fr]">
               <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-muted-foreground text-sm uppercase tracking-[0.2em]">
                     Registered Workspaces
                   </h3>
-                  <Button
-                    aria-label="Refresh"
-                    className="border border-border"
-                    onClick={() => workspaceListQuery.refetch()}
-                    size="icon"
-                    variant="ghost"
-                  >
-                    {workspaceListQuery.isRefetching ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <RefreshCcw className="size-4" />
-                    )}
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      className={cn(
+                        "uppercase tracking-[0.2em]",
+                        registerOpen ? "border-[#5a7c5a]" : undefined
+                      )}
+                      onClick={() => setRegisterOpen((prev) => !prev)}
+                      type="button"
+                      variant="outline"
+                    >
+                      {registerOpen ? "Close" : "Register"}
+                    </Button>
+                    <Button
+                      aria-label="Refresh"
+                      className="border border-border"
+                      onClick={() => workspaceListQuery.refetch()}
+                      size="icon"
+                      variant="ghost"
+                    >
+                      {workspaceListQuery.isRefetching ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <RefreshCcw className="size-4" />
+                      )}
+                    </Button>
+                  </div>
                 </div>
                 <ScrollArea className="min-h-[260px] flex-1 rounded border border-border bg-card/40 p-3">
                   {workspaces.length === 0 ? (
@@ -275,31 +278,46 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                   )}
                 </ScrollArea>
               </div>
-              <WorkspaceRegisterForm
-                explorerEntries={browseEntries}
-                explorerError={browseError}
-                explorerFilter={browseFilter}
-                explorerPathLabel={explorerPathLabel}
-                explorerVisible={isExplorerVisible}
-                isExplorerLoading={isBrowseLoading}
-                onClear={() => {
-                  setPath("");
-                  setBrowseFilter("");
-                  setBrowsePath(undefined);
-                }}
-                onExplorerFilterChange={handleBrowseFilterChange}
-                onExplorerOpen={handleDirectoryOpen}
-                onExplorerRefresh={() => workspaceBrowseQuery.refetch()}
-                onExplorerSelect={handleDirectorySelect}
-                onExplorerToggle={toggleExplorer}
-                onExplorerUp={handleBrowseUp}
-                onPathChange={setPath}
-                onSubmit={handleRegister}
-                parentPath={workspaceBrowseQuery.data?.parentPath}
-                path={path}
-                registering={registerWorkspace.isPending}
-                selectedPath={path}
-              />
+              {registerOpen ? (
+                <WorkspaceRegisterForm
+                  explorerEntries={browseEntries}
+                  explorerError={browseError}
+                  explorerFilter={browseFilter}
+                  explorerPathLabel={explorerPathLabel}
+                  explorerVisible={isExplorerVisible}
+                  isExplorerLoading={isBrowseLoading}
+                  onClear={() => {
+                    setPath("");
+                    setBrowseFilter("");
+                    setBrowsePath(undefined);
+                    setRegisterOpen(false);
+                  }}
+                  onExplorerFilterChange={handleBrowseFilterChange}
+                  onExplorerOpen={handleDirectoryOpen}
+                  onExplorerRefresh={() => workspaceBrowseQuery.refetch()}
+                  onExplorerSelect={handleDirectorySelect}
+                  onExplorerToggle={toggleExplorer}
+                  onExplorerUp={handleBrowseUp}
+                  onPathChange={setPath}
+                  onSubmit={handleRegister}
+                  parentPath={workspaceBrowseQuery.data?.parentPath}
+                  path={path}
+                  registering={registerWorkspace.isPending}
+                  selectedPath={path}
+                />
+              ) : (
+                <div className="rounded border border-border border-dashed bg-card/40 p-4 text-muted-foreground text-sm">
+                  <p>Need to add another project?</p>
+                  <Button
+                    className="mt-3"
+                    onClick={() => setRegisterOpen(true)}
+                    type="button"
+                    variant="secondary"
+                  >
+                    Register new workspace
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
         </SheetContent>
