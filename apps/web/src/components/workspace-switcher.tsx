@@ -204,14 +204,6 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
 
   return (
     <div className="flex flex-col gap-2">
-      <small
-        className={cn(
-          "text-[0.6rem] text-muted-foreground uppercase tracking-[0.28em]",
-          collapsed && "hidden"
-        )}
-      >
-        Workspace
-      </small>
       <Sheet onOpenChange={setSheetOpen} open={sheetOpen}>
         <WorkspaceTriggerSummary
           collapsed={collapsed}
