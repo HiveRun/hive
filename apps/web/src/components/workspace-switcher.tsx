@@ -228,22 +228,11 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
           <div className="flex flex-1 flex-col gap-4 p-4">
             <div className="grid flex-1 gap-6 lg:grid-cols-[1fr,1fr]">
               <div className="flex flex-col gap-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-muted-foreground text-sm uppercase tracking-[0.2em]">
-                    Registered Workspaces
-                  </h3>
-                  <div className="flex gap-2">
-                    <Button
-                      className={cn(
-                        "uppercase tracking-[0.2em]",
-                        registerOpen ? "border-[#5a7c5a]" : undefined
-                      )}
-                      onClick={() => setRegisterOpen((prev) => !prev)}
-                      type="button"
-                      variant="outline"
-                    >
-                      {registerOpen ? "Close" : "Register"}
-                    </Button>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-3">
+                    <h3 className="font-semibold text-muted-foreground text-sm uppercase tracking-[0.2em]">
+                      Registered Workspaces
+                    </h3>
                     <Button
                       aria-label="Refresh"
                       className="border border-border"
@@ -258,6 +247,17 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                       )}
                     </Button>
                   </div>
+                  <Button
+                    className={cn(
+                      "uppercase tracking-[0.2em]",
+                      registerOpen ? "border-[#5a7c5a]" : undefined
+                    )}
+                    onClick={() => setRegisterOpen((prev) => !prev)}
+                    type="button"
+                    variant="outline"
+                  >
+                    {registerOpen ? "Close" : "Register workspace"}
+                  </Button>
                 </div>
                 <WorkspaceListPanel
                   activating={activateWorkspace.isPending}
@@ -297,19 +297,7 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                   registering={registerWorkspace.isPending}
                   selectedPath={path}
                 />
-              ) : (
-                <div className="rounded border border-border border-dashed bg-card/40 p-4 text-muted-foreground text-sm">
-                  <p>Need to add another project?</p>
-                  <Button
-                    className="mt-3"
-                    onClick={() => setRegisterOpen(true)}
-                    type="button"
-                    variant="secondary"
-                  >
-                    Register new workspace
-                  </Button>
-                </div>
-              )}
+              ) : null}
             </div>
           </div>
         </SheetContent>
