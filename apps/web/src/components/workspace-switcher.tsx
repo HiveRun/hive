@@ -10,7 +10,7 @@ import {
   RefreshCcw,
   Trash2,
 } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -47,6 +47,8 @@ type WorkspaceSwitcherProps = {
   collapsed: boolean;
 };
 
+const HIGHLIGHT_DURATION_MS = 800;
+
 export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [path, setPath] = useState("");
@@ -54,6 +56,9 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
   const [registerOpen, setRegisterOpen] = useState(false);
   const [browsePath, setBrowsePath] = useState<string | undefined>(undefined);
   const [browseFilter, setBrowseFilter] = useState<string>("");
+  const [recentlyActivatedId, setRecentlyActivatedId] = useState<string | null>(
+    null
+  );
   const queryClient = useQueryClient();
   const workspaceListQuery = useQuery(workspaceQueries.list());
   const workspaceBrowseQuery = useQuery({
@@ -80,7 +85,10 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
 
   const activateWorkspace = useMutation({
     mutationFn: workspaceMutations.activate.mutationFn,
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
+      if (variables?.id) {
+        setRecentlyActivatedId(variables.id);
+      }
       invalidate();
     },
     onError: (error: Error) => toast.error(error.message),
@@ -126,6 +134,18 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
     () => sortedWorkspaces.filter((workspace) => workspace.id !== activeId),
     [sortedWorkspaces, activeId]
   );
+
+  useEffect(() => {
+    if (!recentlyActivatedId) {
+      return;
+    }
+    const timeout = setTimeout(
+      () => setRecentlyActivatedId(null),
+      HIGHLIGHT_DURATION_MS
+    );
+    return () => clearTimeout(timeout);
+  }, [recentlyActivatedId]);
+
   const isLoading =
     workspaceListQuery.isPending || workspaceListQuery.isRefetching;
 
@@ -263,6 +283,7 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                   activeId={activeId}
                   activeWorkspace={activeWorkspace}
                   allWorkspaces={sortedWorkspaces}
+                  highlightedId={recentlyActivatedId}
                   onActivate={handleActivate}
                   onRemove={handleRemove}
                   otherWorkspaces={otherWorkspaces}
@@ -573,6 +594,7 @@ function WorkspaceRegisterForm({
 type WorkspaceRowProps = {
   workspace: WorkspaceSummary;
   isActive: boolean;
+  highlighted: boolean;
   onActivate: (id: string) => void;
   onRemove: (id: string) => void;
   activating: boolean;
@@ -582,6 +604,7 @@ type WorkspaceRowProps = {
 function WorkspaceRow({
   workspace,
   isActive,
+  highlighted,
   onActivate,
   onRemove,
   activating,
@@ -607,7 +630,12 @@ function WorkspaceRow({
   const isClickable = !(isActive || activating);
 
   return (
-    <div className="space-y-2 border border-border bg-background/80 p-3 text-sm shadow-[2px_2px_0_rgba(0,0,0,0.35)]">
+    <div
+      className={cn(
+        "space-y-2 border border-border bg-background/80 p-3 text-sm shadow-[2px_2px_0_rgba(0,0,0,0.35)] transition-shadow",
+        highlighted ? "animate-pulse ring-2 ring-[#5a7c5a]" : undefined
+      )}
+    >
       <div className="flex items-center gap-3">
         <button
           aria-pressed={isActive}
@@ -697,6 +725,7 @@ type WorkspaceListPanelProps = {
   otherWorkspaces: WorkspaceSummary[];
   allWorkspaces: WorkspaceSummary[];
   activeId: string | null;
+  highlightedId: string | null;
   onActivate: (id: string) => void;
   onRemove: (id: string) => void;
   activating: boolean;
@@ -708,6 +737,7 @@ function WorkspaceListPanel({
   otherWorkspaces,
   allWorkspaces,
   activeId,
+  highlightedId,
   onActivate,
   onRemove,
   activating,
@@ -737,6 +767,7 @@ function WorkspaceListPanel({
             </p>
             <WorkspaceRow
               activating={activating}
+              highlighted={highlightedId === activeWorkspace.id}
               isActive
               key={activeWorkspace.id}
               onActivate={onActivate}
@@ -758,6 +789,7 @@ function WorkspaceListPanel({
               {secondaryWorkspaces.map((workspace) => (
                 <WorkspaceRow
                   activating={activating}
+                  highlighted={workspace.id === highlightedId}
                   isActive={workspace.id === activeId}
                   key={workspace.id}
                   onActivate={onActivate}
