@@ -56,23 +56,36 @@ describe("POST /api/constructs", () => {
       addedAt: new Date().toISOString(),
     };
 
+    function loadWorkspaceConfig() {
+      return Promise.resolve(syntheticConfig);
+    }
+
+    function createConstructWorktree(_constructId: string) {
+      return Promise.resolve({
+        path: workspacePath,
+        branch: "construct-branch",
+        baseCommit: "abc123",
+      });
+    }
+
+    function removeConstructWorktree(_constructId: string) {
+      removeWorktreeCalls += 1;
+      return Promise.resolve();
+    }
+
+    function createTestWorktreeManager() {
+      return Promise.resolve({
+        createWorktree: createConstructWorktree,
+        removeWorktree: removeConstructWorktree,
+      });
+    }
+
     return {
       db: testDb,
       resolveWorkspaceContext: async () => ({
         workspace: workspaceRecord,
-        loadConfig: () => Promise.resolve(syntheticConfig),
-        createWorktreeManager: async () => ({
-          createWorktree(_constructId: string) {
-            return Promise.resolve({
-              path: workspacePath,
-              branch: "construct-branch",
-              baseCommit: "abc123",
-            });
-          },
-          removeWorktree(_constructId: string) {
-            removeWorktreeCalls += 1;
-          },
-        }),
+        loadConfig: loadWorkspaceConfig,
+        createWorktreeManager: createTestWorktreeManager,
       }),
       ensureAgentSession: (constructId: string) =>
         Promise.resolve<AgentSessionRecord>({
