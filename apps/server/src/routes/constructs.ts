@@ -43,6 +43,7 @@ import {
   resolveWorkspaceContext,
   type WorkspaceRuntimeContext,
 } from "../workspaces/context";
+import { createWorkspaceContextPlugin } from "../workspaces/plugin";
 import type { WorkspaceRecord } from "../workspaces/registry";
 import type { WorktreeManager } from "../worktree/manager";
 
@@ -161,13 +162,18 @@ export function createConstructsRoutes(
     stopServicesForConstruct: stopConstructServicesFn,
   } = deps;
 
+  const workspaceContextPlugin = createWorkspaceContextPlugin({
+    resolveWorkspaceContext: resolveWorkspaceCtx,
+  });
+
   return new Elysia({ prefix: "/api/constructs" })
     .use(logger(LOGGER_CONFIG))
+    .use(workspaceContextPlugin)
     .get(
       "/",
-      async ({ query, set }) => {
+      async ({ query, set, getWorkspaceContext }) => {
         try {
-          const workspaceContext = await resolveWorkspaceCtx(query.workspaceId);
+          const workspaceContext = await getWorkspaceContext(query.workspaceId);
           const allConstructs = await database
             .select()
             .from(constructs)
@@ -451,9 +457,9 @@ export function createConstructsRoutes(
     )
     .post(
       "/",
-      async ({ body, set, log }) => {
+      async ({ body, set, log, getWorkspaceContext }) => {
         try {
-          const workspaceContext = await resolveWorkspaceCtx(body.workspaceId);
+          const workspaceContext = await getWorkspaceContext(body.workspaceId);
           const result = await handleConstructCreationRequest({
             body,
             database,

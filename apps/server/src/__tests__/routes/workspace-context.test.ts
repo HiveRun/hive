@@ -12,7 +12,7 @@ const HTTP_OK = 200;
 const syntheticConfig: SyntheticConfig = {
   opencode: {
     defaultProvider: "opencode",
-    defaultModel: "gpt-4",
+    defaultModel: "big-pickle",
   },
   promptSources: [],
   templates: {

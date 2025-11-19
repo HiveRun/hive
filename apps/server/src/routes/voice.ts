@@ -16,7 +16,7 @@ import {
   preloadLocalTranscriber,
   transcribeLocalAudio,
 } from "../voice/local-transcriber";
-import { resolveWorkspaceContext } from "../workspaces/context";
+import { createWorkspaceContextPlugin } from "../workspaces/plugin";
 
 const HTTP_STATUS = {
   BAD_REQUEST: 400,
@@ -54,12 +54,14 @@ export async function preloadVoiceTranscriptionModels() {
 }
 
 export const voiceRoutes = new Elysia({ prefix: "/api/voice" })
+  .use(createWorkspaceContextPlugin())
   .get(
     "/config",
-    async ({ query, set }) => {
+    async ({ query, set, getWorkspaceContext }) => {
       try {
-        const voice = await loadVoiceConfigForWorkspace(query.workspaceId);
-        return { voice: serializeVoiceConfig(voice) };
+        const workspaceContext = await getWorkspaceContext(query.workspaceId);
+        const config = await workspaceContext.loadConfig();
+        return { voice: serializeVoiceConfig(config.voice) };
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;
         return {
@@ -80,11 +82,13 @@ export const voiceRoutes = new Elysia({ prefix: "/api/voice" })
   )
   .post(
     "/transcriptions",
-    async ({ body, query, set }) => {
+    async ({ body, query, set, getWorkspaceContext }) => {
       let voice: VoiceConfig | undefined;
       try {
         const workspaceIdentifier = query.workspaceId ?? body.workspaceId;
-        voice = await loadVoiceConfigForWorkspace(workspaceIdentifier);
+        const workspaceContext = await getWorkspaceContext(workspaceIdentifier);
+        const config = await workspaceContext.loadConfig();
+        voice = config.voice;
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;
         return {
@@ -140,12 +144,6 @@ export const voiceRoutes = new Elysia({ prefix: "/api/voice" })
       },
     }
   );
-
-async function loadVoiceConfigForWorkspace(workspaceId?: string) {
-  const workspaceContext = await resolveWorkspaceContext(workspaceId);
-  const config = await workspaceContext.loadConfig();
-  return config.voice;
-}
 
 async function transcribeLocalRecording(
   audioBytes: Uint8Array,

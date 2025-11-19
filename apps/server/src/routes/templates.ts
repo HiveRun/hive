@@ -4,7 +4,7 @@ import {
   TemplateListResponseSchema,
   TemplateResponseSchema,
 } from "../schema/api";
-import { resolveWorkspaceContext } from "../workspaces/context";
+import { createWorkspaceContextPlugin } from "../workspaces/plugin";
 
 const HTTP_STATUS = {
   NOT_FOUND: 404,
@@ -21,13 +21,12 @@ function templateToResponse(_id: string, template: Template) {
 }
 
 export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
+  .use(createWorkspaceContextPlugin())
   .get(
     "/",
-    async ({ query, set }) => {
+    async ({ query, set, getWorkspaceContext }) => {
       try {
-        const workspaceContext = await resolveWorkspaceContext(
-          query.workspaceId
-        );
+        const workspaceContext = await getWorkspaceContext(query.workspaceId);
         const config = await workspaceContext.loadConfig();
         const templates = Object.entries(config.templates).map(
           ([id, template]) => templateToResponse(id, template)
@@ -56,11 +55,9 @@ export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
   )
   .get(
     "/:id",
-    async ({ params, query, set }) => {
+    async ({ params, query, set, getWorkspaceContext }) => {
       try {
-        const workspaceContext = await resolveWorkspaceContext(
-          query.workspaceId
-        );
+        const workspaceContext = await getWorkspaceContext(query.workspaceId);
         const config = await workspaceContext.loadConfig();
         const template = config.templates[params.id];
         if (!template) {
