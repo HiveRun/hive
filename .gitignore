@@ -60,6 +60,8 @@ playwright/.cache/
 tmp
 temp
 vendor/opencode/
+local.db
+*.db
 
 docs/.obsidian/workspace.json
 docs/.obsidian/workspace-mobile.json
