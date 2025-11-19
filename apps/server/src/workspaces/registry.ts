@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 
 const REGISTRY_FILE_NAME = "workspaces.json";
 const SYNTHETIC_HOME_ENV = "SYNTHETIC_HOME";
@@ -40,8 +40,21 @@ type UpdateWorkspaceLabelInput = {
   label: string;
 };
 
-function resolveSyntheticHome(): string {
+export function resolveSyntheticHome(): string {
   return process.env[SYNTHETIC_HOME_ENV] || join(homedir(), ".synthetic");
+}
+
+export function resolveConstructsRoot(): string {
+  return join(resolveSyntheticHome(), "constructs");
+}
+
+export function isConstructWorkspacePath(path: string): boolean {
+  const constructsRoot = resolve(resolveConstructsRoot());
+  const normalizedPath = resolve(path);
+  return (
+    normalizedPath === constructsRoot ||
+    normalizedPath.startsWith(`${constructsRoot}${sep}`)
+  );
 }
 
 function resolveRegistryPath(): string {
@@ -70,6 +83,10 @@ async function validateWorkspaceDirectory(path: string): Promise<string> {
 
   if (!stats.isDirectory()) {
     throw new Error(`Workspace path is not a directory: ${absolutePath}`);
+  }
+
+  if (isConstructWorkspacePath(absolutePath)) {
+    throw new Error("Construct worktrees cannot be registered as workspaces");
   }
 
   const configPath = join(absolutePath, "synthetic.config.ts");

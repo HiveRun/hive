@@ -858,9 +858,19 @@ function buildBaseEnv({
   serviceName: string;
   construct: Construct;
 }): Record<string, string> {
+  const workspacePath = construct.workspacePath;
+  if (!workspacePath) {
+    throw new Error("Construct workspace path missing");
+  }
+
+  const syntheticHome = resolve(workspacePath, ".synthetic", "home");
+  mkdirSync(syntheticHome, { recursive: true });
+
   return {
     SYNTHETIC_CONSTRUCT_ID: construct.id,
     SYNTHETIC_SERVICE: serviceName,
+    SYNTHETIC_HOME: syntheticHome,
+    SYNTHETIC_BROWSE_ROOT: workspacePath,
   };
 }
 

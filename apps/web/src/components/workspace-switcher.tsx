@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
-
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,6 +41,7 @@ import type {
   WorkspaceSummary,
 } from "@/queries/workspaces";
 import { workspaceMutations, workspaceQueries } from "@/queries/workspaces";
+import { router } from "@/router";
 
 type WorkspaceSwitcherProps = {
   collapsed: boolean;
@@ -77,10 +77,21 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
   const workspaceBrowseQuery = useQuery({
     ...workspaceQueries.browse(browsePath, browseFilter),
   });
-  const invalidate = () =>
+  const invalidateWorkspaceList = () =>
     queryClient.invalidateQueries({
       queryKey: workspaceQueries.list().queryKey,
     });
+  const invalidateWorkspaceScopedData = async () => {
+    await Promise.all([
+      invalidateWorkspaceList(),
+      queryClient.invalidateQueries({ queryKey: ["constructs"] }),
+      queryClient.invalidateQueries({ queryKey: ["templates"] }),
+      queryClient.invalidateQueries({ queryKey: ["voice-config"] }),
+      queryClient.invalidateQueries({ queryKey: ["agent-session"] }),
+      queryClient.invalidateQueries({ queryKey: ["agent-messages"] }),
+    ]);
+    await router.invalidate();
+  };
 
   const registerWorkspace = useMutation({
     mutationFn: workspaceMutations.register.mutationFn,
@@ -88,7 +99,7 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
       toast.success(`Registered ${workspace.label}`);
       setSelectedDirectory("");
       setBrowseFilter("");
-      invalidate();
+      invalidateWorkspaceList();
     },
     onError: (error: Error) => {
       toast.error(error.message);
@@ -97,17 +108,17 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
 
   const activateWorkspace = useMutation({
     mutationFn: workspaceMutations.activate.mutationFn,
-    onSuccess: () => {
-      invalidate();
+    onSuccess: async () => {
+      await invalidateWorkspaceScopedData();
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
   const removeWorkspace = useMutation({
     mutationFn: workspaceMutations.remove.mutationFn,
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("Workspace removed");
-      invalidate();
+      await invalidateWorkspaceScopedData();
     },
     onError: (error: Error) => toast.error(error.message),
   });

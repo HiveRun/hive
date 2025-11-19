@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -8,10 +8,12 @@ import {
   listWorkspaces,
   registerWorkspace,
   removeWorkspace,
+  resolveConstructsRoot,
   updateWorkspaceLabel,
 } from "./registry";
 
 const WORKSPACE_FILE_CONTENT = "export default {}";
+const CONSTRUCT_WORKTREE_ERROR = /construct worktrees cannot be registered/i;
 
 async function createWorkspaceRoot(prefix = "synthetic-workspace-") {
   const dir = await mkdtemp(join(tmpdir(), prefix));
@@ -69,6 +71,19 @@ describe("workspace registry", () => {
 
     const allWorkspaces = await listWorkspaces();
     expect(allWorkspaces).toHaveLength(1);
+  });
+
+  test("rejects registering construct worktree paths", async () => {
+    const constructDir = join(resolveConstructsRoot(), "test-worktree");
+    await mkdir(constructDir, { recursive: true });
+    await writeFile(
+      join(constructDir, "synthetic.config.ts"),
+      WORKSPACE_FILE_CONTENT
+    );
+
+    await expect(registerWorkspace({ path: constructDir })).rejects.toThrow(
+      CONSTRUCT_WORKTREE_ERROR
+    );
   });
 
   test("updating label and removing workspace", async () => {
