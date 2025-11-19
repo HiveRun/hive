@@ -68,11 +68,6 @@ const allowedCorsOrigins =
   resolvedCorsOrigins.length > 0 ? resolvedCorsOrigins : DEFAULT_CORS_ORIGINS;
 
 async function runMigrations() {
-  if (process.env.SKIP_DB_MIGRATIONS === "true") {
-    process.stderr.write("Skipping automatic database migrations.\n");
-    return;
-  }
-
   const migrationsFolder = new URL("./migrations", import.meta.url).pathname;
   try {
     await migrate(db, { migrationsFolder });
