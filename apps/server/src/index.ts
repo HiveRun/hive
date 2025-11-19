@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { logger } from "@bogeychan/elysia-logger";
 import { cors } from "@elysiajs/cors";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { Elysia } from "elysia";
 import { cleanupOrphanedServers } from "./agents/cleanup";
 import { closeAllAgentSessions } from "./agents/service";
@@ -66,6 +67,25 @@ const resolvedCorsOrigins = (process.env.CORS_ORIGIN || "")
 const allowedCorsOrigins =
   resolvedCorsOrigins.length > 0 ? resolvedCorsOrigins : DEFAULT_CORS_ORIGINS;
 
+async function runMigrations() {
+  if (process.env.SKIP_DB_MIGRATIONS === "true") {
+    process.stderr.write("Skipping automatic database migrations.\n");
+    return;
+  }
+
+  const migrationsFolder = new URL("./migrations", import.meta.url).pathname;
+  try {
+    await migrate(db, { migrationsFolder });
+    process.stderr.write("Database migrations applied.\n");
+  } catch (error) {
+    process.stderr.write(
+      `Failed to run database migrations: ${error instanceof Error ? error.message : String(error)}\n`
+    );
+    throw error;
+  }
+}
+
+await runMigrations();
 await startupCleanup();
 
 const workspaceRoot = resolveWorkspaceRoot();

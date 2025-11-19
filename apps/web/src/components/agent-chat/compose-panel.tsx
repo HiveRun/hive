@@ -29,6 +29,7 @@ type ComposePanelProps = {
   provider: string;
   isSending: boolean;
   onSend: (content: string) => Promise<void>;
+  workspaceId: string;
 };
 
 type ComposeValues = z.infer<typeof formSchema>;
@@ -42,13 +43,14 @@ export function ComposePanel({
   provider: agentProvider,
   isSending,
   onSend,
+  workspaceId,
 }: ComposePanelProps) {
   const form = useForm<ComposeValues>({
     defaultValues: { message: "" },
     mode: "onChange",
   });
 
-  const voiceConfigQuery = useQuery(voiceQueries.config());
+  const voiceConfigQuery = useQuery(voiceQueries.config(workspaceId));
   const voiceConfig = voiceConfigQuery.data;
 
   const handleTranscriptionInsert = useCallback(
@@ -130,6 +132,7 @@ export function ComposePanel({
                       disabled={isSending}
                       encodeAsWav={voiceConfig.mode === "local"}
                       onTranscription={handleTranscriptionInsert}
+                      workspaceId={workspaceId}
                     />
                   </div>
                 ) : null}

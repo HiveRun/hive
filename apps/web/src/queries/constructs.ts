@@ -1,10 +1,12 @@
 import { type CreateConstructInput, rpc } from "@/lib/rpc";
 
 export const constructQueries = {
-  all: () => ({
-    queryKey: ["constructs"] as const,
+  all: (workspaceId: string) => ({
+    queryKey: ["constructs", workspaceId] as const,
     queryFn: async () => {
-      const { data, error } = await rpc.api.constructs.get();
+      const { data, error } = await rpc.api.constructs.get({
+        query: { workspaceId },
+      });
       if (error) {
         throw new Error("Failed to fetch constructs");
       }

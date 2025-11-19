@@ -52,7 +52,11 @@ type ServiceStatusState = {
   isError: boolean;
 };
 
-export function ConstructList() {
+type ConstructListProps = {
+  workspaceId: string;
+};
+
+export function ConstructList({ workspaceId }: ConstructListProps) {
   const [selectedConstructIds, setSelectedConstructIds] = useState<Set<string>>(
     () => new Set()
   );
@@ -64,8 +68,8 @@ export function ConstructList() {
     data: constructs,
     isLoading,
     error,
-  } = useQuery(constructQueries.all());
-  const { data: templatesData } = useQuery(templateQueries.all());
+  } = useQuery(constructQueries.all(workspaceId));
+  const { data: templatesData } = useQuery(templateQueries.all(workspaceId));
   const templates = templatesData?.templates;
 
   const serviceStatusQueries = useQueries({
@@ -134,7 +138,7 @@ export function ConstructList() {
       const count = data.deletedIds.length;
       const label = count === 1 ? "construct" : "constructs";
       toast.success(`Deleted ${count} ${label}`);
-      queryClient.invalidateQueries({ queryKey: ["constructs"] });
+      queryClient.invalidateQueries({ queryKey: ["constructs", workspaceId] });
       setSelectedConstructIds(new Set());
       setIsBulkDialogOpen(false);
     },

@@ -223,7 +223,7 @@ export function createServiceSupervisor(
   const activeServices = new Map<string, ActiveServiceHandle>();
   const repository = createServiceRepository(db, now);
   const portManager = createPortManager({ db, now });
-  const templateCache = new Map<string, Template | undefined>();
+  const templateCache = new Map<string, Map<string, Template | undefined>>();
 
   async function bootstrap(): Promise<void> {
     const grouped = groupServicesByConstruct(
@@ -231,7 +231,10 @@ export function createServiceSupervisor(
     );
 
     for (const { construct, rows: constructRows } of grouped.values()) {
-      const template = await loadTemplateCached(construct.templateId);
+      const template = await loadTemplateCached(
+        construct.templateId,
+        construct.workspaceRootPath ?? construct.workspacePath
+      );
       const templateEnv = template?.env ?? {};
       const portMap = await buildPortMap(constructRows);
 
@@ -275,7 +278,11 @@ export function createServiceSupervisor(
     template?: Template;
   }): Promise<void> {
     const resolvedTemplate =
-      template ?? (await loadTemplateCached(construct.templateId));
+      template ??
+      (await loadTemplateCached(
+        construct.templateId,
+        construct.workspaceRootPath ?? construct.workspacePath
+      ));
 
     if (!resolvedTemplate) {
       return;
@@ -679,19 +686,20 @@ export function createServiceSupervisor(
   }
 
   async function loadTemplateCached(
-    templateId: string
+    templateId: string,
+    workspaceRootPath?: string
   ): Promise<Template | undefined> {
-    if (!templateCache.has(templateId)) {
-      templateCache.set(templateId, await loadTemplate(templateId));
+    const key = workspaceRootPath ?? "__default__";
+    let workspaceTemplates = templateCache.get(key);
+    if (!workspaceTemplates) {
+      workspaceTemplates = new Map();
+      templateCache.set(key, workspaceTemplates);
     }
-    return templateCache.get(templateId);
-  }
-
-  async function loadTemplate(
-    templateId: string
-  ): Promise<Template | undefined> {
-    const config = await getSyntheticConfig();
-    return config.templates[templateId];
+    if (!workspaceTemplates.has(templateId)) {
+      const config = await getSyntheticConfig(workspaceRootPath);
+      workspaceTemplates.set(templateId, config.templates[templateId]);
+    }
+    return workspaceTemplates.get(templateId);
   }
 
   async function startConstructServiceById(serviceId: string): Promise<void> {
@@ -700,7 +708,10 @@ export function createServiceSupervisor(
       throw new Error(`Service ${serviceId} not found`);
     }
 
-    const template = await loadTemplateCached(row.construct.templateId);
+    const template = await loadTemplateCached(
+      row.construct.templateId,
+      row.construct.workspaceRootPath ?? row.construct.workspacePath
+    );
     const templateEnv = template?.env ?? {};
 
     const siblings = await repository.fetchServicesForConstruct(

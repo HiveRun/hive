@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useAgentEventStream } from "@/hooks/use-agent-event-stream";
 import { agentMutations, agentQueries } from "@/queries/agents";
+import { constructQueries } from "@/queries/constructs";
 import { ComposePanel } from "./compose-panel";
 import { ConversationPanel } from "./conversation-panel";
 import { AgentChatHeader } from "./header";
@@ -16,6 +17,8 @@ export function AgentChat({ constructId }: AgentChatProps) {
   const queryClient = useQueryClient();
   const sessionQuery = useQuery(agentQueries.sessionByConstruct(constructId));
   const session = sessionQuery.data ?? null;
+  const constructQuery = useQuery(constructQueries.detail(constructId));
+  const workspaceId = constructQuery.data?.workspaceId;
   const messagesQuery = useQuery(agentQueries.messages(session?.id ?? null));
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -91,8 +94,16 @@ export function AgentChat({ constructId }: AgentChatProps) {
   const isStarting = startAgentMutation.isPending;
   const isSending = sendMessageMutation.isPending;
 
-  if (sessionQuery.isPending) {
+  if (sessionQuery.isPending || constructQuery.isPending) {
     return <LoadingState />;
+  }
+
+  if (!workspaceId) {
+    return (
+      <div className="flex h-full items-center justify-center border-2 border-border bg-card text-muted-foreground text-sm">
+        Unable to determine active workspace for this construct.
+      </div>
+    );
   }
 
   if (!session) {
@@ -120,6 +131,7 @@ export function AgentChat({ constructId }: AgentChatProps) {
           isSending={isSending}
           onSend={handleSendMessage}
           provider={session.provider}
+          workspaceId={workspaceId}
         />
       </div>
     </div>

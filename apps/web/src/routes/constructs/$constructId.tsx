@@ -19,18 +19,23 @@ export const Route = createFileRoute("/constructs/$constructId")({
       });
     }
   },
-  loader: ({ params, context: { queryClient } }) =>
-    Promise.all([
-      queryClient.ensureQueryData(constructQueries.detail(params.constructId)),
-      queryClient.ensureQueryData(templateQueries.all()),
-    ]),
+  loader: async ({ params, context: { queryClient } }) => {
+    const construct = await queryClient.ensureQueryData(
+      constructQueries.detail(params.constructId)
+    );
+    await queryClient.ensureQueryData(
+      templateQueries.all(construct.workspaceId)
+    );
+    return { workspaceId: construct.workspaceId };
+  },
   component: ConstructLayout,
 });
 
 function ConstructLayout() {
   const { constructId } = Route.useParams();
+  const { workspaceId } = Route.useLoaderData();
   const constructQuery = useQuery(constructQueries.detail(constructId));
-  const templatesQuery = useQuery(templateQueries.all());
+  const templatesQuery = useQuery(templateQueries.all(workspaceId));
   const activeRouteId = useRouterState({
     select: (state) => state.matches.at(-1)?.routeId ?? undefined,
   });

@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
+import { useActiveWorkspace } from "@/hooks/use-active-workspace";
 import type { AgentSession } from "@/queries/agents";
 import { agentQueries } from "@/queries/agents";
 import type { Construct } from "@/queries/constructs";
@@ -12,7 +13,18 @@ const NOTIFICATION_SOUND_VOLUME = 0.2;
 
 export function useGlobalAgentMonitor() {
   const queryClient = useQueryClient();
-  const { data: constructs } = useQuery(constructQueries.all());
+  const { activeWorkspace } = useActiveWorkspace();
+  const workspaceId = activeWorkspace?.id;
+  const constructsQuery = workspaceId
+    ? constructQueries.all(workspaceId)
+    : {
+        queryKey: ["constructs", "unselected"] as const,
+        queryFn: async () => [] as Construct[],
+      };
+  const { data: constructs = [] } = useQuery({
+    ...constructsQuery,
+    enabled: Boolean(workspaceId),
+  });
   const sessionStreams = useRef<
     Map<string, { source: EventSource; sessionId: string }>
   >(new Map());

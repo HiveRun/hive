@@ -41,6 +41,9 @@ export function createConstructFixture(
     templateId: overrides.templateId ?? "synthetic-dev",
     workspacePath:
       overrides.workspacePath ?? `/home/synthetic/.synthetic/constructs/${id}`,
+    workspaceId: overrides.workspaceId ?? "workspace-primary",
+    workspaceRootPath:
+      overrides.workspaceRootPath ?? "/home/aureatus/dev/projects/synthetic",
     opencodeSessionId:
       overrides.opencodeSessionId ?? constructFaker.string.uuid(),
     opencodeServerUrl: overrides.opencodeServerUrl ?? "http://127.0.0.1:5000",
@@ -63,6 +66,8 @@ export const constructSnapshotFixture: ConstructFixture[] = [
     name: "Snapshot Construct",
     description: "Deterministic fixture used for visual regression tests.",
     workspacePath: "/home/synthetic/.synthetic/constructs/snapshot-construct",
+    workspaceId: "workspace-primary",
+    workspaceRootPath: "/home/aureatus/dev/projects/synthetic",
     createdAt: "2024-01-01T12:00:00.000Z",
   }),
 ];

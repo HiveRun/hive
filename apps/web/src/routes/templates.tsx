@@ -2,14 +2,21 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ensureActiveWorkspace } from "@/lib/workspace";
 import { type Template, templateQueries } from "@/queries/templates";
 
 export const Route = createFileRoute("/templates")({
+  loader: async ({ context: { queryClient } }) => {
+    const workspace = await ensureActiveWorkspace(queryClient);
+    await queryClient.ensureQueryData(templateQueries.all(workspace.id));
+    return { workspaceId: workspace.id };
+  },
   component: TemplatesPage,
 });
 
 function TemplatesPage() {
-  const { data } = useSuspenseQuery(templateQueries.all());
+  const { workspaceId } = Route.useLoaderData();
+  const { data } = useSuspenseQuery(templateQueries.all(workspaceId));
   const templates = data.templates ?? [];
 
   const getServiceIcon = (type: string) => {

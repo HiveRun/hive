@@ -6,6 +6,8 @@ export const ConstructResponseSchema = t.Object({
   name: t.String(),
   description: t.Union([t.String(), t.Null()]),
   templateId: t.String(),
+  workspaceId: t.String(),
+  workspaceRootPath: t.String(),
   workspacePath: t.String(),
   opencodeSessionId: t.Union([t.String(), t.Null()]),
   opencodeServerUrl: t.Union([t.String(), t.Null()]),
@@ -101,6 +103,9 @@ export const CreateConstructSchema = t.Object({
     })
   ),
   templateId: t.String({
+    minLength: 1,
+  }),
+  workspaceId: t.String({
     minLength: 1,
   }),
 });
@@ -199,6 +204,7 @@ export const VoiceConfigResponseSchema = t.Object({
 export const VoiceTranscriptionRequestSchema = t.Object({
   audioBase64: t.String({ minLength: 1 }),
   mimeType: t.Optional(t.String()),
+  workspaceId: t.Optional(t.String({ minLength: 1 })),
 });
 
 export const WorkspaceDirectoryEntrySchema = t.Object({

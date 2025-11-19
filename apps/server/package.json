@@ -20,8 +20,8 @@
     "db:migrate": "bun run src/scripts/migrate.ts",
     "dev": "bun run --hot src/index.ts",
     "start": "bun run dist/index.js",
-    "test": "bun test",
-    "test:run": "bun test"
+    "test": "rm -rf dist && bun test",
+    "test:run": "rm -rf dist && bun test"
   },
   "dependencies": {
     "@ai-sdk/groq": "^2.0.29",

@@ -16,6 +16,7 @@ import {
   preloadLocalTranscriber,
   transcribeLocalAudio,
 } from "../voice/local-transcriber";
+import { resolveWorkspaceContext } from "../workspaces/context";
 
 const HTTP_STATUS = {
   BAD_REQUEST: 400,
@@ -55,21 +56,44 @@ export async function preloadVoiceTranscriptionModels() {
 export const voiceRoutes = new Elysia({ prefix: "/api/voice" })
   .get(
     "/config",
-    async () => {
-      const config = await getSyntheticConfig();
-      return { voice: serializeVoiceConfig(config.voice) };
+    async ({ query, set }) => {
+      try {
+        const voice = await loadVoiceConfigForWorkspace(query.workspaceId);
+        return { voice: serializeVoiceConfig(voice) };
+      } catch (error) {
+        set.status = HTTP_STATUS.BAD_REQUEST;
+        return {
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to load voice configuration",
+        };
+      }
     },
     {
+      query: t.Object({ workspaceId: t.Optional(t.String()) }),
       response: {
         200: VoiceConfigResponseSchema,
+        400: ErrorResponseSchema,
       },
     }
   )
   .post(
     "/transcriptions",
-    async ({ body, set }) => {
-      const config = await getSyntheticConfig();
-      const voice = config.voice;
+    async ({ body, query, set }) => {
+      let voice: VoiceConfig | undefined;
+      try {
+        const workspaceIdentifier = query.workspaceId ?? body.workspaceId;
+        voice = await loadVoiceConfigForWorkspace(workspaceIdentifier);
+      } catch (error) {
+        set.status = HTTP_STATUS.BAD_REQUEST;
+        return {
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to load voice configuration",
+        };
+      }
 
       if (!voice?.enabled) {
         set.status = HTTP_STATUS.BAD_REQUEST;
@@ -82,49 +106,20 @@ export const voiceRoutes = new Elysia({ prefix: "/api/voice" })
         return { message: "Audio payload is empty" };
       }
 
-      if (voice.transcription.mode === "local") {
-        try {
-          const result = await transcribeLocalAudio({
-            audio: audioBytes,
-            model: voice.transcription.model,
-            language: voice.transcription.language,
-          });
-          return serializeTranscription(result);
-        } catch (error) {
-          set.status = HTTP_STATUS.SERVICE_UNAVAILABLE;
-          return {
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to transcribe audio",
-          };
-        }
-      }
-
       try {
-        const { model, providerOptions, timeoutMs } = createRemoteModelFactory(
+        if (voice.transcription.mode === "local") {
+          const result = await transcribeLocalRecording(
+            audioBytes,
+            voice.transcription
+          );
+          return serializeTranscription(result);
+        }
+
+        const result = await transcribeRemoteRecording(
+          audioBytes,
           voice.transcription
         );
-        const result = await transcribe({
-          model,
-          audio: audioBytes,
-          providerOptions,
-          abortSignal:
-            typeof AbortSignal !== "undefined"
-              ? AbortSignal.timeout(timeoutMs)
-              : undefined,
-        });
-
-        return serializeTranscription({
-          text: result.text,
-          language: result.language ?? null,
-          durationInSeconds: result.durationInSeconds ?? null,
-          segments: (result.segments ?? []).map((segment) => ({
-            text: segment.text,
-            startSecond: segment.startSecond ?? null,
-            endSecond: segment.endSecond ?? null,
-          })),
-        });
+        return serializeTranscription(result);
       } catch (error) {
         set.status = HTTP_STATUS.SERVICE_UNAVAILABLE;
         return {
@@ -136,6 +131,7 @@ export const voiceRoutes = new Elysia({ prefix: "/api/voice" })
       }
     },
     {
+      query: t.Object({ workspaceId: t.Optional(t.String()) }),
       body: VoiceTranscriptionRequestSchema,
       response: {
         200: VoiceTranscriptionResponseSchema,
@@ -144,6 +140,52 @@ export const voiceRoutes = new Elysia({ prefix: "/api/voice" })
       },
     }
   );
+
+async function loadVoiceConfigForWorkspace(workspaceId?: string) {
+  const workspaceContext = await resolveWorkspaceContext(workspaceId);
+  const config = await workspaceContext.loadConfig();
+  return config.voice;
+}
+
+async function transcribeLocalRecording(
+  audioBytes: Uint8Array,
+  transcription: Extract<VoiceTranscriptionConfig, { mode: "local" }>
+) {
+  const result = await transcribeLocalAudio({
+    audio: audioBytes,
+    model: transcription.model,
+    language: transcription.language,
+  });
+  return result;
+}
+
+async function transcribeRemoteRecording(
+  audioBytes: Uint8Array,
+  transcription: Extract<VoiceTranscriptionConfig, { mode: "remote" }>
+) {
+  const { model, providerOptions, timeoutMs } =
+    createRemoteModelFactory(transcription);
+  const result = await transcribe({
+    model,
+    audio: audioBytes,
+    providerOptions,
+    abortSignal:
+      typeof AbortSignal !== "undefined"
+        ? AbortSignal.timeout(timeoutMs)
+        : undefined,
+  });
+
+  return {
+    text: result.text,
+    language: result.language ?? null,
+    durationInSeconds: result.durationInSeconds ?? null,
+    segments: (result.segments ?? []).map((segment) => ({
+      text: segment.text,
+      startSecond: segment.startSecond ?? null,
+      endSecond: segment.endSecond ?? null,
+    })),
+  };
+}
 
 function serializeVoiceConfig(voice?: VoiceConfig) {
   if (!voice) {

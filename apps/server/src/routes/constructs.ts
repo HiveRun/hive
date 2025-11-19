@@ -6,7 +6,6 @@ import { logger } from "@bogeychan/elysia-logger";
 import { and, eq, inArray } from "drizzle-orm";
 import { Elysia, type Static, t } from "elysia";
 import { closeAgentSession, ensureAgentSession } from "../agents/service";
-import { getSyntheticConfig } from "../config/context";
 import type { Template } from "../config/schema";
 import { db } from "../db";
 
@@ -40,14 +39,18 @@ import {
   stopServicesForConstruct,
   TemplateSetupError,
 } from "../services/supervisor";
-import { createWorktreeManager } from "../worktree/manager";
+import {
+  resolveWorkspaceContext,
+  type WorkspaceRuntimeContext,
+} from "../workspaces/context";
+import type { WorkspaceRecord } from "../workspaces/registry";
+import type { WorktreeManager } from "../worktree/manager";
 
 export type ConstructRouteDependencies = {
   db: typeof db;
-  getSyntheticConfig: typeof getSyntheticConfig;
+  resolveWorkspaceContext: typeof resolveWorkspaceContext;
   ensureAgentSession: typeof ensureAgentSession;
   closeAgentSession: typeof closeAgentSession;
-  createWorktreeManager: typeof createWorktreeManager;
   ensureServicesForConstruct: typeof ensureServicesForConstruct;
   startServiceById: typeof startServiceById;
   stopServiceById: typeof stopServiceById;
@@ -56,10 +59,9 @@ export type ConstructRouteDependencies = {
 
 const defaultConstructRouteDependencies: ConstructRouteDependencies = {
   db,
-  getSyntheticConfig,
+  resolveWorkspaceContext,
   ensureAgentSession,
   closeAgentSession,
-  createWorktreeManager,
   ensureServicesForConstruct,
   startServiceById,
   stopServiceById,
@@ -125,6 +127,8 @@ function constructToResponse(construct: typeof constructs.$inferSelect) {
     name: construct.name,
     description: construct.description,
     templateId: construct.templateId,
+    workspaceId: construct.workspaceId,
+    workspaceRootPath: construct.workspaceRootPath,
     workspacePath: construct.workspacePath,
     opencodeSessionId: construct.opencodeSessionId,
     opencodeServerUrl: construct.opencodeServerUrl,
@@ -148,10 +152,9 @@ export function createConstructsRoutes(
   const deps = { ...defaultConstructRouteDependencies, ...overrides };
   const {
     db: database,
-    getSyntheticConfig: loadSyntheticConfig,
+    resolveWorkspaceContext: resolveWorkspaceCtx,
     ensureAgentSession: ensureSession,
     closeAgentSession: closeSession,
-    createWorktreeManager: buildWorktreeManager,
     ensureServicesForConstruct: ensureServices,
     startServiceById: startService,
     stopServiceById: stopService,
@@ -162,13 +165,31 @@ export function createConstructsRoutes(
     .use(logger(LOGGER_CONFIG))
     .get(
       "/",
-      async () => {
-        const allConstructs = await database.select().from(constructs);
-        return { constructs: allConstructs.map(constructToResponse) };
+      async ({ query, set }) => {
+        try {
+          const workspaceContext = await resolveWorkspaceCtx(query.workspaceId);
+          const allConstructs = await database
+            .select()
+            .from(constructs)
+            .where(eq(constructs.workspaceId, workspaceContext.workspace.id));
+          return { constructs: allConstructs.map(constructToResponse) };
+        } catch (error) {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to load constructs",
+          };
+        }
       },
       {
+        query: t.Object({
+          workspaceId: t.Optional(t.String()),
+        }),
         response: {
           200: ConstructListResponseSchema,
+          400: ErrorResponseSchema,
         },
       }
     )
@@ -431,19 +452,29 @@ export function createConstructsRoutes(
     .post(
       "/",
       async ({ body, set, log }) => {
-        const result = await handleConstructCreationRequest({
-          body,
-          database,
-          ensureSession,
-          ensureServices,
-          stopConstructServices: stopConstructServicesFn,
-          buildWorktreeManager,
-          loadSyntheticConfig,
-          log,
-        });
+        try {
+          const workspaceContext = await resolveWorkspaceCtx(body.workspaceId);
+          const result = await handleConstructCreationRequest({
+            body,
+            database,
+            ensureSession,
+            ensureServices,
+            stopConstructServices: stopConstructServicesFn,
+            workspaceContext,
+            log,
+          });
 
-        set.status = result.status;
-        return result.payload;
+          set.status = result.status;
+          return result.payload;
+        } catch (error) {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to create construct",
+          };
+        }
       },
       {
         body: CreateConstructSchema,
@@ -466,6 +497,7 @@ export function createConstructsRoutes(
             .select({
               id: constructs.id,
               workspacePath: constructs.workspacePath,
+              workspaceId: constructs.workspaceId,
             })
             .from(constructs)
             .where(inArray(constructs.id, uniqueIds));
@@ -475,7 +507,17 @@ export function createConstructsRoutes(
             return { message: "No constructs found for provided ids" };
           }
 
-          const worktreeService = buildWorktreeManager();
+          const managerCache = new Map<string, WorktreeManager>();
+          const fetchManager = async (workspaceId: string) => {
+            const cached = managerCache.get(workspaceId);
+            if (cached) {
+              return cached;
+            }
+            const context = await resolveWorkspaceCtx(workspaceId);
+            const manager = await context.createWorktreeManager();
+            managerCache.set(workspaceId, manager);
+            return manager;
+          };
 
           for (const construct of constructsToDelete) {
             await closeSession(construct.id);
@@ -486,9 +528,11 @@ export function createConstructsRoutes(
             } catch (error) {
               log.warn(
                 { error, constructId: construct.id },
-                "Failed to stop services before deletion"
+                "Failed to stop services before construct removal"
               );
             }
+
+            const worktreeService = await fetchManager(construct.workspaceId);
             await removeConstructWorkspace(worktreeService, construct, log);
           }
 
@@ -547,7 +591,11 @@ export function createConstructsRoutes(
             );
           }
 
-          const worktreeService = buildWorktreeManager();
+          const workspaceManager = await resolveWorkspaceCtx(
+            construct.workspaceId
+          );
+          const worktreeService =
+            await workspaceManager.createWorktreeManager();
           await removeConstructWorkspace(worktreeService, construct, log);
 
           await database.delete(constructs).where(eq(constructs.id, params.id));
@@ -597,8 +645,7 @@ type ConstructCreationArgs = {
   ensureSession: typeof ensureAgentSession;
   ensureServices: typeof ensureServicesForConstruct;
   stopConstructServices: typeof stopServicesForConstruct;
-  buildWorktreeManager: typeof createWorktreeManager;
-  loadSyntheticConfig: typeof getSyntheticConfig;
+  workspaceContext: WorkspaceRuntimeContext;
   log: LoggerLike;
 };
 
@@ -611,12 +658,11 @@ async function handleConstructCreationRequest(
     ensureSession,
     ensureServices,
     stopConstructServices,
-    buildWorktreeManager,
-    loadSyntheticConfig,
+    workspaceContext,
     log,
   } = args;
 
-  const syntheticConfig = await loadSyntheticConfig();
+  const syntheticConfig = await workspaceContext.loadConfig();
   const template = syntheticConfig.templates[body.templateId];
   if (!template) {
     return {
@@ -625,7 +671,7 @@ async function handleConstructCreationRequest(
     };
   }
 
-  const worktreeService = buildWorktreeManager(process.cwd(), syntheticConfig);
+  const worktreeService = await workspaceContext.createWorktreeManager();
   const context = createProvisionContext({
     body,
     template,
@@ -634,6 +680,7 @@ async function handleConstructCreationRequest(
     ensureServices,
     stopConstructServices,
     worktreeService,
+    workspace: workspaceContext.workspace,
     log,
   });
 
@@ -655,7 +702,8 @@ type ProvisionContext = {
   ensureSession: typeof ensureAgentSession;
   ensureServices: typeof ensureServicesForConstruct;
   stopConstructServices: typeof stopServicesForConstruct;
-  worktreeService: ReturnType<typeof createWorktreeManager>;
+  worktreeService: WorktreeManager;
+  workspace: WorkspaceRecord;
   log: LoggerLike;
   state: ConstructProvisionState;
 };
@@ -678,7 +726,8 @@ function createProvisionContext(args: {
   ensureSession: typeof ensureAgentSession;
   ensureServices: typeof ensureServicesForConstruct;
   stopConstructServices: typeof stopServicesForConstruct;
-  worktreeService: ReturnType<typeof createWorktreeManager>;
+  worktreeService: WorktreeManager;
+  workspace: WorkspaceRecord;
   log: LoggerLike;
 }): ProvisionContext {
   return {
@@ -706,6 +755,7 @@ async function createConstructWithServices(
     ensureSession,
     ensureServices,
     worktreeService,
+    workspace,
     state,
   } = context;
 
@@ -724,6 +774,8 @@ async function createConstructWithServices(
     description: body.description ?? null,
     templateId: body.templateId,
     workspacePath: worktree.path,
+    workspaceId: workspace.id,
+    workspaceRootPath: workspace.path,
     branchName: worktree.branch,
     baseCommit: worktree.baseCommit,
     opencodeSessionId: null,
@@ -972,7 +1024,7 @@ function formatStackTrace(error?: Error): string | undefined {
 }
 
 async function removeConstructWorkspace(
-  worktreeService: ReturnType<typeof createWorktreeManager>,
+  worktreeService: WorktreeManager,
   construct: ConstructWorkspaceRecord,
   log: LoggerLike
 ) {

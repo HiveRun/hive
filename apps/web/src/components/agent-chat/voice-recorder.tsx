@@ -28,6 +28,7 @@ export type VoiceRecorderButtonProps = {
   disabled?: boolean;
   encodeAsWav?: boolean;
   onTranscription: (text: string) => void;
+  workspaceId: string;
 };
 
 export function VoiceRecorderButton({
@@ -35,6 +36,7 @@ export function VoiceRecorderButton({
   disabled,
   encodeAsWav = false,
   onTranscription,
+  workspaceId,
 }: VoiceRecorderButtonProps) {
   const [status, setStatus] = useState<RecorderStatus>("idle");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -45,7 +47,9 @@ export function VoiceRecorderButton({
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const [volumeLevel, setVolumeLevel] = useState(0);
-  const transcribeMutation = useMutation(voiceMutations.transcribe);
+  const transcribeMutation = useMutation(
+    voiceMutations.transcribe(workspaceId)
+  );
 
   const isSupported = useMemo(() => {
     if (typeof window === "undefined") {

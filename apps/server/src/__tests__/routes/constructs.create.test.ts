@@ -49,9 +49,31 @@ describe("POST /api/constructs", () => {
   function createDependencies(
     setupError: TemplateSetupError
   ): Partial<ConstructRouteDependencies> {
+    const workspaceRecord = {
+      id: "test-workspace",
+      label: "Test Workspace",
+      path: "/tmp/test-workspace-root",
+      addedAt: new Date().toISOString(),
+    };
+
     return {
       db: testDb,
-      getSyntheticConfig: () => Promise.resolve(syntheticConfig),
+      resolveWorkspaceContext: async () => ({
+        workspace: workspaceRecord,
+        loadConfig: () => Promise.resolve(syntheticConfig),
+        createWorktreeManager: async () => ({
+          createWorktree(_constructId: string) {
+            return Promise.resolve({
+              path: workspacePath,
+              branch: "construct-branch",
+              baseCommit: "abc123",
+            });
+          },
+          removeWorktree(_constructId: string) {
+            removeWorktreeCalls += 1;
+          },
+        }),
+      }),
       ensureAgentSession: (constructId: string) =>
         Promise.resolve<AgentSessionRecord>({
           id: `session-${constructId}`,
@@ -64,18 +86,6 @@ describe("POST /api/constructs", () => {
           updatedAt: new Date().toISOString(),
         }),
       closeAgentSession: (_constructId: string) => Promise.resolve(),
-      createWorktreeManager: () => ({
-        createWorktree(_constructId: string) {
-          return Promise.resolve({
-            path: workspacePath,
-            branch: "construct-branch",
-            baseCommit: "abc123",
-          });
-        },
-        removeWorktree(_constructId: string) {
-          removeWorktreeCalls += 1;
-        },
-      }),
       ensureServicesForConstruct: (_args?: unknown) =>
         Promise.reject(setupError),
       stopServicesForConstruct: (
@@ -113,6 +123,7 @@ describe("POST /api/constructs", () => {
         body: JSON.stringify({
           name: "Broken Construct",
           templateId,
+          workspaceId: "test-workspace",
         }),
       })
     );

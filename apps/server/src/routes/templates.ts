@@ -1,23 +1,15 @@
 import { Elysia, t } from "elysia";
-import { loadConfig } from "../config/loader";
-import type { SyntheticConfig, Template } from "../config/schema";
+import type { Template } from "../config/schema";
 import {
   TemplateListResponseSchema,
   TemplateResponseSchema,
 } from "../schema/api";
+import { resolveWorkspaceContext } from "../workspaces/context";
 
 const HTTP_STATUS = {
   NOT_FOUND: 404,
+  BAD_REQUEST: 400,
 } as const;
-
-async function getConfig(): Promise<SyntheticConfig> {
-  const currentDir = process.cwd();
-  const workspaceRoot = currentDir.includes("/apps/")
-    ? currentDir.split("/apps/")[0] || currentDir
-    : currentDir;
-
-  return await loadConfig(workspaceRoot);
-}
 
 function templateToResponse(_id: string, template: Template) {
   return {
@@ -31,39 +23,69 @@ function templateToResponse(_id: string, template: Template) {
 export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
   .get(
     "/",
-    async () => {
-      const config = await getConfig();
-      const templates = Object.entries(config.templates).map(([id, template]) =>
-        templateToResponse(id, template)
-      );
-      return {
-        templates,
-        defaults: config.defaults,
-      };
+    async ({ query, set }) => {
+      try {
+        const workspaceContext = await resolveWorkspaceContext(
+          query.workspaceId
+        );
+        const config = await workspaceContext.loadConfig();
+        const templates = Object.entries(config.templates).map(
+          ([id, template]) => templateToResponse(id, template)
+        );
+        return {
+          templates,
+          defaults: config.defaults,
+        };
+      } catch (error) {
+        set.status = HTTP_STATUS.BAD_REQUEST;
+        return {
+          message:
+            error instanceof Error ? error.message : "Failed to load templates",
+        };
+      }
     },
     {
+      query: t.Object({
+        workspaceId: t.Optional(t.String()),
+      }),
       response: {
         200: TemplateListResponseSchema,
+        400: t.Object({ message: t.String() }),
       },
     }
   )
   .get(
     "/:id",
-    async ({ params, set }) => {
-      const config = await getConfig();
-      const template = config.templates[params.id];
-      if (!template) {
-        set.status = HTTP_STATUS.NOT_FOUND;
-        return { message: "Template not found" };
+    async ({ params, query, set }) => {
+      try {
+        const workspaceContext = await resolveWorkspaceContext(
+          query.workspaceId
+        );
+        const config = await workspaceContext.loadConfig();
+        const template = config.templates[params.id];
+        if (!template) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Template not found" };
+        }
+        return templateToResponse(params.id, template);
+      } catch (error) {
+        set.status = HTTP_STATUS.BAD_REQUEST;
+        return {
+          message:
+            error instanceof Error ? error.message : "Failed to load template",
+        };
       }
-      return templateToResponse(params.id, template);
     },
     {
       params: t.Object({
         id: t.String(),
       }),
+      query: t.Object({
+        workspaceId: t.Optional(t.String()),
+      }),
       response: {
         200: TemplateResponseSchema,
+        400: t.Object({ message: t.String() }),
         404: t.Object({
           message: t.String(),
         }),

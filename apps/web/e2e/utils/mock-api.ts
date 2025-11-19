@@ -78,11 +78,11 @@ const API_ROUTE_PATTERNS: (string | RegExp)[] = [
   "**/api/constructs/*/services",
   CONSTRUCT_DIFF_ROUTE_PATTERN,
   CONSTRUCT_DETAIL_PATTERN,
-  "**/api/constructs",
+  "**/api/constructs*",
   WORKSPACE_LIST_PATTERN,
   WORKSPACE_BROWSE_PATTERN,
   "**/api/templates/*",
-  "**/api/templates",
+  "**/api/templates*",
   "**/api/example",
   "**/api/agents/sessions/**",
 ];
@@ -194,7 +194,7 @@ export async function mockAppApi(
       overrides.workspaceBrowse ?? defaultMockData.workspaceBrowse,
   };
 
-  await page.route("**/api/constructs", createConstructRouteHandler(mockData));
+  await page.route("**/api/constructs*", createConstructRouteHandler(mockData));
   await page.route(
     "**/api/constructs/*/services",
     createConstructServicesHandler(mockData)
@@ -217,7 +217,7 @@ export async function mockAppApi(
   );
 
   await page.route("**/api/templates/*", createTemplateDetailHandler(mockData));
-  await page.route("**/api/templates", createTemplateListHandler(mockData));
+  await page.route("**/api/templates*", createTemplateListHandler(mockData));
   await page.route("**/api/example", createExampleRouteHandler(mockData));
   await page.route(
     "**/api/agents/sessions/byConstruct/*",
