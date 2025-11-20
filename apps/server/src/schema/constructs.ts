@@ -9,7 +9,7 @@ export const constructs = sqliteTable("constructs", {
   description: text("description"),
   templateId: text("template_id").notNull(),
   workspacePath: text("workspace_path").notNull(),
-  workspaceId: text("workspace_id").notNull().default("legacy"),
+  workspaceId: text("workspace_id").notNull(),
   workspaceRootPath: text("workspace_root_path").notNull().default(""),
   opencodeSessionId: text("opencode_session_id"),
   opencodeServerUrl: text("opencode_server_url"),

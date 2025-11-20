@@ -88,6 +88,7 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
   const workspaceListQuery = useQuery(workspaceQueries.list());
   const workspaceBrowseQuery = useQuery({
     ...workspaceQueries.browse(browsePath, browseFilter),
+    enabled: registerOpen,
   });
   const workspaceListErrorMessage = resolveWorkspaceListError(
     workspaceListQuery.error
