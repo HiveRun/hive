@@ -113,6 +113,8 @@ const main = async () => {
 
   await run(["tar", "-czf", tarballPath, "-C", releaseBaseDir, releaseName]);
 
+  await rm(serverBinaryPath, { force: true });
+
   const sha256 = await computeSha256(tarballPath);
   await writeFile(
     `${tarballPath}.sha256`,
