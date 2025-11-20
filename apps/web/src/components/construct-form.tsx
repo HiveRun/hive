@@ -58,18 +58,23 @@ const validateTemplateId = (value: string) => {
 };
 
 type ConstructFormProps = {
+  workspaceId: string;
   onSuccess?: () => void;
   onCancel?: () => void;
 };
 
-export function ConstructForm({ onSuccess, onCancel }: ConstructFormProps) {
+export function ConstructForm({
+  workspaceId,
+  onSuccess,
+  onCancel,
+}: ConstructFormProps) {
   const queryClient = useQueryClient();
 
   const {
     data: templatesData,
     isLoading: templatesLoading,
     error: templatesError,
-  } = useQuery(templateQueries.all());
+  } = useQuery(templateQueries.all(workspaceId));
 
   const templates = templatesData?.templates;
   const defaults = templatesData?.defaults;
@@ -87,7 +92,7 @@ export function ConstructForm({ onSuccess, onCancel }: ConstructFormProps) {
         toast.success("Construct created successfully");
       }
 
-      queryClient.invalidateQueries({ queryKey: ["constructs"] });
+      queryClient.invalidateQueries({ queryKey: ["constructs", workspaceId] });
       form.reset();
       onSuccess?.();
     },
@@ -114,7 +119,7 @@ export function ConstructForm({ onSuccess, onCancel }: ConstructFormProps) {
   const form = useForm({
     defaultValues,
     onSubmit: ({ value }) => {
-      mutation.mutate(value as ConstructFormValues);
+      mutation.mutate({ ...(value as ConstructFormValues), workspaceId });
     },
   });
 

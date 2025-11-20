@@ -1,6 +1,10 @@
 import { base, en, Faker } from "@faker-js/faker";
 import type { Page, Route } from "@playwright/test";
 import type { ConstructDiffResponse, DiffMode } from "@/queries/constructs";
+import type {
+  WorkspaceBrowseResponse,
+  WorkspaceListResponse,
+} from "@/queries/workspaces";
 import {
   type ConstructDiffFixture,
   type ConstructFixture,
@@ -24,16 +28,61 @@ const exampleStatus = {
   message: exampleFaker.hacker.phrase(),
 };
 
+const workspaceListFixture: WorkspaceListResponse = {
+  workspaces: [
+    {
+      id: "workspace-primary",
+      label: "synthetic",
+      path: "/home/aureatus/dev/projects/synthetic",
+      addedAt: new Date("2024-01-01T00:00:00Z").toISOString(),
+      lastOpenedAt: new Date("2024-01-02T00:00:00Z").toISOString(),
+    },
+    {
+      id: "workspace-side",
+      label: "demo-service",
+      path: "/home/aureatus/dev/projects/demo-service",
+      addedAt: new Date("2024-01-03T00:00:00Z").toISOString(),
+    },
+  ],
+  activeWorkspaceId: "workspace-primary",
+};
+
+const workspaceBrowseFixture: WorkspaceBrowseResponse = {
+  path: "/home/aureatus/dev/projects",
+  parentPath: "/home/aureatus/dev",
+  directories: [
+    {
+      name: "synthetic",
+      path: "/home/aureatus/dev/projects/synthetic",
+      hasConfig: true,
+    },
+    {
+      name: "demo-service",
+      path: "/home/aureatus/dev/projects/demo-service",
+      hasConfig: false,
+    },
+    {
+      name: "sandbox",
+      path: "/home/aureatus/dev/projects/sandbox",
+      hasConfig: false,
+    },
+  ],
+};
+
 const CONSTRUCT_DETAIL_PATTERN = /\/api\/constructs\/[^/]+$/;
 const CONSTRUCT_DIFF_ROUTE_PATTERN = /\/api\/constructs\/[^/]+\/diff(?:\?.*)?$/;
+const WORKSPACE_LIST_PATTERN = /\/api\/workspaces(?:\?.*)?$/;
+const WORKSPACE_BROWSE_PATTERN = /\/api\/workspaces\/browse(?:\?.*)?$/;
 
 const API_ROUTE_PATTERNS: (string | RegExp)[] = [
   "**/api/constructs/*/services",
   CONSTRUCT_DIFF_ROUTE_PATTERN,
   CONSTRUCT_DETAIL_PATTERN,
-  "**/api/constructs",
+  "**/api/constructs*",
+  WORKSPACE_LIST_PATTERN,
+  WORKSPACE_BROWSE_PATTERN,
   "**/api/templates/*",
-  "**/api/templates",
+  "**/api/templates*",
   "**/api/example",
   "**/api/agents/sessions/**",
 ];
@@ -62,6 +111,16 @@ const API_ROUTE_MATCHERS = [
     description: "GET /api/constructs/:id",
     match: (url: URL, method: string) =>
       method === "GET" && CONSTRUCT_DETAIL_PATTERN.test(url.pathname),
+  },
+  {
+    description: "GET /api/workspaces",
+    match: (url: URL, method: string) =>
+      method === "GET" && url.pathname === "/api/workspaces",
+  },
+  {
+    description: "GET /api/workspaces/browse",
+    match: (url: URL, method: string) =>
+      method === "GET" && url.pathname === "/api/workspaces/browse",
   },
 
   {
@@ -101,6 +160,8 @@ export type MockApiData = {
   services: Record<string, ConstructServiceFixture[]>;
   diffs: ConstructDiffFixture;
   example: typeof exampleStatus;
+  workspaceList: WorkspaceListResponse;
+  workspaceBrowse: WorkspaceBrowseResponse;
 };
 
 const defaultMockData: MockApiData = {
@@ -109,6 +170,8 @@ const defaultMockData: MockApiData = {
   services: constructServiceSnapshotFixture,
   diffs: constructDiffSnapshotFixture,
   example: exampleStatus,
+  workspaceList: workspaceListFixture,
+  workspaceBrowse: workspaceBrowseFixture,
 };
 
 export type MockApiOverrides = Partial<MockApiData>;
@@ -126,9 +189,12 @@ export async function mockAppApi(
     services: overrides.services ?? defaultMockData.services,
     diffs: overrides.diffs ?? defaultMockData.diffs,
     example: overrides.example ?? defaultMockData.example,
+    workspaceList: overrides.workspaceList ?? defaultMockData.workspaceList,
+    workspaceBrowse:
+      overrides.workspaceBrowse ?? defaultMockData.workspaceBrowse,
   };
 
-  await page.route("**/api/constructs", createConstructRouteHandler(mockData));
+  await page.route("**/api/constructs*", createConstructRouteHandler(mockData));
   await page.route(
     "**/api/constructs/*/services",
     createConstructServicesHandler(mockData)
@@ -141,9 +207,17 @@ export async function mockAppApi(
     CONSTRUCT_DETAIL_PATTERN,
     createConstructDetailHandler(mockData)
   );
+  await page.route(
+    WORKSPACE_LIST_PATTERN,
+    createWorkspaceListHandler(mockData)
+  );
+  await page.route(
+    WORKSPACE_BROWSE_PATTERN,
+    createWorkspaceBrowseHandler(mockData)
+  );
 
   await page.route("**/api/templates/*", createTemplateDetailHandler(mockData));
-  await page.route("**/api/templates", createTemplateListHandler(mockData));
+  await page.route("**/api/templates*", createTemplateListHandler(mockData));
   await page.route("**/api/example", createExampleRouteHandler(mockData));
   await page.route(
     "**/api/agents/sessions/byConstruct/*",
@@ -301,6 +375,32 @@ function createConstructServicesHandler(mockData: MockApiData) {
     return {
       body: {
         services: mockData.services[constructId] ?? [],
+      },
+    };
+  });
+}
+
+function createWorkspaceListHandler(mockData: MockApiData) {
+  return createGetJsonHandler(() => ({ body: mockData.workspaceList }));
+}
+
+function createWorkspaceBrowseHandler(mockData: MockApiData) {
+  return createGetJsonHandler((request) => {
+    const url = new URL(request.url());
+    const requestedPath = url.searchParams.get("path") ?? undefined;
+    const rawFilter = url.searchParams.get("filter");
+    const normalizedFilter = rawFilter?.toLowerCase().trim();
+    const directories = normalizedFilter
+      ? mockData.workspaceBrowse.directories.filter((entry) =>
+          entry.name.toLowerCase().includes(normalizedFilter)
+        )
+      : mockData.workspaceBrowse.directories;
+
+    return {
+      body: {
+        ...mockData.workspaceBrowse,
+        path: requestedPath ?? mockData.workspaceBrowse.path,
+        directories,
       },
     };
   });

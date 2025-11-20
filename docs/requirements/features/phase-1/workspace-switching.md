@@ -1,6 +1,6 @@
 # Workspace Discovery & Switching
 
-- [ ] Workspace Discovery & Switching #status/planned #phase-1 #feature/ux
+- [/] Workspace Discovery & Switching #status/in-progress #phase-1 #feature/ux
 
 ## Goal
 Allow users to easily manage multiple workspaces and switch between them within Synthetic.
@@ -8,9 +8,11 @@ Allow users to easily manage multiple workspaces and switch between them within 
 ## Requirements
 
 ### Workspace Discovery
+- Start with explicit registration: expose an "Add workspace" flow (and CLI equivalent) where the operator selects directories to track. Automatic detection is limited to the directory Synthetic is currently running from so we avoid scanning the entire disk.
 - On first launch, prompt for operator to choose a directory; if it contains a `synthetic.config.ts`, register it immediately.
 - When a directory contains multiple subdirectories, scan only the immediate children for `synthetic.config.ts` and offer those as registrable workspaces.
 - Persist registrations in a global workspace registry (e.g., `~/.synthetic/workspaces.json`) and surface all entries via a sidebar or command menu so switching is a single action.
+- Registration UI includes an inline directory explorer with search/filter, so users can browse the filesystem without leaving Synthetic; selected folders automatically use their directory name as the workspace label.
 
 ### Workspace Switching
 - Switching workspaces updates the active repo context, constructs list, and services in-place.
@@ -51,6 +53,7 @@ Allow users to easily manage multiple workspaces and switch between them within 
 - Workspace validation and configuration checking
 - Path resolution and normalization
 - Registry migration and versioning
+- API/CLI hooks for manual add/remove plus auto-registration of the workspace Synthetic is currently running from.
 
 ### Switching Engine
 - Context switching logic and state management

@@ -1,19 +1,23 @@
 import "dotenv/config";
 import { logger } from "@bogeychan/elysia-logger";
 import { cors } from "@elysiajs/cors";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { Elysia } from "elysia";
 import { cleanupOrphanedServers } from "./agents/cleanup";
 import { closeAllAgentSessions } from "./agents/service";
+import { resolveWorkspaceRoot } from "./config/context";
 import { db } from "./db";
 import { agentsRoutes } from "./routes/agents";
 import { constructsRoutes } from "./routes/constructs";
 import { templatesRoutes } from "./routes/templates";
 import { preloadVoiceTranscriptionModels, voiceRoutes } from "./routes/voice";
+import { workspacesRoutes } from "./routes/workspaces";
 import { constructs } from "./schema/constructs";
 import {
   bootstrapServiceSupervisor,
   stopAllServices,
 } from "./services/supervisor";
+import { ensureWorkspaceRegistered } from "./workspaces/registry";
 
 const DEFAULT_SERVER_PORT = 3000;
 const PORT = Number(process.env.PORT ?? DEFAULT_SERVER_PORT);
@@ -63,7 +67,33 @@ const resolvedCorsOrigins = (process.env.CORS_ORIGIN || "")
 const allowedCorsOrigins =
   resolvedCorsOrigins.length > 0 ? resolvedCorsOrigins : DEFAULT_CORS_ORIGINS;
 
+async function runMigrations() {
+  const migrationsFolder = new URL("./migrations", import.meta.url).pathname;
+  try {
+    await migrate(db, { migrationsFolder });
+    process.stderr.write("Database migrations applied.\n");
+  } catch (error) {
+    process.stderr.write(
+      `Failed to run database migrations: ${error instanceof Error ? error.message : String(error)}\n`
+    );
+    throw error;
+  }
+}
+
+await runMigrations();
 await startupCleanup();
+
+const workspaceRoot = resolveWorkspaceRoot();
+try {
+  await ensureWorkspaceRegistered(workspaceRoot, {
+    preserveActiveWorkspace: true,
+  });
+  process.stderr.write(`Workspace registered: ${workspaceRoot}\n`);
+} catch (error) {
+  process.stderr.write(
+    `Warning: Failed to register workspace ${workspaceRoot}: ${error instanceof Error ? error.message : String(error)}\n`
+  );
+}
 
 try {
   await bootstrapServiceSupervisor();
@@ -99,6 +129,7 @@ const app = new Elysia()
     timestamp: Date.now(),
   }))
   .use(templatesRoutes)
+  .use(workspacesRoutes)
   .use(constructsRoutes)
   .use(agentsRoutes)
   .use(voiceRoutes)

@@ -21,10 +21,12 @@ export type VoiceTranscriptionResult = {
 };
 
 export const voiceQueries = {
-  config: () => ({
-    queryKey: ["voice-config"] as const,
+  config: (workspaceId: string) => ({
+    queryKey: ["voice-config", workspaceId] as const,
     queryFn: async (): Promise<VoiceConfig> => {
-      const { data, error } = await rpc.api.voice.config.get();
+      const { data, error } = await rpc.api.voice.config.get({
+        query: { workspaceId },
+      });
       if (error) {
         throw new Error("Failed to load voice configuration");
       }
@@ -34,16 +36,19 @@ export const voiceQueries = {
 };
 
 export const voiceMutations = {
-  transcribe: {
+  transcribe: (workspaceId: string) => ({
     mutationFn: async (input: {
       audioBase64: string;
       mimeType?: string;
     }): Promise<VoiceTranscriptionResult> => {
-      const { data, error } = await rpc.api.voice.transcriptions.post(input);
+      const { data, error } = await rpc.api.voice.transcriptions.post({
+        ...input,
+        workspaceId,
+      });
       if (error) {
         throw new Error("Failed to transcribe audio");
       }
       return data as VoiceTranscriptionResult;
     },
-  },
+  }),
 };

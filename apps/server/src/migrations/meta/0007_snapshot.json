@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "2a2a17c0-9b39-4cec-81f9-9f262acdab88",
-  "prevId": "7838ba5b-e4fa-4cdf-94dd-42d82a651c01",
+  "id": "544a950d-ef1a-4f42-bffb-aee121ee4391",
+  "prevId": "2a2a17c0-9b39-4cec-81f9-9f262acdab88",
   "tables": {
     "constructs": {
       "name": "constructs",
@@ -42,6 +42,21 @@
           "notNull": true,
           "autoincrement": false
         },
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "workspace_root_path": {
+          "name": "workspace_root_path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
         "opencode_session_id": {
           "name": "opencode_session_id",
           "type": "text",
@@ -75,7 +90,8 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
+          "autoincrement": false,
+          "default": "'ready'"
         },
         "last_setup_error": {
           "name": "last_setup_error",
@@ -162,7 +178,8 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
+          "autoincrement": false,
+          "default": "'pending'"
         },
         "port": {
           "name": "port",
@@ -219,8 +236,8 @@
         "construct_services_construct_id_constructs_id_fk": {
           "name": "construct_services_construct_id_constructs_id_fk",
           "tableFrom": "construct_services",
-          "columnsFrom": ["construct_id"],
           "tableTo": "constructs",
+          "columnsFrom": ["construct_id"],
           "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"

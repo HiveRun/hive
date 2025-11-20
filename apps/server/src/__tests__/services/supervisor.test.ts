@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { resolveWorkspaceRoot } from "../../config/context";
 import { constructs } from "../../schema/constructs";
 import { constructServices } from "../../schema/services";
 import type {
@@ -300,6 +301,8 @@ describe("service supervisor", () => {
         name: `Construct-${templateId}`,
         templateId,
         workspacePath,
+        workspaceId: `workspace-${templateId}`,
+        workspaceRootPath: resolveWorkspaceRoot(),
         description: null,
         opencodeSessionId: null,
         opencodeServerUrl: null,

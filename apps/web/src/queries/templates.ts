@@ -39,10 +39,12 @@ export type TemplatesResponse = {
 };
 
 export const templateQueries = {
-  all: () => ({
-    queryKey: ["templates"] as const,
+  all: (workspaceId: string) => ({
+    queryKey: ["templates", workspaceId] as const,
     queryFn: async (): Promise<TemplatesResponse> => {
-      const { data, error } = await rpc.api.templates.get();
+      const { data, error } = await rpc.api.templates.get({
+        query: { workspaceId },
+      });
       if (error) {
         throw new Error("Failed to fetch templates");
       }
@@ -56,10 +58,12 @@ export const templateQueries = {
     },
   }),
 
-  detail: (id: string) => ({
-    queryKey: ["templates", id] as const,
+  detail: (workspaceId: string, id: string) => ({
+    queryKey: ["templates", workspaceId, id] as const,
     queryFn: async (): Promise<Template> => {
-      const { data, error } = await rpc.api.templates({ id }).get();
+      const { data, error } = await rpc.api.templates({ id }).get({
+        query: { workspaceId },
+      });
       if (error) {
         throw new Error("Template not found");
       }

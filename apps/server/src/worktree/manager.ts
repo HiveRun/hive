@@ -2,10 +2,10 @@ import type { ExecException } from "node:child_process";
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { cp, mkdir, rm } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join, sep } from "node:path";
 import { glob } from "tinyglobby";
 import type { Template } from "../config/schema";
+import { resolveConstructsRoot } from "../workspaces/registry";
 
 const WORKTREE_PREFIX = "worktree ";
 const HEAD_PREFIX = "HEAD ";
@@ -58,7 +58,7 @@ export function createWorktreeManager(
   baseDir: string = process.cwd(),
   syntheticConfig?: { templates: Record<string, Template> }
 ): WorktreeManager {
-  const constructsDir = join(homedir(), ".synthetic", "constructs");
+  const constructsDir = resolveConstructsRoot();
 
   function ensureGitRepo(): void {
     try {

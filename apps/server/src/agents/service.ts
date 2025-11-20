@@ -220,7 +220,9 @@ async function ensureRuntimeForConstruct(
     throw new Error("Construct not found");
   }
 
-  const config = await getSyntheticConfig();
+  const config = await getSyntheticConfig(
+    construct.workspaceRootPath ?? construct.workspacePath
+  );
   const template = config.templates[construct.templateId];
   if (!template) {
     throw new Error("Construct template configuration not found");

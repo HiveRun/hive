@@ -1,13 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { ConstructList } from "@/components/construct-list";
+import { ensureActiveWorkspace } from "@/lib/workspace";
 import { constructQueries } from "@/queries/constructs";
 
 export const Route = createFileRoute("/constructs/list")({
-  loader: ({ context: { queryClient } }) =>
-    queryClient.ensureQueryData(constructQueries.all()),
+  loader: async ({ context: { queryClient } }) => {
+    const workspace = await ensureActiveWorkspace(queryClient);
+    await queryClient.ensureQueryData(constructQueries.all(workspace.id));
+    return { workspaceId: workspace.id };
+  },
   component: RouteComponent,
 });
 
 function RouteComponent() {
-  return <ConstructList />;
+  const { workspaceId } = Route.useLoaderData();
+  return <ConstructList workspaceId={workspaceId} />;
 }

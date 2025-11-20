@@ -2,7 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "composite": true,
-    "outDir": "dist",
+    "outDir": "node_modules/.cache/server-tsbuild",
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]

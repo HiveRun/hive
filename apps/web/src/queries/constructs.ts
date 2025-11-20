@@ -1,12 +1,15 @@
 import { type CreateConstructInput, rpc } from "@/lib/rpc";
+import { formatRpcError, formatRpcResponseError } from "@/lib/rpc-error";
 
 export const constructQueries = {
-  all: () => ({
-    queryKey: ["constructs"] as const,
+  all: (workspaceId: string) => ({
+    queryKey: ["constructs", workspaceId] as const,
     queryFn: async () => {
-      const { data, error } = await rpc.api.constructs.get();
+      const { data, error } = await rpc.api.constructs.get({
+        query: { workspaceId },
+      });
       if (error) {
-        throw new Error("Failed to fetch constructs");
+        throw new Error(formatRpcError(error, "Failed to fetch constructs"));
       }
       return data.constructs.map(normalizeConstruct);
     },
@@ -17,15 +20,11 @@ export const constructQueries = {
     queryFn: async () => {
       const { data, error } = await rpc.api.constructs({ id }).get();
       if (error) {
-        throw new Error("Construct not found");
+        throw new Error(formatRpcError(error, "Construct not found"));
       }
 
       if ("message" in data) {
-        const message =
-          typeof data.message === "string"
-            ? data.message
-            : "Construct not found";
-        throw new Error(message);
+        throw new Error(formatRpcResponseError(data, "Construct not found"));
       }
 
       return normalizeConstruct(data);
@@ -37,15 +36,11 @@ export const constructQueries = {
     queryFn: async () => {
       const { data, error } = await rpc.api.constructs({ id }).services.get();
       if (error) {
-        throw new Error("Failed to load services");
+        throw new Error(formatRpcError(error, "Failed to load services"));
       }
 
       if ("message" in data) {
-        const message =
-          typeof data.message === "string"
-            ? data.message
-            : "Construct not found";
-        throw new Error(message);
+        throw new Error(formatRpcResponseError(data, "Construct not found"));
       }
 
       return data.services;
@@ -64,20 +59,13 @@ export const constructMutations = {
     mutationFn: async (input: CreateConstructInput) => {
       const { data, error } = await rpc.api.constructs.post(input);
       if (error) {
-        throw new Error("Failed to create construct");
+        throw new Error(formatRpcError(error, "Failed to create construct"));
       }
 
       if ("message" in data) {
-        const message =
-          typeof data.message === "string"
-            ? data.message
-            : "Failed to create construct";
-        const details =
-          "details" in data && typeof data.details === "string"
-            ? data.details.trim()
-            : "";
-        const formatted = details ? `${message}\n\n${details}` : message;
-        throw new Error(formatted);
+        throw new Error(
+          formatRpcResponseError(data, "Failed to create construct")
+        );
       }
 
       return normalizeConstruct(data);
@@ -88,7 +76,7 @@ export const constructMutations = {
     mutationFn: async (id: string) => {
       const { data, error } = await rpc.api.constructs({ id }).delete();
       if (error) {
-        throw new Error("Failed to delete construct");
+        throw new Error(formatRpcError(error, "Failed to delete construct"));
       }
       return data;
     },
@@ -98,15 +86,13 @@ export const constructMutations = {
     mutationFn: async (ids: string[]) => {
       const { data, error } = await rpc.api.constructs.delete({ ids });
       if (error) {
-        throw new Error("Failed to delete constructs");
+        throw new Error(formatRpcError(error, "Failed to delete constructs"));
       }
 
       if ("message" in data) {
-        const message =
-          typeof data.message === "string"
-            ? data.message
-            : "Failed to delete constructs";
-        throw new Error(message);
+        throw new Error(
+          formatRpcResponseError(data, "Failed to delete constructs")
+        );
       }
 
       return data;
@@ -120,7 +106,7 @@ export const constructMutations = {
         .services({ serviceId })
         .start.post();
       if (error) {
-        throw new Error("Failed to start service");
+        throw new Error(formatRpcError(error, "Failed to start service"));
       }
       return data;
     },
@@ -133,7 +119,7 @@ export const constructMutations = {
         .services({ serviceId })
         .stop.post();
       if (error) {
-        throw new Error("Failed to stop service");
+        throw new Error(formatRpcError(error, "Failed to stop service"));
       }
       return data;
     },
@@ -156,7 +142,7 @@ export const constructDiffQueries = {
         .constructs({ id: constructId })
         .diff.get({ query });
       if (error) {
-        throw new Error("Failed to load construct diff");
+        throw new Error(formatRpcError(error, "Failed to load construct diff"));
       }
       return data as ConstructDiffResponse;
     },
@@ -174,7 +160,9 @@ export const constructDiffQueries = {
           },
         });
       if (error) {
-        throw new Error(`Failed to load diff for ${file}`);
+        throw new Error(
+          formatRpcError(error, `Failed to load diff for ${file}`)
+        );
       }
       const details = (data.details as DiffFileDetail[] | undefined) ?? [];
       return details.find((detail) => detail.path === file) ?? null;

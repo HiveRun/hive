@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { resolveWorkspaceRoot } from "../config/context";
 import { constructs } from "../schema/constructs";
 import { setupTestDb, testDb } from "./test-db";
 
@@ -18,6 +19,11 @@ describe("Constructs CRUD Operations", () => {
     await testDb.delete(constructs);
   });
 
+  const workspaceFields = {
+    workspaceId: "test-workspace",
+    workspaceRootPath: resolveWorkspaceRoot(),
+  };
+
   describe("Create", () => {
     it("should create a construct with valid data", async () => {
       const newConstruct = {
@@ -28,6 +34,7 @@ describe("Constructs CRUD Operations", () => {
         workspacePath: "/tmp/test-worktree-1",
         createdAt: new Date(),
         status: "ready",
+        ...workspaceFields,
       };
 
       const [created] = await testDb
@@ -56,6 +63,7 @@ describe("Constructs CRUD Operations", () => {
         workspacePath: "/tmp/test-worktree-2",
         createdAt: new Date(),
         status: "ready",
+        ...workspaceFields,
       };
 
       const [created] = await testDb
@@ -84,6 +92,7 @@ describe("Constructs CRUD Operations", () => {
           workspacePath: "/tmp/test-worktree-1",
           createdAt: new Date(),
           status: "ready",
+          ...workspaceFields,
         },
         {
           id: "construct-2",
@@ -93,6 +102,7 @@ describe("Constructs CRUD Operations", () => {
           workspacePath: "/tmp/test-worktree-2",
           createdAt: new Date(),
           status: "ready",
+          ...workspaceFields,
         },
       ]);
     });
@@ -150,6 +160,7 @@ describe("Constructs CRUD Operations", () => {
           workspacePath: "/tmp/test-worktree-delete",
           createdAt: new Date(),
           status: "ready",
+          ...workspaceFields,
         })
         .returning();
 

@@ -1,7 +1,8 @@
+import { resolve as resolvePath } from "node:path";
 import { loadConfig } from "./loader";
 import type { SyntheticConfig } from "./schema";
 
-let cachedConfigPromise: Promise<SyntheticConfig> | null = null;
+const configCache = new Map<string, Promise<SyntheticConfig>>();
 
 export function resolveWorkspaceRoot(): string {
   const currentDir = process.cwd();
@@ -12,9 +13,20 @@ export function resolveWorkspaceRoot(): string {
   return currentDir;
 }
 
-export function getSyntheticConfig(): Promise<SyntheticConfig> {
-  if (!cachedConfigPromise) {
-    cachedConfigPromise = loadConfig(resolveWorkspaceRoot());
+export function getSyntheticConfig(
+  workspaceRoot?: string
+): Promise<SyntheticConfig> {
+  const normalizedRoot = resolvePath(workspaceRoot ?? resolveWorkspaceRoot());
+  if (!configCache.has(normalizedRoot)) {
+    configCache.set(normalizedRoot, loadConfig(normalizedRoot));
   }
-  return cachedConfigPromise;
+  return configCache.get(normalizedRoot) as Promise<SyntheticConfig>;
+}
+
+export function clearSyntheticConfigCache(workspaceRoot?: string): void {
+  if (workspaceRoot) {
+    configCache.delete(resolvePath(workspaceRoot));
+    return;
+  }
+  configCache.clear();
 }
