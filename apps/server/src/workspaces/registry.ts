@@ -360,12 +360,41 @@ export async function activateWorkspace(
   return updatedWorkspace;
 }
 
+type EnsureWorkspaceOptions = {
+  label?: string;
+  preserveActiveWorkspace?: boolean;
+};
+
 export async function ensureWorkspaceRegistered(
   path: string,
-  options: { label?: string } = {}
+  options: EnsureWorkspaceOptions = {}
 ): Promise<WorkspaceRecord> {
-  return await registerWorkspace(
-    { path, label: options.label },
-    { setActive: true }
+  const setActive = options.preserveActiveWorkspace
+    ? await shouldActivateWorkspace(path)
+    : true;
+
+  return await registerWorkspace({ path, label: options.label }, { setActive });
+}
+
+async function shouldActivateWorkspace(path: string): Promise<boolean> {
+  const registry = await readRegistryFile();
+
+  if (registry.workspaces.length === 0) {
+    return true;
+  }
+
+  if (!registry.activeWorkspaceId) {
+    return true;
+  }
+
+  const normalizedPath = normalizePath(path);
+  const existing = registry.workspaces.find(
+    (entry) => entry.path === normalizedPath
   );
+
+  if (!existing) {
+    return false;
+  }
+
+  return registry.activeWorkspaceId === existing.id;
 }

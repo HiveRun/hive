@@ -66,6 +66,18 @@ type WorkspaceRegisterFormProps = {
   selectedPath: string;
 };
 
+function resolveWorkspaceListError(error: unknown): string | undefined {
+  if (!error) {
+    return;
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return "Failed to load workspaces";
+}
+
 export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [selectedDirectory, setSelectedDirectory] = useState<string>("");
@@ -77,6 +89,9 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
   const workspaceBrowseQuery = useQuery({
     ...workspaceQueries.browse(browsePath, browseFilter),
   });
+  const workspaceListErrorMessage = resolveWorkspaceListError(
+    workspaceListQuery.error
+  );
   const invalidateWorkspaceList = () =>
     queryClient.invalidateQueries({
       queryKey: workspaceQueries.list().queryKey,
@@ -201,11 +216,13 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
   const handleDirectoryOpen = (dirPath: string) => {
     setBrowsePath(dirPath);
   };
-
   const buttonLabel = activeWorkspace
     ? activeWorkspace.label
     : "Register workspace";
-  const buttonDescription = activeWorkspace?.path ?? "No workspaces registered";
+  const buttonDescription =
+    workspaceListErrorMessage ??
+    activeWorkspace?.path ??
+    "No workspaces registered";
 
   const browseEntries = workspaceBrowseQuery.data?.directories ?? [];
   const explorerPathLabel = workspaceBrowseQuery.data?.path ?? browsePath ?? "";
@@ -259,6 +276,8 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
                 activeId={activeId}
                 activeWorkspace={activeWorkspace}
                 allWorkspaces={sortedWorkspaces}
+                errorMessage={workspaceListErrorMessage}
+                isLoading={isLoading}
                 onActivate={handleActivate}
                 onRemove={handleRemove}
                 otherWorkspaces={otherWorkspaces}
@@ -684,6 +703,8 @@ type WorkspaceListPanelProps = {
   onRemove: (id: string) => void;
   activating: boolean;
   removing: boolean;
+  isLoading: boolean;
+  errorMessage?: string;
 };
 
 function WorkspaceListPanel({
@@ -695,7 +716,34 @@ function WorkspaceListPanel({
   onRemove,
   activating,
   removing,
+  isLoading,
+  errorMessage,
 }: WorkspaceListPanelProps) {
+  if (isLoading) {
+    return (
+      <ScrollArea className="min-h-[260px] flex-1 rounded border border-border bg-card/40 p-3">
+        <div className="flex h-full items-center justify-center gap-2 text-muted-foreground text-sm">
+          <Loader2 className="size-4 animate-spin" />
+          <span>Loading workspaces…</span>
+        </div>
+      </ScrollArea>
+    );
+  }
+
+  if (errorMessage) {
+    return (
+      <ScrollArea className="min-h-[260px] flex-1 rounded border border-border bg-card/40 p-3">
+        <div
+          className="rounded border border-destructive/50 bg-destructive/10 p-4 text-destructive text-sm"
+          role="alert"
+        >
+          <p className="font-semibold">Failed to load workspaces</p>
+          <p className="mt-1 text-destructive text-xs">{errorMessage}</p>
+        </div>
+      </ScrollArea>
+    );
+  }
+
   if (allWorkspaces.length === 0) {
     return (
       <ScrollArea className="min-h-[260px] flex-1 rounded border border-border bg-card/40 p-3">

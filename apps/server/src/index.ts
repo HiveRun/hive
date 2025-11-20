@@ -85,7 +85,9 @@ await startupCleanup();
 
 const workspaceRoot = resolveWorkspaceRoot();
 try {
-  await ensureWorkspaceRegistered(workspaceRoot);
+  await ensureWorkspaceRegistered(workspaceRoot, {
+    preserveActiveWorkspace: true,
+  });
   process.stderr.write(`Workspace registered: ${workspaceRoot}\n`);
 } catch (error) {
   process.stderr.write(

@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   activateWorkspace,
+  ensureWorkspaceRegistered,
   getWorkspaceRegistry,
   listWorkspaces,
   registerWorkspace,
@@ -126,5 +127,37 @@ describe("workspace registry", () => {
     await removeWorkspace(secondary.id);
     registry = await getWorkspaceRegistry();
     expect(registry.activeWorkspaceId).toBe(primary.id);
+  });
+
+  test("ensureWorkspaceRegistered preserves existing active workspace when requested", async () => {
+    const rootDir = await createWorkspaceRoot("root-workspace-");
+    const secondaryDir = await createWorkspaceRoot("secondary-workspace-");
+
+    await ensureWorkspaceRegistered(rootDir);
+    const secondary = await registerWorkspace(
+      { path: secondaryDir },
+      { setActive: true }
+    );
+
+    const registryBefore = await getWorkspaceRegistry();
+    expect(registryBefore.activeWorkspaceId).toBe(secondary.id);
+
+    await ensureWorkspaceRegistered(rootDir, {
+      preserveActiveWorkspace: true,
+    });
+
+    const registryAfter = await getWorkspaceRegistry();
+    expect(registryAfter.activeWorkspaceId).toBe(secondary.id);
+  });
+
+  test("ensureWorkspaceRegistered still activates workspace when none is selected", async () => {
+    const workspaceDir = await createWorkspaceRoot("fresh-workspace-");
+
+    const workspace = await ensureWorkspaceRegistered(workspaceDir, {
+      preserveActiveWorkspace: true,
+    });
+
+    const registry = await getWorkspaceRegistry();
+    expect(registry.activeWorkspaceId).toBe(workspace.id);
   });
 });
