@@ -1,11 +1,14 @@
 import "dotenv/config";
+import { basename } from "node:path";
 import { logger } from "@bogeychan/elysia-logger";
 import { cors } from "@elysiajs/cors";
+import { staticPlugin } from "@elysiajs/static";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { Elysia } from "elysia";
 import { cleanupOrphanedServers } from "./agents/cleanup";
 import { closeAllAgentSessions } from "./agents/service";
 import { resolveWorkspaceRoot } from "./config/context";
+import { resolveStaticAssetsDirectory } from "./config/static-assets";
 import { db } from "./db";
 import { agentsRoutes } from "./routes/agents";
 import { constructsRoutes } from "./routes/constructs";
@@ -21,6 +24,10 @@ import { ensureWorkspaceRegistered } from "./workspaces/registry";
 
 const DEFAULT_SERVER_PORT = 3000;
 const PORT = Number(process.env.PORT ?? DEFAULT_SERVER_PORT);
+
+const runtimeExecutable = basename(process.execPath).toLowerCase();
+const isBunRuntime = runtimeExecutable.startsWith("bun");
+const isCompiledRuntime = !isBunRuntime;
 
 async function startupCleanup() {
   process.stderr.write("Checking for orphaned OpenCode processes...\n");
@@ -80,42 +87,13 @@ async function runMigrations() {
   }
 }
 
-await runMigrations();
-await startupCleanup();
-
-const workspaceRoot = resolveWorkspaceRoot();
-try {
-  await ensureWorkspaceRegistered(workspaceRoot, {
-    preserveActiveWorkspace: true,
-  });
-  process.stderr.write(`Workspace registered: ${workspaceRoot}\n`);
-} catch (error) {
-  process.stderr.write(
-    `Warning: Failed to register workspace ${workspaceRoot}: ${error instanceof Error ? error.message : String(error)}\n`
-  );
-}
-
-try {
-  await bootstrapServiceSupervisor();
-  process.stderr.write("Service supervisor initialized.\n");
-} catch (error) {
-  process.stderr.write(
-    `Failed to bootstrap service supervisor: ${error instanceof Error ? error.message : String(error)}\n`
-  );
-}
-
-await preloadVoiceTranscriptionModels();
-
 const app = new Elysia()
   .use(
     logger({
       level: process.env.LOG_LEVEL || "info",
-      transport:
-        process.env.NODE_ENV !== "production"
-          ? { target: "pino-pretty" }
-          : undefined,
     })
   )
+
   .use(
     cors({
       origin: allowedCorsOrigins,
@@ -124,6 +102,7 @@ const app = new Elysia()
     })
   )
   .get("/", () => "OK")
+  .get("/health", () => ({ status: "ok" }))
   .get("/api/example", () => ({
     message: "Hello from Elysia!",
     timestamp: Date.now(),
@@ -132,8 +111,73 @@ const app = new Elysia()
   .use(workspacesRoutes)
   .use(constructsRoutes)
   .use(agentsRoutes)
-  .use(voiceRoutes)
-  .listen(PORT);
+  .use(voiceRoutes);
+
+const staticAssetsDirectory = resolveStaticAssetsDirectory();
+const shouldServeStaticAssets =
+  Boolean(staticAssetsDirectory) &&
+  (isCompiledRuntime ||
+    Boolean(process.env.SYNTHETIC_WEB_DIST) ||
+    process.env.SYNTHETIC_FORCE_STATIC === "1");
+
+if (shouldServeStaticAssets && staticAssetsDirectory) {
+  app.use(
+    staticPlugin({
+      assets: staticAssetsDirectory,
+      prefix: "/",
+      indexHTML: true,
+      alwaysStatic: true,
+    })
+  );
+  process.stderr.write(
+    `Serving frontend assets from: ${staticAssetsDirectory}\n`
+  );
+} else if (staticAssetsDirectory) {
+  process.stderr.write(
+    "Frontend build detected but static serving is disabled in this runtime.\n"
+  );
+} else {
+  process.stderr.write("No frontend build detected; API-only mode.\n");
+}
+
+const startApplication = async () => {
+  await runMigrations();
+  await startupCleanup();
+
+  const workspaceRoot = resolveWorkspaceRoot();
+  try {
+    await ensureWorkspaceRegistered(workspaceRoot, {
+      preserveActiveWorkspace: true,
+    });
+    process.stderr.write(`Workspace registered: ${workspaceRoot}\n`);
+  } catch (error) {
+    process.stderr.write(
+      `Warning: Failed to register workspace ${workspaceRoot}: ${error instanceof Error ? error.message : String(error)}\n`
+    );
+  }
+
+  try {
+    await bootstrapServiceSupervisor();
+    process.stderr.write("Service supervisor initialized.\n");
+  } catch (error) {
+    process.stderr.write(
+      `Failed to bootstrap service supervisor: ${error instanceof Error ? error.message : String(error)}\n`
+    );
+  }
+
+  await preloadVoiceTranscriptionModels();
+
+  app.listen(PORT);
+};
+
+startApplication().catch((error) => {
+  process.stderr.write(
+    `Failed to start Synthetic: ${
+      error instanceof Error ? (error.stack ?? error.message) : String(error)
+    }\n`
+  );
+  process.exit(1);
+});
 
 export type App = typeof app;
 

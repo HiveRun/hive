@@ -10,6 +10,34 @@ Synthetic is the successor to the earlier **Hive** platform (Elixir/Phoenix + As
 
 All planning and requirements live under `docs/` as plain Markdown so any editor (VS Code + Foam, Obsidian, or the web UI we build later) can read and update them. Capture new requirements in `docs/requirements/`, tasks in `docs/tasks/`, tag each with a `theme-*` label for grouping, and link everything back to Hive references as needed. Keep the task order manually in those lists—whatever note sits at the top is what we tackle next.
 
+## Installation
+
+### One-line install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SyntheticRun/synthetic/main/scripts/install.sh | sh
+```
+
+The installer downloads the latest published release for your platform, expands it into `~/.synthetic`, writes a local SQLite database path to `synthetic.env`, and symlinks `synthetic` into `~/.synthetic/bin`. Add that directory to your `PATH` (the script prints the export line) and run `synthetic` to start the bundled server + UI on the default ports.
+
+Environment variables:
+- `SYNTHETIC_VERSION`: install a specific tag (defaults to `latest`).
+- `SYNTHETIC_HOME`: override the install root (defaults to `~/.synthetic`).
+- `SYNTHETIC_INSTALL_URL`: override the download URL (handy for testing locally built tarballs).
+
+### Building a release locally
+
+```bash
+bun run build:installer
+ls dist/install
+```
+
+This script compiles the Bun server, copies the Vite build output, and packages everything into `dist/install/synthetic-<platform>-<arch>.tar.gz` plus a `.sha256` checksum. Upload that pair to a GitHub Release so the installer can fetch it. To smoke-test the installer against the locally built artifacts, run:
+
+```bash
+bun run local:install
+```
+
 ## Getting Started
 
 ### With Mise (Recommended)

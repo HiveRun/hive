@@ -33,6 +33,8 @@
     "ruler:apply": "cp README.md .ruler/prompts/README.md && cp docs/requirements/design.md .ruler/prompts/design.md && bunx @intellectronica/ruler@latest apply --local-only && biome check --write --no-errors-on-unmatched --files-ignore-unknown=true",
     "dev": "turbo dev",
     "build": "turbo build",
+    "build:installer": "bun run scripts/distribution/build.ts",
+    "local:install": "bun run build:installer && bun run scripts/distribution/local-install.ts",
     "check-types": "turbo check-types",
     "dev:native": "turbo -F native dev",
     "dev:web": "turbo -F web dev",

@@ -5,7 +5,7 @@
 - **Framework**: Elysia (TypeScript backend framework built on Bun)
 - **Database**: Drizzle ORM with SQLite (local) / PostgreSQL (production)
 - **Validation**: Elysia's built-in TypeBox validation
-- **Logging**: @bogeychan/elysia-logger + pino-pretty
+- **Logging**: @bogeychan/elysia-logger (JSON). Pipe output through `pino-pretty` locally if you need formatted logs.
 
 ## Tooling & Commands
 

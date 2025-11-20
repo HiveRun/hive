@@ -93,10 +93,6 @@ const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
 const LOGGER_CONFIG = {
   level: process.env.LOG_LEVEL || "info",
   autoLogging: false,
-  transport:
-    process.env.NODE_ENV !== "production"
-      ? { target: "pino-pretty" as const }
-      : undefined,
 } as const;
 
 function isPortActive(port?: number | null): Promise<boolean> {
