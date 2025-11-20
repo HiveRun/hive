@@ -653,10 +653,13 @@ function WorkspaceRow({
           </AlertDialogTrigger>
           <AlertDialogContent className="max-w-md">
             <AlertDialogHeader>
-              <AlertDialogTitle>Remove workspace?</AlertDialogTitle>
+              <AlertDialogTitle>
+                Remove workspace and constructs?
+              </AlertDialogTitle>
               <AlertDialogDescription>
-                {workspace.label} will be removed from Synthetic. Worktrees and
-                constructs will remain on disk.
+                Removing {workspace.label} deletes every construct created in
+                this workspace, including their worktrees. This action cannot be
+                undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

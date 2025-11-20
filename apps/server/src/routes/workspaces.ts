@@ -5,9 +5,9 @@ import {
   ensureWorkspaceRegistered,
   getWorkspaceRegistry,
   registerWorkspace,
-  removeWorkspace,
   updateWorkspaceLabel,
 } from "../workspaces/registry";
+import { removeWorkspaceCascade } from "../workspaces/removal";
 
 const HTTP_STATUS = {
   OK: 200,
@@ -172,8 +172,8 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   .delete(
     "/:id",
     async ({ params, set }) => {
-      const removed = await removeWorkspace(params.id);
-      if (!removed) {
+      const result = await removeWorkspaceCascade(params.id);
+      if (!result) {
         set.status = HTTP_STATUS.NOT_FOUND;
         return { message: "Workspace not found" };
       }
