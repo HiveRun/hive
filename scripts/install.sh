@@ -1,10 +1,10 @@
-#!/usr/bin/env sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
 OWNER="SyntheticRun"
 REPO="synthetic"
 INSTALL_ROOT="${SYNTHETIC_HOME:-$HOME/.synthetic}"
-BIN_DIR="$INSTALL_ROOT/bin"
+BIN_DIR="${SYNTHETIC_BIN_DIR:-$INSTALL_ROOT/bin}"
 RELEASES_DIR="$INSTALL_ROOT/releases"
 STATE_DIR="$INSTALL_ROOT/state"
 VERSION="${SYNTHETIC_VERSION:-latest}"
@@ -15,6 +15,79 @@ require() {
     echo "Error: missing required command '$1'" >&2
     exit 1
   fi
+}
+
+add_path_entry() {
+  local file="$1"
+  local command_line="$2"
+
+  if [ -f "$file" ] && grep -Fqx "$command_line" "$file"; then
+    echo "Synthetic bin directory already exported in $file"
+    return
+  fi
+
+  mkdir -p "$(dirname "$file")"
+  touch "$file"
+
+  if [ ! -w "$file" ]; then
+    echo "Add Synthetic to PATH manually by appending:\n  $command_line\nto $file"
+    return
+  fi
+
+  {
+    printf '\n# synthetic\n'
+    printf '%s\n' "$command_line"
+  } >> "$file"
+  echo "Added $BIN_DIR to PATH in $file"
+}
+
+configure_shell_path() {
+  if [[ ":$PATH:" == *":$BIN_DIR:"* ]]; then
+    return
+  fi
+
+  local shell_name
+  shell_name=$(basename "${SHELL:-}")
+  local xdg_config="${XDG_CONFIG_HOME:-$HOME/.config}"
+  local command_line
+  local -a candidates
+
+  case "$shell_name" in
+    fish)
+      candidates=([0]="$HOME/.config/fish/config.fish")
+      command_line="fish_add_path $BIN_DIR"
+      ;;
+    zsh)
+      candidates=("$HOME/.zshrc" "$HOME/.zshenv" "$xdg_config/zsh/.zshrc" "$xdg_config/zsh/.zshenv")
+      command_line="export PATH=$BIN_DIR:\$PATH"
+      ;;
+    bash)
+      candidates=("$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$xdg_config/bash/.bashrc" "$xdg_config/bash/.bash_profile")
+      command_line="export PATH=$BIN_DIR:\$PATH"
+      ;;
+    ash|sh)
+      candidates=("$HOME/.profile" "/etc/profile")
+      command_line="export PATH=$BIN_DIR:\$PATH"
+      ;;
+    *)
+      candidates=("$HOME/.profile")
+      command_line="export PATH=$BIN_DIR:\$PATH"
+      ;;
+  esac
+
+  local target=""
+  for file in "${candidates[@]}"; do
+    if [ -f "$file" ]; then
+      target="$file"
+      break
+    fi
+  done
+
+  if [ -z "$target" ]; then
+    target="${candidates[0]}"
+  fi
+
+  add_path_entry "$target" "$command_line"
 }
 
 os=$(uname -s)
@@ -68,10 +141,10 @@ ln -snf "$target" "$INSTALL_ROOT/current"
 ln -snf "$target/synthetic" "$BIN_DIR/synthetic"
 chmod +x "$BIN_DIR/synthetic"
 
+configure_shell_path
+
 cat <<EOF
 Synthetic installed to $target
-Add to your shell profile if needed:
-  export PATH="$BIN_DIR:\$PATH"
 
 Launch with:
   synthetic

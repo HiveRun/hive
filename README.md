@@ -18,7 +18,7 @@ All planning and requirements live under `docs/` as plain Markdown so any editor
 curl -fsSL https://raw.githubusercontent.com/SyntheticRun/synthetic/main/scripts/install.sh | sh
 ```
 
-The installer downloads the latest published release for your platform, expands it into `~/.synthetic`, writes a local SQLite database path to `synthetic.env`, and symlinks `synthetic` into `~/.synthetic/bin`. Add that directory to your `PATH` (the script prints the export line) and run `synthetic` to start the bundled server + UI on the default ports.
+The installer downloads the latest published release for your platform, expands it into `~/.synthetic`, writes a local SQLite database path to `synthetic.env`, symlinks `synthetic` into `~/.synthetic/bin`, and updates your shell PATH so the CLI is immediately available. Run `synthetic` to start the bundled server + UI on the default ports.
 
 Environment variables:
 - `SYNTHETIC_VERSION`: install a specific tag (defaults to `latest`).
@@ -27,25 +27,24 @@ Environment variables:
 
 ### Using the installed binary
 
-1. Add `~/.synthetic/bin` (or your custom `SYNTHETIC_HOME/bin`) to `PATH`:
-   ```bash
-   export PATH="$HOME/.synthetic/bin:$PATH"
-   ```
-2. Start the bundled server + UI with:
-   ```bash
-   synthetic
-   ```
-   - The API listens on `PORT` (defaults to `3000`).
-   - The embedded UI is served from the packaged `public/` directory and proxies through `WEB_PORT` (defaults to `3001`).
-   - Logs stream to stdout; press `Ctrl+C` to stop.
-3. Configuration lives in `~/.synthetic/current/synthetic.env`. Update values there (or override per-run) to change ports, database path, or other environment flags:
-   ```bash
-   # example: run on alternate ports
-   PORT=4100 WEB_PORT=4101 synthetic
-   ```
-4. The SQLite database lives under `~/.synthetic/state/synthetic.db` by default. Point `DATABASE_URL` elsewhere if you want a different location.
+- The installer automatically appends `~/.synthetic/bin` (or `SYNTHETIC_HOME/bin`) to your shell’s PATH for bash, zsh, fish, and other common shells. If you use a custom shell, add it manually:
+  ```bash
+  export PATH="$HOME/.synthetic/bin:$PATH"
+  ```
+- Start the bundled server + UI with:
+  ```bash
+  synthetic
+  ```
+  - API listener: `PORT` (defaults to `3000`).
+  - Embedded UI: `WEB_PORT` (defaults to `3001`) serving the packaged `public/` assets.
+  - Logs stream to stdout; press `Ctrl+C` to stop the process.
+- Configuration lives in `~/.synthetic/current/synthetic.env`. Update values there (or override per run) to change ports, database paths, or feature flags:
+  ```bash
+  PORT=4100 WEB_PORT=4101 synthetic
+  ```
+- The SQLite database defaults to `~/.synthetic/state/synthetic.db`; set `DATABASE_URL` if you need a different location.
 
-Hit `http://localhost:3001` in a browser after the command prints "Service supervisor initialized" to interact with the UI.
+Once the log shows “Service supervisor initialized,” visit [http://localhost:3001](http://localhost:3001) to use the UI.
 
 ### Building a release locally
 

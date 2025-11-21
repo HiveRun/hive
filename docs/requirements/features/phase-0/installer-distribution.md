@@ -22,6 +22,7 @@ Synthetic must be installable with a single `curl | sh` command that downloads a
    - The script archives the directory to `dist/install/synthetic-<platform>-<arch>.tar.gz` and emits a matching `.sha256` checksum for GitHub Releases.
 4. **Installer script**
    - `scripts/install.sh` detects OS/arch, downloads the matching GitHub release tarball, expands it into `~/.synthetic/releases/<name>`, writes `synthetic.env` with a local SQLite path, and symlinks `synthetic` into `~/.synthetic/bin`.
+   - After linking, the script automatically appends the bin directory to the user’s shell PATH (bash/zsh/fish/posix) so `synthetic` is immediately available.
    - Only `SYNTHETIC_VERSION`, `SYNTHETIC_HOME`, and `SYNTHETIC_INSTALL_URL` (for local testing) are configurable so the installer stays small and dependable.
 5. **Docs**
    - README highlights the installer command, env overrides, and release build command so contributors know how to publish binaries.
