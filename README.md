@@ -25,6 +25,28 @@ Environment variables:
 - `SYNTHETIC_HOME`: override the install root (defaults to `~/.synthetic`).
 - `SYNTHETIC_INSTALL_URL`: override the download URL (handy for testing locally built tarballs).
 
+### Using the installed binary
+
+1. Add `~/.synthetic/bin` (or your custom `SYNTHETIC_HOME/bin`) to `PATH`:
+   ```bash
+   export PATH="$HOME/.synthetic/bin:$PATH"
+   ```
+2. Start the bundled server + UI with:
+   ```bash
+   synthetic
+   ```
+   - The API listens on `PORT` (defaults to `3000`).
+   - The embedded UI is served from the packaged `public/` directory and proxies through `WEB_PORT` (defaults to `3001`).
+   - Logs stream to stdout; press `Ctrl+C` to stop.
+3. Configuration lives in `~/.synthetic/current/synthetic.env`. Update values there (or override per-run) to change ports, database path, or other environment flags:
+   ```bash
+   # example: run on alternate ports
+   PORT=4100 WEB_PORT=4101 synthetic
+   ```
+4. The SQLite database lives under `~/.synthetic/state/synthetic.db` by default. Point `DATABASE_URL` elsewhere if you want a different location.
+
+Hit `http://localhost:3001` in a browser after the command prints "Service supervisor initialized" to interact with the UI.
+
 ### Building a release locally
 
 ```bash
