@@ -23,6 +23,7 @@ The installer downloads the latest published release for your platform, expands 
 Environment variables:
 - `SYNTHETIC_VERSION`: install a specific tag (defaults to `latest`).
 - `SYNTHETIC_HOME`: override the install root (defaults to `~/.synthetic`).
+- `SYNTHETIC_BIN_DIR`: override the bin directory that `synthetic` is linked into (defaults to `~/.synthetic/bin`).
 - `SYNTHETIC_INSTALL_URL`: override the download URL (handy for testing locally built tarballs).
 
 ### Using the installed binary
