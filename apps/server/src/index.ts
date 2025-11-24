@@ -141,7 +141,15 @@ if (shouldServeStaticAssets && staticAssetsDirectory) {
 }
 
 const startApplication = async () => {
-  await runMigrations();
+  try {
+    await runMigrations();
+  } catch (error) {
+    process.stderr.write(
+      "Running migrations failed. To bootstrap a fresh install, run `synthetic --init-db` or `bun run apps/server db:push` from the repo.\n"
+    );
+    throw error;
+  }
+
   await startupCleanup();
 
   const workspaceRoot = resolveWorkspaceRoot();
