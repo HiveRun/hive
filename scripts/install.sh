@@ -120,10 +120,23 @@ mkdir -p "$BIN_DIR" "$RELEASES_DIR" "$STATE_DIR"
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
 
-echo "Downloading Synthetic (${platform}/${arch})"
-curl -fsSL "$download" -o "$workdir/package.tgz"
-tar -xzf "$workdir/package.tgz" -C "$workdir"
-release_dir=$(tar -tzf "$workdir/package.tgz" | head -1 | cut -d/ -f1)
+archive_path="$workdir/package.tgz"
+
+if [[ "$download" == file://* ]]; then
+  local_file="${download#file://}"
+  if [ ! -f "$local_file" ]; then
+    echo "Error: local archive $local_file not found" >&2
+    exit 1
+  fi
+  echo "Copying Synthetic archive from $local_file"
+  cp "$local_file" "$archive_path"
+else
+  echo "Downloading Synthetic (${platform}/${arch})"
+  curl -fsSL "$download" -o "$archive_path"
+fi
+
+tar -xzf "$archive_path" -C "$workdir"
+release_dir=$(tar -tzf "$archive_path" | head -1 | cut -d/ -f1 || true)
 
 src="$workdir/$release_dir"
 [ -d "$src" ] || { echo "Archive missing payload" >&2; exit 1; }
