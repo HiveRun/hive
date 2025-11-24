@@ -149,6 +149,7 @@ cat > "$target/synthetic.env" <<EOF
 DATABASE_URL="$STATE_DIR/synthetic.db"
 SYNTHETIC_WEB_DIST="$target/public"
 SYNTHETIC_MIGRATIONS_DIR="$target/migrations"
+SYNTHETIC_LOG_DIR="$INSTALL_ROOT/logs"
 EOF
 
 ln -snf "$target" "$INSTALL_ROOT/current"

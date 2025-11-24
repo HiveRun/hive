@@ -26,6 +26,7 @@ Environment variables:
 - `SYNTHETIC_BIN_DIR`: override the bin directory that `synthetic` is linked into (defaults to `~/.synthetic/bin`).
 - `SYNTHETIC_INSTALL_URL`: override the download URL (handy for testing locally built tarballs).
 - `SYNTHETIC_MIGRATIONS_DIR`: point the runtime at a custom migrations folder (defaults to the bundled `migrations/`).
+- `SYNTHETIC_LOG_DIR`: where background logs are written (defaults to `<release>/logs`).
 
 ### Using the installed binary
 
@@ -33,21 +34,23 @@ Environment variables:
   ```bash
   export PATH="$HOME/.synthetic/bin:$PATH"
   ```
-- Start the bundled server + UI with:
+- Run the CLI with:
   ```bash
   synthetic
   ```
+  - On compiled releases this launches the server/UI in the background and immediately returns control of your terminal. The command prints the UI URL and the log file path so you can open the browser right away.
   - API listener: `PORT` (defaults to `3000`).
   - Embedded UI: `WEB_PORT` (defaults to `3001`) serving the packaged `public/` assets.
   - The first launch automatically runs the bundled Drizzle migrations; no extra init step is required.
-  - Logs stream to stdout; press `Ctrl+C` to stop the process.
+- Use `synthetic --foreground` when you want logs streamed directly to the terminal (Ctrl+C stops everything). `synthetic --init-db` runs migrations once and exits.
+- Background logs default to `~/.synthetic/logs/synthetic.log` (override with `SYNTHETIC_LOG_DIR`).
 - Configuration lives in `~/.synthetic/current/synthetic.env`. Update values there (or override per run) to change ports, database paths, or feature flags:
   ```bash
   PORT=4100 WEB_PORT=4101 synthetic
   ```
 - The SQLite database defaults to `~/.synthetic/state/synthetic.db`; set `DATABASE_URL` if you need a different location.
 
-Once the log shows “Service supervisor initialized,” visit [http://localhost:3001](http://localhost:3001) to use the UI.
+Once the startup message “Service supervisor initialized” appears in the log, visit [http://localhost:3001](http://localhost:3001) to use the UI.
 
 ### Building a release locally
 

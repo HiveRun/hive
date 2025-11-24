@@ -10,6 +10,7 @@ Synthetic must be installable with a single `curl | bash` command that downloads
 - Publish platform-specific tarballs (`synthetic-<platform>-<arch>.tar.gz`) with the binary + frontend assets.
 - Provide a curlable installer script that installs/updates releases into `~/.synthetic` (or a user-defined directory) and links the binary into `~/.synthetic/bin`.
 - Ensure installed builds boot without extra setup by generating `synthetic.env` pointing to a writable SQLite file under `~/.synthetic/state`.
+- Make `synthetic` feel like a native dev tool: the default command should start the server/UI in the background, print the local URL + log file, and immediately return control to the user.
 
 ## Requirements
 
@@ -23,11 +24,13 @@ Synthetic must be installable with a single `curl | bash` command that downloads
 4. **Installer script**
    - `scripts/install.sh` detects OS/arch, downloads the matching GitHub release tarball, expands it into `~/.synthetic/releases/<name>`, writes `synthetic.env` with a local SQLite path, and symlinks `synthetic` into `~/.synthetic/bin`.
    - After linking, the script automatically appends the bin directory to the user’s shell PATH (bash/zsh/fish/posix) so `synthetic` is immediately available.
-   - Configuration knobs: `SYNTHETIC_VERSION`, `SYNTHETIC_HOME`, `SYNTHETIC_BIN_DIR`, `SYNTHETIC_MIGRATIONS_DIR`, and `SYNTHETIC_INSTALL_URL` (local testing only) keep the installer flexible without adding flags.
+   - Configuration knobs: `SYNTHETIC_VERSION`, `SYNTHETIC_HOME`, `SYNTHETIC_BIN_DIR`, `SYNTHETIC_MIGRATIONS_DIR`, `SYNTHETIC_LOG_DIR`, and `SYNTHETIC_INSTALL_URL` (local testing only) keep the installer flexible without adding flags.
 5. **Bundled migrations**
    - The release tarball must include `apps/server/src/migrations` (SQL + `meta/_journal.json`) so compiled binaries can run Drizzle migrations at startup without manual bootstrapping.
-5. **Docs**
-   - README highlights the installer command, env overrides, and release build command so contributors know how to publish binaries.
+6. **CLI ergonomics**
+   - The compiled binary should default to background mode (detached process, background log file, clear UI URL) while offering `--foreground` / `--init-db` escape hatches for debugging.
+7. **Docs**
+   - README highlights the installer command, env overrides, background behavior, and release build command so contributors know how to publish binaries.
 
 ## Task Tracker
 

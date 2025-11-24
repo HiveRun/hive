@@ -1,8 +1,10 @@
 import "dotenv/config";
-import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { logger } from "@bogeychan/elysia-logger";
+
 import { cors } from "@elysiajs/cors";
 import { staticPlugin } from "@elysiajs/static";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
@@ -34,6 +36,52 @@ const isCompiledRuntime = !isBunRuntime;
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const binaryDirectory = dirname(process.execPath);
 const forcedMigrationsDirectory = process.env.SYNTHETIC_MIGRATIONS_DIR;
+const cliArgs = new Set(process.argv.slice(2));
+const isForegroundRequested = cliArgs.has("--foreground");
+const isForcedForeground = process.env.SYNTHETIC_FOREGROUND === "1";
+const isInitDbCommand = cliArgs.has("--init-db");
+const shouldRunDetached =
+  isCompiledRuntime && !isForegroundRequested && !isForcedForeground;
+
+const ensureLogDirectory = (dir: string) => {
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch {
+    /* ignore */
+  }
+};
+
+const startDetachedServer = () => {
+  const logDir = process.env.SYNTHETIC_LOG_DIR ?? join(binaryDirectory, "logs");
+  ensureLogDirectory(logDir);
+  const logFile = join(logDir, "synthetic.log");
+  const stdoutFd = openSync(logFile, "a");
+  const stderrFd = openSync(logFile, "a");
+
+  const child = spawn(process.execPath, ["--foreground"], {
+    cwd: binaryDirectory,
+    env: {
+      ...process.env,
+      SYNTHETIC_FOREGROUND: "1",
+    },
+    detached: true,
+    stdio: ["ignore", stdoutFd, stderrFd],
+  });
+
+  closeSync(stdoutFd);
+  closeSync(stderrFd);
+
+  child.unref();
+
+  process.stdout.write(`
+${[
+  "Synthetic is running in the background.",
+  `UI: ${DEFAULT_WEB_URL}`,
+  `Logs: ${logFile}`,
+  'Run "synthetic --foreground" to attach logs to this terminal.',
+].join("\n")}
+`);
+};
 
 async function startupCleanup() {
   process.stderr.write("Checking for orphaned OpenCode processes...\n");
@@ -71,6 +119,7 @@ const DEFAULT_CORS_ORIGINS = [
   `http://localhost:${DEFAULT_WEB_PORT}`,
   `http://127.0.0.1:${DEFAULT_WEB_PORT}`,
 ];
+const DEFAULT_WEB_URL = `http://localhost:${DEFAULT_WEB_PORT}`;
 
 const resolvedCorsOrigins = (process.env.CORS_ORIGIN || "")
   .split(",")
@@ -202,14 +251,42 @@ const startApplication = async () => {
   app.listen(PORT);
 };
 
-startApplication().catch((error) => {
-  process.stderr.write(
-    `Failed to start Synthetic: ${
-      error instanceof Error ? (error.stack ?? error.message) : String(error)
-    }\n`
-  );
-  process.exit(1);
-});
+const bootstrap = async () => {
+  if (isInitDbCommand) {
+    await runMigrations();
+    return;
+  }
+
+  if (shouldRunDetached) {
+    try {
+      startDetachedServer();
+      return;
+    } catch (error) {
+      process.stderr.write(
+        `Failed to launch background process: ${
+          error instanceof Error ? error.message : String(error)
+        }. Falling back to foreground mode.\n`
+      );
+    }
+  }
+
+  await startApplication();
+};
+
+bootstrap()
+  .then(() => {
+    if (isInitDbCommand || shouldRunDetached) {
+      process.exit(0);
+    }
+  })
+  .catch((error) => {
+    process.stderr.write(
+      `Failed to start Synthetic: ${
+        error instanceof Error ? (error.stack ?? error.message) : String(error)
+      }\n`
+    );
+    process.exit(1);
+  });
 
 export type App = typeof app;
 
