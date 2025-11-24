@@ -83,6 +83,20 @@ const main = async () => {
 
   await cp(frontendDist, join(releaseDir, "public"), { recursive: true });
 
+  const serverMigrationsDir = join(
+    repoRoot,
+    "apps",
+    "server",
+    "src",
+    "migrations"
+  );
+  if (!existsSync(serverMigrationsDir)) {
+    throw new Error("Server migrations directory missing.");
+  }
+  await cp(serverMigrationsDir, join(releaseDir, "migrations"), {
+    recursive: true,
+  });
+
   const pkg = await readRootPackage();
   const commitSha = (() => {
     try {

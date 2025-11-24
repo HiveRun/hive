@@ -148,6 +148,7 @@ mv "$src" "$target"
 cat > "$target/synthetic.env" <<EOF
 DATABASE_URL="$STATE_DIR/synthetic.db"
 SYNTHETIC_WEB_DIST="$target/public"
+SYNTHETIC_MIGRATIONS_DIR="$target/migrations"
 EOF
 
 ln -snf "$target" "$INSTALL_ROOT/current"

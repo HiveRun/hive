@@ -25,6 +25,7 @@ Environment variables:
 - `SYNTHETIC_HOME`: override the install root (defaults to `~/.synthetic`).
 - `SYNTHETIC_BIN_DIR`: override the bin directory that `synthetic` is linked into (defaults to `~/.synthetic/bin`).
 - `SYNTHETIC_INSTALL_URL`: override the download URL (handy for testing locally built tarballs).
+- `SYNTHETIC_MIGRATIONS_DIR`: point the runtime at a custom migrations folder (defaults to the bundled `migrations/`).
 
 ### Using the installed binary
 
@@ -38,6 +39,7 @@ Environment variables:
   ```
   - API listener: `PORT` (defaults to `3000`).
   - Embedded UI: `WEB_PORT` (defaults to `3001`) serving the packaged `public/` assets.
+  - The first launch automatically runs the bundled Drizzle migrations; no extra init step is required.
   - Logs stream to stdout; press `Ctrl+C` to stop the process.
 - Configuration lives in `~/.synthetic/current/synthetic.env`. Update values there (or override per run) to change ports, database paths, or feature flags:
   ```bash

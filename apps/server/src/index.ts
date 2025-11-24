@@ -1,5 +1,7 @@
 import "dotenv/config";
-import { basename } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { logger } from "@bogeychan/elysia-logger";
 import { cors } from "@elysiajs/cors";
 import { staticPlugin } from "@elysiajs/static";
@@ -28,6 +30,10 @@ const PORT = Number(process.env.PORT ?? DEFAULT_SERVER_PORT);
 const runtimeExecutable = basename(process.execPath).toLowerCase();
 const isBunRuntime = runtimeExecutable.startsWith("bun");
 const isCompiledRuntime = !isBunRuntime;
+
+const moduleDir = dirname(fileURLToPath(import.meta.url));
+const binaryDirectory = dirname(process.execPath);
+const forcedMigrationsDirectory = process.env.SYNTHETIC_MIGRATIONS_DIR;
 
 async function startupCleanup() {
   process.stderr.write("Checking for orphaned OpenCode processes...\n");
@@ -74,8 +80,26 @@ const resolvedCorsOrigins = (process.env.CORS_ORIGIN || "")
 const allowedCorsOrigins =
   resolvedCorsOrigins.length > 0 ? resolvedCorsOrigins : DEFAULT_CORS_ORIGINS;
 
+const resolveMigrationsDirectory = () => {
+  const candidates = [
+    forcedMigrationsDirectory,
+    join(binaryDirectory, "migrations"),
+    join(moduleDir, "migrations"),
+  ].filter((dir): dir is string => Boolean(dir));
+
+  for (const directory of candidates) {
+    if (existsSync(directory)) {
+      return directory;
+    }
+  }
+
+  throw new Error(
+    `Can't find migrations directory. Checked: ${candidates.join(", ")}`
+  );
+};
+
 async function runMigrations() {
-  const migrationsFolder = new URL("./migrations", import.meta.url).pathname;
+  const migrationsFolder = resolveMigrationsDirectory();
   try {
     await migrate(db, { migrationsFolder });
     process.stderr.write("Database migrations applied.\n");
