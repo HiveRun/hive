@@ -45,7 +45,7 @@ const env = {
 
 console.log(`Installing Synthetic from ${archivePath}`);
 const result = Bun.spawnSync({
-  cmd: ["sh", installScript],
+  cmd: ["bash", installScript],
   cwd: repoRoot,
   env,
   stdout: "inherit",

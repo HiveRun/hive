@@ -2,7 +2,7 @@
 
 - [x] Installer & Distribution Pipeline #status/complete #phase-0 #feature/distribution
 
-Synthetic must be installable with a single `curl | sh` command that downloads a compiled Bun binary, its static frontend assets, and a ready-to-use local SQLite database path. This document tracks the requirements for that experience.
+Synthetic must be installable with a single `curl | bash` command that downloads a compiled Bun binary, its static frontend assets, and a ready-to-use local SQLite database path. This document tracks the requirements for that experience.
 
 ## Goals
 
@@ -38,5 +38,5 @@ Synthetic must be installable with a single `curl | sh` command that downloads a
 ## Testing Strategy
 
 - Run `bun run build:installer` on each supported platform to ensure the tarball, checksum, and manifest are generated under `dist/install/`.
-- After uploading (or staging) a release artifact, run `SYNTHETIC_VERSION=<tag> scripts/install.sh` (or `SYNTHETIC_INSTALL_URL=file://... scripts/install.sh` for local tarballs) to verify the flow end-to-end and ensure `~/.synthetic/bin/synthetic` launches with the bundled UI. `bun run local:install` automates the local path.
+- After uploading (or staging) a release artifact, run `SYNTHETIC_VERSION=<tag> scripts/install.sh` (or `SYNTHETIC_INSTALL_URL=file://... scripts/install.sh` for local tarballs) to verify the flow end-to-end and ensure `~/.synthetic/bin/synthetic` launches with the bundled UI. `bun run local:install` first runs `build:installer`, then shells into `bash scripts/install.sh` with the file:// override to automate the local path.
 - Smoke-test the installed binary: ensure `/health` responds, frontend loads, migrations run against the generated SQLite database, and `synthetic.env` is respected when edited.

@@ -15,7 +15,7 @@ All planning and requirements live under `docs/` as plain Markdown so any editor
 ### One-line install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SyntheticRun/synthetic/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/SyntheticRun/synthetic/main/scripts/install.sh | bash
 ```
 
 The installer downloads the latest published release for your platform, expands it into `~/.synthetic`, writes a local SQLite database path to `synthetic.env`, symlinks `synthetic` into `~/.synthetic/bin`, and updates your shell PATH so the CLI is immediately available. Run `synthetic` to start the bundled server + UI on the default ports.
@@ -59,6 +59,8 @@ This script compiles the Bun server, copies the Vite build output, and packages 
 ```bash
 bun run local:install
 ```
+
+This command runs `bun run build:installer` under the hood, then installs from the freshly built tarball using `SYNTHETIC_INSTALL_URL=file://...`.
 
 ## Getting Started
 
