@@ -29,7 +29,6 @@ Environment variables:
 - `SYNTHETIC_LOG_DIR`: where background logs are written (defaults to `<release>/logs`).
 - `SYNTHETIC_PID_FILE`: override the pid file path (defaults to `<release>/synthetic.pid`).
 - `SYNTHETIC_INSTALL_COMMAND`: override the command executed by `synthetic upgrade` (defaults to the official curl | bash installer).
-- `SYNTHETIC_INSTALL_COMMAND`: override the command used by `synthetic upgrade` (defaults to the official curl | bash installer).
 
 ### Using the installed binary
 

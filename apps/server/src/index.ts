@@ -204,7 +204,11 @@ const runUpgrade = () => {
   }
 
   const configuredCommand = process.env.SYNTHETIC_INSTALL_COMMAND;
+  const storedInstallUrl = process.env.SYNTHETIC_INSTALL_URL;
   const env = { ...process.env };
+  if (storedInstallUrl) {
+    env.SYNTHETIC_INSTALL_URL = storedInstallUrl;
+  }
   process.stdout.write("Downloading and installing the latest release...\n");
 
   let child: ReturnType<typeof spawn>;
@@ -219,6 +223,12 @@ const runUpgrade = () => {
       stdio: "inherit",
       env,
       cwd: binaryDirectory,
+    });
+  } else if (storedInstallUrl) {
+    const command = `set -euo pipefail; curl -fsSL ${storedInstallUrl} | bash`;
+    child = spawn("bash", ["-c", command], {
+      stdio: "inherit",
+      env,
     });
   } else {
     const command = `set -euo pipefail; ${DEFAULT_INSTALL_COMMAND}`;
