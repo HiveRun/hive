@@ -27,6 +27,7 @@ Environment variables:
 - `SYNTHETIC_INSTALL_URL`: override the download URL (handy for testing locally built tarballs).
 - `SYNTHETIC_MIGRATIONS_DIR`: point the runtime at a custom migrations folder (defaults to the bundled `migrations/`).
 - `SYNTHETIC_LOG_DIR`: where background logs are written (defaults to `<release>/logs`).
+- `SYNTHETIC_PID_FILE`: override the pid file path (defaults to `<release>/synthetic.pid`).
 
 ### Using the installed binary
 
@@ -38,19 +39,23 @@ Environment variables:
   ```bash
   synthetic
   ```
-  - On compiled releases this launches the server/UI in the background and immediately returns control of your terminal. The command prints the UI URL and the log file path so you can open the browser right away.
-  - API listener: `PORT` (defaults to `3000`).
-  - Embedded UI: `WEB_PORT` (defaults to `3001`) serving the packaged `public/` assets.
+  - Compiled releases fork to the background, print the browser URL, log path, and PID file, and immediately return control of your terminal. Releases serve the UI on the API port (`PORT`, defaults to `3000`).
   - The first launch automatically runs the bundled Drizzle migrations; no extra init step is required.
-- Use `synthetic --foreground` when you want logs streamed directly to the terminal (Ctrl+C stops everything). `synthetic --init-db` runs migrations once and exits.
-- Background logs default to `~/.synthetic/logs/synthetic.log` (override with `SYNTHETIC_LOG_DIR`).
+- Follow logs:
+  ```bash
+  synthetic logs
+  ```
+- Stop the background server:
+  ```bash
+  synthetic stop
+  ```
 - Configuration lives in `~/.synthetic/current/synthetic.env`. Update values there (or override per run) to change ports, database paths, or feature flags:
   ```bash
-  PORT=4100 WEB_PORT=4101 synthetic
+  PORT=4100 synthetic
   ```
 - The SQLite database defaults to `~/.synthetic/state/synthetic.db`; set `DATABASE_URL` if you need a different location.
 
-Once the startup message “Service supervisor initialized” appears in the log, visit [http://localhost:3001](http://localhost:3001) to use the UI.
+Open the printed UI link (default [http://localhost:3000](http://localhost:3000)) after the log shows “Service supervisor initialized.”
 
 ### Building a release locally
 

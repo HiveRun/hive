@@ -28,7 +28,7 @@ Synthetic must be installable with a single `curl | bash` command that downloads
 5. **Bundled migrations**
    - The release tarball must include `apps/server/src/migrations` (SQL + `meta/_journal.json`) so compiled binaries can run Drizzle migrations at startup without manual bootstrapping.
 6. **CLI ergonomics**
-   - The compiled binary should default to background mode (detached process, background log file, clear UI URL) while offering `--foreground` / `--init-db` escape hatches for debugging.
+   - The compiled binary should default to background mode (detached process, background log file, clear UI URL, PID file) with built-in commands like `synthetic stop` and `synthetic logs` so users can manage the daemon without shell hacks. Foreground mode is only exposed via env overrides for debugging—no extra CLI flags are required.
 7. **Docs**
    - README highlights the installer command, env overrides, background behavior, and release build command so contributors know how to publish binaries.
 
