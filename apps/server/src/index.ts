@@ -77,10 +77,17 @@ const cleanupPidFile = () => {
   }
 };
 
-const terminateBackgroundProcess = () => {
+const stopBackgroundProcess = (options?: { silent?: boolean }) => {
+  const silent = options?.silent ?? false;
+  const log = (message: string) => {
+    if (!silent) {
+      process.stdout.write(`${message}\n`);
+    }
+  };
+
   if (!existsSync(pidFilePath)) {
-    process.stdout.write("No running Synthetic instance found.\n");
-    return false;
+    log("No running Synthetic instance found.");
+    return "not_running" as const;
   }
 
   let pidText: string;
@@ -92,35 +99,35 @@ const terminateBackgroundProcess = () => {
         error instanceof Error ? error.message : String(error)
       }\n`
     );
-    return false;
+    return "failed" as const;
   }
 
   const pid = Number(pidText);
   if (!pid || Number.isNaN(pid)) {
     process.stderr.write(`Pid file ${pidFilePath} contains invalid data.\n`);
     cleanupPidFile();
-    return false;
+    return "failed" as const;
   }
 
   try {
     process.kill(pid, "SIGTERM");
-    process.stdout.write(`Stopped Synthetic (PID ${pid}).\n`);
+    log(`Stopped Synthetic (PID ${pid}).`);
   } catch (error) {
     process.stderr.write(
       `Failed to stop Synthetic (PID ${pid}): ${
         error instanceof Error ? error.message : String(error)
       }\n`
     );
-    return false;
+    return "failed" as const;
   }
 
   cleanupPidFile();
-  return true;
+  return "stopped" as const;
 };
 
 const stopBackgroundServer = () => {
-  const success = terminateBackgroundProcess();
-  process.exit(success ? 0 : 1);
+  const result = stopBackgroundProcess();
+  process.exit(result === "failed" ? 1 : 0);
 };
 
 const streamLogs = () => {
@@ -178,20 +185,29 @@ const streamLogs = () => {
   process.on("SIGTERM", cleanup);
 };
 
+const DEFAULT_INSTALL_COMMAND =
+  "curl -fsSL https://raw.githubusercontent.com/SyntheticRun/synthetic/main/scripts/install.sh | bash";
+
 const runUpgrade = () => {
-  const stopped = terminateBackgroundProcess();
-  if (!stopped) {
-    process.stdout.write(
-      "No running instance detected or stop failed. Continuing upgrade.\n"
+  const stopResult = stopBackgroundProcess({ silent: true });
+  if (stopResult === "failed") {
+    process.stderr.write(
+      "Unable to stop the running instance. Aborting upgrade.\n"
     );
+    process.exit(1);
+    return;
+  }
+
+  if (stopResult === "stopped") {
+    process.stdout.write("Stopped running instance.\n");
   }
 
   const installCommand =
-    process.env.SYNTHETIC_INSTALL_COMMAND ??
-    "curl -fsSL https://raw.githubusercontent.com/SyntheticRun/synthetic/main/scripts/install.sh | bash";
+    process.env.SYNTHETIC_INSTALL_COMMAND ?? DEFAULT_INSTALL_COMMAND;
+  const command = `set -euo pipefail; ${installCommand}`;
 
   process.stdout.write("Downloading and installing the latest release...\n");
-  const child = spawn("bash", ["-c", installCommand], {
+  const child = spawn("bash", ["-c", command], {
     stdio: "inherit",
     env: process.env,
   });
@@ -202,6 +218,8 @@ const runUpgrade = () => {
       process.stdout.write(
         "Synthetic upgraded successfully. Run `synthetic` to start the new version.\n"
       );
+    } else {
+      process.stderr.write(`Upgrade command exited with code ${exitCode}.\n`);
     }
     process.exit(exitCode);
   });
