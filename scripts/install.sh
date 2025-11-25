@@ -5,6 +5,7 @@ OWNER="SyntheticRun"
 REPO="synthetic"
 INSTALL_ROOT="${SYNTHETIC_HOME:-$HOME/.synthetic}"
 BIN_DIR="${SYNTHETIC_BIN_DIR:-$INSTALL_ROOT/bin}"
+DEFAULT_INSTALL_COMMAND="curl -fsSL https://raw.githubusercontent.com/$OWNER/$REPO/main/scripts/install.sh | bash"
 RELEASES_DIR="$INSTALL_ROOT/releases"
 STATE_DIR="$INSTALL_ROOT/state"
 VERSION="${SYNTHETIC_VERSION:-latest}"
@@ -135,6 +136,8 @@ else
   curl -fsSL "$download" -o "$archive_path"
 fi
 
+install_command_value="${SYNTHETIC_INSTALL_COMMAND:-$DEFAULT_INSTALL_COMMAND}"
+
 tar -xzf "$archive_path" -C "$workdir"
 release_dir=$(tar -tzf "$archive_path" | head -1 | cut -d/ -f1 || true)
 
@@ -150,6 +153,8 @@ DATABASE_URL="$STATE_DIR/synthetic.db"
 SYNTHETIC_WEB_DIST="$target/public"
 SYNTHETIC_MIGRATIONS_DIR="$target/migrations"
 SYNTHETIC_LOG_DIR="$INSTALL_ROOT/logs"
+SYNTHETIC_INSTALL_URL="$download"
+SYNTHETIC_INSTALL_COMMAND="$install_command_value"
 EOF
 
 ln -snf "$target" "$INSTALL_ROOT/current"

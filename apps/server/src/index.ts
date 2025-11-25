@@ -187,6 +187,7 @@ const streamLogs = () => {
 
 const DEFAULT_INSTALL_COMMAND =
   "curl -fsSL https://raw.githubusercontent.com/SyntheticRun/synthetic/main/scripts/install.sh | bash";
+const LOCAL_INSTALL_SCRIPT_PATH = join(binaryDirectory, "install.sh");
 
 const runUpgrade = () => {
   const stopResult = stopBackgroundProcess({ silent: true });
@@ -202,15 +203,30 @@ const runUpgrade = () => {
     process.stdout.write("Stopped running instance.\n");
   }
 
-  const installCommand =
-    process.env.SYNTHETIC_INSTALL_COMMAND ?? DEFAULT_INSTALL_COMMAND;
-  const command = `set -euo pipefail; ${installCommand}`;
-
+  const configuredCommand = process.env.SYNTHETIC_INSTALL_COMMAND;
+  const env = { ...process.env };
   process.stdout.write("Downloading and installing the latest release...\n");
-  const child = spawn("bash", ["-c", command], {
-    stdio: "inherit",
-    env: process.env,
-  });
+
+  let child: ReturnType<typeof spawn>;
+  if (configuredCommand) {
+    const command = `set -euo pipefail; ${configuredCommand}`;
+    child = spawn("bash", ["-c", command], {
+      stdio: "inherit",
+      env,
+    });
+  } else if (existsSync(LOCAL_INSTALL_SCRIPT_PATH)) {
+    child = spawn("bash", [LOCAL_INSTALL_SCRIPT_PATH], {
+      stdio: "inherit",
+      env,
+      cwd: binaryDirectory,
+    });
+  } else {
+    const command = `set -euo pipefail; ${DEFAULT_INSTALL_COMMAND}`;
+    child = spawn("bash", ["-c", command], {
+      stdio: "inherit",
+      env,
+    });
+  }
 
   child.on("exit", (code) => {
     const exitCode = code ?? 0;

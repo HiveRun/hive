@@ -83,6 +83,10 @@ const main = async () => {
 
   await cp(frontendDist, join(releaseDir, "public"), { recursive: true });
 
+  const installerScriptSource = join(repoRoot, "scripts", "install.sh");
+  await copyFile(installerScriptSource, join(releaseDir, "install.sh"));
+  await chmod(join(releaseDir, "install.sh"), EXECUTABLE_PERMISSIONS);
+
   const serverMigrationsDir = join(
     repoRoot,
     "apps",
