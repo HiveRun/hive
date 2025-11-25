@@ -28,6 +28,7 @@ Environment variables:
 - `SYNTHETIC_MIGRATIONS_DIR`: point the runtime at a custom migrations folder (defaults to the bundled `migrations/`).
 - `SYNTHETIC_LOG_DIR`: where background logs are written (defaults to `<release>/logs`).
 - `SYNTHETIC_PID_FILE`: override the pid file path (defaults to `<release>/synthetic.pid`).
+- `SYNTHETIC_INSTALL_COMMAND`: override the command used by `synthetic upgrade` (defaults to the official curl | bash installer).
 
 ### Using the installed binary
 
@@ -48,6 +49,10 @@ Environment variables:
 - Stop the background server:
   ```bash
   synthetic stop
+  ```
+- Upgrade to the latest release (downloads and reinstalls the packaged binary):
+  ```bash
+  synthetic upgrade
   ```
 - Configuration lives in `~/.synthetic/current/synthetic.env`. Update values there (or override per run) to change ports, database paths, or feature flags:
   ```bash

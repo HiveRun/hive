@@ -59,6 +59,7 @@ const resolveLogFilePath = () => join(resolveLogDirectory(), "synthetic.log");
 const cliArgs = process.argv.slice(2);
 const isStopCommand = cliArgs[0] === "stop";
 const isLogsCommand = cliArgs[0] === "logs";
+const isUpgradeCommand = cliArgs[0] === "upgrade";
 
 const ensureLogDirectory = (dir: string) => {
   try {
@@ -76,10 +77,10 @@ const cleanupPidFile = () => {
   }
 };
 
-const stopBackgroundServer = () => {
+const terminateBackgroundProcess = () => {
   if (!existsSync(pidFilePath)) {
     process.stdout.write("No running Synthetic instance found.\n");
-    process.exit(0);
+    return false;
   }
 
   let pidText: string;
@@ -91,16 +92,14 @@ const stopBackgroundServer = () => {
         error instanceof Error ? error.message : String(error)
       }\n`
     );
-    process.exit(1);
-    return;
+    return false;
   }
 
   const pid = Number(pidText);
   if (!pid || Number.isNaN(pid)) {
     process.stderr.write(`Pid file ${pidFilePath} contains invalid data.\n`);
     cleanupPidFile();
-    process.exit(1);
-    return;
+    return false;
   }
 
   try {
@@ -112,10 +111,16 @@ const stopBackgroundServer = () => {
         error instanceof Error ? error.message : String(error)
       }\n`
     );
+    return false;
   }
 
   cleanupPidFile();
-  process.exit(0);
+  return true;
+};
+
+const stopBackgroundServer = () => {
+  const success = terminateBackgroundProcess();
+  process.exit(success ? 0 : 1);
 };
 
 const streamLogs = () => {
@@ -173,13 +178,34 @@ const streamLogs = () => {
   process.on("SIGTERM", cleanup);
 };
 
-if (isStopCommand) {
-  stopBackgroundServer();
-}
+const runUpgrade = () => {
+  const stopped = terminateBackgroundProcess();
+  if (!stopped) {
+    process.stdout.write(
+      "No running instance detected or stop failed. Continuing upgrade.\n"
+    );
+  }
 
-if (isLogsCommand) {
-  streamLogs();
-}
+  const installCommand =
+    process.env.SYNTHETIC_INSTALL_COMMAND ??
+    "curl -fsSL https://raw.githubusercontent.com/SyntheticRun/synthetic/main/scripts/install.sh | bash";
+
+  process.stdout.write("Downloading and installing the latest release...\n");
+  const child = spawn("bash", ["-c", installCommand], {
+    stdio: "inherit",
+    env: process.env,
+  });
+
+  child.on("exit", (code) => {
+    const exitCode = code ?? 0;
+    if (exitCode === 0) {
+      process.stdout.write(
+        "Synthetic upgraded successfully. Run `synthetic` to start the new version.\n"
+      );
+    }
+    process.exit(exitCode);
+  });
+};
 
 const LEADING_SLASH_REGEX = /^\/+/,
   DOT_SEQUENCE_REGEX = /\.\.+/g;
@@ -466,7 +492,26 @@ const bootstrap = async () => {
   await startApplication();
 };
 
-bootstrap().catch((error) => {
+const run = async () => {
+  if (isStopCommand) {
+    stopBackgroundServer();
+    return;
+  }
+
+  if (isLogsCommand) {
+    streamLogs();
+    return;
+  }
+
+  if (isUpgradeCommand) {
+    runUpgrade();
+    return;
+  }
+
+  await bootstrap();
+};
+
+run().catch((error) => {
   process.stderr.write(
     `Failed to start Synthetic: ${
       error instanceof Error ? (error.stack ?? error.message) : String(error)
