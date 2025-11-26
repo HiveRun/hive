@@ -42,8 +42,8 @@ const ensureDir = async (path: string) => {
 
 const buildFrontend = () =>
   run(["bun", "run", "build"], join(repoRoot, "apps", "web"));
-const buildServer = () =>
-  run(["bun", "run", "compile"], join(repoRoot, "apps", "server"));
+const buildCli = () =>
+  run(["bun", "run", "compile"], join(repoRoot, "packages", "cli"));
 
 const readRootPackage = async () => {
   const packageJsonPath = join(repoRoot, "package.json");
@@ -63,15 +63,15 @@ const main = async () => {
   await ensureDir(releaseDir);
 
   await buildFrontend();
-  await buildServer();
+  await buildCli();
 
-  const serverBinaryPath = join(repoRoot, "apps", "server", "server");
-  if (!existsSync(serverBinaryPath)) {
-    throw new Error("Compiled server binary not found. Did the build succeed?");
+  const cliBinaryPath = join(repoRoot, "packages", "cli", "synthetic");
+  if (!existsSync(cliBinaryPath)) {
+    throw new Error("Compiled CLI binary not found. Did the build succeed?");
   }
 
   const binaryDestination = join(releaseDir, "synthetic");
-  await copyFile(serverBinaryPath, binaryDestination);
+  await copyFile(cliBinaryPath, binaryDestination);
   await chmod(binaryDestination, EXECUTABLE_PERMISSIONS);
 
   const frontendDist = join(repoRoot, "apps", "web", "dist");
@@ -131,7 +131,7 @@ const main = async () => {
 
   await run(["tar", "-czf", tarballPath, "-C", releaseBaseDir, releaseName]);
 
-  await rm(serverBinaryPath, { force: true });
+  await rm(cliBinaryPath, { force: true });
 
   const sha256 = await computeSha256(tarballPath);
   await writeFile(
