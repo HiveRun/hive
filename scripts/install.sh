@@ -136,7 +136,7 @@ else
   curl -fsSL "$download" -o "$archive_path"
 fi
 
-install_command_value="${SYNTHETIC_INSTALL_COMMAND:-$DEFAULT_INSTALL_COMMAND}"
+install_command_override="${SYNTHETIC_INSTALL_COMMAND:-}"
 
 tar -xzf "$archive_path" -C "$workdir"
 release_dir=$(tar -tzf "$archive_path" | head -1 | cut -d/ -f1 || true)
@@ -154,8 +154,11 @@ SYNTHETIC_WEB_DIST="$target/public"
 SYNTHETIC_MIGRATIONS_DIR="$target/migrations"
 SYNTHETIC_LOG_DIR="$INSTALL_ROOT/logs"
 SYNTHETIC_INSTALL_URL="$download"
-SYNTHETIC_INSTALL_COMMAND="$install_command_value"
 EOF
+
+if [ -n "$install_command_override" ]; then
+  echo "SYNTHETIC_INSTALL_COMMAND=\"$install_command_override\"" >> "$target/synthetic.env"
+fi
 
 ln -snf "$target" "$INSTALL_ROOT/current"
 ln -snf "$target/synthetic" "$BIN_DIR/synthetic"
