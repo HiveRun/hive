@@ -11,7 +11,7 @@ import {
   watch,
   writeFileSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import {
   binaryDirectory,
@@ -32,6 +32,14 @@ const resolveLogFilePath = () => join(resolveLogDirectory(), "synthetic.log");
 const ensureLogDirectory = (dir: string) => {
   try {
     mkdirSync(dir, { recursive: true });
+  } catch {
+    /* ignore */
+  }
+};
+
+const ensurePidDirectory = () => {
+  try {
+    mkdirSync(dirname(pidFilePath), { recursive: true });
   } catch {
     /* ignore */
   }
@@ -252,6 +260,7 @@ const startDetachedServer = () => {
 
   child.unref();
 
+  ensurePidDirectory();
   try {
     writeFileSync(pidFilePath, String(child.pid));
   } catch (error) {

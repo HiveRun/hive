@@ -23,7 +23,10 @@ import {
   bootstrapServiceSupervisor,
   stopAllServices,
 } from "./services/supervisor";
-import { ensureWorkspaceRegistered } from "./workspaces/registry";
+import {
+  ensureWorkspaceRegistered,
+  resolveSyntheticHome,
+} from "./workspaces/registry";
 
 const DEFAULT_SERVER_PORT = 3000;
 const PORT = Number(process.env.PORT ?? DEFAULT_SERVER_PORT);
@@ -35,8 +38,9 @@ const isCompiledRuntime = !isBunRuntime;
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 export const binaryDirectory = dirname(process.execPath);
 const forcedMigrationsDirectory = process.env.SYNTHETIC_MIGRATIONS_DIR;
+const syntheticHome = resolveSyntheticHome();
 export const pidFilePath =
-  process.env.SYNTHETIC_PID_FILE ?? join(binaryDirectory, "synthetic.pid");
+  process.env.SYNTHETIC_PID_FILE ?? join(syntheticHome, "synthetic.pid");
 
 export const DEFAULT_WEB_PORT =
   process.env.WEB_PORT ?? (isCompiledRuntime ? String(PORT) : "3001");
