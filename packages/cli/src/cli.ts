@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import {
   binaryDirectory,
@@ -20,10 +20,15 @@ import {
   pidFilePath,
   startServer,
 } from "@synthetic/server";
-import { Cli, Command, Option } from "clipanion";
+import { Builtins, Cli, Command, Option } from "clipanion";
 import pc from "picocolors";
 
+import { COMPLETION_SHELLS, renderCompletionScript } from "./completions";
+
 const rawArgv = process.argv.slice(2);
+if (process.env.SYNTHETIC_DEBUG_ARGS === "1") {
+  process.stderr.write(`[synthetic argv] ${JSON.stringify(rawArgv)}\n`);
+}
 if (!process.env.SYNTHETIC_SHELL_MODE) {
   await import("dotenv/config");
 }
@@ -62,24 +67,70 @@ const printSummary = (title: string, rows: [string, string][]) => {
 const resolveSyntheticHomePath = () =>
   process.env.SYNTHETIC_HOME ?? join(homedir(), ".synthetic");
 
-const renderHelp = () => {
-  const lines = [
-    pc.bold(pc.green("Synthetic CLI")),
-    "",
-    pc.bold("Usage"),
-    "  synthetic [--foreground]",
-    "  synthetic stop",
-    "  synthetic logs",
-    "  synthetic upgrade",
-    "  synthetic info",
-    "  synthetic completions <shell>",
-    "  synthetic completions install <shell> [destination]",
-    "",
-    pc.bold("Options"),
-    "  --foreground    Run in the foreground instead of background mode",
-    "  --help, -h      Show this help output",
-  ];
-  process.stdout.write(`${lines.join("\n")}\n`);
+type CompletionShell = (typeof COMPLETION_SHELLS)[number];
+
+const ensureTrailingNewline = (script: string) =>
+  script.endsWith("\n") ? script : `${script}\n`;
+
+const normalizeShell = (shell?: string): CompletionShell | null => {
+  if (!shell) {
+    return null;
+  }
+  const normalized = shell.toLowerCase() as CompletionShell;
+  return COMPLETION_SHELLS.includes(normalized) ? normalized : null;
+};
+
+const supportedShellList = () => COMPLETION_SHELLS.join(", ");
+
+const getDefaultCompletionInstallPath = (shell: CompletionShell) => {
+  const home = homedir();
+  if (shell === "bash") {
+    return join(
+      home,
+      ".local",
+      "share",
+      "bash-completion",
+      "completions",
+      "synthetic"
+    );
+  }
+  if (shell === "fish") {
+    return join(home, ".config", "fish", "completions", "synthetic.fish");
+  }
+  const zshCustom = process.env.ZSH_CUSTOM;
+  if (zshCustom) {
+    return join(zshCustom, "completions", "_synthetic");
+  }
+  if (existsSync(join(home, ".oh-my-zsh"))) {
+    return join(home, ".oh-my-zsh", "custom", "completions", "_synthetic");
+  }
+  return join(home, ".config", "zsh", "completions", "_synthetic");
+};
+
+const installCompletionScript = (
+  shell: CompletionShell,
+  targetPath?: string | null
+) => {
+  const script = renderCompletionScript(shell);
+  if (!script) {
+    return { ok: false, message: `Unsupported shell "${shell}".` } as const;
+  }
+
+  const resolvedPath = targetPath
+    ? resolve(targetPath)
+    : getDefaultCompletionInstallPath(shell);
+  try {
+    mkdirSync(dirname(resolvedPath), { recursive: true });
+    writeFileSync(resolvedPath, ensureTrailingNewline(script), "utf8");
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Unknown error while writing completion script";
+    return { ok: false, message } as const;
+  }
+
+  return { ok: true, path: resolvedPath } as const;
 };
 
 const resolveLogDirectory = () =>
@@ -218,7 +269,7 @@ const streamLogs = () => {
     return Promise.resolve(1);
   }
 
-  return new Promise<number>((resolve) => {
+  return new Promise<number>((resolvePromise) => {
     const watcher = watch(logFile, { persistent: true }, () => {
       try {
         readNewData();
@@ -235,7 +286,7 @@ const streamLogs = () => {
       watcher.close();
       process.off("SIGINT", handleInterrupt);
       process.off("SIGTERM", handleInterrupt);
-      resolve(code);
+      resolvePromise(code);
     };
 
     const handleInterrupt = () => cleanup(0);
@@ -300,7 +351,7 @@ const runUpgrade = async () => {
     });
   }
 
-  return await new Promise<number>((resolve) => {
+  return await new Promise<number>((resolvePromise) => {
     child.on("exit", (code) => {
       const exitCode = code ?? 0;
       if (exitCode === 0) {
@@ -310,7 +361,7 @@ const runUpgrade = async () => {
       } else {
         logError(`Upgrade command exited with code ${exitCode}.`);
       }
-      resolve(exitCode);
+      resolvePromise(exitCode);
     });
 
     child.on("error", (error) => {
@@ -319,7 +370,7 @@ const runUpgrade = async () => {
           error instanceof Error ? error.message : String(error)
         }`
       );
-      resolve(1);
+      resolvePromise(1);
     });
   });
 };
@@ -399,6 +450,17 @@ const bootstrap = async (options?: { forceForeground?: boolean }) => {
 
 class StartCommand extends Command {
   static paths = [Command.Default];
+  static usage = Command.Usage({
+    category: "Runtime",
+    description: "Start the Synthetic daemon and serve the UI.",
+    details: `
+Starts Synthetic in the background unless you pass --foreground. When running detached, logs and the PID file are stored in ~/.synthetic by default.
+`,
+    examples: [
+      ["Start in background", "synthetic"],
+      ["Force foreground mode", "synthetic --foreground"],
+    ],
+  });
 
   forceForeground = Option.Boolean("--foreground", {
     description: "Run in the foreground instead of background mode",
@@ -411,6 +473,13 @@ class StartCommand extends Command {
 
 class StopCommand extends Command {
   static paths = [["stop"]];
+  static usage = Command.Usage({
+    category: "Runtime",
+    description: "Stop the background Synthetic daemon.",
+    details:
+      "Stops the detached background process by reading the PID file written by the start command.",
+    examples: [["Stop running instance", "synthetic stop"]],
+  });
 
   execute() {
     const result = stopBackgroundProcess();
@@ -420,6 +489,13 @@ class StopCommand extends Command {
 
 class LogsCommand extends Command {
   static paths = [["logs"]];
+  static usage = Command.Usage({
+    category: "Runtime",
+    description: "Stream the Synthetic daemon log file.",
+    details:
+      "Tails the current log file and keeps the process running until you press Ctrl+C.",
+    examples: [["Follow logs", "synthetic logs"]],
+  });
 
   execute() {
     return streamLogs();
@@ -428,6 +504,13 @@ class LogsCommand extends Command {
 
 class UpgradeCommand extends Command {
   static paths = [["upgrade"]];
+  static usage = Command.Usage({
+    category: "Runtime",
+    description: "Download and install the latest Synthetic release.",
+    details:
+      "Stops the current daemon if running, then executes the configured installer command (curl | bash by default).",
+    examples: [["Upgrade to latest version", "synthetic upgrade"]],
+  });
 
   execute() {
     return runUpgrade();
@@ -436,6 +519,11 @@ class UpgradeCommand extends Command {
 
 class InfoCommand extends Command {
   static paths = [["info"]];
+  static usage = Command.Usage({
+    category: "Diagnostics",
+    description: "Print paths, version, and daemon status.",
+    examples: [["Check current install", "synthetic info"]],
+  });
 
   execute() {
     const syntheticHome = resolveSyntheticHomePath();
@@ -458,6 +546,87 @@ class InfoCommand extends Command {
   }
 }
 
+class CompletionsCommand extends Command {
+  static paths = [["completions"]];
+  static usage = Command.Usage({
+    category: "Tooling",
+    description: "Print the completion script for a supported shell.",
+    examples: [["Generate zsh completions", "synthetic completions zsh"]],
+  });
+
+  shell = Option.String({
+    name: "shell",
+    required: true,
+  });
+
+  execute() {
+    const normalized = normalizeShell(this.shell);
+    if (!normalized) {
+      logError(
+        `Unsupported shell "${this.shell}". Supported shells: ${supportedShellList()}`
+      );
+      return Promise.resolve(1);
+    }
+
+    const script = renderCompletionScript(normalized);
+    if (!script) {
+      logError("Failed to render completion script.");
+      return Promise.resolve(1);
+    }
+
+    process.stdout.write(ensureTrailingNewline(script));
+    return Promise.resolve(0);
+  }
+}
+
+class CompletionsInstallCommand extends Command {
+  static paths = [["completions", "install"]];
+  static usage = Command.Usage({
+    category: "Tooling",
+    description: "Install the completion script to a default or custom path.",
+    details:
+      "Detects common shell-specific directories (Oh My Zsh custom dir, ~/.local/share/bash-completion/completions, ~/.config/fish/completions, etc.). Pass a destination argument to override the target path.",
+    examples: [
+      ["Install completions for zsh", "synthetic completions install zsh"],
+      [
+        "Install to a custom location",
+        "synthetic completions install zsh ~/.config/zsh/completions/_synthetic",
+      ],
+    ],
+  });
+
+  shell = Option.String({
+    name: "shell",
+    required: true,
+  });
+
+  destination = Option.String({
+    name: "destination",
+  });
+
+  execute() {
+    const normalized = normalizeShell(this.shell);
+    if (!normalized) {
+      logError(
+        `Unsupported shell "${this.shell}". Supported shells: ${supportedShellList()}`
+      );
+      return Promise.resolve(1);
+    }
+
+    const result = installCompletionScript(normalized, this.destination);
+    if (!result.ok) {
+      logError(`Failed to install completions: ${result.message}`);
+      return Promise.resolve(1);
+    }
+
+    logSuccess(
+      `Installed synthetic completions for ${normalized} at ${result.path}`
+    );
+    logInfo("Restart your shell to load them.");
+    return Promise.resolve(0);
+  }
+}
+
 const cli = new Cli({
   binaryLabel: "Synthetic CLI",
   binaryName: "synthetic",
@@ -469,18 +638,14 @@ cli.register(StopCommand);
 cli.register(LogsCommand);
 cli.register(UpgradeCommand);
 cli.register(InfoCommand);
-
-const wantsHelp =
-  rawArgv.includes("--help") || rawArgv.includes("-h") || rawArgv[0] === "help";
-
-if (wantsHelp) {
-  renderHelp();
-  process.exit(0);
-}
+cli.register(CompletionsCommand);
+cli.register(CompletionsInstallCommand);
+cli.register(Builtins.HelpCommand);
+cli.register(Builtins.VersionCommand);
 
 const runCli = async () => {
   try {
-    const exitCode = await cli.run(rawArgv);
+    const exitCode = await cli.run(rawArgv, Cli.defaultContext);
     if (typeof exitCode === "number") {
       process.exit(exitCode);
     }
