@@ -1,4 +1,11 @@
-const PRIMARY_SUBCOMMANDS = ["logs", "stop", "upgrade", "info"] as const;
+const PRIMARY_SUBCOMMANDS = [
+  "logs",
+  "stop",
+  "upgrade",
+  "info",
+  "help",
+  "completions",
+] as const;
 export const COMPLETION_SHELLS = ["bash", "zsh", "fish"] as const;
 
 const PRIMARY_SUBCOMMANDS_TEXT = PRIMARY_SUBCOMMANDS.join(" ");
@@ -23,8 +30,16 @@ _synthetic_completions() {
     COMPREPLY=( $(compgen -W "${PRIMARY_SUBCOMMANDS_TEXT}" -- "$cur") )
     return 0
   fi
+  if [[ \${COMP_WORDS[1]} == "help" ]]; then
+    COMPREPLY=( $(compgen -W "${PRIMARY_SUBCOMMANDS_TEXT}" -- "$cur") )
+    return 0
+  fi
   if [[ \${COMP_WORDS[1]} == "completions" ]]; then
-    COMPREPLY=( $(compgen -W "${COMPLETION_SHELL_TEXT}" -- "$cur") )
+    if [[ \${COMP_CWORD} == 2 ]]; then
+      COMPREPLY=( $(compgen -W "install ${COMPLETION_SHELL_TEXT}" -- "$cur") )
+    elif [[ \${COMP_WORDS[2]} == "install" && \${COMP_CWORD} == 3 ]]; then
+      COMPREPLY=( $(compgen -W "${COMPLETION_SHELL_TEXT}" -- "$cur") )
+    fi
     return 0
   fi
 }
@@ -40,20 +55,36 @@ _synthetic() {
   if (( CURRENT == 2 )); then
     compadd -a primary_commands
     return
-  elif [[ $words[2] == completions ]]; then
-    _describe 'shell' shells
-  else
-    _values 'option' '--foreground' '--help' '-h'
   fi
+
+  if [[ $words[2] == help ]]; then
+    compadd -a primary_commands
+    return
+  fi
+
+  if [[ $words[2] == completions ]]; then
+    if (( CURRENT == 3 )); then
+      compadd install
+      compadd -a shells
+      return
+    elif [[ $words[3] == install ]] && (( CURRENT == 4 )); then
+      _describe 'shell' shells
+      return
+    fi
+  fi
+
+  _values 'option' '--foreground' '--help' '-h'
 }
 compdef _synthetic synthetic
 `,
   fish: `# fish completion for synthetic
 complete -c synthetic -f
 complete -c synthetic -n '__fish_use_subcommand' -a '${PRIMARY_SUBCOMMANDS_TEXT}'
+complete -c synthetic -n '__fish_seen_subcommand_from help' -a '${PRIMARY_SUBCOMMANDS_TEXT}'
+complete -c synthetic -n '__fish_seen_subcommand_from completions; and not __fish_seen_subcommand_from install' -a 'install ${COMPLETION_SHELL_TEXT}'
+complete -c synthetic -n '__fish_seen_subcommand_from completions; and __fish_seen_subcommand_from install' -a '${COMPLETION_SHELL_TEXT}'
 complete -c synthetic -l foreground -d 'Run in the foreground instead of background mode'
 complete -c synthetic -s h -l help -d 'Show help output'
-complete -c synthetic -n '__fish_seen_subcommand_from completions' -a '${COMPLETION_SHELL_TEXT}'
 `,
 };
 
