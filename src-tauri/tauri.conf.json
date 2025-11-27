@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Synthetic",
+  "productName": "Synthetic Desktop",
   "version": "0.1.0",
-  "identifier": "com.synthetic.app",
+  "identifier": "com.synthetic.desktop",
   "build": {
     "devUrl": "http://localhost:3001",
     "beforeBuildCommand": "bun run build",
@@ -12,7 +12,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Synthetic",
+        "title": "Synthetic Desktop",
         "width": 1400,
         "height": 900,
         "devtools": true

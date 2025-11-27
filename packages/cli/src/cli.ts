@@ -349,13 +349,19 @@ const getTauriExecutableCandidates = () => {
   }
 
   if (process.platform === "darwin") {
-    candidates.push(join(binaryDirectory, "Synthetic.app"));
     candidates.push(join(binaryDirectory, "Synthetic Desktop.app"));
+    candidates.push(join(binaryDirectory, "synthetic-desktop"));
+    candidates.push(join(binaryDirectory, "Synthetic.app"));
     candidates.push(join(binaryDirectory, "synthetic-tauri"));
   } else if (process.platform === "win32") {
+    candidates.push(join(binaryDirectory, "synthetic-desktop.exe"));
+    candidates.push(join(binaryDirectory, "Synthetic Desktop.exe"));
     candidates.push(join(binaryDirectory, "synthetic-tauri.exe"));
     candidates.push(join(binaryDirectory, "Synthetic.exe"));
   } else {
+    candidates.push(join(binaryDirectory, "synthetic-desktop.AppImage"));
+    candidates.push(join(binaryDirectory, "synthetic-desktop"));
+    candidates.push(join(binaryDirectory, "synthetic-desktop.bin"));
     candidates.push(join(binaryDirectory, "synthetic-tauri.AppImage"));
     candidates.push(join(binaryDirectory, "synthetic-tauri"));
     candidates.push(join(binaryDirectory, "synthetic-tauri.bin"));
@@ -373,7 +379,7 @@ const launchTauriApplication = () => {
     return {
       ok: false,
       message:
-        "Unable to locate the Synthetic desktop binary. Set SYNTHETIC_TAURI_BINARY to the desktop executable.",
+        "Unable to locate the Synthetic Desktop binary. Set SYNTHETIC_TAURI_BINARY to the desktop executable.",
     } as const;
   }
 

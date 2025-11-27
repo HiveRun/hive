@@ -20,6 +20,10 @@ const arch = process.arch;
 const releaseName = `synthetic-${platform}-${arch}`;
 const releaseDir = join(releaseBaseDir, releaseName);
 
+const desktopBinaryName = "synthetic-desktop";
+const desktopAppBundleName = "Synthetic Desktop.app";
+const legacyDesktopAppBundleName = "Synthetic.app";
+
 const run = async (cmd: string[], cwd = repoRoot) => {
   const process = Bun.spawn({
     cmd,
@@ -86,16 +90,16 @@ const copyLinuxTauriArtifacts = async (destination: string) => {
     );
     if (appImage) {
       const source = join(appImageDir, appImage);
-      const targetPath = join(destination, "synthetic-tauri.AppImage");
+      const targetPath = join(destination, `${desktopBinaryName}.AppImage`);
       await copyFile(source, targetPath);
       await makeExecutable(targetPath);
       copied = true;
     }
   }
 
-  const rawBinary = join(tauriTargetDir, "synthetic");
+  const rawBinary = join(tauriTargetDir, desktopBinaryName);
   if (existsSync(rawBinary)) {
-    const binaryDestination = join(destination, "synthetic-tauri");
+    const binaryDestination = join(destination, desktopBinaryName);
     await copyFile(rawBinary, binaryDestination);
     await makeExecutable(binaryDestination);
     copied = true;
@@ -122,12 +126,18 @@ const copyMacTauriArtifacts = async (destination: string) => {
     }
   }
 
-  const fallback = join(tauriTargetDir, "Synthetic.app");
-  if (existsSync(fallback)) {
-    const targetPath = join(destination, "Synthetic.app");
-    await rm(targetPath, { recursive: true, force: true });
-    await cp(fallback, targetPath, { recursive: true });
-    return;
+  const fallbackCandidates = [
+    { source: desktopAppBundleName, target: desktopAppBundleName },
+    { source: legacyDesktopAppBundleName, target: desktopAppBundleName },
+  ];
+  for (const bundle of fallbackCandidates) {
+    const fallback = join(tauriTargetDir, bundle.source);
+    if (existsSync(fallback)) {
+      const targetPath = join(destination, bundle.target);
+      await rm(targetPath, { recursive: true, force: true });
+      await cp(fallback, targetPath, { recursive: true });
+      return;
+    }
   }
 
   console.warn(
@@ -137,9 +147,13 @@ const copyMacTauriArtifacts = async (destination: string) => {
 
 const copyWindowsTauriArtifacts = async (destination: string) => {
   let copied = false;
-  const executable = join(tauriTargetDir, "synthetic.exe");
-  if (existsSync(executable)) {
-    const targetPath = join(destination, "synthetic-tauri.exe");
+  const executableCandidates = [
+    join(tauriTargetDir, `${desktopBinaryName}.exe`),
+    join(tauriTargetDir, "synthetic.exe"),
+  ];
+  const executable = executableCandidates.find((entry) => existsSync(entry));
+  if (executable) {
+    const targetPath = join(destination, `${desktopBinaryName}.exe`);
     await copyFile(executable, targetPath);
     copied = true;
   }

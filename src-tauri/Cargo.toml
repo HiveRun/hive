@@ -1,5 +1,5 @@
 [package]
-name = "synthetic"
+name = "synthetic-desktop"
 version = "0.1.0"
 description = "Synthetic Desktop App"
 authors = ["you"]
