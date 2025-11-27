@@ -73,6 +73,7 @@ const renderHelp = () => {
     "  synthetic upgrade",
     "  synthetic info",
     "  synthetic completions <shell>",
+    "  synthetic completions install <shell> [destination]",
     "",
     pc.bold("Options"),
     "  --foreground    Run in the foreground instead of background mode",
