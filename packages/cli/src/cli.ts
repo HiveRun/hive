@@ -33,6 +33,19 @@ if (!process.env.SYNTHETIC_SHELL_MODE) {
   await import("dotenv/config");
 }
 
+const coerceHelpAlias = (argv: string[]) => {
+  if (argv[0] !== "help") {
+    return argv;
+  }
+  const [, ...rest] = argv;
+  if (rest.length === 0) {
+    return ["--help"];
+  }
+  return [...rest, "--help"];
+};
+
+const cliArgv = coerceHelpAlias(rawArgv);
+
 const DEFAULT_INSTALL_COMMAND =
   "curl -fsSL https://raw.githubusercontent.com/SyntheticRun/synthetic/main/scripts/install.sh | bash";
 const LOCAL_INSTALL_SCRIPT_PATH = join(binaryDirectory, "install.sh");
@@ -646,7 +659,7 @@ cli.register(Builtins.VersionCommand);
 
 const runCli = async () => {
   try {
-    const exitCode = await cli.run(rawArgv, Cli.defaultContext);
+    const exitCode = await cli.run(cliArgv, Cli.defaultContext);
     if (typeof exitCode === "number") {
       process.exit(exitCode);
     }
