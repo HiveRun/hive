@@ -54,6 +54,7 @@ export const DEFAULT_WEB_PORT =
 const DEFAULT_CORS_ORIGINS = [
   `http://localhost:${DEFAULT_WEB_PORT}`,
   `http://127.0.0.1:${DEFAULT_WEB_PORT}`,
+  "tauri://localhost",
 ];
 export const DEFAULT_WEB_URL = `http://localhost:${DEFAULT_WEB_PORT}`;
 
