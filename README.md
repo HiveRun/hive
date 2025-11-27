@@ -58,11 +58,13 @@ Environment variables:
   ```bash
   synthetic info
   ```
-- Generate shell completions for bash/zsh/fish:
+- Install shell completions (bash/zsh/fish) so they persist across reboots:
   ```bash
-  synthetic completions bash >> ~/.bashrc
+  synthetic completions install zsh
+  synthetic completions install bash
+  synthetic completions install fish
   ```
-  Replace `bash` with `zsh` or `fish` and source the appended snippet to enable tab completion. Re-run the command whenever new subcommands are added.
+  Each command picks a sensible default location for that shell (Oh My Zsh custom dir, `~/.local/share/bash-completion/completions`, `~/.config/fish/completions`, etc.). Re-run it whenever new subcommands land or pass an explicit path as the final argument to control where the file is written.
 - Need a quick refresher on the available commands? Run `synthetic --help` for the latest summary.
 - Configuration lives in `~/.synthetic/current/synthetic.env`. Update values there (or override per run) to change ports, database paths, or feature flags:
 
