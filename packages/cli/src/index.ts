@@ -20,10 +20,56 @@ import {
   pidFilePath,
   startServer,
 } from "@synthetic/server";
+import { Cli, Command, Option } from "clipanion";
+import pc from "picocolors";
 
 const DEFAULT_INSTALL_COMMAND =
   "curl -fsSL https://raw.githubusercontent.com/SyntheticRun/synthetic/main/scripts/install.sh | bash";
 const LOCAL_INSTALL_SCRIPT_PATH = join(binaryDirectory, "install.sh");
+const CLI_VERSION = process.env.SYNTHETIC_VERSION ?? "dev";
+
+const symbols = {
+  info: pc.cyan("ℹ"),
+  success: pc.green("✔"),
+  warning: pc.yellow("▲"),
+  error: pc.red("✖"),
+};
+
+const logInfo = (message: string) =>
+  process.stdout.write(`${symbols.info} ${message}\n`);
+const logSuccess = (message: string) =>
+  process.stdout.write(`${symbols.success} ${message}\n`);
+const logWarning = (message: string) =>
+  process.stdout.write(`${symbols.warning} ${message}\n`);
+const logError = (message: string) =>
+  process.stderr.write(`${symbols.error} ${message}\n`);
+
+const printSummary = (title: string, rows: [string, string][]) => {
+  const lines = [
+    pc.bold(pc.green(title)),
+    ...rows.map(
+      ([label, value]) => `  ${pc.dim("•")} ${pc.dim(`${label}:`)} ${value}`
+    ),
+  ];
+  process.stdout.write(`${lines.join("\n")}\n`);
+};
+
+const renderHelp = () => {
+  const lines = [
+    pc.bold(pc.green("Synthetic CLI")),
+    "",
+    pc.bold("Usage"),
+    "  synthetic [--foreground]",
+    "  synthetic stop",
+    "  synthetic logs",
+    "  synthetic upgrade",
+    "",
+    pc.bold("Options"),
+    "  --foreground    Run in the foreground instead of background mode",
+    "  --help, -h      Show this help output",
+  ];
+  process.stdout.write(`${lines.join("\n")}\n`);
+};
 
 const resolveLogDirectory = () =>
   process.env.SYNTHETIC_LOG_DIR ?? join(binaryDirectory, "logs");
@@ -49,7 +95,7 @@ const stopBackgroundProcess = (options?: { silent?: boolean }) => {
   const silent = options?.silent ?? false;
   const log = (message: string) => {
     if (!silent) {
-      process.stdout.write(`${message}\n`);
+      logInfo(message);
     }
   };
 
@@ -62,29 +108,29 @@ const stopBackgroundProcess = (options?: { silent?: boolean }) => {
   try {
     pidText = readFileSync(pidFilePath, "utf8").trim();
   } catch (error) {
-    process.stderr.write(
+    logError(
       `Unable to read pid file ${pidFilePath}: ${
         error instanceof Error ? error.message : String(error)
-      }\n`
+      }`
     );
     return "failed" as const;
   }
 
   const pid = Number(pidText);
   if (!pid || Number.isNaN(pid)) {
-    process.stderr.write(`Pid file ${pidFilePath} contains invalid data.\n`);
+    logError(`Pid file ${pidFilePath} contains invalid data.`);
     cleanupPidFile();
     return "failed" as const;
   }
 
   try {
     process.kill(pid, "SIGTERM");
-    log(`Stopped Synthetic (PID ${pid}).`);
+    logSuccess(`Stopped Synthetic (PID ${pid}).`);
   } catch (error) {
-    process.stderr.write(
+    logError(
       `Failed to stop Synthetic (PID ${pid}): ${
         error instanceof Error ? error.message : String(error)
-      }\n`
+      }`
     );
     return "failed" as const;
   }
@@ -93,23 +139,16 @@ const stopBackgroundProcess = (options?: { silent?: boolean }) => {
   return "stopped" as const;
 };
 
-const stopBackgroundServer = () => {
-  const result = stopBackgroundProcess();
-  process.exit(result === "failed" ? 1 : 0);
-};
-
 const streamLogs = () => {
   const logFile = resolveLogFilePath();
   if (!existsSync(logFile)) {
-    process.stderr.write(
-      `No log file found at ${logFile}. Start Synthetic before streaming logs.\n`
+    logError(
+      `No log file found at ${logFile}. Start Synthetic before streaming logs.`
     );
-    process.exit(1);
+    return 1;
   }
 
-  process.stdout.write(
-    `Streaming logs from ${logFile}. Press Ctrl+C to stop.\n\n`
-  );
+  logInfo(`Streaming logs from ${logFile}. Press Ctrl+C to stop.`);
 
   let position = 0;
 
@@ -136,10 +175,10 @@ const streamLogs = () => {
     try {
       readNewData();
     } catch (error) {
-      process.stderr.write(
+      logError(
         `Failed to read log updates: ${
           error instanceof Error ? error.message : String(error)
-        }\n`
+        }`
       );
     }
   });
@@ -151,20 +190,19 @@ const streamLogs = () => {
 
   process.on("SIGINT", cleanup);
   process.on("SIGTERM", cleanup);
+
+  return 0;
 };
 
 const runUpgrade = () => {
   const stopResult = stopBackgroundProcess({ silent: true });
   if (stopResult === "failed") {
-    process.stderr.write(
-      "Unable to stop the running instance. Aborting upgrade.\n"
-    );
-    process.exit(1);
-    return;
+    logError("Unable to stop the running instance. Aborting upgrade.");
+    return 1;
   }
 
   if (stopResult === "stopped") {
-    process.stdout.write("Stopped running instance.\n");
+    logInfo("Stopped running instance.");
   }
 
   const configuredCommand = process.env.SYNTHETIC_INSTALL_COMMAND;
@@ -173,7 +211,7 @@ const runUpgrade = () => {
   if (storedInstallUrl) {
     env.SYNTHETIC_INSTALL_URL = storedInstallUrl;
   }
-  process.stdout.write("Downloading and installing the latest release...\n");
+  logInfo("Downloading and installing the latest release...");
 
   let child: ReturnType<typeof spawn>;
   if (configuredCommand) {
@@ -205,38 +243,23 @@ const runUpgrade = () => {
   child.on("exit", (code) => {
     const exitCode = code ?? 0;
     if (exitCode === 0) {
-      process.stdout.write(
-        "Synthetic upgraded successfully. Run `synthetic` to start the new version.\n"
+      logSuccess(
+        "Synthetic upgraded successfully. Run `synthetic` to start the new version."
       );
     } else {
-      process.stderr.write(`Upgrade command exited with code ${exitCode}.\n`);
+      logError(`Upgrade command exited with code ${exitCode}.`);
     }
     process.exit(exitCode);
   });
-};
 
-const printHelp = () => {
-  const lines = [
-    "Synthetic CLI",
-    "",
-    "Usage:",
-    "  synthetic           Start the server and UI (background by default)",
-    "  synthetic stop      Stop the background process",
-    "  synthetic logs      Stream logs from the background process",
-    "  synthetic upgrade   Reinstall using the stored installer metadata",
-    "  synthetic help      Show this help output",
-    "",
-    "Flags:",
-    "  --help, -h          Show this help output",
-  ];
-  process.stdout.write(`${lines.join("\n")}\n`);
+  return 0;
 };
 
 const runtimeExecutable = basename(process.execPath).toLowerCase();
 const isBunRuntime = runtimeExecutable.startsWith("bun");
 const isCompiledRuntime = !isBunRuntime;
 const isForcedForeground = process.env.SYNTHETIC_FOREGROUND === "1";
-const shouldRunDetached = isCompiledRuntime && !isForcedForeground;
+const defaultShouldRunDetached = isCompiledRuntime && !isForcedForeground;
 
 const startDetachedServer = () => {
   const logDir = resolveLogDirectory();
@@ -264,81 +287,118 @@ const startDetachedServer = () => {
   try {
     writeFileSync(pidFilePath, String(child.pid));
   } catch (error) {
-    process.stderr.write(
+    logError(
       `Failed to write pid file ${pidFilePath}: ${
         error instanceof Error ? error.message : String(error)
-      }\n`
+      }`
     );
   }
 
-  const lines = [
-    "Synthetic is running in the background.",
-    `UI: ${DEFAULT_WEB_URL}`,
-    `Logs: ${logFile}`,
-    `PID file: ${pidFilePath}`,
-    "Stop with: synthetic stop",
-    "Tail logs with: synthetic logs",
-  ];
-  process.stdout.write(`${lines.join("\n")}\n`);
+  printSummary("Synthetic is running in the background", [
+    ["UI", DEFAULT_WEB_URL],
+    ["Logs", logFile],
+    ["PID file", pidFilePath],
+    ["Stop", "synthetic stop"],
+    ["Stream logs", "synthetic logs"],
+  ]);
+
   process.exit(0);
 };
 
-const cliArgs = process.argv.slice(2);
-const primaryCliCommand = cliArgs[0];
-const isStopCommand = primaryCliCommand === "stop";
-const isLogsCommand = primaryCliCommand === "logs";
-const isUpgradeCommand = primaryCliCommand === "upgrade";
-const isHelpCommand = primaryCliCommand === "help";
-const hasHelpFlag = cliArgs.includes("--help") || cliArgs.includes("-h");
-const shouldShowHelp = isHelpCommand || hasHelpFlag;
+const bootstrap = async (options?: { forceForeground?: boolean }) => {
+  const shouldRunDetached =
+    !options?.forceForeground && defaultShouldRunDetached;
 
-const bootstrap = async () => {
   if (shouldRunDetached) {
     try {
       startDetachedServer();
-      return;
+      return 0;
     } catch (error) {
-      process.stderr.write(
+      logWarning(
         `Failed to launch background process: ${
           error instanceof Error ? error.message : String(error)
-        }. Falling back to foreground mode.\n`
+        }. Falling back to foreground mode.`
       );
     }
   }
 
   await startServer();
+  return new Promise<never>(() => {
+    /* Keep process alive while server runs in foreground */
+  });
 };
 
-const run = async () => {
-  if (shouldShowHelp) {
-    printHelp();
-    process.exit(0);
-    return;
+class StartCommand extends Command {
+  static paths = [Command.Default];
+
+  forceForeground = Option.Boolean("--foreground", {
+    description: "Run in the foreground instead of background mode",
+  });
+
+  async execute() {
+    await bootstrap({ forceForeground: Boolean(this.forceForeground) });
   }
+}
 
-  if (isStopCommand) {
-    stopBackgroundServer();
-    return;
+class StopCommand extends Command {
+  static paths = [["stop"]];
+
+  execute() {
+    const result = stopBackgroundProcess();
+    return Promise.resolve(result === "failed" ? 1 : 0);
   }
+}
 
-  if (isLogsCommand) {
-    streamLogs();
-    return;
+class LogsCommand extends Command {
+  static paths = [["logs"]];
+
+  execute() {
+    return Promise.resolve(streamLogs());
   }
+}
 
-  if (isUpgradeCommand) {
-    runUpgrade();
-    return;
+class UpgradeCommand extends Command {
+  static paths = [["upgrade"]];
+
+  execute() {
+    return Promise.resolve(runUpgrade());
   }
+}
 
-  await bootstrap();
-};
-
-run().catch((error) => {
-  process.stderr.write(
-    `Failed to start Synthetic: ${
-      error instanceof Error ? (error.stack ?? error.message) : String(error)
-    }\n`
-  );
-  process.exit(1);
+const cli = new Cli({
+  binaryLabel: "Synthetic CLI",
+  binaryName: "synthetic",
+  binaryVersion: CLI_VERSION,
 });
+
+cli.register(StartCommand);
+cli.register(StopCommand);
+cli.register(LogsCommand);
+cli.register(UpgradeCommand);
+
+const rawArgv = process.argv.slice(2);
+const wantsHelp =
+  rawArgv.includes("--help") || rawArgv.includes("-h") || rawArgv[0] === "help";
+
+if (wantsHelp) {
+  renderHelp();
+  process.exit(0);
+}
+
+const runCli = async () => {
+  try {
+    const exitCode = await cli.run(rawArgv);
+    if (typeof exitCode === "number") {
+      process.exit(exitCode);
+    }
+  } catch (error) {
+    logError(
+      `Failed to start Synthetic: ${
+        error instanceof Error ? (error.stack ?? error.message) : String(error)
+      }`
+    );
+    process.exit(1);
+  }
+};
+
+runCli();

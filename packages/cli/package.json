@@ -9,7 +9,9 @@
   },
   "dependencies": {
     "@synthetic/server": "workspace:*",
-    "dotenv": "catalog:"
+    "clipanion": "^3.2.1",
+    "dotenv": "catalog:",
+    "picocolors": "^1.0.0"
   },
   "devDependencies": {
     "@types/bun": "^1.2.6",
