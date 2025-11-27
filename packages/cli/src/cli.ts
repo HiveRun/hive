@@ -182,7 +182,7 @@ const streamLogs = () => {
     logError(
       `No log file found at ${logFile}. Start Synthetic before streaming logs.`
     );
-    return 1;
+    return Promise.resolve(1);
   }
 
   logInfo(`Streaming logs from ${logFile}. Press Ctrl+C to stop.`);
@@ -206,29 +206,51 @@ const streamLogs = () => {
     process.stdout.write(buffer.toString("utf8"));
   };
 
-  readNewData();
+  try {
+    readNewData();
+  } catch (error) {
+    logError(
+      `Failed to read log file ${logFile}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return Promise.resolve(1);
+  }
 
-  const watcher = watch(logFile, { persistent: true }, () => {
-    try {
-      readNewData();
-    } catch (error) {
+  return new Promise<number>((resolve) => {
+    const watcher = watch(logFile, { persistent: true }, () => {
+      try {
+        readNewData();
+      } catch (error) {
+        logError(
+          `Failed to read log updates: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    });
+
+    const cleanup = (code = 0) => {
+      watcher.close();
+      process.off("SIGINT", handleInterrupt);
+      process.off("SIGTERM", handleInterrupt);
+      resolve(code);
+    };
+
+    const handleInterrupt = () => cleanup(0);
+
+    process.on("SIGINT", handleInterrupt);
+    process.on("SIGTERM", handleInterrupt);
+
+    watcher.on("error", (error) => {
       logError(
-        `Failed to read log updates: ${
+        `Log watcher failed: ${
           error instanceof Error ? error.message : String(error)
         }`
       );
-    }
+      cleanup(1);
+    });
   });
-
-  const cleanup = () => {
-    watcher.close();
-    process.exit(0);
-  };
-
-  process.on("SIGINT", cleanup);
-  process.on("SIGTERM", cleanup);
-
-  return 0;
 };
 
 const runUpgrade = async () => {
@@ -399,7 +421,7 @@ class LogsCommand extends Command {
   static paths = [["logs"]];
 
   execute() {
-    return Promise.resolve(streamLogs());
+    return streamLogs();
   }
 }
 
