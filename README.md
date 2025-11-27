@@ -58,6 +58,15 @@ Environment variables:
   ```bash
   synthetic info
   ```
+- Open the UI in your default browser (starts the daemon if needed):
+  ```bash
+  synthetic web
+  ```
+- Launch the desktop (Tauri) app. Set `SYNTHETIC_TAURI_BINARY` if the CLI
+  can’t auto-detect the packaged executable on your system.
+  ```bash
+  synthetic tauri
+  ```
 - Install shell completions (bash/zsh/fish) so they persist across reboots:
   ```bash
   synthetic completions install zsh

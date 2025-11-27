@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type SpawnOptions, spawn } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -146,9 +146,261 @@ const installCompletionScript = (
   return { ok: true, path: resolvedPath } as const;
 };
 
+const trimTrailingSlash = (value: string) =>
+  value.endsWith("/") ? value.slice(0, -1) : value;
+
+const HEALTHCHECK_URL = `${trimTrailingSlash(DEFAULT_WEB_URL)}/health`;
+const SERVER_READY_TIMEOUT_MS = 10_000;
+const SERVER_READY_INTERVAL_MS = 500;
+
+const delay = (ms: number) =>
+  new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+
+const readActivePid = (): number | null => {
+  if (!existsSync(pidFilePath)) {
+    return null;
+  }
+
+  try {
+    const pid = Number(readFileSync(pidFilePath, "utf8").trim());
+    if (!pid || Number.isNaN(pid)) {
+      cleanupPidFile();
+      return null;
+    }
+    return pid;
+  } catch {
+    return null;
+  }
+};
+
+const isPidAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const isDaemonRunning = () => {
+  const pid = readActivePid();
+  if (!pid) {
+    return false;
+  }
+  if (isPidAlive(pid)) {
+    return true;
+  }
+  cleanupPidFile();
+  return false;
+};
+
+const waitForServerReady = async () => {
+  const deadline = Date.now() + SERVER_READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(HEALTHCHECK_URL, { method: "GET" });
+      if (response.ok) {
+        return true;
+      }
+    } catch {
+      /* ignore network errors while the server boots */
+    }
+    await delay(SERVER_READY_INTERVAL_MS);
+  }
+  return false;
+};
+
+type LaunchResult = { pid: number | null; logFile: string };
+
+const openLogStreams = (logFile: string) => ({
+  stdoutFd: openSync(logFile, "a"),
+  stderrFd: openSync(logFile, "a"),
+});
+
+const closeStream = (fd: number | null) => {
+  if (fd === null) {
+    return;
+  }
+  try {
+    closeSync(fd);
+  } catch {
+    /* ignore */
+  }
+};
+
+const persistPidFile = (pid: number | null) => {
+  ensurePidDirectory();
+  if (!pid) {
+    return;
+  }
+  try {
+    writeFileSync(pidFilePath, String(pid));
+  } catch (error) {
+    logWarning(
+      `Failed to write pid file ${pidFilePath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+};
+
+const launchDetachedServer = (): LaunchResult => {
+  const logDir = resolveLogDirectory();
+  ensureLogDirectory(logDir);
+  const logFile = resolveLogFilePath();
+  const { stdoutFd, stderrFd } = openLogStreams(logFile);
+
+  try {
+    const child = spawn(process.execPath, ["--foreground"], {
+      cwd: binaryDirectory,
+      env: {
+        ...process.env,
+        SYNTHETIC_FOREGROUND: "1",
+      },
+      detached: true,
+      stdio: ["ignore", stdoutFd, stderrFd],
+    });
+
+    closeStream(stdoutFd);
+    closeStream(stderrFd);
+
+    child.unref();
+    persistPidFile(child.pid ?? null);
+
+    return { pid: child.pid ?? null, logFile };
+  } catch (error) {
+    closeStream(stdoutFd);
+    closeStream(stderrFd);
+    throw error;
+  }
+};
+
+const ensureDaemonRunning = async () => {
+  if (isDaemonRunning()) {
+    return true;
+  }
+
+  logInfo("Synthetic is not running. Starting background daemon...");
+  try {
+    launchDetachedServer();
+  } catch (error) {
+    logError(
+      `Failed to start Synthetic: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return false;
+  }
+
+  const ready = await waitForServerReady();
+  if (!ready) {
+    logWarning("Daemon started, but /health did not respond before timeout.");
+  }
+  return true;
+};
+
 const resolveLogDirectory = () =>
   process.env.SYNTHETIC_LOG_DIR ?? join(binaryDirectory, "logs");
 const resolveLogFilePath = () => join(resolveLogDirectory(), "synthetic.log");
+
+const openDefaultBrowser = (url: string) => {
+  const platform = process.platform;
+  let command: string;
+  let args: string[];
+
+  if (platform === "darwin") {
+    command = "open";
+    args = [url];
+  } else if (platform === "win32") {
+    command = "cmd";
+    args = ["/c", "start", "", url];
+  } else {
+    command = "xdg-open";
+    args = [url];
+  }
+
+  try {
+    const child = spawn(command, args, {
+      stdio: "ignore",
+      detached: true,
+    });
+    child.unref();
+    return { ok: true } as const;
+  } catch (error) {
+    return {
+      ok: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Failed to open default browser",
+    } as const;
+  }
+};
+
+const getTauriExecutableCandidates = () => {
+  const override = process.env.SYNTHETIC_TAURI_BINARY;
+  const candidates: string[] = [];
+  if (override) {
+    candidates.push(override);
+  }
+
+  if (process.platform === "darwin") {
+    candidates.push(join(binaryDirectory, "Synthetic.app"));
+    candidates.push(join(binaryDirectory, "Synthetic Desktop.app"));
+    candidates.push(join(binaryDirectory, "synthetic-tauri"));
+  } else if (process.platform === "win32") {
+    candidates.push(join(binaryDirectory, "synthetic-tauri.exe"));
+    candidates.push(join(binaryDirectory, "Synthetic.exe"));
+  } else {
+    candidates.push(join(binaryDirectory, "synthetic-tauri"));
+    candidates.push(join(binaryDirectory, "synthetic-tauri.AppImage"));
+    candidates.push(join(binaryDirectory, "synthetic-tauri.bin"));
+  }
+
+  return candidates;
+};
+
+const launchTauriApplication = () => {
+  const target = getTauriExecutableCandidates().find(
+    (candidate) => candidate && existsSync(candidate)
+  );
+
+  if (!target) {
+    return {
+      ok: false,
+      message:
+        "Unable to locate the Synthetic desktop binary. Set SYNTHETIC_TAURI_BINARY to the desktop executable.",
+    } as const;
+  }
+
+  try {
+    let command = target;
+    let args: string[] = [];
+    let options: SpawnOptions = {
+      stdio: "ignore",
+      detached: true,
+      cwd: dirname(target),
+    };
+
+    if (process.platform === "darwin" && target.endsWith(".app")) {
+      command = "open";
+      args = [target];
+      options = { stdio: "ignore", detached: true };
+    }
+
+    const child = spawn(command, args, options);
+    child.unref();
+    return { ok: true, path: target } as const;
+  } catch (error) {
+    return {
+      ok: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Failed to launch Synthetic desktop",
+    } as const;
+  }
+};
 
 const ensureLogDirectory = (dir: string) => {
   try {
@@ -395,37 +647,7 @@ const isForcedForeground = process.env.SYNTHETIC_FOREGROUND === "1";
 const defaultShouldRunDetached = isCompiledRuntime && !isForcedForeground;
 
 const startDetachedServer = () => {
-  const logDir = resolveLogDirectory();
-  ensureLogDirectory(logDir);
-  const logFile = resolveLogFilePath();
-  const stdoutFd = openSync(logFile, "a");
-  const stderrFd = openSync(logFile, "a");
-
-  const child = spawn(process.execPath, ["--foreground"], {
-    cwd: binaryDirectory,
-    env: {
-      ...process.env,
-      SYNTHETIC_FOREGROUND: "1",
-    },
-    detached: true,
-    stdio: ["ignore", stdoutFd, stderrFd],
-  });
-
-  closeSync(stdoutFd);
-  closeSync(stderrFd);
-
-  child.unref();
-
-  ensurePidDirectory();
-  try {
-    writeFileSync(pidFilePath, String(child.pid));
-  } catch (error) {
-    logError(
-      `Failed to write pid file ${pidFilePath}: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-  }
+  const { logFile } = launchDetachedServer();
 
   printSummary("Synthetic is running in the background", [
     ["UI", DEFAULT_WEB_URL],
@@ -512,6 +734,62 @@ class LogsCommand extends Command {
 
   execute() {
     return streamLogs();
+  }
+}
+
+class WebCommand extends Command {
+  static paths = [["web"]];
+  static usage = Command.Usage({
+    category: "Clients",
+    description: "Open the Synthetic UI in your default browser.",
+    details:
+      "Starts the daemon if necessary and launches the configured web UI URL.",
+    examples: [["Start server and open browser", "synthetic web"]],
+  });
+
+  async execute() {
+    const ready = await ensureDaemonRunning();
+    if (!ready) {
+      return 1;
+    }
+
+    const result = openDefaultBrowser(DEFAULT_WEB_URL);
+    if (!result.ok) {
+      logError(`Failed to open browser: ${result.message}`);
+      return 1;
+    }
+
+    logSuccess(`Opened ${DEFAULT_WEB_URL} in your default browser.`);
+    return 0;
+  }
+}
+
+class TauriCommand extends Command {
+  static paths = [["tauri"]];
+  static usage = Command.Usage({
+    category: "Clients",
+    description: "Launch the Synthetic desktop (Tauri) application.",
+    details:
+      "Starts the daemon if needed and opens the packaged desktop UI. Set SYNTHETIC_TAURI_BINARY to override the desktop executable path.",
+    examples: [["Open desktop UI", "synthetic tauri"]],
+  });
+
+  async execute() {
+    const ready = await ensureDaemonRunning();
+    if (!ready) {
+      return 1;
+    }
+
+    const result = launchTauriApplication();
+    if (!result.ok) {
+      if (result.message) {
+        logError(`Failed to launch Synthetic desktop: ${result.message}`);
+      }
+      return 1;
+    }
+
+    logSuccess("Launched Synthetic desktop application.");
+    return 0;
   }
 }
 
@@ -650,6 +928,8 @@ const cli = new Cli({
 cli.register(StartCommand);
 cli.register(StopCommand);
 cli.register(LogsCommand);
+cli.register(WebCommand);
+cli.register(TauriCommand);
 cli.register(UpgradeCommand);
 cli.register(InfoCommand);
 cli.register(CompletionsCommand);
