@@ -51,6 +51,9 @@ const DEFAULT_INSTALL_COMMAND =
 const LOCAL_INSTALL_SCRIPT_PATH = join(binaryDirectory, "install.sh");
 const CLI_VERSION = process.env.SYNTHETIC_VERSION ?? "dev";
 
+const resolveWorkspaceRootEnv = () =>
+  process.env.SYNTHETIC_WORKSPACE_ROOT ?? process.cwd();
+
 const symbols = {
   info: pc.cyan("ℹ"),
   success: pc.green("✔"),
@@ -256,6 +259,7 @@ const launchDetachedServer = (): LaunchResult => {
       env: {
         ...process.env,
         SYNTHETIC_FOREGROUND: "1",
+        SYNTHETIC_WORKSPACE_ROOT: resolveWorkspaceRootEnv(),
       },
       detached: true,
       stdio: ["ignore", stdoutFd, stderrFd],
@@ -675,6 +679,10 @@ const bootstrap = async (options?: { forceForeground?: boolean }) => {
         }. Falling back to foreground mode.`
       );
     }
+  }
+
+  if (!process.env.SYNTHETIC_WORKSPACE_ROOT) {
+    process.env.SYNTHETIC_WORKSPACE_ROOT = process.cwd();
   }
 
   await startServer();

@@ -5,6 +5,11 @@ import type { SyntheticConfig } from "./schema";
 const configCache = new Map<string, Promise<SyntheticConfig>>();
 
 export function resolveWorkspaceRoot(): string {
+  const forcedWorkspaceRoot = process.env.SYNTHETIC_WORKSPACE_ROOT;
+  if (forcedWorkspaceRoot) {
+    return resolvePath(forcedWorkspaceRoot);
+  }
+
   const currentDir = process.cwd();
   if (currentDir.includes("/apps/")) {
     const [root] = currentDir.split("/apps/");
