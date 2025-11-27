@@ -63,9 +63,10 @@ Environment variables:
   synthetic web
   ```
 - Launch the desktop (Tauri) app. Set `SYNTHETIC_TAURI_BINARY` if the CLI
-  can’t auto-detect the packaged executable on your system.
+  can’t auto-detect the packaged executable on your system (legacy `synthetic tauri`
+  still works as an alias).
   ```bash
-  synthetic tauri
+  synthetic desktop
   ```
 - Install shell completions (bash/zsh/fish) so they persist across reboots:
   ```bash

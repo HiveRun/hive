@@ -778,14 +778,14 @@ class WebCommand extends Command {
   }
 }
 
-class TauriCommand extends Command {
-  static paths = [["tauri"]];
+class DesktopCommand extends Command {
+  static paths = [["desktop"], ["tauri"]];
   static usage = Command.Usage({
     category: "Clients",
-    description: "Launch the Synthetic desktop (Tauri) application.",
+    description: "Launch the Synthetic desktop application.",
     details:
       "Starts the daemon if needed and opens the packaged desktop UI. Set SYNTHETIC_TAURI_BINARY to override the desktop executable path.",
-    examples: [["Open desktop UI", "synthetic tauri"]],
+    examples: [["Open desktop UI", "synthetic desktop"]],
   });
 
   async execute() {
@@ -943,7 +943,7 @@ cli.register(StartCommand);
 cli.register(StopCommand);
 cli.register(LogsCommand);
 cli.register(WebCommand);
-cli.register(TauriCommand);
+cli.register(DesktopCommand);
 cli.register(UpgradeCommand);
 cli.register(InfoCommand);
 cli.register(CompletionsCommand);
