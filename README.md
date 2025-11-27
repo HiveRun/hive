@@ -26,8 +26,8 @@ Environment variables:
 - `SYNTHETIC_BIN_DIR`: override the bin directory that `synthetic` is linked into (defaults to `~/.synthetic/bin`).
 - `SYNTHETIC_INSTALL_URL`: override the download URL (handy for testing locally built tarballs).
 - `SYNTHETIC_MIGRATIONS_DIR`: point the runtime at a custom migrations folder (defaults to the bundled `migrations/`).
-- `SYNTHETIC_LOG_DIR`: where background logs are written (defaults to `<release>/logs`).
-- `SYNTHETIC_PID_FILE`: override the pid file path (defaults to `<release>/synthetic.pid`).
+- `SYNTHETIC_LOG_DIR`: where background logs are written (defaults to `~/.synthetic/logs` for installed builds, or `<binary>/logs` when running from source).
+- `SYNTHETIC_PID_FILE`: override the pid file path (defaults to `~/.synthetic/synthetic.pid`).
 - `SYNTHETIC_INSTALL_COMMAND`: override the command executed by `synthetic upgrade` (defaults to the stored installer behavior).
 
 ### Using the installed binary

@@ -1,6 +1,13 @@
 import "dotenv/config";
-import { existsSync, rmSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { existsSync, rmSync, statSync } from "node:fs";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { logger } from "@bogeychan/elysia-logger";
@@ -64,26 +71,52 @@ const LEADING_SLASH_REGEX = /^\/+/,
 const sanitizeAssetPath = (pathname: string) =>
   pathname.replace(LEADING_SLASH_REGEX, "").replace(DOT_SEQUENCE_REGEX, "");
 
+const resolvePathWithin = (root: string, target: string) => {
+  const absolute = resolve(root, target);
+  const relativePath = relative(root, absolute);
+  if (relativePath === "") {
+    return absolute;
+  }
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    return null;
+  }
+  return absolute;
+};
+
+const resolveExistingFile = (filePath?: string | null) => {
+  if (!filePath) {
+    return null;
+  }
+  try {
+    if (existsSync(filePath) && statSync(filePath).isFile()) {
+      return filePath;
+    }
+  } catch {
+    /* ignore filesystem errors */
+  }
+  return null;
+};
+
 const resolveAssetPath = (pathname: string, assetsDir: string) => {
   const [rawPath] = pathname.split("?");
   const cleanPath = sanitizeAssetPath(rawPath ?? "");
   const explicitPath = cleanPath.length > 0 ? cleanPath : "index.html";
-  const candidate = join(assetsDir, explicitPath);
-  if (existsSync(candidate) && !candidate.endsWith("/")) {
-    return candidate;
+
+  const direct = resolveExistingFile(
+    resolvePathWithin(assetsDir, explicitPath)
+  );
+  if (direct) {
+    return direct;
   }
 
-  const nestedIndex = join(assetsDir, explicitPath, "index.html");
-  if (existsSync(nestedIndex)) {
+  const nestedIndex = resolveExistingFile(
+    resolvePathWithin(assetsDir, join(explicitPath, "index.html"))
+  );
+  if (nestedIndex) {
     return nestedIndex;
   }
 
-  const fallback = join(assetsDir, "index.html");
-  if (existsSync(fallback)) {
-    return fallback;
-  }
-
-  return null;
+  return resolveExistingFile(resolvePathWithin(assetsDir, "index.html"));
 };
 
 const registerStaticAssets = (app: App, assetsDir: string) => {

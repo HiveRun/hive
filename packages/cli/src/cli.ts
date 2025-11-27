@@ -1,8 +1,3 @@
-const rawArgv = process.argv.slice(2);
-if (!process.env.SYNTHETIC_SHELL_MODE) {
-  await import("dotenv/config");
-}
-
 import { spawn } from "node:child_process";
 import {
   closeSync,
@@ -27,6 +22,11 @@ import {
 } from "@synthetic/server";
 import { Cli, Command, Option } from "clipanion";
 import pc from "picocolors";
+
+const rawArgv = process.argv.slice(2);
+if (!process.env.SYNTHETIC_SHELL_MODE) {
+  await import("dotenv/config");
+}
 
 const DEFAULT_INSTALL_COMMAND =
   "curl -fsSL https://raw.githubusercontent.com/SyntheticRun/synthetic/main/scripts/install.sh | bash";
@@ -231,7 +231,7 @@ const streamLogs = () => {
   return 0;
 };
 
-const runUpgrade = () => {
+const runUpgrade = async () => {
   const stopResult = stopBackgroundProcess({ silent: true });
   if (stopResult === "failed") {
     logError("Unable to stop the running instance. Aborting upgrade.");
@@ -277,19 +277,28 @@ const runUpgrade = () => {
     });
   }
 
-  child.on("exit", (code) => {
-    const exitCode = code ?? 0;
-    if (exitCode === 0) {
-      logSuccess(
-        "Synthetic upgraded successfully. Run `synthetic` to start the new version."
-      );
-    } else {
-      logError(`Upgrade command exited with code ${exitCode}.`);
-    }
-    process.exit(exitCode);
-  });
+  return await new Promise<number>((resolve) => {
+    child.on("exit", (code) => {
+      const exitCode = code ?? 0;
+      if (exitCode === 0) {
+        logSuccess(
+          "Synthetic upgraded successfully. Run `synthetic` to start the new version."
+        );
+      } else {
+        logError(`Upgrade command exited with code ${exitCode}.`);
+      }
+      resolve(exitCode);
+    });
 
-  return 0;
+    child.on("error", (error) => {
+      logError(
+        `Upgrade command failed to start: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      resolve(1);
+    });
+  });
 };
 
 const runtimeExecutable = basename(process.execPath).toLowerCase();
@@ -398,7 +407,7 @@ class UpgradeCommand extends Command {
   static paths = [["upgrade"]];
 
   execute() {
-    return Promise.resolve(runUpgrade());
+    return runUpgrade();
   }
 }
 
