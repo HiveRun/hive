@@ -31,10 +31,20 @@ const arch = (() => {
 const archiveName = `synthetic-${platform}-${arch}.tar.gz`;
 const archivePath = join(repoRoot, "dist", "install", archiveName);
 
+console.log("Building installer artifacts...");
+const buildResult = Bun.spawnSync({
+  cmd: ["bun", "run", "build:installer"],
+  cwd: repoRoot,
+  stdout: "inherit",
+  stderr: "inherit",
+});
+
+if (buildResult.exitCode !== 0) {
+  throw new Error(`build:installer failed with code ${buildResult.exitCode}`);
+}
+
 if (!existsSync(archivePath)) {
-  throw new Error(
-    `Installer archive missing at ${archivePath}. Run "bun run build:installer" first.`
-  );
+  throw new Error(`Installer archive missing at ${archivePath}`);
 }
 
 const installScript = join(repoRoot, "scripts", "install.sh");

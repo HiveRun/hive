@@ -54,6 +54,16 @@ Environment variables:
   ```bash
   synthetic upgrade
   ```
+- Inspect your current install (release path, log locations, pid status):
+  ```bash
+  synthetic info
+  ```
+- Generate shell completions for bash/zsh/fish:
+  ```bash
+  synthetic completions bash >> ~/.bashrc
+  ```
+  Replace `bash` with `zsh` or `fish` and source the appended snippet to enable tab completion. Re-run the command whenever new subcommands are added.
+- Need a quick refresher on the available commands? Run `synthetic --help` for the latest summary.
 - Configuration lives in `~/.synthetic/current/synthetic.env`. Update values there (or override per run) to change ports, database paths, or feature flags:
 
   ```bash
