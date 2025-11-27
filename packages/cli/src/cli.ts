@@ -602,6 +602,7 @@ class CompletionsInstallCommand extends Command {
 
   destination = Option.String({
     name: "destination",
+    required: false,
   });
 
   execute() {
