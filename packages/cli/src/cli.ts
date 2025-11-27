@@ -352,8 +352,8 @@ const getTauriExecutableCandidates = () => {
     candidates.push(join(binaryDirectory, "synthetic-tauri.exe"));
     candidates.push(join(binaryDirectory, "Synthetic.exe"));
   } else {
-    candidates.push(join(binaryDirectory, "synthetic-tauri"));
     candidates.push(join(binaryDirectory, "synthetic-tauri.AppImage"));
+    candidates.push(join(binaryDirectory, "synthetic-tauri"));
     candidates.push(join(binaryDirectory, "synthetic-tauri.bin"));
   }
 

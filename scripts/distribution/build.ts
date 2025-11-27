@@ -1,7 +1,15 @@
 #!/usr/bin/env bun
 
 import { existsSync } from "node:fs";
-import { chmod, copyFile, cp, mkdir, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  cp,
+  mkdir,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -44,6 +52,7 @@ const buildFrontend = () =>
   run(["bun", "run", "build"], join(repoRoot, "apps", "web"));
 const buildCli = () =>
   run(["bun", "run", "compile"], join(repoRoot, "packages", "cli"));
+const buildTauri = () => run(["bun", "run", "build:tauri"], repoRoot);
 
 const readRootPackage = async () => {
   const packageJsonPath = join(repoRoot, "package.json");
@@ -58,12 +67,118 @@ const computeSha256 = async (filePath: string) => {
 };
 
 const EXECUTABLE_PERMISSIONS = 0o755;
+const tauriTargetDir = join(repoRoot, "src-tauri", "target", "release");
+
+const makeExecutable = async (filePath: string) => {
+  if (process.platform === "win32") {
+    return;
+  }
+  await chmod(filePath, EXECUTABLE_PERMISSIONS);
+};
+
+const copyLinuxTauriArtifacts = async (destination: string) => {
+  let copied = false;
+  const appImageDir = join(tauriTargetDir, "bundle", "appimage");
+  if (existsSync(appImageDir)) {
+    const entries = await readdir(appImageDir);
+    const appImage = entries.find((entry) =>
+      entry.toLowerCase().endsWith(".appimage")
+    );
+    if (appImage) {
+      const source = join(appImageDir, appImage);
+      const targetPath = join(destination, "synthetic-tauri.AppImage");
+      await copyFile(source, targetPath);
+      await makeExecutable(targetPath);
+      copied = true;
+    }
+  }
+
+  const rawBinary = join(tauriTargetDir, "synthetic");
+  if (existsSync(rawBinary)) {
+    const binaryDestination = join(destination, "synthetic-tauri");
+    await copyFile(rawBinary, binaryDestination);
+    await makeExecutable(binaryDestination);
+    copied = true;
+  }
+
+  if (!copied) {
+    console.warn(
+      "Skipping desktop bundle copy (no Linux Tauri artifacts were found)."
+    );
+  }
+};
+
+const copyMacTauriArtifacts = async (destination: string) => {
+  const macBundleDir = join(tauriTargetDir, "bundle", "macos");
+  if (existsSync(macBundleDir)) {
+    const entries = await readdir(macBundleDir);
+    const appFolder = entries.find((entry) => entry.endsWith(".app"));
+    if (appFolder) {
+      const source = join(macBundleDir, appFolder);
+      const targetPath = join(destination, appFolder);
+      await rm(targetPath, { recursive: true, force: true });
+      await cp(source, targetPath, { recursive: true });
+      return;
+    }
+  }
+
+  const fallback = join(tauriTargetDir, "Synthetic.app");
+  if (existsSync(fallback)) {
+    const targetPath = join(destination, "Synthetic.app");
+    await rm(targetPath, { recursive: true, force: true });
+    await cp(fallback, targetPath, { recursive: true });
+    return;
+  }
+
+  console.warn(
+    "Skipping desktop bundle copy (no macOS .app bundle was generated)."
+  );
+};
+
+const copyWindowsTauriArtifacts = async (destination: string) => {
+  let copied = false;
+  const executable = join(tauriTargetDir, "synthetic.exe");
+  if (existsSync(executable)) {
+    const targetPath = join(destination, "synthetic-tauri.exe");
+    await copyFile(executable, targetPath);
+    copied = true;
+  }
+
+  const nsisDir = join(tauriTargetDir, "bundle", "nsis");
+  if (existsSync(nsisDir)) {
+    const entries = await readdir(nsisDir);
+    const installer = entries.find((file) =>
+      file.toLowerCase().endsWith(".exe")
+    );
+    if (installer) {
+      await copyFile(join(nsisDir, installer), join(destination, installer));
+      copied = true;
+    }
+  }
+
+  if (!copied) {
+    console.warn(
+      "Skipping desktop bundle copy (no Windows Tauri artifacts were found)."
+    );
+  }
+};
+
+const copyTauriBundle = async (destination: string) => {
+  if (platform === "darwin") {
+    await copyMacTauriArtifacts(destination);
+  } else if (platform === "win32") {
+    await copyWindowsTauriArtifacts(destination);
+  } else {
+    await copyLinuxTauriArtifacts(destination);
+  }
+};
 
 const main = async () => {
   await ensureDir(releaseDir);
 
   await buildFrontend();
   await buildCli();
+  await buildTauri();
 
   const cliBinaryPath = join(repoRoot, "packages", "cli", "synthetic");
   if (!existsSync(cliBinaryPath)) {
@@ -100,6 +215,8 @@ const main = async () => {
   await cp(serverMigrationsDir, join(releaseDir, "migrations"), {
     recursive: true,
   });
+
+  await copyTauriBundle(releaseDir);
 
   const pkg = await readRootPackage();
   const commitSha = (() => {
