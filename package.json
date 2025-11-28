@@ -27,7 +27,7 @@
     "test:e2e:headed": "turbo -F web test:e2e:headed --ui=stream",
     "test:e2e:update-snapshots": "turbo -F web test:e2e:update-snapshots --ui=stream",
     "check:biome": "biome check --write .",
-    "check:staged": "lint-staged",
+    "check:staged": "lint-staged --allow-empty",
     "check:secrets": "./scripts/check-secrets.sh",
     "check:audit": "bun audit --audit-level high || echo '⚠️  Security audit found issues (see above)'",
     "ruler:apply": "cp README.md .ruler/prompts/README.md && cp docs/requirements/design.md .ruler/prompts/design.md && bunx @intellectronica/ruler@latest apply --local-only && biome check --write --no-errors-on-unmatched --files-ignore-unknown=true",

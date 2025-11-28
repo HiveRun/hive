@@ -10,7 +10,7 @@ dist-electron
 src-tauri/target
 apps/server/server
 *.tsbuildinfo
-**/.synthetic/
+**/.hive/
 
 # Environment variables
 .env

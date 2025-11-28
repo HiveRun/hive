@@ -153,7 +153,7 @@ This design system extends **shadcn/ui** components with forest brutalism stylin
 
 - **Direct**: Clear, straightforward language
 - **Confident**: Bold statements, no hedging
-- **Synthetic**: References to constructs, assembly, orchestration
+- **Hive**: References to constructs, assembly, orchestration
 - **Technical**: Precise, architectural terminology
 
 ## Inspiration & References
