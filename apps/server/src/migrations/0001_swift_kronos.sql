@@ -1,1 +1,0 @@
-ALTER TABLE `cells` ADD `workspace_path` text;

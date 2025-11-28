@@ -8,6 +8,11 @@ This document tracks the current status of prepared schemas, validation, and tes
 
 **Result**: Many schemas and test plans were prepared but are not currently implemented. They remain available for future implementation.
 
+### Migration Reset — 2025-11-28
+- Removed all historical Drizzle migrations tied to "construct" naming and regenerated a single baseline that creates `cells` and `cell_services`
+- Developers must delete their local SQLite files (e.g., `apps/server/local.db`) and rerun `bun run --cwd apps/server db:push` after pulling this change
+- Deferred tables from earlier specs now live only in documentation until they are reintroduced through new migrations
+
 ## Current Implementation Status
 
 ### ✅ Implemented and Active
@@ -72,27 +77,45 @@ This document tracks the current status of prepared schemas, validation, and tes
 
 ### Active Tables
 ```sql
--- Currently implemented and used
 cells (
   id,
   name,
   description,
   template_id,
+  workspace_id,
+  workspace_root_path,
   workspace_path,
   opencode_session_id,
+  opencode_server_url,
+  opencode_server_port,
   status,
+  last_setup_error,
+  branch_name,
+  base_commit,
+  created_at
+)
+
+cell_services (
+  id,
+  cell_id,
+  name,
+  type,
+  command,
+  cwd,
+  env,
+  status,
+  port,
+  pid,
+  ready_timeout_ms,
+  definition,
+  last_known_error,
   created_at,
   updated_at
 )
 ```
 
-### Prepared Tables (Not Currently Used)
-```sql
--- Prepared for Phase 1A implementation
-prompt_bundles (id, cell_id, content, token_count, created_at)
-port_allocations (id, cell_id, service_name, port, allocated_at)
-services (id, cell_id, name, type, command, cwd, env_json, pid, status, ready_pattern, started_at, stopped_at)
-```
+### Prepared Tables (Concept Only)
+The prompt bundle, port allocation, and advanced service tables described later in this document do **not** exist in the regenerated migration baseline. When we resume those features we will add brand-new migrations instead of editing the baseline.
 
 ## Test Status
 

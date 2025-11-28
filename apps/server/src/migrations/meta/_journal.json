@@ -1,61 +1,12 @@
 {
-  "version": "8",
+  "version": "7",
   "dialect": "sqlite",
   "entries": [
     {
       "idx": 0,
       "version": "6",
-      "when": 1762455437269,
-      "tag": "0000_dashing_shen",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1762465482139,
-      "tag": "0001_swift_kronos",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1762559480075,
-      "tag": "0002_charming_nicolaos",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1762725148210,
-      "tag": "0003_bitter_marvel_boy",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1762886478000,
-      "tag": "0004_service_management",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "8",
-      "when": 1763300000000,
-      "tag": "0005_cell_provisioning_status",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "8",
-      "when": 1763500000000,
-      "tag": "0006_cell_diff_metadata",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "6",
-      "when": 1763667187137,
-      "tag": "0007_workspace_scope",
+      "when": 1764373641663,
+      "tag": "0000_rare_joseph",
       "breakpoints": true
     }
   ]
