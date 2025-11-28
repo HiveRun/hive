@@ -60,7 +60,7 @@ playwright/.cache/
 .cache
 tmp
 temp
-vendor/opencode/
+vendor/
 local.db
 *.db
 
