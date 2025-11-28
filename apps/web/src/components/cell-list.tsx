@@ -29,11 +29,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { agentQueries } from "@/queries/agents";
 import {
-  type Construct,
-  type ConstructServiceSummary,
-  constructMutations,
-  constructQueries,
-} from "@/queries/constructs";
+  type Cell,
+  type CellServiceSummary,
+  cellMutations,
+  cellQueries,
+} from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
 
 const MAX_SELECTION_PREVIEW = 3;
@@ -52,12 +52,12 @@ type ServiceStatusState = {
   isError: boolean;
 };
 
-type ConstructListProps = {
+type CellListProps = {
   workspaceId: string;
 };
 
-export function ConstructList({ workspaceId }: ConstructListProps) {
-  const [selectedConstructIds, setSelectedConstructIds] = useState<Set<string>>(
+export function CellList({ workspaceId }: CellListProps) {
+  const [selectedCellIds, setSelectedCellIds] = useState<Set<string>>(
     () => new Set()
   );
   const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
@@ -65,22 +65,22 @@ export function ConstructList({ workspaceId }: ConstructListProps) {
   const queryClient = useQueryClient();
 
   const {
-    data: constructs,
+    data: cells,
     isLoading,
     error,
-  } = useQuery(constructQueries.all(workspaceId));
+  } = useQuery(cellQueries.all(workspaceId));
   const { data: templatesData } = useQuery(templateQueries.all(workspaceId));
   const templates = templatesData?.templates;
 
   const serviceStatusQueries = useQueries({
     queries:
-      constructs?.map((construct) => {
-        const config = constructQueries.services(construct.id);
+      cells?.map((cell) => {
+        const config = cellQueries.services(cell.id);
         return {
           queryKey: config.queryKey,
           queryFn: config.queryFn,
           select: summarizeServices,
-          enabled: construct.status === "ready" && Boolean(construct.id),
+          enabled: cell.status === "ready" && Boolean(cell.id),
           staleTime: 15_000,
         };
       }) ?? [],
@@ -88,10 +88,10 @@ export function ConstructList({ workspaceId }: ConstructListProps) {
 
   const serviceStatusMap = new Map<string, ServiceStatusState>();
 
-  constructs?.forEach((construct, index) => {
+  cells?.forEach((cell, index) => {
     const serviceQuery = serviceStatusQueries[index];
     if (serviceQuery) {
-      serviceStatusMap.set(construct.id, {
+      serviceStatusMap.set(cell.id, {
         summary: serviceQuery.data,
         isLoading: serviceQuery.isLoading,
         isError: serviceQuery.isError,
@@ -100,8 +100,8 @@ export function ConstructList({ workspaceId }: ConstructListProps) {
   });
 
   useEffect(() => {
-    if (!constructs) {
-      setSelectedConstructIds((prev) => {
+    if (!cells) {
+      setSelectedCellIds((prev) => {
         if (prev.size === 0) {
           return prev;
         }
@@ -110,20 +110,19 @@ export function ConstructList({ workspaceId }: ConstructListProps) {
       return;
     }
 
-    const validIds = new Set(constructs.map((construct) => construct.id));
-    setSelectedConstructIds((prev) => {
+    const validIds = new Set(cells.map((cell) => cell.id));
+    setSelectedCellIds((prev) => {
       const filtered = [...prev].filter((id) => validIds.has(id));
       if (filtered.length === prev.size) {
         return prev;
       }
       return new Set(filtered);
     });
-  }, [constructs]);
+  }, [cells]);
 
-  const selectedConstructs =
-    constructs?.filter((construct) => selectedConstructIds.has(construct.id)) ??
-    [];
-  const selectedCount = selectedConstructs.length;
+  const selectedCells =
+    cells?.filter((cell) => selectedCellIds.has(cell.id)) ?? [];
+  const selectedCount = selectedCells.length;
   const hasSelection = selectedCount > 0;
 
   useEffect(() => {
@@ -133,20 +132,20 @@ export function ConstructList({ workspaceId }: ConstructListProps) {
   }, [hasSelection]);
 
   const bulkDeleteMutation = useMutation({
-    ...constructMutations.deleteMany,
+    ...cellMutations.deleteMany,
     onSuccess: (data: { deletedIds: string[] }) => {
       const count = data.deletedIds.length;
-      const label = count === 1 ? "construct" : "constructs";
+      const label = count === 1 ? "cell" : "cells";
       toast.success(`Deleted ${count} ${label}`);
-      queryClient.invalidateQueries({ queryKey: ["constructs", workspaceId] });
-      setSelectedConstructIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
+      setSelectedCellIds(new Set());
       setIsBulkDialogOpen(false);
     },
     onError: (unknownError) => {
       const message =
         unknownError instanceof Error
           ? unknownError.message
-          : "Failed to delete constructs";
+          : "Failed to delete cells";
       toast.error(message);
     },
   });
@@ -156,33 +155,33 @@ export function ConstructList({ workspaceId }: ConstructListProps) {
       return;
     }
 
-    bulkDeleteMutation.mutate(Array.from(selectedConstructIds));
+    bulkDeleteMutation.mutate(Array.from(selectedCellIds));
   };
 
   const handleClearSelection = () => {
-    setSelectedConstructIds(new Set());
+    setSelectedCellIds(new Set());
   };
 
   const handleSelectAllToggle = () => {
-    if (!constructs?.length) {
+    if (!cells?.length) {
       return;
     }
 
-    setSelectedConstructIds((prev) => {
-      if (prev.size === constructs.length) {
+    setSelectedCellIds((prev) => {
+      if (prev.size === cells.length) {
         return new Set();
       }
-      return new Set(constructs.map((construct) => construct.id));
+      return new Set(cells.map((cell) => cell.id));
     });
   };
 
-  const toggleConstructSelection = (constructId: string) => {
-    setSelectedConstructIds((prev) => {
+  const toggleCellSelection = (cellId: string) => {
+    setSelectedCellIds((prev) => {
       const next = new Set(prev);
-      if (next.has(constructId)) {
-        next.delete(constructId);
+      if (next.has(cellId)) {
+        next.delete(cellId);
       } else {
-        next.add(constructId);
+        next.add(cellId);
       }
       return next;
     });
@@ -211,23 +210,21 @@ export function ConstructList({ workspaceId }: ConstructListProps) {
   };
 
   if (isLoading) {
-    return <div className="p-6">Loading constructs...</div>;
+    return <div className="p-6">Loading cells...</div>;
   }
 
   if (error) {
     const message =
-      error instanceof Error ? error.message : "Failed to load constructs";
+      error instanceof Error ? error.message : "Failed to load cells";
     return (
-      <div className="p-6 text-destructive">
-        Error loading constructs: {message}
-      </div>
+      <div className="p-6 text-destructive">Error loading cells: {message}</div>
     );
   }
 
   return (
     <div className="space-y-6 p-4 md:p-6">
       <div className="flex flex-col gap-4">
-        <h1 className="font-bold text-2xl md:text-3xl">Constructs</h1>
+        <h1 className="font-bold text-2xl md:text-3xl">Cells</h1>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">
@@ -260,7 +257,7 @@ export function ConstructList({ workspaceId }: ConstructListProps) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {constructs && constructs.length > 0 && (
+            {cells && cells.length > 0 && (
               <Button
                 className="flex-1 sm:flex-none"
                 data-testid="toggle-select-all-global"
@@ -271,10 +268,10 @@ export function ConstructList({ workspaceId }: ConstructListProps) {
                 Select All
               </Button>
             )}
-            <Link className="flex-1 sm:flex-none" to="/constructs/new">
+            <Link className="flex-1 sm:flex-none" to="/cells/new">
               <Button className="w-full" type="button">
                 <Plus className="mr-2 h-4 w-4" />
-                New Construct
+                New Cell
               </Button>
             </Link>
           </div>
@@ -286,38 +283,38 @@ export function ConstructList({ workspaceId }: ConstructListProps) {
         isOpen={isBulkDialogOpen && hasSelection}
         onConfirmDelete={handleBulkDelete}
         onOpenChange={setIsBulkDialogOpen}
-        selectedConstructs={selectedConstructs}
+        selectedCells={selectedCells}
         selectedCount={selectedCount}
       />
 
-      {constructs && constructs.length === 0 ? (
+      {cells && cells.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
-            <h3 className="mb-2 font-semibold text-lg">No constructs yet</h3>
+            <h3 className="mb-2 font-semibold text-lg">No cells yet</h3>
             <p className="mb-4 text-center text-muted-foreground">
-              Create your first construct to get started with Hive.
+              Create your first cell to get started with Hive.
             </p>
-            <Link to="/constructs/new">
+            <Link to="/cells/new">
               <Button type="button">
                 <Plus className="mr-2 h-4 w-4" />
-                Create Construct
+                Create Cell
               </Button>
             </Link>
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-          {constructs?.map((construct) => (
-            <ConstructCard
-              construct={construct}
-              createdLabel={formatDate(construct.createdAt)}
+          {cells?.map((cell) => (
+            <CellCard
+              cell={cell}
+              createdLabel={formatDate(cell.createdAt)}
               disableSelection={bulkDeleteMutation.isPending}
-              isSelected={selectedConstructIds.has(construct.id)}
-              key={construct.id}
+              isSelected={selectedCellIds.has(cell.id)}
+              key={cell.id}
               onCopyWorkspace={copyToClipboard}
-              onToggleSelect={() => toggleConstructSelection(construct.id)}
-              serviceStatus={serviceStatusMap.get(construct.id)}
-              templateLabel={getTemplateLabel(construct.templateId)}
+              onToggleSelect={() => toggleCellSelection(cell.id)}
+              serviceStatus={serviceStatusMap.get(cell.id)}
+              templateLabel={getTemplateLabel(cell.templateId)}
             />
           ))}
         </div>
@@ -331,7 +328,7 @@ type BulkDeleteDialogProps = {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirmDelete: () => void;
-  selectedConstructs: Construct[];
+  selectedCells: Cell[];
   selectedCount: number;
 };
 
@@ -340,14 +337,14 @@ function BulkDeleteDialog({
   isOpen,
   onOpenChange,
   onConfirmDelete,
-  selectedConstructs,
+  selectedCells,
   selectedCount,
 }: BulkDeleteDialogProps) {
   if (!selectedCount) {
     return null;
   }
 
-  const selectionPreview = selectedConstructs.slice(0, MAX_SELECTION_PREVIEW);
+  const selectionPreview = selectedCells.slice(0, MAX_SELECTION_PREVIEW);
   const overflowCount = selectedCount - selectionPreview.length;
 
   return (
@@ -355,19 +352,18 @@ function BulkDeleteDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            Delete {selectedCount}{" "}
-            {selectedCount === 1 ? "construct" : "constructs"}?
+            Delete {selectedCount} {selectedCount === 1 ? "cell" : "cells"}?
           </AlertDialogTitle>
           <AlertDialogDescription>
-            This action permanently removes the selected constructs and their
+            This action permanently removes the selected cells and their
             metadata. This cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="rounded-md border border-muted bg-muted/30 p-4 text-sm">
           <p className="font-semibold">Selection Summary</p>
           <ul className="list-disc pl-5 text-muted-foreground">
-            {selectionPreview.map((construct) => (
-              <li key={construct.id}>{construct.name}</li>
+            {selectionPreview.map((cell) => (
+              <li key={cell.id}>{cell.name}</li>
             ))}
             {overflowCount > 0 && <li>+{overflowCount} more</li>}
           </ul>
@@ -390,8 +386,8 @@ function BulkDeleteDialog({
   );
 }
 
-type ConstructCardProps = {
-  construct: Construct;
+type CellCardProps = {
+  cell: Cell;
   templateLabel: string;
   createdLabel: string;
   isSelected: boolean;
@@ -401,8 +397,8 @@ type ConstructCardProps = {
   serviceStatus?: ServiceStatusState;
 };
 
-function ConstructCard({
-  construct,
+function CellCard({
+  cell,
   createdLabel,
   disableSelection,
   isSelected,
@@ -410,11 +406,11 @@ function ConstructCard({
   onToggleSelect,
   templateLabel,
   serviceStatus,
-}: ConstructCardProps) {
-  const sessionQueryConfig = agentQueries.sessionByConstruct(construct.id);
+}: CellCardProps) {
+  const sessionQueryConfig = agentQueries.sessionByCell(cell.id);
   const agentSessionQuery = useQuery({
     ...sessionQueryConfig,
-    enabled: construct.status === "ready" && Boolean(construct.id),
+    enabled: cell.status === "ready" && Boolean(cell.id),
     staleTime: 30_000,
   });
   return (
@@ -423,38 +419,38 @@ function ConstructCard({
         "transition-shadow hover:shadow-md",
         isSelected && "border-primary bg-primary/5 shadow-sm"
       )}
-      data-testid="construct-card"
+      data-testid="cell-card"
     >
       <CardHeader className="space-y-3">
         <div className="flex items-start gap-3">
           <Checkbox
-            aria-label={`Select construct ${construct.name}`}
+            aria-label={`Select cell ${cell.name}`}
             checked={isSelected}
             className="mt-0.5 h-5 w-5 shrink-0 border-2 border-muted-foreground data-[state=checked]:border-primary data-[state=checked]:bg-primary"
-            data-construct-id={construct.id}
-            data-testid="construct-select"
+            data-cell-id={cell.id}
+            data-testid="cell-select"
             disabled={disableSelection}
             onCheckedChange={() => onToggleSelect()}
           />
           <CardTitle
             className="break-words text-lg leading-tight"
-            data-testid="construct-name"
+            data-testid="cell-name"
           >
-            {construct.name}
+            {cell.name}
           </CardTitle>
         </div>
         <Badge
           className="w-fit"
-          data-testid="construct-template"
+          data-testid="cell-template"
           variant="secondary"
         >
           {templateLabel}
         </Badge>
-        <ConstructStatusNotice
-          lastSetupError={construct.lastSetupError}
-          status={construct.status}
+        <CellStatusNotice
+          lastSetupError={cell.lastSetupError}
+          status={cell.status}
         />
-        {construct.status === "ready" && (
+        {cell.status === "ready" && (
           <>
             <AgentStatusIndicator
               isError={agentSessionQuery.isError}
@@ -467,16 +463,16 @@ function ConstructCard({
       </CardHeader>
 
       <CardContent className="space-y-4">
-        {construct.description && (
+        {cell.description && (
           <p
             className="line-clamp-3 break-words text-muted-foreground text-sm"
-            data-testid="construct-description"
+            data-testid="cell-description"
           >
-            {construct.description}
+            {cell.description}
           </p>
         )}
 
-        {construct.workspacePath && (
+        {cell.workspacePath && (
           <div>
             <div className="flex items-center justify-between gap-2">
               <p className="font-medium text-muted-foreground text-xs">
@@ -485,7 +481,7 @@ function ConstructCard({
               <Button
                 className="h-7 w-7 p-0"
                 data-testid="copy-workspace-path"
-                onClick={() => onCopyWorkspace(construct.workspacePath)}
+                onClick={() => onCopyWorkspace(cell.workspacePath)}
                 size="sm"
                 title="Copy workspace path"
                 type="button"
@@ -495,7 +491,7 @@ function ConstructCard({
               </Button>
             </div>
             <p className="mt-1 overflow-hidden break-all rounded bg-muted/50 p-2 font-mono text-muted-foreground text-xs">
-              {construct.workspacePath}
+              {cell.workspacePath}
             </p>
           </div>
         )}
@@ -504,18 +500,12 @@ function ConstructCard({
           <p>Created: {createdLabel}</p>
         </div>
         <div className="flex justify-end gap-2">
-          <Link
-            params={{ constructId: construct.id }}
-            to="/constructs/$constructId/services"
-          >
+          <Link params={{ cellId: cell.id }} to="/cells/$cellId/services">
             <Button size="sm" type="button" variant="secondary">
               Services Panel
             </Button>
           </Link>
-          <Link
-            params={{ constructId: construct.id }}
-            to="/constructs/$constructId/chat"
-          >
+          <Link params={{ cellId: cell.id }} to="/cells/$cellId/chat">
             <Button size="sm" type="button" variant="outline">
               Open Chat
             </Button>
@@ -526,10 +516,10 @@ function ConstructCard({
   );
 }
 
-function ConstructStatusNotice({
+function CellStatusNotice({
   status,
   lastSetupError,
-}: Pick<Construct, "status" | "lastSetupError">) {
+}: Pick<Cell, "status" | "lastSetupError">) {
   if (status === "error") {
     return (
       <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/10 p-3">
@@ -669,7 +659,7 @@ function ServiceStatusIndicator({ status }: { status?: ServiceStatusState }) {
 }
 
 function summarizeServices(
-  services: ConstructServiceSummary[]
+  services: CellServiceSummary[]
 ): ServiceStatusSummary {
   const summary: ServiceStatusSummary = {
     total: services.length,

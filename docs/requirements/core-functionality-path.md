@@ -6,54 +6,54 @@ This document outlines the focused implementation path for delivering core Hive 
 
 **Goal**: A user should be able to:
 1. ✅ Define templates in `hive.config.ts` (completed)
-2. ✅ Create and manage basic constructs through UI (real database)
-3. Provision worktrees for existing constructs
-4. Start agent sessions in construct worktrees
+2. ✅ Create and manage basic cells through UI (real database)
+3. Provision worktrees for existing cells
+4. Start agent sessions in cell worktrees
 5. Chat with agents through web interface
 
 **Timeline**: 1-2 weeks for complete, usable functionality
 
 ## Rescope Rationale
 
-**New Focus**: Worktrees, OpenCode integration, and base construct capabilities
+**New Focus**: Worktrees, OpenCode integration, and base cell capabilities
 **Deferred**: Service management, port allocation, complex provisioning orchestration
 
 **Key Insight**: Users can get value from isolated agent workspaces without complex service orchestration. The deferred features remain prepared (schemas, tests) but aren't blocking initial delivery.
 
 ## Implementation Sequence
 
-### Step 1: Basic Construct Management (Step 2)
+### Step 1: Basic Cell Management (Step 2)
 
-**Branch**: `feat/basic-construct-management`
+**Branch**: `feat/basic-cell-management`
 **Status**: ✅ Completed
 
 #### Core Components
 ```typescript
 // Main UI components to implement
-interface ConstructCreationForm {
+interface CellCreationForm {
   name: string
   description: string
   templateId: string
 }
 
-interface ConstructList {
-  constructs: Construct[]
-  onCreateConstruct: () => void
-  onSelectConstruct: (id: string) => void
+interface CellList {
+  cells: Cell[]
+  onCreateCell: () => void
+  onSelectCell: (id: string) => void
 }
 
 // Real backend implementation
-interface ConstructService {
-  createConstruct(data: CreateConstructData): Promise<Construct>
-  listConstructs(): Promise<Construct[]>
-  deleteConstruct(id: string): Promise<void>
-  updateConstructStatus(id: string, status: ConstructStatus): Promise<void>
+interface CellService {
+  createCell(data: CreateCellData): Promise<Cell>
+  listCells(): Promise<Cell[]>
+  deleteCell(id: string): Promise<void>
+  updateCellStatus(id: string, status: CellStatus): Promise<void>
 }
 ```
 
 #### Database Schema
 ```sql
-CREATE TABLE constructs (
+CREATE TABLE cells (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   description TEXT,
@@ -66,19 +66,19 @@ CREATE TABLE constructs (
 ```
 
 #### Key Implementation Details
-- Construct creation form with template selection from PR #1
-- Construct list showing basic info
-- **Real database persistence** for construct entities
-- **No status tracking, no worktree, no agents** - just basic construct management
+- Cell creation form with template selection from PR #1
+- Cell list showing basic info
+- **Real database persistence** for cell entities
+- **No status tracking, no worktree, no agents** - just basic cell management
 - Component-level tests with real data
-- E2E tests for complete construct management workflow
+- E2E tests for complete cell management workflow
 
 #### Acceptance Tests
-- Can create construct via UI form with real database storage
-- Construct list shows correct info from database
-- Can delete constructs from UI and database
-- Can update construct details (name, description)
-- E2E test for complete construct management workflow
+- Can create cell via UI form with real database storage
+- Cell list shows correct info from database
+- Can delete cells from UI and database
+- Can update cell details (name, description)
+- E2E test for complete cell management workflow
 - Database schema ready for extension in PR #3
 
 ---
@@ -89,17 +89,17 @@ CREATE TABLE constructs (
 
 #### Core Functionality
 ```typescript
-// Extend existing construct service
+// Extend existing cell service
 interface WorktreeManager {
-  createWorktree(constructId: string): Promise<string> // returns worktree path
+  createWorktree(cellId: string): Promise<string> // returns worktree path
   listWorktrees(): Promise<WorktreeInfo[]>
-  pruneWorktree(constructId: string): Promise<void>
-  cleanupWorktree(constructId: string): Promise<void>
+  pruneWorktree(cellId: string): Promise<void>
+  cleanupWorktree(cellId: string): Promise<void>
 }
 
-interface ConstructService {
+interface CellService {
   // Existing methods from PR #2...
-  provisionWorktree(constructId: string): Promise<void> // new method
+  provisionWorktree(cellId: string): Promise<void> // new method
 }
 
 // Status tracking not needed until PR #4
@@ -108,18 +108,18 @@ interface ConstructService {
 #### Database Schema Updates
 ```sql
 -- Migration to add worktree support
-ALTER TABLE constructs ADD COLUMN workspace_path TEXT;
+ALTER TABLE cells ADD COLUMN workspace_path TEXT;
 ```
 
 #### Key Implementation Details
-- **Extend existing constructs** with worktree functionality
-- Use `git worktree add .constructs/<id>` to create isolated workspaces
+- **Extend existing cells** with worktree functionality
+- Use `git worktree add .cells/<id>` to create isolated workspaces
 - Track worktree lifecycle to prevent orphaned worktrees
 - Implement safety checks (no duplicate worktrees, proper cleanup)
 - **Extend existing UI** to show worktree information and controls
 
 #### Acceptance Tests
-- Can create worktree for existing construct
+- Can create worktree for existing cell
 - Worktree is isolated (changes don't affect main repo)
 - Can list and delete worktrees
 - Worktree information displayed in UI
@@ -135,9 +135,9 @@ ALTER TABLE constructs ADD COLUMN workspace_path TEXT;
 
 #### Core Functionality
 ```typescript
-// Extend existing construct system
+// Extend existing cell system
 interface AgentManager {
-  createSession(constructId: string, template: Template): Promise<AgentSession>
+  createSession(cellId: string, template: Template): Promise<AgentSession>
   sendMessage(sessionId: string, message: string): Promise<void>
   streamMessages(sessionId: string): AsyncIterable<AgentMessage>
   stopSession(sessionId: string): Promise<void>
@@ -152,7 +152,7 @@ interface OpenCodeConfig {
 
 // Extend existing UI
 interface ChatInterface {
-  constructId: string
+  cellId: string
   sessionId: string
   messages: AgentMessage[]
   onSendMessage: (message: string) => void
@@ -162,20 +162,20 @@ interface ChatInterface {
 
 #### Database Schema
 ```sql
-ALTER TABLE constructs
+ALTER TABLE cells
   ADD COLUMN opencode_session_id TEXT NULL;
 ```
 
 > Agent transcripts and message history live inside OpenCode's own datastore. Hive keeps only the `opencode_session_id` pointer so it can rehydrate sessions on demand.
 
 #### Key Implementation Details
-- **Extend existing constructs** with agent functionality
+- **Extend existing cells** with agent functionality
 - Integrate `@opencode-ai/sdk` for real OpenCode sessions
 - Implement mock orchestrator for development without credentials
-- Set working directory to construct's worktree (from PR #3)
+- Set working directory to cell's worktree (from PR #3)
 - Stream messages in real-time to UI using the same `message.updated` / `message.part.updated` / `permission.updated` events that OpenCode’s TUI exposes
 - Handle session lifecycle (starting → running → completed/error)
-- Construct creation automatically provisions the agent session (mock vs provider based on form input) and rolls back the worktree/DB row if provisioning fails
+- Cell creation automatically provisions the agent session (mock vs provider based on form input) and rolls back the worktree/DB row if provisioning fails
 - Surface permission prompts directly in the chat so agents can request file/network access without falling back to the CLI
 - **Extend existing UI** with chat interface
 
@@ -183,8 +183,8 @@ ALTER TABLE constructs
 - Can create session with real OpenCode credentials
 - Mock orchestrator works without credentials
 - Messages stream correctly to UI
-- Session operates within construct worktree
-- Construct creation fails with actionable error if agent provisioning fails (e.g., missing credentials) and leaves no orphaned worktree
+- Session operates within cell worktree
+- Cell creation fails with actionable error if agent provisioning fails (e.g., missing credentials) and leaves no orphaned worktree
 - Permission prompts can be approved/denied from the chat UI (no fallback to CLI banners)
 - Transcripts persist via OpenCode's datastore (Hive can rehydrate by session ID)
 - **Integration tests with existing UI from Step 1**
@@ -195,16 +195,16 @@ ALTER TABLE constructs
 
 ### Template System Integration
 - Templates provide initial context for agent sessions
-- Template selection in construct creation form
-- Template validation before construct creation
+- Template selection in cell creation form
+- Template validation before cell creation
 
 ### Worktree-Agent Integration
-- Agent sessions run within construct worktree
-- Working directory set to `.constructs/<id>/`
+- Agent sessions run within cell worktree
+- Working directory set to `.cells/<id>/`
 - File operations affect isolated worktree only
 
 ### UI-Backend Integration
-- Real-time updates for construct status
+- Real-time updates for cell status
 - Streaming agent messages to chat interface
 - Session lifecycle controls in UI
 
@@ -212,21 +212,21 @@ ALTER TABLE constructs
 
 ### Minimum Viable Product
 1. ✅ User can define templates in config
-2. 🔄 User can create and manage basic constructs through UI (real database)
-3. 🔄 User can provision worktrees for existing constructs
-4. 🔄 User can start agent sessions in construct worktrees
+2. 🔄 User can create and manage basic cells through UI (real database)
+3. 🔄 User can provision worktrees for existing cells
+4. 🔄 User can start agent sessions in cell worktrees
 5. 🔄 User can chat with agents through web interface
 
 ### Success Metrics
-- Time from template definition to working construct management: < 2 days
-- Time from basic constructs to worktree integration: < 3 days
+- Time from template definition to working cell management: < 2 days
+- Time from basic cells to worktree integration: < 3 days
 - Time from worktree to agent integration: < 4 days
 - End-to-end workflow completion: < 2 minutes
 - Zero configuration beyond `hive.config.ts`
 
 ### Testing Strategy
 - **Step 1**: Real database operations from day 1
-- **Step 2**: Worktree functionality tested against existing constructs
+- **Step 2**: Worktree functionality tested against existing cells
 - **Step 3**: Agent integration tested against complete system
 - **Each step**: Extends and validates previous functionality
 
@@ -245,12 +245,12 @@ Once core functionality is working, we can add:
 apps/server/src/
 ├── worktree/          # Worktree management
 ├── agents/            # OpenCode integration
-├── constructs/        # Construct CRUD operations
+├── cells/        # Cell CRUD operations
 └── routes/           # API endpoints
 
 web/src/
 ├── components/
-│   ├── construct/     # Construct creation/listing
+│   ├── cell/     # Cell creation/listing
 │   ├── chat/         # Agent chat interface
 │   └── templates/    # Template browser (existing)
 └── routes/           # Frontend routes
@@ -259,9 +259,9 @@ web/src/
 ### API Endpoints
 ```typescript
 // Core endpoints to implement
-POST /api/constructs              # Create construct
-GET /api/constructs               # List constructs
-DELETE /api/constructs/:id        # Delete construct
+POST /api/cells              # Create cell
+GET /api/cells               # List cells
+DELETE /api/cells/:id        # Delete cell
 
 POST /api/agents/sessions         # Create agent session
 POST /api/agents/sessions/:id/messages  # Send message

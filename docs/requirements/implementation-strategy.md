@@ -5,10 +5,10 @@
 ### Development Strategy
 **Approach**: Sequential PRs focused on delivering immediate value
 
-**Rationale**: To get Hive useful quickly, we're focusing on the core path: **worktrees + OpenCode integration + basic constructs**. Complex service management and provisioning are deferred.
+**Rationale**: To get Hive useful quickly, we're focusing on the core path: **worktrees + OpenCode integration + basic cells**. Complex service management and provisioning are deferred.
 
 ### Rescope Decision
-**New Focus**: Worktrees, OpenCode integration, and base construct capabilities
+**New Focus**: Worktrees, OpenCode integration, and base cell capabilities
 **Deferred**: Service management, port allocation, complex provisioning orchestration
 
 **Key Insight**: Users can get value from isolated agent workspaces without complex service orchestration. The deferred features remain prepared (schemas, tests) but aren't blocking initial delivery.
@@ -22,26 +22,26 @@
 - **Persistence**: File-based storage in `hive.config.ts` (intentional)
 - Tests with in-memory fixtures
 
-#### Step 2: Basic Construct Management ✅ **COMPLETED**
-- Construct creation form and listing UI
-- Basic construct CRUD operations (create, list, delete, update)
-- **Persistence**: `constructs` table with metadata
+#### Step 2: Basic Cell Management ✅ **COMPLETED**
+- Cell creation form and listing UI
+- Basic cell CRUD operations (create, list, delete, update)
+- **Persistence**: `cells` table with metadata
 - E2E tests for complete workflow
 
 #### Step 3: Git Worktree Management
-- Create isolated git worktrees for each construct (`.constructs/<id>/`)
+- Create isolated git worktrees for each cell (`.cells/<id>/`)
 - Worktree lifecycle management (create, list, prune, cleanup)
-- Extend existing constructs with worktree functionality
-- **Persistence**: Add `workspace_path` to constructs table
+- Extend existing cells with worktree functionality
+- **Persistence**: Add `workspace_path` to cells table
 - Tests for worktree creation and isolation
 
 #### Step 4: OpenCode Agent Integration  
 - `@opencode-ai/sdk` integration
 - Mock orchestrator fallback for development
 - Message streaming and session management
-- Construct creation automatically provisions the agent session (mock vs provider based on selection) and fails fast with cleanup if provisioning cannot complete
+- Cell creation automatically provisions the agent session (mock vs provider based on selection) and fails fast with cleanup if provisioning cannot complete
 - Frontend consumes the same OpenCode SSE event types as the TUI (messages, parts, permissions) and provides inline approval controls
-- **Persistence**: `constructs` table stores `opencode_session_id`; transcripts remain in OpenCode's datastore (no local agent tables)
+- **Persistence**: `cells` table stores `opencode_session_id`; transcripts remain in OpenCode's datastore (no local agent tables)
 - Tests using mock orchestrator
 
 ### Deferred Features (Prepared but Not Implemented)
@@ -61,7 +61,7 @@ The following features have complete schemas and test plans but are deferred to 
 #### Deferred: Service Management & Process Lifecycle
 - **Status**: Schema prepared, implementation deferred
 - **Why**: Complex, not needed for core agent functionality
-- **Future**: Will enable development environments within constructs
+- **Future**: Will enable development environments within cells
 
 #### PR #6 (Original): Provisioning Orchestration
 - **Status**: Logic prepared, implementation deferred
@@ -105,7 +105,7 @@ Add capabilities that build on the now-complete foundation:
 
 #### Step 4B: Diff Review & Code Visualization
 - Visual diff displays for agent changes
-- Code review interface within constructs
+- Code review interface within cells
 - Change approval/rejection workflows
 
 #### Step 5B: Docker Compose Support
@@ -120,7 +120,7 @@ Add capabilities that build on the now-complete foundation:
 
 #### Step 7D: Workspace Switching
 - Multiple workspace management
-- Quick context switching between constructs
+- Quick context switching between cells
 - Workspace-scoped templates and settings
 
 ### Branch Workflow
@@ -148,7 +148,7 @@ git checkout -b feature/workspace-switching
 ```bash
 # Each feature in its own branch
 git checkout -b feature/voice-input
-git checkout -b feature/sparse-constructs
+git checkout -b feature/sparse-cells
 # ... etc
 
 # Individual PRs to main

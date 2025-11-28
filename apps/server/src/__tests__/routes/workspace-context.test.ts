@@ -1,8 +1,8 @@
 import { Elysia } from "elysia";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { HiveConfig } from "../../config/schema";
-import { createConstructsRoutes } from "../../routes/constructs";
-import { constructs } from "../../schema/constructs";
+import { createCellsRoutes } from "../../routes/cells";
+import { cells } from "../../schema/cells";
 import type { WorkspaceRecord } from "../../workspaces/registry";
 import { setupTestDb, testDb } from "../test-db";
 
@@ -39,18 +39,18 @@ const secondaryWorkspace: WorkspaceRecord = {
   addedAt: new Date("2024-01-02T00:00:00Z").toISOString(),
 };
 
-describe("Construct routes workspace enforcement", () => {
+describe("Cell routes workspace enforcement", () => {
   beforeAll(async () => {
     await setupTestDb();
   });
 
   beforeEach(async () => {
-    await testDb.delete(constructs);
+    await testDb.delete(cells);
   });
 
   it("returns 400 when workspace context cannot be resolved", async () => {
     const app = new Elysia().use(
-      createConstructsRoutes({
+      createCellsRoutes({
         db: testDb,
         resolveWorkspaceContext: () =>
           Promise.reject(
@@ -62,7 +62,7 @@ describe("Construct routes workspace enforcement", () => {
     );
 
     const listResponse = await app.handle(
-      new Request("http://localhost/api/constructs")
+      new Request("http://localhost/api/cells")
     );
 
     expect(listResponse.status).toBe(HTTP_BAD_REQUEST);
@@ -70,7 +70,7 @@ describe("Construct routes workspace enforcement", () => {
     expect(listPayload.message.toLowerCase()).toContain("workspace");
 
     const createResponse = await app.handle(
-      new Request("http://localhost/api/constructs", {
+      new Request("http://localhost/api/cells", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -86,30 +86,30 @@ describe("Construct routes workspace enforcement", () => {
     expect(createPayload.message.toLowerCase()).toContain("workspace");
   });
 
-  it("filters construct listings by workspace id", async () => {
+  it("filters cell listings by workspace id", async () => {
     const now = new Date();
-    await testDb.insert(constructs).values([
+    await testDb.insert(cells).values([
       {
-        id: "construct-primary",
-        name: "Primary construct",
+        id: "cell-primary",
+        name: "Primary cell",
         description: "From primary workspace",
         templateId: "test-template",
         workspaceId: primaryWorkspace.id,
         workspaceRootPath: primaryWorkspace.path,
-        workspacePath: `${primaryWorkspace.path}/.hive/constructs/primary`,
+        workspacePath: `${primaryWorkspace.path}/.hive/cells/primary`,
         branchName: "feature/x",
         baseCommit: "abc123",
         createdAt: now,
         status: "ready",
       },
       {
-        id: "construct-secondary",
-        name: "Secondary construct",
+        id: "cell-secondary",
+        name: "Secondary cell",
         description: "From secondary workspace",
         templateId: "test-template",
         workspaceId: secondaryWorkspace.id,
         workspaceRootPath: secondaryWorkspace.path,
-        workspacePath: `${secondaryWorkspace.path}/.hive/constructs/secondary`,
+        workspacePath: `${secondaryWorkspace.path}/.hive/cells/secondary`,
         branchName: "feature/y",
         baseCommit: "def456",
         createdAt: now,
@@ -134,7 +134,7 @@ describe("Construct routes workspace enforcement", () => {
         loadConfig: () => Promise.resolve(hiveConfig),
         createWorktreeManager: async () => ({
           createWorktree: async () => ({
-            path: `${resolved.path}/.hive/constructs/new`,
+            path: `${resolved.path}/.hive/cells/new`,
             branch: "main",
             baseCommit: "base",
           }),
@@ -146,7 +146,7 @@ describe("Construct routes workspace enforcement", () => {
     };
 
     const app = new Elysia().use(
-      createConstructsRoutes({
+      createCellsRoutes({
         db: testDb,
         resolveWorkspaceContext,
       })
@@ -154,26 +154,26 @@ describe("Construct routes workspace enforcement", () => {
 
     const primaryResponse = await app.handle(
       new Request(
-        `http://localhost/api/constructs?workspaceId=${primaryWorkspace.id}`
+        `http://localhost/api/cells?workspaceId=${primaryWorkspace.id}`
       )
     );
     expect(primaryResponse.status).toBe(HTTP_OK);
     const primaryPayload = (await primaryResponse.json()) as {
-      constructs: Array<{ id: string }>;
+      cells: Array<{ id: string }>;
     };
-    expect(primaryPayload.constructs).toHaveLength(1);
-    expect(primaryPayload.constructs[0]?.id).toBe("construct-primary");
+    expect(primaryPayload.cells).toHaveLength(1);
+    expect(primaryPayload.cells[0]?.id).toBe("cell-primary");
 
     const secondaryResponse = await app.handle(
       new Request(
-        `http://localhost/api/constructs?workspaceId=${secondaryWorkspace.id}`
+        `http://localhost/api/cells?workspaceId=${secondaryWorkspace.id}`
       )
     );
     expect(secondaryResponse.status).toBe(HTTP_OK);
     const secondaryPayload = (await secondaryResponse.json()) as {
-      constructs: Array<{ id: string }>;
+      cells: Array<{ id: string }>;
     };
-    expect(secondaryPayload.constructs).toHaveLength(1);
-    expect(secondaryPayload.constructs[0]?.id).toBe("construct-secondary");
+    expect(secondaryPayload.cells).toHaveLength(1);
+    expect(secondaryPayload.cells[0]?.id).toBe("cell-secondary");
   });
 });

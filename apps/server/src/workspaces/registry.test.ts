@@ -9,12 +9,12 @@ import {
   listWorkspaces,
   registerWorkspace,
   removeWorkspace,
-  resolveConstructsRoot,
+  resolveCellsRoot,
   updateWorkspaceLabel,
 } from "./registry";
 
 const WORKSPACE_FILE_CONTENT = "export default {}";
-const CONSTRUCT_WORKTREE_ERROR = /construct worktrees cannot be registered/i;
+const CONSTRUCT_WORKTREE_ERROR = /cell worktrees cannot be registered/i;
 
 async function createWorkspaceRoot(prefix = "hive-workspace-") {
   const dir = await mkdtemp(join(tmpdir(), prefix));
@@ -74,15 +74,12 @@ describe("workspace registry", () => {
     expect(allWorkspaces).toHaveLength(1);
   });
 
-  test("rejects registering construct worktree paths", async () => {
-    const constructDir = join(resolveConstructsRoot(), "test-worktree");
-    await mkdir(constructDir, { recursive: true });
-    await writeFile(
-      join(constructDir, "hive.config.ts"),
-      WORKSPACE_FILE_CONTENT
-    );
+  test("rejects registering cell worktree paths", async () => {
+    const cellDir = join(resolveCellsRoot(), "test-worktree");
+    await mkdir(cellDir, { recursive: true });
+    await writeFile(join(cellDir, "hive.config.ts"), WORKSPACE_FILE_CONTENT);
 
-    await expect(registerWorkspace({ path: constructDir })).rejects.toThrow(
+    await expect(registerWorkspace({ path: cellDir })).rejects.toThrow(
       CONSTRUCT_WORKTREE_ERROR
     );
   });

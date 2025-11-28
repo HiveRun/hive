@@ -91,7 +91,7 @@ export const templateSchema = z.object({
   teardown: z
     .array(z.string())
     .optional()
-    .describe("Cleanup commands on construct stop"),
+    .describe("Cleanup commands on cell stop"),
   includePatterns: z
     .array(z.string())
     .optional()
@@ -182,7 +182,7 @@ export const defaultsSchema = z.object({
   templateId: z
     .string()
     .optional()
-    .describe("Default template to use when creating constructs"),
+    .describe("Default template to use when creating cells"),
 });
 
 export const hiveConfigSchema = z.object({
@@ -197,13 +197,13 @@ export const hiveConfigSchema = z.object({
     ),
   templates: z
     .record(z.string(), templateSchema)
-    .describe("Available construct templates"),
+    .describe("Available cell templates"),
   voice: voiceConfigSchema
     .optional()
-    .describe("Voice input configuration shared by all constructs"),
+    .describe("Voice input configuration shared by all cells"),
   defaults: defaultsSchema
     .optional()
-    .describe("Default values for construct creation"),
+    .describe("Default values for cell creation"),
 });
 
 export type ProcessService = z.infer<typeof processServiceSchema>;

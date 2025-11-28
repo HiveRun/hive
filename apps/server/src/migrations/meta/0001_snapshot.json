@@ -4,8 +4,8 @@
   "id": "57f68dc6-093b-480e-85ef-c664cd856a13",
   "prevId": "afbe1660-6eb8-4760-8459-b33532ca139d",
   "tables": {
-    "constructs": {
-      "name": "constructs",
+    "cells": {
+      "name": "cells",
       "columns": {
         "id": {
           "name": "id",

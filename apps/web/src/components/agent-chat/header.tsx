@@ -2,21 +2,18 @@ import type { AgentSession } from "@/queries/agents";
 import { formatStatus, getStatusAppearance } from "./status-theme";
 
 type AgentChatHeaderProps = {
-  constructId: string;
+  cellId: string;
   session: AgentSession;
 };
 
-export function AgentChatHeader({
-  constructId,
-  session,
-}: AgentChatHeaderProps) {
+export function AgentChatHeader({ cellId, session }: AgentChatHeaderProps) {
   const statusTheme = getStatusAppearance(session.status);
 
   return (
     <header className="flex items-center gap-2 border-border border-b px-3 py-1.5 text-muted-foreground text-xs">
-      <span className="text-[10px] uppercase tracking-[0.25em]">Construct</span>
+      <span className="text-[10px] uppercase tracking-[0.25em]">Cell</span>
       <span className="font-semibold text-foreground text-sm tracking-wide">
-        {constructId}
+        {cellId}
       </span>
       <span className="text-muted-foreground">·</span>
       <span>Template · {session.templateId}</span>

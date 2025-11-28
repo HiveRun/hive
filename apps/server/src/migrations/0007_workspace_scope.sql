@@ -1,5 +1,5 @@
 PRAGMA foreign_keys=OFF;--> statement-breakpoint
-CREATE TABLE `__new_constructs` (
+CREATE TABLE `__new_cells` (
 	`id` text PRIMARY KEY NOT NULL,
 	`name` text NOT NULL,
 	`description` text,
@@ -17,13 +17,13 @@ CREATE TABLE `__new_constructs` (
 	`base_commit` text
 );
 --> statement-breakpoint
-INSERT INTO `__new_constructs`("id", "name", "description", "template_id", "workspace_path", "workspace_id", "workspace_root_path", "opencode_session_id", "opencode_server_url", "opencode_server_port", "created_at", "status", "last_setup_error", "branch_name", "base_commit") SELECT "id", "name", "description", "template_id", "workspace_path", "workspace_id", "workspace_root_path", "opencode_session_id", "opencode_server_url", "opencode_server_port", "created_at", "status", "last_setup_error", "branch_name", "base_commit" FROM `constructs`;--> statement-breakpoint
-DROP TABLE `constructs`;--> statement-breakpoint
-ALTER TABLE `__new_constructs` RENAME TO `constructs`;--> statement-breakpoint
+INSERT INTO `__new_cells`("id", "name", "description", "template_id", "workspace_path", "workspace_id", "workspace_root_path", "opencode_session_id", "opencode_server_url", "opencode_server_port", "created_at", "status", "last_setup_error", "branch_name", "base_commit") SELECT "id", "name", "description", "template_id", "workspace_path", "workspace_id", "workspace_root_path", "opencode_session_id", "opencode_server_url", "opencode_server_port", "created_at", "status", "last_setup_error", "branch_name", "base_commit" FROM `cells`;--> statement-breakpoint
+DROP TABLE `cells`;--> statement-breakpoint
+ALTER TABLE `__new_cells` RENAME TO `cells`;--> statement-breakpoint
 PRAGMA foreign_keys=ON;--> statement-breakpoint
-CREATE TABLE `__new_construct_services` (
+CREATE TABLE `__new_cell_services` (
 	`id` text PRIMARY KEY NOT NULL,
-	`construct_id` text NOT NULL,
+	`cell_id` text NOT NULL,
 	`name` text NOT NULL,
 	`type` text NOT NULL,
 	`command` text NOT NULL,
@@ -37,9 +37,9 @@ CREATE TABLE `__new_construct_services` (
 	`last_known_error` text,
 	`created_at` integer NOT NULL,
 	`updated_at` integer NOT NULL,
-	FOREIGN KEY (`construct_id`) REFERENCES `constructs`(`id`) ON UPDATE no action ON DELETE cascade
+	FOREIGN KEY (`cell_id`) REFERENCES `cells`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-INSERT INTO `__new_construct_services`("id", "construct_id", "name", "type", "command", "cwd", "env", "status", "port", "pid", "ready_timeout_ms", "definition", "last_known_error", "created_at", "updated_at") SELECT "id", "construct_id", "name", "type", "command", "cwd", "env", "status", "port", "pid", "ready_timeout_ms", "definition", "last_known_error", "created_at", "updated_at" FROM `construct_services`;--> statement-breakpoint
-DROP TABLE `construct_services`;--> statement-breakpoint
-ALTER TABLE `__new_construct_services` RENAME TO `construct_services`;
+INSERT INTO `__new_cell_services`("id", "cell_id", "name", "type", "command", "cwd", "env", "status", "port", "pid", "ready_timeout_ms", "definition", "last_known_error", "created_at", "updated_at") SELECT "id", "cell_id", "name", "type", "command", "cwd", "env", "status", "port", "pid", "ready_timeout_ms", "definition", "last_known_error", "created_at", "updated_at" FROM `cell_services`;--> statement-breakpoint
+DROP TABLE `cell_services`;--> statement-breakpoint
+ALTER TABLE `__new_cell_services` RENAME TO `cell_services`;

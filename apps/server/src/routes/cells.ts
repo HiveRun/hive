@@ -10,33 +10,29 @@ import type { Template } from "../config/schema";
 import { db } from "../db";
 
 import {
-  ConstructDiffResponseSchema,
-  ConstructListResponseSchema,
-  ConstructResponseSchema,
-  ConstructServiceListResponseSchema,
-  ConstructServiceSchema,
-  CreateConstructSchema,
-  DeleteConstructsSchema,
+  CellDiffResponseSchema,
+  CellListResponseSchema,
+  CellResponseSchema,
+  CellServiceListResponseSchema,
+  CellServiceSchema,
+  CreateCellSchema,
+  DeleteCellsSchema,
   DiffQuerySchema,
 } from "../schema/api";
+import { type CellStatus, cells, type NewCell } from "../schema/cells";
+import { cellServices } from "../schema/services";
 import {
-  type ConstructStatus,
-  constructs,
-  type NewConstruct,
-} from "../schema/constructs";
-import { constructServices } from "../schema/services";
-import {
-  buildConstructDiffPayload,
+  buildCellDiffPayload,
   parseDiffRequest,
 } from "../services/diff-route-helpers";
 import { subscribeToServiceEvents } from "../services/events";
 import {
   CommandExecutionError,
-  ensureServicesForConstruct,
+  ensureServicesForCell,
   isProcessAlive,
   startServiceById,
   stopServiceById,
-  stopServicesForConstruct,
+  stopServicesForCell,
   TemplateSetupError,
 } from "../services/supervisor";
 import {
@@ -47,26 +43,26 @@ import { createWorkspaceContextPlugin } from "../workspaces/plugin";
 import type { WorkspaceRecord } from "../workspaces/registry";
 import type { WorktreeManager } from "../worktree/manager";
 
-export type ConstructRouteDependencies = {
+export type CellRouteDependencies = {
   db: typeof db;
   resolveWorkspaceContext: typeof resolveWorkspaceContext;
   ensureAgentSession: typeof ensureAgentSession;
   closeAgentSession: typeof closeAgentSession;
-  ensureServicesForConstruct: typeof ensureServicesForConstruct;
+  ensureServicesForCell: typeof ensureServicesForCell;
   startServiceById: typeof startServiceById;
   stopServiceById: typeof stopServiceById;
-  stopServicesForConstruct: typeof stopServicesForConstruct;
+  stopServicesForCell: typeof stopServicesForCell;
 };
 
-const defaultConstructRouteDependencies: ConstructRouteDependencies = {
+const defaultCellRouteDependencies: CellRouteDependencies = {
   db,
   resolveWorkspaceContext,
   ensureAgentSession,
   closeAgentSession,
-  ensureServicesForConstruct,
+  ensureServicesForCell,
   startServiceById,
   stopServiceById,
-  stopServicesForConstruct,
+  stopServicesForCell,
 };
 
 const HTTP_STATUS = {
@@ -118,23 +114,23 @@ function isPortActive(port?: number | null): Promise<boolean> {
   });
 }
 
-function constructToResponse(construct: typeof constructs.$inferSelect) {
+function cellToResponse(cell: typeof cells.$inferSelect) {
   return {
-    id: construct.id,
-    name: construct.name,
-    description: construct.description,
-    templateId: construct.templateId,
-    workspaceId: construct.workspaceId,
-    workspaceRootPath: construct.workspaceRootPath,
-    workspacePath: construct.workspacePath,
-    opencodeSessionId: construct.opencodeSessionId,
-    opencodeServerUrl: construct.opencodeServerUrl,
-    opencodeServerPort: construct.opencodeServerPort,
-    createdAt: construct.createdAt.toISOString(),
-    status: construct.status,
-    lastSetupError: construct.lastSetupError ?? undefined,
-    branchName: construct.branchName ?? undefined,
-    baseCommit: construct.baseCommit ?? undefined,
+    id: cell.id,
+    name: cell.name,
+    description: cell.description,
+    templateId: cell.templateId,
+    workspaceId: cell.workspaceId,
+    workspaceRootPath: cell.workspaceRootPath,
+    workspacePath: cell.workspacePath,
+    opencodeSessionId: cell.opencodeSessionId,
+    opencodeServerUrl: cell.opencodeServerUrl,
+    opencodeServerPort: cell.opencodeServerPort,
+    createdAt: cell.createdAt.toISOString(),
+    status: cell.status,
+    lastSetupError: cell.lastSetupError ?? undefined,
+    branchName: cell.branchName ?? undefined,
+    baseCommit: cell.baseCommit ?? undefined,
   };
 }
 
@@ -143,26 +139,26 @@ type ErrorPayload = {
   details?: string;
 };
 
-export function createConstructsRoutes(
-  overrides: Partial<ConstructRouteDependencies> = {}
+export function createCellsRoutes(
+  overrides: Partial<CellRouteDependencies> = {}
 ) {
-  const deps = { ...defaultConstructRouteDependencies, ...overrides };
+  const deps = { ...defaultCellRouteDependencies, ...overrides };
   const {
     db: database,
     resolveWorkspaceContext: resolveWorkspaceCtx,
     ensureAgentSession: ensureSession,
     closeAgentSession: closeSession,
-    ensureServicesForConstruct: ensureServices,
+    ensureServicesForCell: ensureServices,
     startServiceById: startService,
     stopServiceById: stopService,
-    stopServicesForConstruct: stopConstructServicesFn,
+    stopServicesForCell: stopCellServicesFn,
   } = deps;
 
   const workspaceContextPlugin = createWorkspaceContextPlugin({
     resolveWorkspaceContext: resolveWorkspaceCtx,
   });
 
-  return new Elysia({ prefix: "/api/constructs" })
+  return new Elysia({ prefix: "/api/cells" })
     .use(logger(LOGGER_CONFIG))
     .use(workspaceContextPlugin)
     .get(
@@ -170,18 +166,16 @@ export function createConstructsRoutes(
       async ({ query, set, getWorkspaceContext }) => {
         try {
           const workspaceContext = await getWorkspaceContext(query.workspaceId);
-          const allConstructs = await database
+          const allCells = await database
             .select()
-            .from(constructs)
-            .where(eq(constructs.workspaceId, workspaceContext.workspace.id));
-          return { constructs: allConstructs.map(constructToResponse) };
+            .from(cells)
+            .where(eq(cells.workspaceId, workspaceContext.workspace.id));
+          return { cells: allCells.map(cellToResponse) };
         } catch (error) {
           set.status = HTTP_STATUS.BAD_REQUEST;
           return {
             message:
-              error instanceof Error
-                ? error.message
-                : "Failed to load constructs",
+              error instanceof Error ? error.message : "Failed to load cells",
           };
         }
       },
@@ -190,7 +184,7 @@ export function createConstructsRoutes(
           workspaceId: t.Optional(t.String()),
         }),
         response: {
-          200: ConstructListResponseSchema,
+          200: CellListResponseSchema,
           400: ErrorResponseSchema,
         },
       }
@@ -200,29 +194,29 @@ export function createConstructsRoutes(
       async ({ params, set }) => {
         const result = await database
           .select()
-          .from(constructs)
-          .where(eq(constructs.id, params.id))
+          .from(cells)
+          .where(eq(cells.id, params.id))
           .limit(1);
 
         if (result.length === 0) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Construct not found" };
+          return { message: "Cell not found" };
         }
 
-        const [construct] = result;
-        if (!construct) {
+        const [cell] = result;
+        if (!cell) {
           set.status = HTTP_STATUS.INTERNAL_ERROR;
-          return { message: "Failed to load construct" };
+          return { message: "Failed to load cell" };
         }
 
-        return constructToResponse(construct);
+        return cellToResponse(cell);
       },
       {
         params: t.Object({
           id: t.String(),
         }),
         response: {
-          200: ConstructResponseSchema,
+          200: CellResponseSchema,
           404: t.Object({
             message: t.String(),
           }),
@@ -232,10 +226,10 @@ export function createConstructsRoutes(
     .get(
       "/:id/services",
       async ({ params, set }) => {
-        const construct = await loadConstructById(database, params.id);
-        if (!construct) {
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Construct not found" };
+          return { message: "Cell not found" };
         }
 
         const rows = await fetchServiceRows(database, params.id);
@@ -248,7 +242,7 @@ export function createConstructsRoutes(
       {
         params: t.Object({ id: t.String() }),
         response: {
-          200: ConstructServiceListResponseSchema,
+          200: CellServiceListResponseSchema,
           404: t.Object({ message: t.String() }),
         },
       }
@@ -256,10 +250,10 @@ export function createConstructsRoutes(
     .get(
       "/:id/services/stream",
       async ({ params, set, log }) => {
-        const construct = await loadConstructById(database, params.id);
-        if (!construct) {
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Construct not found" };
+          return { message: "Cell not found" };
         }
 
         const encoder = new TextEncoder();
@@ -349,20 +343,20 @@ export function createConstructsRoutes(
     .get(
       "/:id/diff",
       async ({ params, query, set }) => {
-        const construct = await loadConstructById(database, params.id);
-        if (!construct) {
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Construct not found" };
+          return { message: "Cell not found" };
         }
 
-        const parsed = parseDiffRequest(construct, query);
+        const parsed = parseDiffRequest(cell, query);
         if (!parsed.ok) {
           set.status = parsed.status;
           return { message: parsed.message };
         }
 
         try {
-          return await buildConstructDiffPayload(construct, parsed.value);
+          return await buildCellDiffPayload(cell, parsed.value);
         } catch (error) {
           set.status = HTTP_STATUS.INTERNAL_ERROR;
           return {
@@ -375,7 +369,7 @@ export function createConstructsRoutes(
         params: t.Object({ id: t.String() }),
         query: DiffQuerySchema,
         response: {
-          200: ConstructDiffResponseSchema,
+          200: CellDiffResponseSchema,
           400: t.Object({ message: t.String() }),
           404: t.Object({ message: t.String() }),
         },
@@ -412,7 +406,7 @@ export function createConstructsRoutes(
       {
         params: t.Object({ id: t.String(), serviceId: t.String() }),
         response: {
-          200: ConstructServiceSchema,
+          200: CellServiceSchema,
           404: t.Object({ message: t.String() }),
         },
       }
@@ -446,7 +440,7 @@ export function createConstructsRoutes(
       {
         params: t.Object({ id: t.String(), serviceId: t.String() }),
         response: {
-          200: ConstructServiceSchema,
+          200: CellServiceSchema,
           404: t.Object({ message: t.String() }),
         },
       }
@@ -456,12 +450,12 @@ export function createConstructsRoutes(
       async ({ body, set, log, getWorkspaceContext }) => {
         try {
           const workspaceContext = await getWorkspaceContext(body.workspaceId);
-          const result = await handleConstructCreationRequest({
+          const result = await handleCellCreationRequest({
             body,
             database,
             ensureSession,
             ensureServices,
-            stopConstructServices: stopConstructServicesFn,
+            stopCellServices: stopCellServicesFn,
             workspaceContext,
             log,
           });
@@ -472,16 +466,14 @@ export function createConstructsRoutes(
           set.status = HTTP_STATUS.BAD_REQUEST;
           return {
             message:
-              error instanceof Error
-                ? error.message
-                : "Failed to create construct",
+              error instanceof Error ? error.message : "Failed to create cell",
           };
         }
       },
       {
-        body: CreateConstructSchema,
+        body: CreateCellSchema,
         response: {
-          201: ConstructResponseSchema,
+          201: CellResponseSchema,
           400: t.Object({
             message: t.String(),
           }),
@@ -495,18 +487,18 @@ export function createConstructsRoutes(
         try {
           const uniqueIds = [...new Set(body.ids)];
 
-          const constructsToDelete = await database
+          const cellsToDelete = await database
             .select({
-              id: constructs.id,
-              workspacePath: constructs.workspacePath,
-              workspaceId: constructs.workspaceId,
+              id: cells.id,
+              workspacePath: cells.workspacePath,
+              workspaceId: cells.workspaceId,
             })
-            .from(constructs)
-            .where(inArray(constructs.id, uniqueIds));
+            .from(cells)
+            .where(inArray(cells.id, uniqueIds));
 
-          if (constructsToDelete.length === 0) {
+          if (cellsToDelete.length === 0) {
             set.status = HTTP_STATUS.NOT_FOUND;
-            return { message: "No constructs found for provided ids" };
+            return { message: "No cells found for provided ids" };
           }
 
           const managerCache = new Map<string, WorktreeManager>();
@@ -521,44 +513,40 @@ export function createConstructsRoutes(
             return manager;
           };
 
-          for (const construct of constructsToDelete) {
-            await closeSession(construct.id);
+          for (const cell of cellsToDelete) {
+            await closeSession(cell.id);
             try {
-              await stopConstructServicesFn(construct.id, {
+              await stopCellServicesFn(cell.id, {
                 releasePorts: true,
               });
             } catch (error) {
               log.warn(
-                { error, constructId: construct.id },
-                "Failed to stop services before construct removal"
+                { error, cellId: cell.id },
+                "Failed to stop services before cell removal"
               );
             }
 
-            const worktreeService = await fetchManager(construct.workspaceId);
-            await removeConstructWorkspace(worktreeService, construct, log);
+            const worktreeService = await fetchManager(cell.workspaceId);
+            await removeCellWorkspace(worktreeService, cell, log);
           }
 
-          const idsToDelete = constructsToDelete.map(
-            (construct) => construct.id
-          );
+          const idsToDelete = cellsToDelete.map((cell) => cell.id);
 
-          await database
-            .delete(constructs)
-            .where(inArray(constructs.id, idsToDelete));
+          await database.delete(cells).where(inArray(cells.id, idsToDelete));
 
           return { deletedIds: idsToDelete };
         } catch (error) {
           if (error instanceof Error) {
-            log.error(error, "Failed to delete constructs");
+            log.error(error, "Failed to delete cells");
           } else {
-            log.error({ error }, "Failed to delete constructs");
+            log.error({ error }, "Failed to delete cells");
           }
           set.status = HTTP_STATUS.INTERNAL_ERROR;
-          return { message: "Failed to delete constructs" };
+          return { message: "Failed to delete cells" };
         }
       },
       {
-        body: DeleteConstructsSchema,
+        body: DeleteCellsSchema,
         response: {
           200: t.Object({
             deletedIds: t.Array(t.String()),
@@ -577,40 +565,38 @@ export function createConstructsRoutes(
       "/:id",
       async ({ params, set, log }) => {
         try {
-          const construct = await loadConstructById(database, params.id);
-          if (!construct) {
+          const cell = await loadCellById(database, params.id);
+          if (!cell) {
             set.status = HTTP_STATUS.NOT_FOUND;
-            return { message: "Construct not found" };
+            return { message: "Cell not found" };
           }
 
           await closeSession(params.id);
           try {
-            await stopConstructServicesFn(params.id, { releasePorts: true });
+            await stopCellServicesFn(params.id, { releasePorts: true });
           } catch (error) {
             log.warn(
-              { error, constructId: params.id },
-              "Failed to stop services before construct removal"
+              { error, cellId: params.id },
+              "Failed to stop services before cell removal"
             );
           }
 
-          const workspaceManager = await resolveWorkspaceCtx(
-            construct.workspaceId
-          );
+          const workspaceManager = await resolveWorkspaceCtx(cell.workspaceId);
           const worktreeService =
             await workspaceManager.createWorktreeManager();
-          await removeConstructWorkspace(worktreeService, construct, log);
+          await removeCellWorkspace(worktreeService, cell, log);
 
-          await database.delete(constructs).where(eq(constructs.id, params.id));
+          await database.delete(cells).where(eq(cells.id, params.id));
 
-          return { message: "Construct deleted successfully" };
+          return { message: "Cell deleted successfully" };
         } catch (error) {
           if (error instanceof Error) {
-            log.error(error, "Failed to delete construct");
+            log.error(error, "Failed to delete cell");
           } else {
-            log.error({ error }, "Failed to delete construct");
+            log.error({ error }, "Failed to delete cell");
           }
           set.status = HTTP_STATUS.INTERNAL_ERROR;
-          return { message: "Failed to delete construct" };
+          return { message: "Failed to delete cell" };
         }
       },
       {
@@ -630,36 +616,34 @@ export function createConstructsRoutes(
     );
 }
 
-export const constructsRoutes = createConstructsRoutes();
+export const cellsRoutes = createCellsRoutes();
 
-type ConstructCreationResult = {
+type CellCreationResult = {
   status: number;
-  payload: ConstructCreationPayload;
+  payload: CellCreationPayload;
 };
 
-type ConstructCreationPayload =
-  | ReturnType<typeof constructToResponse>
-  | ErrorPayload;
+type CellCreationPayload = ReturnType<typeof cellToResponse> | ErrorPayload;
 
-type ConstructCreationArgs = {
-  body: Static<typeof CreateConstructSchema>;
+type CellCreationArgs = {
+  body: Static<typeof CreateCellSchema>;
   database: typeof db;
   ensureSession: typeof ensureAgentSession;
-  ensureServices: typeof ensureServicesForConstruct;
-  stopConstructServices: typeof stopServicesForConstruct;
+  ensureServices: typeof ensureServicesForCell;
+  stopCellServices: typeof stopServicesForCell;
   workspaceContext: WorkspaceRuntimeContext;
   log: LoggerLike;
 };
 
-async function handleConstructCreationRequest(
-  args: ConstructCreationArgs
-): Promise<ConstructCreationResult> {
+async function handleCellCreationRequest(
+  args: CellCreationArgs
+): Promise<CellCreationResult> {
   const {
     body,
     database,
     ensureSession,
     ensureServices,
-    stopConstructServices,
+    stopCellServices,
     workspaceContext,
     log,
   } = args;
@@ -680,54 +664,54 @@ async function handleConstructCreationRequest(
     database,
     ensureSession,
     ensureServices,
-    stopConstructServices,
+    stopCellServices,
     worktreeService,
     workspace: workspaceContext.workspace,
     log,
   });
 
   try {
-    const construct = await createConstructWithServices(context);
+    const cell = await createCellWithServices(context);
     return {
       status: HTTP_STATUS.CREATED,
-      payload: constructToResponse(construct),
+      payload: cellToResponse(cell),
     };
   } catch (error) {
-    return recoverConstructCreationFailure(context, error);
+    return recoverCellCreationFailure(context, error);
   }
 }
 
 type ProvisionContext = {
-  body: Static<typeof CreateConstructSchema>;
+  body: Static<typeof CreateCellSchema>;
   template: Template;
   database: typeof db;
   ensureSession: typeof ensureAgentSession;
-  ensureServices: typeof ensureServicesForConstruct;
-  stopConstructServices: typeof stopServicesForConstruct;
+  ensureServices: typeof ensureServicesForCell;
+  stopCellServices: typeof stopServicesForCell;
   worktreeService: WorktreeManager;
   workspace: WorkspaceRecord;
   log: LoggerLike;
-  state: ConstructProvisionState;
+  state: CellProvisionState;
 };
 
-type ConstructProvisionState = {
-  constructId: string;
+type CellProvisionState = {
+  cellId: string;
   worktreeCreated: boolean;
   recordCreated: boolean;
   servicesStarted: boolean;
   workspacePath: string | null;
   branchName: string | null;
   baseCommit: string | null;
-  createdConstruct: typeof constructs.$inferSelect | null;
+  createdCell: typeof cells.$inferSelect | null;
 };
 
 function createProvisionContext(args: {
-  body: Static<typeof CreateConstructSchema>;
+  body: Static<typeof CreateCellSchema>;
   template: Template;
   database: typeof db;
   ensureSession: typeof ensureAgentSession;
-  ensureServices: typeof ensureServicesForConstruct;
-  stopConstructServices: typeof stopServicesForConstruct;
+  ensureServices: typeof ensureServicesForCell;
+  stopCellServices: typeof stopServicesForCell;
   worktreeService: WorktreeManager;
   workspace: WorkspaceRecord;
   log: LoggerLike;
@@ -735,21 +719,21 @@ function createProvisionContext(args: {
   return {
     ...args,
     state: {
-      constructId: randomUUID(),
+      cellId: randomUUID(),
       worktreeCreated: false,
       recordCreated: false,
       servicesStarted: false,
       workspacePath: null,
       branchName: null,
       baseCommit: null,
-      createdConstruct: null,
+      createdCell: null,
     },
   };
 }
 
-async function createConstructWithServices(
+async function createCellWithServices(
   context: ProvisionContext
-): Promise<typeof constructs.$inferSelect> {
+): Promise<typeof cells.$inferSelect> {
   const {
     body,
     template,
@@ -761,7 +745,7 @@ async function createConstructWithServices(
     state,
   } = context;
 
-  const worktree = await worktreeService.createWorktree(state.constructId, {
+  const worktree = await worktreeService.createWorktree(state.cellId, {
     templateId: body.templateId,
   });
   state.worktreeCreated = true;
@@ -770,8 +754,8 @@ async function createConstructWithServices(
   state.baseCommit = worktree.baseCommit;
 
   const timestamp = new Date();
-  const newConstruct: NewConstruct = {
-    id: state.constructId,
+  const newCell: NewCell = {
+    id: state.cellId,
     name: body.name,
     description: body.description ?? null,
     templateId: body.templateId,
@@ -788,47 +772,44 @@ async function createConstructWithServices(
     lastSetupError: null,
   };
 
-  const [created] = await database
-    .insert(constructs)
-    .values(newConstruct)
-    .returning();
+  const [created] = await database.insert(cells).values(newCell).returning();
 
   if (!created) {
-    throw new Error("Failed to create construct record");
+    throw new Error("Failed to create cell record");
   }
 
   state.recordCreated = true;
-  state.createdConstruct = created;
+  state.createdCell = created;
 
-  await ensureSession(state.constructId);
+  await ensureSession(state.cellId);
   await ensureServices(created, template);
 
   state.servicesStarted = true;
 
-  await updateConstructProvisioningStatus(database, state.constructId, "ready");
+  await updateCellProvisioningStatus(database, state.cellId, "ready");
 
   const readyRecord = { ...created, status: "ready", lastSetupError: null };
-  state.createdConstruct = readyRecord;
+  state.createdCell = readyRecord;
   return readyRecord;
 }
 
-async function recoverConstructCreationFailure(
+async function recoverCellCreationFailure(
   context: ProvisionContext,
   error: unknown
-): Promise<ConstructCreationResult> {
-  const payload = buildConstructCreationErrorPayload(error);
-  const preserveResources = shouldPreserveConstructWorkspace(error);
+): Promise<CellCreationResult> {
+  const payload = buildCellCreationErrorPayload(error);
+  const preserveResources = shouldPreserveCellWorkspace(error);
 
   if (
     preserveResources &&
     context.state.recordCreated &&
-    context.state.createdConstruct
+    context.state.createdCell
   ) {
     const lastSetupError = deriveSetupErrorDetails(payload);
 
-    await updateConstructProvisioningStatus(
+    await updateCellProvisioningStatus(
       context.database,
-      context.state.constructId,
+      context.state.cellId,
       "error",
       lastSetupError
     );
@@ -838,26 +819,26 @@ async function recoverConstructCreationFailure(
       preserveWorktree: true,
     });
 
-    const erroredConstruct = {
-      ...context.state.createdConstruct,
+    const erroredCell = {
+      ...context.state.createdCell,
       status: "error",
       lastSetupError,
     };
 
-    context.state.createdConstruct = erroredConstruct;
+    context.state.createdCell = erroredCell;
 
     return {
       status: HTTP_STATUS.CREATED,
-      payload: constructToResponse(erroredConstruct),
+      payload: cellToResponse(erroredCell),
     };
   }
 
   await cleanupProvisionResources(context);
 
   if (error instanceof Error) {
-    context.log.error(error, "Failed to create construct");
+    context.log.error(error, "Failed to create cell");
   } else {
-    context.log.error({ error }, "Failed to create construct");
+    context.log.error({ error }, "Failed to create cell");
   }
 
   return { status: HTTP_STATUS.INTERNAL_ERROR, payload };
@@ -874,7 +855,7 @@ async function cleanupProvisionResources(
   }
 
   if (!options.preserveRecord) {
-    await deleteConstructRecordIfCreated(context);
+    await deleteCellRecordIfCreated(context);
   }
 }
 
@@ -884,13 +865,13 @@ async function stopServicesIfStarted(context: ProvisionContext) {
   }
 
   try {
-    await context.stopConstructServices(context.state.constructId, {
+    await context.stopCellServices(context.state.cellId, {
       releasePorts: true,
     });
   } catch (cleanupError) {
     context.log.warn(
       { cleanupError },
-      "Failed to stop services during construct creation cleanup"
+      "Failed to stop services during cell creation cleanup"
     );
   } finally {
     context.state.servicesStarted = false;
@@ -902,10 +883,10 @@ async function removeWorktreeIfCreated(context: ProvisionContext) {
     return;
   }
 
-  await removeConstructWorkspace(
+  await removeCellWorkspace(
     context.worktreeService,
     {
-      id: context.state.constructId,
+      id: context.state.cellId,
       workspacePath: context.state.workspacePath,
     },
     context.log
@@ -915,28 +896,28 @@ async function removeWorktreeIfCreated(context: ProvisionContext) {
   context.state.workspacePath = null;
 }
 
-async function deleteConstructRecordIfCreated(context: ProvisionContext) {
+async function deleteCellRecordIfCreated(context: ProvisionContext) {
   if (!context.state.recordCreated) {
     return;
   }
 
   try {
     await context.database
-      .delete(constructs)
-      .where(eq(constructs.id, context.state.constructId));
+      .delete(cells)
+      .where(eq(cells.id, context.state.cellId));
   } catch (cleanupError) {
     context.log.warn(
       { cleanupError },
-      "Failed to delete construct row during cleanup"
+      "Failed to delete cell row during cleanup"
     );
   } finally {
     context.state.recordCreated = false;
-    context.state.createdConstruct = null;
+    context.state.createdCell = null;
   }
 }
 
-type ConstructWorkspaceRecord = Pick<
-  typeof constructs.$inferSelect,
+type CellWorkspaceRecord = Pick<
+  typeof cells.$inferSelect,
   "id" | "workspacePath"
 >;
 
@@ -945,7 +926,7 @@ type LoggerLike = {
   error: (obj: Record<string, unknown> | Error, message?: string) => void;
 };
 
-function shouldPreserveConstructWorkspace(
+function shouldPreserveCellWorkspace(
   error: unknown
 ): error is TemplateSetupError {
   return error instanceof TemplateSetupError;
@@ -956,19 +937,19 @@ function deriveSetupErrorDetails(payload: ErrorPayload): string {
   return details?.length ? details : payload.message;
 }
 
-async function updateConstructProvisioningStatus(
+async function updateCellProvisioningStatus(
   database: typeof db,
-  constructId: string,
-  status: ConstructStatus,
+  cellId: string,
+  status: CellStatus,
   lastSetupError?: string | null
 ): Promise<void> {
   await database
-    .update(constructs)
+    .update(cells)
     .set({ status, lastSetupError: lastSetupError ?? null })
-    .where(eq(constructs.id, constructId));
+    .where(eq(cells.id, cellId));
 }
 
-function buildConstructCreationErrorPayload(error: unknown): ErrorPayload {
+function buildCellCreationErrorPayload(error: unknown): ErrorPayload {
   if (error instanceof TemplateSetupError) {
     const details = [
       `Template ID: ${error.templateId}`,
@@ -1014,7 +995,7 @@ function buildConstructCreationErrorPayload(error: unknown): ErrorPayload {
     };
   }
 
-  return { message: "Failed to create construct" };
+  return { message: "Failed to create cell" };
 }
 
 function formatStackTrace(error?: Error): string | undefined {
@@ -1025,75 +1006,70 @@ function formatStackTrace(error?: Error): string | undefined {
   return error.stack ?? error.message;
 }
 
-async function removeConstructWorkspace(
+async function removeCellWorkspace(
   worktreeService: WorktreeManager,
-  construct: ConstructWorkspaceRecord,
+  cell: CellWorkspaceRecord,
   log: LoggerLike
 ) {
   try {
-    worktreeService.removeWorktree(construct.id);
+    worktreeService.removeWorktree(cell.id);
     return;
   } catch (error) {
     log.warn(
-      { error, constructId: construct.id },
+      { error, cellId: cell.id },
       "Failed to remove git worktree, attempting filesystem cleanup"
     );
   }
 
-  if (!construct.workspacePath) {
+  if (!cell.workspacePath) {
     return;
   }
 
   try {
-    await fs.rm(construct.workspacePath, { recursive: true, force: true });
+    await fs.rm(cell.workspacePath, { recursive: true, force: true });
   } catch (error) {
     log.warn(
       {
         error,
-        constructId: construct.id,
-        workspacePath: construct.workspacePath,
+        cellId: cell.id,
+        workspacePath: cell.workspacePath,
       },
-      "Failed to remove construct workspace directory"
+      "Failed to remove cell workspace directory"
     );
   }
 }
 
-async function loadConstructById(
+async function loadCellById(
   database: typeof db,
-  constructId: string
-): Promise<typeof constructs.$inferSelect | null> {
-  const [construct] = await database
+  cellId: string
+): Promise<typeof cells.$inferSelect | null> {
+  const [cell] = await database
     .select()
-    .from(constructs)
-    .where(eq(constructs.id, constructId))
+    .from(cells)
+    .where(eq(cells.id, cellId))
     .limit(1);
 
-  return construct ?? null;
+  return cell ?? null;
 }
 
-function fetchServiceRows(database: typeof db, constructId: string) {
+function fetchServiceRows(database: typeof db, cellId: string) {
   return database
-    .select({ service: constructServices, construct: constructs })
-    .from(constructServices)
-    .innerJoin(constructs, eq(constructs.id, constructServices.constructId))
-    .where(eq(constructServices.constructId, constructId));
+    .select({ service: cellServices, cell: cells })
+    .from(cellServices)
+    .innerJoin(cells, eq(cells.id, cellServices.cellId))
+    .where(eq(cellServices.cellId, cellId));
 }
 
 async function fetchServiceRow(
   database: typeof db,
-  constructId: string,
+  cellId: string,
   serviceId: string
 ) {
   const [row] = await database
-    .select({ service: constructServices, construct: constructs })
-    .from(constructServices)
-    .innerJoin(constructs, eq(constructs.id, constructServices.constructId))
-    .where(
-      and(
-        eq(constructServices.constructId, constructId),
-        eq(constructServices.id, serviceId)
-      )
-    )
+    .select({ service: cellServices, cell: cells })
+    .from(cellServices)
+    .innerJoin(cells, eq(cells.id, cellServices.cellId))
+    .where(and(eq(cellServices.cellId, cellId), eq(cellServices.id, serviceId)))
     .limit(1);
 
   return row ?? null;
@@ -1102,12 +1078,12 @@ async function fetchServiceRow(
 async function serializeService(
   database: typeof db,
   row: {
-    service: typeof constructServices.$inferSelect;
-    construct: typeof constructs.$inferSelect;
+    service: typeof cellServices.$inferSelect;
+    cell: typeof cells.$inferSelect;
   }
 ) {
-  const { service, construct } = row;
-  const logPath = computeServiceLogPath(construct.workspacePath, service.name);
+  const { service, cell } = row;
+  const logPath = computeServiceLogPath(cell.workspacePath, service.name);
   const recentLogs = await readLogTail(logPath);
   const processAlive = isProcessAlive(service.pid);
   const portReachable =
@@ -1135,14 +1111,14 @@ async function serializeService(
 
   if (shouldPersist) {
     await database
-      .update(constructServices)
+      .update(cellServices)
       .set({
         status: derivedStatus,
         lastKnownError: derivedLastKnownError,
         pid: derivedPid,
         updatedAt: new Date(),
       })
-      .where(eq(constructServices.id, service.id));
+      .where(eq(cellServices.id, service.id));
   }
 
   return {

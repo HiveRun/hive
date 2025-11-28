@@ -202,7 +202,7 @@ export const templateSnapshotFixture: TemplateFixture[] = [
         STORAGE_ROOT: "/var/hive/hive-dev",
       },
       setup: ["bun setup"],
-      prompts: ["Synchronize runtime state", "Validate construct scaffolding"],
+      prompts: ["Synchronize runtime state", "Validate cell scaffolding"],
       teardown: ["bun run cleanup", "rm -rf .hive/hive-dev"],
     },
   }),

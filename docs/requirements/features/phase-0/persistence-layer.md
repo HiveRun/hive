@@ -7,21 +7,21 @@
 > **Current Approach**: Each PR adds only the database tables and queries it actually needs. This document describes the complete schema that was originally planned for Phase 0.
 > 
 > **What's Implemented Instead**:
-> - **Step 2**: Basic `constructs` table (minimal schema)
-> - **Step 4**: `constructs` table stores `opencode_session_id` (OpenCode persists transcripts)
-> - **Step 3**: Adds `workspace_path` to constructs table
+> - **Step 2**: Basic `cells` table (minimal schema)
+> - **Step 4**: `cells` table stores `opencode_session_id` (OpenCode persists transcripts)
+> - **Step 3**: Adds `workspace_path` to cells table
 
 > **Template Storage**: Templates are intentionally stored as files (`hive.config.ts`) rather than in the database. This architectural decision prioritizes version control, type safety, and developer experience over dynamic template management.
 
 ## Goal
-Provide reliable storage for constructs, transcripts, artifacts, and metadata with ACID guarantees and efficient access patterns.
+Provide reliable storage for cells, transcripts, artifacts, and metadata with ACID guarantees and efficient access patterns.
 
 ## Current Status: DEFERRED
 
 This feature represents the **comprehensive persistence system** that was originally planned for Phase 0. It has been deferred to accelerate delivery of core functionality.
 
 ### What's Implemented Instead
-- **Step 2**: Basic `constructs` table with minimal schema
+- **Step 2**: Basic `cells` table with minimal schema
 - **Step 3**: Adds `workspace_path` column for worktree support
 - Agent transcript persistence now lives entirely inside OpenCode's store. Hive no longer creates local `agent_sessions` / `agent_messages` tables; the backend proxies directly to OpenCode when transcript history is needed.
 
@@ -31,41 +31,41 @@ The complete persistence system with all tables, indexes, and optimizations will
 ## Requirements
 
 ### Database Schema
-- **Primary store**: Use SQLite as the primary database for constructs, transcripts, statuses, and metadata to gain ACID writes with minimal setup.
-- **Schema design**: Design normalized tables for constructs, sessions, transcripts, artifacts, and relationships.
+- **Primary store**: Use SQLite as the primary database for cells, transcripts, statuses, and metadata to gain ACID writes with minimal setup.
+- **Schema design**: Design normalized tables for cells, sessions, transcripts, artifacts, and relationships.
 - **Migration system**: Version the schema alongside app releases with a simple `hive migrate` command.
-- **Indexing strategy**: Optimize queries for common access patterns (construct listings, transcript streaming, artifact retrieval).
+- **Indexing strategy**: Optimize queries for common access patterns (cell listings, transcript streaming, artifact retrieval).
 
 ### Artifact Storage
 - **Large file handling**: Persist large artifacts, command logs, and diff bundles as raw files on disk referenced from SQLite tables for fast streaming.
-- **File organization**: Organize artifacts by construct ID and type for easy cleanup and backup.
+- **File organization**: Organize artifacts by cell ID and type for easy cleanup and backup.
 - **Compression**: Apply appropriate compression for text-based artifacts (transcripts, logs) to save disk space.
 - **Reference integrity**: Maintain foreign key relationships between database records and file system artifacts.
 
 ### Data Access Patterns
-- **Construct queries**: Efficient listing, filtering, and searching of constructs by status, type, and metadata.
+- **Cell queries**: Efficient listing, filtering, and searching of cells by status, type, and metadata.
 - **Transcript streaming**: Chunked access to long transcripts for UI rendering without loading entire conversations into memory.
 - **Artifact serving**: Fast access to diff bundles, logs, and other artifacts with proper content-type handling.
-- **Cross-construct queries**: Support for searching across multiple constructs (for features like cross-construct search).
+- **Cross-cell queries**: Support for searching across multiple cells (for features like cross-cell search).
 
 ### Performance & Scaling
 - **Connection pooling**: Manage SQLite connections efficiently for concurrent access.
 - **Query optimization**: Use prepared statements and proper indexing for common queries.
-- **Cache strategy**: Implement appropriate caching for frequently accessed data (construct metadata, recent transcripts).
+- **Cache strategy**: Implement appropriate caching for frequently accessed data (cell metadata, recent transcripts).
 - **Cleanup policies**: Support for configurable retention policies and cleanup of old artifacts.
 
 ### Backup & Recovery
-- **Export functionality**: Ability to export individual constructs or entire workspaces for backup.
-- **Import capability**: Restore constructs from exported data with proper conflict resolution.
+- **Export functionality**: Ability to export individual cells or entire workspaces for backup.
+- **Import capability**: Restore cells from exported data with proper conflict resolution.
 - **Integrity checks**: Periodic validation of database consistency and file system references.
 - **Disaster recovery**: Documented procedures for recovering from database corruption.
 
 ## UX Requirements
 
 ### Data Management Interface
-- **Storage usage display**: Show per-construct and total storage usage with breakdown by type
-- **Cleanup controls**: Allow users to manually clean up old constructs, artifacts, and transcripts
-- **Export/Import UI**: Simple interface for backing up and restoring construct data
+- **Storage usage display**: Show per-cell and total storage usage with breakdown by type
+- **Cleanup controls**: Allow users to manually clean up old cells, artifacts, and transcripts
+- **Export/Import UI**: Simple interface for backing up and restoring cell data
 - **Retention settings**: User-configurable policies for automatic cleanup of old data
 
 ### Performance Feedback
@@ -76,12 +76,12 @@ The complete persistence system with all tables, indexes, and optimizations will
 ## Implementation Details
 
 ### Schema Design
-- Normalized tables for constructs, sessions, transcripts, artifacts with proper relationships
+- Normalized tables for cells, sessions, transcripts, artifacts with proper relationships
 - Efficient indexing for common query patterns (status filters, time ranges, text search)
 - Migration system with version tracking and rollback capabilities
 
 ### File Management
-- Organized directory structure for artifacts by construct ID and type
+- Organized directory structure for artifacts by cell ID and type
 - Compression and deduplication for text-based content
 - Reference integrity maintenance between database and file system
 
@@ -92,10 +92,10 @@ The complete persistence system with all tables, indexes, and optimizations will
 
 ## Integration Points
 - **Agent Orchestration Engine**: Stores session state, transcripts, and events
-- **Construct Creation/Provisioning**: Persists construct metadata and provisioning state
-- **Planning-to-Implementation Handoff**: Persists plans and cross-construct relationships
+- **Cell Creation/Provisioning**: Persists cell metadata and provisioning state
+- **Planning-to-Implementation Handoff**: Persists plans and cross-cell relationships
 - **Activity Timeline**: Provides time-series data for timeline rendering
-- **Cross-Construct Search**: Indexes content for search functionality
+- **Cross-Cell Search**: Indexes content for search functionality
 - **Metrics Baseline**: Stores timing and intervention data for analytics
 
 ## Testing Strategy

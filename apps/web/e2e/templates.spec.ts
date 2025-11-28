@@ -11,7 +11,7 @@ const SELECTORS = {
 
 const TEXT = {
   pageTitle: "Templates",
-  pageDescription: "Browse available construct templates",
+  pageDescription: "Browse available cell templates",
   noTemplates: "No templates available",
   configFileHint: "Create a hive.config.ts file to define templates",
 } as const;

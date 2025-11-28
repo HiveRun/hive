@@ -8,7 +8,7 @@
 
 - **Visible circuits** – expose rails, seams, and power traces; the structure is the ornament
 - **Luminous cores** – reserve bright amber for intent, status, and AI presence
-- **Hexagonal memory** – repeat honeycomb silhouettes, overlays, and staggered columns to suggest construct clusters
+- **Hexagonal memory** – repeat honeycomb silhouettes, overlays, and staggered columns to suggest cell clusters
 - **Industrial calm** – keep surfaces matte and confident so the energy accents stay intentional
 
 ## Color Palette
@@ -50,7 +50,7 @@ Always pair luminous hues with deep graphite; amber without darkness loses the H
 ### Grid
 - 12-column grid, 1120px max content width
 - Base unit: 8px with 24px gutters on desktop / 16px on mobile
-- Vertical rhythm snaps to 72px to keep constructs feeling monolithic
+- Vertical rhythm snaps to 72px to keep cells feeling monolithic
 
 ### Structural Rules
 - Break symmetry intentionally by offsetting sections ±1 column to echo staggered comb cells
@@ -98,7 +98,7 @@ Always pair luminous hues with deep graphite; amber without darkness loses the H
 ## Iconography
 
 - Stroke-based, 2px weight, squared caps
-- Geometric primitives (hex, chevron, coil) referencing constructs, swarms, or instrumentation
+- Geometric primitives (hex, chevron, coil) referencing cells, swarms, or instrumentation
 - Fill icons only for destructive or confirm actions to differentiate from outline-heavy rest of system
 
 ## Responsive Design
@@ -122,12 +122,12 @@ Always pair luminous hues with deep graphite; amber without darkness loses the H
 
 - Maintain 4.5:1 contrast minimum; amber on graphite typically meets 7:1
 - Focus outlines: 3px Field Violet ring + 1px amber inset to stay on-brand
-- Screen-reader regions should describe construct lineage (“Hive workspace sidebar”, “Agent pulse stream”)
+- Screen-reader regions should describe cell lineage (“Hive workspace sidebar”, “Agent pulse stream”)
 
 ## Brand Voice & Tone
 
 - **Direct** – issue commands, not suggestions
-- **Assembly-minded** – reference constructs, swarms, scaffolds
+- **Assembly-minded** – reference cells, swarms, scaffolds
 - **Confident** – short clauses, assertive verbs, avoid filler
 - **Technical poetry** – combine engineering language with biological cues (e.g., “ignite the swarm channel”)
 
@@ -137,4 +137,4 @@ Always pair luminous hues with deep graphite; amber without darkness loses the H
 - Honeycomb cores, microchip traces, beekeeping frames, radio stack schematics
 - Mood board keywords: obsidian slab, molten amber, carbon weave, servo indicator, pollen flare
 
-This Hive system ensures every UI surface feels like part of the same construct assembly: austere graphite shells lit by intelligent amber energy, disciplined enough for operators yet evocative enough for agents.
+This Hive system ensures every UI surface feels like part of the same cell assembly: austere graphite shells lit by intelligent amber energy, disciplined enough for operators yet evocative enough for agents.

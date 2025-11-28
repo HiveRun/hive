@@ -12,7 +12,7 @@ import {
   vi,
 } from "vitest";
 import { setupTestDb, testDb } from "../__tests__/test-db";
-import { constructs } from "../schema/constructs";
+import { cells } from "../schema/cells";
 import { getWorkspaceRegistry, registerWorkspace } from "./registry";
 import { removeWorkspaceCascade } from "./removal";
 
@@ -34,7 +34,7 @@ describe("removeWorkspaceCascade", () => {
   beforeEach(async () => {
     hiveHome = await mkdtemp(join(tmpdir(), "hive-home-removal-"));
     process.env.HIVE_HOME = hiveHome;
-    await testDb.delete(constructs);
+    await testDb.delete(cells);
   });
 
   afterEach(async () => {
@@ -42,29 +42,24 @@ describe("removeWorkspaceCascade", () => {
     process.env.HIVE_HOME = undefined;
   });
 
-  it("removes constructs and the workspace registry entry", async () => {
+  it("removes cells and the workspace registry entry", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const workspace = await registerWorkspace(
       { path: workspaceRoot },
       { setActive: true }
     );
 
-    const constructId = "construct-removal-test";
-    const constructPath = join(
-      workspaceRoot,
-      ".hive",
-      "constructs",
-      constructId
-    );
-    await mkdir(constructPath, { recursive: true });
+    const cellId = "cell-removal-test";
+    const cellPath = join(workspaceRoot, ".hive", "cells", cellId);
+    await mkdir(cellPath, { recursive: true });
 
-    await testDb.insert(constructs).values({
-      id: constructId,
+    await testDb.insert(cells).values({
+      id: cellId,
       name: "Removal fixture",
       templateId: "template-a",
       workspaceId: workspace.id,
       workspaceRootPath: workspaceRoot,
-      workspacePath: constructPath,
+      workspacePath: cellPath,
       createdAt: new Date(),
       status: "ready",
       description: null,
@@ -72,32 +67,32 @@ describe("removeWorkspaceCascade", () => {
       baseCommit: null,
     });
 
-    const stopConstructServices = vi.fn().mockResolvedValue(undefined);
+    const stopCellServices = vi.fn().mockResolvedValue(undefined);
     const closeAgentSession = vi.fn().mockResolvedValue(undefined);
 
     const result = await removeWorkspaceCascade(workspace.id, {
       db: testDb,
-      stopConstructServices,
+      stopCellServices,
       closeAgentSession,
     });
 
     expect(result).not.toBeNull();
     expect(result?.workspace.id).toBe(workspace.id);
-    expect(result?.deletedConstructIds).toEqual([constructId]);
+    expect(result?.deletedCellIds).toEqual([cellId]);
 
-    const remainingConstructs = await testDb
+    const remainingCells = await testDb
       .select()
-      .from(constructs)
-      .where(eq(constructs.workspaceId, workspace.id));
-    expect(remainingConstructs).toHaveLength(0);
+      .from(cells)
+      .where(eq(cells.workspaceId, workspace.id));
+    expect(remainingCells).toHaveLength(0);
 
     const registry = await getWorkspaceRegistry();
     expect(registry.workspaces).toHaveLength(0);
 
-    expect(stopConstructServices).toHaveBeenCalledWith(constructId, {
+    expect(stopCellServices).toHaveBeenCalledWith(cellId, {
       releasePorts: true,
     });
-    expect(closeAgentSession).toHaveBeenCalledWith(constructId);
+    expect(closeAgentSession).toHaveBeenCalledWith(cellId);
   });
 
   it("returns null when the workspace does not exist", async () => {

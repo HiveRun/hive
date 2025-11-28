@@ -3,10 +3,10 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentSessionRecord } from "../../agents/types";
 import type { HiveConfig } from "../../config/schema";
 import {
-  type ConstructRouteDependencies,
-  createConstructsRoutes,
-} from "../../routes/constructs";
-import { constructs } from "../../schema/constructs";
+  type CellRouteDependencies,
+  createCellsRoutes,
+} from "../../routes/cells";
+import { cells } from "../../schema/cells";
 import {
   CommandExecutionError,
   TemplateSetupError,
@@ -34,7 +34,7 @@ const hiveConfig: HiveConfig = {
   defaults: {},
 };
 
-describe("POST /api/constructs", () => {
+describe("POST /api/cells", () => {
   let removeWorktreeCalls = 0;
 
   beforeAll(async () => {
@@ -42,13 +42,13 @@ describe("POST /api/constructs", () => {
   });
 
   beforeEach(async () => {
-    await testDb.delete(constructs);
+    await testDb.delete(cells);
     removeWorktreeCalls = 0;
   });
 
   function createDependencies(
     setupError: TemplateSetupError
-  ): Partial<ConstructRouteDependencies> {
+  ): Partial<CellRouteDependencies> {
     const workspaceRecord = {
       id: "test-workspace",
       label: "Test Workspace",
@@ -60,23 +60,23 @@ describe("POST /api/constructs", () => {
       return Promise.resolve(hiveConfig);
     }
 
-    function createConstructWorktree(_constructId: string) {
+    function createCellWorktree(_cellId: string) {
       return Promise.resolve({
         path: workspacePath,
-        branch: "construct-branch",
+        branch: "cell-branch",
         baseCommit: "abc123",
       });
     }
 
-    function removeConstructWorktree(_constructId: string) {
+    function removeCellWorktree(_cellId: string) {
       removeWorktreeCalls += 1;
       return Promise.resolve();
     }
 
     function createTestWorktreeManager() {
       return Promise.resolve({
-        createWorktree: createConstructWorktree,
-        removeWorktree: removeConstructWorktree,
+        createWorktree: createCellWorktree,
+        removeWorktree: removeCellWorktree,
       });
     }
 
@@ -87,10 +87,10 @@ describe("POST /api/constructs", () => {
         loadConfig: loadWorkspaceConfig,
         createWorktreeManager: createTestWorktreeManager,
       }),
-      ensureAgentSession: (constructId: string) =>
+      ensureAgentSession: (cellId: string) =>
         Promise.resolve<AgentSessionRecord>({
-          id: `session-${constructId}`,
-          constructId,
+          id: `session-${cellId}`,
+          cellId,
           templateId,
           provider: "opencode",
           status: "awaiting_input",
@@ -98,16 +98,15 @@ describe("POST /api/constructs", () => {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         }),
-      closeAgentSession: (_constructId: string) => Promise.resolve(),
-      ensureServicesForConstruct: (_args?: unknown) =>
-        Promise.reject(setupError),
-      stopServicesForConstruct: (
-        _constructId: string,
+      closeAgentSession: (_cellId: string) => Promise.resolve(),
+      ensureServicesForCell: (_args?: unknown) => Promise.reject(setupError),
+      stopServicesForCell: (
+        _cellId: string,
         _options?: { releasePorts?: boolean }
       ) => Promise.resolve(),
       startServiceById: (_serviceId: string) => Promise.resolve(),
       stopServiceById: (_serviceId: string) => Promise.resolve(),
-    } satisfies Partial<ConstructRouteDependencies>;
+    } satisfies Partial<CellRouteDependencies>;
   }
 
   it("returns detailed payload when template setup fails", async () => {
@@ -124,17 +123,17 @@ describe("POST /api/constructs", () => {
       cause,
     });
 
-    const routes = createConstructsRoutes(createDependencies(setupError));
+    const routes = createCellsRoutes(createDependencies(setupError));
     const app = new Elysia().use(routes);
 
     const response = await app.handle(
-      new Request("http://localhost/api/constructs", {
+      new Request("http://localhost/api/cells", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          name: "Broken Construct",
+          name: "Broken Cell",
           templateId,
           workspaceId: "test-workspace",
         }),
@@ -154,7 +153,7 @@ describe("POST /api/constructs", () => {
 
     expect(removeWorktreeCalls).toBe(0);
 
-    const rows = await testDb.select().from(constructs);
+    const rows = await testDb.select().from(cells);
     expect(rows).toHaveLength(1);
     const [row] = rows;
     expect(row?.status).toBe("error");

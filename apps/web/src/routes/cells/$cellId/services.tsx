@@ -5,25 +5,18 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useServiceStream } from "@/hooks/use-service-stream";
 import { cn } from "@/lib/utils";
-import {
-  type ConstructServiceSummary,
-  constructMutations,
-} from "@/queries/constructs";
+import { type CellServiceSummary, cellMutations } from "@/queries/cells";
 
-export const Route = createFileRoute("/constructs/$constructId/services")({
-  component: ConstructServices,
+export const Route = createFileRoute("/cells/$cellId/services")({
+  component: CellServices,
 });
 
-function ConstructServices() {
-  const { constructId } = Route.useParams();
-  const {
-    services,
-    isLoading,
-    error: streamError,
-  } = useServiceStream(constructId);
+function CellServices() {
+  const { cellId } = Route.useParams();
+  const { services, isLoading, error: streamError } = useServiceStream(cellId);
 
   const startServiceMutation = useMutation({
-    mutationFn: constructMutations.startService.mutationFn,
+    mutationFn: cellMutations.startService.mutationFn,
     onError: (mutationError, variables) => {
       const message =
         mutationError instanceof Error
@@ -34,7 +27,7 @@ function ConstructServices() {
   });
 
   const stopServiceMutation = useMutation({
-    mutationFn: constructMutations.stopService.mutationFn,
+    mutationFn: cellMutations.stopService.mutationFn,
     onSuccess: (_data, variables) => {
       toast.success(`Stopped ${variables.serviceName}`);
     },
@@ -54,17 +47,17 @@ function ConstructServices() {
     ? stopServiceMutation.variables?.serviceId
     : undefined;
 
-  const handleStart = (service: ConstructServiceSummary) => {
+  const handleStart = (service: CellServiceSummary) => {
     startServiceMutation.mutate({
-      constructId,
+      cellId,
       serviceId: service.id,
       serviceName: service.name,
     });
   };
 
-  const handleStop = (service: ConstructServiceSummary) => {
+  const handleStop = (service: CellServiceSummary) => {
     stopServiceMutation.mutate({
-      constructId,
+      cellId,
       serviceId: service.id,
       serviceName: service.name,
     });
@@ -94,11 +87,11 @@ function ServicesPanel({
   pendingStartId,
   pendingStopId,
 }: {
-  services: ConstructServiceSummary[];
+  services: CellServiceSummary[];
   isLoading: boolean;
   errorMessage?: string;
-  onStartService: (service: ConstructServiceSummary) => void;
-  onStopService: (service: ConstructServiceSummary) => void;
+  onStartService: (service: CellServiceSummary) => void;
+  onStopService: (service: CellServiceSummary) => void;
   pendingStartId?: string;
   pendingStopId?: string;
 }) {
@@ -111,7 +104,7 @@ function ServicesPanel({
   } else if (services.length === 0) {
     body = (
       <p className="text-muted-foreground text-xs">
-        This construct's template does not define any services.
+        This cell's template does not define any services.
       </p>
     );
   } else {
@@ -139,7 +132,7 @@ function ServicesPanel({
             Services
           </h2>
           <p className="text-muted-foreground text-xs uppercase tracking-[0.3em]">
-            Runtime status per construct
+            Runtime status per cell
           </p>
         </div>
       </div>
@@ -155,9 +148,9 @@ function ServiceCard({
   isStarting,
   isStopping,
 }: {
-  service: ConstructServiceSummary;
-  onStart: (service: ConstructServiceSummary) => void;
-  onStop: (service: ConstructServiceSummary) => void;
+  service: CellServiceSummary;
+  onStart: (service: CellServiceSummary) => void;
+  onStop: (service: CellServiceSummary) => void;
   isStarting: boolean;
   isStopping: boolean;
 }) {
@@ -229,9 +222,9 @@ function ServiceActions({
   isStarting,
   isStopping,
 }: {
-  service: ConstructServiceSummary;
-  onStart: (service: ConstructServiceSummary) => void;
-  onStop: (service: ConstructServiceSummary) => void;
+  service: CellServiceSummary;
+  onStart: (service: CellServiceSummary) => void;
+  onStop: (service: CellServiceSummary) => void;
   isStarting: boolean;
   isStopping: boolean;
 }) {

@@ -6,8 +6,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { getHiveConfig } from "../config/context";
 import type { ProcessService, Template } from "../config/schema";
 import { db as defaultDb } from "../db";
-import type { Construct } from "../schema/constructs";
-import type { ConstructService, ServiceStatus } from "../schema/services";
+import type { Cell } from "../schema/cells";
+import type { CellService, ServiceStatus } from "../schema/services";
 import { emitServiceUpdate } from "./events";
 import { createPortManager } from "./port-manager";
 import { createServiceRepository } from "./repository";
@@ -104,17 +104,14 @@ export type RunCommand = (
 
 export type ServiceSupervisor = {
   bootstrap(): Promise<void>;
-  ensureConstructServices(args: {
-    construct: Construct;
-    template?: Template;
-  }): Promise<void>;
-  startConstructService(serviceId: string): Promise<void>;
-  stopConstructService(
+  ensureCellServices(args: { cell: Cell; template?: Template }): Promise<void>;
+  startCellService(serviceId: string): Promise<void>;
+  stopCellService(
     serviceId: string,
     options?: { releasePorts?: boolean }
   ): Promise<void>;
-  stopConstructServices(
-    constructId: string,
+  stopCellServices(
+    cellId: string,
     options?: { releasePorts?: boolean }
   ): Promise<void>;
   stopAll(): Promise<void>;
@@ -135,8 +132,8 @@ type ServiceLogger = {
 };
 
 type ServiceRow = {
-  service: ConstructService;
-  construct: Construct;
+  service: CellService;
+  cell: Cell;
 };
 
 type ActiveServiceHandle = {
@@ -226,27 +223,25 @@ export function createServiceSupervisor(
   const templateCache = new Map<string, Map<string, Template | undefined>>();
 
   async function bootstrap(): Promise<void> {
-    const grouped = groupServicesByConstruct(
-      await repository.fetchAllServices()
-    );
+    const grouped = groupServicesByCell(await repository.fetchAllServices());
 
-    for (const { construct, rows: constructRows } of grouped.values()) {
+    for (const { cell, rows: cellRows } of grouped.values()) {
       const template = await loadTemplateCached(
-        construct.templateId,
-        construct.workspaceRootPath ?? construct.workspacePath
+        cell.templateId,
+        cell.workspaceRootPath ?? cell.workspacePath
       );
       const templateEnv = template?.env ?? {};
-      const portMap = await buildPortMap(constructRows);
+      const portMap = await buildPortMap(cellRows);
 
-      await restartServicesForConstruct({
-        rows: constructRows,
+      await restartServicesForCell({
+        rows: cellRows,
         portMap,
         templateEnv,
       });
     }
   }
 
-  async function restartServicesForConstruct(args: {
+  async function restartServicesForCell(args: {
     rows: ServiceRow[];
     portMap: Map<string, number>;
     templateEnv: Record<string, string>;
@@ -263,25 +258,25 @@ export function createServiceSupervisor(
       } catch (error) {
         logger.error("Failed to restart service", {
           serviceId: row.service.id,
-          constructId: row.construct.id,
+          cellId: row.cell.id,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
   }
 
-  async function ensureConstructServices({
-    construct,
+  async function ensureCellServices({
+    cell,
     template,
   }: {
-    construct: Construct;
+    cell: Cell;
     template?: Template;
   }): Promise<void> {
     const resolvedTemplate =
       template ??
       (await loadTemplateCached(
-        construct.templateId,
-        construct.workspaceRootPath ?? construct.workspacePath
+        cell.templateId,
+        cell.workspaceRootPath ?? cell.workspacePath
       ));
 
     if (!resolvedTemplate) {
@@ -289,13 +284,13 @@ export function createServiceSupervisor(
     }
 
     const templateEnv = resolvedTemplate.env ?? {};
-    await runTemplateSetupCommands(construct, resolvedTemplate, templateEnv);
+    await runTemplateSetupCommands(cell, resolvedTemplate, templateEnv);
 
     if (!resolvedTemplate.services) {
       return;
     }
 
-    const prepared = await prepareProcessServices(construct, resolvedTemplate);
+    const prepared = await prepareProcessServices(cell, resolvedTemplate);
     if (!prepared.length) {
       return;
     }
@@ -308,7 +303,7 @@ export function createServiceSupervisor(
   }
 
   async function prepareProcessServices(
-    construct: Construct,
+    cell: Cell,
     template: Template
   ): Promise<Array<{ row: ServiceRow; definition: ProcessService }>> {
     const prepared: Array<{ row: ServiceRow; definition: ProcessService }> = [];
@@ -316,14 +311,14 @@ export function createServiceSupervisor(
     for (const [name, definition] of Object.entries(template.services ?? {})) {
       if (definition.type !== "process") {
         logger.warn("Unsupported service type. Skipping.", {
-          constructId: construct.id,
+          cellId: cell.id,
           service: name,
           type: definition.type,
         });
         continue;
       }
 
-      const row = await ensureService(construct, name, definition);
+      const row = await ensureService(cell, name, definition);
       prepared.push({ row, definition });
     }
 
@@ -341,7 +336,7 @@ export function createServiceSupervisor(
     } catch (error) {
       logger.error("Failed to start service", {
         serviceId: row.service.id,
-        constructId: row.construct.id,
+        cellId: row.cell.id,
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
@@ -349,7 +344,7 @@ export function createServiceSupervisor(
   }
 
   async function runTemplateSetupCommands(
-    construct: Construct,
+    cell: Cell,
     template: Template,
     templateEnv: Record<string, string>
   ): Promise<void> {
@@ -357,26 +352,26 @@ export function createServiceSupervisor(
       return;
     }
 
-    if (!construct.workspacePath) {
-      throw new Error("Construct workspace path missing");
+    if (!cell.workspacePath) {
+      throw new Error("Cell workspace path missing");
     }
 
     const env = {
-      ...buildBaseEnv({ serviceName: template.id, construct }),
+      ...buildBaseEnv({ serviceName: template.id, cell }),
       ...templateEnv,
     };
 
     for (const command of template.setup) {
       try {
         await runCommand(command, {
-          cwd: construct.workspacePath,
+          cwd: cell.workspacePath,
           env,
         });
       } catch (error) {
         throw new TemplateSetupError({
           command,
           templateId: template.id,
-          workspacePath: construct.workspacePath,
+          workspacePath: cell.workspacePath,
           cause: error,
         });
       }
@@ -384,15 +379,12 @@ export function createServiceSupervisor(
   }
 
   async function ensureService(
-    construct: Construct,
+    cell: Cell,
     name: string,
     definition: ProcessService
   ): Promise<ServiceRow> {
-    let record = await repository.findByConstructAndName(construct.id, name);
-    const resolvedCwd = resolveServiceCwd(
-      construct.workspacePath,
-      definition.cwd
-    );
+    let record = await repository.findByCellAndName(cell.id, name);
+    const resolvedCwd = resolveServiceCwd(cell.workspacePath, definition.cwd);
 
     if (record) {
       const shouldUpdate = needsDefinitionUpdate(
@@ -410,13 +402,13 @@ export function createServiceSupervisor(
           })) ?? record;
       }
     } else {
-      record = await repository.insertService(construct, {
+      record = await repository.insertService(cell, {
         id: randomUUID(),
         name,
         type: definition.type,
         command: definition.run,
         cwd: resolvedCwd,
-        env: buildBaseEnv({ serviceName: name, construct }),
+        env: buildBaseEnv({ serviceName: name, cell }),
         port: null,
         pid: null,
         status: "pending",
@@ -425,7 +417,7 @@ export function createServiceSupervisor(
         lastKnownError: null,
       });
 
-      ensureLogFile(computeServiceLogPath(construct.workspacePath, name));
+      ensureLogFile(computeServiceLogPath(cell.workspacePath, name));
     }
 
     if (!record) {
@@ -433,14 +425,14 @@ export function createServiceSupervisor(
     }
 
     rememberPort(record);
-    return { service: record, construct };
+    return { service: record, cell };
   }
 
-  async function stopConstructServices(
-    constructId: string,
+  async function stopCellServices(
+    cellId: string,
     options?: { releasePorts?: boolean }
   ): Promise<void> {
-    const rows = await repository.fetchServicesForConstruct(constructId);
+    const rows = await repository.fetchServicesForCell(cellId);
 
     for (const row of rows) {
       await stopService(row, options?.releasePorts ?? false);
@@ -467,7 +459,7 @@ export function createServiceSupervisor(
     if (!definition || definition.type !== "process") {
       logger.warn("Cannot start non-process service", {
         serviceId: row.service.id,
-        constructId: row.construct.id,
+        cellId: row.cell.id,
       });
       return;
     }
@@ -477,7 +469,7 @@ export function createServiceSupervisor(
     }
 
     const port = await prepareServicePort(row, portLookup);
-    const cwd = resolveServiceCwd(row.construct.workspacePath, definition.cwd);
+    const cwd = resolveServiceCwd(row.cell.workspacePath, definition.cwd);
 
     if (!(await ensureServiceDirectory(row, cwd))) {
       return;
@@ -488,7 +480,7 @@ export function createServiceSupervisor(
       port,
       templateEnv,
       serviceEnv: definition.env ?? {},
-      construct: row.construct,
+      cell: row.cell,
       portMap: portLookup,
     });
 
@@ -525,7 +517,7 @@ export function createServiceSupervisor(
 
     await markServiceError(
       row.service.id,
-      row.construct.id,
+      row.cell.id,
       "Service working directory not found"
     );
 
@@ -539,7 +531,7 @@ export function createServiceSupervisor(
 
   function prepareLoggingCommand(row: ServiceRow, command: string) {
     const logPath = computeServiceLogPath(
-      row.construct.workspacePath,
+      row.cell.workspacePath,
       row.service.name
     );
     ensureLogFile(logPath);
@@ -594,7 +586,7 @@ export function createServiceSupervisor(
       activeServices.delete(row.service.id);
       await markServiceError(
         row.service.id,
-        row.construct.id,
+        row.cell.id,
         error instanceof Error ? error.message : String(error)
       );
       throw error;
@@ -621,7 +613,7 @@ export function createServiceSupervisor(
   ): Promise<void> {
     const definition = row.service.definition as ProcessService | null;
     const env = row.service.env;
-    const cwd = resolveServiceCwd(row.construct.workspacePath, definition?.cwd);
+    const cwd = resolveServiceCwd(row.cell.workspacePath, definition?.cwd);
     const active = activeServices.get(row.service.id);
 
     try {
@@ -668,7 +660,7 @@ export function createServiceSupervisor(
     return ports;
   }
 
-  function rememberPort(service: ConstructService): void {
+  function rememberPort(service: CellService): void {
     if (typeof service.port === "number") {
       portManager.rememberSpecificPort(service.id, service.port);
     }
@@ -680,7 +672,7 @@ export function createServiceSupervisor(
 
   function notifyServiceUpdate(row: ServiceRow): void {
     emitServiceUpdate({
-      constructId: row.construct.id,
+      cellId: row.cell.id,
       serviceId: row.service.id,
     });
   }
@@ -702,21 +694,19 @@ export function createServiceSupervisor(
     return workspaceTemplates.get(templateId);
   }
 
-  async function startConstructServiceById(serviceId: string): Promise<void> {
+  async function startCellServiceById(serviceId: string): Promise<void> {
     const row = await repository.fetchServiceRowById(serviceId);
     if (!row) {
       throw new Error(`Service ${serviceId} not found`);
     }
 
     const template = await loadTemplateCached(
-      row.construct.templateId,
-      row.construct.workspaceRootPath ?? row.construct.workspacePath
+      row.cell.templateId,
+      row.cell.workspaceRootPath ?? row.cell.workspacePath
     );
     const templateEnv = template?.env ?? {};
 
-    const siblings = await repository.fetchServicesForConstruct(
-      row.construct.id
-    );
+    const siblings = await repository.fetchServicesForCell(row.cell.id);
     const portMap = new Map<string, number>();
     for (const sibling of siblings) {
       if (sibling.service.port) {
@@ -727,7 +717,7 @@ export function createServiceSupervisor(
     await startService(row, undefined, templateEnv, portMap);
   }
 
-  async function stopConstructServiceById(
+  async function stopCellServiceById(
     serviceId: string,
     options?: { releasePorts?: boolean }
   ): Promise<void> {
@@ -741,20 +731,20 @@ export function createServiceSupervisor(
 
   return {
     bootstrap,
-    ensureConstructServices,
-    startConstructService: startConstructServiceById,
-    stopConstructService: stopConstructServiceById,
-    stopConstructServices,
+    ensureCellServices,
+    startCellService: startCellServiceById,
+    stopCellService: stopCellServiceById,
+    stopCellServices,
     stopAll,
   };
 
   async function markServiceError(
     serviceId: string,
-    constructId: string,
+    cellId: string,
     message: string
   ): Promise<void> {
     await repository.markError(serviceId, message);
-    emitServiceUpdate({ constructId, serviceId });
+    emitServiceUpdate({ cellId, serviceId });
   }
 
   async function terminateHandle(handle: ProcessHandle): Promise<void> {
@@ -797,28 +787,25 @@ export function createServiceSupervisor(
   }
 }
 
-function groupServicesByConstruct(
+function groupServicesByCell(
   rows: ServiceRow[]
-): Map<string, { construct: Construct; rows: ServiceRow[] }> {
-  const grouped = new Map<
-    string,
-    { construct: Construct; rows: ServiceRow[] }
-  >();
+): Map<string, { cell: Cell; rows: ServiceRow[] }> {
+  const grouped = new Map<string, { cell: Cell; rows: ServiceRow[] }>();
 
   for (const row of rows) {
-    const existing = grouped.get(row.construct.id);
+    const existing = grouped.get(row.cell.id);
     if (existing) {
       existing.rows.push(row);
       continue;
     }
-    grouped.set(row.construct.id, { construct: row.construct, rows: [row] });
+    grouped.set(row.cell.id, { cell: row.cell, rows: [row] });
   }
 
   return grouped;
 }
 
 function needsDefinitionUpdate(
-  record: ConstructService,
+  record: CellService,
   definition: ProcessService,
   cwd: string
 ): boolean {
@@ -853,21 +840,21 @@ function sanitizeServiceName(name: string): string {
 
 function buildBaseEnv({
   serviceName,
-  construct,
+  cell,
 }: {
   serviceName: string;
-  construct: Construct;
+  cell: Cell;
 }): Record<string, string> {
-  const workspacePath = construct.workspacePath;
+  const workspacePath = cell.workspacePath;
   if (!workspacePath) {
-    throw new Error("Construct workspace path missing");
+    throw new Error("Cell workspace path missing");
   }
 
   const hiveHome = resolve(workspacePath, ".hive", "home");
   mkdirSync(hiveHome, { recursive: true });
 
   return {
-    HIVE_CONSTRUCT_ID: construct.id,
+    HIVE_CONSTRUCT_ID: cell.id,
     HIVE_SERVICE: serviceName,
     HIVE_HOME: hiveHome,
     HIVE_BROWSE_ROOT: workspacePath,
@@ -879,14 +866,14 @@ function buildServiceEnv({
   port,
   templateEnv,
   serviceEnv,
-  construct,
+  cell,
   portMap,
 }: {
   serviceName: string;
   port: number;
   templateEnv: Record<string, string>;
   serviceEnv: Record<string, string>;
-  construct: Construct;
+  cell: Cell;
   portMap?: Map<string, number>;
 }): Record<string, string> {
   const upper = sanitizeServiceName(serviceName);
@@ -900,7 +887,7 @@ function buildServiceEnv({
   }
 
   return {
-    ...buildBaseEnv({ serviceName, construct }),
+    ...buildBaseEnv({ serviceName, cell }),
     ...templateEnv,
     ...serviceEnv,
     ...sharedPorts,
@@ -938,20 +925,18 @@ const defaultSupervisor = createServiceSupervisor();
 
 export const bootstrapServiceSupervisor = (): Promise<void> =>
   defaultSupervisor.bootstrap();
-export const ensureServicesForConstruct = (
-  construct: Construct,
+export const ensureServicesForCell = (
+  cell: Cell,
   template?: Template
-): Promise<void> =>
-  defaultSupervisor.ensureConstructServices({ construct, template });
+): Promise<void> => defaultSupervisor.ensureCellServices({ cell, template });
 export const startServiceById = (serviceId: string): Promise<void> =>
-  defaultSupervisor.startConstructService(serviceId);
+  defaultSupervisor.startCellService(serviceId);
 export const stopServiceById = (
   serviceId: string,
   options?: { releasePorts?: boolean }
-): Promise<void> => defaultSupervisor.stopConstructService(serviceId, options);
-export const stopServicesForConstruct = (
-  constructId: string,
+): Promise<void> => defaultSupervisor.stopCellService(serviceId, options);
+export const stopServicesForCell = (
+  cellId: string,
   options?: { releasePorts?: boolean }
-): Promise<void> =>
-  defaultSupervisor.stopConstructServices(constructId, options);
+): Promise<void> => defaultSupervisor.stopCellServices(cellId, options);
 export const stopAllServices = (): Promise<void> => defaultSupervisor.stopAll();

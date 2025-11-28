@@ -46,8 +46,8 @@ bun -C apps/web run test:e2e:update-snapshots                 # Update snapshots
 - Every test that touches the host (files, services, ports) must clean up via `finally` blocks to keep the developer’s machine stable.
 - Surface errors directly. Tests can assert on the error payload in the view layer; no special retry logic needed.
 
-### Construct & Agent Tests
-- Use Vitest for construct logic. Import `fs`, `path`, `Bun.spawn`, etc. directly in production code, and in tests rely on `vi.mock`/`vi.spyOn` to swap only the calls you need (remember to `vi.restoreAllMocks()` in `afterEach`).
+### Cell & Agent Tests
+- Use Vitest for cell logic. Import `fs`, `path`, `Bun.spawn`, etc. directly in production code, and in tests rely on `vi.mock`/`vi.spyOn` to swap only the calls you need (remember to `vi.restoreAllMocks()` in `afterEach`).
 - Keep explicit dependency arguments for things we truly swap (e.g., OpenCode client). Provide a tiny fake client in tests so worktree creation, port allocation, and service orchestration stay close to real behavior.
 - Template commands in tests should be safe stubs (`echo`, simple scripts) so integration specs exercise orchestration without heavy workloads.
 

@@ -1,22 +1,22 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resolveWorkspaceRoot } from "../config/context";
-import { constructs } from "../schema/constructs";
+import { cells } from "../schema/cells";
 import { setupTestDb, testDb } from "./test-db";
 
-describe("Constructs CRUD Operations", () => {
+describe("Cells CRUD Operations", () => {
   beforeAll(async () => {
     await setupTestDb();
   });
 
   beforeEach(async () => {
     // Clean up before each test
-    await testDb.delete(constructs);
+    await testDb.delete(cells);
   });
 
   afterEach(async () => {
     // Clean up after each test
-    await testDb.delete(constructs);
+    await testDb.delete(cells);
   });
 
   const workspaceFields = {
@@ -25,11 +25,11 @@ describe("Constructs CRUD Operations", () => {
   };
 
   describe("Create", () => {
-    it("should create a construct with valid data", async () => {
-      const newConstruct = {
-        id: "test-construct-1",
-        name: "Test Construct",
-        description: "A test construct",
+    it("should create a cell with valid data", async () => {
+      const newCell = {
+        id: "test-cell-1",
+        name: "Test Cell",
+        description: "A test cell",
         templateId: "basic",
         workspacePath: "/tmp/test-worktree-1",
         createdAt: new Date(),
@@ -37,28 +37,25 @@ describe("Constructs CRUD Operations", () => {
         ...workspaceFields,
       };
 
-      const [created] = await testDb
-        .insert(constructs)
-        .values(newConstruct)
-        .returning();
+      const [created] = await testDb.insert(cells).values(newCell).returning();
 
       expect(created).toBeDefined();
       if (!created) {
-        throw new Error("Insert did not return construct");
+        throw new Error("Insert did not return cell");
       }
 
       expect(created).toMatchObject({
-        id: newConstruct.id,
-        name: newConstruct.name,
-        description: newConstruct.description,
-        templateId: newConstruct.templateId,
+        id: newCell.id,
+        name: newCell.name,
+        description: newCell.description,
+        templateId: newCell.templateId,
       });
     });
 
-    it("should create a construct without description", async () => {
-      const newConstruct = {
-        id: "test-construct-2",
-        name: "Minimal Construct",
+    it("should create a cell without description", async () => {
+      const newCell = {
+        id: "test-cell-2",
+        name: "Minimal Cell",
         templateId: "basic",
         workspacePath: "/tmp/test-worktree-2",
         createdAt: new Date(),
@@ -66,14 +63,11 @@ describe("Constructs CRUD Operations", () => {
         ...workspaceFields,
       };
 
-      const [created] = await testDb
-        .insert(constructs)
-        .values(newConstruct)
-        .returning();
+      const [created] = await testDb.insert(cells).values(newCell).returning();
 
       expect(created).toBeDefined();
       if (!created) {
-        throw new Error("Insert did not return construct");
+        throw new Error("Insert did not return cell");
       }
 
       expect(created.description).toBeNull();
@@ -83,11 +77,11 @@ describe("Constructs CRUD Operations", () => {
   describe("Read", () => {
     beforeEach(async () => {
       // Insert test data
-      await testDb.insert(constructs).values([
+      await testDb.insert(cells).values([
         {
-          id: "construct-1",
-          name: "First Construct",
-          description: "First test construct",
+          id: "cell-1",
+          name: "First Cell",
+          description: "First test cell",
           templateId: "basic",
           workspacePath: "/tmp/test-worktree-1",
           createdAt: new Date(),
@@ -95,9 +89,9 @@ describe("Constructs CRUD Operations", () => {
           ...workspaceFields,
         },
         {
-          id: "construct-2",
-          name: "Second Construct",
-          description: "Second test construct",
+          id: "cell-2",
+          name: "Second Cell",
+          description: "Second test cell",
           templateId: "web-api",
           workspacePath: "/tmp/test-worktree-2",
           createdAt: new Date(),
@@ -107,40 +101,40 @@ describe("Constructs CRUD Operations", () => {
       ]);
     });
 
-    it("should retrieve all constructs", async () => {
-      const allConstructs = await testDb.select().from(constructs);
+    it("should retrieve all cells", async () => {
+      const allCells = await testDb.select().from(cells);
 
-      expect(allConstructs).toHaveLength(2);
+      expect(allCells).toHaveLength(2);
 
-      const [first, second] = allConstructs;
+      const [first, second] = allCells;
       if (!(first && second)) {
-        throw new Error("Expected two constructs");
+        throw new Error("Expected two cells");
       }
 
-      expect(first.name).toBe("First Construct");
-      expect(second.name).toBe("Second Construct");
+      expect(first.name).toBe("First Cell");
+      expect(second.name).toBe("Second Cell");
     });
 
-    it("should retrieve a construct by ID", async () => {
+    it("should retrieve a cell by ID", async () => {
       const [found] = await testDb
         .select()
-        .from(constructs)
-        .where(eq(constructs.id, "construct-1"))
+        .from(cells)
+        .where(eq(cells.id, "cell-1"))
         .limit(1);
 
       expect(found).toBeDefined();
       if (!found) {
-        throw new Error("Construct not found");
+        throw new Error("Cell not found");
       }
 
-      expect(found.name).toBe("First Construct");
+      expect(found.name).toBe("First Cell");
     });
 
     it("should return empty array for non-existent ID", async () => {
       const result = await testDb
         .select()
-        .from(constructs)
-        .where(eq(constructs.id, "non-existent"))
+        .from(cells)
+        .where(eq(cells.id, "non-existent"))
         .limit(1);
 
       expect(result).toHaveLength(0);
@@ -148,13 +142,13 @@ describe("Constructs CRUD Operations", () => {
   });
 
   describe("Delete", () => {
-    let constructId: string;
+    let cellId: string;
 
     beforeEach(async () => {
       const [created] = await testDb
-        .insert(constructs)
+        .insert(cells)
         .values({
-          id: "construct-to-delete",
+          id: "cell-to-delete",
           name: "To Delete",
           templateId: "basic",
           workspacePath: "/tmp/test-worktree-delete",
@@ -165,39 +159,39 @@ describe("Constructs CRUD Operations", () => {
         .returning();
 
       if (!created) {
-        throw new Error("Failed to insert construct for delete tests");
+        throw new Error("Failed to insert cell for delete tests");
       }
 
-      constructId = created.id;
+      cellId = created.id;
     });
 
-    it("should delete existing construct", async () => {
+    it("should delete existing cell", async () => {
       const [deleted] = await testDb
-        .delete(constructs)
-        .where(eq(constructs.id, constructId))
+        .delete(cells)
+        .where(eq(cells.id, cellId))
         .returning();
 
       expect(deleted).toBeDefined();
       if (!deleted) {
-        throw new Error("Delete did not return construct");
+        throw new Error("Delete did not return cell");
       }
 
-      expect(deleted.id).toBe(constructId);
+      expect(deleted.id).toBe(cellId);
 
       // Verify it's actually deleted
       const verifyResult = await testDb
         .select()
-        .from(constructs)
-        .where(eq(constructs.id, constructId))
+        .from(cells)
+        .where(eq(cells.id, cellId))
         .limit(1);
 
       expect(verifyResult).toHaveLength(0);
     });
 
-    it("should not delete non-existent construct", async () => {
+    it("should not delete non-existent cell", async () => {
       const result = await testDb
-        .delete(constructs)
-        .where(eq(constructs.id, "non-existent"))
+        .delete(cells)
+        .where(eq(cells.id, "non-existent"))
         .returning();
 
       expect(result).toHaveLength(0);

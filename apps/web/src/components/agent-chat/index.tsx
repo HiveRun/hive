@@ -4,25 +4,25 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useAgentEventStream } from "@/hooks/use-agent-event-stream";
 import { agentMutations, agentQueries } from "@/queries/agents";
-import { constructQueries } from "@/queries/constructs";
+import { cellQueries } from "@/queries/cells";
 import { ComposePanel } from "./compose-panel";
 import { ConversationPanel } from "./conversation-panel";
 import { AgentChatHeader } from "./header";
 
 type AgentChatProps = {
-  constructId: string;
+  cellId: string;
 };
 
-export function AgentChat({ constructId }: AgentChatProps) {
+export function AgentChat({ cellId }: AgentChatProps) {
   const queryClient = useQueryClient();
-  const sessionQuery = useQuery(agentQueries.sessionByConstruct(constructId));
+  const sessionQuery = useQuery(agentQueries.sessionByCell(cellId));
   const session = sessionQuery.data ?? null;
-  const constructQuery = useQuery(constructQueries.detail(constructId));
-  const workspaceId = constructQuery.data?.workspaceId;
+  const cellQuery = useQuery(cellQueries.detail(cellId));
+  const workspaceId = cellQuery.data?.workspaceId;
   const messagesQuery = useQuery(agentQueries.messages(session?.id ?? null));
   const [searchQuery, setSearchQuery] = useState("");
 
-  const { permissions } = useAgentEventStream(session?.id ?? null, constructId);
+  const { permissions } = useAgentEventStream(session?.id ?? null, cellId);
 
   const orderedMessages = useMemo(
     () =>
@@ -51,7 +51,7 @@ export function AgentChat({ constructId }: AgentChatProps) {
     ...agentMutations.start,
     onSuccess: (newSession) => {
       queryClient.setQueryData(
-        agentQueries.sessionByConstruct(constructId).queryKey,
+        agentQueries.sessionByCell(cellId).queryKey,
         newSession
       );
       queryClient.invalidateQueries({
@@ -77,7 +77,7 @@ export function AgentChat({ constructId }: AgentChatProps) {
 
   const handleStartSession = () => {
     startAgentMutation.mutate({
-      constructId,
+      cellId,
     });
   };
 
@@ -94,14 +94,14 @@ export function AgentChat({ constructId }: AgentChatProps) {
   const isStarting = startAgentMutation.isPending;
   const isSending = sendMessageMutation.isPending;
 
-  if (sessionQuery.isPending || constructQuery.isPending) {
+  if (sessionQuery.isPending || cellQuery.isPending) {
     return <LoadingState />;
   }
 
   if (!workspaceId) {
     return (
       <div className="flex h-full items-center justify-center border-2 border-border bg-card text-muted-foreground text-sm">
-        Unable to determine active workspace for this construct.
+        Unable to determine active workspace for this cell.
       </div>
     );
   }
@@ -114,7 +114,7 @@ export function AgentChat({ constructId }: AgentChatProps) {
 
   return (
     <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden border-2 border-border bg-background text-foreground">
-      <AgentChatHeader constructId={constructId} session={session} />
+      <AgentChatHeader cellId={cellId} session={session} />
       <div className="flex flex-1 flex-col gap-0 overflow-hidden lg:flex-row">
         <ConversationPanel
           filteredMessages={filteredMessages}
@@ -160,8 +160,8 @@ function NoSessionState({
           Agent Session
         </p>
         <p className="text-muted-foreground text-sm">
-          No agent is currently running for this construct. Start a session to
-          chat with the workspace agent.
+          No agent is currently running for this cell. Start a session to chat
+          with the workspace agent.
         </p>
       </div>
       <Button

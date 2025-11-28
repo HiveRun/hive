@@ -31,6 +31,4 @@ const API_URL = (() => {
 export const rpc = treaty<App>(API_URL);
 
 // Helper types for convenience - inferred from Eden Treaty
-export type CreateConstructInput = Parameters<
-  typeof rpc.api.constructs.post
->[0];
+export type CreateCellInput = Parameters<typeof rpc.api.cells.post>[0];

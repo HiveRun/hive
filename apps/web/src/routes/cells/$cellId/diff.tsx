@@ -29,13 +29,13 @@ import {
 import { cn } from "@/lib/utils";
 
 import {
-  type ConstructDiffResponse,
-  constructDiffQueries,
-  constructQueries,
+  type CellDiffResponse,
+  cellDiffQueries,
+  cellQueries,
   type DiffFileDetail,
   type DiffFileSummary,
   type DiffMode,
-} from "@/queries/constructs";
+} from "@/queries/cells";
 
 const diffSearchSchema = z.object({
   mode: z.enum(["workspace", "branch"]).optional(),
@@ -55,7 +55,7 @@ const DIFF_MODE_META: Record<
   },
   branch: {
     button: "All",
-    description: "All changes since construct base",
+    description: "All changes since cell base",
   },
 };
 
@@ -85,7 +85,7 @@ type DiffLoaderData = {
   initialFiles: string[];
 };
 
-export const Route = createFileRoute("/constructs/$constructId/diff")({
+export const Route = createFileRoute("/cells/$cellId/diff")({
   validateSearch: (search) => diffSearchSchema.parse(search),
   loaderDeps: ({ search }) => ({
     mode: (search?.mode ?? "workspace") as DiffMode,
@@ -93,17 +93,17 @@ export const Route = createFileRoute("/constructs/$constructId/diff")({
   }),
   loader: async ({ params, context: { queryClient }, deps }) => {
     await queryClient.ensureQueryData(
-      constructDiffQueries.summary(params.constructId, deps.mode, {
+      cellDiffQueries.summary(params.cellId, deps.mode, {
         files: deps.initialFiles,
       })
     );
     return { initialFiles: deps.initialFiles } satisfies DiffLoaderData;
   },
-  component: ConstructDiffRoute,
+  component: CellDiffRoute,
 });
 
-function ConstructDiffRoute() {
-  const { constructId } = Route.useParams();
+function CellDiffRoute() {
+  const { cellId } = Route.useParams();
   const { initialFiles } = Route.useLoaderData() as DiffLoaderData;
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
@@ -116,7 +116,7 @@ function ConstructDiffRoute() {
   const mode = (search.mode ?? "workspace") as DiffMode;
 
   const summaryQuery = useSuspenseQuery(
-    constructDiffQueries.summary(constructId, mode, {
+    cellDiffQueries.summary(cellId, mode, {
       files: initialFiles,
     })
   );
@@ -130,8 +130,8 @@ function ConstructDiffRoute() {
     setDetailCacheVersion((version) => version + 1);
   }, [summary]);
 
-  const constructQuery = useQuery(constructQueries.detail(constructId));
-  const branchAvailable = Boolean(constructQuery.data?.baseCommit);
+  const cellQuery = useQuery(cellQueries.detail(cellId));
+  const branchAvailable = Boolean(cellQuery.data?.baseCommit);
 
   const filteredFiles = useMemo(() => {
     if (!filter.trim()) {
@@ -198,15 +198,9 @@ function ConstructDiffRoute() {
 
   const detailQuery = useQuery({
     ...(selectedFile
-      ? constructDiffQueries.detail(constructId, mode, selectedFile)
+      ? cellDiffQueries.detail(cellId, mode, selectedFile)
       : {
-          queryKey: [
-            "construct-diff",
-            constructId,
-            mode,
-            "detail",
-            "__none__",
-          ] as const,
+          queryKey: ["cell-diff", cellId, mode, "detail", "__none__"] as const,
           queryFn: async () => null,
         }),
     enabled: needsDetailFetch,
@@ -239,8 +233,8 @@ function ConstructDiffRoute() {
 
   const updateSearch = (updater: (prev: DiffSearch) => DiffSearch) => {
     navigate({
-      to: "/constructs/$constructId/diff",
-      params: { constructId },
+      to: "/cells/$cellId/diff",
+      params: { cellId },
       search: updater,
       replace: true,
     });
@@ -269,7 +263,7 @@ function ConstructDiffRoute() {
 
   const handleRefresh = () => {
     queryClient.invalidateQueries({
-      queryKey: ["construct-diff", constructId],
+      queryKey: ["cell-diff", cellId],
     });
   };
 
@@ -311,7 +305,7 @@ function ConstructDiffRoute() {
 
 type DiffHeaderProps = {
   mode: DiffMode;
-  summary: ConstructDiffResponse;
+  summary: CellDiffResponse;
   totals: { additions: number; deletions: number };
   branchAvailable: boolean;
   onModeChange: (mode: DiffMode) => void;
@@ -341,7 +335,7 @@ function DiffHeader({
     <header className="flex flex-wrap items-center justify-between gap-3 border-border border-b pb-3">
       <div className="space-y-1">
         <p className="text-muted-foreground text-xs uppercase tracking-[0.3em]">
-          Construct Diff
+          Cell Diff
         </p>
         <div className="flex flex-wrap gap-4 text-[11px] text-muted-foreground uppercase tracking-[0.2em]">
           <span>Mode · {DIFF_MODE_META[mode].description}</span>

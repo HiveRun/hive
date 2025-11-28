@@ -1,18 +1,18 @@
 import { base, en, Faker } from "@faker-js/faker";
 import type { Page, Route } from "@playwright/test";
-import type { ConstructDiffResponse, DiffMode } from "@/queries/constructs";
+import type { CellDiffResponse, DiffMode } from "@/queries/cells";
 import type {
   WorkspaceBrowseResponse,
   WorkspaceListResponse,
 } from "@/queries/workspaces";
 import {
-  type ConstructDiffFixture,
-  type ConstructFixture,
-  type ConstructServiceFixture,
-  constructDiffSnapshotFixture,
-  constructServiceSnapshotFixture,
-  constructSnapshotFixture,
-} from "./construct-fixture";
+  type CellDiffFixture,
+  type CellFixture,
+  type CellServiceFixture,
+  cellDiffSnapshotFixture,
+  cellServiceSnapshotFixture,
+  cellSnapshotFixture,
+} from "./cell-fixture";
 import {
   type TemplateFixture,
   templateSnapshotFixture,
@@ -69,16 +69,16 @@ const workspaceBrowseFixture: WorkspaceBrowseResponse = {
   ],
 };
 
-const CONSTRUCT_DETAIL_PATTERN = /\/api\/constructs\/[^/]+$/;
-const CONSTRUCT_DIFF_ROUTE_PATTERN = /\/api\/constructs\/[^/]+\/diff(?:\?.*)?$/;
+const CONSTRUCT_DETAIL_PATTERN = /\/api\/cells\/[^/]+$/;
+const CONSTRUCT_DIFF_ROUTE_PATTERN = /\/api\/cells\/[^/]+\/diff(?:\?.*)?$/;
 const WORKSPACE_LIST_PATTERN = /\/api\/workspaces(?:\?.*)?$/;
 const WORKSPACE_BROWSE_PATTERN = /\/api\/workspaces\/browse(?:\?.*)?$/;
 
 const API_ROUTE_PATTERNS: (string | RegExp)[] = [
-  "**/api/constructs/*/services",
+  "**/api/cells/*/services",
   CONSTRUCT_DIFF_ROUTE_PATTERN,
   CONSTRUCT_DETAIL_PATTERN,
-  "**/api/constructs*",
+  "**/api/cells*",
   WORKSPACE_LIST_PATTERN,
   WORKSPACE_BROWSE_PATTERN,
   "**/api/templates/*",
@@ -87,28 +87,28 @@ const API_ROUTE_PATTERNS: (string | RegExp)[] = [
   "**/api/agents/sessions/**",
 ];
 
-const CONSTRUCT_SERVICES_REGEX = /\/api\/constructs\/[^/]+\/services$/;
-const CONSTRUCT_DIFF_REGEX = /\/api\/constructs\/[^/]+\/diff$/;
+const CONSTRUCT_SERVICES_REGEX = /\/api\/cells\/[^/]+\/services$/;
+const CONSTRUCT_DIFF_REGEX = /\/api\/cells\/[^/]+\/diff$/;
 const AGENT_EVENTS_REGEX = /\/api\/agents\/sessions\/.+\/events$/;
 
 const API_ROUTE_MATCHERS = [
   {
-    description: "GET /api/constructs",
+    description: "GET /api/cells",
     match: (url: URL, method: string) =>
-      method === "GET" && url.pathname === "/api/constructs",
+      method === "GET" && url.pathname === "/api/cells",
   },
   {
-    description: "GET /api/constructs/:id/services",
+    description: "GET /api/cells/:id/services",
     match: (url: URL, method: string) =>
       method === "GET" && CONSTRUCT_SERVICES_REGEX.test(url.pathname),
   },
   {
-    description: "GET /api/constructs/:id/diff",
+    description: "GET /api/cells/:id/diff",
     match: (url: URL, method: string) =>
       method === "GET" && CONSTRUCT_DIFF_REGEX.test(url.pathname),
   },
   {
-    description: "GET /api/constructs/:id",
+    description: "GET /api/cells/:id",
     match: (url: URL, method: string) =>
       method === "GET" && CONSTRUCT_DETAIL_PATTERN.test(url.pathname),
   },
@@ -140,10 +140,10 @@ const API_ROUTE_MATCHERS = [
       method === "GET" && url.pathname === "/api/example",
   },
   {
-    description: "GET /api/agents/sessions/byConstruct/:id",
+    description: "GET /api/agents/sessions/byCell/:id",
     match: (url: URL, method: string) =>
       method === "GET" &&
-      url.pathname.startsWith("/api/agents/sessions/byConstruct/"),
+      url.pathname.startsWith("/api/agents/sessions/byCell/"),
   },
   {
     description: "GET /api/agents/sessions/:id/events",
@@ -155,20 +155,20 @@ const API_ROUTE_MATCHERS = [
 const apiGuardedPages = new WeakSet<Page>();
 
 export type MockApiData = {
-  constructs: ConstructFixture[];
+  cells: CellFixture[];
   templates: TemplateFixture[];
-  services: Record<string, ConstructServiceFixture[]>;
-  diffs: ConstructDiffFixture;
+  services: Record<string, CellServiceFixture[]>;
+  diffs: CellDiffFixture;
   example: typeof exampleStatus;
   workspaceList: WorkspaceListResponse;
   workspaceBrowse: WorkspaceBrowseResponse;
 };
 
 const defaultMockData: MockApiData = {
-  constructs: constructSnapshotFixture,
+  cells: cellSnapshotFixture,
   templates: templateSnapshotFixture,
-  services: constructServiceSnapshotFixture,
-  diffs: constructDiffSnapshotFixture,
+  services: cellServiceSnapshotFixture,
+  diffs: cellDiffSnapshotFixture,
   example: exampleStatus,
   workspaceList: workspaceListFixture,
   workspaceBrowse: workspaceBrowseFixture,
@@ -184,7 +184,7 @@ export async function mockAppApi(
   await resetMockApiRoutes(page);
 
   const mockData: MockApiData = {
-    constructs: overrides.constructs ?? defaultMockData.constructs,
+    cells: overrides.cells ?? defaultMockData.cells,
     templates: overrides.templates ?? defaultMockData.templates,
     services: overrides.services ?? defaultMockData.services,
     diffs: overrides.diffs ?? defaultMockData.diffs,
@@ -194,19 +194,16 @@ export async function mockAppApi(
       overrides.workspaceBrowse ?? defaultMockData.workspaceBrowse,
   };
 
-  await page.route("**/api/constructs*", createConstructRouteHandler(mockData));
+  await page.route("**/api/cells*", createCellRouteHandler(mockData));
   await page.route(
-    "**/api/constructs/*/services",
-    createConstructServicesHandler(mockData)
+    "**/api/cells/*/services",
+    createCellServicesHandler(mockData)
   );
   await page.route(
     CONSTRUCT_DIFF_ROUTE_PATTERN,
-    createConstructDiffHandler(mockData)
+    createCellDiffHandler(mockData)
   );
-  await page.route(
-    CONSTRUCT_DETAIL_PATTERN,
-    createConstructDetailHandler(mockData)
-  );
+  await page.route(CONSTRUCT_DETAIL_PATTERN, createCellDetailHandler(mockData));
   await page.route(
     WORKSPACE_LIST_PATTERN,
     createWorkspaceListHandler(mockData)
@@ -220,8 +217,8 @@ export async function mockAppApi(
   await page.route("**/api/templates*", createTemplateListHandler(mockData));
   await page.route("**/api/example", createExampleRouteHandler(mockData));
   await page.route(
-    "**/api/agents/sessions/byConstruct/*",
-    createAgentSessionByConstructHandler()
+    "**/api/agents/sessions/byCell/*",
+    createAgentSessionByCellHandler()
   );
   await page.route(
     "**/api/agents/sessions/*/events",
@@ -269,54 +266,52 @@ async function ensureApiGuard(page: Page) {
   });
 }
 
-function createConstructRouteHandler(mockData: MockApiData) {
+function createCellRouteHandler(mockData: MockApiData) {
   return createGetJsonHandler(() => ({
-    body: { constructs: mockData.constructs },
+    body: { cells: mockData.cells },
   }));
 }
 
-function createConstructDetailHandler(mockData: MockApiData) {
+function createCellDetailHandler(mockData: MockApiData) {
   return createGetJsonHandler((request) => {
     const requestUrl = new URL(request.url());
     const segments = requestUrl.pathname.split("/").filter(Boolean);
-    const constructId = segments.at(2);
+    const cellId = segments.at(2);
 
-    if (!constructId) {
+    if (!cellId) {
       return {
         status: 404,
-        body: { message: "Construct not found" },
+        body: { message: "Cell not found" },
       };
     }
 
-    const construct = mockData.constructs.find(
-      (entry) => entry.id === constructId
-    );
+    const cell = mockData.cells.find((entry) => entry.id === cellId);
 
-    if (!construct) {
+    if (!cell) {
       return {
         status: 404,
-        body: { message: "Construct not found" },
+        body: { message: "Cell not found" },
       };
     }
 
-    return { body: construct };
+    return { body: cell };
   });
 }
 
-function createConstructDiffHandler(mockData: MockApiData) {
+function createCellDiffHandler(mockData: MockApiData) {
   return createGetJsonHandler((request) => {
     const requestUrl = new URL(request.url());
     const segments = requestUrl.pathname.split("/").filter(Boolean);
-    const constructId = segments.at(2);
+    const cellId = segments.at(2);
 
-    if (!constructId) {
+    if (!cellId) {
       return {
         status: 404,
-        body: { message: "Construct not found" },
+        body: { message: "Cell not found" },
       };
     }
 
-    const diff = mockData.diffs[constructId];
+    const diff = mockData.diffs[cellId];
     if (!diff) {
       return {
         status: 404,
@@ -333,7 +328,7 @@ function createConstructDiffHandler(mockData: MockApiData) {
           .filter(Boolean)
       : [];
 
-    const nextDiff: ConstructDiffResponse = {
+    const nextDiff: CellDiffResponse = {
       ...diff,
       mode: (modeParam as DiffMode) ?? diff.mode,
       details:
@@ -348,33 +343,31 @@ function createConstructDiffHandler(mockData: MockApiData) {
   });
 }
 
-function createConstructServicesHandler(mockData: MockApiData) {
+function createCellServicesHandler(mockData: MockApiData) {
   return createGetJsonHandler((request) => {
     const requestUrl = new URL(request.url());
     const segments = requestUrl.pathname.split("/").filter(Boolean);
-    const constructId = segments.at(2);
+    const cellId = segments.at(2);
 
-    if (!constructId) {
+    if (!cellId) {
       return {
         status: 404,
-        body: { message: "Construct not found" },
+        body: { message: "Cell not found" },
       };
     }
 
-    const constructExists = mockData.constructs.some(
-      (construct) => construct.id === constructId
-    );
+    const cellExists = mockData.cells.some((cell) => cell.id === cellId);
 
-    if (!constructExists) {
+    if (!cellExists) {
       return {
         status: 404,
-        body: { message: "Construct not found" },
+        body: { message: "Cell not found" },
       };
     }
 
     return {
       body: {
-        services: mockData.services[constructId] ?? [],
+        services: mockData.services[cellId] ?? [],
       },
     };
   });
@@ -441,23 +434,23 @@ function createExampleRouteHandler(mockData: MockApiData) {
   return createGetJsonHandler(() => ({ body: mockData.example }));
 }
 
-function createAgentSessionByConstructHandler() {
+function createAgentSessionByCellHandler() {
   return createGetJsonHandler((request) => {
     const requestUrl = new URL(request.url());
     const segments = requestUrl.pathname.split("/").filter(Boolean);
-    const constructId = segments.at(-1);
+    const cellId = segments.at(-1);
 
-    if (!constructId) {
+    if (!cellId) {
       return {
         status: 404,
-        body: { message: "Construct not found" },
+        body: { message: "Cell not found" },
       };
     }
 
     return {
       body: {
         session: {
-          id: `session-${constructId}`,
+          id: `session-${cellId}`,
           status: "awaiting_input",
         },
       },

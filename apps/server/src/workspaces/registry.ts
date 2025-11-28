@@ -44,16 +44,16 @@ export function resolveHiveHome(): string {
   return process.env[HIVE_HOME_ENV] || join(homedir(), ".hive");
 }
 
-export function resolveConstructsRoot(): string {
-  return join(resolveHiveHome(), "constructs");
+export function resolveCellsRoot(): string {
+  return join(resolveHiveHome(), "cells");
 }
 
-export function isConstructWorkspacePath(path: string): boolean {
-  const constructsRoot = resolve(resolveConstructsRoot());
+export function isCellWorkspacePath(path: string): boolean {
+  const cellsRoot = resolve(resolveCellsRoot());
   const normalizedPath = resolve(path);
   return (
-    normalizedPath === constructsRoot ||
-    normalizedPath.startsWith(`${constructsRoot}${sep}`)
+    normalizedPath === cellsRoot ||
+    normalizedPath.startsWith(`${cellsRoot}${sep}`)
   );
 }
 
@@ -85,8 +85,8 @@ async function validateWorkspaceDirectory(path: string): Promise<string> {
     throw new Error(`Workspace path is not a directory: ${absolutePath}`);
   }
 
-  if (isConstructWorkspacePath(absolutePath)) {
-    throw new Error("Construct worktrees cannot be registered as workspaces");
+  if (isCellWorkspacePath(absolutePath)) {
+    throw new Error("Cell worktrees cannot be registered as workspaces");
   }
 
   const configPath = join(absolutePath, "hive.config.ts");

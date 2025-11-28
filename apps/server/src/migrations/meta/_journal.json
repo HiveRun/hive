@@ -41,14 +41,14 @@
       "idx": 5,
       "version": "8",
       "when": 1763300000000,
-      "tag": "0005_construct_provisioning_status",
+      "tag": "0005_cell_provisioning_status",
       "breakpoints": true
     },
     {
       "idx": 6,
       "version": "8",
       "when": 1763500000000,
-      "tag": "0006_construct_diff_metadata",
+      "tag": "0006_cell_diff_metadata",
       "breakpoints": true
     },
     {

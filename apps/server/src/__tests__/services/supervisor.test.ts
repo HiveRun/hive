@@ -6,8 +6,8 @@ import { join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resolveWorkspaceRoot } from "../../config/context";
-import { constructs } from "../../schema/constructs";
-import { constructServices } from "../../schema/services";
+import { cells } from "../../schema/cells";
+import { cellServices } from "../../schema/services";
 import type {
   ProcessHandle,
   RunCommand,
@@ -43,8 +43,8 @@ describe("service supervisor", () => {
   let workspaceDirs: string[] = [];
 
   beforeEach(async () => {
-    await testDb.delete(constructServices);
-    await testDb.delete(constructs);
+    await testDb.delete(cellServices);
+    await testDb.delete(cells);
     workspaceDirs = [];
   });
 
@@ -56,12 +56,12 @@ describe("service supervisor", () => {
 
   it("starts process services with assigned ports and env", async () => {
     const workspace = await createWorkspaceDir();
-    const construct = await insertConstruct(workspace, "template-web");
+    const cell = await insertCell(workspace, "template-web");
 
     const harness = createHarness();
 
-    await harness.supervisor.ensureConstructServices({
-      construct,
+    await harness.supervisor.ensureCellServices({
+      cell,
       template: {
         id: "template-web",
         label: "Template",
@@ -89,24 +89,24 @@ describe("service supervisor", () => {
     expect(call.options.env.WEB_PORT).toBeDefined();
     expect(call.options.env.PORT).toBe(call.options.env.WEB_PORT);
 
-    const [service] = await testDb.select().from(constructServices);
+    const [service] = await testDb.select().from(cellServices);
     expect(service?.status).toBe("running");
     expect(typeof service?.port).toBe("number");
 
-    await harness.supervisor.stopConstructServices(construct.id, {
+    await harness.supervisor.stopCellServices(cell.id, {
       releasePorts: true,
     });
     await Promise.all(harness.processes.map((proc) => proc.handle.exited));
   });
 
-  it("creates log files inside construct workspace", async () => {
+  it("creates log files inside cell workspace", async () => {
     const workspace = await createWorkspaceDir();
-    const construct = await insertConstruct(workspace, "template-web");
+    const cell = await insertCell(workspace, "template-web");
 
     const harness = createHarness();
 
-    await harness.supervisor.ensureConstructServices({
-      construct,
+    await harness.supervisor.ensureCellServices({
+      cell,
       template: {
         id: "template-web",
         label: "Template",
@@ -127,12 +127,12 @@ describe("service supervisor", () => {
 
   it("runs template setup commands before starting services", async () => {
     const workspace = await createWorkspaceDir();
-    const construct = await insertConstruct(workspace, "template-setup");
+    const cell = await insertCell(workspace, "template-setup");
 
     const harness = createHarness();
 
-    await harness.supervisor.ensureConstructServices({
-      construct,
+    await harness.supervisor.ensureCellServices({
+      cell,
       template: {
         id: "template-setup",
         label: "Template",
@@ -153,12 +153,12 @@ describe("service supervisor", () => {
 
   it("can stop and restart a single service", async () => {
     const workspace = await createWorkspaceDir();
-    const construct = await insertConstruct(workspace, "template-restart");
+    const cell = await insertCell(workspace, "template-restart");
 
     const harness = createHarness();
 
-    await harness.supervisor.ensureConstructServices({
-      construct,
+    await harness.supervisor.ensureCellServices({
+      cell,
       template: {
         id: "template-restart",
         label: "Template",
@@ -175,31 +175,31 @@ describe("service supervisor", () => {
 
     const [service] = await testDb
       .select()
-      .from(constructServices)
-      .where(eq(constructServices.constructId, construct.id));
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
 
     expect(service?.status).toBe("running");
     if (!service) {
       throw new Error("Missing service record");
     }
 
-    await harness.supervisor.stopConstructService(service.id);
+    await harness.supervisor.stopCellService(service.id);
 
     const [stopped] = await testDb
       .select()
-      .from(constructServices)
-      .where(eq(constructServices.id, service.id));
+      .from(cellServices)
+      .where(eq(cellServices.id, service.id));
     expect(stopped?.status).toBe("stopped");
 
-    await harness.supervisor.startConstructService(service.id);
+    await harness.supervisor.startCellService(service.id);
 
     const [restarted] = await testDb
       .select()
-      .from(constructServices)
-      .where(eq(constructServices.id, service.id));
+      .from(cellServices)
+      .where(eq(cellServices.id, service.id));
     expect(restarted?.status).toBe("running");
 
-    await harness.supervisor.stopConstructServices(construct.id, {
+    await harness.supervisor.stopCellServices(cell.id, {
       releasePorts: true,
     });
     await Promise.all(harness.processes.map((proc) => proc.handle.exited));
@@ -207,7 +207,7 @@ describe("service supervisor", () => {
 
   it("restores persisted services during bootstrap", async () => {
     const workspace = await createWorkspaceDir();
-    const construct = await insertConstruct(workspace, "template-bootstrap");
+    const cell = await insertCell(workspace, "template-bootstrap");
 
     const definition = {
       type: "process" as const,
@@ -218,9 +218,9 @@ describe("service supervisor", () => {
 
     const timestamp = new Date();
 
-    await testDb.insert(constructServices).values({
+    await testDb.insert(cellServices).values({
       id: "svc-bootstrap",
-      constructId: construct.id,
+      cellId: cell.id,
       name: "web",
       type: "process",
       command: definition.run,
@@ -247,8 +247,8 @@ describe("service supervisor", () => {
 
     const [service] = await testDb
       .select()
-      .from(constructServices)
-      .where(eq(constructServices.id, "svc-bootstrap"));
+      .from(cellServices)
+      .where(eq(cellServices.id, "svc-bootstrap"));
 
     expect(service?.pid).toBe(call.handle.pid);
 
@@ -258,12 +258,12 @@ describe("service supervisor", () => {
 
   it("stops running services and clears pid", async () => {
     const workspace = await createWorkspaceDir();
-    const construct = await insertConstruct(workspace, "template-stop");
+    const cell = await insertCell(workspace, "template-stop");
 
     const harness = createHarness();
 
-    await harness.supervisor.ensureConstructServices({
-      construct,
+    await harness.supervisor.ensureCellServices({
+      cell,
       template: {
         id: "template-stop",
         label: "Template",
@@ -278,7 +278,7 @@ describe("service supervisor", () => {
       },
     });
 
-    await harness.supervisor.stopConstructServices(construct.id, {
+    await harness.supervisor.stopCellServices(cell.id, {
       releasePorts: true,
     });
 
@@ -286,19 +286,19 @@ describe("service supervisor", () => {
 
     const [service] = await testDb
       .select()
-      .from(constructServices)
-      .where(eq(constructServices.constructId, construct.id));
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
 
     expect(service?.status).toBe("stopped");
     expect(service?.pid).toBeNull();
   });
 
-  async function insertConstruct(workspacePath: string, templateId: string) {
-    const [construct] = await testDb
-      .insert(constructs)
+  async function insertCell(workspacePath: string, templateId: string) {
+    const [cell] = await testDb
+      .insert(cells)
       .values({
         id: randomUUID(),
-        name: `Construct-${templateId}`,
+        name: `Cell-${templateId}`,
         templateId,
         workspacePath,
         workspaceId: `workspace-${templateId}`,
@@ -313,11 +313,11 @@ describe("service supervisor", () => {
       })
       .returning();
 
-    if (!construct) {
-      throw new Error("Failed to insert construct");
+    if (!cell) {
+      throw new Error("Failed to insert cell");
     }
 
-    return construct;
+    return cell;
   }
 
   function createHarness() {

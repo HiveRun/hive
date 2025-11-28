@@ -5,7 +5,7 @@ import { cp, mkdir, rm } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { glob } from "tinyglobby";
 import type { Template } from "../config/schema";
-import { resolveConstructsRoot } from "../workspaces/registry";
+import { resolveCellsRoot } from "../workspaces/registry";
 
 const WORKTREE_PREFIX = "worktree ";
 const HEAD_PREFIX = "HEAD ";
@@ -46,10 +46,10 @@ export type WorktreeLocation = {
 
 export type WorktreeManager = {
   createWorktree(
-    constructId: string,
+    cellId: string,
     options?: WorktreeCreateOptions
   ): Promise<WorktreeLocation>;
-  removeWorktree(constructId: string): void;
+  removeWorktree(cellId: string): void;
 };
 
 const DEFAULT_INCLUDE_PATTERNS: string[] = [];
@@ -58,7 +58,7 @@ export function createWorktreeManager(
   baseDir: string = process.cwd(),
   hiveConfig?: { templates: Record<string, Template> }
 ): WorktreeManager {
-  const constructsDir = resolveConstructsRoot();
+  const cellsDir = resolveCellsRoot();
 
   function ensureGitRepo(): void {
     try {
@@ -124,9 +124,9 @@ export function createWorktreeManager(
     }
   }
 
-  async function ensureConstructsDir(): Promise<void> {
-    if (!existsSync(constructsDir)) {
-      await mkdir(constructsDir, { recursive: true });
+  async function ensureCellsDir(): Promise<void> {
+    if (!existsSync(cellsDir)) {
+      await mkdir(cellsDir, { recursive: true });
     }
   }
 
@@ -271,8 +271,8 @@ export function createWorktreeManager(
     return path && commit ? { path, commit, branch: branch || "HEAD" } : null;
   }
 
-  function findWorktreeInfo(constructId: string): WorktreeInfo | null {
-    const expectedPath = join(constructsDir, constructId);
+  function findWorktreeInfo(cellId: string): WorktreeInfo | null {
+    const expectedPath = join(cellsDir, cellId);
     const worktreeList = git("worktree", "list", "--porcelain");
     const sections = worktreeList.trim().split("\n\n");
 
@@ -284,7 +284,7 @@ export function createWorktreeManager(
 
       if (parsed.path === expectedPath) {
         return {
-          id: constructId,
+          id: cellId,
           path: parsed.path,
           branch: parsed.branch,
           commit: parsed.commit,
@@ -298,16 +298,16 @@ export function createWorktreeManager(
 
   return {
     async createWorktree(
-      constructId: string,
+      cellId: string,
       options: WorktreeCreateOptions = {}
     ): Promise<WorktreeLocation> {
-      await ensureConstructsDir();
+      await ensureCellsDir();
 
-      const worktreePath = join(constructsDir, constructId);
+      const worktreePath = join(cellsDir, cellId);
 
       await handleExistingWorktree(worktreePath, options.force ?? false);
 
-      const branch = ensureBranchExists(`construct-${constructId}`);
+      const branch = ensureBranchExists(`cell-${cellId}`);
 
       try {
         git("worktree", "add", worktreePath, branch);
@@ -333,11 +333,11 @@ export function createWorktreeManager(
       }
     },
 
-    removeWorktree(constructId: string): void {
-      const worktreeInfo = findWorktreeInfo(constructId);
+    removeWorktree(cellId: string): void {
+      const worktreeInfo = findWorktreeInfo(cellId);
 
       if (!worktreeInfo) {
-        throw new Error(`Worktree not found for construct ${constructId}`);
+        throw new Error(`Worktree not found for cell ${cellId}`);
       }
 
       if (worktreeInfo.isMain) {
@@ -349,7 +349,7 @@ export function createWorktreeManager(
         git("worktree", "prune");
       } catch (error) {
         throw new Error(
-          `Failed to remove worktree for construct ${constructId}: ${error}`
+          `Failed to remove worktree for cell ${cellId}: ${error}`
         );
       }
     },

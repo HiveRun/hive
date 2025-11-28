@@ -8,7 +8,7 @@
 
 - **Expose the assembly** – seams, rails, and frames stay visible so operators trust the structure
 - **Luminous intent** – bright amber only accompanies actionable or living elements
-- **Hex memory** – staggered cells, beveled hex corners, and diagonal chisels echo Hive constructs
+- **Hex memory** – staggered cells, beveled hex corners, and diagonal chisels echo Hive cells
 - **Composed power** – calm graphite grounds the experience so flares feel deliberate
 
 ## Color Palette
@@ -49,7 +49,7 @@ Keep amber against near-black for brand contrast; dilute only inside large gradi
 
 ### Grid
 - 12-column grid up to 1120px, base unit 8px, gutters 24px desktop / 16px mobile
-- Vertical rhythm snaps to 72px to reinforce construct scale
+- Vertical rhythm snaps to 72px to reinforce cell scale
 
 ### Structural Moves
 - Offset sections ±1 column to mimic staggered combs
@@ -118,12 +118,12 @@ Keep amber against near-black for brand contrast; dilute only inside large gradi
 
 - Maintain at least 4.5:1 contrast; amber (#F5A524) on graphite (#111416) hits 7+:1
 - Focus outlines: 3px Field Violet halo + 1px amber inset for clarity
-- Provide aria-labels referencing constructs/workspaces so assistive tech matches vocabulary
+- Provide aria-labels referencing cells/workspaces so assistive tech matches vocabulary
 
 ## Brand Voice & Tone
 
 - Direct, confident, assembly-first language
-- Reference constructs, swarms, scaffolds when naming UI or writing helper copy
+- Reference cells, swarms, scaffolds when naming UI or writing helper copy
 - Pair technical brevity with biological metaphors (“ignite swarm”, “stabilize hatch”)
 
 ## Inspiration & References

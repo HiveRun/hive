@@ -1,96 +1,93 @@
 import { base, en, Faker } from "@faker-js/faker";
 import type {
-  Construct,
-  ConstructDiffResponse,
-  ConstructServiceSummary,
-} from "@/queries/constructs";
+  Cell,
+  CellDiffResponse,
+  CellServiceSummary,
+} from "@/queries/cells";
 
 const FIXTURE_SEED = 20_251_108;
 const DEFAULT_OPENCODE_PORT = 5000;
 const DEFAULT_SERVICE_PORT = 3000;
 
-const constructFaker = new Faker({ locale: [en, base] });
+const cellFaker = new Faker({ locale: [en, base] });
 
-constructFaker.seed(FIXTURE_SEED);
+cellFaker.seed(FIXTURE_SEED);
 
-export type ConstructFixture = Construct;
+export type CellFixture = Cell;
 
-export function createConstructFixture(
-  overrides: Partial<ConstructFixture> = {}
-): ConstructFixture {
-  const id = overrides.id ?? constructFaker.string.uuid();
+export function createCellFixture(
+  overrides: Partial<CellFixture> = {}
+): CellFixture {
+  const id = overrides.id ?? cellFaker.string.uuid();
 
-  const constructBase: ConstructFixture = {
+  const cellBase: CellFixture = {
     id,
     name:
       overrides.name ??
-      constructFaker.helpers.arrayElement([
-        "Snapshot Construct",
+      cellFaker.helpers.arrayElement([
+        "Snapshot Cell",
         "Hive Runtime",
         "Forest Engine",
       ]),
     description:
       overrides.description ??
-      constructFaker.helpers.maybe(
-        () => constructFaker.lorem.sentence({ min: 6, max: 12 }),
+      cellFaker.helpers.maybe(
+        () => cellFaker.lorem.sentence({ min: 6, max: 12 }),
         {
           probability: 0.6,
         }
       ) ??
       null,
     templateId: overrides.templateId ?? "hive-dev",
-    workspacePath:
-      overrides.workspacePath ?? `/home/hive/.hive/constructs/${id}`,
+    workspacePath: overrides.workspacePath ?? `/home/hive/.hive/cells/${id}`,
     workspaceId: overrides.workspaceId ?? "workspace-primary",
     workspaceRootPath:
       overrides.workspaceRootPath ?? "/home/aureatus/dev/projects/hive",
-    opencodeSessionId:
-      overrides.opencodeSessionId ?? constructFaker.string.uuid(),
+    opencodeSessionId: overrides.opencodeSessionId ?? cellFaker.string.uuid(),
     opencodeServerUrl: overrides.opencodeServerUrl ?? "http://127.0.0.1:5000",
     opencodeServerPort: overrides.opencodeServerPort ?? DEFAULT_OPENCODE_PORT,
     createdAt:
       overrides.createdAt ??
-      constructFaker.date
+      cellFaker.date
         .past({ years: 1, refDate: "2024-01-01T00:00:00.000Z" })
         .toISOString(),
     status: overrides.status ?? "ready",
     lastSetupError: overrides.lastSetupError,
   };
 
-  return { ...constructBase, ...overrides };
+  return { ...cellBase, ...overrides };
 }
 
-export const constructSnapshotFixture: ConstructFixture[] = [
-  createConstructFixture({
-    id: "snapshot-construct",
-    name: "Snapshot Construct",
+export const cellSnapshotFixture: CellFixture[] = [
+  createCellFixture({
+    id: "snapshot-cell",
+    name: "Snapshot Cell",
     description: "Deterministic fixture used for visual regression tests.",
-    workspacePath: "/home/hive/.hive/constructs/snapshot-construct",
+    workspacePath: "/home/hive/.hive/cells/snapshot-cell",
     workspaceId: "workspace-primary",
     workspaceRootPath: "/home/aureatus/dev/projects/hive",
     createdAt: "2024-01-01T12:00:00.000Z",
   }),
 ];
 
-export type ConstructServiceFixture = ConstructServiceSummary;
+export type CellServiceFixture = CellServiceSummary;
 
 export function createServiceFixture(
-  overrides: Partial<ConstructServiceFixture> = {}
-): ConstructServiceFixture {
-  const id = overrides.id ?? constructFaker.string.uuid();
+  overrides: Partial<CellServiceFixture> = {}
+): CellServiceFixture {
+  const id = overrides.id ?? cellFaker.string.uuid();
   return {
     id,
     name: overrides.name ?? "web",
     type: overrides.type ?? "process",
     status: overrides.status ?? "running",
     port: overrides.port ?? DEFAULT_SERVICE_PORT,
-    pid:
-      overrides.pid ?? constructFaker.number.int({ min: 10_000, max: 20_000 }),
+    pid: overrides.pid ?? cellFaker.number.int({ min: 10_000, max: 20_000 }),
     command: overrides.command ?? "bun run dev",
     cwd: overrides.cwd ?? ".",
     logPath:
       overrides.logPath ??
-      `/home/hive/.hive/constructs/${id}/logs/${overrides.name ?? "web"}.log`,
+      `/home/hive/.hive/cells/${id}/logs/${overrides.name ?? "web"}.log`,
     lastKnownError: overrides.lastKnownError ?? null,
     updatedAt: overrides.updatedAt ?? new Date().toISOString(),
     env: overrides.env ?? {},
@@ -98,35 +95,30 @@ export function createServiceFixture(
   };
 }
 
-export const constructServiceSnapshotFixture: Record<
-  string,
-  ConstructServiceFixture[]
-> = {
-  "snapshot-construct": [
-    createServiceFixture({
-      id: "snapshot-service-web",
-      name: "web",
-      status: "running",
-    }),
-    createServiceFixture({
-      id: "snapshot-service-server",
-      name: "server",
-      status: "error",
-      lastKnownError: "Exited with code 1",
-      recentLogs: "error: Cannot find module 'pino'",
-    }),
-  ],
-};
+export const cellServiceSnapshotFixture: Record<string, CellServiceFixture[]> =
+  {
+    "snapshot-cell": [
+      createServiceFixture({
+        id: "snapshot-service-web",
+        name: "web",
+        status: "running",
+      }),
+      createServiceFixture({
+        id: "snapshot-service-server",
+        name: "server",
+        status: "error",
+        lastKnownError: "Exited with code 1",
+        recentLogs: "error: Cannot find module 'pino'",
+      }),
+    ],
+  };
 
 const DIFF_LONG_LINE_REPEAT = 60;
 const LONG_LINE_BEFORE = `const renderOutput = "${"initial-value-".repeat(DIFF_LONG_LINE_REPEAT)}";`;
 const LONG_LINE_AFTER = `const renderOutput = "${"initial-value-".repeat(DIFF_LONG_LINE_REPEAT)}_diff";`;
 
-export const constructDiffSnapshotFixture: Record<
-  string,
-  ConstructDiffResponse
-> = {
-  "snapshot-construct": {
+export const cellDiffSnapshotFixture: Record<string, CellDiffResponse> = {
+  "snapshot-cell": {
     mode: "workspace",
     baseCommit: "abc1234",
     headCommit: "def5678",
@@ -169,4 +161,4 @@ export const constructDiffSnapshotFixture: Record<
   },
 };
 
-export type ConstructDiffFixture = typeof constructDiffSnapshotFixture;
+export type CellDiffFixture = typeof cellDiffSnapshotFixture;

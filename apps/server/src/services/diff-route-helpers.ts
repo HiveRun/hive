@@ -1,11 +1,11 @@
 import type { Static } from "elysia";
 
 import type { DiffQuerySchema } from "../schema/api";
-import type { Construct } from "../schema/constructs";
+import type { Cell } from "../schema/cells";
 import {
   type DiffMode,
-  getConstructDiffDetails,
-  getConstructDiffSummary,
+  getCellDiffDetails,
+  getCellDiffSummary,
 } from "./diff-service";
 
 export type ParsedDiffRequest = {
@@ -19,15 +19,15 @@ export type DiffRequestParseResult =
   | { ok: false; status: number; message: string };
 
 export function parseDiffRequest(
-  construct: Construct,
+  cell: Cell,
   query: Static<typeof DiffQuerySchema>
 ): DiffRequestParseResult {
   const mode = (query.mode ?? "workspace") as DiffMode;
-  if (mode === "branch" && !construct.baseCommit) {
+  if (mode === "branch" && !cell.baseCommit) {
     return {
       ok: false,
       status: 400,
-      message: "Construct is missing base commit metadata",
+      message: "Cell is missing base commit metadata",
     };
   }
 
@@ -52,17 +52,17 @@ export function parseDiffRequest(
   };
 }
 
-export async function buildConstructDiffPayload(
-  construct: Construct,
+export async function buildCellDiffPayload(
+  cell: Cell,
   request: ParsedDiffRequest
 ) {
   const { mode, files, includeSummary } = request;
   const requestedBaseCommit =
-    mode === "branch" ? (construct.baseCommit ?? null) : null;
+    mode === "branch" ? (cell.baseCommit ?? null) : null;
 
   const summary = includeSummary
-    ? await getConstructDiffSummary({
-        workspacePath: construct.workspacePath,
+    ? await getCellDiffSummary({
+        workspacePath: cell.workspacePath,
         mode,
         baseCommit: requestedBaseCommit,
       })
@@ -71,8 +71,8 @@ export async function buildConstructDiffPayload(
   const resolvedBaseCommit = summary?.baseCommit ?? requestedBaseCommit ?? null;
 
   const details = files.length
-    ? await getConstructDiffDetails({
-        workspacePath: construct.workspacePath,
+    ? await getCellDiffDetails({
+        workspacePath: cell.workspacePath,
         mode,
         baseCommit: resolvedBaseCommit,
         files,

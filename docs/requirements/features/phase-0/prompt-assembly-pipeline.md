@@ -25,9 +25,9 @@ This sophisticated prompt assembly system will be implemented in **Phase 1A** af
 - **Deduplication**: Automatic detection and removal of duplicate prompt fragments.
 
 ### Base Brief Assembly
-- **Base template**: Store a repository-level Markdown template (`docs/agents/base-brief.md`) that explains Hive's purpose, construct concepts, guardrails, and escalation expectations.
-- **Construct context injection**: When provisioning a construct, concatenate the base brief with:
-  - Task summary and acceptance criteria from construct metadata
+- **Base template**: Store a repository-level Markdown template (`docs/agents/base-brief.md`) that explains Hive's purpose, cell concepts, guardrails, and escalation expectations.
+- **Cell context injection**: When provisioning a cell, concatenate the base brief with:
+  - Task summary and acceptance criteria from cell metadata
   - Tabular list of configured services with resolved hostnames/ports and exposed env vars
   - Template-level prompt fragments declared on the selected template
   - Explicit boundaries and safety reminders
@@ -35,20 +35,20 @@ This sophisticated prompt assembly system will be implemented in **Phase 1A** af
 
 ### Template-Specific Prompts
 - **Template prompts**: Allow templates to list additional `prompts` that reference files within the built bundle or absolute paths.
-- **Domain-specific guidance**: Each construct instance can append domain-specific guidance automatically.
+- **Domain-specific guidance**: Each cell instance can append domain-specific guidance automatically.
 - **Prompt inheritance**: Support for template-level prompt inheritance from base templates (future enhancement).
 
 ### Bundle Generation
 - **CLI integration**: Provide `hive prompts build` command that resolves configured sources through the TypeScript config.
 - **Concatenation**: Deduplicate headings and concatenate fragments into `AGENTS.md` and other provider-specific outputs.
 - **Rebuild triggers**: Rebuild prompt bundles during provisioning and whenever config changes.
-- **Bundle metadata**: Expose generated bundle path in construct metadata for agent prompt assembly.
+- **Bundle metadata**: Expose generated bundle path in cell metadata for agent prompt assembly.
 
 ### Context Injection
-- **Variable substitution**: Support template variable replacement in prompt fragments (e.g., `${constructId}`, `${workspaceName}`).
+- **Variable substitution**: Support template variable replacement in prompt fragments (e.g., `${cellId}`, `${workspaceName}`).
 - **Service context**: Automatically inject service configuration (ports, URLs, environment) into prompts.
-- **Dynamic content**: Include runtime information like current user, workspace settings, and construct state.
-- **Safety boundaries**: Inject explicit boundaries and reminders about construct isolation.
+- **Dynamic content**: Include runtime information like current user, workspace settings, and cell state.
+- **Safety boundaries**: Inject explicit boundaries and reminders about cell isolation.
 
 ### Validation & Optimization
 - **Content validation**: Validate prompt fragments for required sections and formatting.
@@ -92,7 +92,7 @@ This sophisticated prompt assembly system will be implemented in **Phase 1A** af
 
 ## Integration Points
 - **Agent Orchestration Engine**: Consumes assembled prompts for agent sessions
-- **Construct Creation/Provisioning**: Provides construct context for prompt assembly
+- **Cell Creation/Provisioning**: Provides cell context for prompt assembly
 - **Template Definition System**: Accesses template-specific prompt configurations
 - **Planning-to-Implementation Handoff**: Provides planning vs implementation prompt variants
 - **Prompt Optimisation**: Uses pipeline data for optimization analysis

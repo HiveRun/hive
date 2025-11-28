@@ -1,29 +1,26 @@
 import { and, eq } from "drizzle-orm";
-import type { Construct } from "../schema/constructs";
-import { constructs } from "../schema/constructs";
-import type { ConstructService } from "../schema/services";
-import { constructServices } from "../schema/services";
+import type { Cell } from "../schema/cells";
+import { cells } from "../schema/cells";
+import type { CellService } from "../schema/services";
+import { cellServices } from "../schema/services";
 
 type DbClient = typeof import("../db").db;
 
 type ServiceRow = {
-  service: ConstructService;
-  construct: Construct;
+  service: CellService;
+  cell: Cell;
 };
 
 export function createServiceRepository(db: DbClient, now: () => Date) {
-  async function findByConstructAndName(
-    constructId: string,
+  async function findByCellAndName(
+    cellId: string,
     serviceName: string
-  ): Promise<ConstructService | undefined> {
+  ): Promise<CellService | undefined> {
     const [record] = await db
       .select()
-      .from(constructServices)
+      .from(cellServices)
       .where(
-        and(
-          eq(constructServices.constructId, constructId),
-          eq(constructServices.name, serviceName)
-        )
+        and(eq(cellServices.cellId, cellId), eq(cellServices.name, serviceName))
       )
       .limit(1);
 
@@ -31,20 +28,17 @@ export function createServiceRepository(db: DbClient, now: () => Date) {
   }
 
   async function insertService(
-    construct: Construct,
-    data: Omit<
-      ConstructService,
-      "id" | "constructId" | "createdAt" | "updatedAt"
-    > & {
+    cell: Cell,
+    data: Omit<CellService, "id" | "cellId" | "createdAt" | "updatedAt"> & {
       id: string;
     }
   ) {
     const timestamp = now();
     const [record] = await db
-      .insert(constructServices)
+      .insert(cellServices)
       .values({
         ...data,
-        constructId: construct.id,
+        cellId: cell.id,
         createdAt: timestamp,
         updatedAt: timestamp,
       })
@@ -55,12 +49,12 @@ export function createServiceRepository(db: DbClient, now: () => Date) {
 
   async function updateService(
     serviceId: string,
-    update: Partial<ConstructService>
+    update: Partial<CellService>
   ) {
     const [record] = await db
-      .update(constructServices)
+      .update(cellServices)
       .set({ ...update, updatedAt: now() })
-      .where(eq(constructServices.id, serviceId))
+      .where(eq(cellServices.id, serviceId))
       .returning();
 
     return record;
@@ -68,14 +62,14 @@ export function createServiceRepository(db: DbClient, now: () => Date) {
 
   async function markError(serviceId: string, message: string): Promise<void> {
     await db
-      .update(constructServices)
+      .update(cellServices)
       .set({
         status: "error",
         pid: null,
         lastKnownError: message,
         updatedAt: now(),
       })
-      .where(eq(constructServices.id, serviceId));
+      .where(eq(cellServices.id, serviceId));
   }
 
   async function fetchServiceRowById(
@@ -83,22 +77,20 @@ export function createServiceRepository(db: DbClient, now: () => Date) {
   ): Promise<ServiceRow | undefined> {
     const [row] = await db
       .select()
-      .from(constructServices)
-      .innerJoin(constructs, eq(constructs.id, constructServices.constructId))
-      .where(eq(constructServices.id, serviceId))
+      .from(cellServices)
+      .innerJoin(cells, eq(cells.id, cellServices.cellId))
+      .where(eq(cellServices.id, serviceId))
       .limit(1);
 
     return row ? mapRow(row) : undefined;
   }
 
-  async function fetchServicesForConstruct(
-    constructId: string
-  ): Promise<ServiceRow[]> {
+  async function fetchServicesForCell(cellId: string): Promise<ServiceRow[]> {
     const rows = await db
       .select()
-      .from(constructServices)
-      .innerJoin(constructs, eq(constructs.id, constructServices.constructId))
-      .where(eq(constructServices.constructId, constructId));
+      .from(cellServices)
+      .innerJoin(cells, eq(cells.id, cellServices.cellId))
+      .where(eq(cellServices.cellId, cellId));
 
     return rows.map(mapRow);
   }
@@ -106,29 +98,26 @@ export function createServiceRepository(db: DbClient, now: () => Date) {
   async function fetchAllServices(): Promise<ServiceRow[]> {
     const rows = await db
       .select()
-      .from(constructServices)
-      .innerJoin(constructs, eq(constructs.id, constructServices.constructId));
+      .from(cellServices)
+      .innerJoin(cells, eq(cells.id, cellServices.cellId));
 
     return rows.map(mapRow);
   }
 
   return {
-    findByConstructAndName,
+    findByCellAndName,
     insertService,
     updateService,
     markError,
     fetchServiceRowById,
-    fetchServicesForConstruct,
+    fetchServicesForCell,
     fetchAllServices,
   };
 }
 
-function mapRow(row: {
-  construct_services: ConstructService;
-  constructs: Construct;
-}): ServiceRow {
+function mapRow(row: { cell_services: CellService; cells: Cell }): ServiceRow {
   return {
-    service: row.construct_services,
-    construct: row.constructs,
+    service: row.cell_services,
+    cell: row.cells,
   };
 }

@@ -1,7 +1,7 @@
 import { access, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { isConstructWorkspacePath } from "./registry";
+import { isCellWorkspacePath } from "./registry";
 
 export type WorkspaceDirectoryEntry = {
   name: string;
@@ -61,7 +61,7 @@ export async function browseWorkspaceDirectories(
     }
 
     const entryPath = join(targetPath, entry.name);
-    if (isConstructWorkspacePath(entryPath)) {
+    if (isCellWorkspacePath(entryPath)) {
       continue;
     }
 

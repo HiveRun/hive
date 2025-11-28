@@ -1,1 +1,1 @@
-ALTER TABLE `constructs` ADD `workspace_path` text;
+ALTER TABLE `cells` ADD `workspace_path` text;

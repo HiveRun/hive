@@ -2,7 +2,7 @@ import { rpc } from "@/lib/rpc";
 
 export type AgentSession = {
   id: string;
-  constructId: string;
+  cellId: string;
   templateId: string;
   provider: string;
   status: string;
@@ -31,12 +31,12 @@ export type AgentMessage = {
 };
 
 export const agentQueries = {
-  sessionByConstruct: (constructId: string) => ({
-    queryKey: ["agent-session", constructId] as const,
+  sessionByCell: (cellId: string) => ({
+    queryKey: ["agent-session", cellId] as const,
     queryFn: async (): Promise<AgentSession | null> => {
       const { data, error } = await rpc.api.agents.sessions
-        .byConstruct({
-          constructId,
+        .byCell({
+          cellId,
         })
         .get();
 
@@ -70,7 +70,7 @@ export const agentQueries = {
 
 export const agentMutations = {
   start: {
-    mutationFn: async (input: { constructId: string; force?: boolean }) => {
+    mutationFn: async (input: { cellId: string; force?: boolean }) => {
       const { data, error } = await rpc.api.agents.sessions.post(input);
       if (error) {
         throw new Error("Failed to start agent session");

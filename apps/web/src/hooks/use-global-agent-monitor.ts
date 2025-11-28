@@ -4,8 +4,8 @@ import { toast } from "sonner";
 import { useActiveWorkspace } from "@/hooks/use-active-workspace";
 import type { AgentSession } from "@/queries/agents";
 import { agentQueries } from "@/queries/agents";
-import type { Construct } from "@/queries/constructs";
-import { constructQueries } from "@/queries/constructs";
+import type { Cell } from "@/queries/cells";
+import { cellQueries } from "@/queries/cells";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
 const NOTIFICATION_SOUND_PATH = "/sounds/agent-awaiting-input.wav";
@@ -15,14 +15,14 @@ export function useGlobalAgentMonitor() {
   const queryClient = useQueryClient();
   const { activeWorkspace } = useActiveWorkspace();
   const workspaceId = activeWorkspace?.id;
-  const constructsQuery = workspaceId
-    ? constructQueries.all(workspaceId)
+  const cellsQuery = workspaceId
+    ? cellQueries.all(workspaceId)
     : {
-        queryKey: ["constructs", "unselected"] as const,
-        queryFn: async () => [] as Construct[],
+        queryKey: ["cells", "unselected"] as const,
+        queryFn: async () => [] as Cell[],
       };
-  const { data: constructs = [] } = useQuery({
-    ...constructsQuery,
+  const { data: cells = [] } = useQuery({
+    ...cellsQuery,
     enabled: Boolean(workspaceId),
   });
   const sessionStreams = useRef<
@@ -53,21 +53,19 @@ export function useGlobalAgentMonitor() {
     window.addEventListener("blur", handleBlur);
     window.addEventListener("visibilitychange", handleVisibilityChange);
 
-    const readyConstructs = (constructs ?? []).filter(
-      (construct) => construct.status === "ready"
-    );
-    const readyIds = new Set(readyConstructs.map((construct) => construct.id));
+    const readyCells = (cells ?? []).filter((cell) => cell.status === "ready");
+    const readyIds = new Set(readyCells.map((cell) => cell.id));
 
-    for (const [constructId, stream] of sessionStreams.current.entries()) {
-      if (!readyIds.has(constructId)) {
+    for (const [cellId, stream] of sessionStreams.current.entries()) {
+      if (!readyIds.has(cellId)) {
         stream.source.close();
-        sessionStreams.current.delete(constructId);
+        sessionStreams.current.delete(cellId);
         lastStatuses.current.delete(stream.sessionId);
       }
     }
 
-    const startMonitor = async (construct: Construct) => {
-      const sessionQuery = agentQueries.sessionByConstruct(construct.id);
+    const startMonitor = async (cell: Cell) => {
+      const sessionQuery = agentQueries.sessionByCell(cell.id);
 
       try {
         const session = await queryClient.ensureQueryData(sessionQuery);
@@ -75,19 +73,19 @@ export function useGlobalAgentMonitor() {
           return;
         }
 
-        const currentStream = sessionStreams.current.get(construct.id);
+        const currentStream = sessionStreams.current.get(cell.id);
         if (currentStream) {
           if (currentStream.sessionId === session.id) {
             return;
           }
           currentStream.source.close();
-          sessionStreams.current.delete(construct.id);
+          sessionStreams.current.delete(cell.id);
         }
 
         const eventSource = new EventSource(
           `${API_BASE}/api/agents/sessions/${session.id}/events`
         );
-        sessionStreams.current.set(construct.id, {
+        sessionStreams.current.set(cell.id, {
           source: eventSource,
           sessionId: session.id,
         });
@@ -117,7 +115,7 @@ export function useGlobalAgentMonitor() {
               previousStatus !== "awaiting_input"
             ) {
               dispatchAwaitingInputNotification({
-                construct,
+                cell,
                 isWindowFocused: windowFocusedRef.current,
               });
             }
@@ -129,7 +127,7 @@ export function useGlobalAgentMonitor() {
         eventSource.addEventListener("status", handleStatus);
         eventSource.onerror = () => {
           eventSource.close();
-          sessionStreams.current.delete(construct.id);
+          sessionStreams.current.delete(cell.id);
           lastStatuses.current.delete(session.id);
         };
       } catch {
@@ -137,12 +135,12 @@ export function useGlobalAgentMonitor() {
       }
     };
 
-    for (const construct of readyConstructs) {
-      const existingStream = sessionStreams.current.get(construct.id);
+    for (const cell of readyCells) {
+      const existingStream = sessionStreams.current.get(cell.id);
       if (existingStream?.sessionId) {
         continue;
       }
-      startMonitor(construct);
+      startMonitor(cell);
     }
 
     return () => {
@@ -156,19 +154,19 @@ export function useGlobalAgentMonitor() {
       sessionStreams.current.clear();
       lastStatuses.current.clear();
     };
-  }, [constructs, queryClient]);
+  }, [cells, queryClient]);
 }
 
 type AwaitingInputNotificationOptions = {
-  construct: Construct;
+  cell: Cell;
   isWindowFocused: boolean;
 };
 
 function dispatchAwaitingInputNotification(
   options: AwaitingInputNotificationOptions
 ) {
-  const { construct, isWindowFocused } = options;
-  const label = construct.name || construct.id;
+  const { cell, isWindowFocused } = options;
+  const label = cell.name || cell.id;
   const message = `${label} agent needs your response`;
   const shouldUseDesktop = hasTauriBridge() && !isWindowFocused;
 

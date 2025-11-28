@@ -8,10 +8,10 @@ Deliver a terminal-based frontend that mirrors the core Hive experience, powered
 ## Requirements
 
 ### Core TUI Functionality
-- Reuse existing APIs so the TUI presents construct lists, chat, diff, and service status.
-- Support keyboard shortcuts for command menu actions and construct navigation.
+- Reuse existing APIs so the TUI presents cell lists, chat, diff, and service status.
+- Support keyboard shortcuts for command menu actions and cell navigation.
 - Handle streaming logs and notifications within the terminal context.
-- Consider multi-construct workflows (tabs/panes) similar to the web UI.
+- Consider multi-cell workflows (tabs/panes) similar to the web UI.
 
 ### Terminal Experience
 - **Responsive layout**: Adaptive terminal UI for different terminal sizes and resolutions
@@ -33,10 +33,10 @@ Deliver a terminal-based frontend that mirrors the core Hive experience, powered
 - **Context menus**: Right-click or keyboard-triggered context actions
 - **Help system**: Built-in help and keyboard shortcut reference
 
-### Multi-Construct Management
-- **Tab/pane system**: Organize multiple constructs simultaneously
-- **Quick switching**: Fast navigation between open constructs
-- **Status overview**: At-a-glance status for all active constructs
+### Multi-Cell Management
+- **Tab/pane system**: Organize multiple cells simultaneously
+- **Quick switching**: Fast navigation between open cells
+- **Status overview**: At-a-glance status for all active cells
 - **Workspace awareness**: Clear indication of current workspace context
 
 ### Terminal Integration

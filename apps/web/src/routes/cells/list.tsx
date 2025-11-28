@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ConstructList } from "@/components/construct-list";
+import { CellList } from "@/components/cell-list";
 import { ensureActiveWorkspace } from "@/lib/workspace";
-import { constructQueries } from "@/queries/constructs";
+import { cellQueries } from "@/queries/cells";
 
-export const Route = createFileRoute("/constructs/list")({
+export const Route = createFileRoute("/cells/list")({
   loader: async ({ context: { queryClient } }) => {
     const workspace = await ensureActiveWorkspace(queryClient);
-    await queryClient.ensureQueryData(constructQueries.all(workspace.id));
+    await queryClient.ensureQueryData(cellQueries.all(workspace.id));
     return { workspaceId: workspace.id };
   },
   component: RouteComponent,
@@ -14,5 +14,5 @@ export const Route = createFileRoute("/constructs/list")({
 
 function RouteComponent() {
   const { workspaceId } = Route.useLoaderData();
-  return <ConstructList workspaceId={workspaceId} />;
+  return <CellList workspaceId={workspaceId} />;
 }

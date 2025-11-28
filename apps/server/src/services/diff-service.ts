@@ -213,7 +213,7 @@ function buildFileSummaries(statsMap: StatsMap, statusMap: StatusMap) {
     });
 }
 
-export async function getConstructDiffSummary(args: {
+export async function getCellDiffSummary(args: {
   workspacePath: string;
   mode: DiffMode;
   baseCommit?: string | null;
@@ -228,7 +228,7 @@ export async function getConstructDiffSummary(args: {
   const resolvedBase =
     mode === "workspace" ? headCommit : (args.baseCommit ?? null);
   if (mode === "branch" && !resolvedBase) {
-    throw new Error("Construct is missing base commit metadata");
+    throw new Error("Cell is missing base commit metadata");
   }
 
   const rangeArgs = buildRangeArgs(mode, resolvedBase);
@@ -257,7 +257,7 @@ export async function getConstructDiffSummary(args: {
   };
 }
 
-export async function getConstructDiffDetails(args: {
+export async function getCellDiffDetails(args: {
   workspacePath: string;
   mode: DiffMode;
   files: string[];

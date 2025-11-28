@@ -1,9 +1,9 @@
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-export const constructStatusValues = ["pending", "ready", "error"] as const;
-export type ConstructStatus = (typeof constructStatusValues)[number];
+export const cellStatusValues = ["pending", "ready", "error"] as const;
+export type CellStatus = (typeof cellStatusValues)[number];
 
-export const constructs = sqliteTable("constructs", {
+export const cells = sqliteTable("cells", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   description: text("description"),
@@ -21,5 +21,5 @@ export const constructs = sqliteTable("constructs", {
   baseCommit: text("base_commit"),
 });
 
-export type Construct = typeof constructs.$inferSelect;
-export type NewConstruct = typeof constructs.$inferInsert;
+export type Cell = typeof cells.$inferSelect;
+export type NewCell = typeof cells.$inferInsert;

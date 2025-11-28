@@ -88,21 +88,21 @@ Provide a comprehensive diff review experience within Hive so users can review a
 - **Baseline Git Data**: keep emitting unified patches from `git diff` / `git diff --cached` so we can stage hunks, compute stats, and fall back when semantic engines fail. These patches also power comment context and future integrations.
 
 ### Backend Plan
-- Track each construct's branch metadata by persisting the branch name and starting commit hash when `createWorktree` (apps/server/src/worktree/manager.ts) clones `construct-<id>`. Store it on the `constructs` table (new columns `branch_name`, `base_commit`).
+- Track each cell's branch metadata by persisting the branch name and starting commit hash when `createWorktree` (apps/server/src/worktree/manager.ts) clones `cell-<id>`. Store it on the `cells` table (new columns `branch_name`, `base_commit`).
 - Introduce a `DiffService` in `apps/server/src/services` responsible for:
   - Listing changed files grouped by status through porcelain status + `git diff --name-status`.
   - Producing structured file payloads (`before`, `after`, patch, summary) for both "branch" (base commit → HEAD) and "workspace" (HEAD → working tree) modes.
   - Handling staging controls by generating targeted patches and piping them into `git apply --cached` / `git checkout --patch` depending on stage/unstage requests. Line-level staging can be built by slicing the stored patch hunks.
-  - Persisting line comments (new table keyed by construct_id + file + commit-ish + line) together with author metadata and timestamps.
-- Extend the constructs API with:
-  - `GET /api/constructs/:id/diff?mode=branch|workspace&files=...` for initial payloads.
-  - `POST /api/constructs/:id/diff/stage` & `/unstage` that accept file/hunk descriptors.
-  - `POST /api/constructs/:id/diff/comment` for line comments and `GET /api/constructs/:id/diff/comments` for hydration.
-  - `POST /api/constructs/:id/diff/commit` to create commits directly from the diff view.
+  - Persisting line comments (new table keyed by cell_id + file + commit-ish + line) together with author metadata and timestamps.
+- Extend the cells API with:
+  - `GET /api/cells/:id/diff?mode=branch|workspace&files=...` for initial payloads.
+  - `POST /api/cells/:id/diff/stage` & `/unstage` that accept file/hunk descriptors.
+  - `POST /api/cells/:id/diff/comment` for line comments and `GET /api/cells/:id/diff/comments` for hydration.
+  - `POST /api/cells/:id/diff/commit` to create commits directly from the diff view.
 - Wire agent SSEs: `session.diff` events already arrive via `publishAgentEvent` (apps/server/src/agents/events.ts). Extend `/api/agents/sessions/:id/events` to forward them, and update the client hook so diff tabs refresh automatically when an agent edits files.
 
 ### Frontend Plan
-- Add a TanStack Start route at `apps/web/src/routes/constructs/$constructId/diff.tsx`. Update the nav in `ConstructLayout` to include a "Diff" button, and make `/constructs/$id/diff` the new default redirect once services and chat remain accessible.
+- Add a TanStack Start route at `apps/web/src/routes/cells/$cellId/diff.tsx`. Update the nav in `CellLayout` to include a "Diff" button, and make `/cells/$id/diff` the new default redirect once services and chat remain accessible.
 - Loader responsibilities:
   - Read search params (`mode`, `file`, `view=semantic|structured`) via `validateSearch` for deterministic URLs.
   - Ensure diff data via `queryClient.ensureQueryData` so there is no loading flash when switching tabs.
@@ -118,7 +118,7 @@ Provide a comprehensive diff review experience within Hive so users can review a
 
 
 ### Ops, Perf, and Testing
-- Cache git diff summaries/details per `(constructId, filePath, mode, beforeHash, afterHash)` so repeated openings are instant.
+- Cache git diff summaries/details per `(cellId, filePath, mode, beforeHash, afterHash)` so repeated openings are instant.
 - Protect against binary or oversized files by returning metadata-only entries with download buttons instead of attempting to render diffs.
   - Testing plan:
     - Unit-test the new DiffService with fixture repositories exercising added/modified/deleted, rename detection, and partial staging.

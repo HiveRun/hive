@@ -4,7 +4,7 @@ This document tracks the current status of prepared schemas, validation, and tes
 
 ## Overview
 
-**Rescope Decision**: Focus on worktrees, OpenCode integration, and base construct capabilities to deliver value quickly.
+**Rescope Decision**: Focus on worktrees, OpenCode integration, and base cell capabilities to deliver value quickly.
 
 **Result**: Many schemas and test plans were prepared but are not currently implemented. They remain available for future implementation.
 
@@ -20,20 +20,20 @@ This document tracks the current status of prepared schemas, validation, and tes
 
 ### 🔄 Currently Implementing
 
-#### Basic Construct Management
-- **Schema**: `constructs` table
+#### Basic Cell Management
+- **Schema**: `cells` table
 - **Status**: ✅ Completed (Step 2)
-- **Usage**: Basic construct CRUD operations
+- **Usage**: Basic cell CRUD operations
 - **Tests**: ✅ Implemented and passing
 
 #### Git Worktree Management
-- **Schema**: `constructs` table (extended)
+- **Schema**: `cells` table (extended)
 - **Status**: 🔄 Next up (Step 3)
-- **Usage**: Worktree lifecycle and construct tracking
+- **Usage**: Worktree lifecycle and cell tracking
 - **Tests**: 🔄 Planned
 
 #### OpenCode Agent Integration
-- **Schema Update**: `constructs.opencode_session_id` column (maps constructs → OpenCode session)
+- **Schema Update**: `cells.opencode_session_id` column (maps cells → OpenCode session)
 - **Status**: ✅ Completed (Step 4)
 - **Usage**: Backend rehydrates agent runtime by looking up the stored OpenCode session ID; transcripts live inside OpenCode's datastore
 - **Tests**: 🔄 Remote-session recovery tests planned
@@ -62,7 +62,7 @@ This document tracks the current status of prepared schemas, validation, and tes
 - **Reason**: Complex, not needed for core agent functionality
 
 ### Advanced Provisioning (Deferred)
-- **Schema**: Updates to `constructs` status tracking
+- **Schema**: Updates to `cells` status tracking
 - **Validation**: Multi-step orchestration, rollback logic
 - **Tests**: Integration tests, failure scenarios
 - **Status**: 🔄 Deferred to Phase 1A
@@ -73,7 +73,7 @@ This document tracks the current status of prepared schemas, validation, and tes
 ### Active Tables
 ```sql
 -- Currently implemented and used
-constructs (
+cells (
   id,
   name,
   description,
@@ -89,9 +89,9 @@ constructs (
 ### Prepared Tables (Not Currently Used)
 ```sql
 -- Prepared for Phase 1A implementation
-prompt_bundles (id, construct_id, content, token_count, created_at)
-port_allocations (id, construct_id, service_name, port, allocated_at)
-services (id, construct_id, name, type, command, cwd, env_json, pid, status, ready_pattern, started_at, stopped_at)
+prompt_bundles (id, cell_id, content, token_count, created_at)
+port_allocations (id, cell_id, service_name, port, allocated_at)
+services (id, cell_id, name, type, command, cwd, env_json, pid, status, ready_pattern, started_at, stopped_at)
 ```
 
 ## Test Status

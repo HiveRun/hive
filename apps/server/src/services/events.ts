@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 
 export type ServiceUpdateEvent = {
-  constructId: string;
+  cellId: string;
   serviceId: string;
 };
 
@@ -9,15 +9,15 @@ const emitter = new EventEmitter();
 emitter.setMaxListeners(0);
 
 export function emitServiceUpdate(event: ServiceUpdateEvent): void {
-  emitter.emit(event.constructId, event);
+  emitter.emit(event.cellId, event);
 }
 
 export function subscribeToServiceEvents(
-  constructId: string,
+  cellId: string,
   listener: (event: ServiceUpdateEvent) => void
 ): () => void {
-  emitter.on(constructId, listener);
+  emitter.on(cellId, listener);
   return () => {
-    emitter.off(constructId, listener);
+    emitter.off(cellId, listener);
   };
 }

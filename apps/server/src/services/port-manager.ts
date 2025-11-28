@@ -1,8 +1,8 @@
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { eq } from "drizzle-orm";
-import type { ConstructService } from "../schema/services";
-import { constructServices } from "../schema/services";
+import type { CellService } from "../schema/services";
+import { cellServices } from "../schema/services";
 
 type DbClient = typeof import("../db").db;
 
@@ -30,7 +30,7 @@ export function createPortManager({ db, now }: PortManagerDeps) {
     }
   }
 
-  async function ensureServicePort(service: ConstructService): Promise<number> {
+  async function ensureServicePort(service: CellService): Promise<number> {
     const existing = service.port ?? servicePortMap.get(service.id);
 
     if (typeof existing === "number") {
@@ -47,9 +47,9 @@ export function createPortManager({ db, now }: PortManagerDeps) {
     rememberSpecificPort(service.id, port);
 
     await db
-      .update(constructServices)
+      .update(cellServices)
       .set({ port, updatedAt: now() })
-      .where(eq(constructServices.id, service.id));
+      .where(eq(cellServices.id, service.id));
 
     return port;
   }

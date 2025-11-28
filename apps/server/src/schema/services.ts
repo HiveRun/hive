@@ -1,6 +1,6 @@
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import type { Service } from "../config/schema";
-import { constructs } from "./constructs";
+import { cells } from "./cells";
 
 export const SERVICE_STATUSES = [
   "pending",
@@ -13,11 +13,11 @@ export const SERVICE_STATUSES = [
 
 export type ServiceStatus = (typeof SERVICE_STATUSES)[number];
 
-export const constructServices = sqliteTable("construct_services", {
+export const cellServices = sqliteTable("cell_services", {
   id: text("id").primaryKey(),
-  constructId: text("construct_id")
+  cellId: text("cell_id")
     .notNull()
-    .references(() => constructs.id, { onDelete: "cascade" }),
+    .references(() => cells.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   type: text("type").notNull(),
   command: text("command").notNull(),
@@ -33,5 +33,5 @@ export const constructServices = sqliteTable("construct_services", {
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });
 
-export type ConstructService = typeof constructServices.$inferSelect;
-export type NewConstructService = typeof constructServices.$inferInsert;
+export type CellService = typeof cellServices.$inferSelect;
+export type NewCellService = typeof cellServices.$inferInsert;

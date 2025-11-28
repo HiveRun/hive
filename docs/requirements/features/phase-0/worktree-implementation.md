@@ -4,39 +4,39 @@
 
 ## Overview
 
-Git worktree functionality has been successfully implemented to provide isolated workspaces for each construct. This allows users to work on multiple constructs simultaneously without conflicts, using git's native worktree feature.
+Git worktree functionality has been successfully implemented to provide isolated workspaces for each cell. This allows users to work on multiple cells simultaneously without conflicts, using git's native worktree feature.
 
 ## What Was Implemented
 
 ### Backend Implementation
 
 1. **Database Schema Update**
-   - Added `workspace_path` column to `constructs` table
+   - Added `workspace_path` column to `cells` table
    - Migration: `0001_swift_kronos.sql`
-   - Stores the path to the construct's worktree when active
+   - Stores the path to the cell's worktree when active
 
 2. **WorktreeManager Service** (`apps/server/src/worktree/manager.ts`)
    - Factory function pattern (no classes, per coding guidelines)
    - **Public API (2 methods)**:
-     - `createWorktree(constructId, options)`: Creates isolated worktrees in `~/.hive/constructs/<id>`
-     - `removeWorktree(constructId)`: Safely removes worktrees with automatic prune
+     - `createWorktree(cellId, options)`: Creates isolated worktrees in `~/.hive/cells/<id>`
+     - `removeWorktree(cellId)`: Safely removes worktrees with automatic prune
    - **Internal helpers**:
-     - `findWorktreeInfo()`: Locates worktree by construct ID
+     - `findWorktreeInfo()`: Locates worktree by cell ID
      - Direct git command execution via `execSync` (no external dependencies)
-   - Automatic branch management: Creates unique branches (`construct-{id}`) to avoid conflicts
+   - Automatic branch management: Creates unique branches (`cell-{id}`) to avoid conflicts
    - Gitignored files copying: Template-based include patterns (defaults to `.env*`, `*.local`)
    - Error logging: Non-critical failures logged to stderr (silent in tests)
 
 3. **API Integration**
-   - Worktree creation integrated into `POST /api/constructs` endpoint
-   - Worktree removal integrated into `DELETE /api/constructs/:id` endpoint
+   - Worktree creation integrated into `POST /api/cells` endpoint
+   - Worktree removal integrated into `DELETE /api/cells/:id` endpoint
    - Full TypeBox validation on all endpoints
-   - Automatic cleanup on construct deletion
+   - Automatic cleanup on cell deletion
 
 ### Frontend Implementation
 
 1. **UI Components** (`apps/web/src/components/`)
-   - Updated `ConstructList` with worktree status badges
+   - Updated `CellList` with worktree status badges
    - Worktree creation/removal buttons with proper state management
    - Workspace path display when available
    - Status indicators: "Worktree Active" vs "No Worktree"
@@ -65,14 +65,14 @@ Git worktree functionality has been successfully implemented to provide isolated
 - **Trade-offs**: Less abstraction, but git is stable and well-documented
 
 ### Worktree Storage Location
-- **Location**: `~/.hive/constructs/<construct-id>`
+- **Location**: `~/.hive/cells/<cell-id>`
 - **Rationale**: 
   - Keeps worktrees outside main repo for safety
   - Consistent location across projects
   - Easy to find and manage manually
 
 ### Branch Management Strategy
-- **Automatic branch creation**: Each worktree gets unique branch `construct-{id}`
+- **Automatic branch creation**: Each worktree gets unique branch `cell-{id}`
 - **Conflict prevention**: Avoids multiple worktrees on same branch
 - **Error handling**: Logged to stderr with graceful fallbacks
 
@@ -95,60 +95,60 @@ apps/server/src/
 ├── worktree/
 │   └── manager.ts          # Core worktree management (398 lines, 19.16 KB built)
 ├── routes/
-│   └── constructs.ts       # Integrated worktree lifecycle with CRUD
+│   └── cells.ts       # Integrated worktree lifecycle with CRUD
 └── migrations/
     └── 0001_swift_kronos.sql  # Database schema update
 
 apps/web/src/
 ├── components/
-│   ├── construct-list.tsx  # Shows workspace paths
-│   └── construct-form.tsx  # Create construct → auto-creates worktree
+│   ├── cell-list.tsx  # Shows workspace paths
+│   └── cell-form.tsx  # Create cell → auto-creates worktree
 ├── queries/
-│   └── constructs.ts       # CRUD queries (worktree lifecycle included)
+│   └── cells.ts       # CRUD queries (worktree lifecycle included)
 └── e2e/
-    └── constructs.spec.ts  # E2E coverage including worktree workflows
+    └── cells.spec.ts  # E2E coverage including worktree workflows
 ```
 
 ## API Examples
 
-### Create Construct (Auto-creates Worktree)
+### Create Cell (Auto-creates Worktree)
 ```bash
-curl -X POST http://localhost:3000/api/constructs \
+curl -X POST http://localhost:3000/api/cells \
   -H "Content-Type: application/json" \
   -d '{
     "name": "My Feature",
     "description": "Working on new feature",
     "templateId": "full-stack"
   }'
-# Returns: {"id": "...", "workspacePath": "~/.hive/constructs/<id>", ...}
+# Returns: {"id": "...", "workspacePath": "~/.hive/cells/<id>", ...}
 ```
 
-### Delete Construct (Auto-removes Worktree)
+### Delete Cell (Auto-removes Worktree)
 ```bash
-curl -X DELETE http://localhost:3000/api/constructs/<id>
+curl -X DELETE http://localhost:3000/api/cells/<id>
 # Automatically removes worktree and prunes stale entries
 ```
 
 ## Testing Coverage
 
-- **Backend Unit Tests**: 34/34 passing (includes construct CRUD with worktree lifecycle)
+- **Backend Unit Tests**: 34/34 passing (includes cell CRUD with worktree lifecycle)
 - **E2E Tests**: 29/29 passing (UI workflows with visual snapshots)
 - **Visual Snapshots**: Light/Dark mode × Desktop/Tablet/Mobile viewports
 - **Error Logging**: Silent in tests (`NODE_ENV=test`)
 
 ## Usage Workflow
 
-1. **Create Construct**: User fills form → construct saved to database
-2. **Auto-create Worktree**: Worktree automatically created at `~/.hive/constructs/<id>`
-3. **Work Isolated**: Git worktree provides isolated workspace with unique branch `construct-<id>`
+1. **Create Cell**: User fills form → cell saved to database
+2. **Auto-create Worktree**: Worktree automatically created at `~/.hive/cells/<id>`
+3. **Work Isolated**: Git worktree provides isolated workspace with unique branch `cell-<id>`
 4. **Copy Config Files**: Template-based include patterns copy `.env*`, `*.local` files
 5. **Track Changes**: All work happens in isolated environment
-6. **Clean Up**: Delete construct → automatically removes worktree and prunes
+6. **Clean Up**: Delete cell → automatically removes worktree and prunes
 
 ## Benefits Achieved
 
-- **Isolation**: Each construct has its own workspace
-- **No Conflicts**: Multiple constructs can be worked on simultaneously
+- **Isolation**: Each cell has its own workspace
+- **No Conflicts**: Multiple cells can be worked on simultaneously
 - **Git Integration**: Native git workflow with proper branching
 - **Clean Management**: Automatic cleanup and pruning of stale worktrees
 - **Type Safety**: End-to-end TypeScript integration via Eden Treaty

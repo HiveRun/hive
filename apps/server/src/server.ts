@@ -21,11 +21,11 @@ import { resolveWorkspaceRoot } from "./config/context";
 import { resolveStaticAssetsDirectory } from "./config/static-assets";
 import { db } from "./db";
 import { agentsRoutes } from "./routes/agents";
-import { constructsRoutes } from "./routes/constructs";
+import { cellsRoutes } from "./routes/cells";
 import { templatesRoutes } from "./routes/templates";
 import { preloadVoiceTranscriptionModels, voiceRoutes } from "./routes/voice";
 import { workspacesRoutes } from "./routes/workspaces";
-import { constructs } from "./schema/constructs";
+import { cells } from "./schema/cells";
 import {
   bootstrapServiceSupervisor,
   stopAllServices,
@@ -186,11 +186,11 @@ async function runMigrations() {
 async function startupCleanup() {
   process.stderr.write("Checking for orphaned OpenCode processes...\n");
 
-  const activeConstructs = await db
-    .select({ port: constructs.opencodeServerPort })
-    .from(constructs);
+  const activeCells = await db
+    .select({ port: cells.opencodeServerPort })
+    .from(cells);
 
-  const ports = activeConstructs
+  const ports = activeCells
     .map((c) => c.port)
     .filter((p): p is number => p !== null);
 
@@ -246,7 +246,7 @@ const createApp = () =>
     }))
     .use(templatesRoutes)
     .use(workspacesRoutes)
-    .use(constructsRoutes)
+    .use(cellsRoutes)
     .use(agentsRoutes)
     .use(voiceRoutes);
 

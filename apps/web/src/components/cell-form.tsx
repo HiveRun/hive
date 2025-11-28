@@ -15,16 +15,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type { CreateConstructInput } from "@/lib/rpc";
-import { constructMutations } from "@/queries/constructs";
+import type { CreateCellInput } from "@/lib/rpc";
+import { cellMutations } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
 
-type ConstructFormValues = CreateConstructInput;
+type CellFormValues = CreateCellInput;
 
 const NAME_MAX_LENGTH = 255;
 const DESCRIPTION_MAX_LENGTH = 1000;
 
-const constructSchema = z.object({
+const cellSchema = z.object({
   name: z
     .string()
     .min(1, "Name is required")
@@ -37,37 +37,33 @@ const constructSchema = z.object({
 });
 
 const validateName = (value: string) => {
-  const result = constructSchema.shape.name.safeParse(value);
+  const result = cellSchema.shape.name.safeParse(value);
   if (!result.success) {
     return result.error.issues[0]?.message ?? "Invalid name";
   }
 };
 
 const validateDescription = (value: string) => {
-  const result = constructSchema.shape.description.safeParse(value);
+  const result = cellSchema.shape.description.safeParse(value);
   if (!result.success) {
     return result.error.issues[0]?.message ?? "Invalid description";
   }
 };
 
 const validateTemplateId = (value: string) => {
-  const result = constructSchema.shape.templateId.safeParse(value);
+  const result = cellSchema.shape.templateId.safeParse(value);
   if (!result.success) {
     return result.error.issues[0]?.message ?? "Template is required";
   }
 };
 
-type ConstructFormProps = {
+type CellFormProps = {
   workspaceId: string;
   onSuccess?: () => void;
   onCancel?: () => void;
 };
 
-export function ConstructForm({
-  workspaceId,
-  onSuccess,
-  onCancel,
-}: ConstructFormProps) {
+export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
   const queryClient = useQueryClient();
 
   const {
@@ -80,28 +76,28 @@ export function ConstructForm({
   const defaults = templatesData?.defaults;
 
   const mutation = useMutation({
-    mutationFn: constructMutations.create.mutationFn,
-    onSuccess: (construct) => {
-      if (construct.status === "error") {
-        toast.warning("Construct created with setup errors", {
+    mutationFn: cellMutations.create.mutationFn,
+    onSuccess: (cell) => {
+      if (cell.status === "error") {
+        toast.warning("Cell created with setup errors", {
           description:
-            construct.lastSetupError ??
-            "Open the construct to rerun the setup commands manually.",
+            cell.lastSetupError ??
+            "Open the cell to rerun the setup commands manually.",
         });
       } else {
-        toast.success("Construct created successfully");
+        toast.success("Cell created successfully");
       }
 
-      queryClient.invalidateQueries({ queryKey: ["constructs", workspaceId] });
+      queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
       form.reset();
       onSuccess?.();
     },
     onError: (error) => {
       const message =
-        error instanceof Error ? error.message : "Failed to create construct";
+        error instanceof Error ? error.message : "Failed to create cell";
       const [headline, ...rest] = message.split("\n");
       const description = rest.join("\n").trim();
-      toast.error(headline || "Failed to create construct", {
+      toast.error(headline || "Failed to create cell", {
         description: description || undefined,
       });
     },
@@ -119,7 +115,7 @@ export function ConstructForm({
   const form = useForm({
     defaultValues,
     onSubmit: ({ value }) => {
-      mutation.mutate({ ...(value as ConstructFormValues), workspaceId });
+      mutation.mutate({ ...(value as CellFormValues), workspaceId });
     },
   });
 
@@ -151,12 +147,12 @@ export function ConstructForm({
   return (
     <Card className="w-full max-w-2xl">
       <CardHeader>
-        <CardTitle>Create New Construct</CardTitle>
+        <CardTitle>Create New Cell</CardTitle>
       </CardHeader>
       <CardContent>
         {mutation.isError && mutationErrorMessage && (
           <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-destructive text-sm">
-            <p className="font-semibold">Construct creation failed</p>
+            <p className="font-semibold">Cell creation failed</p>
             <pre className="mt-2 whitespace-pre-wrap text-destructive text-xs">
               {mutationErrorMessage}
             </pre>
@@ -183,7 +179,7 @@ export function ConstructForm({
                   disabled={mutation.isPending}
                   id={field.name}
                   onChange={(event) => field.handleChange(event.target.value)}
-                  placeholder="Enter construct name"
+                  placeholder="Enter cell name"
                   value={field.state.value}
                 />
                 {field.state.meta.errors.length > 0 && (
@@ -208,7 +204,7 @@ export function ConstructForm({
                   disabled={mutation.isPending}
                   id={field.name}
                   onChange={(event) => field.handleChange(event.target.value)}
-                  placeholder="Enter construct description (optional)"
+                  placeholder="Enter cell description (optional)"
                   rows={3}
                   value={field.state.value}
                 />
@@ -270,7 +266,7 @@ export function ConstructForm({
               </Button>
             )}
             <Button disabled={mutation.isPending} type="submit">
-              {mutation.isPending ? "Creating..." : "Create Construct"}
+              {mutation.isPending ? "Creating..." : "Create Cell"}
             </Button>
           </div>
         </form>

@@ -100,7 +100,7 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
   const invalidateWorkspaceScopedData = async () => {
     await Promise.all([
       invalidateWorkspaceList(),
-      queryClient.invalidateQueries({ queryKey: ["constructs"] }),
+      queryClient.invalidateQueries({ queryKey: ["cells"] }),
       queryClient.invalidateQueries({ queryKey: ["templates"] }),
       queryClient.invalidateQueries({ queryKey: ["voice-config"] }),
       queryClient.invalidateQueries({ queryKey: ["agent-session"] }),
@@ -249,7 +249,7 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
             <SheetTitle>Manage Workspaces</SheetTitle>
             <SheetDescription>
               Keep every project registered once, then switch contexts without
-              stopping running constructs.
+              stopping running cells.
             </SheetDescription>
           </SheetHeader>
           <div className="flex flex-1 flex-col gap-4 p-4">
@@ -673,12 +673,10 @@ function WorkspaceRow({
           </AlertDialogTrigger>
           <AlertDialogContent className="max-w-md">
             <AlertDialogHeader>
-              <AlertDialogTitle>
-                Remove workspace and constructs?
-              </AlertDialogTitle>
+              <AlertDialogTitle>Remove workspace and cells?</AlertDialogTitle>
               <AlertDialogDescription>
-                Removing {workspace.label} deletes every construct created in
-                this workspace, including their worktrees. This action cannot be
+                Removing {workspace.label} deletes every cell created in this
+                workspace, including their worktrees. This action cannot be
                 undone.
               </AlertDialogDescription>
             </AlertDialogHeader>

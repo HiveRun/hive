@@ -10,14 +10,14 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 
 ## Rescope Decision
 
-**New Focus**: Worktrees, OpenCode integration, and base construct capabilities
+**New Focus**: Worktrees, OpenCode integration, and base cell capabilities
 **Deferred**: Service management, port allocation, complex provisioning orchestration
 
 **Rationale**: To get Hive useful quickly, we need:
 1. ✅ Template definitions (completed)
 2. 🔄 Git worktree management for isolated workspaces  
 3. 🔄 OpenCode SDK integration for agent sessions
-4. 🔄 Basic construct lifecycle (create, list, status)
+4. 🔄 Basic cell lifecycle (create, list, status)
 
 **Note**: All schemas, validation, and tests from the original plan remain in place but are marked as **PREPARED BUT NOT CURRENTLY USED** to enable faster implementation of the core path.
 
@@ -55,39 +55,39 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 
 ---
 
-## Step 2: Basic Construct Management ✅ **COMPLETED**
+## Step 2: Basic Cell Management ✅ **COMPLETED**
 
-**Branch**: `feat/basic-construct-management`
+**Branch**: `feat/basic-cell-management`
 
 ### Scope
-- Construct creation form UI (name, description, template selection)
-- Construct listing page
-- **Real database persistence** for basic constructs
-- Construct CRUD operations (create, list, delete, update)
-- **No status tracking, no worktree, no services, no agents** - just basic construct entities
+- Cell creation form UI (name, description, template selection)
+- Cell listing page
+- **Real database persistence** for basic cells
+- Cell CRUD operations (create, list, delete, update)
+- **No status tracking, no worktree, no services, no agents** - just basic cell entities
 
 ### Persistence Added
-- `constructs` table (id, name, description, template_id, created_at, updated_at)
+- `cells` table (id, name, description, template_id, created_at, updated_at)
 - **Note**: workspace_path and status added later in PR #3
 - Queries: create, list, get by id, delete, update
 
 ### Tests
-- Construct creation form validation
+- Cell creation form validation
 - Database CRUD operations
 - UI component tests with real data
-- E2E tests for complete construct management workflow
+- E2E tests for complete cell management workflow
 - [x] Playwright snapshots mock API responses with deterministic Faker fixtures
 
 ### Dependencies
-- Step 1 (needs templates for construct creation form)
+- Step 1 (needs templates for cell creation form)
 
 ### Acceptance Criteria
-- [x] Can create construct via UI form with real database storage
-- [x] Construct list shows basic info from database
-- [x] Can delete constructs from UI and database
-- [x] Can bulk delete constructs from UI and database
-- [x] Can update construct details (name, description)
-- [x] E2E tests pass for full construct management workflow
+- [x] Can create cell via UI form with real database storage
+- [x] Cell list shows basic info from database
+- [x] Can delete cells from UI and database
+- [x] Can bulk delete cells from UI and database
+- [x] Can update cell details (name, description)
+- [x] E2E tests pass for full cell management workflow
 - [x] Database schema ready for worktree extension in PR #3
 
 ---
@@ -97,16 +97,16 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 **Branch**: `feat/git-worktree-integration`
 
 ### Scope
-- **Extend existing constructs** with git worktree functionality
-- Add `workspace_path` to existing constructs
-- Create isolated git worktrees for each construct (`.constructs/<id>/`)
+- **Extend existing cells** with git worktree functionality
+- Add `workspace_path` to existing cells
+- Create isolated git worktrees for each cell (`.cells/<id>/`)
 - Worktree lifecycle management (create, list, prune, cleanup)
 - Worktree isolation and safety checks
 - **Extend existing UI** from Step 2 to show worktree information
 
 ### Persistence Updates
-- **ALTER TABLE constructs ADD COLUMN workspace_path TEXT**
-- Update existing constructs to support worktree paths
+- **ALTER TABLE cells ADD COLUMN workspace_path TEXT**
+- Update existing cells to support worktree paths
 - Migration script to add workspace_path column
 
 ### Tests
@@ -116,14 +116,14 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - **Integration tests with existing UI from Step 2**
 
 ### Dependencies
-- Step 1 (needs templates for construct creation)
-- Step 2 (needs existing construct management)
+- Step 1 (needs templates for cell creation)
+- Step 2 (needs existing cell management)
 
 ### Acceptance Criteria
-- [x] Existing constructs can be extended with worktree functionality
-- [x] Worktree created at `.constructs/<id>/` when requested
+- [x] Existing cells can be extended with worktree functionality
+- [x] Worktree created at `.cells/<id>/` when requested
 - [x] Worktree information displayed in UI
-- [x] Worktree cleanup on construct deletion
+- [x] Worktree cleanup on cell deletion
 - [x] Safety checks prevent worktree conflicts
 - [x] Database migration works correctly
 - [x] End-to-end test: UI → backend → worktree creation
@@ -135,18 +135,18 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 **Branch**: `feat/agent-integration`
 
 ### Scope
-- **Extend existing constructs** with agent functionality
+- **Extend existing cells** with agent functionality
 - `@opencode-ai/sdk` integration
 - Mock orchestrator fallback for development
 - Message streaming and state management
 - Session lifecycle (create, send, receive, stop)
 - Credential validation from OpenCode config
 - Agent session management in worktree context
-- Construct creation automatically provisions the agent session (with mock fallback) and fails fast if provisioning cannot complete
+- Cell creation automatically provisions the agent session (with mock fallback) and fails fast if provisioning cannot complete
 - **Extend existing UI** from Step 2 with chat interface
 
 ### Persistence Added
-- `constructs` table gains `opencode_session_id`
+- `cells` table gains `opencode_session_id`
 - Agent transcripts/messages remain inside OpenCode's datastore (Hive rehydrates via stored session ID)
 
 ### Tests
@@ -158,7 +158,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - **Integration tests with existing UI from Step 2**
 
 ### Dependencies
-- Step 2 (needs existing construct management)
+- Step 2 (needs existing cell management)
 - Step 3 (needs worktrees to run agents in)
 
 ### Acceptance Criteria
@@ -166,9 +166,9 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - [/] Messages stream in real-time to UI chat interface
 - [/] Mock orchestrator works without credentials
 - [/] Session status reflected in UI via runtime + OpenCode session metadata
-- [/] Construct creation provisions an agent session automatically (and rolls back on failure)
+- [/] Cell creation provisions an agent session automatically (and rolls back on failure)
 - [/] Transcripts persist through OpenCode and display in UI
-- [/] Agent operates within construct worktree
+- [/] Agent operates within cell worktree
 - [/] End-to-end test: UI → agent session → real responses
 
 ---
@@ -190,7 +190,7 @@ The following features from the original plan are **deferred** to focus on core 
 ### 🔄 Deferred: Service Management & Process Lifecycle
 - **Status**: Schema prepared but not implemented  
 - **Why deferred**: Complex, not needed for core agent functionality
-- **Future**: Will enable development environments within constructs
+- **Future**: Will enable development environments within cells
 
 ### 🔄 Deferred: Provisioning Orchestration
 - **Status**: Logic prepared but not implemented
@@ -204,7 +204,7 @@ The following features from the original plan are **deferred** to focus on core 
 ```
 Step 1 (Templates) ✅ COMPLETED
   ↓
-Step 2 (Basic Construct Management) ✅ COMPLETED
+Step 2 (Basic Cell Management) ✅ COMPLETED
   ↓
 Step 3 (Git Worktree Management)  
   ↓
@@ -215,15 +215,15 @@ Step 4 (OpenCode Agent Integration)
 This rescoped sequence delivers a **functional agent workspace** in 4 steps:
 
 1. ✅ **Template definitions** (completed)
-2. ✅ **Basic construct management** (real database entities)
-3. 🔄 **Git worktree integration** (extends existing constructs)
-4. 🔄 **Agent integration** (extends existing constructs)
+2. ✅ **Basic cell management** (real database entities)
+3. 🔄 **Git worktree integration** (extends existing cells)
+4. 🔄 **Agent integration** (extends existing cells)
 
-### Why Basic Constructs First?
-- **Real entities**: Constructs exist in database from day 1
+### Why Basic Cells First?
+- **Real entities**: Cells exist in database from day 1
 - **Incremental complexity**: Each PR extends existing functionality
 - **Testing foundation**: Real database operations enable proper testing
-- **User value**: Users can create and manage constructs immediately
+- **User value**: Users can create and manage cells immediately
 - **Clear extension path**: Each feature builds on solid foundation
 
 ### Deferred Complex Systems

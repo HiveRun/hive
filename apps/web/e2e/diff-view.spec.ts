@@ -1,6 +1,6 @@
-import type { ConstructDiffResponse } from "@/queries/constructs";
+import type { CellDiffResponse } from "@/queries/cells";
 import { expect, type Page, test } from "./utils/app-test";
-import { constructDiffSnapshotFixture } from "./utils/construct-fixture";
+import { cellDiffSnapshotFixture } from "./utils/cell-fixture";
 import { type MockApiOverrides, mockAppApi } from "./utils/mock-api";
 
 const API_ERROR_STATUS = 400;
@@ -12,7 +12,7 @@ async function openDiffView(
   page.on("response", (response) => {
     if (
       response.status() >= API_ERROR_STATUS &&
-      response.url().includes("/api/constructs")
+      response.url().includes("/api/cells")
     ) {
       console.error(`API ${response.status()} -> ${response.url()}`);
     }
@@ -23,13 +23,13 @@ async function openDiffView(
     params.set("file", options.file);
   }
   const query = params.size > 0 ? `?${params.toString()}` : "";
-  await page.goto(`/constructs/snapshot-construct/diff${query}`);
+  await page.goto(`/cells/snapshot-cell/diff${query}`);
   await page.waitForLoadState("networkidle");
 }
 
 const SEMANTIC_WRAP_TOLERANCE = 5;
 
-test.describe("Construct Diff View", () => {
+test.describe("Cell Diff View", () => {
   test("semantic diff wraps by default", async ({ page }) => {
     await openDiffView(page);
     const diffContainer = page.getByTestId("diff-semantic-view");
@@ -44,8 +44,8 @@ test.describe("Construct Diff View", () => {
   });
 
   test("patch fallback wraps output", async ({ page }) => {
-    const baseDiff = constructDiffSnapshotFixture["snapshot-construct"];
-    const patchOnlyDiff: ConstructDiffResponse = {
+    const baseDiff = cellDiffSnapshotFixture["snapshot-cell"];
+    const patchOnlyDiff: CellDiffResponse = {
       ...baseDiff,
       details:
         baseDiff.details?.map((detail) =>
@@ -63,8 +63,8 @@ test.describe("Construct Diff View", () => {
       file: "README.md",
       overrides: {
         diffs: {
-          ...constructDiffSnapshotFixture,
-          "snapshot-construct": patchOnlyDiff,
+          ...cellDiffSnapshotFixture,
+          "snapshot-cell": patchOnlyDiff,
         },
       },
     });

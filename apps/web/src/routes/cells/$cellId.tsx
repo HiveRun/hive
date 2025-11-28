@@ -7,68 +7,66 @@ import {
   useRouterState,
 } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
-import { constructQueries } from "@/queries/constructs";
+import { cellQueries } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
 
-export const Route = createFileRoute("/constructs/$constructId")({
+export const Route = createFileRoute("/cells/$cellId")({
   beforeLoad: ({ params, location }) => {
-    if (location.pathname === `/constructs/${params.constructId}`) {
+    if (location.pathname === `/cells/${params.cellId}`) {
       throw redirect({
-        to: "/constructs/$constructId/chat",
+        to: "/cells/$cellId/chat",
         params,
       });
     }
   },
   loader: async ({ params, context: { queryClient } }) => {
-    const construct = await queryClient.ensureQueryData(
-      constructQueries.detail(params.constructId)
+    const cell = await queryClient.ensureQueryData(
+      cellQueries.detail(params.cellId)
     );
-    await queryClient.ensureQueryData(
-      templateQueries.all(construct.workspaceId)
-    );
-    return { workspaceId: construct.workspaceId };
+    await queryClient.ensureQueryData(templateQueries.all(cell.workspaceId));
+    return { workspaceId: cell.workspaceId };
   },
-  component: ConstructLayout,
+  component: CellLayout,
 });
 
-function ConstructLayout() {
-  const { constructId } = Route.useParams();
+function CellLayout() {
+  const { cellId } = Route.useParams();
   const { workspaceId } = Route.useLoaderData();
-  const constructQuery = useQuery(constructQueries.detail(constructId));
+  const cellQuery = useQuery(cellQueries.detail(cellId));
   const templatesQuery = useQuery(templateQueries.all(workspaceId));
   const activeRouteId = useRouterState({
     select: (state) => state.matches.at(-1)?.routeId ?? undefined,
   });
 
-  const construct = constructQuery.data;
+  const cell = cellQuery.data;
   const templates = templatesQuery.data?.templates ?? [];
 
   const templateLabel = templates.find(
-    (template) => template.id === construct?.templateId
+    (template) => template.id === cell?.templateId
   )?.label;
   const navItems = [
     {
-      routeId: "/constructs/$constructId/services",
+      routeId: "/cells/$cellId/services",
       label: "Services",
-      to: "/constructs/$constructId/services",
+      to: "/cells/$cellId/services",
     },
     {
-      routeId: "/constructs/$constructId/diff",
+      routeId: "/cells/$cellId/diff",
       label: "Diff",
-      to: "/constructs/$constructId/diff",
+      to: "/cells/$cellId/diff",
     },
     {
-      routeId: "/constructs/$constructId/chat",
+      routeId: "/cells/$cellId/chat",
       label: "Chat",
-      to: "/constructs/$constructId/chat",
+      to: "/cells/$cellId/chat",
     },
   ];
 
-  if (!construct) {
+  if (!cell) {
     return (
       <div className="flex h-full w-full flex-1 overflow-hidden">
         <div className="flex min-h-0 flex-1 items-center justify-center border-2 border-border bg-card p-6 text-muted-foreground text-sm">
-          Unable to load construct. It may have been deleted.
+          Unable to load cell. It may have been deleted.
         </div>
       </div>
     );
@@ -81,27 +79,27 @@ function ConstructLayout() {
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="font-semibold text-2xl text-foreground tracking-wide">
-                {construct.name}
+                {cell.name}
               </h1>
               <span className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
-                {construct.id}
+                {cell.id}
               </span>
             </div>
-            {construct.description ? (
+            {cell.description ? (
               <p className="max-w-3xl text-muted-foreground text-sm">
-                {construct.description}
+                {cell.description}
               </p>
             ) : null}
             <div className="flex flex-wrap gap-4 text-[11px] text-muted-foreground uppercase tracking-[0.2em]">
-              <span>Template · {templateLabel ?? construct.templateId}</span>
-              <span>Workspace · {construct.workspacePath}</span>
+              <span>Template · {templateLabel ?? cell.templateId}</span>
+              <span>Workspace · {cell.workspacePath}</span>
             </div>
           </div>
         </section>
 
         <div className="flex flex-wrap justify-end gap-2">
           {navItems.map((item) => (
-            <Link key={item.routeId} params={{ constructId }} to={item.to}>
+            <Link key={item.routeId} params={{ cellId }} to={item.to}>
               <Button
                 variant={
                   activeRouteId === item.routeId ? "secondary" : "outline"

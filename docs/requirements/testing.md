@@ -1,6 +1,6 @@
 # Testing Strategy
 
-This document outlines our approach to testing Hive across constructs and supporting services.
+This document outlines our approach to testing Hive across cells and supporting services.
 
 ## Philosophy
 - Prefer pure functions; when code needs IO helpers, accept only the specific helper you want to swap. For standard modules (`fs`, `path`, `Bun.spawn`), import them directly and use `vi.mock`/`vi.spyOn` in tests when necessary.
@@ -27,10 +27,10 @@ This document outlines our approach to testing Hive across constructs and suppor
 - Boot the API with temp roots: `WORKTREE_ROOT=/tmp/hive-e2e-<uuid>` and `DATABASE_URL=file:/tmp/hive-e2e-<uuid>.db`. Playwright’s `globalSetup` should create these dirs, run migrations/seeds, and export the env for both the server process and the tests.
 - Freeze time via [`timekeeper`](https://www.npmjs.com/package/timekeeper) in the backend entrypoint: if `HIVE_FIXED_TIME` is set, call `timekeeper.freeze(new Date(value))`. Every timestamp the UI creates stays stable, yet the server still executes real logic.
 - Optional hardening: run the API inside Docker/bubblewrap with the temp directory bind-mounted. That allows `git worktree` to run for real while ensuring the host repo is untouched and everything disappears after teardown.
-- Snapshot strategy: start from an empty DB (zero constructs), take the “empty state” screenshot, drive the actual creation form, wait for success, then capture the “single construct” view. Because the clock is frozen and the DB/worktree roots are ephemeral, screenshots don’t drift between runs.
+- Snapshot strategy: start from an empty DB (zero cells), take the “empty state” screenshot, drive the actual creation form, wait for success, then capture the “single cell” view. Because the clock is frozen and the DB/worktree roots are ephemeral, screenshots don’t drift between runs.
 
 ## Smoke & Visual Regression
-- Maintain a small set of Playwright specs and CLI smoke tests that exercise construct creation, review queue, and transcript rendering. Keep them fast and run on nightly/release pipelines.
+- Maintain a small set of Playwright specs and CLI smoke tests that exercise cell creation, review queue, and transcript rendering. Keep them fast and run on nightly/release pipelines.
 
 ## CI Tiers
 - Run unit tests and lint on every push.

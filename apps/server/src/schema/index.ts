@@ -1,7 +1,7 @@
-import { constructs } from "./constructs";
-import { constructServices } from "./services";
+import { cells } from "./cells";
+import { cellServices } from "./services";
 
 export const schema = {
-  constructs,
-  constructServices,
+  cells,
+  cellServices,
 };

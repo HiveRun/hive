@@ -4,8 +4,8 @@
   "id": "544a950d-ef1a-4f42-bffb-aee121ee4391",
   "prevId": "2a2a17c0-9b39-4cec-81f9-9f262acdab88",
   "tables": {
-    "constructs": {
-      "name": "constructs",
+    "cells": {
+      "name": "cells",
       "columns": {
         "id": {
           "name": "id",
@@ -121,8 +121,8 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "construct_services": {
-      "name": "construct_services",
+    "cell_services": {
+      "name": "cell_services",
       "columns": {
         "id": {
           "name": "id",
@@ -131,8 +131,8 @@
           "notNull": true,
           "autoincrement": false
         },
-        "construct_id": {
-          "name": "construct_id",
+        "cell_id": {
+          "name": "cell_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -233,11 +233,11 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "construct_services_construct_id_constructs_id_fk": {
-          "name": "construct_services_construct_id_constructs_id_fk",
-          "tableFrom": "construct_services",
-          "tableTo": "constructs",
-          "columnsFrom": ["construct_id"],
+        "cell_services_cell_id_cells_id_fk": {
+          "name": "cell_services_cell_id_cells_id_fk",
+          "tableFrom": "cell_services",
+          "tableTo": "cells",
+          "columnsFrom": ["cell_id"],
           "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"

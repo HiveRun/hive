@@ -1,9 +1,9 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 
-export const Route = createFileRoute("/constructs")({
+export const Route = createFileRoute("/cells")({
   beforeLoad: ({ location }) => {
-    if (location.pathname === "/constructs") {
-      throw redirect({ to: "/constructs/list" });
+    if (location.pathname === "/cells") {
+      throw redirect({ to: "/cells/list" });
     }
   },
   component: RouteComponent,
