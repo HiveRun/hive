@@ -1,15 +1,29 @@
-import { dirname, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, URL } from "node:url";
 import dotenv from "dotenv";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const serverEnvPath = resolve(moduleDir, "../../.env");
+const binaryDirectory = dirname(process.execPath);
 
-// Allow Bun to populate env vars automatically while keeping Node tooling working.
-dotenv.config({
-  path: serverEnvPath,
-  override: false,
-});
+const candidateEnvFiles = [
+  process.env.SYNTHETIC_ENV_FILE,
+  join(binaryDirectory, "synthetic.env"),
+  join(binaryDirectory, ".env"),
+  serverEnvPath,
+].filter((file): file is string => Boolean(file));
+
+for (const envFile of candidateEnvFiles) {
+  if (!existsSync(envFile)) {
+    continue;
+  }
+
+  dotenv.config({
+    path: envFile,
+    override: false,
+  });
+}
 
 type BunRuntime = { env?: Record<string, string | undefined> };
 const bunEnv = (globalThis as { Bun?: BunRuntime }).Bun?.env;

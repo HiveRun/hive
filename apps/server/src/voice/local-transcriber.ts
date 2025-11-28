@@ -1,26 +1,59 @@
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 
-import {
-  type AutomaticSpeechRecognitionOutput,
-  type AutomaticSpeechRecognitionPipeline,
-  type Chunk,
-  env,
-  pipeline,
+import type {
+  AutomaticSpeechRecognitionOutput,
+  AutomaticSpeechRecognitionPipeline,
+  Chunk,
 } from "@xenova/transformers";
 import { WaveFile } from "wavefile";
 
 const MODEL_CACHE_DIR = resolve(process.cwd(), ".synthetic/models");
 const TARGET_SAMPLE_RATE = 16_000;
 
-try {
-  mkdirSync(MODEL_CACHE_DIR, { recursive: true });
-} catch {
-  /* ignore errors when directory exists */
-}
+type TransformersModule = typeof import("@xenova/transformers");
 
-env.allowLocalModels = true;
-env.cacheDir = MODEL_CACHE_DIR;
+let transformersModulePromise: Promise<TransformersModule | null> | null = null;
+let localBackendError: Error | null = null;
+let hasLoggedBackendFailure = false;
+
+const ensureModelCacheDirectory = () => {
+  try {
+    mkdirSync(MODEL_CACHE_DIR, { recursive: true });
+  } catch {
+    /* ignore errors when directory exists */
+  }
+};
+
+const logBackendFailure = (message: string) => {
+  if (hasLoggedBackendFailure) {
+    return;
+  }
+  hasLoggedBackendFailure = true;
+  localBackendError = new Error(message);
+  process.stderr.write(`${message}\n`);
+};
+
+const loadTransformersModule = () => {
+  if (!transformersModulePromise) {
+    transformersModulePromise = (async () => {
+      try {
+        ensureModelCacheDirectory();
+        const mod = await import("@xenova/transformers");
+        mod.env.allowLocalModels = true;
+        mod.env.cacheDir = MODEL_CACHE_DIR;
+        return mod;
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        logBackendFailure(
+          `Local voice transcription disabled: ${detail}. Install ONNX Runtime libraries (libonnxruntime) or set voice.transcription.mode="remote".`
+        );
+        return null;
+      }
+    })();
+  }
+  return transformersModulePromise;
+};
 
 type LocalTranscriptionArgs = {
   audio: Uint8Array;
@@ -43,11 +76,21 @@ export type LocalTranscriptionResult = {
 
 const pipelineCache: PipelineCache = new Map();
 
-function loadTranscriber(modelId: string) {
+async function loadTranscriber(modelId: string) {
+  const transformers = await loadTransformersModule();
+  if (!transformers) {
+    throw (
+      localBackendError ??
+      new Error(
+        "Local voice transcription backend is unavailable on this system."
+      )
+    );
+  }
+
   if (!pipelineCache.has(modelId)) {
     pipelineCache.set(
       modelId,
-      pipeline("automatic-speech-recognition", modelId)
+      transformers.pipeline("automatic-speech-recognition", modelId)
     );
   }
 

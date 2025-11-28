@@ -10,6 +10,95 @@ Synthetic is the successor to the earlier **Hive** platform (Elixir/Phoenix + As
 
 All planning and requirements live under `docs/` as plain Markdown so any editor (VS Code + Foam, Obsidian, or the web UI we build later) can read and update them. Capture new requirements in `docs/requirements/`, tasks in `docs/tasks/`, tag each with a `theme-*` label for grouping, and link everything back to Hive references as needed. Keep the task order manually in those lists—whatever note sits at the top is what we tackle next.
 
+## Installation
+
+### One-line install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SyntheticRun/synthetic/main/scripts/install.sh | bash
+```
+
+The installer downloads the latest published release for your platform, expands it into `~/.synthetic`, writes a local SQLite database path to `synthetic.env`, symlinks `synthetic` into `~/.synthetic/bin`, and updates your shell PATH so the CLI is immediately available. Run `synthetic` to start the bundled server + UI on the default ports.
+
+Environment variables:
+- `SYNTHETIC_VERSION`: install a specific tag (defaults to `latest`).
+- `SYNTHETIC_HOME`: override the install root (defaults to `~/.synthetic`).
+- `SYNTHETIC_BIN_DIR`: override the bin directory that `synthetic` is linked into (defaults to `~/.synthetic/bin`).
+- `SYNTHETIC_INSTALL_URL`: override the download URL (handy for testing locally built tarballs).
+- `SYNTHETIC_MIGRATIONS_DIR`: point the runtime at a custom migrations folder (defaults to the bundled `migrations/`).
+- `SYNTHETIC_LOG_DIR`: where background logs are written (defaults to `~/.synthetic/logs` for installed builds, or `<binary>/logs` when running from source).
+- `SYNTHETIC_PID_FILE`: override the pid file path (defaults to `~/.synthetic/synthetic.pid`).
+- `SYNTHETIC_INSTALL_COMMAND`: override the command executed by `synthetic upgrade` (defaults to the stored installer behavior).
+
+### Using the installed binary
+
+- The installer automatically appends `~/.synthetic/bin` (or `SYNTHETIC_HOME/bin`) to your shell’s PATH for bash, zsh, fish, and other common shells. If you use a custom shell, add it manually:
+  ```bash
+  export PATH="$HOME/.synthetic/bin:$PATH"
+  ```
+- Run the CLI with:
+  ```bash
+  synthetic
+  ```
+  - Compiled releases fork to the background, print the browser URL, log path, and PID file, and immediately return control of your terminal. Releases serve the UI on the API port (`PORT`, defaults to `3000`).
+  - The first launch automatically runs the bundled Drizzle migrations; no extra init step is required.
+- Follow logs:
+  ```bash
+  synthetic logs
+  ```
+- Stop the background server:
+  ```bash
+  synthetic stop
+  ```
+- Upgrade to the latest published release:
+  ```bash
+  synthetic upgrade
+  ```
+- Inspect your current install (release path, log locations, pid status):
+  ```bash
+  synthetic info
+  ```
+- Open the UI in your default browser (starts the daemon if needed):
+  ```bash
+  synthetic web
+  ```
+- Launch the desktop (Tauri) app. Set `SYNTHETIC_TAURI_BINARY` if the CLI
+  can’t auto-detect the packaged executable on your system.
+  ```bash
+  synthetic desktop
+  ```
+- Install shell completions (bash/zsh/fish) so they persist across reboots:
+  ```bash
+  synthetic completions install zsh
+  synthetic completions install bash
+  synthetic completions install fish
+  ```
+  Each command picks a sensible default location for that shell (Oh My Zsh custom dir, `~/.local/share/bash-completion/completions`, `~/.config/fish/completions`, etc.). Re-run it whenever new subcommands land or pass an explicit path as the final argument to control where the file is written.
+- Need a quick refresher on the available commands? Run `synthetic --help` for the latest summary.
+- Configuration lives in `~/.synthetic/current/synthetic.env`. Update values there (or override per run) to change ports, database paths, or feature flags:
+
+  ```bash
+  PORT=4100 synthetic
+  ```
+- The SQLite database defaults to `~/.synthetic/state/synthetic.db`; set `DATABASE_URL` if you need a different location.
+
+Open the printed UI link (default [http://localhost:3000](http://localhost:3000)) after the log shows “Service supervisor initialized.”
+
+### Building a release locally
+
+```bash
+bun run build:installer
+ls dist/install
+```
+
+This script compiles the Bun server, copies the Vite build output, and packages everything into `dist/install/synthetic-<platform>-<arch>.tar.gz` plus a `.sha256` checksum. Upload that pair to a GitHub Release so the installer can fetch it. To smoke-test the installer against the locally built artifacts, run:
+
+```bash
+bun run local:install
+```
+
+This command runs `bun run build:installer` under the hood, then installs from the freshly built tarball using `SYNTHETIC_INSTALL_URL=file://...`.
+
 ## Getting Started
 
 ### With Mise (Recommended)

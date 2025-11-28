@@ -1,0 +1,20 @@
+{
+  "name": "@synthetic/cli",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "check-types": "tsc -p tsconfig.json --noEmit",
+    "dev": "bun run --hot src/index.ts",
+    "compile": "bun build --compile --minify --sourcemap ./src/index.ts --outfile synthetic"
+  },
+  "dependencies": {
+    "@synthetic/server": "workspace:*",
+    "clipanion": "^3.2.1",
+    "dotenv": "catalog:",
+    "picocolors": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.6",
+    "typescript": "catalog:"
+  }
+}

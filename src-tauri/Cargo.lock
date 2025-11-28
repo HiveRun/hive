@@ -3535,7 +3535,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "synthetic"
+name = "synthetic-desktop"
 version = "0.1.0"
 dependencies = [
  "serde",
