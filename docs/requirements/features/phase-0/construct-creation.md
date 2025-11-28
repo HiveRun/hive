@@ -28,7 +28,7 @@ This comprehensive provisioning system will be implemented in **Phase 1A** after
 ## Requirements
 
 ### Core Provisioning
-- **Template Selection**: Allow users to browse and select from available construct templates defined in `synthetic.config.ts`
+- **Template Selection**: Allow users to browse and select from available construct templates defined in `hive.config.ts`
 - **Workspace Provisioning**: Create isolated git worktrees for each construct to prevent conflicts with the main workspace
 - **Service Setup**: Initialize and configure required services (databases, APIs, etc.) as specified by the template
 - **Port Allocation**: Dynamically allocate and manage ports to avoid conflicts between constructs and the host system
@@ -83,7 +83,7 @@ This comprehensive provisioning system will be implemented in **Phase 1A** after
 ### Prompt Assembly Context
 - Collect runtime information: allocated ports, service URLs, workspace paths
 - Gather template-specific context and configuration
-- Assemble base prompt with Synthetic overview and construct role
+- Assemble base prompt with Hive overview and construct role
 - Include task brief, constraints, and success criteria
 
 ## Integration Points

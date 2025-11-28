@@ -12,7 +12,7 @@ export const Route = createFileRoute("/debug-notifications")({
   component: DebugNotificationsRoute,
 });
 
-const NOTIFICATION_TITLE = "Synthetic Debug Notification";
+const NOTIFICATION_TITLE = "Hive Debug Notification";
 
 type StatusTone = "idle" | "success" | "error";
 

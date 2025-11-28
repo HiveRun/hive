@@ -17,12 +17,12 @@ const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const releaseBaseDir = join(repoRoot, "dist", "install");
 const platform = process.platform;
 const arch = process.arch;
-const releaseName = `synthetic-${platform}-${arch}`;
+const releaseName = `hive-${platform}-${arch}`;
 const releaseDir = join(releaseBaseDir, releaseName);
 
-const desktopBinaryName = "synthetic-desktop";
-const desktopAppBundleName = "Synthetic Desktop.app";
-const legacyDesktopAppBundleName = "Synthetic.app";
+const desktopBinaryName = "hive-desktop";
+const desktopAppBundleName = "Hive Desktop.app";
+const legacyDesktopAppBundleName = "Hive.app";
 
 const run = async (cmd: string[], cwd = repoRoot) => {
   const process = Bun.spawn({
@@ -149,7 +149,7 @@ const copyWindowsTauriArtifacts = async (destination: string) => {
   let copied = false;
   const executableCandidates = [
     join(tauriTargetDir, `${desktopBinaryName}.exe`),
-    join(tauriTargetDir, "synthetic.exe"),
+    join(tauriTargetDir, "hive.exe"),
   ];
   const executable = executableCandidates.find((entry) => existsSync(entry));
   if (executable) {
@@ -194,12 +194,12 @@ const main = async () => {
   await buildCli();
   await buildTauri();
 
-  const cliBinaryPath = join(repoRoot, "packages", "cli", "synthetic");
+  const cliBinaryPath = join(repoRoot, "packages", "cli", "hive");
   if (!existsSync(cliBinaryPath)) {
     throw new Error("Compiled CLI binary not found. Did the build succeed?");
   }
 
-  const binaryDestination = join(releaseDir, "synthetic");
+  const binaryDestination = join(releaseDir, "hive");
   await copyFile(cliBinaryPath, binaryDestination);
   await chmod(binaryDestination, EXECUTABLE_PERMISSIONS);
 
@@ -242,13 +242,13 @@ const main = async () => {
   })();
 
   const manifest = {
-    name: "synthetic",
-    version: Bun.env.SYNTHETIC_VERSION ?? pkg.version ?? "0.0.0-dev",
+    name: "hive",
+    version: Bun.env.HIVE_VERSION ?? pkg.version ?? "0.0.0-dev",
     platform,
     arch,
     commit: commitSha,
     builtAt: new Date().toISOString(),
-    binary: "synthetic",
+    binary: "hive",
     assetsDir: "public",
   } satisfies Record<string, string>;
 

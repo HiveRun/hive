@@ -3,7 +3,7 @@
 - [/] Diff Review #status/in-progress #phase-1 #feature/ux
 
 ## Goal
-Provide a comprehensive diff review experience within Synthetic so users can review agent changes without leaving the platform.
+Provide a comprehensive diff review experience within Hive so users can review agent changes without leaving the platform.
 
 ## Requirements
 

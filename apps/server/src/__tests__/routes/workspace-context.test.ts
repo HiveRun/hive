@@ -1,6 +1,6 @@
 import { Elysia } from "elysia";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { SyntheticConfig } from "../../config/schema";
+import type { HiveConfig } from "../../config/schema";
 import { createConstructsRoutes } from "../../routes/constructs";
 import { constructs } from "../../schema/constructs";
 import type { WorkspaceRecord } from "../../workspaces/registry";
@@ -9,7 +9,7 @@ import { setupTestDb, testDb } from "../test-db";
 const HTTP_BAD_REQUEST = 400;
 const HTTP_OK = 200;
 
-const syntheticConfig: SyntheticConfig = {
+const hiveConfig: HiveConfig = {
   opencode: {
     defaultProvider: "opencode",
     defaultModel: "big-pickle",
@@ -96,7 +96,7 @@ describe("Construct routes workspace enforcement", () => {
         templateId: "test-template",
         workspaceId: primaryWorkspace.id,
         workspaceRootPath: primaryWorkspace.path,
-        workspacePath: `${primaryWorkspace.path}/.synthetic/constructs/primary`,
+        workspacePath: `${primaryWorkspace.path}/.hive/constructs/primary`,
         branchName: "feature/x",
         baseCommit: "abc123",
         createdAt: now,
@@ -109,7 +109,7 @@ describe("Construct routes workspace enforcement", () => {
         templateId: "test-template",
         workspaceId: secondaryWorkspace.id,
         workspaceRootPath: secondaryWorkspace.path,
-        workspacePath: `${secondaryWorkspace.path}/.synthetic/constructs/secondary`,
+        workspacePath: `${secondaryWorkspace.path}/.hive/constructs/secondary`,
         branchName: "feature/y",
         baseCommit: "def456",
         createdAt: now,
@@ -131,10 +131,10 @@ describe("Construct routes workspace enforcement", () => {
 
       return Promise.resolve({
         workspace: resolved,
-        loadConfig: () => Promise.resolve(syntheticConfig),
+        loadConfig: () => Promise.resolve(hiveConfig),
         createWorktreeManager: async () => ({
           createWorktree: async () => ({
-            path: `${resolved.path}/.synthetic/constructs/new`,
+            path: `${resolved.path}/.hive/constructs/new`,
             branch: "main",
             baseCommit: "base",
           }),

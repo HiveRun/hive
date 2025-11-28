@@ -19,13 +19,13 @@ This sophisticated prompt assembly system will be implemented in **Phase 1A** af
 ## Requirements
 
 ### Source Management
-- **Prompt sources**: Read `promptSources` from `synthetic.config.ts`, supporting files, directories, or glob patterns (e.g., "docs/prompts/**/*.md").
+- **Prompt sources**: Read `promptSources` from `hive.config.ts`, supporting files, directories, or glob patterns (e.g., "docs/prompts/**/*.md").
 - **Ordering support**: Allow entries to be objects with `path` and `order` so users can pin high-priority primers ahead of feature guides.
 - **Type safety**: TypeScript definitions expose autocomplete for prompt source configuration.
 - **Deduplication**: Automatic detection and removal of duplicate prompt fragments.
 
 ### Base Brief Assembly
-- **Base template**: Store a repository-level Markdown template (`docs/agents/base-brief.md`) that explains Synthetic's purpose, construct concepts, guardrails, and escalation expectations.
+- **Base template**: Store a repository-level Markdown template (`docs/agents/base-brief.md`) that explains Hive's purpose, construct concepts, guardrails, and escalation expectations.
 - **Construct context injection**: When provisioning a construct, concatenate the base brief with:
   - Task summary and acceptance criteria from construct metadata
   - Tabular list of configured services with resolved hostnames/ports and exposed env vars
@@ -39,7 +39,7 @@ This sophisticated prompt assembly system will be implemented in **Phase 1A** af
 - **Prompt inheritance**: Support for template-level prompt inheritance from base templates (future enhancement).
 
 ### Bundle Generation
-- **CLI integration**: Provide `synthetic prompts build` command that resolves configured sources through the TypeScript config.
+- **CLI integration**: Provide `hive prompts build` command that resolves configured sources through the TypeScript config.
 - **Concatenation**: Deduplicate headings and concatenate fragments into `AGENTS.md` and other provider-specific outputs.
 - **Rebuild triggers**: Rebuild prompt bundles during provisioning and whenever config changes.
 - **Bundle metadata**: Expose generated bundle path in construct metadata for agent prompt assembly.

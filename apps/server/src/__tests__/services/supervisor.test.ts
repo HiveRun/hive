@@ -121,7 +121,7 @@ describe("service supervisor", () => {
       },
     });
 
-    const expectedLogPath = resolve(workspace, ".synthetic/logs/web.log");
+    const expectedLogPath = resolve(workspace, ".hive/logs/web.log");
     expect(existsSync(expectedLogPath)).toBe(true);
   });
 
@@ -359,7 +359,7 @@ describe("service supervisor", () => {
   }
 
   async function createWorkspaceDir() {
-    const dir = await mkdtemp(join(tmpdir(), "synthetic-services-"));
+    const dir = await mkdtemp(join(tmpdir(), "hive-services-"));
     workspaceDirs.push(dir);
     return dir;
   }

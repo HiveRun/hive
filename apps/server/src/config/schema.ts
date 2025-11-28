@@ -185,7 +185,7 @@ export const defaultsSchema = z.object({
     .describe("Default template to use when creating constructs"),
 });
 
-export const syntheticConfigSchema = z.object({
+export const hiveConfigSchema = z.object({
   opencode: opencodeConfigSchema.describe(
     "Global OpenCode configuration shared across templates"
   ),
@@ -216,10 +216,8 @@ export type VoiceTranscriptionConfig = z.infer<typeof voiceTranscriptionSchema>;
 export type VoiceConfig = z.infer<typeof voiceConfigSchema>;
 export type OpencodeConfig = z.infer<typeof opencodeConfigSchema>;
 export type Defaults = z.infer<typeof defaultsSchema>;
-export type SyntheticConfig = z.infer<typeof syntheticConfigSchema>;
+export type HiveConfig = z.infer<typeof hiveConfigSchema>;
 
-export function defineSyntheticConfig(
-  config: SyntheticConfig
-): SyntheticConfig {
-  return syntheticConfigSchema.parse(config);
+export function defineHiveConfig(config: HiveConfig): HiveConfig {
+  return hiveConfigSchema.parse(config);
 }

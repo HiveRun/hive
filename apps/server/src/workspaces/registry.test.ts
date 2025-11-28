@@ -16,23 +16,23 @@ import {
 const WORKSPACE_FILE_CONTENT = "export default {}";
 const CONSTRUCT_WORKTREE_ERROR = /construct worktrees cannot be registered/i;
 
-async function createWorkspaceRoot(prefix = "synthetic-workspace-") {
+async function createWorkspaceRoot(prefix = "hive-workspace-") {
   const dir = await mkdtemp(join(tmpdir(), prefix));
-  await writeFile(join(dir, "synthetic.config.ts"), WORKSPACE_FILE_CONTENT);
+  await writeFile(join(dir, "hive.config.ts"), WORKSPACE_FILE_CONTENT);
   return dir;
 }
 
 describe("workspace registry", () => {
-  let syntheticHome: string;
+  let hiveHome: string;
 
   beforeEach(async () => {
-    syntheticHome = await mkdtemp(join(tmpdir(), "synthetic-home-"));
-    process.env.SYNTHETIC_HOME = syntheticHome;
+    hiveHome = await mkdtemp(join(tmpdir(), "hive-home-"));
+    process.env.HIVE_HOME = hiveHome;
   });
 
   afterEach(async () => {
-    await rm(syntheticHome, { recursive: true, force: true });
-    process.env.SYNTHETIC_HOME = undefined;
+    await rm(hiveHome, { recursive: true, force: true });
+    process.env.HIVE_HOME = undefined;
   });
 
   test("registerWorkspace adds a new workspace and lists it", async () => {
@@ -78,7 +78,7 @@ describe("workspace registry", () => {
     const constructDir = join(resolveConstructsRoot(), "test-worktree");
     await mkdir(constructDir, { recursive: true });
     await writeFile(
-      join(constructDir, "synthetic.config.ts"),
+      join(constructDir, "hive.config.ts"),
       WORKSPACE_FILE_CONTENT
     );
 

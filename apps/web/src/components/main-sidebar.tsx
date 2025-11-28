@@ -44,7 +44,7 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
             className="size-9 rounded-none border-2 border-border bg-sidebar text-sidebar-foreground shadow-[3px_3px_0_color-mix(in_oklch,var(--color-shadow-color)_65%,transparent)] transition-none hover:bg-sidebar/80 hover:text-sidebar-foreground group-data-[collapsible=icon]:mx-auto"
           />
           <Link
-            aria-label="Synthetic home"
+            aria-label="Hive home"
             className="group flex h-full items-center gap-3 uppercase tracking-[0.28em] transition-none group-data-[collapsible=icon]:hidden"
             to="/"
           >
@@ -52,9 +52,7 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
               aria-hidden
               className="block h-10 w-1 bg-primary shadow-[4px_0_0_0_color-mix(in_oklch,var(--color-shadow-color)_45%,transparent)] transition-none group-hover:bg-primary/80"
             />
-            <span className="font-semibold text-foreground text-sm">
-              Synthetic
-            </span>
+            <span className="font-semibold text-foreground text-sm">Hive</span>
           </Link>
         </div>
       </SidebarHeader>

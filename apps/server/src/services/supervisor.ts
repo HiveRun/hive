@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { dirname, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { getSyntheticConfig } from "../config/context";
+import { getHiveConfig } from "../config/context";
 import type { ProcessService, Template } from "../config/schema";
 import { db as defaultDb } from "../db";
 import type { Construct } from "../schema/constructs";
@@ -23,7 +23,7 @@ const STOP_TIMEOUT_MS = 2000;
 const FORCE_KILL_DELAY_MS = 250;
 const DEFAULT_SHELL = process.env.SHELL || "/bin/bash";
 const SIGNAL_CODES = osConstants?.signals ?? {};
-const SERVICE_LOG_DIR = ".synthetic/logs";
+const SERVICE_LOG_DIR = ".hive/logs";
 
 export class CommandExecutionError extends Error {
   readonly command: string;
@@ -696,7 +696,7 @@ export function createServiceSupervisor(
       templateCache.set(key, workspaceTemplates);
     }
     if (!workspaceTemplates.has(templateId)) {
-      const config = await getSyntheticConfig(workspaceRootPath);
+      const config = await getHiveConfig(workspaceRootPath);
       workspaceTemplates.set(templateId, config.templates[templateId]);
     }
     return workspaceTemplates.get(templateId);
@@ -863,14 +863,14 @@ function buildBaseEnv({
     throw new Error("Construct workspace path missing");
   }
 
-  const syntheticHome = resolve(workspacePath, ".synthetic", "home");
-  mkdirSync(syntheticHome, { recursive: true });
+  const hiveHome = resolve(workspacePath, ".hive", "home");
+  mkdirSync(hiveHome, { recursive: true });
 
   return {
-    SYNTHETIC_CONSTRUCT_ID: construct.id,
-    SYNTHETIC_SERVICE: serviceName,
-    SYNTHETIC_HOME: syntheticHome,
-    SYNTHETIC_BROWSE_ROOT: workspacePath,
+    HIVE_CONSTRUCT_ID: construct.id,
+    HIVE_SERVICE: serviceName,
+    HIVE_HOME: hiveHome,
+    HIVE_BROWSE_ROOT: workspacePath,
   };
 }
 

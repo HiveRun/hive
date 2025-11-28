@@ -5,7 +5,7 @@
 ### Development Strategy
 **Approach**: Sequential PRs focused on delivering immediate value
 
-**Rationale**: To get Synthetic useful quickly, we're focusing on the core path: **worktrees + OpenCode integration + basic constructs**. Complex service management and provisioning are deferred.
+**Rationale**: To get Hive useful quickly, we're focusing on the core path: **worktrees + OpenCode integration + basic constructs**. Complex service management and provisioning are deferred.
 
 ### Rescope Decision
 **New Focus**: Worktrees, OpenCode integration, and base construct capabilities
@@ -16,10 +16,10 @@
 ### PR Sequence (Rescoped)
 
 #### Step 1: Template Definition System ✅ **COMPLETED**
-- TypeScript config schema (`synthetic.config.ts`)
+- TypeScript config schema (`hive.config.ts`)
 - Template validation and type safety
 - Basic template browser/listing in UI
-- **Persistence**: File-based storage in `synthetic.config.ts` (intentional)
+- **Persistence**: File-based storage in `hive.config.ts` (intentional)
 - Tests with in-memory fixtures
 
 #### Step 2: Basic Construct Management ✅ **COMPLETED**

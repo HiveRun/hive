@@ -18,7 +18,7 @@ Git worktree functionality has been successfully implemented to provide isolated
 2. **WorktreeManager Service** (`apps/server/src/worktree/manager.ts`)
    - Factory function pattern (no classes, per coding guidelines)
    - **Public API (2 methods)**:
-     - `createWorktree(constructId, options)`: Creates isolated worktrees in `~/.synthetic/constructs/<id>`
+     - `createWorktree(constructId, options)`: Creates isolated worktrees in `~/.hive/constructs/<id>`
      - `removeWorktree(constructId)`: Safely removes worktrees with automatic prune
    - **Internal helpers**:
      - `findWorktreeInfo()`: Locates worktree by construct ID
@@ -65,7 +65,7 @@ Git worktree functionality has been successfully implemented to provide isolated
 - **Trade-offs**: Less abstraction, but git is stable and well-documented
 
 ### Worktree Storage Location
-- **Location**: `~/.synthetic/constructs/<construct-id>`
+- **Location**: `~/.hive/constructs/<construct-id>`
 - **Rationale**: 
   - Keeps worktrees outside main repo for safety
   - Consistent location across projects
@@ -120,7 +120,7 @@ curl -X POST http://localhost:3000/api/constructs \
     "description": "Working on new feature",
     "templateId": "full-stack"
   }'
-# Returns: {"id": "...", "workspacePath": "~/.synthetic/constructs/<id>", ...}
+# Returns: {"id": "...", "workspacePath": "~/.hive/constructs/<id>", ...}
 ```
 
 ### Delete Construct (Auto-removes Worktree)
@@ -139,7 +139,7 @@ curl -X DELETE http://localhost:3000/api/constructs/<id>
 ## Usage Workflow
 
 1. **Create Construct**: User fills form → construct saved to database
-2. **Auto-create Worktree**: Worktree automatically created at `~/.synthetic/constructs/<id>`
+2. **Auto-create Worktree**: Worktree automatically created at `~/.hive/constructs/<id>`
 3. **Work Isolated**: Git worktree provides isolated workspace with unique branch `construct-<id>`
 4. **Copy Config Files**: Template-based include patterns copy `.env*`, `*.local` files
 5. **Track Changes**: All work happens in isolated environment

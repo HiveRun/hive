@@ -32,7 +32,7 @@ import {
 } from "./services/supervisor";
 import {
   ensureWorkspaceRegistered,
-  resolveSyntheticHome,
+  resolveHiveHome,
 } from "./workspaces/registry";
 
 const DEFAULT_SERVER_PORT = 3000;
@@ -44,10 +44,10 @@ const isCompiledRuntime = !isBunRuntime;
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 export const binaryDirectory = dirname(process.execPath);
-const forcedMigrationsDirectory = process.env.SYNTHETIC_MIGRATIONS_DIR;
-const syntheticHome = resolveSyntheticHome();
+const forcedMigrationsDirectory = process.env.HIVE_MIGRATIONS_DIR;
+const hiveHome = resolveHiveHome();
 export const pidFilePath =
-  process.env.SYNTHETIC_PID_FILE ?? join(syntheticHome, "synthetic.pid");
+  process.env.HIVE_PID_FILE ?? join(hiveHome, "hive.pid");
 
 export const DEFAULT_WEB_PORT =
   process.env.WEB_PORT ?? (isCompiledRuntime ? String(PORT) : "3001");
@@ -301,8 +301,8 @@ export const startServer = async () => {
   const shouldServeStaticAssets =
     Boolean(staticAssetsDirectory) &&
     (isCompiledRuntime ||
-      Boolean(process.env.SYNTHETIC_WEB_DIST) ||
-      process.env.SYNTHETIC_FORCE_STATIC === "1");
+      Boolean(process.env.HIVE_WEB_DIST) ||
+      process.env.HIVE_FORCE_STATIC === "1");
 
   if (shouldServeStaticAssets && staticAssetsDirectory) {
     registerStaticAssets(app, staticAssetsDirectory);

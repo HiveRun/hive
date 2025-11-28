@@ -12,7 +12,7 @@ The template definition system has been successfully implemented using a **file-
 ### Key Implementation Decisions
 
 **File-Based vs Database Storage:**
-- **Chose file-based**: Templates are defined in `synthetic.config.ts` using TypeScript
+- **Chose file-based**: Templates are defined in `hive.config.ts` using TypeScript
 - **Benefits**: 
   - Templates are version-controlled alongside code
   - Full TypeScript type safety and intellisense
@@ -31,8 +31,8 @@ The template definition system has been successfully implemented using a **file-
 ## Requirements
 
 ### Template Schema
-- **TypeScript definitions**: Ship a small runtime+types package (`@synthetic/config`) that exposes `defineSyntheticConfig` with full type safety and intellisense.
-- **Inline templates**: Keep templates inline within `synthetic.config.ts` for v1 simplicity, with support for external template files in future versions.
+- **TypeScript definitions**: Ship a small runtime+types package (`@hive/config`) that exposes `defineHiveConfig` with full type safety and intellisense.
+- **Inline templates**: Keep templates inline within `hive.config.ts` for v1 simplicity, with support for external template files in future versions.
 - **Template metadata**: Each template requires `id`, `label`, `summary`, and optional `type` (implementation/planning/manual).
 - **Workspace setup**: Templates can specify a `setup` array that runs once inside the worktree before services start (e.g., `bun setup` to install deps and run migrations).
 - **Validation**: Compile-time validation of template structure and required fields.
@@ -45,7 +45,7 @@ The template definition system has been successfully implemented using a **file-
 
 ### Port Management
 - **Port requests**: Array of port requests with `name`, optional `preferred` host port, and optional `container` port for Docker.
-- **Dynamic allocation**: Synthetic probes the actual OS for free ports (not just internal state) to avoid collisions.
+- **Dynamic allocation**: Hive probes the actual OS for free ports (not just internal state) to avoid collisions.
 - **Environment injection**: Resolved ports are exported as environment variables with configurable names via `env` field.
 - **Template variables**: Support `${env.VAR_NAME}` and `${constructDir}` templating in service configurations.
 

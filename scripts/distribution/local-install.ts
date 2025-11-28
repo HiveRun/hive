@@ -28,7 +28,7 @@ const arch = (() => {
   throw new Error(`Unsupported architecture for local install: ${raw}`);
 })();
 
-const archiveName = `synthetic-${platform}-${arch}.tar.gz`;
+const archiveName = `hive-${platform}-${arch}.tar.gz`;
 const archivePath = join(repoRoot, "dist", "install", archiveName);
 
 console.log("Building installer artifacts...");
@@ -50,10 +50,10 @@ if (!existsSync(archivePath)) {
 const installScript = join(repoRoot, "scripts", "install.sh");
 const env = {
   ...process.env,
-  SYNTHETIC_INSTALL_URL: `file://${archivePath}`,
+  HIVE_INSTALL_URL: `file://${archivePath}`,
 };
 
-console.log(`Installing Synthetic from ${archivePath}`);
+console.log(`Installing Hive from ${archivePath}`);
 const result = Bun.spawnSync({
   cmd: ["bash", installScript],
   cwd: repoRoot,

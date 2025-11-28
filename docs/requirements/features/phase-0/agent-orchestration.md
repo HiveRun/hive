@@ -18,7 +18,7 @@ This feature represents **advanced agent orchestration** that was originally pla
 ### What's Implemented Instead
 - **PR #4**: Simplified agent integration with basic OpenCode SDK integration
 - Basic chat interface without advanced orchestration features
-- Agent transcripts persist inside OpenCode's data store; Synthetic keeps no local `agent_sessions`/`agent_messages` tables and rehydrates from OpenCode when needed
+- Agent transcripts persist inside OpenCode's data store; Hive keeps no local `agent_sessions`/`agent_messages` tables and rehydrates from OpenCode when needed
 
 ### When This Will Be Implemented
 This comprehensive orchestration system will be implemented in **Phase 1A** after core functionality path is complete and validated.
@@ -62,7 +62,7 @@ This comprehensive orchestration system will be implemented in **Phase 1A** afte
 - Provide session recovery mechanisms for interrupted constructs
 - Treat OpenCode's built-in session store as the source of truth; API keeps only an in-memory registry and rehydrates by querying OpenCode on demand
 - Construct creation automatically provisions an agent session (mock or provider-backed based on user selection) so every construct is born with an attached agent
-- Synthetic proxies OpenCode's SSE feed (`message.updated`, `message.part.updated`, `permission.updated`, etc.) so the UI consumes the same real-time events as the TUI
+- Hive proxies OpenCode's SSE feed (`message.updated`, `message.part.updated`, `permission.updated`, etc.) so the UI consumes the same real-time events as the TUI
 
 ### Authentication & Security
 - Validate OpenCode credentials before session creation

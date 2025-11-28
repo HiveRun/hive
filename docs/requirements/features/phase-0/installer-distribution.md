@@ -2,34 +2,34 @@
 
 - [x] Installer & Distribution Pipeline #status/complete #phase-0 #feature/distribution
 
-Synthetic must be installable with a single `curl | bash` command that downloads a compiled Bun binary, its static frontend assets, and a ready-to-use local SQLite database path. This document tracks the requirements for that experience.
+Hive must be installable with a single `curl | bash` command that downloads a compiled Bun binary, its static frontend assets, and a ready-to-use local SQLite database path. This document tracks the requirements for that experience.
 
 ## Goals
 
-- Ship a compiled `synthetic` binary that includes the API and serves the built UI statically.
-- Publish platform-specific tarballs (`synthetic-<platform>-<arch>.tar.gz`) with the binary + frontend assets.
-- Provide a curlable installer script that installs/updates releases into `~/.synthetic` (or a user-defined directory) and links the binary into `~/.synthetic/bin`.
-- Ensure installed builds boot without extra setup by generating `synthetic.env` pointing to a writable SQLite file under `~/.synthetic/state`.
-- Make `synthetic` feel like a native dev tool: the default command should start the server/UI in the background, print the local URL + log file, and immediately return control to the user.
+- Ship a compiled `hive` binary that includes the API and serves the built UI statically.
+- Publish platform-specific tarballs (`hive-<platform>-<arch>.tar.gz`) with the binary + frontend assets.
+- Provide a curlable installer script that installs/updates releases into `~/.hive` (or a user-defined directory) and links the binary into `~/.hive/bin`.
+- Ensure installed builds boot without extra setup by generating `hive.env` pointing to a writable SQLite file under `~/.hive/state`.
+- Make `hive` feel like a native dev tool: the default command should start the server/UI in the background, print the local URL + log file, and immediately return control to the user.
 
 ## Requirements
 
 1. **Static asset serving**
    - The Elysia server must detect a packaged `public/` directory (next to the binary) or a repo-local `apps/web/dist` directory and serve those files via `@elysiajs/static` with SPA fallbacks.
 2. **Compile-friendly env resolution**
-   - Database config loads `.env`, `synthetic.env`, or `SYNTHETIC_ENV_FILE` from the binary directory so packaged builds find `DATABASE_URL`.
+   - Database config loads `.env`, `hive.env`, or `HIVE_ENV_FILE` from the binary directory so packaged builds find `DATABASE_URL`.
 3. **Release builder**
-   - `bun run build:installer` compiles the server (`bun --compile`), runs the Vite build, and assembles a release directory containing `synthetic`, `public/`, and `manifest.json`.
-   - The script archives the directory to `dist/install/synthetic-<platform>-<arch>.tar.gz` and emits a matching `.sha256` checksum for GitHub Releases.
+   - `bun run build:installer` compiles the server (`bun --compile`), runs the Vite build, and assembles a release directory containing `hive`, `public/`, and `manifest.json`.
+   - The script archives the directory to `dist/install/hive-<platform>-<arch>.tar.gz` and emits a matching `.sha256` checksum for GitHub Releases.
 4. **Installer script**
-   - `scripts/install.sh` detects OS/arch, downloads the matching GitHub release tarball, expands it into `~/.synthetic/releases/<name>`, writes `synthetic.env` with a local SQLite path, and symlinks `synthetic` into `~/.synthetic/bin`.
-    - After linking, the script automatically appends the bin directory to the user’s shell PATH (bash/zsh/fish/posix) so `synthetic` is immediately available.
-    - Configuration knobs: `SYNTHETIC_VERSION`, `SYNTHETIC_HOME`, `SYNTHETIC_BIN_DIR`, `SYNTHETIC_MIGRATIONS_DIR`, `SYNTHETIC_LOG_DIR`, `SYNTHETIC_PID_FILE`, `SYNTHETIC_INSTALL_COMMAND`, and `SYNTHETIC_INSTALL_URL` (local testing only) keep the installer flexible without adding flags.
+   - `scripts/install.sh` detects OS/arch, downloads the matching GitHub release tarball, expands it into `~/.hive/releases/<name>`, writes `hive.env` with a local SQLite path, and symlinks `hive` into `~/.hive/bin`.
+    - After linking, the script automatically appends the bin directory to the user’s shell PATH (bash/zsh/fish/posix) so `hive` is immediately available.
+    - Configuration knobs: `HIVE_VERSION`, `HIVE_HOME`, `HIVE_BIN_DIR`, `HIVE_MIGRATIONS_DIR`, `HIVE_LOG_DIR`, `HIVE_PID_FILE`, `HIVE_INSTALL_COMMAND`, and `HIVE_INSTALL_URL` (local testing only) keep the installer flexible without adding flags.
 
 5. **Bundled migrations**
    - The release tarball must include `apps/server/src/migrations` (SQL + `meta/_journal.json`) so compiled binaries can run Drizzle migrations at startup without manual bootstrapping.
 6. **CLI ergonomics**
-   - The compiled binary should default to background mode (detached process, background log file, clear UI URL, PID file) with built-in commands like `synthetic stop`, `synthetic logs`, and `synthetic upgrade` so users can manage the daemon lifecycle without manual shell hacks. Foreground mode is only exposed via env overrides for debugging—no extra CLI flags are required.
+   - The compiled binary should default to background mode (detached process, background log file, clear UI URL, PID file) with built-in commands like `hive stop`, `hive logs`, and `hive upgrade` so users can manage the daemon lifecycle without manual shell hacks. Foreground mode is only exposed via env overrides for debugging—no extra CLI flags are required.
 7. **Docs**
    - README highlights the installer command, env overrides, background behavior, and release build command so contributors know how to publish binaries.
 
@@ -44,5 +44,5 @@ Synthetic must be installable with a single `curl | bash` command that downloads
 ## Testing Strategy
 
 - Run `bun run build:installer` on each supported platform to ensure the tarball, checksum, and manifest are generated under `dist/install/`.
-- After uploading (or staging) a release artifact, run `SYNTHETIC_VERSION=<tag> scripts/install.sh` (or `SYNTHETIC_INSTALL_URL=file://... scripts/install.sh` for local tarballs) to verify the flow end-to-end and ensure `~/.synthetic/bin/synthetic` launches with the bundled UI. `bun run local:install` first runs `build:installer`, then shells into `bash scripts/install.sh` with the file:// override to automate the local path.
-- Smoke-test the installed binary: ensure `/health` responds, frontend loads, migrations run against the generated SQLite database, and `synthetic.env` is respected when edited.
+- After uploading (or staging) a release artifact, run `HIVE_VERSION=<tag> scripts/install.sh` (or `HIVE_INSTALL_URL=file://... scripts/install.sh` for local tarballs) to verify the flow end-to-end and ensure `~/.hive/bin/hive` launches with the bundled UI. `bun run local:install` first runs `build:installer`, then shells into `bash scripts/install.sh` with the file:// override to automate the local path.
+- Smoke-test the installed binary: ensure `/health` responds, frontend loads, migrations run against the generated SQLite database, and `hive.env` is respected when edited.

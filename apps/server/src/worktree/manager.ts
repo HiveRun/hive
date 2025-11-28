@@ -20,7 +20,7 @@ const POSIX_SEPARATOR = "/";
 const IGNORED_DIRECTORIES = [
   ".git",
   "node_modules",
-  ".synthetic",
+  ".hive",
   ".turbo",
   "vendor",
 ];
@@ -56,7 +56,7 @@ const DEFAULT_INCLUDE_PATTERNS: string[] = [];
 
 export function createWorktreeManager(
   baseDir: string = process.cwd(),
-  syntheticConfig?: { templates: Record<string, Template> }
+  hiveConfig?: { templates: Record<string, Template> }
 ): WorktreeManager {
   const constructsDir = resolveConstructsRoot();
 
@@ -135,13 +135,11 @@ export function createWorktreeManager(
   }
 
   function getIncludePatterns(templateId?: string): string[] {
-    if (!(templateId && syntheticConfig)) {
+    if (!(templateId && hiveConfig)) {
       return DEFAULT_INCLUDE_PATTERNS;
     }
 
-    const template = syntheticConfig.templates[templateId] as
-      | Template
-      | undefined;
+    const template = hiveConfig.templates[templateId] as Template | undefined;
     if (!template?.includePatterns) {
       return DEFAULT_INCLUDE_PATTERNS;
     }

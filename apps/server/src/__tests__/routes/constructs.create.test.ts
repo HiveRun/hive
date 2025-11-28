@@ -1,7 +1,7 @@
 import { Elysia } from "elysia";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentSessionRecord } from "../../agents/types";
-import type { SyntheticConfig } from "../../config/schema";
+import type { HiveConfig } from "../../config/schema";
 import {
   type ConstructRouteDependencies,
   createConstructsRoutes,
@@ -17,7 +17,7 @@ const templateId = "failing-template";
 const workspacePath = "/tmp/mock-worktree";
 const CREATED_STATUS = 201;
 
-const syntheticConfig: SyntheticConfig = {
+const hiveConfig: HiveConfig = {
   opencode: {
     defaultProvider: "opencode",
     defaultModel: "mock-model",
@@ -57,7 +57,7 @@ describe("POST /api/constructs", () => {
     };
 
     function loadWorkspaceConfig() {
-      return Promise.resolve(syntheticConfig);
+      return Promise.resolve(hiveConfig);
     }
 
     function createConstructWorktree(_constructId: string) {

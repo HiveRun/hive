@@ -1,6 +1,6 @@
-import { defineSyntheticConfig } from "./apps/server/src/config/schema";
+import { defineHiveConfig } from "./apps/server/src/config/schema";
 
-export default defineSyntheticConfig({
+export default defineHiveConfig({
   opencode: {
     defaultProvider: "zen",
     defaultModel: "big-pickle",

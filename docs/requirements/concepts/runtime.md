@@ -12,7 +12,7 @@ This document covers the high-level runtime behavior of constructs. For detailed
 ### Future Construct Types (Phase 1A+)
 - **Implementation (full)**: launches the agent with the full tool/toolbox defined by the workspace. Use the standard prompt assembly pipeline and allow file writes, command execution, etc.
 - **Planning**: launches OpenCode in plan mode (limited toolset). See [[features/phase-3/planning-handoff|Planning-to-Implementation Handoff]] for detailed workflow.
-- **Manual**: skip agent creation entirely. Services still provision, the worktree is created, and Synthetic exposes diff/log views; the user drives work manually via their own editor/terminal or via MCP/CLI helpers.
+- **Manual**: skip agent creation entirely. Services still provision, the worktree is created, and Hive exposes diff/log views; the user drives work manually via their own editor/terminal or via MCP/CLI helpers.
 
 ### Runtime Environment (Current)
 - Constructs run directly in host environment so agents share the user's credentials, PATH, and dependencies; no supervised pods for v1.

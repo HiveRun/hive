@@ -295,7 +295,7 @@ export function ConstructList({ workspaceId }: ConstructListProps) {
           <CardContent className="flex flex-col items-center justify-center py-12">
             <h3 className="mb-2 font-semibold text-lg">No constructs yet</h3>
             <p className="mb-4 text-center text-muted-foreground">
-              Create your first construct to get started with Synthetic.
+              Create your first construct to get started with Hive.
             </p>
             <Link to="/constructs/new">
               <Button type="button">

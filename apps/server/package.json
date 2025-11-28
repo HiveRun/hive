@@ -1,5 +1,5 @@
 {
-  "name": "@synthetic/server",
+  "name": "@hive/server",
   "main": "src/server.ts",
   "type": "module",
   "exports": {

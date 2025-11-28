@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 
 const REGISTRY_FILE_NAME = "workspaces.json";
-const SYNTHETIC_HOME_ENV = "SYNTHETIC_HOME";
+const HIVE_HOME_ENV = "HIVE_HOME";
 const REGISTRY_VERSION = 1;
 
 export type WorkspaceRecord = {
@@ -40,12 +40,12 @@ type UpdateWorkspaceLabelInput = {
   label: string;
 };
 
-export function resolveSyntheticHome(): string {
-  return process.env[SYNTHETIC_HOME_ENV] || join(homedir(), ".synthetic");
+export function resolveHiveHome(): string {
+  return process.env[HIVE_HOME_ENV] || join(homedir(), ".hive");
 }
 
 export function resolveConstructsRoot(): string {
-  return join(resolveSyntheticHome(), "constructs");
+  return join(resolveHiveHome(), "constructs");
 }
 
 export function isConstructWorkspacePath(path: string): boolean {
@@ -58,12 +58,12 @@ export function isConstructWorkspacePath(path: string): boolean {
 }
 
 function resolveRegistryPath(): string {
-  return join(resolveSyntheticHome(), REGISTRY_FILE_NAME);
+  return join(resolveHiveHome(), REGISTRY_FILE_NAME);
 }
 
 async function ensureRegistryDir(): Promise<void> {
-  const syntheticHome = resolveSyntheticHome();
-  await mkdir(syntheticHome, { recursive: true });
+  const hiveHome = resolveHiveHome();
+  await mkdir(hiveHome, { recursive: true });
 }
 
 function normalizePath(path: string): string {
@@ -89,11 +89,11 @@ async function validateWorkspaceDirectory(path: string): Promise<string> {
     throw new Error("Construct worktrees cannot be registered as workspaces");
   }
 
-  const configPath = join(absolutePath, "synthetic.config.ts");
+  const configPath = join(absolutePath, "hive.config.ts");
   try {
     await access(configPath);
   } catch {
-    throw new Error(`synthetic.config.ts not found in ${absolutePath}`);
+    throw new Error(`hive.config.ts not found in ${absolutePath}`);
   }
 
   return absolutePath;

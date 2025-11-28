@@ -1,5 +1,5 @@
 import { treaty } from "@elysiajs/eden";
-import type { App } from "@synthetic/server";
+import type { App } from "@hive/server";
 
 const DEFAULT_API_URL = "http://localhost:3000";
 const isBrowser = typeof window !== "undefined";

@@ -26,7 +26,7 @@ export function createConstructFixture(
       overrides.name ??
       constructFaker.helpers.arrayElement([
         "Snapshot Construct",
-        "Synthetic Runtime",
+        "Hive Runtime",
         "Forest Engine",
       ]),
     description:
@@ -38,12 +38,12 @@ export function createConstructFixture(
         }
       ) ??
       null,
-    templateId: overrides.templateId ?? "synthetic-dev",
+    templateId: overrides.templateId ?? "hive-dev",
     workspacePath:
-      overrides.workspacePath ?? `/home/synthetic/.synthetic/constructs/${id}`,
+      overrides.workspacePath ?? `/home/hive/.hive/constructs/${id}`,
     workspaceId: overrides.workspaceId ?? "workspace-primary",
     workspaceRootPath:
-      overrides.workspaceRootPath ?? "/home/aureatus/dev/projects/synthetic",
+      overrides.workspaceRootPath ?? "/home/aureatus/dev/projects/hive",
     opencodeSessionId:
       overrides.opencodeSessionId ?? constructFaker.string.uuid(),
     opencodeServerUrl: overrides.opencodeServerUrl ?? "http://127.0.0.1:5000",
@@ -65,9 +65,9 @@ export const constructSnapshotFixture: ConstructFixture[] = [
     id: "snapshot-construct",
     name: "Snapshot Construct",
     description: "Deterministic fixture used for visual regression tests.",
-    workspacePath: "/home/synthetic/.synthetic/constructs/snapshot-construct",
+    workspacePath: "/home/hive/.hive/constructs/snapshot-construct",
     workspaceId: "workspace-primary",
-    workspaceRootPath: "/home/aureatus/dev/projects/synthetic",
+    workspaceRootPath: "/home/aureatus/dev/projects/hive",
     createdAt: "2024-01-01T12:00:00.000Z",
   }),
 ];
@@ -90,7 +90,7 @@ export function createServiceFixture(
     cwd: overrides.cwd ?? ".",
     logPath:
       overrides.logPath ??
-      `/home/synthetic/.synthetic/constructs/${id}/logs/${overrides.name ?? "web"}.log`,
+      `/home/hive/.hive/constructs/${id}/logs/${overrides.name ?? "web"}.log`,
     lastKnownError: overrides.lastKnownError ?? null,
     updatedAt: overrides.updatedAt ?? new Date().toISOString(),
     env: overrides.env ?? {},

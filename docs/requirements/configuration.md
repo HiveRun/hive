@@ -5,10 +5,10 @@ This document covers the high-level concepts for workspace configuration. For de
 ## Core Concepts
 
 ### Workspace Configuration
-- Locate a `synthetic.config.ts` at the repo root exporting strongly typed workspace settings (one per project repository).
-- Ship a small runtime+types package (`@synthetic/config`) that exposes `defineSyntheticConfig` for type-safe configuration.
+- Locate a `hive.config.ts` at the repo root exporting strongly typed workspace settings (one per project repository).
+- Ship a small runtime+types package (`@hive/config`) that exposes `defineHiveConfig` for type-safe configuration.
 - `opencode`: defines the workspace ID, optional token reference, and default provider/model used when launching agent sessions (`workspaceId`, `token`, `defaultProvider`, `defaultModel`). The repo defaults target the free `zen` provider with the `big-pickle` model, so no credentials are required out of the box.
-- `promptSources`: defines the reusable prompt fragments that Synthetic concatenates into agent prompts.
+- `promptSources`: defines the reusable prompt fragments that Hive concatenates into agent prompts.
 - `templates`: reusable construct templates that describe services, environments, and agent types. Each template can now include an `agent` block `{ providerId, modelId? }` to override the global defaults.
 
 ### Configuration Features
@@ -20,9 +20,9 @@ The configuration system is implemented through these features:
 
 ### Example Configuration
 ```ts
-import { defineSyntheticConfig } from "@synthetic/config"
+import { defineHiveConfig } from "@hive/config"
 
-export default defineSyntheticConfig({
+export default defineHiveConfig({
   opencode: { workspaceId: "workspace_123" },
   promptSources: ["docs/prompts/**/*.md"],
   templates: [

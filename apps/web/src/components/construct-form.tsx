@@ -143,8 +143,7 @@ export function ConstructForm({
   if (!templates || templates.length === 0) {
     return (
       <div>
-        No templates available. Add templates in synthetic.config.ts to
-        continue.
+        No templates available. Add templates in hive.config.ts to continue.
       </div>
     );
   }

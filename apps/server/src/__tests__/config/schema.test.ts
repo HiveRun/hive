@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  defineSyntheticConfig,
-  syntheticConfigSchema,
+  defineHiveConfig,
+  hiveConfigSchema,
   templateSchema,
 } from "../../config/schema";
 
@@ -73,7 +73,7 @@ describe("Template Schema", () => {
   });
 });
 
-describe("Synthetic Config Schema", () => {
+describe("Hive Config Schema", () => {
   it("should validate a minimal config", () => {
     const minimalConfig = {
       opencode: SAMPLE_OPENCODE_CONFIG,
@@ -87,7 +87,7 @@ describe("Synthetic Config Schema", () => {
       },
     };
 
-    const result = syntheticConfigSchema.parse(minimalConfig);
+    const result = hiveConfigSchema.parse(minimalConfig);
     expect(result.templates[EXPECTED.configKey]).toBeDefined();
     expect(result.opencode.defaultProvider).toBe("zen");
   });
@@ -113,7 +113,7 @@ describe("Synthetic Config Schema", () => {
       },
     };
 
-    const result = syntheticConfigSchema.parse(configWithVoice);
+    const result = hiveConfigSchema.parse(configWithVoice);
     expect(result.voice?.enabled).toBe(true);
     const transcription = result.voice?.transcription;
     expect(transcription?.mode).toBe("local");
@@ -125,7 +125,7 @@ describe("Synthetic Config Schema", () => {
   });
 });
 
-describe("defineSyntheticConfig", () => {
+describe("defineHiveConfig", () => {
   it("should return validated config", () => {
     const configForValidation = {
       opencode: SAMPLE_OPENCODE_CONFIG,
@@ -139,7 +139,7 @@ describe("defineSyntheticConfig", () => {
       },
     };
 
-    const config = defineSyntheticConfig(configForValidation);
+    const config = defineHiveConfig(configForValidation);
     expect(config.templates.test?.id).toBe(EXPECTED.templateId);
     expect(config.opencode.defaultProvider).toBe("zen");
   });

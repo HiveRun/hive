@@ -11,7 +11,7 @@
 > - **Step 4**: `constructs` table stores `opencode_session_id` (OpenCode persists transcripts)
 > - **Step 3**: Adds `workspace_path` to constructs table
 
-> **Template Storage**: Templates are intentionally stored as files (`synthetic.config.ts`) rather than in the database. This architectural decision prioritizes version control, type safety, and developer experience over dynamic template management.
+> **Template Storage**: Templates are intentionally stored as files (`hive.config.ts`) rather than in the database. This architectural decision prioritizes version control, type safety, and developer experience over dynamic template management.
 
 ## Goal
 Provide reliable storage for constructs, transcripts, artifacts, and metadata with ACID guarantees and efficient access patterns.
@@ -23,7 +23,7 @@ This feature represents the **comprehensive persistence system** that was origin
 ### What's Implemented Instead
 - **Step 2**: Basic `constructs` table with minimal schema
 - **Step 3**: Adds `workspace_path` column for worktree support
-- Agent transcript persistence now lives entirely inside OpenCode's store. Synthetic no longer creates local `agent_sessions` / `agent_messages` tables; the backend proxies directly to OpenCode when transcript history is needed.
+- Agent transcript persistence now lives entirely inside OpenCode's store. Hive no longer creates local `agent_sessions` / `agent_messages` tables; the backend proxies directly to OpenCode when transcript history is needed.
 
 ### When This Will Be Implemented
 The complete persistence system with all tables, indexes, and optimizations will be implemented in **Phase 1A** after core functionality path is complete and validated.
@@ -33,7 +33,7 @@ The complete persistence system with all tables, indexes, and optimizations will
 ### Database Schema
 - **Primary store**: Use SQLite as the primary database for constructs, transcripts, statuses, and metadata to gain ACID writes with minimal setup.
 - **Schema design**: Design normalized tables for constructs, sessions, transcripts, artifacts, and relationships.
-- **Migration system**: Version the schema alongside app releases with a simple `synthetic migrate` command.
+- **Migration system**: Version the schema alongside app releases with a simple `hive migrate` command.
 - **Indexing strategy**: Optimize queries for common access patterns (construct listings, transcript streaming, artifact retrieval).
 
 ### Artifact Storage

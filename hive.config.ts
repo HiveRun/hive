@@ -1,6 +1,6 @@
-import { defineSyntheticConfig } from "./apps/server/src/config/schema";
+import { defineHiveConfig } from "./apps/server/src/config/schema";
 
-export default defineSyntheticConfig({
+export default defineHiveConfig({
   opencode: {
     defaultProvider: "opencode",
     defaultModel: "big-pickle",
@@ -16,12 +16,12 @@ export default defineSyntheticConfig({
     },
   },
   defaults: {
-    templateId: "synthetic-dev",
+    templateId: "hive-dev",
   },
   templates: {
-    "synthetic-dev": {
-      id: "synthetic-dev",
-      label: "Synthetic Development Environment",
+    "hive-dev": {
+      id: "hive-dev",
+      label: "Hive Development Environment",
       type: "manual",
       includePatterns: [".env*"],
       agent: {

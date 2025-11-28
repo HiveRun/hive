@@ -13,7 +13,7 @@ const TEXT = {
   pageTitle: "Templates",
   pageDescription: "Browse available construct templates",
   noTemplates: "No templates available",
-  configFileHint: "Create a synthetic.config.ts file to define templates",
+  configFileHint: "Create a hive.config.ts file to define templates",
 } as const;
 
 test.describe("Templates Page", () => {
@@ -59,7 +59,7 @@ test.describe("Templates Page", () => {
     if (await emptyState.isVisible()) {
       await expect(emptyState).toBeVisible();
       await expect(
-        page.getByText("Create a synthetic.config.ts file to define templates")
+        page.getByText("Create a hive.config.ts file to define templates")
       ).toBeVisible();
     }
   });

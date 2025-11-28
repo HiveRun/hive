@@ -13,7 +13,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 **New Focus**: Worktrees, OpenCode integration, and base construct capabilities
 **Deferred**: Service management, port allocation, complex provisioning orchestration
 
-**Rationale**: To get Synthetic useful quickly, we need:
+**Rationale**: To get Hive useful quickly, we need:
 1. ✅ Template definitions (completed)
 2. 🔄 Git worktree management for isolated workspaces  
 3. 🔄 OpenCode SDK integration for agent sessions
@@ -28,13 +28,13 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 **Branch**: `feat/template-definition-system`
 
 ### Scope
-- TypeScript config schema (`synthetic.config.ts`)
-- `defineSyntheticConfig()` function with full type safety
+- TypeScript config schema (`hive.config.ts`)
+- `defineHiveConfig()` function with full type safety
 - Template validation and type checking
 - Basic template browser/listing in UI
 
 ### Persistence Added
-- **File-based storage**: Templates stored in `synthetic.config.ts` (intentional architectural decision)
+- **File-based storage**: Templates stored in `hive.config.ts` (intentional architectural decision)
 - No database tables for templates (prioritizes version control and type safety)
 - Elysia RPC endpoint for template loading from config files
 
@@ -46,7 +46,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - E2E tests for templates page
 
 ### Acceptance Criteria
-- [x] Can define templates in `synthetic.config.ts` with intellisense
+- [x] Can define templates in `hive.config.ts` with intellisense
 - [x] Templates validate at compile time
 - [x] UI can list available templates
 - [x] Tests pass with real template data
@@ -147,7 +147,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 
 ### Persistence Added
 - `constructs` table gains `opencode_session_id`
-- Agent transcripts/messages remain inside OpenCode's datastore (Synthetic rehydrates via stored session ID)
+- Agent transcripts/messages remain inside OpenCode's datastore (Hive rehydrates via stored session ID)
 
 ### Tests
 - Session creation with mock orchestrator

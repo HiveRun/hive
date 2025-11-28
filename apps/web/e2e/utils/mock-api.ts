@@ -32,8 +32,8 @@ const workspaceListFixture: WorkspaceListResponse = {
   workspaces: [
     {
       id: "workspace-primary",
-      label: "synthetic",
-      path: "/home/aureatus/dev/projects/synthetic",
+      label: "hive",
+      path: "/home/aureatus/dev/projects/hive",
       addedAt: new Date("2024-01-01T00:00:00Z").toISOString(),
       lastOpenedAt: new Date("2024-01-02T00:00:00Z").toISOString(),
     },
@@ -52,8 +52,8 @@ const workspaceBrowseFixture: WorkspaceBrowseResponse = {
   parentPath: "/home/aureatus/dev",
   directories: [
     {
-      name: "synthetic",
-      path: "/home/aureatus/dev/projects/synthetic",
+      name: "hive",
+      path: "/home/aureatus/dev/projects/hive",
       hasConfig: true,
     },
     {

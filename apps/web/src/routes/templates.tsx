@@ -188,7 +188,7 @@ function TemplatesPage() {
             <p className="mt-2 text-muted-foreground text-sm">
               Create a{" "}
               <code className="rounded bg-muted px-1 py-0.5 text-xs">
-                synthetic.config.ts
+                hive.config.ts
               </code>{" "}
               file to define templates
             </p>

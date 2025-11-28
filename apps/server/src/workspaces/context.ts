@@ -1,12 +1,12 @@
-import { getSyntheticConfig } from "../config/context";
-import type { SyntheticConfig } from "../config/schema";
+import { getHiveConfig } from "../config/context";
+import type { HiveConfig } from "../config/schema";
 import { createWorktreeManager } from "../worktree/manager";
 import type { WorkspaceRecord } from "./registry";
 import { getWorkspaceRegistry } from "./registry";
 
 export type WorkspaceRuntimeContext = {
   workspace: WorkspaceRecord;
-  loadConfig: () => Promise<SyntheticConfig>;
+  loadConfig: () => Promise<HiveConfig>;
   createWorktreeManager: () => Promise<
     ReturnType<typeof createWorktreeManager>
   >;
@@ -35,11 +35,11 @@ export async function resolveWorkspaceContext(
   }
 
   const resolvedWorkspace = workspace;
-  let configPromise: Promise<SyntheticConfig> | null = null;
+  let configPromise: Promise<HiveConfig> | null = null;
 
   const loadConfig = () => {
     if (!configPromise) {
-      configPromise = getSyntheticConfig(resolvedWorkspace.path);
+      configPromise = getHiveConfig(resolvedWorkspace.path);
     }
     return configPromise;
   };

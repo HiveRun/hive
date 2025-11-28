@@ -3,7 +3,7 @@
 - [ ] Plan Export #status/planned #phase-3 #feature/advanced
 
 ## Goal
-Let users push planning outcomes to external systems (Linear, GitHub Issues, etc.) directly from Synthetic.
+Let users push planning outcomes to external systems (Linear, GitHub Issues, etc.) directly from Hive.
 
 ## Key Requirements
 - Provide an action after plan approval to export the plan summary and artefacts.

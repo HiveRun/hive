@@ -1,6 +1,6 @@
 # Testing Strategy
 
-This document outlines our approach to testing Synthetic across constructs and supporting services.
+This document outlines our approach to testing Hive across constructs and supporting services.
 
 ## Philosophy
 - Prefer pure functions; when code needs IO helpers, accept only the specific helper you want to swap. For standard modules (`fs`, `path`, `Bun.spawn`), import them directly and use `vi.mock`/`vi.spyOn` in tests when necessary.
@@ -15,7 +15,7 @@ This document outlines our approach to testing Synthetic across constructs and s
 ## Integration Layer
 - Provide a test harness that spins up isolated temp workspaces, fake agents, and stubbed service runners. Harness must create/clean git worktrees, assign ephemeral ports, and ensure all processes are terminated even on failure.
 - Implement a mock OpenCode SDK/server shim that reproduces session lifecycle, message streaming, and auth failures. Use it in integration tests so we never hit real LLMs during CI.
-- Tests should set `SYNTHETIC_TEST_MODE` (or equivalent) so service commands run lightweight stubs, docker invocations are replaced with no-ops, and resource limits prevent runaway processes. All writes happen under a temp root (e.g., `/tmp/synthetic-test-*`).
+- Tests should set `HIVE_TEST_MODE` (or equivalent) so service commands run lightweight stubs, docker invocations are replaced with no-ops, and resource limits prevent runaway processes. All writes happen under a temp root (e.g., `/tmp/hive-test-*`).
 
 ## Visual Regression (Playwright)
 - Browser automation lives under `apps/web/e2e/` and serves as a **visual regression harness** rather than a pure end-to-end suite. Specs hit the real router, but critical API calls are intercepted with deterministic fixtures so screenshots remain stable.
@@ -24,8 +24,8 @@ This document outlines our approach to testing Synthetic across constructs and s
 
 ## TODO: Full-Stack Playwright Flow (Frozen Clock)
 - Goal: run the **actual** server + database + git worktree creation while keeping screenshots deterministic.
-- Boot the API with temp roots: `WORKTREE_ROOT=/tmp/synthetic-e2e-<uuid>` and `DATABASE_URL=file:/tmp/synthetic-e2e-<uuid>.db`. Playwright’s `globalSetup` should create these dirs, run migrations/seeds, and export the env for both the server process and the tests.
-- Freeze time via [`timekeeper`](https://www.npmjs.com/package/timekeeper) in the backend entrypoint: if `SYNTHETIC_FIXED_TIME` is set, call `timekeeper.freeze(new Date(value))`. Every timestamp the UI creates stays stable, yet the server still executes real logic.
+- Boot the API with temp roots: `WORKTREE_ROOT=/tmp/hive-e2e-<uuid>` and `DATABASE_URL=file:/tmp/hive-e2e-<uuid>.db`. Playwright’s `globalSetup` should create these dirs, run migrations/seeds, and export the env for both the server process and the tests.
+- Freeze time via [`timekeeper`](https://www.npmjs.com/package/timekeeper) in the backend entrypoint: if `HIVE_FIXED_TIME` is set, call `timekeeper.freeze(new Date(value))`. Every timestamp the UI creates stays stable, yet the server still executes real logic.
 - Optional hardening: run the API inside Docker/bubblewrap with the temp directory bind-mounted. That allows `git worktree` to run for real while ensuring the host repo is untouched and everything disappears after teardown.
 - Snapshot strategy: start from an empty DB (zero constructs), take the “empty state” screenshot, drive the actual creation form, wait for success, then capture the “single construct” view. Because the clock is frozen and the DB/worktree roots are ephemeral, screenshots don’t drift between runs.
 

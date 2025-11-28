@@ -10,8 +10,8 @@ import {
   type Session,
 } from "@opencode-ai/sdk";
 import { eq } from "drizzle-orm";
-import { getSyntheticConfig } from "../config/context";
-import type { SyntheticConfig, Template } from "../config/schema";
+import { getHiveConfig } from "../config/context";
+import type { HiveConfig, Template } from "../config/schema";
 import { db } from "../db";
 import { type Construct, constructs } from "../schema/constructs";
 import { publishAgentEvent } from "./events";
@@ -75,7 +75,7 @@ type TemplateAgentConfig = {
 
 function resolveTemplateAgentConfig(
   template: Template,
-  config: SyntheticConfig
+  config: HiveConfig
 ): TemplateAgentConfig {
   if (template.agent) {
     return {
@@ -220,7 +220,7 @@ async function ensureRuntimeForConstruct(
     throw new Error("Construct not found");
   }
 
-  const config = await getSyntheticConfig(
+  const config = await getHiveConfig(
     construct.workspaceRootPath ?? construct.workspacePath
   );
   const template = config.templates[construct.templateId];

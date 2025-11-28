@@ -1,11 +1,11 @@
 # Core Functionality Implementation Path
 
-This document outlines the focused implementation path for delivering core Synthetic functionality quickly.
+This document outlines the focused implementation path for delivering core Hive functionality quickly.
 
 ## Target User Experience
 
 **Goal**: A user should be able to:
-1. ✅ Define templates in `synthetic.config.ts` (completed)
+1. ✅ Define templates in `hive.config.ts` (completed)
 2. ✅ Create and manage basic constructs through UI (real database)
 3. Provision worktrees for existing constructs
 4. Start agent sessions in construct worktrees
@@ -166,7 +166,7 @@ ALTER TABLE constructs
   ADD COLUMN opencode_session_id TEXT NULL;
 ```
 
-> Agent transcripts and message history live inside OpenCode's own datastore. Synthetic keeps only the `opencode_session_id` pointer so it can rehydrate sessions on demand.
+> Agent transcripts and message history live inside OpenCode's own datastore. Hive keeps only the `opencode_session_id` pointer so it can rehydrate sessions on demand.
 
 #### Key Implementation Details
 - **Extend existing constructs** with agent functionality
@@ -186,7 +186,7 @@ ALTER TABLE constructs
 - Session operates within construct worktree
 - Construct creation fails with actionable error if agent provisioning fails (e.g., missing credentials) and leaves no orphaned worktree
 - Permission prompts can be approved/denied from the chat UI (no fallback to CLI banners)
-- Transcripts persist via OpenCode's datastore (Synthetic can rehydrate by session ID)
+- Transcripts persist via OpenCode's datastore (Hive can rehydrate by session ID)
 - **Integration tests with existing UI from Step 1**
 
 ---
@@ -222,7 +222,7 @@ ALTER TABLE constructs
 - Time from basic constructs to worktree integration: < 3 days
 - Time from worktree to agent integration: < 4 days
 - End-to-end workflow completion: < 2 minutes
-- Zero configuration beyond `synthetic.config.ts`
+- Zero configuration beyond `hive.config.ts`
 
 ### Testing Strategy
 - **Step 1**: Real database operations from day 1

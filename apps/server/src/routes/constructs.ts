@@ -86,7 +86,7 @@ const ErrorResponseSchema = t.Object({
 const LOG_TAIL_MAX_BYTES = 64_000;
 const LOG_TAIL_MAX_LINES = 200;
 const LOG_LINE_SPLIT_RE = /\r?\n/;
-const SERVICE_LOG_DIR = ".synthetic/logs";
+const SERVICE_LOG_DIR = ".hive/logs";
 const PORT_CHECK_TIMEOUT_MS = 500;
 const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
 
@@ -664,8 +664,8 @@ async function handleConstructCreationRequest(
     log,
   } = args;
 
-  const syntheticConfig = await workspaceContext.loadConfig();
-  const template = syntheticConfig.templates[body.templateId];
+  const hiveConfig = await workspaceContext.loadConfig();
+  const template = hiveConfig.templates[body.templateId];
   if (!template) {
     return {
       status: HTTP_STATUS.BAD_REQUEST,

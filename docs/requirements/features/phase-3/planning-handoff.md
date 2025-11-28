@@ -14,7 +14,7 @@ Enable seamless workflow transitions between planning and implementation phases,
 - **Plan format expectations**: Define clear schema for plan submissions (sections, acceptance criteria, implementation steps, dependencies).
 
 ### Plan Submission & Storage
-- **MCP endpoint**: Expose `synthetic.plan.submit` that planning agents must call with generated plans.
+- **MCP endpoint**: Expose `hive.plan.submit` that planning agents must call with generated plans.
 - **Plan validation**: Validate submitted plans against expected schema before acceptance.
 - **Version control**: Store each plan submission with version history, allowing comparison between iterations.
 - **Persistence**: Store plans in SQLite + generate `PLAN.md` files in construct worktree for reference.

@@ -1,10 +1,10 @@
-# synthetic
+# hive
 
 Monorepo project with React + TanStack Start frontend and Elysia backend.
 
 ## Legacy Context
 
-Synthetic is the successor to the earlier **Hive** platform (Elixir/Phoenix + Ash + React). We keep Hive's architectural and workflow documentation under `docs/historical/hive` as a reference when translating proven patterns into this Bun/TypeScript monorepo.
+Hive is the successor to the earlier **Hive** platform (Elixir/Phoenix + Ash + React). We keep Hive's architectural and workflow documentation under `docs/historical/hive` as a reference when translating proven patterns into this Bun/TypeScript monorepo.
 
 ## Documentation Workflow
 
@@ -15,72 +15,72 @@ All planning and requirements live under `docs/` as plain Markdown so any editor
 ### One-line install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SyntheticRun/synthetic/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/HiveRun/hive/main/scripts/install.sh | bash
 ```
 
-The installer downloads the latest published release for your platform, expands it into `~/.synthetic`, writes a local SQLite database path to `synthetic.env`, symlinks `synthetic` into `~/.synthetic/bin`, and updates your shell PATH so the CLI is immediately available. Run `synthetic` to start the bundled server + UI on the default ports.
+The installer downloads the latest published release for your platform, expands it into `~/.hive`, writes a local SQLite database path to `hive.env`, symlinks `hive` into `~/.hive/bin`, and updates your shell PATH so the CLI is immediately available. Run `hive` to start the bundled server + UI on the default ports.
 
 Environment variables:
-- `SYNTHETIC_VERSION`: install a specific tag (defaults to `latest`).
-- `SYNTHETIC_HOME`: override the install root (defaults to `~/.synthetic`).
-- `SYNTHETIC_BIN_DIR`: override the bin directory that `synthetic` is linked into (defaults to `~/.synthetic/bin`).
-- `SYNTHETIC_INSTALL_URL`: override the download URL (handy for testing locally built tarballs).
-- `SYNTHETIC_MIGRATIONS_DIR`: point the runtime at a custom migrations folder (defaults to the bundled `migrations/`).
-- `SYNTHETIC_LOG_DIR`: where background logs are written (defaults to `~/.synthetic/logs` for installed builds, or `<binary>/logs` when running from source).
-- `SYNTHETIC_PID_FILE`: override the pid file path (defaults to `~/.synthetic/synthetic.pid`).
-- `SYNTHETIC_INSTALL_COMMAND`: override the command executed by `synthetic upgrade` (defaults to the stored installer behavior).
+- `HIVE_VERSION`: install a specific tag (defaults to `latest`).
+- `HIVE_HOME`: override the install root (defaults to `~/.hive`).
+- `HIVE_BIN_DIR`: override the bin directory that `hive` is linked into (defaults to `~/.hive/bin`).
+- `HIVE_INSTALL_URL`: override the download URL (handy for testing locally built tarballs).
+- `HIVE_MIGRATIONS_DIR`: point the runtime at a custom migrations folder (defaults to the bundled `migrations/`).
+- `HIVE_LOG_DIR`: where background logs are written (defaults to `~/.hive/logs` for installed builds, or `<binary>/logs` when running from source).
+- `HIVE_PID_FILE`: override the pid file path (defaults to `~/.hive/hive.pid`).
+- `HIVE_INSTALL_COMMAND`: override the command executed by `hive upgrade` (defaults to the stored installer behavior).
 
 ### Using the installed binary
 
-- The installer automatically appends `~/.synthetic/bin` (or `SYNTHETIC_HOME/bin`) to your shell’s PATH for bash, zsh, fish, and other common shells. If you use a custom shell, add it manually:
+- The installer automatically appends `~/.hive/bin` (or `HIVE_HOME/bin`) to your shell’s PATH for bash, zsh, fish, and other common shells. If you use a custom shell, add it manually:
   ```bash
-  export PATH="$HOME/.synthetic/bin:$PATH"
+  export PATH="$HOME/.hive/bin:$PATH"
   ```
 - Run the CLI with:
   ```bash
-  synthetic
+  hive
   ```
   - Compiled releases fork to the background, print the browser URL, log path, and PID file, and immediately return control of your terminal. Releases serve the UI on the API port (`PORT`, defaults to `3000`).
   - The first launch automatically runs the bundled Drizzle migrations; no extra init step is required.
 - Follow logs:
   ```bash
-  synthetic logs
+  hive logs
   ```
 - Stop the background server:
   ```bash
-  synthetic stop
+  hive stop
   ```
 - Upgrade to the latest published release:
   ```bash
-  synthetic upgrade
+  hive upgrade
   ```
 - Inspect your current install (release path, log locations, pid status):
   ```bash
-  synthetic info
+  hive info
   ```
 - Open the UI in your default browser (starts the daemon if needed):
   ```bash
-  synthetic web
+  hive web
   ```
-- Launch the desktop (Tauri) app. Set `SYNTHETIC_TAURI_BINARY` if the CLI
+- Launch the desktop (Tauri) app. Set `HIVE_TAURI_BINARY` if the CLI
   can’t auto-detect the packaged executable on your system.
   ```bash
-  synthetic desktop
+  hive desktop
   ```
 - Install shell completions (bash/zsh/fish) so they persist across reboots:
   ```bash
-  synthetic completions install zsh
-  synthetic completions install bash
-  synthetic completions install fish
+  hive completions install zsh
+  hive completions install bash
+  hive completions install fish
   ```
   Each command picks a sensible default location for that shell (Oh My Zsh custom dir, `~/.local/share/bash-completion/completions`, `~/.config/fish/completions`, etc.). Re-run it whenever new subcommands land or pass an explicit path as the final argument to control where the file is written.
-- Need a quick refresher on the available commands? Run `synthetic --help` for the latest summary.
-- Configuration lives in `~/.synthetic/current/synthetic.env`. Update values there (or override per run) to change ports, database paths, or feature flags:
+- Need a quick refresher on the available commands? Run `hive --help` for the latest summary.
+- Configuration lives in `~/.hive/current/hive.env`. Update values there (or override per run) to change ports, database paths, or feature flags:
 
   ```bash
-  PORT=4100 synthetic
+  PORT=4100 hive
   ```
-- The SQLite database defaults to `~/.synthetic/state/synthetic.db`; set `DATABASE_URL` if you need a different location.
+- The SQLite database defaults to `~/.hive/state/hive.db`; set `DATABASE_URL` if you need a different location.
 
 Open the printed UI link (default [http://localhost:3000](http://localhost:3000)) after the log shows “Service supervisor initialized.”
 
@@ -91,13 +91,13 @@ bun run build:installer
 ls dist/install
 ```
 
-This script compiles the Bun server, copies the Vite build output, and packages everything into `dist/install/synthetic-<platform>-<arch>.tar.gz` plus a `.sha256` checksum. Upload that pair to a GitHub Release so the installer can fetch it. To smoke-test the installer against the locally built artifacts, run:
+This script compiles the Bun server, copies the Vite build output, and packages everything into `dist/install/hive-<platform>-<arch>.tar.gz` plus a `.sha256` checksum. Upload that pair to a GitHub Release so the installer can fetch it. To smoke-test the installer against the locally built artifacts, run:
 
 ```bash
 bun run local:install
 ```
 
-This command runs `bun run build:installer` under the hood, then installs from the freshly built tarball using `SYNTHETIC_INSTALL_URL=file://...`.
+This command runs `bun run build:installer` under the hood, then installs from the freshly built tarball using `HIVE_INSTALL_URL=file://...`.
 
 ## Getting Started
 
@@ -139,7 +139,7 @@ bun dev
 ## Project Structure
 
 ```
-synthetic/
+hive/
 ├── apps/
 │   ├── web/         # Frontend application (React + TanStack Start)
 │   └── server/      # Backend API (Elysia)
@@ -211,9 +211,9 @@ bun test:e2e:update-snapshots
 
 ## Voice Input (Beta)
 
-Synthetic now ships optional push-to-talk controls in the agent chat experience. To enable voice input:
+Hive now ships optional push-to-talk controls in the agent chat experience. To enable voice input:
 
-1. Update `synthetic.config.ts` with a `voice` block. Local mode is the default and spins up a bundled Whisper (Transformers.js) transcriber on demand. Remote mode forwards the audio to providers such as OpenAI or Groq via the Vercel AI SDK.
+1. Update `hive.config.ts` with a `voice` block. Local mode is the default and spins up a bundled Whisper (Transformers.js) transcriber on demand. Remote mode forwards the audio to providers such as OpenAI or Groq via the Vercel AI SDK.
 2. If you pick a remote provider, expose the API key via the referenced environment variable (defaults are `OPENAI_API_KEY` or `GROQ_API_KEY`). Remote mode automatically selects our recommended Whisper variant for that provider (OpenAI `whisper-1`, Groq `whisper-large-v3-turbo`).
 3. Restart the server so `/api/voice/config` and `/api/voice/transcriptions` pick up the new settings.
 4. Visit the agent chat UI — a microphone button appears inside the compose panel when browser recording is allowed.
@@ -241,7 +241,7 @@ voice: {
 },
 ```
 
-Local models are cached under `.synthetic/models` and the first transcription run downloads them automatically. All audio is captured in-browser, converted to WAV, sent once to `/api/voice/transcriptions`, and discarded when a transcript is returned.
+Local models are cached under `.hive/models` and the first transcription run downloads them automatically. All audio is captured in-browser, converted to WAV, sent once to `/api/voice/transcriptions`, and discarded when a transcript is returned.
 
 #### Debugging Failed Snapshot Tests
 

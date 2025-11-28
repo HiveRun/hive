@@ -55,8 +55,7 @@ test.describe("Constructs Page", () => {
         createConstructFixture({
           id: "secondary-construct",
           name: "Secondary Construct",
-          workspacePath:
-            "/home/synthetic/.synthetic/constructs/secondary-construct",
+          workspacePath: "/home/hive/.hive/constructs/secondary-construct",
           createdAt: "2024-02-01T10:00:00.000Z",
         }),
       ],

@@ -1,5 +1,5 @@
 {
-  "name": "synthetic",
+  "name": "hive",
   "private": true,
   "type": "module",
   "workspaces": {
@@ -31,7 +31,7 @@
     "check:secrets": "./scripts/check-secrets.sh",
     "check:audit": "bun audit --audit-level high || echo '⚠️  Security audit found issues (see above)'",
     "ruler:apply": "cp README.md .ruler/prompts/README.md && cp docs/requirements/design.md .ruler/prompts/design.md && bunx @intellectronica/ruler@latest apply --local-only && biome check --write --no-errors-on-unmatched --files-ignore-unknown=true",
-    "dev": "turbo run dev --filter=web... --filter=@synthetic/server...",
+    "dev": "turbo run dev --filter=web... --filter=@hive/server...",
     "build": "turbo build",
     "build:installer": "bun run scripts/distribution/build.ts",
     "local:install": "bun run scripts/distribution/local-install.ts",
@@ -42,10 +42,10 @@
     "dev:tauri": "tauri dev",
     "build:tauri": "tauri build",
     "db:local": "cd apps/server && bun db:local",
-    "db:push": "turbo -F @synthetic/server db:push",
-    "db:studio": "turbo -F @synthetic/server db:studio",
-    "db:generate": "turbo -F @synthetic/server db:generate",
-    "db:migrate": "turbo -F @synthetic/server db:migrate",
+    "db:push": "turbo -F @hive/server db:push",
+    "db:studio": "turbo -F @hive/server db:studio",
+    "db:generate": "turbo -F @hive/server db:generate",
+    "db:migrate": "turbo -F @hive/server db:migrate",
     "prepare": "husky"
   },
   "dependencies": {

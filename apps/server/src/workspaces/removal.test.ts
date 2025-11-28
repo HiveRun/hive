@@ -16,30 +16,30 @@ import { constructs } from "../schema/constructs";
 import { getWorkspaceRegistry, registerWorkspace } from "./registry";
 import { removeWorkspaceCascade } from "./removal";
 
-const SYNTHETIC_CONFIG_CONTENT = "export default {}";
+const HIVE_CONFIG_CONTENT = "export default {}";
 
 async function createWorkspaceRoot(prefix = "workspace-removal-") {
   const dir = await mkdtemp(join(tmpdir(), prefix));
-  await writeFile(join(dir, "synthetic.config.ts"), SYNTHETIC_CONFIG_CONTENT);
+  await writeFile(join(dir, "hive.config.ts"), HIVE_CONFIG_CONTENT);
   return dir;
 }
 
 describe("removeWorkspaceCascade", () => {
-  let syntheticHome: string;
+  let hiveHome: string;
 
   beforeAll(async () => {
     await setupTestDb();
   });
 
   beforeEach(async () => {
-    syntheticHome = await mkdtemp(join(tmpdir(), "synthetic-home-removal-"));
-    process.env.SYNTHETIC_HOME = syntheticHome;
+    hiveHome = await mkdtemp(join(tmpdir(), "hive-home-removal-"));
+    process.env.HIVE_HOME = hiveHome;
     await testDb.delete(constructs);
   });
 
   afterEach(async () => {
-    await rm(syntheticHome, { recursive: true, force: true });
-    process.env.SYNTHETIC_HOME = undefined;
+    await rm(hiveHome, { recursive: true, force: true });
+    process.env.HIVE_HOME = undefined;
   });
 
   it("removes constructs and the workspace registry entry", async () => {
@@ -52,7 +52,7 @@ describe("removeWorkspaceCascade", () => {
     const constructId = "construct-removal-test";
     const constructPath = join(
       workspaceRoot,
-      ".synthetic",
+      ".hive",
       "constructs",
       constructId
     );
