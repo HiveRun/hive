@@ -4,12 +4,14 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-sans:
+    "Inter", "Geist", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
 
 html,
 body {
-  @apply h-full bg-white dark:bg-gray-950;
+  @apply h-full;
 
   @media (prefers-color-scheme: dark) {
     color-scheme: dark;
@@ -18,123 +20,121 @@ body {
 
 :root {
   --radius: 0rem;
-  --background: oklch(0.96 0 0);
-  --foreground: oklch(0.15 0 0);
-  --card: oklch(0.92 0 0);
-  --card-foreground: oklch(0.15 0 0);
-  --popover: oklch(0.92 0 0);
-  --popover-foreground: oklch(0.15 0 0);
-  --primary: oklch(0.35 0.1 145);
-  --primary-foreground: oklch(0.96 0 0);
-  --secondary: oklch(0.88 0 0);
-  --secondary-foreground: oklch(0.15 0 0);
-  --muted: oklch(0.82 0 0);
-  --muted-foreground: oklch(0.4 0 0);
-  --accent: oklch(0.45 0.12 145);
-  --accent-foreground: oklch(0.96 0 0);
-  --border: oklch(0.32 0.05 150);
-  --input: oklch(0.92 0 0);
-  --ring: oklch(0.55 0.15 145);
-  --destructive: oklch(0.53 0.2 20);
-  --chart-1: oklch(0.5749 0.1118 145.2516);
-  --chart-2: oklch(0.6534 0.0567 146.5284);
-  --chart-3: oklch(0.7202 0.0643 146.2736);
-  --chart-4: oklch(0.4878 0.0212 39.3031);
-  --chart-5: oklch(0.5999 0.0126 45.6295);
-  --sidebar: oklch(0.78 0 0);
-  --sidebar-foreground: oklch(0.15 0 0);
-  --sidebar-primary: oklch(0.2 0 0);
-  --sidebar-primary-foreground: oklch(0.96 0 0);
-  --sidebar-accent: oklch(0.55 0.15 145);
-  --sidebar-accent-foreground: oklch(0.15 0 0);
-  --sidebar-border: oklch(0.32 0.05 150);
-  --sidebar-ring: oklch(0.55 0.15 145);
-  --destructive-foreground: oklch(0.8902 0.0121 145.473);
-  --font-sans: "Roboto Mono", monospace;
-  --font-serif: "Playfair Display", serif;
-  --font-mono: "Roboto Mono", monospace;
-  --shadow-color: #000000;
-  --shadow-opacity: 0.3;
-  --shadow-blur: 6px;
-  --shadow-spread: -3px;
-  --shadow-offset-x: 3px;
-  --shadow-offset-y: 3px;
-  --letter-spacing: 0.02em;
+  --background: oklch(0.98 0.02 85);
+  --foreground: oklch(0.15 0.02 50);
+  --card: oklch(0.96 0.03 80);
+  --card-foreground: oklch(0.15 0.02 50);
+  --popover: oklch(0.98 0.02 85);
+  --popover-foreground: oklch(0.15 0.02 50);
+  --primary: oklch(0.68 0.18 105);
+  --primary-foreground: oklch(0.98 0.02 105);
+  --secondary: oklch(0.85 0.08 95);
+  --secondary-foreground: oklch(0.25 0.04 65);
+  --muted: oklch(0.92 0.04 100);
+  --muted-foreground: oklch(0.45 0.06 80);
+  --accent: oklch(0.75 0.12 90);
+  --accent-foreground: oklch(0.15 0.02 70);
+  --destructive: oklch(0.58 0.24 28);
+  --border: oklch(0.88 0.06 95);
+  --input: oklch(0.92 0.04 100);
+  --ring: oklch(0.68 0.18 105);
+  --chart-1: oklch(0.68 0.18 105);
+  --chart-2: oklch(0.45 0.15 65);
+  --chart-3: oklch(0.75 0.12 90);
+  --chart-4: oklch(0.82 0.1 95);
+  --chart-5: oklch(0.55 0.2 80);
+  --sidebar: oklch(0.95 0.03 102);
+  --sidebar-foreground: oklch(0.15 0.02 70);
+  --sidebar-primary: oklch(0.68 0.18 105);
+  --sidebar-primary-foreground: oklch(0.98 0.02 105);
+  --sidebar-accent: oklch(0.85 0.08 95);
+  --sidebar-accent-foreground: oklch(0.25 0.04 65);
+  --sidebar-border: oklch(0.88 0.06 95);
+  --sidebar-ring: oklch(0.68 0.18 105);
+  --destructive-foreground: oklch(0.9702 0 0);
+  --font-sans: Geist Mono, monospace;
+  --font-serif: Geist Mono, monospace;
+  --font-mono: Geist Mono, monospace;
+  --shadow-color: hsl(0 0% 0%);
+  --shadow-opacity: 0;
+  --shadow-blur: 0px;
+  --shadow-spread: 0px;
+  --shadow-offset-x: 0px;
+  --shadow-offset-y: 1px;
+  --letter-spacing: 0em;
   --spacing: 0.25rem;
-  --shadow-2xs: 3px 3px 6px -3px hsl(0 0% 0% / 0.15);
-  --shadow-xs: 3px 3px 6px -3px hsl(0 0% 0% / 0.15);
+  --shadow-2xs: 0px 1px 0px 0px hsl(0 0% 0% / 0);
+  --shadow-xs: 0px 1px 0px 0px hsl(0 0% 0% / 0);
   --shadow-sm:
-    3px 3px 6px -3px hsl(0 0% 0% / 0.3), 3px 1px 2px -4px hsl(0 0% 0% / 0.3);
-  --shadow:
-    3px 3px 6px -3px hsl(0 0% 0% / 0.3), 3px 1px 2px -4px hsl(0 0% 0% / 0.3);
+    0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
+  --shadow: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
   --shadow-md:
-    3px 3px 6px -3px hsl(0 0% 0% / 0.3), 3px 2px 4px -4px hsl(0 0% 0% / 0.3);
+    0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 2px 4px -1px hsl(0 0% 0% / 0);
   --shadow-lg:
-    3px 3px 6px -3px hsl(0 0% 0% / 0.3), 3px 4px 6px -4px hsl(0 0% 0% / 0.3);
+    0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 4px 6px -1px hsl(0 0% 0% / 0);
   --shadow-xl:
-    3px 3px 6px -3px hsl(0 0% 0% / 0.3), 3px 8px 10px -4px hsl(0 0% 0% / 0.3);
-  --shadow-2xl: 3px 3px 6px -3px hsl(0 0% 0% / 0.75);
-  --tracking-normal: 0.02em;
+    0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 8px 10px -1px hsl(0 0% 0% / 0);
+  --shadow-2xl: 0px 1px 0px 0px hsl(0 0% 0% / 0);
+  --tracking-normal: 0em;
 }
 
 .dark {
-  --background: oklch(0.1 0 0);
-  --foreground: oklch(0.92 0 0);
-  --card: oklch(0.13 0 0);
-  --card-foreground: oklch(0.92 0 0);
-  --popover: oklch(0.13 0 0);
-  --popover-foreground: oklch(0.92 0 0);
-  --primary: oklch(0.55 0.1 145);
-  --primary-foreground: oklch(0.1 0 0);
-  --secondary: oklch(0.18 0 0);
-  --secondary-foreground: oklch(0.92 0 0);
-  --muted: oklch(0.15 0 0);
-  --muted-foreground: oklch(0.6 0 0);
-  --accent: oklch(0.55 0.12 145);
-  --accent-foreground: oklch(0.1 0 0);
-  --border: oklch(0.2 0.05 150);
-  --input: oklch(0.13 0 0);
-  --ring: oklch(0.65 0.12 145);
-  --destructive: oklch(0.4 0.15 20);
-  --chart-1: oklch(0.5749 0.1118 145.2516);
-  --chart-2: oklch(0.6534 0.0567 146.5284);
-  --chart-3: oklch(0.7202 0.0643 146.2736);
-  --chart-4: oklch(0.4878 0.0212 39.3031);
-  --chart-5: oklch(0.5999 0.0126 45.6295);
-  --sidebar: oklch(0.15 0 0);
-  --sidebar-foreground: oklch(0.92 0 0);
-  --sidebar-primary: oklch(0.85 0 0);
-  --sidebar-primary-foreground: oklch(0.1 0 0);
-  --sidebar-accent: oklch(0.65 0.12 145);
-  --sidebar-accent-foreground: oklch(0.1 0 0);
-  --sidebar-border: oklch(0.2 0.05 150);
-  --sidebar-ring: oklch(0.65 0.12 145);
-  --destructive-foreground: oklch(0.8902 0.0121 145.473);
+  --background: oklch(0.08 0.01 45);
+  --foreground: oklch(0.95 0.03 85);
+  --card: oklch(0.12 0.02 50);
+  --card-foreground: oklch(0.92 0.04 85);
+  --popover: oklch(0.15 0.03 55);
+  --popover-foreground: oklch(0.92 0.04 85);
+  --primary: oklch(0.75 0.2 95);
+  --primary-foreground: oklch(0.08 0.01 65);
+  --secondary: oklch(0.18 0.04 80);
+  --secondary-foreground: oklch(0.85 0.06 100);
+  --muted: oklch(0.16 0.03 75);
+  --muted-foreground: oklch(0.65 0.08 90);
+  --accent: oklch(0.25 0.06 85);
+  --accent-foreground: oklch(0.92 0.04 105);
+  --destructive: oklch(0.65 0.2 25);
+  --border: oklch(0.22 0.04 80);
+  --input: oklch(0.2 0.04 78);
+  --ring: oklch(0.75 0.2 95);
+  --chart-1: oklch(0.75 0.2 95);
+  --chart-2: oklch(0.45 0.15 65);
+  --chart-3: oklch(0.6 0.18 100);
+  --chart-4: oklch(0.35 0.12 60);
+  --chart-5: oklch(0.7 0.16 105);
+  --sidebar: oklch(0.1 0.02 68);
+  --sidebar-foreground: oklch(0.88 0.05 102);
+  --sidebar-primary: oklch(0.75 0.2 95);
+  --sidebar-primary-foreground: oklch(0.08 0.01 65);
+  --sidebar-accent: oklch(0.18 0.04 80);
+  --sidebar-accent-foreground: oklch(0.85 0.06 100);
+  --sidebar-border: oklch(0.22 0.04 80);
+  --sidebar-ring: oklch(0.75 0.2 95);
+  --destructive-foreground: oklch(0.95 0.02 85);
   --radius: 0rem;
-  --font-sans: "Roboto Mono", monospace;
-  --font-serif: "Playfair Display", serif;
-  --font-mono: "Roboto Mono", monospace;
-  --shadow-color: #000000;
-  --shadow-opacity: 0.3;
-  --shadow-blur: 6px;
-  --shadow-spread: -3px;
-  --shadow-offset-x: 3px;
-  --shadow-offset-y: 3px;
-  --letter-spacing: 0.02em;
+  --font-sans: Geist Mono, monospace;
+  --font-serif: Geist Mono, monospace;
+  --font-mono: Geist Mono, monospace;
+  --shadow-color: hsl(0 0% 0%);
+  --shadow-opacity: 0;
+  --shadow-blur: 0px;
+  --shadow-spread: 0px;
+  --shadow-offset-x: 0px;
+  --shadow-offset-y: 1px;
+  --letter-spacing: 0em;
   --spacing: 0.25rem;
-  --shadow-2xs: 3px 3px 6px -3px hsl(0 0% 0% / 0.15);
-  --shadow-xs: 3px 3px 6px -3px hsl(0 0% 0% / 0.15);
+  --shadow-2xs: 0px 1px 0px 0px hsl(0 0% 0% / 0);
+  --shadow-xs: 0px 1px 0px 0px hsl(0 0% 0% / 0);
   --shadow-sm:
-    3px 3px 6px -3px hsl(0 0% 0% / 0.3), 3px 1px 2px -4px hsl(0 0% 0% / 0.3);
-  --shadow:
-    3px 3px 6px -3px hsl(0 0% 0% / 0.3), 3px 1px 2px -4px hsl(0 0% 0% / 0.3);
+    0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
+  --shadow: 0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 1px 2px -1px hsl(0 0% 0% / 0);
   --shadow-md:
-    3px 3px 6px -3px hsl(0 0% 0% / 0.3), 3px 2px 4px -4px hsl(0 0% 0% / 0.3);
+    0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 2px 4px -1px hsl(0 0% 0% / 0);
   --shadow-lg:
-    3px 3px 6px -3px hsl(0 0% 0% / 0.3), 3px 4px 6px -4px hsl(0 0% 0% / 0.3);
+    0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 4px 6px -1px hsl(0 0% 0% / 0);
   --shadow-xl:
-    3px 3px 6px -3px hsl(0 0% 0% / 0.3), 3px 8px 10px -4px hsl(0 0% 0% / 0.3);
-  --shadow-2xl: 3px 3px 6px -3px hsl(0 0% 0% / 0.75);
+    0px 1px 0px 0px hsl(0 0% 0% / 0), 0px 8px 10px -1px hsl(0 0% 0% / 0);
+  --shadow-2xl: 0px 1px 0px 0px hsl(0 0% 0% / 0);
 }
 
 @theme inline {
@@ -173,9 +173,9 @@ body {
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Roboto Mono", monospace;
-  --font-serif: "Playfair Display", serif;
+  --font-sans: Geist Mono, monospace;
+  --font-mono: Geist Mono, monospace;
+  --font-serif: Geist Mono, monospace;
   --radius: 0rem;
   --tracking-tighter: calc(var(--tracking-normal) - 0.05em);
   --tracking-tight: calc(var(--tracking-normal) - 0.025em);

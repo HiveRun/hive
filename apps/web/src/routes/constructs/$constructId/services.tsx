@@ -71,7 +71,7 @@ function ConstructServices() {
   };
 
   return (
-    <div className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-[#1f1f1c] bg-[#060706]">
+    <div className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
       <ServicesPanel
         errorMessage={streamError}
         isLoading={isLoading}
@@ -105,12 +105,12 @@ function ServicesPanel({
   let body: ReactNode;
 
   if (isLoading) {
-    body = <p className="text-[#8e9088] text-xs">Loading services…</p>;
+    body = <p className="text-muted-foreground text-xs">Loading services…</p>;
   } else if (errorMessage) {
-    body = <p className="text-[#f19b7f] text-xs">{errorMessage}</p>;
+    body = <p className="text-destructive text-xs">{errorMessage}</p>;
   } else if (services.length === 0) {
     body = (
-      <p className="text-[#8e9088] text-xs">
+      <p className="text-muted-foreground text-xs">
         This construct's template does not define any services.
       </p>
     );
@@ -132,13 +132,13 @@ function ServicesPanel({
   }
 
   return (
-    <section className="flex h-full w-full flex-col px-4 py-3 text-[#d7d9cf] text-sm">
+    <section className="flex h-full w-full flex-col px-4 py-3 text-muted-foreground text-sm">
       <div className="mb-3 flex items-center justify-between gap-4">
         <div>
-          <h2 className="font-semibold text-[#f0f2e9] text-lg uppercase tracking-[0.2em]">
+          <h2 className="font-semibold text-foreground text-lg uppercase tracking-[0.2em]">
             Services
           </h2>
-          <p className="text-[#7b7e76] text-xs uppercase tracking-[0.3em]">
+          <p className="text-muted-foreground text-xs uppercase tracking-[0.3em]">
             Runtime status per construct
           </p>
         </div>
@@ -167,18 +167,18 @@ function ServiceCard({
   return (
     <div
       className={cn(
-        "flex h-full min-h-0 flex-col gap-3 border bg-[#040404] p-4",
+        "flex h-full min-h-0 flex-col gap-3 border border-border bg-card p-4",
         isErrorState
-          ? "border-[#3f0f0f] shadow-[0_0_0_2px_rgba(255,155,155,0.35)]"
-          : "border-[#1b1d17]"
+          ? "border-destructive shadow-[0_0_0_2px_color-mix(in_oklch,var(--color-destructive)_35%,transparent)]"
+          : "border-border/60"
       )}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="font-semibold text-[#f4f5ed] text-base uppercase tracking-[0.15em]">
+          <p className="font-semibold text-base text-foreground uppercase tracking-[0.15em]">
             {service.name}
           </p>
-          <p className="text-[#77796f] text-xs">
+          <p className="text-muted-foreground text-xs">
             {service.command} · {service.cwd}
           </p>
         </div>
@@ -186,25 +186,25 @@ function ServiceCard({
           <ServiceStatusBadge status={service.status} />
         </div>
       </div>
-      <div className="flex flex-wrap gap-4 text-[#8b8e84] text-[11px] uppercase tracking-[0.3em]">
+      <div className="flex flex-wrap gap-4 text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
         <span>type · {service.type}</span>
         <span>port · {service.port ?? "—"}</span>
         <span>pid · {service.pid ?? "—"}</span>
         <span>log · {service.logPath ?? "—"}</span>
       </div>
       {isErrorState ? null : (
-        <div className="min-h-[1.25rem] text-[#d47d76] text-xs">
+        <div className="min-h-[1.25rem] text-destructive text-xs">
           {service.lastKnownError
             ? `Last error: ${service.lastKnownError}`
             : " "}
         </div>
       )}
       <div className="flex flex-1 flex-col gap-2">
-        <p className="text-[#7b7e76] text-[11px] uppercase tracking-[0.3em]">
+        <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
           Recent logs
         </p>
-        <div className="min-h-0 flex-1 rounded-sm border border-[#24271f] bg-[#0b0c09]">
-          <pre className="h-full min-h-0 overflow-auto whitespace-pre-wrap p-3 text-[#cfd2c6] text-[11px] leading-relaxed">
+        <div className="min-h-0 flex-1 rounded-sm border border-border bg-card">
+          <pre className="h-full min-h-0 overflow-auto whitespace-pre-wrap p-3 text-[11px] text-foreground leading-relaxed">
             {service.recentLogs && service.recentLogs.length > 0
               ? service.recentLogs
               : "No log output yet."}
@@ -270,13 +270,13 @@ function ServiceActions({
 function ServiceStatusBadge({ status }: { status: string }) {
   const normalized = status.toLowerCase();
   const toneMap: Record<string, string> = {
-    running: "bg-[#0b3c1f] text-[#7ef5a3]",
-    starting: "bg-[#3a2c09] text-[#f5dd7e]",
-    pending: "bg-[#1a1d26] text-[#9fb4ff]",
-    error: "bg-[#3f0f0f] text-[#ff9b9b]",
-    stopped: "bg-[#232323] text-[#a2a2a2]",
+    running: "bg-primary/15 text-primary",
+    starting: "bg-secondary/20 text-secondary-foreground",
+    pending: "bg-muted text-muted-foreground",
+    error: "bg-destructive/10 text-destructive",
+    stopped: "bg-border/20 text-muted-foreground",
   };
-  const tone = toneMap[normalized] ?? "bg-[#1f2220] text-[#dfe2d6]";
+  const tone = toneMap[normalized] ?? "bg-muted text-muted-foreground";
 
   return (
     <span

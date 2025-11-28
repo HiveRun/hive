@@ -426,7 +426,7 @@ function WorkspaceDirectoryExplorer({
                 className={cn(
                   "flex items-center justify-between gap-2 px-3 py-2 text-left transition-colors",
                   isSelected
-                    ? "bg-[#22382a] text-foreground"
+                    ? "bg-primary/10 text-foreground"
                     : "hover:bg-card/40"
                 )}
                 key={entry.path}
@@ -437,7 +437,7 @@ function WorkspaceDirectoryExplorer({
                   <FolderOpen className="size-4 shrink-0" />
                   <span className="truncate">{entry.name}</span>
                   {entry.hasConfig ? (
-                    <span className="rounded border border-emerald-400 px-1 py-0.5 text-[0.55rem] text-emerald-300 uppercase tracking-[0.25em]">
+                    <span className="rounded border border-primary/70 px-1 py-0.5 text-[0.55rem] text-primary uppercase tracking-[0.25em]">
                       config
                     </span>
                   ) : null}
@@ -616,10 +616,10 @@ function WorkspaceRow({
         <button
           aria-pressed={isActive}
           className={cn(
-            "flex w-full flex-1 items-center gap-3 rounded-sm border border-transparent px-2 py-1 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5a7c5a]",
+            "flex w-full flex-1 items-center gap-3 rounded-sm border border-transparent px-2 py-1 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
             isActive
-              ? "border-[#5a7c5a] bg-[#22382a]"
-              : "border-border/60 border-dashed hover:border-[#5a7c5a] hover:bg-card/40"
+              ? "border-primary bg-primary/10"
+              : "border-border/60 border-dashed hover:border-primary hover:bg-card/40"
           )}
           disabled={!isClickable}
           onClick={handleActivate}
@@ -630,7 +630,7 @@ function WorkspaceRow({
             className={cn(
               "flex size-6 items-center justify-center rounded-full border-2",
               isActive
-                ? "border-emerald-400 bg-emerald-500/20 text-emerald-200"
+                ? "border-primary bg-primary/20 text-primary-foreground"
                 : "border-border/70 text-muted-foreground"
             )}
           >
@@ -644,7 +644,7 @@ function WorkspaceRow({
             <p className="font-semibold text-foreground">
               {workspace.label}
               {isActive ? (
-                <span className="ml-2 rounded border border-emerald-400 px-1 py-0.5 text-[0.65rem] text-emerald-300 uppercase tracking-[0.25em]">
+                <span className="ml-2 rounded border border-primary/70 px-1 py-0.5 text-[0.65rem] text-primary uppercase tracking-[0.25em]">
                   active
                 </span>
               ) : null}
@@ -840,10 +840,10 @@ function WorkspaceTriggerSummary({
   return (
     <SheetTrigger asChild>
       <button
-        className="group flex w-full items-center gap-3 rounded-none border-2 border-transparent px-3 py-2 text-left text-muted-foreground uppercase tracking-[0.18em] transition-none hover:border-[#5a7c5a] hover:bg-[#22382a] hover:text-[#f4f7f2]"
+        className="group flex w-full items-center gap-3 rounded-none border-2 border-transparent px-3 py-2 text-left text-muted-foreground uppercase tracking-[0.18em] transition-none hover:border-primary hover:bg-primary/10 hover:text-foreground"
         type="button"
       >
-        <span className="flex size-8 items-center justify-center rounded-none border border-[#5a7c5a] bg-transparent text-foreground">
+        <span className="flex size-8 items-center justify-center rounded-none border border-primary bg-transparent text-foreground">
           {isLoading ? (
             <Loader2 className="size-4 animate-spin" />
           ) : (

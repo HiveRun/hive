@@ -578,7 +578,7 @@ function AgentStatusIndicator({
 
   if (isError) {
     return (
-      <p className="text-[#f19b7f] text-[11px] uppercase tracking-[0.3em]">
+      <p className="text-[11px] text-destructive uppercase tracking-[0.3em]">
         Agent unavailable
       </p>
     );
@@ -612,17 +612,17 @@ function AgentStatusIndicator({
 function getStatusDotClass(status: string): string {
   switch (status) {
     case "working":
-      return "bg-[#0b3c1f]";
+      return "bg-primary";
     case "awaiting_input":
-      return "bg-[#f5dd7e]";
+      return "bg-secondary";
     case "completed":
-      return "bg-[#7ef5a3]";
+      return "bg-accent";
     case "error":
-      return "bg-[#ff9b9b]";
+      return "bg-destructive";
     case "starting":
-      return "bg-[#4a5d4a]";
+      return "bg-muted";
     default:
-      return "bg-[#232323]";
+      return "bg-border/60";
   }
 }
 
@@ -641,7 +641,7 @@ function ServiceStatusIndicator({ status }: { status?: ServiceStatusState }) {
 
   if (status.isError) {
     return (
-      <p className="text-[#f19b7f] text-[11px] uppercase tracking-[0.3em]">
+      <p className="text-[11px] text-destructive uppercase tracking-[0.3em]">
         Service status unavailable
       </p>
     );
@@ -707,38 +707,38 @@ function describeServiceHealth(summary: ServiceStatusSummary) {
   if (summary.error > 0) {
     return {
       label: `${summary.error}/${summary.total} error`,
-      dotClass: "bg-[#ff9b9b]",
-      textClass: "text-[#ff9b9b]",
+      dotClass: "bg-destructive",
+      textClass: "text-destructive",
     };
   }
 
   if (summary.pending > 0) {
     return {
       label: `Starting ${summary.pending}/${summary.total}`,
-      dotClass: "bg-[#f5dd7e]",
-      textClass: "text-[#f5dd7e]",
+      dotClass: "bg-secondary",
+      textClass: "text-secondary-foreground",
     };
   }
 
   if (summary.running === summary.total && summary.total > 0) {
     return {
       label: "All services running",
-      dotClass: "bg-[#0b3c1f]",
-      textClass: "text-[#7ef5a3]",
+      dotClass: "bg-primary",
+      textClass: "text-primary",
     };
   }
 
   if (summary.running === 0) {
     return {
       label: "Services stopped",
-      dotClass: "bg-[#232323]",
-      textClass: "text-[#a2a2a2]",
+      dotClass: "bg-border",
+      textClass: "text-muted-foreground",
     };
   }
 
   return {
     label: `${summary.running}/${summary.total} running`,
-    dotClass: "bg-[#4a5d4a]",
-    textClass: "text-[#8b9d8b]",
+    dotClass: "bg-accent",
+    textClass: "text-accent-foreground",
   };
 }

@@ -276,7 +276,7 @@ function ConstructDiffRoute() {
   const hasVisibleFiles = sortedFiles.length > 0;
 
   return (
-    <div className="flex h-full flex-col gap-4 rounded-sm border-2 border-[#1f1f1c] bg-[#050505] p-4 text-[#c7c9bf] text-sm">
+    <div className="flex h-full flex-col gap-4 rounded-sm border-2 border-border bg-card p-4 text-muted-foreground text-sm">
       <DiffHeader
         branchAvailable={branchAvailable}
         mode={mode}
@@ -338,12 +338,12 @@ function DiffHeader({
   };
 
   return (
-    <header className="flex flex-wrap items-center justify-between gap-3 border-[#1a1a17] border-b pb-3">
+    <header className="flex flex-wrap items-center justify-between gap-3 border-border border-b pb-3">
       <div className="space-y-1">
-        <p className="text-[#73756d] text-xs uppercase tracking-[0.3em]">
+        <p className="text-muted-foreground text-xs uppercase tracking-[0.3em]">
           Construct Diff
         </p>
-        <div className="flex flex-wrap gap-4 text-[#8e9088] text-[11px] uppercase tracking-[0.2em]">
+        <div className="flex flex-wrap gap-4 text-[11px] text-muted-foreground uppercase tracking-[0.2em]">
           <span>Mode · {DIFF_MODE_META[mode].description}</span>
           {renderCommitStats("Base", summary.baseCommit)}
           {renderCommitStats("Head", summary.headCommit)}
@@ -402,32 +402,32 @@ function FileSidebar({
   onToggleDir,
 }: FileSidebarProps) {
   return (
-    <aside className="flex w-full max-w-xs flex-col gap-3 border border-[#1f1f1a] bg-[#080808] p-3">
+    <aside className="flex w-full max-w-xs flex-col gap-3 border border-border bg-card p-3">
       <Input
-        className="border-[#1f1f1a] bg-[#040404] text-[#d7d9cf]"
+        className="border-border bg-background text-foreground"
         onChange={(event) => onFilterChange(event.target.value)}
         placeholder="Filter files"
         value={filter}
       />
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-[#6f7169] text-[11px] uppercase tracking-[0.2em]">
+        <div className="text-[11px] text-muted-foreground uppercase tracking-[0.2em]">
           Files ({totalCount})
         </div>
         <Select
           onValueChange={(value) => onSortModeChange(value as DiffSortMode)}
           value={sortMode}
         >
-          <SelectTrigger className="h-8 border-[#1f1f1a] bg-[#040404] text-[#d7d9cf]">
+          <SelectTrigger className="h-8 border-border bg-background text-foreground">
             <SelectValue placeholder="Sort" />
           </SelectTrigger>
-          <SelectContent className="border-[#1f1f1a] bg-[#050505] text-[#d7d9cf]">
+          <SelectContent className="border-border bg-card text-foreground">
             {Object.entries(DIFF_SORT_OPTIONS).map(([value, option]) => (
               <SelectItem key={value} value={value}>
                 <span className="flex flex-col">
                   <span className="text-xs uppercase tracking-[0.2em]">
                     {option.label}
                   </span>
-                  <span className="text-[#8b8d85] text-[10px]">
+                  <span className="text-[10px] text-muted-foreground">
                     {option.description}
                   </span>
                 </span>
@@ -438,7 +438,9 @@ function FileSidebar({
       </div>
       <div className="flex-1 overflow-auto pr-1">
         {tree.length === 0 ? (
-          <p className="text-[#7b7d75] text-xs">No files match filter.</p>
+          <p className="text-muted-foreground text-xs">
+            No files match filter.
+          </p>
         ) : (
           <FileTreeList
             expandedDirs={expandedDirs}
@@ -525,7 +527,7 @@ function DirectoryNode({
       <button
         className={cn(
           "flex w-full items-center gap-2 rounded-sm border border-transparent px-2 py-1 text-left text-xs uppercase tracking-[0.25em]",
-          "text-[#a1a399] hover:border-[#292926] hover:bg-[#0b0b0a]"
+          "text-muted-foreground hover:border-border/70 hover:bg-muted"
         )}
         onClick={() => onToggleDir(node.path)}
         style={{ paddingLeft }}
@@ -538,10 +540,10 @@ function DirectoryNode({
         )}
         <DirectoryIcon
           aria-hidden="true"
-          className="h-3.5 w-3.5 text-[#5a7c5a]"
+          className="h-3.5 w-3.5 text-primary"
         />
-        <span className="text-[#d2d4cb]">{node.name}</span>
-        <span className="ml-auto text-[#6f7169] text-[10px] tracking-[0.2em]">
+        <span className="text-foreground">{node.name}</span>
+        <span className="ml-auto text-[10px] text-muted-foreground tracking-[0.2em]">
           {node.fileCount} {node.fileCount === 1 ? "file" : "files"}
         </span>
       </button>
@@ -575,8 +577,8 @@ function FileNode({ node, depth, onSelectFile, selectedFile }: FileNodeProps) {
         className={cn(
           "w-full cursor-pointer border border-transparent px-2 py-2 text-left text-xs",
           selectedFile === node.path
-            ? "border-[#3b3c33] bg-[#11110f]"
-            : "hover:border-[#292926] hover:bg-[#0b0b0a]"
+            ? "border-border bg-muted"
+            : "hover:border-border/70 hover:bg-muted/70"
         )}
         onClick={() => onSelectFile(node.path)}
         style={{ paddingLeft: paddingLeft + FILE_INDENT_OFFSET_PX }}
@@ -586,16 +588,16 @@ function FileNode({ node, depth, onSelectFile, selectedFile }: FileNodeProps) {
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <FileText
               aria-hidden="true"
-              className="h-3.5 w-3.5 text-[#b3b5ab]"
+              className="h-3.5 w-3.5 text-muted-foreground"
             />
             <div className="flex min-w-0 flex-col">
-              <span className="break-words text-[#f3f4ed]">{node.name}</span>
-              <span className="text-[#808279] text-[10px] uppercase tracking-[0.25em]">
+              <span className="break-words text-foreground">{node.name}</span>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-[0.25em]">
                 {node.summary.status}
               </span>
             </div>
           </div>
-          <div className="shrink-0 text-[#8f9189] text-[11px]">
+          <div className="shrink-0 text-[11px] text-muted-foreground">
             +{node.summary.additions} / -{node.summary.deletions}
           </div>
         </div>
@@ -651,14 +653,14 @@ function DiffViewer({
   };
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col gap-3 border border-[#1a1a17] bg-[#060606] p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-[#12120f] border-b pb-2">
+    <section className="flex min-h-0 flex-1 flex-col gap-3 border border-border bg-card p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-border/70 border-b pb-2">
         <div className="flex flex-col">
-          <span className="text-[#6c6e66] text-xs uppercase tracking-[0.3em]">
+          <span className="text-muted-foreground text-xs uppercase tracking-[0.3em]">
             {selectedFile || "No file selected"}
           </span>
           {detail ? (
-            <span className="text-[#96988f] text-[11px]">
+            <span className="text-[11px] text-muted-foreground">
               +{detail.additions} / -{detail.deletions}
             </span>
           ) : null}
@@ -672,7 +674,7 @@ function DiffViewer({
 
 function StatusMessage({ children }: { children: ReactNode }) {
   return (
-    <div className="flex flex-1 items-center justify-center text-[#7f8179] text-sm">
+    <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
       {children}
     </div>
   );
@@ -686,7 +688,7 @@ const DiffScrollContainer = ({
   testId: string;
 }) => (
   <div
-    className="flex min-h-0 w-full min-w-0 flex-1 overflow-auto rounded-sm border border-[#1a1a17] bg-[#090909]"
+    className="flex min-h-0 w-full min-w-0 flex-1 overflow-auto rounded-sm border border-border bg-card"
     data-testid={testId}
   >
     <div className="w-full">{children}</div>
@@ -734,7 +736,7 @@ function DiffPreview({
 
     if (detail.patch) {
       return (
-        <pre className="whitespace-pre-wrap p-3 font-mono text-[#d9dbd2] text-xs leading-relaxed">
+        <pre className="whitespace-pre-wrap p-3 font-mono text-foreground text-xs leading-relaxed">
           {detail.patch}
         </pre>
       );
@@ -749,7 +751,7 @@ function DiffPreview({
 
   if (variant === "stacked") {
     return (
-      <div className="rounded-sm border border-[#1a1a17] bg-[#090909]">
+      <div className="rounded-sm border border-border bg-card">
         <div className="w-full overflow-x-auto">{content}</div>
       </div>
     );
