@@ -4,7 +4,7 @@ const PRIMARY_SUBCOMMANDS = [
   "upgrade",
   "info",
   "web",
-  "tauri",
+  "desktop",
   "help",
   "completions",
 ] as const;
@@ -15,7 +15,7 @@ const HELP_TARGETS = [
   "upgrade",
   "info",
   "web",
-  "tauri",
+  "desktop",
   "completions",
 ] as const;
 export const COMPLETION_SHELLS = ["bash", "zsh", "fish"] as const;
