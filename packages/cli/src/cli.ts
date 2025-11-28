@@ -779,7 +779,7 @@ class WebCommand extends Command {
 }
 
 class DesktopCommand extends Command {
-  static paths = [["desktop"], ["tauri"]];
+  static paths = [["desktop"]];
   static usage = Command.Usage({
     category: "Clients",
     description: "Launch the Synthetic desktop application.",
