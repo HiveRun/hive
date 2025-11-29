@@ -109,17 +109,6 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
   const providerPreference =
     selectedModel?.providerId ?? templateAgent?.providerId;
 
-  useEffect(() => {
-    if (selectedModel || !templates?.length) {
-      return;
-    }
-    const template = templates.find((entry) => entry.id === activeTemplateId);
-    const agent = template?.configJson.agent;
-    if (agent?.providerId && agent.modelId) {
-      setSelectedModel({ id: agent.modelId, providerId: agent.providerId });
-    }
-  }, [activeTemplateId, selectedModel, templates]);
-
   const mutation = useMutation({
     mutationFn: cellMutations.create.mutationFn,
     onSuccess: (cell) => {
@@ -280,17 +269,6 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
                     onValueChange={(value) => {
                       field.handleChange(value);
                       setActiveTemplateId(value);
-                      const nextTemplate = templates?.find(
-                        (template) => template.id === value
-                      );
-                      const nextAgent = nextTemplate?.configJson.agent;
-                      if (nextAgent?.providerId && nextAgent.modelId) {
-                        setSelectedModel({
-                          id: nextAgent.modelId,
-                          providerId: nextAgent.providerId,
-                        });
-                        return;
-                      }
                       setSelectedModel(undefined);
                     }}
                     value={field.state.value}

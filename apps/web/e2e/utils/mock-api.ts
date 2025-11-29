@@ -1,6 +1,7 @@
 import { base, en, Faker } from "@faker-js/faker";
 import type { Page, Route } from "@playwright/test";
 import type { CellDiffResponse, DiffMode } from "@/queries/cells";
+import type { ModelListResponse } from "@/queries/models";
 import type {
   WorkspaceBrowseResponse,
   WorkspaceListResponse,
@@ -26,6 +27,25 @@ exampleFaker.seed(EXAMPLE_FIXTURE_SEED);
 
 const exampleStatus = {
   message: exampleFaker.hacker.phrase(),
+};
+
+const modelCatalogFixture: ModelListResponse = {
+  models: [
+    {
+      id: "gpt-5.1-codex-high",
+      name: "GPT 5.1 Codex High",
+      provider: "openai",
+    },
+    {
+      id: "gpt-5.1-codex-low",
+      name: "GPT 5.1 Codex Low",
+      provider: "openai",
+    },
+  ],
+  defaults: {
+    openai: "gpt-5.1-codex-high",
+  },
+  providers: [{ id: "openai", name: "OpenAI" }],
 };
 
 const workspaceListFixture: WorkspaceListResponse = {
@@ -84,6 +104,7 @@ const API_ROUTE_PATTERNS: (string | RegExp)[] = [
   "**/api/templates/*",
   "**/api/templates*",
   "**/api/example",
+  "**/api/agents/models",
   "**/api/agents/sessions/**",
 ];
 
@@ -140,6 +161,11 @@ const API_ROUTE_MATCHERS = [
       method === "GET" && url.pathname === "/api/example",
   },
   {
+    description: "GET /api/agents/models",
+    match: (url: URL, method: string) =>
+      method === "GET" && url.pathname === "/api/agents/models",
+  },
+  {
     description: "GET /api/agents/sessions/byCell/:id",
     match: (url: URL, method: string) =>
       method === "GET" &&
@@ -162,6 +188,7 @@ export type MockApiData = {
   example: typeof exampleStatus;
   workspaceList: WorkspaceListResponse;
   workspaceBrowse: WorkspaceBrowseResponse;
+  modelCatalog: ModelListResponse;
 };
 
 const defaultMockData: MockApiData = {
@@ -172,6 +199,7 @@ const defaultMockData: MockApiData = {
   example: exampleStatus,
   workspaceList: workspaceListFixture,
   workspaceBrowse: workspaceBrowseFixture,
+  modelCatalog: modelCatalogFixture,
 };
 
 export type MockApiOverrides = Partial<MockApiData>;
@@ -192,6 +220,7 @@ export async function mockAppApi(
     workspaceList: overrides.workspaceList ?? defaultMockData.workspaceList,
     workspaceBrowse:
       overrides.workspaceBrowse ?? defaultMockData.workspaceBrowse,
+    modelCatalog: overrides.modelCatalog ?? defaultMockData.modelCatalog,
   };
 
   await page.route("**/api/cells*", createCellRouteHandler(mockData));
@@ -224,6 +253,7 @@ export async function mockAppApi(
     "**/api/agents/sessions/*/events",
     createAgentEventStreamHandler()
   );
+  await page.route("**/api/agents/models", createModelCatalogHandler(mockData));
 
   return mockData;
 }
@@ -460,30 +490,23 @@ function createAgentSessionByCellHandler() {
 
 function createAgentEventStreamHandler() {
   return async (route: Route) => {
-    if (route.request().method() !== "GET") {
-      await route.continue();
-      return;
-    }
-
-    const historyPayload = JSON.stringify({ messages: [] });
-    const statusPayload = JSON.stringify({ status: "awaiting_input" });
-    const body = [
-      "event: history",
-      `data: ${historyPayload}`,
-      "",
-      "event: status",
-      `data: ${statusPayload}`,
-      "",
-    ].join("\n");
-
     await route.fulfill({
       status: 200,
+      body: 'data: {"status":"idle"}\n\n',
       headers: {
-        "content-type": "text/event-stream",
-        connection: "keep-alive",
-        "cache-control": "no-cache",
+        "Content-Type": "text/event-stream",
+        Connection: "keep-alive",
       },
-      body,
+    });
+  };
+}
+
+function createModelCatalogHandler(mockData: MockApiData) {
+  return async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(mockData.modelCatalog),
     });
   };
 }

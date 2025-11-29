@@ -210,8 +210,44 @@ describe("agent model selection", () => {
 
     const session = await ensureAgentSession(cellId);
 
-    expect(session.provider).toBe("opencode");
+    expect(session.provider).toBe("openai");
     expect(session.modelId).toBe("opencode-default");
+  });
+
+  it("prefers opencode config defaults even if templates specify a model", async () => {
+    const templateWithModel = mockHiveConfig.templates["template-basic"];
+    if (!templateWithModel) {
+      throw new Error("Template missing");
+    }
+
+    const overriddenConfig: HiveConfig = {
+      ...mockHiveConfig,
+      templates: {
+        ...mockHiveConfig.templates,
+        "template-basic": {
+          ...templateWithModel,
+          agent: {
+            providerId: "opencode",
+            modelId: "template-model",
+          },
+        },
+      },
+    };
+
+    vi.spyOn(ConfigContext, "getHiveConfig").mockResolvedValue(
+      overriddenConfig
+    );
+    vi.spyOn(OpencodeConfig, "loadOpencodeConfig").mockResolvedValue({
+      config: { model: "openai/gpt-5.1-codex-high" },
+      source: "workspace",
+      details: undefined,
+      defaultModel: { providerId: "openai", modelId: "gpt-5.1-codex-high" },
+    });
+
+    const session = await ensureAgentSession(cellId);
+
+    expect(session.provider).toBe("openai");
+    expect(session.modelId).toBe("gpt-5.1-codex-high");
   });
 });
 

@@ -265,17 +265,16 @@ async function ensureRuntimeForCell(
   const mergedConfig = await loadOpencodeConfig(workspaceRootPath);
   const defaultOpencodeModel = mergedConfig.defaultModel;
 
-  // Use provided overrides or fall back to template/config defaults, then opencode.json
   const requestedProviderId =
     options?.providerId ??
-    agentConfig.providerId ??
     defaultOpencodeModel?.providerId ??
+    agentConfig.providerId ??
     hiveConfig.opencode.defaultProvider;
 
   const requestedModelId =
     options?.modelId ??
-    agentConfig.modelId ??
     defaultOpencodeModel?.modelId ??
+    agentConfig.modelId ??
     hiveConfig.opencode.defaultModel;
 
   await ensureProviderCredentials(requestedProviderId);

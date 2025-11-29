@@ -85,6 +85,21 @@ export function ModelSelector({
     [providerNames]
   );
 
+  const defaultSelection = useMemo(() => {
+    const defaults = modelsData?.defaults ?? {};
+    if (providerId && defaults[providerId]) {
+      return { providerId, modelId: defaults[providerId] };
+    }
+    const [entry] = Object.entries(defaults);
+    if (entry) {
+      const [defaultProviderId, modelId] = entry;
+      return { providerId: defaultProviderId, modelId };
+    }
+    return null;
+  }, [modelsData?.defaults, providerId]);
+
+  const prioritizedProviderId = providerId ?? defaultSelection?.providerId;
+
   const groupedModels = useMemo(() => {
     if (!modelsData?.models) {
       return [] as ProviderGroup[];
@@ -107,11 +122,17 @@ export function ModelSelector({
     }));
 
     return groups.sort((a, b) => {
-      if (providerId) {
-        if (a.provider === providerId && b.provider !== providerId) {
+      if (prioritizedProviderId) {
+        if (
+          a.provider === prioritizedProviderId &&
+          b.provider !== prioritizedProviderId
+        ) {
           return -1;
         }
-        if (b.provider === providerId && a.provider !== providerId) {
+        if (
+          b.provider === prioritizedProviderId &&
+          a.provider !== prioritizedProviderId
+        ) {
           return 1;
         }
       }
@@ -119,7 +140,7 @@ export function ModelSelector({
       const nameB = resolveProviderLabel(b.provider);
       return nameA.localeCompare(nameB);
     });
-  }, [modelsData?.models, providerId, resolveProviderLabel]);
+  }, [modelsData?.models, prioritizedProviderId, resolveProviderLabel]);
 
   const flattenedModels = useMemo(
     () => groupedModels.flatMap((group) => group.models),
@@ -130,25 +151,21 @@ export function ModelSelector({
     if (!flattenedModels.length || selectedModel) {
       return;
     }
-    const preferredModelId = providerId
-      ? modelsData?.defaults?.[providerId]
-      : undefined;
-    const defaultModel = preferredModelId
-      ? flattenedModels.find(
-          (model) =>
-            model.id === preferredModelId && model.provider === providerId
-        )
-      : flattenedModels[0];
+    let defaultModel: AvailableModel | undefined;
+    if (defaultSelection) {
+      defaultModel = flattenedModels.find(
+        (model) =>
+          model.id === defaultSelection.modelId &&
+          model.provider === defaultSelection.providerId
+      );
+    }
+    if (!defaultModel) {
+      defaultModel = flattenedModels[0];
+    }
     if (defaultModel) {
       onModelChange({ id: defaultModel.id, providerId: defaultModel.provider });
     }
-  }, [
-    flattenedModels,
-    modelsData?.defaults,
-    onModelChange,
-    providerId,
-    selectedModel,
-  ]);
+  }, [flattenedModels, defaultSelection, onModelChange, selectedModel]);
 
   const selectedEntry = selectedModel
     ? flattenedModels.find(
