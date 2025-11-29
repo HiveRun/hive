@@ -5,7 +5,11 @@ import { resolve as resolvePath } from "node:path";
 import { logger } from "@bogeychan/elysia-logger";
 import { and, eq, inArray } from "drizzle-orm";
 import { Elysia, type Static, t } from "elysia";
-import { closeAgentSession, ensureAgentSession } from "../agents/service";
+import {
+  closeAgentSession,
+  ensureAgentSession,
+  sendAgentMessage,
+} from "../agents/service";
 import type { Template } from "../config/schema";
 import { db } from "../db";
 
@@ -47,6 +51,7 @@ export type CellRouteDependencies = {
   db: typeof db;
   resolveWorkspaceContext: typeof resolveWorkspaceContext;
   ensureAgentSession: typeof ensureAgentSession;
+  sendAgentMessage: typeof sendAgentMessage;
   closeAgentSession: typeof closeAgentSession;
   ensureServicesForCell: typeof ensureServicesForCell;
   startServiceById: typeof startServiceById;
@@ -58,6 +63,7 @@ const defaultCellRouteDependencies: CellRouteDependencies = {
   db,
   resolveWorkspaceContext,
   ensureAgentSession,
+  sendAgentMessage,
   closeAgentSession,
   ensureServicesForCell,
   startServiceById,
@@ -147,6 +153,7 @@ export function createCellsRoutes(
     db: database,
     resolveWorkspaceContext: resolveWorkspaceCtx,
     ensureAgentSession: ensureSession,
+    sendAgentMessage: sendMessage,
     closeAgentSession: closeSession,
     ensureServicesForCell: ensureServices,
     startServiceById: startService,
@@ -454,6 +461,7 @@ export function createCellsRoutes(
             body,
             database,
             ensureSession,
+            sendAgentMessage: sendMessage,
             ensureServices,
             stopCellServices: stopCellServicesFn,
             workspaceContext,
@@ -629,6 +637,7 @@ type CellCreationArgs = {
   body: Static<typeof CreateCellSchema>;
   database: typeof db;
   ensureSession: typeof ensureAgentSession;
+  sendAgentMessage: typeof sendAgentMessage;
   ensureServices: typeof ensureServicesForCell;
   stopCellServices: typeof stopServicesForCell;
   workspaceContext: WorkspaceRuntimeContext;
@@ -642,6 +651,7 @@ async function handleCellCreationRequest(
     body,
     database,
     ensureSession,
+    sendAgentMessage: dispatchAgentMessage,
     ensureServices,
     stopCellServices,
     workspaceContext,
@@ -663,6 +673,7 @@ async function handleCellCreationRequest(
     template,
     database,
     ensureSession,
+    sendAgentMessage: dispatchAgentMessage,
     ensureServices,
     stopCellServices,
     worktreeService,
@@ -686,6 +697,7 @@ type ProvisionContext = {
   template: Template;
   database: typeof db;
   ensureSession: typeof ensureAgentSession;
+  sendAgentMessage: typeof sendAgentMessage;
   ensureServices: typeof ensureServicesForCell;
   stopCellServices: typeof stopServicesForCell;
   worktreeService: WorktreeManager;
@@ -710,6 +722,7 @@ function createProvisionContext(args: {
   template: Template;
   database: typeof db;
   ensureSession: typeof ensureAgentSession;
+  sendAgentMessage: typeof sendAgentMessage;
   ensureServices: typeof ensureServicesForCell;
   stopCellServices: typeof stopServicesForCell;
   worktreeService: WorktreeManager;
@@ -739,6 +752,7 @@ async function createCellWithServices(
     template,
     database,
     ensureSession,
+    sendAgentMessage: dispatchAgentMessage,
     ensureServices,
     worktreeService,
     workspace,
@@ -781,10 +795,15 @@ async function createCellWithServices(
   state.recordCreated = true;
   state.createdCell = created;
 
-  await ensureSession(state.cellId);
+  const session = await ensureSession(state.cellId);
   await ensureServices(created, template);
 
   state.servicesStarted = true;
+
+  const initialPrompt = body.description?.trim();
+  if (initialPrompt) {
+    await dispatchAgentMessage(session.id, initialPrompt);
+  }
 
   await updateCellProvisioningStatus(database, state.cellId, "ready");
 

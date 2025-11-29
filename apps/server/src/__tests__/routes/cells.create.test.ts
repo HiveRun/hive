@@ -1,5 +1,5 @@
 import { Elysia } from "elysia";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSessionRecord } from "../../agents/types";
 import type { HiveConfig } from "../../config/schema";
 import {
@@ -34,6 +34,14 @@ const hiveConfig: HiveConfig = {
   defaults: {},
 };
 
+type SendAgentMessageFn = (sessionId: string, content: string) => Promise<void>;
+
+type DependencyFactoryOptions = {
+  setupError?: TemplateSetupError;
+  sendAgentMessage?: SendAgentMessageFn;
+  onEnsureAgentSession?: (cellId: string, sessionId: string) => void;
+};
+
 describe("POST /api/cells", () => {
   let removeWorktreeCalls = 0;
 
@@ -47,7 +55,7 @@ describe("POST /api/cells", () => {
   });
 
   function createDependencies(
-    setupError: TemplateSetupError
+    options: DependencyFactoryOptions = {}
   ): Partial<CellRouteDependencies> {
     const workspaceRecord = {
       id: "test-workspace",
@@ -80,6 +88,10 @@ describe("POST /api/cells", () => {
       });
     }
 
+    const sendAgentMessageImpl =
+      options.sendAgentMessage ??
+      vi.fn<SendAgentMessageFn>().mockResolvedValue();
+
     return {
       db: testDb,
       resolveWorkspaceContext: async () => ({
@@ -87,8 +99,8 @@ describe("POST /api/cells", () => {
         loadConfig: loadWorkspaceConfig,
         createWorktreeManager: createTestWorktreeManager,
       }),
-      ensureAgentSession: (cellId: string) =>
-        Promise.resolve<AgentSessionRecord>({
+      ensureAgentSession: (cellId: string) => {
+        const session: AgentSessionRecord = {
           id: `session-${cellId}`,
           cellId,
           templateId,
@@ -97,15 +109,22 @@ describe("POST /api/cells", () => {
           workspacePath,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
-        }),
+        };
+        options.onEnsureAgentSession?.(cellId, session.id);
+        return Promise.resolve(session);
+      },
       closeAgentSession: (_cellId: string) => Promise.resolve(),
-      ensureServicesForCell: (_args?: unknown) => Promise.reject(setupError),
+      ensureServicesForCell: (_args?: unknown) =>
+        options.setupError
+          ? Promise.reject(options.setupError)
+          : Promise.resolve(),
       stopServicesForCell: (
         _cellId: string,
         _options?: { releasePorts?: boolean }
       ) => Promise.resolve(),
       startServiceById: (_serviceId: string) => Promise.resolve(),
       stopServiceById: (_serviceId: string) => Promise.resolve(),
+      sendAgentMessage: sendAgentMessageImpl,
     } satisfies Partial<CellRouteDependencies>;
   }
 
@@ -123,7 +142,7 @@ describe("POST /api/cells", () => {
       cause,
     });
 
-    const routes = createCellsRoutes(createDependencies(setupError));
+    const routes = createCellsRoutes(createDependencies({ setupError }));
     const app = new Elysia().use(routes);
 
     const response = await app.handle(
@@ -158,5 +177,76 @@ describe("POST /api/cells", () => {
     const [row] = rows;
     expect(row?.status).toBe("error");
     expect(row?.lastSetupError).toContain("exit code 42");
+  });
+
+  it("sends the cell description as the first agent prompt", async () => {
+    const sendAgentMessage = vi
+      .fn<SendAgentMessageFn>()
+      .mockResolvedValue(undefined);
+    let capturedSessionId: string | null = null;
+
+    const routes = createCellsRoutes(
+      createDependencies({
+        sendAgentMessage,
+        onEnsureAgentSession: (_cellId, sessionId) => {
+          capturedSessionId = sessionId;
+        },
+      })
+    );
+    const app = new Elysia().use(routes);
+
+    const response = await app.handle(
+      new Request("http://localhost/api/cells", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Autostart Cell",
+          templateId,
+          workspaceId: "test-workspace",
+          description: "  Fix the failing specs in apps/web  ",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(CREATED_STATUS);
+    expect(capturedSessionId).toBeTruthy();
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+    expect(sendAgentMessage).toHaveBeenCalledWith(
+      capturedSessionId,
+      "Fix the failing specs in apps/web"
+    );
+  });
+
+  it("skips sending the initial prompt when description is blank", async () => {
+    const sendAgentMessage = vi
+      .fn<SendAgentMessageFn>()
+      .mockResolvedValue(undefined);
+
+    const routes = createCellsRoutes(
+      createDependencies({
+        sendAgentMessage,
+      })
+    );
+    const app = new Elysia().use(routes);
+
+    const response = await app.handle(
+      new Request("http://localhost/api/cells", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Blank Description",
+          templateId,
+          workspaceId: "test-workspace",
+          description: "   ",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(CREATED_STATUS);
+    expect(sendAgentMessage).not.toHaveBeenCalled();
   });
 });
