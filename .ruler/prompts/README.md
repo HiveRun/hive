@@ -2,10 +2,6 @@
 
 Monorepo project with React + TanStack Start frontend and Elysia backend.
 
-## Legacy Context
-
-Hive is the successor to the earlier **Hive** platform (Elixir/Phoenix + Ash + React). We keep Hive's architectural and workflow documentation under `docs/historical/hive` as a reference when translating proven patterns into this Bun/TypeScript monorepo.
-
 ## Documentation Workflow
 
 All planning and requirements live under `docs/` as plain Markdown so any editor (VS Code + Foam, Obsidian, or the web UI we build later) can read and update them. Capture new requirements in `docs/requirements/`, tasks in `docs/tasks/`, tag each with a `theme-*` label for grouping, and link everything back to Hive references as needed. Keep the task order manually in those lists—whatever note sits at the top is what we tackle next.
