@@ -1,5 +1,6 @@
 import { Elysia, sse, t } from "elysia";
 import { subscribeAgentEvents } from "../agents/events";
+import { fetchOpencodeModels } from "../agents/opencode-config";
 import {
   ensureAgentSession,
   ensureRuntimeForSession,
@@ -36,28 +37,19 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     async ({ params, set }) => {
       try {
         const runtime = await ensureRuntimeForSession(params.id);
-        const { data, error } = await runtime.client.config.providers();
+        const workspaceRootPath =
+          runtime.cell.workspaceRootPath || runtime.cell.workspacePath;
+        const { models, defaults } =
+          await fetchOpencodeModels(workspaceRootPath);
 
-        if (error || !data) {
-          throw new Error("Failed to load provider list from OpenCode runtime");
-        }
-
-        const providerEntries = normalizeProviderModels(data.providers);
-
-        const models: Array<{ id: string; name: string; provider: string }> =
-          [];
-
-        for (const provider of providerEntries) {
-          for (const [modelId, model] of Object.entries(provider.models)) {
-            models.push({
-              id: modelId,
-              name: model.name ?? modelId,
-              provider: provider.id,
-            });
-          }
-        }
-
-        return { models, defaults: data.default ?? {} };
+        return {
+          models: models.map((model) => ({
+            id: model.modelId,
+            name: model.name,
+            provider: model.providerId,
+          })),
+          defaults,
+        };
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;
         return {
@@ -79,7 +71,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
               provider: t.String(),
             })
           ),
-          defaults: t.Optional(t.Record(t.String(), t.String())),
+          defaults: t.Record(t.String(), t.String()),
         }),
         400: t.Object({
           models: t.Array(
@@ -89,7 +81,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
               provider: t.String(),
             })
           ),
-          defaults: t.Optional(t.Record(t.String(), t.String())),
+          defaults: t.Record(t.String(), t.String()),
           message: t.String(),
         }),
       },
@@ -307,59 +299,6 @@ function formatMessage(message: AgentMessageRecord) {
     createdAt: message.createdAt,
     parts: message.parts,
   };
-}
-
-type NormalizedProviderEntry = {
-  id: string;
-  models: Record<string, { name?: string }>;
-};
-
-function coerceProviderEntry(
-  input: unknown,
-  fallbackId?: string
-): NormalizedProviderEntry | null {
-  if (!input || typeof input !== "object") {
-    return null;
-  }
-
-  const inputWithProps = input as { id?: unknown; models?: unknown };
-  const providerId =
-    typeof inputWithProps.id === "string" ? inputWithProps.id : fallbackId;
-
-  if (!providerId) {
-    return null;
-  }
-
-  if (!inputWithProps.models || typeof inputWithProps.models !== "object") {
-    return null;
-  }
-
-  return {
-    id: providerId,
-    models: inputWithProps.models as Record<string, { name?: string }>,
-  };
-}
-
-function normalizeProviderModels(rawProviders: unknown) {
-  if (!rawProviders) {
-    return [] as NormalizedProviderEntry[];
-  }
-
-  if (Array.isArray(rawProviders)) {
-    return rawProviders
-      .map((provider) => coerceProviderEntry(provider))
-      .filter((entry): entry is NormalizedProviderEntry => Boolean(entry));
-  }
-
-  if (typeof rawProviders === "object") {
-    return Object.entries(rawProviders as Record<string, unknown>)
-      .map(([providerId, provider]) =>
-        coerceProviderEntry(provider, providerId)
-      )
-      .filter((entry): entry is NormalizedProviderEntry => Boolean(entry));
-  }
-
-  return [] as NormalizedProviderEntry[];
 }
 
 function createEventIterator(sessionId: string, signal: AbortSignal) {

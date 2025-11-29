@@ -16,6 +16,7 @@ import type { HiveConfig, Template } from "../config/schema";
 import { db } from "../db";
 import { type Cell, cells } from "../schema/cells";
 import { publishAgentEvent } from "./events";
+import { loadOpencodeConfig } from "./opencode-config";
 import type {
   AgentMessageRecord,
   AgentMessageState,
@@ -68,27 +69,6 @@ async function ensureProviderCredentials(providerId: string): Promise<void> {
   if (!providerAuth) {
     throw new Error(
       `Missing authentication for ${providerId}. Run \\"opencode auth login ${providerId}\\".`
-    );
-  }
-}
-
-async function readWorkspaceOpencodeConfig(
-  workspaceRootPath: string
-): Promise<OpencodeServerConfig | undefined> {
-  const configPath = join(workspaceRootPath, "opencode.json");
-  try {
-    const raw = await readFile(configPath, "utf8");
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") {
-      return parsed as OpencodeServerConfig;
-    }
-    throw new Error("OpenCode config file must contain a JSON object");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      return;
-    }
-    throw new Error(
-      `Failed to read OpenCode config from ${configPath}: ${error instanceof Error ? error.message : String(error)}`
     );
   }
 }
@@ -260,15 +240,16 @@ async function ensureRuntimeForCell(
 
   await ensureProviderCredentials(agentConfig.providerId);
 
-  const opencodeFileConfig =
-    await readWorkspaceOpencodeConfig(workspaceRootPath);
+  const mergedConfig = await loadOpencodeConfig(workspaceRootPath);
 
   const runtime = await startOpencodeRuntime({
     cell,
     providerId: agentConfig.providerId,
     modelId,
     force: options?.force ?? false,
-    opencodeConfig: opencodeFileConfig,
+    opencodeConfig: mergedConfig.config as OpencodeServerConfig,
+    opencodeConfigSource: mergedConfig.source,
+    opencodeConfigDetails: mergedConfig.details,
   });
 
   cellSessionMap.set(cell.id, runtime.session.id);
@@ -283,6 +264,8 @@ type StartRuntimeArgs = {
   modelId?: string;
   force: boolean;
   opencodeConfig?: OpencodeServerConfig;
+  opencodeConfigSource?: "cli" | "workspace" | "default";
+  opencodeConfigDetails?: string;
 };
 
 async function startOpencodeRuntime({
@@ -291,7 +274,30 @@ async function startOpencodeRuntime({
   modelId,
   force,
   opencodeConfig,
+  opencodeConfigSource,
+  opencodeConfigDetails,
 }: StartRuntimeArgs): Promise<RuntimeHandle> {
+  const sourceLabel = opencodeConfigSource ?? "default";
+  const detailSuffix = opencodeConfigDetails
+    ? ` (${opencodeConfigDetails})`
+    : "";
+  // biome-ignore lint/suspicious/noConsole: temporary visibility until structured logging is wired up
+  console.info(
+    `[opencode] Resolved config source '${sourceLabel}${detailSuffix}' for cell ${cell.id}`
+  );
+
+  if (opencodeConfig && typeof opencodeConfig === "object") {
+    const providerKeys = Object.keys(
+      (opencodeConfig as { provider?: Record<string, unknown> }).provider ?? {}
+    );
+    if (providerKeys.length > 0) {
+      // biome-ignore lint/suspicious/noConsole: temporary visibility until structured logging is wired up
+      console.info(
+        `[opencode] Providers available for cell ${cell.id}: ${providerKeys.join(", ")}`
+      );
+    }
+  }
+
   const server = await createOpencodeServer({
     hostname: "127.0.0.1",
     port: 0,
