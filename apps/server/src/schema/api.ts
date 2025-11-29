@@ -149,12 +149,14 @@ export const AgentSessionSchema = t.Object({
   updatedAt: t.String(),
   completedAt: t.Optional(t.String()),
   modelId: t.Optional(t.String()),
+  modelProviderId: t.Optional(t.String()),
 });
 
 export const CreateAgentSessionSchema = t.Object({
   cellId: t.String(),
   force: t.Optional(t.Boolean()),
   modelId: t.Optional(t.String()),
+  providerId: t.Optional(t.String()),
 });
 
 export const AgentMessageSchema = t.Object({

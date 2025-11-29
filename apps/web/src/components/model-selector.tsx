@@ -18,6 +18,11 @@ import {
 import { cn } from "@/lib/utils";
 import { type AvailableModel, modelQueries } from "@/queries/models";
 
+export type ModelSelection = {
+  id: string;
+  providerId: string;
+};
+
 const ROUTER_PROVIDER_IDS = new Set(["opencode"]);
 const PROVIDER_LABEL_OVERRIDES: Record<string, string> = {
   opencode: "Zen",
@@ -32,8 +37,8 @@ type ModelSelectorProps = {
   id?: string;
   providerId: string;
   sessionId: string;
-  selectedModelId?: string;
-  onModelChange: (modelId: string) => void;
+  selectedModel?: ModelSelection;
+  onModelChange: (model: ModelSelection) => void;
   disabled?: boolean;
 };
 
@@ -41,7 +46,7 @@ export function ModelSelector({
   id,
   providerId,
   sessionId,
-  selectedModelId,
+  selectedModel,
   onModelChange,
   disabled = false,
 }: ModelSelectorProps) {
@@ -117,30 +122,39 @@ export function ModelSelector({
   );
 
   useEffect(() => {
-    if (!(sessionId && flattenedModels.length) || selectedModelId) {
+    if (!(sessionId && flattenedModels.length) || selectedModel) {
       return;
     }
-    const defaultModelId =
-      modelsData?.defaults?.[providerId] ?? flattenedModels[0]?.id;
-    if (defaultModelId) {
-      onModelChange(defaultModelId);
+    const preferredModelId = modelsData?.defaults?.[providerId];
+    const defaultModel = preferredModelId
+      ? flattenedModels.find(
+          (model) =>
+            model.id === preferredModelId && model.provider === providerId
+        )
+      : flattenedModels[0];
+    if (defaultModel) {
+      onModelChange({ id: defaultModel.id, providerId: defaultModel.provider });
     }
   }, [
     flattenedModels,
     modelsData?.defaults,
     onModelChange,
     providerId,
-    selectedModelId,
+    selectedModel,
     sessionId,
   ]);
 
-  const selectedModel = flattenedModels.find(
-    (model) => model.id === selectedModelId
-  );
+  const selectedEntry = selectedModel
+    ? flattenedModels.find(
+        (model) =>
+          model.id === selectedModel.id &&
+          model.provider === selectedModel.providerId
+      )
+    : undefined;
 
   const handleSelect = useCallback(
-    (modelId: string) => {
-      onModelChange(modelId);
+    (model: AvailableModel) => {
+      onModelChange({ id: model.id, providerId: model.provider });
       setOpen(false);
     },
     [onModelChange]
@@ -175,11 +189,14 @@ export function ModelSelector({
   }
 
   const selectedProviderLabel = selectedModel
-    ? resolveProviderLabel(selectedModel.provider)
+    ? resolveProviderLabel(selectedModel.providerId)
     : null;
-  const selectedModelLabel = selectedModel
-    ? selectedModel.name
-    : "Select model...";
+  let selectedModelLabel = "Select model...";
+  if (selectedEntry) {
+    selectedModelLabel = selectedEntry.name;
+  } else if (selectedModel) {
+    selectedModelLabel = selectedModel.id;
+  }
 
   return (
     <Popover onOpenChange={setOpen} open={open}>
@@ -222,12 +239,12 @@ export function ModelSelector({
                   {group.models.map((model) => {
                     const isSelected =
                       selectedModel?.id === model.id &&
-                      selectedModel.provider === model.provider;
+                      selectedModel.providerId === model.provider;
                     return (
                       <CommandItem
                         key={`${model.provider}-${model.id}`}
-                        onSelect={handleSelect}
-                        value={model.id}
+                        onSelect={() => handleSelect(model)}
+                        value={`${model.provider}-${model.id}`}
                       >
                         <Check
                           className={cn(

@@ -39,6 +39,7 @@ const providerSchema = t.Object({
 
 const updateModelSchema = t.Object({
   modelId: t.String(),
+  providerId: t.Optional(t.String()),
 });
 
 type ProviderEntry = {
@@ -125,6 +126,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
         const session = await ensureAgentSession(body.cellId, {
           force: body.force,
           modelId: body.modelId,
+          providerId: body.providerId,
         });
         return formatSession(session);
       } catch (error) {
@@ -149,7 +151,10 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     "/sessions/:id/model",
     async ({ params, body, set }) => {
       try {
-        const session = await updateAgentSessionModel(params.id, body.modelId);
+        const session = await updateAgentSessionModel(params.id, {
+          modelId: body.modelId,
+          providerId: body.providerId ?? undefined,
+        });
         return formatSession(session);
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;
@@ -400,6 +405,7 @@ function formatSession(session: AgentSessionRecord) {
     updatedAt: session.updatedAt,
     completedAt: session.completedAt,
     modelId: session.modelId,
+    modelProviderId: session.modelProviderId,
   };
 }
 

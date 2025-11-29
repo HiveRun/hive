@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import type { ModelSelection } from "@/components/model-selector";
 import { Button } from "@/components/ui/button";
 import { useAgentEventStream } from "@/hooks/use-agent-event-stream";
 import { agentMutations, agentQueries } from "@/queries/agents";
@@ -22,15 +23,17 @@ export function AgentChat({ cellId }: AgentChatProps) {
   const workspaceId = cellQuery.data?.workspaceId;
   const messagesQuery = useQuery(agentQueries.messages(sessionId ?? null));
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedModelId, setSelectedModelId] = useState<string>();
+  const [selectedModel, setSelectedModel] = useState<ModelSelection>();
 
   const { permissions } = useAgentEventStream(sessionId ?? null, cellId);
 
   useEffect(() => {
-    if (!session) {
+    if (!session?.modelId) {
+      setSelectedModel(undefined);
       return;
     }
-    setSelectedModelId(session.modelId ?? undefined);
+    const providerId = session.modelProviderId ?? session.provider;
+    setSelectedModel({ id: session.modelId, providerId });
   }, [session]);
 
   const orderedMessages = useMemo(
@@ -91,20 +94,36 @@ export function AgentChat({ cellId }: AgentChatProps) {
         agentQueries.sessionByCell(cellId).queryKey,
         updatedSession
       );
-      setSelectedModelId(updatedSession.modelId ?? undefined);
+      setSelectedModel(
+        updatedSession.modelId
+          ? {
+              id: updatedSession.modelId,
+              providerId:
+                updatedSession.modelProviderId ?? updatedSession.provider,
+            }
+          : undefined
+      );
     },
     onError: (error) => {
       const errorMessage =
         error instanceof Error ? error.message : "Failed to update model";
       toast.error(errorMessage);
-      setSelectedModelId(session?.modelId ?? undefined);
+      setSelectedModel(
+        session?.modelId
+          ? {
+              id: session.modelId,
+              providerId: session.modelProviderId ?? session.provider,
+            }
+          : undefined
+      );
     },
   });
 
   const handleStartSession = () => {
     startAgentMutation.mutate({
       cellId,
-      modelId: selectedModelId,
+      modelId: selectedModel?.id,
+      providerId: selectedModel?.providerId,
     });
   };
 
@@ -119,10 +138,14 @@ export function AgentChat({ cellId }: AgentChatProps) {
   };
 
   const handleModelChange = useCallback(
-    (modelId: string) => {
-      setSelectedModelId(modelId);
+    (model: ModelSelection) => {
+      setSelectedModel(model);
       if (session?.id) {
-        setModelMutation.mutate({ sessionId: session.id, modelId });
+        setModelMutation.mutate({
+          sessionId: session.id,
+          modelId: model.id,
+          providerId: model.providerId,
+        });
       }
     },
     [session?.id, setModelMutation]
@@ -170,7 +193,7 @@ export function AgentChat({ cellId }: AgentChatProps) {
           onModelChange={handleModelChange}
           onSend={handleSendMessage}
           provider={session.provider}
-          selectedModelId={selectedModelId}
+          selectedModel={selectedModel}
           sessionId={session.id}
           workspaceId={workspaceId}
         />

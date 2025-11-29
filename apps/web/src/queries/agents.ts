@@ -11,6 +11,7 @@ export type AgentSession = {
   updatedAt: string;
   completedAt?: string;
   modelId?: string;
+  modelProviderId?: string;
 };
 
 export type AgentMessagePart = {
@@ -75,6 +76,7 @@ export const agentMutations = {
       cellId: string;
       force?: boolean;
       modelId?: string;
+      providerId?: string;
     }) => {
       const { data, error } = await rpc.api.agents.sessions.post(input);
       if (error) {
@@ -84,10 +86,14 @@ export const agentMutations = {
     },
   },
   setModel: {
-    mutationFn: async (input: { sessionId: string; modelId: string }) => {
+    mutationFn: async (input: {
+      sessionId: string;
+      modelId: string;
+      providerId?: string;
+    }) => {
       const { data, error } = await rpc.api.agents
         .sessions({ id: input.sessionId })
-        .model.patch({ modelId: input.modelId });
+        .model.patch({ modelId: input.modelId, providerId: input.providerId });
       if (error) {
         throw new Error("Failed to update session model");
       }

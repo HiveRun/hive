@@ -56,6 +56,7 @@ export type AgentSessionRecord = {
   updatedAt: string;
   completedAt?: string;
   modelId?: string;
+  modelProviderId?: string;
 };
 
 /**

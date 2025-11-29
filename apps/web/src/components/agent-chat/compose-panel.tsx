@@ -2,7 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { ModelSelector } from "@/components/model-selector";
+import {
+  type ModelSelection,
+  ModelSelector,
+} from "@/components/model-selector";
 import { Button } from "@/components/ui/button";
 import {
   Form,
@@ -33,8 +36,8 @@ type ComposePanelProps = {
   onSend: (content: string) => Promise<void>;
   workspaceId: string;
   sessionId: string;
-  selectedModelId?: string;
-  onModelChange: (modelId: string) => void;
+  selectedModel?: ModelSelection;
+  onModelChange: (model: ModelSelection) => void;
 };
 
 type ComposeValues = z.infer<typeof formSchema>;
@@ -51,7 +54,7 @@ export function ComposePanel({
   onSend,
   workspaceId,
   sessionId,
-  selectedModelId,
+  selectedModel,
   onModelChange,
 }: ComposePanelProps) {
   const form = useForm<ComposeValues>({
@@ -102,7 +105,7 @@ export function ComposePanel({
           id="model-selector"
           onModelChange={onModelChange}
           providerId={agentProvider}
-          selectedModelId={selectedModelId}
+          selectedModel={selectedModel}
           sessionId={sessionId}
         />
       </div>

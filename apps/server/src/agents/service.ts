@@ -97,7 +97,7 @@ function resolveTemplateAgentConfig(
 
 export async function ensureAgentSession(
   cellId: string,
-  options?: { force?: boolean; modelId?: string }
+  options?: { force?: boolean; modelId?: string; providerId?: string }
 ): Promise<AgentSessionRecord> {
   const runtime = await ensureRuntimeForCell(cellId, options);
   return toSessionRecord(runtime);
@@ -136,10 +136,13 @@ export async function fetchAgentMessages(
 
 export async function updateAgentSessionModel(
   sessionId: string,
-  modelId: string
+  model: { modelId: string; providerId?: string }
 ): Promise<AgentSessionRecord> {
   const runtime = await ensureRuntimeForSession(sessionId);
-  runtime.modelId = modelId;
+  const nextProviderId = model.providerId ?? runtime.providerId;
+  await ensureProviderCredentials(nextProviderId);
+  runtime.providerId = nextProviderId;
+  runtime.modelId = model.modelId;
   return toSessionRecord(runtime);
 }
 
@@ -219,7 +222,7 @@ export async function ensureRuntimeForSession(
 
 async function ensureRuntimeForCell(
   cellId: string,
-  options?: { force?: boolean; modelId?: string }
+  options?: { force?: boolean; modelId?: string; providerId?: string }
 ): Promise<RuntimeHandle> {
   const currentSessionId = cellSessionMap.get(cellId);
   if (currentSessionId && !options?.force) {
@@ -244,22 +247,35 @@ async function ensureRuntimeForCell(
 
   const agentConfig = resolveTemplateAgentConfig(template, hiveConfig);
 
-  // Use provided modelId or fall back to template/config default
-  const modelId = options?.modelId ?? agentConfig.modelId;
+  // Use provided overrides or fall back to template/config defaults
+  const requestedModelId = options?.modelId ?? agentConfig.modelId;
+  const requestedProviderId = options?.providerId ?? agentConfig.providerId;
 
-  await ensureProviderCredentials(agentConfig.providerId);
+  await ensureProviderCredentials(requestedProviderId);
 
   const mergedConfig = await loadOpencodeConfig(workspaceRootPath);
 
   const runtime = await startOpencodeRuntime({
     cell,
-    providerId: agentConfig.providerId,
-    modelId,
+    providerId: requestedProviderId,
+    modelId: requestedModelId,
     force: options?.force ?? false,
     opencodeConfig: mergedConfig.config as OpencodeServerConfig,
     opencodeConfigSource: mergedConfig.source,
     opencodeConfigDetails: mergedConfig.details,
   });
+
+  if (!options?.modelId) {
+    const restoredModel = await resolveSessionModelPreference(runtime);
+    if (restoredModel) {
+      await ensureProviderCredentials(restoredModel.providerId);
+      runtime.providerId = restoredModel.providerId;
+      runtime.modelId = restoredModel.modelId;
+    }
+  } else if (options.providerId) {
+    runtime.providerId = options.providerId;
+    runtime.modelId = options.modelId;
+  }
 
   cellSessionMap.set(cell.id, runtime.session.id);
   runtimeRegistry.set(runtime.session.id, runtime);
@@ -348,15 +364,16 @@ async function startOpencodeRuntime({
     async sendMessage(content) {
       setRuntimeStatus(runtime, "working");
 
+      const activeModelId = runtime.modelId;
       const response = await client.session.prompt({
         path: { id: session.id },
         query: directoryQuery,
         body: {
           parts: [{ type: "text", text: content }],
-          model: modelId
+          model: activeModelId
             ? {
-                providerID: providerId,
-                modelID: modelId,
+                providerID: runtime.providerId,
+                modelID: activeModelId,
               }
             : undefined,
         },
@@ -475,6 +492,43 @@ async function startEventStream({
     }
   } catch {
     // Event stream closed
+  }
+}
+
+async function resolveSessionModelPreference(
+  runtime: RuntimeHandle
+): Promise<{ providerId: string; modelId: string } | null> {
+  try {
+    const query = runtime.directoryQuery.directory
+      ? { directory: runtime.directoryQuery.directory, limit: 100 }
+      : { limit: 100 };
+    const response = await runtime.client.session.messages({
+      path: { id: runtime.session.id },
+      query,
+    });
+
+    if (response.error || !response.data) {
+      return null;
+    }
+
+    for (let index = response.data.length - 1; index >= 0; index -= 1) {
+      const entry = response.data[index];
+      if (!entry?.info) {
+        continue;
+      }
+      const info = entry.info as Message & {
+        model?: { providerID: string; modelID: string };
+      };
+      if (info.role === "user" && info.model) {
+        return {
+          providerId: info.model.providerID,
+          modelId: info.model.modelID,
+        };
+      }
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -609,6 +663,7 @@ function toSessionRecord(runtime: RuntimeHandle): AgentSessionRecord {
     createdAt: new Date(runtime.session.time.created).toISOString(),
     updatedAt: new Date(runtime.session.time.updated).toISOString(),
     modelId: runtime.modelId,
+    modelProviderId: runtime.modelId ? runtime.providerId : undefined,
   };
 }
 
