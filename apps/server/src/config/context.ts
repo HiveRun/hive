@@ -23,7 +23,6 @@ function resolveBaseWorkspaceRoot(): string {
     const [root] = currentDir.split("/apps/");
     return root || currentDir;
   }
-
   return currentDir;
 }
 
