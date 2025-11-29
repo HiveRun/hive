@@ -23,7 +23,6 @@ export type ModelSelection = {
   providerId: string;
 };
 
-const ROUTER_PROVIDER_IDS = new Set(["opencode"]);
 const PROVIDER_LABEL_OVERRIDES: Record<string, string> = {
   opencode: "Zen",
 };
@@ -72,8 +71,6 @@ export function ModelSelector({
     [providerNames]
   );
 
-  const includeAllProviders = ROUTER_PROVIDER_IDS.has(providerId);
-
   const groupedModels = useMemo(() => {
     if (!modelsData?.models) {
       return [] as ProviderGroup[];
@@ -82,9 +79,6 @@ export function ModelSelector({
     const map = new Map<string, AvailableModel[]>();
 
     for (const model of modelsData.models) {
-      if (!includeAllProviders && model.provider !== providerId) {
-        continue;
-      }
       const bucket = map.get(model.provider);
       if (bucket) {
         bucket.push(model);
@@ -109,12 +103,7 @@ export function ModelSelector({
       const nameB = resolveProviderLabel(b.provider);
       return nameA.localeCompare(nameB);
     });
-  }, [
-    includeAllProviders,
-    modelsData?.models,
-    providerId,
-    resolveProviderLabel,
-  ]);
+  }, [modelsData?.models, providerId, resolveProviderLabel]);
 
   const flattenedModels = useMemo(
     () => groupedModels.flatMap((group) => group.models),
@@ -176,14 +165,10 @@ export function ModelSelector({
     );
   }
 
-  const emptyLabel = includeAllProviders
-    ? "No models available"
-    : `No models available for ${providerId}`;
-
   if (!flattenedModels.length) {
     return (
       <div className="flex h-10 w-full items-center justify-center rounded-md border border-input bg-muted px-3 py-2 text-muted-foreground text-xs">
-        {emptyLabel}
+        No models available
       </div>
     );
   }
