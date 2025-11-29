@@ -202,6 +202,23 @@
       "type": "local",
       "enabled": true,
       "command": ["bunx", "mcp-remote", "https://mcp.exa.ai/mcp"]
+    },
+    "linear": {
+      "type": "local",
+      "enabled": true,
+      "command": ["bunx", "mcp-remote", "https://mcp.linear.app/mcp"]
+    },
+    "playwright": {
+      "type": "local",
+      "enabled": true,
+      "command": [
+        "bunx",
+        "@playwright/mcp@latest",
+        "--headless",
+        "--save-trace",
+        "--save-video=1280x720",
+        "--output-dir=./playwright-mcp-output"
+      ]
     }
   },
   "permission": {
