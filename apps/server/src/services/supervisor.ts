@@ -854,7 +854,7 @@ function buildBaseEnv({
   mkdirSync(hiveHome, { recursive: true });
 
   return {
-    HIVE_CONSTRUCT_ID: cell.id,
+    HIVE_CELL_ID: cell.id,
     HIVE_SERVICE: serviceName,
     HIVE_HOME: hiveHome,
     HIVE_BROWSE_ROOT: workspacePath,
