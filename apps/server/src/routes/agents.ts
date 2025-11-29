@@ -31,6 +31,14 @@ const HTTP_STATUS = {
   INTERNAL_ERROR: 500,
 } as const;
 
+const providerMetadataSchema = t.Object({
+  id: t.String(),
+  priority: t.Number(),
+  category: t.String(),
+  description: t.Optional(t.String()),
+  includeAllModels: t.Boolean(),
+});
+
 export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .get(
     "/sessions/:id/models",
@@ -39,7 +47,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
         const runtime = await ensureRuntimeForSession(params.id);
         const workspaceRootPath =
           runtime.cell.workspaceRootPath || runtime.cell.workspacePath;
-        const { models, defaults } =
+        const { models, defaults, providers } =
           await fetchOpencodeModels(workspaceRootPath);
 
         return {
@@ -49,17 +57,20 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
             provider: model.providerId,
           })),
           defaults,
+          providers,
         };
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;
         return {
           models: [],
           defaults: {},
+          providers: [],
           message:
-            error instanceof Error ? error.message : "Unable to fetch models",
+            error instanceof Error ? error.message : "Failed to list models",
         };
       }
     },
+
     {
       params: t.Object({ id: t.String() }),
       response: {
@@ -72,6 +83,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
             })
           ),
           defaults: t.Record(t.String(), t.String()),
+          providers: t.Array(providerMetadataSchema),
         }),
         400: t.Object({
           models: t.Array(
@@ -82,6 +94,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
             })
           ),
           defaults: t.Record(t.String(), t.String()),
+          providers: t.Array(providerMetadataSchema),
           message: t.String(),
         }),
       },

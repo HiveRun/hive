@@ -6,9 +6,18 @@ export type AvailableModel = {
   provider: string;
 };
 
+export type ProviderInfo = {
+  id: string;
+  priority: number;
+  category: string;
+  description?: string;
+  includeAllModels: boolean;
+};
+
 export type ModelListResponse = {
   models: AvailableModel[];
-  defaults?: Record<string, string>;
+  defaults: Record<string, string>;
+  providers: ProviderInfo[];
 };
 
 export const modelQueries = {
@@ -21,7 +30,14 @@ export const modelQueries = {
       if (error) {
         throw new Error("Failed to fetch models");
       }
-      return (data ?? { models: [], defaults: {} }) as ModelListResponse;
+      const response = data as ModelListResponse | undefined;
+      return (
+        response ?? {
+          models: [],
+          defaults: {},
+          providers: [],
+        }
+      );
     },
   }),
 };

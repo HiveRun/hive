@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { type ProviderMetadata, sortProviderIds } from "./provider-metadata";
 
 const WORKSPACE_CONFIG_CANDIDATES = [
   "@opencode.json",
@@ -39,9 +40,15 @@ export type OpencodeModelInfo = {
   metadata?: Record<string, unknown>;
 };
 
+export type OpencodeModelCatalog = {
+  models: OpencodeModelInfo[];
+  defaults: Record<string, string>;
+  providers: ProviderMetadata[];
+};
+
 export async function fetchOpencodeModels(
   workspaceRootPath: string
-): Promise<{ models: OpencodeModelInfo[]; defaults: Record<string, string> }> {
+): Promise<OpencodeModelCatalog> {
   const verboseResult = await runOpencodeCommand(
     ["models", "--verbose"],
     workspaceRootPath
@@ -50,12 +57,12 @@ export async function fetchOpencodeModels(
   if (verboseResult) {
     const parsed = parseVerboseModels(verboseResult.stdout);
     if (parsed.models.length > 0) {
-      return parsed;
+      return withProviderMetadata(parsed);
     }
   }
 
   const basicResult = await runOpencodeCommand(["models"], workspaceRootPath);
-  return parseBasicModels(basicResult.stdout);
+  return withProviderMetadata(parseBasicModels(basicResult.stdout));
 }
 
 async function readWorkspaceConfig(
@@ -276,4 +283,17 @@ function parseBasicModels(output: string) {
   }
 
   return { models, defaults };
+}
+
+function withProviderMetadata(result: {
+  models: OpencodeModelInfo[];
+  defaults: Record<string, string>;
+}): OpencodeModelCatalog {
+  const providerIds = result.models.map((model) => model.providerId);
+  const providers = sortProviderIds(providerIds);
+  return {
+    models: result.models,
+    defaults: result.defaults,
+    providers,
+  };
 }

@@ -16,9 +16,11 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { type AvailableModel, modelQueries } from "@/queries/models";
-
-const FLEXIBLE_PROVIDER_IDS = new Set(["opencode"]);
+import {
+  type AvailableModel,
+  modelQueries,
+  type ProviderInfo,
+} from "@/queries/models";
 
 type ProviderGroup = {
   provider: string;
@@ -49,7 +51,15 @@ export function ModelSelector({
   } = useQuery(modelQueries.bySession(sessionId));
   const [open, setOpen] = useState(false);
 
-  const includeAllProviders = FLEXIBLE_PROVIDER_IDS.has(providerId);
+  const providerMetadataById = useMemo(() => {
+    const providers = modelsData?.providers ?? [];
+    return new Map<string, ProviderInfo>(
+      providers.map((provider) => [provider.id, provider])
+    );
+  }, [modelsData?.providers]);
+
+  const currentProviderMeta = providerMetadataById.get(providerId);
+  const includeAllProviders = currentProviderMeta?.includeAllModels ?? false;
 
   const groupedModels = useMemo(() => {
     if (!modelsData?.models) {
@@ -70,21 +80,35 @@ export function ModelSelector({
       }
     }
 
-    return Array.from(map.entries())
-      .map(([provider, models]) => ({
-        provider,
-        models: [...models].sort((a, b) => a.name.localeCompare(b.name)),
-      }))
-      .sort((a, b) => {
-        if (a.provider === providerId) {
-          return -1;
-        }
-        if (b.provider === providerId) {
-          return 1;
-        }
-        return a.provider.localeCompare(b.provider);
-      });
-  }, [includeAllProviders, modelsData?.models, providerId]);
+    const groups = Array.from(map.entries()).map(([provider, models]) => ({
+      provider,
+      models: [...models].sort((a, b) => a.name.localeCompare(b.name)),
+    }));
+
+    const scoreFor = (provider: string) => {
+      const metadata = providerMetadataById.get(provider);
+      return metadata?.priority ?? Number.MAX_SAFE_INTEGER;
+    };
+
+    return groups.sort((a, b) => {
+      const priorityDelta = scoreFor(a.provider) - scoreFor(b.provider);
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+      if (a.provider === providerId) {
+        return -1;
+      }
+      if (b.provider === providerId) {
+        return 1;
+      }
+      return a.provider.localeCompare(b.provider);
+    });
+  }, [
+    includeAllProviders,
+    modelsData?.models,
+    providerId,
+    providerMetadataById,
+  ]);
 
   const flattenedModels = useMemo(
     () => groupedModels.flatMap((group) => group.models),
@@ -169,35 +193,41 @@ export function ModelSelector({
           <CommandInput placeholder="Search models..." />
           <CommandList>
             <CommandEmpty>No models found.</CommandEmpty>
-            {groupedModels.map((group) => (
-              <CommandGroup heading={group.provider} key={group.provider}>
-                {group.models.map((model) => {
-                  const isSelected =
-                    selectedModel?.id === model.id &&
-                    selectedModel.provider === model.provider;
-                  return (
-                    <CommandItem
-                      key={`${model.provider}-${model.id}`}
-                      onSelect={handleSelect}
-                      value={model.id}
-                    >
-                      <Check
-                        className={cn(
-                          "mr-2 h-4 w-4",
-                          isSelected ? "opacity-100" : "opacity-0"
-                        )}
-                      />
-                      <div className="flex flex-col">
-                        <span className="font-medium">{model.name}</span>
-                        <span className="text-muted-foreground text-xs">
-                          {model.provider}/{model.id}
-                        </span>
-                      </div>
-                    </CommandItem>
-                  );
-                })}
-              </CommandGroup>
-            ))}
+            {groupedModels.map((group) => {
+              const metadata = providerMetadataById.get(group.provider);
+              const heading = metadata
+                ? `${metadata.category} · ${group.provider}${metadata.description ? ` ${metadata.description}` : ""}`
+                : group.provider;
+              return (
+                <CommandGroup heading={heading} key={group.provider}>
+                  {group.models.map((model) => {
+                    const isSelected =
+                      selectedModel?.id === model.id &&
+                      selectedModel.provider === model.provider;
+                    return (
+                      <CommandItem
+                        key={`${model.provider}-${model.id}`}
+                        onSelect={handleSelect}
+                        value={model.id}
+                      >
+                        <Check
+                          className={cn(
+                            "mr-2 h-4 w-4",
+                            isSelected ? "opacity-100" : "opacity-0"
+                          )}
+                        />
+                        <div className="flex flex-col">
+                          <span className="font-medium">{model.name}</span>
+                          <span className="text-muted-foreground text-xs">
+                            {model.provider}/{model.id}
+                          </span>
+                        </div>
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+              );
+            })}
           </CommandList>
         </Command>
       </PopoverContent>
