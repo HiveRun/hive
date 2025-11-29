@@ -5,6 +5,10 @@
 - No Cursor or GitHub Copilot override files exist; Ruler prompts are the single source of truth for agent context.
 - When adding new workflows, prefer short, action-focused bullets so the generated handbook stays compact (~20 lines).
 - Keep the OpenCode repository cloned in `vendor/opencode/` for reference only; production code and runtime integrations must depend on the published `@opencode-ai/sdk` package.
+- Run CodeRabbit CLI on your own changes before asking for review so we catch issues prior to PR CI:
+  - Start a local review from the repo root with `coderabbit --prompt-only --type uncommitted --base main` (add `--plain` if you want the detailed output).
+  - Launch it in the background as soon as you finish an implementation; reviews can take 7–30 minutes, so set a reminder and check back rather than blocking on the terminal.
+  - When the findings arrive, prioritize fixing critical or major issues, then rerun the CLI once more to ensure no regressions before committing/pushing.
 - Project documentation is distributed across several key locations:
   - `docs/` Obsidian vault - Requirements, implementation plans, project context
   - `.ruler/prompts/` - AI agent guidance and coding standards  
