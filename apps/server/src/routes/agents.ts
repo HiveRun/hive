@@ -2,13 +2,16 @@ import { Elysia, sse, t } from "elysia";
 import { subscribeAgentEvents } from "../agents/events";
 import {
   ensureAgentSession,
+  ensureRuntimeForSession,
   fetchAgentMessages,
   fetchAgentSession,
   fetchAgentSessionForCell,
   respondAgentPermission,
   sendAgentMessage,
   stopAgentSession,
+  updateAgentSessionModel,
 } from "../agents/service";
+
 import type {
   AgentMessageRecord,
   AgentSessionRecord,
@@ -29,13 +32,101 @@ const HTTP_STATUS = {
   INTERNAL_ERROR: 500,
 } as const;
 
+const providerSchema = t.Object({
+  id: t.String(),
+  name: t.Optional(t.String()),
+});
+
+const updateModelSchema = t.Object({
+  modelId: t.String(),
+  providerId: t.Optional(t.String()),
+});
+
+type ProviderEntry = {
+  id: string;
+  name?: string;
+  models?: Record<string, ProviderModel>;
+};
+
+type ProviderModel = {
+  id?: string;
+  name?: string;
+};
+
 export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
+  .get(
+    "/sessions/:id/models",
+    async ({ params, set }) => {
+      try {
+        const runtime = await ensureRuntimeForSession(params.id);
+        const { data, error } = await runtime.client.config.providers();
+
+        if (error || !data) {
+          throw new Error("Failed to fetch provider catalog from OpenCode");
+        }
+
+        const providerEntries = normalizeProviderEntries(data.providers);
+        const models = flattenProviderModels(providerEntries);
+        const defaults = normalizeProviderDefaults(data.default);
+        const providers = providerEntries.map(({ id, name }) => ({
+          id,
+          name,
+        }));
+
+        return {
+          models,
+          defaults,
+          providers,
+        };
+      } catch (error) {
+        set.status = HTTP_STATUS.BAD_REQUEST;
+        return {
+          models: [],
+          defaults: {},
+          providers: [],
+          message:
+            error instanceof Error ? error.message : "Failed to list models",
+        };
+      }
+    },
+
+    {
+      params: t.Object({ id: t.String() }),
+      response: {
+        200: t.Object({
+          models: t.Array(
+            t.Object({
+              id: t.String(),
+              name: t.String(),
+              provider: t.String(),
+            })
+          ),
+          defaults: t.Record(t.String(), t.String()),
+          providers: t.Array(providerSchema),
+        }),
+        400: t.Object({
+          models: t.Array(
+            t.Object({
+              id: t.String(),
+              name: t.String(),
+              provider: t.String(),
+            })
+          ),
+          defaults: t.Record(t.String(), t.String()),
+          providers: t.Array(providerSchema),
+          message: t.String(),
+        }),
+      },
+    }
+  )
   .post(
     "/sessions",
     async ({ body, set }) => {
       try {
         const session = await ensureAgentSession(body.cellId, {
           force: body.force,
+          modelId: body.modelId,
+          providerId: body.providerId,
         });
         return formatSession(session);
       } catch (error) {
@@ -50,6 +141,34 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     },
     {
       body: CreateAgentSessionSchema,
+      response: {
+        200: AgentSessionSchema,
+        400: t.Object({ message: t.String() }),
+      },
+    }
+  )
+  .patch(
+    "/sessions/:id/model",
+    async ({ params, body, set }) => {
+      try {
+        const session = await updateAgentSessionModel(params.id, {
+          modelId: body.modelId,
+          providerId: body.providerId ?? undefined,
+        });
+        return formatSession(session);
+      } catch (error) {
+        set.status = HTTP_STATUS.BAD_REQUEST;
+        return {
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to update session model",
+        };
+      }
+    },
+    {
+      params: t.Object({ id: t.String() }),
+      body: updateModelSchema,
       response: {
         200: AgentSessionSchema,
         400: t.Object({ message: t.String() }),
@@ -217,6 +336,63 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     }
   );
 
+function normalizeProviderEntries(input: unknown): ProviderEntry[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const providers: ProviderEntry[] = [];
+  for (const candidate of input) {
+    if (
+      typeof candidate !== "object" ||
+      candidate === null ||
+      typeof (candidate as { id?: unknown }).id !== "string"
+    ) {
+      continue;
+    }
+
+    const { id, name, models } = candidate as {
+      id: string;
+      name?: string;
+      models?: Record<string, ProviderModel>;
+    };
+    providers.push({ id, name, models });
+  }
+
+  return providers;
+}
+
+function flattenProviderModels(providers: ProviderEntry[]) {
+  const models: { id: string; name: string; provider: string }[] = [];
+
+  for (const provider of providers) {
+    const providerModels = provider.models ?? {};
+    for (const [modelKey, model] of Object.entries(providerModels)) {
+      const id = model?.id ?? modelKey;
+      const name = model?.name ?? id;
+      models.push({ id, name, provider: provider.id });
+    }
+  }
+
+  return models;
+}
+
+function normalizeProviderDefaults(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const defaults: Record<string, string> = {};
+  for (const [providerId, modelId] of Object.entries(
+    value as Record<string, unknown>
+  )) {
+    if (typeof modelId === "string") {
+      defaults[providerId] = modelId;
+    }
+  }
+  return defaults;
+}
+
 function formatSession(session: AgentSessionRecord) {
   return {
     id: session.id,
@@ -228,6 +404,8 @@ function formatSession(session: AgentSessionRecord) {
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     completedAt: session.completedAt,
+    modelId: session.modelId,
+    modelProviderId: session.modelProviderId,
   };
 }
 

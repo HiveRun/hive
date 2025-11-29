@@ -2,6 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
+import {
+  type ModelSelection,
+  ModelSelector,
+} from "@/components/model-selector";
 import { Button } from "@/components/ui/button";
 import {
   Form,
@@ -28,8 +32,12 @@ const formSchema = z.object({
 type ComposePanelProps = {
   provider: string;
   isSending: boolean;
+  isModelChanging?: boolean;
   onSend: (content: string) => Promise<void>;
   workspaceId: string;
+  sessionId: string;
+  selectedModel?: ModelSelection;
+  onModelChange: (model: ModelSelection) => void;
 };
 
 type ComposeValues = z.infer<typeof formSchema>;
@@ -42,8 +50,12 @@ const validateMessage = (value: string) => {
 export function ComposePanel({
   provider: agentProvider,
   isSending,
+  isModelChanging = false,
   onSend,
   workspaceId,
+  sessionId,
+  selectedModel,
+  onModelChange,
 }: ComposePanelProps) {
   const form = useForm<ComposeValues>({
     defaultValues: { message: "" },
@@ -80,6 +92,22 @@ export function ComposePanel({
       <div className="flex items-center justify-between">
         <span>Send Instructions</span>
         <span>{agentProvider}</span>
+      </div>
+      <div className="mt-3">
+        <label
+          className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]"
+          htmlFor="model-selector"
+        >
+          Model
+        </label>
+        <ModelSelector
+          disabled={isSending || isModelChanging}
+          id="model-selector"
+          onModelChange={onModelChange}
+          providerId={agentProvider}
+          selectedModel={selectedModel}
+          sessionId={sessionId}
+        />
       </div>
       <Form {...form}>
         <form className="mt-2 space-y-3" onSubmit={handleSubmit}>

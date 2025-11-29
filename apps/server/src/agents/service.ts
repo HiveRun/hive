@@ -7,6 +7,7 @@ import {
   type Event,
   type Message,
   type Part,
+  type ServerOptions,
   type Session,
 } from "@opencode-ai/sdk";
 import { eq } from "drizzle-orm";
@@ -15,6 +16,7 @@ import type { HiveConfig, Template } from "../config/schema";
 import { db } from "../db";
 import { type Cell, cells } from "../schema/cells";
 import { publishAgentEvent } from "./events";
+import { loadOpencodeConfig } from "./opencode-config";
 import type {
   AgentMessageRecord,
   AgentMessageState,
@@ -29,6 +31,8 @@ const cellSessionMap = new Map<string, string>();
 type DirectoryQuery = {
   directory?: string;
 };
+
+type OpencodeServerConfig = NonNullable<ServerOptions["config"]>;
 
 type RuntimeHandle = {
   session: Session;
@@ -60,10 +64,11 @@ async function ensureProviderCredentials(providerId: string): Promise<void> {
     return;
   }
 
-  const authEntries = await readProviderCredentials();
-  if (!authEntries[providerId]) {
+  const credentials = await readProviderCredentials();
+  const providerAuth = credentials[providerId];
+  if (!providerAuth) {
     throw new Error(
-      `Missing OpenCode credentials for provider '${providerId}'. Run \`opencode auth login ${providerId}\` to continue.`
+      `Missing authentication for ${providerId}. Run \\"opencode auth login ${providerId}\\".`
     );
   }
 }
@@ -92,7 +97,7 @@ function resolveTemplateAgentConfig(
 
 export async function ensureAgentSession(
   cellId: string,
-  options?: { force?: boolean }
+  options?: { force?: boolean; modelId?: string; providerId?: string }
 ): Promise<AgentSessionRecord> {
   const runtime = await ensureRuntimeForCell(cellId, options);
   return toSessionRecord(runtime);
@@ -127,6 +132,18 @@ export async function fetchAgentMessages(
 ): Promise<AgentMessageRecord[]> {
   const runtime = await ensureRuntimeForSession(sessionId);
   return loadRemoteMessages(runtime);
+}
+
+export async function updateAgentSessionModel(
+  sessionId: string,
+  model: { modelId: string; providerId?: string }
+): Promise<AgentSessionRecord> {
+  const runtime = await ensureRuntimeForSession(sessionId);
+  const nextProviderId = model.providerId ?? runtime.providerId;
+  await ensureProviderCredentials(nextProviderId);
+  runtime.providerId = nextProviderId;
+  runtime.modelId = model.modelId;
+  return toSessionRecord(runtime);
 }
 
 export async function sendAgentMessage(
@@ -205,7 +222,7 @@ export async function ensureRuntimeForSession(
 
 async function ensureRuntimeForCell(
   cellId: string,
-  options?: { force?: boolean }
+  options?: { force?: boolean; modelId?: string; providerId?: string }
 ): Promise<RuntimeHandle> {
   const currentSessionId = cellSessionMap.get(cellId);
   if (currentSessionId && !options?.force) {
@@ -220,24 +237,45 @@ async function ensureRuntimeForCell(
     throw new Error("Cell not found");
   }
 
-  const config = await getHiveConfig(
-    cell.workspaceRootPath ?? cell.workspacePath
-  );
-  const template = config.templates[cell.templateId];
+  const workspaceRootPath = cell.workspaceRootPath || cell.workspacePath;
+
+  const hiveConfig = await getHiveConfig(workspaceRootPath);
+  const template = hiveConfig.templates[cell.templateId];
   if (!template) {
     throw new Error("Cell template configuration not found");
   }
 
-  const agentConfig = resolveTemplateAgentConfig(template, config);
+  const agentConfig = resolveTemplateAgentConfig(template, hiveConfig);
 
-  await ensureProviderCredentials(agentConfig.providerId);
+  // Use provided overrides or fall back to template/config defaults
+  const requestedModelId = options?.modelId ?? agentConfig.modelId;
+  const requestedProviderId = options?.providerId ?? agentConfig.providerId;
+
+  await ensureProviderCredentials(requestedProviderId);
+
+  const mergedConfig = await loadOpencodeConfig(workspaceRootPath);
 
   const runtime = await startOpencodeRuntime({
     cell,
-    providerId: agentConfig.providerId,
-    modelId: agentConfig.modelId,
+    providerId: requestedProviderId,
+    modelId: requestedModelId,
     force: options?.force ?? false,
+    opencodeConfig: mergedConfig.config as OpencodeServerConfig,
+    opencodeConfigSource: mergedConfig.source,
+    opencodeConfigDetails: mergedConfig.details,
   });
+
+  if (!options?.modelId) {
+    const restoredModel = await resolveSessionModelPreference(runtime);
+    if (restoredModel) {
+      await ensureProviderCredentials(restoredModel.providerId);
+      runtime.providerId = restoredModel.providerId;
+      runtime.modelId = restoredModel.modelId;
+    }
+  } else if (options.providerId) {
+    runtime.providerId = options.providerId;
+    runtime.modelId = options.modelId;
+  }
 
   cellSessionMap.set(cell.id, runtime.session.id);
   runtimeRegistry.set(runtime.session.id, runtime);
@@ -250,6 +288,9 @@ type StartRuntimeArgs = {
   providerId: string;
   modelId?: string;
   force: boolean;
+  opencodeConfig?: OpencodeServerConfig;
+  opencodeConfigSource?: "cli" | "workspace" | "default";
+  opencodeConfigDetails?: string;
 };
 
 async function startOpencodeRuntime({
@@ -257,10 +298,35 @@ async function startOpencodeRuntime({
   providerId,
   modelId,
   force,
+  opencodeConfig,
+  opencodeConfigSource,
+  opencodeConfigDetails,
 }: StartRuntimeArgs): Promise<RuntimeHandle> {
+  const sourceLabel = opencodeConfigSource ?? "default";
+  const detailSuffix = opencodeConfigDetails
+    ? ` (${opencodeConfigDetails})`
+    : "";
+  // biome-ignore lint/suspicious/noConsole: temporary visibility until structured logging is wired up
+  console.info(
+    `[opencode] Resolved config source '${sourceLabel}${detailSuffix}' for cell ${cell.id}`
+  );
+
+  if (opencodeConfig && typeof opencodeConfig === "object") {
+    const providerKeys = Object.keys(
+      (opencodeConfig as { provider?: Record<string, unknown> }).provider ?? {}
+    );
+    if (providerKeys.length > 0) {
+      // biome-ignore lint/suspicious/noConsole: temporary visibility until structured logging is wired up
+      console.info(
+        `[opencode] Providers available for cell ${cell.id}: ${providerKeys.join(", ")}`
+      );
+    }
+  }
+
   const server = await createOpencodeServer({
     hostname: "127.0.0.1",
     port: 0,
+    config: opencodeConfig,
   });
 
   const client = createOpencodeClient({
@@ -298,15 +364,16 @@ async function startOpencodeRuntime({
     async sendMessage(content) {
       setRuntimeStatus(runtime, "working");
 
+      const activeModelId = runtime.modelId;
       const response = await client.session.prompt({
         path: { id: session.id },
         query: directoryQuery,
         body: {
           parts: [{ type: "text", text: content }],
-          model: modelId
+          model: activeModelId
             ? {
-                providerID: providerId,
-                modelID: modelId,
+                providerID: runtime.providerId,
+                modelID: activeModelId,
               }
             : undefined,
         },
@@ -425,6 +492,43 @@ async function startEventStream({
     }
   } catch {
     // Event stream closed
+  }
+}
+
+async function resolveSessionModelPreference(
+  runtime: RuntimeHandle
+): Promise<{ providerId: string; modelId: string } | null> {
+  try {
+    const query = runtime.directoryQuery.directory
+      ? { directory: runtime.directoryQuery.directory, limit: 100 }
+      : { limit: 100 };
+    const response = await runtime.client.session.messages({
+      path: { id: runtime.session.id },
+      query,
+    });
+
+    if (response.error || !response.data) {
+      return null;
+    }
+
+    for (let index = response.data.length - 1; index >= 0; index -= 1) {
+      const entry = response.data[index];
+      if (!entry?.info) {
+        continue;
+      }
+      const info = entry.info as Message & {
+        model?: { providerID: string; modelID: string };
+      };
+      if (info.role === "user" && info.model) {
+        return {
+          providerId: info.model.providerID,
+          modelId: info.model.modelID,
+        };
+      }
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -558,6 +662,8 @@ function toSessionRecord(runtime: RuntimeHandle): AgentSessionRecord {
     workspacePath: runtime.cell.workspacePath,
     createdAt: new Date(runtime.session.time.created).toISOString(),
     updatedAt: new Date(runtime.session.time.updated).toISOString(),
+    modelId: runtime.modelId,
+    modelProviderId: runtime.modelId ? runtime.providerId : undefined,
   };
 }
 
