@@ -1,4 +1,5 @@
 import { Elysia, t } from "elysia";
+import { loadOpencodeConfig } from "../agents/opencode-config";
 import type { Template } from "../config/schema";
 import {
   TemplateListResponseSchema,
@@ -31,9 +32,13 @@ export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
         const templates = Object.entries(config.templates).map(
           ([id, template]) => templateToResponse(id, template)
         );
+        const opencodeConfig = await loadOpencodeConfig(
+          workspaceContext.workspace.path
+        );
         return {
           templates,
           defaults: config.defaults,
+          agentDefaults: opencodeConfig.defaultModel,
         };
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;

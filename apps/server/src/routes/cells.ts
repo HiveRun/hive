@@ -795,7 +795,10 @@ async function createCellWithServices(
   state.recordCreated = true;
   state.createdCell = created;
 
-  const session = await ensureSession(state.cellId);
+  const session = await ensureSession(state.cellId, {
+    modelId: body.modelId ?? undefined,
+    providerId: body.providerId ?? undefined,
+  });
   await ensureServices(created, template);
 
   state.servicesStarted = true;

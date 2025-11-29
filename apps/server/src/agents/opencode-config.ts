@@ -6,10 +6,16 @@ const WORKSPACE_CONFIG_CANDIDATES = [
   "opencode.json",
 ] as const;
 
+type DefaultModel = {
+  providerId?: string;
+  modelId?: string;
+};
+
 export type LoadedOpencodeConfig = {
   config: Record<string, unknown>;
   source: "workspace" | "default";
   details?: string;
+  defaultModel?: DefaultModel;
 };
 
 export async function loadOpencodeConfig(
@@ -17,10 +23,19 @@ export async function loadOpencodeConfig(
 ): Promise<LoadedOpencodeConfig> {
   const fileConfig = await readWorkspaceConfig(workspaceRootPath);
   if (fileConfig) {
-    return { config: fileConfig, source: "workspace" };
+    return {
+      config: fileConfig,
+      source: "workspace",
+      defaultModel: extractDefaultModel(fileConfig),
+    };
   }
 
-  return { config: {}, source: "default" };
+  const fallback = {} as Record<string, unknown>;
+  return {
+    config: fallback,
+    source: "default",
+    defaultModel: extractDefaultModel(fallback),
+  };
 }
 
 async function readWorkspaceConfig(
@@ -43,4 +58,20 @@ async function readWorkspaceConfig(
   }
 
   return;
+}
+
+function extractDefaultModel(
+  config: Record<string, unknown>
+): DefaultModel | undefined {
+  const raw = typeof config.model === "string" ? config.model.trim() : "";
+  if (!raw) {
+    return;
+  }
+
+  const [providerId, modelId] = raw.split("/", 2);
+  if (modelId) {
+    return { providerId: providerId || undefined, modelId };
+  }
+
+  return { modelId: providerId };
 }

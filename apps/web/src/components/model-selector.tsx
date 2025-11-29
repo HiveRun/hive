@@ -16,7 +16,11 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { type AvailableModel, modelQueries } from "@/queries/models";
+import {
+  type AvailableModel,
+  type ModelListResponse,
+  modelQueries,
+} from "@/queries/models";
 
 export type ModelSelection = {
   id: string;
@@ -34,8 +38,9 @@ type ProviderGroup = {
 
 type ModelSelectorProps = {
   id?: string;
-  providerId: string;
-  sessionId: string;
+  providerId?: string;
+  sessionId?: string;
+  workspaceId?: string;
   selectedModel?: ModelSelection;
   onModelChange: (model: ModelSelection) => void;
   disabled?: boolean;
@@ -45,15 +50,24 @@ export function ModelSelector({
   id,
   providerId,
   sessionId,
+  workspaceId,
   selectedModel,
   onModelChange,
   disabled = false,
 }: ModelSelectorProps) {
+  if (!(sessionId || workspaceId)) {
+    throw new Error("ModelSelector requires a sessionId or workspaceId");
+  }
+
+  const queryOptions = sessionId
+    ? modelQueries.bySession(sessionId)
+    : modelQueries.byWorkspace(workspaceId as string);
+
   const {
     data: modelsData,
     isLoading,
     isError,
-  } = useQuery(modelQueries.bySession(sessionId));
+  } = useQuery<ModelListResponse>(queryOptions);
   const [open, setOpen] = useState(false);
 
   const providerNames = useMemo(() => {
@@ -70,6 +84,21 @@ export function ModelSelector({
       providerKey,
     [providerNames]
   );
+
+  const defaultSelection = useMemo(() => {
+    const defaults = modelsData?.defaults ?? {};
+    if (providerId && defaults[providerId]) {
+      return { providerId, modelId: defaults[providerId] };
+    }
+    const [entry] = Object.entries(defaults);
+    if (entry) {
+      const [defaultProviderId, modelId] = entry;
+      return { providerId: defaultProviderId, modelId };
+    }
+    return null;
+  }, [modelsData?.defaults, providerId]);
+
+  const prioritizedProviderId = providerId ?? defaultSelection?.providerId;
 
   const groupedModels = useMemo(() => {
     if (!modelsData?.models) {
@@ -93,17 +122,25 @@ export function ModelSelector({
     }));
 
     return groups.sort((a, b) => {
-      if (a.provider === providerId) {
-        return -1;
-      }
-      if (b.provider === providerId) {
-        return 1;
+      if (prioritizedProviderId) {
+        if (
+          a.provider === prioritizedProviderId &&
+          b.provider !== prioritizedProviderId
+        ) {
+          return -1;
+        }
+        if (
+          b.provider === prioritizedProviderId &&
+          a.provider !== prioritizedProviderId
+        ) {
+          return 1;
+        }
       }
       const nameA = resolveProviderLabel(a.provider);
       const nameB = resolveProviderLabel(b.provider);
       return nameA.localeCompare(nameB);
     });
-  }, [modelsData?.models, providerId, resolveProviderLabel]);
+  }, [modelsData?.models, prioritizedProviderId, resolveProviderLabel]);
 
   const flattenedModels = useMemo(
     () => groupedModels.flatMap((group) => group.models),
@@ -111,27 +148,24 @@ export function ModelSelector({
   );
 
   useEffect(() => {
-    if (!(sessionId && flattenedModels.length) || selectedModel) {
+    if (!flattenedModels.length || selectedModel) {
       return;
     }
-    const preferredModelId = modelsData?.defaults?.[providerId];
-    const defaultModel = preferredModelId
-      ? flattenedModels.find(
-          (model) =>
-            model.id === preferredModelId && model.provider === providerId
-        )
-      : flattenedModels[0];
+    let defaultModel: AvailableModel | undefined;
+    if (defaultSelection) {
+      defaultModel = flattenedModels.find(
+        (model) =>
+          model.id === defaultSelection.modelId &&
+          model.provider === defaultSelection.providerId
+      );
+    }
+    if (!defaultModel) {
+      defaultModel = flattenedModels[0];
+    }
     if (defaultModel) {
       onModelChange({ id: defaultModel.id, providerId: defaultModel.provider });
     }
-  }, [
-    flattenedModels,
-    modelsData?.defaults,
-    onModelChange,
-    providerId,
-    selectedModel,
-    sessionId,
-  ]);
+  }, [flattenedModels, defaultSelection, onModelChange, selectedModel]);
 
   const selectedEntry = selectedModel
     ? flattenedModels.find(

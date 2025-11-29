@@ -105,6 +105,16 @@ export const CreateCellSchema = t.Object({
   templateId: t.String({
     minLength: 1,
   }),
+  modelId: t.Optional(
+    t.String({
+      minLength: 1,
+    })
+  ),
+  providerId: t.Optional(
+    t.String({
+      minLength: 1,
+    })
+  ),
   workspaceId: t.String({
     minLength: 1,
   }),
@@ -133,9 +143,15 @@ export const DefaultsResponseSchema = t.Object({
   templateId: t.Optional(t.String()),
 });
 
+const AgentDefaultsSchema = t.Object({
+  providerId: t.Optional(t.String()),
+  modelId: t.Optional(t.String()),
+});
+
 export const TemplateListResponseSchema = t.Object({
   templates: t.Array(TemplateResponseSchema),
   defaults: t.Optional(DefaultsResponseSchema),
+  agentDefaults: t.Optional(AgentDefaultsSchema),
 });
 
 export const AgentSessionSchema = t.Object({

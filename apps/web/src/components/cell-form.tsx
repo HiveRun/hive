@@ -1,8 +1,12 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
+import {
+  type ModelSelection,
+  ModelSelector,
+} from "@/components/model-selector";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -17,7 +21,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import type { CreateCellInput } from "@/lib/rpc";
 import { cellMutations } from "@/queries/cells";
-import { templateQueries } from "@/queries/templates";
+import { type Template, templateQueries } from "@/queries/templates";
 
 type CellFormValues = CreateCellInput;
 
@@ -34,6 +38,8 @@ const cellSchema = z.object({
     .max(DESCRIPTION_MAX_LENGTH, "Description too long")
     .optional(),
   templateId: z.string().min(1, "Template is required"),
+  modelId: z.string().optional(),
+  providerId: z.string().optional(),
 });
 
 const validateName = (value: string) => {
@@ -74,6 +80,71 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
 
   const templates = templatesData?.templates;
   const defaults = templatesData?.defaults;
+  const agentDefaults = templatesData?.agentDefaults;
+
+  const defaultValues = useMemo(
+    () => ({
+      name: "",
+      description: "",
+      templateId: defaults?.templateId ?? "",
+      modelId: undefined,
+      providerId: undefined,
+    }),
+    [defaults?.templateId]
+  );
+
+  const [activeTemplateId, setActiveTemplateId] = useState(
+    defaultValues.templateId
+  );
+  const [selectedModel, setSelectedModel] = useState<ModelSelection>();
+
+  useEffect(() => {
+    setActiveTemplateId(defaultValues.templateId);
+    setSelectedModel(undefined);
+  }, [defaultValues.templateId]);
+
+  const activeTemplate = templates?.find(
+    (template) => template.id === activeTemplateId
+  );
+  const templateAgent = activeTemplate?.configJson.agent;
+  const providerPreference =
+    selectedModel?.providerId ?? templateAgent?.providerId;
+
+  const resolveTemplateModelSelection = useCallback(
+    (template?: Template) => {
+      const agentConfig = template?.configJson.agent;
+      if (agentConfig?.modelId) {
+        return { id: agentConfig.modelId, providerId: agentConfig.providerId };
+      }
+
+      const defaultModelId = agentDefaults?.modelId;
+      const defaultProviderId = agentDefaults?.providerId;
+      const templateProviderId = agentConfig?.providerId;
+
+      const providerCompatible =
+        !(templateProviderId && defaultProviderId) ||
+        templateProviderId === defaultProviderId;
+
+      if (defaultModelId && providerCompatible) {
+        const providerId = templateProviderId ?? defaultProviderId;
+        if (providerId) {
+          return { id: defaultModelId, providerId };
+        }
+      }
+    },
+    [agentDefaults]
+  );
+
+  useEffect(() => {
+    if (!activeTemplate || selectedModel) {
+      return;
+    }
+
+    const nextSelection = resolveTemplateModelSelection(activeTemplate);
+    if (nextSelection) {
+      setSelectedModel(nextSelection);
+    }
+  }, [activeTemplate, resolveTemplateModelSelection, selectedModel]);
 
   const mutation = useMutation({
     mutationFn: cellMutations.create.mutationFn,
@@ -90,6 +161,8 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
 
       queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
       form.reset();
+      setSelectedModel(undefined);
+      setActiveTemplateId(defaultValues.templateId);
       onSuccess?.();
     },
     onError: (error) => {
@@ -103,21 +176,22 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
     },
   });
 
-  const defaultValues = useMemo(
-    () => ({
-      name: "",
-      description: "",
-      templateId: defaults?.templateId ?? "",
-    }),
-    [defaults?.templateId]
-  );
-
   const form = useForm({
     defaultValues,
     onSubmit: ({ value }) => {
-      mutation.mutate({ ...(value as CellFormValues), workspaceId });
+      const formValues = value as CellFormValues;
+      mutation.mutate({
+        ...formValues,
+        workspaceId,
+        modelId: selectedModel?.id ?? formValues.modelId,
+        providerId: selectedModel?.providerId ?? formValues.providerId,
+      });
     },
   });
+
+  const handleModelChange = (model: ModelSelection) => {
+    setSelectedModel(model);
+  };
 
   const mutationErrorMessage =
     mutation.error instanceof Error ? mutation.error.message : undefined;
@@ -229,7 +303,16 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
                 <div data-testid="template-select">
                   <Select
                     disabled={mutation.isPending}
-                    onValueChange={(value) => field.handleChange(value)}
+                    onValueChange={(value) => {
+                      field.handleChange(value);
+                      setActiveTemplateId(value);
+                      const nextTemplate = templates?.find(
+                        (template) => template.id === value
+                      );
+                      const nextSelection =
+                        resolveTemplateModelSelection(nextTemplate);
+                      setSelectedModel(nextSelection);
+                    }}
                     value={field.state.value}
                   >
                     <SelectTrigger>
@@ -253,6 +336,21 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
               </div>
             )}
           </form.Field>
+
+          <div className="space-y-2">
+            <Label htmlFor="cell-model-selector">Model</Label>
+            <ModelSelector
+              disabled={mutation.isPending}
+              id="cell-model-selector"
+              onModelChange={handleModelChange}
+              providerId={providerPreference}
+              selectedModel={selectedModel}
+              workspaceId={workspaceId}
+            />
+            <p className="text-muted-foreground text-xs">
+              Sets the provider/model used when the cell's agent session starts.
+            </p>
+          </div>
 
           <div className="flex justify-end space-x-2">
             {onCancel && (
