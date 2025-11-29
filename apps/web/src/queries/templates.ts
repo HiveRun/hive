@@ -20,6 +20,10 @@ export type TemplateConfig = {
   setup?: string[];
   prompts?: string[];
   teardown?: string[];
+  agent?: {
+    providerId: string;
+    modelId?: string;
+  };
 };
 
 export type Template = {

@@ -39,7 +39,11 @@ type SendAgentMessageFn = (sessionId: string, content: string) => Promise<void>;
 type DependencyFactoryOptions = {
   setupError?: TemplateSetupError;
   sendAgentMessage?: SendAgentMessageFn;
-  onEnsureAgentSession?: (cellId: string, sessionId: string) => void;
+  onEnsureAgentSession?: (
+    cellId: string,
+    sessionId: string,
+    overrides?: { modelId?: string; providerId?: string }
+  ) => void;
 };
 
 describe("POST /api/cells", () => {
@@ -99,7 +103,10 @@ describe("POST /api/cells", () => {
         loadConfig: loadWorkspaceConfig,
         createWorktreeManager: createTestWorktreeManager,
       }),
-      ensureAgentSession: (cellId: string) => {
+      ensureAgentSession: (
+        cellId: string,
+        overrides?: { modelId?: string; providerId?: string }
+      ) => {
         const session: AgentSessionRecord = {
           id: `session-${cellId}`,
           cellId,
@@ -110,7 +117,7 @@ describe("POST /api/cells", () => {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
-        options.onEnsureAgentSession?.(cellId, session.id);
+        options.onEnsureAgentSession?.(cellId, session.id, overrides);
         return Promise.resolve(session);
       },
       closeAgentSession: (_cellId: string) => Promise.resolve(),
@@ -217,6 +224,43 @@ describe("POST /api/cells", () => {
       capturedSessionId,
       "Fix the failing specs in apps/web"
     );
+  });
+
+  it("passes selected model overrides to agent provisioning", async () => {
+    let capturedOverrides:
+      | { modelId?: string; providerId?: string }
+      | undefined;
+
+    const routes = createCellsRoutes(
+      createDependencies({
+        onEnsureAgentSession: (_cellId, _sessionId, overrides) => {
+          capturedOverrides = overrides;
+        },
+      })
+    );
+    const app = new Elysia().use(routes);
+
+    const response = await app.handle(
+      new Request("http://localhost/api/cells", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Model Override",
+          templateId,
+          workspaceId: "test-workspace",
+          modelId: "custom-model",
+          providerId: "zen",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(CREATED_STATUS);
+    expect(capturedOverrides).toEqual({
+      modelId: "custom-model",
+      providerId: "zen",
+    });
   });
 
   it("skips sending the initial prompt when description is blank", async () => {

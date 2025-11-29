@@ -48,6 +48,22 @@ type RuntimeHandle = {
   stop: () => Promise<void>;
 };
 
+export type ProviderModel = {
+  id?: string;
+  name?: string;
+};
+
+export type ProviderEntry = {
+  id: string;
+  name?: string;
+  models?: Record<string, ProviderModel>;
+};
+
+export type ProviderCatalogResponse = {
+  providers?: ProviderEntry[];
+  default?: Record<string, string>;
+};
+
 async function readProviderCredentials(): Promise<Record<string, unknown>> {
   try {
     const raw = await readFile(AUTH_PATH, "utf8");
@@ -281,6 +297,37 @@ async function ensureRuntimeForCell(
   runtimeRegistry.set(runtime.session.id, runtime);
 
   return runtime;
+}
+
+export async function fetchProviderCatalogForWorkspace(
+  workspaceRootPath: string
+): Promise<ProviderCatalogResponse> {
+  const mergedConfig = await loadOpencodeConfig(workspaceRootPath);
+  const server = await createOpencodeServer({
+    hostname: "127.0.0.1",
+    port: 0,
+    config: mergedConfig.config as OpencodeServerConfig,
+  });
+
+  try {
+    const client = createOpencodeClient({
+      baseUrl: server.url,
+    });
+    const response = await client.config.providers();
+
+    if (response.error || !response.data) {
+      throw new Error(
+        getRpcErrorMessage(
+          response.error,
+          "Failed to fetch provider catalog from OpenCode"
+        )
+      );
+    }
+
+    return response.data as ProviderCatalogResponse;
+  } finally {
+    await server.close();
+  }
 }
 
 type StartRuntimeArgs = {

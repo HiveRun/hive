@@ -6,6 +6,9 @@ import {
   fetchAgentMessages,
   fetchAgentSession,
   fetchAgentSessionForCell,
+  fetchProviderCatalogForWorkspace,
+  type ProviderEntry,
+  type ProviderModel,
   respondAgentPermission,
   sendAgentMessage,
   stopAgentSession,
@@ -25,6 +28,7 @@ import {
   RespondPermissionSchema,
   SendAgentMessageSchema,
 } from "../schema/api";
+import { createWorkspaceContextPlugin } from "../workspaces/plugin";
 
 const HTTP_STATUS = {
   NOT_FOUND: 404,
@@ -42,18 +46,68 @@ const updateModelSchema = t.Object({
   providerId: t.Optional(t.String()),
 });
 
-type ProviderEntry = {
-  id: string;
-  name?: string;
-  models?: Record<string, ProviderModel>;
-};
-
-type ProviderModel = {
-  id?: string;
-  name?: string;
-};
-
 export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
+  .use(createWorkspaceContextPlugin())
+  .get(
+    "/models",
+    async ({ query, set, getWorkspaceContext }) => {
+      try {
+        const workspaceContext = await getWorkspaceContext(query.workspaceId);
+        const catalog = await fetchProviderCatalogForWorkspace(
+          workspaceContext.workspace.path
+        );
+        const providerEntries = normalizeProviderEntries(catalog.providers);
+        const models = flattenProviderModels(providerEntries);
+        const defaults = normalizeProviderDefaults(catalog.default ?? {});
+        const providers = providerEntries.map(({ id, name }) => ({ id, name }));
+
+        return {
+          models,
+          defaults,
+          providers,
+        };
+      } catch (error) {
+        set.status = HTTP_STATUS.BAD_REQUEST;
+        return {
+          models: [],
+          defaults: {},
+          providers: [],
+          message:
+            error instanceof Error ? error.message : "Failed to list models",
+        };
+      }
+    },
+    {
+      query: t.Object({
+        workspaceId: t.Optional(t.String()),
+      }),
+      response: {
+        200: t.Object({
+          models: t.Array(
+            t.Object({
+              id: t.String(),
+              name: t.String(),
+              provider: t.String(),
+            })
+          ),
+          defaults: t.Record(t.String(), t.String()),
+          providers: t.Array(providerSchema),
+        }),
+        400: t.Object({
+          models: t.Array(
+            t.Object({
+              id: t.String(),
+              name: t.String(),
+              provider: t.String(),
+            })
+          ),
+          defaults: t.Record(t.String(), t.String()),
+          providers: t.Array(providerSchema),
+          message: t.String(),
+        }),
+      },
+    }
+  )
   .get(
     "/sessions/:id/models",
     async ({ params, set }) => {
