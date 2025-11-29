@@ -174,8 +174,11 @@ export function ModelSelector({
     );
   }
 
-  const selectedLabel = selectedModel
-    ? `${resolveProviderLabel(selectedModel.provider)} · ${selectedModel.name}`
+  const selectedProviderLabel = selectedModel
+    ? resolveProviderLabel(selectedModel.provider)
+    : null;
+  const selectedModelLabel = selectedModel
+    ? selectedModel.name
     : "Select model...";
 
   return (
@@ -183,13 +186,27 @@ export function ModelSelector({
       <PopoverTrigger asChild>
         <Button
           aria-expanded={open}
-          className="w-full justify-between"
+          className="w-full items-center justify-between"
           disabled={disabled}
           id={id}
           role="combobox"
           variant="outline"
         >
-          {selectedLabel}
+          <div className="flex flex-col items-start text-left">
+            <span
+              className={cn(
+                "font-medium",
+                selectedModel ? undefined : "text-muted-foreground"
+              )}
+            >
+              {selectedModelLabel}
+            </span>
+            {selectedProviderLabel ? (
+              <span className="text-muted-foreground text-xs">
+                {selectedProviderLabel}
+              </span>
+            ) : null}
+          </div>
           <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
