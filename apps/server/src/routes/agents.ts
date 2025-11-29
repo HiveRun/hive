@@ -1,6 +1,6 @@
 import { Elysia, sse, t } from "elysia";
 import { subscribeAgentEvents } from "../agents/events";
-import { fetchOpencodeModels } from "../agents/opencode-config";
+import { sortProviderIds } from "../agents/provider-metadata";
 import {
   ensureAgentSession,
   ensureRuntimeForSession,
@@ -11,6 +11,7 @@ import {
   sendAgentMessage,
   stopAgentSession,
 } from "../agents/service";
+
 import type {
   AgentMessageRecord,
   AgentSessionRecord,
@@ -39,23 +40,35 @@ const providerMetadataSchema = t.Object({
   includeAllModels: t.Boolean(),
 });
 
+type ProviderEntry = {
+  id: string;
+  models?: Record<string, ProviderModel>;
+};
+
+type ProviderModel = {
+  id?: string;
+  name?: string;
+};
+
 export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .get(
     "/sessions/:id/models",
     async ({ params, set }) => {
       try {
         const runtime = await ensureRuntimeForSession(params.id);
-        const workspaceRootPath =
-          runtime.cell.workspaceRootPath || runtime.cell.workspacePath;
-        const { models, defaults, providers } =
-          await fetchOpencodeModels(workspaceRootPath);
+        const { data, error } = await runtime.client.config.providers();
+
+        if (error || !data) {
+          throw new Error("Failed to fetch provider catalog from OpenCode");
+        }
+
+        const providerEntries = normalizeProviderEntries(data.providers);
+        const models = flattenProviderModels(providerEntries);
+        const defaults = normalizeProviderDefaults(data.default);
+        const providers = sortProviderIds(providerEntries.map((p) => p.id));
 
         return {
-          models: models.map((model) => ({
-            id: model.modelId,
-            name: model.name,
-            provider: model.providerId,
-          })),
+          models,
           defaults,
           providers,
         };
@@ -287,6 +300,62 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
       },
     }
   );
+
+function normalizeProviderEntries(input: unknown): ProviderEntry[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const providers: ProviderEntry[] = [];
+  for (const candidate of input) {
+    if (
+      typeof candidate !== "object" ||
+      candidate === null ||
+      typeof (candidate as { id?: unknown }).id !== "string"
+    ) {
+      continue;
+    }
+
+    const { id, models } = candidate as {
+      id: string;
+      models?: Record<string, ProviderModel>;
+    };
+    providers.push({ id, models });
+  }
+
+  return providers;
+}
+
+function flattenProviderModels(providers: ProviderEntry[]) {
+  const models: { id: string; name: string; provider: string }[] = [];
+
+  for (const provider of providers) {
+    const providerModels = provider.models ?? {};
+    for (const [modelKey, model] of Object.entries(providerModels)) {
+      const id = model?.id ?? modelKey;
+      const name = model?.name ?? id;
+      models.push({ id, name, provider: provider.id });
+    }
+  }
+
+  return models;
+}
+
+function normalizeProviderDefaults(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const defaults: Record<string, string> = {};
+  for (const [providerId, modelId] of Object.entries(
+    value as Record<string, unknown>
+  )) {
+    if (typeof modelId === "string") {
+      defaults[providerId] = modelId;
+    }
+  }
+  return defaults;
+}
 
 function formatSession(session: AgentSessionRecord) {
   return {
