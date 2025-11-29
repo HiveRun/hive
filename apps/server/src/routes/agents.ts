@@ -9,6 +9,7 @@ import {
   respondAgentPermission,
   sendAgentMessage,
   stopAgentSession,
+  updateAgentSessionModel,
 } from "../agents/service";
 
 import type {
@@ -34,6 +35,10 @@ const HTTP_STATUS = {
 const providerSchema = t.Object({
   id: t.String(),
   name: t.Optional(t.String()),
+});
+
+const updateModelSchema = t.Object({
+  modelId: t.String(),
 });
 
 type ProviderEntry = {
@@ -134,6 +139,31 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     },
     {
       body: CreateAgentSessionSchema,
+      response: {
+        200: AgentSessionSchema,
+        400: t.Object({ message: t.String() }),
+      },
+    }
+  )
+  .patch(
+    "/sessions/:id/model",
+    async ({ params, body, set }) => {
+      try {
+        const session = await updateAgentSessionModel(params.id, body.modelId);
+        return formatSession(session);
+      } catch (error) {
+        set.status = HTTP_STATUS.BAD_REQUEST;
+        return {
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to update session model",
+        };
+      }
+    },
+    {
+      params: t.Object({ id: t.String() }),
+      body: updateModelSchema,
       response: {
         200: AgentSessionSchema,
         400: t.Object({ message: t.String() }),
@@ -369,6 +399,7 @@ function formatSession(session: AgentSessionRecord) {
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     completedAt: session.completedAt,
+    modelId: session.modelId,
   };
 }
 

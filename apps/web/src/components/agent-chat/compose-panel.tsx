@@ -29,6 +29,7 @@ const formSchema = z.object({
 type ComposePanelProps = {
   provider: string;
   isSending: boolean;
+  isModelChanging?: boolean;
   onSend: (content: string) => Promise<void>;
   workspaceId: string;
   sessionId: string;
@@ -46,6 +47,7 @@ const validateMessage = (value: string) => {
 export function ComposePanel({
   provider: agentProvider,
   isSending,
+  isModelChanging = false,
   onSend,
   workspaceId,
   sessionId,
@@ -96,7 +98,7 @@ export function ComposePanel({
           Model
         </label>
         <ModelSelector
-          disabled={isSending}
+          disabled={isSending || isModelChanging}
           id="model-selector"
           onModelChange={onModelChange}
           providerId={agentProvider}

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useAgentEventStream } from "@/hooks/use-agent-event-stream";
@@ -27,11 +27,11 @@ export function AgentChat({ cellId }: AgentChatProps) {
   const { permissions } = useAgentEventStream(sessionId ?? null, cellId);
 
   useEffect(() => {
-    if (sessionId === undefined) {
+    if (!session) {
       return;
     }
-    setSelectedModelId(undefined);
-  }, [sessionId]);
+    setSelectedModelId(session.modelId ?? undefined);
+  }, [session]);
 
   const orderedMessages = useMemo(
     () =>
@@ -84,6 +84,23 @@ export function AgentChat({ cellId }: AgentChatProps) {
     },
   });
 
+  const setModelMutation = useMutation({
+    ...agentMutations.setModel,
+    onSuccess: (updatedSession) => {
+      queryClient.setQueryData(
+        agentQueries.sessionByCell(cellId).queryKey,
+        updatedSession
+      );
+      setSelectedModelId(updatedSession.modelId ?? undefined);
+    },
+    onError: (error) => {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to update model";
+      toast.error(errorMessage);
+      setSelectedModelId(session?.modelId ?? undefined);
+    },
+  });
+
   const handleStartSession = () => {
     startAgentMutation.mutate({
       cellId,
@@ -100,6 +117,16 @@ export function AgentChat({ cellId }: AgentChatProps) {
       content: content.trim(),
     });
   };
+
+  const handleModelChange = useCallback(
+    (modelId: string) => {
+      setSelectedModelId(modelId);
+      if (session?.id) {
+        setModelMutation.mutate({ sessionId: session.id, modelId });
+      }
+    },
+    [session?.id, setModelMutation]
+  );
 
   const isStarting = startAgentMutation.isPending;
   const isSending = sendMessageMutation.isPending;
@@ -138,8 +165,9 @@ export function AgentChat({ cellId }: AgentChatProps) {
           workspacePath={session.workspacePath}
         />
         <ComposePanel
+          isModelChanging={setModelMutation.isPending}
           isSending={isSending}
-          onModelChange={setSelectedModelId}
+          onModelChange={handleModelChange}
           onSend={handleSendMessage}
           provider={session.provider}
           selectedModelId={selectedModelId}

@@ -148,6 +148,7 @@ export const AgentSessionSchema = t.Object({
   createdAt: t.String(),
   updatedAt: t.String(),
   completedAt: t.Optional(t.String()),
+  modelId: t.Optional(t.String()),
 });
 
 export const CreateAgentSessionSchema = t.Object({

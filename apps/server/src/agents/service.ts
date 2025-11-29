@@ -134,6 +134,15 @@ export async function fetchAgentMessages(
   return loadRemoteMessages(runtime);
 }
 
+export async function updateAgentSessionModel(
+  sessionId: string,
+  modelId: string
+): Promise<AgentSessionRecord> {
+  const runtime = await ensureRuntimeForSession(sessionId);
+  runtime.modelId = modelId;
+  return toSessionRecord(runtime);
+}
+
 export async function sendAgentMessage(
   sessionId: string,
   content: string
@@ -599,6 +608,7 @@ function toSessionRecord(runtime: RuntimeHandle): AgentSessionRecord {
     workspacePath: runtime.cell.workspacePath,
     createdAt: new Date(runtime.session.time.created).toISOString(),
     updatedAt: new Date(runtime.session.time.updated).toISOString(),
+    modelId: runtime.modelId,
   };
 }
 

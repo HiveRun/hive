@@ -10,6 +10,7 @@ export type AgentSession = {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  modelId?: string;
 };
 
 export type AgentMessagePart = {
@@ -78,6 +79,17 @@ export const agentMutations = {
       const { data, error } = await rpc.api.agents.sessions.post(input);
       if (error) {
         throw new Error("Failed to start agent session");
+      }
+      return data as AgentSession;
+    },
+  },
+  setModel: {
+    mutationFn: async (input: { sessionId: string; modelId: string }) => {
+      const { data, error } = await rpc.api.agents
+        .sessions({ id: input.sessionId })
+        .model.patch({ modelId: input.modelId });
+      if (error) {
+        throw new Error("Failed to update session model");
       }
       return data as AgentSession;
     },
