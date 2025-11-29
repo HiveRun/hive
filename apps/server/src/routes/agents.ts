@@ -4,7 +4,7 @@ import {
   ensureAgentSession,
   fetchAgentMessages,
   fetchAgentSession,
-  fetchAgentSessionForConstruct,
+  fetchAgentSessionForCell,
   respondAgentPermission,
   sendAgentMessage,
   stopAgentSession,
@@ -16,7 +16,7 @@ import type {
 } from "../agents/types";
 import {
   AgentMessageListResponseSchema,
-  AgentSessionByConstructResponseSchema,
+  AgentSessionByCellResponseSchema,
   AgentSessionSchema,
   CreateAgentSessionSchema,
   RespondPermissionSchema,
@@ -34,7 +34,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     "/sessions",
     async ({ body, set }) => {
       try {
-        const session = await ensureAgentSession(body.constructId, {
+        const session = await ensureAgentSession(body.cellId, {
           force: body.force,
         });
         return formatSession(session);
@@ -75,15 +75,15 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     }
   )
   .get(
-    "/sessions/byConstruct/:constructId",
+    "/sessions/byCell/:cellId",
     async ({ params }) => {
-      const session = await fetchAgentSessionForConstruct(params.constructId);
+      const session = await fetchAgentSessionForCell(params.cellId);
       return { session: session ? formatSession(session) : null };
     },
     {
-      params: t.Object({ constructId: t.String() }),
+      params: t.Object({ cellId: t.String() }),
       response: {
-        200: AgentSessionByConstructResponseSchema,
+        200: AgentSessionByCellResponseSchema,
       },
     }
   )
@@ -220,7 +220,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
 function formatSession(session: AgentSessionRecord) {
   return {
     id: session.id,
-    constructId: session.constructId,
+    cellId: session.cellId,
     templateId: session.templateId,
     provider: session.provider,
     status: session.status,

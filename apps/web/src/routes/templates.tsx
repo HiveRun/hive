@@ -54,9 +54,7 @@ function TemplatesPage() {
         >
           Templates
         </h1>
-        <p className="text-muted-foreground">
-          Browse available construct templates
-        </p>
+        <p className="text-muted-foreground">Browse available cell templates</p>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
@@ -188,7 +186,7 @@ function TemplatesPage() {
             <p className="mt-2 text-muted-foreground text-sm">
               Create a{" "}
               <code className="rounded bg-muted px-1 py-0.5 text-xs">
-                synthetic.config.ts
+                hive.config.ts
               </code>{" "}
               file to define templates
             </p>

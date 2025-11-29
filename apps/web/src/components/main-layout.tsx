@@ -31,7 +31,7 @@ export function MainLayout({ children, isLoading = false }: MainLayoutProps) {
               className="size-9 rounded-none border-2 border-border bg-card text-foreground shadow-[3px_3px_0_rgba(0,0,0,0.45)] transition-none hover:bg-muted hover:text-foreground"
             />
             <span className="font-semibold text-foreground text-sm uppercase tracking-[0.32em]">
-              Synthetic
+              Hive
             </span>
           </div>
           <ModeToggle />

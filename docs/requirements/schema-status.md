@@ -4,36 +4,41 @@ This document tracks the current status of prepared schemas, validation, and tes
 
 ## Overview
 
-**Rescope Decision**: Focus on worktrees, OpenCode integration, and base construct capabilities to deliver value quickly.
+**Rescope Decision**: Focus on worktrees, OpenCode integration, and base cell capabilities to deliver value quickly.
 
 **Result**: Many schemas and test plans were prepared but are not currently implemented. They remain available for future implementation.
+
+### Migration Reset — 2025-11-28
+- Removed all historical Drizzle migrations tied to "construct" naming and regenerated a single baseline that creates `cells` and `cell_services`
+- Developers must delete their local SQLite files (e.g., `apps/server/local.db`) and rerun `bun run --cwd apps/server db:push` after pulling this change
+- Deferred tables from earlier specs now live only in documentation until they are reintroduced through new migrations
 
 ## Current Implementation Status
 
 ### ✅ Implemented and Active
 
 #### Template Definition System
-- **File**: `synthetic.config.ts` schema
+- **File**: `hive.config.ts` schema
 - **Status**: ✅ Active, file-based storage
 - **Usage**: Template definitions and validation
 - **Tests**: ✅ Implemented and passing
 
 ### 🔄 Currently Implementing
 
-#### Basic Construct Management
-- **Schema**: `constructs` table
+#### Basic Cell Management
+- **Schema**: `cells` table
 - **Status**: ✅ Completed (Step 2)
-- **Usage**: Basic construct CRUD operations
+- **Usage**: Basic cell CRUD operations
 - **Tests**: ✅ Implemented and passing
 
 #### Git Worktree Management
-- **Schema**: `constructs` table (extended)
+- **Schema**: `cells` table (extended)
 - **Status**: 🔄 Next up (Step 3)
-- **Usage**: Worktree lifecycle and construct tracking
+- **Usage**: Worktree lifecycle and cell tracking
 - **Tests**: 🔄 Planned
 
 #### OpenCode Agent Integration
-- **Schema Update**: `constructs.opencode_session_id` column (maps constructs → OpenCode session)
+- **Schema Update**: `cells.opencode_session_id` column (maps cells → OpenCode session)
 - **Status**: ✅ Completed (Step 4)
 - **Usage**: Backend rehydrates agent runtime by looking up the stored OpenCode session ID; transcripts live inside OpenCode's datastore
 - **Tests**: 🔄 Remote-session recovery tests planned
@@ -62,7 +67,7 @@ This document tracks the current status of prepared schemas, validation, and tes
 - **Reason**: Complex, not needed for core agent functionality
 
 ### Advanced Provisioning (Deferred)
-- **Schema**: Updates to `constructs` status tracking
+- **Schema**: Updates to `cells` status tracking
 - **Validation**: Multi-step orchestration, rollback logic
 - **Tests**: Integration tests, failure scenarios
 - **Status**: 🔄 Deferred to Phase 1A
@@ -72,27 +77,45 @@ This document tracks the current status of prepared schemas, validation, and tes
 
 ### Active Tables
 ```sql
--- Currently implemented and used
-constructs (
+cells (
   id,
   name,
   description,
   template_id,
+  workspace_id,
+  workspace_root_path,
   workspace_path,
   opencode_session_id,
+  opencode_server_url,
+  opencode_server_port,
   status,
+  last_setup_error,
+  branch_name,
+  base_commit,
+  created_at
+)
+
+cell_services (
+  id,
+  cell_id,
+  name,
+  type,
+  command,
+  cwd,
+  env,
+  status,
+  port,
+  pid,
+  ready_timeout_ms,
+  definition,
+  last_known_error,
   created_at,
   updated_at
 )
 ```
 
-### Prepared Tables (Not Currently Used)
-```sql
--- Prepared for Phase 1A implementation
-prompt_bundles (id, construct_id, content, token_count, created_at)
-port_allocations (id, construct_id, service_name, port, allocated_at)
-services (id, construct_id, name, type, command, cwd, env_json, pid, status, ready_pattern, started_at, stopped_at)
-```
+### Prepared Tables (Concept Only)
+The prompt bundle, port allocation, and advanced service tables described later in this document do **not** exist in the regenerated migration baseline. When we resume those features we will add brand-new migrations instead of editing the baseline.
 
 ## Test Status
 

@@ -17,9 +17,9 @@ export function ModeToggle() {
       <DropdownMenuTrigger asChild>
         <Button
           className={cn(
-            "h-10 w-10 rounded-none border-2 border-border bg-card text-foreground shadow-[3px_3px_0_rgba(0,0,0,0.45)] transition-none",
+            "h-10 w-10 rounded-none border-2 border-border bg-card text-foreground shadow-[3px_3px_0_color-mix(in_oklch,var(--color-shadow-color)_45%,transparent)] transition-none",
             "hover:bg-muted hover:text-foreground",
-            "focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#5a7c5a] focus-visible:outline-offset-2"
+            "focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
           )}
           size="icon"
           variant="outline"
@@ -31,7 +31,7 @@ export function ModeToggle() {
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
-        className="rounded-none border-2 border-border bg-background px-0 py-0 shadow-[4px_4px_0_rgba(0,0,0,0.45)]"
+        className="rounded-none border-2 border-border bg-background px-0 py-0 shadow-[4px_4px_0_color-mix(in_oklch,var(--color-shadow-color)_45%,transparent)]"
       >
         <DropdownMenuItem
           className="rounded-none uppercase tracking-[0.3em]"

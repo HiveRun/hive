@@ -1,7 +1,7 @@
 # Requirements Index
 
 ## Core Concepts
-- [Constructs](concepts/constructs.md) - Core construct model, lifecycle, and roadmap
+- [Cells](concepts/cells.md) - Core cell model, lifecycle, and roadmap
 - [Runtime](concepts/runtime.md) - Technical implementation details
 
 ## Implementation Strategy
@@ -12,16 +12,16 @@
 ## Features by Phase
 
 ### Phase 0: Core Infrastructure (Rescoped)
-- [x] [Template Definition System](features/phase-0/template-definition-system.md) #status/completed #phase-0 #feature/core - System for defining construct templates
-- [x] [Basic Construct Management](features/phase-0/PR-SEQUENCE.md) #status/completed #phase-0 #feature/core - Real database entities for constructs (PR #2)
-- [ ] [Git Worktree Integration](features/phase-0/PR-SEQUENCE.md) #status/planned #phase-0 #feature/core - Isolated workspaces for constructs (PR #3)
+- [x] [Template Definition System](features/phase-0/template-definition-system.md) #status/completed #phase-0 #feature/core - System for defining cell templates
+- [x] [Basic Cell Management](features/phase-0/PR-SEQUENCE.md) #status/completed #phase-0 #feature/core - Real database entities for cells (PR #2)
+- [ ] [Git Worktree Integration](features/phase-0/PR-SEQUENCE.md) #status/planned #phase-0 #feature/core - Isolated workspaces for cells (PR #3)
 - [ ] [Agent Integration](features/phase-0/PR-SEQUENCE.md) #status/planned #phase-0 #feature/core - OpenCode SDK integration (PR #4)
 
 #### Deferred Features (Prepared but Not Implemented)
 - [ ] [Prompt Assembly Pipeline](features/phase-0/prompt-assembly-pipeline.md) #status/deferred #phase-0 #feature/advanced - System for assembling agent prompts
 - [ ] [Agent Orchestration Engine](features/phase-0/agent-orchestration.md) #status/deferred #phase-0 #feature/advanced - Core engine for managing agent sessions with integrated UX
-- [ ] [Construct Creation & Provisioning](features/phase-0/construct-creation.md) #status/deferred #phase-0 #feature/advanced - Template selection and workspace setup
-- [ ] [Persistence Layer](features/phase-0/persistence-layer.md) #status/deferred #phase-0 #feature/advanced - Reliable storage for constructs and artifacts
+- [ ] [Cell Creation & Provisioning](features/phase-0/cell-creation.md) #status/deferred #phase-0 #feature/advanced - Template selection and workspace setup
+- [ ] [Persistence Layer](features/phase-0/persistence-layer.md) #status/deferred #phase-0 #feature/advanced - Reliable storage for cells and artifacts
 
 ### Phase 1: Core Runtime
 - [ ] [Diff Review](features/phase-1/diff-review.md) #status/planned #phase-1 #feature/ux - Comprehensive diff review experience
@@ -31,12 +31,12 @@
 
 ### Phase 2: Advanced Interaction
 - [/] [Voice Input](features/phase-2/voice-input.md) #status/in-progress #phase-2 #feature/advanced - Microphone capture and transcription
-- [ ] [Sparse Constructs](features/phase-2/sparse-constructs.md) #status/planned #phase-2 #feature/advanced - Agent-only lightweight constructs
+- [ ] [Sparse Cells](features/phase-2/sparse-cells.md) #status/planned #phase-2 #feature/advanced - Agent-only lightweight cells
 - [ ] [Template Prompt Viewer](features/phase-2/template-prompt-viewer.md) #status/planned #phase-2 #feature/advanced - Preview template prompts
 - [ ] [Compaction Logging](features/phase-2/compaction-logging.md) #status/planned #phase-2 #feature/advanced - Monitor prompt degradation
-- [ ] [Linear Integration](features/phase-2/linear-integration.md) #status/planned #phase-2 #feature/advanced - Create constructs from Linear issues
+- [ ] [Linear Integration](features/phase-2/linear-integration.md) #status/planned #phase-2 #feature/advanced - Create cells from Linear issues
 - [ ] [GitHub Integration](features/phase-2/github-integration.md) #status/planned #phase-2 #feature/advanced - GitHub branch and PR integration
-- [ ] [Cross-Construct Search](features/phase-2/cross-construct-search.md) #status/planned #phase-2 #feature/advanced - Search across construct data
+- [ ] [Cross-Cell Search](features/phase-2/cross-cell-search.md) #status/planned #phase-2 #feature/advanced - Search across cell data
 
 ### Phase 3: Planning & Collaboration
 - [ ] [Planning-to-Implementation Handoff](features/phase-3/planning-handoff.md) #status/planned #phase-3 #feature/advanced - Workflow transitions

@@ -1,8 +1,8 @@
 /**
  * Application-layer types for agent sessions and messages.
  *
- * These types extend the OpenCode SDK types with Synthetic-specific concerns:
- * - Track which construct owns a session (constructId, templateId)
+ * These types extend the OpenCode SDK types with Hive-specific concerns:
+ * - Track which cell owns a session (cellId, templateId)
  * - Add custom status tracking beyond SDK's session lifecycle
  * - Serialize SDK types into simplified API responses
  *
@@ -13,7 +13,7 @@
 import type { Event as OpencodeEvent, Part } from "@opencode-ai/sdk";
 
 /**
- * Custom session statuses that track Synthetic-specific workflow states.
+ * Custom session statuses that track Hive-specific workflow states.
  * These are distinct from OpenCode SDK's internal session states.
  */
 export const agentSessionStatuses = [
@@ -40,14 +40,14 @@ export type AgentMessageState = "pending" | "streaming" | "completed" | "error";
  * Application model for agent sessions.
  *
  * Extends OpenCode SDK's Session type with:
- * - constructId: Links session to a Synthetic construct
+ * - cellId: Links session to a Hive cell
  * - templateId: Tracks which template config was used
  * - provider: AI provider (anthropic, openai, etc.)
  * - status: Custom workflow status tracking
  */
 export type AgentSessionRecord = {
   id: string;
-  constructId: string;
+  cellId: string;
   templateId: string;
   provider: string;
   status: AgentSessionStatus;

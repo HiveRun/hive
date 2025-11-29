@@ -1,14 +1,14 @@
 {
-  "name": "@synthetic/cli",
+  "name": "@hive/cli",
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
     "check-types": "tsc -p tsconfig.json --noEmit",
     "dev": "bun run --hot src/index.ts",
-    "compile": "bun build --compile --minify --sourcemap ./src/index.ts --outfile synthetic"
+    "compile": "bun build --compile --minify --sourcemap ./src/index.ts --outfile hive"
   },
   "dependencies": {
-    "@synthetic/server": "workspace:*",
+    "@hive/server": "workspace:*",
     "clipanion": "^3.2.1",
     "dotenv": "catalog:",
     "picocolors": "^1.0.0"

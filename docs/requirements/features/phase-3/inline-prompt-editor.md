@@ -3,7 +3,7 @@
 - [ ] Inline Prompt Editor #status/planned #phase-3 #feature/advanced
 
 ## Goal
-Offer an optional rich markdown editor for prompt fragments so users can adjust agent guidance without leaving Synthetic.
+Offer an optional rich markdown editor for prompt fragments so users can adjust agent guidance without leaving Hive.
 
 ## Key Requirements
 - List all prompt files sourced from `promptSources` and template-specific prompts.

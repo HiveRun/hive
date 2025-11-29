@@ -75,13 +75,13 @@ export function VoiceRecorderButton({
     const contextWindow = window as typeof window & {
       webkitAudioContext?: typeof AudioContext;
     };
-    const AudioContextConstructor =
+    const AudioContextCellor =
       contextWindow.AudioContext ?? contextWindow.webkitAudioContext;
-    if (!AudioContextConstructor) {
+    if (!AudioContextCellor) {
       return null;
     }
     if (!audioContextRef.current) {
-      audioContextRef.current = new AudioContextConstructor();
+      audioContextRef.current = new AudioContextCellor();
     }
     const context = audioContextRef.current;
     if (context?.state === "suspended") {

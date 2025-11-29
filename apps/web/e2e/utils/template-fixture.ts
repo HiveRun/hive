@@ -97,27 +97,24 @@ function buildTemplateConfigFixture(
         type: "docker",
         run: undefined,
         cwd: undefined,
-        image: "ghcr.io/synthetic/runtime:latest",
+        image: "ghcr.io/hive/runtime:latest",
         ports: ["5432:5432"],
         env: {
           NODE_ENV: "production",
-          DATABASE_URL: "postgres://synthetic@localhost:5432/runtime",
+          DATABASE_URL: "postgres://hive@localhost:5432/runtime",
         },
       }),
     },
     env: overrides.env ?? {
       API_URL: "http://localhost:3000",
-      STORAGE_ROOT: `/var/synthetic/${id}`,
+      STORAGE_ROOT: `/var/hive/${id}`,
     },
     setup: overrides.setup ?? [...DEFAULT_TEMPLATE_SETUP],
     prompts: overrides.prompts ?? [
       templateFaker.hacker.phrase(),
       templateFaker.company.catchPhrase(),
     ],
-    teardown: overrides.teardown ?? [
-      "bun run cleanup",
-      `rm -rf .synthetic/${id}`,
-    ],
+    teardown: overrides.teardown ?? ["bun run cleanup", `rm -rf .hive/${id}`],
   };
 
   return {
@@ -175,12 +172,12 @@ export function createTemplateFixture(
 
 export const templateSnapshotFixture: TemplateFixture[] = [
   createTemplateFixture({
-    id: "synthetic-dev",
-    label: "Synthetic Dev",
+    id: "hive-dev",
+    label: "Hive Dev",
     type: "implementation",
     configJson: {
-      id: "synthetic-dev",
-      label: "Synthetic Dev",
+      id: "hive-dev",
+      label: "Hive Dev",
       type: "implementation",
       summary: "Deterministic fixture used for Playwright snapshots.",
       includePatterns: [".env*", "*.db"],
@@ -202,11 +199,11 @@ export const templateSnapshotFixture: TemplateFixture[] = [
       },
       env: {
         API_URL: "http://localhost:3000",
-        STORAGE_ROOT: "/var/synthetic/synthetic-dev",
+        STORAGE_ROOT: "/var/hive/hive-dev",
       },
       setup: ["bun setup"],
-      prompts: ["Synchronize runtime state", "Validate construct scaffolding"],
-      teardown: ["bun run cleanup", "rm -rf .synthetic/synthetic-dev"],
+      prompts: ["Synchronize runtime state", "Validate cell scaffolding"],
+      teardown: ["bun run cleanup", "rm -rf .hive/hive-dev"],
     },
   }),
   createTemplateFixture(),

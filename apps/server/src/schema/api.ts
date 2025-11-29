@@ -1,7 +1,7 @@
 import { t } from "elysia";
 
-// Construct schemas
-export const ConstructResponseSchema = t.Object({
+// Cell schemas
+export const CellResponseSchema = t.Object({
   id: t.String(),
   name: t.String(),
   description: t.Union([t.String(), t.Null()]),
@@ -19,11 +19,11 @@ export const ConstructResponseSchema = t.Object({
   baseCommit: t.Optional(t.String()),
 });
 
-export const ConstructListResponseSchema = t.Object({
-  constructs: t.Array(ConstructResponseSchema),
+export const CellListResponseSchema = t.Object({
+  cells: t.Array(CellResponseSchema),
 });
 
-export const ConstructServiceSchema = t.Object({
+export const CellServiceSchema = t.Object({
   id: t.String(),
   name: t.String(),
   type: t.String(),
@@ -41,8 +41,8 @@ export const ConstructServiceSchema = t.Object({
   portReachable: t.Optional(t.Boolean()),
 });
 
-export const ConstructServiceListResponseSchema = t.Object({
-  services: t.Array(ConstructServiceSchema),
+export const CellServiceListResponseSchema = t.Object({
+  services: t.Array(CellServiceSchema),
 });
 
 const DiffStatusSchema = t.Union([
@@ -84,7 +84,7 @@ export const DiffFileDetailSchema = t.Object({
   patch: t.Optional(t.String()),
 });
 
-export const ConstructDiffResponseSchema = t.Object({
+export const CellDiffResponseSchema = t.Object({
   mode: DiffModeSchema,
   baseCommit: t.Optional(t.Union([t.String(), t.Null()])),
   headCommit: t.Optional(t.Union([t.String(), t.Null()])),
@@ -92,7 +92,7 @@ export const ConstructDiffResponseSchema = t.Object({
   details: t.Optional(t.Array(DiffFileDetailSchema)),
 });
 
-export const CreateConstructSchema = t.Object({
+export const CreateCellSchema = t.Object({
   name: t.String({
     minLength: 1,
     maxLength: 255,
@@ -110,7 +110,7 @@ export const CreateConstructSchema = t.Object({
   }),
 });
 
-export const DeleteConstructsSchema = t.Object({
+export const DeleteCellsSchema = t.Object({
   ids: t.Array(
     t.String({
       minLength: 1,
@@ -140,7 +140,7 @@ export const TemplateListResponseSchema = t.Object({
 
 export const AgentSessionSchema = t.Object({
   id: t.String(),
-  constructId: t.String(),
+  cellId: t.String(),
   templateId: t.String(),
   provider: t.String(),
   status: t.String(),
@@ -151,7 +151,7 @@ export const AgentSessionSchema = t.Object({
 });
 
 export const CreateAgentSessionSchema = t.Object({
-  constructId: t.String(),
+  cellId: t.String(),
   force: t.Optional(t.Boolean()),
 });
 
@@ -169,7 +169,7 @@ export const AgentMessageListResponseSchema = t.Object({
   messages: t.Array(AgentMessageSchema),
 });
 
-export const AgentSessionByConstructResponseSchema = t.Object({
+export const AgentSessionByCellResponseSchema = t.Object({
   session: t.Union([AgentSessionSchema, t.Null()]),
 });
 

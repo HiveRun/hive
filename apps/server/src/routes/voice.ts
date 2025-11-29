@@ -5,7 +5,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import type { JSONValue, TranscriptionModel } from "ai";
 import { experimental_transcribe as transcribe } from "ai";
 import { Elysia, t } from "elysia";
-import { getSyntheticConfig } from "../config/context";
+import { getHiveConfig } from "../config/context";
 import type { VoiceConfig, VoiceTranscriptionConfig } from "../config/schema";
 import {
   VoiceConfigResponseSchema,
@@ -39,7 +39,7 @@ const ErrorResponseSchema = t.Object({
 
 export async function preloadVoiceTranscriptionModels() {
   try {
-    const config = await getSyntheticConfig();
+    const config = await getHiveConfig();
     if (config.voice?.enabled && config.voice.transcription.mode === "local") {
       await preloadLocalTranscriber(config.voice.transcription.model);
       process.stderr.write(

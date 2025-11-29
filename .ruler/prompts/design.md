@@ -1,172 +1,140 @@
-# Design Guidelines - Forest Brutalism
+# Design Guidelines - Hive Resonant Brutalism
 
 ## Theme Overview
 
-**Forest Brutalism** combines raw, brutalist architectural principles with organic forest elements. This creates a unique aesthetic that's both stark and natural, digital and primal.
+**Hive Resonant Brutalism** fuses mission-control hardware with luminous honeycomb biology. We frame every screen as a control slab carved from graphite, then inject radiant amber energy through seams, glyphs, and telemetry. Interfaces should feel engineered, ritualistic, and alive with signal flow.
 
-### Core Philosophy
+### Core Principles
 
-- **Raw honesty** - Show the structure, don't hide it
-- **Organic geometry** - Angular forms meet natural textures
-- **Monolithic presence** - Bold, unapologetic interfaces
-- **Forest integration** - Nature as structural element, not decoration
+- **Visible circuits** – expose rails, seams, and power traces; the structure is the ornament
+- **Luminous cores** – reserve bright amber for intent, status, and AI presence
+- **Hexagonal memory** – repeat honeycomb silhouettes, overlays, and staggered columns to suggest cell clusters
+- **Industrial calm** – keep surfaces matte and confident so the energy accents stay intentional
 
 ## Color Palette
 
-### Primary Colors
-- **Deep Forest Green** - `#1a2f1a` (backgrounds, heavy elements)
-- **Shadow Evergreen** - `#284334` (accents, borders)
-- **Moss Green** - `#4a5d4a` (secondary elements)
-- **Stone Gray** - `#6b7280` (neutral elements)
+### Primary Field
+- **Obsidian Resin** – `#050708` (base canvas, modal chrome)
+- **Graphite Lattice** – `#111416` (page bodies, cards, shell)
+- **Basalt Alloy** – `#1f2629` (panels, secondary containers)
+- **Amber Core** – `#F5A524` (primary actions, live signals)
+- **Honeyed Steel** – `#FFC857` (secondary highlight, badges, metrics)
 
-### Accent Colors
-- **Sap Green** - `#5a7c5a` (interactive elements)
-- **Fern Green** - `#6b8e6b` (hover states)
-- **Lichen** - `#8b9d8b` (disabled states)
+### Accent Field
+- **Signal Nectar** – `#FF8F1F` (hover/press states, warning emphasis)
+- **Iridescent Pollen** – `#FFE9A8` (soft glows, tooltips, halos)
+- **Coolant Teal** – `#2DD4BF` (success, sync indicators, neutral CTAs)
+- **Field Violet** – `#7C5BFF` (selection outlines, AI handoff states)
+
+### Utility Tones
+- **Alert Magma** – `#FF5C5C`
+- **Stability Chlorophyll** – `#8EDB5D`
+- **Muted Graph** – `#6B7280` (copy, secondary icons)
+
+Always pair luminous hues with deep graphite; amber without darkness loses the Hive signature contrast.
 
 ## Typography
 
 ### Hierarchy
-- **Headings**: Bold, uppercase, letter-spacing: 0.05em
-- **Body**: Regular, 16px base, line-height: 1.6
-- **Code**: Monospace, subtle background
+- **Headings** – uppercase, tracking 0.08em, 600 weight; sizes follow 16 × 2ⁿ (32 / 64 / 128)
+- **Body** – 16px base, 1.55 line-height, 400 weight; prefer sharp grotesks (e.g., Space Grotesk, Suisse Int'l)
+- **Code / system text** – mono with subtle translucent background `rgba(255,200,87,0.08)`
 
-### Brutalist Typography Rules
-- **No rounded fonts** - Sharp, angular characters only
-- **High contrast** - Minimum 7:1 contrast ratio
-- **Uniform weight** - Primarily 400/600 weights
-- **Systematic sizing** - Powers of 2: 16px, 32px, 64px, 128px
+### Typographic Rules
+- No rounded terminals; prefer straight spines and cut joins
+- Underlines act as baselines (2px) rather than text decoration
+- Numeric data uses tabular figures and can carry amber tint at 70% opacity
 
-## Layout Principles
+## Layout System
 
-### Grid System
-- **Base unit**: 8px grid
-- **Container max-width**: 1400px
-- **Gutter**: 24px (desktop), 16px (mobile)
-- **Section spacing**: 64px vertical rhythm
+### Grid
+- 12-column grid, 1120px max content width
+- Base unit: 8px with 24px gutters on desktop / 16px on mobile
+- Vertical rhythm snaps to 72px to keep cells feeling monolithic
 
-### Brutalist Layout Rules
-- **Asymmetry preferred** - Break symmetry intentionally
-- **Heavy borders** - 2-4px borders on structural elements
-- **Overlapping elements** - Layers that intersect
-- **Negative space** - Generous whitespace as design element
+### Structural Rules
+- Break symmetry intentionally by offsetting sections ±1 column to echo staggered comb cells
+- Stack panels with 3px separators to mimic rack-mounted instrumentation
+- Allow honeycomb overlays (SVG or CSS masks) to clip hero regions or timeline backgrounds
 
 ## Visual Elements
 
-### Borders & Dividers
-- **Weight**: 2px minimum, 4px for structural elements
-- **Style**: Solid only (no dashed/dotted)
-- **Color**: Shadow Evergreen (`#284334`) or Stone Gray (`#6b7280`)
-- **Corners**: 0px radius (no rounding)
+### Frames & Dividers
+- Border weight: 3px default, 5px for marquee containers
+- Border colors alternate between `#111416` and `#284334` to keep depth subtle
+- Corners remain 0px; if curvature is required for hardware metaphors, bevel rather than round
 
-### Shadows
-- **Hard shadows** - No blur, sharp offset
-- **Single direction** - Primarily bottom-right
-- **High contrast** - `rgba(0,0,0,0.3)` minimum
-- **Layered shadows** - Multiple hard shadows for depth
+### Surfaces & Texture
+- Deploy low-frequency noise or etched metal textures at <6% opacity inside hero slabs
+- Use gradient sheens only along diagonal axes to suggest injected light
 
-### Textures & Patterns
-- **Wood grain** - Subtle organic textures
-- **Leaf patterns** - Geometric leaf silhouettes
-- **Rock textures** - Rough, stone-like surfaces
-- **Grid overlays** - Subtle grid patterns
+### Light & Shadow
+- Shadows are hard, dual-offset: `2px 2px 0 rgba(0,0,0,0.6)` + `-1px -1px 0 rgba(255,143,31,0.35)` to simulate reflected amber
+- Glow effects belong exclusively to live data, typing cursors, and agent avatars
 
 ## Interactive Elements
 
 ### Buttons
-- Heavy borders, no radius
-- Uppercase text, letter-spacing
-- Hard shadow on hover
-- Mechanical movement (no easing)
+- Rectilinear frames with 3px border and 0 radius
+- Default: Graphite fill, amber border; Hover: amber fill, obsidian text; Active: invert plus 1px inner stroke of Signal Nectar
+- Disabled states desaturate to `#2A2F32` but keep border for clarity
 
-### Form Elements
-- Thick borders, no radius
-- Raw appearance
-- Focus states with border color change
-- High contrast validation states
+### Form Inputs
+- Thick border (3px) with inset label bars; focus introduces Field Violet outline + amber caret
+- Validation uses Alert Magma borders plus inline diagnostic copy in Muted Graph
 
 ### Navigation
-- **Horizontal**: Heavy underline on active items
-- **Vertical**: Left border accent on active items
-- **Mobile**: Slide-out with heavy border
+- Global nav uses bottom underline (4px) that animates linearly left→right; no easing
+- Vertical nav/outliner uses 3px leading bar plus honeycomb bullet for active node
+- Mobile: slide-out sheet with 5px left border and darkened scrim
 
-## Animation & Transitions
+## Animation & Motion
 
-### Principles
-- **Mechanical movement** - Linear transitions, no easing
-- **Abrupt changes** - Quick, noticeable state changes
-- **Structural animation** - Elements move as solid blocks
-- **No micro-interactions** - Avoid subtle, playful animations
+### Behavior Rules
+- Motions are servo-like: 120ms linear, 0ms delay, single axis per action
+- Loading indicators use pulsing hex cells or sweeping amber lines across a rail
+- Avoid bounce, spring, or opacity-only transitions; every movement should imply machinery
 
 ## Iconography
 
-### Style
-- **Geometric** - Sharp, angular icons
-- **Monoline** - Consistent stroke width
-- **Minimal** - Simple, recognizable shapes
-- **Forest-themed** - Leaves, trees, rocks, tools
+- Stroke-based, 2px weight, squared caps
+- Geometric primitives (hex, chevron, coil) referencing cells, swarms, or instrumentation
+- Fill icons only for destructive or confirm actions to differentiate from outline-heavy rest of system
 
 ## Responsive Design
 
 ### Breakpoints
-- **Mobile**: < 768px
-- **Tablet**: 768px - 1024px  
-- **Desktop**: > 1024px
+- Mobile < 768px, Tablet 768–1200px, Desktop > 1200px
 
-### Mobile Adaptations
-- **Stacked layouts** - Vertical stacking on mobile
-- **Touch targets** - Minimum 44px
-- **Simplified borders** - Reduce visual complexity
-- **Maintain brutalism** - Don't soften the aesthetic
+### Mobile Behavior
+- Collapse double-column layouts into stacked slabs with 24px separators
+- Reduce border weight to 2px while preserving accent bars
+- Keep amber reserved for the primary CTA even on constrained layouts
 
 ## Component Integration with shadcn/ui
 
-This design system extends **shadcn/ui** components with forest brutalism styling:
-
-### Core Components
-- **Card**: Override with heavy borders, no radius, hard shadows
-- **Button**: Override with uppercase text, hard shadow on hover
-- **Input**: Override with thick borders, raw appearance
-- **Dialog/Modal**: Override with heavy frame styling
-- **Sheet/Sidebar**: Override with thick border, slide animation
-
-### Implementation Approach
-- Use shadcn/ui as the base component library
-- Apply forest brutalism theming via CSS custom properties
-- Override component variants using `class-variance-authority` (cva)
-- Maintain shadcn/ui's accessibility and functionality
+- Extend tokens via CSS vars: `--hive-bg`, `--hive-amber`, `--hive-border`
+- Override shadcn components with `cva` variants that swap borders for each intent (neutral/primary/destructive)
+- Dialogs use double frames: outer obsidian container + inner amber rail (`box-shadow: inset 0 0 0 3px #F5A524`)
+- Sheets/sidebars should animate linearly with `transform: translateX()` and no opacity fade
 
 ## Accessibility
 
-### Requirements
-- **WCAG AA**: Minimum 4.5:1 for normal text
-- **WCAG AAA**: Minimum 7:1 for enhanced contrast
-- **Focus management**: Visible focus indicators, logical tab order
-- **Screen readers**: Semantic HTML, meaningful ARIA labels
-
-### Focus States
-- High contrast outlines (2px minimum)
-- Clear visual feedback for keyboard navigation
-- Maintain brutalist aesthetic while ensuring accessibility
+- Maintain 4.5:1 contrast minimum; amber on graphite typically meets 7:1
+- Focus outlines: 3px Field Violet ring + 1px amber inset to stay on-brand
+- Screen-reader regions should describe cell lineage (“Hive workspace sidebar”, “Agent pulse stream”)
 
 ## Brand Voice & Tone
 
-- **Direct**: Clear, straightforward language
-- **Confident**: Bold statements, no hedging
-- **Synthetic**: References to constructs, assembly, orchestration
-- **Technical**: Precise, architectural terminology
+- **Direct** – issue commands, not suggestions
+- **Assembly-minded** – reference cells, swarms, scaffolds
+- **Confident** – short clauses, assertive verbs, avoid filler
+- **Technical poetry** – combine engineering language with biological cues (e.g., “ignite the swarm channel”)
 
 ## Inspiration & References
 
-### Architectural References
-- **Brutalist Websites**: brutalistwebsites.com
-- **Forest Architecture**: Tadao Ando's concrete forest works
-- **Natural Brutalism**: Peter Zumthor's thermal baths
+- James Turrell light chambers, NASA mission control, stainless lab hardware
+- Honeycomb cores, microchip traces, beekeeping frames, radio stack schematics
+- Mood board keywords: obsidian slab, molten amber, carbon weave, servo indicator, pollen flare
 
-### Mood Board Elements
-- **Concrete textures** - Raw, unfinished surfaces
-- **Tree cross-sections** - Growth rings as patterns
-- **Geometric leaves** - Stylized natural forms
-- **Rock formations** - Angular, solid structures
-
-This design system provides the foundation for building consistent, brutalist forest-themed interfaces that are both visually striking and functionally robust while integrating seamlessly with shadcn/ui components.
+This Hive system ensures every UI surface feels like part of the same cell assembly: austere graphite shells lit by intelligent amber energy, disciplined enough for operators yet evocative enough for agents.

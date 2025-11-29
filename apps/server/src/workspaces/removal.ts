@@ -2,8 +2,8 @@ import { rm } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import { closeAgentSession as closeDefaultAgentSession } from "../agents/service";
 import { db as defaultDb } from "../db";
-import { constructs } from "../schema/constructs";
-import { stopServicesForConstruct as stopDefaultConstructServices } from "../services/supervisor";
+import { cells } from "../schema/cells";
+import { stopServicesForCell as stopDefaultCellServices } from "../services/supervisor";
 import type { WorktreeManager } from "../worktree/manager";
 import { createWorktreeManager } from "../worktree/manager";
 import {
@@ -14,18 +14,18 @@ import {
 
 export type WorkspaceRemovalResult = {
   workspace: WorkspaceRecord;
-  deletedConstructIds: string[];
+  deletedCellIds: string[];
 };
 
 export type WorkspaceRemovalDependencies = {
   db: typeof defaultDb;
-  stopConstructServices: typeof stopDefaultConstructServices;
+  stopCellServices: typeof stopDefaultCellServices;
   closeAgentSession: typeof closeDefaultAgentSession;
 };
 
 const defaultDependencies: WorkspaceRemovalDependencies = {
   db: defaultDb,
-  stopConstructServices: stopDefaultConstructServices,
+  stopCellServices: stopDefaultCellServices,
   closeAgentSession: closeDefaultAgentSession,
 };
 
@@ -35,7 +35,7 @@ export async function removeWorkspaceCascade(
 ): Promise<WorkspaceRemovalResult | null> {
   const {
     db: database,
-    stopConstructServices,
+    stopCellServices,
     closeAgentSession,
   } = {
     ...defaultDependencies,
@@ -50,13 +50,13 @@ export async function removeWorkspaceCascade(
     return null;
   }
 
-  const constructsForWorkspace = await database
+  const cellsForWorkspace = await database
     .select({
-      id: constructs.id,
-      workspacePath: constructs.workspacePath,
+      id: cells.id,
+      workspacePath: cells.workspacePath,
     })
-    .from(constructs)
-    .where(eq(constructs.workspaceId, workspaceId));
+    .from(cells)
+    .where(eq(cells.workspaceId, workspaceId));
 
   let worktreeManager: WorktreeManager | null = null;
   try {
@@ -68,56 +68,49 @@ export async function removeWorkspaceCascade(
     });
   }
 
-  const deletedConstructIds: string[] = [];
+  const deletedCellIds: string[] = [];
 
-  for (const construct of constructsForWorkspace) {
-    await closeAgentSession(construct.id).catch((error) =>
+  for (const cell of cellsForWorkspace) {
+    await closeAgentSession(cell.id).catch((error) =>
       logWorkspaceRemovalWarning("Failed to close agent session", {
-        constructId: construct.id,
+        cellId: cell.id,
         error: formatError(error),
       })
     );
 
-    await stopConstructServices(construct.id, { releasePorts: true }).catch(
-      (error) =>
-        logWorkspaceRemovalWarning("Failed to stop construct services", {
-          constructId: construct.id,
-          error: formatError(error),
-        })
+    await stopCellServices(cell.id, { releasePorts: true }).catch((error) =>
+      logWorkspaceRemovalWarning("Failed to stop cell services", {
+        cellId: cell.id,
+        error: formatError(error),
+      })
     );
 
-    await cleanupConstructWorkspace(
-      worktreeManager,
-      construct.id,
-      construct.workspacePath
-    );
+    await cleanupCellWorkspace(worktreeManager, cell.id, cell.workspacePath);
 
-    deletedConstructIds.push(construct.id);
+    deletedCellIds.push(cell.id);
   }
 
-  if (deletedConstructIds.length > 0) {
-    await database
-      .delete(constructs)
-      .where(eq(constructs.workspaceId, workspaceId));
+  if (deletedCellIds.length > 0) {
+    await database.delete(cells).where(eq(cells.workspaceId, workspaceId));
   }
 
   await removeWorkspaceRecord(workspaceId);
 
-  return { workspace, deletedConstructIds };
+  return { workspace, deletedCellIds };
 }
 
-async function cleanupConstructWorkspace(
+async function cleanupCellWorkspace(
   manager: WorktreeManager | null,
-  constructId: string,
+  cellId: string,
   workspacePath?: string | null
 ): Promise<void> {
   if (manager) {
     try {
-      manager.removeWorktree(constructId);
+      manager.removeWorktree(cellId);
       return;
     } catch (error) {
       logWorkspaceRemovalWarning("Failed to remove git worktree", {
-        constructId,
+        cellId,
         error: formatError(error),
       });
     }
@@ -128,7 +121,7 @@ async function cleanupConstructWorkspace(
       await rm(workspacePath, { recursive: true, force: true });
     } catch (error) {
       logWorkspaceRemovalWarning("Failed to remove workspace directory", {
-        constructId,
+        cellId,
         workspacePath,
         error: formatError(error),
       });

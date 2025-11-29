@@ -1,19 +1,17 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { SyntheticConfig } from "./schema";
-import { syntheticConfigSchema } from "./schema";
+import type { HiveConfig } from "./schema";
+import { hiveConfigSchema } from "./schema";
 
-export async function loadConfig(
-  workspaceRoot: string
-): Promise<SyntheticConfig> {
-  const configPath = join(workspaceRoot, "synthetic.config.ts");
+export async function loadConfig(workspaceRoot: string): Promise<HiveConfig> {
+  const configPath = join(workspaceRoot, "hive.config.ts");
 
   if (!existsSync(configPath)) {
     throw new Error(
-      `Config not found at ${configPath}. Create synthetic.config.ts using defineSyntheticConfig().`
+      `Config not found at ${configPath}. Create hive.config.ts using defineHiveConfig().`
     );
   }
 
   const configModule = await import(configPath);
-  return syntheticConfigSchema.parse(configModule.default);
+  return hiveConfigSchema.parse(configModule.default);
 }

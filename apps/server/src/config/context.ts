@@ -1,11 +1,11 @@
 import { resolve as resolvePath } from "node:path";
 import { loadConfig } from "./loader";
-import type { SyntheticConfig } from "./schema";
+import type { HiveConfig } from "./schema";
 
-const configCache = new Map<string, Promise<SyntheticConfig>>();
+const configCache = new Map<string, Promise<HiveConfig>>();
 
 export function resolveWorkspaceRoot(): string {
-  const forcedWorkspaceRoot = process.env.SYNTHETIC_WORKSPACE_ROOT;
+  const forcedWorkspaceRoot = process.env.HIVE_WORKSPACE_ROOT;
   if (forcedWorkspaceRoot) {
     return resolvePath(forcedWorkspaceRoot);
   }
@@ -18,17 +18,15 @@ export function resolveWorkspaceRoot(): string {
   return currentDir;
 }
 
-export function getSyntheticConfig(
-  workspaceRoot?: string
-): Promise<SyntheticConfig> {
+export function getHiveConfig(workspaceRoot?: string): Promise<HiveConfig> {
   const normalizedRoot = resolvePath(workspaceRoot ?? resolveWorkspaceRoot());
   if (!configCache.has(normalizedRoot)) {
     configCache.set(normalizedRoot, loadConfig(normalizedRoot));
   }
-  return configCache.get(normalizedRoot) as Promise<SyntheticConfig>;
+  return configCache.get(normalizedRoot) as Promise<HiveConfig>;
 }
 
-export function clearSyntheticConfigCache(workspaceRoot?: string): void {
+export function clearHiveConfigCache(workspaceRoot?: string): void {
   if (workspaceRoot) {
     configCache.delete(resolvePath(workspaceRoot));
     return;

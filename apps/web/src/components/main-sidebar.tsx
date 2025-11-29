@@ -31,7 +31,7 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
   return (
     <Sidebar
       className={cn(
-        "border-[#284334] border-r-4 bg-sidebar text-sidebar-foreground",
+        "border-border border-r-4 bg-sidebar text-sidebar-foreground",
         className
       )}
       collapsible="icon"
@@ -41,20 +41,18 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
         <div className="flex h-12 items-center gap-3 transition-none group-data-[collapsible=icon]:justify-center">
           <SidebarTrigger
             aria-label="Toggle sidebar"
-            className="size-9 rounded-none border-2 border-[#284334] bg-[#1a2f1a] text-[#f4f7f2] shadow-[3px_3px_0_rgba(0,0,0,0.65)] transition-none hover:bg-[#203820] hover:text-[#f4f7f2] group-data-[collapsible=icon]:mx-auto"
+            className="size-9 rounded-none border-2 border-border bg-sidebar text-sidebar-foreground shadow-[3px_3px_0_color-mix(in_oklch,var(--color-shadow-color)_65%,transparent)] transition-none hover:bg-sidebar/80 hover:text-sidebar-foreground group-data-[collapsible=icon]:mx-auto"
           />
           <Link
-            aria-label="Synthetic home"
+            aria-label="Hive home"
             className="group flex h-full items-center gap-3 uppercase tracking-[0.28em] transition-none group-data-[collapsible=icon]:hidden"
             to="/"
           >
             <span
               aria-hidden
-              className="block h-10 w-1 bg-[#5a7c5a] shadow-[4px_0_0_0_rgba(0,0,0,0.45)] transition-none group-hover:bg-[#6b8e6b]"
+              className="block h-10 w-1 bg-primary shadow-[4px_0_0_0_color-mix(in_oklch,var(--color-shadow-color)_45%,transparent)] transition-none group-hover:bg-primary/80"
             />
-            <span className="font-semibold text-foreground text-sm">
-              Synthetic
-            </span>
+            <span className="font-semibold text-foreground text-sm">Hive</span>
           </Link>
         </div>
       </SidebarHeader>
@@ -94,8 +92,8 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
                       asChild
                       className={cn(
                         "rounded-none border-2 border-transparent text-muted-foreground uppercase tracking-[0.18em] transition-none",
-                        "data-[active=true]:border-[#5a7c5a] data-[active=true]:bg-[#22382a] data-[active=true]:text-[#f4f7f2]",
-                        "hover:border-[#5a7c5a] hover:bg-[#22382a] hover:text-[#f4f7f2]",
+                        "data-[active=true]:border-primary data-[active=true]:bg-primary/15 data-[active=true]:text-foreground",
+                        "hover:border-primary hover:bg-primary/10 hover:text-foreground",
                         "group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-2 group-data-[collapsible=icon]:text-foreground"
                       )}
                       isActive={isActive}

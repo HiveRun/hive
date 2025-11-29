@@ -91,7 +91,7 @@ export const templateSchema = z.object({
   teardown: z
     .array(z.string())
     .optional()
-    .describe("Cleanup commands on construct stop"),
+    .describe("Cleanup commands on cell stop"),
   includePatterns: z
     .array(z.string())
     .optional()
@@ -182,10 +182,10 @@ export const defaultsSchema = z.object({
   templateId: z
     .string()
     .optional()
-    .describe("Default template to use when creating constructs"),
+    .describe("Default template to use when creating cells"),
 });
 
-export const syntheticConfigSchema = z.object({
+export const hiveConfigSchema = z.object({
   opencode: opencodeConfigSchema.describe(
     "Global OpenCode configuration shared across templates"
   ),
@@ -197,13 +197,13 @@ export const syntheticConfigSchema = z.object({
     ),
   templates: z
     .record(z.string(), templateSchema)
-    .describe("Available construct templates"),
+    .describe("Available cell templates"),
   voice: voiceConfigSchema
     .optional()
-    .describe("Voice input configuration shared by all constructs"),
+    .describe("Voice input configuration shared by all cells"),
   defaults: defaultsSchema
     .optional()
-    .describe("Default values for construct creation"),
+    .describe("Default values for cell creation"),
 });
 
 export type ProcessService = z.infer<typeof processServiceSchema>;
@@ -216,10 +216,8 @@ export type VoiceTranscriptionConfig = z.infer<typeof voiceTranscriptionSchema>;
 export type VoiceConfig = z.infer<typeof voiceConfigSchema>;
 export type OpencodeConfig = z.infer<typeof opencodeConfigSchema>;
 export type Defaults = z.infer<typeof defaultsSchema>;
-export type SyntheticConfig = z.infer<typeof syntheticConfigSchema>;
+export type HiveConfig = z.infer<typeof hiveConfigSchema>;
 
-export function defineSyntheticConfig(
-  config: SyntheticConfig
-): SyntheticConfig {
-  return syntheticConfigSchema.parse(config);
+export function defineHiveConfig(config: HiveConfig): HiveConfig {
+  return hiveConfigSchema.parse(config);
 }

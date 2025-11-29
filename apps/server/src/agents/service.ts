@@ -10,10 +10,10 @@ import {
   type Session,
 } from "@opencode-ai/sdk";
 import { eq } from "drizzle-orm";
-import { getSyntheticConfig } from "../config/context";
-import type { SyntheticConfig, Template } from "../config/schema";
+import { getHiveConfig } from "../config/context";
+import type { HiveConfig, Template } from "../config/schema";
 import { db } from "../db";
-import { type Construct, constructs } from "../schema/constructs";
+import { type Cell, cells } from "../schema/cells";
 import { publishAgentEvent } from "./events";
 import type {
   AgentMessageRecord,
@@ -25,14 +25,14 @@ import type {
 const AUTH_PATH = join(homedir(), ".local", "share", "opencode", "auth.json");
 
 const runtimeRegistry = new Map<string, RuntimeHandle>();
-const constructSessionMap = new Map<string, string>();
+const cellSessionMap = new Map<string, string>();
 type DirectoryQuery = {
   directory?: string;
 };
 
 type RuntimeHandle = {
   session: Session;
-  construct: Construct;
+  cell: Cell;
   providerId: string;
   modelId?: string;
   directoryQuery: DirectoryQuery;
@@ -75,7 +75,7 @@ type TemplateAgentConfig = {
 
 function resolveTemplateAgentConfig(
   template: Template,
-  config: SyntheticConfig
+  config: HiveConfig
 ): TemplateAgentConfig {
   if (template.agent) {
     return {
@@ -91,10 +91,10 @@ function resolveTemplateAgentConfig(
 }
 
 export async function ensureAgentSession(
-  constructId: string,
+  cellId: string,
   options?: { force?: boolean }
 ): Promise<AgentSessionRecord> {
-  const runtime = await ensureRuntimeForConstruct(constructId, options);
+  const runtime = await ensureRuntimeForCell(cellId, options);
   return toSessionRecord(runtime);
 }
 
@@ -109,11 +109,11 @@ export async function fetchAgentSession(
   }
 }
 
-export async function fetchAgentSessionForConstruct(
-  constructId: string
+export async function fetchAgentSessionForCell(
+  cellId: string
 ): Promise<AgentSessionRecord | null> {
   try {
-    const runtime = await ensureRuntimeForConstruct(constructId, {
+    const runtime = await ensureRuntimeForCell(cellId, {
       force: false,
     });
     return toSessionRecord(runtime);
@@ -145,11 +145,11 @@ export async function stopAgentSession(sessionId: string): Promise<void> {
 
   await runtime.stop();
   runtimeRegistry.delete(sessionId);
-  constructSessionMap.delete(runtime.construct.id);
+  cellSessionMap.delete(runtime.cell.id);
 }
 
-export async function closeAgentSession(constructId: string): Promise<void> {
-  const sessionId = constructSessionMap.get(constructId);
+export async function closeAgentSession(cellId: string): Promise<void> {
+  const sessionId = cellSessionMap.get(cellId);
   if (!sessionId) {
     return;
   }
@@ -192,22 +192,22 @@ export async function ensureRuntimeForSession(
     return existing;
   }
 
-  const construct = await getConstructBySessionId(sessionId);
-  if (!construct) {
+  const cell = await getCellBySessionId(sessionId);
+  if (!cell) {
     throw new Error("Agent session not found");
   }
 
-  const runtime = await ensureRuntimeForConstruct(construct.id, {
+  const runtime = await ensureRuntimeForCell(cell.id, {
     force: false,
   });
   return runtime;
 }
 
-async function ensureRuntimeForConstruct(
-  constructId: string,
+async function ensureRuntimeForCell(
+  cellId: string,
   options?: { force?: boolean }
 ): Promise<RuntimeHandle> {
-  const currentSessionId = constructSessionMap.get(constructId);
+  const currentSessionId = cellSessionMap.get(cellId);
   if (currentSessionId && !options?.force) {
     const activeRuntime = runtimeRegistry.get(currentSessionId);
     if (activeRuntime) {
@@ -215,17 +215,17 @@ async function ensureRuntimeForConstruct(
     }
   }
 
-  const construct = await getConstructById(constructId);
-  if (!construct) {
-    throw new Error("Construct not found");
+  const cell = await getCellById(cellId);
+  if (!cell) {
+    throw new Error("Cell not found");
   }
 
-  const config = await getSyntheticConfig(
-    construct.workspaceRootPath ?? construct.workspacePath
+  const config = await getHiveConfig(
+    cell.workspaceRootPath ?? cell.workspacePath
   );
-  const template = config.templates[construct.templateId];
+  const template = config.templates[cell.templateId];
   if (!template) {
-    throw new Error("Construct template configuration not found");
+    throw new Error("Cell template configuration not found");
   }
 
   const agentConfig = resolveTemplateAgentConfig(template, config);
@@ -233,27 +233,27 @@ async function ensureRuntimeForConstruct(
   await ensureProviderCredentials(agentConfig.providerId);
 
   const runtime = await startOpencodeRuntime({
-    construct,
+    cell,
     providerId: agentConfig.providerId,
     modelId: agentConfig.modelId,
     force: options?.force ?? false,
   });
 
-  constructSessionMap.set(construct.id, runtime.session.id);
+  cellSessionMap.set(cell.id, runtime.session.id);
   runtimeRegistry.set(runtime.session.id, runtime);
 
   return runtime;
 }
 
 type StartRuntimeArgs = {
-  construct: Construct;
+  cell: Cell;
   providerId: string;
   modelId?: string;
   force: boolean;
 };
 
 async function startOpencodeRuntime({
-  construct,
+  cell,
   providerId,
   modelId,
   force,
@@ -267,27 +267,27 @@ async function startOpencodeRuntime({
     baseUrl: server.url,
   });
 
-  const directoryQuery: DirectoryQuery = { directory: construct.workspacePath };
+  const directoryQuery: DirectoryQuery = { directory: cell.workspacePath };
   const { session, created } = await resolveOpencodeSession({
     client,
-    construct,
+    cell,
     directoryQuery,
     force,
   });
 
-  if (created || construct.opencodeSessionId !== session.id) {
+  if (created || cell.opencodeSessionId !== session.id) {
     await db
-      .update(constructs)
+      .update(cells)
       .set({ opencodeSessionId: session.id })
-      .where(eq(constructs.id, construct.id));
-    construct.opencodeSessionId = session.id;
+      .where(eq(cells.id, cell.id));
+    cell.opencodeSessionId = session.id;
   }
 
   const abortController = new AbortController();
 
   const runtime: RuntimeHandle = {
     session,
-    construct,
+    cell,
     providerId,
     modelId,
     directoryQuery,
@@ -342,22 +342,22 @@ async function startOpencodeRuntime({
 
 type ResolveSessionArgs = {
   client: ReturnType<typeof createOpencodeClient>;
-  construct: Construct;
+  cell: Cell;
   directoryQuery: DirectoryQuery;
   force: boolean;
 };
 
 async function resolveOpencodeSession({
   client,
-  construct,
+  cell,
   directoryQuery,
   force,
 }: ResolveSessionArgs): Promise<{ session: Session; created: boolean }> {
-  if (!force && construct.opencodeSessionId) {
+  if (!force && cell.opencodeSessionId) {
     const existing = await getRemoteSession(
       client,
       directoryQuery,
-      construct.opencodeSessionId
+      cell.opencodeSessionId
     );
     if (existing) {
       return { session: existing, created: false };
@@ -366,7 +366,7 @@ async function resolveOpencodeSession({
 
   const created = await client.session.create({
     body: {
-      title: construct.name,
+      title: cell.name,
     },
     query: directoryQuery,
   });
@@ -551,11 +551,11 @@ function determineMessageState(message: Message): AgentMessageState {
 function toSessionRecord(runtime: RuntimeHandle): AgentSessionRecord {
   return {
     id: runtime.session.id,
-    constructId: runtime.construct.id,
-    templateId: runtime.construct.templateId,
+    cellId: runtime.cell.id,
+    templateId: runtime.cell.templateId,
     provider: runtime.providerId,
     status: runtime.status,
-    workspacePath: runtime.construct.workspacePath,
+    workspacePath: runtime.cell.workspacePath,
     createdAt: new Date(runtime.session.time.created).toISOString(),
     updatedAt: new Date(runtime.session.time.updated).toISOString(),
   };
@@ -599,22 +599,16 @@ function getRpcErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-async function getConstructById(id: string): Promise<Construct | null> {
-  const [construct] = await db
-    .select()
-    .from(constructs)
-    .where(eq(constructs.id, id))
-    .limit(1);
-  return construct ?? null;
+async function getCellById(id: string): Promise<Cell | null> {
+  const [cell] = await db.select().from(cells).where(eq(cells.id, id)).limit(1);
+  return cell ?? null;
 }
 
-async function getConstructBySessionId(
-  sessionId: string
-): Promise<Construct | null> {
-  const [construct] = await db
+async function getCellBySessionId(sessionId: string): Promise<Cell | null> {
+  const [cell] = await db
     .select()
-    .from(constructs)
-    .where(eq(constructs.opencodeSessionId, sessionId))
+    .from(cells)
+    .where(eq(cells.opencodeSessionId, sessionId))
     .limit(1);
-  return construct ?? null;
+  return cell ?? null;
 }

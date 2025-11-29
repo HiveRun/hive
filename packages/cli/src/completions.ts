@@ -34,8 +34,8 @@ const QUOTED_COMPLETION_SUBCOMMANDS = COMPLETION_SUBCOMMANDS.map(
 const QUOTED_SHELLS = COMPLETION_SHELLS.map((shell) => `"${shell}"`).join(" ");
 
 const COMPLETION_SCRIPTS: Record<(typeof COMPLETION_SHELLS)[number], string> = {
-  bash: `# bash completion for synthetic
-_synthetic_completions() {
+  bash: `# bash completion for hive
+_hive_completions() {
   local cur prev
   COMPREPLY=()
   cur="\${COMP_WORDS[COMP_CWORD]}"
@@ -64,11 +64,11 @@ _synthetic_completions() {
     return 0
   fi
 }
-complete -F _synthetic_completions synthetic
+complete -F _hive_completions hive
 `,
 
-  zsh: `#compdef synthetic
-_synthetic() {
+  zsh: `#compdef hive
+_hive() {
   local -a primary_commands
   primary_commands=(${QUOTED_PRIMARY_SUBCOMMANDS})
   local -a help_targets
@@ -104,17 +104,17 @@ _synthetic() {
 
   _values 'option' '--foreground' '--help' '-h'
 }
-compdef _synthetic synthetic
+compdef _hive hive
 `,
 
-  fish: `# fish completion for synthetic
-complete -c synthetic -f
-complete -c synthetic -n '__fish_use_subcommand' -a '${PRIMARY_SUBCOMMANDS_TEXT}'
-complete -c synthetic -n '__fish_seen_subcommand_from help' -a '${HELP_TARGETS_TEXT}'
-complete -c synthetic -n '__fish_seen_subcommand_from completions; and not __fish_seen_subcommand_from install' -a '${COMPLETION_SUBCOMMANDS_TEXT}'
-complete -c synthetic -n '__fish_seen_subcommand_from completions; and __fish_seen_subcommand_from install' -a '${COMPLETION_SHELL_TEXT}'
-complete -c synthetic -l foreground -d 'Run in the foreground instead of background mode'
-complete -c synthetic -s h -l help -d 'Show help output'
+  fish: `# fish completion for hive
+complete -c hive -f
+complete -c hive -n '__fish_use_subcommand' -a '${PRIMARY_SUBCOMMANDS_TEXT}'
+complete -c hive -n '__fish_seen_subcommand_from help' -a '${HELP_TARGETS_TEXT}'
+complete -c hive -n '__fish_seen_subcommand_from completions; and not __fish_seen_subcommand_from install' -a '${COMPLETION_SUBCOMMANDS_TEXT}'
+complete -c hive -n '__fish_seen_subcommand_from completions; and __fish_seen_subcommand_from install' -a '${COMPLETION_SHELL_TEXT}'
+complete -c hive -l foreground -d 'Run in the foreground instead of background mode'
+complete -c hive -s h -l help -d 'Show help output'
 `,
 };
 

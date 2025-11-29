@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OWNER="SyntheticRun"
-REPO="synthetic"
-INSTALL_ROOT="${SYNTHETIC_HOME:-$HOME/.synthetic}"
-BIN_DIR="${SYNTHETIC_BIN_DIR:-$INSTALL_ROOT/bin}"
+OWNER="HiveRun"
+REPO="hive"
+INSTALL_ROOT="${HIVE_HOME:-$HOME/.hive}"
+BIN_DIR="${HIVE_BIN_DIR:-$INSTALL_ROOT/bin}"
 DEFAULT_INSTALL_COMMAND="curl -fsSL https://raw.githubusercontent.com/$OWNER/$REPO/main/scripts/install.sh | bash"
 RELEASES_DIR="$INSTALL_ROOT/releases"
 STATE_DIR="$INSTALL_ROOT/state"
-VERSION="${SYNTHETIC_VERSION:-latest}"
-CUSTOM_URL="${SYNTHETIC_INSTALL_URL:-}"
+VERSION="${HIVE_VERSION:-latest}"
+CUSTOM_URL="${HIVE_INSTALL_URL:-}"
 
 require() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -23,7 +23,7 @@ add_path_entry() {
   local command_line="$2"
 
   if [ -f "$file" ] && grep -Fqx "$command_line" "$file"; then
-    echo "Synthetic bin directory already exported in $file"
+    echo "Hive bin directory already exported in $file"
     return
   fi
 
@@ -31,12 +31,12 @@ add_path_entry() {
   touch "$file"
 
   if [ ! -w "$file" ]; then
-    echo "Add Synthetic to PATH manually by appending:\n  $command_line\nto $file"
+    echo "Add Hive to PATH manually by appending:\n  $command_line\nto $file"
     return
   fi
 
   {
-    printf '\n# synthetic\n'
+    printf '\n# hive\n'
     printf '%s\n' "$command_line"
   } >> "$file"
   echo "Added $BIN_DIR to PATH in $file"
@@ -105,7 +105,7 @@ case "$arch" in
   *) echo "Unsupported architecture: $arch" >&2 && exit 1 ;;
 esac
 
-filename="synthetic-${platform}-${arch}.tar.gz"
+filename="hive-${platform}-${arch}.tar.gz"
 if [ -n "$CUSTOM_URL" ]; then
   download="$CUSTOM_URL"
 elif [ "$VERSION" = "latest" ]; then
@@ -129,14 +129,14 @@ if [[ "$download" == file://* ]]; then
     echo "Error: local archive $local_file not found" >&2
     exit 1
   fi
-  echo "Copying Synthetic archive from $local_file"
+  echo "Copying Hive archive from $local_file"
   cp "$local_file" "$archive_path"
 else
-  echo "Downloading Synthetic (${platform}/${arch})"
+  echo "Downloading Hive (${platform}/${arch})"
   curl -fsSL "$download" -o "$archive_path"
 fi
 
-install_command_override="${SYNTHETIC_INSTALL_COMMAND:-}"
+install_command_override="${HIVE_INSTALL_COMMAND:-}"
 
 tar -xzf "$archive_path" -C "$workdir"
 release_dir=$(tar -tzf "$archive_path" | head -1 | cut -d/ -f1 || true)
@@ -148,27 +148,27 @@ target="$RELEASES_DIR/$release_dir"
 rm -rf "$target"
 mv "$src" "$target"
 
-cat > "$target/synthetic.env" <<EOF
-DATABASE_URL="$STATE_DIR/synthetic.db"
-SYNTHETIC_WEB_DIST="$target/public"
-SYNTHETIC_MIGRATIONS_DIR="$target/migrations"
-SYNTHETIC_LOG_DIR="$INSTALL_ROOT/logs"
-SYNTHETIC_INSTALL_URL="$download"
+cat > "$target/hive.env" <<EOF
+DATABASE_URL="$STATE_DIR/hive.db"
+HIVE_WEB_DIST="$target/public"
+HIVE_MIGRATIONS_DIR="$target/migrations"
+HIVE_LOG_DIR="$INSTALL_ROOT/logs"
+HIVE_INSTALL_URL="$download"
 EOF
 
 if [ -n "$install_command_override" ]; then
-  echo "SYNTHETIC_INSTALL_COMMAND=\"$install_command_override\"" >> "$target/synthetic.env"
+  echo "HIVE_INSTALL_COMMAND=\"$install_command_override\"" >> "$target/hive.env"
 fi
 
 ln -snf "$target" "$INSTALL_ROOT/current"
-ln -snf "$target/synthetic" "$BIN_DIR/synthetic"
-chmod +x "$BIN_DIR/synthetic"
+ln -snf "$target/hive" "$BIN_DIR/hive"
+chmod +x "$BIN_DIR/hive"
 
 configure_shell_path
 
 cat <<EOF
-Synthetic installed to $target
+Hive installed to $target
 
 Launch with:
-  synthetic
+  hive
 EOF

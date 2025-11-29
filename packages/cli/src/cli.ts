@@ -19,17 +19,17 @@ import {
   DEFAULT_WEB_URL,
   pidFilePath,
   startServer,
-} from "@synthetic/server";
+} from "@hive/server";
 import { Builtins, Cli, Command, Option } from "clipanion";
 import pc from "picocolors";
 
 import { COMPLETION_SHELLS, renderCompletionScript } from "./completions";
 
 const rawArgv = process.argv.slice(2);
-if (process.env.SYNTHETIC_DEBUG_ARGS === "1") {
-  process.stderr.write(`[synthetic argv] ${JSON.stringify(rawArgv)}\n`);
+if (process.env.HIVE_DEBUG_ARGS === "1") {
+  process.stderr.write(`[hive argv] ${JSON.stringify(rawArgv)}\n`);
 }
-if (!process.env.SYNTHETIC_SHELL_MODE) {
+if (!process.env.HIVE_SHELL_MODE) {
   await import("dotenv/config");
 }
 
@@ -47,12 +47,12 @@ const coerceHelpAlias = (argv: string[]) => {
 const cliArgv = coerceHelpAlias(rawArgv);
 
 const DEFAULT_INSTALL_COMMAND =
-  "curl -fsSL https://raw.githubusercontent.com/SyntheticRun/synthetic/main/scripts/install.sh | bash";
+  "curl -fsSL https://raw.githubusercontent.com/HiveRun/hive/main/scripts/install.sh | bash";
 const LOCAL_INSTALL_SCRIPT_PATH = join(binaryDirectory, "install.sh");
-const CLI_VERSION = process.env.SYNTHETIC_VERSION ?? "dev";
+const CLI_VERSION = process.env.HIVE_VERSION ?? "dev";
 
 const resolveWorkspaceRootEnv = () =>
-  process.env.SYNTHETIC_WORKSPACE_ROOT ?? process.cwd();
+  process.env.HIVE_WORKSPACE_ROOT ?? process.cwd();
 
 const symbols = {
   info: pc.cyan("ℹ"),
@@ -80,8 +80,8 @@ const printSummary = (title: string, rows: [string, string][]) => {
   process.stdout.write(`${lines.join("\n")}\n`);
 };
 
-const resolveSyntheticHomePath = () =>
-  process.env.SYNTHETIC_HOME ?? join(homedir(), ".synthetic");
+const resolveHiveHomePath = () =>
+  process.env.HIVE_HOME ?? join(homedir(), ".hive");
 
 type CompletionShell = (typeof COMPLETION_SHELLS)[number];
 
@@ -107,20 +107,20 @@ const getDefaultCompletionInstallPath = (shell: CompletionShell) => {
       "share",
       "bash-completion",
       "completions",
-      "synthetic"
+      "hive"
     );
   }
   if (shell === "fish") {
-    return join(home, ".config", "fish", "completions", "synthetic.fish");
+    return join(home, ".config", "fish", "completions", "hive.fish");
   }
   const zshCustom = process.env.ZSH_CUSTOM;
   if (zshCustom) {
-    return join(zshCustom, "completions", "_synthetic");
+    return join(zshCustom, "completions", "_hive");
   }
   if (existsSync(join(home, ".oh-my-zsh"))) {
-    return join(home, ".oh-my-zsh", "custom", "completions", "_synthetic");
+    return join(home, ".oh-my-zsh", "custom", "completions", "_hive");
   }
-  return join(home, ".config", "zsh", "completions", "_synthetic");
+  return join(home, ".config", "zsh", "completions", "_hive");
 };
 
 const installCompletionScript = (
@@ -258,8 +258,8 @@ const launchDetachedServer = (): LaunchResult => {
       cwd: binaryDirectory,
       env: {
         ...process.env,
-        SYNTHETIC_FOREGROUND: "1",
-        SYNTHETIC_WORKSPACE_ROOT: resolveWorkspaceRootEnv(),
+        HIVE_FOREGROUND: "1",
+        HIVE_WORKSPACE_ROOT: resolveWorkspaceRootEnv(),
       },
       detached: true,
       stdio: ["ignore", stdoutFd, stderrFd],
@@ -284,12 +284,12 @@ const ensureDaemonRunning = async () => {
     return true;
   }
 
-  logInfo("Synthetic is not running. Starting background daemon...");
+  logInfo("Hive is not running. Starting background daemon...");
   try {
     launchDetachedServer();
   } catch (error) {
     logError(
-      `Failed to start Synthetic: ${
+      `Failed to start Hive: ${
         error instanceof Error ? error.message : String(error)
       }`
     );
@@ -304,8 +304,8 @@ const ensureDaemonRunning = async () => {
 };
 
 const resolveLogDirectory = () =>
-  process.env.SYNTHETIC_LOG_DIR ?? join(binaryDirectory, "logs");
-const resolveLogFilePath = () => join(resolveLogDirectory(), "synthetic.log");
+  process.env.HIVE_LOG_DIR ?? join(binaryDirectory, "logs");
+const resolveLogFilePath = () => join(resolveLogDirectory(), "hive.log");
 
 const openDefaultBrowser = (url: string) => {
   const platform = process.platform;
@@ -342,29 +342,29 @@ const openDefaultBrowser = (url: string) => {
 };
 
 const getTauriExecutableCandidates = () => {
-  const override = process.env.SYNTHETIC_TAURI_BINARY;
+  const override = process.env.HIVE_TAURI_BINARY;
   const candidates: string[] = [];
   if (override) {
     candidates.push(override);
   }
 
   if (process.platform === "darwin") {
-    candidates.push(join(binaryDirectory, "Synthetic Desktop.app"));
-    candidates.push(join(binaryDirectory, "synthetic-desktop"));
-    candidates.push(join(binaryDirectory, "Synthetic.app"));
-    candidates.push(join(binaryDirectory, "synthetic-tauri"));
+    candidates.push(join(binaryDirectory, "Hive Desktop.app"));
+    candidates.push(join(binaryDirectory, "hive-desktop"));
+    candidates.push(join(binaryDirectory, "Hive.app"));
+    candidates.push(join(binaryDirectory, "hive-tauri"));
   } else if (process.platform === "win32") {
-    candidates.push(join(binaryDirectory, "synthetic-desktop.exe"));
-    candidates.push(join(binaryDirectory, "Synthetic Desktop.exe"));
-    candidates.push(join(binaryDirectory, "synthetic-tauri.exe"));
-    candidates.push(join(binaryDirectory, "Synthetic.exe"));
+    candidates.push(join(binaryDirectory, "hive-desktop.exe"));
+    candidates.push(join(binaryDirectory, "Hive Desktop.exe"));
+    candidates.push(join(binaryDirectory, "hive-tauri.exe"));
+    candidates.push(join(binaryDirectory, "Hive.exe"));
   } else {
-    candidates.push(join(binaryDirectory, "synthetic-desktop.AppImage"));
-    candidates.push(join(binaryDirectory, "synthetic-desktop"));
-    candidates.push(join(binaryDirectory, "synthetic-desktop.bin"));
-    candidates.push(join(binaryDirectory, "synthetic-tauri.AppImage"));
-    candidates.push(join(binaryDirectory, "synthetic-tauri"));
-    candidates.push(join(binaryDirectory, "synthetic-tauri.bin"));
+    candidates.push(join(binaryDirectory, "hive-desktop.AppImage"));
+    candidates.push(join(binaryDirectory, "hive-desktop"));
+    candidates.push(join(binaryDirectory, "hive-desktop.bin"));
+    candidates.push(join(binaryDirectory, "hive-tauri.AppImage"));
+    candidates.push(join(binaryDirectory, "hive-tauri"));
+    candidates.push(join(binaryDirectory, "hive-tauri.bin"));
   }
 
   return candidates;
@@ -379,7 +379,7 @@ const launchTauriApplication = () => {
     return {
       ok: false,
       message:
-        "Unable to locate the Synthetic Desktop binary. Set SYNTHETIC_TAURI_BINARY to the desktop executable.",
+        "Unable to locate the Hive Desktop binary. Set HIVE_TAURI_BINARY to the desktop executable.",
     } as const;
   }
 
@@ -407,7 +407,7 @@ const launchTauriApplication = () => {
       message:
         error instanceof Error
           ? error.message
-          : "Failed to launch Synthetic desktop",
+          : "Failed to launch Hive desktop",
     } as const;
   }
 };
@@ -464,7 +464,7 @@ const stopBackgroundProcess = (options?: { silent?: boolean }) => {
   };
 
   if (!existsSync(pidFilePath)) {
-    log("No running Synthetic instance found.");
+    log("No running Hive instance found.");
     return "not_running" as const;
   }
 
@@ -489,10 +489,10 @@ const stopBackgroundProcess = (options?: { silent?: boolean }) => {
 
   try {
     process.kill(pid, "SIGTERM");
-    logSuccess(`Stopped Synthetic (PID ${pid}).`);
+    logSuccess(`Stopped Hive (PID ${pid}).`);
   } catch (error) {
     logError(
-      `Failed to stop Synthetic (PID ${pid}): ${
+      `Failed to stop Hive (PID ${pid}): ${
         error instanceof Error ? error.message : String(error)
       }`
     );
@@ -507,7 +507,7 @@ const streamLogs = () => {
   const logFile = resolveLogFilePath();
   if (!existsSync(logFile)) {
     logError(
-      `No log file found at ${logFile}. Start Synthetic before streaming logs.`
+      `No log file found at ${logFile}. Start Hive before streaming logs.`
     );
     return Promise.resolve(1);
   }
@@ -591,11 +591,11 @@ const runUpgrade = async () => {
     logInfo("Stopped running instance.");
   }
 
-  const configuredCommand = process.env.SYNTHETIC_INSTALL_COMMAND;
-  const storedInstallUrl = process.env.SYNTHETIC_INSTALL_URL;
+  const configuredCommand = process.env.HIVE_INSTALL_COMMAND;
+  const storedInstallUrl = process.env.HIVE_INSTALL_URL;
   const env = { ...process.env };
   if (storedInstallUrl) {
-    env.SYNTHETIC_INSTALL_URL = storedInstallUrl;
+    env.HIVE_INSTALL_URL = storedInstallUrl;
   }
   logInfo("Downloading and installing the latest release...");
 
@@ -631,7 +631,7 @@ const runUpgrade = async () => {
       const exitCode = code ?? 0;
       if (exitCode === 0) {
         logSuccess(
-          "Synthetic upgraded successfully. Run `synthetic` to start the new version."
+          "Hive upgraded successfully. Run `hive` to start the new version."
         );
       } else {
         logError(`Upgrade command exited with code ${exitCode}.`);
@@ -653,18 +653,18 @@ const runUpgrade = async () => {
 const runtimeExecutable = basename(process.execPath).toLowerCase();
 const isBunRuntime = runtimeExecutable.startsWith("bun");
 const isCompiledRuntime = !isBunRuntime;
-const isForcedForeground = process.env.SYNTHETIC_FOREGROUND === "1";
+const isForcedForeground = process.env.HIVE_FOREGROUND === "1";
 const defaultShouldRunDetached = isCompiledRuntime && !isForcedForeground;
 
 const startDetachedServer = () => {
   const { logFile } = launchDetachedServer();
 
-  printSummary("Synthetic is running in the background", [
+  printSummary("Hive is running in the background", [
     ["UI", DEFAULT_WEB_URL],
     ["Logs", logFile],
     ["PID file", pidFilePath],
-    ["Stop", "synthetic stop"],
-    ["Stream logs", "synthetic logs"],
+    ["Stop", "hive stop"],
+    ["Stream logs", "hive logs"],
   ]);
 
   process.exit(0);
@@ -687,8 +687,8 @@ const bootstrap = async (options?: { forceForeground?: boolean }) => {
     }
   }
 
-  if (!process.env.SYNTHETIC_WORKSPACE_ROOT) {
-    process.env.SYNTHETIC_WORKSPACE_ROOT = process.cwd();
+  if (!process.env.HIVE_WORKSPACE_ROOT) {
+    process.env.HIVE_WORKSPACE_ROOT = process.cwd();
   }
 
   await startServer();
@@ -701,13 +701,13 @@ class StartCommand extends Command {
   static paths = [Command.Default];
   static usage = Command.Usage({
     category: "Runtime",
-    description: "Start the Synthetic daemon and serve the UI.",
+    description: "Start the Hive daemon and serve the UI.",
     details: `
-Starts Synthetic in the background unless you pass --foreground. When running detached, logs and the PID file are stored in ~/.synthetic by default.
+Starts Hive in the background unless you pass --foreground. When running detached, logs and the PID file are stored in ~/.hive by default.
 `,
     examples: [
-      ["Start in background", "synthetic"],
-      ["Force foreground mode", "synthetic --foreground"],
+      ["Start in background", "hive"],
+      ["Force foreground mode", "hive --foreground"],
     ],
   });
 
@@ -724,10 +724,10 @@ class StopCommand extends Command {
   static paths = [["stop"]];
   static usage = Command.Usage({
     category: "Runtime",
-    description: "Stop the background Synthetic daemon.",
+    description: "Stop the background Hive daemon.",
     details:
       "Stops the detached background process by reading the PID file written by the start command.",
-    examples: [["Stop running instance", "synthetic stop"]],
+    examples: [["Stop running instance", "hive stop"]],
   });
 
   execute() {
@@ -740,10 +740,10 @@ class LogsCommand extends Command {
   static paths = [["logs"]];
   static usage = Command.Usage({
     category: "Runtime",
-    description: "Stream the Synthetic daemon log file.",
+    description: "Stream the Hive daemon log file.",
     details:
       "Tails the current log file and keeps the process running until you press Ctrl+C.",
-    examples: [["Follow logs", "synthetic logs"]],
+    examples: [["Follow logs", "hive logs"]],
   });
 
   execute() {
@@ -755,10 +755,10 @@ class WebCommand extends Command {
   static paths = [["web"]];
   static usage = Command.Usage({
     category: "Clients",
-    description: "Open the Synthetic UI in your default browser.",
+    description: "Open the Hive UI in your default browser.",
     details:
       "Starts the daemon if necessary and launches the configured web UI URL.",
-    examples: [["Start server and open browser", "synthetic web"]],
+    examples: [["Start server and open browser", "hive web"]],
   });
 
   async execute() {
@@ -782,10 +782,10 @@ class DesktopCommand extends Command {
   static paths = [["desktop"]];
   static usage = Command.Usage({
     category: "Clients",
-    description: "Launch the Synthetic desktop application.",
+    description: "Launch the Hive desktop application.",
     details:
-      "Starts the daemon if needed and opens the packaged desktop UI. Set SYNTHETIC_TAURI_BINARY to override the desktop executable path.",
-    examples: [["Open desktop UI", "synthetic desktop"]],
+      "Starts the daemon if needed and opens the packaged desktop UI. Set HIVE_TAURI_BINARY to override the desktop executable path.",
+    examples: [["Open desktop UI", "hive desktop"]],
   });
 
   async execute() {
@@ -797,12 +797,12 @@ class DesktopCommand extends Command {
     const result = launchTauriApplication();
     if (!result.ok) {
       if (result.message) {
-        logError(`Failed to launch Synthetic desktop: ${result.message}`);
+        logError(`Failed to launch Hive desktop: ${result.message}`);
       }
       return 1;
     }
 
-    logSuccess("Launched Synthetic desktop application.");
+    logSuccess("Launched Hive desktop application.");
     return 0;
   }
 }
@@ -811,10 +811,10 @@ class UpgradeCommand extends Command {
   static paths = [["upgrade"]];
   static usage = Command.Usage({
     category: "Runtime",
-    description: "Download and install the latest Synthetic release.",
+    description: "Download and install the latest Hive release.",
     details:
       "Stops the current daemon if running, then executes the configured installer command (curl | bash by default).",
-    examples: [["Upgrade to latest version", "synthetic upgrade"]],
+    examples: [["Upgrade to latest version", "hive upgrade"]],
   });
 
   execute() {
@@ -827,16 +827,16 @@ class InfoCommand extends Command {
   static usage = Command.Usage({
     category: "Diagnostics",
     description: "Print paths, version, and daemon status.",
-    examples: [["Check current install", "synthetic info"]],
+    examples: [["Check current install", "hive info"]],
   });
 
   execute() {
-    const syntheticHome = resolveSyntheticHomePath();
+    const hiveHome = resolveHiveHomePath();
     const logDir = resolveLogDirectory();
     const logFile = resolveLogFilePath();
     const summaryRows: [string, string][] = [
       ["Version", CLI_VERSION],
-      ["Synthetic home", syntheticHome],
+      ["Hive home", hiveHome],
       ["Release", binaryDirectory],
       ["Binary", process.execPath],
       ["Logs", logDir],
@@ -846,7 +846,7 @@ class InfoCommand extends Command {
       ["Default UI", DEFAULT_WEB_URL],
     ];
 
-    printSummary("Synthetic environment", summaryRows);
+    printSummary("Hive environment", summaryRows);
     return Promise.resolve(0);
   }
 }
@@ -856,7 +856,7 @@ class CompletionsCommand extends Command {
   static usage = Command.Usage({
     category: "Tooling",
     description: "Print the completion script for a supported shell.",
-    examples: [["Generate zsh completions", "synthetic completions zsh"]],
+    examples: [["Generate zsh completions", "hive completions zsh"]],
   });
 
   shell = Option.String({
@@ -892,10 +892,10 @@ class CompletionsInstallCommand extends Command {
     details:
       "Detects common shell-specific directories (Oh My Zsh custom dir, ~/.local/share/bash-completion/completions, ~/.config/fish/completions, etc.). Pass a destination argument to override the target path.",
     examples: [
-      ["Install completions for zsh", "synthetic completions install zsh"],
+      ["Install completions for zsh", "hive completions install zsh"],
       [
         "Install to a custom location",
-        "synthetic completions install zsh ~/.config/zsh/completions/_synthetic",
+        "hive completions install zsh ~/.config/zsh/completions/_hive",
       ],
     ],
   });
@@ -926,7 +926,7 @@ class CompletionsInstallCommand extends Command {
     }
 
     logSuccess(
-      `Installed synthetic completions for ${normalized} at ${result.path}`
+      `Installed hive completions for ${normalized} at ${result.path}`
     );
     logInfo("Restart your shell to load them.");
     return Promise.resolve(0);
@@ -934,8 +934,8 @@ class CompletionsInstallCommand extends Command {
 }
 
 const cli = new Cli({
-  binaryLabel: "Synthetic CLI",
-  binaryName: "synthetic",
+  binaryLabel: "Hive CLI",
+  binaryName: "hive",
   binaryVersion: CLI_VERSION,
 });
 
@@ -959,7 +959,7 @@ const runCli = async () => {
     }
   } catch (error) {
     logError(
-      `Failed to start Synthetic: ${
+      `Failed to start Hive: ${
         error instanceof Error ? (error.stack ?? error.message) : String(error)
       }`
     );

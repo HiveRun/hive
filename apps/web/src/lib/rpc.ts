@@ -1,5 +1,5 @@
 import { treaty } from "@elysiajs/eden";
-import type { App } from "@synthetic/server";
+import type { App } from "@hive/server";
 
 const DEFAULT_API_URL = "http://localhost:3000";
 const isBrowser = typeof window !== "undefined";
@@ -31,6 +31,4 @@ const API_URL = (() => {
 export const rpc = treaty<App>(API_URL);
 
 // Helper types for convenience - inferred from Eden Treaty
-export type CreateConstructInput = Parameters<
-  typeof rpc.api.constructs.post
->[0];
+export type CreateCellInput = Parameters<typeof rpc.api.cells.post>[0];

@@ -3,10 +3,10 @@
 - [ ] Linear Integration #status/planned #phase-2 #feature/advanced
 
 ## Goal
-Integrate Synthetic constructs with Linear so planning and implementation work can originate from and sync back to product tracking.
+Integrate Hive cells with Linear so planning and implementation work can originate from and sync back to product tracking.
 
 ## Key Requirements
 - Authenticate with Linear (per user or workspace token).
-- Allow creating a construct directly from a Linear issue (pull title/description, attach links).
-- Update Linear status/labels as the construct progresses (planning approved, implementation completed).
+- Allow creating a cell directly from a Linear issue (pull title/description, attach links).
+- Update Linear status/labels as the cell progresses (planning approved, implementation completed).
 - Optionally push plan artifacts or summaries back into the Linear issue comments.

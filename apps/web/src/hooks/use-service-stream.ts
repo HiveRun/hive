@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
-import type { ConstructServiceSummary } from "@/queries/constructs";
+import type { CellServiceSummary } from "@/queries/cells";
 
-export function useServiceStream(constructId: string) {
-  const [services, setServices] = useState<ConstructServiceSummary[]>([]);
+export function useServiceStream(cellId: string) {
+  const [services, setServices] = useState<CellServiceSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
 
   useEffect(() => {
-    if (!constructId || typeof window === "undefined") {
+    if (!cellId || typeof window === "undefined") {
       return;
     }
 
@@ -16,11 +16,9 @@ export function useServiceStream(constructId: string) {
     setIsLoading(true);
     setError(undefined);
 
-    const source = new EventSource(
-      `/api/constructs/${constructId}/services/stream`
-    );
+    const source = new EventSource(`/api/cells/${cellId}/services/stream`);
 
-    const upsertService = (service: ConstructServiceSummary) => {
+    const upsertService = (service: CellServiceSummary) => {
       setServices((current) => {
         const index = current.findIndex((item) => item.id === service.id);
         if (index === -1) {
@@ -36,7 +34,7 @@ export function useServiceStream(constructId: string) {
 
     const serviceListener = (event: MessageEvent<string>) => {
       try {
-        const payload = JSON.parse(event.data) as ConstructServiceSummary;
+        const payload = JSON.parse(event.data) as CellServiceSummary;
         upsertService(payload);
       } catch {
         /* ignore malformed events */
@@ -66,7 +64,7 @@ export function useServiceStream(constructId: string) {
       source.removeEventListener("error", errorListener);
       source.close();
     };
-  }, [constructId]);
+  }, [cellId]);
 
   return { services, isLoading, error };
 }

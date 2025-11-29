@@ -17,6 +17,11 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["bun"]
+    "types": ["bun"],
+    "baseUrl": "./",
+    "paths": {
+      "@hive/server": ["apps/server/src/server.ts"],
+      "@hive/server/*": ["apps/server/src/*"]
+    }
   }
 }

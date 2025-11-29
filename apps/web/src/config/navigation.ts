@@ -14,7 +14,7 @@ export type MainNavItem = {
     | "/example-dashboard"
     | "/test-error"
     | "/templates"
-    | "/constructs/list"
+    | "/cells/list"
     | "/debug-notifications";
   label: string;
   description?: string;
@@ -31,16 +31,16 @@ export const MAIN_NAV_ITEMS: MainNavItem[] = [
     description: "System status and API health",
   },
   {
-    to: "/constructs/list",
-    label: "Constructs",
+    to: "/cells/list",
+    label: "Cells",
     icon: Layers,
-    description: "Manage your constructs",
+    description: "Manage your cells",
   },
   {
     to: "/templates",
     label: "Templates",
     icon: FileText,
-    description: "Browse construct templates",
+    description: "Browse cell templates",
   },
   {
     to: "/example-dashboard",

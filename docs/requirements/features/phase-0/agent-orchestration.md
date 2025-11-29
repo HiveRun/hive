@@ -9,7 +9,7 @@
 > - **PR #8**: Agent Orchestration Engine → Deferred to Phase 1A (advanced orchestration)
 
 ## Goal
-Provide the core engine for managing agent sessions, authentication, and lifecycle events across all construct types.
+Provide the core engine for managing agent sessions, authentication, and lifecycle events across all cell types.
 
 ## Current Status: DEFERRED
 
@@ -18,7 +18,7 @@ This feature represents **advanced agent orchestration** that was originally pla
 ### What's Implemented Instead
 - **PR #4**: Simplified agent integration with basic OpenCode SDK integration
 - Basic chat interface without advanced orchestration features
-- Agent transcripts persist inside OpenCode's data store; Synthetic keeps no local `agent_sessions`/`agent_messages` tables and rehydrates from OpenCode when needed
+- Agent transcripts persist inside OpenCode's data store; Hive keeps no local `agent_sessions`/`agent_messages` tables and rehydrates from OpenCode when needed
 
 ### When This Will Be Implemented
 This comprehensive orchestration system will be implemented in **Phase 1A** after core functionality path is complete and validated.
@@ -28,17 +28,17 @@ This comprehensive orchestration system will be implemented in **Phase 1A** afte
 ### Core Engine
 - Anchor on the official OpenCode SDK for all agent interactions (init sessions, send prompts, stream tool events, fetch artifacts). Avoid TUI screen scraping.
 - Keep a local clone of <https://github.com/sst/opencode> in `vendor/opencode/` for reference only; production code must depend on the published `@opencode-ai/sdk` package, never the clone.
-- Run constructs directly in the host environment so agents share the user's credentials, PATH, and dependencies; no supervised pods for v1.
+- Run cells directly in the host environment so agents share the user's credentials, PATH, and dependencies; no supervised pods for v1.
 - Before creating an OpenCode session, inspect the user's OpenCode config/auth store (`auth.json`) to confirm credentials exist for the provider the template demands; if missing, block the session and prompt the user to run `opencode auth login` (no additional runtime retries beyond surfacing the error toast).
 - Handle agent state transitions (starting, working, awaiting input, completed, error) and emit events for the UI to consume.
 - Stream agent tool events and responses in real-time to the UI for live progress tracking.
-- Manage agent session persistence and recovery, allowing constructs to be resumed after interruptions.
+- Manage agent session persistence and recovery, allowing cells to be resumed after interruptions.
 - Provide hooks for the persistence layer to store transcripts and artifacts as they're generated.
 
 ## UX Requirements
 
 ### Agent Chat Interface
-- **Simple transcript**: Chronological stream of user and agent messages—no special tooling visualization yet. Focus on reliable text display first. Planning constructs show plan submissions as dedicated system messages (with links to the rendered plan); manual constructs skip this view entirely.
+- **Simple transcript**: Chronological stream of user and agent messages—no special tooling visualization yet. Focus on reliable text display first. Planning cells show plan submissions as dedicated system messages (with links to the rendered plan); manual cells skip this view entirely.
 - **Stable scrolling**: Preserve scroll position when messages send/arrive and across refresh/navigation. Display a down-arrow indicator whenever the user is not at the bottom—even with no new messages—so they can jump back to the latest on demand.
 - **Message states**: Highlight aborted/failed messages with a subtle status tag and muted styling so users can see where the agent stopped. Successful messages stay visually consistent.
 - **Persistent composer**: Keep the input contents intact across refresh/navigation. Provide an explicit "Clear input" action so the user controls when drafts are discarded.
@@ -47,7 +47,7 @@ This comprehensive orchestration system will be implemented in **Phase 1A** afte
 ### Input Controls
 - **Sending shortcut**: Require `⌘ + Enter` / `Ctrl + Enter` to send. Plain `Enter` inserts a newline; indicate the shortcut directly in the UI and keep focus in the composer after sending.
 - **Interruptions**: Expose an Abort button and bind `Esc` to the same action so the user can cancel the agent quickly without losing draft text or scroll position. After a restart, show a "Resume agent" banner prompting the user to rehydrate context before sending new input.
-- **Canned replies**: Allow user-defined quick responses (chips/buttons) that insert preset text into the composer without auto-sending. Provide a simple manage/edit affordance (e.g., overflow menu linking to settings) so users can update canned text without leaving the construct.
+- **Canned replies**: Allow user-defined quick responses (chips/buttons) that insert preset text into the composer without auto-sending. Provide a simple manage/edit affordance (e.g., overflow menu linking to settings) so users can update canned text without leaving the cell.
 
 ### Responsive Layout
 - **Layout basics**: Keep transcript and composer in the main column with any context/service panels in a secondary column that collapses into tabs on smaller screens. Ensure the down-arrow indicator and canned responses adapt in responsive layouts.
@@ -57,12 +57,12 @@ This comprehensive orchestration system will be implemented in **Phase 1A** afte
 
 ### Session Management
 - Initialize OpenCode sessions with proper authentication and context
-- Maintain session registry with status tracking for all active constructs
+- Maintain session registry with status tracking for all active cells
 - Handle session lifecycle: creation, activation, suspension, termination
-- Provide session recovery mechanisms for interrupted constructs
+- Provide session recovery mechanisms for interrupted cells
 - Treat OpenCode's built-in session store as the source of truth; API keeps only an in-memory registry and rehydrates by querying OpenCode on demand
-- Construct creation automatically provisions an agent session (mock or provider-backed based on user selection) so every construct is born with an attached agent
-- Synthetic proxies OpenCode's SSE feed (`message.updated`, `message.part.updated`, `permission.updated`, etc.) so the UI consumes the same real-time events as the TUI
+- Cell creation automatically provisions an agent session (mock or provider-backed based on user selection) so every cell is born with an attached agent
+- Hive proxies OpenCode's SSE feed (`message.updated`, `message.part.updated`, `permission.updated`, etc.) so the UI consumes the same real-time events as the TUI
 
 ### Authentication & Security
 - Validate OpenCode credentials before session creation
@@ -77,7 +77,7 @@ This comprehensive orchestration system will be implemented in **Phase 1A** afte
 - Buffer events during brief disconnections to prevent data loss
 
 ### State Management
-- Track agent state across all constructs with consistent status reporting
+- Track agent state across all cells with consistent status reporting
 - Emit state change events for UI components to react to
 - Handle concurrent agent operations with proper synchronization
 - Provide state inspection and debugging capabilities
@@ -90,7 +90,7 @@ This comprehensive orchestration system will be implemented in **Phase 1A** afte
 
 ## Integration Points
 - **Persistence Layer**: Stores session state, transcripts, and artifacts
-- **Construct Creation/Provisioning**: Receives provisioned construct and assembled prompt for session initialization
+- **Cell Creation/Provisioning**: Receives provisioned cell and assembled prompt for session initialization
 - **Prompt Assembly Pipeline**: Provides the composed agent brief
 - **Configuration Validation**: Ensures templates have required agent configuration
 

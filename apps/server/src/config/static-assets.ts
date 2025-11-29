@@ -32,7 +32,7 @@ const ensureDirectory = (dir: string) => {
 export const resolveStaticAssetsDirectory = (): string => {
   const candidateDirectories = unique(
     [
-      normalize(process.env.SYNTHETIC_WEB_DIST),
+      normalize(process.env.HIVE_WEB_DIST),
       normalize(join(binaryDirectory, "public")),
       normalize(join(moduleDir, "../../public")),
       normalize(fileURLToPath(new URL("../../../web/dist", import.meta.url))),

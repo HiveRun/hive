@@ -8,7 +8,7 @@ import type {
 } from "@xenova/transformers";
 import { WaveFile } from "wavefile";
 
-const MODEL_CACHE_DIR = resolve(process.cwd(), ".synthetic/models");
+const MODEL_CACHE_DIR = resolve(process.cwd(), ".hive/models");
 const TARGET_SAMPLE_RATE = 16_000;
 
 type TransformersModule = typeof import("@xenova/transformers");

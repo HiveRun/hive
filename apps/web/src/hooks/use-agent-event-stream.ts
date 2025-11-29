@@ -30,10 +30,7 @@ export type PermissionRequest = {
   };
 };
 
-export function useAgentEventStream(
-  sessionId: string | null,
-  constructId: string
-) {
+export function useAgentEventStream(sessionId: string | null, cellId: string) {
   const queryClient = useQueryClient();
   const messageStoreRef = useRef<Map<string, AgentMessage>>(new Map());
   const messagePartsRef = useRef<Map<string, AgentMessagePart[]>>(new Map());
@@ -120,7 +117,7 @@ export function useAgentEventStream(
     messagePartsRef.current.clear();
     setPermissions([]);
 
-    const sessionKey = agentQueries.sessionByConstruct(constructId).queryKey;
+    const sessionKey = agentQueries.sessionByCell(cellId).queryKey;
     const messagesKey = agentQueries.messages(sessionId).queryKey;
     const eventSource = new EventSource(
       `${API_BASE}/api/agents/sessions/${sessionId}/events`
@@ -295,7 +292,7 @@ export function useAgentEventStream(
     eventSource.addEventListener("permission.replied", handlePermissionReplied);
     const handleSessionDiff = () => {
       queryClient.invalidateQueries({
-        queryKey: ["construct-diff", constructId],
+        queryKey: ["cell-diff", cellId],
       });
     };
     eventSource.addEventListener("session.diff", handleSessionDiff);
@@ -329,7 +326,7 @@ export function useAgentEventStream(
       eventSource.close();
     };
   }, [
-    constructId,
+    cellId,
     queryClient,
     sessionId,
     applyMessageFromInfo,

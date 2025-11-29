@@ -3535,7 +3535,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "synthetic-desktop"
+name = "hive-desktop"
 version = "0.1.0"
 dependencies = [
  "serde",

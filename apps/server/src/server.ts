@@ -21,18 +21,18 @@ import { resolveWorkspaceRoot } from "./config/context";
 import { resolveStaticAssetsDirectory } from "./config/static-assets";
 import { db } from "./db";
 import { agentsRoutes } from "./routes/agents";
-import { constructsRoutes } from "./routes/constructs";
+import { cellsRoutes } from "./routes/cells";
 import { templatesRoutes } from "./routes/templates";
 import { preloadVoiceTranscriptionModels, voiceRoutes } from "./routes/voice";
 import { workspacesRoutes } from "./routes/workspaces";
-import { constructs } from "./schema/constructs";
+import { cells } from "./schema/cells";
 import {
   bootstrapServiceSupervisor,
   stopAllServices,
 } from "./services/supervisor";
 import {
   ensureWorkspaceRegistered,
-  resolveSyntheticHome,
+  resolveHiveHome,
 } from "./workspaces/registry";
 
 const DEFAULT_SERVER_PORT = 3000;
@@ -44,10 +44,10 @@ const isCompiledRuntime = !isBunRuntime;
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 export const binaryDirectory = dirname(process.execPath);
-const forcedMigrationsDirectory = process.env.SYNTHETIC_MIGRATIONS_DIR;
-const syntheticHome = resolveSyntheticHome();
+const forcedMigrationsDirectory = process.env.HIVE_MIGRATIONS_DIR;
+const hiveHome = resolveHiveHome();
 export const pidFilePath =
-  process.env.SYNTHETIC_PID_FILE ?? join(syntheticHome, "synthetic.pid");
+  process.env.HIVE_PID_FILE ?? join(hiveHome, "hive.pid");
 
 export const DEFAULT_WEB_PORT =
   process.env.WEB_PORT ?? (isCompiledRuntime ? String(PORT) : "3001");
@@ -186,11 +186,11 @@ async function runMigrations() {
 async function startupCleanup() {
   process.stderr.write("Checking for orphaned OpenCode processes...\n");
 
-  const activeConstructs = await db
-    .select({ port: constructs.opencodeServerPort })
-    .from(constructs);
+  const activeCells = await db
+    .select({ port: cells.opencodeServerPort })
+    .from(cells);
 
-  const ports = activeConstructs
+  const ports = activeCells
     .map((c) => c.port)
     .filter((p): p is number => p !== null);
 
@@ -246,7 +246,7 @@ const createApp = () =>
     }))
     .use(templatesRoutes)
     .use(workspacesRoutes)
-    .use(constructsRoutes)
+    .use(cellsRoutes)
     .use(agentsRoutes)
     .use(voiceRoutes);
 
@@ -301,8 +301,8 @@ export const startServer = async () => {
   const shouldServeStaticAssets =
     Boolean(staticAssetsDirectory) &&
     (isCompiledRuntime ||
-      Boolean(process.env.SYNTHETIC_WEB_DIST) ||
-      process.env.SYNTHETIC_FORCE_STATIC === "1");
+      Boolean(process.env.HIVE_WEB_DIST) ||
+      process.env.HIVE_FORCE_STATIC === "1");
 
   if (shouldServeStaticAssets && staticAssetsDirectory) {
     registerStaticAssets(app, staticAssetsDirectory);

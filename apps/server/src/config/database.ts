@@ -8,8 +8,8 @@ const serverEnvPath = resolve(moduleDir, "../../.env");
 const binaryDirectory = dirname(process.execPath);
 
 const candidateEnvFiles = [
-  process.env.SYNTHETIC_ENV_FILE,
-  join(binaryDirectory, "synthetic.env"),
+  process.env.HIVE_ENV_FILE,
+  join(binaryDirectory, "hive.env"),
   join(binaryDirectory, ".env"),
   serverEnvPath,
 ].filter((file): file is string => Boolean(file));

@@ -13,14 +13,14 @@ import { Route as TestErrorRouteImport } from './routes/test-error'
 import { Route as TemplatesRouteImport } from './routes/templates'
 import { Route as ExampleDashboardRouteImport } from './routes/example-dashboard'
 import { Route as DebugNotificationsRouteImport } from './routes/debug-notifications'
-import { Route as ConstructsRouteImport } from './routes/constructs'
+import { Route as CellsRouteImport } from './routes/cells'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as ConstructsNewRouteImport } from './routes/constructs/new'
-import { Route as ConstructsListRouteImport } from './routes/constructs/list'
-import { Route as ConstructsConstructIdRouteImport } from './routes/constructs/$constructId'
-import { Route as ConstructsConstructIdServicesRouteImport } from './routes/constructs/$constructId/services'
-import { Route as ConstructsConstructIdDiffRouteImport } from './routes/constructs/$constructId/diff'
-import { Route as ConstructsConstructIdChatRouteImport } from './routes/constructs/$constructId/chat'
+import { Route as CellsNewRouteImport } from './routes/cells/new'
+import { Route as CellsListRouteImport } from './routes/cells/list'
+import { Route as CellsCellIdRouteImport } from './routes/cells/$cellId'
+import { Route as CellsCellIdServicesRouteImport } from './routes/cells/$cellId/services'
+import { Route as CellsCellIdDiffRouteImport } from './routes/cells/$cellId/diff'
+import { Route as CellsCellIdChatRouteImport } from './routes/cells/$cellId/chat'
 
 const TestErrorRoute = TestErrorRouteImport.update({
   id: '/test-error',
@@ -42,9 +42,9 @@ const DebugNotificationsRoute = DebugNotificationsRouteImport.update({
   path: '/debug-notifications',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ConstructsRoute = ConstructsRouteImport.update({
-  id: '/constructs',
-  path: '/constructs',
+const CellsRoute = CellsRouteImport.update({
+  id: '/cells',
+  path: '/cells',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -52,131 +52,128 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ConstructsNewRoute = ConstructsNewRouteImport.update({
+const CellsNewRoute = CellsNewRouteImport.update({
   id: '/new',
   path: '/new',
-  getParentRoute: () => ConstructsRoute,
+  getParentRoute: () => CellsRoute,
 } as any)
-const ConstructsListRoute = ConstructsListRouteImport.update({
+const CellsListRoute = CellsListRouteImport.update({
   id: '/list',
   path: '/list',
-  getParentRoute: () => ConstructsRoute,
+  getParentRoute: () => CellsRoute,
 } as any)
-const ConstructsConstructIdRoute = ConstructsConstructIdRouteImport.update({
-  id: '/$constructId',
-  path: '/$constructId',
-  getParentRoute: () => ConstructsRoute,
+const CellsCellIdRoute = CellsCellIdRouteImport.update({
+  id: '/$cellId',
+  path: '/$cellId',
+  getParentRoute: () => CellsRoute,
 } as any)
-const ConstructsConstructIdServicesRoute =
-  ConstructsConstructIdServicesRouteImport.update({
-    id: '/services',
-    path: '/services',
-    getParentRoute: () => ConstructsConstructIdRoute,
-  } as any)
-const ConstructsConstructIdDiffRoute =
-  ConstructsConstructIdDiffRouteImport.update({
-    id: '/diff',
-    path: '/diff',
-    getParentRoute: () => ConstructsConstructIdRoute,
-  } as any)
-const ConstructsConstructIdChatRoute =
-  ConstructsConstructIdChatRouteImport.update({
-    id: '/chat',
-    path: '/chat',
-    getParentRoute: () => ConstructsConstructIdRoute,
-  } as any)
+const CellsCellIdServicesRoute = CellsCellIdServicesRouteImport.update({
+  id: '/services',
+  path: '/services',
+  getParentRoute: () => CellsCellIdRoute,
+} as any)
+const CellsCellIdDiffRoute = CellsCellIdDiffRouteImport.update({
+  id: '/diff',
+  path: '/diff',
+  getParentRoute: () => CellsCellIdRoute,
+} as any)
+const CellsCellIdChatRoute = CellsCellIdChatRouteImport.update({
+  id: '/chat',
+  path: '/chat',
+  getParentRoute: () => CellsCellIdRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/constructs': typeof ConstructsRouteWithChildren
+  '/cells': typeof CellsRouteWithChildren
   '/debug-notifications': typeof DebugNotificationsRoute
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
-  '/constructs/$constructId': typeof ConstructsConstructIdRouteWithChildren
-  '/constructs/list': typeof ConstructsListRoute
-  '/constructs/new': typeof ConstructsNewRoute
-  '/constructs/$constructId/chat': typeof ConstructsConstructIdChatRoute
-  '/constructs/$constructId/diff': typeof ConstructsConstructIdDiffRoute
-  '/constructs/$constructId/services': typeof ConstructsConstructIdServicesRoute
+  '/cells/$cellId': typeof CellsCellIdRouteWithChildren
+  '/cells/list': typeof CellsListRoute
+  '/cells/new': typeof CellsNewRoute
+  '/cells/$cellId/chat': typeof CellsCellIdChatRoute
+  '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
+  '/cells/$cellId/services': typeof CellsCellIdServicesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/constructs': typeof ConstructsRouteWithChildren
+  '/cells': typeof CellsRouteWithChildren
   '/debug-notifications': typeof DebugNotificationsRoute
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
-  '/constructs/$constructId': typeof ConstructsConstructIdRouteWithChildren
-  '/constructs/list': typeof ConstructsListRoute
-  '/constructs/new': typeof ConstructsNewRoute
-  '/constructs/$constructId/chat': typeof ConstructsConstructIdChatRoute
-  '/constructs/$constructId/diff': typeof ConstructsConstructIdDiffRoute
-  '/constructs/$constructId/services': typeof ConstructsConstructIdServicesRoute
+  '/cells/$cellId': typeof CellsCellIdRouteWithChildren
+  '/cells/list': typeof CellsListRoute
+  '/cells/new': typeof CellsNewRoute
+  '/cells/$cellId/chat': typeof CellsCellIdChatRoute
+  '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
+  '/cells/$cellId/services': typeof CellsCellIdServicesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/constructs': typeof ConstructsRouteWithChildren
+  '/cells': typeof CellsRouteWithChildren
   '/debug-notifications': typeof DebugNotificationsRoute
   '/example-dashboard': typeof ExampleDashboardRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
-  '/constructs/$constructId': typeof ConstructsConstructIdRouteWithChildren
-  '/constructs/list': typeof ConstructsListRoute
-  '/constructs/new': typeof ConstructsNewRoute
-  '/constructs/$constructId/chat': typeof ConstructsConstructIdChatRoute
-  '/constructs/$constructId/diff': typeof ConstructsConstructIdDiffRoute
-  '/constructs/$constructId/services': typeof ConstructsConstructIdServicesRoute
+  '/cells/$cellId': typeof CellsCellIdRouteWithChildren
+  '/cells/list': typeof CellsListRoute
+  '/cells/new': typeof CellsNewRoute
+  '/cells/$cellId/chat': typeof CellsCellIdChatRoute
+  '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
+  '/cells/$cellId/services': typeof CellsCellIdServicesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/constructs'
+    | '/cells'
     | '/debug-notifications'
     | '/example-dashboard'
     | '/templates'
     | '/test-error'
-    | '/constructs/$constructId'
-    | '/constructs/list'
-    | '/constructs/new'
-    | '/constructs/$constructId/chat'
-    | '/constructs/$constructId/diff'
-    | '/constructs/$constructId/services'
+    | '/cells/$cellId'
+    | '/cells/list'
+    | '/cells/new'
+    | '/cells/$cellId/chat'
+    | '/cells/$cellId/diff'
+    | '/cells/$cellId/services'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/constructs'
+    | '/cells'
     | '/debug-notifications'
     | '/example-dashboard'
     | '/templates'
     | '/test-error'
-    | '/constructs/$constructId'
-    | '/constructs/list'
-    | '/constructs/new'
-    | '/constructs/$constructId/chat'
-    | '/constructs/$constructId/diff'
-    | '/constructs/$constructId/services'
+    | '/cells/$cellId'
+    | '/cells/list'
+    | '/cells/new'
+    | '/cells/$cellId/chat'
+    | '/cells/$cellId/diff'
+    | '/cells/$cellId/services'
   id:
     | '__root__'
     | '/'
-    | '/constructs'
+    | '/cells'
     | '/debug-notifications'
     | '/example-dashboard'
     | '/templates'
     | '/test-error'
-    | '/constructs/$constructId'
-    | '/constructs/list'
-    | '/constructs/new'
-    | '/constructs/$constructId/chat'
-    | '/constructs/$constructId/diff'
-    | '/constructs/$constructId/services'
+    | '/cells/$cellId'
+    | '/cells/list'
+    | '/cells/new'
+    | '/cells/$cellId/chat'
+    | '/cells/$cellId/diff'
+    | '/cells/$cellId/services'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  ConstructsRoute: typeof ConstructsRouteWithChildren
+  CellsRoute: typeof CellsRouteWithChildren
   DebugNotificationsRoute: typeof DebugNotificationsRoute
   ExampleDashboardRoute: typeof ExampleDashboardRoute
   TemplatesRoute: typeof TemplatesRoute
@@ -213,11 +210,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DebugNotificationsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/constructs': {
-      id: '/constructs'
-      path: '/constructs'
-      fullPath: '/constructs'
-      preLoaderRoute: typeof ConstructsRouteImport
+    '/cells': {
+      id: '/cells'
+      path: '/cells'
+      fullPath: '/cells'
+      preLoaderRoute: typeof CellsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -227,87 +224,84 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/constructs/new': {
-      id: '/constructs/new'
+    '/cells/new': {
+      id: '/cells/new'
       path: '/new'
-      fullPath: '/constructs/new'
-      preLoaderRoute: typeof ConstructsNewRouteImport
-      parentRoute: typeof ConstructsRoute
+      fullPath: '/cells/new'
+      preLoaderRoute: typeof CellsNewRouteImport
+      parentRoute: typeof CellsRoute
     }
-    '/constructs/list': {
-      id: '/constructs/list'
+    '/cells/list': {
+      id: '/cells/list'
       path: '/list'
-      fullPath: '/constructs/list'
-      preLoaderRoute: typeof ConstructsListRouteImport
-      parentRoute: typeof ConstructsRoute
+      fullPath: '/cells/list'
+      preLoaderRoute: typeof CellsListRouteImport
+      parentRoute: typeof CellsRoute
     }
-    '/constructs/$constructId': {
-      id: '/constructs/$constructId'
-      path: '/$constructId'
-      fullPath: '/constructs/$constructId'
-      preLoaderRoute: typeof ConstructsConstructIdRouteImport
-      parentRoute: typeof ConstructsRoute
+    '/cells/$cellId': {
+      id: '/cells/$cellId'
+      path: '/$cellId'
+      fullPath: '/cells/$cellId'
+      preLoaderRoute: typeof CellsCellIdRouteImport
+      parentRoute: typeof CellsRoute
     }
-    '/constructs/$constructId/services': {
-      id: '/constructs/$constructId/services'
+    '/cells/$cellId/services': {
+      id: '/cells/$cellId/services'
       path: '/services'
-      fullPath: '/constructs/$constructId/services'
-      preLoaderRoute: typeof ConstructsConstructIdServicesRouteImport
-      parentRoute: typeof ConstructsConstructIdRoute
+      fullPath: '/cells/$cellId/services'
+      preLoaderRoute: typeof CellsCellIdServicesRouteImport
+      parentRoute: typeof CellsCellIdRoute
     }
-    '/constructs/$constructId/diff': {
-      id: '/constructs/$constructId/diff'
+    '/cells/$cellId/diff': {
+      id: '/cells/$cellId/diff'
       path: '/diff'
-      fullPath: '/constructs/$constructId/diff'
-      preLoaderRoute: typeof ConstructsConstructIdDiffRouteImport
-      parentRoute: typeof ConstructsConstructIdRoute
+      fullPath: '/cells/$cellId/diff'
+      preLoaderRoute: typeof CellsCellIdDiffRouteImport
+      parentRoute: typeof CellsCellIdRoute
     }
-    '/constructs/$constructId/chat': {
-      id: '/constructs/$constructId/chat'
+    '/cells/$cellId/chat': {
+      id: '/cells/$cellId/chat'
       path: '/chat'
-      fullPath: '/constructs/$constructId/chat'
-      preLoaderRoute: typeof ConstructsConstructIdChatRouteImport
-      parentRoute: typeof ConstructsConstructIdRoute
+      fullPath: '/cells/$cellId/chat'
+      preLoaderRoute: typeof CellsCellIdChatRouteImport
+      parentRoute: typeof CellsCellIdRoute
     }
   }
 }
 
-interface ConstructsConstructIdRouteChildren {
-  ConstructsConstructIdChatRoute: typeof ConstructsConstructIdChatRoute
-  ConstructsConstructIdDiffRoute: typeof ConstructsConstructIdDiffRoute
-  ConstructsConstructIdServicesRoute: typeof ConstructsConstructIdServicesRoute
+interface CellsCellIdRouteChildren {
+  CellsCellIdChatRoute: typeof CellsCellIdChatRoute
+  CellsCellIdDiffRoute: typeof CellsCellIdDiffRoute
+  CellsCellIdServicesRoute: typeof CellsCellIdServicesRoute
 }
 
-const ConstructsConstructIdRouteChildren: ConstructsConstructIdRouteChildren = {
-  ConstructsConstructIdChatRoute: ConstructsConstructIdChatRoute,
-  ConstructsConstructIdDiffRoute: ConstructsConstructIdDiffRoute,
-  ConstructsConstructIdServicesRoute: ConstructsConstructIdServicesRoute,
+const CellsCellIdRouteChildren: CellsCellIdRouteChildren = {
+  CellsCellIdChatRoute: CellsCellIdChatRoute,
+  CellsCellIdDiffRoute: CellsCellIdDiffRoute,
+  CellsCellIdServicesRoute: CellsCellIdServicesRoute,
 }
 
-const ConstructsConstructIdRouteWithChildren =
-  ConstructsConstructIdRoute._addFileChildren(
-    ConstructsConstructIdRouteChildren,
-  )
-
-interface ConstructsRouteChildren {
-  ConstructsConstructIdRoute: typeof ConstructsConstructIdRouteWithChildren
-  ConstructsListRoute: typeof ConstructsListRoute
-  ConstructsNewRoute: typeof ConstructsNewRoute
-}
-
-const ConstructsRouteChildren: ConstructsRouteChildren = {
-  ConstructsConstructIdRoute: ConstructsConstructIdRouteWithChildren,
-  ConstructsListRoute: ConstructsListRoute,
-  ConstructsNewRoute: ConstructsNewRoute,
-}
-
-const ConstructsRouteWithChildren = ConstructsRoute._addFileChildren(
-  ConstructsRouteChildren,
+const CellsCellIdRouteWithChildren = CellsCellIdRoute._addFileChildren(
+  CellsCellIdRouteChildren,
 )
+
+interface CellsRouteChildren {
+  CellsCellIdRoute: typeof CellsCellIdRouteWithChildren
+  CellsListRoute: typeof CellsListRoute
+  CellsNewRoute: typeof CellsNewRoute
+}
+
+const CellsRouteChildren: CellsRouteChildren = {
+  CellsCellIdRoute: CellsCellIdRouteWithChildren,
+  CellsListRoute: CellsListRoute,
+  CellsNewRoute: CellsNewRoute,
+}
+
+const CellsRouteWithChildren = CellsRoute._addFileChildren(CellsRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  ConstructsRoute: ConstructsRouteWithChildren,
+  CellsRoute: CellsRouteWithChildren,
   DebugNotificationsRoute: DebugNotificationsRoute,
   ExampleDashboardRoute: ExampleDashboardRoute,
   TemplatesRoute: TemplatesRoute,
