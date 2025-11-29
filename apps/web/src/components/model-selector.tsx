@@ -19,6 +19,9 @@ import { cn } from "@/lib/utils";
 import { type AvailableModel, modelQueries } from "@/queries/models";
 
 const ROUTER_PROVIDER_IDS = new Set(["opencode"]);
+const PROVIDER_LABEL_OVERRIDES: Record<string, string> = {
+  opencode: "Zen",
+};
 
 type ProviderGroup = {
   provider: string;
@@ -56,6 +59,14 @@ export function ModelSelector({
     );
   }, [modelsData?.providers]);
 
+  const resolveProviderLabel = useCallback(
+    (providerKey: string) =>
+      PROVIDER_LABEL_OVERRIDES[providerKey] ??
+      providerNames.get(providerKey) ??
+      providerKey,
+    [providerNames]
+  );
+
   const includeAllProviders = ROUTER_PROVIDER_IDS.has(providerId);
 
   const groupedModels = useMemo(() => {
@@ -89,11 +100,16 @@ export function ModelSelector({
       if (b.provider === providerId) {
         return 1;
       }
-      const nameA = providerNames.get(a.provider) ?? a.provider;
-      const nameB = providerNames.get(b.provider) ?? b.provider;
+      const nameA = resolveProviderLabel(a.provider);
+      const nameB = resolveProviderLabel(b.provider);
       return nameA.localeCompare(nameB);
     });
-  }, [includeAllProviders, modelsData?.models, providerId, providerNames]);
+  }, [
+    includeAllProviders,
+    modelsData?.models,
+    providerId,
+    resolveProviderLabel,
+  ]);
 
   const flattenedModels = useMemo(
     () => groupedModels.flatMap((group) => group.models),
@@ -158,6 +174,10 @@ export function ModelSelector({
     );
   }
 
+  const selectedLabel = selectedModel
+    ? `${resolveProviderLabel(selectedModel.provider)} · ${selectedModel.name}`
+    : "Select model...";
+
   return (
     <Popover onOpenChange={setOpen} open={open}>
       <PopoverTrigger asChild>
@@ -169,7 +189,7 @@ export function ModelSelector({
           role="combobox"
           variant="outline"
         >
-          {selectedModel ? selectedModel.name : "Select model..."}
+          {selectedLabel}
           <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
@@ -179,8 +199,7 @@ export function ModelSelector({
           <CommandList>
             <CommandEmpty>No models found.</CommandEmpty>
             {groupedModels.map((group) => {
-              const heading =
-                providerNames.get(group.provider) ?? group.provider;
+              const heading = resolveProviderLabel(group.provider);
               return (
                 <CommandGroup heading={heading} key={group.provider}>
                   {group.models.map((model) => {
