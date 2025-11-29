@@ -90,6 +90,7 @@ describe("agent model selection", () => {
       config: {},
       source: "default",
       details: undefined,
+      defaultModel: undefined,
     });
 
     await db.insert(cells).values({
@@ -176,6 +177,41 @@ describe("agent model selection", () => {
       providerID: "opencode",
       modelID: "big-pickle",
     });
+  });
+
+  it("falls back to the opencode config model when templates omit it", async () => {
+    const baseTemplate = mockHiveConfig.templates["template-basic"];
+    if (!baseTemplate) {
+      throw new Error("Test template missing");
+    }
+
+    const hiveConfigWithoutModel: HiveConfig = {
+      ...mockHiveConfig,
+      templates: {
+        ...mockHiveConfig.templates,
+        "template-basic": {
+          ...baseTemplate,
+          agent: {
+            providerId: "opencode",
+          },
+        },
+      },
+    };
+
+    vi.spyOn(ConfigContext, "getHiveConfig").mockResolvedValue(
+      hiveConfigWithoutModel
+    );
+    vi.spyOn(OpencodeConfig, "loadOpencodeConfig").mockResolvedValue({
+      config: { model: "openai/opencode-default" },
+      source: "workspace",
+      details: undefined,
+      defaultModel: { providerId: "openai", modelId: "opencode-default" },
+    });
+
+    const session = await ensureAgentSession(cellId);
+
+    expect(session.provider).toBe("opencode");
+    expect(session.modelId).toBe("opencode-default");
   });
 });
 

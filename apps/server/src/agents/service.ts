@@ -101,7 +101,7 @@ function resolveTemplateAgentConfig(
   if (template.agent) {
     return {
       providerId: template.agent.providerId,
-      modelId: template.agent.modelId ?? config.opencode.defaultModel,
+      modelId: template.agent.modelId,
     };
   }
 
@@ -262,14 +262,23 @@ async function ensureRuntimeForCell(
   }
 
   const agentConfig = resolveTemplateAgentConfig(template, hiveConfig);
+  const mergedConfig = await loadOpencodeConfig(workspaceRootPath);
+  const defaultOpencodeModel = mergedConfig.defaultModel;
 
-  // Use provided overrides or fall back to template/config defaults
-  const requestedModelId = options?.modelId ?? agentConfig.modelId;
-  const requestedProviderId = options?.providerId ?? agentConfig.providerId;
+  // Use provided overrides or fall back to template/config defaults, then opencode.json
+  const requestedProviderId =
+    options?.providerId ??
+    agentConfig.providerId ??
+    defaultOpencodeModel?.providerId ??
+    hiveConfig.opencode.defaultProvider;
+
+  const requestedModelId =
+    options?.modelId ??
+    agentConfig.modelId ??
+    defaultOpencodeModel?.modelId ??
+    hiveConfig.opencode.defaultModel;
 
   await ensureProviderCredentials(requestedProviderId);
-
-  const mergedConfig = await loadOpencodeConfig(workspaceRootPath);
 
   const runtime = await startOpencodeRuntime({
     cell,
