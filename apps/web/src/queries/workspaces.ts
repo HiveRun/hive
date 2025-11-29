@@ -1,4 +1,5 @@
 import { rpc } from "@/lib/rpc";
+import { formatRpcError, formatRpcResponseError } from "@/lib/rpc-error";
 
 export type WorkspaceSummary = {
   id: string;
@@ -55,37 +56,13 @@ function ensureWorkspaceResponse(
   throw new Error(fallbackMessage);
 }
 
-function extractErrorMessage(data: unknown, fallback: string): string {
-  if (
-    data &&
-    typeof data === "object" &&
-    "message" in data &&
-    typeof (data as { message?: unknown }).message === "string"
-  ) {
-    return (data as { message: string }).message;
-  }
-  return fallback;
-}
-
-function formatErrorMessage(error: unknown, fallback: string): string {
-  if (
-    error &&
-    typeof error === "object" &&
-    "message" in error &&
-    typeof (error as { message?: unknown }).message === "string"
-  ) {
-    return (error as { message: string }).message;
-  }
-  return fallback;
-}
-
 export const workspaceQueries = {
   list: () => ({
     queryKey: ["workspaces"] as const,
     queryFn: async (): Promise<WorkspaceListResponse> => {
       const { data, error } = await rpc.api.workspaces.get();
       if (error) {
-        throw new Error(formatErrorMessage(error, "Failed to load workspaces"));
+        throw new Error(formatRpcError(error, "Failed to load workspaces"));
       }
       if (
         !data ||
@@ -109,9 +86,7 @@ export const workspaceQueries = {
         path || filter ? { query: { path, filter } } : undefined;
       const { data, error } = await rpc.api.workspaces.browse.get(args);
       if (error) {
-        throw new Error(
-          formatErrorMessage(error, "Failed to load directories")
-        );
+        throw new Error(formatRpcError(error, "Failed to load directories"));
       }
       if (
         !data ||
@@ -133,9 +108,7 @@ export const workspaceMutations = {
     ): Promise<WorkspaceSummary> => {
       const { data, error } = await rpc.api.workspaces.post(input);
       if (error) {
-        throw new Error(
-          formatErrorMessage(error, "Failed to register workspace")
-        );
+        throw new Error(formatRpcError(error, "Failed to register workspace"));
       }
       return ensureWorkspaceResponse(data, "Failed to register workspace");
     },
@@ -146,9 +119,7 @@ export const workspaceMutations = {
     }: ActivateWorkspaceInput): Promise<WorkspaceSummary> => {
       const { data, error } = await rpc.api.workspaces({ id }).activate.post();
       if (error) {
-        throw new Error(
-          formatErrorMessage(error, "Failed to activate workspace")
-        );
+        throw new Error(formatRpcError(error, "Failed to activate workspace"));
       }
       if (
         data &&
@@ -157,7 +128,7 @@ export const workspaceMutations = {
         !("workspace" in data)
       ) {
         throw new Error(
-          extractErrorMessage(data, "Failed to activate workspace")
+          formatRpcResponseError(data, "Failed to activate workspace")
         );
       }
       return ensureWorkspaceResponse(data, "Failed to activate workspace");
@@ -167,13 +138,11 @@ export const workspaceMutations = {
     mutationFn: async ({ id }: RemoveWorkspaceInput): Promise<void> => {
       const { data, error } = await rpc.api.workspaces({ id }).delete();
       if (error) {
-        throw new Error(
-          formatErrorMessage(error, "Failed to remove workspace")
-        );
+        throw new Error(formatRpcError(error, "Failed to remove workspace"));
       }
       if (data && typeof data === "object" && "message" in data) {
         throw new Error(
-          extractErrorMessage(data, "Failed to remove workspace")
+          formatRpcResponseError(data, "Failed to remove workspace")
         );
       }
     },
