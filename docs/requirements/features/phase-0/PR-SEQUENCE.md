@@ -168,6 +168,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - [/] Session status reflected in UI via runtime + OpenCode session metadata
 - [/] Cell creation provisions an agent session automatically (and rolls back on failure)
 - [/] Transcripts persist through OpenCode and display in UI
+- [/] Model picker surfaces the full `/api/models` catalog (grouped by provider defaults)
 - [/] Agent operates within cell worktree
 - [x] Cell description auto-sent as first prompt on creation
 - [/] End-to-end test: UI → agent session → real responses

@@ -18,6 +18,13 @@ import {
 import { cn } from "@/lib/utils";
 import { type AvailableModel, modelQueries } from "@/queries/models";
 
+const FLEXIBLE_PROVIDER_IDS = new Set(["opencode"]);
+
+type ProviderGroup = {
+  provider: string;
+  models: AvailableModel[];
+};
+
 type ModelSelectorProps = {
   id?: string;
   providerId: string;
@@ -42,24 +49,59 @@ export function ModelSelector({
   } = useQuery(modelQueries.bySession(sessionId));
   const [open, setOpen] = useState(false);
 
-  const availableModels = useMemo(() => {
+  const includeAllProviders = FLEXIBLE_PROVIDER_IDS.has(providerId);
+
+  const groupedModels = useMemo(() => {
     if (!modelsData?.models) {
-      return [] as AvailableModel[];
+      return [] as ProviderGroup[];
     }
-    return modelsData.models.filter((model) => model.provider === providerId);
-  }, [modelsData?.models, providerId]);
+
+    const map = new Map<string, AvailableModel[]>();
+
+    for (const model of modelsData.models) {
+      if (!includeAllProviders && model.provider !== providerId) {
+        continue;
+      }
+      const bucket = map.get(model.provider);
+      if (bucket) {
+        bucket.push(model);
+      } else {
+        map.set(model.provider, [model]);
+      }
+    }
+
+    return Array.from(map.entries())
+      .map(([provider, models]) => ({
+        provider,
+        models: [...models].sort((a, b) => a.name.localeCompare(b.name)),
+      }))
+      .sort((a, b) => {
+        if (a.provider === providerId) {
+          return -1;
+        }
+        if (b.provider === providerId) {
+          return 1;
+        }
+        return a.provider.localeCompare(b.provider);
+      });
+  }, [includeAllProviders, modelsData?.models, providerId]);
+
+  const flattenedModels = useMemo(
+    () => groupedModels.flatMap((group) => group.models),
+    [groupedModels]
+  );
 
   useEffect(() => {
-    if (!(sessionId && availableModels.length) || selectedModelId) {
+    if (!(sessionId && flattenedModels.length) || selectedModelId) {
       return;
     }
     const defaultModelId =
-      modelsData?.defaults?.[providerId] ?? availableModels[0]?.id;
+      modelsData?.defaults?.[providerId] ?? flattenedModels[0]?.id;
     if (defaultModelId) {
       onModelChange(defaultModelId);
     }
   }, [
-    availableModels,
+    flattenedModels,
     modelsData?.defaults,
     onModelChange,
     providerId,
@@ -67,7 +109,7 @@ export function ModelSelector({
     sessionId,
   ]);
 
-  const selectedModel = availableModels.find(
+  const selectedModel = flattenedModels.find(
     (model) => model.id === selectedModelId
   );
 
@@ -95,10 +137,14 @@ export function ModelSelector({
     );
   }
 
-  if (!availableModels.length) {
+  const emptyLabel = includeAllProviders
+    ? "No models available"
+    : `No models available for ${providerId}`;
+
+  if (!flattenedModels.length) {
     return (
       <div className="flex h-10 w-full items-center justify-center rounded-md border border-input bg-muted px-3 py-2 text-muted-foreground text-xs">
-        No models available for {providerId}
+        {emptyLabel}
       </div>
     );
   }
@@ -123,28 +169,35 @@ export function ModelSelector({
           <CommandInput placeholder="Search models..." />
           <CommandList>
             <CommandEmpty>No models found.</CommandEmpty>
-            <CommandGroup>
-              {availableModels.map((model) => (
-                <CommandItem
-                  key={model.id}
-                  onSelect={handleSelect}
-                  value={model.id}
-                >
-                  <Check
-                    className={cn(
-                      "mr-2 h-4 w-4",
-                      model.id === selectedModelId ? "opacity-100" : "opacity-0"
-                    )}
-                  />
-                  <div className="flex flex-col">
-                    <span className="font-medium">{model.name}</span>
-                    <span className="text-muted-foreground text-xs">
-                      {model.provider}/{model.id}
-                    </span>
-                  </div>
-                </CommandItem>
-              ))}
-            </CommandGroup>
+            {groupedModels.map((group) => (
+              <CommandGroup heading={group.provider} key={group.provider}>
+                {group.models.map((model) => {
+                  const isSelected =
+                    selectedModel?.id === model.id &&
+                    selectedModel.provider === model.provider;
+                  return (
+                    <CommandItem
+                      key={`${model.provider}-${model.id}`}
+                      onSelect={handleSelect}
+                      value={model.id}
+                    >
+                      <Check
+                        className={cn(
+                          "mr-2 h-4 w-4",
+                          isSelected ? "opacity-100" : "opacity-0"
+                        )}
+                      />
+                      <div className="flex flex-col">
+                        <span className="font-medium">{model.name}</span>
+                        <span className="text-muted-foreground text-xs">
+                          {model.provider}/{model.id}
+                        </span>
+                      </div>
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            ))}
           </CommandList>
         </Command>
       </PopoverContent>
