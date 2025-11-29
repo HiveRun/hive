@@ -7,6 +7,7 @@ import {
   type Event,
   type Message,
   type Part,
+  type ServerOptions,
   type Session,
 } from "@opencode-ai/sdk";
 import { eq } from "drizzle-orm";
@@ -29,6 +30,8 @@ const cellSessionMap = new Map<string, string>();
 type DirectoryQuery = {
   directory?: string;
 };
+
+type OpencodeServerConfig = NonNullable<ServerOptions["config"]>;
 
 type RuntimeHandle = {
   session: Session;
@@ -60,10 +63,32 @@ async function ensureProviderCredentials(providerId: string): Promise<void> {
     return;
   }
 
-  const authEntries = await readProviderCredentials();
-  if (!authEntries[providerId]) {
+  const credentials = await readProviderCredentials();
+  const providerAuth = credentials[providerId];
+  if (!providerAuth) {
     throw new Error(
-      `Missing OpenCode credentials for provider '${providerId}'. Run \`opencode auth login ${providerId}\` to continue.`
+      `Missing authentication for ${providerId}. Run \\"opencode auth login ${providerId}\\".`
+    );
+  }
+}
+
+async function readWorkspaceOpencodeConfig(
+  workspaceRootPath: string
+): Promise<OpencodeServerConfig | undefined> {
+  const configPath = join(workspaceRootPath, "opencode.json");
+  try {
+    const raw = await readFile(configPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      return parsed as OpencodeServerConfig;
+    }
+    throw new Error("OpenCode config file must contain a JSON object");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return;
+    }
+    throw new Error(
+      `Failed to read OpenCode config from ${configPath}: ${error instanceof Error ? error.message : String(error)}`
     );
   }
 }
@@ -220,26 +245,30 @@ async function ensureRuntimeForCell(
     throw new Error("Cell not found");
   }
 
-  const config = await getHiveConfig(
-    cell.workspaceRootPath ?? cell.workspacePath
-  );
-  const template = config.templates[cell.templateId];
+  const workspaceRootPath = cell.workspaceRootPath || cell.workspacePath;
+
+  const hiveConfig = await getHiveConfig(workspaceRootPath);
+  const template = hiveConfig.templates[cell.templateId];
   if (!template) {
     throw new Error("Cell template configuration not found");
   }
 
-  const agentConfig = resolveTemplateAgentConfig(template, config);
+  const agentConfig = resolveTemplateAgentConfig(template, hiveConfig);
 
   // Use provided modelId or fall back to template/config default
   const modelId = options?.modelId ?? agentConfig.modelId;
 
   await ensureProviderCredentials(agentConfig.providerId);
 
+  const opencodeFileConfig =
+    await readWorkspaceOpencodeConfig(workspaceRootPath);
+
   const runtime = await startOpencodeRuntime({
     cell,
     providerId: agentConfig.providerId,
     modelId,
     force: options?.force ?? false,
+    opencodeConfig: opencodeFileConfig,
   });
 
   cellSessionMap.set(cell.id, runtime.session.id);
@@ -253,6 +282,7 @@ type StartRuntimeArgs = {
   providerId: string;
   modelId?: string;
   force: boolean;
+  opencodeConfig?: OpencodeServerConfig;
 };
 
 async function startOpencodeRuntime({
@@ -260,10 +290,12 @@ async function startOpencodeRuntime({
   providerId,
   modelId,
   force,
+  opencodeConfig,
 }: StartRuntimeArgs): Promise<RuntimeHandle> {
   const server = await createOpencodeServer({
     hostname: "127.0.0.1",
     port: 0,
+    config: opencodeConfig,
   });
 
   const client = createOpencodeClient({
