@@ -4,7 +4,15 @@ import type { OpencodeClient } from "@opencode-ai/sdk";
 // biome-ignore lint/performance/noNamespaceImport: tests need namespace import for spies
 import * as OpencodeSdk from "@opencode-ai/sdk";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from "vitest";
 // biome-ignore lint/performance/noNamespaceImport: tests need namespace import for spies
 import * as ConfigContext from "../config/context";
 import type { HiveConfig } from "../config/schema";
@@ -63,6 +71,8 @@ import {
 describe("agent model selection", () => {
   const cellId = "cell-model-test";
   let clientStub: ClientStub;
+  let getHiveConfigSpy: Mock;
+  let loadOpencodeConfigSpy: Mock;
 
   beforeAll(async () => {
     const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -85,13 +95,17 @@ describe("agent model selection", () => {
       url: "http://127.0.0.1:0",
       close: vi.fn(),
     });
-    vi.spyOn(ConfigContext, "getHiveConfig").mockResolvedValue(mockHiveConfig);
-    vi.spyOn(OpencodeConfig, "loadOpencodeConfig").mockResolvedValue({
-      config: {},
-      source: "default",
-      details: undefined,
-      defaultModel: undefined,
-    });
+    getHiveConfigSpy = vi
+      .spyOn(ConfigContext, "getHiveConfig")
+      .mockResolvedValue(mockHiveConfig);
+    loadOpencodeConfigSpy = vi
+      .spyOn(OpencodeConfig, "loadOpencodeConfig")
+      .mockResolvedValue({
+        config: {},
+        source: "default",
+        details: undefined,
+        defaultModel: undefined,
+      });
 
     await db.insert(cells).values({
       id: cellId,
@@ -179,7 +193,21 @@ describe("agent model selection", () => {
     });
   });
 
-  it("falls back to the opencode config model when templates omit it", async () => {
+  it("prefers the template's agent configuration over opencode defaults", async () => {
+    loadOpencodeConfigSpy.mockResolvedValue({
+      config: { model: "openai/gpt-5.1-codex-high" },
+      source: "workspace",
+      details: undefined,
+      defaultModel: { providerId: "openai", modelId: "gpt-5.1-codex-high" },
+    });
+
+    const session = await ensureAgentSession(cellId);
+
+    expect(session.provider).toBe("opencode");
+    expect(session.modelId).toBe("template-default");
+  });
+
+  it("uses workspace defaults when template agents omit models and providers match", async () => {
     const baseTemplate = mockHiveConfig.templates["template-basic"];
     if (!baseTemplate) {
       throw new Error("Test template missing");
@@ -198,10 +226,41 @@ describe("agent model selection", () => {
       },
     };
 
-    vi.spyOn(ConfigContext, "getHiveConfig").mockResolvedValue(
-      hiveConfigWithoutModel
-    );
-    vi.spyOn(OpencodeConfig, "loadOpencodeConfig").mockResolvedValue({
+    getHiveConfigSpy.mockResolvedValue(hiveConfigWithoutModel);
+    loadOpencodeConfigSpy.mockResolvedValue({
+      config: { model: "opencode/workspace-default" },
+      source: "workspace",
+      details: undefined,
+      defaultModel: { providerId: "opencode", modelId: "workspace-default" },
+    });
+
+    const session = await ensureAgentSession(cellId);
+
+    expect(session.provider).toBe("opencode");
+    expect(session.modelId).toBe("workspace-default");
+  });
+
+  it("falls back to hive defaults when workspace defaults target another provider", async () => {
+    const baseTemplate = mockHiveConfig.templates["template-basic"];
+    if (!baseTemplate) {
+      throw new Error("Test template missing");
+    }
+
+    const hiveConfigWithoutModel: HiveConfig = {
+      ...mockHiveConfig,
+      templates: {
+        ...mockHiveConfig.templates,
+        "template-basic": {
+          ...baseTemplate,
+          agent: {
+            providerId: "opencode",
+          },
+        },
+      },
+    };
+
+    getHiveConfigSpy.mockResolvedValue(hiveConfigWithoutModel);
+    loadOpencodeConfigSpy.mockResolvedValue({
       config: { model: "openai/opencode-default" },
       source: "workspace",
       details: undefined,
@@ -210,34 +269,29 @@ describe("agent model selection", () => {
 
     const session = await ensureAgentSession(cellId);
 
-    expect(session.provider).toBe("openai");
-    expect(session.modelId).toBe("opencode-default");
+    expect(session.provider).toBe("opencode");
+    expect(session.modelId).toBe("template-default");
   });
 
-  it("prefers opencode config defaults even if templates specify a model", async () => {
-    const templateWithModel = mockHiveConfig.templates["template-basic"];
-    if (!templateWithModel) {
+  it("uses opencode config defaults when a template omits the agent block", async () => {
+    const templateWithoutAgent = mockHiveConfig.templates["template-basic"];
+    if (!templateWithoutAgent) {
       throw new Error("Template missing");
     }
 
-    const overriddenConfig: HiveConfig = {
+    const hiveConfigWithoutAgent: HiveConfig = {
       ...mockHiveConfig,
       templates: {
         ...mockHiveConfig.templates,
         "template-basic": {
-          ...templateWithModel,
-          agent: {
-            providerId: "opencode",
-            modelId: "template-model",
-          },
+          ...templateWithoutAgent,
+          agent: undefined,
         },
       },
     };
 
-    vi.spyOn(ConfigContext, "getHiveConfig").mockResolvedValue(
-      overriddenConfig
-    );
-    vi.spyOn(OpencodeConfig, "loadOpencodeConfig").mockResolvedValue({
+    getHiveConfigSpy.mockResolvedValue(hiveConfigWithoutAgent);
+    loadOpencodeConfigSpy.mockResolvedValue({
       config: { model: "openai/gpt-5.1-codex-high" },
       source: "workspace",
       details: undefined,

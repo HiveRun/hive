@@ -78,5 +78,20 @@ export default defineHiveConfig({
         modelId: "big-pickle",
       },
     },
+    "provider-only": {
+      id: "provider-only",
+      label: "Provider Only Agent",
+      type: "manual",
+      includePatterns: [".env*"],
+      agent: {
+        providerId: "opencode",
+      },
+    },
+    agentless: {
+      id: "agentless",
+      label: "No Agent Overrides",
+      type: "manual",
+      includePatterns: [".env*"],
+    },
   },
 });

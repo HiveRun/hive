@@ -12,7 +12,7 @@ import {
 } from "@opencode-ai/sdk";
 import { eq } from "drizzle-orm";
 import { getHiveConfig } from "../config/context";
-import type { HiveConfig, Template } from "../config/schema";
+import type { Template } from "../config/schema";
 import { db } from "../db";
 import { type Cell, cells } from "../schema/cells";
 import { publishAgentEvent } from "./events";
@@ -95,20 +95,70 @@ type TemplateAgentConfig = {
 };
 
 function resolveTemplateAgentConfig(
-  template: Template,
-  config: HiveConfig
-): TemplateAgentConfig {
-  if (template.agent) {
-    return {
-      providerId: template.agent.providerId,
-      modelId: template.agent.modelId,
-    };
+  template: Template
+): TemplateAgentConfig | undefined {
+  if (!template.agent) {
+    return;
   }
 
   return {
-    providerId: config.opencode.defaultProvider,
-    modelId: config.opencode.defaultModel,
+    providerId: template.agent.providerId,
+    modelId: template.agent.modelId,
   };
+}
+
+function resolveProviderId(
+  options: { providerId?: string } | undefined,
+  agentConfig: TemplateAgentConfig | undefined,
+  defaultOpencodeModel: { providerId?: string } | undefined,
+  configDefaultProvider: string
+): string {
+  if (options?.providerId) {
+    return options.providerId;
+  }
+
+  if (agentConfig?.providerId) {
+    return agentConfig.providerId;
+  }
+
+  return defaultOpencodeModel?.providerId ?? configDefaultProvider;
+}
+
+type ResolveModelArgs = {
+  options?: { modelId?: string };
+  agentConfig?: TemplateAgentConfig;
+  configDefaultModel?: string;
+  defaultOpencodeModel?: { providerId?: string; modelId?: string };
+  resolvedProviderId: string;
+};
+
+function resolveModelId({
+  options,
+  agentConfig,
+  configDefaultModel,
+  defaultOpencodeModel,
+  resolvedProviderId,
+}: ResolveModelArgs): string | undefined {
+  if (options?.modelId) {
+    return options.modelId;
+  }
+
+  if (agentConfig?.modelId) {
+    return agentConfig.modelId;
+  }
+
+  const opencodeMatchesProvider =
+    defaultOpencodeModel?.modelId &&
+    (!defaultOpencodeModel.providerId ||
+      defaultOpencodeModel.providerId === resolvedProviderId)
+      ? defaultOpencodeModel.modelId
+      : undefined;
+
+  if (opencodeMatchesProvider) {
+    return opencodeMatchesProvider;
+  }
+
+  return configDefaultModel;
 }
 
 export async function ensureAgentSession(
@@ -261,21 +311,26 @@ async function ensureRuntimeForCell(
     throw new Error("Cell template configuration not found");
   }
 
-  const agentConfig = resolveTemplateAgentConfig(template, hiveConfig);
+  const agentConfig = resolveTemplateAgentConfig(template);
   const mergedConfig = await loadOpencodeConfig(workspaceRootPath);
   const defaultOpencodeModel = mergedConfig.defaultModel;
+  const configDefaultProvider = hiveConfig.opencode.defaultProvider;
+  const configDefaultModel = hiveConfig.opencode.defaultModel;
 
-  const requestedProviderId =
-    options?.providerId ??
-    defaultOpencodeModel?.providerId ??
-    agentConfig.providerId ??
-    hiveConfig.opencode.defaultProvider;
+  const requestedProviderId = resolveProviderId(
+    options,
+    agentConfig,
+    defaultOpencodeModel,
+    configDefaultProvider
+  );
 
-  const requestedModelId =
-    options?.modelId ??
-    defaultOpencodeModel?.modelId ??
-    agentConfig.modelId ??
-    hiveConfig.opencode.defaultModel;
+  const requestedModelId = resolveModelId({
+    options,
+    agentConfig,
+    configDefaultModel,
+    defaultOpencodeModel,
+    resolvedProviderId: requestedProviderId,
+  });
 
   await ensureProviderCredentials(requestedProviderId);
 

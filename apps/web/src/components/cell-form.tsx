@@ -1,6 +1,6 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import {
@@ -21,7 +21,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import type { CreateCellInput } from "@/lib/rpc";
 import { cellMutations } from "@/queries/cells";
-import { templateQueries } from "@/queries/templates";
+import { type Template, templateQueries } from "@/queries/templates";
 
 type CellFormValues = CreateCellInput;
 
@@ -80,6 +80,7 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
 
   const templates = templatesData?.templates;
   const defaults = templatesData?.defaults;
+  const agentDefaults = templatesData?.agentDefaults;
 
   const defaultValues = useMemo(
     () => ({
@@ -108,6 +109,42 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
   const templateAgent = activeTemplate?.configJson.agent;
   const providerPreference =
     selectedModel?.providerId ?? templateAgent?.providerId;
+
+  const resolveTemplateModelSelection = useCallback(
+    (template?: Template) => {
+      const agentConfig = template?.configJson.agent;
+      if (agentConfig?.modelId) {
+        return { id: agentConfig.modelId, providerId: agentConfig.providerId };
+      }
+
+      const defaultModelId = agentDefaults?.modelId;
+      const defaultProviderId = agentDefaults?.providerId;
+      const templateProviderId = agentConfig?.providerId;
+
+      const providerCompatible =
+        !(templateProviderId && defaultProviderId) ||
+        templateProviderId === defaultProviderId;
+
+      if (defaultModelId && providerCompatible) {
+        const providerId = templateProviderId ?? defaultProviderId;
+        if (providerId) {
+          return { id: defaultModelId, providerId };
+        }
+      }
+    },
+    [agentDefaults]
+  );
+
+  useEffect(() => {
+    if (!activeTemplate || selectedModel) {
+      return;
+    }
+
+    const nextSelection = resolveTemplateModelSelection(activeTemplate);
+    if (nextSelection) {
+      setSelectedModel(nextSelection);
+    }
+  }, [activeTemplate, resolveTemplateModelSelection, selectedModel]);
 
   const mutation = useMutation({
     mutationFn: cellMutations.create.mutationFn,
@@ -269,7 +306,12 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
                     onValueChange={(value) => {
                       field.handleChange(value);
                       setActiveTemplateId(value);
-                      setSelectedModel(undefined);
+                      const nextTemplate = templates?.find(
+                        (template) => template.id === value
+                      );
+                      const nextSelection =
+                        resolveTemplateModelSelection(nextTemplate);
+                      setSelectedModel(nextSelection);
                     }}
                     value={field.state.value}
                   >

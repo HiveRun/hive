@@ -37,9 +37,15 @@ export type Defaults = {
   templateId?: string;
 };
 
+export type AgentDefaults = {
+  providerId?: string;
+  modelId?: string;
+};
+
 export type TemplatesResponse = {
   templates: Template[];
   defaults?: Defaults;
+  agentDefaults?: AgentDefaults;
 };
 
 export const templateQueries = {
@@ -58,6 +64,7 @@ export const templateQueries = {
       return {
         templates: data.templates,
         defaults: data.defaults,
+        agentDefaults: data.agentDefaults,
       };
     },
   }),
