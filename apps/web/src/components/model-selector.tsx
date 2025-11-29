@@ -186,13 +186,13 @@ export function ModelSelector({
       <PopoverTrigger asChild>
         <Button
           aria-expanded={open}
-          className="w-full items-center justify-between"
+          className="w-full items-center justify-between gap-2"
           disabled={disabled}
           id={id}
           role="combobox"
           variant="outline"
         >
-          <div className="flex flex-col items-start text-left">
+          <div className="flex flex-col items-start text-left leading-tight">
             <span
               className={cn(
                 "font-medium",
@@ -202,7 +202,7 @@ export function ModelSelector({
               {selectedModelLabel}
             </span>
             {selectedProviderLabel ? (
-              <span className="text-muted-foreground text-xs">
+              <span className="text-[0.65rem] text-muted-foreground uppercase tracking-wide">
                 {selectedProviderLabel}
               </span>
             ) : null}
