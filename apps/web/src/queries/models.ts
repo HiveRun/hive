@@ -8,10 +8,7 @@ export type AvailableModel = {
 
 export type ProviderInfo = {
   id: string;
-  priority: number;
-  category: string;
-  description?: string;
-  includeAllModels: boolean;
+  name?: string;
 };
 
 export type ModelListResponse = {

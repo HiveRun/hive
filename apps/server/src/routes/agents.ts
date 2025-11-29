@@ -1,6 +1,5 @@
 import { Elysia, sse, t } from "elysia";
 import { subscribeAgentEvents } from "../agents/events";
-import { sortProviderIds } from "../agents/provider-metadata";
 import {
   ensureAgentSession,
   ensureRuntimeForSession,
@@ -32,16 +31,14 @@ const HTTP_STATUS = {
   INTERNAL_ERROR: 500,
 } as const;
 
-const providerMetadataSchema = t.Object({
+const providerSchema = t.Object({
   id: t.String(),
-  priority: t.Number(),
-  category: t.String(),
-  description: t.Optional(t.String()),
-  includeAllModels: t.Boolean(),
+  name: t.Optional(t.String()),
 });
 
 type ProviderEntry = {
   id: string;
+  name?: string;
   models?: Record<string, ProviderModel>;
 };
 
@@ -65,7 +62,10 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
         const providerEntries = normalizeProviderEntries(data.providers);
         const models = flattenProviderModels(providerEntries);
         const defaults = normalizeProviderDefaults(data.default);
-        const providers = sortProviderIds(providerEntries.map((p) => p.id));
+        const providers = providerEntries.map(({ id, name }) => ({
+          id,
+          name,
+        }));
 
         return {
           models,
@@ -96,7 +96,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
             })
           ),
           defaults: t.Record(t.String(), t.String()),
-          providers: t.Array(providerMetadataSchema),
+          providers: t.Array(providerSchema),
         }),
         400: t.Object({
           models: t.Array(
@@ -107,7 +107,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
             })
           ),
           defaults: t.Record(t.String(), t.String()),
-          providers: t.Array(providerMetadataSchema),
+          providers: t.Array(providerSchema),
           message: t.String(),
         }),
       },
@@ -316,11 +316,12 @@ function normalizeProviderEntries(input: unknown): ProviderEntry[] {
       continue;
     }
 
-    const { id, models } = candidate as {
+    const { id, name, models } = candidate as {
       id: string;
+      name?: string;
       models?: Record<string, ProviderModel>;
     };
-    providers.push({ id, models });
+    providers.push({ id, name, models });
   }
 
   return providers;

@@ -16,11 +16,9 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import {
-  type AvailableModel,
-  modelQueries,
-  type ProviderInfo,
-} from "@/queries/models";
+import { type AvailableModel, modelQueries } from "@/queries/models";
+
+const ROUTER_PROVIDER_IDS = new Set(["opencode"]);
 
 type ProviderGroup = {
   provider: string;
@@ -51,15 +49,14 @@ export function ModelSelector({
   } = useQuery(modelQueries.bySession(sessionId));
   const [open, setOpen] = useState(false);
 
-  const providerMetadataById = useMemo(() => {
+  const providerNames = useMemo(() => {
     const providers = modelsData?.providers ?? [];
-    return new Map<string, ProviderInfo>(
-      providers.map((provider) => [provider.id, provider])
+    return new Map<string, string>(
+      providers.map((provider) => [provider.id, provider.name ?? provider.id])
     );
   }, [modelsData?.providers]);
 
-  const currentProviderMeta = providerMetadataById.get(providerId);
-  const includeAllProviders = currentProviderMeta?.includeAllModels ?? false;
+  const includeAllProviders = ROUTER_PROVIDER_IDS.has(providerId);
 
   const groupedModels = useMemo(() => {
     if (!modelsData?.models) {
@@ -85,30 +82,18 @@ export function ModelSelector({
       models: [...models].sort((a, b) => a.name.localeCompare(b.name)),
     }));
 
-    const scoreFor = (provider: string) => {
-      const metadata = providerMetadataById.get(provider);
-      return metadata?.priority ?? Number.MAX_SAFE_INTEGER;
-    };
-
     return groups.sort((a, b) => {
-      const priorityDelta = scoreFor(a.provider) - scoreFor(b.provider);
-      if (priorityDelta !== 0) {
-        return priorityDelta;
-      }
       if (a.provider === providerId) {
         return -1;
       }
       if (b.provider === providerId) {
         return 1;
       }
-      return a.provider.localeCompare(b.provider);
+      const nameA = providerNames.get(a.provider) ?? a.provider;
+      const nameB = providerNames.get(b.provider) ?? b.provider;
+      return nameA.localeCompare(nameB);
     });
-  }, [
-    includeAllProviders,
-    modelsData?.models,
-    providerId,
-    providerMetadataById,
-  ]);
+  }, [includeAllProviders, modelsData?.models, providerId, providerNames]);
 
   const flattenedModels = useMemo(
     () => groupedModels.flatMap((group) => group.models),
@@ -194,10 +179,8 @@ export function ModelSelector({
           <CommandList>
             <CommandEmpty>No models found.</CommandEmpty>
             {groupedModels.map((group) => {
-              const metadata = providerMetadataById.get(group.provider);
-              const heading = metadata
-                ? `${metadata.category} · ${group.provider}${metadata.description ? ` ${metadata.description}` : ""}`
-                : group.provider;
+              const heading =
+                providerNames.get(group.provider) ?? group.provider;
               return (
                 <CommandGroup heading={heading} key={group.provider}>
                   {group.models.map((model) => {
