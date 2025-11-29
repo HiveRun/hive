@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useAgentEventStream } from "@/hooks/use-agent-event-stream";
@@ -17,12 +17,21 @@ export function AgentChat({ cellId }: AgentChatProps) {
   const queryClient = useQueryClient();
   const sessionQuery = useQuery(agentQueries.sessionByCell(cellId));
   const session = sessionQuery.data ?? null;
+  const sessionId = session?.id;
   const cellQuery = useQuery(cellQueries.detail(cellId));
   const workspaceId = cellQuery.data?.workspaceId;
-  const messagesQuery = useQuery(agentQueries.messages(session?.id ?? null));
+  const messagesQuery = useQuery(agentQueries.messages(sessionId ?? null));
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedModelId, setSelectedModelId] = useState<string>();
 
-  const { permissions } = useAgentEventStream(session?.id ?? null, cellId);
+  const { permissions } = useAgentEventStream(sessionId ?? null, cellId);
+
+  useEffect(() => {
+    if (sessionId === undefined) {
+      return;
+    }
+    setSelectedModelId(undefined);
+  }, [sessionId]);
 
   const orderedMessages = useMemo(
     () =>
@@ -78,6 +87,7 @@ export function AgentChat({ cellId }: AgentChatProps) {
   const handleStartSession = () => {
     startAgentMutation.mutate({
       cellId,
+      modelId: selectedModelId,
     });
   };
 
@@ -129,8 +139,11 @@ export function AgentChat({ cellId }: AgentChatProps) {
         />
         <ComposePanel
           isSending={isSending}
+          onModelChange={setSelectedModelId}
           onSend={handleSendMessage}
           provider={session.provider}
+          selectedModelId={selectedModelId}
+          sessionId={session.id}
           workspaceId={workspaceId}
         />
       </div>

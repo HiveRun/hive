@@ -92,7 +92,7 @@ function resolveTemplateAgentConfig(
 
 export async function ensureAgentSession(
   cellId: string,
-  options?: { force?: boolean }
+  options?: { force?: boolean; modelId?: string }
 ): Promise<AgentSessionRecord> {
   const runtime = await ensureRuntimeForCell(cellId, options);
   return toSessionRecord(runtime);
@@ -205,7 +205,7 @@ export async function ensureRuntimeForSession(
 
 async function ensureRuntimeForCell(
   cellId: string,
-  options?: { force?: boolean }
+  options?: { force?: boolean; modelId?: string }
 ): Promise<RuntimeHandle> {
   const currentSessionId = cellSessionMap.get(cellId);
   if (currentSessionId && !options?.force) {
@@ -230,12 +230,15 @@ async function ensureRuntimeForCell(
 
   const agentConfig = resolveTemplateAgentConfig(template, config);
 
+  // Use provided modelId or fall back to template/config default
+  const modelId = options?.modelId ?? agentConfig.modelId;
+
   await ensureProviderCredentials(agentConfig.providerId);
 
   const runtime = await startOpencodeRuntime({
     cell,
     providerId: agentConfig.providerId,
-    modelId: agentConfig.modelId,
+    modelId,
     force: options?.force ?? false,
   });
 
