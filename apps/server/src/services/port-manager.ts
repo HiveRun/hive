@@ -1,6 +1,7 @@
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { eq } from "drizzle-orm";
+import { Result } from "neverthrow";
 import type { CellService } from "../schema/services";
 import { cellServices } from "../schema/services";
 
@@ -119,16 +120,22 @@ function allocatePort(): Promise<number> {
 }
 
 async function terminatePid(pid: number): Promise<void> {
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
+  const terminateResult = Result.fromThrowable(
+    () => process.kill(pid, "SIGTERM"),
+    () => null
+  )();
+
+  if (terminateResult.isErr()) {
     return;
   }
+
   await delay(FORCE_KILL_DELAY_MS);
-  try {
-    process.kill(pid, 0);
-    process.kill(pid, "SIGKILL");
-  } catch {
-    // already stopped
-  }
+
+  Result.fromThrowable(
+    () => {
+      process.kill(pid, 0);
+      process.kill(pid, "SIGKILL");
+    },
+    () => null
+  )();
 }

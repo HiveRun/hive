@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
+import { ResultAsync } from "neverthrow";
 
 const REGISTRY_FILE_NAME = "workspaces.json";
 const HIVE_HOME_ENV = "HIVE_HOME";
@@ -72,16 +73,19 @@ function normalizePath(path: string): string {
 
 async function validateWorkspaceDirectory(path: string): Promise<string> {
   const absolutePath = normalizePath(path);
-  let stats: Awaited<ReturnType<typeof stat>>;
-  try {
-    stats = await stat(absolutePath);
-  } catch (error) {
+  const statsResult = await ResultAsync.fromPromise(
+    stat(absolutePath),
+    (error) => error
+  );
+
+  if (statsResult.isErr()) {
+    const failure = statsResult.error;
     throw new Error(
-      `Workspace path does not exist: ${absolutePath} (${error instanceof Error ? error.message : error})`
+      `Workspace path does not exist: ${absolutePath} (${failure instanceof Error ? failure.message : failure})`
     );
   }
 
-  if (!stats.isDirectory()) {
+  if (!statsResult.value.isDirectory()) {
     throw new Error(`Workspace path is not a directory: ${absolutePath}`);
   }
 
@@ -90,9 +94,12 @@ async function validateWorkspaceDirectory(path: string): Promise<string> {
   }
 
   const configPath = join(absolutePath, "hive.config.ts");
-  try {
-    await access(configPath);
-  } catch {
+  const configExists = await ResultAsync.fromPromise(
+    access(configPath),
+    (error) => error
+  );
+
+  if (configExists.isErr()) {
     throw new Error(`hive.config.ts not found in ${absolutePath}`);
   }
 

@@ -3,7 +3,7 @@ import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { cp, mkdir, rm } from "node:fs/promises";
 import { join, sep } from "node:path";
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
 import { glob } from "tinyglobby";
 import type { Template } from "../config/schema";
 import { resolveCellsRoot } from "../workspaces/registry";
@@ -144,13 +144,17 @@ export function createWorktreeManager(
   const cellsDir = resolveCellsRoot();
 
   function ensureGitRepo(): void {
-    try {
-      execSync("git rev-parse --git-dir", {
-        encoding: "utf8",
-        cwd: baseDir,
-        stdio: "pipe",
-      });
-    } catch {
+    const repoCheck = Result.fromThrowable(
+      () =>
+        execSync("git rev-parse --git-dir", {
+          encoding: "utf8",
+          cwd: baseDir,
+          stdio: "pipe",
+        }),
+      () => null
+    )();
+
+    if (repoCheck.isErr()) {
       throw new Error(
         `Not a git repository: ${baseDir}. Worktree manager requires a git repository.`
       );
@@ -197,14 +201,20 @@ export function createWorktreeManager(
 
   function git(...args: string[]): string {
     const command = args.join(" ");
-    try {
-      return execSync(`git ${command}`, {
-        encoding: "utf8",
-        cwd: baseDir,
-      }).trim();
-    } catch (error) {
-      throw formatExecError(command, error);
+    const execResult = Result.fromThrowable(
+      () =>
+        execSync(`git ${command}`, {
+          encoding: "utf8",
+          cwd: baseDir,
+        }).trim(),
+      (error) => formatExecError(command, error)
+    )();
+
+    if (execResult.isErr()) {
+      throw execResult.error;
     }
+
+    return execResult.value;
   }
 
   async function ensureCellsDir(): Promise<void> {
@@ -238,27 +248,31 @@ export function createWorktreeManager(
       return [];
     }
 
-    try {
-      // Expand patterns to include recursive matching for nested files
-      const expandedPatterns = includePatterns.flatMap((pattern) => {
-        if (!pattern.includes("/")) {
-          return [pattern, `**/${pattern}`];
-        }
-        return [pattern];
-      });
+    const expandedPatterns = includePatterns.flatMap((pattern) => {
+      if (!pattern.includes("/")) {
+        return [pattern, `**/${pattern}`];
+      }
+      return [pattern];
+    });
 
-      const files = await glob(expandedPatterns, {
+    const filesResult = await ResultAsync.fromPromise(
+      glob(expandedPatterns, {
         cwd: mainRepoPath,
         absolute: false,
         ignore: IGNORED_DIRECTORIES.map((dir) => `**/${dir}/**`),
         dot: true,
-      });
+      }),
+      (error) => error
+    );
 
-      return files.map((file: string) => file.split(sep).join(POSIX_SEPARATOR));
-    } catch (error) {
-      logWarn("Failed to match include patterns", error);
+    if (filesResult.isErr()) {
+      logWarn("Failed to match include patterns", filesResult.error);
       return [];
     }
+
+    return filesResult.value.map((file: string) =>
+      file.split(sep).join(POSIX_SEPARATOR)
+    );
   }
 
   async function copyIncludedFiles(
@@ -285,10 +299,13 @@ export function createWorktreeManager(
     const sourcePath = join(mainRepoPath, file);
     const targetPath = join(worktreePath, file);
 
-    try {
-      await cp(sourcePath, targetPath, { recursive: true });
-    } catch (error) {
-      logWarn(`Failed to copy ${file} to worktree`, error);
+    const copyResult = await ResultAsync.fromPromise(
+      cp(sourcePath, targetPath, { recursive: true }),
+      (error) => error
+    );
+
+    if (copyResult.isErr()) {
+      logWarn(`Failed to copy ${file} to worktree`, copyResult.error);
     }
   }
 
@@ -319,12 +336,15 @@ export function createWorktreeManager(
 
     return ResultAsync.fromPromise(
       (async () => {
-        try {
-          git("worktree", "remove", "--force", worktreePath);
-        } catch (error) {
+        const removalResult = Result.fromThrowable(
+          () => git("worktree", "remove", "--force", worktreePath),
+          (error) => error
+        )();
+
+        if (removalResult.isErr()) {
           logWarn(
             "Git worktree remove failed, falling back to filesystem removal",
-            error
+            removalResult.error
           );
           await rm(worktreePath, { recursive: true, force: true });
         }
@@ -342,14 +362,18 @@ export function createWorktreeManager(
   }
 
   function ensureBranchExists(branchName: string): string {
-    try {
-      git("show-ref", "--verify", `refs/heads/${branchName}`);
-      return branchName;
-    } catch {
-      const currentBranch = getCurrentBranch();
-      git("branch", branchName, currentBranch);
+    const verification = Result.fromThrowable(
+      () => git("show-ref", "--verify", `refs/heads/${branchName}`),
+      () => null
+    )();
+
+    if (verification.isOk()) {
       return branchName;
     }
+
+    const currentBranch = getCurrentBranch();
+    git("branch", branchName, currentBranch);
+    return branchName;
   }
 
   function parseWorktreeSection(section: string): {
@@ -422,7 +446,7 @@ export function createWorktreeManager(
 
           const branch = ensureBranchExists(`cell-${cellId}`);
 
-          try {
+          const worktreeSetup = (async () => {
             git("worktree", "add", worktreePath, branch);
 
             const includePatterns = getIncludePatterns(options.templateId);
@@ -434,16 +458,27 @@ export function createWorktreeManager(
               branch,
               baseCommit,
             } satisfies WorktreeLocation;
-          } catch (error) {
-            try {
-              if (existsSync(worktreePath)) {
-                git("worktree", "remove", "--force", worktreePath);
-              }
-            } catch (cleanupError) {
-              logWarn("Failed to cleanup worktree after failure", cleanupError);
+          })().catch((error) => {
+            const cleanupResult = Result.fromThrowable(
+              () => {
+                if (existsSync(worktreePath)) {
+                  git("worktree", "remove", "--force", worktreePath);
+                }
+              },
+              (cleanupError) => cleanupError
+            )();
+
+            if (cleanupResult.isErr()) {
+              logWarn(
+                "Failed to cleanup worktree after failure",
+                cleanupResult.error
+              );
             }
+
             throw error;
-          }
+          });
+
+          return worktreeSetup;
         })(),
         (error) =>
           toWorktreeError(

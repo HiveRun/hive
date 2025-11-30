@@ -5,6 +5,7 @@ import { resolve as resolvePath } from "node:path";
 import { logger } from "@bogeychan/elysia-logger";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { Elysia, type Static, t } from "elysia";
+import { ResultAsync } from "neverthrow";
 import {
   closeAgentSession,
   ensureAgentSession,
@@ -99,6 +100,10 @@ const SERVICE_LOG_DIR = ".hive/logs";
 const PORT_CHECK_TIMEOUT_MS = 500;
 const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
 const MAX_PROVISIONING_ATTEMPTS = 3;
+
+const toError = (value: unknown): Error =>
+  value instanceof Error ? value : new Error(String(value));
+
 const PROVISIONING_INTERRUPTED_MESSAGE =
   "Provisioning interrupted. Fix the workspace and rerun setup.";
 
@@ -1345,12 +1350,15 @@ async function removeCellWorkspace(
     return;
   }
 
-  try {
-    await fs.rm(cell.workspacePath, { recursive: true, force: true });
-  } catch (error) {
+  const filesystemRemoval = await ResultAsync.fromPromise(
+    fs.rm(cell.workspacePath, { recursive: true, force: true }),
+    toError
+  );
+
+  if (filesystemRemoval.isErr()) {
     log.warn(
       {
-        error,
+        error: filesystemRemoval.error,
         cellId: cell.id,
         workspacePath: cell.workspacePath,
       },

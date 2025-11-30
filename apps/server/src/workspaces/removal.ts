@@ -1,5 +1,6 @@
 import { rm } from "node:fs/promises";
 import { eq } from "drizzle-orm";
+import { Result, ResultAsync } from "neverthrow";
 import { closeAgentSession as closeDefaultAgentSession } from "../agents/service";
 import { db as defaultDb } from "../db";
 import { cells } from "../schema/cells";
@@ -62,12 +63,18 @@ export async function removeWorkspaceCascade(
     .where(eq(cells.workspaceId, workspaceId));
 
   let worktreeManager: WorktreeManager | null = null;
-  try {
-    worktreeManager = createWorktreeManager(workspace.path);
-  } catch (error) {
+  const safeCreateWorktreeManager = Result.fromThrowable(
+    createWorktreeManager,
+    (error) => error
+  );
+  const worktreeResult = safeCreateWorktreeManager(workspace.path);
+
+  if (worktreeResult.isOk()) {
+    worktreeManager = worktreeResult.value;
+  } else {
     logWorkspaceRemovalWarning("Failed to initialize worktree manager", {
       workspaceId,
-      error: formatError(error),
+      error: formatError(worktreeResult.error),
     });
   }
 
@@ -120,13 +127,16 @@ async function cleanupCellWorkspace(
   }
 
   if (workspacePath && workspacePath.trim().length > 0) {
-    try {
-      await rm(workspacePath, { recursive: true, force: true });
-    } catch (error) {
+    const removalResult = await ResultAsync.fromPromise(
+      rm(workspacePath, { recursive: true, force: true }),
+      (error) => error
+    );
+
+    if (removalResult.isErr()) {
       logWorkspaceRemovalWarning("Failed to remove workspace directory", {
         cellId,
         workspacePath,
-        error: formatError(error),
+        error: formatError(removalResult.error),
       });
     }
   }
