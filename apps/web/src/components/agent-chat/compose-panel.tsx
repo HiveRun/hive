@@ -38,6 +38,10 @@ type ComposePanelProps = {
   sessionId: string;
   selectedModel?: ModelSelection;
   onModelChange: (model: ModelSelection) => void;
+  onInterrupt: () => void;
+  canInterrupt: boolean;
+  isInterrupting: boolean;
+  showInterruptHint: boolean;
 };
 
 type ComposeValues = z.infer<typeof formSchema>;
@@ -56,6 +60,10 @@ export function ComposePanel({
   sessionId,
   selectedModel,
   onModelChange,
+  onInterrupt,
+  canInterrupt,
+  isInterrupting,
+  showInterruptHint,
 }: ComposePanelProps) {
   const form = useForm<ComposeValues>({
     defaultValues: { message: "" },
@@ -86,6 +94,16 @@ export function ComposePanel({
     await onSend(values.message.trim());
     form.reset();
   });
+
+  const interruptButtonLabel = (() => {
+    if (isInterrupting) {
+      return "Interrupting...";
+    }
+    if (canInterrupt) {
+      return "Abort Response";
+    }
+    return "Interrupt Unavailable";
+  })();
 
   return (
     <section className="min-h-0 w-full overflow-y-auto border border-border/60 bg-card p-3 text-[10px] text-muted-foreground uppercase tracking-[0.25em] lg:w-80 lg:border-l-2">
@@ -142,9 +160,19 @@ export function ComposePanel({
           />
           <div className="flex flex-col gap-2">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-              <span className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
-                Ctrl+Enter to send
-              </span>
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
+                  Ctrl+Enter to send
+                </span>
+                <span className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
+                  Esc twice to interrupt
+                </span>
+                {showInterruptHint ? (
+                  <span className="text-[10px] text-primary uppercase tracking-[0.2em]">
+                    Press Esc again to confirm interrupt
+                  </span>
+                ) : null}
+              </div>
               <div className="flex flex-col items-end gap-2">
                 <Button
                   className="w-full border border-primary bg-primary px-3 py-1 text-primary-foreground text-xs hover:bg-primary/90 focus-visible:ring-primary sm:w-40"
@@ -152,6 +180,15 @@ export function ComposePanel({
                   type="submit"
                 >
                   {isSending ? "Sending..." : "Send"}
+                </Button>
+                <Button
+                  className="w-full border border-primary/70 bg-transparent px-3 py-1 text-primary text-xs hover:bg-primary/10 focus-visible:ring-primary disabled:text-muted-foreground disabled:opacity-50 sm:w-40"
+                  disabled={!canInterrupt || isInterrupting}
+                  onClick={onInterrupt}
+                  type="button"
+                  variant="outline"
+                >
+                  {interruptButtonLabel}
                 </Button>
                 {voiceConfig?.enabled && voiceConfig.allowBrowserRecording ? (
                   <div className="w-full sm:w-40">

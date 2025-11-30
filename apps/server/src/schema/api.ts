@@ -183,6 +183,9 @@ export const AgentMessageSchema = t.Object({
   state: t.String(),
   createdAt: t.String(),
   parts: t.Array(t.Any()), // Part[] from OpenCode SDK - complex union type
+  parentId: t.Optional(t.Union([t.String(), t.Null()])),
+  errorName: t.Optional(t.Union([t.String(), t.Null()])),
+  errorMessage: t.Optional(t.Union([t.String(), t.Null()])),
 });
 
 export const AgentMessageListResponseSchema = t.Object({

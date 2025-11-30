@@ -10,11 +10,16 @@ import type { AgentMessage } from "@/queries/agents";
 
 import { MessageBubble } from "./message-bubble";
 
+type ConversationMessage = AgentMessage & {
+  interruptionReason?: string;
+};
+
 type ConversationPanelProps = {
   totalMessages: number;
-  filteredMessages: AgentMessage[];
+  filteredMessages: ConversationMessage[];
   searchQuery: string;
   onSearchQueryChange: (value: string) => void;
+
   workspacePath: string;
   provider: string;
   permissions: PermissionRequest[];

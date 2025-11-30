@@ -7,6 +7,7 @@ import {
   fetchAgentSession,
   fetchAgentSessionForCell,
   fetchProviderCatalogForWorkspace,
+  interruptAgentSession,
   type ProviderEntry,
   type ProviderModel,
   respondAgentPermission,
@@ -279,6 +280,30 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     {
       params: t.Object({ id: t.String() }),
       body: SendAgentMessageSchema,
+      response: {
+        200: t.Object({ ok: t.Boolean() }),
+        400: t.Object({ message: t.String() }),
+      },
+    }
+  )
+  .post(
+    "/sessions/:id/interrupt",
+    async ({ params, set }) => {
+      try {
+        await interruptAgentSession(params.id);
+        return { ok: true };
+      } catch (error) {
+        set.status = HTTP_STATUS.BAD_REQUEST;
+        return {
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to interrupt agent session",
+        };
+      }
+    },
+    {
+      params: t.Object({ id: t.String() }),
       response: {
         200: t.Object({ ok: t.Boolean() }),
         400: t.Object({ message: t.String() }),

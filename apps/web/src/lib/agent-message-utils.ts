@@ -4,6 +4,7 @@ export type OpenCodeMessageInfo = {
   id: string;
   sessionID: string;
   role: "user" | "assistant";
+  parentID?: string;
   time: {
     created: number;
     completed?: number;
@@ -27,6 +28,9 @@ export function normalizeMessage(message: AgentMessage): AgentMessage {
   return {
     ...message,
     content: message.content ?? null,
+    parentId: message.parentId ?? null,
+    errorName: message.errorName ?? null,
+    errorMessage: message.errorMessage ?? null,
     parts: Array.isArray(message.parts)
       ? (message.parts as AgentMessagePart[])
       : safeParseParts(message.parts as unknown),

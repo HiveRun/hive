@@ -11,6 +11,9 @@
 ## Goal
 Provide the core engine for managing agent sessions, authentication, and lifecycle events across all cell types.
 
+## Tasks
+- [x] [HIVE-5] Add chat interruption controls (Abort button + double-Esc binding)
+
 ## Current Status: DEFERRED
 
 This feature represents **advanced agent orchestration** that was originally planned for Phase 0. It has been deferred to accelerate delivery of core functionality.

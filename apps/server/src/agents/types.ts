@@ -75,6 +75,9 @@ export type AgentMessageRecord = {
   state: AgentMessageState;
   createdAt: string;
   parts: Part[]; // From OpenCode SDK
+  parentId?: string | null;
+  errorName?: string | null;
+  errorMessage?: string | null;
 };
 
 /**
