@@ -44,6 +44,7 @@ type RuntimeHandle = {
   server: { close(): void };
   abortController: AbortController;
   status: AgentSessionStatus;
+  pendingInterrupt: boolean;
   sendMessage: (content: string) => Promise<void>;
   stop: () => Promise<void>;
 };
@@ -218,6 +219,24 @@ export async function sendAgentMessage(
 ): Promise<void> {
   const runtime = await ensureRuntimeForSession(sessionId);
   await runtime.sendMessage(content);
+}
+
+export async function interruptAgentSession(sessionId: string): Promise<void> {
+  const runtime = await ensureRuntimeForSession(sessionId);
+  runtime.pendingInterrupt = true;
+  const result = await runtime.client.session.abort({
+    path: { id: runtime.session.id },
+    query: runtime.directoryQuery,
+  });
+
+  if (result.error) {
+    runtime.pendingInterrupt = false;
+    throw new Error(
+      getRpcErrorMessage(result.error, "Failed to interrupt agent session")
+    );
+  }
+
+  setRuntimeStatus(runtime, "awaiting_input");
 }
 
 export async function stopAgentSession(sessionId: string): Promise<void> {
@@ -471,6 +490,7 @@ async function startOpencodeRuntime({
     server,
     abortController,
     status: "awaiting_input",
+    pendingInterrupt: false,
     async sendMessage(content) {
       setRuntimeStatus(runtime, "working");
 
@@ -490,6 +510,11 @@ async function startOpencodeRuntime({
       });
 
       if (response.error) {
+        if (runtime.pendingInterrupt && isMessageAbortedError(response.error)) {
+          runtime.pendingInterrupt = false;
+          setRuntimeStatus(runtime, "awaiting_input");
+          return;
+        }
         const errorMessage = getRpcErrorMessage(
           response.error,
           "Agent prompt failed"
@@ -497,6 +522,8 @@ async function startOpencodeRuntime({
         setRuntimeStatus(runtime, "error", errorMessage);
         throw new Error(errorMessage);
       }
+
+      runtime.pendingInterrupt = false;
     },
     async stop() {
       abortController.abort();
@@ -670,6 +697,20 @@ function updateRuntimeStatusFromEvent(
   runtime: RuntimeHandle,
   event: Event
 ): void {
+  if (
+    event.type === "session.error" &&
+    runtime.pendingInterrupt &&
+    isSessionErrorAborted(event)
+  ) {
+    runtime.pendingInterrupt = false;
+    setRuntimeStatus(runtime, "awaiting_input");
+    return;
+  }
+
+  if (runtime.pendingInterrupt && event.type === "message.updated") {
+    return;
+  }
+
   const update = resolveRuntimeStatusFromEvent(event);
   if (!update) {
     return;
@@ -721,6 +762,17 @@ async function loadRemoteMessages(
 
 function serializeMessage(info: Message, parts: Part[]): AgentMessageRecord {
   const contentText = extractTextFromParts(parts);
+  const parentId = (info as { parentID?: string }).parentID ?? null;
+  const errorDetails =
+    info.role === "assistant"
+      ? (
+          info as {
+            error?: { name?: string; data?: { message?: string } };
+          }
+        ).error
+      : undefined;
+  const isAborted = errorDetails?.name === "MessageAbortedError";
+
   return {
     id: info.id,
     sessionId: info.sessionID,
@@ -729,6 +781,9 @@ function serializeMessage(info: Message, parts: Part[]): AgentMessageRecord {
     parts,
     state: determineMessageState(info),
     createdAt: new Date(info.time.created).toISOString(),
+    parentId,
+    errorName: isAborted ? (errorDetails?.name ?? null) : null,
+    errorMessage: isAborted ? (errorDetails?.data?.message ?? null) : null,
   };
 }
 
@@ -797,6 +852,37 @@ function extractErrorMessage(event: Event): string {
     return err.data.message;
   }
   return "Agent session error";
+}
+
+function isSessionErrorAborted(event: Event): boolean {
+  if (event.type !== "session.error") {
+    return false;
+  }
+  return isMessageAbortedError(event.properties.error);
+}
+
+function isMessageAbortedError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const candidate = error as {
+    name?: string;
+    data?: { name?: string; message?: string };
+    errors?: Array<{ name?: string }>;
+  };
+  if (candidate.name === "MessageAbortedError") {
+    return true;
+  }
+  if (candidate.data?.name === "MessageAbortedError") {
+    return true;
+  }
+  if (
+    Array.isArray(candidate.errors) &&
+    candidate.errors.some((item) => item?.name === "MessageAbortedError")
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function getRpcErrorMessage(error: unknown, fallback: string): string {

@@ -30,6 +30,9 @@ export type AgentMessage = {
   state: string;
   createdAt: string;
   parts: AgentMessagePart[];
+  parentId?: string | null;
+  errorName?: string | null;
+  errorMessage?: string | null;
 };
 
 export const agentQueries = {
@@ -123,6 +126,17 @@ export const agentMutations = {
         .post({ response: input.response });
       if (error) {
         throw new Error("Failed to update permission");
+      }
+      return true;
+    },
+  },
+  interrupt: {
+    mutationFn: async (input: { sessionId: string }) => {
+      const { error } = await rpc.api.agents
+        .sessions({ id: input.sessionId })
+        .interrupt.post();
+      if (error) {
+        throw new Error("Failed to interrupt agent session");
       }
       return true;
     },
