@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  type AssistantMessage,
   createOpencodeClient,
   createOpencodeServer,
   type Event,
@@ -66,12 +67,50 @@ type ProviderCatalogResponse = NonNullable<
   >["data"]
 >;
 
-async function readProviderCredentials(): Promise<Record<string, unknown>> {
+type ProviderAuthEntry = {
+  token?: string;
+  [key: string]: unknown;
+};
+
+type ProviderCredentialsStore = Record<string, ProviderAuthEntry>;
+
+async function readProviderCredentials(): Promise<ProviderCredentialsStore> {
   try {
     const raw = await readFile(AUTH_PATH, "utf8");
-    return JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return {};
+    const parsed = JSON.parse(raw);
+    assertIsProviderCredentialStore(parsed, AUTH_PATH);
+    return parsed;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return {};
+    }
+    throw new Error(
+      `Failed to read provider credentials from ${AUTH_PATH}: ${error instanceof Error ? error.message : error}`
+    );
+  }
+}
+
+function assertIsProviderCredentialStore(
+  value: unknown,
+  source: string
+): asserts value is ProviderCredentialsStore {
+  if (typeof value !== "object" || value === null) {
+    throw new Error(`Provider credentials at ${source} must be an object`);
+  }
+
+  for (const [providerId, entry] of Object.entries(value)) {
+    if (typeof entry !== "object" || entry === null) {
+      throw new Error(
+        `Credential entry for ${providerId} in ${source} must be an object`
+      );
+    }
+
+    const maybeToken = (entry as { token?: unknown }).token;
+    if (maybeToken !== undefined && typeof maybeToken !== "string") {
+      throw new Error(
+        `Credential entry for ${providerId} in ${source} has invalid "token"`
+      );
+    }
   }
 }
 
@@ -660,13 +699,12 @@ async function resolveSessionModelPreference(
       if (!entry?.info) {
         continue;
       }
-      const info = entry.info as Message & {
-        model?: { providerID: string; modelID: string };
-      };
-      if (info.role === "user" && info.model) {
+      const info: Message = entry.info;
+      const modelSelection = extractMessageModelSelection(info);
+      if (info.role === "user" && modelSelection) {
         return {
-          providerId: info.model.providerID,
-          modelId: info.model.modelID,
+          providerId: modelSelection.providerId,
+          modelId: modelSelection.modelId,
         };
       }
     }
@@ -674,6 +712,47 @@ async function resolveSessionModelPreference(
   } catch {
     return null;
   }
+}
+
+type MessageModelSelection = {
+  providerId: string;
+  modelId: string;
+};
+
+function extractMessageModelSelection(
+  info: Message
+): MessageModelSelection | null {
+  const candidate = (info as { model?: unknown }).model;
+  if (
+    candidate &&
+    typeof candidate === "object" &&
+    candidate !== null &&
+    typeof (candidate as { providerID?: unknown }).providerID === "string" &&
+    typeof (candidate as { modelID?: unknown }).modelID === "string"
+  ) {
+    const { providerID, modelID } = candidate as {
+      providerID: string;
+      modelID: string;
+    };
+    return { providerId: providerID, modelId: modelID };
+  }
+  return null;
+}
+
+function getMessageParentId(info: Message): string | null {
+  if (info.role !== "assistant") {
+    return null;
+  }
+  return info.parentID ?? null;
+}
+
+function getAssistantErrorDetails(
+  info: Message
+): AssistantMessage["error"] | null {
+  if (info.role !== "assistant") {
+    return null;
+  }
+  return info.error ?? null;
 }
 
 function getEventSessionId(event: Event): string | null {
@@ -769,16 +848,12 @@ async function loadRemoteMessages(
 
 function serializeMessage(info: Message, parts: Part[]): AgentMessageRecord {
   const contentText = extractTextFromParts(parts);
-  const parentId = (info as { parentID?: string }).parentID ?? null;
-  const errorDetails =
-    info.role === "assistant"
-      ? (
-          info as {
-            error?: { name?: string; data?: { message?: string } };
-          }
-        ).error
-      : undefined;
-  const isAborted = errorDetails?.name === "MessageAbortedError";
+  const parentId = getMessageParentId(info);
+  const errorDetails = getAssistantErrorDetails(info);
+  const isAborted = isMessageAbortedError(errorDetails);
+  const abortedErrorPayload = isAborted
+    ? extractRpcErrorPayload(errorDetails)
+    : null;
 
   return {
     id: info.id,
@@ -790,7 +865,11 @@ function serializeMessage(info: Message, parts: Part[]): AgentMessageRecord {
     createdAt: new Date(info.time.created).toISOString(),
     parentId,
     errorName: isAborted ? (errorDetails?.name ?? null) : null,
-    errorMessage: isAborted ? (errorDetails?.data?.message ?? null) : null,
+    errorMessage: isAborted
+      ? (abortedErrorPayload?.data?.message ??
+        abortedErrorPayload?.message ??
+        null)
+      : null,
   };
 }
 
@@ -856,15 +935,43 @@ function setRuntimeStatus(
   publishAgentEvent(runtime.session.id, statusEvent);
 }
 
+type RpcErrorPayload = {
+  message?: string;
+  data?: { message?: string };
+};
+
+function extractRpcErrorPayload(error: unknown): RpcErrorPayload | null {
+  if (typeof error !== "object" || error === null) {
+    return null;
+  }
+
+  const candidate = error as { message?: unknown; data?: unknown };
+  const payload: RpcErrorPayload = {};
+
+  if (typeof candidate.message === "string") {
+    payload.message = candidate.message;
+  }
+
+  if (candidate.data && typeof candidate.data === "object") {
+    const dataMessage = (candidate.data as { message?: unknown }).message;
+    if (typeof dataMessage === "string") {
+      payload.data = { message: dataMessage };
+    }
+  }
+
+  return payload.message || payload.data ? payload : null;
+}
+
 function extractErrorMessage(event: Event): string {
   if (event.type !== "session.error") {
     return "Agent session error";
   }
-  const err = event.properties.error as
-    | { data?: { message?: string } }
-    | undefined;
-  if (err?.data?.message) {
-    return err.data.message;
+  const rpcError = extractRpcErrorPayload(event.properties.error);
+  if (rpcError?.data?.message) {
+    return rpcError.data.message;
+  }
+  if (rpcError?.message) {
+    return rpcError.message;
   }
   return "Agent session error";
 }
@@ -901,17 +1008,15 @@ function isMessageAbortedError(error: unknown): boolean {
 }
 
 function getRpcErrorMessage(error: unknown, fallback: string): string {
-  if (!error) {
+  const rpcError = extractRpcErrorPayload(error);
+  if (!rpcError) {
     return fallback;
   }
-  if (typeof error === "object" && error !== null) {
-    const rpcError = error as { data?: { message?: string }; message?: string };
-    if (typeof rpcError.data?.message === "string") {
-      return rpcError.data.message;
-    }
-    if (typeof rpcError.message === "string") {
-      return rpcError.message;
-    }
+  if (rpcError.data?.message) {
+    return rpcError.data.message;
+  }
+  if (rpcError.message) {
+    return rpcError.message;
   }
   return fallback;
 }
