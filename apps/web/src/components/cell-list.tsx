@@ -71,26 +71,18 @@ export function CellList({ workspaceId }: CellListProps) {
     data: cells,
     isLoading,
     error,
-  } = useQuery(cellQueries.all(workspaceId));
+  } = useQuery({
+    ...cellQueries.all(workspaceId),
+    refetchInterval: (data) => {
+      const hasProvisioningCells = Array.isArray(data)
+        ? data.some((cell) => PROVISIONING_STATUSES.includes(cell.status))
+        : false;
+      return hasProvisioningCells ? PROVISIONING_POLL_INTERVAL_MS : false;
+    },
+    refetchIntervalInBackground: true,
+  });
   const { data: templatesData } = useQuery(templateQueries.all(workspaceId));
   const templates = templatesData?.templates;
-
-  const hasProvisioningCells =
-    cells?.some((cell) => PROVISIONING_STATUSES.includes(cell.status)) ?? false;
-
-  useEffect(() => {
-    if (!hasProvisioningCells) {
-      return;
-    }
-
-    const intervalId = setInterval(() => {
-      queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
-    }, PROVISIONING_POLL_INTERVAL_MS);
-
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, [hasProvisioningCells, queryClient, workspaceId]);
 
   const serviceStatusQueries = useQueries({
     queries:

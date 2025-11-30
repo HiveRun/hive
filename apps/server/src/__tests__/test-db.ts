@@ -11,6 +11,11 @@ const sqlite = new Database(":memory:");
 export const testDb = drizzle(sqlite, { schema });
 
 export async function setupTestDb() {
+  sqlite.exec("DROP TABLE IF EXISTS cell_services;");
+  sqlite.exec("DROP TABLE IF EXISTS cell_provisioning_state;");
+  sqlite.exec("DROP TABLE IF EXISTS cells;");
+  sqlite.exec("DROP TABLE IF EXISTS __drizzle_migrations;");
+
   const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
   const migrationsFolder = join(packageRoot, "src", "migrations");
   await migrate(testDb, { migrationsFolder });

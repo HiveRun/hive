@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSessionRecord } from "../../agents/types";
@@ -5,7 +6,9 @@ import type { HiveConfig } from "../../config/schema";
 import {
   type CellRouteDependencies,
   createCellsRoutes,
+  resumeSpawningCells,
 } from "../../routes/cells";
+import { cellProvisioningStates } from "../../schema/cell-provisioning";
 import { cells } from "../../schema/cells";
 import {
   CommandExecutionError,
@@ -75,11 +78,88 @@ type DependencyFactoryOptions = {
     sessionId: string,
     overrides?: { modelId?: string; providerId?: string }
   ) => void;
+  hiveConfigOverride?: HiveConfig;
 };
 
-describe("POST /api/cells", () => {
-  let removeWorktreeCalls = 0;
+let removeWorktreeCalls = 0;
 
+function createDependencies(
+  options: DependencyFactoryOptions = {}
+): Partial<CellRouteDependencies> {
+  const workspaceRecord = {
+    id: "test-workspace",
+    label: "Test Workspace",
+    path: "/tmp/test-workspace-root",
+    addedAt: new Date().toISOString(),
+  };
+
+  function loadWorkspaceConfig() {
+    return Promise.resolve(options.hiveConfigOverride ?? hiveConfig);
+  }
+
+  function createCellWorktree(_cellId: string) {
+    return Promise.resolve({
+      path: workspacePath,
+      branch: "cell-branch",
+      baseCommit: "abc123",
+    });
+  }
+
+  function removeCellWorktree(_cellId: string) {
+    removeWorktreeCalls += 1;
+    return Promise.resolve();
+  }
+
+  function createTestWorktreeManager() {
+    return Promise.resolve({
+      createWorktree: createCellWorktree,
+      removeWorktree: removeCellWorktree,
+    });
+  }
+
+  const sendAgentMessageImpl =
+    options.sendAgentMessage ?? vi.fn<SendAgentMessageFn>().mockResolvedValue();
+
+  return {
+    db: testDb,
+    resolveWorkspaceContext: async () => ({
+      workspace: workspaceRecord,
+      loadConfig: loadWorkspaceConfig,
+      createWorktreeManager: createTestWorktreeManager,
+    }),
+    ensureAgentSession: (
+      cellId: string,
+      overrides?: { modelId?: string; providerId?: string }
+    ) => {
+      const session: AgentSessionRecord = {
+        id: `session-${cellId}`,
+        cellId,
+        templateId,
+        provider: "opencode",
+        status: "awaiting_input",
+        workspacePath,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      options.onEnsureAgentSession?.(cellId, session.id, overrides);
+      return Promise.resolve(session);
+    },
+    closeAgentSession: (_cellId: string) => Promise.resolve(),
+    ensureServicesForCell: (_args?: unknown) =>
+      options.setupError
+        ? Promise.reject(options.setupError)
+        : Promise.resolve(),
+    stopServicesForCell: (
+      _cellId: string,
+      _options?: { releasePorts?: boolean }
+    ) => Promise.resolve(),
+    startServiceById: (_serviceId: string) => Promise.resolve(),
+    stopServiceById: (_serviceId: string) => Promise.resolve(),
+    sendAgentMessage: sendAgentMessageImpl,
+  } satisfies Partial<CellRouteDependencies>;
+}
+
+describe("POST /api/cells", () => {
   beforeAll(async () => {
     await setupTestDb();
   });
@@ -88,83 +168,6 @@ describe("POST /api/cells", () => {
     await testDb.delete(cells);
     removeWorktreeCalls = 0;
   });
-
-  function createDependencies(
-    options: DependencyFactoryOptions = {}
-  ): Partial<CellRouteDependencies> {
-    const workspaceRecord = {
-      id: "test-workspace",
-      label: "Test Workspace",
-      path: "/tmp/test-workspace-root",
-      addedAt: new Date().toISOString(),
-    };
-
-    function loadWorkspaceConfig() {
-      return Promise.resolve(hiveConfig);
-    }
-
-    function createCellWorktree(_cellId: string) {
-      return Promise.resolve({
-        path: workspacePath,
-        branch: "cell-branch",
-        baseCommit: "abc123",
-      });
-    }
-
-    function removeCellWorktree(_cellId: string) {
-      removeWorktreeCalls += 1;
-      return Promise.resolve();
-    }
-
-    function createTestWorktreeManager() {
-      return Promise.resolve({
-        createWorktree: createCellWorktree,
-        removeWorktree: removeCellWorktree,
-      });
-    }
-
-    const sendAgentMessageImpl =
-      options.sendAgentMessage ??
-      vi.fn<SendAgentMessageFn>().mockResolvedValue();
-
-    return {
-      db: testDb,
-      resolveWorkspaceContext: async () => ({
-        workspace: workspaceRecord,
-        loadConfig: loadWorkspaceConfig,
-        createWorktreeManager: createTestWorktreeManager,
-      }),
-      ensureAgentSession: (
-        cellId: string,
-        overrides?: { modelId?: string; providerId?: string }
-      ) => {
-        const session: AgentSessionRecord = {
-          id: `session-${cellId}`,
-          cellId,
-          templateId,
-          provider: "opencode",
-          status: "awaiting_input",
-          workspacePath,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        options.onEnsureAgentSession?.(cellId, session.id, overrides);
-        return Promise.resolve(session);
-      },
-      closeAgentSession: (_cellId: string) => Promise.resolve(),
-      ensureServicesForCell: (_args?: unknown) =>
-        options.setupError
-          ? Promise.reject(options.setupError)
-          : Promise.resolve(),
-      stopServicesForCell: (
-        _cellId: string,
-        _options?: { releasePorts?: boolean }
-      ) => Promise.resolve(),
-      startServiceById: (_serviceId: string) => Promise.resolve(),
-      stopServiceById: (_serviceId: string) => Promise.resolve(),
-      sendAgentMessage: sendAgentMessageImpl,
-    } satisfies Partial<CellRouteDependencies>;
-  }
 
   it("returns detailed payload when template setup fails", async () => {
     const failingCommand = "bash -lc 'echo FAIL && exit 42'";
@@ -339,5 +342,94 @@ describe("POST /api/cells", () => {
 
     await waitForCellStatus(payload.id, "ready");
     expect(sendAgentMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("resumeSpawningCells", () => {
+  beforeEach(async () => {
+    await testDb.delete(cells);
+  });
+
+  it("retries provisioning for stranded cells", async () => {
+    const dependencies = createDependencies();
+    const cellId = "resume-cell";
+    const createdAt = new Date();
+
+    await testDb.insert(cells).values({
+      id: cellId,
+      name: "Resume Cell",
+      description: "Resume description",
+      templateId,
+      workspaceId: "test-workspace",
+      workspacePath,
+      workspaceRootPath: "/tmp/test-workspace-root",
+      branchName: "cell-branch",
+      baseCommit: "abc123",
+      opencodeSessionId: null,
+      opencodeServerUrl: null,
+      opencodeServerPort: null,
+      createdAt,
+      status: "spawning",
+      lastSetupError: null,
+    });
+
+    await testDb.insert(cellProvisioningStates).values({
+      cellId,
+      modelIdOverride: null,
+      providerIdOverride: null,
+      attemptCount: 0,
+      startedAt: null,
+      finishedAt: null,
+    });
+
+    await resumeSpawningCells(dependencies);
+
+    const readyRow = await waitForCellStatus(cellId, "ready");
+    const [provisioningState] = await testDb
+      .select()
+      .from(cellProvisioningStates)
+      .where(eq(cellProvisioningStates.cellId, cellId));
+
+    expect(provisioningState?.startedAt).toBeInstanceOf(Date);
+    expect(provisioningState?.finishedAt).toBeInstanceOf(Date);
+    expect(provisioningState?.attemptCount).toBe(1);
+    expect(readyRow.lastSetupError).toBeNull();
+  });
+
+  it("marks cells as error when the template no longer exists", async () => {
+    const missingTemplateConfig: HiveConfig = {
+      ...hiveConfig,
+      templates: {},
+    };
+
+    const cellId = "missing-template-cell";
+    await testDb.insert(cells).values({
+      id: cellId,
+      name: "Missing Template",
+      templateId: "removed-template",
+      workspaceId: "test-workspace",
+      workspacePath,
+      workspaceRootPath: "/tmp/test-workspace-root",
+      createdAt: new Date(),
+      status: "spawning",
+    });
+
+    await testDb.insert(cellProvisioningStates).values({
+      cellId,
+      modelIdOverride: null,
+      providerIdOverride: null,
+      attemptCount: 0,
+      startedAt: null,
+      finishedAt: null,
+    });
+
+    await resumeSpawningCells(
+      createDependencies({ hiveConfigOverride: missingTemplateConfig })
+    );
+
+    const errored = await waitForCellStatus(cellId, "error");
+    expect(errored.lastSetupError).toContain(
+      "Template removed-template no longer exists"
+    );
   });
 });

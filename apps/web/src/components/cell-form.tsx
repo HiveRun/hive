@@ -155,6 +155,10 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
             cell.lastSetupError ??
             "Open the cell to rerun the setup commands manually.",
         });
+      } else if (cell.status === "spawning" || cell.status === "pending") {
+        toast.info("Cell provisioning started", {
+          description: "We'll refresh the list when the setup completes.",
+        });
       } else {
         toast.success("Cell created successfully");
       }
