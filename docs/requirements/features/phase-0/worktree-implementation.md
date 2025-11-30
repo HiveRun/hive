@@ -17,9 +17,9 @@ Git worktree functionality has been successfully implemented to provide isolated
 
 2. **WorktreeManager Service** (`apps/server/src/worktree/manager.ts`)
    - Factory function pattern (no classes, per coding guidelines)
-   - **Public API (2 methods)**:
-     - `createWorktree(cellId, options)`: Creates isolated worktrees in `~/.hive/cells/<id>`
-     - `removeWorktree(cellId)`: Safely removes worktrees with automatic prune
+   - **Public API (2 methods)** powered by `neverthrow` `ResultAsync` values for structured error handling:
+     - `createWorktree(cellId, options)`: Creates isolated worktrees in `~/.hive/cells/<id>` and returns `Ok(worktree)` or `Err({ kind, message, context })`
+     - `removeWorktree(cellId)`: Safely removes worktrees with automatic prune and returns success/failure metadata instead of throwing
    - **Internal helpers**:
      - `findWorktreeInfo()`: Locates worktree by cell ID
      - Direct git command execution via `execSync` (no external dependencies)

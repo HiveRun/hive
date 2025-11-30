@@ -3,6 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { eq } from "drizzle-orm";
 import type { CellService } from "../schema/services";
 import { cellServices } from "../schema/services";
+import { safeSync } from "../utils/result";
 
 type DbClient = typeof import("../db").db;
 
@@ -119,16 +120,22 @@ function allocatePort(): Promise<number> {
 }
 
 async function terminatePid(pid: number): Promise<void> {
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
+  const terminateResult = safeSync(
+    () => process.kill(pid, "SIGTERM"),
+    () => null
+  );
+
+  if (terminateResult.isErr()) {
     return;
   }
+
   await delay(FORCE_KILL_DELAY_MS);
-  try {
-    process.kill(pid, 0);
-    process.kill(pid, "SIGKILL");
-  } catch {
-    // already stopped
-  }
+
+  safeSync(
+    () => {
+      process.kill(pid, 0);
+      process.kill(pid, "SIGKILL");
+    },
+    () => null
+  );
 }

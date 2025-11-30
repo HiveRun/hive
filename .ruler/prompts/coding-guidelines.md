@@ -33,6 +33,8 @@
 
 **Handle errors where you can do something reasonable about them.** Don't catch errors just to re-throw them or log without context.
 
+**Prefer `neverthrow` Results over `try`/`catch`.** Reach for `Result`/`ResultAsync` helpers (or shared wrappers like `safeSync`/`safeAsync`) so callers must explicitly unwrap errors. Only use `try`/`catch` when there is no alternative (e.g., synchronous APIs that throw and must not crash the process).
+
 **Prioritize visibility** - ensure errors surface clearly where they occur. Stack traces and context are more valuable than silent failures.
 
 **Avoid overbearing error handling** that adds no value. Let errors bubble up to where they can be meaningfully addressed.

@@ -8,6 +8,7 @@ import type { ProcessService, Template } from "../config/schema";
 import { db as defaultDb } from "../db";
 import type { Cell } from "../schema/cells";
 import type { CellService, ServiceStatus } from "../schema/services";
+import { safeAsync, safeSync } from "../utils/result";
 import { emitServiceUpdate } from "./events";
 import { createPortManager } from "./port-manager";
 import { createServiceRepository } from "./repository";
@@ -253,15 +254,15 @@ export function createServiceSupervisor(
         continue;
       }
 
-      try {
-        await startService(row, undefined, templateEnv, portMap);
-      } catch (error) {
-        logger.error("Failed to restart service", {
-          serviceId: row.service.id,
-          cellId: row.cell.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+      await startService(row, undefined, templateEnv, portMap).catch(
+        (error) => {
+          logger.error("Failed to restart service", {
+            serviceId: row.service.id,
+            cellId: row.cell.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      );
     }
   }
 
@@ -362,17 +363,21 @@ export function createServiceSupervisor(
     };
 
     for (const command of template.setup) {
-      try {
-        await runCommand(command, {
-          cwd: cell.workspacePath,
-          env,
-        });
-      } catch (error) {
+      const commandResult = await safeAsync(
+        () =>
+          runCommand(command, {
+            cwd: cell.workspacePath,
+            env,
+          }),
+        (error) => error
+      );
+
+      if (commandResult.isErr()) {
         throw new TemplateSetupError({
           command,
           templateId: template.id,
           workspacePath: cell.workspacePath,
-          cause: error,
+          cause: commandResult.error,
         });
       }
     }
@@ -616,14 +621,12 @@ export function createServiceSupervisor(
     const cwd = resolveServiceCwd(row.cell.workspacePath, definition?.cwd);
     const active = activeServices.get(row.service.id);
 
-    try {
-      if (definition?.type === "process" && definition.stop) {
-        await runCommand(definition.stop, { cwd, env });
-      }
-    } catch (error) {
-      logger.warn("Service stop command failed", {
-        serviceId: row.service.id,
-        error: error instanceof Error ? error.message : String(error),
+    if (definition?.type === "process" && definition.stop) {
+      await runCommand(definition.stop, { cwd, env }).catch((error) => {
+        logger.warn("Service stop command failed", {
+          serviceId: row.service.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
     }
 
@@ -748,11 +751,10 @@ export function createServiceSupervisor(
   }
 
   async function terminateHandle(handle: ProcessHandle): Promise<void> {
-    try {
-      handle.kill("SIGTERM");
-    } catch {
-      // Process already stopped
-    }
+    safeSync(
+      () => handle.kill("SIGTERM"),
+      () => null
+    );
 
     const exit = await Promise.race([
       handle.exited,
@@ -760,11 +762,10 @@ export function createServiceSupervisor(
     ]);
 
     if (exit === -1) {
-      try {
-        handle.kill("SIGKILL");
-      } catch {
-        // Process already stopped
-      }
+      safeSync(
+        () => handle.kill("SIGKILL"),
+        () => null
+      );
       await handle.exited.catch(() => {
         /* swallow errors when waiting for exit */
       });
@@ -772,18 +773,18 @@ export function createServiceSupervisor(
   }
 
   async function terminatePid(pid: number): Promise<void> {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // Process already stopped
-    }
+    safeSync(
+      () => process.kill(pid, "SIGTERM"),
+      () => null
+    );
     await delay(FORCE_KILL_DELAY_MS);
-    try {
-      process.kill(pid, 0);
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // Process already stopped
-    }
+    safeSync(
+      () => {
+        process.kill(pid, 0);
+        process.kill(pid, "SIGKILL");
+      },
+      () => null
+    );
   }
 }
 

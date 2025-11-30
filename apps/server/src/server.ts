@@ -30,6 +30,7 @@ import {
   bootstrapServiceSupervisor,
   stopAllServices,
 } from "./services/supervisor";
+import { safeAsync, safeSync } from "./utils/result";
 import {
   ensureWorkspaceRegistered,
   resolveHiveHome,
@@ -88,14 +89,13 @@ const resolveExistingFile = (filePath?: string | null) => {
   if (!filePath) {
     return null;
   }
-  try {
-    if (existsSync(filePath) && statSync(filePath).isFile()) {
-      return filePath;
-    }
-  } catch {
-    /* ignore filesystem errors */
-  }
-  return null;
+
+  const exists = safeSync(
+    () => existsSync(filePath) && statSync(filePath).isFile(),
+    () => false
+  ).unwrapOr(false);
+
+  return exists ? filePath : null;
 };
 
 const resolveAssetPath = (pathname: string, assetsDir: string) => {
@@ -217,11 +217,10 @@ async function startupCleanup() {
 }
 
 export const cleanupPidFile = () => {
-  try {
-    rmSync(pidFilePath);
-  } catch {
-    /* ignore */
-  }
+  safeSync(
+    () => rmSync(pidFilePath),
+    () => null
+  );
 };
 
 const createApp = () =>
@@ -261,6 +260,12 @@ const registerSignalHandlers = () => {
   }
   signalsRegistered = true;
 
+  const performShutdown = async () => {
+    await stopAllServices();
+    await closeAllAgentSessions();
+    cleanupPidFile();
+  };
+
   const handleShutdown = async (signal: string) => {
     if (shuttingDown) {
       return;
@@ -269,17 +274,17 @@ const registerSignalHandlers = () => {
 
     process.stderr.write(`\n${signal} received. Shutting down gracefully...\n`);
 
-    try {
-      await stopAllServices();
-      await closeAllAgentSessions();
-      cleanupPidFile();
+    const shutdownResult = await safeAsync(performShutdown, (error) => error);
+
+    if (shutdownResult.isOk()) {
       process.stderr.write("Cleanup completed. Exiting.\n");
       process.exit(0);
-    } catch (error) {
-      process.stderr.write(`Error during shutdown: ${error}\n`);
-      cleanupPidFile();
-      process.exit(1);
+      return;
     }
+
+    process.stderr.write(`Error during shutdown: ${shutdownResult.error}\n`);
+    cleanupPidFile();
+    process.exit(1);
   };
 
   process.on("SIGTERM", () => {
@@ -318,51 +323,68 @@ const configureAssetServing = (
 };
 
 const runMigrationsOrExit = async () => {
-  try {
-    await runMigrations();
-  } catch (error) {
+  const migrationResult = await safeAsync(runMigrations, (error) => error);
+
+  if (migrationResult.isErr()) {
     process.stderr.write(
       "Running migrations failed. Delete the database defined in DATABASE_URL or rerun `bun run apps/server db:push` from source to recover.\n"
     );
-    throw error;
+    throw migrationResult.error;
   }
 };
 
 const ensureWorkspaceRegistration = async (workspaceRoot: string) => {
-  try {
-    await ensureWorkspaceRegistered(workspaceRoot, {
-      preserveActiveWorkspace: true,
-    });
+  const registrationResult = await safeAsync(
+    () =>
+      ensureWorkspaceRegistered(workspaceRoot, {
+        preserveActiveWorkspace: true,
+      }),
+    (error) => error
+  );
+
+  if (registrationResult.isOk()) {
     process.stderr.write(`Workspace registered: ${workspaceRoot}\n`);
-  } catch (error) {
-    process.stderr.write(
-      `Warning: Failed to register workspace ${workspaceRoot}: ${
-        error instanceof Error ? error.message : String(error)
-      }\n`
-    );
+    return;
   }
+
+  const failure = registrationResult.error;
+  process.stderr.write(
+    `Warning: Failed to register workspace ${workspaceRoot}: ${
+      failure instanceof Error ? failure.message : String(failure)
+    }\n`
+  );
 };
 
 const initializeSupervisorSafely = async () => {
-  try {
-    await bootstrapServiceSupervisor();
+  const supervisorResult = await safeAsync(
+    bootstrapServiceSupervisor,
+    (error) => error
+  );
+
+  if (supervisorResult.isOk()) {
     process.stderr.write("Service supervisor initialized.\n");
-  } catch (error) {
-    process.stderr.write(
-      `Failed to bootstrap service supervisor: ${
-        error instanceof Error ? error.message : String(error)
-      }\n`
-    );
+    return;
   }
+
+  const failure = supervisorResult.error;
+  process.stderr.write(
+    `Failed to bootstrap service supervisor: ${
+      failure instanceof Error ? failure.message : String(failure)
+    }\n`
+  );
 };
 
 const resumeProvisioningSafely = async () => {
-  try {
-    await resumeSpawningCells();
-  } catch (error) {
+  const provisioningResult = await safeAsync(
+    resumeSpawningCells,
+    (error) => error
+  );
+
+  if (provisioningResult.isErr()) {
+    const failure = provisioningResult.error;
     process.stderr.write(
       `Failed to resume cell provisioning: ${
-        error instanceof Error ? error.message : String(error)
+        failure instanceof Error ? failure.message : String(failure)
       }\n`
     );
   }
