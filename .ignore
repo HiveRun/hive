@@ -1,0 +1,13 @@
+# Allow OpenCode's ripgrep search to inspect directories normally filtered by .gitignore.
+# These negated patterns keep key dependency/build trees visible during agent runs.
+
+# Dependencies and vendored sources
+!**/node_modules/**
+!vendor/**
+
+# Build output and generated artifacts
+!**/dist/**
+!**/build/**
+!**/dist-electron/**
+!src-tauri/target/**
+!apps/server/server/**
