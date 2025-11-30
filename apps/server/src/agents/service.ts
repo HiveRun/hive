@@ -60,10 +60,11 @@ export type ProviderEntry = {
   models?: Record<string, ProviderModel>;
 };
 
-export type ProviderCatalogResponse = {
-  providers?: ProviderEntry[];
-  default?: Record<string, string>;
-};
+type ProviderCatalogResponse = NonNullable<
+  Awaited<
+    ReturnType<ReturnType<typeof createOpencodeClient>["config"]["providers"]>
+  >["data"]
+>;
 
 async function readProviderCredentials(): Promise<Record<string, unknown>> {
   try {
@@ -363,7 +364,7 @@ async function ensureRuntimeForCell(
     providerId: requestedProviderId,
     modelId: requestedModelId,
     force: options?.force ?? false,
-    opencodeConfig: mergedConfig.config as OpencodeServerConfig,
+    opencodeConfig: mergedConfig.config,
     opencodeConfigSource: mergedConfig.source,
     opencodeConfigDetails: mergedConfig.details,
   });
@@ -393,7 +394,7 @@ export async function fetchProviderCatalogForWorkspace(
   const server = await createOpencodeServer({
     hostname: "127.0.0.1",
     port: 0,
-    config: mergedConfig.config as OpencodeServerConfig,
+    config: mergedConfig.config,
   });
 
   try {
@@ -411,7 +412,7 @@ export async function fetchProviderCatalogForWorkspace(
       );
     }
 
-    return response.data as ProviderCatalogResponse;
+    return response.data;
   } finally {
     await server.close();
   }
@@ -446,9 +447,7 @@ async function startOpencodeRuntime({
   );
 
   if (opencodeConfig && typeof opencodeConfig === "object") {
-    const providerKeys = Object.keys(
-      (opencodeConfig as { provider?: Record<string, unknown> }).provider ?? {}
-    );
+    const providerKeys = Object.keys(opencodeConfig.provider ?? {});
     if (providerKeys.length > 0) {
       // biome-ignore lint/suspicious/noConsole: temporary visibility until structured logging is wired up
       console.info(

@@ -1,10 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { ServerOptions } from "@opencode-ai/sdk";
+
 const WORKSPACE_CONFIG_CANDIDATES = [
   "@opencode.json",
   "opencode.json",
 ] as const;
+
+type OpencodeServerConfig = NonNullable<ServerOptions["config"]>;
 
 type DefaultModel = {
   providerId?: string;
@@ -12,7 +16,7 @@ type DefaultModel = {
 };
 
 export type LoadedOpencodeConfig = {
-  config: Record<string, unknown>;
+  config: OpencodeServerConfig;
   source: "workspace" | "default";
   details?: string;
   defaultModel?: DefaultModel;
@@ -31,7 +35,7 @@ export async function loadOpencodeConfig(
     };
   }
 
-  const fallback = {} as Record<string, unknown>;
+  const fallback: OpencodeServerConfig = {};
   const fallbackDefaultModel = extractDefaultModel(fallback);
   return {
     config: fallback,
@@ -42,12 +46,13 @@ export async function loadOpencodeConfig(
 
 async function readWorkspaceConfig(
   workspaceRootPath: string
-): Promise<Record<string, unknown> | undefined> {
+): Promise<OpencodeServerConfig | undefined> {
   for (const filename of WORKSPACE_CONFIG_CANDIDATES) {
     const configPath = join(workspaceRootPath, filename);
     try {
       const raw = await readFile(configPath, "utf8");
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const parsed = JSON.parse(raw);
+      assertIsOpencodeConfig(parsed, configPath);
       return parsed;
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
@@ -62,8 +67,34 @@ async function readWorkspaceConfig(
   return;
 }
 
+function assertIsOpencodeConfig(
+  value: unknown,
+  source: string
+): asserts value is OpencodeServerConfig {
+  if (typeof value !== "object" || value === null) {
+    throw new Error(`OpenCode config at ${source} must be an object`);
+  }
+
+  const candidate = value as Record<string, unknown>;
+
+  if (candidate.model !== undefined && typeof candidate.model !== "string") {
+    throw new Error(
+      `OpenCode config at ${source} has invalid "model" (expected string)`
+    );
+  }
+
+  if (
+    candidate.provider !== undefined &&
+    (typeof candidate.provider !== "object" || candidate.provider === null)
+  ) {
+    throw new Error(
+      `OpenCode config at ${source} has invalid "provider" (expected object)`
+    );
+  }
+}
+
 function extractDefaultModel(
-  config: Record<string, unknown>
+  config: OpencodeServerConfig
 ): DefaultModel | undefined {
   const raw = typeof config.model === "string" ? config.model.trim() : "";
   if (!raw) {
