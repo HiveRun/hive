@@ -152,7 +152,7 @@ async function transcribeLocalRecording(
   const result = await transcribeLocalAudio({
     audio: audioBytes,
     model: transcription.model,
-    language: transcription.language,
+    ...(transcription.language ? { language: transcription.language } : {}),
   });
   return result;
 }

@@ -35,7 +35,7 @@ function CellLayout() {
   const cellQuery = useQuery(cellQueries.detail(cellId));
   const templatesQuery = useQuery(templateQueries.all(workspaceId));
   const activeRouteId = useRouterState({
-    select: (state) => state.matches.at(-1)?.routeId ?? undefined,
+    select: (state) => state.matches.at(-1)?.routeId,
   });
 
   const cell = cellQuery.data;

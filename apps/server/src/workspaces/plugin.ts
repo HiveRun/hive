@@ -47,7 +47,8 @@ export function createWorkspaceContextPlugin({
       let cachedFor: string | undefined | null = null;
 
       const inferWorkspaceId = (explicit?: string) => {
-        const headerId = request?.headers?.get("x-workspace-id") ?? undefined;
+        const headerValue = request?.headers?.get("x-workspace-id");
+        const headerId = headerValue === null ? undefined : headerValue;
         const candidates = [
           explicit,
           extractWorkspaceId(query),

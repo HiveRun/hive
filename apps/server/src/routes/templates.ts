@@ -1,4 +1,4 @@
-import { Elysia, t } from "elysia";
+import { Elysia, type Static, t } from "elysia";
 import { loadOpencodeConfig } from "../agents/opencode-config";
 import type { Template } from "../config/schema";
 import {
@@ -11,6 +11,8 @@ const HTTP_STATUS = {
   NOT_FOUND: 404,
   BAD_REQUEST: 400,
 } as const;
+
+type TemplateListResponse = Static<typeof TemplateListResponseSchema>;
 
 function templateToResponse(_id: string, template: Template) {
   return {
@@ -37,15 +39,17 @@ export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
         );
         return {
           templates,
-          defaults: config.defaults,
-          agentDefaults: opencodeConfig.defaultModel,
-        };
+          ...(config.defaults ? { defaults: config.defaults } : {}),
+          ...(opencodeConfig.defaultModel
+            ? { agentDefaults: opencodeConfig.defaultModel }
+            : {}),
+        } satisfies TemplateListResponse;
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;
         return {
           message:
             error instanceof Error ? error.message : "Failed to load templates",
-        };
+        } satisfies { message: string };
       }
     },
     {
@@ -67,7 +71,9 @@ export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
         const template = config.templates[params.id];
         if (!template) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Template not found" };
+          return { message: "Template not found" } satisfies {
+            message: string;
+          };
         }
         return templateToResponse(params.id, template);
       } catch (error) {
@@ -75,7 +81,7 @@ export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
         return {
           message:
             error instanceof Error ? error.message : "Failed to load template",
-        };
+        } satisfies { message: string };
       }
     },
     {

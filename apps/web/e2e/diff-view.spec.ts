@@ -45,6 +45,9 @@ test.describe("Cell Diff View", () => {
 
   test("patch fallback wraps output", async ({ page }) => {
     const baseDiff = cellDiffSnapshotFixture["snapshot-cell"];
+    if (!baseDiff) {
+      throw new Error("Missing diff snapshot for snapshot-cell");
+    }
     const patchOnlyDiff: CellDiffResponse = {
       ...baseDiff,
       details:

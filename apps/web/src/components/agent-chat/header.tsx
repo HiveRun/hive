@@ -7,7 +7,7 @@ type AgentChatHeaderProps = {
 };
 
 export function AgentChatHeader({ cellId, session }: AgentChatHeaderProps) {
-  const statusTheme = getStatusAppearance(session.status);
+  const { badge } = getStatusAppearance(session.status);
 
   return (
     <header className="flex items-center gap-2 border-border border-b px-3 py-1.5 text-muted-foreground text-xs">
@@ -20,7 +20,7 @@ export function AgentChatHeader({ cellId, session }: AgentChatHeaderProps) {
       <span className="text-muted-foreground">·</span>
       <span>Provider · {session.provider}</span>
       <span
-        className={`ml-auto rounded-full border px-3 py-0.5 text-[10px] uppercase tracking-[0.25em] ${statusTheme.badge}`}
+        className={`ml-auto rounded-full border px-3 py-0.5 text-[10px] uppercase tracking-[0.25em] ${badge}`}
       >
         {formatStatus(session.status)}
       </span>

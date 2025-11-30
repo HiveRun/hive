@@ -19,12 +19,18 @@
       "!**/.alchemy",
       "!**/.svelte-kit",
       "!**/wrangler.jsonc",
-      "!**/.source",
-      "!**/tsconfig*.json"
+      "!**/.source"
     ]
   },
   "javascript": {
     "globals": ["Bun"]
+  },
+  "linter": {
+    "rules": {
+      "suspicious": {
+        "noExplicitAny": "error"
+      }
+    }
   },
   "extends": ["ultracite/core", "ultracite/react"],
   "overrides": [

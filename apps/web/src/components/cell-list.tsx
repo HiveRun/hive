@@ -614,7 +614,7 @@ function AgentStatusIndicator({
     );
   }
 
-  const statusTheme = getStatusAppearance(session.status);
+  const { badge } = getStatusAppearance(session.status);
 
   return (
     <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.3em]">
@@ -624,9 +624,7 @@ function AgentStatusIndicator({
           getStatusDotClass(session.status)
         )}
       />
-      <span className={statusTheme.badge}>
-        Agent {formatStatus(session.status)}
-      </span>
+      <span className={badge}>Agent {formatStatus(session.status)}</span>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-const STATUS_APPEARANCES: Record<string, { badge: string }> = {
+const STATUS_APPEARANCES = {
   working: {
     badge: "border border-primary bg-primary/10 text-primary-foreground",
   },
@@ -18,13 +18,17 @@ const STATUS_APPEARANCES: Record<string, { badge: string }> = {
   default: {
     badge: "border border-border bg-card text-muted-foreground",
   },
-};
+} as const;
 
-export function getStatusAppearance(status?: string) {
+type StatusAppearance =
+  (typeof STATUS_APPEARANCES)[keyof typeof STATUS_APPEARANCES];
+
+export function getStatusAppearance(status?: string): StatusAppearance {
   if (!status) {
     return STATUS_APPEARANCES.default;
   }
-  return STATUS_APPEARANCES[status] ?? STATUS_APPEARANCES.default;
+  const appearances = STATUS_APPEARANCES as Record<string, StatusAppearance>;
+  return appearances[status] ?? STATUS_APPEARANCES.default;
 }
 
 export function formatStatus(status: string) {

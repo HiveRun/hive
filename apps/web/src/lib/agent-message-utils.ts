@@ -81,7 +81,7 @@ export function mergePartWithDelta(
   return {
     ...existing,
     ...incoming,
-    text: text ?? undefined,
+    ...(text !== undefined ? { text } : {}),
   };
 }
 
