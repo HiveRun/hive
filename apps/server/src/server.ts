@@ -14,21 +14,25 @@ import { logger } from "@bogeychan/elysia-logger";
 
 import { cors } from "@elysiajs/cors";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import { Effect, Layer, Runtime } from "effect";
 import { Elysia } from "elysia";
 import { cleanupOrphanedServers } from "./agents/cleanup";
 import { closeAllAgentSessions } from "./agents/service";
-import { resolveWorkspaceRoot } from "./config/context";
+import { HiveConfigLayer, resolveWorkspaceRoot } from "./config/context";
 import { resolveStaticAssetsDirectory } from "./config/static-assets";
-import { db } from "./db";
+import { DatabaseLayer, db } from "./db";
+import { LoggerLayer } from "./logger";
 import { agentsRoutes } from "./routes/agents";
 import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
 import { templatesRoutes } from "./routes/templates";
 import { preloadVoiceTranscriptionModels, voiceRoutes } from "./routes/voice";
 import { workspacesRoutes } from "./routes/workspaces";
 import { cells } from "./schema/cells";
+import { PortManagerLayer } from "./services/port-manager";
+import { ServiceRepositoryLayer } from "./services/repository";
 import {
-  bootstrapServiceSupervisor,
-  stopAllServices,
+  ServiceSupervisorLayer,
+  ServiceSupervisorService,
 } from "./services/supervisor";
 import { safeAsync, safeSync } from "./utils/result";
 import {
@@ -66,6 +70,34 @@ const resolvedCorsOrigins = (process.env.CORS_ORIGIN || "")
 
 const allowedCorsOrigins =
   resolvedCorsOrigins.length > 0 ? resolvedCorsOrigins : DEFAULT_CORS_ORIGINS;
+
+const serverLayer = Layer.mergeAll(
+  HiveConfigLayer,
+  LoggerLayer,
+  ServiceRepositoryLayer,
+  PortManagerLayer,
+  ServiceSupervisorLayer
+).pipe(Layer.provideMerge(DatabaseLayer));
+
+const serverRuntime = Effect.runPromise(
+  Effect.scoped(Layer.toRuntime(serverLayer))
+);
+
+type ServerLayerServices = Layer.Layer.Success<typeof serverLayer>;
+
+const runServerEffect = async <A, E>(
+  effect: Effect.Effect<A, E, ServerLayerServices>
+): Promise<A> => {
+  const runtime = await serverRuntime;
+  return Runtime.runPromise(runtime)(effect);
+};
+
+const runSupervisorEffect = <A>(
+  selector: (service: ServiceSupervisorService) => Effect.Effect<A, unknown>
+) =>
+  runServerEffect(
+    Effect.flatMap(ServiceSupervisorService, (service) => selector(service))
+  );
 
 const LEADING_SLASH_REGEX = /^\/+/,
   DOT_SEQUENCE_REGEX = /\.\.+/g;
@@ -261,7 +293,7 @@ const registerSignalHandlers = () => {
   signalsRegistered = true;
 
   const performShutdown = async () => {
-    await stopAllServices();
+    await runSupervisorEffect((service) => service.stopAll);
     await closeAllAgentSessions();
     cleanupPidFile();
   };
@@ -357,7 +389,7 @@ const ensureWorkspaceRegistration = async (workspaceRoot: string) => {
 
 const initializeSupervisorSafely = async () => {
   const supervisorResult = await safeAsync(
-    bootstrapServiceSupervisor,
+    () => runSupervisorEffect((service) => service.bootstrap),
     (error) => error
   );
 
