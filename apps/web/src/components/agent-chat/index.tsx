@@ -71,14 +71,13 @@ export function AgentChat({ cellId }: AgentChatProps) {
       processed.push(message);
     }
 
-    return processed.map((message) =>
-      message.role === "user" && interruptedReasons.has(message.id)
-        ? {
-            ...message,
-            interruptionReason: interruptedReasons.get(message.id) ?? undefined,
-          }
-        : message
-    );
+    return processed.map((message) => {
+      if (message.role !== "user") {
+        return message;
+      }
+      const reason = interruptedReasons.get(message.id);
+      return reason ? { ...message, interruptionReason: reason } : message;
+    });
   }, [messagesQuery.data]);
 
   const filteredMessages = useMemo(() => {
@@ -395,6 +394,9 @@ function findPreviousUserMessageId(
 ): string | undefined {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const candidate = messages[index];
+    if (!candidate) {
+      continue;
+    }
     if (candidate.role === "user") {
       return candidate.id;
     }

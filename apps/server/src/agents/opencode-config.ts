@@ -23,18 +23,20 @@ export async function loadOpencodeConfig(
 ): Promise<LoadedOpencodeConfig> {
   const fileConfig = await readWorkspaceConfig(workspaceRootPath);
   if (fileConfig) {
+    const defaultModel = extractDefaultModel(fileConfig);
     return {
       config: fileConfig,
       source: "workspace",
-      defaultModel: extractDefaultModel(fileConfig),
+      ...(defaultModel ? { defaultModel } : {}),
     };
   }
 
   const fallback = {} as Record<string, unknown>;
+  const fallbackDefaultModel = extractDefaultModel(fallback);
   return {
     config: fallback,
     source: "default",
-    defaultModel: extractDefaultModel(fallback),
+    ...(fallbackDefaultModel ? { defaultModel: fallbackDefaultModel } : {}),
   };
 }
 
@@ -70,8 +72,16 @@ function extractDefaultModel(
 
   const [providerId, modelId] = raw.split("/", 2);
   if (modelId) {
-    return { providerId: providerId || undefined, modelId };
+    const defaultModel: DefaultModel = { modelId };
+    if (providerId) {
+      defaultModel.providerId = providerId;
+    }
+    return defaultModel;
   }
 
-  return { modelId: providerId };
+  if (providerId) {
+    return { modelId: providerId };
+  }
+
+  return;
 }

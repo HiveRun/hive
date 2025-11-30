@@ -698,8 +698,8 @@ const bootstrap = async (options?: { forceForeground?: boolean }) => {
 };
 
 class StartCommand extends Command {
-  static paths = [Command.Default];
-  static usage = Command.Usage({
+  static override paths = [Command.Default];
+  static override usage = Command.Usage({
     category: "Runtime",
     description: "Start the Hive daemon and serve the UI.",
     details: `
@@ -715,14 +715,14 @@ Starts Hive in the background unless you pass --foreground. When running detache
     description: "Run in the foreground instead of background mode",
   });
 
-  async execute() {
+  override async execute() {
     await bootstrap({ forceForeground: Boolean(this.forceForeground) });
   }
 }
 
 class StopCommand extends Command {
-  static paths = [["stop"]];
-  static usage = Command.Usage({
+  static override paths = [["stop"]];
+  static override usage = Command.Usage({
     category: "Runtime",
     description: "Stop the background Hive daemon.",
     details:
@@ -730,15 +730,15 @@ class StopCommand extends Command {
     examples: [["Stop running instance", "hive stop"]],
   });
 
-  execute() {
+  override execute() {
     const result = stopBackgroundProcess();
     return Promise.resolve(result === "failed" ? 1 : 0);
   }
 }
 
 class LogsCommand extends Command {
-  static paths = [["logs"]];
-  static usage = Command.Usage({
+  static override paths = [["logs"]];
+  static override usage = Command.Usage({
     category: "Runtime",
     description: "Stream the Hive daemon log file.",
     details:
@@ -746,14 +746,14 @@ class LogsCommand extends Command {
     examples: [["Follow logs", "hive logs"]],
   });
 
-  execute() {
+  override execute() {
     return streamLogs();
   }
 }
 
 class WebCommand extends Command {
-  static paths = [["web"]];
-  static usage = Command.Usage({
+  static override paths = [["web"]];
+  static override usage = Command.Usage({
     category: "Clients",
     description: "Open the Hive UI in your default browser.",
     details:
@@ -761,7 +761,7 @@ class WebCommand extends Command {
     examples: [["Start server and open browser", "hive web"]],
   });
 
-  async execute() {
+  override async execute() {
     const ready = await ensureDaemonRunning();
     if (!ready) {
       return 1;
@@ -779,8 +779,8 @@ class WebCommand extends Command {
 }
 
 class DesktopCommand extends Command {
-  static paths = [["desktop"]];
-  static usage = Command.Usage({
+  static override paths = [["desktop"]];
+  static override usage = Command.Usage({
     category: "Clients",
     description: "Launch the Hive desktop application.",
     details:
@@ -788,7 +788,7 @@ class DesktopCommand extends Command {
     examples: [["Open desktop UI", "hive desktop"]],
   });
 
-  async execute() {
+  override async execute() {
     const ready = await ensureDaemonRunning();
     if (!ready) {
       return 1;
@@ -808,8 +808,8 @@ class DesktopCommand extends Command {
 }
 
 class UpgradeCommand extends Command {
-  static paths = [["upgrade"]];
-  static usage = Command.Usage({
+  static override paths = [["upgrade"]];
+  static override usage = Command.Usage({
     category: "Runtime",
     description: "Download and install the latest Hive release.",
     details:
@@ -817,20 +817,20 @@ class UpgradeCommand extends Command {
     examples: [["Upgrade to latest version", "hive upgrade"]],
   });
 
-  execute() {
+  override execute() {
     return runUpgrade();
   }
 }
 
 class InfoCommand extends Command {
-  static paths = [["info"]];
-  static usage = Command.Usage({
+  static override paths = [["info"]];
+  static override usage = Command.Usage({
     category: "Diagnostics",
     description: "Print paths, version, and daemon status.",
     examples: [["Check current install", "hive info"]],
   });
 
-  execute() {
+  override execute() {
     const hiveHome = resolveHiveHomePath();
     const logDir = resolveLogDirectory();
     const logFile = resolveLogFilePath();
@@ -852,8 +852,8 @@ class InfoCommand extends Command {
 }
 
 class CompletionsCommand extends Command {
-  static paths = [["completions"]];
-  static usage = Command.Usage({
+  static override paths = [["completions"]];
+  static override usage = Command.Usage({
     category: "Tooling",
     description: "Print the completion script for a supported shell.",
     examples: [["Generate zsh completions", "hive completions zsh"]],
@@ -864,7 +864,7 @@ class CompletionsCommand extends Command {
     required: true,
   });
 
-  execute() {
+  override execute() {
     const normalized = normalizeShell(this.shell);
     if (!normalized) {
       logError(
@@ -885,8 +885,8 @@ class CompletionsCommand extends Command {
 }
 
 class CompletionsInstallCommand extends Command {
-  static paths = [["completions", "install"]];
-  static usage = Command.Usage({
+  static override paths = [["completions", "install"]];
+  static override usage = Command.Usage({
     category: "Tooling",
     description: "Install the completion script to a default or custom path.",
     details:
@@ -910,8 +910,9 @@ class CompletionsInstallCommand extends Command {
     required: false,
   });
 
-  execute() {
+  override execute() {
     const normalized = normalizeShell(this.shell);
+
     if (!normalized) {
       logError(
         `Unsupported shell "${this.shell}". Supported shells: ${supportedShellList()}`

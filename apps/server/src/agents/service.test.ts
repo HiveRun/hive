@@ -103,8 +103,6 @@ describe("agent model selection", () => {
       .mockResolvedValue({
         config: {},
         source: "default",
-        details: undefined,
-        defaultModel: undefined,
       });
 
     await db.insert(cells).values({

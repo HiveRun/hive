@@ -431,7 +431,11 @@ function audioBufferToWavBuffer(audioBuffer: AudioBuffer) {
 
   for (let i = 0; i < audioBuffer.length; i += 1) {
     for (let channel = 0; channel < numChannels; channel += 1) {
-      const sample = Math.max(-1, Math.min(1, channelData[channel][i]));
+      const data = channelData[channel];
+      if (!data) {
+        continue;
+      }
+      const sample = Math.max(-1, Math.min(1, data[i] ?? 0));
       const value =
         sample < 0 ? sample * PCM_NEGATIVE_SCALE : sample * PCM_POSITIVE_SCALE;
       view.setInt16(offset, value, true);

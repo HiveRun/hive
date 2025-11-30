@@ -410,7 +410,8 @@ function createWorkspaceListHandler(mockData: MockApiData) {
 function createWorkspaceBrowseHandler(mockData: MockApiData) {
   return createGetJsonHandler((request) => {
     const url = new URL(request.url());
-    const requestedPath = url.searchParams.get("path") ?? undefined;
+    const pathParam = url.searchParams.get("path");
+    const requestedPath = pathParam === null ? undefined : pathParam;
     const rawFilter = url.searchParams.get("filter");
     const normalizedFilter = rawFilter?.toLowerCase().trim();
     const directories = normalizedFilter

@@ -79,6 +79,10 @@ const defaultCellRouteDependencies: CellRouteDependencies = {
   stopServicesForCell,
 };
 
+type CellServiceListResponse = Static<typeof CellServiceListResponseSchema>;
+type CellDiffResponse = Static<typeof CellDiffResponseSchema>;
+type CellServiceResponse = Static<typeof CellServiceSchema>;
+
 const HTTP_STATUS = {
   OK: 200,
   CREATED: 201,
@@ -149,9 +153,11 @@ function cellToResponse(cell: typeof cells.$inferSelect) {
     opencodeServerPort: cell.opencodeServerPort,
     createdAt: cell.createdAt.toISOString(),
     status: cell.status,
-    lastSetupError: cell.lastSetupError ?? undefined,
-    branchName: cell.branchName ?? undefined,
-    baseCommit: cell.baseCommit ?? undefined,
+    ...(cell.lastSetupError != null
+      ? { lastSetupError: cell.lastSetupError }
+      : {}),
+    ...(cell.branchName != null ? { branchName: cell.branchName } : {}),
+    ...(cell.baseCommit != null ? { baseCommit: cell.baseCommit } : {}),
   };
 }
 
@@ -251,7 +257,7 @@ export function createCellsRoutes(
         const cell = await loadCellById(database, params.id);
         if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" };
+          return { message: "Cell not found" } satisfies { message: string };
         }
 
         const rows = await fetchServiceRows(database, params.id);
@@ -259,7 +265,7 @@ export function createCellsRoutes(
           rows.map((row) => serializeService(database, row))
         );
 
-        return { services };
+        return { services } satisfies CellServiceListResponse;
       },
       {
         params: t.Object({ id: t.String() }),
@@ -368,23 +374,24 @@ export function createCellsRoutes(
         const cell = await loadCellById(database, params.id);
         if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" };
+          return { message: "Cell not found" } satisfies { message: string };
         }
 
         const parsed = parseDiffRequest(cell, query);
         if (!parsed.ok) {
           set.status = parsed.status;
-          return { message: parsed.message };
+          return { message: parsed.message } satisfies { message: string };
         }
 
         try {
-          return await buildCellDiffPayload(cell, parsed.value);
+          const diff = await buildCellDiffPayload(cell, parsed.value);
+          return diff satisfies CellDiffResponse;
         } catch (error) {
           set.status = HTTP_STATUS.INTERNAL_ERROR;
           return {
             message:
               error instanceof Error ? error.message : "Failed to compute diff",
-          };
+          } satisfies { message: string };
         }
       },
       {
@@ -409,7 +416,7 @@ export function createCellsRoutes(
         );
         if (!row) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" };
+          return { message: "Service not found" } satisfies { message: string };
         }
 
         await startService(params.serviceId);
@@ -420,10 +427,11 @@ export function createCellsRoutes(
         );
         if (!updated) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" };
+          return { message: "Service not found" } satisfies { message: string };
         }
 
-        return serializeService(database, updated);
+        const serialized = await serializeService(database, updated);
+        return serialized satisfies CellServiceResponse;
       },
       {
         params: t.Object({ id: t.String(), serviceId: t.String() }),
@@ -443,7 +451,7 @@ export function createCellsRoutes(
         );
         if (!row) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" };
+          return { message: "Service not found" } satisfies { message: string };
         }
 
         await stopService(params.serviceId);
@@ -454,10 +462,11 @@ export function createCellsRoutes(
         );
         if (!updated) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" };
+          return { message: "Service not found" } satisfies { message: string };
         }
 
-        return serializeService(database, updated);
+        const serialized = await serializeService(database, updated);
+        return serialized satisfies CellServiceResponse;
       },
       {
         params: t.Object({ id: t.String(), serviceId: t.String() }),
@@ -929,10 +938,14 @@ async function finalizeCellProvisioning(
     throw new Error("Cell record missing during provisioning");
   }
 
-  const session = await ensureSession(state.cellId, {
-    modelId: body.modelId ?? undefined,
-    providerId: body.providerId ?? undefined,
-  });
+  const sessionOptions = {
+    ...(body.modelId ? { modelId: body.modelId } : {}),
+    ...(body.providerId ? { providerId: body.providerId } : {}),
+  };
+  const session = await ensureSession(
+    state.cellId,
+    Object.keys(sessionOptions).length ? sessionOptions : undefined
+  );
   await ensureServices(state.createdCell, template);
 
   state.servicesStarted = true;
@@ -1136,11 +1149,15 @@ function resolveProvisioningParams(
 ): Static<typeof CreateCellSchema> {
   return {
     name: cell.name,
-    description: cell.description ?? undefined,
+    ...(cell.description != null ? { description: cell.description } : {}),
     templateId: cell.templateId,
     workspaceId: cell.workspaceId,
-    modelId: provisioningState?.modelIdOverride ?? undefined,
-    providerId: provisioningState?.providerIdOverride ?? undefined,
+    ...(provisioningState?.modelIdOverride != null
+      ? { modelId: provisioningState.modelIdOverride }
+      : {}),
+    ...(provisioningState?.providerIdOverride != null
+      ? { providerId: provisioningState.providerIdOverride }
+      : {}),
   };
 }
 
@@ -1311,10 +1328,10 @@ function buildCellCreationErrorPayload(error: unknown): ErrorPayload {
   }
 
   if (error instanceof Error) {
-    return {
-      message: error.message,
-      details: formatStackTrace(error),
-    };
+    const stack = formatStackTrace(error);
+    return stack
+      ? { message: error.message, details: stack }
+      : { message: error.message };
   }
 
   return { message: "Failed to create cell" };
@@ -1454,8 +1471,8 @@ async function serializeService(
     name: service.name,
     type: service.type,
     status: derivedStatus,
-    port: service.port ?? undefined,
-    pid: derivedPid ?? undefined,
+    ...(service.port != null ? { port: service.port } : {}),
+    ...(derivedPid != null ? { pid: derivedPid } : {}),
     command: service.command,
     cwd: service.cwd,
     logPath,
@@ -1464,7 +1481,7 @@ async function serializeService(
     updatedAt: service.updatedAt.toISOString(),
     recentLogs,
     processAlive,
-    portReachable,
+    ...(portReachable !== undefined ? { portReachable } : {}),
   };
 }
 

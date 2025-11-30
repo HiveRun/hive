@@ -102,10 +102,15 @@ function resolveTemplateAgentConfig(
     return;
   }
 
-  return {
+  const agentConfig: TemplateAgentConfig = {
     providerId: template.agent.providerId,
-    modelId: template.agent.modelId,
   };
+
+  if (template.agent.modelId) {
+    agentConfig.modelId = template.agent.modelId;
+  }
+
+  return agentConfig;
 }
 
 function resolveProviderId(
@@ -495,18 +500,21 @@ async function startOpencodeRuntime({
       setRuntimeStatus(runtime, "working");
 
       const activeModelId = runtime.modelId;
+      const parts = [{ type: "text" as const, text: content }];
+      const promptBody = activeModelId
+        ? {
+            parts,
+            model: {
+              providerID: runtime.providerId,
+              modelID: activeModelId,
+            },
+          }
+        : { parts };
+
       const response = await client.session.prompt({
         path: { id: session.id },
         query: directoryQuery,
-        body: {
-          parts: [{ type: "text", text: content }],
-          model: activeModelId
-            ? {
-                providerID: runtime.providerId,
-                modelID: activeModelId,
-              }
-            : undefined,
-        },
+        body: promptBody,
       });
 
       if (response.error) {
@@ -818,6 +826,11 @@ function determineMessageState(message: Message): AgentMessageState {
 }
 
 function toSessionRecord(runtime: RuntimeHandle): AgentSessionRecord {
+  const modelFields =
+    runtime.modelId === undefined
+      ? {}
+      : { modelId: runtime.modelId, modelProviderId: runtime.providerId };
+
   return {
     id: runtime.session.id,
     cellId: runtime.cell.id,
@@ -827,8 +840,7 @@ function toSessionRecord(runtime: RuntimeHandle): AgentSessionRecord {
     workspacePath: runtime.cell.workspacePath,
     createdAt: new Date(runtime.session.time.created).toISOString(),
     updatedAt: new Date(runtime.session.time.updated).toISOString(),
-    modelId: runtime.modelId,
-    modelProviderId: runtime.modelId ? runtime.providerId : undefined,
+    ...modelFields,
   };
 }
 
@@ -838,7 +850,11 @@ function setRuntimeStatus(
   error?: string
 ) {
   runtime.status = status;
-  publishAgentEvent(runtime.session.id, { type: "status", status, error });
+  const statusEvent =
+    error === undefined
+      ? { type: "status" as const, status }
+      : { type: "status" as const, status, error };
+  publishAgentEvent(runtime.session.id, statusEvent);
 }
 
 function extractErrorMessage(event: Event): string {

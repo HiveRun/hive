@@ -60,7 +60,9 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
         const providerEntries = normalizeProviderEntries(catalog.providers);
         const models = flattenProviderModels(providerEntries);
         const defaults = normalizeProviderDefaults(catalog.default ?? {});
-        const providers = providerEntries.map(({ id, name }) => ({ id, name }));
+        const providers = providerEntries.map(({ id, name }) =>
+          name ? { id, name } : { id }
+        );
 
         return {
           models,
@@ -123,10 +125,9 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
         const providerEntries = normalizeProviderEntries(data.providers);
         const models = flattenProviderModels(providerEntries);
         const defaults = normalizeProviderDefaults(data.default);
-        const providers = providerEntries.map(({ id, name }) => ({
-          id,
-          name,
-        }));
+        const providers = providerEntries.map(({ id, name }) =>
+          name ? { id, name } : { id }
+        );
 
         return {
           models,
@@ -178,11 +179,15 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     "/sessions",
     async ({ body, set }) => {
       try {
-        const session = await ensureAgentSession(body.cellId, {
-          force: body.force,
-          modelId: body.modelId,
-          providerId: body.providerId,
-        });
+        const sessionOptions = {
+          ...(body.force !== undefined ? { force: body.force } : {}),
+          ...(body.modelId ? { modelId: body.modelId } : {}),
+          ...(body.providerId ? { providerId: body.providerId } : {}),
+        };
+        const session = await ensureAgentSession(
+          body.cellId,
+          Object.keys(sessionOptions).length ? sessionOptions : undefined
+        );
         return formatSession(session);
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;
@@ -206,10 +211,12 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     "/sessions/:id/model",
     async ({ params, body, set }) => {
       try {
-        const session = await updateAgentSessionModel(params.id, {
-          modelId: body.modelId,
-          providerId: body.providerId ?? undefined,
-        });
+        const session = await updateAgentSessionModel(
+          params.id,
+          body.providerId
+            ? { modelId: body.modelId, providerId: body.providerId }
+            : { modelId: body.modelId }
+        );
         return formatSession(session);
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;
@@ -435,7 +442,14 @@ function normalizeProviderEntries(input: unknown): ProviderEntry[] {
       name?: string;
       models?: Record<string, ProviderModel>;
     };
-    providers.push({ id, name, models });
+    const providerEntry: ProviderEntry = { id };
+    if (name) {
+      providerEntry.name = name;
+    }
+    if (models) {
+      providerEntry.models = models;
+    }
+    providers.push(providerEntry);
   }
 
   return providers;
@@ -482,9 +496,11 @@ function formatSession(session: AgentSessionRecord) {
     workspacePath: session.workspacePath,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
-    completedAt: session.completedAt,
-    modelId: session.modelId,
-    modelProviderId: session.modelProviderId,
+    ...(session.completedAt ? { completedAt: session.completedAt } : {}),
+    ...(session.modelId ? { modelId: session.modelId } : {}),
+    ...(session.modelProviderId
+      ? { modelProviderId: session.modelProviderId }
+      : {}),
   };
 }
 
