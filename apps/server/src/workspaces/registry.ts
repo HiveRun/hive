@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
-import { ResultAsync } from "neverthrow";
+import { safeAsync } from "../utils/result";
 
 const REGISTRY_FILE_NAME = "workspaces.json";
 const HIVE_HOME_ENV = "HIVE_HOME";
@@ -73,8 +73,8 @@ function normalizePath(path: string): string {
 
 async function validateWorkspaceDirectory(path: string): Promise<string> {
   const absolutePath = normalizePath(path);
-  const statsResult = await ResultAsync.fromPromise(
-    stat(absolutePath),
+  const statsResult = await safeAsync(
+    () => stat(absolutePath),
     (error) => error
   );
 
@@ -94,8 +94,8 @@ async function validateWorkspaceDirectory(path: string): Promise<string> {
   }
 
   const configPath = join(absolutePath, "hive.config.ts");
-  const configExists = await ResultAsync.fromPromise(
-    access(configPath),
+  const configExists = await safeAsync(
+    () => access(configPath),
     (error) => error
   );
 

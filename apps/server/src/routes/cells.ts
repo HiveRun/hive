@@ -5,7 +5,6 @@ import { resolve as resolvePath } from "node:path";
 import { logger } from "@bogeychan/elysia-logger";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { Elysia, type Static, t } from "elysia";
-import { ResultAsync } from "neverthrow";
 import {
   closeAgentSession,
   ensureAgentSession,
@@ -43,6 +42,7 @@ import {
   stopServicesForCell,
   TemplateSetupError,
 } from "../services/supervisor";
+import { safeAsync } from "../utils/result";
 import {
   resolveWorkspaceContext,
   type WorkspaceRuntimeContext,
@@ -1350,8 +1350,8 @@ async function removeCellWorkspace(
     return;
   }
 
-  const filesystemRemoval = await ResultAsync.fromPromise(
-    fs.rm(cell.workspacePath, { recursive: true, force: true }),
+  const filesystemRemoval = await safeAsync(
+    () => fs.rm(cell.workspacePath, { recursive: true, force: true }),
     toError
   );
 

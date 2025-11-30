@@ -1,10 +1,10 @@
 import { rm } from "node:fs/promises";
 import { eq } from "drizzle-orm";
-import { Result, ResultAsync } from "neverthrow";
 import { closeAgentSession as closeDefaultAgentSession } from "../agents/service";
 import { db as defaultDb } from "../db";
 import { cells } from "../schema/cells";
 import { stopServicesForCell as stopDefaultCellServices } from "../services/supervisor";
+import { safeAsync, safeSync } from "../utils/result";
 import type { WorktreeManager } from "../worktree/manager";
 import {
   createWorktreeManager,
@@ -63,11 +63,10 @@ export async function removeWorkspaceCascade(
     .where(eq(cells.workspaceId, workspaceId));
 
   let worktreeManager: WorktreeManager | null = null;
-  const safeCreateWorktreeManager = Result.fromThrowable(
-    createWorktreeManager,
+  const worktreeResult = safeSync(
+    () => createWorktreeManager(workspace.path),
     (error) => error
   );
-  const worktreeResult = safeCreateWorktreeManager(workspace.path);
 
   if (worktreeResult.isOk()) {
     worktreeManager = worktreeResult.value;
@@ -127,8 +126,8 @@ async function cleanupCellWorkspace(
   }
 
   if (workspacePath && workspacePath.trim().length > 0) {
-    const removalResult = await ResultAsync.fromPromise(
-      rm(workspacePath, { recursive: true, force: true }),
+    const removalResult = await safeAsync(
+      () => rm(workspacePath, { recursive: true, force: true }),
       (error) => error
     );
 

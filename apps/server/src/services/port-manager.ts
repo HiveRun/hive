@@ -1,9 +1,9 @@
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { eq } from "drizzle-orm";
-import { Result } from "neverthrow";
 import type { CellService } from "../schema/services";
 import { cellServices } from "../schema/services";
+import { safeSync } from "../utils/result";
 
 type DbClient = typeof import("../db").db;
 
@@ -120,10 +120,10 @@ function allocatePort(): Promise<number> {
 }
 
 async function terminatePid(pid: number): Promise<void> {
-  const terminateResult = Result.fromThrowable(
+  const terminateResult = safeSync(
     () => process.kill(pid, "SIGTERM"),
     () => null
-  )();
+  );
 
   if (terminateResult.isErr()) {
     return;
@@ -131,11 +131,11 @@ async function terminatePid(pid: number): Promise<void> {
 
   await delay(FORCE_KILL_DELAY_MS);
 
-  Result.fromThrowable(
+  safeSync(
     () => {
       process.kill(pid, 0);
       process.kill(pid, "SIGKILL");
     },
     () => null
-  )();
+  );
 }

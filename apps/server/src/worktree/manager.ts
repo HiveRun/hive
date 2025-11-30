@@ -3,9 +3,10 @@ import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { cp, mkdir, rm } from "node:fs/promises";
 import { join, sep } from "node:path";
-import { errAsync, okAsync, Result, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import { glob } from "tinyglobby";
 import type { Template } from "../config/schema";
+import { safeAsync, safeSync } from "../utils/result";
 import { resolveCellsRoot } from "../workspaces/registry";
 
 const WORKTREE_PREFIX = "worktree ";
@@ -144,7 +145,7 @@ export function createWorktreeManager(
   const cellsDir = resolveCellsRoot();
 
   function ensureGitRepo(): void {
-    const repoCheck = Result.fromThrowable(
+    const repoCheck = safeSync(
       () =>
         execSync("git rev-parse --git-dir", {
           encoding: "utf8",
@@ -152,7 +153,7 @@ export function createWorktreeManager(
           stdio: "pipe",
         }),
       () => null
-    )();
+    );
 
     if (repoCheck.isErr()) {
       throw new Error(
@@ -201,14 +202,14 @@ export function createWorktreeManager(
 
   function git(...args: string[]): string {
     const command = args.join(" ");
-    const execResult = Result.fromThrowable(
+    const execResult = safeSync(
       () =>
         execSync(`git ${command}`, {
           encoding: "utf8",
           cwd: baseDir,
         }).trim(),
       (error) => formatExecError(command, error)
-    )();
+    );
 
     if (execResult.isErr()) {
       throw execResult.error;
@@ -255,13 +256,14 @@ export function createWorktreeManager(
       return [pattern];
     });
 
-    const filesResult = await ResultAsync.fromPromise(
-      glob(expandedPatterns, {
-        cwd: mainRepoPath,
-        absolute: false,
-        ignore: IGNORED_DIRECTORIES.map((dir) => `**/${dir}/**`),
-        dot: true,
-      }),
+    const filesResult = await safeAsync(
+      () =>
+        glob(expandedPatterns, {
+          cwd: mainRepoPath,
+          absolute: false,
+          ignore: IGNORED_DIRECTORIES.map((dir) => `**/${dir}/**`),
+          dot: true,
+        }),
       (error) => error
     );
 
@@ -299,8 +301,8 @@ export function createWorktreeManager(
     const sourcePath = join(mainRepoPath, file);
     const targetPath = join(worktreePath, file);
 
-    const copyResult = await ResultAsync.fromPromise(
-      cp(sourcePath, targetPath, { recursive: true }),
+    const copyResult = await safeAsync(
+      () => cp(sourcePath, targetPath, { recursive: true }),
       (error) => error
     );
 
@@ -334,12 +336,12 @@ export function createWorktreeManager(
       );
     }
 
-    return ResultAsync.fromPromise(
-      (async () => {
-        const removalResult = Result.fromThrowable(
+    return safeAsync(
+      async () => {
+        const removalResult = safeSync(
           () => git("worktree", "remove", "--force", worktreePath),
           (error) => error
-        )();
+        );
 
         if (removalResult.isErr()) {
           logWarn(
@@ -348,7 +350,7 @@ export function createWorktreeManager(
           );
           await rm(worktreePath, { recursive: true, force: true });
         }
-      })(),
+      },
       (error) =>
         toWorktreeError(
           {
@@ -362,10 +364,10 @@ export function createWorktreeManager(
   }
 
   function ensureBranchExists(branchName: string): string {
-    const verification = Result.fromThrowable(
+    const verification = safeSync(
       () => git("show-ref", "--verify", `refs/heads/${branchName}`),
       () => null
-    )();
+    );
 
     if (verification.isOk()) {
       return branchName;
@@ -432,8 +434,8 @@ export function createWorktreeManager(
     ): ResultAsync<WorktreeLocation, WorktreeManagerError> {
       const worktreePath = join(cellsDir, cellId);
 
-      return ResultAsync.fromPromise(
-        (async () => {
+      return safeAsync(
+        async () => {
           await ensureCellsDir();
 
           const existingResult = await handleExistingWorktree(
@@ -459,14 +461,14 @@ export function createWorktreeManager(
               baseCommit,
             } satisfies WorktreeLocation;
           })().catch((error) => {
-            const cleanupResult = Result.fromThrowable(
+            const cleanupResult = safeSync(
               () => {
                 if (existsSync(worktreePath)) {
                   git("worktree", "remove", "--force", worktreePath);
                 }
               },
               (cleanupError) => cleanupError
-            )();
+            );
 
             if (cleanupResult.isErr()) {
               logWarn(
@@ -479,7 +481,7 @@ export function createWorktreeManager(
           });
 
           return worktreeSetup;
-        })(),
+        },
         (error) =>
           toWorktreeError(
             {
@@ -525,11 +527,11 @@ export function createWorktreeManager(
         );
       }
 
-      return ResultAsync.fromPromise(
-        Promise.resolve().then(() => {
+      return safeAsync(
+        () => {
           git("worktree", "remove", "--force", worktreeInfo.path);
           git("worktree", "prune");
-        }),
+        },
         (error) =>
           toWorktreeError(
             {

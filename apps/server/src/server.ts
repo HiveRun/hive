@@ -15,7 +15,6 @@ import { logger } from "@bogeychan/elysia-logger";
 import { cors } from "@elysiajs/cors";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { Elysia } from "elysia";
-import { Result, ResultAsync } from "neverthrow";
 import { cleanupOrphanedServers } from "./agents/cleanup";
 import { closeAllAgentSessions } from "./agents/service";
 import { resolveWorkspaceRoot } from "./config/context";
@@ -31,6 +30,7 @@ import {
   bootstrapServiceSupervisor,
   stopAllServices,
 } from "./services/supervisor";
+import { safeAsync, safeSync } from "./utils/result";
 import {
   ensureWorkspaceRegistered,
   resolveHiveHome,
@@ -90,16 +90,12 @@ const resolveExistingFile = (filePath?: string | null) => {
     return null;
   }
 
-  const fileCheck = Result.fromThrowable(
+  const exists = safeSync(
     () => existsSync(filePath) && statSync(filePath).isFile(),
     () => false
-  )();
+  ).unwrapOr(false);
 
-  if (fileCheck.isOk() && fileCheck.value) {
-    return filePath;
-  }
-
-  return null;
+  return exists ? filePath : null;
 };
 
 const resolveAssetPath = (pathname: string, assetsDir: string) => {
@@ -221,10 +217,10 @@ async function startupCleanup() {
 }
 
 export const cleanupPidFile = () => {
-  Result.fromThrowable(
+  safeSync(
     () => rmSync(pidFilePath),
     () => null
-  )();
+  );
 };
 
 const createApp = () =>
@@ -278,10 +274,7 @@ const registerSignalHandlers = () => {
 
     process.stderr.write(`\n${signal} received. Shutting down gracefully...\n`);
 
-    const shutdownResult = await ResultAsync.fromPromise(
-      performShutdown(),
-      (error) => error
-    );
+    const shutdownResult = await safeAsync(performShutdown, (error) => error);
 
     if (shutdownResult.isOk()) {
       process.stderr.write("Cleanup completed. Exiting.\n");
@@ -330,10 +323,7 @@ const configureAssetServing = (
 };
 
 const runMigrationsOrExit = async () => {
-  const migrationResult = await ResultAsync.fromPromise(
-    runMigrations(),
-    (error) => error
-  );
+  const migrationResult = await safeAsync(runMigrations, (error) => error);
 
   if (migrationResult.isErr()) {
     process.stderr.write(
@@ -344,10 +334,11 @@ const runMigrationsOrExit = async () => {
 };
 
 const ensureWorkspaceRegistration = async (workspaceRoot: string) => {
-  const registrationResult = await ResultAsync.fromPromise(
-    ensureWorkspaceRegistered(workspaceRoot, {
-      preserveActiveWorkspace: true,
-    }),
+  const registrationResult = await safeAsync(
+    () =>
+      ensureWorkspaceRegistered(workspaceRoot, {
+        preserveActiveWorkspace: true,
+      }),
     (error) => error
   );
 
@@ -365,8 +356,8 @@ const ensureWorkspaceRegistration = async (workspaceRoot: string) => {
 };
 
 const initializeSupervisorSafely = async () => {
-  const supervisorResult = await ResultAsync.fromPromise(
-    bootstrapServiceSupervisor(),
+  const supervisorResult = await safeAsync(
+    bootstrapServiceSupervisor,
     (error) => error
   );
 
@@ -384,8 +375,8 @@ const initializeSupervisorSafely = async () => {
 };
 
 const resumeProvisioningSafely = async () => {
-  const provisioningResult = await ResultAsync.fromPromise(
-    resumeSpawningCells(),
+  const provisioningResult = await safeAsync(
+    resumeSpawningCells,
     (error) => error
   );
 

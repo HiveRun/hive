@@ -3,12 +3,12 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { dirname, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { Result, ResultAsync } from "neverthrow";
 import { getHiveConfig } from "../config/context";
 import type { ProcessService, Template } from "../config/schema";
 import { db as defaultDb } from "../db";
 import type { Cell } from "../schema/cells";
 import type { CellService, ServiceStatus } from "../schema/services";
+import { safeAsync, safeSync } from "../utils/result";
 import { emitServiceUpdate } from "./events";
 import { createPortManager } from "./port-manager";
 import { createServiceRepository } from "./repository";
@@ -363,11 +363,12 @@ export function createServiceSupervisor(
     };
 
     for (const command of template.setup) {
-      const commandResult = await ResultAsync.fromPromise(
-        runCommand(command, {
-          cwd: cell.workspacePath,
-          env,
-        }),
+      const commandResult = await safeAsync(
+        () =>
+          runCommand(command, {
+            cwd: cell.workspacePath,
+            env,
+          }),
         (error) => error
       );
 
@@ -750,10 +751,10 @@ export function createServiceSupervisor(
   }
 
   async function terminateHandle(handle: ProcessHandle): Promise<void> {
-    Result.fromThrowable(
+    safeSync(
       () => handle.kill("SIGTERM"),
       () => null
-    )();
+    );
 
     const exit = await Promise.race([
       handle.exited,
@@ -761,10 +762,10 @@ export function createServiceSupervisor(
     ]);
 
     if (exit === -1) {
-      Result.fromThrowable(
+      safeSync(
         () => handle.kill("SIGKILL"),
         () => null
-      )();
+      );
       await handle.exited.catch(() => {
         /* swallow errors when waiting for exit */
       });
@@ -772,18 +773,18 @@ export function createServiceSupervisor(
   }
 
   async function terminatePid(pid: number): Promise<void> {
-    Result.fromThrowable(
+    safeSync(
       () => process.kill(pid, "SIGTERM"),
       () => null
-    )();
+    );
     await delay(FORCE_KILL_DELAY_MS);
-    Result.fromThrowable(
+    safeSync(
       () => {
         process.kill(pid, 0);
         process.kill(pid, "SIGKILL");
       },
       () => null
-    )();
+    );
   }
 }
 
