@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import { createConnection } from "node:net";
 import { resolve as resolvePath } from "node:path";
 import { logger } from "@bogeychan/elysia-logger";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { Elysia, type Static, t } from "elysia";
 import {
   closeAgentSession,
@@ -12,7 +12,6 @@ import {
 } from "../agents/service";
 import type { Template } from "../config/schema";
 import { db } from "../db";
-
 import {
   CellDiffResponseSchema,
   CellListResponseSchema,
@@ -23,6 +22,10 @@ import {
   DeleteCellsSchema,
   DiffQuerySchema,
 } from "../schema/api";
+import {
+  type CellProvisioningState,
+  cellProvisioningStates,
+} from "../schema/cell-provisioning";
 import { type CellStatus, cells, type NewCell } from "../schema/cells";
 import { cellServices } from "../schema/services";
 import {
@@ -91,6 +94,9 @@ const LOG_LINE_SPLIT_RE = /\r?\n/;
 const SERVICE_LOG_DIR = ".hive/logs";
 const PORT_CHECK_TIMEOUT_MS = 500;
 const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
+const MAX_PROVISIONING_ATTEMPTS = 3;
+const PROVISIONING_INTERRUPTED_MESSAGE =
+  "Provisioning interrupted. Fix the workspace and rerun setup.";
 
 const LOGGER_CONFIG = {
   level: process.env.LOG_LEVEL || "info",
@@ -682,7 +688,8 @@ async function handleCellCreationRequest(
   });
 
   try {
-    const cell = await createCellWithServices(context);
+    const cell = await createCellRecord(context);
+    startProvisioningWorkflow(context);
     return {
       status: HTTP_STATUS.CREATED,
       payload: cellToResponse(cell),
@@ -715,6 +722,7 @@ type CellProvisionState = {
   branchName: string | null;
   baseCommit: string | null;
   createdCell: typeof cells.$inferSelect | null;
+  provisioningState: CellProvisioningState | null;
 };
 
 function createProvisionContext(args: {
@@ -740,24 +748,54 @@ function createProvisionContext(args: {
       branchName: null,
       baseCommit: null,
       createdCell: null,
+      provisioningState: null,
     },
   };
 }
 
-async function createCellWithServices(
+async function createExistingProvisionContext(args: {
+  cell: typeof cells.$inferSelect;
+  provisioningState: CellProvisioningState | null;
+  body: Static<typeof CreateCellSchema>;
+  template: Template;
+  database: typeof db;
+  ensureSession: typeof ensureAgentSession;
+  sendAgentMessage: typeof sendAgentMessage;
+  ensureServices: typeof ensureServicesForCell;
+  stopCellServices: typeof stopServicesForCell;
+  workspaceContext: WorkspaceRuntimeContext;
+  log: LoggerLike;
+}): Promise<ProvisionContext> {
+  const worktreeService = await args.workspaceContext.createWorktreeManager();
+  return {
+    body: args.body,
+    template: args.template,
+    database: args.database,
+    ensureSession: args.ensureSession,
+    sendAgentMessage: args.sendAgentMessage,
+    ensureServices: args.ensureServices,
+    stopCellServices: args.stopCellServices,
+    worktreeService,
+    workspace: args.workspaceContext.workspace,
+    log: args.log,
+    state: {
+      cellId: args.cell.id,
+      worktreeCreated: true,
+      recordCreated: true,
+      servicesStarted: false,
+      workspacePath: args.cell.workspacePath,
+      branchName: args.cell.branchName,
+      baseCommit: args.cell.baseCommit,
+      createdCell: args.cell,
+      provisioningState: args.provisioningState,
+    },
+  };
+}
+
+async function createCellRecord(
   context: ProvisionContext
 ): Promise<typeof cells.$inferSelect> {
-  const {
-    body,
-    template,
-    database,
-    ensureSession,
-    sendAgentMessage: dispatchAgentMessage,
-    ensureServices,
-    worktreeService,
-    workspace,
-    state,
-  } = context;
+  const { body, database, worktreeService, workspace, state } = context;
 
   const worktree = await worktreeService.createWorktree(state.cellId, {
     templateId: body.templateId,
@@ -782,7 +820,7 @@ async function createCellWithServices(
     opencodeServerUrl: null,
     opencodeServerPort: null,
     createdAt: timestamp,
-    status: "pending",
+    status: "spawning",
     lastSetupError: null,
   };
 
@@ -795,11 +833,85 @@ async function createCellWithServices(
   state.recordCreated = true;
   state.createdCell = created;
 
+  const [provisioningState] = await database
+    .insert(cellProvisioningStates)
+    .values({
+      cellId: state.cellId,
+      modelIdOverride: body.modelId ?? null,
+      providerIdOverride: body.providerId ?? null,
+      startedAt: null,
+      finishedAt: null,
+      attemptCount: 0,
+    })
+    .returning();
+
+  state.provisioningState = provisioningState ?? null;
+
+  return created;
+}
+
+function startProvisioningWorkflow(context: ProvisionContext) {
+  beginProvisioningAttempt(context)
+    .then(() => finalizeCellProvisioning(context))
+    .catch((error) => {
+      handleDeferredProvisionFailure(context, error).catch((cleanupError) => {
+        context.log.error(
+          cleanupError instanceof Error
+            ? cleanupError
+            : { error: cleanupError },
+          "Failed to handle provisioning failure"
+        );
+      });
+    });
+}
+
+async function beginProvisioningAttempt(
+  context: ProvisionContext
+): Promise<void> {
+  if (!context.state.provisioningState) {
+    throw new Error("Provisioning metadata missing for cell");
+  }
+
+  const startedAt = new Date();
+  await context.database
+    .update(cellProvisioningStates)
+    .set({
+      startedAt,
+      finishedAt: null,
+      attemptCount: sql`${cellProvisioningStates.attemptCount} + 1`,
+    })
+    .where(eq(cellProvisioningStates.cellId, context.state.cellId));
+
+  context.state.provisioningState = {
+    ...context.state.provisioningState,
+    startedAt,
+    finishedAt: null,
+    attemptCount: context.state.provisioningState.attemptCount + 1,
+  };
+}
+
+async function finalizeCellProvisioning(
+  context: ProvisionContext
+): Promise<void> {
+  const {
+    body,
+    template,
+    ensureSession,
+    sendAgentMessage: dispatchAgentMessage,
+    ensureServices,
+    database,
+    state,
+  } = context;
+
+  if (!state.createdCell) {
+    throw new Error("Cell record missing during provisioning");
+  }
+
   const session = await ensureSession(state.cellId, {
     modelId: body.modelId ?? undefined,
     providerId: body.providerId ?? undefined,
   });
-  await ensureServices(created, template);
+  await ensureServices(state.createdCell, template);
 
   state.servicesStarted = true;
 
@@ -808,11 +920,62 @@ async function createCellWithServices(
     await dispatchAgentMessage(session.id, initialPrompt);
   }
 
-  await updateCellProvisioningStatus(database, state.cellId, "ready");
+  const finishedAt = await updateCellProvisioningStatus(
+    database,
+    state.cellId,
+    "ready"
+  );
 
-  const readyRecord = { ...created, status: "ready", lastSetupError: null };
-  state.createdCell = readyRecord;
-  return readyRecord;
+  state.createdCell = {
+    ...state.createdCell,
+    status: "ready",
+    lastSetupError: null,
+  };
+
+  if (state.provisioningState) {
+    state.provisioningState = {
+      ...state.provisioningState,
+      finishedAt,
+    };
+  }
+}
+
+async function handleDeferredProvisionFailure(
+  context: ProvisionContext,
+  error: unknown
+): Promise<void> {
+  const payload = buildCellCreationErrorPayload(error);
+  const lastSetupError = deriveSetupErrorDetails(payload);
+
+  await stopServicesIfStarted(context);
+
+  const finishedAt = await updateCellProvisioningStatus(
+    context.database,
+    context.state.cellId,
+    "error",
+    lastSetupError
+  );
+
+  if (context.state.createdCell) {
+    context.state.createdCell = {
+      ...context.state.createdCell,
+      status: "error",
+      lastSetupError,
+    };
+  }
+
+  if (context.state.provisioningState) {
+    context.state.provisioningState = {
+      ...context.state.provisioningState,
+      finishedAt,
+    };
+  }
+
+  if (error instanceof Error) {
+    context.log.error(error, "Cell provisioning failed after response");
+  } else {
+    context.log.error({ error }, "Cell provisioning failed after response");
+  }
 }
 
 async function recoverCellCreationFailure(
@@ -829,7 +992,7 @@ async function recoverCellCreationFailure(
   ) {
     const lastSetupError = deriveSetupErrorDetails(payload);
 
-    await updateCellProvisioningStatus(
+    const finishedAt = await updateCellProvisioningStatus(
       context.database,
       context.state.cellId,
       "error",
@@ -848,6 +1011,12 @@ async function recoverCellCreationFailure(
     };
 
     context.state.createdCell = erroredCell;
+    if (context.state.provisioningState) {
+      context.state.provisioningState = {
+        ...context.state.provisioningState,
+        finishedAt,
+      };
+    }
 
     return {
       status: HTTP_STATUS.CREATED,
@@ -935,7 +1104,22 @@ async function deleteCellRecordIfCreated(context: ProvisionContext) {
   } finally {
     context.state.recordCreated = false;
     context.state.createdCell = null;
+    context.state.provisioningState = null;
   }
+}
+
+function resolveProvisioningParams(
+  cell: typeof cells.$inferSelect,
+  provisioningState?: CellProvisioningState | null
+): Static<typeof CreateCellSchema> {
+  return {
+    name: cell.name,
+    description: cell.description ?? undefined,
+    templateId: cell.templateId,
+    workspaceId: cell.workspaceId,
+    modelId: provisioningState?.modelIdOverride ?? undefined,
+    providerId: provisioningState?.providerIdOverride ?? undefined,
+  };
 }
 
 type CellWorkspaceRecord = Pick<
@@ -947,6 +1131,89 @@ type LoggerLike = {
   warn: (obj: Record<string, unknown>, message?: string) => void;
   error: (obj: Record<string, unknown> | Error, message?: string) => void;
 };
+
+const backgroundProvisioningLogger: LoggerLike = {
+  warn: () => {
+    /* noop */
+  },
+  error: () => {
+    /* noop */
+  },
+};
+
+export async function resumeSpawningCells(
+  overrides: Partial<CellRouteDependencies> = {}
+): Promise<void> {
+  const deps = { ...defaultCellRouteDependencies, ...overrides };
+  const pendingCells = await deps.db
+    .select({ cell: cells, provisioningState: cellProvisioningStates })
+    .from(cells)
+    .innerJoin(
+      cellProvisioningStates,
+      eq(cellProvisioningStates.cellId, cells.id)
+    )
+    .where(eq(cells.status, "spawning"));
+
+  if (pendingCells.length === 0) {
+    return;
+  }
+
+  for (const entry of pendingCells) {
+    const { cell, provisioningState } = entry;
+    const attemptCount = provisioningState?.attemptCount ?? 0;
+    if (attemptCount >= MAX_PROVISIONING_ATTEMPTS) {
+      await updateCellProvisioningStatus(
+        deps.db,
+        cell.id,
+        "error",
+        `${PROVISIONING_INTERRUPTED_MESSAGE}\nRetry limit exceeded.`
+      );
+      continue;
+    }
+
+    try {
+      const workspaceContext = await deps.resolveWorkspaceContext(
+        cell.workspaceId
+      );
+      const hiveConfig = await workspaceContext.loadConfig();
+      const template = hiveConfig.templates[cell.templateId];
+      if (!template) {
+        await updateCellProvisioningStatus(
+          deps.db,
+          cell.id,
+          "error",
+          `${PROVISIONING_INTERRUPTED_MESSAGE}\nTemplate ${cell.templateId} no longer exists.`
+        );
+        continue;
+      }
+
+      const context = await createExistingProvisionContext({
+        cell,
+        provisioningState,
+        body: resolveProvisioningParams(cell, provisioningState),
+        template,
+        database: deps.db,
+        ensureSession: deps.ensureAgentSession,
+        sendAgentMessage: deps.sendAgentMessage,
+        ensureServices: deps.ensureServicesForCell,
+        stopCellServices: deps.stopServicesForCell,
+        workspaceContext,
+        log: backgroundProvisioningLogger,
+      });
+
+      startProvisioningWorkflow(context);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown provisioning failure";
+      await updateCellProvisioningStatus(
+        deps.db,
+        cell.id,
+        "error",
+        `${PROVISIONING_INTERRUPTED_MESSAGE}\n${message}`
+      );
+    }
+  }
+}
 
 function shouldPreserveCellWorkspace(
   error: unknown
@@ -964,11 +1231,22 @@ async function updateCellProvisioningStatus(
   cellId: string,
   status: CellStatus,
   lastSetupError?: string | null
-): Promise<void> {
+): Promise<Date | null> {
+  const finished = status === "ready" || status === "error";
+  const finishedAt = finished ? new Date() : null;
   await database
     .update(cells)
     .set({ status, lastSetupError: lastSetupError ?? null })
     .where(eq(cells.id, cellId));
+
+  if (finishedAt) {
+    await database
+      .update(cellProvisioningStates)
+      .set({ finishedAt })
+      .where(eq(cellProvisioningStates.cellId, cellId));
+  }
+
+  return finishedAt;
 }
 
 function buildCellCreationErrorPayload(error: unknown): ErrorPayload {

@@ -21,7 +21,7 @@ import { resolveWorkspaceRoot } from "./config/context";
 import { resolveStaticAssetsDirectory } from "./config/static-assets";
 import { db } from "./db";
 import { agentsRoutes } from "./routes/agents";
-import { cellsRoutes } from "./routes/cells";
+import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
 import { templatesRoutes } from "./routes/templates";
 import { preloadVoiceTranscriptionModels, voiceRoutes } from "./routes/voice";
 import { workspacesRoutes } from "./routes/workspaces";
@@ -294,33 +294,30 @@ const registerSignalHandlers = () => {
   });
 };
 
-export const startServer = async () => {
-  const app = createApp();
-
-  const staticAssetsDirectory = resolveStaticAssetsDirectory();
-  const shouldServeStaticAssets =
-    Boolean(staticAssetsDirectory) &&
-    (isCompiledRuntime ||
-      Boolean(process.env.HIVE_WEB_DIST) ||
-      process.env.HIVE_FORCE_STATIC === "1");
-
+const configureAssetServing = (
+  app: App,
+  shouldServeStaticAssets: boolean,
+  staticAssetsDirectory: string | null
+) => {
   if (shouldServeStaticAssets && staticAssetsDirectory) {
     registerStaticAssets(app, staticAssetsDirectory);
     process.stderr.write(
       `Serving frontend assets from: ${staticAssetsDirectory}\n`
     );
-  } else if (staticAssetsDirectory) {
+    return;
+  }
+
+  if (staticAssetsDirectory) {
     process.stderr.write(
       "Frontend build detected but static serving is disabled in this runtime.\n"
     );
-  } else {
-    process.stderr.write("No frontend build detected; API-only mode.\n");
+    return;
   }
 
-  if (!shouldServeStaticAssets) {
-    app.get("/", () => "OK");
-  }
+  process.stderr.write("No frontend build detected; API-only mode.\n");
+};
 
+const runMigrationsOrExit = async () => {
   try {
     await runMigrations();
   } catch (error) {
@@ -329,10 +326,9 @@ export const startServer = async () => {
     );
     throw error;
   }
+};
 
-  await startupCleanup();
-
-  const workspaceRoot = resolveWorkspaceRoot();
+const ensureWorkspaceRegistration = async (workspaceRoot: string) => {
   try {
     await ensureWorkspaceRegistered(workspaceRoot, {
       preserveActiveWorkspace: true,
@@ -345,7 +341,9 @@ export const startServer = async () => {
       }\n`
     );
   }
+};
 
+const initializeSupervisorSafely = async () => {
   try {
     await bootstrapServiceSupervisor();
     process.stderr.write("Service supervisor initialized.\n");
@@ -356,7 +354,43 @@ export const startServer = async () => {
       }\n`
     );
   }
+};
 
+const resumeProvisioningSafely = async () => {
+  try {
+    await resumeSpawningCells();
+  } catch (error) {
+    process.stderr.write(
+      `Failed to resume cell provisioning: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`
+    );
+  }
+};
+
+export const startServer = async () => {
+  const app = createApp();
+
+  const staticAssetsDirectory = resolveStaticAssetsDirectory();
+  const shouldServeStaticAssets =
+    Boolean(staticAssetsDirectory) &&
+    (isCompiledRuntime ||
+      Boolean(process.env.HIVE_WEB_DIST) ||
+      process.env.HIVE_FORCE_STATIC === "1");
+
+  configureAssetServing(app, shouldServeStaticAssets, staticAssetsDirectory);
+
+  if (!shouldServeStaticAssets) {
+    app.get("/", () => "OK");
+  }
+
+  await runMigrationsOrExit();
+  await startupCleanup();
+
+  const workspaceRoot = resolveWorkspaceRoot();
+  await ensureWorkspaceRegistration(workspaceRoot);
+  await initializeSupervisorSafely();
+  await resumeProvisioningSafely();
   await preloadVoiceTranscriptionModels();
 
   registerSignalHandlers();

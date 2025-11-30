@@ -8,6 +8,13 @@
       "when": 1764373641663,
       "tag": "0000_rare_joseph",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1764508852786,
+      "tag": "0001_cute_tomas",
+      "breakpoints": true
     }
   ]
 }
