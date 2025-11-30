@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { dirname, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { Context, Effect, Layer } from "effect";
 import { getHiveConfig } from "../config/context";
 import type { ProcessService, Template } from "../config/schema";
 import { db as defaultDb } from "../db";
@@ -941,3 +942,67 @@ export const stopServicesForCell = (
   options?: { releasePorts?: boolean }
 ): Promise<void> => defaultSupervisor.stopCellServices(cellId, options);
 export const stopAllServices = (): Promise<void> => defaultSupervisor.stopAll();
+
+type ServiceSupervisorError = {
+  readonly _tag: "ServiceSupervisorError";
+  readonly cause: unknown;
+};
+
+const makeServiceSupervisorError = (
+  cause: unknown
+): ServiceSupervisorError => ({
+  _tag: "ServiceSupervisorError",
+  cause,
+});
+
+const wrapSupervisorPromise =
+  <Args extends unknown[]>(fn: (...args: Args) => Promise<void>) =>
+  (...args: Args): Effect.Effect<void, ServiceSupervisorError> =>
+    Effect.tryPromise({
+      try: () => fn(...args),
+      catch: (cause) => makeServiceSupervisorError(cause),
+    });
+
+export type ServiceSupervisorService = {
+  readonly bootstrap: Effect.Effect<void, ServiceSupervisorError>;
+  readonly ensureCellServices: (args: {
+    cell: Cell;
+    template?: Template;
+  }) => Effect.Effect<void, ServiceSupervisorError>;
+  readonly startCellService: (
+    serviceId: string
+  ) => Effect.Effect<void, ServiceSupervisorError>;
+  readonly stopCellService: (
+    serviceId: string,
+    options?: { releasePorts?: boolean }
+  ) => Effect.Effect<void, ServiceSupervisorError>;
+  readonly stopCellServices: (
+    cellId: string,
+    options?: { releasePorts?: boolean }
+  ) => Effect.Effect<void, ServiceSupervisorError>;
+  readonly stopAll: Effect.Effect<void, ServiceSupervisorError>;
+};
+
+const makeEffectSupervisor = (
+  supervisor: ServiceSupervisor
+): ServiceSupervisorService => ({
+  bootstrap: wrapSupervisorPromise(supervisor.bootstrap)(),
+  ensureCellServices: (args) =>
+    wrapSupervisorPromise(supervisor.ensureCellServices)(args),
+  startCellService: (serviceId) =>
+    wrapSupervisorPromise(supervisor.startCellService)(serviceId),
+  stopCellService: (serviceId, options) =>
+    wrapSupervisorPromise(supervisor.stopCellService)(serviceId, options),
+  stopCellServices: (cellId, options) =>
+    wrapSupervisorPromise(supervisor.stopCellServices)(cellId, options),
+  stopAll: wrapSupervisorPromise(supervisor.stopAll)(),
+});
+
+export const ServiceSupervisorService =
+  Context.GenericTag<ServiceSupervisorService>(
+    "@hive/server/ServiceSupervisorService"
+  );
+
+export const ServiceSupervisorLayer = Layer.sync(ServiceSupervisorService, () =>
+  makeEffectSupervisor(defaultSupervisor)
+);
