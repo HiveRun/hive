@@ -14,6 +14,7 @@ Provide the core engine for managing agent sessions, authentication, and lifecyc
 ## Tasks
 - [x] [HIVE-5] Add chat interruption controls (Abort button + double-Esc binding)
 - [x] [HIVE-16] Ship repo-level `.ignore` overrides so OpenCode/ripgrep can inspect gitignored dependencies
+- [x] [HIVE-9] Adopt neverthrow Result patterns for consistent agent/provider error handling (2025-11-30)
 
 ## Current Status: DEFERRED
 

@@ -3,6 +3,7 @@ import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { cp, mkdir, rm } from "node:fs/promises";
 import { join, sep } from "node:path";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { glob } from "tinyglobby";
 import type { Template } from "../config/schema";
 import { resolveCellsRoot } from "../workspaces/registry";
@@ -44,12 +45,94 @@ export type WorktreeLocation = {
   baseCommit: string;
 };
 
+export type WorktreeErrorKind =
+  | "git"
+  | "filesystem"
+  | "conflict"
+  | "not-found"
+  | "cleanup"
+  | "validation"
+  | "unknown";
+
+export type WorktreeManagerError = {
+  kind: WorktreeErrorKind;
+  message: string;
+  context?: Record<string, unknown>;
+  cause?: Error;
+};
+
+export function describeWorktreeError(error: WorktreeManagerError) {
+  return {
+    kind: error.kind,
+    message: error.message,
+    context: error.context,
+    cause: error.cause?.message ?? null,
+  };
+}
+
+export function worktreeErrorToError(error: WorktreeManagerError): Error {
+  const contextSuffix = error.context
+    ? ` ${JSON.stringify(error.context)}`
+    : "";
+  const formatted = new Error(`${error.message}${contextSuffix}`);
+  if (error.cause) {
+    (formatted as Error & { cause?: Error }).cause = error.cause;
+  }
+  return formatted;
+}
+
+function isWorktreeManagerError(value: unknown): value is WorktreeManagerError {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    "message" in (value as Record<string, unknown>) &&
+    "kind" in (value as Record<string, unknown>)
+  );
+}
+
+function toWorktreeError(
+  params: {
+    message: string;
+    kind?: WorktreeErrorKind;
+    context?: Record<string, unknown>;
+  },
+  cause?: unknown
+): WorktreeManagerError {
+  if (isWorktreeManagerError(cause)) {
+    const mergedContext =
+      cause.context || params.context
+        ? { ...(cause.context ?? {}), ...(params.context ?? {}) }
+        : undefined;
+
+    return {
+      ...cause,
+      kind: cause.kind ?? params.kind ?? "unknown",
+      message: cause.message ?? params.message,
+      context: mergedContext,
+    };
+  }
+
+  let resolvedCause: Error | undefined;
+  if (cause instanceof Error) {
+    resolvedCause = cause;
+  } else if (cause !== undefined) {
+    resolvedCause = new Error(String(cause));
+  }
+
+  return {
+    kind: params.kind ?? "unknown",
+    message: params.message,
+    context: params.context,
+    cause: resolvedCause,
+  };
+}
+
 export type WorktreeManager = {
   createWorktree(
     cellId: string,
     options?: WorktreeCreateOptions
-  ): Promise<WorktreeLocation>;
-  removeWorktree(cellId: string): void;
+  ): ResultAsync<WorktreeLocation, WorktreeManagerError>;
+  removeWorktree(cellId: string): ResultAsync<void, WorktreeManagerError>;
 };
 
 const DEFAULT_INCLUDE_PATTERNS: string[] = [];
@@ -213,27 +296,49 @@ export function createWorktreeManager(
     return git("rev-parse", "--abbrev-ref", "HEAD");
   }
 
-  async function handleExistingWorktree(
+  function handleExistingWorktree(
     worktreePath: string,
     force: boolean
-  ): Promise<void> {
+  ): ResultAsync<void, WorktreeManagerError> {
     if (!existsSync(worktreePath)) {
-      return;
+      return okAsync(undefined);
     }
 
-    if (force) {
-      try {
-        git("worktree", "remove", "--force", worktreePath);
-      } catch (error) {
-        logWarn(
-          "Git worktree remove failed, falling back to filesystem removal",
-          error
-        );
-        await rm(worktreePath, { recursive: true, force: true });
-      }
-    } else {
-      throw new Error(`Worktree already exists at ${worktreePath}`);
+    if (!force) {
+      return errAsync(
+        toWorktreeError(
+          {
+            message: `Worktree already exists at ${worktreePath}`,
+            kind: "conflict",
+            context: { worktreePath },
+          },
+          undefined
+        )
+      );
     }
+
+    return ResultAsync.fromPromise(
+      (async () => {
+        try {
+          git("worktree", "remove", "--force", worktreePath);
+        } catch (error) {
+          logWarn(
+            "Git worktree remove failed, falling back to filesystem removal",
+            error
+          );
+          await rm(worktreePath, { recursive: true, force: true });
+        }
+      })(),
+      (error) =>
+        toWorktreeError(
+          {
+            message: "Failed to clean up existing worktree",
+            kind: "cleanup",
+            context: { worktreePath },
+          },
+          error
+        )
+    );
   }
 
   function ensureBranchExists(branchName: string): string {
@@ -297,61 +402,109 @@ export function createWorktreeManager(
   }
 
   return {
-    async createWorktree(
+    createWorktree(
       cellId: string,
       options: WorktreeCreateOptions = {}
-    ): Promise<WorktreeLocation> {
-      await ensureCellsDir();
-
+    ): ResultAsync<WorktreeLocation, WorktreeManagerError> {
       const worktreePath = join(cellsDir, cellId);
 
-      await handleExistingWorktree(worktreePath, options.force ?? false);
+      return ResultAsync.fromPromise(
+        (async () => {
+          await ensureCellsDir();
 
-      const branch = ensureBranchExists(`cell-${cellId}`);
-
-      try {
-        git("worktree", "add", worktreePath, branch);
-
-        const includePatterns = getIncludePatterns(options.templateId);
-        await copyIncludedFiles(worktreePath, includePatterns);
-
-        const baseCommit = git("rev-parse", branch);
-        return {
-          path: worktreePath,
-          branch,
-          baseCommit,
-        };
-      } catch (error) {
-        try {
-          if (existsSync(worktreePath)) {
-            git("worktree", "remove", "--force", worktreePath);
+          const existingResult = await handleExistingWorktree(
+            worktreePath,
+            options.force ?? false
+          );
+          if (existingResult.isErr()) {
+            throw existingResult.error;
           }
-        } catch (cleanupError) {
-          logWarn("Failed to cleanup worktree after failure", cleanupError);
-        }
-        throw error;
-      }
+
+          const branch = ensureBranchExists(`cell-${cellId}`);
+
+          try {
+            git("worktree", "add", worktreePath, branch);
+
+            const includePatterns = getIncludePatterns(options.templateId);
+            await copyIncludedFiles(worktreePath, includePatterns);
+
+            const baseCommit = git("rev-parse", branch);
+            return {
+              path: worktreePath,
+              branch,
+              baseCommit,
+            } satisfies WorktreeLocation;
+          } catch (error) {
+            try {
+              if (existsSync(worktreePath)) {
+                git("worktree", "remove", "--force", worktreePath);
+              }
+            } catch (cleanupError) {
+              logWarn("Failed to cleanup worktree after failure", cleanupError);
+            }
+            throw error;
+          }
+        })(),
+        (error) =>
+          toWorktreeError(
+            {
+              message: "Failed to create git worktree",
+              kind: "git",
+              context: {
+                cellId,
+                worktreePath,
+                templateId: options.templateId,
+              },
+            },
+            error
+          )
+      );
     },
 
-    removeWorktree(cellId: string): void {
+    removeWorktree(cellId: string): ResultAsync<void, WorktreeManagerError> {
       const worktreeInfo = findWorktreeInfo(cellId);
 
       if (!worktreeInfo) {
-        throw new Error(`Worktree not found for cell ${cellId}`);
+        return errAsync(
+          toWorktreeError(
+            {
+              message: `Worktree not found for cell ${cellId}`,
+              kind: "not-found",
+              context: { cellId },
+            },
+            undefined
+          )
+        );
       }
 
       if (worktreeInfo.isMain) {
-        throw new Error("Cannot remove the main worktree");
-      }
-
-      try {
-        git("worktree", "remove", "--force", worktreeInfo.path);
-        git("worktree", "prune");
-      } catch (error) {
-        throw new Error(
-          `Failed to remove worktree for cell ${cellId}: ${error}`
+        return errAsync(
+          toWorktreeError(
+            {
+              message: "Cannot remove the main worktree",
+              kind: "validation",
+              context: { cellId },
+            },
+            undefined
+          )
         );
       }
+
+      return ResultAsync.fromPromise(
+        Promise.resolve().then(() => {
+          git("worktree", "remove", "--force", worktreeInfo.path);
+          git("worktree", "prune");
+        }),
+        (error) =>
+          toWorktreeError(
+            {
+              message: "Failed to remove git worktree",
+              kind: "cleanup",
+              context: { cellId, worktreePath: worktreeInfo.path },
+            },
+            error
+          )
+      );
     },
   };
 }

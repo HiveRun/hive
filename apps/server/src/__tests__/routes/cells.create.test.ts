@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { Elysia } from "elysia";
+import { okAsync } from "neverthrow";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSessionRecord } from "../../agents/types";
 import type { HiveConfig } from "../../config/schema";
@@ -98,7 +99,7 @@ function createDependencies(
   }
 
   function createCellWorktree(_cellId: string) {
-    return Promise.resolve({
+    return okAsync({
       path: workspacePath,
       branch: "cell-branch",
       baseCommit: "abc123",
@@ -107,7 +108,7 @@ function createDependencies(
 
   function removeCellWorktree(_cellId: string) {
     removeWorktreeCalls += 1;
-    return Promise.resolve();
+    return okAsync(undefined);
   }
 
   function createTestWorktreeManager() {

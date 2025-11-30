@@ -49,6 +49,10 @@ import {
 import { createWorkspaceContextPlugin } from "../workspaces/plugin";
 import type { WorkspaceRecord } from "../workspaces/registry";
 import type { WorktreeManager } from "../worktree/manager";
+import {
+  describeWorktreeError,
+  worktreeErrorToError,
+} from "../worktree/manager";
 
 export type CellRouteDependencies = {
   db: typeof db;
@@ -797,9 +801,22 @@ async function createCellRecord(
 ): Promise<typeof cells.$inferSelect> {
   const { body, database, worktreeService, workspace, state } = context;
 
-  const worktree = await worktreeService.createWorktree(state.cellId, {
+  const worktreeResult = await worktreeService.createWorktree(state.cellId, {
     templateId: body.templateId,
   });
+
+  if (worktreeResult.isErr()) {
+    context.log.error(
+      {
+        error: describeWorktreeError(worktreeResult.error),
+        cellId: state.cellId,
+      },
+      "Failed to create git worktree"
+    );
+    throw worktreeErrorToError(worktreeResult.error);
+  }
+
+  const worktree = worktreeResult.value;
   state.worktreeCreated = true;
   state.workspacePath = worktree.path;
   state.branchName = worktree.branch;
@@ -1311,15 +1328,18 @@ async function removeCellWorkspace(
   cell: CellWorkspaceRecord,
   log: LoggerLike
 ) {
-  try {
-    worktreeService.removeWorktree(cell.id);
+  const removalResult = await worktreeService.removeWorktree(cell.id);
+  if (removalResult.isOk()) {
     return;
-  } catch (error) {
-    log.warn(
-      { error, cellId: cell.id },
-      "Failed to remove git worktree, attempting filesystem cleanup"
-    );
   }
+
+  log.warn(
+    {
+      error: describeWorktreeError(removalResult.error),
+      cellId: cell.id,
+    },
+    "Failed to remove git worktree, attempting filesystem cleanup"
+  );
 
   if (!cell.workspacePath) {
     return;

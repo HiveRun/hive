@@ -1,4 +1,5 @@
 import { Elysia } from "elysia";
+import { okAsync } from "neverthrow";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { HiveConfig } from "../../config/schema";
 import { createCellsRoutes } from "../../routes/cells";
@@ -133,14 +134,13 @@ describe("Cell routes workspace enforcement", () => {
         workspace: resolved,
         loadConfig: () => Promise.resolve(hiveConfig),
         createWorktreeManager: async () => ({
-          createWorktree: async () => ({
-            path: `${resolved.path}/.hive/cells/new`,
-            branch: "main",
-            baseCommit: "base",
-          }),
-          removeWorktree: async () => {
-            /* noop for tests */
-          },
+          createWorktree: () =>
+            okAsync({
+              path: `${resolved.path}/.hive/cells/new`,
+              branch: "main",
+              baseCommit: "base",
+            }),
+          removeWorktree: () => okAsync(undefined),
         }),
       });
     };

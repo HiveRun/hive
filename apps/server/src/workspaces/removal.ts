@@ -5,7 +5,10 @@ import { db as defaultDb } from "../db";
 import { cells } from "../schema/cells";
 import { stopServicesForCell as stopDefaultCellServices } from "../services/supervisor";
 import type { WorktreeManager } from "../worktree/manager";
-import { createWorktreeManager } from "../worktree/manager";
+import {
+  createWorktreeManager,
+  describeWorktreeError,
+} from "../worktree/manager";
 import {
   getWorkspaceRegistry,
   removeWorkspace as removeWorkspaceRecord,
@@ -105,15 +108,15 @@ async function cleanupCellWorkspace(
   workspacePath?: string | null
 ): Promise<void> {
   if (manager) {
-    try {
-      manager.removeWorktree(cellId);
+    const removeResult = await manager.removeWorktree(cellId);
+    if (removeResult.isOk()) {
       return;
-    } catch (error) {
-      logWorkspaceRemovalWarning("Failed to remove git worktree", {
-        cellId,
-        error: formatError(error),
-      });
     }
+
+    logWorkspaceRemovalWarning("Failed to remove git worktree", {
+      cellId,
+      error: describeWorktreeError(removeResult.error),
+    });
   }
 
   if (workspacePath && workspacePath.trim().length > 0) {
