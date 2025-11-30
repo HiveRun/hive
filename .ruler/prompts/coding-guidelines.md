@@ -9,6 +9,14 @@
 - Lint/format via `bun run check:biome` or each package's `bun -C <dir> run check` script; Biome applies fixes in place.
 - Husky hooks enforce the check pipeline automatically—do not skip or rewrite them.
 
+## Effect Solutions Usage
+The Effect Solutions CLI provides curated best practices and patterns for Effect TypeScript. Before working on Effect code, check if there's a relevant topic that covers your use case.
+- `effect-solutions list` - List all available topics
+- `effect-solutions show <slug...>` - Read one or more topics
+- `effect-solutions search <term>` - Search topics by keyword
+
+**Local Effect Source:** The upstream Effect repository lives in `vendor/effect/`. Use it to grep for implementation patterns and API examples when Effect docs or solutions need deeper references.
+
 ## Programming Style
 
 **Prefer functional and declarative approaches** where possible. This makes code more predictable, testable, and easier to reason about.

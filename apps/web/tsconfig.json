@@ -6,6 +6,8 @@
     "lib": ["DOM", "DOM.Iterable", "ESNext"],
     "types": ["vite/client"],
     "allowImportingTsExtensions": true,
+    "module": "preserve",
+    "moduleResolution": "bundler",
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
