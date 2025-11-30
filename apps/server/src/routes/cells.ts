@@ -682,7 +682,17 @@ async function handleCellCreationRequest(
   });
 
   try {
-    const cell = await createCellWithServices(context);
+    const cell = await createCellRecord(context);
+    finalizeCellProvisioning(context).catch((error) => {
+      handleDeferredProvisionFailure(context, error).catch((cleanupError) => {
+        log.error(
+          cleanupError instanceof Error
+            ? cleanupError
+            : { error: cleanupError },
+          "Failed to handle provisioning failure"
+        );
+      });
+    });
     return {
       status: HTTP_STATUS.CREATED,
       payload: cellToResponse(cell),
@@ -744,20 +754,10 @@ function createProvisionContext(args: {
   };
 }
 
-async function createCellWithServices(
+async function createCellRecord(
   context: ProvisionContext
 ): Promise<typeof cells.$inferSelect> {
-  const {
-    body,
-    template,
-    database,
-    ensureSession,
-    sendAgentMessage: dispatchAgentMessage,
-    ensureServices,
-    worktreeService,
-    workspace,
-    state,
-  } = context;
+  const { body, database, worktreeService, workspace, state } = context;
 
   const worktree = await worktreeService.createWorktree(state.cellId, {
     templateId: body.templateId,
@@ -782,7 +782,7 @@ async function createCellWithServices(
     opencodeServerUrl: null,
     opencodeServerPort: null,
     createdAt: timestamp,
-    status: "pending",
+    status: "spawning",
     lastSetupError: null,
   };
 
@@ -795,11 +795,31 @@ async function createCellWithServices(
   state.recordCreated = true;
   state.createdCell = created;
 
+  return created;
+}
+
+async function finalizeCellProvisioning(
+  context: ProvisionContext
+): Promise<void> {
+  const {
+    body,
+    template,
+    ensureSession,
+    sendAgentMessage: dispatchAgentMessage,
+    ensureServices,
+    database,
+    state,
+  } = context;
+
+  if (!state.createdCell) {
+    throw new Error("Cell record missing during provisioning");
+  }
+
   const session = await ensureSession(state.cellId, {
     modelId: body.modelId ?? undefined,
     providerId: body.providerId ?? undefined,
   });
-  await ensureServices(created, template);
+  await ensureServices(state.createdCell, template);
 
   state.servicesStarted = true;
 
@@ -810,9 +830,42 @@ async function createCellWithServices(
 
   await updateCellProvisioningStatus(database, state.cellId, "ready");
 
-  const readyRecord = { ...created, status: "ready", lastSetupError: null };
-  state.createdCell = readyRecord;
-  return readyRecord;
+  state.createdCell = {
+    ...state.createdCell,
+    status: "ready",
+    lastSetupError: null,
+  };
+}
+
+async function handleDeferredProvisionFailure(
+  context: ProvisionContext,
+  error: unknown
+): Promise<void> {
+  const payload = buildCellCreationErrorPayload(error);
+  const lastSetupError = deriveSetupErrorDetails(payload);
+
+  await stopServicesIfStarted(context);
+
+  await updateCellProvisioningStatus(
+    context.database,
+    context.state.cellId,
+    "error",
+    lastSetupError
+  );
+
+  if (context.state.createdCell) {
+    context.state.createdCell = {
+      ...context.state.createdCell,
+      status: "error",
+      lastSetupError,
+    };
+  }
+
+  if (error instanceof Error) {
+    context.log.error(error, "Cell provisioning failed after response");
+  } else {
+    context.log.error({ error }, "Cell provisioning failed after response");
+  }
 }
 
 async function recoverCellCreationFailure(

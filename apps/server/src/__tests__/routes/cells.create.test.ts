@@ -16,6 +16,37 @@ import { setupTestDb, testDb } from "../test-db";
 const templateId = "failing-template";
 const workspacePath = "/tmp/mock-worktree";
 const CREATED_STATUS = 201;
+const WAIT_TIMEOUT_MS = 500;
+const WAIT_INTERVAL_MS = 10;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitForCondition(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = WAIT_TIMEOUT_MS
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) {
+      return;
+    }
+    await sleep(WAIT_INTERVAL_MS);
+  }
+  throw new Error("Condition not met within timeout");
+}
+
+async function waitForCellStatus(cellId: string, status: string) {
+  let latestRow: typeof cells.$inferSelect | undefined;
+  await waitForCondition(async () => {
+    const rows = await testDb.select().from(cells);
+    latestRow = rows.find((row) => row.id === cellId);
+    return latestRow?.status === status;
+  });
+  if (!latestRow) {
+    throw new Error(`Cell ${cellId} not found`);
+  }
+  return latestRow;
+}
 
 const hiveConfig: HiveConfig = {
   opencode: {
@@ -173,17 +204,17 @@ describe("POST /api/cells", () => {
       lastSetupError?: string;
     };
 
-    expect(payload.status).toBe("error");
-    expect(payload.lastSetupError).toBeTruthy();
-    expect(payload.lastSetupError?.toLowerCase()).toContain("exit code 42");
+    expect(payload.status).toBe("spawning");
+    expect(payload.lastSetupError).toBeUndefined();
 
     expect(removeWorktreeCalls).toBe(0);
 
+    const erroredRow = await waitForCellStatus(payload.id, "error");
+    expect(erroredRow.lastSetupError).toContain("exit code 42");
+
     const rows = await testDb.select().from(cells);
     expect(rows).toHaveLength(1);
-    const [row] = rows;
-    expect(row?.status).toBe("error");
-    expect(row?.lastSetupError).toContain("exit code 42");
+    expect(rows[0]?.status).toBe("error");
   });
 
   it("sends the cell description as the first agent prompt", async () => {
@@ -218,8 +249,14 @@ describe("POST /api/cells", () => {
     );
 
     expect(response.status).toBe(CREATED_STATUS);
+    const payload = (await response.json()) as { id: string; status: string };
+    expect(payload.status).toBe("spawning");
+
+    await waitForCellStatus(payload.id, "ready");
+    await waitForCondition(() => Boolean(capturedSessionId));
+    await waitForCondition(() => sendAgentMessage.mock.calls.length === 1);
+
     expect(capturedSessionId).toBeTruthy();
-    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
     expect(sendAgentMessage).toHaveBeenCalledWith(
       capturedSessionId,
       "Fix the failing specs in apps/web"
@@ -257,6 +294,12 @@ describe("POST /api/cells", () => {
     );
 
     expect(response.status).toBe(CREATED_STATUS);
+    const payload = (await response.json()) as { id: string; status: string };
+    expect(payload.status).toBe("spawning");
+
+    await waitForCellStatus(payload.id, "ready");
+    await waitForCondition(() => Boolean(capturedOverrides));
+
     expect(capturedOverrides).toEqual({
       modelId: "custom-model",
       providerId: "zen",
@@ -291,6 +334,10 @@ describe("POST /api/cells", () => {
     );
 
     expect(response.status).toBe(CREATED_STATUS);
+    const payload = (await response.json()) as { id: string; status: string };
+    expect(payload.status).toBe("spawning");
+
+    await waitForCellStatus(payload.id, "ready");
     expect(sendAgentMessage).not.toHaveBeenCalled();
   });
 });

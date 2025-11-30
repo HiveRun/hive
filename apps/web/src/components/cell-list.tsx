@@ -5,7 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Copy, Plus } from "lucide-react";
+import { Copy, Loader2, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -31,12 +31,15 @@ import { agentQueries } from "@/queries/agents";
 import {
   type Cell,
   type CellServiceSummary,
+  type CellStatus,
   cellMutations,
   cellQueries,
 } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
 
 const MAX_SELECTION_PREVIEW = 3;
+const PROVISIONING_STATUSES: CellStatus[] = ["spawning", "pending"];
+const PROVISIONING_POLL_INTERVAL_MS = 1000;
 
 type ServiceStatusSummary = {
   total: number;
@@ -71,6 +74,23 @@ export function CellList({ workspaceId }: CellListProps) {
   } = useQuery(cellQueries.all(workspaceId));
   const { data: templatesData } = useQuery(templateQueries.all(workspaceId));
   const templates = templatesData?.templates;
+
+  const hasProvisioningCells =
+    cells?.some((cell) => PROVISIONING_STATUSES.includes(cell.status)) ?? false;
+
+  useEffect(() => {
+    if (!hasProvisioningCells) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
+    }, PROVISIONING_POLL_INTERVAL_MS);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [hasProvisioningCells, queryClient, workspaceId]);
 
   const serviceStatusQueries = useQueries({
     queries:
@@ -538,11 +558,19 @@ function CellStatusNotice({
     );
   }
 
-  if (status === "pending") {
+  if (status === "spawning" || status === "pending") {
     return (
-      <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
-        Provisioning…
-      </p>
+      <div className="flex items-center gap-3 rounded-md border border-primary/40 bg-primary/5 p-3">
+        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+        <div className="space-y-1">
+          <p className="font-semibold text-[11px] text-primary uppercase tracking-[0.3em]">
+            Spawning cell
+          </p>
+          <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+            Setup tasks running in background
+          </p>
+        </div>
+      </div>
     );
   }
 
