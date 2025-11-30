@@ -362,3 +362,9 @@ This command:
 - **Use clear section headers** - Make content scannable for both humans and AI
 - **Be concise but complete** - AI agents have token limits
 - **Include examples** where helpful - Concrete examples beat abstract rules
+
+### Ripgrep Overrides for Agents
+
+OpenCode's search shell respects `.gitignore` by default, which hides dependencies and build outputs that agents often need to inspect. We keep a project-level `.ignore` file in the repo root with negated patterns for `node_modules`, build directories (`dist`, `build`, `dist-electron`, `apps/server/server`, `src-tauri/target`), cached artifacts (`.turbo`, `.cache`, `tmp`, `temp`), coverage data, and Playwright reports (`test-results/`, `playwright-report/`). Ripgrep automatically merges these overrides, so agents can still search through those trees without humans having to toggle settings.
+
+If you add new tooling that writes important gitignored files, extend `.ignore` with another `!` pattern so the content remains discoverable to opencode agents.

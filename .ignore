@@ -11,3 +11,12 @@
 !**/dist-electron/**
 !src-tauri/target/**
 !apps/server/server/**
+
+# Tool caches and test reports
+!**/.turbo/**
+!**/.cache/**
+!**/tmp/**
+!**/temp/**
+!**/coverage/**
+!**/test-results/**
+!**/playwright-report/**
