@@ -3,9 +3,11 @@ import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { cp, mkdir, rm } from "node:fs/promises";
 import { join, sep } from "node:path";
+import { Context, Effect, Layer } from "effect";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import { glob } from "tinyglobby";
-import type { Template } from "../config/schema";
+import { HiveConfigService } from "../config/context";
+import type { HiveConfig, Template } from "../config/schema";
 import { safeAsync, safeSync } from "../utils/result";
 import { resolveCellsRoot } from "../workspaces/registry";
 
@@ -545,3 +547,118 @@ export function createWorktreeManager(
     },
   };
 }
+
+export type WorktreeManagerInitError = {
+  readonly _tag: "WorktreeManagerInitError";
+  readonly workspacePath: string;
+  readonly cause: unknown;
+};
+
+const makeWorktreeManagerInitError = (
+  workspacePath: string,
+  cause: unknown
+): WorktreeManagerInitError => ({
+  _tag: "WorktreeManagerInitError",
+  workspacePath,
+  cause,
+});
+
+const resultAsyncToEffect = <A, E>(
+  result: ResultAsync<A, E>
+): Effect.Effect<A, E> =>
+  Effect.tryPromise({
+    try: async () => {
+      const resolved = await result;
+      if (resolved.isErr()) {
+        throw resolved.error;
+      }
+      return resolved.value;
+    },
+    catch: (cause) => cause as E,
+  });
+
+const toManagerEffect = (
+  workspacePath: string,
+  config?: HiveConfig
+): Effect.Effect<WorktreeManager, WorktreeManagerInitError> =>
+  Effect.try({
+    try: () => createWorktreeManager(workspacePath, config),
+    catch: (cause) => makeWorktreeManagerInitError(workspacePath, cause),
+  });
+
+export type WorktreeManagerService = {
+  readonly createManager: (
+    workspacePath: string,
+    config?: HiveConfig
+  ) => Effect.Effect<WorktreeManager, WorktreeManagerInitError>;
+  readonly createWorktree: (
+    args: {
+      workspacePath: string;
+      cellId: string;
+    } & WorktreeCreateOptions
+  ) => Effect.Effect<
+    WorktreeLocation,
+    WorktreeManagerError | WorktreeManagerInitError
+  >;
+  readonly removeWorktree: (
+    workspacePath: string,
+    cellId: string
+  ) => Effect.Effect<void, WorktreeManagerError | WorktreeManagerInitError>;
+};
+
+export const WorktreeManagerServiceTag =
+  Context.GenericTag<WorktreeManagerService>(
+    "@hive/server/WorktreeManagerService"
+  );
+
+type HiveConfigServiceInstance = {
+  load: (workspaceRoot?: string) => Effect.Effect<HiveConfig, unknown>;
+};
+
+const makeWorktreeManagerService = (
+  hiveConfigService: HiveConfigServiceInstance
+): WorktreeManagerService => {
+  const loadConfig = (workspacePath: string) =>
+    hiveConfigService
+      .load(workspacePath)
+      .pipe(
+        Effect.mapError((cause) =>
+          makeWorktreeManagerInitError(workspacePath, cause)
+        )
+      );
+
+  const managerFor = (
+    workspacePath: string,
+    config?: HiveConfig
+  ): Effect.Effect<WorktreeManager, WorktreeManagerInitError> =>
+    config
+      ? toManagerEffect(workspacePath, config)
+      : Effect.flatMap(loadConfig(workspacePath), (loadedConfig) =>
+          toManagerEffect(workspacePath, loadedConfig)
+        );
+
+  return {
+    createManager: managerFor,
+    createWorktree: (args) =>
+      Effect.gen(function* () {
+        const { workspacePath, cellId, ...options } = args;
+        const manager = yield* managerFor(workspacePath);
+        return yield* resultAsyncToEffect(
+          manager.createWorktree(cellId, options)
+        );
+      }),
+    removeWorktree: (workspacePath, cellId) =>
+      Effect.gen(function* () {
+        const manager = yield* managerFor(workspacePath);
+        return yield* resultAsyncToEffect(manager.removeWorktree(cellId));
+      }),
+  };
+};
+
+export const WorktreeManagerLayer = Layer.effect(
+  WorktreeManagerServiceTag,
+  Effect.gen(function* () {
+    const hiveConfigService = yield* HiveConfigService;
+    return makeWorktreeManagerService(hiveConfigService);
+  })
+);

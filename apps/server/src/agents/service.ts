@@ -12,9 +12,10 @@ import {
   type Session,
 } from "@opencode-ai/sdk";
 import { eq } from "drizzle-orm";
-import { getHiveConfig } from "../config/context";
-import type { Template } from "../config/schema";
-import { db } from "../db";
+import { Context, Effect, Layer, Runtime } from "effect";
+import { getHiveConfig, HiveConfigService } from "../config/context";
+import type { HiveConfig, Template } from "../config/schema";
+import { DatabaseService, db } from "../db";
 import { type Cell, cells } from "../schema/cells";
 import { publishAgentEvent } from "./events";
 import { loadOpencodeConfig } from "./opencode-config";
@@ -73,6 +74,30 @@ type ProviderAuthEntry = {
 };
 
 type ProviderCredentialsStore = Record<string, ProviderAuthEntry>;
+
+type AgentRuntimeDependencies = {
+  db: typeof db;
+  loadHiveConfig: (workspaceRoot?: string) => Promise<HiveConfig>;
+  loadOpencodeConfig: typeof loadOpencodeConfig;
+  publishAgentEvent: typeof publishAgentEvent;
+};
+
+const agentRuntimeOverrides: Partial<AgentRuntimeDependencies> = {};
+
+export const setAgentRuntimeDependencies = (
+  overrides: Partial<AgentRuntimeDependencies>
+) => {
+  Object.assign(agentRuntimeOverrides, overrides);
+};
+
+const getAgentRuntimeDependencies = (): AgentRuntimeDependencies => ({
+  db: agentRuntimeOverrides.db ?? db,
+  loadHiveConfig: agentRuntimeOverrides.loadHiveConfig ?? getHiveConfig,
+  loadOpencodeConfig:
+    agentRuntimeOverrides.loadOpencodeConfig ?? loadOpencodeConfig,
+  publishAgentEvent:
+    agentRuntimeOverrides.publishAgentEvent ?? publishAgentEvent,
+});
 
 async function readProviderCredentials(): Promise<ProviderCredentialsStore> {
   try {
@@ -312,6 +337,110 @@ export async function closeAllAgentSessions(): Promise<void> {
   }
 }
 
+type AgentRuntimeError = {
+  readonly _tag: "AgentRuntimeError";
+  readonly cause: unknown;
+};
+
+const makeAgentRuntimeError = (cause: unknown): AgentRuntimeError => ({
+  _tag: "AgentRuntimeError",
+  cause,
+});
+
+const wrapAgentRuntime =
+  <Args extends unknown[], Result>(fn: (...args: Args) => Promise<Result>) =>
+  (...args: Args): Effect.Effect<Result, AgentRuntimeError> =>
+    Effect.tryPromise({
+      try: () => fn(...args),
+      catch: (cause) => makeAgentRuntimeError(cause),
+    });
+
+export type AgentRuntimeService = {
+  readonly ensureAgentSession: (
+    cellId: string,
+    options?: { force?: boolean; modelId?: string; providerId?: string }
+  ) => Effect.Effect<AgentSessionRecord, AgentRuntimeError>;
+  readonly fetchAgentSession: (
+    sessionId: string
+  ) => Effect.Effect<AgentSessionRecord | null, AgentRuntimeError>;
+  readonly fetchAgentSessionForCell: (
+    cellId: string
+  ) => Effect.Effect<AgentSessionRecord | null, AgentRuntimeError>;
+  readonly fetchAgentMessages: (
+    sessionId: string
+  ) => Effect.Effect<AgentMessageRecord[], AgentRuntimeError>;
+  readonly updateAgentSessionModel: (
+    sessionId: string,
+    model: { modelId: string; providerId?: string }
+  ) => Effect.Effect<AgentSessionRecord, AgentRuntimeError>;
+  readonly sendAgentMessage: (
+    sessionId: string,
+    content: string
+  ) => Effect.Effect<void, AgentRuntimeError>;
+  readonly interruptAgentSession: (
+    sessionId: string
+  ) => Effect.Effect<void, AgentRuntimeError>;
+  readonly stopAgentSession: (
+    sessionId: string
+  ) => Effect.Effect<void, AgentRuntimeError>;
+  readonly closeAgentSession: (
+    cellId: string
+  ) => Effect.Effect<void, AgentRuntimeError>;
+  readonly closeAllAgentSessions: Effect.Effect<void, AgentRuntimeError>;
+  readonly respondAgentPermission: (
+    sessionId: string,
+    permissionId: string,
+    response: "once" | "always" | "reject"
+  ) => Effect.Effect<void, AgentRuntimeError>;
+  readonly fetchProviderCatalogForWorkspace: (
+    workspaceRootPath: string
+  ) => Effect.Effect<ProviderCatalogResponse, AgentRuntimeError>;
+};
+
+export const AgentRuntimeServiceTag = Context.GenericTag<AgentRuntimeService>(
+  "@hive/server/AgentRuntimeService"
+);
+
+const makeAgentRuntimeService = (): AgentRuntimeService => ({
+  ensureAgentSession: (cellId, options) =>
+    wrapAgentRuntime(ensureAgentSession)(cellId, options),
+  fetchAgentSession: (sessionId) =>
+    wrapAgentRuntime(fetchAgentSession)(sessionId),
+  fetchAgentSessionForCell: (cellId) =>
+    wrapAgentRuntime(fetchAgentSessionForCell)(cellId),
+  fetchAgentMessages: (sessionId) =>
+    wrapAgentRuntime(fetchAgentMessages)(sessionId),
+  updateAgentSessionModel: (sessionId, model) =>
+    wrapAgentRuntime(updateAgentSessionModel)(sessionId, model),
+  sendAgentMessage: (sessionId, content) =>
+    wrapAgentRuntime(sendAgentMessage)(sessionId, content),
+  interruptAgentSession: (sessionId) =>
+    wrapAgentRuntime(interruptAgentSession)(sessionId),
+  stopAgentSession: (sessionId) =>
+    wrapAgentRuntime(stopAgentSession)(sessionId),
+  closeAgentSession: (cellId) => wrapAgentRuntime(closeAgentSession)(cellId),
+  closeAllAgentSessions: wrapAgentRuntime(closeAllAgentSessions)(),
+  respondAgentPermission: (sessionId, permissionId, response) =>
+    wrapAgentRuntime(respondAgentPermission)(sessionId, permissionId, response),
+  fetchProviderCatalogForWorkspace: (workspaceRootPath) =>
+    wrapAgentRuntime(fetchProviderCatalogForWorkspace)(workspaceRootPath),
+});
+
+export const AgentRuntimeLayer = Layer.effect(
+  AgentRuntimeServiceTag,
+  Effect.gen(function* () {
+    const { db: runtimeDb } = yield* DatabaseService;
+    const hiveConfigService = yield* HiveConfigService;
+    const runtime = yield* Effect.runtime<never>();
+    setAgentRuntimeDependencies({
+      db: runtimeDb,
+      loadHiveConfig: (workspaceRoot?: string) =>
+        Runtime.runPromise(runtime, hiveConfigService.load(workspaceRoot)),
+    });
+    return makeAgentRuntimeService();
+  })
+);
+
 export async function respondAgentPermission(
   sessionId: string,
   permissionId: string,
@@ -368,15 +497,16 @@ async function ensureRuntimeForCell(
   }
 
   const workspaceRootPath = cell.workspaceRootPath || cell.workspacePath;
+  const deps = getAgentRuntimeDependencies();
 
-  const hiveConfig = await getHiveConfig(workspaceRootPath);
+  const hiveConfig = await deps.loadHiveConfig(workspaceRootPath);
   const template = hiveConfig.templates[cell.templateId];
   if (!template) {
     throw new Error("Cell template configuration not found");
   }
 
   const agentConfig = resolveTemplateAgentConfig(template);
-  const mergedConfig = await loadOpencodeConfig(workspaceRootPath);
+  const mergedConfig = await deps.loadOpencodeConfig(workspaceRootPath);
   const defaultOpencodeModel = mergedConfig.defaultModel;
   const configDefaultProvider = hiveConfig.opencode.defaultProvider;
   const configDefaultModel = hiveConfig.opencode.defaultModel;
@@ -429,7 +559,8 @@ async function ensureRuntimeForCell(
 export async function fetchProviderCatalogForWorkspace(
   workspaceRootPath: string
 ): Promise<ProviderCatalogResponse> {
-  const mergedConfig = await loadOpencodeConfig(workspaceRootPath);
+  const { loadOpencodeConfig: loadConfig } = getAgentRuntimeDependencies();
+  const mergedConfig = await loadConfig(workspaceRootPath);
   const server = await createOpencodeServer({
     hostname: "127.0.0.1",
     port: 0,
@@ -514,7 +645,8 @@ async function startOpencodeRuntime({
   });
 
   if (created || cell.opencodeSessionId !== session.id) {
-    await db
+    const { db: runtimeDb } = getAgentRuntimeDependencies();
+    await runtimeDb
       .update(cells)
       .set({ opencodeSessionId: session.id })
       .where(eq(cells.id, cell.id));
@@ -663,6 +795,7 @@ async function startEventStream({
       query: directoryQuery,
       signal: abortController.signal,
     });
+    const { publishAgentEvent: publish } = getAgentRuntimeDependencies();
 
     for await (const event of events.stream) {
       const eventSessionId = getEventSessionId(event);
@@ -670,7 +803,7 @@ async function startEventStream({
         continue;
       }
 
-      publishAgentEvent(runtime.session.id, event);
+      publish(runtime.session.id, event);
       updateRuntimeStatusFromEvent(runtime, event);
     }
   } catch {
@@ -932,7 +1065,8 @@ function setRuntimeStatus(
     error === undefined
       ? { type: "status" as const, status }
       : { type: "status" as const, status, error };
-  publishAgentEvent(runtime.session.id, statusEvent);
+  const { publishAgentEvent: publish } = getAgentRuntimeDependencies();
+  publish(runtime.session.id, statusEvent);
 }
 
 type RpcErrorPayload = {
@@ -1022,12 +1156,18 @@ function getRpcErrorMessage(error: unknown, fallback: string): string {
 }
 
 async function getCellById(id: string): Promise<Cell | null> {
-  const [cell] = await db.select().from(cells).where(eq(cells.id, id)).limit(1);
+  const { db: runtimeDb } = getAgentRuntimeDependencies();
+  const [cell] = await runtimeDb
+    .select()
+    .from(cells)
+    .where(eq(cells.id, id))
+    .limit(1);
   return cell ?? null;
 }
 
 async function getCellBySessionId(sessionId: string): Promise<Cell | null> {
-  const [cell] = await db
+  const { db: runtimeDb } = getAgentRuntimeDependencies();
+  const [cell] = await runtimeDb
     .select()
     .from(cells)
     .where(eq(cells.opencodeSessionId, sessionId))
