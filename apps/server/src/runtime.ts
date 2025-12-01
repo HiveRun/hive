@@ -1,4 +1,5 @@
 import { Effect, Layer } from "effect";
+import { AgentRuntimeLayer } from "./agents/service";
 import { HiveConfigLayer } from "./config/context";
 import { DatabaseLayer } from "./db";
 import { LoggerLayer } from "./logger";
@@ -9,15 +10,18 @@ import {
   ServiceSupervisorService,
 } from "./services/supervisor";
 import { WorkspaceRegistryLayer } from "./workspaces/registry";
+import { WorktreeManagerLayer } from "./worktree/manager";
+
+const baseLayers = Layer.mergeAll(HiveConfigLayer, DatabaseLayer, LoggerLayer);
 
 export const serverLayer = Layer.mergeAll(
-  HiveConfigLayer,
-  LoggerLayer,
   ServiceRepositoryLayer,
   PortManagerLayer,
   ServiceSupervisorLayer,
-  WorkspaceRegistryLayer
-).pipe(Layer.provideMerge(DatabaseLayer));
+  WorkspaceRegistryLayer,
+  WorktreeManagerLayer,
+  AgentRuntimeLayer
+).pipe(Layer.provideMerge(baseLayers));
 
 type ServerLayerServices = Layer.Layer.Success<typeof serverLayer>;
 
