@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
+import { Context, Effect, Layer } from "effect";
 import { safeAsync } from "../utils/result";
 
 const REGISTRY_FILE_NAME = "workspaces.json";
@@ -405,3 +406,142 @@ async function shouldActivateWorkspace(path: string): Promise<boolean> {
 
   return registry.activeWorkspaceId === existing.id;
 }
+
+export type WorkspaceRegistryError = {
+  readonly _tag: "WorkspaceRegistryError";
+  readonly message: string;
+  readonly cause?: unknown;
+};
+
+const makeWorkspaceRegistryError = (
+  message: string,
+  cause?: unknown
+): WorkspaceRegistryError => ({
+  _tag: "WorkspaceRegistryError",
+  message,
+  cause,
+});
+
+const wrapRegistryPromise = <A>(
+  operation: () => Promise<A>,
+  message: string
+): Effect.Effect<A, WorkspaceRegistryError> =>
+  Effect.tryPromise({
+    try: operation,
+    catch: (cause) => makeWorkspaceRegistryError(message, cause),
+  });
+
+export type WorkspaceRegistryService = {
+  readonly getRegistry: Effect.Effect<
+    WorkspaceRegistry,
+    WorkspaceRegistryError
+  >;
+  readonly listWorkspaces: Effect.Effect<
+    WorkspaceRecord[],
+    WorkspaceRegistryError
+  >;
+  readonly registerWorkspace: (
+    input: RegisterWorkspaceInput,
+    options?: RegisterWorkspaceOptions
+  ) => Effect.Effect<WorkspaceRecord, WorkspaceRegistryError>;
+  readonly removeWorkspace: (
+    id: string
+  ) => Effect.Effect<boolean, WorkspaceRegistryError>;
+  readonly updateWorkspaceLabel: (
+    input: UpdateWorkspaceLabelInput
+  ) => Effect.Effect<WorkspaceRecord | null, WorkspaceRegistryError>;
+  readonly activateWorkspace: (
+    id: string
+  ) => Effect.Effect<WorkspaceRecord | null, WorkspaceRegistryError>;
+  readonly ensureWorkspaceRegistered: (
+    path: string,
+    options?: EnsureWorkspaceOptions
+  ) => Effect.Effect<WorkspaceRecord, WorkspaceRegistryError>;
+};
+
+const createWorkspaceRegistryService = (): WorkspaceRegistryService => ({
+  getRegistry: wrapRegistryPromise(
+    () => getWorkspaceRegistry(),
+    "Failed to read workspace registry"
+  ),
+  listWorkspaces: wrapRegistryPromise(
+    () => listWorkspaces(),
+    "Failed to list workspaces"
+  ),
+  registerWorkspace: (input, options) =>
+    wrapRegistryPromise(
+      () => registerWorkspace(input, options),
+      "Failed to register workspace"
+    ),
+  removeWorkspace: (id) =>
+    wrapRegistryPromise(
+      () => removeWorkspace(id),
+      "Failed to remove workspace"
+    ),
+  updateWorkspaceLabel: (input) =>
+    wrapRegistryPromise(
+      () => updateWorkspaceLabel(input),
+      "Failed to update workspace label"
+    ),
+  activateWorkspace: (id) =>
+    wrapRegistryPromise(
+      () => activateWorkspace(id),
+      "Failed to activate workspace"
+    ),
+  ensureWorkspaceRegistered: (path, options) =>
+    wrapRegistryPromise(
+      () => ensureWorkspaceRegistered(path, options),
+      "Failed to ensure workspace registration"
+    ),
+});
+
+export const WorkspaceRegistryServiceTag =
+  Context.GenericTag<WorkspaceRegistryService>(
+    "@hive/server/WorkspaceRegistryService"
+  );
+
+export const WorkspaceRegistryLayer = Layer.sync(
+  WorkspaceRegistryServiceTag,
+  createWorkspaceRegistryService
+);
+
+export const getWorkspaceRegistryEffect = Effect.flatMap(
+  WorkspaceRegistryServiceTag,
+  (service) => service.getRegistry
+);
+
+export const listWorkspacesEffect = Effect.flatMap(
+  WorkspaceRegistryServiceTag,
+  (service) => service.listWorkspaces
+);
+
+export const registerWorkspaceEffect = (
+  input: RegisterWorkspaceInput,
+  options?: RegisterWorkspaceOptions
+) =>
+  Effect.flatMap(WorkspaceRegistryServiceTag, (service) =>
+    service.registerWorkspace(input, options)
+  );
+
+export const removeWorkspaceEffect = (id: string) =>
+  Effect.flatMap(WorkspaceRegistryServiceTag, (service) =>
+    service.removeWorkspace(id)
+  );
+
+export const updateWorkspaceLabelEffect = (input: UpdateWorkspaceLabelInput) =>
+  Effect.flatMap(WorkspaceRegistryServiceTag, (service) =>
+    service.updateWorkspaceLabel(input)
+  );
+
+export const activateWorkspaceEffect = (id: string) =>
+  Effect.flatMap(WorkspaceRegistryServiceTag, (service) =>
+    service.activateWorkspace(id)
+  );
+
+export const ensureWorkspaceRegisteredEffect = (
+  path: string,
+  options?: EnsureWorkspaceOptions
+) =>
+  Effect.flatMap(WorkspaceRegistryServiceTag, (service) =>
+    service.ensureWorkspaceRegistered(path, options)
+  );

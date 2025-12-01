@@ -14,29 +14,22 @@ import { logger } from "@bogeychan/elysia-logger";
 
 import { cors } from "@elysiajs/cors";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import { Effect, Layer, Runtime } from "effect";
 import { Elysia } from "elysia";
 import { cleanupOrphanedServers } from "./agents/cleanup";
 import { closeAllAgentSessions } from "./agents/service";
-import { HiveConfigLayer, resolveWorkspaceRoot } from "./config/context";
+import { resolveWorkspaceRoot } from "./config/context";
 import { resolveStaticAssetsDirectory } from "./config/static-assets";
-import { DatabaseLayer, db } from "./db";
-import { LoggerLayer } from "./logger";
+import { db } from "./db";
 import { agentsRoutes } from "./routes/agents";
 import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
 import { templatesRoutes } from "./routes/templates";
 import { preloadVoiceTranscriptionModels, voiceRoutes } from "./routes/voice";
 import { workspacesRoutes } from "./routes/workspaces";
+import { runServerEffect, runSupervisorEffect } from "./runtime";
 import { cells } from "./schema/cells";
-import { PortManagerLayer } from "./services/port-manager";
-import { ServiceRepositoryLayer } from "./services/repository";
-import {
-  ServiceSupervisorLayer,
-  ServiceSupervisorService,
-} from "./services/supervisor";
 import { safeAsync, safeSync } from "./utils/result";
 import {
-  ensureWorkspaceRegistered,
+  ensureWorkspaceRegisteredEffect,
   resolveHiveHome,
 } from "./workspaces/registry";
 
@@ -70,34 +63,6 @@ const resolvedCorsOrigins = (process.env.CORS_ORIGIN || "")
 
 const allowedCorsOrigins =
   resolvedCorsOrigins.length > 0 ? resolvedCorsOrigins : DEFAULT_CORS_ORIGINS;
-
-const serverLayer = Layer.mergeAll(
-  HiveConfigLayer,
-  LoggerLayer,
-  ServiceRepositoryLayer,
-  PortManagerLayer,
-  ServiceSupervisorLayer
-).pipe(Layer.provideMerge(DatabaseLayer));
-
-const serverRuntime = Effect.runPromise(
-  Effect.scoped(Layer.toRuntime(serverLayer))
-);
-
-type ServerLayerServices = Layer.Layer.Success<typeof serverLayer>;
-
-const runServerEffect = async <A, E>(
-  effect: Effect.Effect<A, E, ServerLayerServices>
-): Promise<A> => {
-  const runtime = await serverRuntime;
-  return Runtime.runPromise(runtime)(effect);
-};
-
-const runSupervisorEffect = <A>(
-  selector: (service: ServiceSupervisorService) => Effect.Effect<A, unknown>
-) =>
-  runServerEffect(
-    Effect.flatMap(ServiceSupervisorService, (service) => selector(service))
-  );
 
 const LEADING_SLASH_REGEX = /^\/+/,
   DOT_SEQUENCE_REGEX = /\.\.+/g;
@@ -368,9 +333,11 @@ const runMigrationsOrExit = async () => {
 const ensureWorkspaceRegistration = async (workspaceRoot: string) => {
   const registrationResult = await safeAsync(
     () =>
-      ensureWorkspaceRegistered(workspaceRoot, {
-        preserveActiveWorkspace: true,
-      }),
+      runServerEffect(
+        ensureWorkspaceRegisteredEffect(workspaceRoot, {
+          preserveActiveWorkspace: true,
+        })
+      ),
     (error) => error
   );
 

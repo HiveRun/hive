@@ -1,11 +1,12 @@
 import { Elysia, t } from "elysia";
+import { runServerEffect } from "../runtime";
 import { browseWorkspaceDirectories } from "../workspaces/browser";
 import {
-  activateWorkspace,
-  ensureWorkspaceRegistered,
-  getWorkspaceRegistry,
-  registerWorkspace,
-  updateWorkspaceLabel,
+  activateWorkspaceEffect,
+  ensureWorkspaceRegisteredEffect,
+  getWorkspaceRegistryEffect,
+  registerWorkspaceEffect,
+  updateWorkspaceLabelEffect,
 } from "../workspaces/registry";
 import { removeWorkspaceCascade } from "../workspaces/removal";
 
@@ -54,7 +55,7 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   .get(
     "/",
     async () => {
-      const registry = await getWorkspaceRegistry();
+      const registry = await runServerEffect(getWorkspaceRegistryEffect);
       return registry;
     },
     {
@@ -90,9 +91,11 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
     "/",
     async ({ body, set }) => {
       try {
-        const workspace = await registerWorkspace(
-          { path: body.path, label: body.label },
-          { setActive: body.activate ?? false }
+        const workspace = await runServerEffect(
+          registerWorkspaceEffect(
+            { path: body.path, label: body.label },
+            { setActive: body.activate ?? false }
+          )
         );
         set.status = HTTP_STATUS.CREATED;
         return { workspace };
@@ -118,7 +121,9 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   .post(
     "/:id/activate",
     async ({ params, set }) => {
-      const workspace = await activateWorkspace(params.id);
+      const workspace = await runServerEffect(
+        activateWorkspaceEffect(params.id)
+      );
       if (!workspace) {
         set.status = HTTP_STATUS.NOT_FOUND;
         return { message: "Workspace not found" };
@@ -139,10 +144,12 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
     "/:id",
     async ({ params, body, set }) => {
       try {
-        const workspace = await updateWorkspaceLabel({
-          id: params.id,
-          label: body.label,
-        });
+        const workspace = await runServerEffect(
+          updateWorkspaceLabelEffect({
+            id: params.id,
+            label: body.label,
+          })
+        );
         if (!workspace) {
           set.status = HTTP_STATUS.NOT_FOUND;
           return { message: "Workspace not found" };
@@ -194,9 +201,11 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
     "/auto-register",
     async ({ body, set }) => {
       try {
-        const workspace = await ensureWorkspaceRegistered(body.path, {
-          label: body.label,
-        });
+        const workspace = await runServerEffect(
+          ensureWorkspaceRegisteredEffect(body.path, {
+            label: body.label,
+          })
+        );
         set.status = HTTP_STATUS.CREATED;
         return { workspace };
       } catch (error) {
