@@ -4,14 +4,14 @@ import { createConnection } from "node:net";
 import { resolve as resolvePath } from "node:path";
 import { logger } from "@bogeychan/elysia-logger";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { Effect } from "effect";
 import { Elysia, type Static, t } from "elysia";
-import {
-  closeAgentSession,
-  ensureAgentSession,
-  sendAgentMessage,
-} from "../agents/service";
+import { AgentRuntimeServiceTag } from "../agents/service";
+import type { AgentSessionRecord } from "../agents/types";
 import type { Template } from "../config/schema";
-import { db } from "../db";
+import type { DatabaseService as DatabaseServiceType } from "../db";
+import { DatabaseService } from "../db";
+import { runServerEffect } from "../runtime";
 import {
   CellDiffResponseSchema,
   CellListResponseSchema,
@@ -35,11 +35,8 @@ import {
 import { subscribeToServiceEvents } from "../services/events";
 import {
   CommandExecutionError,
-  ensureServicesForCell,
   isProcessAlive,
-  startServiceById,
-  stopServiceById,
-  stopServicesForCell,
+  ServiceSupervisorService,
   TemplateSetupError,
 } from "../services/supervisor";
 import { safeAsync } from "../utils/result";
@@ -55,33 +52,101 @@ import {
   worktreeErrorToError,
 } from "../worktree/manager";
 
+type DatabaseClient = DatabaseServiceType["db"];
+
 export type CellRouteDependencies = {
-  db: typeof db;
+  db: DatabaseClient;
   resolveWorkspaceContext: typeof resolveWorkspaceContext;
-  ensureAgentSession: typeof ensureAgentSession;
-  sendAgentMessage: typeof sendAgentMessage;
-  closeAgentSession: typeof closeAgentSession;
-  ensureServicesForCell: typeof ensureServicesForCell;
-  startServiceById: typeof startServiceById;
-  stopServiceById: typeof stopServiceById;
-  stopServicesForCell: typeof stopServicesForCell;
+  ensureAgentSession: (
+    cellId: string,
+    options?: { force?: boolean; modelId?: string; providerId?: string }
+  ) => Promise<AgentSessionRecord>;
+  sendAgentMessage: (sessionId: string, content: string) => Promise<void>;
+  closeAgentSession: (cellId: string) => Promise<void>;
+  ensureServicesForCell: (
+    cell: typeof cells.$inferSelect,
+    template?: Template
+  ) => Promise<void>;
+  startServiceById: (serviceId: string) => Promise<void>;
+  stopServiceById: (
+    serviceId: string,
+    options?: { releasePorts?: boolean }
+  ) => Promise<void>;
+  stopServicesForCell: (
+    cellId: string,
+    options?: { releasePorts?: boolean }
+  ) => Promise<void>;
 };
 
-const defaultCellRouteDependencies: CellRouteDependencies = {
-  db,
-  resolveWorkspaceContext,
-  ensureAgentSession,
-  sendAgentMessage,
-  closeAgentSession,
-  ensureServicesForCell,
-  startServiceById,
-  stopServiceById,
-  stopServicesForCell,
+const dependencyKeys: Array<keyof CellRouteDependencies> = [
+  "db",
+  "resolveWorkspaceContext",
+  "ensureAgentSession",
+  "sendAgentMessage",
+  "closeAgentSession",
+  "ensureServicesForCell",
+  "startServiceById",
+  "stopServiceById",
+  "stopServicesForCell",
+];
+
+const buildDefaultCellDependencies = () =>
+  Effect.gen(function* () {
+    const { db: database } = yield* DatabaseService;
+    const agentRuntime = yield* AgentRuntimeServiceTag;
+    const supervisor = yield* ServiceSupervisorService;
+
+    return {
+      db: database,
+      resolveWorkspaceContext,
+      ensureAgentSession: (cellId, options) =>
+        Effect.runPromise(agentRuntime.ensureAgentSession(cellId, options)),
+      sendAgentMessage: (sessionId, content) =>
+        Effect.runPromise(agentRuntime.sendAgentMessage(sessionId, content)),
+      closeAgentSession: (cellId) =>
+        Effect.runPromise(agentRuntime.closeAgentSession(cellId)),
+      ensureServicesForCell: (cell, template) =>
+        Effect.runPromise(
+          supervisor.ensureCellServices({
+            cell,
+            template,
+          })
+        ),
+      startServiceById: (serviceId) =>
+        Effect.runPromise(supervisor.startCellService(serviceId)),
+      stopServiceById: (serviceId, options) =>
+        Effect.runPromise(supervisor.stopCellService(serviceId, options)),
+      stopServicesForCell: (cellId, options) =>
+        Effect.runPromise(supervisor.stopCellServices(cellId, options)),
+    } satisfies CellRouteDependencies;
+  });
+
+const hasAllDependencies = (
+  overrides: Partial<CellRouteDependencies>
+): overrides is CellRouteDependencies =>
+  dependencyKeys.every((key) => overrides[key] !== undefined);
+
+const resolveCellRouteDependencies = (
+  overrides: Partial<CellRouteDependencies> = {}
+): Promise<CellRouteDependencies> => {
+  if (hasAllDependencies(overrides)) {
+    return Promise.resolve(overrides);
+  }
+
+  return runServerEffect(buildDefaultCellDependencies()).then((base) => ({
+    ...base,
+    ...overrides,
+  }));
 };
 
 type CellServiceListResponse = Static<typeof CellServiceListResponseSchema>;
 type CellDiffResponse = Static<typeof CellDiffResponseSchema>;
 type CellServiceResponse = Static<typeof CellServiceSchema>;
+
+type ServiceRow = {
+  service: typeof cellServices.$inferSelect;
+  cell: typeof cells.$inferSelect;
+};
 
 const HTTP_STATUS = {
   OK: 200,
@@ -169,21 +234,19 @@ type ErrorPayload = {
 export function createCellsRoutes(
   overrides: Partial<CellRouteDependencies> = {}
 ) {
-  const deps = { ...defaultCellRouteDependencies, ...overrides };
-  const {
-    db: database,
-    resolveWorkspaceContext: resolveWorkspaceCtx,
-    ensureAgentSession: ensureSession,
-    sendAgentMessage: sendMessage,
-    closeAgentSession: closeSession,
-    ensureServicesForCell: ensureServices,
-    startServiceById: startService,
-    stopServiceById: stopService,
-    stopServicesForCell: stopCellServicesFn,
-  } = deps;
+  const resolveDeps = (() => {
+    let cachedDeps: Promise<CellRouteDependencies> | null = null;
+    return () => {
+      if (!cachedDeps) {
+        cachedDeps = resolveCellRouteDependencies(overrides);
+      }
+      return cachedDeps;
+    };
+  })();
 
   const workspaceContextPlugin = createWorkspaceContextPlugin({
-    resolveWorkspaceContext: resolveWorkspaceCtx,
+    resolveWorkspaceContext: async (workspaceId?: string) =>
+      (await resolveDeps()).resolveWorkspaceContext(workspaceId),
   });
 
   return new Elysia({ prefix: "/api/cells" })
@@ -193,6 +256,7 @@ export function createCellsRoutes(
       "/",
       async ({ query, set, getWorkspaceContext }) => {
         try {
+          const { db: database } = await resolveDeps();
           const workspaceContext = await getWorkspaceContext(query.workspaceId);
           const allCells = await database
             .select()
@@ -220,6 +284,7 @@ export function createCellsRoutes(
     .get(
       "/:id",
       async ({ params, set }) => {
+        const { db: database } = await resolveDeps();
         const result = await database
           .select()
           .from(cells)
@@ -254,6 +319,7 @@ export function createCellsRoutes(
     .get(
       "/:id/services",
       async ({ params, set }) => {
+        const { db: database } = await resolveDeps();
         const cell = await loadCellById(database, params.id);
         if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
@@ -278,6 +344,7 @@ export function createCellsRoutes(
     .get(
       "/:id/services/stream",
       async ({ params, set, log }) => {
+        const { db: database } = await resolveDeps();
         const cell = await loadCellById(database, params.id);
         if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
@@ -371,6 +438,7 @@ export function createCellsRoutes(
     .get(
       "/:id/diff",
       async ({ params, query, set }) => {
+        const { db: database } = await resolveDeps();
         const cell = await loadCellById(database, params.id);
         if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
@@ -409,6 +477,9 @@ export function createCellsRoutes(
       "/:id/services/:serviceId/start",
 
       async ({ params, set }) => {
+        const { db: database, startServiceById: startService } =
+          await resolveDeps();
+
         const row = await fetchServiceRow(
           database,
           params.id,
@@ -444,6 +515,9 @@ export function createCellsRoutes(
     .post(
       "/:id/services/:serviceId/stop",
       async ({ params, set }) => {
+        const { db: database, stopServiceById: stopService } =
+          await resolveDeps();
+
         const row = await fetchServiceRow(
           database,
           params.id,
@@ -480,17 +554,30 @@ export function createCellsRoutes(
       "/",
       async ({ body, set, log, getWorkspaceContext }) => {
         try {
-          const workspaceContext = await getWorkspaceContext(body.workspaceId);
-          const result = await handleCellCreationRequest({
-            body,
-            database,
-            ensureSession,
+          const deps = await resolveDeps();
+          const {
+            db: database,
+            ensureAgentSession: ensureSession,
             sendAgentMessage: sendMessage,
-            ensureServices,
-            stopCellServices: stopCellServicesFn,
-            workspaceContext,
-            log,
-          });
+            ensureServicesForCell: ensureServices,
+            stopServicesForCell: stopCellServicesFn,
+          } = deps;
+
+          const workspaceContext = await getWorkspaceContext(body.workspaceId);
+          const result = await runServerEffect(
+            Effect.tryPromise(() =>
+              handleCellCreationRequest({
+                body,
+                database,
+                ensureSession,
+                sendAgentMessage: sendMessage,
+                ensureServices,
+                stopCellServices: stopCellServicesFn,
+                workspaceContext,
+                log,
+              })
+            )
+          );
 
           set.status = result.status;
           return result.payload;
@@ -517,6 +604,14 @@ export function createCellsRoutes(
       "/",
       async ({ body, set, log }) => {
         try {
+          const deps = await resolveDeps();
+          const {
+            db: database,
+            resolveWorkspaceContext: resolveWorkspaceCtx,
+            closeAgentSession: closeSession,
+            stopServicesForCell: stopCellServicesFn,
+          } = deps;
+
           const uniqueIds = [...new Set(body.ids)];
 
           const cellsToDelete = await database
@@ -597,6 +692,14 @@ export function createCellsRoutes(
       "/:id",
       async ({ params, set, log }) => {
         try {
+          const deps = await resolveDeps();
+          const {
+            db: database,
+            resolveWorkspaceContext: resolveWorkspaceCtx,
+            closeAgentSession: closeSession,
+            stopServicesForCell: stopCellServicesFn,
+          } = deps;
+
           const cell = await loadCellById(database, params.id);
           if (!cell) {
             set.status = HTTP_STATUS.NOT_FOUND;
@@ -659,11 +762,11 @@ type CellCreationPayload = ReturnType<typeof cellToResponse> | ErrorPayload;
 
 type CellCreationArgs = {
   body: Static<typeof CreateCellSchema>;
-  database: typeof db;
-  ensureSession: typeof ensureAgentSession;
-  sendAgentMessage: typeof sendAgentMessage;
-  ensureServices: typeof ensureServicesForCell;
-  stopCellServices: typeof stopServicesForCell;
+  database: DatabaseClient;
+  ensureSession: CellRouteDependencies["ensureAgentSession"];
+  sendAgentMessage: CellRouteDependencies["sendAgentMessage"];
+  ensureServices: CellRouteDependencies["ensureServicesForCell"];
+  stopCellServices: CellRouteDependencies["stopServicesForCell"];
   workspaceContext: WorkspaceRuntimeContext;
   log: LoggerLike;
 };
@@ -720,11 +823,11 @@ async function handleCellCreationRequest(
 type ProvisionContext = {
   body: Static<typeof CreateCellSchema>;
   template: Template;
-  database: typeof db;
-  ensureSession: typeof ensureAgentSession;
-  sendAgentMessage: typeof sendAgentMessage;
-  ensureServices: typeof ensureServicesForCell;
-  stopCellServices: typeof stopServicesForCell;
+  database: DatabaseClient;
+  ensureSession: CellRouteDependencies["ensureAgentSession"];
+  sendAgentMessage: CellRouteDependencies["sendAgentMessage"];
+  ensureServices: CellRouteDependencies["ensureServicesForCell"];
+  stopCellServices: CellRouteDependencies["stopServicesForCell"];
   worktreeService: WorktreeManager;
   workspace: WorkspaceRecord;
   log: LoggerLike;
@@ -746,11 +849,11 @@ type CellProvisionState = {
 function createProvisionContext(args: {
   body: Static<typeof CreateCellSchema>;
   template: Template;
-  database: typeof db;
-  ensureSession: typeof ensureAgentSession;
-  sendAgentMessage: typeof sendAgentMessage;
-  ensureServices: typeof ensureServicesForCell;
-  stopCellServices: typeof stopServicesForCell;
+  database: DatabaseClient;
+  ensureSession: CellRouteDependencies["ensureAgentSession"];
+  sendAgentMessage: CellRouteDependencies["sendAgentMessage"];
+  ensureServices: CellRouteDependencies["ensureServicesForCell"];
+  stopCellServices: CellRouteDependencies["stopServicesForCell"];
   worktreeService: WorktreeManager;
   workspace: WorkspaceRecord;
   log: LoggerLike;
@@ -776,11 +879,11 @@ async function createExistingProvisionContext(args: {
   provisioningState: CellProvisioningState | null;
   body: Static<typeof CreateCellSchema>;
   template: Template;
-  database: typeof db;
-  ensureSession: typeof ensureAgentSession;
-  sendAgentMessage: typeof sendAgentMessage;
-  ensureServices: typeof ensureServicesForCell;
-  stopCellServices: typeof stopServicesForCell;
+  database: DatabaseClient;
+  ensureSession: CellRouteDependencies["ensureAgentSession"];
+  sendAgentMessage: CellRouteDependencies["sendAgentMessage"];
+  ensureServices: CellRouteDependencies["ensureServicesForCell"];
+  stopCellServices: CellRouteDependencies["stopServicesForCell"];
   workspaceContext: WorkspaceRuntimeContext;
   log: LoggerLike;
 }): Promise<ProvisionContext> {
@@ -1183,7 +1286,7 @@ const backgroundProvisioningLogger: LoggerLike = {
 export async function resumeSpawningCells(
   overrides: Partial<CellRouteDependencies> = {}
 ): Promise<void> {
-  const deps = { ...defaultCellRouteDependencies, ...overrides };
+  const deps = await resolveCellRouteDependencies(overrides);
   const pendingCells = await deps.db
     .select({ cell: cells, provisioningState: cellProvisioningStates })
     .from(cells)
@@ -1266,7 +1369,7 @@ function deriveSetupErrorDetails(payload: ErrorPayload): string {
 }
 
 async function updateCellProvisioningStatus(
-  database: typeof db,
+  database: DatabaseClient,
   cellId: string,
   status: CellStatus,
   lastSetupError?: string | null
@@ -1385,7 +1488,7 @@ async function removeCellWorkspace(
 }
 
 async function loadCellById(
-  database: typeof db,
+  database: DatabaseClient,
   cellId: string
 ): Promise<typeof cells.$inferSelect | null> {
   const [cell] = await database
@@ -1397,7 +1500,10 @@ async function loadCellById(
   return cell ?? null;
 }
 
-function fetchServiceRows(database: typeof db, cellId: string) {
+function fetchServiceRows(
+  database: DatabaseClient,
+  cellId: string
+): Promise<ServiceRow[]> {
   return database
     .select({ service: cellServices, cell: cells })
     .from(cellServices)
@@ -1406,10 +1512,10 @@ function fetchServiceRows(database: typeof db, cellId: string) {
 }
 
 async function fetchServiceRow(
-  database: typeof db,
+  database: DatabaseClient,
   cellId: string,
   serviceId: string
-) {
+): Promise<ServiceRow | null> {
   const [row] = await database
     .select({ service: cellServices, cell: cells })
     .from(cellServices)
@@ -1420,13 +1526,7 @@ async function fetchServiceRow(
   return row ?? null;
 }
 
-async function serializeService(
-  database: typeof db,
-  row: {
-    service: typeof cellServices.$inferSelect;
-    cell: typeof cells.$inferSelect;
-  }
-) {
+async function serializeService(database: DatabaseClient, row: ServiceRow) {
   const { service, cell } = row;
   const logPath = computeServiceLogPath(cell.workspacePath, service.name);
   const recentLogs = await readLogTail(logPath);
