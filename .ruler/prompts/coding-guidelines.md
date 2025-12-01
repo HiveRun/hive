@@ -17,6 +17,12 @@ The Effect Solutions CLI provides curated best practices and patterns for Effect
 
 **Local Effect Source:** The upstream Effect repository lives in `vendor/effect/`. Use it to grep for implementation patterns and API examples when Effect docs or solutions need deeper references.
 
+## Effect Runtime Patterns
+- The backend runtime is built on Effect. All new services must expose a Context tag + Layer and be wired through `runServerEffect`.
+- Route/CLI/business logic should be implemented as `Effect` programs (prefer `Effect.gen`) that depend on tagged services; do not add new promise-based helpers.
+- Tests must execute the same effects (via `runServerEffect` or dedicated test layers) so behavior stays consistent.
+- Avoid introducing new globals—inject dependencies through Layers so the runtime graph remains the single source of truth.
+
 ## Programming Style
 
 **Prefer functional and declarative approaches** where possible. This makes code more predictable, testable, and easier to reason about.
