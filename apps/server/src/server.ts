@@ -25,14 +25,11 @@ import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
 import { templatesRoutes } from "./routes/templates";
 import { preloadVoiceTranscriptionModels, voiceRoutes } from "./routes/voice";
 import { workspacesRoutes } from "./routes/workspaces";
+import { runServerEffect, runSupervisorEffect } from "./runtime";
 import { cells } from "./schema/cells";
-import {
-  bootstrapServiceSupervisor,
-  stopAllServices,
-} from "./services/supervisor";
 import { safeAsync, safeSync } from "./utils/result";
 import {
-  ensureWorkspaceRegistered,
+  ensureWorkspaceRegisteredEffect,
   resolveHiveHome,
 } from "./workspaces/registry";
 
@@ -261,7 +258,7 @@ const registerSignalHandlers = () => {
   signalsRegistered = true;
 
   const performShutdown = async () => {
-    await stopAllServices();
+    await runSupervisorEffect((service) => service.stopAll);
     await closeAllAgentSessions();
     cleanupPidFile();
   };
@@ -336,9 +333,11 @@ const runMigrationsOrExit = async () => {
 const ensureWorkspaceRegistration = async (workspaceRoot: string) => {
   const registrationResult = await safeAsync(
     () =>
-      ensureWorkspaceRegistered(workspaceRoot, {
-        preserveActiveWorkspace: true,
-      }),
+      runServerEffect(
+        ensureWorkspaceRegisteredEffect(workspaceRoot, {
+          preserveActiveWorkspace: true,
+        })
+      ),
     (error) => error
   );
 
@@ -357,7 +356,7 @@ const ensureWorkspaceRegistration = async (workspaceRoot: string) => {
 
 const initializeSupervisorSafely = async () => {
   const supervisorResult = await safeAsync(
-    bootstrapServiceSupervisor,
+    () => runSupervisorEffect((service) => service.bootstrap),
     (error) => error
   );
 

@@ -2,6 +2,7 @@ import { rm } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import { closeAgentSession as closeDefaultAgentSession } from "../agents/service";
 import { db as defaultDb } from "../db";
+import { runServerEffect } from "../runtime";
 import { cells } from "../schema/cells";
 import { stopServicesForCell as stopDefaultCellServices } from "../services/supervisor";
 import { safeAsync, safeSync } from "../utils/result";
@@ -11,8 +12,8 @@ import {
   describeWorktreeError,
 } from "../worktree/manager";
 import {
-  getWorkspaceRegistry,
-  removeWorkspace as removeWorkspaceRecord,
+  getWorkspaceRegistryEffect,
+  removeWorkspaceEffect,
   type WorkspaceRecord,
 } from "./registry";
 
@@ -46,7 +47,7 @@ export async function removeWorkspaceCascade(
     ...overrides,
   };
 
-  const registry = await getWorkspaceRegistry();
+  const registry = await runServerEffect(getWorkspaceRegistryEffect);
   const workspace = registry.workspaces.find(
     (entry) => entry.id === workspaceId
   );
@@ -103,7 +104,7 @@ export async function removeWorkspaceCascade(
     await database.delete(cells).where(eq(cells.workspaceId, workspaceId));
   }
 
-  await removeWorkspaceRecord(workspaceId);
+  await runServerEffect(removeWorkspaceEffect(workspaceId));
 
   return { workspace, deletedCellIds };
 }

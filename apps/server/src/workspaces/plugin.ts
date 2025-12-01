@@ -1,6 +1,8 @@
 import { Elysia } from "elysia";
+import { runServerEffect } from "../runtime";
 import {
-  resolveWorkspaceContext as defaultResolveWorkspaceContext,
+  type resolveWorkspaceContext as defaultResolveWorkspaceContext,
+  resolveWorkspaceContextEffect,
   type WorkspaceRuntimeContext,
 } from "./context";
 
@@ -39,7 +41,9 @@ export function createWorkspaceContextPlugin({
   resolveWorkspaceContext?: typeof defaultResolveWorkspaceContext;
 } = {}) {
   const resolveContext =
-    resolveWorkspaceContext ?? defaultResolveWorkspaceContext;
+    resolveWorkspaceContext ??
+    ((workspaceId?: string) =>
+      runServerEffect(resolveWorkspaceContextEffect(workspaceId)));
 
   return new Elysia({ name: "workspace-context" })
     .derive(({ body, query, params, request }) => {

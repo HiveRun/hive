@@ -1,12 +1,17 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
   "compilerOptions": {
-    "target": "ESNext",
+    "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
     "moduleDetection": "force",
-    "lib": ["ESNext"],
+    "lib": ["ES2022"],
+    "incremental": true,
+    "composite": true,
+    "sourceMap": true,
+    "declarationMap": true,
     "verbatimModuleSyntax": true,
+    "rewriteRelativeImportExtensions": true,
     "strict": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
@@ -21,6 +26,11 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "types": ["bun"],
+    "plugins": [
+      {
+        "name": "@effect/language-service"
+      }
+    ],
     "baseUrl": "./",
     "paths": {
       "@hive/server": ["apps/server/src/server.ts"],

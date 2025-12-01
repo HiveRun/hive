@@ -1,6 +1,8 @@
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { eq } from "drizzle-orm";
+import { Context, Effect, Layer } from "effect";
+import { DatabaseService } from "../db";
 import type { CellService } from "../schema/services";
 import { cellServices } from "../schema/services";
 import { safeSync } from "../utils/result";
@@ -139,3 +141,57 @@ async function terminatePid(pid: number): Promise<void> {
     () => null
   );
 }
+
+type PortManagerError = {
+  readonly _tag: "PortManagerError";
+  readonly cause: unknown;
+};
+
+const makePortManagerError = (cause: unknown): PortManagerError => ({
+  _tag: "PortManagerError",
+  cause,
+});
+
+export type PortManagerService = {
+  readonly ensureServicePort: (
+    service: CellService
+  ) => Effect.Effect<number, PortManagerError>;
+  readonly rememberSpecificPort: (
+    serviceId: string,
+    port: number
+  ) => Effect.Effect<void>;
+  readonly releasePortFor: (serviceId: string) => Effect.Effect<void>;
+  readonly findFreePort: () => Effect.Effect<number, PortManagerError>;
+};
+
+export const PortManagerService = Context.GenericTag<PortManagerService>(
+  "@hive/server/PortManagerService"
+);
+
+export const PortManagerLayer = Layer.effect(
+  PortManagerService,
+  Effect.gen(function* () {
+    const { db } = yield* DatabaseService;
+    const manager = createPortManager({ db, now: () => new Date() });
+    return {
+      ensureServicePort: (service) =>
+        Effect.tryPromise({
+          try: () => manager.ensureServicePort(service),
+          catch: (cause) => makePortManagerError(cause),
+        }),
+      rememberSpecificPort: (serviceId, port) =>
+        Effect.sync(() => {
+          manager.rememberSpecificPort(serviceId, port);
+        }),
+      releasePortFor: (serviceId) =>
+        Effect.sync(() => {
+          manager.releasePortFor(serviceId);
+        }),
+      findFreePort: () =>
+        Effect.tryPromise({
+          try: () => manager.findFreePort(),
+          catch: (cause) => makePortManagerError(cause),
+        }),
+    } satisfies PortManagerService;
+  })
+);
