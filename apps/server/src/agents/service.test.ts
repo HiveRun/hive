@@ -5,6 +5,7 @@ import type { OpencodeClient } from "@opencode-ai/sdk";
 import * as OpencodeSdk from "@opencode-ai/sdk";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import {
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -13,8 +14,6 @@ import {
   type Mock,
   vi,
 } from "vitest";
-// biome-ignore lint/performance/noNamespaceImport: tests need namespace import for spies
-import * as ConfigContext from "../config/context";
 import type { HiveConfig } from "../config/schema";
 import { db } from "../db";
 import { cells } from "../schema/cells";
@@ -64,14 +63,16 @@ const mockHiveConfig: HiveConfig = {
 import {
   closeAllAgentSessions,
   ensureAgentSession,
+  resetAgentRuntimeDependencies,
   sendAgentMessage,
+  setAgentRuntimeDependencies,
   updateAgentSessionModel,
 } from "./service";
 
 describe("agent model selection", () => {
   const cellId = "cell-model-test";
   let clientStub: ClientStub;
-  let getHiveConfigSpy: Mock;
+  let loadHiveConfigMock: Mock;
   let loadOpencodeConfigSpy: Mock;
 
   beforeAll(async () => {
@@ -95,15 +96,18 @@ describe("agent model selection", () => {
       url: "http://127.0.0.1:0",
       close: vi.fn(),
     });
-    getHiveConfigSpy = vi
-      .spyOn(ConfigContext, "getHiveConfig")
-      .mockResolvedValue(mockHiveConfig);
+    loadHiveConfigMock = vi.fn().mockResolvedValue(mockHiveConfig);
     loadOpencodeConfigSpy = vi
       .spyOn(OpencodeConfig, "loadOpencodeConfig")
       .mockResolvedValue({
         config: {},
         source: "default",
       });
+
+    setAgentRuntimeDependencies({
+      loadHiveConfig: loadHiveConfigMock,
+      loadOpencodeConfig: loadOpencodeConfigSpy,
+    });
 
     await db.insert(cells).values({
       id: cellId,
@@ -116,6 +120,10 @@ describe("agent model selection", () => {
       createdAt: new Date(),
       status: "ready",
     });
+  });
+
+  afterEach(() => {
+    resetAgentRuntimeDependencies();
   });
 
   it("hydrates runtime model from the last user message", async () => {
@@ -224,7 +232,7 @@ describe("agent model selection", () => {
       },
     };
 
-    getHiveConfigSpy.mockResolvedValue(hiveConfigWithoutModel);
+    loadHiveConfigMock.mockResolvedValue(hiveConfigWithoutModel);
     loadOpencodeConfigSpy.mockResolvedValue({
       config: { model: "opencode/workspace-default" },
       source: "workspace",
@@ -257,7 +265,7 @@ describe("agent model selection", () => {
       },
     };
 
-    getHiveConfigSpy.mockResolvedValue(hiveConfigWithoutModel);
+    loadHiveConfigMock.mockResolvedValue(hiveConfigWithoutModel);
     loadOpencodeConfigSpy.mockResolvedValue({
       config: { model: "openai/opencode-default" },
       source: "workspace",
@@ -288,7 +296,7 @@ describe("agent model selection", () => {
       },
     };
 
-    getHiveConfigSpy.mockResolvedValue(hiveConfigWithoutAgent);
+    loadHiveConfigMock.mockResolvedValue(hiveConfigWithoutAgent);
     loadOpencodeConfigSpy.mockResolvedValue({
       config: { model: "openai/gpt-5.1-codex-high" },
       source: "workspace",

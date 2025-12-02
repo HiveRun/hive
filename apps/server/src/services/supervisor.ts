@@ -4,7 +4,7 @@ import { constants as osConstants } from "node:os";
 import { dirname, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { Context, Effect, Layer } from "effect";
-import { getHiveConfig } from "../config/context";
+import { loadHiveConfig } from "../config/context";
 import type { ProcessService, Template } from "../config/schema";
 import { db as defaultDb } from "../db";
 import type { Cell } from "../schema/cells";
@@ -692,7 +692,7 @@ export function createServiceSupervisor(
       templateCache.set(key, workspaceTemplates);
     }
     if (!workspaceTemplates.has(templateId)) {
-      const config = await getHiveConfig(workspaceRootPath);
+      const config = await loadHiveConfig(workspaceRootPath);
       workspaceTemplates.set(templateId, config.templates[templateId]);
     }
     return workspaceTemplates.get(templateId);
