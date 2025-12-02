@@ -73,6 +73,10 @@ const computeSha256 = async (filePath: string) => {
 const EXECUTABLE_PERMISSIONS = 0o755;
 const tauriTargetDir = join(repoRoot, "src-tauri", "target", "release");
 
+// Force Cargo to write build artifacts inside this repository so Tauri plugins
+// don't inherit stale paths from a global CARGO_TARGET_DIR.
+process.env.CARGO_TARGET_DIR = join(repoRoot, "src-tauri", "target");
+
 const makeExecutable = async (filePath: string) => {
   if (process.platform === "win32") {
     return;
