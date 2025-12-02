@@ -3,7 +3,8 @@
   "compilerOptions": {
     "composite": true,
     "outDir": "node_modules/.cache/cli-tsbuild",
-    "baseUrl": "."
+    "baseUrl": ".",
+    "types": ["bun", "vitest"]
   },
   "include": ["src"]
 }

@@ -4,6 +4,7 @@
   - [x] [HIVE-19] Build Effect service adapters for worktree manager and agent runtime
   - [x] [HIVE-20] Effect-ify cells provisioning and routes
   - [x] [HIVE-23] Effect-ify agents routes with Effect services
+  - [/] [HIVE-25] Effect-ify CLI commands
   - [x] [HIVE-27] Effect-ify templates routes and config loading
 
 ## Goal
