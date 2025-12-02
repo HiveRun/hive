@@ -50,7 +50,7 @@ function hasConfig(directory: string): boolean {
   return existsSync(join(directory, CONFIG_FILENAME));
 }
 
-export function getHiveConfig(workspaceRoot?: string): Promise<HiveConfig> {
+function loadHiveConfigCached(workspaceRoot?: string): Promise<HiveConfig> {
   const normalizedRoot = resolvePath(workspaceRoot ?? resolveWorkspaceRoot());
   if (!configCache.has(normalizedRoot)) {
     configCache.set(normalizedRoot, loadConfig(normalizedRoot));
@@ -121,7 +121,7 @@ export const HiveConfigLayer = Layer.effect(
 
     const load = (workspaceRoot?: string) =>
       Effect.tryPromise({
-        try: () => getHiveConfig(workspaceRoot ?? resolvedAtStartup),
+        try: () => loadHiveConfigCached(workspaceRoot ?? resolvedAtStartup),
         catch: (cause) =>
           makeHiveConfigError(workspaceRoot ?? resolvedAtStartup, cause),
       });
