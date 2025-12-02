@@ -50,6 +50,7 @@
     "prepare": "husky && effect-language-service patch"
   },
   "dependencies": {
+    "@effect/rpc": "0.72.2",
     "dotenv": "^17.2.2",
     "neverthrow": "^8.2.0",
     "playwright": "^1.57.0",
@@ -69,6 +70,9 @@
     "tsdown": "^0.15.5",
     "turbo": "^2.5.4",
     "ultracite": "6.0.1"
+  },
+  "overrides": {
+    "@effect/rpc": "0.72.2"
   },
   "packageManager": "bun@1.2.20",
   "lint-staged": {

@@ -13,6 +13,8 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
+import { Args, Command, Options } from "@effect/cli";
+import { BunContext, BunRuntime } from "@effect/platform-bun";
 import {
   binaryDirectory,
   cleanupPidFile,
@@ -20,8 +22,8 @@ import {
   pidFilePath,
   startServer,
 } from "@hive/server";
-import { Builtins, Cli, Command, Option } from "clipanion";
-import { Effect } from "effect";
+
+import { Effect, Option, pipe } from "effect";
 import pc from "picocolors";
 
 import {
@@ -798,223 +800,99 @@ const completionsInstallCommandEffect = (
     return 0;
   });
 
-const runCommandEffect = (
-  effect: Effect.Effect<number, unknown>,
-  label: string
+const ensureSuccess = (
+  label: string,
+  effect: Effect.Effect<number, Error | unknown>
 ) =>
-  Effect.runPromise(
+  Effect.flatMap(
     Effect.catchAll(effect, (error) => {
       logError(`${label} failed: ${formatError(error)}`);
       return Effect.succeed(1);
-    })
+    }),
+    (code) =>
+      code === 0
+        ? Effect.succeed(undefined)
+        : Effect.fail(new Error(`${label} exited with code ${code}`))
   );
 
-class StartCommand extends Command {
-  static override paths = [Command.Default];
-  static override usage = Command.Usage({
-    category: "Runtime",
-    description: "Start the Hive daemon and serve the UI.",
-    details: `
-Starts Hive in the background unless you pass --foreground. When running detached, logs and the PID file are stored in ~/.hive by default.
-`,
-    examples: [
-      ["Start in background", "hive"],
-      ["Force foreground mode", "hive --foreground"],
-    ],
-  });
+const foregroundOption = Options.boolean("foreground").pipe(
+  Options.withDefault(false)
+);
 
-  forceForeground = Option.Boolean("--foreground", {
-    description: "Run in the foreground instead of background mode",
-  });
+const startCommand = Command.make(
+  "hive",
+  { foreground: foregroundOption },
+  ({ foreground }) =>
+    ensureSuccess(
+      "start",
+      bootstrapEffect({ forceForeground: Boolean(foreground) })
+    )
+);
 
-  override execute() {
-    return Effect.runPromise(
-      Effect.catchAll(
-        bootstrapEffect({ forceForeground: Boolean(this.forceForeground) }),
-        (error) => {
-          logError(`Failed to start Hive: ${formatError(error)}`);
-          return Effect.succeed(1);
-        }
-      )
-    );
-  }
-}
+const stopCommand = Command.make("stop", {}, () =>
+  ensureSuccess("stop", stopCommandEffect)
+);
 
-class StopCommand extends Command {
-  static override paths = [["stop"]];
-  static override usage = Command.Usage({
-    category: "Runtime",
-    description: "Stop the background Hive daemon.",
-    details:
-      "Stops the detached background process by reading the PID file written by the start command.",
-    examples: [["Stop running instance", "hive stop"]],
-  });
+const logsCommand = Command.make("logs", {}, () =>
+  ensureSuccess("logs", streamLogsEffect)
+);
 
-  override execute() {
-    return runCommandEffect(stopCommandEffect, "stop");
-  }
-}
+const webCommand = Command.make("web", {}, () =>
+  ensureSuccess("web", webCommandEffect)
+);
 
-class LogsCommand extends Command {
-  static override paths = [["logs"]];
-  static override usage = Command.Usage({
-    category: "Runtime",
-    description: "Stream the Hive daemon log file.",
-    details:
-      "Tails the current log file and keeps the process running until you press Ctrl+C.",
-    examples: [["Follow logs", "hive logs"]],
-  });
+const desktopCommand = Command.make("desktop", {}, () =>
+  ensureSuccess("desktop", desktopCommandEffect)
+);
 
-  override execute() {
-    return runCommandEffect(streamLogsEffect, "logs");
-  }
-}
+const upgradeCommand = Command.make("upgrade", {}, () =>
+  ensureSuccess("upgrade", runUpgradeEffect)
+);
 
-class WebCommand extends Command {
-  static override paths = [["web"]];
-  static override usage = Command.Usage({
-    category: "Clients",
-    description: "Open the Hive UI in your default browser.",
-    details:
-      "Starts the daemon if necessary and launches the configured web UI URL.",
-    examples: [["Start server and open browser", "hive web"]],
-  });
+const infoCommand = Command.make("info", {}, () =>
+  ensureSuccess("info", infoCommandEffect)
+);
 
-  override execute() {
-    return runCommandEffect(webCommandEffect, "web");
-  }
-}
+const completionsCommand = Command.make(
+  "completions",
+  { shell: Args.text({ name: "shell" }) },
+  ({ shell }) => ensureSuccess("completions", completionsCommandEffect(shell))
+);
 
-class DesktopCommand extends Command {
-  static override paths = [["desktop"]];
-  static override usage = Command.Usage({
-    category: "Clients",
-    description: "Launch the Hive desktop application.",
-    details:
-      "Starts the daemon if needed and opens the packaged desktop UI. Set HIVE_TAURI_BINARY to override the desktop executable path.",
-    examples: [["Open desktop UI", "hive desktop"]],
-  });
+const completionsInstallCommand = Command.make(
+  "install",
+  {
+    shell: Args.text({ name: "shell" }),
+    destination: Args.text({ name: "destination" }).pipe(Args.optional),
+  },
+  ({ shell, destination }) =>
+    ensureSuccess(
+      "completions install",
+      completionsInstallCommandEffect(shell, Option.getOrNull(destination))
+    )
+);
 
-  override execute() {
-    return runCommandEffect(desktopCommandEffect, "desktop");
-  }
-}
+const completionsWithSubcommands = completionsCommand.pipe(
+  Command.withSubcommands([completionsInstallCommand])
+);
 
-class UpgradeCommand extends Command {
-  static override paths = [["upgrade"]];
-  static override usage = Command.Usage({
-    category: "Runtime",
-    description: "Download and install the latest Hive release.",
-    details:
-      "Stops the current daemon if running, then executes the configured installer command (curl | bash by default).",
-    examples: [["Upgrade to latest version", "hive upgrade"]],
-  });
+const rootCommand = startCommand.pipe(
+  Command.withSubcommands([
+    stopCommand,
+    logsCommand,
+    webCommand,
+    desktopCommand,
+    upgradeCommand,
+    infoCommand,
+    completionsWithSubcommands,
+  ])
+);
 
-  override execute() {
-    return runCommandEffect(runUpgradeEffect, "upgrade");
-  }
-}
-
-class InfoCommand extends Command {
-  static override paths = [["info"]];
-  static override usage = Command.Usage({
-    category: "Diagnostics",
-    description: "Print paths, version, and daemon status.",
-    examples: [["Check current install", "hive info"]],
-  });
-
-  override execute() {
-    return runCommandEffect(infoCommandEffect, "info");
-  }
-}
-
-class CompletionsCommand extends Command {
-  static override paths = [["completions"]];
-  static override usage = Command.Usage({
-    category: "Tooling",
-    description: "Print the completion script for a supported shell.",
-    examples: [["Generate zsh completions", "hive completions zsh"]],
-  });
-
-  shell = Option.String({
-    name: "shell",
-    required: true,
-  });
-
-  override execute() {
-    return runCommandEffect(
-      completionsCommandEffect(this.shell),
-      "completions"
-    );
-  }
-}
-
-class CompletionsInstallCommand extends Command {
-  static override paths = [["completions", "install"]];
-  static override usage = Command.Usage({
-    category: "Tooling",
-    description: "Install the completion script to a default or custom path.",
-    details:
-      "Detects common shell-specific directories (Oh My Zsh custom dir, ~/.local/share/bash-completion/completions, ~/.config/fish/completions, etc.). Pass a destination argument to override the target path.",
-    examples: [
-      ["Install completions for zsh", "hive completions install zsh"],
-      [
-        "Install to a custom location",
-        "hive completions install zsh ~/.config/zsh/completions/_hive",
-      ],
-    ],
-  });
-
-  shell = Option.String({
-    name: "shell",
-    required: true,
-  });
-
-  destination = Option.String({
-    name: "destination",
-    required: false,
-  });
-
-  override execute() {
-    return runCommandEffect(
-      completionsInstallCommandEffect(this.shell, this.destination),
-      "completions install"
-    );
-  }
-}
-
-const cli = new Cli({
-  binaryLabel: "Hive CLI",
-  binaryName: "hive",
-  binaryVersion: CLI_VERSION,
+const app = Command.run(rootCommand, {
+  name: "Hive CLI",
+  version: CLI_VERSION,
 });
 
-cli.register(StartCommand);
-cli.register(StopCommand);
-cli.register(LogsCommand);
-cli.register(WebCommand);
-cli.register(DesktopCommand);
-cli.register(UpgradeCommand);
-cli.register(InfoCommand);
-cli.register(CompletionsCommand);
-cli.register(CompletionsInstallCommand);
-cli.register(Builtins.HelpCommand);
-cli.register(Builtins.VersionCommand);
+const main = app(cliArgv);
 
-const runCli = async () => {
-  try {
-    const exitCode = await cli.run(cliArgv, Cli.defaultContext);
-    if (typeof exitCode === "number") {
-      process.exit(exitCode);
-    }
-  } catch (error) {
-    logError(
-      `Failed to start Hive: ${
-        error instanceof Error ? (error.stack ?? error.message) : String(error)
-      }`
-    );
-    process.exit(1);
-  }
-};
-
-runCli();
+pipe(main, Effect.provide(BunContext.layer), BunRuntime.runMain);

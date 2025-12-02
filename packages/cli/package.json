@@ -11,8 +11,12 @@
   },
   "dependencies": {
     "@effect/cli": "^0.72.1",
+    "@effect/cluster": "^0.54.0",
+    "@effect/platform": "^0.93.5",
+    "@effect/platform-bun": "^0.85.0",
+    "@effect/rpc": "0.72.2",
+    "@effect/sql": "^0.48.5",
     "@hive/server": "workspace:*",
-    "clipanion": "^3.2.1",
     "dotenv": "catalog:",
     "effect": "^3.19.8",
     "picocolors": "^1.0.0"
