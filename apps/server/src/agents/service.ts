@@ -13,7 +13,7 @@ import {
 } from "@opencode-ai/sdk";
 import { eq } from "drizzle-orm";
 import { Context, Effect, Layer, Runtime } from "effect";
-import { getHiveConfig, HiveConfigService } from "../config/context";
+import { HiveConfigService, loadHiveConfig } from "../config/context";
 import type { HiveConfig, Template } from "../config/schema";
 import { DatabaseService, db } from "../db";
 import { type Cell, cells } from "../schema/cells";
@@ -90,9 +90,15 @@ export const setAgentRuntimeDependencies = (
   Object.assign(agentRuntimeOverrides, overrides);
 };
 
+export const resetAgentRuntimeDependencies = () => {
+  for (const key of Object.keys(agentRuntimeOverrides)) {
+    delete (agentRuntimeOverrides as Record<string, unknown>)[key];
+  }
+};
+
 const getAgentRuntimeDependencies = (): AgentRuntimeDependencies => ({
   db: agentRuntimeOverrides.db ?? db,
-  loadHiveConfig: agentRuntimeOverrides.loadHiveConfig ?? getHiveConfig,
+  loadHiveConfig: agentRuntimeOverrides.loadHiveConfig ?? loadHiveConfig,
   loadOpencodeConfig:
     agentRuntimeOverrides.loadOpencodeConfig ?? loadOpencodeConfig,
   publishAgentEvent:

@@ -1,6 +1,11 @@
 import { existsSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { Context, Effect, Layer } from "effect";
+import {
+  getWorkspaceRegistryEffect,
+  type WorkspaceRegistry,
+  WorkspaceRegistryLayer,
+} from "../workspaces/registry";
 import { loadConfig } from "./loader";
 import type { HiveConfig } from "./schema";
 
@@ -76,6 +81,26 @@ const makeHiveConfigError = (
   cause,
 });
 
+export type HiveConfigWorkspaceError = {
+  readonly _tag: "HiveConfigWorkspaceError";
+  readonly workspaceId?: string;
+  readonly message: string;
+};
+
+export type HiveConfigResolutionError =
+  | HiveConfigError
+  | HiveConfigWorkspaceError;
+
+const makeHiveConfigWorkspaceError = (
+  workspaceId?: string
+): HiveConfigWorkspaceError => ({
+  _tag: "HiveConfigWorkspaceError",
+  workspaceId,
+  message: workspaceId
+    ? `Workspace '${workspaceId}' not found`
+    : "No active workspace. Register and activate a workspace to continue.",
+});
+
 export type HiveConfigService = {
   readonly workspaceRoot: string;
   readonly resolve: () => string;
@@ -114,3 +139,47 @@ export const HiveConfigLayer = Layer.effect(
     } satisfies HiveConfigService;
   })
 );
+
+const selectWorkspaceForConfig = (
+  registry: WorkspaceRegistry,
+  workspaceId?: string
+) => {
+  if (workspaceId) {
+    return registry.workspaces.find((entry) => entry.id === workspaceId);
+  }
+  if (registry.activeWorkspaceId) {
+    return registry.workspaces.find(
+      (entry) => entry.id === registry.activeWorkspaceId
+    );
+  }
+  return null;
+};
+
+export const loadHiveConfigEffect = (workspaceRoot?: string) =>
+  Effect.flatMap(HiveConfigService, (service) => service.load(workspaceRoot));
+
+export const loadWorkspaceHiveConfigEffect = (workspaceId?: string) =>
+  Effect.gen(function* () {
+    const registry = yield* getWorkspaceRegistryEffect;
+    const workspace = selectWorkspaceForConfig(registry, workspaceId);
+
+    if (!workspace) {
+      return yield* Effect.fail(makeHiveConfigWorkspaceError(workspaceId));
+    }
+
+    return yield* loadHiveConfigEffect(workspace.path);
+  });
+
+export const loadHiveConfig = (workspaceRoot?: string): Promise<HiveConfig> =>
+  Effect.runPromise(
+    Effect.provide(HiveConfigLayer)(loadHiveConfigEffect(workspaceRoot))
+  );
+
+export const loadWorkspaceHiveConfig = (
+  workspaceId?: string
+): Promise<HiveConfig> =>
+  Effect.runPromise(
+    Effect.provide(Layer.mergeAll(HiveConfigLayer, WorkspaceRegistryLayer))(
+      loadWorkspaceHiveConfigEffect(workspaceId)
+    )
+  );

@@ -5,7 +5,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import type { JSONValue, TranscriptionModel } from "ai";
 import { experimental_transcribe as transcribe } from "ai";
 import { Elysia, t } from "elysia";
-import { getHiveConfig } from "../config/context";
+import { loadHiveConfig } from "../config/context";
 import type { VoiceConfig, VoiceTranscriptionConfig } from "../config/schema";
 import {
   VoiceConfigResponseSchema,
@@ -39,7 +39,7 @@ const ErrorResponseSchema = t.Object({
 
 export async function preloadVoiceTranscriptionModels() {
   try {
-    const config = await getHiveConfig();
+    const config = await loadHiveConfig();
     if (config.voice?.enabled && config.voice.transcription.mode === "local") {
       await preloadLocalTranscriber(config.voice.transcription.model);
       process.stderr.write(
@@ -60,7 +60,7 @@ export const voiceRoutes = new Elysia({ prefix: "/api/voice" })
     async ({ query, set, getWorkspaceContext }) => {
       try {
         const workspaceContext = await getWorkspaceContext(query.workspaceId);
-        const config = await workspaceContext.loadConfig();
+        const config = await loadHiveConfig(workspaceContext.workspace.path);
         return { voice: serializeVoiceConfig(config.voice) };
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;
@@ -87,7 +87,7 @@ export const voiceRoutes = new Elysia({ prefix: "/api/voice" })
       try {
         const workspaceIdentifier = query.workspaceId ?? body.workspaceId;
         const workspaceContext = await getWorkspaceContext(workspaceIdentifier);
-        const config = await workspaceContext.loadConfig();
+        const config = await loadHiveConfig(workspaceContext.workspace.path);
         voice = config.voice;
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;
