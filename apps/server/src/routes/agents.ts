@@ -1,26 +1,18 @@
+import { Effect } from "effect";
 import { Elysia, sse, t } from "elysia";
 import { subscribeAgentEvents } from "../agents/events";
 import {
-  ensureAgentSession,
-  ensureRuntimeForSession,
-  fetchAgentMessages,
-  fetchAgentSession,
-  fetchAgentSessionForCell,
-  fetchProviderCatalogForWorkspace,
-  interruptAgentSession,
+  type AgentRuntimeService,
+  AgentRuntimeServiceTag,
   type ProviderEntry,
   type ProviderModel,
-  respondAgentPermission,
-  sendAgentMessage,
-  stopAgentSession,
-  updateAgentSessionModel,
 } from "../agents/service";
-
 import type {
   AgentMessageRecord,
   AgentSessionRecord,
   AgentStreamEvent,
 } from "../agents/types";
+import { runServerEffect } from "../runtime";
 import {
   AgentMessageListResponseSchema,
   AgentSessionByCellResponseSchema,
@@ -36,6 +28,29 @@ const HTTP_STATUS = {
   BAD_REQUEST: 400,
   INTERNAL_ERROR: 500,
 } as const;
+
+const runAgentEffect = <A>(
+  selector: (service: AgentRuntimeService) => Effect.Effect<A, unknown>
+) =>
+  runServerEffect(
+    Effect.gen(function* () {
+      const agentRuntime = yield* AgentRuntimeServiceTag;
+      return yield* selector(agentRuntime);
+    })
+  );
+
+const agentRuntimeErrorMessage = (error: unknown, fallback: string) => {
+  if (error && typeof error === "object") {
+    const { cause } = error as { cause?: unknown };
+    if (cause instanceof Error) {
+      return cause.message;
+    }
+    if (typeof cause === "string") {
+      return cause;
+    }
+  }
+  return error instanceof Error ? error.message : fallback;
+};
 
 const providerSchema = t.Object({
   id: t.String(),
@@ -54,8 +69,10 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     async ({ query, set, getWorkspaceContext }) => {
       try {
         const workspaceContext = await getWorkspaceContext(query.workspaceId);
-        const catalog = await fetchProviderCatalogForWorkspace(
-          workspaceContext.workspace.path
+        const catalog = await runAgentEffect((agentRuntime) =>
+          agentRuntime.fetchProviderCatalogForWorkspace(
+            workspaceContext.workspace.path
+          )
         );
         const providerEntries = normalizeProviderEntries(catalog.providers);
         const models = flattenProviderModels(providerEntries);
@@ -75,8 +92,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
           models: [],
           defaults: {},
           providers: [],
-          message:
-            error instanceof Error ? error.message : "Failed to list models",
+          message: agentRuntimeErrorMessage(error, "Failed to list models"),
         };
       }
     },
@@ -115,16 +131,21 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     "/sessions/:id/models",
     async ({ params, set }) => {
       try {
-        const runtime = await ensureRuntimeForSession(params.id);
-        const { data, error } = await runtime.client.config.providers();
+        const session = await runAgentEffect((agentRuntime) =>
+          agentRuntime.fetchAgentSession(params.id)
+        );
 
-        if (error || !data) {
-          throw new Error("Failed to fetch provider catalog from OpenCode");
+        if (!session) {
+          throw new Error("Agent session not found");
         }
 
-        const providerEntries = normalizeProviderEntries(data.providers);
+        const catalog = await runAgentEffect((agentRuntime) =>
+          agentRuntime.fetchProviderCatalogForWorkspace(session.workspacePath)
+        );
+
+        const providerEntries = normalizeProviderEntries(catalog.providers);
         const models = flattenProviderModels(providerEntries);
-        const defaults = normalizeProviderDefaults(data.default);
+        const defaults = normalizeProviderDefaults(catalog.default);
         const providers = providerEntries.map(({ id, name }) =>
           name ? { id, name } : { id }
         );
@@ -140,8 +161,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
           models: [],
           defaults: {},
           providers: [],
-          message:
-            error instanceof Error ? error.message : "Failed to list models",
+          message: agentRuntimeErrorMessage(error, "Failed to list models"),
         };
       }
     },
@@ -184,18 +204,20 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
           ...(body.modelId ? { modelId: body.modelId } : {}),
           ...(body.providerId ? { providerId: body.providerId } : {}),
         };
-        const session = await ensureAgentSession(
-          body.cellId,
-          Object.keys(sessionOptions).length ? sessionOptions : undefined
+        const session = await runAgentEffect((agentRuntime) =>
+          agentRuntime.ensureAgentSession(
+            body.cellId,
+            Object.keys(sessionOptions).length ? sessionOptions : undefined
+          )
         );
         return formatSession(session);
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;
         return {
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to start agent session",
+          message: agentRuntimeErrorMessage(
+            error,
+            "Failed to start agent session"
+          ),
         };
       }
     },
@@ -211,20 +233,22 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     "/sessions/:id/model",
     async ({ params, body, set }) => {
       try {
-        const session = await updateAgentSessionModel(
-          params.id,
-          body.providerId
-            ? { modelId: body.modelId, providerId: body.providerId }
-            : { modelId: body.modelId }
+        const session = await runAgentEffect((agentRuntime) =>
+          agentRuntime.updateAgentSessionModel(
+            params.id,
+            body.providerId
+              ? { modelId: body.modelId, providerId: body.providerId }
+              : { modelId: body.modelId }
+          )
         );
         return formatSession(session);
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;
         return {
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to update session model",
+          message: agentRuntimeErrorMessage(
+            error,
+            "Failed to update session model"
+          ),
         };
       }
     },
@@ -240,7 +264,9 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .get(
     "/sessions/:id",
     async ({ params, set }) => {
-      const session = await fetchAgentSession(params.id);
+      const session = await runAgentEffect((agentRuntime) =>
+        agentRuntime.fetchAgentSession(params.id)
+      );
       if (!session) {
         set.status = HTTP_STATUS.NOT_FOUND;
         return { message: "Agent session not found" };
@@ -258,7 +284,9 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .get(
     "/sessions/byCell/:cellId",
     async ({ params }) => {
-      const session = await fetchAgentSessionForCell(params.cellId);
+      const session = await runAgentEffect((agentRuntime) =>
+        agentRuntime.fetchAgentSessionForCell(params.cellId)
+      );
       return { session: session ? formatSession(session) : null };
     },
     {
@@ -272,15 +300,17 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     "/sessions/:id/messages",
     async ({ params, body, set }) => {
       try {
-        await sendAgentMessage(params.id, body.content);
+        await runAgentEffect((agentRuntime) =>
+          agentRuntime.sendAgentMessage(params.id, body.content)
+        );
         return { ok: true };
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;
         return {
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to send agent message",
+          message: agentRuntimeErrorMessage(
+            error,
+            "Failed to send agent message"
+          ),
         };
       }
     },
@@ -297,15 +327,17 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     "/sessions/:id/interrupt",
     async ({ params, set }) => {
       try {
-        await interruptAgentSession(params.id);
+        await runAgentEffect((agentRuntime) =>
+          agentRuntime.interruptAgentSession(params.id)
+        );
         return { ok: true };
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;
         return {
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to interrupt agent session",
+          message: agentRuntimeErrorMessage(
+            error,
+            "Failed to interrupt agent session"
+          ),
         };
       }
     },
@@ -320,12 +352,16 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .get(
     "/sessions/:id/messages",
     async ({ params, set }) => {
-      const session = await fetchAgentSession(params.id);
+      const session = await runAgentEffect((agentRuntime) =>
+        agentRuntime.fetchAgentSession(params.id)
+      );
       if (!session) {
         set.status = HTTP_STATUS.NOT_FOUND;
         return { message: "Agent session not found" };
       }
-      const messages = await fetchAgentMessages(params.id);
+      const messages = await runAgentEffect((agentRuntime) =>
+        agentRuntime.fetchAgentMessages(params.id)
+      );
       return {
         messages: messages.map(formatMessage),
       };
@@ -341,7 +377,9 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .get(
     "/sessions/:id/events",
     async ({ params, request }) => {
-      const history = await fetchAgentMessages(params.id);
+      const history = await runAgentEffect((agentRuntime) =>
+        agentRuntime.fetchAgentMessages(params.id)
+      );
       const iterator = createEventIterator(params.id, request.signal);
 
       async function* stream() {
@@ -377,19 +415,21 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     "/sessions/:id/permissions/:permissionId",
     async ({ params, body, set }) => {
       try {
-        await respondAgentPermission(
-          params.id,
-          params.permissionId,
-          body.response
+        await runAgentEffect((agentRuntime) =>
+          agentRuntime.respondAgentPermission(
+            params.id,
+            params.permissionId,
+            body.response
+          )
         );
         return { ok: true };
       } catch (error) {
         set.status = HTTP_STATUS.BAD_REQUEST;
         return {
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to respond to permission",
+          message: agentRuntimeErrorMessage(
+            error,
+            "Failed to respond to permission"
+          ),
         };
       }
     },
@@ -405,12 +445,16 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .delete(
     "/sessions/:id",
     async ({ params, set }) => {
-      const session = await fetchAgentSession(params.id);
+      const session = await runAgentEffect((agentRuntime) =>
+        agentRuntime.fetchAgentSession(params.id)
+      );
       if (!session) {
         set.status = HTTP_STATUS.NOT_FOUND;
         return { message: "Agent session not found" };
       }
-      await stopAgentSession(params.id);
+      await runAgentEffect((agentRuntime) =>
+        agentRuntime.stopAgentSession(params.id)
+      );
       return { message: "Agent session stopped" };
     },
     {

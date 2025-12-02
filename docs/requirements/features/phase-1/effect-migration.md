@@ -3,6 +3,7 @@
 - [/] Effect Migration #status/active #phase-1 #feature/platform
   - [x] [HIVE-19] Build Effect service adapters for worktree manager and agent runtime
   - [x] [HIVE-20] Effect-ify cells provisioning and routes
+  - [x] [HIVE-23] Effect-ify agents routes with Effect services
 
 ## Goal
 Finish the transition to Effect-first services for shared backend modules so routes and tests can rely on context tags instead of global utilities.
