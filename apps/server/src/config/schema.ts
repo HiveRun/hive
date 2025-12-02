@@ -100,68 +100,6 @@ export const templateSchema = z.object({
     ),
 });
 
-const transcriptionProviderSchema = z.literal("openai");
-
-const DEFAULT_TRANSCRIPTION_TIMEOUT_MS = 60_000;
-
-const remoteTranscriptionSchema = z.object({
-  mode: z.literal("remote"),
-  provider: transcriptionProviderSchema.default("openai"),
-  language: z
-    .string()
-    .optional()
-    .describe("Language hint passed directly to the provider (ISO-639-1)"),
-  apiKeyEnv: z
-    .string()
-    .optional()
-    .describe("Environment variable that contains the provider API key"),
-  baseUrl: z
-    .string()
-    .url()
-    .optional()
-    .describe("Custom base URL for OpenAI-compatible providers"),
-  timeoutMs: z
-    .number()
-    .int()
-    .positive()
-    .default(DEFAULT_TRANSCRIPTION_TIMEOUT_MS)
-    .describe("Maximum transcription time before the request is aborted"),
-});
-
-const localTranscriptionSchema = z.object({
-  mode: z.literal("local"),
-  provider: z.literal("local").default("local"),
-  model: z
-    .string()
-    .min(1)
-    .default("Xenova/whisper-small")
-    .describe("Local model identifier supported by Transformers.js"),
-  language: z
-    .string()
-    .optional()
-    .describe("Language hint passed directly to Whisper"),
-  timeoutMs: z
-    .number()
-    .int()
-    .positive()
-    .default(DEFAULT_TRANSCRIPTION_TIMEOUT_MS)
-    .describe("Maximum transcription time before the request is aborted"),
-});
-
-export const voiceTranscriptionSchema = z.discriminatedUnion("mode", [
-  remoteTranscriptionSchema,
-  localTranscriptionSchema,
-]);
-
-export const voiceConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-  allowBrowserRecording: z
-    .boolean()
-    .default(true)
-    .describe("Whether the UI should expose microphone controls"),
-  transcription: voiceTranscriptionSchema,
-});
-
 const opencodeConfigSchema = z.object({
   token: z
     .string()
@@ -198,9 +136,6 @@ export const hiveConfigSchema = z.object({
   templates: z
     .record(z.string(), templateSchema)
     .describe("Available cell templates"),
-  voice: voiceConfigSchema
-    .optional()
-    .describe("Voice input configuration shared by all cells"),
   defaults: defaultsSchema
     .optional()
     .describe("Default values for cell creation"),
@@ -212,8 +147,6 @@ export type ComposeService = z.infer<typeof composeServiceSchema>;
 export type Service = z.infer<typeof serviceSchema>;
 export type TemplateAgent = z.infer<typeof templateAgentSchema>;
 export type Template = z.infer<typeof templateSchema>;
-export type VoiceTranscriptionConfig = z.infer<typeof voiceTranscriptionSchema>;
-export type VoiceConfig = z.infer<typeof voiceConfigSchema>;
 export type OpencodeConfig = z.infer<typeof opencodeConfigSchema>;
 export type Defaults = z.infer<typeof defaultsSchema>;
 export type HiveConfig = z.infer<typeof hiveConfigSchema>;

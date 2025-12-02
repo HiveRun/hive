@@ -102,7 +102,6 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
       invalidateWorkspaceList(),
       queryClient.invalidateQueries({ queryKey: ["cells"] }),
       queryClient.invalidateQueries({ queryKey: ["templates"] }),
-      queryClient.invalidateQueries({ queryKey: ["voice-config"] }),
       queryClient.invalidateQueries({ queryKey: ["agent-session"] }),
       queryClient.invalidateQueries({ queryKey: ["agent-messages"] }),
     ]);

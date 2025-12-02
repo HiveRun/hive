@@ -6,15 +6,6 @@ export default defineHiveConfig({
     defaultModel: "big-pickle",
   },
   promptSources: ["docs/prompts/**/*.md"],
-  voice: {
-    enabled: true,
-    transcription: {
-      mode: "remote",
-      provider: "openai",
-      language: "en",
-      apiKeyEnv: "OPENAI_API_KEY",
-    },
-  },
   defaults: {
     templateId: "hive-dev",
   },

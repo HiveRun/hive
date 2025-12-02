@@ -23,7 +23,6 @@ import { db } from "./db";
 import { agentsRoutes } from "./routes/agents";
 import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
 import { templatesRoutes } from "./routes/templates";
-import { preloadVoiceTranscriptionModels, voiceRoutes } from "./routes/voice";
 import { workspacesRoutes } from "./routes/workspaces";
 import { runServerEffect, runSupervisorEffect } from "./runtime";
 import { cells } from "./schema/cells";
@@ -243,8 +242,7 @@ const createApp = () =>
     .use(templatesRoutes)
     .use(workspacesRoutes)
     .use(cellsRoutes)
-    .use(agentsRoutes)
-    .use(voiceRoutes);
+    .use(agentsRoutes);
 
 export type App = ReturnType<typeof createApp>;
 
@@ -412,7 +410,6 @@ export const startServer = async () => {
   await ensureWorkspaceRegistration(workspaceRoot);
   await initializeSupervisorSafely();
   await resumeProvisioningSafely();
-  await preloadVoiceTranscriptionModels();
 
   registerSignalHandlers();
   app.listen(PORT);

@@ -30,7 +30,7 @@
 - [ ] [Workspace Discovery & Switching](features/phase-1/workspace-switching.md) #status/planned #phase-1 #feature/ux - Multi-workspace management
 
 ### Phase 2: Advanced Interaction
-- [/] [Voice Input](features/phase-2/voice-input.md) #status/in-progress #phase-2 #feature/advanced - Microphone capture and transcription
+- [-] [Voice Input](features/phase-2/voice-input.md) #status/blocked #phase-2 #feature/advanced - Removed until scope is revisited
 - [ ] [Sparse Cells](features/phase-2/sparse-cells.md) #status/planned #phase-2 #feature/advanced - Agent-only lightweight cells
 - [ ] [Template Prompt Viewer](features/phase-2/template-prompt-viewer.md) #status/planned #phase-2 #feature/advanced - Preview template prompts
 - [ ] [Compaction Logging](features/phase-2/compaction-logging.md) #status/planned #phase-2 #feature/advanced - Monitor prompt degradation
