@@ -19,6 +19,7 @@ const HELP_TARGETS = [
   "completions",
 ] as const;
 export const COMPLETION_SHELLS = ["bash", "zsh", "fish"] as const;
+export type CompletionShell = (typeof COMPLETION_SHELLS)[number];
 
 const PRIMARY_SUBCOMMANDS_TEXT = PRIMARY_SUBCOMMANDS.join(" ");
 const HELP_TARGETS_TEXT = HELP_TARGETS.join(" ");

@@ -5,6 +5,8 @@
     "build": "tsc -p tsconfig.json --noEmit",
     "check-types": "tsc -p tsconfig.json --noEmit",
     "dev": "bun run --hot src/index.ts",
+    "test": "vitest",
+    "test:run": "vitest run",
     "compile": "bun build --compile --minify --sourcemap ./src/index.ts --outfile hive"
   },
   "dependencies": {
@@ -17,6 +19,7 @@
   },
   "devDependencies": {
     "@types/bun": "^1.2.6",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "^4.0.3"
   }
 }
