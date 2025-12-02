@@ -925,24 +925,6 @@ function wrapCommandWithLogging(command: string, logPath: string): string {
 
 const defaultSupervisor = createServiceSupervisor();
 
-export const bootstrapServiceSupervisor = (): Promise<void> =>
-  defaultSupervisor.bootstrap();
-export const ensureServicesForCell = (
-  cell: Cell,
-  template?: Template
-): Promise<void> => defaultSupervisor.ensureCellServices({ cell, template });
-export const startServiceById = (serviceId: string): Promise<void> =>
-  defaultSupervisor.startCellService(serviceId);
-export const stopServiceById = (
-  serviceId: string,
-  options?: { releasePorts?: boolean }
-): Promise<void> => defaultSupervisor.stopCellService(serviceId, options);
-export const stopServicesForCell = (
-  cellId: string,
-  options?: { releasePorts?: boolean }
-): Promise<void> => defaultSupervisor.stopCellServices(cellId, options);
-export const stopAllServices = (): Promise<void> => defaultSupervisor.stopAll();
-
 type ServiceSupervisorError = {
   readonly _tag: "ServiceSupervisorError";
   readonly cause: unknown;

@@ -1,7 +1,6 @@
 import { Effect } from "effect";
 import { HiveConfigService } from "../config/context";
 import type { HiveConfig } from "../config/schema";
-import { runServerEffect } from "../runtime";
 import {
   type WorktreeCreateOptions,
   type WorktreeLocation,
@@ -26,6 +25,10 @@ export type WorkspaceRuntimeContext = {
   ) => Promise<WorktreeLocation>;
   removeWorktree: (cellId: string) => Promise<void>;
 };
+
+export type ResolveWorkspaceContext = (
+  workspaceId?: string
+) => Promise<WorkspaceRuntimeContext>;
 
 export class WorkspaceContextError extends Error {
   constructor(message: string) {
@@ -121,9 +124,3 @@ export const resolveWorkspaceContextEffect = (
       removeWorktree,
     } satisfies WorkspaceRuntimeContext;
   });
-
-export function resolveWorkspaceContext(
-  workspaceId?: string
-): Promise<WorkspaceRuntimeContext> {
-  return runServerEffect(resolveWorkspaceContextEffect(workspaceId));
-}

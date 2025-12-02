@@ -2,15 +2,19 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { createConnection } from "node:net";
 import { resolve as resolvePath } from "node:path";
+
 import { logger } from "@bogeychan/elysia-logger";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { Effect } from "effect";
 import { Elysia, type Static, t } from "elysia";
+
 import { AgentRuntimeServiceTag } from "../agents/service";
 import type { AgentSessionRecord } from "../agents/types";
 import type { Template } from "../config/schema";
-import type { DatabaseService as DatabaseServiceType } from "../db";
-import { DatabaseService } from "../db";
+import {
+  DatabaseService,
+  type DatabaseService as DatabaseServiceType,
+} from "../db";
 import { runServerEffect } from "../runtime";
 import {
   CellDiffResponseSchema,
@@ -41,14 +45,15 @@ import {
 } from "../services/supervisor";
 import { safeAsync } from "../utils/result";
 import {
-  resolveWorkspaceContext,
+  type ResolveWorkspaceContext,
+  resolveWorkspaceContextEffect,
   type WorkspaceRuntimeContext,
 } from "../workspaces/context";
 import { createWorkspaceContextPlugin } from "../workspaces/plugin";
 import type { WorkspaceRecord } from "../workspaces/registry";
-import type { WorktreeManager } from "../worktree/manager";
 import {
   describeWorktreeError,
+  type WorktreeManager,
   worktreeErrorToError,
 } from "../worktree/manager";
 
@@ -56,7 +61,7 @@ type DatabaseClient = DatabaseServiceType["db"];
 
 export type CellRouteDependencies = {
   db: DatabaseClient;
-  resolveWorkspaceContext: typeof resolveWorkspaceContext;
+  resolveWorkspaceContext: ResolveWorkspaceContext;
   ensureAgentSession: (
     cellId: string,
     options?: { force?: boolean; modelId?: string; providerId?: string }
@@ -98,7 +103,8 @@ const buildDefaultCellDependencies = () =>
 
     return {
       db: database,
-      resolveWorkspaceContext,
+      resolveWorkspaceContext: (workspaceId) =>
+        runServerEffect(resolveWorkspaceContextEffect(workspaceId)),
       ensureAgentSession: (cellId, options) =>
         Effect.runPromise(agentRuntime.ensureAgentSession(cellId, options)),
       sendAgentMessage: (sessionId, content) =>

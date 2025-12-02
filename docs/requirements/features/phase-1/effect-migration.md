@@ -6,6 +6,7 @@
   - [x] [HIVE-23] Effect-ify agents routes with Effect services
   - [/] [HIVE-25] Effect-ify CLI commands
   - [x] [HIVE-27] Effect-ify templates routes and config loading
+  - [/] [HIVE-22] Finalize Effect migration cleanup
 
 ## Goal
 Finish the transition to Effect-first services for shared backend modules so routes and tests can rely on context tags instead of global utilities.
@@ -15,5 +16,5 @@ Finish the transition to Effect-first services for shared backend modules so rou
 - `AgentRuntimeService` / `AgentRuntimeLayer` (`apps/server/src/agents/service.ts`): Effect wrappers for agent session lifecycle helpers (ensure/fetch/interrupt/send, provider catalog) wired through the server runtime.
 
 ## Migration Notes
-- Legacy promise-based functions remain available; prefer the new context tags in new code to avoid direct database/filesystem imports.
+- Legacy promise helpers are being removed; use `runServerEffect` with context tags for backend operations instead of Promise shims.
 - `serverLayer` now includes these layers so `runServerEffect` consumers get the adapters without manual wiring.
