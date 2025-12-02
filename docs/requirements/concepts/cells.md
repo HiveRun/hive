@@ -78,7 +78,7 @@ Cell status is computed from service + agent state. If any service is flagged `n
 - [[features/phase-1/workspace-switching|Workspace discovery & switching]]: allow users to manage multiple workspaces and switch between them.
 
 **Phase 2 – Advanced Interaction**
-- [[features/phase-2/voice-input|Voice input]]: add microphone capture, streaming transcription, and push-to-talk UX inside agent conversations; fall back to text if transcription fails.
+- [[features/phase-2/voice-input|Voice input]]: feature removed from current release; voice capture and transcription will be revisited before any reintroduction.
 - [[features/phase-2/sparse-cells|Sparse cells]]: allow launching a cell with agent-only mode (no services) for light-weight exploratory work.
 - [[features/phase-2/template-prompt-viewer|Template prompt viewer]]: provide a UI to preview a template's concatenated prompts, including estimated token count and the exact fragments that will be sent to the agent.
 - [[features/phase-2/compaction-logging|Compaction logging]]: surface agent compaction events/tokens so users can monitor prompt degradation over long sessions.

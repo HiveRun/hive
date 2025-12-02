@@ -208,22 +208,6 @@ export const RespondPermissionSchema = t.Object({
   ]),
 });
 
-export const VoiceModeSchema = t.Union([
-  t.Literal("remote"),
-  t.Literal("local"),
-]);
-
-export const VoiceConfigResponseSchema = t.Object({
-  voice: t.Object({
-    enabled: t.Boolean(),
-    allowBrowserRecording: t.Boolean(),
-    mode: t.Union([VoiceModeSchema, t.Null()]),
-    provider: t.Union([t.String(), t.Null()]),
-    model: t.Union([t.String(), t.Null()]),
-    language: t.Union([t.String(), t.Null()]),
-  }),
-});
-
 export const VoiceTranscriptionRequestSchema = t.Object({
   audioBase64: t.String({ minLength: 1 }),
   mimeType: t.Optional(t.String()),

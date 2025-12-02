@@ -1,5 +1,3 @@
-import { useQuery } from "@tanstack/react-query";
-import { useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import {
@@ -16,8 +14,6 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Textarea } from "@/components/ui/textarea";
-import { voiceQueries } from "@/queries/voice";
-import { VoiceRecorderButton } from "./voice-recorder";
 
 const MESSAGE_MAX_LENGTH = 5000;
 
@@ -34,7 +30,6 @@ type ComposePanelProps = {
   isSending: boolean;
   isModelChanging?: boolean;
   onSend: (content: string) => Promise<void>;
-  workspaceId: string;
   sessionId: string;
   selectedModel?: ModelSelection;
   onModelChange: (model: ModelSelection) => void;
@@ -56,7 +51,6 @@ export function ComposePanel({
   isSending,
   isModelChanging = false,
   onSend,
-  workspaceId,
   sessionId,
   selectedModel,
   onModelChange,
@@ -69,26 +63,6 @@ export function ComposePanel({
     defaultValues: { message: "" },
     mode: "onChange",
   });
-
-  const voiceConfigQuery = useQuery(voiceQueries.config(workspaceId));
-  const voiceConfig = voiceConfigQuery.data;
-
-  const handleTranscriptionInsert = useCallback(
-    (transcript: string) => {
-      const trimmed = transcript.trim();
-      if (!trimmed) {
-        return;
-      }
-      const existing = form.getValues("message")?.trim();
-      const nextValue = existing ? `${existing} ${trimmed}`.trim() : trimmed;
-      form.setValue("message", nextValue, {
-        shouldDirty: true,
-        shouldTouch: true,
-        shouldValidate: true,
-      });
-    },
-    [form]
-  );
 
   const handleSubmit = form.handleSubmit(async (values) => {
     await onSend(values.message.trim());
@@ -190,17 +164,6 @@ export function ComposePanel({
                 >
                   {interruptButtonLabel}
                 </Button>
-                {voiceConfig?.enabled && voiceConfig.allowBrowserRecording ? (
-                  <div className="w-full sm:w-40">
-                    <VoiceRecorderButton
-                      config={voiceConfig}
-                      disabled={isSending}
-                      encodeAsWav={voiceConfig.mode === "local"}
-                      onTranscription={handleTranscriptionInsert}
-                      workspaceId={workspaceId}
-                    />
-                  </div>
-                ) : null}
               </div>
             </div>
           </div>

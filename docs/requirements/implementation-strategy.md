@@ -147,7 +147,6 @@ git checkout -b feature/workspace-switching
 ### Branch Workflow
 ```bash
 # Each feature in its own branch
-git checkout -b feature/voice-input
 git checkout -b feature/sparse-cells
 # ... etc
 

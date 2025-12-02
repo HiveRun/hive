@@ -28,7 +28,6 @@ export function AgentChat({ cellId }: AgentChatProps) {
   const session = sessionQuery.data ?? null;
   const sessionId = session?.id;
   const cellQuery = useQuery(cellQueries.detail(cellId));
-  const workspaceId = cellQuery.data?.workspaceId;
   const messagesQuery = useQuery(agentQueries.messages(sessionId ?? null));
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedModel, setSelectedModel] = useState<ModelSelection>();
@@ -289,14 +288,6 @@ export function AgentChat({ cellId }: AgentChatProps) {
     return <LoadingState />;
   }
 
-  if (!workspaceId) {
-    return (
-      <div className="flex h-full items-center justify-center border-2 border-border bg-card text-muted-foreground text-sm">
-        Unable to determine active workspace for this cell.
-      </div>
-    );
-  }
-
   if (!session) {
     return (
       <NoSessionState isStarting={isStarting} onStart={handleStartSession} />
@@ -333,7 +324,6 @@ export function AgentChat({ cellId }: AgentChatProps) {
           selectedModel={selectedModel}
           sessionId={session.id}
           showInterruptHint={showEscInterruptHint}
-          workspaceId={workspaceId}
         />
       </div>
     </div>

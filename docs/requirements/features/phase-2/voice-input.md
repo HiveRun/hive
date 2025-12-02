@@ -1,6 +1,8 @@
 # Voice Input
 
-- [/] Voice Input #status/in-progress #phase-2 #feature/advanced
+- [-] Voice Input #status/blocked #phase-2 #feature/advanced
+
+_Status_: Voice routes and the transcription service have been removed; revisit scope before reintroducing voice capture.
 
 ## Goal
 Add voice capture to agent chat so operators can speak prompts and have them transcribed into the conversation.
@@ -72,12 +74,7 @@ Add voice capture to agent chat so operators can speak prompts and have them tra
 - **Configuration System**: Manages transcription service settings
 
 ## Current Progress
-- Push-to-talk controls land in the agent chat compose panel with a transcription preview + status messaging.
-- Transcription is handled through the Vercel AI SDK `experimental_transcribe` helper and runs through a new `/api/voice/transcriptions` endpoint so API keys remain server-side.
-- `hive.config.ts` now exposes a `voice` stanza that selects remote (hosted) providers or the bundled local Transformers.js Whisper pipeline, with support for OpenAI-compatible stacks and Groq out of the box. Remote mode pins to our recommended Whisper model per provider so operators only choose the provider, not the SKU.
-- Local mode downloads/caches models into `.hive/models` automatically so operators do not have to run a separate transcription server.
-- Sanitized voice metadata is exposed over `/api/voice/config` so the web UI knows whether to render the voice controls and which model is active.
-- Audio blobs are deleted once the transcript is returned; there is no persistent audio storage in this first iteration.
+- Voice endpoints, configuration schema, and UI controls were removed; no voice capture or transcription is available in the current build.
 
 ## Testing Strategy
 - Test voice capture across different microphones and environments
