@@ -127,7 +127,17 @@ function createDependencies(
       workspace: workspaceRecord,
       loadConfig: loadWorkspaceConfig,
       createWorktreeManager: createTestWorktreeManager,
+      createWorktree: async () => ({
+        path: workspacePath,
+        branch: "cell-branch",
+        baseCommit: "abc123",
+      }),
+      removeWorktree: () => {
+        removeWorktreeCalls += 1;
+        return Promise.resolve();
+      },
     }),
+
     ensureAgentSession: (
       cellId: string,
       overrides?: { modelId?: string; providerId?: string }

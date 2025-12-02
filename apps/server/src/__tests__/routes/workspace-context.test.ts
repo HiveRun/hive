@@ -142,6 +142,12 @@ describe("Cell routes workspace enforcement", () => {
             }),
           removeWorktree: () => okAsync(undefined),
         }),
+        createWorktree: async () => ({
+          path: `${resolved.path}/.hive/cells/new`,
+          branch: "main",
+          baseCommit: "base",
+        }),
+        removeWorktree: () => Promise.resolve(),
       });
     };
 

@@ -1,8 +1,14 @@
 import { Effect } from "effect";
-import { getHiveConfig } from "../config/context";
+import { HiveConfigService } from "../config/context";
 import type { HiveConfig } from "../config/schema";
 import { runServerEffect } from "../runtime";
-import { createWorktreeManager } from "../worktree/manager";
+import {
+  type WorktreeCreateOptions,
+  type WorktreeLocation,
+  type WorktreeManager,
+  type WorktreeManagerService,
+  WorktreeManagerServiceTag,
+} from "../worktree/manager";
 import type {
   WorkspaceRecord,
   WorkspaceRegistryError,
@@ -13,9 +19,12 @@ import { getWorkspaceRegistryEffect } from "./registry";
 export type WorkspaceRuntimeContext = {
   workspace: WorkspaceRecord;
   loadConfig: () => Promise<HiveConfig>;
-  createWorktreeManager: () => Promise<
-    ReturnType<typeof createWorktreeManager>
-  >;
+  createWorktreeManager: () => Promise<WorktreeManager>;
+  createWorktree: (
+    cellId: string,
+    options?: WorktreeCreateOptions
+  ) => Promise<WorktreeLocation>;
+  removeWorktree: (cellId: string) => Promise<void>;
 };
 
 export class WorkspaceContextError extends Error {
@@ -28,12 +37,15 @@ export class WorkspaceContextError extends Error {
 const mapRegistryError = (error: WorkspaceRegistryError) =>
   new WorkspaceContextError(error.message);
 
+const formatError = (cause: unknown) =>
+  cause instanceof Error ? cause.message : String(cause);
+
 export const resolveWorkspaceContextEffect = (
   workspaceId?: string
 ): Effect.Effect<
   WorkspaceRuntimeContext,
   WorkspaceContextError,
-  WorkspaceRegistryService
+  WorkspaceRegistryService | HiveConfigService | WorktreeManagerService
 > =>
   Effect.gen(function* () {
     const registry = yield* getWorkspaceRegistryEffect.pipe(
@@ -60,24 +72,53 @@ export const resolveWorkspaceContextEffect = (
     }
 
     const resolvedWorkspace = workspace;
-    let configPromise: Promise<HiveConfig> | null = null;
+    const hiveConfigService = yield* HiveConfigService;
+    const worktreeService = yield* WorktreeManagerServiceTag;
 
-    const loadConfig = () => {
-      if (!configPromise) {
-        configPromise = getHiveConfig(resolvedWorkspace.path);
-      }
-      return configPromise;
-    };
+    const toPromise = <A, E>(effect: Effect.Effect<A, E>, message: string) =>
+      Effect.runPromise(
+        effect.pipe(
+          Effect.mapError(
+            (cause) =>
+              new WorkspaceContextError(`${message}: ${formatError(cause)}`)
+          )
+        )
+      );
 
-    const createManager = async () => {
-      const config = await loadConfig();
-      return createWorktreeManager(resolvedWorkspace.path, config);
-    };
+    const loadConfig = () =>
+      toPromise(
+        hiveConfigService.load(resolvedWorkspace.path),
+        "Failed to load workspace config"
+      );
+
+    const createManager = () =>
+      toPromise(
+        worktreeService.createManager(resolvedWorkspace.path),
+        "Failed to initialize worktree manager"
+      );
+
+    const createWorktree = (cellId: string, options?: WorktreeCreateOptions) =>
+      toPromise(
+        worktreeService.createWorktree({
+          workspacePath: resolvedWorkspace.path,
+          cellId,
+          ...(options ?? {}),
+        }),
+        "Failed to create git worktree"
+      );
+
+    const removeWorktree = (cellId: string) =>
+      toPromise(
+        worktreeService.removeWorktree(resolvedWorkspace.path, cellId),
+        "Failed to remove git worktree"
+      );
 
     return {
       workspace: resolvedWorkspace,
       loadConfig,
       createWorktreeManager: createManager,
+      createWorktree,
+      removeWorktree,
     } satisfies WorkspaceRuntimeContext;
   });
 

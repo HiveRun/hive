@@ -5,17 +5,12 @@ import { db as defaultDb } from "../db";
 import { runServerEffect } from "../runtime";
 import { cells } from "../schema/cells";
 import { stopServicesForCell as stopDefaultCellServices } from "../services/supervisor";
-import { safeAsync, safeSync } from "../utils/result";
-import type { WorktreeManager } from "../worktree/manager";
 import {
-  createWorktreeManager,
-  describeWorktreeError,
-} from "../worktree/manager";
-import {
-  getWorkspaceRegistryEffect,
-  removeWorkspaceEffect,
-  type WorkspaceRecord,
-} from "./registry";
+  resolveWorkspaceContext,
+  WorkspaceContextError,
+  type WorkspaceRuntimeContext,
+} from "./context";
+import { removeWorkspaceEffect, type WorkspaceRecord } from "./registry";
 
 export type WorkspaceRemovalResult = {
   workspace: WorkspaceRecord;
@@ -47,11 +42,18 @@ export async function removeWorkspaceCascade(
     ...overrides,
   };
 
-  const registry = await runServerEffect(getWorkspaceRegistryEffect);
-  const workspace = registry.workspaces.find(
-    (entry) => entry.id === workspaceId
-  );
-  if (!workspace) {
+  let workspaceContext: WorkspaceRuntimeContext;
+  try {
+    workspaceContext = await resolveWorkspaceContext(workspaceId);
+  } catch (error) {
+    if (error instanceof WorkspaceContextError) {
+      return null;
+    }
+
+    logWorkspaceRemovalWarning("Failed to resolve workspace context", {
+      workspaceId,
+      error: formatError(error),
+    });
     return null;
   }
 
@@ -62,21 +64,6 @@ export async function removeWorkspaceCascade(
     })
     .from(cells)
     .where(eq(cells.workspaceId, workspaceId));
-
-  let worktreeManager: WorktreeManager | null = null;
-  const worktreeResult = safeSync(
-    () => createWorktreeManager(workspace.path),
-    (error) => error
-  );
-
-  if (worktreeResult.isOk()) {
-    worktreeManager = worktreeResult.value;
-  } else {
-    logWorkspaceRemovalWarning("Failed to initialize worktree manager", {
-      workspaceId,
-      error: formatError(worktreeResult.error),
-    });
-  }
 
   const deletedCellIds: string[] = [];
 
@@ -95,7 +82,7 @@ export async function removeWorkspaceCascade(
       })
     );
 
-    await cleanupCellWorkspace(worktreeManager, cell.id, cell.workspacePath);
+    await cleanupCellWorkspace(workspaceContext, cell.id, cell.workspacePath);
 
     deletedCellIds.push(cell.id);
   }
@@ -106,37 +93,32 @@ export async function removeWorkspaceCascade(
 
   await runServerEffect(removeWorkspaceEffect(workspaceId));
 
-  return { workspace, deletedCellIds };
+  return { workspace: workspaceContext.workspace, deletedCellIds };
 }
 
 async function cleanupCellWorkspace(
-  manager: WorktreeManager | null,
+  workspaceContext: WorkspaceRuntimeContext,
   cellId: string,
   workspacePath?: string | null
 ): Promise<void> {
-  if (manager) {
-    const removeResult = await manager.removeWorktree(cellId);
-    if (removeResult.isOk()) {
-      return;
-    }
-
+  try {
+    await workspaceContext.removeWorktree(cellId);
+    return;
+  } catch (error) {
     logWorkspaceRemovalWarning("Failed to remove git worktree", {
       cellId,
-      error: describeWorktreeError(removeResult.error),
+      error: formatError(error),
     });
   }
 
   if (workspacePath && workspacePath.trim().length > 0) {
-    const removalResult = await safeAsync(
-      () => rm(workspacePath, { recursive: true, force: true }),
-      (error) => error
-    );
-
-    if (removalResult.isErr()) {
+    try {
+      await rm(workspacePath, { recursive: true, force: true });
+    } catch (error) {
       logWorkspaceRemovalWarning("Failed to remove workspace directory", {
         cellId,
         workspacePath,
-        error: formatError(removalResult.error),
+        error: formatError(error),
       });
     }
   }
