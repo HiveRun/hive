@@ -18,3 +18,4 @@ Finish the transition to Effect-first services for shared backend modules so rou
 ## Migration Notes
 - Legacy promise helpers are being removed; use `runServerEffect` with context tags for backend operations instead of Promise shims.
 - `serverLayer` now includes these layers so `runServerEffect` consumers get the adapters without manual wiring.
+- Cells provisioning now surfaces the full `TemplateSetupError` detail (template/workspace/command + exit code + stack) through `lastSetupError`, so operators can debug from the UI without checking logs.

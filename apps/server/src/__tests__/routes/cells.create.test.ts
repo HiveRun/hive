@@ -235,6 +235,9 @@ describe("POST /api/cells", () => {
     expect(removeWorktreeCalls).toBe(0);
 
     const erroredRow = await waitForCellStatus(payload.id, "error");
+    expect(erroredRow.lastSetupError).toContain(
+      "Template ID: failing-template"
+    );
     expect(erroredRow.lastSetupError).toContain("exit code 42");
 
     const rows = await testDb.select().from(cells);
