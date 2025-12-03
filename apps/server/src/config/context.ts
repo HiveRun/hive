@@ -1,9 +1,12 @@
 import { existsSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
+
 import { Context, Effect, Layer } from "effect";
+
 import {
   getWorkspaceRegistryEffect,
   type WorkspaceRegistry,
+  type WorkspaceRegistryError,
   WorkspaceRegistryLayer,
 } from "../workspaces/registry";
 import { loadConfig } from "./loader";
@@ -89,7 +92,8 @@ export type HiveConfigWorkspaceError = {
 
 export type HiveConfigResolutionError =
   | HiveConfigError
-  | HiveConfigWorkspaceError;
+  | HiveConfigWorkspaceError
+  | WorkspaceRegistryError;
 
 const makeHiveConfigWorkspaceError = (
   workspaceId?: string
@@ -170,16 +174,23 @@ export const loadWorkspaceHiveConfigEffect = (workspaceId?: string) =>
     return yield* loadHiveConfigEffect(workspace.path);
   });
 
-export const loadHiveConfig = (workspaceRoot?: string): Promise<HiveConfig> =>
-  Effect.runPromise(
-    Effect.provide(HiveConfigLayer)(loadHiveConfigEffect(workspaceRoot))
-  );
+export const loadHiveConfig = (
+  workspaceRoot?: string
+): Effect.Effect<HiveConfig, HiveConfigError> =>
+  Effect.provide(HiveConfigLayer)(loadHiveConfigEffect(workspaceRoot));
+
+export const loadHiveConfigPromise = (
+  workspaceRoot?: string
+): Promise<HiveConfig> => Effect.runPromise(loadHiveConfig(workspaceRoot));
 
 export const loadWorkspaceHiveConfig = (
   workspaceId?: string
-): Promise<HiveConfig> =>
-  Effect.runPromise(
-    Effect.provide(Layer.mergeAll(HiveConfigLayer, WorkspaceRegistryLayer))(
-      loadWorkspaceHiveConfigEffect(workspaceId)
-    )
+): Effect.Effect<HiveConfig, HiveConfigResolutionError> =>
+  Effect.provide(Layer.mergeAll(HiveConfigLayer, WorkspaceRegistryLayer))(
+    loadWorkspaceHiveConfigEffect(workspaceId)
   );
+
+export const loadWorkspaceHiveConfigPromise = (
+  workspaceId?: string
+): Promise<HiveConfig> =>
+  Effect.runPromise(loadWorkspaceHiveConfig(workspaceId));

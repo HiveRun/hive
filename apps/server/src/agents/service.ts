@@ -12,8 +12,12 @@ import {
   type Session,
 } from "@opencode-ai/sdk";
 import { eq } from "drizzle-orm";
-import { Context, Effect, Layer, Runtime } from "effect";
-import { HiveConfigService, loadHiveConfig } from "../config/context";
+import { Context, Effect, Layer } from "effect";
+import {
+  type HiveConfigError,
+  HiveConfigService,
+  loadHiveConfig,
+} from "../config/context";
 import type { HiveConfig, Template } from "../config/schema";
 import { DatabaseService, db } from "../db";
 import { type Cell, cells } from "../schema/cells";
@@ -77,7 +81,9 @@ type ProviderCredentialsStore = Record<string, ProviderAuthEntry>;
 
 type AgentRuntimeDependencies = {
   db: typeof db;
-  loadHiveConfig: (workspaceRoot?: string) => Promise<HiveConfig>;
+  loadHiveConfig: (
+    workspaceRoot?: string
+  ) => Effect.Effect<HiveConfig, HiveConfigError> | Promise<HiveConfig>;
   loadOpencodeConfig: typeof loadOpencodeConfig;
   publishAgentEvent: typeof publishAgentEvent;
 };
@@ -437,11 +443,11 @@ export const AgentRuntimeLayer = Layer.effect(
   Effect.gen(function* () {
     const { db: runtimeDb } = yield* DatabaseService;
     const hiveConfigService = yield* HiveConfigService;
-    const runtime = yield* Effect.runtime<never>();
+
     setAgentRuntimeDependencies({
       db: runtimeDb,
       loadHiveConfig: (workspaceRoot?: string) =>
-        Runtime.runPromise(runtime, hiveConfigService.load(workspaceRoot)),
+        hiveConfigService.load(workspaceRoot),
     });
     return makeAgentRuntimeService();
   })
@@ -505,7 +511,12 @@ async function ensureRuntimeForCell(
   const workspaceRootPath = cell.workspaceRootPath || cell.workspacePath;
   const deps = getAgentRuntimeDependencies();
 
-  const hiveConfig = await deps.loadHiveConfig(workspaceRootPath);
+  const hiveConfigResult = deps.loadHiveConfig(workspaceRootPath);
+  const hiveConfig =
+    typeof (hiveConfigResult as unknown as { then?: unknown }).then ===
+    "function"
+      ? await (hiveConfigResult as Promise<HiveConfig>)
+      : await Effect.runPromise(hiveConfigResult as Effect.Effect<HiveConfig>);
   const template = hiveConfig.templates[cell.templateId];
   if (!template) {
     throw new Error("Cell template configuration not found");
