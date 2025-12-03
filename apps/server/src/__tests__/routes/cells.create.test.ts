@@ -1,7 +1,6 @@
 import { eq } from "drizzle-orm";
 import { Effect } from "effect";
 import { Elysia } from "elysia";
-import { okAsync } from "neverthrow";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSessionRecord } from "../../agents/types";
 import type { HiveConfig } from "../../config/schema";
@@ -17,6 +16,7 @@ import {
   CommandExecutionError,
   TemplateSetupError,
 } from "../../services/supervisor";
+import { okAsync } from "../../utils/result";
 import { setupTestDb, testDb } from "../test-db";
 
 const templateId = "failing-template";
@@ -110,7 +110,7 @@ function createDependencies(
 
   function removeCellWorktree(_cellId: string) {
     removeWorktreeCalls += 1;
-    return okAsync(undefined);
+    return okAsync();
   }
 
   const sendAgentMessageImpl =
