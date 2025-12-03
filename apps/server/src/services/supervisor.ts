@@ -50,12 +50,14 @@ export class TemplateSetupError extends Error {
   readonly command: string;
   readonly templateId: string;
   readonly workspacePath: string;
+  readonly exitCode?: number;
 
   constructor(params: {
     command: string;
     templateId: string;
     workspacePath: string;
     cause?: unknown;
+    exitCode?: number;
   }) {
     super(
       `Template setup command "${params.command}" failed for template "${params.templateId}"`,
@@ -65,6 +67,23 @@ export class TemplateSetupError extends Error {
     this.command = params.command;
     this.templateId = params.templateId;
     this.workspacePath = params.workspacePath;
+
+    let derivedExitCode: number | undefined;
+    if (typeof params.exitCode === "number") {
+      derivedExitCode = params.exitCode;
+    } else if (params.cause instanceof CommandExecutionError) {
+      derivedExitCode = params.cause.exitCode;
+    } else if (
+      params.cause &&
+      typeof params.cause === "object" &&
+      typeof (params.cause as { exitCode?: unknown }).exitCode === "number"
+    ) {
+      derivedExitCode = (params.cause as { exitCode: number }).exitCode;
+    }
+
+    if (typeof derivedExitCode === "number") {
+      this.exitCode = derivedExitCode;
+    }
   }
 }
 
