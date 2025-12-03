@@ -570,20 +570,16 @@ export function createCellsRoutes(
           } = deps;
 
           const workspaceContext = await getWorkspaceContext(body.workspaceId);
-          const result = await runServerEffect(
-            Effect.tryPromise(() =>
-              handleCellCreationRequest({
-                body,
-                database,
-                ensureSession,
-                sendAgentMessage: sendMessage,
-                ensureServices,
-                stopCellServices: stopCellServicesFn,
-                workspaceContext,
-                log,
-              })
-            )
-          );
+          const result = await handleCellCreationRequest({
+            body,
+            database,
+            ensureSession,
+            sendAgentMessage: sendMessage,
+            ensureServices,
+            stopCellServices: stopCellServicesFn,
+            workspaceContext,
+            log,
+          });
 
           set.status = result.status;
           return result.payload;
@@ -1324,6 +1320,7 @@ export async function resumeSpawningCells(
         cell.workspaceId
       );
       const hiveConfig = await workspaceContext.loadConfig();
+
       const template = hiveConfig.templates[cell.templateId];
       if (!template) {
         await updateCellProvisioningStatus(
