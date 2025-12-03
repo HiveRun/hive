@@ -17,18 +17,27 @@ import { getWorkspaceRegistryEffect } from "./registry";
 
 export type WorkspaceRuntimeContext = {
   workspace: WorkspaceRecord;
-  loadConfig: () => Promise<HiveConfig>;
-  createWorktreeManager: () => Promise<WorktreeManager>;
+  loadConfig: () => Effect.Effect<HiveConfig, WorkspaceContextError>;
+  createWorktreeManager: () => Effect.Effect<
+    WorktreeManager,
+    WorkspaceContextError
+  >;
   createWorktree: (
     cellId: string,
     options?: WorktreeCreateOptions
-  ) => Promise<WorktreeLocation>;
-  removeWorktree: (cellId: string) => Promise<void>;
+  ) => Effect.Effect<WorktreeLocation, WorkspaceContextError>;
+  removeWorktree: (
+    cellId: string
+  ) => Effect.Effect<void, WorkspaceContextError>;
 };
 
 export type ResolveWorkspaceContext = (
   workspaceId?: string
-) => Promise<WorkspaceRuntimeContext>;
+) => Effect.Effect<
+  WorkspaceRuntimeContext,
+  WorkspaceContextError,
+  WorkspaceRegistryService | HiveConfigService | WorktreeManagerService
+>;
 
 export class WorkspaceContextError extends Error {
   constructor(message: string) {
@@ -78,42 +87,46 @@ export const resolveWorkspaceContextEffect = (
     const hiveConfigService = yield* HiveConfigService;
     const worktreeService = yield* WorktreeManagerServiceTag;
 
-    const toPromise = <A, E>(effect: Effect.Effect<A, E>, message: string) =>
-      Effect.runPromise(
+    const wrap =
+      <A>(message: string) =>
+      (
+        effect: Effect.Effect<A, unknown>
+      ): Effect.Effect<A, WorkspaceContextError> =>
         effect.pipe(
           Effect.mapError(
             (cause) =>
               new WorkspaceContextError(`${message}: ${formatError(cause)}`)
           )
-        )
+        );
+
+    const loadConfig: WorkspaceRuntimeContext["loadConfig"] = () =>
+      wrap<HiveConfig>("Failed to load workspace config")(
+        hiveConfigService.load(resolvedWorkspace.path)
       );
 
-    const loadConfig = () =>
-      toPromise(
-        hiveConfigService.load(resolvedWorkspace.path),
-        "Failed to load workspace config"
-      );
+    const createManager: WorkspaceRuntimeContext["createWorktreeManager"] =
+      () =>
+        wrap<WorktreeManager>("Failed to initialize worktree manager")(
+          worktreeService.createManager(resolvedWorkspace.path)
+        );
 
-    const createManager = () =>
-      toPromise(
-        worktreeService.createManager(resolvedWorkspace.path),
-        "Failed to initialize worktree manager"
-      );
-
-    const createWorktree = (cellId: string, options?: WorktreeCreateOptions) =>
-      toPromise(
+    const createWorktree: WorkspaceRuntimeContext["createWorktree"] = (
+      cellId,
+      options
+    ) =>
+      wrap<WorktreeLocation>("Failed to create git worktree")(
         worktreeService.createWorktree({
           workspacePath: resolvedWorkspace.path,
           cellId,
           ...(options ?? {}),
-        }),
-        "Failed to create git worktree"
+        })
       );
 
-    const removeWorktree = (cellId: string) =>
-      toPromise(
-        worktreeService.removeWorktree(resolvedWorkspace.path, cellId),
-        "Failed to remove git worktree"
+    const removeWorktree: WorkspaceRuntimeContext["removeWorktree"] = (
+      cellId
+    ) =>
+      wrap<void>("Failed to remove git worktree")(
+        worktreeService.removeWorktree(resolvedWorkspace.path, cellId)
       );
 
     return {

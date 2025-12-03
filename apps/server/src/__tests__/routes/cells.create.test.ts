@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { Effect } from "effect";
 import { Elysia } from "elysia";
 import { okAsync } from "neverthrow";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -111,32 +112,31 @@ function createDependencies(
     return okAsync(undefined);
   }
 
-  function createTestWorktreeManager() {
-    return Promise.resolve({
-      createWorktree: createCellWorktree,
-      removeWorktree: removeCellWorktree,
-    });
-  }
-
   const sendAgentMessageImpl =
     options.sendAgentMessage ?? vi.fn<SendAgentMessageFn>().mockResolvedValue();
 
   return {
     db: testDb,
-    resolveWorkspaceContext: async () => ({
-      workspace: workspaceRecord,
-      loadConfig: loadWorkspaceConfig,
-      createWorktreeManager: createTestWorktreeManager,
-      createWorktree: async () => ({
-        path: workspacePath,
-        branch: "cell-branch",
-        baseCommit: "abc123",
+    resolveWorkspaceContext: () =>
+      Effect.succeed({
+        workspace: workspaceRecord,
+        loadConfig: () => Effect.promise(loadWorkspaceConfig),
+        createWorktreeManager: () =>
+          Effect.succeed({
+            createWorktree: createCellWorktree,
+            removeWorktree: removeCellWorktree,
+          }),
+        createWorktree: () =>
+          Effect.succeed({
+            path: workspacePath,
+            branch: "cell-branch",
+            baseCommit: "abc123",
+          }),
+        removeWorktree: () =>
+          Effect.sync(() => {
+            removeWorktreeCalls += 1;
+          }),
       }),
-      removeWorktree: () => {
-        removeWorktreeCalls += 1;
-        return Promise.resolve();
-      },
-    }),
 
     ensureAgentSession: (
       cellId: string,

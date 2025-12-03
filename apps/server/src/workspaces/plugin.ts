@@ -42,8 +42,7 @@ export function createWorkspaceContextPlugin({
 } = {}) {
   const resolveContext =
     resolveWorkspaceContext ??
-    ((workspaceId?: string) =>
-      runServerEffect(resolveWorkspaceContextEffect(workspaceId)));
+    ((workspaceId?: string) => resolveWorkspaceContextEffect(workspaceId));
 
   return new Elysia({ name: "workspace-context" })
     .derive(({ body, query, params, request }) => {
@@ -71,13 +70,15 @@ export function createWorkspaceContextPlugin({
         const resolvedId = inferWorkspaceId(workspaceId);
         if (!cachedPromise || cachedFor !== resolvedId) {
           cachedFor = resolvedId ?? null;
-          cachedPromise = resolveContext(resolvedId).catch((error: unknown) => {
-            const message =
-              error instanceof Error
-                ? error.message
-                : "Failed to resolve workspace context";
-            throw new WorkspaceContextResolutionError(message);
-          });
+          cachedPromise = runServerEffect(resolveContext(resolvedId)).catch(
+            (error: unknown) => {
+              const message =
+                error instanceof Error
+                  ? error.message
+                  : "Failed to resolve workspace context";
+              throw new WorkspaceContextResolutionError(message);
+            }
+          );
         }
 
         if (!cachedPromise) {

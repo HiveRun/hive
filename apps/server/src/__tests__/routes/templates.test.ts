@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { Elysia } from "elysia";
+import { okAsync } from "neverthrow";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 // biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
 import * as OpencodeConfig from "../../agents/opencode-config";
@@ -16,6 +17,7 @@ import type { WorkspaceRuntimeContext } from "../../workspaces/context";
 // biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
 import * as WorkspaceContext from "../../workspaces/context";
 import { WorkspaceContextError } from "../../workspaces/context";
+import type { WorktreeManager } from "../../worktree/manager";
 
 const HTTP_OK = 200;
 const HTTP_BAD_REQUEST = 400;
@@ -77,25 +79,35 @@ const createFailingHiveConfigService = (
 
 const createWorkspaceContext = (
   path = workspacePath
-): WorkspaceRuntimeContext =>
-  ({
+): WorkspaceRuntimeContext => {
+  const mockManager: WorktreeManager = {
+    createWorktree: () =>
+      okAsync({
+        path: `${path}/.hive/cells/sample`,
+        branch: "main",
+        baseCommit: "abc",
+      }),
+    removeWorktree: () => okAsync(undefined),
+  };
+
+  return {
     workspace: {
       id: "workspace-basic",
       label: "Workspace",
       path,
       addedAt: new Date("2024-01-01T00:00:00Z").toISOString(),
     },
-    loadConfig: async () => baseHiveConfig,
-    createWorktreeManager: async () => ({}),
-    createWorktree: async () => ({
-      path: `${path}/.hive/cells/sample`,
-      branch: "main",
-      baseCommit: "abc",
-    }),
-    removeWorktree: async () => {
-      /* noop in tests */
-    },
-  }) as unknown as WorkspaceRuntimeContext;
+    loadConfig: () => Effect.succeed(baseHiveConfig),
+    createWorktreeManager: () => Effect.succeed(mockManager),
+    createWorktree: () =>
+      Effect.succeed({
+        path: `${path}/.hive/cells/sample`,
+        branch: "main",
+        baseCommit: "abc",
+      }),
+    removeWorktree: () => Effect.void,
+  };
+};
 
 const createApp = () => new Elysia().use(templatesRoutes);
 

@@ -104,7 +104,7 @@ const buildDefaultCellDependencies = () =>
     return {
       db: database,
       resolveWorkspaceContext: (workspaceId) =>
-        runServerEffect(resolveWorkspaceContextEffect(workspaceId)),
+        resolveWorkspaceContextEffect(workspaceId),
       ensureAgentSession: (cellId, options) =>
         Effect.runPromise(agentRuntime.ensureAgentSession(cellId, options)),
       sendAgentMessage: (sessionId, content) =>
@@ -251,8 +251,10 @@ export function createCellsRoutes(
   })();
 
   const workspaceContextPlugin = createWorkspaceContextPlugin({
-    resolveWorkspaceContext: async (workspaceId?: string) =>
-      (await resolveDeps()).resolveWorkspaceContext(workspaceId),
+    resolveWorkspaceContext: (workspaceId) =>
+      Effect.promise(() => resolveDeps()).pipe(
+        Effect.flatMap((deps) => deps.resolveWorkspaceContext(workspaceId))
+      ),
   });
 
   return new Elysia({ prefix: "/api/cells" })
@@ -636,8 +638,12 @@ export function createCellsRoutes(
             if (cached) {
               return cached;
             }
-            const context = await resolveWorkspaceCtx(workspaceId);
-            const manager = await context.createWorktreeManager();
+            const context = await runServerEffect(
+              resolveWorkspaceCtx(workspaceId)
+            );
+            const manager = await runServerEffect(
+              context.createWorktreeManager()
+            );
             managerCache.set(workspaceId, manager);
             return manager;
           };
@@ -718,9 +724,12 @@ export function createCellsRoutes(
             );
           }
 
-          const workspaceManager = await resolveWorkspaceCtx(cell.workspaceId);
-          const worktreeService =
-            await workspaceManager.createWorktreeManager();
+          const workspaceManager = await runServerEffect(
+            resolveWorkspaceCtx(cell.workspaceId)
+          );
+          const worktreeService = await runServerEffect(
+            workspaceManager.createWorktreeManager()
+          );
           await removeCellWorkspace(worktreeService, cell, log);
 
           await database.delete(cells).where(eq(cells.id, params.id));
@@ -787,7 +796,7 @@ async function handleCellCreationRequest(
     log,
   } = args;
 
-  const hiveConfig = await workspaceContext.loadConfig();
+  const hiveConfig = await runServerEffect(workspaceContext.loadConfig());
   const template = hiveConfig.templates[body.templateId];
   if (!template) {
     return {
@@ -796,7 +805,9 @@ async function handleCellCreationRequest(
     };
   }
 
-  const worktreeService = await workspaceContext.createWorktreeManager();
+  const worktreeService = await runServerEffect(
+    workspaceContext.createWorktreeManager()
+  );
   const context = createProvisionContext({
     body,
     template,
@@ -889,7 +900,9 @@ async function createExistingProvisionContext(args: {
   workspaceContext: WorkspaceRuntimeContext;
   log: LoggerLike;
 }): Promise<ProvisionContext> {
-  const worktreeService = await args.workspaceContext.createWorktreeManager();
+  const worktreeService = await runServerEffect(
+    args.workspaceContext.createWorktreeManager()
+  );
   return {
     body: args.body,
     template: args.template,
@@ -1316,10 +1329,10 @@ export async function resumeSpawningCells(
     }
 
     try {
-      const workspaceContext = await deps.resolveWorkspaceContext(
-        cell.workspaceId
+      const workspaceContext = await runServerEffect(
+        deps.resolveWorkspaceContext(cell.workspaceId)
       );
-      const hiveConfig = await workspaceContext.loadConfig();
+      const hiveConfig = await runServerEffect(workspaceContext.loadConfig());
 
       const template = hiveConfig.templates[cell.templateId];
       if (!template) {
