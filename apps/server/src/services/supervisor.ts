@@ -3,9 +3,12 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { dirname, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+
 import { Context, Effect, Layer } from "effect";
-import { loadHiveConfig } from "../config/context";
-import type { ProcessService, Template } from "../config/schema";
+
+import { HiveConfigService, resolveWorkspaceRoot } from "../config/context";
+import { loadConfig } from "../config/loader";
+import type { HiveConfig, ProcessService, Template } from "../config/schema";
 import { db as defaultDb } from "../db";
 import type { Cell } from "../schema/cells";
 import type { CellService, ServiceStatus } from "../schema/services";
@@ -47,12 +50,14 @@ export class TemplateSetupError extends Error {
   readonly command: string;
   readonly templateId: string;
   readonly workspacePath: string;
+  readonly exitCode?: number;
 
   constructor(params: {
     command: string;
     templateId: string;
     workspacePath: string;
     cause?: unknown;
+    exitCode?: number;
   }) {
     super(
       `Template setup command "${params.command}" failed for template "${params.templateId}"`,
@@ -62,6 +67,23 @@ export class TemplateSetupError extends Error {
     this.command = params.command;
     this.templateId = params.templateId;
     this.workspacePath = params.workspacePath;
+
+    let derivedExitCode: number | undefined;
+    if (typeof params.exitCode === "number") {
+      derivedExitCode = params.exitCode;
+    } else if (params.cause instanceof CommandExecutionError) {
+      derivedExitCode = params.cause.exitCode;
+    } else if (
+      params.cause &&
+      typeof params.cause === "object" &&
+      typeof (params.cause as { exitCode?: unknown }).exitCode === "number"
+    ) {
+      derivedExitCode = (params.cause as { exitCode: number }).exitCode;
+    }
+
+    if (typeof derivedExitCode === "number") {
+      this.exitCode = derivedExitCode;
+    }
   }
 }
 
@@ -125,6 +147,7 @@ export type SupervisorDependencies = {
   runCommand: RunCommand;
   now: () => Date;
   logger: ServiceLogger;
+  loadHiveConfig: (workspaceRoot?: string) => Promise<HiveConfig>;
 };
 
 type ServiceLogger = {
@@ -218,6 +241,10 @@ export function createServiceSupervisor(
   const runCommand =
     overrides.runCommand ?? createDefaultRunCommand(spawnProcess);
   const now = overrides.now ?? (() => new Date());
+  const loadHiveConfig =
+    overrides.loadHiveConfig ??
+    ((workspaceRoot?: string) =>
+      loadConfig(workspaceRoot ?? resolveWorkspaceRoot()));
 
   const activeServices = new Map<string, ActiveServiceHandle>();
   const repository = createServiceRepository(db, now);
@@ -923,27 +950,7 @@ function wrapCommandWithLogging(command: string, logPath: string): string {
   return `set -o pipefail; mkdir -p ${quotedDir} && touch ${quotedPath} && ( ${command} ) 2>&1 | tee -a ${quotedPath}`;
 }
 
-const defaultSupervisor = createServiceSupervisor();
-
-export const bootstrapServiceSupervisor = (): Promise<void> =>
-  defaultSupervisor.bootstrap();
-export const ensureServicesForCell = (
-  cell: Cell,
-  template?: Template
-): Promise<void> => defaultSupervisor.ensureCellServices({ cell, template });
-export const startServiceById = (serviceId: string): Promise<void> =>
-  defaultSupervisor.startCellService(serviceId);
-export const stopServiceById = (
-  serviceId: string,
-  options?: { releasePorts?: boolean }
-): Promise<void> => defaultSupervisor.stopCellService(serviceId, options);
-export const stopServicesForCell = (
-  cellId: string,
-  options?: { releasePorts?: boolean }
-): Promise<void> => defaultSupervisor.stopCellServices(cellId, options);
-export const stopAllServices = (): Promise<void> => defaultSupervisor.stopAll();
-
-type ServiceSupervisorError = {
+export type ServiceSupervisorError = {
   readonly _tag: "ServiceSupervisorError";
   readonly cause: unknown;
 };
@@ -1003,6 +1010,14 @@ export const ServiceSupervisorService =
     "@hive/server/ServiceSupervisorService"
   );
 
-export const ServiceSupervisorLayer = Layer.sync(ServiceSupervisorService, () =>
-  makeEffectSupervisor(defaultSupervisor)
+export const ServiceSupervisorLayer = Layer.effect(
+  ServiceSupervisorService,
+  Effect.gen(function* () {
+    const hiveConfigService = yield* HiveConfigService;
+    const supervisor = createServiceSupervisor({
+      loadHiveConfig: (workspaceRoot?: string) =>
+        Effect.runPromise(hiveConfigService.load(workspaceRoot)),
+    });
+    return makeEffectSupervisor(supervisor);
+  })
 );

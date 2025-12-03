@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { Effect } from "effect";
 import { Elysia } from "elysia";
 import { okAsync } from "neverthrow";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +12,7 @@ import {
 } from "../../routes/cells";
 import { cellProvisioningStates } from "../../schema/cell-provisioning";
 import { cells } from "../../schema/cells";
+import type { ServiceSupervisorError } from "../../services/supervisor";
 import {
   CommandExecutionError,
   TemplateSetupError,
@@ -111,62 +113,71 @@ function createDependencies(
     return okAsync(undefined);
   }
 
-  function createTestWorktreeManager() {
-    return Promise.resolve({
-      createWorktree: createCellWorktree,
-      removeWorktree: removeCellWorktree,
-    });
-  }
-
   const sendAgentMessageImpl =
     options.sendAgentMessage ?? vi.fn<SendAgentMessageFn>().mockResolvedValue();
 
   return {
     db: testDb,
-    resolveWorkspaceContext: async () => ({
-      workspace: workspaceRecord,
-      loadConfig: loadWorkspaceConfig,
-      createWorktreeManager: createTestWorktreeManager,
-      createWorktree: async () => ({
-        path: workspacePath,
-        branch: "cell-branch",
-        baseCommit: "abc123",
+    resolveWorkspaceContext: () =>
+      Effect.succeed({
+        workspace: workspaceRecord,
+        loadConfig: () => Effect.promise(loadWorkspaceConfig),
+        createWorktreeManager: () =>
+          Effect.succeed({
+            createWorktree: createCellWorktree,
+            removeWorktree: removeCellWorktree,
+          }),
+        createWorktree: () =>
+          Effect.succeed({
+            path: workspacePath,
+            branch: "cell-branch",
+            baseCommit: "abc123",
+          }),
+        removeWorktree: () =>
+          Effect.sync(() => {
+            removeWorktreeCalls += 1;
+          }),
       }),
-      removeWorktree: () => {
-        removeWorktreeCalls += 1;
-        return Promise.resolve();
-      },
-    }),
 
     ensureAgentSession: (
       cellId: string,
       overrides?: { modelId?: string; providerId?: string }
-    ) => {
-      const session: AgentSessionRecord = {
-        id: `session-${cellId}`,
-        cellId,
-        templateId,
-        provider: "opencode",
-        status: "awaiting_input",
-        workspacePath,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      options.onEnsureAgentSession?.(cellId, session.id, overrides);
-      return Promise.resolve(session);
-    },
-    closeAgentSession: (_cellId: string) => Promise.resolve(),
-    ensureServicesForCell: (_args?: unknown) =>
+    ) =>
+      Effect.sync(() => {
+        const session: AgentSessionRecord = {
+          id: `session-${cellId}`,
+          cellId,
+          templateId,
+          provider: "opencode",
+          status: "awaiting_input",
+          workspacePath,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        options.onEnsureAgentSession?.(cellId, session.id, overrides);
+        return session;
+      }),
+    closeAgentSession: (_cellId: string) => Effect.void,
+    ensureServicesForCell: (
+      _args: Parameters<CellRouteDependencies["ensureServicesForCell"]>[0]
+    ) =>
       options.setupError
-        ? Promise.reject(options.setupError)
-        : Promise.resolve(),
+        ? Effect.fail({
+            _tag: "ServiceSupervisorError",
+            cause: options.setupError,
+          } as ServiceSupervisorError)
+        : Effect.void,
     stopServicesForCell: (
       _cellId: string,
       _options?: { releasePorts?: boolean }
-    ) => Promise.resolve(),
-    startServiceById: (_serviceId: string) => Promise.resolve(),
-    stopServiceById: (_serviceId: string) => Promise.resolve(),
-    sendAgentMessage: sendAgentMessageImpl,
+    ) => Effect.void,
+    startServiceById: (_serviceId: string) => Effect.void,
+    stopServiceById: (
+      _serviceId: string,
+      _options?: { releasePorts?: boolean }
+    ) => Effect.void,
+    sendAgentMessage: (sessionId, content) =>
+      Effect.promise(() => sendAgentMessageImpl(sessionId, content)),
   } satisfies Partial<CellRouteDependencies>;
 }
 
@@ -224,6 +235,9 @@ describe("POST /api/cells", () => {
     expect(removeWorktreeCalls).toBe(0);
 
     const erroredRow = await waitForCellStatus(payload.id, "error");
+    expect(erroredRow.lastSetupError).toContain(
+      "Template ID: failing-template"
+    );
     expect(erroredRow.lastSetupError).toContain("exit code 42");
 
     const rows = await testDb.select().from(cells);

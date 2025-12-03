@@ -1,10 +1,13 @@
+import { Effect } from "effect";
 import { Elysia } from "elysia";
 import { okAsync } from "neverthrow";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { HiveConfig } from "../../config/schema";
 import { createCellsRoutes } from "../../routes/cells";
 import { cells } from "../../schema/cells";
+import { WorkspaceContextError } from "../../workspaces/context";
 import type { WorkspaceRecord } from "../../workspaces/registry";
+import type { WorktreeManager } from "../../worktree/manager";
 import { setupTestDb, testDb } from "../test-db";
 
 const HTTP_BAD_REQUEST = 400;
@@ -54,8 +57,8 @@ describe("Cell routes workspace enforcement", () => {
       createCellsRoutes({
         db: testDb,
         resolveWorkspaceContext: () =>
-          Promise.reject(
-            new Error(
+          Effect.fail(
+            new WorkspaceContextError(
               "No active workspace. Register and activate a workspace to continue."
             )
           ),
@@ -125,29 +128,32 @@ describe("Cell routes workspace enforcement", () => {
       };
       const resolved = workspaceId ? registry[workspaceId] : primaryWorkspace;
       if (!resolved) {
-        return Promise.reject(
-          new Error(`Workspace '${workspaceId}' not found`)
+        return Effect.fail(
+          new WorkspaceContextError(`Workspace '${workspaceId}' not found`)
         );
       }
 
-      return Promise.resolve({
+      const mockManager: WorktreeManager = {
+        createWorktree: () =>
+          okAsync({
+            path: `${resolved.path}/.hive/cells/new`,
+            branch: "main",
+            baseCommit: "base",
+          }),
+        removeWorktree: () => okAsync(undefined),
+      };
+
+      return Effect.succeed({
         workspace: resolved,
-        loadConfig: () => Promise.resolve(hiveConfig),
-        createWorktreeManager: async () => ({
-          createWorktree: () =>
-            okAsync({
-              path: `${resolved.path}/.hive/cells/new`,
-              branch: "main",
-              baseCommit: "base",
-            }),
-          removeWorktree: () => okAsync(undefined),
-        }),
-        createWorktree: async () => ({
-          path: `${resolved.path}/.hive/cells/new`,
-          branch: "main",
-          baseCommit: "base",
-        }),
-        removeWorktree: () => Promise.resolve(),
+        loadConfig: () => Effect.succeed(hiveConfig),
+        createWorktreeManager: () => Effect.succeed(mockManager),
+        createWorktree: () =>
+          Effect.succeed({
+            path: `${resolved.path}/.hive/cells/new`,
+            branch: "main",
+            baseCommit: "base",
+          }),
+        removeWorktree: () => Effect.void,
       });
     };
 

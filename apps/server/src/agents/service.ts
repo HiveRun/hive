@@ -12,8 +12,8 @@ import {
   type Session,
 } from "@opencode-ai/sdk";
 import { eq } from "drizzle-orm";
-import { Context, Effect, Layer, Runtime } from "effect";
-import { HiveConfigService, loadHiveConfig } from "../config/context";
+import { Context, Effect, Layer } from "effect";
+import { type HiveConfigError, HiveConfigService } from "../config/context";
 import type { HiveConfig, Template } from "../config/schema";
 import { DatabaseService, db } from "../db";
 import { type Cell, cells } from "../schema/cells";
@@ -77,7 +77,9 @@ type ProviderCredentialsStore = Record<string, ProviderAuthEntry>;
 
 type AgentRuntimeDependencies = {
   db: typeof db;
-  loadHiveConfig: (workspaceRoot?: string) => Promise<HiveConfig>;
+  loadHiveConfig: (
+    workspaceRoot?: string
+  ) => Effect.Effect<HiveConfig, HiveConfigError>;
   loadOpencodeConfig: typeof loadOpencodeConfig;
   publishAgentEvent: typeof publishAgentEvent;
 };
@@ -96,14 +98,20 @@ export const resetAgentRuntimeDependencies = () => {
   }
 };
 
-const getAgentRuntimeDependencies = (): AgentRuntimeDependencies => ({
-  db: agentRuntimeOverrides.db ?? db,
-  loadHiveConfig: agentRuntimeOverrides.loadHiveConfig ?? loadHiveConfig,
-  loadOpencodeConfig:
-    agentRuntimeOverrides.loadOpencodeConfig ?? loadOpencodeConfig,
-  publishAgentEvent:
-    agentRuntimeOverrides.publishAgentEvent ?? publishAgentEvent,
-});
+const getAgentRuntimeDependencies = (): AgentRuntimeDependencies => {
+  if (!agentRuntimeOverrides.loadHiveConfig) {
+    throw new Error("Agent runtime loadHiveConfig not configured");
+  }
+
+  return {
+    db: agentRuntimeOverrides.db ?? db,
+    loadHiveConfig: agentRuntimeOverrides.loadHiveConfig,
+    loadOpencodeConfig:
+      agentRuntimeOverrides.loadOpencodeConfig ?? loadOpencodeConfig,
+    publishAgentEvent:
+      agentRuntimeOverrides.publishAgentEvent ?? publishAgentEvent,
+  };
+};
 
 async function readProviderCredentials(): Promise<ProviderCredentialsStore> {
   try {
@@ -437,11 +445,11 @@ export const AgentRuntimeLayer = Layer.effect(
   Effect.gen(function* () {
     const { db: runtimeDb } = yield* DatabaseService;
     const hiveConfigService = yield* HiveConfigService;
-    const runtime = yield* Effect.runtime<never>();
+
     setAgentRuntimeDependencies({
       db: runtimeDb,
       loadHiveConfig: (workspaceRoot?: string) =>
-        Runtime.runPromise(runtime, hiveConfigService.load(workspaceRoot)),
+        hiveConfigService.load(workspaceRoot),
     });
     return makeAgentRuntimeService();
   })
@@ -485,6 +493,12 @@ export async function ensureRuntimeForSession(
   return runtime;
 }
 
+const isEffectValue = (value: unknown): value is Effect.Effect<unknown> =>
+  typeof value === "object" &&
+  value !== null &&
+  "pipe" in (value as Record<string, unknown>) &&
+  typeof (value as { pipe?: unknown }).pipe === "function";
+
 async function ensureRuntimeForCell(
   cellId: string,
   options?: { force?: boolean; modelId?: string; providerId?: string }
@@ -505,7 +519,13 @@ async function ensureRuntimeForCell(
   const workspaceRootPath = cell.workspaceRootPath || cell.workspacePath;
   const deps = getAgentRuntimeDependencies();
 
-  const hiveConfig = await deps.loadHiveConfig(workspaceRootPath);
+  const hiveConfigResult = deps.loadHiveConfig(workspaceRootPath);
+  const hiveConfig = isEffectValue(hiveConfigResult)
+    ? await Effect.runPromise(hiveConfigResult as Effect.Effect<HiveConfig>)
+    : await Effect.runPromise(
+        Effect.promise(() => hiveConfigResult as unknown as Promise<HiveConfig>)
+      );
+
   const template = hiveConfig.templates[cell.templateId];
   if (!template) {
     throw new Error("Cell template configuration not found");

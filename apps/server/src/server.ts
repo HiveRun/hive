@@ -14,6 +14,7 @@ import { logger } from "@bogeychan/elysia-logger";
 
 import { cors } from "@elysiajs/cors";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import { Effect } from "effect";
 import { Elysia } from "elysia";
 import { cleanupOrphanedServers } from "./agents/cleanup";
 import { closeAllAgentSessions } from "./agents/service";
@@ -24,8 +25,9 @@ import { agentsRoutes } from "./routes/agents";
 import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
 import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
-import { runServerEffect, runSupervisorEffect } from "./runtime";
+import { runServerEffect } from "./runtime";
 import { cells } from "./schema/cells";
+import { ServiceSupervisorService } from "./services/supervisor";
 import { safeAsync, safeSync } from "./utils/result";
 import {
   ensureWorkspaceRegisteredEffect,
@@ -256,7 +258,9 @@ const registerSignalHandlers = () => {
   signalsRegistered = true;
 
   const performShutdown = async () => {
-    await runSupervisorEffect((service) => service.stopAll);
+    await runServerEffect(
+      Effect.flatMap(ServiceSupervisorService, (service) => service.stopAll)
+    );
     await closeAllAgentSessions();
     cleanupPidFile();
   };
@@ -354,7 +358,10 @@ const ensureWorkspaceRegistration = async (workspaceRoot: string) => {
 
 const initializeSupervisorSafely = async () => {
   const supervisorResult = await safeAsync(
-    () => runSupervisorEffect((service) => service.bootstrap),
+    () =>
+      runServerEffect(
+        Effect.flatMap(ServiceSupervisorService, (service) => service.bootstrap)
+      ),
     (error) => error
   );
 

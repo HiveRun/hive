@@ -2,15 +2,18 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { createConnection } from "node:net";
 import { resolve as resolvePath } from "node:path";
+
 import { logger } from "@bogeychan/elysia-logger";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { Effect } from "effect";
 import { Elysia, type Static, t } from "elysia";
+import type { AgentRuntimeService } from "../agents/service";
 import { AgentRuntimeServiceTag } from "../agents/service";
-import type { AgentSessionRecord } from "../agents/types";
 import type { Template } from "../config/schema";
-import type { DatabaseService as DatabaseServiceType } from "../db";
-import { DatabaseService } from "../db";
+import {
+  DatabaseService,
+  type DatabaseService as DatabaseServiceType,
+} from "../db";
 import { runServerEffect } from "../runtime";
 import {
   CellDiffResponseSchema,
@@ -33,6 +36,10 @@ import {
   parseDiffRequest,
 } from "../services/diff-route-helpers";
 import { subscribeToServiceEvents } from "../services/events";
+import type {
+  ServiceSupervisorError,
+  ServiceSupervisorService as ServiceSupervisorServiceType,
+} from "../services/supervisor";
 import {
   CommandExecutionError,
   isProcessAlive,
@@ -41,14 +48,15 @@ import {
 } from "../services/supervisor";
 import { safeAsync } from "../utils/result";
 import {
-  resolveWorkspaceContext,
+  type ResolveWorkspaceContext,
+  resolveWorkspaceContextEffect,
   type WorkspaceRuntimeContext,
 } from "../workspaces/context";
 import { createWorkspaceContextPlugin } from "../workspaces/plugin";
 import type { WorkspaceRecord } from "../workspaces/registry";
-import type { WorktreeManager } from "../worktree/manager";
 import {
   describeWorktreeError,
+  type WorktreeManager,
   worktreeErrorToError,
 } from "../worktree/manager";
 
@@ -56,26 +64,14 @@ type DatabaseClient = DatabaseServiceType["db"];
 
 export type CellRouteDependencies = {
   db: DatabaseClient;
-  resolveWorkspaceContext: typeof resolveWorkspaceContext;
-  ensureAgentSession: (
-    cellId: string,
-    options?: { force?: boolean; modelId?: string; providerId?: string }
-  ) => Promise<AgentSessionRecord>;
-  sendAgentMessage: (sessionId: string, content: string) => Promise<void>;
-  closeAgentSession: (cellId: string) => Promise<void>;
-  ensureServicesForCell: (
-    cell: typeof cells.$inferSelect,
-    template?: Template
-  ) => Promise<void>;
-  startServiceById: (serviceId: string) => Promise<void>;
-  stopServiceById: (
-    serviceId: string,
-    options?: { releasePorts?: boolean }
-  ) => Promise<void>;
-  stopServicesForCell: (
-    cellId: string,
-    options?: { releasePorts?: boolean }
-  ) => Promise<void>;
+  resolveWorkspaceContext: ResolveWorkspaceContext;
+  ensureAgentSession: AgentRuntimeService["ensureAgentSession"];
+  sendAgentMessage: AgentRuntimeService["sendAgentMessage"];
+  closeAgentSession: AgentRuntimeService["closeAgentSession"];
+  ensureServicesForCell: ServiceSupervisorServiceType["ensureCellServices"];
+  startServiceById: ServiceSupervisorServiceType["startCellService"];
+  stopServiceById: ServiceSupervisorServiceType["stopCellService"];
+  stopServicesForCell: ServiceSupervisorServiceType["stopCellServices"];
 };
 
 const dependencyKeys: Array<keyof CellRouteDependencies> = [
@@ -98,26 +94,15 @@ const buildDefaultCellDependencies = () =>
 
     return {
       db: database,
-      resolveWorkspaceContext,
-      ensureAgentSession: (cellId, options) =>
-        Effect.runPromise(agentRuntime.ensureAgentSession(cellId, options)),
-      sendAgentMessage: (sessionId, content) =>
-        Effect.runPromise(agentRuntime.sendAgentMessage(sessionId, content)),
-      closeAgentSession: (cellId) =>
-        Effect.runPromise(agentRuntime.closeAgentSession(cellId)),
-      ensureServicesForCell: (cell, template) =>
-        Effect.runPromise(
-          supervisor.ensureCellServices({
-            cell,
-            template,
-          })
-        ),
-      startServiceById: (serviceId) =>
-        Effect.runPromise(supervisor.startCellService(serviceId)),
-      stopServiceById: (serviceId, options) =>
-        Effect.runPromise(supervisor.stopCellService(serviceId, options)),
-      stopServicesForCell: (cellId, options) =>
-        Effect.runPromise(supervisor.stopCellServices(cellId, options)),
+      resolveWorkspaceContext: (workspaceId) =>
+        resolveWorkspaceContextEffect(workspaceId),
+      ensureAgentSession: agentRuntime.ensureAgentSession,
+      sendAgentMessage: agentRuntime.sendAgentMessage,
+      closeAgentSession: agentRuntime.closeAgentSession,
+      ensureServicesForCell: supervisor.ensureCellServices,
+      startServiceById: supervisor.startCellService,
+      stopServiceById: supervisor.stopCellService,
+      stopServicesForCell: supervisor.stopCellServices,
     } satisfies CellRouteDependencies;
   });
 
@@ -245,8 +230,10 @@ export function createCellsRoutes(
   })();
 
   const workspaceContextPlugin = createWorkspaceContextPlugin({
-    resolveWorkspaceContext: async (workspaceId?: string) =>
-      (await resolveDeps()).resolveWorkspaceContext(workspaceId),
+    resolveWorkspaceContext: (workspaceId) =>
+      Effect.promise(() => resolveDeps()).pipe(
+        Effect.flatMap((deps) => deps.resolveWorkspaceContext(workspaceId))
+      ),
   });
 
   return new Elysia({ prefix: "/api/cells" })
@@ -490,7 +477,7 @@ export function createCellsRoutes(
           return { message: "Service not found" } satisfies { message: string };
         }
 
-        await startService(params.serviceId);
+        await runServerEffect(startService(params.serviceId));
         const updated = await fetchServiceRow(
           database,
           params.id,
@@ -528,7 +515,7 @@ export function createCellsRoutes(
           return { message: "Service not found" } satisfies { message: string };
         }
 
-        await stopService(params.serviceId);
+        await runServerEffect(stopService(params.serviceId));
         const updated = await fetchServiceRow(
           database,
           params.id,
@@ -564,20 +551,16 @@ export function createCellsRoutes(
           } = deps;
 
           const workspaceContext = await getWorkspaceContext(body.workspaceId);
-          const result = await runServerEffect(
-            Effect.tryPromise(() =>
-              handleCellCreationRequest({
-                body,
-                database,
-                ensureSession,
-                sendAgentMessage: sendMessage,
-                ensureServices,
-                stopCellServices: stopCellServicesFn,
-                workspaceContext,
-                log,
-              })
-            )
-          );
+          const result = await handleCellCreationRequest({
+            body,
+            database,
+            ensureSession,
+            sendAgentMessage: sendMessage,
+            ensureServices,
+            stopCellServices: stopCellServicesFn,
+            workspaceContext,
+            log,
+          });
 
           set.status = result.status;
           return result.payload;
@@ -634,18 +617,24 @@ export function createCellsRoutes(
             if (cached) {
               return cached;
             }
-            const context = await resolveWorkspaceCtx(workspaceId);
-            const manager = await context.createWorktreeManager();
+            const context = await runServerEffect(
+              resolveWorkspaceCtx(workspaceId)
+            );
+            const manager = await runServerEffect(
+              context.createWorktreeManager()
+            );
             managerCache.set(workspaceId, manager);
             return manager;
           };
 
           for (const cell of cellsToDelete) {
-            await closeSession(cell.id);
+            await runServerEffect(closeSession(cell.id));
             try {
-              await stopCellServicesFn(cell.id, {
-                releasePorts: true,
-              });
+              await runServerEffect(
+                stopCellServicesFn(cell.id, {
+                  releasePorts: true,
+                })
+              );
             } catch (error) {
               log.warn(
                 { error, cellId: cell.id },
@@ -706,9 +695,11 @@ export function createCellsRoutes(
             return { message: "Cell not found" };
           }
 
-          await closeSession(params.id);
+          await runServerEffect(closeSession(params.id));
           try {
-            await stopCellServicesFn(params.id, { releasePorts: true });
+            await runServerEffect(
+              stopCellServicesFn(params.id, { releasePorts: true })
+            );
           } catch (error) {
             log.warn(
               { error, cellId: params.id },
@@ -716,9 +707,12 @@ export function createCellsRoutes(
             );
           }
 
-          const workspaceManager = await resolveWorkspaceCtx(cell.workspaceId);
-          const worktreeService =
-            await workspaceManager.createWorktreeManager();
+          const workspaceManager = await runServerEffect(
+            resolveWorkspaceCtx(cell.workspaceId)
+          );
+          const worktreeService = await runServerEffect(
+            workspaceManager.createWorktreeManager()
+          );
           await removeCellWorkspace(worktreeService, cell, log);
 
           await database.delete(cells).where(eq(cells.id, params.id));
@@ -785,7 +779,7 @@ async function handleCellCreationRequest(
     log,
   } = args;
 
-  const hiveConfig = await workspaceContext.loadConfig();
+  const hiveConfig = await runServerEffect(workspaceContext.loadConfig());
   const template = hiveConfig.templates[body.templateId];
   if (!template) {
     return {
@@ -794,7 +788,9 @@ async function handleCellCreationRequest(
     };
   }
 
-  const worktreeService = await workspaceContext.createWorktreeManager();
+  const worktreeService = await runServerEffect(
+    workspaceContext.createWorktreeManager()
+  );
   const context = createProvisionContext({
     body,
     template,
@@ -887,7 +883,9 @@ async function createExistingProvisionContext(args: {
   workspaceContext: WorkspaceRuntimeContext;
   log: LoggerLike;
 }): Promise<ProvisionContext> {
-  const worktreeService = await args.workspaceContext.createWorktreeManager();
+  const worktreeService = await runServerEffect(
+    args.workspaceContext.createWorktreeManager()
+  );
   return {
     body: args.body,
     template: args.template,
@@ -1045,17 +1043,24 @@ async function finalizeCellProvisioning(
     ...(body.modelId ? { modelId: body.modelId } : {}),
     ...(body.providerId ? { providerId: body.providerId } : {}),
   };
-  const session = await ensureSession(
-    state.cellId,
-    Object.keys(sessionOptions).length ? sessionOptions : undefined
+  const session = await runServerEffect(
+    ensureSession(
+      state.cellId,
+      Object.keys(sessionOptions).length ? sessionOptions : undefined
+    )
   );
-  await ensureServices(state.createdCell, template);
+  await runServerEffect(
+    ensureServices({
+      cell: state.createdCell,
+      template,
+    })
+  );
 
   state.servicesStarted = true;
 
   const initialPrompt = body.description?.trim();
   if (initialPrompt) {
-    await dispatchAgentMessage(session.id, initialPrompt);
+    await runServerEffect(dispatchAgentMessage(session.id, initialPrompt));
   }
 
   const finishedAt = await updateCellProvisioningStatus(
@@ -1194,9 +1199,11 @@ async function stopServicesIfStarted(context: ProvisionContext) {
   }
 
   try {
-    await context.stopCellServices(context.state.cellId, {
-      releasePorts: true,
-    });
+    await runServerEffect(
+      context.stopCellServices(context.state.cellId, {
+        releasePorts: true,
+      })
+    );
   } catch (cleanupError) {
     context.log.warn(
       { cleanupError },
@@ -1314,10 +1321,11 @@ export async function resumeSpawningCells(
     }
 
     try {
-      const workspaceContext = await deps.resolveWorkspaceContext(
-        cell.workspaceId
+      const workspaceContext = await runServerEffect(
+        deps.resolveWorkspaceContext(cell.workspaceId)
       );
-      const hiveConfig = await workspaceContext.loadConfig();
+      const hiveConfig = await runServerEffect(workspaceContext.loadConfig());
+
       const template = hiveConfig.templates[cell.templateId];
       if (!template) {
         await updateCellProvisioningStatus(
@@ -1357,10 +1365,111 @@ export async function resumeSpawningCells(
   }
 }
 
+const isServiceSupervisorError = (
+  error: unknown
+): error is ServiceSupervisorError =>
+  typeof error === "object" &&
+  error !== null &&
+  (error as { _tag?: string })._tag === "ServiceSupervisorError";
+
+const unwrapSupervisorError = (error: unknown): unknown => {
+  if (isServiceSupervisorError(error)) {
+    return error.cause;
+  }
+
+  if (error instanceof Error) {
+    try {
+      const parsed = JSON.parse(error.message);
+      if (isServiceSupervisorError(parsed)) {
+        return parsed.cause;
+      }
+    } catch {
+      // no-op
+    }
+  }
+
+  return error;
+};
+
+const reviveTemplateSetupError = (
+  error: unknown
+): TemplateSetupError | null => {
+  if (error instanceof TemplateSetupError) {
+    return error;
+  }
+
+  if (
+    error &&
+    typeof error === "object" &&
+    (error as { name?: string }).name === "TemplateSetupError" &&
+    typeof (error as { command?: unknown }).command === "string" &&
+    typeof (error as { templateId?: unknown }).templateId === "string" &&
+    typeof (error as { workspacePath?: unknown }).workspacePath === "string"
+  ) {
+    const templateLike = error as {
+      command: string;
+      templateId: string;
+      workspacePath: string;
+      cause?: unknown;
+      exitCode?: number;
+    };
+
+    return new TemplateSetupError({
+      command: templateLike.command,
+      templateId: templateLike.templateId,
+      workspacePath: templateLike.workspacePath,
+      cause: templateLike.cause,
+      exitCode:
+        typeof templateLike.exitCode === "number"
+          ? templateLike.exitCode
+          : undefined,
+    });
+  }
+
+  return null;
+};
+
+const reviveCommandExecutionError = (
+  error: unknown
+): CommandExecutionError | null => {
+  if (error instanceof CommandExecutionError) {
+    return error;
+  }
+
+  if (
+    error &&
+    typeof error === "object" &&
+    (error as { name?: string }).name === "CommandExecutionError" &&
+    typeof (error as { command?: unknown }).command === "string" &&
+    typeof (error as { cwd?: unknown }).cwd === "string" &&
+    typeof (error as { exitCode?: unknown }).exitCode === "number"
+  ) {
+    const commandLike = error as {
+      command: string;
+      cwd: string;
+      exitCode: number;
+    };
+
+    return new CommandExecutionError(commandLike);
+  }
+
+  return null;
+};
+
+const normalizeFailureError = (error: unknown): unknown => {
+  const unwrapped = unwrapSupervisorError(error);
+  return (
+    reviveTemplateSetupError(unwrapped) ??
+    reviveCommandExecutionError(unwrapped) ??
+    unwrapped
+  );
+};
+
 function shouldPreserveCellWorkspace(
   error: unknown
 ): error is TemplateSetupError {
-  return error instanceof TemplateSetupError;
+  const underlying = normalizeFailureError(error);
+  return underlying instanceof TemplateSetupError;
 }
 
 function deriveSetupErrorDetails(payload: ErrorPayload): string {
@@ -1391,50 +1500,95 @@ async function updateCellProvisioningStatus(
   return finishedAt;
 }
 
+const buildTemplateSetupErrorPayload = (
+  error: unknown
+): ErrorPayload | null => {
+  if (!(error instanceof TemplateSetupError)) {
+    return null;
+  }
+
+  const details = [
+    `Template ID: ${error.templateId}`,
+    `Workspace: ${error.workspacePath}`,
+    `Command: ${error.command}`,
+  ];
+
+  let exitCode: number | undefined;
+  if (typeof error.exitCode === "number") {
+    exitCode = error.exitCode;
+  } else {
+    const causeError = unwrapSupervisorError(error.cause);
+    const nestedCommandError = reviveCommandExecutionError(causeError);
+    if (nestedCommandError) {
+      exitCode = nestedCommandError.exitCode;
+    } else if (
+      causeError &&
+      typeof causeError === "object" &&
+      typeof (causeError as { exitCode?: unknown }).exitCode === "number"
+    ) {
+      exitCode = (causeError as { exitCode: number }).exitCode;
+    }
+  }
+
+  if (typeof exitCode === "number") {
+    details.push(`exit code ${exitCode}`);
+  }
+
+  const stack = formatStackTrace(error);
+  const causeStack = formatStackTrace(
+    error.cause instanceof Error ? error.cause : undefined
+  );
+
+  if (stack) {
+    details.push("", stack);
+  }
+
+  if (causeStack && causeStack !== stack) {
+    details.push("", `Caused by:\n${causeStack}`);
+  }
+
+  return { message: error.message, details: details.join("\n") };
+};
+
+const buildCommandExecutionErrorPayload = (
+  error: unknown
+): ErrorPayload | null => {
+  if (!(error instanceof CommandExecutionError)) {
+    return null;
+  }
+
+  const details = [
+    `Command: ${error.command}`,
+    `cwd: ${error.cwd}`,
+    `Exit code: ${error.exitCode}`,
+  ];
+
+  const stack = formatStackTrace(error);
+  if (stack) {
+    details.push("", stack);
+  }
+
+  return { message: error.message, details: details.join("\n") };
+};
+
 function buildCellCreationErrorPayload(error: unknown): ErrorPayload {
-  if (error instanceof TemplateSetupError) {
-    const details = [
-      `Template ID: ${error.templateId}`,
-      `Workspace: ${error.workspacePath}`,
-      `Command: ${error.command}`,
-    ];
+  const underlyingError = normalizeFailureError(error);
 
-    const stack = formatStackTrace(error);
-    const causeStack = formatStackTrace(
-      error.cause instanceof Error ? error.cause : undefined
-    );
-
-    if (stack) {
-      details.push("", stack);
-    }
-
-    if (causeStack && causeStack !== stack) {
-      details.push("", `Caused by:\n${causeStack}`);
-    }
-
-    return { message: error.message, details: details.join("\n") };
+  const templatePayload = buildTemplateSetupErrorPayload(underlyingError);
+  if (templatePayload) {
+    return templatePayload;
   }
 
-  if (error instanceof CommandExecutionError) {
-    const details = [
-      `Command: ${error.command}`,
-      `cwd: ${error.cwd}`,
-      `Exit code: ${error.exitCode}`,
-    ];
-
-    const stack = formatStackTrace(error);
-    if (stack) {
-      details.push("", stack);
-    }
-
-    return { message: error.message, details: details.join("\n") };
+  const commandPayload = buildCommandExecutionErrorPayload(underlyingError);
+  if (commandPayload) {
+    return commandPayload;
   }
 
-  if (error instanceof Error) {
-    const stack = formatStackTrace(error);
+  if (underlyingError instanceof Error) {
+    const stack = formatStackTrace(underlyingError);
     return stack
-      ? { message: error.message, details: stack }
-      : { message: error.message };
+      ? { message: underlyingError.message, details: stack }
+      : { message: underlyingError.message };
   }
 
   return { message: "Failed to create cell" };

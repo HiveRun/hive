@@ -1,10 +1,10 @@
 import { Elysia } from "elysia";
 import { runServerEffect } from "../runtime";
-import {
-  type resolveWorkspaceContext as defaultResolveWorkspaceContext,
-  resolveWorkspaceContextEffect,
-  type WorkspaceRuntimeContext,
+import type {
+  ResolveWorkspaceContext,
+  WorkspaceRuntimeContext,
 } from "./context";
+import { resolveWorkspaceContextEffect } from "./context";
 
 const HTTP_STATUS = {
   BAD_REQUEST: 400,
@@ -38,16 +38,15 @@ export type WorkspaceContextFetcher = (
 export function createWorkspaceContextPlugin({
   resolveWorkspaceContext,
 }: {
-  resolveWorkspaceContext?: typeof defaultResolveWorkspaceContext;
+  resolveWorkspaceContext?: ResolveWorkspaceContext;
 } = {}) {
   const resolveContext =
     resolveWorkspaceContext ??
-    ((workspaceId?: string) =>
-      runServerEffect(resolveWorkspaceContextEffect(workspaceId)));
+    ((workspaceId?: string) => resolveWorkspaceContextEffect(workspaceId));
 
   return new Elysia({ name: "workspace-context" })
     .derive(({ body, query, params, request }) => {
-      let cachedPromise: Promise<WorkspaceRuntimeContext> | null = null;
+      let cachedPromise: Promise<WorkspaceRuntimeContext> | undefined;
       let cachedFor: string | undefined | null = null;
 
       const inferWorkspaceId = (explicit?: string) => {
@@ -71,13 +70,21 @@ export function createWorkspaceContextPlugin({
         const resolvedId = inferWorkspaceId(workspaceId);
         if (!cachedPromise || cachedFor !== resolvedId) {
           cachedFor = resolvedId ?? null;
-          cachedPromise = resolveContext(resolvedId).catch((error) => {
-            const message =
-              error instanceof Error
-                ? error.message
-                : "Failed to resolve workspace context";
-            throw new WorkspaceContextResolutionError(message);
-          });
+          cachedPromise = runServerEffect(resolveContext(resolvedId)).catch(
+            (error: unknown) => {
+              const message =
+                error instanceof Error
+                  ? error.message
+                  : "Failed to resolve workspace context";
+              throw new WorkspaceContextResolutionError(message);
+            }
+          );
+        }
+
+        if (!cachedPromise) {
+          throw new WorkspaceContextResolutionError(
+            "Failed to resolve workspace context"
+          );
         }
 
         return cachedPromise;
