@@ -3,9 +3,12 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { dirname, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+
 import { Context, Effect, Layer } from "effect";
-import { loadHiveConfigPromise } from "../config/context";
-import type { ProcessService, Template } from "../config/schema";
+
+import { HiveConfigService, resolveWorkspaceRoot } from "../config/context";
+import { loadConfig } from "../config/loader";
+import type { HiveConfig, ProcessService, Template } from "../config/schema";
 import { db as defaultDb } from "../db";
 import type { Cell } from "../schema/cells";
 import type { CellService, ServiceStatus } from "../schema/services";
@@ -125,6 +128,7 @@ export type SupervisorDependencies = {
   runCommand: RunCommand;
   now: () => Date;
   logger: ServiceLogger;
+  loadHiveConfig: (workspaceRoot?: string) => Promise<HiveConfig>;
 };
 
 type ServiceLogger = {
@@ -218,6 +222,10 @@ export function createServiceSupervisor(
   const runCommand =
     overrides.runCommand ?? createDefaultRunCommand(spawnProcess);
   const now = overrides.now ?? (() => new Date());
+  const loadHiveConfig =
+    overrides.loadHiveConfig ??
+    ((workspaceRoot?: string) =>
+      loadConfig(workspaceRoot ?? resolveWorkspaceRoot()));
 
   const activeServices = new Map<string, ActiveServiceHandle>();
   const repository = createServiceRepository(db, now);
@@ -692,7 +700,7 @@ export function createServiceSupervisor(
       templateCache.set(key, workspaceTemplates);
     }
     if (!workspaceTemplates.has(templateId)) {
-      const config = await loadHiveConfigPromise(workspaceRootPath);
+      const config = await loadHiveConfig(workspaceRootPath);
       workspaceTemplates.set(templateId, config.templates[templateId]);
     }
     return workspaceTemplates.get(templateId);
@@ -923,9 +931,7 @@ function wrapCommandWithLogging(command: string, logPath: string): string {
   return `set -o pipefail; mkdir -p ${quotedDir} && touch ${quotedPath} && ( ${command} ) 2>&1 | tee -a ${quotedPath}`;
 }
 
-const defaultSupervisor = createServiceSupervisor();
-
-type ServiceSupervisorError = {
+export type ServiceSupervisorError = {
   readonly _tag: "ServiceSupervisorError";
   readonly cause: unknown;
 };
@@ -985,6 +991,14 @@ export const ServiceSupervisorService =
     "@hive/server/ServiceSupervisorService"
   );
 
-export const ServiceSupervisorLayer = Layer.sync(ServiceSupervisorService, () =>
-  makeEffectSupervisor(defaultSupervisor)
+export const ServiceSupervisorLayer = Layer.effect(
+  ServiceSupervisorService,
+  Effect.gen(function* () {
+    const hiveConfigService = yield* HiveConfigService;
+    const supervisor = createServiceSupervisor({
+      loadHiveConfig: (workspaceRoot?: string) =>
+        Effect.runPromise(hiveConfigService.load(workspaceRoot)),
+    });
+    return makeEffectSupervisor(supervisor);
+  })
 );

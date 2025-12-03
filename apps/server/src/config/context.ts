@@ -179,18 +179,9 @@ export const loadHiveConfig = (
 ): Effect.Effect<HiveConfig, HiveConfigError> =>
   Effect.provide(HiveConfigLayer)(loadHiveConfigEffect(workspaceRoot));
 
-export const loadHiveConfigPromise = (
-  workspaceRoot?: string
-): Promise<HiveConfig> => Effect.runPromise(loadHiveConfig(workspaceRoot));
-
 export const loadWorkspaceHiveConfig = (
   workspaceId?: string
 ): Effect.Effect<HiveConfig, HiveConfigResolutionError> =>
   Effect.provide(Layer.mergeAll(HiveConfigLayer, WorkspaceRegistryLayer))(
     loadWorkspaceHiveConfigEffect(workspaceId)
   );
-
-export const loadWorkspaceHiveConfigPromise = (
-  workspaceId?: string
-): Promise<HiveConfig> =>
-  Effect.runPromise(loadWorkspaceHiveConfig(workspaceId));

@@ -4,6 +4,7 @@ import type { OpencodeClient } from "@opencode-ai/sdk";
 // biome-ignore lint/performance/noNamespaceImport: tests need namespace import for spies
 import * as OpencodeSdk from "@opencode-ai/sdk";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import { Effect } from "effect";
 import {
   afterEach,
   beforeAll,
@@ -83,10 +84,6 @@ describe("agent model selection", () => {
 
   beforeEach(async () => {
     vi.restoreAllMocks();
-    await closeAllAgentSessions();
-    await db.delete(cells);
-    sessionMessagesMock.mockReset();
-    sessionMessagesMock.mockResolvedValue({ data: [] });
 
     clientStub = buildClientStub();
     vi.spyOn(OpencodeSdk, "createOpencodeClient").mockReturnValue(
@@ -96,7 +93,8 @@ describe("agent model selection", () => {
       url: "http://127.0.0.1:0",
       close: vi.fn(),
     });
-    loadHiveConfigMock = vi.fn().mockResolvedValue(mockHiveConfig);
+
+    loadHiveConfigMock = vi.fn(() => Effect.succeed(mockHiveConfig));
     loadOpencodeConfigSpy = vi
       .spyOn(OpencodeConfig, "loadOpencodeConfig")
       .mockResolvedValue({
@@ -108,6 +106,11 @@ describe("agent model selection", () => {
       loadHiveConfig: loadHiveConfigMock,
       loadOpencodeConfig: loadOpencodeConfigSpy,
     });
+
+    await closeAllAgentSessions();
+    await db.delete(cells);
+    sessionMessagesMock.mockReset();
+    sessionMessagesMock.mockResolvedValue({ data: [] });
 
     await db.insert(cells).values({
       id: cellId,
