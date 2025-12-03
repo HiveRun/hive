@@ -46,6 +46,7 @@ const makeErr = <T, E>(error: E): ErrResult<T, E> => ({
   },
   unwrapOr: (fallback: T) => fallback,
 });
+
 export const ok = <T, E = never>(value: T): Result<T, E> => makeOk<T>(value);
 
 export const err = <T = never, E = Error>(error: E): Result<T, E> =>
