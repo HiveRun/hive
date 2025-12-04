@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { existsSync, rmSync, statSync } from "node:fs";
+import { createServer } from "node:net";
 import {
   basename,
   dirname,
@@ -69,6 +70,18 @@ const LEADING_SLASH_REGEX = /^\/+/,
 
 const sanitizeAssetPath = (pathname: string) =>
   pathname.replace(LEADING_SLASH_REGEX, "").replace(DOT_SEQUENCE_REGEX, "");
+
+const ensurePortAvailable = (port: number, hostname: string) =>
+  new Promise<void>((resolvePromise, reject) => {
+    const tester = createServer();
+    tester.once("error", (error) => {
+      tester.close();
+      reject(error);
+    });
+    tester.listen(port, hostname, () => {
+      tester.close(() => resolvePromise());
+    });
+  });
 
 const resolvePathWithin = (root: string, target: string) => {
   const absolute = resolve(root, target);
@@ -400,14 +413,26 @@ export const startServer = async () => {
   await initializeSupervisorSafely();
   await resumeProvisioningSafely();
 
+  try {
+    await ensurePortAvailable(PORT, "127.0.0.1");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(
+      `Port ${PORT} on 127.0.0.1 is unavailable: ${message}. Is another process using this port?\n`
+    );
+    cleanupPidFile();
+    process.exit(1);
+  }
+
   registerSignalHandlers();
 
   try {
     app.listen({
       port: PORT,
-      hostname: "0.0.0.0",
+      hostname: "127.0.0.1",
       reusePort: false,
     });
+    process.stderr.write(`API listening on http://localhost:${PORT}\n`);
   } catch (error) {
     const message =
       error instanceof Error ? error.message : JSON.stringify(error);
@@ -417,23 +442,6 @@ export const startServer = async () => {
     cleanupPidFile();
     process.exit(1);
   }
-
-  const actualPort = app.server?.port;
-  if (!actualPort) {
-    process.stderr.write("Server failed to report listening port. Exiting.\n");
-    cleanupPidFile();
-    process.exit(1);
-  }
-
-  if (actualPort !== PORT) {
-    process.stderr.write(
-      `Requested port ${PORT} but server bound ${actualPort}. Refusing to continue.\n`
-    );
-    cleanupPidFile();
-    process.exit(1);
-  }
-
-  process.stderr.write(`API listening on http://localhost:${PORT}\n`);
 
   return app;
 };
