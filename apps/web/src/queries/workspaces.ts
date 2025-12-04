@@ -69,11 +69,8 @@ export const workspaceQueries = {
           formatRpcResponseError(data, "Failed to load workspaces")
         );
       }
-      if (!data || typeof data !== "object") {
-        throw new Error("Invalid workspace response");
-      }
 
-      const { workspaces, activeWorkspaceId } = data as {
+      const { workspaces, activeWorkspaceId } = (data ?? {}) as {
         workspaces?: unknown;
         activeWorkspaceId?: unknown;
       };
