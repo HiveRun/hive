@@ -171,6 +171,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - [/] Model picker surfaces the full `/api/models` catalog (grouped by provider defaults)
 - [x] Cell creation form includes the shared model picker to choose the initial agent provider/model
 - [/] Agent operates within cell worktree
+- [x] [HIVE-2] Use single shared OpenCode server per Hive instance so cells reuse sessions instead of spawning servers
 - [x] Cell description auto-sent as first prompt on creation
 - [/] End-to-end test: UI → agent session → real responses
 

@@ -1,15 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import {
-  type AssistantMessage,
-  createOpencodeClient,
-  createOpencodeServer,
-  type Event,
-  type Message,
-  type Part,
-  type ServerOptions,
-  type Session,
+import type {
+  AssistantMessage,
+  Event,
+  Message,
+  OpencodeClient,
+  Part,
+  Session,
 } from "@opencode-ai/sdk";
 import { eq } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
@@ -19,6 +17,7 @@ import { DatabaseService, db } from "../db";
 import { type Cell, cells } from "../schema/cells";
 import { publishAgentEvent } from "./events";
 import { loadOpencodeConfig } from "./opencode-config";
+import { acquireSharedOpencodeClient } from "./opencode-server";
 import type {
   AgentMessageRecord,
   AgentMessageState,
@@ -34,16 +33,13 @@ type DirectoryQuery = {
   directory?: string;
 };
 
-type OpencodeServerConfig = NonNullable<ServerOptions["config"]>;
-
 type RuntimeHandle = {
   session: Session;
   cell: Cell;
   providerId: string;
   modelId?: string;
   directoryQuery: DirectoryQuery;
-  client: ReturnType<typeof createOpencodeClient>;
-  server: { close(): void };
+  client: OpencodeClient;
   abortController: AbortController;
   status: AgentSessionStatus;
   pendingInterrupt: boolean;
@@ -63,9 +59,7 @@ export type ProviderEntry = {
 };
 
 type ProviderCatalogResponse = NonNullable<
-  Awaited<
-    ReturnType<ReturnType<typeof createOpencodeClient>["config"]["providers"]>
-  >["data"]
+  Awaited<ReturnType<OpencodeClient["config"]["providers"]>>["data"]
 >;
 
 type ProviderAuthEntry = {
@@ -82,6 +76,7 @@ type AgentRuntimeDependencies = {
   ) => Effect.Effect<HiveConfig, HiveConfigError>;
   loadOpencodeConfig: typeof loadOpencodeConfig;
   publishAgentEvent: typeof publishAgentEvent;
+  acquireOpencodeClient: () => Promise<OpencodeClient>;
 };
 
 const agentRuntimeOverrides: Partial<AgentRuntimeDependencies> = {};
@@ -110,6 +105,9 @@ const getAgentRuntimeDependencies = (): AgentRuntimeDependencies => {
       agentRuntimeOverrides.loadOpencodeConfig ?? loadOpencodeConfig,
     publishAgentEvent:
       agentRuntimeOverrides.publishAgentEvent ?? publishAgentEvent,
+    acquireOpencodeClient:
+      agentRuntimeOverrides.acquireOpencodeClient ??
+      acquireSharedOpencodeClient,
   };
 };
 
@@ -559,9 +557,7 @@ async function ensureRuntimeForCell(
     providerId: requestedProviderId,
     modelId: requestedModelId,
     force: options?.force ?? false,
-    opencodeConfig: mergedConfig.config,
-    opencodeConfigSource: mergedConfig.source,
-    opencodeConfigDetails: mergedConfig.details,
+    deps,
   });
 
   if (!options?.modelId) {
@@ -583,35 +579,23 @@ async function ensureRuntimeForCell(
 }
 
 export async function fetchProviderCatalogForWorkspace(
-  workspaceRootPath: string
+  _workspaceRootPath: string
 ): Promise<ProviderCatalogResponse> {
-  const { loadOpencodeConfig: loadConfig } = getAgentRuntimeDependencies();
-  const mergedConfig = await loadConfig(workspaceRootPath);
-  const server = await createOpencodeServer({
-    hostname: "127.0.0.1",
-    port: 0,
-    config: mergedConfig.config,
-  });
+  const { acquireOpencodeClient: acquireClient } =
+    getAgentRuntimeDependencies();
+  const client = await acquireClient();
+  const response = await client.config.providers();
 
-  try {
-    const client = createOpencodeClient({
-      baseUrl: server.url,
-    });
-    const response = await client.config.providers();
-
-    if (response.error || !response.data) {
-      throw new Error(
-        getRpcErrorMessage(
-          response.error,
-          "Failed to fetch provider catalog from OpenCode"
-        )
-      );
-    }
-
-    return response.data;
-  } finally {
-    await server.close();
+  if (response.error || !response.data) {
+    throw new Error(
+      getRpcErrorMessage(
+        response.error,
+        "Failed to fetch provider catalog from OpenCode"
+      )
+    );
   }
+
+  return response.data;
 }
 
 type StartRuntimeArgs = {
@@ -619,9 +603,7 @@ type StartRuntimeArgs = {
   providerId: string;
   modelId?: string;
   force: boolean;
-  opencodeConfig?: OpencodeServerConfig;
-  opencodeConfigSource?: "cli" | "workspace" | "default";
-  opencodeConfigDetails?: string;
+  deps: AgentRuntimeDependencies;
 };
 
 async function startOpencodeRuntime({
@@ -629,39 +611,9 @@ async function startOpencodeRuntime({
   providerId,
   modelId,
   force,
-  opencodeConfig,
-  opencodeConfigSource,
-  opencodeConfigDetails,
+  deps,
 }: StartRuntimeArgs): Promise<RuntimeHandle> {
-  const sourceLabel = opencodeConfigSource ?? "default";
-  const detailSuffix = opencodeConfigDetails
-    ? ` (${opencodeConfigDetails})`
-    : "";
-  // biome-ignore lint/suspicious/noConsole: temporary visibility until structured logging is wired up
-  console.info(
-    `[opencode] Resolved config source '${sourceLabel}${detailSuffix}' for cell ${cell.id}`
-  );
-
-  if (opencodeConfig && typeof opencodeConfig === "object") {
-    const providerKeys = Object.keys(opencodeConfig.provider ?? {});
-    if (providerKeys.length > 0) {
-      // biome-ignore lint/suspicious/noConsole: temporary visibility until structured logging is wired up
-      console.info(
-        `[opencode] Providers available for cell ${cell.id}: ${providerKeys.join(", ")}`
-      );
-    }
-  }
-
-  const server = await createOpencodeServer({
-    hostname: "127.0.0.1",
-    port: 0,
-    config: opencodeConfig,
-  });
-
-  const client = createOpencodeClient({
-    baseUrl: server.url,
-  });
-
+  const client = await deps.acquireOpencodeClient();
   const directoryQuery: DirectoryQuery = { directory: cell.workspacePath };
   const { session, created } = await resolveOpencodeSession({
     client,
@@ -688,7 +640,6 @@ async function startOpencodeRuntime({
     modelId,
     directoryQuery,
     client,
-    server,
     abortController,
     status: "awaiting_input",
     pendingInterrupt: false,
@@ -729,10 +680,10 @@ async function startOpencodeRuntime({
 
       runtime.pendingInterrupt = false;
     },
-    async stop() {
+    stop() {
       abortController.abort();
-      await server.close();
       setRuntimeStatus(runtime, "completed");
+      return Promise.resolve();
     },
   };
 
@@ -749,7 +700,7 @@ async function startOpencodeRuntime({
 }
 
 type ResolveSessionArgs = {
-  client: ReturnType<typeof createOpencodeClient>;
+  client: OpencodeClient;
   cell: Cell;
   directoryQuery: DirectoryQuery;
   force: boolean;
@@ -789,7 +740,7 @@ async function resolveOpencodeSession({
 }
 
 async function getRemoteSession(
-  client: ReturnType<typeof createOpencodeClient>,
+  client: OpencodeClient,
   directoryQuery: DirectoryQuery,
   sessionId: string
 ): Promise<Session | null> {
@@ -812,7 +763,7 @@ async function startEventStream({
   abortController,
 }: {
   runtime: RuntimeHandle;
-  client: ReturnType<typeof createOpencodeClient>;
+  client: OpencodeClient;
   directoryQuery: DirectoryQuery;
   abortController: AbortController;
 }) {
