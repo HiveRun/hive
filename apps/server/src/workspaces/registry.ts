@@ -139,6 +139,8 @@ async function readRegistryFile(): Promise<RegistryFile> {
       };
     }
 
+    // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
+    console.error("registry:read:error", { error });
     throw new Error(
       `Failed to read workspace registry: ${error instanceof Error ? error.message : String(error)}`
     );
@@ -223,12 +225,23 @@ export async function getWorkspaceRegistry(): Promise<WorkspaceRegistry> {
     registry.activeWorkspaceId ?? workspaces[0]?.id ?? null;
 
   if (!registry.activeWorkspaceId && activeWorkspaceId) {
+    // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
+    console.warn("registry:auto-activate", {
+      chosen: activeWorkspaceId,
+      workspaceCount: workspaces.length,
+    });
     await writeRegistryFile({
       version: REGISTRY_VERSION,
       workspaces,
       activeWorkspaceId,
     });
   }
+
+  // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
+  console.debug("registry:get", {
+    workspaceCount: workspaces.length,
+    activeWorkspaceId,
+  });
 
   return {
     workspaces,
