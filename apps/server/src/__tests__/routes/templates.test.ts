@@ -1,6 +1,5 @@
 import { Effect } from "effect";
 import { Elysia } from "elysia";
-import { okAsync } from "neverthrow";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 // biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
 import * as OpencodeConfig from "../../agents/opencode-config";
@@ -13,6 +12,7 @@ import type { HiveConfig } from "../../config/schema";
 import { templatesRoutes } from "../../routes/templates";
 // biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
 import * as Runtime from "../../runtime";
+import { okAsync } from "../../utils/result";
 import type { WorkspaceRuntimeContext } from "../../workspaces/context";
 // biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
 import * as WorkspaceContext from "../../workspaces/context";
@@ -87,7 +87,7 @@ const createWorkspaceContext = (
         branch: "main",
         baseCommit: "abc",
       }),
-    removeWorktree: () => okAsync(undefined),
+    removeWorktree: () => okAsync(),
   };
 
   return {

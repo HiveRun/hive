@@ -91,7 +91,7 @@ CREATE TABLE cells (
 ```typescript
 // Extend existing cell service
 interface WorktreeManager {
-  createWorktree(cellId: string): ResultAsync<WorktreeLocation, WorktreeManagerError> // returns worktree metadata via neverthrow
+  createWorktree(cellId: string): ResultAsync<WorktreeLocation, WorktreeManagerError> // structured Result via utils/result (Effect-compatible)
   listWorktrees(): Promise<WorktreeInfo[]>
   pruneWorktree(cellId: string): Promise<void>
   cleanupWorktree(cellId: string): Promise<void>
@@ -105,7 +105,7 @@ interface CellService {
 // Status tracking not needed until PR #4
 ```
 
-> **Implementation update (2025-11-30)**: The production `WorktreeManager` returns `neverthrow` `ResultAsync` values so git/fs failures surface as structured `Err` results. The UI/service layers unwrap those results instead of relying on thrown exceptions.
+> **Implementation update (2025-11-30)**: The production `WorktreeManager` returns `ResultAsync` values from `apps/server/src/utils/result.ts` (Effect-friendly Result helpers) so git/fs failures surface as structured `Err` results. The UI/service layers unwrap those results instead of relying on thrown exceptions.
 
 #### Database Schema Updates
 ```sql

@@ -4,11 +4,16 @@ import { existsSync } from "node:fs";
 import { cp, mkdir, rm } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { Context, Effect, Layer } from "effect";
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 import { glob } from "tinyglobby";
 import { HiveConfigService } from "../config/context";
 import type { HiveConfig, Template } from "../config/schema";
-import { safeAsync, safeSync } from "../utils/result";
+import {
+  errAsync,
+  okAsync,
+  type ResultAsync,
+  safeAsync,
+  safeSync,
+} from "../utils/result";
 import { resolveCellsRoot } from "../workspaces/registry";
 
 const WORKTREE_PREFIX = "worktree ";
@@ -322,7 +327,7 @@ export function createWorktreeManager(
     force: boolean
   ): ResultAsync<void, WorktreeManagerError> {
     if (!existsSync(worktreePath)) {
-      return okAsync(undefined);
+      return okAsync();
     }
 
     if (!force) {

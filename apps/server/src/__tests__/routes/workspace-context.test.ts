@@ -1,10 +1,10 @@
 import { Effect } from "effect";
 import { Elysia } from "elysia";
-import { okAsync } from "neverthrow";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { HiveConfig } from "../../config/schema";
 import { createCellsRoutes } from "../../routes/cells";
 import { cells } from "../../schema/cells";
+import { okAsync } from "../../utils/result";
 import { WorkspaceContextError } from "../../workspaces/context";
 import type { WorkspaceRecord } from "../../workspaces/registry";
 import type { WorktreeManager } from "../../worktree/manager";
@@ -140,7 +140,7 @@ describe("Cell routes workspace enforcement", () => {
             branch: "main",
             baseCommit: "base",
           }),
-        removeWorktree: () => okAsync(undefined),
+        removeWorktree: () => okAsync(),
       };
 
       return Effect.succeed({
