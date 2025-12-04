@@ -72,11 +72,10 @@ const sanitizeAssetPath = (pathname: string) =>
   pathname.replace(LEADING_SLASH_REGEX, "").replace(DOT_SEQUENCE_REGEX, "");
 
 const ensurePortAvailable = (port: number, hostname: string) =>
-  new Promise<void>((resolvePromise, reject) => {
+  new Promise<void>((resolvePromise, rejectPromise) => {
     const tester = createServer();
     tester.once("error", (error) => {
-      tester.close();
-      reject(error);
+      tester.close(() => rejectPromise(error));
     });
     tester.listen(port, hostname, () => {
       tester.close(() => resolvePromise());
@@ -432,7 +431,6 @@ export const startServer = async () => {
       hostname: "127.0.0.1",
       reusePort: false,
     });
-    process.stderr.write(`API listening on http://localhost:${PORT}\n`);
   } catch (error) {
     const message =
       error instanceof Error ? error.message : JSON.stringify(error);
@@ -442,6 +440,17 @@ export const startServer = async () => {
     cleanupPidFile();
     process.exit(1);
   }
+
+  const boundPort = app.server?.port;
+  if (boundPort !== PORT) {
+    process.stderr.write(
+      `API requested port ${PORT} but Bun bound ${boundPort}. Refusing to continue.\n`
+    );
+    cleanupPidFile();
+    process.exit(1);
+  }
+
+  process.stderr.write(`API listening on http://localhost:${PORT}\n`);
 
   return app;
 };
