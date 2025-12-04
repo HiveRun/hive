@@ -64,6 +64,11 @@ export const workspaceQueries = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to load workspaces"));
       }
+      if (data && typeof data === "object" && "message" in data) {
+        throw new Error(
+          formatRpcResponseError(data, "Failed to load workspaces")
+        );
+      }
       if (
         !data ||
         typeof data !== "object" ||
