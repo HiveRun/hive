@@ -21,7 +21,7 @@ import { cleanupOrphanedServers } from "./agents/cleanup";
 import { closeAllAgentSessions } from "./agents/service";
 import { resolveWorkspaceRoot } from "./config/context";
 import { resolveStaticAssetsDirectory } from "./config/static-assets";
-import { db } from "./db";
+import { DatabaseService } from "./db";
 import { agentsRoutes } from "./routes/agents";
 import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
 import { templatesRoutes } from "./routes/templates";
@@ -181,53 +181,78 @@ const resolveMigrationsDirectory = () => {
   );
 };
 
-async function runMigrations() {
-  const migrationsFolder = resolveMigrationsDirectory();
-  try {
-    await migrate(db, { migrationsFolder });
-    process.stderr.write("Database migrations applied.\n");
-  } catch (error) {
-    process.stderr.write(
-      `Failed to run database migrations: ${
-        error instanceof Error ? error.message : String(error)
-      }\n`
-    );
-    throw error;
-  }
-}
+const runMigrationsEffect = Effect.flatMap(DatabaseService, ({ db }) =>
+  Effect.tryPromise({
+    try: async () => {
+      const migrationsFolder = resolveMigrationsDirectory();
+      await migrate(db, { migrationsFolder });
+    },
+    catch: (error) =>
+      error instanceof Error ? error : new Error(String(error)),
+  }).pipe(
+    Effect.tap(() =>
+      Effect.sync(() => process.stderr.write("Database migrations applied.\n"))
+    ),
+    Effect.tapError((error) =>
+      Effect.sync(() =>
+        process.stderr.write(
+          `Failed to run database migrations: ${
+            error instanceof Error ? error.message : String(error)
+          }\n`
+        )
+      )
+    )
+  )
+);
 
-async function startupCleanup() {
-  process.stderr.write("Checking for orphaned OpenCode processes...\n");
+const startupCleanupEffect = Effect.gen(function* () {
+  const { db } = yield* DatabaseService;
 
-  const activeCells = await db
-    .select({ port: cells.opencodeServerPort })
-    .from(cells);
+  yield* Effect.sync(() =>
+    process.stderr.write("Checking for orphaned OpenCode processes...\n")
+  );
+
+  const activeCells = yield* Effect.tryPromise({
+    try: () => db.select({ port: cells.opencodeServerPort }).from(cells),
+    catch: (error) =>
+      error instanceof Error ? error : new Error(String(error)),
+  });
 
   const ports = activeCells
-    .map((c) => c.port)
-    .filter((p): p is number => p !== null);
+    .map((cell) => cell.port)
+    .filter((port): port is number => port !== null);
 
   if (ports.length === 0) {
-    process.stderr.write("No OpenCode ports to clean up.\n");
+    yield* Effect.sync(() =>
+      process.stderr.write("No OpenCode ports to clean up.\n")
+    );
     return;
   }
 
-  const { cleaned, failed } = await cleanupOrphanedServers(ports);
+  const { cleaned, failed } = yield* Effect.tryPromise({
+    try: () => cleanupOrphanedServers(ports),
+    catch: (error) =>
+      error instanceof Error ? error : new Error(String(error)),
+  });
 
   if (cleaned.length > 0) {
-    process.stderr.write(
-      `Cleaned up ${cleaned.length} orphaned OpenCode process(es) on ports: ${cleaned.join(", ")}` +
-        "\n"
+    yield* Effect.sync(() =>
+      process.stderr.write(
+        `Cleaned up ${cleaned.length} orphaned OpenCode process(es) on ports: ${cleaned.join(", ")}` +
+          "\n"
+      )
     );
   }
 
   if (failed.length > 0) {
-    process.stderr.write(
-      `Warning: Failed to clean up ${failed.length} process(es) on ports: ${failed.join(", ")}` +
-        "\n"
+    yield* Effect.sync(() =>
+      process.stderr.write(
+        `Warning: Failed to clean up ${failed.length} process(es) on ports: ${failed.join(", ")}` +
+          "\n"
+      )
     );
   }
-}
+});
 
 export const cleanupPidFile = () => {
   try {
@@ -267,6 +292,18 @@ export type App = ReturnType<typeof createApp>;
 let shuttingDown = false;
 let signalsRegistered = false;
 
+const shutdownEffect = Effect.gen(function* () {
+  yield* ServiceSupervisorService.pipe(
+    Effect.flatMap((service) => service.stopAll)
+  );
+  yield* Effect.tryPromise({
+    try: () => closeAllAgentSessions(),
+    catch: (error) =>
+      error instanceof Error ? error : new Error(String(error)),
+  });
+  yield* Effect.sync(cleanupPidFile);
+});
+
 const registerSignalHandlers = () => {
   if (signalsRegistered) {
     return;
@@ -274,11 +311,7 @@ const registerSignalHandlers = () => {
   signalsRegistered = true;
 
   const performShutdown = async () => {
-    await runServerEffect(
-      Effect.flatMap(ServiceSupervisorService, (service) => service.stopAll)
-    );
-    await closeAllAgentSessions();
-    cleanupPidFile();
+    await runServerEffect(shutdownEffect);
   };
 
   const handleShutdown = async (signal: string) => {
@@ -335,60 +368,95 @@ const configureAssetServing = (
   process.stderr.write("No frontend build detected; API-only mode.\n");
 };
 
-const runMigrationsOrExit = async () => {
-  try {
-    await runMigrations();
-  } catch (error) {
-    process.stderr.write(
-      "Running migrations failed. Delete the database defined in DATABASE_URL or rerun `bun run apps/server db:push` from source to recover.\n"
-    );
-    throw error;
-  }
-};
+const registerWorkspaceEffect = (workspaceRoot: string) =>
+  ensureWorkspaceRegisteredEffect(workspaceRoot, {
+    preserveActiveWorkspace: true,
+  }).pipe(
+    Effect.tap(() =>
+      Effect.sync(() =>
+        process.stderr.write(`Workspace registered: ${workspaceRoot}\n`)
+      )
+    ),
+    Effect.catchAll((failure) =>
+      Effect.sync(() =>
+        process.stderr.write(
+          `Warning: Failed to register workspace ${workspaceRoot}: ${
+            failure instanceof Error ? failure.message : String(failure)
+          }\n`
+        )
+      )
+    )
+  );
 
-const ensureWorkspaceRegistration = async (workspaceRoot: string) => {
-  try {
-    await runServerEffect(
-      ensureWorkspaceRegisteredEffect(workspaceRoot, {
-        preserveActiveWorkspace: true,
-      })
-    );
-    process.stderr.write(`Workspace registered: ${workspaceRoot}\n`);
-  } catch (failure) {
-    process.stderr.write(
-      `Warning: Failed to register workspace ${workspaceRoot}: ${
-        failure instanceof Error ? failure.message : String(failure)
-      }\n`
-    );
-  }
-};
+const bootstrapSupervisorEffect = ServiceSupervisorService.pipe(
+  Effect.flatMap((service) => service.bootstrap),
+  Effect.tap(() =>
+    Effect.sync(() => process.stderr.write("Service supervisor initialized.\n"))
+  ),
+  Effect.catchAll((failure) =>
+    Effect.sync(() =>
+      process.stderr.write(
+        `Failed to bootstrap service supervisor: ${
+          failure instanceof Error ? failure.message : String(failure)
+        }\n`
+      )
+    )
+  )
+);
 
-const initializeSupervisorSafely = async () => {
-  try {
-    await runServerEffect(
-      Effect.flatMap(ServiceSupervisorService, (service) => service.bootstrap)
-    );
-    process.stderr.write("Service supervisor initialized.\n");
-  } catch (failure) {
-    process.stderr.write(
-      `Failed to bootstrap service supervisor: ${
-        failure instanceof Error ? failure.message : String(failure)
-      }\n`
-    );
-  }
-};
+const resumeProvisioningEffect = Effect.tryPromise({
+  try: () => resumeSpawningCells(),
+  catch: (failure) =>
+    failure instanceof Error ? failure : new Error(String(failure)),
+}).pipe(
+  Effect.catchAll((failure) =>
+    Effect.sync(() =>
+      process.stderr.write(
+        `Failed to resume cell provisioning: ${
+          failure instanceof Error ? failure.message : String(failure)
+        }\n`
+      )
+    )
+  )
+);
 
-const resumeProvisioningSafely = async () => {
-  try {
-    await resumeSpawningCells();
-  } catch (failure) {
-    process.stderr.write(
-      `Failed to resume cell provisioning: ${
-        failure instanceof Error ? failure.message : String(failure)
-      }\n`
-    );
-  }
-};
+const ensurePortAvailableEffect = (port: number, hostname: string) =>
+  Effect.tryPromise({
+    try: () => ensurePortAvailable(port, hostname),
+    catch: (error) =>
+      error instanceof Error ? error : new Error(String(error)),
+  });
+
+const ensureRequestedPortsEffect = (port: number, hostChecks: Set<string>) =>
+  Effect.forEach(
+    [...hostChecks],
+    (host) =>
+      ensurePortAvailableEffect(port, host).pipe(
+        Effect.catchAll((error) =>
+          Effect.fail(
+            new Error(
+              `Port ${port} on ${host} is unavailable: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            )
+          )
+        )
+      ),
+    { discard: true, concurrency: 1 }
+  );
+
+const bootstrapServerEffect = (
+  workspaceRoot: string,
+  hostChecks: Set<string>
+) =>
+  Effect.gen(function* () {
+    yield* runMigrationsEffect;
+    yield* startupCleanupEffect;
+    yield* registerWorkspaceEffect(workspaceRoot);
+    yield* bootstrapSupervisorEffect;
+    yield* resumeProvisioningEffect;
+    yield* ensureRequestedPortsEffect(PORT, hostChecks);
+  });
 
 export const startServer = async () => {
   const app = createApp();
@@ -406,31 +474,23 @@ export const startServer = async () => {
     app.get("/", () => "OK");
   }
 
-  await runMigrationsOrExit();
-  await startupCleanup();
-
   const workspaceRoot = resolveWorkspaceRoot();
-  await ensureWorkspaceRegistration(workspaceRoot);
-  await initializeSupervisorSafely();
-  await resumeProvisioningSafely();
-
   const hostChecks = new Set([HOSTNAME]);
   if (HOSTNAME === "localhost") {
     hostChecks.add("127.0.0.1");
     hostChecks.add("::1");
   }
 
-  for (const host of hostChecks) {
-    try {
-      await ensurePortAvailable(PORT, host);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(
-        `Port ${PORT} on ${host} is unavailable: ${message}. Is another process using this port?\n`
-      );
-      cleanupPidFile();
-      process.exit(1);
-    }
+  try {
+    await runServerEffect(bootstrapServerEffect(workspaceRoot, hostChecks));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(
+      `${message}\nStartup failed. Check the logs above for details; database issues may require rerunning migrations with ` +
+        "`bun run apps/server db:push`.\n"
+    );
+    cleanupPidFile();
+    process.exit(1);
   }
 
   registerSignalHandlers();
