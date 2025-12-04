@@ -208,6 +208,13 @@ const updateSessionModelEffect = (
     "Failed to update session model"
   );
 
+const eventStreamEffect = (sessionId: string, signal: AbortSignal) =>
+  Effect.gen(function* () {
+    const history = yield* fetchMessagesEffect(sessionId);
+    const { iterator } = createEventIterator(sessionId, signal);
+    return { history, iterator };
+  });
+
 export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .use(createWorkspaceContextPlugin())
   .get(
@@ -501,39 +508,42 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .get(
     "/sessions/:id/events",
     async ({ params, request, set }) => {
-      try {
-        const history = await runServerEffect(
-          fetchMessagesEffect(params.id).pipe(
-            Effect.map((messages) => messages)
-          )
-        );
-        const iterator = createEventIterator(params.id, request.signal);
+      const outcome = await runServerEffect(
+        matchAgentEffect(eventStreamEffect(params.id, request.signal))
+      );
 
-        async function* stream() {
-          yield sse({ event: "history", data: { messages: history } });
+      set.status = outcome.status;
 
-          for await (const event of iterator) {
-            if (event.type === "history") {
-              continue;
-            }
-
-            if (event.type === "status") {
-              yield sse({
-                event: "status",
-                data: { status: event.status, error: event.error },
-              });
-              continue;
-            }
-
-            yield sse({ event: event.type, data: event.properties });
-          }
-        }
-
-        return stream();
-      } catch (error) {
-        set.status = HTTP_STATUS.BAD_REQUEST;
-        return { message: formatUnknown(error, "Failed to stream events") };
+      if (outcome.status !== HTTP_STATUS.OK) {
+        return outcome.body;
       }
+
+      const { history, iterator } = outcome.body as {
+        history: AgentMessageRecord[];
+        iterator: AsyncIterable<AgentStreamEvent>;
+      };
+
+      async function* stream() {
+        yield sse({ event: "history", data: { messages: history } });
+
+        for await (const event of iterator) {
+          if (event.type === "history") {
+            continue;
+          }
+
+          if (event.type === "status") {
+            yield sse({
+              event: "status",
+              data: { status: event.status, error: event.error },
+            });
+            continue;
+          }
+
+          yield sse({ event: event.type, data: event.properties });
+        }
+      }
+
+      return stream();
     },
     {
       params: t.Object({ id: t.String() }),
@@ -705,6 +715,7 @@ function createEventIterator(sessionId: string, signal: AbortSignal) {
     }
     finished = true;
     unsubscribe();
+    signal.removeEventListener("abort", cleanup);
     if (resolver) {
       resolver(null);
       resolver = null;
@@ -713,7 +724,7 @@ function createEventIterator(sessionId: string, signal: AbortSignal) {
 
   signal.addEventListener("abort", cleanup, { once: true });
 
-  return {
+  const iterator = {
     async *[Symbol.asyncIterator]() {
       try {
         while (!finished) {
@@ -741,5 +752,7 @@ function createEventIterator(sessionId: string, signal: AbortSignal) {
         cleanup();
       }
     },
-  };
+  } satisfies AsyncIterable<AgentStreamEvent>;
+
+  return { iterator, cleanup };
 }
