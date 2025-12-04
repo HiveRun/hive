@@ -401,7 +401,19 @@ export const startServer = async () => {
   await resumeProvisioningSafely();
 
   registerSignalHandlers();
-  app.listen(PORT);
+
+  try {
+    app.listen(PORT);
+    process.stderr.write(`API listening on http://localhost:${PORT}\n`);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : JSON.stringify(error);
+    process.stderr.write(
+      `Failed to bind API port ${PORT}: ${message}. Is another process using this port?\n`
+    );
+    cleanupPidFile();
+    process.exit(1);
+  }
 
   return app;
 };
