@@ -111,18 +111,33 @@ const hasAllDependencies = (
 ): overrides is CellRouteDependencies =>
   dependencyKeys.every((key) => overrides[key] !== undefined);
 
-const resolveCellRouteDependencies = (
+const resolveCellRouteDependenciesEffect = (
   overrides: Partial<CellRouteDependencies> = {}
-): Promise<CellRouteDependencies> => {
-  if (hasAllDependencies(overrides)) {
-    return Promise.resolve(overrides);
-  }
+) =>
+  hasAllDependencies(overrides)
+    ? Effect.succeed(overrides)
+    : buildDefaultCellDependencies().pipe(
+        Effect.map((base) => ({ ...base, ...overrides }))
+      );
 
-  return runServerEffect(buildDefaultCellDependencies()).then((base) => ({
-    ...base,
-    ...overrides,
-  }));
-};
+const resolveCellRouteDependencies = (() => {
+  let cachedBaseDeps: Promise<CellRouteDependencies> | null = null;
+
+  const loadBase = () => {
+    if (!cachedBaseDeps) {
+      cachedBaseDeps = runServerEffect(buildDefaultCellDependencies());
+    }
+    return cachedBaseDeps;
+  };
+
+  return (overrides: Partial<CellRouteDependencies> = {}) => {
+    if (hasAllDependencies(overrides)) {
+      return Promise.resolve(overrides);
+    }
+
+    return loadBase().then((base) => ({ ...base, ...overrides }));
+  };
+})();
 
 type CellServiceListResponse = Static<typeof CellServiceListResponseSchema>;
 type CellDiffResponse = Static<typeof CellDiffResponseSchema>;
@@ -867,7 +882,7 @@ function createProvisionContext(args: {
   };
 }
 
-async function createExistingProvisionContext(args: {
+function createExistingProvisionContextEffect(args: {
   cell: typeof cells.$inferSelect;
   provisioningState: CellProvisioningState | null;
   body: Static<typeof CreateCellSchema>;
@@ -879,33 +894,32 @@ async function createExistingProvisionContext(args: {
   stopCellServices: CellRouteDependencies["stopServicesForCell"];
   workspaceContext: WorkspaceRuntimeContext;
   log: LoggerLike;
-}): Promise<ProvisionContext> {
-  const worktreeService = await runServerEffect(
-    args.workspaceContext.createWorktreeManager()
+}) {
+  return args.workspaceContext.createWorktreeManager().pipe(
+    Effect.map((worktreeService) => ({
+      body: args.body,
+      template: args.template,
+      database: args.database,
+      ensureSession: args.ensureSession,
+      sendAgentMessage: args.sendAgentMessage,
+      ensureServices: args.ensureServices,
+      stopCellServices: args.stopCellServices,
+      worktreeService,
+      workspace: args.workspaceContext.workspace,
+      log: args.log,
+      state: {
+        cellId: args.cell.id,
+        worktreeCreated: true,
+        recordCreated: true,
+        servicesStarted: false,
+        workspacePath: args.cell.workspacePath,
+        branchName: args.cell.branchName,
+        baseCommit: args.cell.baseCommit,
+        createdCell: args.cell,
+        provisioningState: args.provisioningState,
+      },
+    }))
   );
-  return {
-    body: args.body,
-    template: args.template,
-    database: args.database,
-    ensureSession: args.ensureSession,
-    sendAgentMessage: args.sendAgentMessage,
-    ensureServices: args.ensureServices,
-    stopCellServices: args.stopCellServices,
-    worktreeService,
-    workspace: args.workspaceContext.workspace,
-    log: args.log,
-    state: {
-      cellId: args.cell.id,
-      worktreeCreated: true,
-      recordCreated: true,
-      servicesStarted: false,
-      workspacePath: args.cell.workspacePath,
-      branchName: args.cell.branchName,
-      baseCommit: args.cell.baseCommit,
-      createdCell: args.cell,
-      provisioningState: args.provisioningState,
-    },
-  };
 }
 
 async function createCellRecord(
@@ -1291,79 +1305,114 @@ const backgroundProvisioningLogger: LoggerLike = {
   },
 };
 
-export async function resumeSpawningCells(
-  overrides: Partial<CellRouteDependencies> = {}
-): Promise<void> {
-  const deps = await resolveCellRouteDependencies(overrides);
-  const pendingCells = await deps.db
-    .select({ cell: cells, provisioningState: cellProvisioningStates })
-    .from(cells)
-    .innerJoin(
-      cellProvisioningStates,
-      eq(cellProvisioningStates.cellId, cells.id)
-    )
-    .where(eq(cells.status, "spawning"));
-
-  if (pendingCells.length === 0) {
-    return;
-  }
-
-  for (const entry of pendingCells) {
-    const { cell, provisioningState } = entry;
+const resumeSingleCellEffect = (
+  deps: CellRouteDependencies,
+  cell: typeof cells.$inferSelect,
+  provisioningState: typeof cellProvisioningStates.$inferSelect | null
+) =>
+  Effect.gen(function* () {
     const attemptCount = provisioningState?.attemptCount ?? 0;
     if (attemptCount >= MAX_PROVISIONING_ATTEMPTS) {
-      await updateCellProvisioningStatus(
-        deps.db,
-        cell.id,
-        "error",
-        `${PROVISIONING_INTERRUPTED_MESSAGE}\nRetry limit exceeded.`
+      yield* Effect.tryPromise(() =>
+        updateCellProvisioningStatus(
+          deps.db,
+          cell.id,
+          "error",
+          `${PROVISIONING_INTERRUPTED_MESSAGE}\nRetry limit exceeded.`
+        )
       );
-      continue;
+      return;
     }
 
-    try {
-      const workspaceContext = await runServerEffect(
-        deps.resolveWorkspaceContext(cell.workspaceId)
-      );
-      const hiveConfig = await runServerEffect(workspaceContext.loadConfig());
+    const workspaceContext = yield* deps.resolveWorkspaceContext(
+      cell.workspaceId
+    );
+    const hiveConfig = yield* workspaceContext.loadConfig();
 
-      const template = hiveConfig.templates[cell.templateId];
-      if (!template) {
-        await updateCellProvisioningStatus(
+    const template = hiveConfig.templates[cell.templateId];
+    if (!template) {
+      yield* Effect.tryPromise(() =>
+        updateCellProvisioningStatus(
           deps.db,
           cell.id,
           "error",
           `${PROVISIONING_INTERRUPTED_MESSAGE}\nTemplate ${cell.templateId} no longer exists.`
-        );
-        continue;
-      }
-
-      const context = await createExistingProvisionContext({
-        cell,
-        provisioningState,
-        body: resolveProvisioningParams(cell, provisioningState),
-        template,
-        database: deps.db,
-        ensureSession: deps.ensureAgentSession,
-        sendAgentMessage: deps.sendAgentMessage,
-        ensureServices: deps.ensureServicesForCell,
-        stopCellServices: deps.stopServicesForCell,
-        workspaceContext,
-        log: backgroundProvisioningLogger,
-      });
-
-      startProvisioningWorkflow(context);
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Unknown provisioning failure";
-      await updateCellProvisioningStatus(
-        deps.db,
-        cell.id,
-        "error",
-        `${PROVISIONING_INTERRUPTED_MESSAGE}\n${message}`
+        )
       );
+      return;
     }
-  }
+
+    const context = yield* createExistingProvisionContextEffect({
+      cell,
+      provisioningState,
+      body: resolveProvisioningParams(cell, provisioningState),
+      template,
+      database: deps.db,
+      ensureSession: deps.ensureAgentSession,
+      sendAgentMessage: deps.sendAgentMessage,
+      ensureServices: deps.ensureServicesForCell,
+      stopCellServices: deps.stopServicesForCell,
+      workspaceContext,
+      log: backgroundProvisioningLogger,
+    });
+
+    startProvisioningWorkflow(context);
+  }).pipe(
+    Effect.catchAll((error) =>
+      Effect.tryPromise(() =>
+        updateCellProvisioningStatus(
+          deps.db,
+          cell.id,
+          "error",
+          `${PROVISIONING_INTERRUPTED_MESSAGE}\n${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      )
+    )
+  );
+
+const resumePendingCellsEffect = (
+  overrides: Partial<CellRouteDependencies> = {}
+) =>
+  resolveCellRouteDependenciesEffect(overrides).pipe(
+    Effect.flatMap((deps) =>
+      Effect.gen(function* () {
+        const pendingCells = yield* Effect.tryPromise({
+          try: () =>
+            deps.db
+              .select({
+                cell: cells,
+                provisioningState: cellProvisioningStates,
+              })
+              .from(cells)
+              .innerJoin(
+                cellProvisioningStates,
+                eq(cellProvisioningStates.cellId, cells.id)
+              )
+              .where(eq(cells.status, "spawning")),
+          catch: (error) =>
+            error instanceof Error ? error : new Error(String(error)),
+        });
+
+        if (pendingCells.length === 0) {
+          return;
+        }
+
+        yield* Effect.forEach(
+          pendingCells,
+          ({ cell, provisioningState }) =>
+            resumeSingleCellEffect(deps, cell, provisioningState),
+          { discard: true, concurrency: 1 }
+        );
+      })
+    )
+  );
+
+export async function resumeSpawningCells(
+  overrides: Partial<CellRouteDependencies> = {}
+): Promise<void> {
+  await runServerEffect(resumePendingCellsEffect(overrides));
 }
 
 const isServiceSupervisorError = (

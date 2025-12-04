@@ -20,7 +20,7 @@ export const serverLayer = Layer.mergeAll(
   AgentRuntimeLayer
 ).pipe(Layer.provideMerge(baseLayers));
 
-type ServerLayerServices = Layer.Layer.Success<typeof serverLayer>;
+export type ServerLayerServices = Layer.Layer.Success<typeof serverLayer>;
 
 const provideServerLayer = Effect.provide(serverLayer);
 
