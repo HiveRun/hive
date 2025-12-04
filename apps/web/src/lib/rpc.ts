@@ -1,31 +1,18 @@
 import { treaty } from "@elysiajs/eden";
 import type { App } from "@hive/server";
 
-const DEFAULT_API_URL = "http://localhost:3000";
-const isBrowser = typeof window !== "undefined";
-const tauriCandidate = isBrowser
-  ? (window as Window & { __TAURI__?: unknown; __TAURI_IPC__?: unknown })
-  : undefined;
-const hasTauriBridge = Boolean(
-  tauriCandidate?.__TAURI__ ?? tauriCandidate?.__TAURI_IPC__
-);
-
-// Desktop builds render from the `tauri://` scheme, so they must directly
-// target the HTTP API origin instead of relying on window.location.
 const API_URL = (() => {
-  if (import.meta.env.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL;
+  const envUrl = import.meta.env.VITE_API_URL?.trim();
+  if (!envUrl || envUrl === "undefined") {
+    // biome-ignore lint/suspicious/noConsole: hard-stop misconfigurations in dev
+    console.error(
+      "VITE_API_URL is required. Set it to your API origin, e.g. http://localhost:3000"
+    );
+    throw new Error(
+      "VITE_API_URL is required. Set it to your API origin, e.g. http://localhost:3000"
+    );
   }
-
-  if (hasTauriBridge) {
-    return DEFAULT_API_URL;
-  }
-
-  if (isBrowser) {
-    return window.location.origin;
-  }
-
-  return DEFAULT_API_URL;
+  return envUrl;
 })();
 
 export const rpc = treaty<App>(API_URL);

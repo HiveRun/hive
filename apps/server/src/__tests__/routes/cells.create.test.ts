@@ -16,7 +16,6 @@ import {
   CommandExecutionError,
   TemplateSetupError,
 } from "../../services/supervisor";
-import { okAsync } from "../../utils/result";
 import { setupTestDb, testDb } from "../test-db";
 
 const templateId = "failing-template";
@@ -101,7 +100,7 @@ function createDependencies(
   }
 
   function createCellWorktree(_cellId: string) {
-    return okAsync({
+    return Effect.succeed({
       path: workspacePath,
       branch: "cell-branch",
       baseCommit: "abc123",
@@ -110,7 +109,7 @@ function createDependencies(
 
   function removeCellWorktree(_cellId: string) {
     removeWorktreeCalls += 1;
-    return okAsync();
+    return Effect.void;
   }
 
   const sendAgentMessageImpl =

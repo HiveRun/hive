@@ -4,7 +4,6 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { HiveConfig } from "../../config/schema";
 import { createCellsRoutes } from "../../routes/cells";
 import { cells } from "../../schema/cells";
-import { okAsync } from "../../utils/result";
 import { WorkspaceContextError } from "../../workspaces/context";
 import type { WorkspaceRecord } from "../../workspaces/registry";
 import type { WorktreeManager } from "../../worktree/manager";
@@ -135,12 +134,12 @@ describe("Cell routes workspace enforcement", () => {
 
       const mockManager: WorktreeManager = {
         createWorktree: () =>
-          okAsync({
+          Effect.succeed({
             path: `${resolved.path}/.hive/cells/new`,
             branch: "main",
             baseCommit: "base",
           }),
-        removeWorktree: () => okAsync(),
+        removeWorktree: () => Effect.void,
       };
 
       return Effect.succeed({

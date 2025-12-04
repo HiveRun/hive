@@ -3,7 +3,6 @@ import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import { Context, Effect, Layer } from "effect";
-import { safeAsync } from "../utils/result";
 
 const REGISTRY_FILE_NAME = "workspaces.json";
 const HIVE_HOME_ENV = "HIVE_HOME";
@@ -74,19 +73,18 @@ function normalizePath(path: string): string {
 
 async function validateWorkspaceDirectory(path: string): Promise<string> {
   const absolutePath = normalizePath(path);
-  const statsResult = await safeAsync(
-    () => stat(absolutePath),
-    (error) => error
-  );
+  let stats: Awaited<ReturnType<typeof stat>>;
 
-  if (statsResult.isErr()) {
-    const failure = statsResult.error;
+  try {
+    stats = await stat(absolutePath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Workspace path does not exist: ${absolutePath} (${failure instanceof Error ? failure.message : failure})`
+      `Workspace path does not exist: ${absolutePath} (${message})`
     );
   }
 
-  if (!statsResult.value.isDirectory()) {
+  if (!stats.isDirectory()) {
     throw new Error(`Workspace path is not a directory: ${absolutePath}`);
   }
 
@@ -95,12 +93,9 @@ async function validateWorkspaceDirectory(path: string): Promise<string> {
   }
 
   const configPath = join(absolutePath, "hive.config.ts");
-  const configExists = await safeAsync(
-    () => access(configPath),
-    (error) => error
-  );
-
-  if (configExists.isErr()) {
+  try {
+    await access(configPath);
+  } catch {
     throw new Error(`hive.config.ts not found in ${absolutePath}`);
   }
 
@@ -144,6 +139,8 @@ async function readRegistryFile(): Promise<RegistryFile> {
       };
     }
 
+    // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
+    console.error("registry:read:error", { error });
     throw new Error(
       `Failed to read workspace registry: ${error instanceof Error ? error.message : String(error)}`
     );
@@ -223,9 +220,32 @@ function sortWorkspaces(workspaces: WorkspaceRecord[]): WorkspaceRecord[] {
 
 export async function getWorkspaceRegistry(): Promise<WorkspaceRegistry> {
   const registry = await readRegistryFile();
+  const workspaces = sortWorkspaces(registry.workspaces);
+  const activeWorkspaceId =
+    registry.activeWorkspaceId ?? workspaces[0]?.id ?? null;
+
+  if (!registry.activeWorkspaceId && activeWorkspaceId) {
+    // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
+    console.warn("registry:auto-activate", {
+      chosen: activeWorkspaceId,
+      workspaceCount: workspaces.length,
+    });
+    await writeRegistryFile({
+      version: REGISTRY_VERSION,
+      workspaces,
+      activeWorkspaceId,
+    });
+  }
+
+  // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
+  console.debug("registry:get", {
+    workspaceCount: workspaces.length,
+    activeWorkspaceId,
+  });
+
   return {
-    workspaces: sortWorkspaces(registry.workspaces),
-    activeWorkspaceId: registry.activeWorkspaceId ?? null,
+    workspaces,
+    activeWorkspaceId,
   };
 }
 

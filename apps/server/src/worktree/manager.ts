@@ -7,13 +7,6 @@ import { Context, Effect, Layer } from "effect";
 import { glob } from "tinyglobby";
 import { HiveConfigService } from "../config/context";
 import type { HiveConfig, Template } from "../config/schema";
-import {
-  errAsync,
-  okAsync,
-  type ResultAsync,
-  safeAsync,
-  safeSync,
-} from "../utils/result";
 import { resolveCellsRoot } from "../workspaces/registry";
 
 const WORKTREE_PREFIX = "worktree ";
@@ -139,8 +132,8 @@ export type WorktreeManager = {
   createWorktree(
     cellId: string,
     options?: WorktreeCreateOptions
-  ): ResultAsync<WorktreeLocation, WorktreeManagerError>;
-  removeWorktree(cellId: string): ResultAsync<void, WorktreeManagerError>;
+  ): Effect.Effect<WorktreeLocation, WorktreeManagerError>;
+  removeWorktree(cellId: string): Effect.Effect<void, WorktreeManagerError>;
 };
 
 const DEFAULT_INCLUDE_PATTERNS: string[] = [];
@@ -152,17 +145,13 @@ export function createWorktreeManager(
   const cellsDir = resolveCellsRoot();
 
   function ensureGitRepo(): void {
-    const repoCheck = safeSync(
-      () =>
-        execSync("git rev-parse --git-dir", {
-          encoding: "utf8",
-          cwd: baseDir,
-          stdio: "pipe",
-        }),
-      () => null
-    );
-
-    if (repoCheck.isErr()) {
+    try {
+      execSync("git rev-parse --git-dir", {
+        encoding: "utf8",
+        cwd: baseDir,
+        stdio: "pipe",
+      });
+    } catch {
       throw new Error(
         `Not a git repository: ${baseDir}. Worktree manager requires a git repository.`
       );
@@ -209,20 +198,14 @@ export function createWorktreeManager(
 
   function git(...args: string[]): string {
     const command = args.join(" ");
-    const execResult = safeSync(
-      () =>
-        execSync(`git ${command}`, {
-          encoding: "utf8",
-          cwd: baseDir,
-        }).trim(),
-      (error) => formatExecError(command, error)
-    );
-
-    if (execResult.isErr()) {
-      throw execResult.error;
+    try {
+      return execSync(`git ${command}`, {
+        encoding: "utf8",
+        cwd: baseDir,
+      }).trim();
+    } catch (error) {
+      throw formatExecError(command, error);
     }
-
-    return execResult.value;
   }
 
   async function ensureCellsDir(): Promise<void> {
@@ -263,25 +246,19 @@ export function createWorktreeManager(
       return [pattern];
     });
 
-    const filesResult = await safeAsync(
-      () =>
-        glob(expandedPatterns, {
-          cwd: mainRepoPath,
-          absolute: false,
-          ignore: IGNORED_DIRECTORIES.map((dir) => `**/${dir}/**`),
-          dot: true,
-        }),
-      (error) => error
-    );
+    try {
+      const files = await glob(expandedPatterns, {
+        cwd: mainRepoPath,
+        absolute: false,
+        ignore: IGNORED_DIRECTORIES.map((dir) => `**/${dir}/**`),
+        dot: true,
+      });
 
-    if (filesResult.isErr()) {
-      logWarn("Failed to match include patterns", filesResult.error);
+      return files.map((file: string) => file.split(sep).join(POSIX_SEPARATOR));
+    } catch (error: unknown) {
+      logWarn("Failed to match include patterns", error);
       return [];
     }
-
-    return filesResult.value.map((file: string) =>
-      file.split(sep).join(POSIX_SEPARATOR)
-    );
   }
 
   async function copyIncludedFiles(
@@ -308,13 +285,10 @@ export function createWorktreeManager(
     const sourcePath = join(mainRepoPath, file);
     const targetPath = join(worktreePath, file);
 
-    const copyResult = await safeAsync(
-      () => cp(sourcePath, targetPath, { recursive: true }),
-      (error) => error
-    );
-
-    if (copyResult.isErr()) {
-      logWarn(`Failed to copy ${file} to worktree`, copyResult.error);
+    try {
+      await cp(sourcePath, targetPath, { recursive: true });
+    } catch (error: unknown) {
+      logWarn(`Failed to copy ${file} to worktree`, error);
     }
   }
 
@@ -322,67 +296,61 @@ export function createWorktreeManager(
     return git("rev-parse", "--abbrev-ref", "HEAD");
   }
 
-  function handleExistingWorktree(
+  const handleExistingWorktree = (
     worktreePath: string,
     force: boolean
-  ): ResultAsync<void, WorktreeManagerError> {
-    if (!existsSync(worktreePath)) {
-      return okAsync();
-    }
+  ): Effect.Effect<void, WorktreeManagerError> =>
+    Effect.gen(function* () {
+      if (!existsSync(worktreePath)) {
+        return;
+      }
 
-    if (!force) {
-      return errAsync(
-        toWorktreeError(
-          {
-            message: `Worktree already exists at ${worktreePath}`,
-            kind: "conflict",
-            context: { worktreePath },
-          },
-          undefined
-        )
-      );
-    }
-
-    return safeAsync(
-      async () => {
-        const removalResult = safeSync(
-          () => git("worktree", "remove", "--force", worktreePath),
-          (error) => error
+      if (!force) {
+        return yield* Effect.fail(
+          toWorktreeError(
+            {
+              message: `Worktree already exists at ${worktreePath}`,
+              kind: "conflict",
+              context: { worktreePath },
+            },
+            undefined
+          )
         );
+      }
 
-        if (removalResult.isErr()) {
-          logWarn(
-            "Git worktree remove failed, falling back to filesystem removal",
-            removalResult.error
-          );
-          await rm(worktreePath, { recursive: true, force: true });
-        }
-      },
-      (error) =>
-        toWorktreeError(
-          {
-            message: "Failed to clean up existing worktree",
-            kind: "cleanup",
-            context: { worktreePath },
-          },
-          error
-        )
-    );
-  }
+      return yield* Effect.tryPromise({
+        try: async () => {
+          try {
+            git("worktree", "remove", "--force", worktreePath);
+          } catch (error) {
+            logWarn(
+              "Git worktree remove failed, falling back to filesystem removal",
+              error
+            );
+            await rm(worktreePath, { recursive: true, force: true });
+          }
+        },
+        catch: (cause) =>
+          toWorktreeError(
+            {
+              message: "Failed to clean up existing worktree",
+              kind: "cleanup",
+              context: { worktreePath },
+            },
+            cause
+          ),
+      });
+    });
 
   function ensureBranchExists(branchName: string): string {
-    const verification = safeSync(
-      () => git("show-ref", "--verify", `refs/heads/${branchName}`),
-      () => null
-    );
-
-    if (verification.isOk()) {
+    try {
+      git("show-ref", "--verify", `refs/heads/${branchName}`);
+      return branchName;
+    } catch {
+      const currentBranch = getCurrentBranch();
+      git("branch", branchName, currentBranch);
       return branchName;
     }
-
-    const currentBranch = getCurrentBranch();
-    git("branch", branchName, currentBranch);
-    return branchName;
   }
 
   function parseWorktreeSection(section: string): {
@@ -438,78 +406,73 @@ export function createWorktreeManager(
     createWorktree(
       cellId: string,
       options: WorktreeCreateOptions = {}
-    ): ResultAsync<WorktreeLocation, WorktreeManagerError> {
+    ): Effect.Effect<WorktreeLocation, WorktreeManagerError> {
       const worktreePath = join(cellsDir, cellId);
 
-      return safeAsync(
-        async () => {
-          await ensureCellsDir();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise({
+          try: () => ensureCellsDir(),
+          catch: (cause) =>
+            toWorktreeError(
+              {
+                message: "Failed to prepare cells directory",
+                kind: "filesystem",
+                context: { worktreePath },
+              },
+              cause
+            ),
+        });
 
-          const existingResult = await handleExistingWorktree(
-            worktreePath,
-            options.force ?? false
+        yield* handleExistingWorktree(worktreePath, options.force ?? false);
+
+        const branch = ensureBranchExists(`cell-${cellId}`);
+
+        try {
+          git("worktree", "add", worktreePath, branch);
+
+          const includePatterns = getIncludePatterns(options.templateId);
+          yield* Effect.promise(() =>
+            copyIncludedFiles(worktreePath, includePatterns)
           );
-          if (existingResult.isErr()) {
-            throw existingResult.error;
+
+          const baseCommit = git("rev-parse", branch);
+          return {
+            path: worktreePath,
+            branch,
+            baseCommit,
+          } satisfies WorktreeLocation;
+        } catch (cause) {
+          try {
+            if (existsSync(worktreePath)) {
+              git("worktree", "remove", "--force", worktreePath);
+            }
+          } catch (cleanupError: unknown) {
+            logWarn("Failed to cleanup worktree after failure", cleanupError);
           }
 
-          const branch = ensureBranchExists(`cell-${cellId}`);
-
-          const worktreeSetup = (async () => {
-            git("worktree", "add", worktreePath, branch);
-
-            const includePatterns = getIncludePatterns(options.templateId);
-            await copyIncludedFiles(worktreePath, includePatterns);
-
-            const baseCommit = git("rev-parse", branch);
-            return {
-              path: worktreePath,
-              branch,
-              baseCommit,
-            } satisfies WorktreeLocation;
-          })().catch((error) => {
-            const cleanupResult = safeSync(
-              () => {
-                if (existsSync(worktreePath)) {
-                  git("worktree", "remove", "--force", worktreePath);
-                }
+          return yield* Effect.fail(
+            toWorktreeError(
+              {
+                message: "Failed to create git worktree",
+                kind: "git",
+                context: {
+                  cellId,
+                  worktreePath,
+                  templateId: options.templateId,
+                },
               },
-              (cleanupError) => cleanupError
-            );
-
-            if (cleanupResult.isErr()) {
-              logWarn(
-                "Failed to cleanup worktree after failure",
-                cleanupResult.error
-              );
-            }
-
-            throw error;
-          });
-
-          return worktreeSetup;
-        },
-        (error) =>
-          toWorktreeError(
-            {
-              message: "Failed to create git worktree",
-              kind: "git",
-              context: {
-                cellId,
-                worktreePath,
-                templateId: options.templateId,
-              },
-            },
-            error
-          )
-      );
+              cause
+            )
+          );
+        }
+      });
     },
 
-    removeWorktree(cellId: string): ResultAsync<void, WorktreeManagerError> {
+    removeWorktree(cellId: string): Effect.Effect<void, WorktreeManagerError> {
       const worktreeInfo = findWorktreeInfo(cellId);
 
       if (!worktreeInfo) {
-        return errAsync(
+        return Effect.fail(
           toWorktreeError(
             {
               message: `Worktree not found for cell ${cellId}`,
@@ -522,7 +485,7 @@ export function createWorktreeManager(
       }
 
       if (worktreeInfo.isMain) {
-        return errAsync(
+        return Effect.fail(
           toWorktreeError(
             {
               message: "Cannot remove the main worktree",
@@ -534,21 +497,21 @@ export function createWorktreeManager(
         );
       }
 
-      return safeAsync(
-        () => {
+      return Effect.try({
+        try: () => {
           git("worktree", "remove", "--force", worktreeInfo.path);
           git("worktree", "prune");
         },
-        (error) =>
+        catch: (cause) =>
           toWorktreeError(
             {
               message: "Failed to remove git worktree",
               kind: "cleanup",
               context: { cellId, worktreePath: worktreeInfo.path },
             },
-            error
-          )
-      );
+            cause
+          ),
+      });
     },
   };
 }
@@ -567,20 +530,6 @@ const makeWorktreeManagerInitError = (
   workspacePath,
   cause,
 });
-
-const resultAsyncToEffect = <A, E>(
-  result: ResultAsync<A, E>
-): Effect.Effect<A, E> =>
-  Effect.tryPromise({
-    try: async () => {
-      const resolved = await result;
-      if (resolved.isErr()) {
-        throw resolved.error;
-      }
-      return resolved.value;
-    },
-    catch: (cause) => cause as E,
-  });
 
 const toManagerEffect = (
   workspacePath: string,
@@ -648,14 +597,12 @@ const makeWorktreeManagerService = (
       Effect.gen(function* () {
         const { workspacePath, cellId, ...options } = args;
         const manager = yield* managerFor(workspacePath);
-        return yield* resultAsyncToEffect(
-          manager.createWorktree(cellId, options)
-        );
+        return yield* manager.createWorktree(cellId, options);
       }),
     removeWorktree: (workspacePath, cellId) =>
       Effect.gen(function* () {
         const manager = yield* managerFor(workspacePath);
-        return yield* resultAsyncToEffect(manager.removeWorktree(cellId));
+        return yield* manager.removeWorktree(cellId);
       }),
   };
 };

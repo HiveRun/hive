@@ -91,7 +91,9 @@ CREATE TABLE cells (
 ```typescript
 // Extend existing cell service
 interface WorktreeManager {
-  createWorktree(cellId: string): ResultAsync<WorktreeLocation, WorktreeManagerError> // structured Result via utils/result (Effect-compatible)
+  createWorktree(
+    cellId: string
+  ): Effect.Effect<WorktreeLocation, WorktreeManagerError> // Effect-first API with structured errors
   listWorktrees(): Promise<WorktreeInfo[]>
   pruneWorktree(cellId: string): Promise<void>
   cleanupWorktree(cellId: string): Promise<void>
@@ -105,7 +107,7 @@ interface CellService {
 // Status tracking not needed until PR #4
 ```
 
-> **Implementation update (2025-11-30)**: The production `WorktreeManager` returns `ResultAsync` values from `apps/server/src/utils/result.ts` (Effect-friendly Result helpers) so git/fs failures surface as structured `Err` results. The UI/service layers unwrap those results instead of relying on thrown exceptions.
+> **Implementation update (2025-12-04)**: The production `WorktreeManager` now returns `Effect` values. Git/filesystem failures surface as `WorktreeManagerError` so routes can handle them via `Effect.match` / `runServerEffect` without Result helpers.
 
 #### Database Schema Updates
 ```sql

@@ -1,7 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { safeSync } from "../utils/result";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const binaryDirectory = dirname(process.execPath);
@@ -22,11 +21,13 @@ const unique = <T>(values: (T | undefined)[]) => {
   return result;
 };
 
-const ensureDirectory = (dir: string) =>
-  safeSync(
-    () => existsSync(dir) && statSync(dir).isDirectory(),
-    () => false
-  ).unwrapOr(false);
+const ensureDirectory = (dir: string) => {
+  try {
+    return existsSync(dir) && statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+};
 
 export const resolveStaticAssetsDirectory = (): string => {
   const candidateDirectories = unique(

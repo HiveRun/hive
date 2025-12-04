@@ -64,15 +64,29 @@ export const workspaceQueries = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to load workspaces"));
       }
-      if (
-        !data ||
-        typeof data !== "object" ||
-        !("workspaces" in data) ||
-        !Array.isArray((data as { workspaces?: unknown }).workspaces)
-      ) {
-        throw new Error("Invalid workspace response");
+      if (data && typeof data === "object" && "message" in data) {
+        throw new Error(
+          formatRpcResponseError(data, "Failed to load workspaces")
+        );
       }
-      return data as WorkspaceListResponse;
+
+      const { workspaces, activeWorkspaceId } = (data ?? {}) as {
+        workspaces?: unknown;
+        activeWorkspaceId?: unknown;
+      };
+
+      const normalizedWorkspaces = Array.isArray(workspaces)
+        ? (workspaces as WorkspaceSummary[])
+        : [];
+      const normalizedActiveId =
+        typeof activeWorkspaceId === "string" || activeWorkspaceId === null
+          ? activeWorkspaceId
+          : null;
+
+      return {
+        workspaces: normalizedWorkspaces,
+        activeWorkspaceId: normalizedActiveId,
+      } satisfies WorkspaceListResponse;
     },
   }),
   browse: (path?: string, filter?: string) => ({

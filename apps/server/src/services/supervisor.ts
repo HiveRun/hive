@@ -12,7 +12,6 @@ import type { HiveConfig, ProcessService, Template } from "../config/schema";
 import { db as defaultDb } from "../db";
 import type { Cell } from "../schema/cells";
 import type { CellService, ServiceStatus } from "../schema/services";
-import { safeAsync, safeSync } from "../utils/result";
 import { emitServiceUpdate } from "./events";
 import { createPortManager } from "./port-manager";
 import { createServiceRepository } from "./repository";
@@ -391,21 +390,17 @@ export function createServiceSupervisor(
     };
 
     for (const command of template.setup) {
-      const commandResult = await safeAsync(
-        () =>
-          runCommand(command, {
-            cwd: cell.workspacePath,
-            env,
-          }),
-        (error) => error
-      );
-
-      if (commandResult.isErr()) {
+      try {
+        await runCommand(command, {
+          cwd: cell.workspacePath,
+          env,
+        });
+      } catch (error) {
         throw new TemplateSetupError({
           command,
           templateId: template.id,
           workspacePath: cell.workspacePath,
-          cause: commandResult.error,
+          cause: error,
         });
       }
     }
@@ -779,10 +774,11 @@ export function createServiceSupervisor(
   }
 
   async function terminateHandle(handle: ProcessHandle): Promise<void> {
-    safeSync(
-      () => handle.kill("SIGTERM"),
-      () => null
-    );
+    try {
+      handle.kill("SIGTERM");
+    } catch {
+      /* ignore initial termination errors */
+    }
 
     const exit = await Promise.race([
       handle.exited,
@@ -790,10 +786,11 @@ export function createServiceSupervisor(
     ]);
 
     if (exit === -1) {
-      safeSync(
-        () => handle.kill("SIGKILL"),
-        () => null
-      );
+      try {
+        handle.kill("SIGKILL");
+      } catch {
+        /* ignore forced termination errors */
+      }
       await handle.exited.catch(() => {
         /* swallow errors when waiting for exit */
       });
@@ -801,18 +798,18 @@ export function createServiceSupervisor(
   }
 
   async function terminatePid(pid: number): Promise<void> {
-    safeSync(
-      () => process.kill(pid, "SIGTERM"),
-      () => null
-    );
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      return;
+    }
     await delay(FORCE_KILL_DELAY_MS);
-    safeSync(
-      () => {
-        process.kill(pid, 0);
-        process.kill(pid, "SIGKILL");
-      },
-      () => null
-    );
+    try {
+      process.kill(pid, 0);
+      process.kill(pid, "SIGKILL");
+    } catch {
+      /* ignore forced termination errors */
+    }
   }
 }
 
