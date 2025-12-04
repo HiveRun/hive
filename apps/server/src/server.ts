@@ -403,8 +403,11 @@ export const startServer = async () => {
   registerSignalHandlers();
 
   try {
-    app.listen(PORT);
-    process.stderr.write(`API listening on http://localhost:${PORT}\n`);
+    app.listen({
+      port: PORT,
+      hostname: "0.0.0.0",
+      reusePort: false,
+    });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : JSON.stringify(error);
@@ -414,6 +417,23 @@ export const startServer = async () => {
     cleanupPidFile();
     process.exit(1);
   }
+
+  const actualPort = app.server?.port;
+  if (!actualPort) {
+    process.stderr.write("Server failed to report listening port. Exiting.\n");
+    cleanupPidFile();
+    process.exit(1);
+  }
+
+  if (actualPort !== PORT) {
+    process.stderr.write(
+      `Requested port ${PORT} but server bound ${actualPort}. Refusing to continue.\n`
+    );
+    cleanupPidFile();
+    process.exit(1);
+  }
+
+  process.stderr.write(`API listening on http://localhost:${PORT}\n`);
 
   return app;
 };
