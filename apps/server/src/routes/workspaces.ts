@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { Elysia, t } from "elysia";
+import { LoggerService } from "../logger";
 import { runServerEffect } from "../runtime";
 import { browseWorkspaceDirectories } from "../workspaces/browser";
 import {
@@ -50,6 +51,16 @@ const matchWorkspaceEffect = <A, R>(
     }),
     onSuccess: (value) => ({ status: successStatus, body: value }),
   });
+
+const withRouteLogger = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  context: Record<string, unknown>
+) =>
+  LoggerService.pipe(
+    Effect.flatMap((logger) =>
+      effect.pipe(Effect.provideService(LoggerService, logger.child(context)))
+    )
+  );
 
 const safeBrowseEffect = (path?: string, filter?: string) =>
   Effect.tryPromise({
@@ -175,13 +186,16 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
     async ({ set }) => {
       const outcome = await runServerEffect(
         matchWorkspaceEffect(
-          getWorkspaceRegistryEffect.pipe(
-            Effect.mapError((cause) =>
-              toError(
-                HTTP_STATUS.BAD_REQUEST,
-                formatUnknown(cause, "Failed to load workspaces")
+          withRouteLogger(
+            getWorkspaceRegistryEffect.pipe(
+              Effect.mapError((cause) =>
+                toError(
+                  HTTP_STATUS.BAD_REQUEST,
+                  formatUnknown(cause, "Failed to load workspaces")
+                )
               )
-            )
+            ),
+            { route: "workspaces/list" }
           )
         )
       );
@@ -199,7 +213,12 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
     "/browse",
     async ({ query, set }) => {
       const outcome = await runServerEffect(
-        matchWorkspaceEffect(safeBrowseEffect(query.path, query.filter))
+        matchWorkspaceEffect(
+          withRouteLogger(safeBrowseEffect(query.path, query.filter), {
+            route: "workspaces/browse",
+            path: query.path ?? null,
+          })
+        )
       );
       set.status = outcome.status;
       return outcome.body;
@@ -219,7 +238,13 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
     "/",
     async ({ body, set }) => {
       const outcome = await runServerEffect(
-        matchWorkspaceEffect(safeRegisterEffect(body), HTTP_STATUS.CREATED)
+        matchWorkspaceEffect(
+          withRouteLogger(safeRegisterEffect(body), {
+            route: "workspaces/register",
+            path: body.path,
+          }),
+          HTTP_STATUS.CREATED
+        )
       );
       set.status = outcome.status;
       return outcome.body;
@@ -240,7 +265,12 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
     "/:id/activate",
     async ({ params, set }) => {
       const outcome = await runServerEffect(
-        matchWorkspaceEffect(safeActivateEffect(params.id))
+        matchWorkspaceEffect(
+          withRouteLogger(safeActivateEffect(params.id), {
+            route: "workspaces/activate",
+            id: params.id,
+          })
+        )
       );
       set.status = outcome.status;
       return outcome.body;
@@ -260,7 +290,12 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
     "/:id",
     async ({ params, body, set }) => {
       const outcome = await runServerEffect(
-        matchWorkspaceEffect(safeUpdateEffect(params.id, body.label))
+        matchWorkspaceEffect(
+          withRouteLogger(safeUpdateEffect(params.id, body.label), {
+            route: "workspaces/update",
+            id: params.id,
+          })
+        )
       );
       set.status = outcome.status;
       return outcome.body;
@@ -284,7 +319,10 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
     async ({ params, set }) => {
       const outcome = await runServerEffect(
         matchWorkspaceEffect(
-          safeDeleteEffect(params.id),
+          withRouteLogger(safeDeleteEffect(params.id), {
+            route: "workspaces/delete",
+            id: params.id,
+          }),
           HTTP_STATUS.NO_CONTENT
         )
       );
@@ -306,7 +344,13 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
     "/auto-register",
     async ({ body, set }) => {
       const outcome = await runServerEffect(
-        matchWorkspaceEffect(safeAutoRegisterEffect(body), HTTP_STATUS.CREATED)
+        matchWorkspaceEffect(
+          withRouteLogger(safeAutoRegisterEffect(body), {
+            route: "workspaces/auto-register",
+            path: body.path,
+          }),
+          HTTP_STATUS.CREATED
+        )
       );
       set.status = outcome.status;
       return outcome.body;
