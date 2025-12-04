@@ -499,12 +499,12 @@ function CellCard({
         )}
 
         {cell.workspacePath && (
-          <div>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="font-medium text-muted-foreground text-xs">
-                Workspace:
-              </p>
-              <div className="flex gap-1">
+          <div className="space-y-3">
+            <div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-medium text-muted-foreground text-xs">
+                  Workspace
+                </p>
                 <Button
                   className="h-7 w-7 p-0"
                   data-testid="copy-workspace-path"
@@ -516,8 +516,26 @@ function CellCard({
                 >
                   <Copy className="h-3 w-3" />
                 </Button>
+              </div>
+              <p className="mt-1 overflow-hidden break-all rounded bg-muted/50 p-2 font-mono text-muted-foreground text-xs">
+                {cell.workspacePath}
+              </p>
+            </div>
+
+            <div className="space-y-2 rounded border border-border/70 bg-background/70 p-2 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="font-semibold text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+                    OpenCode CLI
+                  </p>
+                  <p className="text-[10px] text-muted-foreground/80 uppercase tracking-[0.3em]">
+                    {opencodeCommand
+                      ? "Copy command to resume in TUI"
+                      : "Session must be running"}
+                  </p>
+                </div>
                 <Button
-                  className="h-7 px-2 text-[10px] uppercase tracking-[0.3em]"
+                  className="shrink-0"
                   data-testid="copy-opencode-command"
                   disabled={!opencodeCommand}
                   onClick={() => opencodeCommand && onCopyText(opencodeCommand)}
@@ -530,17 +548,19 @@ function CellCard({
                   type="button"
                   variant="outline"
                 >
-                  <Copy className="mr-1 h-3 w-3" />
-                  CLI
+                  <Copy className="h-3.5 w-3.5" />
+                  Copy CLI
                 </Button>
               </div>
-            </div>
-            <p className="mt-1 overflow-hidden break-all rounded bg-muted/50 p-2 font-mono text-muted-foreground text-xs">
-              {cell.workspacePath}
-            </p>
-            <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground uppercase tracking-[0.2em]">
-              <span>Session · {cell.opencodeSessionId ?? "pending"}</span>
-              {connectionLabel ? <span>Server · {connectionLabel}</span> : null}
+              <pre className="min-h-[2.5rem] overflow-x-auto whitespace-pre-wrap break-all rounded border border-border/40 bg-card/70 p-2 font-mono text-[11px] text-muted-foreground">
+                {opencodeCommand ?? "OpenCode session not available"}
+              </pre>
+              <div className="flex flex-wrap gap-3 text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                <span>Session · {cell.opencodeSessionId ?? "pending"}</span>
+                {connectionLabel ? (
+                  <span>Server · {connectionLabel}</span>
+                ) : null}
+              </div>
             </div>
           </div>
         )}
