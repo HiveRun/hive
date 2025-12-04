@@ -5,7 +5,6 @@ import { Context, Effect, Layer } from "effect";
 import { DatabaseService } from "../db";
 import type { CellService } from "../schema/services";
 import { cellServices } from "../schema/services";
-import { safeSync } from "../utils/result";
 
 type DbClient = typeof import("../db").db;
 
@@ -122,24 +121,20 @@ function allocatePort(): Promise<number> {
 }
 
 async function terminatePid(pid: number): Promise<void> {
-  const terminateResult = safeSync(
-    () => process.kill(pid, "SIGTERM"),
-    () => null
-  );
-
-  if (terminateResult.isErr()) {
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
     return;
   }
 
   await delay(FORCE_KILL_DELAY_MS);
 
-  safeSync(
-    () => {
-      process.kill(pid, 0);
-      process.kill(pid, "SIGKILL");
-    },
-    () => null
-  );
+  try {
+    process.kill(pid, 0);
+    process.kill(pid, "SIGKILL");
+  } catch {
+    /* ignore cleanup errors */
+  }
 }
 
 type PortManagerError = {

@@ -46,7 +46,6 @@ import {
   ServiceSupervisorService,
   TemplateSetupError,
 } from "../services/supervisor";
-import { safeAsync } from "../utils/result";
 import {
   type ResolveWorkspaceContext,
   resolveWorkspaceContextEffect,
@@ -57,6 +56,7 @@ import type { WorkspaceRecord } from "../workspaces/registry";
 import {
   describeWorktreeError,
   type WorktreeManager,
+  type WorktreeManagerError,
   worktreeErrorToError,
 } from "../worktree/manager";
 
@@ -154,9 +154,6 @@ const SERVICE_LOG_DIR = ".hive/logs";
 const PORT_CHECK_TIMEOUT_MS = 500;
 const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
 const MAX_PROVISIONING_ATTEMPTS = 3;
-
-const toError = (value: unknown): Error =>
-  value instanceof Error ? value : new Error(String(value));
 
 const PROVISIONING_INTERRUPTED_MESSAGE =
   "Provisioning interrupted. Fix the workspace and rerun setup.";
@@ -916,22 +913,26 @@ async function createCellRecord(
 ): Promise<typeof cells.$inferSelect> {
   const { body, database, worktreeService, workspace, state } = context;
 
-  const worktreeResult = await worktreeService.createWorktree(state.cellId, {
-    templateId: body.templateId,
-  });
-
-  if (worktreeResult.isErr()) {
-    context.log.error(
-      {
-        error: describeWorktreeError(worktreeResult.error),
-        cellId: state.cellId,
-      },
-      "Failed to create git worktree"
-    );
-    throw worktreeErrorToError(worktreeResult.error);
-  }
-
-  const worktree = worktreeResult.value;
+  const worktree = await Effect.runPromise(
+    worktreeService
+      .createWorktree(state.cellId, {
+        templateId: body.templateId,
+      })
+      .pipe(
+        Effect.tapError((error) =>
+          Effect.sync(() =>
+            context.log.error(
+              {
+                error: describeWorktreeError(error),
+                cellId: state.cellId,
+              },
+              "Failed to create git worktree"
+            )
+          )
+        ),
+        Effect.mapError(worktreeErrorToError)
+      )
+  );
   state.worktreeCreated = true;
   state.workspacePath = worktree.path;
   state.branchName = worktree.branch;
@@ -1607,32 +1608,30 @@ async function removeCellWorkspace(
   cell: CellWorkspaceRecord,
   log: LoggerLike
 ) {
-  const removalResult = await worktreeService.removeWorktree(cell.id);
-  if (removalResult.isOk()) {
+  try {
+    await Effect.runPromise(worktreeService.removeWorktree(cell.id));
     return;
+  } catch (error) {
+    const worktreeError = error as WorktreeManagerError;
+    log.warn(
+      {
+        error: describeWorktreeError(worktreeError),
+        cellId: cell.id,
+      },
+      "Failed to remove git worktree, attempting filesystem cleanup"
+    );
   }
-
-  log.warn(
-    {
-      error: describeWorktreeError(removalResult.error),
-      cellId: cell.id,
-    },
-    "Failed to remove git worktree, attempting filesystem cleanup"
-  );
 
   if (!cell.workspacePath) {
     return;
   }
 
-  const filesystemRemoval = await safeAsync(
-    () => fs.rm(cell.workspacePath, { recursive: true, force: true }),
-    toError
-  );
-
-  if (filesystemRemoval.isErr()) {
+  try {
+    await fs.rm(cell.workspacePath, { recursive: true, force: true });
+  } catch (filesystemError) {
     log.warn(
       {
-        error: filesystemRemoval.error,
+        error: filesystemError,
         cellId: cell.id,
         workspacePath: cell.workspacePath,
       },

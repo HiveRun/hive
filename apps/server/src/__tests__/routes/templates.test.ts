@@ -12,7 +12,6 @@ import type { HiveConfig } from "../../config/schema";
 import { templatesRoutes } from "../../routes/templates";
 // biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
 import * as Runtime from "../../runtime";
-import { okAsync } from "../../utils/result";
 import type { WorkspaceRuntimeContext } from "../../workspaces/context";
 // biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
 import * as WorkspaceContext from "../../workspaces/context";
@@ -82,12 +81,12 @@ const createWorkspaceContext = (
 ): WorkspaceRuntimeContext => {
   const mockManager: WorktreeManager = {
     createWorktree: () =>
-      okAsync({
+      Effect.succeed({
         path: `${path}/.hive/cells/sample`,
         branch: "main",
         baseCommit: "abc",
       }),
-    removeWorktree: () => okAsync(),
+    removeWorktree: () => Effect.void,
   };
 
   return {
