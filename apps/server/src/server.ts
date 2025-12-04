@@ -35,7 +35,9 @@ import {
 } from "./workspaces/registry";
 
 const DEFAULT_SERVER_PORT = 3000;
+const DEFAULT_HOSTNAME = "localhost";
 const PORT = Number(process.env.PORT ?? DEFAULT_SERVER_PORT);
+const HOSTNAME = process.env.HOST ?? process.env.HOSTNAME ?? DEFAULT_HOSTNAME;
 
 const runtimeExecutable = basename(process.execPath).toLowerCase();
 const isBunRuntime = runtimeExecutable.startsWith("bun");
@@ -412,15 +414,23 @@ export const startServer = async () => {
   await initializeSupervisorSafely();
   await resumeProvisioningSafely();
 
-  try {
-    await ensurePortAvailable(PORT, "127.0.0.1");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(
-      `Port ${PORT} on 127.0.0.1 is unavailable: ${message}. Is another process using this port?\n`
-    );
-    cleanupPidFile();
-    process.exit(1);
+  const hostChecks = new Set([HOSTNAME]);
+  if (HOSTNAME === "localhost") {
+    hostChecks.add("127.0.0.1");
+    hostChecks.add("::1");
+  }
+
+  for (const host of hostChecks) {
+    try {
+      await ensurePortAvailable(PORT, host);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(
+        `Port ${PORT} on ${host} is unavailable: ${message}. Is another process using this port?\n`
+      );
+      cleanupPidFile();
+      process.exit(1);
+    }
   }
 
   registerSignalHandlers();
@@ -428,7 +438,7 @@ export const startServer = async () => {
   try {
     app.listen({
       port: PORT,
-      hostname: "127.0.0.1",
+      hostname: HOSTNAME,
       reusePort: false,
     });
   } catch (error) {
@@ -444,13 +454,13 @@ export const startServer = async () => {
   const boundPort = app.server?.port;
   if (boundPort !== PORT) {
     process.stderr.write(
-      `API requested port ${PORT} but Bun bound ${boundPort}. Refusing to continue.\n`
+      `API requested ${HOSTNAME}:${PORT} but Bun bound ${boundPort}. Refusing to continue.\n`
     );
     cleanupPidFile();
     process.exit(1);
   }
 
-  process.stderr.write(`API listening on http://localhost:${PORT}\n`);
+  process.stderr.write(`API listening on http://${HOSTNAME}:${PORT}\n`);
 
   return app;
 };
