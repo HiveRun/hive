@@ -218,9 +218,21 @@ function sortWorkspaces(workspaces: WorkspaceRecord[]): WorkspaceRecord[] {
 
 export async function getWorkspaceRegistry(): Promise<WorkspaceRegistry> {
   const registry = await readRegistryFile();
+  const workspaces = sortWorkspaces(registry.workspaces);
+  const activeWorkspaceId =
+    registry.activeWorkspaceId ?? workspaces[0]?.id ?? null;
+
+  if (!registry.activeWorkspaceId && activeWorkspaceId) {
+    await writeRegistryFile({
+      version: REGISTRY_VERSION,
+      workspaces,
+      activeWorkspaceId,
+    });
+  }
+
   return {
-    workspaces: sortWorkspaces(registry.workspaces),
-    activeWorkspaceId: registry.activeWorkspaceId ?? null,
+    workspaces,
+    activeWorkspaceId,
   };
 }
 
