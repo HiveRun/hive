@@ -17,7 +17,11 @@ import { cors } from "@elysiajs/cors";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { Effect } from "effect";
 import { Elysia } from "elysia";
-import { cleanupOrphanedServers } from "./agents/cleanup";
+import { loadOpencodeConfig } from "./agents/opencode-config";
+import {
+  startSharedOpencodeServer,
+  stopSharedOpencodeServer,
+} from "./agents/opencode-server";
 import { closeAllAgentSessions } from "./agents/service";
 import { resolveWorkspaceRoot } from "./config/context";
 import { resolveStaticAssetsDirectory } from "./config/static-assets";
@@ -27,7 +31,6 @@ import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
 import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
 import { runServerEffect } from "./runtime";
-import { cells } from "./schema/cells";
 import { ServiceSupervisorService } from "./services/supervisor";
 import {
   ensureWorkspaceRegisteredEffect,
@@ -205,54 +208,15 @@ const runMigrationsEffect = Effect.flatMap(DatabaseService, ({ db }) =>
   )
 );
 
-const startupCleanupEffect = Effect.gen(function* () {
-  const { db } = yield* DatabaseService;
-
-  yield* Effect.sync(() =>
-    process.stderr.write("Checking for orphaned OpenCode processes...\n")
-  );
-
-  const activeCells = yield* Effect.tryPromise({
-    try: () => db.select({ port: cells.opencodeServerPort }).from(cells),
+const startOpencodeServerEffect = (workspaceRoot: string) =>
+  Effect.tryPromise({
+    try: async () => {
+      const config = await loadOpencodeConfig(workspaceRoot);
+      await startSharedOpencodeServer(config);
+    },
     catch: (error) =>
       error instanceof Error ? error : new Error(String(error)),
   });
-
-  const ports = activeCells
-    .map((cell) => cell.port)
-    .filter((port): port is number => port !== null);
-
-  if (ports.length === 0) {
-    yield* Effect.sync(() =>
-      process.stderr.write("No OpenCode ports to clean up.\n")
-    );
-    return;
-  }
-
-  const { cleaned, failed } = yield* Effect.tryPromise({
-    try: () => cleanupOrphanedServers(ports),
-    catch: (error) =>
-      error instanceof Error ? error : new Error(String(error)),
-  });
-
-  if (cleaned.length > 0) {
-    yield* Effect.sync(() =>
-      process.stderr.write(
-        `Cleaned up ${cleaned.length} orphaned OpenCode process(es) on ports: ${cleaned.join(", ")}` +
-          "\n"
-      )
-    );
-  }
-
-  if (failed.length > 0) {
-    yield* Effect.sync(() =>
-      process.stderr.write(
-        `Warning: Failed to clean up ${failed.length} process(es) on ports: ${failed.join(", ")}` +
-          "\n"
-      )
-    );
-  }
-});
 
 export const cleanupPidFile = () => {
   try {
@@ -298,6 +262,11 @@ const shutdownEffect = Effect.gen(function* () {
   );
   yield* Effect.tryPromise({
     try: () => closeAllAgentSessions(),
+    catch: (error) =>
+      error instanceof Error ? error : new Error(String(error)),
+  });
+  yield* Effect.tryPromise({
+    try: () => stopSharedOpencodeServer(),
     catch: (error) =>
       error instanceof Error ? error : new Error(String(error)),
   });
@@ -451,8 +420,8 @@ const bootstrapServerEffect = (
 ) =>
   Effect.gen(function* () {
     yield* runMigrationsEffect;
-    yield* startupCleanupEffect;
     yield* registerWorkspaceEffect(workspaceRoot);
+    yield* startOpencodeServerEffect(workspaceRoot);
     yield* bootstrapSupervisorEffect;
     yield* resumeProvisioningEffect;
     yield* ensureRequestedPortsEffect(PORT, hostChecks);

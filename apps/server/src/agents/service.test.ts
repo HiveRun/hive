@@ -1,8 +1,6 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { OpencodeClient } from "@opencode-ai/sdk";
-// biome-ignore lint/performance/noNamespaceImport: tests need namespace import for spies
-import * as OpencodeSdk from "@opencode-ai/sdk";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { Effect } from "effect";
 import {
@@ -75,6 +73,7 @@ describe("agent model selection", () => {
   let clientStub: ClientStub;
   let loadHiveConfigMock: Mock;
   let loadOpencodeConfigSpy: Mock;
+  let acquireOpencodeClientMock: Mock;
 
   beforeAll(async () => {
     const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -86,13 +85,9 @@ describe("agent model selection", () => {
     vi.restoreAllMocks();
 
     clientStub = buildClientStub();
-    vi.spyOn(OpencodeSdk, "createOpencodeClient").mockReturnValue(
-      clientStub as unknown as OpencodeClient
+    acquireOpencodeClientMock = vi.fn(
+      async () => clientStub as unknown as OpencodeClient
     );
-    vi.spyOn(OpencodeSdk, "createOpencodeServer").mockResolvedValue({
-      url: "http://127.0.0.1:0",
-      close: vi.fn(),
-    });
 
     loadHiveConfigMock = vi.fn(() => Effect.succeed(mockHiveConfig));
     loadOpencodeConfigSpy = vi
@@ -105,6 +100,7 @@ describe("agent model selection", () => {
     setAgentRuntimeDependencies({
       loadHiveConfig: loadHiveConfigMock,
       loadOpencodeConfig: loadOpencodeConfigSpy,
+      acquireOpencodeClient: acquireOpencodeClientMock,
     });
 
     await closeAllAgentSessions();
