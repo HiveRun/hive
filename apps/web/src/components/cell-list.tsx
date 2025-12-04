@@ -437,7 +437,7 @@ function CellCard({
     enabled: cell.status === "ready" && Boolean(cell.id),
     staleTime: 30_000,
   });
-  const opencodeCommand = buildOpencodeCommand(cell);
+  const opencodeCommand = cell.opencodeCommand ?? null;
   const connectionLabel = describeServerConnection(cell);
   return (
     <Card
@@ -635,29 +635,6 @@ function CellStatusNotice({
   );
 }
 
-function buildOpencodeCommand(cell: Cell): string | null {
-  if (!(cell.workspacePath && cell.opencodeSessionId)) {
-    return null;
-  }
-
-  const args = [
-    "opencode",
-    shellQuote(cell.workspacePath),
-    "--session",
-    shellQuote(cell.opencodeSessionId),
-  ];
-
-  const { hostname, port } = deriveServerOptions(cell);
-  if (hostname) {
-    args.push("--hostname", shellQuote(hostname));
-  }
-  if (port) {
-    args.push("--port", shellQuote(port));
-  }
-
-  return args.join(" ");
-}
-
 function describeServerConnection(cell: Cell): string | null {
   const { hostname, port } = deriveServerOptions(cell);
   if (!(hostname || port)) {
@@ -693,10 +670,6 @@ function deriveServerOptions(
   }
 
   return options;
-}
-
-function shellQuote(value: string): string {
-  return JSON.stringify(value);
 }
 
 function AgentStatusIndicator({
