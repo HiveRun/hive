@@ -12,6 +12,13 @@ const devServerPort = Number.isNaN(resolvedDevPort)
   : resolvedDevPort;
 const apiServerPort = process.env.SERVER_PORT ?? DEFAULT_API_SERVER_PORT;
 
+const requiredApiUrl = process.env.VITE_API_URL?.trim();
+if (!requiredApiUrl || requiredApiUrl === "undefined") {
+  throw new Error(
+    "VITE_API_URL is required. Set it before running dev/build (e.g. http://localhost:3000)."
+  );
+}
+
 export default defineConfig({
   plugins: [
     tsconfigPaths({
