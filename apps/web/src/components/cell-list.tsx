@@ -335,7 +335,7 @@ export function CellList({ workspaceId }: CellListProps) {
               disableSelection={bulkDeleteMutation.isPending}
               isSelected={selectedCellIds.has(cell.id)}
               key={cell.id}
-              onCopyWorkspace={copyToClipboard}
+              onCopyText={copyToClipboard}
               onToggleSelect={() => toggleCellSelection(cell.id)}
               serviceStatus={serviceStatusMap.get(cell.id)}
               templateLabel={getTemplateLabel(cell.templateId)}
@@ -417,7 +417,7 @@ type CellCardProps = {
   isSelected: boolean;
   disableSelection: boolean;
   onToggleSelect: () => void;
-  onCopyWorkspace: (path: string) => void;
+  onCopyText: (value: string) => void;
   serviceStatus?: ServiceStatusState;
 };
 
@@ -426,7 +426,7 @@ function CellCard({
   createdLabel,
   disableSelection,
   isSelected,
-  onCopyWorkspace,
+  onCopyText,
   onToggleSelect,
   templateLabel,
   serviceStatus,
@@ -437,6 +437,8 @@ function CellCard({
     enabled: cell.status === "ready" && Boolean(cell.id),
     staleTime: 30_000,
   });
+  const opencodeCommand = cell.opencodeCommand ?? null;
+  const connectionLabel = describeServerConnection(cell);
   return (
     <Card
       className={cn(
@@ -497,26 +499,69 @@ function CellCard({
         )}
 
         {cell.workspacePath && (
-          <div>
-            <div className="flex items-center justify-between gap-2">
-              <p className="font-medium text-muted-foreground text-xs">
-                Workspace:
+          <div className="space-y-3">
+            <div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-medium text-muted-foreground text-xs">
+                  Workspace
+                </p>
+                <Button
+                  className="h-7 w-7 p-0"
+                  data-testid="copy-workspace-path"
+                  onClick={() => onCopyText(cell.workspacePath)}
+                  size="sm"
+                  title="Copy workspace path"
+                  type="button"
+                  variant="ghost"
+                >
+                  <Copy className="h-3 w-3" />
+                </Button>
+              </div>
+              <p className="mt-1 overflow-hidden break-all rounded bg-muted/50 p-2 font-mono text-muted-foreground text-xs">
+                {cell.workspacePath}
               </p>
-              <Button
-                className="h-7 w-7 p-0"
-                data-testid="copy-workspace-path"
-                onClick={() => onCopyWorkspace(cell.workspacePath)}
-                size="sm"
-                title="Copy workspace path"
-                type="button"
-                variant="ghost"
-              >
-                <Copy className="h-3 w-3" />
-              </Button>
             </div>
-            <p className="mt-1 overflow-hidden break-all rounded bg-muted/50 p-2 font-mono text-muted-foreground text-xs">
-              {cell.workspacePath}
-            </p>
+
+            <div className="space-y-2 rounded border border-border/70 bg-background/70 p-2 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="font-semibold text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+                    OpenCode CLI
+                  </p>
+                  <p className="text-[10px] text-muted-foreground/80 uppercase tracking-[0.3em]">
+                    {opencodeCommand
+                      ? "Copy command to resume in TUI"
+                      : "Session must be running"}
+                  </p>
+                </div>
+                <Button
+                  className="shrink-0"
+                  data-testid="copy-opencode-command"
+                  disabled={!opencodeCommand}
+                  onClick={() => opencodeCommand && onCopyText(opencodeCommand)}
+                  size="sm"
+                  title={
+                    opencodeCommand
+                      ? "Copy OpenCode CLI command"
+                      : "OpenCode session not ready"
+                  }
+                  type="button"
+                  variant="outline"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  Copy CLI
+                </Button>
+              </div>
+              <pre className="min-h-[2.5rem] overflow-x-auto whitespace-pre-wrap break-all rounded border border-border/40 bg-card/70 p-2 font-mono text-[11px] text-muted-foreground">
+                {opencodeCommand ?? "OpenCode session not available"}
+              </pre>
+              <div className="flex flex-wrap gap-3 text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                <span>Session · {cell.opencodeSessionId ?? "pending"}</span>
+                {connectionLabel ? (
+                  <span>Server · {connectionLabel}</span>
+                ) : null}
+              </div>
+            </div>
           </div>
         )}
 
@@ -578,7 +623,53 @@ function CellStatusNotice({
     );
   }
 
-  return null;
+  return (
+    <div className="rounded-md border border-accent/30 bg-accent/5 p-3">
+      <p className="font-semibold text-[11px] text-accent uppercase tracking-[0.3em]">
+        Ready
+      </p>
+      <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+        Cell is ready for interaction
+      </p>
+    </div>
+  );
+}
+
+function describeServerConnection(cell: Cell): string | null {
+  const { hostname, port } = deriveServerOptions(cell);
+  if (!(hostname || port)) {
+    return null;
+  }
+  if (hostname && port) {
+    return `${hostname}:${port}`;
+  }
+  return hostname ?? port ?? null;
+}
+
+function deriveServerOptions(
+  cell: Pick<Cell, "opencodeServerUrl" | "opencodeServerPort">
+): { hostname?: string; port?: string } {
+  const options: { hostname?: string; port?: string } = {};
+
+  if (cell.opencodeServerUrl) {
+    try {
+      const parsed = new URL(cell.opencodeServerUrl);
+      if (parsed.hostname) {
+        options.hostname = parsed.hostname;
+      }
+      if (parsed.port) {
+        options.port = parsed.port;
+      }
+    } catch {
+      // ignore invalid url fragments; fallback to explicit port if provided
+    }
+  }
+
+  if (cell.opencodeServerPort) {
+    options.port = String(cell.opencodeServerPort);
+  }
+
+  return options;
 }
 
 function AgentStatusIndicator({

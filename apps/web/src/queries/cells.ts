@@ -178,6 +178,7 @@ export type Cell = Awaited<
   ReturnType<ReturnType<typeof cellQueries.detail>["queryFn"]>
 > & {
   status: CellStatus;
+  opencodeCommand?: string | null;
   lastSetupError?: string;
   branchName?: string | null;
   baseCommit?: string | null;

@@ -12,6 +12,7 @@ export const CellResponseSchema = t.Object({
   opencodeSessionId: t.Union([t.String(), t.Null()]),
   opencodeServerUrl: t.Union([t.String(), t.Null()]),
   opencodeServerPort: t.Union([t.Number(), t.Null()]),
+  opencodeCommand: t.Union([t.String(), t.Null()]),
   createdAt: t.String(),
   status: t.String(),
   lastSetupError: t.Optional(t.String()),

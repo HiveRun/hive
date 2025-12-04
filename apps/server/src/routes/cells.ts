@@ -213,6 +213,7 @@ function cellToResponse(cell: typeof cells.$inferSelect) {
     opencodeSessionId: cell.opencodeSessionId,
     opencodeServerUrl: cell.opencodeServerUrl,
     opencodeServerPort: cell.opencodeServerPort,
+    opencodeCommand: buildOpencodeCommand(cell),
     createdAt: cell.createdAt.toISOString(),
     status: cell.status,
     ...(cell.lastSetupError != null
@@ -221,6 +222,70 @@ function cellToResponse(cell: typeof cells.$inferSelect) {
     ...(cell.branchName != null ? { branchName: cell.branchName } : {}),
     ...(cell.baseCommit != null ? { baseCommit: cell.baseCommit } : {}),
   };
+}
+
+function buildOpencodeCommand(
+  cell: Pick<
+    typeof cells.$inferSelect,
+    | "workspacePath"
+    | "opencodeSessionId"
+    | "opencodeServerUrl"
+    | "opencodeServerPort"
+  >
+): string | null {
+  if (!(cell.workspacePath && cell.opencodeSessionId)) {
+    return null;
+  }
+
+  const args = [
+    "opencode",
+    shellQuote(cell.workspacePath),
+    "--session",
+    shellQuote(cell.opencodeSessionId),
+  ];
+
+  const { hostname, port } = deriveServerOptions(cell);
+  if (hostname) {
+    args.push("--hostname", shellQuote(hostname));
+  }
+  if (port) {
+    args.push("--port", shellQuote(port));
+  }
+
+  return args.join(" ");
+}
+
+function deriveServerOptions(
+  cell: Pick<
+    typeof cells.$inferSelect,
+    "opencodeServerUrl" | "opencodeServerPort"
+  >
+): { hostname?: string; port?: string } {
+  const options: { hostname?: string; port?: string } = {};
+
+  if (cell.opencodeServerUrl) {
+    try {
+      const parsed = new URL(cell.opencodeServerUrl);
+      if (parsed.hostname) {
+        options.hostname = parsed.hostname;
+      }
+      if (parsed.port) {
+        options.port = parsed.port;
+      }
+    } catch {
+      // ignore invalid url fragments; fall back to explicit port if provided
+    }
+  }
+
+  if (cell.opencodeServerPort) {
+    options.port = String(cell.opencodeServerPort);
+  }
+
+  return options;
+}
+
+function shellQuote(value: string): string {
+  return JSON.stringify(value);
 }
 
 type ErrorPayload = {

@@ -46,6 +46,7 @@ export function createCellFixture(
     opencodeSessionId: overrides.opencodeSessionId ?? cellFaker.string.uuid(),
     opencodeServerUrl: overrides.opencodeServerUrl ?? "http://127.0.0.1:5000",
     opencodeServerPort: overrides.opencodeServerPort ?? DEFAULT_OPENCODE_PORT,
+    opencodeCommand: overrides.opencodeCommand ?? null,
     createdAt:
       overrides.createdAt ??
       cellFaker.date
