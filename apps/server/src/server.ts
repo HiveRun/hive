@@ -1,6 +1,5 @@
 import "dotenv/config";
 import { existsSync, rmSync, statSync } from "node:fs";
-import { createServer } from "node:net";
 import {
   basename,
   dirname,
@@ -52,7 +51,6 @@ const forcedMigrationsDirectory = process.env.HIVE_MIGRATIONS_DIR;
 const hiveHome = resolveHiveHome();
 export const pidFilePath =
   process.env.HIVE_PID_FILE ?? join(hiveHome, "hive.pid");
-
 export const DEFAULT_WEB_PORT =
   process.env.WEB_PORT ?? (isCompiledRuntime ? String(PORT) : "3001");
 const DEFAULT_CORS_ORIGINS = [
@@ -61,12 +59,12 @@ const DEFAULT_CORS_ORIGINS = [
   "tauri://localhost",
 ];
 export const DEFAULT_WEB_URL = `http://localhost:${DEFAULT_WEB_PORT}`;
-
+//
 const resolvedCorsOrigins = (process.env.CORS_ORIGIN || "")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
-
+//
 const allowedCorsOrigins =
   resolvedCorsOrigins.length > 0 ? resolvedCorsOrigins : DEFAULT_CORS_ORIGINS;
 
@@ -75,17 +73,6 @@ const LEADING_SLASH_REGEX = /^\/+/,
 
 const sanitizeAssetPath = (pathname: string) =>
   pathname.replace(LEADING_SLASH_REGEX, "").replace(DOT_SEQUENCE_REGEX, "");
-
-const ensurePortAvailable = (port: number, hostname: string) =>
-  new Promise<void>((resolvePromise, rejectPromise) => {
-    const tester = createServer();
-    tester.once("error", (error) => {
-      tester.close(() => rejectPromise(error));
-    });
-    tester.listen(port, hostname, () => {
-      tester.close(() => resolvePromise());
-    });
-  });
 
 const resolvePathWithin = (root: string, target: string) => {
   const absolute = resolve(root, target);
@@ -389,42 +376,13 @@ const resumeProvisioningEffect = Effect.tryPromise({
   )
 );
 
-const ensurePortAvailableEffect = (port: number, hostname: string) =>
-  Effect.tryPromise({
-    try: () => ensurePortAvailable(port, hostname),
-    catch: (error) =>
-      error instanceof Error ? error : new Error(String(error)),
-  });
-
-const ensureRequestedPortsEffect = (port: number, hostChecks: Set<string>) =>
-  Effect.forEach(
-    [...hostChecks],
-    (host) =>
-      ensurePortAvailableEffect(port, host).pipe(
-        Effect.catchAll((error) =>
-          Effect.fail(
-            new Error(
-              `Port ${port} on ${host} is unavailable: ${
-                error instanceof Error ? error.message : String(error)
-              }`
-            )
-          )
-        )
-      ),
-    { discard: true, concurrency: 1 }
-  );
-
-const bootstrapServerEffect = (
-  workspaceRoot: string,
-  hostChecks: Set<string>
-) =>
+const bootstrapServerEffect = (workspaceRoot: string) =>
   Effect.gen(function* () {
     yield* runMigrationsEffect;
     yield* registerWorkspaceEffect(workspaceRoot);
     yield* startOpencodeServerEffect(workspaceRoot);
     yield* bootstrapSupervisorEffect;
     yield* resumeProvisioningEffect;
-    yield* ensureRequestedPortsEffect(PORT, hostChecks);
   });
 
 export const startServer = async () => {
@@ -444,14 +402,9 @@ export const startServer = async () => {
   }
 
   const workspaceRoot = resolveWorkspaceRoot();
-  const hostChecks = new Set([HOSTNAME]);
-  if (HOSTNAME === "localhost") {
-    hostChecks.add("127.0.0.1");
-    hostChecks.add("::1");
-  }
 
   try {
-    await runServerEffect(bootstrapServerEffect(workspaceRoot, hostChecks));
+    await runServerEffect(bootstrapServerEffect(workspaceRoot));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(
@@ -480,16 +433,11 @@ export const startServer = async () => {
     process.exit(1);
   }
 
-  const boundPort = app.server?.port;
-  if (boundPort !== PORT) {
-    process.stderr.write(
-      `API requested ${HOSTNAME}:${PORT} but Bun bound ${boundPort}. Refusing to continue.\n`
-    );
-    cleanupPidFile();
-    process.exit(1);
-  }
-
-  process.stderr.write(`API listening on http://${HOSTNAME}:${PORT}\n`);
+  const boundPort = app.server?.port ?? PORT;
+  const boundHostname = app.server?.hostname ?? HOSTNAME;
+  process.stderr.write(
+    `API listening on http://${boundHostname}:${boundPort}\n`
+  );
 
   return app;
 };
