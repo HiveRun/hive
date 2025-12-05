@@ -64,7 +64,7 @@ const resolvedCorsOrigins = (process.env.CORS_ORIGIN || "")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
-
+//
 const allowedCorsOrigins =
   resolvedCorsOrigins.length > 0 ? resolvedCorsOrigins : DEFAULT_CORS_ORIGINS;
 
@@ -376,18 +376,6 @@ const resumeProvisioningEffect = Effect.tryPromise({
   )
 );
 
-const DEFAULT_PORT_RETRY_ATTEMPTS = 10;
-const DEFAULT_PORT_RETRY_DELAY_MS = 100;
-const PORT_RETRY_ATTEMPTS = Number(
-  process.env.PORT_RETRY_ATTEMPTS ?? DEFAULT_PORT_RETRY_ATTEMPTS
-);
-const PORT_RETRY_DELAY_MS = Number(
-  process.env.PORT_RETRY_DELAY_MS ?? DEFAULT_PORT_RETRY_DELAY_MS
-);
-const shouldRetryPortBinding =
-  process.env.PORT_RETRY_ENABLED !== "0" &&
-  process.env.NODE_ENV !== "production";
-
 const bootstrapServerEffect = (workspaceRoot: string) =>
   Effect.gen(function* () {
     yield* runMigrationsEffect;
@@ -396,49 +384,6 @@ const bootstrapServerEffect = (workspaceRoot: string) =>
     yield* bootstrapSupervisorEffect;
     yield* resumeProvisioningEffect;
   });
-
-const listenWithRetry = async (
-  app: App,
-  port: number,
-  hostname: string
-): Promise<void> => {
-  if (!shouldRetryPortBinding) {
-    app.listen({ port, hostname, reusePort: false });
-    return;
-  }
-
-  let lastError: unknown = null;
-
-  for (let attempt = 0; attempt <= PORT_RETRY_ATTEMPTS; attempt += 1) {
-    try {
-      app.listen({ port, hostname, reusePort: false });
-      return;
-    } catch (error) {
-      lastError = error;
-      const code = (error as { code?: string } | undefined)?.code;
-
-      if (code !== "EADDRINUSE") {
-        throw error;
-      }
-
-      if (attempt === 0) {
-        process.stderr.write(
-          `API port ${hostname}:${port} unavailable; retrying up to ${PORT_RETRY_ATTEMPTS} times with ${PORT_RETRY_DELAY_MS}ms delay.\n`
-        );
-      }
-
-      if (attempt === PORT_RETRY_ATTEMPTS) {
-        throw error;
-      }
-
-      await new Promise((resolvePromise) =>
-        setTimeout(resolvePromise, PORT_RETRY_DELAY_MS)
-      );
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
-};
 
 export const startServer = async () => {
   const app = createApp();
@@ -473,7 +418,11 @@ export const startServer = async () => {
   registerSignalHandlers();
 
   try {
-    await listenWithRetry(app, PORT, HOSTNAME);
+    app.listen({
+      port: PORT,
+      hostname: HOSTNAME,
+      reusePort: false,
+    });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : JSON.stringify(error);
@@ -486,12 +435,6 @@ export const startServer = async () => {
 
   const boundPort = app.server?.port ?? PORT;
   const boundHostname = app.server?.hostname ?? HOSTNAME;
-  if (boundPort !== PORT || boundHostname !== HOSTNAME) {
-    process.stderr.write(
-      `API requested ${HOSTNAME}:${PORT} but Bun bound ${boundHostname}:${boundPort}. Continuing with bound address.\n`
-    );
-  }
-
   process.stderr.write(
     `API listening on http://${boundHostname}:${boundPort}\n`
   );
