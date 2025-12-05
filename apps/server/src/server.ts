@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { existsSync, rmSync, statSync } from "node:fs";
+import { createServer } from "node:net";
 import {
   basename,
   dirname,
@@ -388,6 +389,37 @@ const shouldRetryPortBinding =
   process.env.PORT_RETRY_ENABLED !== "0" &&
   process.env.NODE_ENV !== "production";
 
+const ensurePortAvailable = (port: number, hostname: string) =>
+  new Promise<void>((resolvePromise, rejectPromise) => {
+    const tester = createServer();
+    tester.once("error", (error: unknown) => {
+      tester.close(() => rejectPromise(error));
+    });
+    tester.listen(port, hostname, () => {
+      tester.close(() => resolvePromise());
+    });
+  });
+
+const preflightPortAvailability = async (port: number, hostname: string) => {
+  const hostChecks = new Set<string>([hostname]);
+  if (hostname === "localhost") {
+    hostChecks.add("127.0.0.1");
+    hostChecks.add("::1");
+  }
+
+  for (const host of hostChecks) {
+    try {
+      await ensurePortAvailable(port, host);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : String(error ?? "unknown error");
+      throw new Error(`Port ${port} on ${host} is unavailable: ${message}`);
+    }
+  }
+};
+
 const bootstrapServerEffect = (workspaceRoot: string) =>
   Effect.gen(function* () {
     yield* runMigrationsEffect;
@@ -402,6 +434,8 @@ const listenWithRetry = async (
   port: number,
   hostname: string
 ): Promise<void> => {
+  await preflightPortAvailability(port, hostname);
+
   if (!shouldRetryPortBinding) {
     app.listen({ port, hostname, reusePort: false });
     return;
