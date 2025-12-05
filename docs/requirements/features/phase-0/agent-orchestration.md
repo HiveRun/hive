@@ -12,6 +12,7 @@
 Provide the core engine for managing agent sessions, authentication, and lifecycle events across all cell types.
 
 ## Tasks
+- [x] [HIVE-6] Enrich agent chat info (expand reasoning, tool call, and diff traces)
 - [x] [HIVE-5] Add chat interruption controls (Abort button + double-Esc binding)
 - [x] [HIVE-16] Ship repo-level `.ignore` overrides so OpenCode/ripgrep can inspect gitignored dependencies
 - [x] [HIVE-9] Adopt Effect-friendly Result helpers for consistent agent/provider error handling (2025-11-30)

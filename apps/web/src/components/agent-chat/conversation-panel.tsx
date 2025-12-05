@@ -3,12 +3,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AgentPermissions } from "@/components/agent-permissions";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { PermissionRequest } from "@/hooks/use-agent-event-stream";
+import { storage } from "@/lib/storage";
 import type { AgentMessage } from "@/queries/agents";
 
-import { MessageBubble } from "./message-bubble";
+import { MessageBubble, type TracePreferences } from "./message-bubble";
 
 type ConversationMessage = AgentMessage & {
   interruptionReason?: string;
@@ -29,6 +38,13 @@ type ConversationPanelProps = {
 
 const SCROLL_STORAGE_PREFIX = "agent-chat-scroll";
 const SCROLL_BOTTOM_THRESHOLD = 16;
+const TRACE_PREFERENCES_STORAGE_PREFIX = "agent-chat-trace-filters";
+
+const DEFAULT_TRACE_PREFERENCES: TracePreferences = {
+  showReasoning: true,
+  showToolRuns: true,
+  showDiffs: true,
+};
 
 export function ConversationPanel({
   totalMessages,
@@ -57,6 +73,16 @@ export function ConversationPanel({
     () => `${SCROLL_STORAGE_PREFIX}:${sessionId}`,
     [sessionId]
   );
+  const tracePreferenceKey = useMemo(() => {
+    if (!sessionId) {
+      return null;
+    }
+    return `${TRACE_PREFERENCES_STORAGE_PREFIX}:${sessionId}`;
+  }, [sessionId]);
+  const [tracePreferences, setTracePreferences] = useState<TracePreferences>(
+    DEFAULT_TRACE_PREFERENCES
+  );
+  const tracePreferencesHydratedRef = useRef(false);
 
   useEffect(() => {
     if (!sessionId) {
@@ -64,6 +90,48 @@ export function ConversationPanel({
     }
     pendingRestoreRef.current = true;
   }, [sessionId]);
+
+  useEffect(() => {
+    tracePreferencesHydratedRef.current = false;
+    if (typeof window === "undefined") {
+      tracePreferencesHydratedRef.current = true;
+      return;
+    }
+    if (!tracePreferenceKey) {
+      setTracePreferences(DEFAULT_TRACE_PREFERENCES);
+      tracePreferencesHydratedRef.current = true;
+      return;
+    }
+    const stored = storage.get<TracePreferences>(tracePreferenceKey);
+    setTracePreferences(
+      stored
+        ? { ...DEFAULT_TRACE_PREFERENCES, ...stored }
+        : DEFAULT_TRACE_PREFERENCES
+    );
+    tracePreferencesHydratedRef.current = true;
+  }, [tracePreferenceKey]);
+
+  useEffect(() => {
+    if (
+      !(tracePreferenceKey && tracePreferencesHydratedRef.current) ||
+      typeof window === "undefined"
+    ) {
+      return;
+    }
+    storage.set(tracePreferenceKey, tracePreferences);
+  }, [tracePreferenceKey, tracePreferences]);
+
+  const handleTracePreferenceChange = useCallback(
+    (key: keyof TracePreferences, nextValue: boolean) => {
+      setTracePreferences((previous: TracePreferences) => {
+        if (previous[key] === nextValue) {
+          return previous;
+        }
+        return { ...previous, [key]: nextValue };
+      });
+    },
+    []
+  );
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const viewport = viewportRef.current;
@@ -252,7 +320,11 @@ export function ConversationPanel({
     return (
       <div className="space-y-2">
         {filteredMessages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+          <MessageBubble
+            key={message.id}
+            message={message}
+            tracePreferences={tracePreferences}
+          />
         ))}
       </div>
     );
@@ -262,6 +334,7 @@ export function ConversationPanel({
     hasMessages,
     isLoading,
     searchQuery,
+    tracePreferences,
   ]);
 
   const showScrollToLatest = !isAtBottom && isOverflowing;
@@ -277,13 +350,20 @@ export function ConversationPanel({
         <span className="text-primary">•</span>
         <span>Provider · {provider}</span>
       </div>
-      <div className="mt-2 flex flex-col gap-1.5 md:flex-row md:items-center">
-        <Input
-          className="h-8 border border-input bg-background text-foreground text-sm placeholder:text-muted-foreground focus-visible:ring-primary"
-          onChange={(event) => onSearchQueryChange(event.target.value)}
-          placeholder="Search conversation"
-          value={searchQuery}
-        />
+      <div className="mt-2 flex flex-col gap-1.5 md:flex-row md:items-center md:justify-between">
+        <div className="flex w-full flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2 md:flex-1">
+          <Input
+            className="h-8 flex-1 border border-input bg-background text-foreground text-sm placeholder:text-muted-foreground focus-visible:ring-primary"
+            onChange={(event) => onSearchQueryChange(event.target.value)}
+            placeholder="Search conversation"
+            value={searchQuery}
+          />
+          <TracePreferencesMenu
+            className="sm:w-auto"
+            onPreferenceChange={handleTracePreferenceChange}
+            preferences={tracePreferences}
+          />
+        </div>
         <span className="whitespace-nowrap text-[10px] text-muted-foreground uppercase tracking-[0.25em]">
           Conversation Log
         </span>
@@ -314,5 +394,71 @@ export function ConversationPanel({
         </div>
       ) : null}
     </section>
+  );
+}
+
+type TracePreferencesMenuProps = {
+  preferences: TracePreferences;
+  onPreferenceChange: (key: keyof TracePreferences, nextValue: boolean) => void;
+  className?: string;
+};
+
+function TracePreferencesMenu({
+  preferences,
+  onPreferenceChange,
+  className,
+}: TracePreferencesMenuProps) {
+  const total = Object.keys(preferences).length;
+  const visible = Object.values(preferences).filter(Boolean).length;
+  const hasHidden = visible !== total;
+  const labelText = hasHidden ? `Traces (${visible}/${total})` : "Traces";
+  const triggerClassName = [
+    "h-8 w-full border border-input bg-background text-[10px] font-semibold uppercase tracking-[0.25em]",
+    className ?? "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const createCheckedHandler =
+    (key: keyof TracePreferences) => (checked: boolean | "indeterminate") => {
+      onPreferenceChange(key, checked === true);
+    };
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          aria-pressed={hasHidden ? true : undefined}
+          className={triggerClassName}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          {labelText}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-60">
+        <DropdownMenuLabel>Trace visibility</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuCheckboxItem
+          checked={preferences.showReasoning}
+          onCheckedChange={createCheckedHandler("showReasoning")}
+        >
+          Reasoning blocks
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={preferences.showToolRuns}
+          onCheckedChange={createCheckedHandler("showToolRuns")}
+        >
+          Tool calls
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={preferences.showDiffs}
+          onCheckedChange={createCheckedHandler("showDiffs")}
+        >
+          Diff summaries
+        </DropdownMenuCheckboxItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

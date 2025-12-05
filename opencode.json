@@ -9,7 +9,6 @@
         "reasoningEffort": "medium",
         "reasoningSummary": "auto",
         "textVerbosity": "medium",
-        "include": ["reasoning.encrypted_content"],
         "store": false
       },
       "models": {
@@ -23,7 +22,6 @@
             "reasoningEffort": "low",
             "reasoningSummary": "auto",
             "textVerbosity": "medium",
-            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -37,7 +35,6 @@
             "reasoningEffort": "medium",
             "reasoningSummary": "auto",
             "textVerbosity": "medium",
-            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -51,7 +48,6 @@
             "reasoningEffort": "high",
             "reasoningSummary": "detailed",
             "textVerbosity": "medium",
-            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -65,7 +61,6 @@
             "reasoningEffort": "high",
             "reasoningSummary": "detailed",
             "textVerbosity": "medium",
-            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -79,7 +74,6 @@
             "reasoningEffort": "low",
             "reasoningSummary": "detailed",
             "textVerbosity": "medium",
-            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -93,7 +87,6 @@
             "reasoningEffort": "medium",
             "reasoningSummary": "detailed",
             "textVerbosity": "medium",
-            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -107,7 +100,6 @@
             "reasoningEffort": "high",
             "reasoningSummary": "detailed",
             "textVerbosity": "medium",
-            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -121,7 +113,6 @@
             "reasoningEffort": "xhigh",
             "reasoningSummary": "detailed",
             "textVerbosity": "medium",
-            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -135,7 +126,6 @@
             "reasoningEffort": "medium",
             "reasoningSummary": "auto",
             "textVerbosity": "medium",
-            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -149,7 +139,6 @@
             "reasoningEffort": "high",
             "reasoningSummary": "detailed",
             "textVerbosity": "medium",
-            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -163,7 +152,6 @@
             "reasoningEffort": "low",
             "reasoningSummary": "auto",
             "textVerbosity": "low",
-            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -177,7 +165,6 @@
             "reasoningEffort": "medium",
             "reasoningSummary": "auto",
             "textVerbosity": "medium",
-            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -191,7 +178,6 @@
             "reasoningEffort": "high",
             "reasoningSummary": "detailed",
             "textVerbosity": "high",
-            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         }

@@ -1,5 +1,6 @@
 import { base, en, Faker } from "@faker-js/faker";
 import type { Page, Route } from "@playwright/test";
+import type { AgentMessage } from "@/queries/agents";
 import type { CellDiffResponse, DiffMode } from "@/queries/cells";
 import type { ModelListResponse } from "@/queries/models";
 import type {
@@ -28,6 +29,24 @@ exampleFaker.seed(EXAMPLE_FIXTURE_SEED);
 const exampleStatus = {
   message: exampleFaker.hacker.phrase(),
 };
+
+export type AgentEventStreamEntry = {
+  event?: string;
+  data: unknown;
+};
+
+type AgentMessagesMap = Record<string, AgentMessage[]>;
+
+const defaultAgentEvents: AgentEventStreamEntry[] = [
+  { event: "history", data: { messages: [] } },
+  { event: "status", data: { status: "idle" } },
+];
+
+const defaultAgentMessages: AgentMessagesMap = {};
+
+const SESSION_ID_SEGMENT_INDEX = 3;
+const SESSION_PREFIX_REGEX = /^session-/;
+const SESSION_TIMESTAMP_ISO = "2025-01-01T00:00:00.000Z";
 
 const modelCatalogFixture: ModelListResponse = {
   models: [
@@ -189,6 +208,8 @@ export type MockApiData = {
   workspaceList: WorkspaceListResponse;
   workspaceBrowse: WorkspaceBrowseResponse;
   modelCatalog: ModelListResponse;
+  agentMessages: AgentMessagesMap;
+  agentEvents: AgentEventStreamEntry[];
 };
 
 const defaultMockData: MockApiData = {
@@ -200,6 +221,8 @@ const defaultMockData: MockApiData = {
   workspaceList: workspaceListFixture,
   workspaceBrowse: workspaceBrowseFixture,
   modelCatalog: modelCatalogFixture,
+  agentMessages: defaultAgentMessages,
+  agentEvents: defaultAgentEvents,
 };
 
 export type MockApiOverrides = Partial<MockApiData>;
@@ -221,6 +244,8 @@ export async function mockAppApi(
     workspaceBrowse:
       overrides.workspaceBrowse ?? defaultMockData.workspaceBrowse,
     modelCatalog: overrides.modelCatalog ?? defaultMockData.modelCatalog,
+    agentMessages: overrides.agentMessages ?? defaultAgentMessages,
+    agentEvents: overrides.agentEvents ?? defaultAgentEvents,
   };
 
   await page.route("**/api/cells*", createCellRouteHandler(mockData));
@@ -250,8 +275,20 @@ export async function mockAppApi(
     createAgentSessionByCellHandler()
   );
   await page.route(
+    "**/api/agents/sessions/*/messages",
+    createAgentMessagesHandler(mockData)
+  );
+  await page.route(
     "**/api/agents/sessions/*/events",
-    createAgentEventStreamHandler()
+    createAgentEventStreamHandler(mockData)
+  );
+  await page.route(
+    "**/api/agents/sessions/*/model",
+    createAgentSessionModelUpdateHandler()
+  );
+  await page.route(
+    "**/api/agents/sessions/*/models",
+    createAgentSessionModelsHandler(mockData)
   );
   await page.route("**/api/agents/models", createModelCatalogHandler(mockData));
 
@@ -489,17 +526,73 @@ function createAgentSessionByCellHandler() {
   });
 }
 
-function createAgentEventStreamHandler() {
+function createAgentMessagesHandler(mockData: MockApiData) {
+  return createGetJsonHandler((request) => {
+    const requestUrl = new URL(request.url());
+    const segments = requestUrl.pathname.split("/").filter(Boolean);
+    const sessionId = segments.at(SESSION_ID_SEGMENT_INDEX);
+
+    if (!sessionId) {
+      return {
+        status: 404,
+        body: { message: "Session not found" },
+      };
+    }
+
+    return {
+      body: {
+        messages: mockData.agentMessages[sessionId] ?? [],
+      },
+    };
+  });
+}
+
+function createAgentEventStreamHandler(mockData: MockApiData) {
   return async (route: Route) => {
     await route.fulfill({
       status: 200,
-      body: 'data: {"status":"idle"}\n\n',
+      body: serializeEventStream(mockData.agentEvents),
       headers: {
         "Content-Type": "text/event-stream",
         Connection: "keep-alive",
       },
     });
   };
+}
+
+function createAgentSessionModelUpdateHandler() {
+  return async (route: Route) => {
+    if (route.request().method() !== "PATCH") {
+      return route.continue();
+    }
+    const requestUrl = new URL(route.request().url());
+    const segments = requestUrl.pathname.split("/").filter(Boolean);
+    const sessionId = segments.at(SESSION_ID_SEGMENT_INDEX) ?? "session-mock";
+    const cellId =
+      sessionId.replace(SESSION_PREFIX_REGEX, "") || "snapshot-cell";
+    const timestamp = new Date(SESSION_TIMESTAMP_ISO).toISOString();
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: sessionId,
+        cellId,
+        templateId: "hive-dev",
+        provider: "openai",
+        status: "awaiting_input",
+        workspacePath: `/home/hive/.hive/cells/${cellId}`,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    });
+  };
+}
+
+function createAgentSessionModelsHandler(mockData: MockApiData) {
+  return createGetJsonHandler(() => ({
+    body: mockData.modelCatalog,
+  }));
 }
 
 function createModelCatalogHandler(mockData: MockApiData) {
@@ -510,6 +603,26 @@ function createModelCatalogHandler(mockData: MockApiData) {
       body: JSON.stringify(mockData.modelCatalog),
     });
   };
+}
+
+function serializeEventStream(entries: AgentEventStreamEntry[]): string {
+  if (entries.length === 0) {
+    return "data: {}\n\n";
+  }
+  return `${entries
+    .map((entry) => {
+      const lines: string[] = [];
+      if (entry.event) {
+        lines.push(`event: ${entry.event}`);
+      }
+      const payload =
+        typeof entry.data === "string"
+          ? entry.data
+          : JSON.stringify(entry.data);
+      lines.push(`data: ${payload}`);
+      return lines.join("\n");
+    })
+    .join("\n\n")}\n\n`;
 }
 
 type RouteRequest = ReturnType<Route["request"]>;

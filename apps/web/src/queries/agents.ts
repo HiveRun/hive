@@ -20,6 +20,13 @@ export type AgentMessagePart = {
   messageID: string;
   type: string;
   text?: string;
+  tool?: string;
+  state?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  files?: string[];
+  callID?: string;
+  attachments?: Record<string, unknown>[];
+  [key: string]: unknown;
 };
 
 export type AgentMessage = {
