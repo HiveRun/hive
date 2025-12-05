@@ -19,6 +19,8 @@ const TRACE_DIFF_TEXT = [
 
 const TRACE_TOOL_TIME = { start: 1000, end: 2000 } as const;
 const TRACE_MOBILE_VIEWPORT = { width: 375, height: 667 } as const;
+const EXPAND_BUTTON_REGEX = /expand/i;
+const TRACE_EXPAND_DELAY_MS = 50;
 
 const TRACE_MESSAGES: AgentMessage[] = [
   {
@@ -95,6 +97,11 @@ const TRACE_EVENTS: AgentEventStreamEntry[] = [
   { event: "status", data: { status: "idle" } },
 ];
 
+const SNAPSHOT_OPTIONS = {
+  animations: "disabled" as const,
+  fullPage: true,
+};
+
 async function navigateToAgentChat(
   page: Page,
   options?: {
@@ -120,31 +127,82 @@ async function navigateToAgentChat(
   await expect(page.getByText("Reasoning")).toBeVisible();
 }
 
+async function expandAllTraceCards(page: Page) {
+  const expandButtons = page.getByRole("button", { name: EXPAND_BUTTON_REGEX });
+  while ((await expandButtons.count()) > 0) {
+    await expandButtons
+      .first()
+      .evaluate((button) => (button as HTMLButtonElement).click());
+    await page.waitForTimeout(TRACE_EXPAND_DELAY_MS);
+  }
+}
+
+async function captureChatSnapshot(
+  page: Page,
+  config: {
+    fileName: string;
+    theme: "light" | "dark";
+    viewport?: { width: number; height: number };
+    expandTraces?: boolean;
+  }
+) {
+  await navigateToAgentChat(page, {
+    theme: config.theme,
+    viewport: config.viewport,
+  });
+
+  if (config.expandTraces) {
+    await expandAllTraceCards(page);
+  }
+
+  await expect(page).toHaveScreenshot(config.fileName, SNAPSHOT_OPTIONS);
+}
+
 test.describe("Agent Chat Traces", () => {
   test("captures trace stack in light mode", async ({ page }) => {
-    await navigateToAgentChat(page, { theme: "light" });
-    await expect(page).toHaveScreenshot("agent-chat-light.png", {
-      animations: "disabled",
-      fullPage: true,
+    await captureChatSnapshot(page, {
+      fileName: "agent-chat-light.png",
+      theme: "light",
     });
   });
 
   test("captures trace stack in dark mode", async ({ page }) => {
-    await navigateToAgentChat(page, { theme: "dark" });
-    await expect(page).toHaveScreenshot("agent-chat-dark.png", {
-      animations: "disabled",
-      fullPage: true,
+    await captureChatSnapshot(page, {
+      fileName: "agent-chat-dark.png",
+      theme: "dark",
     });
   });
 
   test("captures trace stack in mobile layout", async ({ page }) => {
-    await navigateToAgentChat(page, {
+    await captureChatSnapshot(page, {
+      fileName: "agent-chat-mobile.png",
       theme: "light",
       viewport: TRACE_MOBILE_VIEWPORT,
     });
-    await expect(page).toHaveScreenshot("agent-chat-mobile.png", {
-      animations: "disabled",
-      fullPage: true,
+  });
+
+  test("captures expanded trace stack in light mode", async ({ page }) => {
+    await captureChatSnapshot(page, {
+      fileName: "agent-chat-expanded-light.png",
+      theme: "light",
+      expandTraces: true,
+    });
+  });
+
+  test("captures expanded trace stack in dark mode", async ({ page }) => {
+    await captureChatSnapshot(page, {
+      fileName: "agent-chat-expanded-dark.png",
+      theme: "dark",
+      expandTraces: true,
+    });
+  });
+
+  test("captures expanded trace stack in mobile layout", async ({ page }) => {
+    await captureChatSnapshot(page, {
+      fileName: "agent-chat-expanded-mobile.png",
+      theme: "light",
+      viewport: TRACE_MOBILE_VIEWPORT,
+      expandTraces: true,
     });
   });
 });
