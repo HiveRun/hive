@@ -237,7 +237,7 @@ const createApp = () =>
     .use(
       cors({
         origin: allowedCorsOrigins,
-        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         credentials: true,
       })
     )
