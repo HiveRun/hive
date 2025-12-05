@@ -1,6 +1,5 @@
 import "dotenv/config";
 import { existsSync, rmSync, statSync } from "node:fs";
-import { createServer } from "node:net";
 import {
   basename,
   dirname,
@@ -52,7 +51,6 @@ const forcedMigrationsDirectory = process.env.HIVE_MIGRATIONS_DIR;
 const hiveHome = resolveHiveHome();
 export const pidFilePath =
   process.env.HIVE_PID_FILE ?? join(hiveHome, "hive.pid");
-
 export const DEFAULT_WEB_PORT =
   process.env.WEB_PORT ?? (isCompiledRuntime ? String(PORT) : "3001");
 const DEFAULT_CORS_ORIGINS = [
@@ -75,17 +73,6 @@ const LEADING_SLASH_REGEX = /^\/+/,
 
 const sanitizeAssetPath = (pathname: string) =>
   pathname.replace(LEADING_SLASH_REGEX, "").replace(DOT_SEQUENCE_REGEX, "");
-
-const ensurePortAvailable = (port: number, hostname: string) =>
-  new Promise<void>((resolvePromise, rejectPromise) => {
-    const tester = createServer();
-    tester.once("error", (error) => {
-      tester.close(() => rejectPromise(error));
-    });
-    tester.listen(port, hostname, () => {
-      tester.close(() => resolvePromise());
-    });
-  });
 
 const resolvePathWithin = (root: string, target: string) => {
   const absolute = resolve(root, target);
@@ -389,43 +376,69 @@ const resumeProvisioningEffect = Effect.tryPromise({
   )
 );
 
-const ensurePortAvailableEffect = (port: number, hostname: string) =>
-  Effect.tryPromise({
-    try: () => ensurePortAvailable(port, hostname),
-    catch: (error) =>
-      error instanceof Error ? error : new Error(String(error)),
-  });
+const DEFAULT_PORT_RETRY_ATTEMPTS = 10;
+const DEFAULT_PORT_RETRY_DELAY_MS = 100;
+const PORT_RETRY_ATTEMPTS = Number(
+  process.env.PORT_RETRY_ATTEMPTS ?? DEFAULT_PORT_RETRY_ATTEMPTS
+);
+const PORT_RETRY_DELAY_MS = Number(
+  process.env.PORT_RETRY_DELAY_MS ?? DEFAULT_PORT_RETRY_DELAY_MS
+);
+const shouldRetryPortBinding =
+  process.env.PORT_RETRY_ENABLED !== "0" &&
+  process.env.NODE_ENV !== "production";
 
-const ensureRequestedPortsEffect = (port: number, hostChecks: Set<string>) =>
-  Effect.forEach(
-    [...hostChecks],
-    (host) =>
-      ensurePortAvailableEffect(port, host).pipe(
-        Effect.catchAll((error) =>
-          Effect.fail(
-            new Error(
-              `Port ${port} on ${host} is unavailable: ${
-                error instanceof Error ? error.message : String(error)
-              }`
-            )
-          )
-        )
-      ),
-    { discard: true, concurrency: 1 }
-  );
-
-const bootstrapServerEffect = (
-  workspaceRoot: string,
-  hostChecks: Set<string>
-) =>
+const bootstrapServerEffect = (workspaceRoot: string) =>
   Effect.gen(function* () {
     yield* runMigrationsEffect;
     yield* registerWorkspaceEffect(workspaceRoot);
     yield* startOpencodeServerEffect(workspaceRoot);
     yield* bootstrapSupervisorEffect;
     yield* resumeProvisioningEffect;
-    yield* ensureRequestedPortsEffect(PORT, hostChecks);
   });
+
+const listenWithRetry = async (
+  app: App,
+  port: number,
+  hostname: string
+): Promise<void> => {
+  if (!shouldRetryPortBinding) {
+    app.listen({ port, hostname, reusePort: false });
+    return;
+  }
+
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt <= PORT_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      app.listen({ port, hostname, reusePort: false });
+      return;
+    } catch (error) {
+      lastError = error;
+      const code = (error as { code?: string } | undefined)?.code;
+
+      if (code !== "EADDRINUSE") {
+        throw error;
+      }
+
+      if (attempt === 0) {
+        process.stderr.write(
+          `API port ${hostname}:${port} unavailable; retrying up to ${PORT_RETRY_ATTEMPTS} times with ${PORT_RETRY_DELAY_MS}ms delay.\n`
+        );
+      }
+
+      if (attempt === PORT_RETRY_ATTEMPTS) {
+        throw error;
+      }
+
+      await new Promise((resolvePromise) =>
+        setTimeout(resolvePromise, PORT_RETRY_DELAY_MS)
+      );
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+};
 
 export const startServer = async () => {
   const app = createApp();
@@ -444,14 +457,9 @@ export const startServer = async () => {
   }
 
   const workspaceRoot = resolveWorkspaceRoot();
-  const hostChecks = new Set([HOSTNAME]);
-  if (HOSTNAME === "localhost") {
-    hostChecks.add("127.0.0.1");
-    hostChecks.add("::1");
-  }
 
   try {
-    await runServerEffect(bootstrapServerEffect(workspaceRoot, hostChecks));
+    await runServerEffect(bootstrapServerEffect(workspaceRoot));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(
@@ -465,11 +473,7 @@ export const startServer = async () => {
   registerSignalHandlers();
 
   try {
-    app.listen({
-      port: PORT,
-      hostname: HOSTNAME,
-      reusePort: false,
-    });
+    await listenWithRetry(app, PORT, HOSTNAME);
   } catch (error) {
     const message =
       error instanceof Error ? error.message : JSON.stringify(error);
