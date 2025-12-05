@@ -1,6 +1,5 @@
 import "dotenv/config";
 import { existsSync, rmSync, statSync } from "node:fs";
-import { createServer } from "node:net";
 import {
   basename,
   dirname,
@@ -60,7 +59,7 @@ const DEFAULT_CORS_ORIGINS = [
   "tauri://localhost",
 ];
 export const DEFAULT_WEB_URL = `http://localhost:${DEFAULT_WEB_PORT}`;
-
+//
 const resolvedCorsOrigins = (process.env.CORS_ORIGIN || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -389,37 +388,6 @@ const shouldRetryPortBinding =
   process.env.PORT_RETRY_ENABLED !== "0" &&
   process.env.NODE_ENV !== "production";
 
-const ensurePortAvailable = (port: number, hostname: string) =>
-  new Promise<void>((resolvePromise, rejectPromise) => {
-    const tester = createServer();
-    tester.once("error", (error: unknown) => {
-      tester.close(() => rejectPromise(error));
-    });
-    tester.listen(port, hostname, () => {
-      tester.close(() => resolvePromise());
-    });
-  });
-
-const preflightPortAvailability = async (port: number, hostname: string) => {
-  const hostChecks = new Set<string>([hostname]);
-  if (hostname === "localhost") {
-    hostChecks.add("127.0.0.1");
-    hostChecks.add("::1");
-  }
-
-  for (const host of hostChecks) {
-    try {
-      await ensurePortAvailable(port, host);
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : String(error ?? "unknown error");
-      throw new Error(`Port ${port} on ${host} is unavailable: ${message}`);
-    }
-  }
-};
-
 const bootstrapServerEffect = (workspaceRoot: string) =>
   Effect.gen(function* () {
     yield* runMigrationsEffect;
@@ -434,8 +402,6 @@ const listenWithRetry = async (
   port: number,
   hostname: string
 ): Promise<void> => {
-  await preflightPortAvailability(port, hostname);
-
   if (!shouldRetryPortBinding) {
     app.listen({ port, hostname, reusePort: false });
     return;
@@ -518,16 +484,17 @@ export const startServer = async () => {
     process.exit(1);
   }
 
-  const boundPort = app.server?.port;
-  if (boundPort !== PORT) {
+  const boundPort = app.server?.port ?? PORT;
+  const boundHostname = app.server?.hostname ?? HOSTNAME;
+  if (boundPort !== PORT || boundHostname !== HOSTNAME) {
     process.stderr.write(
-      `API requested ${HOSTNAME}:${PORT} but Bun bound ${boundPort}. Refusing to continue.\n`
+      `API requested ${HOSTNAME}:${PORT} but Bun bound ${boundHostname}:${boundPort}. Continuing with bound address.\n`
     );
-    cleanupPidFile();
-    process.exit(1);
   }
 
-  process.stderr.write(`API listening on http://${HOSTNAME}:${PORT}\n`);
+  process.stderr.write(
+    `API listening on http://${boundHostname}:${boundPort}\n`
+  );
 
   return app;
 };
