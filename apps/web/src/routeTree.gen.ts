@@ -18,6 +18,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as CellsNewRouteImport } from './routes/cells/new'
 import { Route as CellsListRouteImport } from './routes/cells/list'
 import { Route as CellsCellIdRouteImport } from './routes/cells/$cellId'
+import { Route as CellsCellIdViewerRouteImport } from './routes/cells/$cellId/viewer'
 import { Route as CellsCellIdServicesRouteImport } from './routes/cells/$cellId/services'
 import { Route as CellsCellIdDiffRouteImport } from './routes/cells/$cellId/diff'
 import { Route as CellsCellIdChatRouteImport } from './routes/cells/$cellId/chat'
@@ -67,6 +68,11 @@ const CellsCellIdRoute = CellsCellIdRouteImport.update({
   path: '/$cellId',
   getParentRoute: () => CellsRoute,
 } as any)
+const CellsCellIdViewerRoute = CellsCellIdViewerRouteImport.update({
+  id: '/viewer',
+  path: '/viewer',
+  getParentRoute: () => CellsCellIdRoute,
+} as any)
 const CellsCellIdServicesRoute = CellsCellIdServicesRouteImport.update({
   id: '/services',
   path: '/services',
@@ -96,6 +102,7 @@ export interface FileRoutesByFullPath {
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
   '/cells/$cellId/services': typeof CellsCellIdServicesRoute
+  '/cells/$cellId/viewer': typeof CellsCellIdViewerRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -110,6 +117,7 @@ export interface FileRoutesByTo {
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
   '/cells/$cellId/services': typeof CellsCellIdServicesRoute
+  '/cells/$cellId/viewer': typeof CellsCellIdViewerRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -125,6 +133,7 @@ export interface FileRoutesById {
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
   '/cells/$cellId/services': typeof CellsCellIdServicesRoute
+  '/cells/$cellId/viewer': typeof CellsCellIdViewerRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -141,6 +150,7 @@ export interface FileRouteTypes {
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
     | '/cells/$cellId/services'
+    | '/cells/$cellId/viewer'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -155,6 +165,7 @@ export interface FileRouteTypes {
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
     | '/cells/$cellId/services'
+    | '/cells/$cellId/viewer'
   id:
     | '__root__'
     | '/'
@@ -169,6 +180,7 @@ export interface FileRouteTypes {
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
     | '/cells/$cellId/services'
+    | '/cells/$cellId/viewer'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -245,6 +257,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CellsCellIdRouteImport
       parentRoute: typeof CellsRoute
     }
+    '/cells/$cellId/viewer': {
+      id: '/cells/$cellId/viewer'
+      path: '/viewer'
+      fullPath: '/cells/$cellId/viewer'
+      preLoaderRoute: typeof CellsCellIdViewerRouteImport
+      parentRoute: typeof CellsCellIdRoute
+    }
     '/cells/$cellId/services': {
       id: '/cells/$cellId/services'
       path: '/services'
@@ -273,12 +292,14 @@ interface CellsCellIdRouteChildren {
   CellsCellIdChatRoute: typeof CellsCellIdChatRoute
   CellsCellIdDiffRoute: typeof CellsCellIdDiffRoute
   CellsCellIdServicesRoute: typeof CellsCellIdServicesRoute
+  CellsCellIdViewerRoute: typeof CellsCellIdViewerRoute
 }
 
 const CellsCellIdRouteChildren: CellsCellIdRouteChildren = {
   CellsCellIdChatRoute: CellsCellIdChatRoute,
   CellsCellIdDiffRoute: CellsCellIdDiffRoute,
   CellsCellIdServicesRoute: CellsCellIdServicesRoute,
+  CellsCellIdViewerRoute: CellsCellIdViewerRoute,
 }
 
 const CellsCellIdRouteWithChildren = CellsCellIdRoute._addFileChildren(

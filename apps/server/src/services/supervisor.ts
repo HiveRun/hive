@@ -905,14 +905,17 @@ function buildServiceEnv({
   const upper = sanitizeServiceName(serviceName);
   const portString = String(port);
 
+  const portLookup = new Map(portMap ?? new Map());
+  portLookup.set(serviceName, port);
+
   const sharedPorts: Record<string, string> = {};
-  if (portMap) {
-    for (const [name, value] of portMap.entries()) {
+  if (portLookup.size > 0) {
+    for (const [name, value] of portLookup.entries()) {
       sharedPorts[`${sanitizeServiceName(name)}_PORT`] = String(value);
     }
   }
 
-  return {
+  const baseEnv = {
     ...buildBaseEnv({ serviceName, cell }),
     ...templateEnv,
     ...serviceEnv,
@@ -921,6 +924,65 @@ function buildServiceEnv({
     SERVICE_PORT: portString,
     [`${upper}_PORT`]: portString,
   };
+
+  const interpolatedEnv = interpolatePorts(baseEnv, portLookup, serviceName);
+
+  if (!interpolatedEnv.CORS_ORIGIN) {
+    const derivedCors = deriveCorsOrigin({ serviceName, portLookup });
+    if (derivedCors) {
+      interpolatedEnv.CORS_ORIGIN = derivedCors;
+    }
+  }
+
+  return interpolatedEnv;
+}
+
+function deriveCorsOrigin({
+  serviceName,
+  portLookup,
+}: {
+  serviceName: string;
+  portLookup: Map<string, number>;
+}): string | null {
+  const normalizedName = serviceName.toLowerCase();
+  const isServerLike =
+    normalizedName === "server" || normalizedName.endsWith("-server");
+  if (!isServerLike) {
+    return null;
+  }
+
+  const targetPort = portLookup.get("web") ?? portLookup.get("frontend");
+  if (!targetPort) {
+    return null;
+  }
+
+  const originBase = `http://localhost:${targetPort}`;
+  const origins = [originBase, `http://127.0.0.1:${targetPort}`];
+  return origins.join(",");
+}
+
+function interpolatePorts(
+  env: Record<string, string>,
+  portLookup: Map<string, number>,
+  serviceName: string
+): Record<string, string> {
+  const tokenRegex = /\$(?:\{?PORT(?::([A-Za-z0-9_-]+))?\}?)/g;
+
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value !== "string") {
+      result[key] = value;
+      continue;
+    }
+    const replaced = value.replace(tokenRegex, (_match, target?: string) => {
+      const targetName = target ?? serviceName;
+      const portValue = portLookup.get(targetName) ?? null;
+      return portValue != null ? String(portValue) : _match;
+    });
+    result[key] = replaced;
+  }
+
+  return result;
 }
 
 function computeServiceLogPath(
