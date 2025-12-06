@@ -927,38 +927,7 @@ function buildServiceEnv({
 
   const interpolatedEnv = interpolatePorts(baseEnv, portLookup, serviceName);
 
-  if (!interpolatedEnv.CORS_ORIGIN) {
-    const derivedCors = deriveCorsOrigin({ serviceName, portLookup });
-    if (derivedCors) {
-      interpolatedEnv.CORS_ORIGIN = derivedCors;
-    }
-  }
-
   return interpolatedEnv;
-}
-
-function deriveCorsOrigin({
-  serviceName,
-  portLookup,
-}: {
-  serviceName: string;
-  portLookup: Map<string, number>;
-}): string | null {
-  const normalizedName = serviceName.toLowerCase();
-  const isServerLike =
-    normalizedName === "server" || normalizedName.endsWith("-server");
-  if (!isServerLike) {
-    return null;
-  }
-
-  const targetPort = portLookup.get("web") ?? portLookup.get("frontend");
-  if (!targetPort) {
-    return null;
-  }
-
-  const originBase = `http://localhost:${targetPort}`;
-  const origins = [originBase, `http://127.0.0.1:${targetPort}`];
-  return origins.join(",");
 }
 
 function interpolatePorts(
