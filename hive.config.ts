@@ -27,6 +27,7 @@ export default defineHiveConfig({
           cwd: "./apps/web",
           env: {
             NODE_ENV: "development",
+            VITE_API_URL: "http://localhost:$PORT:server",
           },
           readyTimeoutMs: 3000,
         },
@@ -35,6 +36,10 @@ export default defineHiveConfig({
           run: "bun run dev",
           cwd: "./apps/server",
           readyTimeoutMs: 5000,
+          env: {
+            CORS_ORIGIN:
+              "http://localhost:$PORT:web,http://127.0.0.1:$PORT:web",
+          },
         },
       },
     },

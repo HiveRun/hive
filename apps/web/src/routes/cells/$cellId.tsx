@@ -51,6 +51,11 @@ function CellLayout() {
       to: "/cells/$cellId/services",
     },
     {
+      routeId: "/cells/$cellId/viewer",
+      label: "Viewer",
+      to: "/cells/$cellId/viewer",
+    },
+    {
       routeId: "/cells/$cellId/diff",
       label: "Diff",
       to: "/cells/$cellId/diff",

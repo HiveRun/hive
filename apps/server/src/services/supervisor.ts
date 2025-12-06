@@ -905,14 +905,17 @@ function buildServiceEnv({
   const upper = sanitizeServiceName(serviceName);
   const portString = String(port);
 
+  const portLookup = new Map(portMap ?? new Map());
+  portLookup.set(serviceName, port);
+
   const sharedPorts: Record<string, string> = {};
-  if (portMap) {
-    for (const [name, value] of portMap.entries()) {
+  if (portLookup.size > 0) {
+    for (const [name, value] of portLookup.entries()) {
       sharedPorts[`${sanitizeServiceName(name)}_PORT`] = String(value);
     }
   }
 
-  return {
+  const baseEnv = {
     ...buildBaseEnv({ serviceName, cell }),
     ...templateEnv,
     ...serviceEnv,
@@ -921,6 +924,34 @@ function buildServiceEnv({
     SERVICE_PORT: portString,
     [`${upper}_PORT`]: portString,
   };
+
+  const interpolatedEnv = interpolatePorts(baseEnv, portLookup, serviceName);
+
+  return interpolatedEnv;
+}
+
+function interpolatePorts(
+  env: Record<string, string>,
+  portLookup: Map<string, number>,
+  serviceName: string
+): Record<string, string> {
+  const tokenRegex = /\$(?:\{?PORT(?::([A-Za-z0-9_-]+))?\}?)/g;
+
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value !== "string") {
+      result[key] = value;
+      continue;
+    }
+    const replaced = value.replace(tokenRegex, (_match, target?: string) => {
+      const targetName = target ?? serviceName;
+      const portValue = portLookup.get(targetName) ?? null;
+      return portValue != null ? String(portValue) : _match;
+    });
+    result[key] = replaced;
+  }
+
+  return result;
 }
 
 function computeServiceLogPath(
