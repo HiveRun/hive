@@ -98,6 +98,12 @@ export const templateSchema = z.object({
     .describe(
       "Patterns to include from gitignored files for worktree copying (e.g., '.env', '*.local')"
     ),
+  ignorePatterns: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Glob patterns to skip when copying included files into worktrees"
+    ),
 });
 
 const opencodeConfigSchema = z.object({
