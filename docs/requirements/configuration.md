@@ -40,7 +40,7 @@ The configuration system is implemented through these features:
 ```
 
 ### Keeping config in sync
-- Run `bun run config:generate` whenever the config schema changes; this regenerates `hive.config.jsonc` from the Zod schema defaults.
+- Run `bun run config:generate` whenever the config schema changes; edit defaults in `scripts/dev/config.defaults.ts` and regenerate `hive.config.jsonc` from the Zod schema.
 - CI/commit checks use `bun run check:config` to ensure the checked-in config matches the schema output, and `setup` runs the generator by default.
 
 ## Related Features
