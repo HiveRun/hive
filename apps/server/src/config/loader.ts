@@ -1,11 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 
-import {
-  findConfigPath,
-  findDeprecatedConfigPath,
-  PREFERRED_CONFIG_FILENAME,
-} from "./files";
+import { findConfigPath, PREFERRED_CONFIG_FILENAME } from "./files";
 import type { HiveConfig } from "./schema";
 import { hiveConfigSchema } from "./schema";
 
@@ -15,13 +11,6 @@ export async function loadConfig(workspaceRoot: string): Promise<HiveConfig> {
   const configPath = findConfigPath(workspaceRoot);
 
   if (!configPath) {
-    const deprecatedPath = findDeprecatedConfigPath(workspaceRoot);
-    if (deprecatedPath) {
-      throw new Error(
-        `Config not found in ${workspaceRoot}. Found deprecated ${basename(deprecatedPath)}. Rename it to ${PREFERRED_CONFIG_FILENAME}.`
-      );
-    }
-
     throw new Error(
       `Config not found in ${workspaceRoot}. Create ${PREFERRED_CONFIG_FILENAME}.`
     );

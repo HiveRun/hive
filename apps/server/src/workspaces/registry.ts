@@ -4,11 +4,7 @@ import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import { Context, Effect, Layer } from "effect";
 
-import {
-  findConfigPath,
-  findDeprecatedConfigPath,
-  PREFERRED_CONFIG_FILENAME,
-} from "../config/files";
+import { findConfigPath, PREFERRED_CONFIG_FILENAME } from "../config/files";
 
 const REGISTRY_FILE_NAME = "workspaces.json";
 const HIVE_HOME_ENV = "HIVE_HOME";
@@ -100,13 +96,6 @@ async function validateWorkspaceDirectory(path: string): Promise<string> {
 
   const configPath = findConfigPath(absolutePath);
   if (!configPath) {
-    const deprecated = findDeprecatedConfigPath(absolutePath);
-    if (deprecated) {
-      throw new Error(
-        `Hive config not found in ${absolutePath}. Found deprecated ${deprecated}. Rename it to ${PREFERRED_CONFIG_FILENAME}.`
-      );
-    }
-
     throw new Error(
       `Hive config not found in ${absolutePath}. Add ${PREFERRED_CONFIG_FILENAME}.`
     );
