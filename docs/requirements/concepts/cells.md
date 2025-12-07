@@ -24,7 +24,7 @@ The foundational features that enable core cell functionality:
 - Optimize for a single operator managing their own project; multi-user coordination is out of scope for v1.
 
 ## Cell Model (Rescoped)
-- **Definition**: A cell bundles basic metadata, optional worktree, and optional agent session. Cells are instantiated from reusable templates defined in `hive.config.ts`; each cell is owned and operated by the same single user who controls the workspace.
+- **Definition**: A cell bundles basic metadata, optional worktree, and optional agent session. Cells are instantiated from reusable templates defined in `hive.config.jsonc` / `hive.config.json` (legacy `hive.config.ts` still supported); each cell is owned and operated by the same single user who controls the workspace.
 - **Core Lifecycle**: Create (basic entity) → Extend with worktree (optional) → Extend with agent session (optional)
 - **State Capture**: Persist basic metadata (name, description, template_id). Additional features (worktree, agent) extend this base entity.
 
@@ -88,7 +88,7 @@ Cell status is computed from service + agent state. If any service is flagged `n
 **Phase 3 – Planning & Collaboration**
 - [[features/phase-3/planning-handoff|Planning-to-Implementation Handoff]]: workflow transitions between planning and implementation phases, including planning agent type and plan submission/approval
 - [[features/phase-3/reference-repos|Reference repos]]: support cloning remote repositories into read-only worktrees so agents can learn from external code before planning/implementation.
-- [[features/phase-3/config-editor|Config editor]]: offer a UX for editing `hive.config.ts` (or a companion YAML/JSON) with validation, to be explored once the config API stabilizes.
+- [[features/phase-3/config-editor|Config editor]]: offer a UX for editing `hive.config.jsonc` / `hive.config.json` (legacy TS included) with validation, to be explored once the config API stabilizes.
 - [[features/phase-3/inline-prompt-editor|Inline prompt editor]]: optional rich markdown editor for prompt fragments (`docs/prompts/**/*.md`) so users can tweak agent briefing without leaving Hive. (Evaluate effort/benefit before building.)
 - [[features/phase-3/context-switching-aids|Context switching aids]]: help users quickly regain context when returning to cells or switching between tasks.
 - [[features/phase-3/plan-export|Plan export]]: send planning outcomes to external systems (Linear tickets, GitHub issues, etc.) from within Hive.

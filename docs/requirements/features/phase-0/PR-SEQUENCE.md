@@ -28,13 +28,13 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 **Branch**: `feat/template-definition-system`
 
 ### Scope
-- TypeScript config schema (`hive.config.ts`)
-- `defineHiveConfig()` function with full type safety
+- JSON/JSONC config schema (`hive.config.jsonc` / `hive.config.json`; legacy `hive.config.ts` via `defineHiveConfig` still supported)
+- Runtime validation with Zod (optional `defineHiveConfig()` helper for TypeScript configs)
 - Template validation and type checking
 - Basic template browser/listing in UI
 
 ### Persistence Added
-- **File-based storage**: Templates stored in `hive.config.ts` (intentional architectural decision)
+- **File-based storage**: Templates stored in `hive.config.jsonc` or `hive.config.json` (intentional architectural decision; TypeScript configs remain compatible for development)
 - No database tables for templates (prioritizes version control and type safety)
 - Elysia RPC endpoint for template loading from config files
 
@@ -46,7 +46,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - E2E tests for templates page
 
 ### Acceptance Criteria
-- [x] Can define templates in `hive.config.ts` with intellisense
+- [x] Can define templates in `hive.config.jsonc` (or `hive.config.json`) with runtime validation; legacy TS keeps intellisense
 - [x] Templates validate at compile time
 - [x] UI can list available templates
 - [x] Tests pass with real template data

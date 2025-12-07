@@ -28,7 +28,7 @@ This comprehensive provisioning system will be implemented in **Phase 1A** after
 ## Requirements
 
 ### Core Provisioning
-- **Template Selection**: Allow users to browse and select from available cell templates defined in `hive.config.ts`
+- **Template Selection**: Allow users to browse and select from available cell templates defined in `hive.config.jsonc` / `hive.config.json` (legacy `hive.config.ts` supported)
 - **Workspace Provisioning**: Create isolated git worktrees for each cell to prevent conflicts with the main workspace
 - **Service Setup**: Initialize and configure required services (databases, APIs, etc.) as specified by the template
 - **Port Allocation**: Dynamically allocate and manage ports to avoid conflicts between cells and the host system

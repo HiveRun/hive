@@ -12,7 +12,7 @@ The template definition system has been successfully implemented using a **file-
 ### Key Implementation Decisions
 
 **File-Based vs Database Storage:**
-- **Chose file-based**: Templates are defined in `hive.config.ts` using TypeScript
+- **Chose file-based**: Templates are defined in `hive.config.jsonc` / `hive.config.json` (legacy `hive.config.ts` also loads for development)
 - **Benefits**: 
   - Templates are version-controlled alongside code
   - Full TypeScript type safety and intellisense
@@ -32,7 +32,7 @@ The template definition system has been successfully implemented using a **file-
 
 ### Template Schema
 - **TypeScript definitions**: Ship a small runtime+types package (`@hive/config`) that exposes `defineHiveConfig` with full type safety and intellisense.
-- **Inline templates**: Keep templates inline within `hive.config.ts` for v1 simplicity, with support for external template files in future versions.
+- **Inline templates**: Keep templates inline within `hive.config.jsonc` for v1 simplicity (hive.config.json works too; legacy hive.config.ts remains supported), with support for external template files in future versions.
 - **Template metadata**: Each template requires `id`, `label`, `summary`, and optional `type` (implementation/planning/manual).
 - **Workspace setup**: Templates can specify a `setup` array that runs once inside the worktree before services start (e.g., `bun setup` to install deps and run migrations).
 - **Validation**: Compile-time validation of template structure and required fields.

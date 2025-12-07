@@ -19,7 +19,7 @@ This sophisticated prompt assembly system will be implemented in **Phase 1A** af
 ## Requirements
 
 ### Source Management
-- **Prompt sources**: Read `promptSources` from `hive.config.ts`, supporting files, directories, or glob patterns (e.g., "docs/prompts/**/*.md").
+- **Prompt sources**: Read `promptSources` from `hive.config.jsonc` / `hive.config.json` (legacy `hive.config.ts` supported), supporting files, directories, or glob patterns (e.g., "docs/prompts/**/*.md").
 - **Ordering support**: Allow entries to be objects with `path` and `order` so users can pin high-priority primers ahead of feature guides.
 - **Type safety**: TypeScript definitions expose autocomplete for prompt source configuration.
 - **Deduplication**: Automatic detection and removal of duplicate prompt fragments.

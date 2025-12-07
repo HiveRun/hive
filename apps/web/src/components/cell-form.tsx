@@ -217,7 +217,8 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
   if (!templates || templates.length === 0) {
     return (
       <div>
-        No templates available. Add templates in hive.config.ts to continue.
+        No templates available. Add templates in hive.config.jsonc (or
+        hive.config.json) to continue.
       </div>
     );
   }

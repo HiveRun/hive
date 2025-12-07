@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import { Context, Effect, Layer } from "effect";
 
+import { findConfigPath, PREFERRED_CONFIG_FILENAME } from "../config/files";
+
 const REGISTRY_FILE_NAME = "workspaces.json";
 const HIVE_HOME_ENV = "HIVE_HOME";
 const REGISTRY_VERSION = 1;
@@ -92,11 +94,17 @@ async function validateWorkspaceDirectory(path: string): Promise<string> {
     throw new Error("Cell worktrees cannot be registered as workspaces");
   }
 
-  const configPath = join(absolutePath, "hive.config.ts");
+  const configPath = findConfigPath(absolutePath);
+  if (!configPath) {
+    throw new Error(
+      `Hive config not found in ${absolutePath}. Add ${PREFERRED_CONFIG_FILENAME} (or hive.config.json). Legacy hive.config.ts is still supported.`
+    );
+  }
+
   try {
     await access(configPath);
   } catch {
-    throw new Error(`hive.config.ts not found in ${absolutePath}`);
+    throw new Error(`Hive config is not readable at ${configPath}`);
   }
 
   return absolutePath;
