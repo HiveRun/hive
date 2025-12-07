@@ -5,8 +5,9 @@ import { hiveConfigSchema } from "../../apps/server/src/config/schema";
 import { hiveConfigDefaults } from "./config.defaults";
 
 const config = hiveConfigSchema.parse(hiveConfigDefaults);
+const withSchema = { $schema: "./hive.config.schema.json", ...config };
 const outputPath = resolve(process.cwd(), "hive.config.json");
-const nextContent = `${JSON.stringify(config, null, 2)}\n`;
+const nextContent = `${JSON.stringify(withSchema, null, 2)}\n`;
 
 const prevContent = await readFile(outputPath, "utf8").catch(() => null);
 

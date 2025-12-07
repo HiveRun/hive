@@ -25,6 +25,10 @@ export async function loadConfig(workspaceRoot: string): Promise<HiveConfig> {
 
   const config = await loadJsonConfig(configPath);
 
+  if (config && typeof config === "object" && !Array.isArray(config)) {
+    (config as Record<string, unknown>).$schema = undefined;
+  }
+
   return hiveConfigSchema.parse(config);
 }
 

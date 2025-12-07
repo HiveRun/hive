@@ -1,4 +1,5 @@
 {
+  "$schema": "./hive.config.schema.json",
   "opencode": {
     "defaultProvider": "zen",
     "defaultModel": "big-pickle"
