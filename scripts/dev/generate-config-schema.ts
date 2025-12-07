@@ -5,9 +5,9 @@ import { z } from "zod";
 
 import { hiveConfigSchema } from "../../apps/server/src/config/schema";
 
-const baseSchema = z.toJSONSchema(hiveConfigSchema);
+const baseSchema = z.toJSONSchema(hiveConfigSchema, { target: "draft-7" });
 const hydratedSchema = {
-  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $schema: "http://json-schema.org/draft-07/schema#",
   $id: "hive.config.schema.json",
   title: "HiveConfig",
   ...baseSchema,
