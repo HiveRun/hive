@@ -4,6 +4,9 @@
   "title": "HiveConfig",
   "type": "object",
   "properties": {
+    "$schema": {
+      "type": "string"
+    },
     "opencode": {
       "type": "object",
       "properties": {
