@@ -1,34 +1,29 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "hive.config.schema.json",
   "title": "HiveConfig",
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "opencode",
-    "promptSources",
-    "templates"
-  ],
   "properties": {
     "opencode": {
       "type": "object",
-      "required": [
-        "defaultProvider"
-      ],
-      "additionalProperties": false,
       "properties": {
         "token": {
           "type": "string"
         },
         "defaultProvider": {
-          "type": "string"
+          "default": "openai",
+          "type": "string",
+          "minLength": 1
         },
         "defaultModel": {
           "type": "string"
         }
-      }
+      },
+      "required": ["defaultProvider"],
+      "additionalProperties": false
     },
     "promptSources": {
+      "default": [],
       "type": "array",
       "items": {
         "type": "string"
@@ -36,14 +31,11 @@
     },
     "templates": {
       "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
       "additionalProperties": {
         "type": "object",
-        "required": [
-          "id",
-          "label",
-          "type"
-        ],
-        "additionalProperties": false,
         "properties": {
           "id": {
             "type": "string"
@@ -52,21 +44,22 @@
             "type": "string"
           },
           "type": {
+            "type": "string",
             "const": "manual"
           },
           "services": {
             "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
             "additionalProperties": {
               "oneOf": [
                 {
                   "type": "object",
-                  "required": [
-                    "type",
-                    "run"
-                  ],
-                  "additionalProperties": false,
                   "properties": {
                     "type": {
+                      "default": "process",
+                      "type": "string",
                       "const": "process"
                     },
                     "run": {
@@ -83,10 +76,12 @@
                     },
                     "env": {
                       "type": "object",
-                      "additionalProperties": {
+                      "propertyNames": {
                         "type": "string"
                       },
-                      "required": []
+                      "additionalProperties": {
+                        "type": "string"
+                      }
                     },
                     "readyTimeoutMs": {
                       "type": "number"
@@ -94,17 +89,15 @@
                     "stop": {
                       "type": "string"
                     }
-                  }
+                  },
+                  "required": ["type", "run"],
+                  "additionalProperties": false
                 },
                 {
                   "type": "object",
-                  "required": [
-                    "type",
-                    "image"
-                  ],
-                  "additionalProperties": false,
                   "properties": {
                     "type": {
+                      "type": "string",
                       "const": "docker"
                     },
                     "image": {
@@ -121,10 +114,12 @@
                     },
                     "env": {
                       "type": "object",
-                      "additionalProperties": {
+                      "propertyNames": {
                         "type": "string"
                       },
-                      "required": []
+                      "additionalProperties": {
+                        "type": "string"
+                      }
                     },
                     "volumes": {
                       "type": "array",
@@ -135,17 +130,15 @@
                     "readyTimeoutMs": {
                       "type": "number"
                     }
-                  }
+                  },
+                  "required": ["type", "image"],
+                  "additionalProperties": false
                 },
                 {
                   "type": "object",
-                  "required": [
-                    "type",
-                    "file"
-                  ],
-                  "additionalProperties": false,
                   "properties": {
                     "type": {
+                      "type": "string",
                       "const": "compose"
                     },
                     "file": {
@@ -159,22 +152,28 @@
                     },
                     "env": {
                       "type": "object",
-                      "additionalProperties": {
+                      "propertyNames": {
                         "type": "string"
                       },
-                      "required": []
+                      "additionalProperties": {
+                        "type": "string"
+                      }
                     }
-                  }
+                  },
+                  "required": ["type", "file"],
+                  "additionalProperties": false
                 }
               ]
             }
           },
           "env": {
             "type": "object",
-            "additionalProperties": {
+            "propertyNames": {
               "type": "string"
             },
-            "required": []
+            "additionalProperties": {
+              "type": "string"
+            }
           },
           "setup": {
             "type": "array",
@@ -190,10 +189,6 @@
           },
           "agent": {
             "type": "object",
-            "required": [
-              "providerId"
-            ],
-            "additionalProperties": false,
             "properties": {
               "providerId": {
                 "type": "string"
@@ -204,7 +199,9 @@
               "agentId": {
                 "type": "string"
               }
-            }
+            },
+            "required": ["providerId"],
+            "additionalProperties": false
           },
           "teardown": {
             "type": "array",
@@ -224,17 +221,21 @@
               "type": "string"
             }
           }
-        }
+        },
+        "required": ["id", "label", "type"],
+        "additionalProperties": false
       }
     },
     "defaults": {
       "type": "object",
-      "additionalProperties": false,
       "properties": {
         "templateId": {
           "type": "string"
         }
-      }
+      },
+      "additionalProperties": false
     }
-  }
+  },
+  "required": ["opencode", "promptSources", "templates"],
+  "additionalProperties": false
 }
