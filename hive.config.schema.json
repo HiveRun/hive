@@ -12,26 +12,31 @@
       "type": "object",
       "properties": {
         "token": {
-          "type": "string"
+          "type": "string",
+          "description": "Authentication token or environment reference"
         },
         "defaultProvider": {
           "default": "openai",
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "Default provider identifier when templates omit one"
         },
         "defaultModel": {
-          "type": "string"
+          "type": "string",
+          "description": "Fallback model identifier used when templates omit one"
         }
       },
       "required": ["defaultProvider"],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "Global OpenCode configuration shared across templates"
     },
     "promptSources": {
       "default": [],
       "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "description": "Glob patterns pointing to prompt fragments used when assembling agent briefs"
     },
     "templates": {
       "type": "object",
@@ -42,14 +47,17 @@
         "type": "object",
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Unique template identifier"
           },
           "label": {
-            "type": "string"
+            "type": "string",
+            "description": "Display name for template"
           },
           "type": {
             "type": "string",
-            "const": "manual"
+            "const": "manual",
+            "description": "Template type"
           },
           "services": {
             "type": "object",
@@ -64,19 +72,23 @@
                     "type": {
                       "default": "process",
                       "type": "string",
-                      "const": "process"
+                      "const": "process",
+                      "description": "Service type discriminator"
                     },
                     "run": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Command to run service"
                     },
                     "setup": {
                       "type": "array",
                       "items": {
                         "type": "string"
-                      }
+                      },
+                      "description": "Setup commands before main command"
                     },
                     "cwd": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Working directory for service"
                     },
                     "env": {
                       "type": "object",
@@ -85,36 +97,44 @@
                       },
                       "additionalProperties": {
                         "type": "string"
-                      }
+                      },
+                      "description": "Environment variables"
                     },
                     "readyTimeoutMs": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "Milliseconds to wait for service readiness"
                     },
                     "stop": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Graceful stop command"
                     }
                   },
                   "required": ["type", "run"],
-                  "additionalProperties": false
+                  "additionalProperties": false,
+                  "description": "Service definition"
                 },
                 {
                   "type": "object",
                   "properties": {
                     "type": {
                       "type": "string",
-                      "const": "docker"
+                      "const": "docker",
+                      "description": "Service type discriminator"
                     },
                     "image": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Docker image to use"
                     },
                     "command": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Command to override default"
                     },
                     "ports": {
                       "type": "array",
                       "items": {
                         "type": "string"
-                      }
+                      },
+                      "description": "Port mappings (e.g., '3000:3000')"
                     },
                     "env": {
                       "type": "object",
@@ -123,36 +143,43 @@
                       },
                       "additionalProperties": {
                         "type": "string"
-                      }
+                      },
+                      "description": "Environment variables"
                     },
                     "volumes": {
                       "type": "array",
                       "items": {
                         "type": "string"
-                      }
+                      },
+                      "description": "Volume mappings"
                     },
                     "readyTimeoutMs": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "Milliseconds to wait for service readiness"
                     }
                   },
                   "required": ["type", "image"],
-                  "additionalProperties": false
+                  "additionalProperties": false,
+                  "description": "Service definition"
                 },
                 {
                   "type": "object",
                   "properties": {
                     "type": {
                       "type": "string",
-                      "const": "compose"
+                      "const": "compose",
+                      "description": "Service type discriminator"
                     },
                     "file": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Path to docker-compose.yml"
                     },
                     "services": {
                       "type": "array",
                       "items": {
                         "type": "string"
-                      }
+                      },
+                      "description": "Specific services to run"
                     },
                     "env": {
                       "type": "object",
@@ -161,14 +188,18 @@
                       },
                       "additionalProperties": {
                         "type": "string"
-                      }
+                      },
+                      "description": "Environment variables"
                     }
                   },
                   "required": ["type", "file"],
-                  "additionalProperties": false
+                  "additionalProperties": false,
+                  "description": "Service definition"
                 }
-              ]
-            }
+              ],
+              "description": "Service definition"
+            },
+            "description": "Services required by this template"
           },
           "env": {
             "type": "object",
@@ -189,57 +220,70 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Paths to prompt files or directories (relative to workspace root)"
           },
           "agent": {
             "type": "object",
             "properties": {
               "providerId": {
-                "type": "string"
+                "type": "string",
+                "description": "OpenCode provider identifier"
               },
               "modelId": {
-                "type": "string"
+                "type": "string",
+                "description": "Model identifier within the provider"
               },
               "agentId": {
-                "type": "string"
+                "type": "string",
+                "description": "Agent preset identifier"
               }
             },
             "required": ["providerId"],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "Agent configuration for this template"
           },
           "teardown": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Cleanup commands on cell stop"
           },
           "includePatterns": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Patterns to include from gitignored files for worktree copying (e.g., '.env', '*.local')"
           },
           "ignorePatterns": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Glob patterns to skip when copying included files into worktrees"
           }
         },
         "required": ["id", "label", "type"],
-        "additionalProperties": false
-      }
+        "additionalProperties": false,
+        "description": "Template definition"
+      },
+      "description": "Available cell templates"
     },
     "defaults": {
       "type": "object",
       "properties": {
         "templateId": {
-          "type": "string"
+          "type": "string",
+          "description": "Default template to use when creating cells"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "Default values for cell creation"
     }
   },
   "required": ["opencode", "promptSources", "templates"],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "description": "Hive workspace configuration"
 }

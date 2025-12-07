@@ -20,7 +20,6 @@
     "check": "bun run check:commit",
     "check:commit": "bun run check:config && bun run check:staged && bun run check:secrets && bun run check:audit && biome check --no-errors-on-unmatched --files-ignore-unknown=true && bun run test:run && turbo check check-types --ui=stream --force && bun run build",
     "check:push": "bun run check:commit && bun run test:e2e",
-
     "test": "turbo test --ui=stream --force",
     "test:run": "turbo test:run --ui=stream --force",
     "test:e2e": "turbo test:e2e --ui=stream",
@@ -56,7 +55,7 @@
   "dependencies": {
     "dotenv": "^17.2.2",
     "playwright": "^1.57.0",
-    "zod": "^4.1.11"
+    "zod": "^4.1.13"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.0",
