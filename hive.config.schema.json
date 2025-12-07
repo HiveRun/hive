@@ -5,32 +5,38 @@
   "type": "object",
   "properties": {
     "$schema": {
-      "type": "string"
+      "type": "string",
+      "description": "JSON schema reference"
     },
     "opencode": {
       "type": "object",
+      "required": ["defaultProvider"],
+      "additionalProperties": false,
+      "description": "Global OpenCode configuration shared across templates",
       "properties": {
         "token": {
-          "type": "string"
+          "type": "string",
+          "description": "Authentication token or environment reference"
         },
         "defaultProvider": {
-          "default": "openai",
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "Default provider identifier when templates omit one",
+          "default": "openai"
         },
         "defaultModel": {
-          "type": "string"
+          "type": "string",
+          "description": "Fallback model identifier when templates omit one"
         }
-      },
-      "required": ["defaultProvider"],
-      "additionalProperties": false
+      }
     },
     "promptSources": {
-      "default": [],
       "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "description": "Glob patterns pointing to prompt fragments used when assembling agent briefs",
+      "default": []
     },
     "templates": {
       "type": "object",
@@ -39,16 +45,21 @@
       },
       "additionalProperties": {
         "type": "object",
+        "required": ["id", "label", "type"],
+        "additionalProperties": false,
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Unique template identifier"
           },
           "label": {
-            "type": "string"
+            "type": "string",
+            "description": "Display name for template"
           },
           "type": {
+            "const": "manual",
             "type": "string",
-            "const": "manual"
+            "description": "Template type"
           },
           "services": {
             "type": "object",
@@ -59,23 +70,28 @@
               "oneOf": [
                 {
                   "type": "object",
+                  "required": ["type", "run"],
+                  "additionalProperties": false,
                   "properties": {
                     "type": {
-                      "default": "process",
+                      "const": "process",
                       "type": "string",
-                      "const": "process"
+                      "description": "Service type"
                     },
                     "run": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Command to run service"
                     },
                     "setup": {
                       "type": "array",
                       "items": {
                         "type": "string"
-                      }
+                      },
+                      "description": "Setup commands before main command"
                     },
                     "cwd": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Working directory for service"
                     },
                     "env": {
                       "type": "object",
@@ -84,36 +100,43 @@
                       },
                       "additionalProperties": {
                         "type": "string"
-                      }
+                      },
+                      "description": "Environment variables"
                     },
                     "readyTimeoutMs": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "Milliseconds to wait for service readiness"
                     },
                     "stop": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Graceful stop command"
                     }
-                  },
-                  "required": ["type", "run"],
-                  "additionalProperties": false
+                  }
                 },
                 {
                   "type": "object",
+                  "required": ["type", "image"],
+                  "additionalProperties": false,
                   "properties": {
                     "type": {
+                      "const": "docker",
                       "type": "string",
-                      "const": "docker"
+                      "description": "Service type"
                     },
                     "image": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Docker image to use"
                     },
                     "command": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Command to override default"
                     },
                     "ports": {
                       "type": "array",
                       "items": {
                         "type": "string"
-                      }
+                      },
+                      "description": "Port mappings (e.g., '3000:3000')"
                     },
                     "env": {
                       "type": "object",
@@ -122,36 +145,42 @@
                       },
                       "additionalProperties": {
                         "type": "string"
-                      }
+                      },
+                      "description": "Environment variables"
                     },
                     "volumes": {
                       "type": "array",
                       "items": {
                         "type": "string"
-                      }
+                      },
+                      "description": "Volume mappings"
                     },
                     "readyTimeoutMs": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "Milliseconds to wait for service readiness"
                     }
-                  },
-                  "required": ["type", "image"],
-                  "additionalProperties": false
+                  }
                 },
                 {
                   "type": "object",
+                  "required": ["type", "file"],
+                  "additionalProperties": false,
                   "properties": {
                     "type": {
+                      "const": "compose",
                       "type": "string",
-                      "const": "compose"
+                      "description": "Service type"
                     },
                     "file": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Path to docker-compose.yml"
                     },
                     "services": {
                       "type": "array",
                       "items": {
                         "type": "string"
-                      }
+                      },
+                      "description": "Specific services to run"
                     },
                     "env": {
                       "type": "object",
@@ -160,14 +189,14 @@
                       },
                       "additionalProperties": {
                         "type": "string"
-                      }
+                      },
+                      "description": "Environment variables"
                     }
-                  },
-                  "required": ["type", "file"],
-                  "additionalProperties": false
+                  }
                 }
               ]
-            }
+            },
+            "description": "Services required by this template"
           },
           "env": {
             "type": "object",
@@ -176,67 +205,78 @@
             },
             "additionalProperties": {
               "type": "string"
-            }
+            },
+            "description": "Global environment variables"
           },
           "setup": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Commands run once before services"
           },
           "prompts": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Paths to prompt files or directories"
           },
           "agent": {
             "type": "object",
+            "required": ["providerId"],
+            "additionalProperties": false,
             "properties": {
               "providerId": {
-                "type": "string"
+                "type": "string",
+                "description": "OpenCode provider identifier"
               },
               "modelId": {
-                "type": "string"
+                "type": "string",
+                "description": "Model identifier within the provider"
               },
               "agentId": {
-                "type": "string"
+                "type": "string",
+                "description": "Agent preset identifier"
               }
             },
-            "required": ["providerId"],
-            "additionalProperties": false
+            "description": "Agent configuration"
           },
           "teardown": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Cleanup commands on cell stop"
           },
           "includePatterns": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Glob patterns to include from gitignored files for worktree copying"
           },
           "ignorePatterns": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Glob patterns to skip when copying into worktrees"
           }
-        },
-        "required": ["id", "label", "type"],
-        "additionalProperties": false
-      }
+        }
+      },
+      "description": "Available cell templates"
     },
     "defaults": {
       "type": "object",
+      "additionalProperties": false,
+      "description": "Default values for cell creation",
       "properties": {
         "templateId": {
-          "type": "string"
+          "type": "string",
+          "description": "Default template to use when creating cells"
         }
-      },
-      "additionalProperties": false
+      }
     }
   },
   "required": ["opencode", "promptSources", "templates"],

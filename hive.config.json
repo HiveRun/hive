@@ -4,9 +4,7 @@
     "defaultProvider": "opencode",
     "defaultModel": "big-pickle"
   },
-  "promptSources": [
-    "docs/prompts/**/*.md"
-  ],
+  "promptSources": ["docs/prompts/**/*.md"],
   "templates": {
     "hive-dev": {
       "id": "hive-dev",
@@ -33,22 +31,13 @@
           "readyTimeoutMs": 5000
         }
       },
-      "setup": [
-        "bun setup"
-      ],
+      "setup": ["bun setup"],
       "agent": {
         "providerId": "opencode",
         "modelId": "big-pickle"
       },
-      "includePatterns": [
-        ".env*",
-        "vendor/**"
-      ],
-      "ignorePatterns": [
-        "node_modules/**",
-        ".hive/**",
-        ".turbo/**"
-      ]
+      "includePatterns": [".env*", "vendor/**"],
+      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
     },
     "web-api": {
       "id": "web-api",
@@ -69,16 +58,8 @@
         "providerId": "opencode",
         "modelId": "big-pickle"
       },
-      "includePatterns": [
-        ".env*",
-        "*.db",
-        "vendor/**"
-      ],
-      "ignorePatterns": [
-        "node_modules/**",
-        ".hive/**",
-        ".turbo/**"
-      ]
+      "includePatterns": [".env*", "*.db", "vendor/**"],
+      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
     },
     "basic": {
       "id": "basic",
@@ -88,15 +69,8 @@
         "providerId": "opencode",
         "modelId": "big-pickle"
       },
-      "includePatterns": [
-        ".env*",
-        "vendor/**"
-      ],
-      "ignorePatterns": [
-        "node_modules/**",
-        ".hive/**",
-        ".turbo/**"
-      ]
+      "includePatterns": [".env*", "vendor/**"],
+      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
     },
     "provider-only": {
       "id": "provider-only",
@@ -105,29 +79,15 @@
       "agent": {
         "providerId": "opencode"
       },
-      "includePatterns": [
-        ".env*",
-        "vendor/**"
-      ],
-      "ignorePatterns": [
-        "node_modules/**",
-        ".hive/**",
-        ".turbo/**"
-      ]
+      "includePatterns": [".env*", "vendor/**"],
+      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
     },
     "agentless": {
       "id": "agentless",
       "label": "No Agent Overrides",
       "type": "manual",
-      "includePatterns": [
-        ".env*",
-        "vendor/**"
-      ],
-      "ignorePatterns": [
-        "node_modules/**",
-        ".hive/**",
-        ".turbo/**"
-      ]
+      "includePatterns": [".env*", "vendor/**"],
+      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
     }
   },
   "defaults": {
