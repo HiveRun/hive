@@ -4,6 +4,7 @@
   - [x] Split cell detail into dedicated `/cells/$id/chat` and `/cells/$id/services` routes linked from cell cards
   - [x] Add per-service start/stop controls with backend enforcement of unhealthy states
   - [x] [HIVE-19] Expose Effect layers for service orchestration and agent runtime adapters
+  - [/] [HIVE-37] Simplify service management error handling
 
 ## Goal
 Provide comprehensive service management capabilities for both users and agents through UI, CLI, and MCP tools.

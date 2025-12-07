@@ -476,7 +476,7 @@ export function createCellsRoutes(
 
         const rows = await fetchServiceRows(database, params.id);
         const services = await Promise.all(
-          rows.map((row) => serializeService(database, row))
+          rows.map((row) => serializeService(row))
         );
 
         return { services } satisfies CellServiceListResponse;
@@ -519,7 +519,7 @@ export function createCellsRoutes(
                 if (!row) {
                   return;
                 }
-                const payload = await serializeService(database, row);
+                const payload = await serializeService(row);
                 sendEvent("service", JSON.stringify(payload));
               } catch (error) {
                 log.error(
@@ -545,7 +545,7 @@ export function createCellsRoutes(
               try {
                 const rows = await fetchServiceRows(database, params.id);
                 for (const row of rows) {
-                  const payload = await serializeService(database, row);
+                  const payload = await serializeService(row);
                   sendEvent("service", JSON.stringify(payload));
                 }
                 sendEvent(
@@ -649,7 +649,7 @@ export function createCellsRoutes(
           return { message: "Service not found" } satisfies { message: string };
         }
 
-        const serialized = await serializeService(database, updated);
+        const serialized = await serializeService(updated);
         return serialized satisfies CellServiceResponse;
       },
       {
@@ -687,7 +687,7 @@ export function createCellsRoutes(
           return { message: "Service not found" } satisfies { message: string };
         }
 
-        const serialized = await serializeService(database, updated);
+        const serialized = await serializeService(updated);
         return serialized satisfies CellServiceResponse;
       },
       {
@@ -1877,7 +1877,7 @@ async function fetchServiceRow(
   return row ?? null;
 }
 
-async function serializeService(database: DatabaseClient, row: ServiceRow) {
+async function serializeService(row: ServiceRow) {
   const { service, cell } = row;
   const logPath = computeServiceLogPath(cell.workspacePath, service.name);
   const recentLogs = await readLogTail(logPath);
@@ -1887,47 +1887,17 @@ async function serializeService(database: DatabaseClient, row: ServiceRow) {
       ? await isPortActive(service.port)
       : undefined;
 
-  let derivedStatus = service.status;
-  let derivedLastKnownError = service.lastKnownError;
-
-  if (service.status === "running" && !processAlive) {
-    derivedStatus = "error";
-    derivedLastKnownError =
-      service.lastKnownError ?? "Process exited unexpectedly";
-  } else if (service.status === "error" && processAlive) {
-    derivedStatus = "running";
-    derivedLastKnownError = null;
-  }
-
-  const derivedPid = processAlive ? service.pid : null;
-  const shouldPersist =
-    derivedStatus !== service.status ||
-    derivedLastKnownError !== service.lastKnownError ||
-    derivedPid !== (service.pid ?? null);
-
-  if (shouldPersist) {
-    await database
-      .update(cellServices)
-      .set({
-        status: derivedStatus,
-        lastKnownError: derivedLastKnownError,
-        pid: derivedPid,
-        updatedAt: new Date(),
-      })
-      .where(eq(cellServices.id, service.id));
-  }
-
   return {
     id: service.id,
     name: service.name,
     type: service.type,
-    status: derivedStatus,
+    status: service.status,
     ...(service.port != null ? { port: service.port } : {}),
-    ...(derivedPid != null ? { pid: derivedPid } : {}),
+    ...(service.pid != null ? { pid: service.pid } : {}),
     command: service.command,
     cwd: service.cwd,
     logPath,
-    lastKnownError: derivedLastKnownError,
+    lastKnownError: service.lastKnownError,
     env: service.env,
     updatedAt: service.updatedAt.toISOString(),
     recentLogs,
