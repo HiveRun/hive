@@ -1,7 +1,240 @@
 {
-  "$ref": "#/definitions/HiveConfig",
-  "definitions": {
-    "HiveConfig": {}
-  },
-  "$schema": "http://json-schema.org/draft-07/schema#"
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "hive.config.schema.json",
+  "title": "HiveConfig",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "opencode",
+    "promptSources",
+    "templates"
+  ],
+  "properties": {
+    "opencode": {
+      "type": "object",
+      "required": [
+        "defaultProvider"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "token": {
+          "type": "string"
+        },
+        "defaultProvider": {
+          "type": "string"
+        },
+        "defaultModel": {
+          "type": "string"
+        }
+      }
+    },
+    "promptSources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "templates": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "type"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "type": {
+            "const": "manual"
+          },
+          "services": {
+            "type": "object",
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "run"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "process"
+                    },
+                    "run": {
+                      "type": "string"
+                    },
+                    "setup": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "cwd": {
+                      "type": "string"
+                    },
+                    "env": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "required": []
+                    },
+                    "readyTimeoutMs": {
+                      "type": "number"
+                    },
+                    "stop": {
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "image"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "docker"
+                    },
+                    "image": {
+                      "type": "string"
+                    },
+                    "command": {
+                      "type": "string"
+                    },
+                    "ports": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "env": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "required": []
+                    },
+                    "volumes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "readyTimeoutMs": {
+                      "type": "number"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "file"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "compose"
+                    },
+                    "file": {
+                      "type": "string"
+                    },
+                    "services": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "env": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "required": []
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "required": []
+          },
+          "setup": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "prompts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "agent": {
+            "type": "object",
+            "required": [
+              "providerId"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "providerId": {
+                "type": "string"
+              },
+              "modelId": {
+                "type": "string"
+              },
+              "agentId": {
+                "type": "string"
+              }
+            }
+          },
+          "teardown": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "includePatterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ignorePatterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "templateId": {
+          "type": "string"
+        }
+      }
+    }
+  }
 }
