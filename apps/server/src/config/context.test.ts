@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { resolveWorkspaceRoot } from "./context";
 
-const CONFIG_CONTENT = "export default {} as const\n";
+const CONFIG_CONTENT = "{}\n";
 
 const originalCwd = process.cwd();
 const originalWorkspaceEnv = process.env.HIVE_WORKSPACE_ROOT;
@@ -28,7 +28,7 @@ describe("resolveWorkspaceRoot", () => {
   };
 
   const writeConfig = (dir: string) => {
-    writeFileSync(join(dir, "hive.config.ts"), CONFIG_CONTENT, "utf8");
+    writeFileSync(join(dir, "hive.config.json"), CONFIG_CONTENT, "utf8");
   };
 
   beforeEach(() => {
@@ -46,7 +46,7 @@ describe("resolveWorkspaceRoot", () => {
     }
   });
 
-  it("returns the current directory when hive.config.ts is present", () => {
+  it("returns the current directory when hive.config.json is present", () => {
     const workspace = makeTempDir();
     writeConfig(workspace);
     process.chdir(workspace);

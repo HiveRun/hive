@@ -1,9 +1,9 @@
 # Configuration Editor
 
-- [ ] Configuration Editor #status/planned #phase-3 #feature/advanced
+- [/] Configuration Editor #status/in-progress #phase-3 #feature/advanced
 
 ## Goal
-Provide a guided UI for editing `hive.config.ts` (or a future companion format) with validation and guardrails.
+Provide a guided UI for editing `hive.config.json` with validation and guardrails.
 
 ## Key Requirements
 - Present workspace settings, templates, and prompt sources in structured forms.

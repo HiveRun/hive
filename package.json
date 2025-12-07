@@ -16,9 +16,9 @@
     }
   },
   "scripts": {
-    "setup": "bun install && ./scripts/dev/clone-opencode.sh && ./scripts/dev/clone-hive.sh && bun run db:migrate",
+    "setup": "bun install && ./scripts/dev/clone-opencode.sh && ./scripts/dev/clone-hive.sh && bun run config:generate && bun run db:migrate",
     "check": "bun run check:commit",
-    "check:commit": "bun run check:staged && bun run check:secrets && bun run check:audit && biome check --no-errors-on-unmatched --files-ignore-unknown=true && bun run test:run && turbo check check-types --ui=stream --force && bun run build",
+    "check:commit": "bun run check:config && bun run check:staged && bun run check:secrets && bun run check:audit && biome check --no-errors-on-unmatched --files-ignore-unknown=true && bun run test:run && turbo check check-types --ui=stream --force && bun run build",
     "check:push": "bun run check:commit && bun run test:e2e",
     "test": "turbo test --ui=stream --force",
     "test:run": "turbo test:run --ui=stream --force",
@@ -26,6 +26,7 @@
     "test:e2e:ui": "turbo -F web test:e2e:ui --ui=stream",
     "test:e2e:headed": "turbo -F web test:e2e:headed --ui=stream",
     "test:e2e:update-snapshots": "turbo -F web test:e2e:update-snapshots --ui=stream",
+    "check:config": "bun run config:generate && git diff --exit-code hive.config.json hive.config.schema.json",
     "check:biome": "biome check --write .",
     "check:staged": "lint-staged --allow-empty",
     "check:secrets": "./scripts/check-secrets.sh",
@@ -43,6 +44,7 @@
     "dev:server": "turbo -F server dev",
     "dev:tauri": "tauri dev",
     "build:tauri": "tauri build",
+    "config:generate": "bun scripts/dev/generate-config.ts && bun scripts/dev/generate-config-schema.ts",
     "db:local": "cd apps/server && bun db:local",
     "db:push": "turbo -F @hive/server db:push",
     "db:studio": "turbo -F @hive/server db:studio",
@@ -53,7 +55,7 @@
   "dependencies": {
     "dotenv": "^17.2.2",
     "playwright": "^1.57.0",
-    "zod": "^4.1.11"
+    "zod": "^4.1.13"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.0",
@@ -75,7 +77,7 @@
     "**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue,astro,svelte}": [
       "biome check --write --files-ignore-unknown=true --no-errors-on-unmatched"
     ],
-    "**/*.{json,jsonc}": [
+    "**/*.json": [
       "biome check --write --files-ignore-unknown=true --no-errors-on-unmatched"
     ]
   }

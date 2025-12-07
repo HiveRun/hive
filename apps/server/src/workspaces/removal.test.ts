@@ -37,7 +37,7 @@ import {
 } from "./registry";
 import { removeWorkspaceCascadeEffect } from "./removal";
 
-const HIVE_CONFIG_CONTENT = "export default {}";
+const HIVE_CONFIG_CONTENT = "{}";
 
 type RemovalTestOverrides = {
   stopCellServices?: (
@@ -176,7 +176,7 @@ describe("removeWorkspaceCascadeEffect", () => {
 
 async function createWorkspaceRoot(prefix = "workspace-removal-") {
   const dir = await mkdtemp(join(tmpdir(), prefix));
-  await writeFile(join(dir, "hive.config.ts"), HIVE_CONFIG_CONTENT);
+  await writeFile(join(dir, "hive.config.json"), HIVE_CONFIG_CONTENT);
   return dir;
 }
 

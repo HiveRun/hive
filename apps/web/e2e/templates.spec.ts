@@ -13,7 +13,7 @@ const TEXT = {
   pageTitle: "Templates",
   pageDescription: "Browse available cell templates",
   noTemplates: "No templates available",
-  configFileHint: "Create a hive.config.ts file to define templates",
+  configFileHint: "Create a hive.config.json file to define templates",
 } as const;
 
 test.describe("Templates Page", () => {
@@ -55,12 +55,10 @@ test.describe("Templates Page", () => {
     await page.waitForLoadState("networkidle");
 
     // Check for empty state message
-    const emptyState = page.getByText("No templates available");
+    const emptyState = page.getByText(TEXT.noTemplates);
     if (await emptyState.isVisible()) {
       await expect(emptyState).toBeVisible();
-      await expect(
-        page.getByText("Create a hive.config.ts file to define templates")
-      ).toBeVisible();
+      await expect(page.getByText(TEXT.configFileHint)).toBeVisible();
     }
   });
 

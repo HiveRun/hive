@@ -1,8 +1,8 @@
-import { defineHiveConfig } from "./apps/server/src/config/schema";
+import type { HiveConfig } from "../../apps/server/src/config/schema";
 
 const defaultIgnorePatterns = ["node_modules/**", ".hive/**", ".turbo/**"];
 
-export default defineHiveConfig({
+export const hiveConfigDefaults: HiveConfig = {
   opencode: {
     defaultProvider: "opencode",
     defaultModel: "big-pickle",
@@ -97,4 +97,4 @@ export default defineHiveConfig({
       ignorePatterns: defaultIgnorePatterns,
     },
   },
-});
+};

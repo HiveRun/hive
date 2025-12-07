@@ -1,6 +1,8 @@
-import { access, readdir, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+
+import { hasConfigFile } from "../config/files";
 import { isCellWorkspacePath } from "./registry";
 
 export type WorkspaceDirectoryEntry = {
@@ -15,7 +17,6 @@ export type WorkspaceBrowseResult = {
   directories: WorkspaceDirectoryEntry[];
 };
 
-const HIVE_CONFIG_FILE = "hive.config.ts";
 const DEFAULT_BROWSE_ROOT = process.env.HIVE_BROWSE_ROOT || homedir();
 
 function normalizeBrowsePath(path?: string): string {
@@ -25,13 +26,8 @@ function normalizeBrowsePath(path?: string): string {
   return resolve(path);
 }
 
-async function directoryHasConfig(path: string): Promise<boolean> {
-  try {
-    await access(join(path, HIVE_CONFIG_FILE));
-    return true;
-  } catch {
-    return false;
-  }
+function directoryHasConfig(path: string): boolean {
+  return hasConfigFile(path);
 }
 
 export async function browseWorkspaceDirectories(
@@ -65,7 +61,7 @@ export async function browseWorkspaceDirectories(
       continue;
     }
 
-    const hasConfig = await directoryHasConfig(entryPath);
+    const hasConfig = directoryHasConfig(entryPath);
     directories.push({
       name: entry.name,
       path: entryPath,

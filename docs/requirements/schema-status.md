@@ -18,7 +18,7 @@ This document tracks the current status of prepared schemas, validation, and tes
 ### ✅ Implemented and Active
 
 #### Template Definition System
-- **File**: `hive.config.ts` schema
+- **File**: `hive.config.json` schema
 - **Status**: ✅ Active, file-based storage
 - **Usage**: Template definitions and validation
 - **Tests**: ✅ Implemented and passing

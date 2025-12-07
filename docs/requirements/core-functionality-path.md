@@ -5,7 +5,7 @@ This document outlines the focused implementation path for delivering core Hive 
 ## Target User Experience
 
 **Goal**: A user should be able to:
-1. ✅ Define templates in `hive.config.ts` (completed)
+1. ✅ Define templates in `hive.config.json` (completed)
 2. ✅ Create and manage basic cells through UI (real database)
 3. Provision worktrees for existing cells
 4. Start agent sessions in cell worktrees
@@ -226,7 +226,7 @@ ALTER TABLE cells
 - Time from basic cells to worktree integration: < 3 days
 - Time from worktree to agent integration: < 4 days
 - End-to-end workflow completion: < 2 minutes
-- Zero configuration beyond `hive.config.ts`
+- Zero configuration beyond `hive.config.json`
 
 ### Testing Strategy
 - **Step 1**: Real database operations from day 1

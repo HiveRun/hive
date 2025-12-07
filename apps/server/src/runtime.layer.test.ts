@@ -62,16 +62,20 @@ describe("serverLayer wiring", () => {
     process.env.HIVE_WORKSPACE_ROOT = tempWorkspaceRoot;
     process.env.HIVE_HOME = tempHiveHome;
 
-    const configContents = `
-export default {
-  opencode: { defaultProvider: "opencode", defaultModel: "big-pickle" },
-  promptSources: [],
-  templates: { demo: { id: "demo", label: "Demo Template", type: "manual" } },
-  defaults: {},
-};
+    const configContents = `{
+  "opencode": { "defaultProvider": "opencode", "defaultModel": "big-pickle" },
+  "promptSources": [],
+  "templates": {
+    "demo": { "id": "demo", "label": "Demo Template", "type": "manual" }
+  },
+  "defaults": {}
+}
 `;
 
-    await writeFile(join(tempWorkspaceRoot, "hive.config.ts"), configContents);
+    await writeFile(
+      join(tempWorkspaceRoot, "hive.config.json"),
+      configContents
+    );
     execSync("git init", { cwd: tempWorkspaceRoot, env: gitEnv });
     await writeFile(join(tempWorkspaceRoot, "README.md"), "# workspace");
     execSync("git add .", { cwd: tempWorkspaceRoot, env: gitEnv });

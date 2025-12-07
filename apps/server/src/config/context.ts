@@ -1,5 +1,4 @@
-import { existsSync } from "node:fs";
-import { join, resolve as resolvePath } from "node:path";
+import { resolve as resolvePath } from "node:path";
 
 import { Context, Effect, Layer } from "effect";
 
@@ -9,10 +8,10 @@ import {
   type WorkspaceRegistryError,
   WorkspaceRegistryLayer,
 } from "../workspaces/registry";
+import { hasConfigFile } from "./files";
 import { loadConfig } from "./loader";
 import type { HiveConfig } from "./schema";
 
-const CONFIG_FILENAME = "hive.config.ts";
 const FALLBACK_DIRECTORY = "hive";
 const configCache = new Map<string, Promise<HiveConfig>>();
 
@@ -50,7 +49,7 @@ function findConfigRoot(baseRoot: string): string {
 }
 
 function hasConfig(directory: string): boolean {
-  return existsSync(join(directory, CONFIG_FILENAME));
+  return hasConfigFile(directory);
 }
 
 function loadHiveConfigCached(workspaceRoot?: string): Promise<HiveConfig> {

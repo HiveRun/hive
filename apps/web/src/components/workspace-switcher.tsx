@@ -123,7 +123,30 @@ export function WorkspaceSwitcher({ collapsed }: WorkspaceSwitcherProps) {
 
   const activateWorkspace = useMutation({
     mutationFn: workspaceMutations.activate.mutationFn,
-    onSuccess: async () => {
+    onSuccess: async (workspace) => {
+      queryClient.setQueryData(
+        workspaceQueries.list().queryKey,
+        (prev: unknown) => {
+          if (!prev || typeof prev !== "object") {
+            return prev;
+          }
+          const current = prev as {
+            workspaces: WorkspaceSummary[];
+            activeWorkspaceId: string | null | undefined;
+          };
+          const existing = current.workspaces.find(
+            (item) => item.id === workspace.id
+          );
+          const nextWorkspaces = existing
+            ? current.workspaces
+            : [...current.workspaces, workspace];
+          return {
+            ...current,
+            activeWorkspaceId: workspace.id,
+            workspaces: nextWorkspaces,
+          };
+        }
+      );
       await invalidateWorkspaceScopedData();
     },
     onError: (error: Error) => toast.error(error.message),
@@ -530,7 +553,7 @@ function WorkspaceRegisterForm({
           Register Workspace
         </h3>
         <p className="text-muted-foreground text-sm">
-          Provide an absolute path that contains a hive.config.ts.
+          Provide an absolute path that contains a hive.config.json.
         </p>
       </div>
       <form className="space-y-4" onSubmit={onSubmit}>

@@ -13,12 +13,12 @@ import {
   updateWorkspaceLabel,
 } from "./registry";
 
-const WORKSPACE_FILE_CONTENT = "export default {}";
+const WORKSPACE_FILE_CONTENT = "{}";
 const CELL_WORKTREE_ERROR = /cell worktrees cannot be registered/i;
 
 async function createWorkspaceRoot(prefix = "hive-workspace-") {
   const dir = await mkdtemp(join(tmpdir(), prefix));
-  await writeFile(join(dir, "hive.config.ts"), WORKSPACE_FILE_CONTENT);
+  await writeFile(join(dir, "hive.config.json"), WORKSPACE_FILE_CONTENT);
   return dir;
 }
 
@@ -77,7 +77,7 @@ describe("workspace registry", () => {
   test("rejects registering cell worktree paths", async () => {
     const cellDir = join(resolveCellsRoot(), "test-worktree");
     await mkdir(cellDir, { recursive: true });
-    await writeFile(join(cellDir, "hive.config.ts"), WORKSPACE_FILE_CONTENT);
+    await writeFile(join(cellDir, "hive.config.json"), WORKSPACE_FILE_CONTENT);
 
     await expect(registerWorkspace({ path: cellDir })).rejects.toThrow(
       CELL_WORKTREE_ERROR
