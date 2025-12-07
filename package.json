@@ -78,7 +78,7 @@
     "**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue,astro,svelte}": [
       "biome check --write --files-ignore-unknown=true --no-errors-on-unmatched"
     ],
-    "**/*.{json,jsonc}": [
+    "**/*.json": [
       "biome check --write --files-ignore-unknown=true --no-errors-on-unmatched"
     ]
   }

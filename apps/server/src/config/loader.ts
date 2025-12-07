@@ -29,7 +29,14 @@ export async function loadConfig(workspaceRoot: string): Promise<HiveConfig> {
 }
 
 const loadJsonConfig = async (configPath: string): Promise<unknown> => {
-  const contents = await readFile(configPath, "utf8");
+  let contents: string;
+  try {
+    contents = await readFile(configPath, "utf8");
+  } catch (error) {
+    throw new Error(
+      `Could not read ${basename(configPath)}: ${(error as Error).message}`
+    );
+  }
 
   let parsed: unknown;
   try {
