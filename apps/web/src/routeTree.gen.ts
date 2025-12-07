@@ -19,6 +19,7 @@ import { Route as CellsNewRouteImport } from './routes/cells/new'
 import { Route as CellsListRouteImport } from './routes/cells/list'
 import { Route as CellsCellIdRouteImport } from './routes/cells/$cellId'
 import { Route as CellsCellIdViewerRouteImport } from './routes/cells/$cellId/viewer'
+import { Route as CellsCellIdSetupRouteImport } from './routes/cells/$cellId/setup'
 import { Route as CellsCellIdServicesRouteImport } from './routes/cells/$cellId/services'
 import { Route as CellsCellIdDiffRouteImport } from './routes/cells/$cellId/diff'
 import { Route as CellsCellIdChatRouteImport } from './routes/cells/$cellId/chat'
@@ -73,6 +74,11 @@ const CellsCellIdViewerRoute = CellsCellIdViewerRouteImport.update({
   path: '/viewer',
   getParentRoute: () => CellsCellIdRoute,
 } as any)
+const CellsCellIdSetupRoute = CellsCellIdSetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
+  getParentRoute: () => CellsCellIdRoute,
+} as any)
 const CellsCellIdServicesRoute = CellsCellIdServicesRouteImport.update({
   id: '/services',
   path: '/services',
@@ -102,6 +108,7 @@ export interface FileRoutesByFullPath {
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
   '/cells/$cellId/services': typeof CellsCellIdServicesRoute
+  '/cells/$cellId/setup': typeof CellsCellIdSetupRoute
   '/cells/$cellId/viewer': typeof CellsCellIdViewerRoute
 }
 export interface FileRoutesByTo {
@@ -117,6 +124,7 @@ export interface FileRoutesByTo {
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
   '/cells/$cellId/services': typeof CellsCellIdServicesRoute
+  '/cells/$cellId/setup': typeof CellsCellIdSetupRoute
   '/cells/$cellId/viewer': typeof CellsCellIdViewerRoute
 }
 export interface FileRoutesById {
@@ -133,6 +141,7 @@ export interface FileRoutesById {
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
   '/cells/$cellId/services': typeof CellsCellIdServicesRoute
+  '/cells/$cellId/setup': typeof CellsCellIdSetupRoute
   '/cells/$cellId/viewer': typeof CellsCellIdViewerRoute
 }
 export interface FileRouteTypes {
@@ -150,6 +159,7 @@ export interface FileRouteTypes {
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
     | '/cells/$cellId/services'
+    | '/cells/$cellId/setup'
     | '/cells/$cellId/viewer'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -165,6 +175,7 @@ export interface FileRouteTypes {
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
     | '/cells/$cellId/services'
+    | '/cells/$cellId/setup'
     | '/cells/$cellId/viewer'
   id:
     | '__root__'
@@ -180,6 +191,7 @@ export interface FileRouteTypes {
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
     | '/cells/$cellId/services'
+    | '/cells/$cellId/setup'
     | '/cells/$cellId/viewer'
   fileRoutesById: FileRoutesById
 }
@@ -264,6 +276,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CellsCellIdViewerRouteImport
       parentRoute: typeof CellsCellIdRoute
     }
+    '/cells/$cellId/setup': {
+      id: '/cells/$cellId/setup'
+      path: '/setup'
+      fullPath: '/cells/$cellId/setup'
+      preLoaderRoute: typeof CellsCellIdSetupRouteImport
+      parentRoute: typeof CellsCellIdRoute
+    }
     '/cells/$cellId/services': {
       id: '/cells/$cellId/services'
       path: '/services'
@@ -292,6 +311,7 @@ interface CellsCellIdRouteChildren {
   CellsCellIdChatRoute: typeof CellsCellIdChatRoute
   CellsCellIdDiffRoute: typeof CellsCellIdDiffRoute
   CellsCellIdServicesRoute: typeof CellsCellIdServicesRoute
+  CellsCellIdSetupRoute: typeof CellsCellIdSetupRoute
   CellsCellIdViewerRoute: typeof CellsCellIdViewerRoute
 }
 
@@ -299,6 +319,7 @@ const CellsCellIdRouteChildren: CellsCellIdRouteChildren = {
   CellsCellIdChatRoute: CellsCellIdChatRoute,
   CellsCellIdDiffRoute: CellsCellIdDiffRoute,
   CellsCellIdServicesRoute: CellsCellIdServicesRoute,
+  CellsCellIdSetupRoute: CellsCellIdSetupRoute,
   CellsCellIdViewerRoute: CellsCellIdViewerRoute,
 }
 

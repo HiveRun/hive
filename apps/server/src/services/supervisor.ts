@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { dirname, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -387,15 +387,33 @@ export function createServiceSupervisor(
     const env = {
       ...buildBaseEnv({ serviceName: template.id, cell }),
       ...templateEnv,
+      HIVE_WORKTREE_SETUP: "true",
+      HIVE_MAIN_REPO: cell.workspaceRootPath ?? cell.workspacePath,
     };
 
-    for (const command of template.setup) {
+    const logPath = computeSetupLogPath(cell.workspacePath);
+    ensureLogFile(logPath);
+    logSetupEvent(
+      logPath,
+      `Starting template setup for ${template.id} (${template.setup.length} command${
+        template.setup.length === 1 ? "" : "s"
+      })`
+    );
+
+    const executeCommand = async (command: string) => {
+      logSetupEvent(logPath, `Running: ${command}`);
+      const commandWithLogging = wrapCommandWithLogging(command, logPath);
+
       try {
-        await runCommand(command, {
+        await runCommand(commandWithLogging, {
           cwd: cell.workspacePath,
           env,
         });
+        logSetupEvent(logPath, `Completed: ${command}`);
       } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error ?? "unknown");
+        logSetupEvent(logPath, `Failed: ${command} (${message})`);
         throw new TemplateSetupError({
           command,
           templateId: template.id,
@@ -403,7 +421,13 @@ export function createServiceSupervisor(
           cause: error,
         });
       }
+    };
+
+    for (const command of template.setup) {
+      await executeCommand(command);
     }
+
+    logSetupEvent(logPath, `Template setup finished for ${template.id}`);
   }
 
   async function ensureService(
@@ -963,12 +987,22 @@ function computeServiceLogPath(
   return resolve(logsDir, `${safeName}.log`);
 }
 
+function computeSetupLogPath(workspacePath: string): string {
+  const logsDir = resolve(workspacePath, SERVICE_LOG_DIR);
+  return resolve(logsDir, "setup.log");
+}
+
 function ensureLogFile(logPath: string): void {
   const directory = dirname(logPath);
   mkdirSync(directory, { recursive: true });
   if (!existsSync(logPath)) {
     writeFileSync(logPath, "");
   }
+}
+
+function logSetupEvent(logPath: string, message: string): void {
+  const timestamp = new Date().toISOString();
+  appendFileSync(logPath, `[${timestamp}] ${message}\n`);
 }
 
 function wrapCommandWithLogging(command: string, logPath: string): string {

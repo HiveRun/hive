@@ -120,6 +120,18 @@ export const cellMutations = {
       return data;
     },
   },
+
+  retrySetup: {
+    mutationFn: async (cellId: string) => {
+      const { data, error } = await rpc.api
+        .cells({ id: cellId })
+        .setup.retry.post();
+      if (error) {
+        throw new Error(formatRpcError(error, "Failed to retry setup"));
+      }
+      return normalizeCell(data);
+    },
+  },
 };
 
 export const cellDiffQueries = {
@@ -182,6 +194,8 @@ export type Cell = Awaited<
   lastSetupError?: string;
   branchName?: string | null;
   baseCommit?: string | null;
+  setupLog?: string | null;
+  setupLogPath?: string | null;
 };
 
 export type CellServiceSummary = Awaited<

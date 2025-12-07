@@ -46,6 +46,11 @@ function CellLayout() {
   )?.label;
   const navItems = [
     {
+      routeId: "/cells/$cellId/setup",
+      label: "Setup",
+      to: "/cells/$cellId/setup",
+    },
+    {
       routeId: "/cells/$cellId/services",
       label: "Services",
       to: "/cells/$cellId/services",
