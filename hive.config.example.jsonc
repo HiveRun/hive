@@ -3,7 +3,9 @@
     "defaultProvider": "zen",
     "defaultModel": "big-pickle"
   },
-  "promptSources": ["docs/prompts/**/*.md"],
+  "promptSources": [
+    "https://raw.githubusercontent.com/HiveRun/hive/refs/heads/main/docs/prompts/**/*.md"
+  ],
   "templates": {
     "basic": {
       "id": "basic",
