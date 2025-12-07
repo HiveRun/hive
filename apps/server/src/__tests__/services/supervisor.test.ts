@@ -148,7 +148,8 @@ describe("service supervisor", () => {
       },
     });
 
-    expect(harness.runCommandCalls).toEqual(["echo template-setup"]);
+    expect(harness.runCommandCalls).toHaveLength(1);
+    expect(harness.runCommandCalls[0]).toContain("echo template-setup");
   });
 
   it("can stop and restart a single service", async () => {

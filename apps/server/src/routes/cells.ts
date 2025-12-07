@@ -142,6 +142,7 @@ const resolveCellRouteDependencies = (() => {
 type CellServiceListResponse = Static<typeof CellServiceListResponseSchema>;
 type CellDiffResponse = Static<typeof CellDiffResponseSchema>;
 type CellServiceResponse = Static<typeof CellServiceSchema>;
+type CellResponse = Static<typeof CellResponseSchema>;
 
 type ServiceRow = {
   service: typeof cellServices.$inferSelect;
@@ -316,6 +317,88 @@ export function createCellsRoutes(
   return new Elysia({ prefix: "/api/cells" })
     .use(logger(LOGGER_CONFIG))
     .use(workspaceContextPlugin)
+    .post(
+      "/:id/setup/retry",
+      async ({ params, set }) => {
+        const deps = await resolveDeps();
+        const cell = await loadCellById(deps.db, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+
+        const workspaceContext = await runServerEffect(
+          deps.resolveWorkspaceContext(cell.workspaceId)
+        );
+        const hiveConfig = await runServerEffect(workspaceContext.loadConfig());
+        const template = hiveConfig.templates[cell.templateId];
+        if (!template) {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return { message: "Template not found for cell" } satisfies {
+            message: string;
+          };
+        }
+
+        try {
+          await deps.db
+            .update(cells)
+            .set({ status: "pending", lastSetupError: null })
+            .where(eq(cells.id, cell.id));
+
+          await runServerEffect(
+            deps.ensureServicesForCell({
+              cell: {
+                ...cell,
+                status: "pending",
+                lastSetupError: null,
+              },
+              template,
+            })
+          );
+
+          await deps.db
+            .update(cells)
+            .set({ status: "ready", lastSetupError: null })
+            .where(eq(cells.id, cell.id));
+        } catch (error) {
+          const payload = buildCellCreationErrorPayload(error);
+          const lastSetupError = deriveSetupErrorDetails(payload);
+          await deps.db
+            .update(cells)
+            .set({ status: "error", lastSetupError })
+            .where(eq(cells.id, cell.id));
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return {
+            message: payload.message,
+            ...(lastSetupError ? { details: lastSetupError } : {}),
+          } satisfies ErrorPayload;
+        }
+
+        const updated = await loadCellById(deps.db, cell.id);
+        if (!updated) {
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          return {
+            message: "Failed to load cell after retry",
+          } satisfies ErrorPayload;
+        }
+
+        const extras = await buildSetupLogPayload(updated.workspacePath);
+        return {
+          ...cellToResponse(updated),
+          ...extras,
+        } satisfies CellResponse;
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        response: {
+          200: CellResponseSchema,
+          400: ErrorResponseSchema,
+          404: ErrorResponseSchema,
+          500: ErrorResponseSchema,
+        },
+      }
+    )
+
     .get(
       "/",
       async ({ query, set, getWorkspaceContext }) => {
@@ -366,7 +449,8 @@ export function createCellsRoutes(
           return { message: "Failed to load cell" };
         }
 
-        return cellToResponse(cell);
+        const extras = await buildSetupLogPayload(cell.workspacePath);
+        return { ...cellToResponse(cell), ...extras };
       },
       {
         params: t.Object({
@@ -1885,6 +1969,23 @@ function computeServiceLogPath(
 ): string {
   const safe = sanitizeServiceNameForLogs(serviceName);
   return resolvePath(workspacePath, SERVICE_LOG_DIR, `${safe}.log`);
+}
+
+function computeSetupLogPath(workspacePath: string): string {
+  return resolvePath(workspacePath, SERVICE_LOG_DIR, "setup.log");
+}
+
+async function buildSetupLogPayload(workspacePath?: string | null) {
+  if (!workspacePath) {
+    return {};
+  }
+
+  const setupLogPath = computeSetupLogPath(workspacePath);
+  const setupLog = await readLogTail(setupLogPath);
+  return {
+    setupLogPath,
+    ...(setupLog != null ? { setupLog } : {}),
+  };
 }
 
 function sanitizeServiceNameForLogs(name: string): string {

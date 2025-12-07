@@ -18,6 +18,8 @@ export const CellResponseSchema = t.Object({
   lastSetupError: t.Optional(t.String()),
   branchName: t.Optional(t.String()),
   baseCommit: t.Optional(t.String()),
+  setupLog: t.Optional(t.String()),
+  setupLogPath: t.Optional(t.String()),
 });
 
 export const CellListResponseSchema = t.Object({
@@ -138,6 +140,7 @@ export const TemplateResponseSchema = t.Object({
   label: t.String(),
   type: t.String(),
   configJson: t.Any(),
+  includeDirectories: t.Optional(t.Array(t.String())),
 });
 
 export const DefaultsResponseSchema = t.Object({

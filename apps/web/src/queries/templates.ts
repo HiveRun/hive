@@ -31,6 +31,7 @@ export type Template = {
   label: string;
   type: string;
   configJson: TemplateConfig;
+  includeDirectories?: string[];
 };
 
 export type Defaults = {
