@@ -5,7 +5,7 @@ This document covers the high-level concepts for workspace configuration. For de
 ## Core Concepts
 
 ### Workspace Configuration
-- Locate a `hive.config.jsonc` (or `hive.config.json`) at the repo root with workspace settings (one per project repository). Legacy `hive.config.ts` files are still read for development, but JSONC is the default for distributed installs.
+- Locate a `hive.config.jsonc` (or `hive.config.json`) at the repo root with workspace settings (one per project repository).
 - Configuration is validated at runtime against the server Zod schema; JSONC keeps comments and trailing commas without requiring a helper package.
 - `opencode`: defines the workspace ID, optional token reference, and default provider/model used when launching agent sessions (`workspaceId`, `token`, `defaultProvider`, `defaultModel`). The repo defaults target the free `zen` provider with the `big-pickle` model, so no credentials are required out of the box. Developers can also drop an `opencode.json` file (or `@opencode.json`) inside the workspace root to provide personal defaults; that file takes effect only when templates omit an agent configuration.
 - `promptSources`: defines the reusable prompt fragments that Hive concatenates into agent prompts.
@@ -39,8 +39,12 @@ The configuration system is implemented through these features:
 }
 ```
 
+### Keeping config in sync
+- Run `bun run config:generate` whenever the config schema changes; this regenerates `hive.config.jsonc` from the Zod schema defaults.
+- CI/commit checks use `bun run check:config` to ensure the checked-in config matches the schema output, and `setup` runs the generator by default.
 
 ## Related Features
+
 
 For detailed implementation specifications, see:
 - **[[features/phase-0/template-definition-system|Template Definition System]]**: Template schema, service definitions, and port management
