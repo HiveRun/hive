@@ -43,6 +43,7 @@
     "dev:server": "turbo -F server dev",
     "dev:tauri": "tauri dev",
     "build:tauri": "tauri build",
+    "config:generate": "bun scripts/dev/generate-config.ts",
     "db:local": "cd apps/server && bun db:local",
     "db:push": "turbo -F @hive/server db:push",
     "db:studio": "turbo -F @hive/server db:studio",
