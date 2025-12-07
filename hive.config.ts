@@ -1,5 +1,7 @@
 import { defineHiveConfig } from "./apps/server/src/config/schema";
 
+const defaultIgnorePatterns = ["node_modules/**", ".hive/**", ".turbo/**"];
+
 export default defineHiveConfig({
   opencode: {
     defaultProvider: "opencode",
@@ -14,7 +16,8 @@ export default defineHiveConfig({
       id: "hive-dev",
       label: "Hive Development Environment",
       type: "manual",
-      includePatterns: [".env*"],
+      includePatterns: [".env*", "vendor/**"],
+      ignorePatterns: defaultIgnorePatterns,
       agent: {
         providerId: "opencode",
         modelId: "big-pickle",
@@ -47,7 +50,8 @@ export default defineHiveConfig({
       id: "web-api",
       label: "Web API Server",
       type: "manual",
-      includePatterns: [".env*", "*.db"],
+      includePatterns: [".env*", "*.db", "vendor/**"],
+      ignorePatterns: defaultIgnorePatterns,
       agent: {
         providerId: "opencode",
         modelId: "big-pickle",
@@ -68,7 +72,8 @@ export default defineHiveConfig({
       id: "basic",
       label: "Basic Template",
       type: "manual",
-      includePatterns: [".env*"],
+      includePatterns: [".env*", "vendor/**"],
+      ignorePatterns: defaultIgnorePatterns,
       agent: {
         providerId: "opencode",
         modelId: "big-pickle",
@@ -78,7 +83,8 @@ export default defineHiveConfig({
       id: "provider-only",
       label: "Provider Only Agent",
       type: "manual",
-      includePatterns: [".env*"],
+      includePatterns: [".env*", "vendor/**"],
+      ignorePatterns: defaultIgnorePatterns,
       agent: {
         providerId: "opencode",
       },
@@ -87,7 +93,8 @@ export default defineHiveConfig({
       id: "agentless",
       label: "No Agent Overrides",
       type: "manual",
-      includePatterns: [".env*"],
+      includePatterns: [".env*", "vendor/**"],
+      ignorePatterns: defaultIgnorePatterns,
     },
   },
 });
