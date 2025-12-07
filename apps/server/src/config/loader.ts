@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
-import { pathToFileURL } from "node:url";
 import { type ParseError, parse, printParseErrorCode } from "jsonc-parser";
 
 import { findConfigPath, PREFERRED_CONFIG_FILENAME } from "./files";
@@ -15,16 +14,18 @@ export async function loadConfig(workspaceRoot: string): Promise<HiveConfig> {
 
   if (!configPath) {
     throw new Error(
-      `Config not found in ${workspaceRoot}. Create ${PREFERRED_CONFIG_FILENAME} (or hive.config.json). Legacy hive.config.ts files are still supported for development.`
+      `Config not found in ${workspaceRoot}. Create ${PREFERRED_CONFIG_FILENAME} (or hive.config.json).`
     );
   }
 
   const extension = extname(configPath).toLowerCase();
+  if (!JSON_EXTENSIONS.has(extension)) {
+    throw new Error(
+      `Unsupported config format at ${basename(configPath)}. Use ${PREFERRED_CONFIG_FILENAME} or hive.config.json.`
+    );
+  }
 
-  const config =
-    JSON_EXTENSIONS.has(extension) || extension === ""
-      ? await loadJsonConfig(configPath)
-      : await loadModuleConfig(configPath);
+  const config = await loadJsonConfig(configPath);
 
   return hiveConfigSchema.parse(config);
 }
@@ -51,12 +52,6 @@ const loadJsonConfig = async (configPath: string): Promise<unknown> => {
   }
 
   return parsed;
-};
-
-const loadModuleConfig = async (configPath: string): Promise<unknown> => {
-  const modulePath = pathToFileURL(configPath).href;
-  const configModule = await import(modulePath);
-  return configModule.default ?? configModule;
 };
 
 const toLineColumn = (text: string, offset: number) => {

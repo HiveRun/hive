@@ -10,7 +10,7 @@ Allow users to easily manage multiple workspaces and switch between them within 
 
 ### Workspace Discovery
 - Start with explicit registration: expose an "Add workspace" flow (and CLI equivalent) where the operator selects directories to track. Automatic detection is limited to the directory Hive is currently running from so we avoid scanning the entire disk.
-- On first launch, prompt for operator to choose a directory; if it contains a `hive.config.jsonc` or `hive.config.json`, register it immediately (legacy `hive.config.ts` still loads).
+- On first launch, prompt for operator to choose a directory; if it contains a `hive.config.jsonc` or `hive.config.json`, register it immediately.
 - When a directory contains multiple subdirectories, scan only the immediate children for `hive.config.jsonc` / `hive.config.json` and offer those as registrable workspaces.
 - Persist registrations in a global workspace registry (e.g., `~/.hive/workspaces.json`) and surface all entries via a sidebar or command menu so switching is a single action.
 - Registration UI includes an inline directory explorer with search/filter, so users can browse the filesystem without leaving Hive; selected folders automatically use their directory name as the workspace label.

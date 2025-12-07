@@ -4,7 +4,6 @@ import { join } from "node:path";
 export const CONFIG_FILENAMES = [
   "hive.config.jsonc",
   "hive.config.json",
-  "hive.config.ts",
 ] as const;
 
 export type ConfigFilename = (typeof CONFIG_FILENAMES)[number];
