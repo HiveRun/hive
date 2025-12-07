@@ -19,9 +19,7 @@ const HEAD_PREFIX_LENGTH = HEAD_PREFIX.length;
 const BRANCH_PREFIX_LENGTH = BRANCH_PREFIX.length;
 
 const POSIX_SEPARATOR = "/";
-const IGNORED_DIRECTORIES = ["node_modules", ".hive", ".turbo", "vendor"];
-const LEADING_DOT_SLASH_REGEX = /^\.\/+/;
-const LEADING_GLOB_REGEX = /^\*\*\//;
+const DEFAULT_IGNORE_PATTERNS: string[] = [];
 
 export type WorktreeInfo = {
   id: string;
@@ -227,34 +225,23 @@ export function createWorktreeManager(
     return template.includePatterns;
   }
 
-  function buildIgnoreGlobs(includePatterns: string[]): string[] {
-    const allowedDirectories = new Set<string>();
-
-    for (const pattern of includePatterns) {
-      const sanitized = pattern
-        .replace(LEADING_DOT_SLASH_REGEX, "")
-        .replace(LEADING_GLOB_REGEX, "");
-      const [firstSegment] = sanitized.split("/");
-
-      if (
-        !firstSegment ||
-        firstSegment === "**" ||
-        firstSegment.includes("*")
-      ) {
-        continue;
-      }
-
-      allowedDirectories.add(firstSegment);
+  function getIgnorePatterns(templateId?: string): string[] {
+    if (!(templateId && hiveConfig)) {
+      return DEFAULT_IGNORE_PATTERNS;
     }
 
-    return IGNORED_DIRECTORIES.filter(
-      (dir) => !allowedDirectories.has(dir)
-    ).map((dir) => `**/${dir}/**`);
+    const template = hiveConfig.templates[templateId] as Template | undefined;
+    if (!template?.ignorePatterns) {
+      return DEFAULT_IGNORE_PATTERNS;
+    }
+
+    return template.ignorePatterns;
   }
 
   async function getIncludedPaths(
     mainRepoPath: string,
-    includePatterns: string[]
+    includePatterns: string[],
+    ignorePatterns: string[]
   ): Promise<string[]> {
     if (includePatterns.length === 0) {
       return [];
@@ -267,13 +254,11 @@ export function createWorktreeManager(
       return [pattern];
     });
 
-    const ignoreGlobs = buildIgnoreGlobs(includePatterns);
-
     try {
       const files = await glob(expandedPatterns, {
         cwd: mainRepoPath,
         absolute: false,
-        ignore: ignoreGlobs,
+        ignore: ignorePatterns,
         dot: true,
         onlyFiles: false,
       });
@@ -287,14 +272,19 @@ export function createWorktreeManager(
 
   async function copyIncludedFiles(
     worktreePath: string,
-    includePatterns: string[]
+    includePatterns: string[],
+    ignorePatterns: string[]
   ): Promise<void> {
     if (includePatterns.length === 0) {
       return;
     }
 
     const mainRepoPath = getMainRepoPath();
-    const includedPaths = await getIncludedPaths(mainRepoPath, includePatterns);
+    const includedPaths = await getIncludedPaths(
+      mainRepoPath,
+      includePatterns,
+      ignorePatterns
+    );
 
     for (const relativePath of includedPaths) {
       await copyToWorktree(mainRepoPath, worktreePath, relativePath);
@@ -456,8 +446,9 @@ export function createWorktreeManager(
           git("worktree", "add", worktreePath, branch);
 
           const includePatterns = getIncludePatterns(options.templateId);
+          const ignorePatterns = getIgnorePatterns(options.templateId);
           yield* Effect.promise(() =>
-            copyIncludedFiles(worktreePath, includePatterns)
+            copyIncludedFiles(worktreePath, includePatterns, ignorePatterns)
           );
 
           const baseCommit = git("rev-parse", branch);

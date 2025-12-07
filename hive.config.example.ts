@@ -1,5 +1,7 @@
 import { defineHiveConfig } from "./apps/server/src/config/schema";
 
+const defaultIgnorePatterns = ["node_modules/**", ".hive/**", ".turbo/**"];
+
 export default defineHiveConfig({
   opencode: {
     defaultProvider: "zen",
@@ -12,6 +14,7 @@ export default defineHiveConfig({
       label: "Basic Template",
       type: "manual",
       includePatterns: [".env*"],
+      ignorePatterns: defaultIgnorePatterns,
       agent: {
         providerId: "zen",
         modelId: "big-pickle",

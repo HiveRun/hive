@@ -1,5 +1,7 @@
 import { defineHiveConfig } from "./apps/server/src/config/schema";
 
+const defaultIgnorePatterns = ["node_modules/**", ".hive/**", ".turbo/**"];
+
 export default defineHiveConfig({
   opencode: {
     defaultProvider: "opencode",
@@ -15,6 +17,7 @@ export default defineHiveConfig({
       label: "Hive Development Environment",
       type: "manual",
       includePatterns: [".env*", "vendor/**"],
+      ignorePatterns: defaultIgnorePatterns,
       agent: {
         providerId: "opencode",
         modelId: "big-pickle",
@@ -48,6 +51,7 @@ export default defineHiveConfig({
       label: "Web API Server",
       type: "manual",
       includePatterns: [".env*", "*.db", "vendor/**"],
+      ignorePatterns: defaultIgnorePatterns,
       agent: {
         providerId: "opencode",
         modelId: "big-pickle",
@@ -69,6 +73,7 @@ export default defineHiveConfig({
       label: "Basic Template",
       type: "manual",
       includePatterns: [".env*", "vendor/**"],
+      ignorePatterns: defaultIgnorePatterns,
       agent: {
         providerId: "opencode",
         modelId: "big-pickle",
@@ -79,6 +84,7 @@ export default defineHiveConfig({
       label: "Provider Only Agent",
       type: "manual",
       includePatterns: [".env*", "vendor/**"],
+      ignorePatterns: defaultIgnorePatterns,
       agent: {
         providerId: "opencode",
       },
@@ -88,6 +94,7 @@ export default defineHiveConfig({
       label: "No Agent Overrides",
       type: "manual",
       includePatterns: [".env*", "vendor/**"],
+      ignorePatterns: defaultIgnorePatterns,
     },
   },
 });
