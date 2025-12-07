@@ -2,7 +2,7 @@ import type { ExecException } from "node:child_process";
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { cp, mkdir, rm } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { Context, Effect, Layer } from "effect";
 import { glob } from "tinyglobby";
 import { HiveConfigService } from "../config/context";
@@ -19,13 +19,9 @@ const HEAD_PREFIX_LENGTH = HEAD_PREFIX.length;
 const BRANCH_PREFIX_LENGTH = BRANCH_PREFIX.length;
 
 const POSIX_SEPARATOR = "/";
-const IGNORED_DIRECTORIES = [
-  ".git",
-  "node_modules",
-  ".hive",
-  ".turbo",
-  "vendor",
-];
+const IGNORED_DIRECTORIES = ["node_modules", ".hive", ".turbo", "vendor"];
+const LEADING_DOT_SLASH_REGEX = /^\.\/+/;
+const LEADING_GLOB_REGEX = /^\*\*\//;
 
 export type WorktreeInfo = {
   id: string;
@@ -231,6 +227,31 @@ export function createWorktreeManager(
     return template.includePatterns;
   }
 
+  function buildIgnoreGlobs(includePatterns: string[]): string[] {
+    const allowedDirectories = new Set<string>();
+
+    for (const pattern of includePatterns) {
+      const sanitized = pattern
+        .replace(LEADING_DOT_SLASH_REGEX, "")
+        .replace(LEADING_GLOB_REGEX, "");
+      const [firstSegment] = sanitized.split("/");
+
+      if (
+        !firstSegment ||
+        firstSegment === "**" ||
+        firstSegment.includes("*")
+      ) {
+        continue;
+      }
+
+      allowedDirectories.add(firstSegment);
+    }
+
+    return IGNORED_DIRECTORIES.filter(
+      (dir) => !allowedDirectories.has(dir)
+    ).map((dir) => `**/${dir}/**`);
+  }
+
   async function getIncludedPaths(
     mainRepoPath: string,
     includePatterns: string[]
@@ -246,12 +267,15 @@ export function createWorktreeManager(
       return [pattern];
     });
 
+    const ignoreGlobs = buildIgnoreGlobs(includePatterns);
+
     try {
       const files = await glob(expandedPatterns, {
         cwd: mainRepoPath,
         absolute: false,
-        ignore: IGNORED_DIRECTORIES.map((dir) => `**/${dir}/**`),
+        ignore: ignoreGlobs,
         dot: true,
+        onlyFiles: false,
       });
 
       return files.map((file: string) => file.split(sep).join(POSIX_SEPARATOR));
@@ -286,6 +310,7 @@ export function createWorktreeManager(
     const targetPath = join(worktreePath, file);
 
     try {
+      await mkdir(dirname(targetPath), { recursive: true });
       await cp(sourcePath, targetPath, { recursive: true });
     } catch (error: unknown) {
       logWarn(`Failed to copy ${file} to worktree`, error);
