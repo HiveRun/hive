@@ -228,16 +228,8 @@ const listTemplatesEffect = (workspaceId?: string) =>
     const { config, workspacePath } = yield* workspaceConfigEffect(workspaceId);
     const templates = yield* Effect.forEach(
       Object.entries(config.templates),
-      ([id, template]) =>
-        Effect.gen(function* () {
-          const includeDirectories = yield* previewIncludeDirectoriesEffect(
-            workspacePath,
-            id,
-            template
-          );
-          return templateToResponse(id, template, includeDirectories);
-        }),
-      { concurrency: 2 }
+      ([id, template]) => Effect.succeed(templateToResponse(id, template)),
+      { concurrency: 4 }
     );
     const opencodeConfig = yield* loadOpencodeConfigEffect(workspacePath);
     return {
