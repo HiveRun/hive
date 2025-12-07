@@ -27,7 +27,7 @@
     "test:e2e:ui": "turbo -F web test:e2e:ui --ui=stream",
     "test:e2e:headed": "turbo -F web test:e2e:headed --ui=stream",
     "test:e2e:update-snapshots": "turbo -F web test:e2e:update-snapshots --ui=stream",
-    "check:config": "bun run config:generate && git diff --exit-code hive.config.jsonc",
+    "check:config": "bun run config:generate && git diff --exit-code hive.config.json",
     "check:biome": "biome check --write .",
     "check:staged": "lint-staged --allow-empty",
     "check:secrets": "./scripts/check-secrets.sh",

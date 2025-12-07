@@ -3,7 +3,7 @@
 - [/] Configuration Editor #status/in-progress #phase-3 #feature/advanced
 
 ## Goal
-Provide a guided UI for editing `hive.config.jsonc` / `hive.config.json` with validation and guardrails.
+Provide a guided UI for editing `hive.config.json` with validation and guardrails.
 
 ## Key Requirements
 - Present workspace settings, templates, and prompt sources in structured forms.

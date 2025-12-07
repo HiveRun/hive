@@ -73,7 +73,7 @@ describe("serverLayer wiring", () => {
 `;
 
     await writeFile(
-      join(tempWorkspaceRoot, "hive.config.jsonc"),
+      join(tempWorkspaceRoot, "hive.config.json"),
       configContents
     );
     execSync("git init", { cwd: tempWorkspaceRoot, env: gitEnv });

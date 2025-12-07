@@ -186,13 +186,9 @@ function TemplatesPage() {
             <p className="mt-2 text-muted-foreground text-sm">
               Create a{" "}
               <code className="rounded bg-muted px-1 py-0.5 text-xs">
-                hive.config.jsonc
-              </code>{" "}
-              (or{" "}
-              <code className="rounded bg-muted px-1 py-0.5 text-xs">
                 hive.config.json
-              </code>
-              ) file to define templates
+              </code>{" "}
+              file to define templates
             </p>
           </div>
         )}

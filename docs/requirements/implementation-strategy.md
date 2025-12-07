@@ -16,10 +16,10 @@
 ### PR Sequence (Rescoped)
 
 #### Step 1: Template Definition System ✅ **COMPLETED**
-- JSONC config schema (`hive.config.jsonc` / `hive.config.json`)
+- JSON config schema (`hive.config.json`)
 - Template validation and type safety
-- Basic template browser/listing in UI
-- **Persistence**: File-based storage in `hive.config.jsonc` (intentional)
+- **Persistence**: File-based storage in `hive.config.json` (intentional)
+
 - Tests with in-memory fixtures
 
 #### Step 2: Basic Cell Management ✅ **COMPLETED**

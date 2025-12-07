@@ -5,12 +5,12 @@ This document covers the high-level concepts for workspace configuration. For de
 ## Core Concepts
 
 ### Workspace Configuration
-- Locate a `hive.config.jsonc` (or `hive.config.json`) at the repo root with workspace settings (one per project repository).
-- Configuration is validated at runtime against the server Zod schema; JSONC keeps comments and trailing commas without requiring a helper package.
+- Locate a `hive.config.json` at the repo root with workspace settings (one per project repository).
+- Configuration is validated at runtime against the server Zod schema.
 - `opencode`: defines the workspace ID, optional token reference, and default provider/model used when launching agent sessions (`workspaceId`, `token`, `defaultProvider`, `defaultModel`). The repo defaults target the free `zen` provider with the `big-pickle` model, so no credentials are required out of the box. Developers can also drop an `opencode.json` file (or `@opencode.json`) inside the workspace root to provide personal defaults; that file takes effect only when templates omit an agent configuration.
 - `promptSources`: defines the reusable prompt fragments that Hive concatenates into agent prompts.
 - `templates`: reusable cell templates that describe services, environments, and agent types. Each template can now include an `agent` block `{ providerId, modelId? }` to override the global defaults.
-- **Agent precedence**: When Hive spins up a cell, it uses the first available configuration in this order: user-selected provider/model, template `agent` block, workspace `opencode.json` default, then the repository-wide defaults in `hive.config.jsonc`.
+- **Agent precedence**: When Hive spins up a cell, it uses the first available configuration in this order: user-selected provider/model, template `agent` block, workspace `opencode.json` default, then the repository-wide defaults in `hive.config.json`.
 
 ### Configuration Features
 
@@ -20,7 +20,7 @@ The configuration system is implemented through these features:
 - **[[features/phase-0/prompt-assembly-pipeline|Prompt Assembly Pipeline]]**: Manages prompt source resolution and assembly
 
 ### Example Configuration
-```jsonc
+```json
 {
   "opencode": { "workspaceId": "workspace_123" },
   "promptSources": ["docs/prompts/**/*.md"],
@@ -40,7 +40,7 @@ The configuration system is implemented through these features:
 ```
 
 ### Keeping config in sync
-- Run `bun run config:generate` whenever the config schema changes; edit defaults in `scripts/dev/config.defaults.ts` and regenerate `hive.config.jsonc` from the Zod schema.
+- Run `bun run config:generate` whenever the config schema changes; edit defaults in `scripts/dev/config.defaults.ts` and regenerate `hive.config.json` from the Zod schema.
 - CI/commit checks use `bun run check:config` to ensure the checked-in config matches the schema output, and `setup` runs the generator by default.
 
 ## Related Features

@@ -176,7 +176,7 @@ describe("removeWorkspaceCascadeEffect", () => {
 
 async function createWorkspaceRoot(prefix = "workspace-removal-") {
   const dir = await mkdtemp(join(tmpdir(), prefix));
-  await writeFile(join(dir, "hive.config.jsonc"), HIVE_CONFIG_CONTENT);
+  await writeFile(join(dir, "hive.config.json"), HIVE_CONFIG_CONTENT);
   return dir;
 }
 

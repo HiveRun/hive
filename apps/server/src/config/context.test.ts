@@ -28,7 +28,7 @@ describe("resolveWorkspaceRoot", () => {
   };
 
   const writeConfig = (dir: string) => {
-    writeFileSync(join(dir, "hive.config.jsonc"), CONFIG_CONTENT, "utf8");
+    writeFileSync(join(dir, "hive.config.json"), CONFIG_CONTENT, "utf8");
   };
 
   beforeEach(() => {
@@ -46,7 +46,7 @@ describe("resolveWorkspaceRoot", () => {
     }
   });
 
-  it("returns the current directory when hive.config.jsonc is present", () => {
+  it("returns the current directory when hive.config.json is present", () => {
     const workspace = makeTempDir();
     writeConfig(workspace);
     process.chdir(workspace);

@@ -530,8 +530,7 @@ function WorkspaceRegisterForm({
           Register Workspace
         </h3>
         <p className="text-muted-foreground text-sm">
-          Provide an absolute path that contains a hive.config.jsonc (or
-          hive.config.json).
+          Provide an absolute path that contains a hive.config.json.
         </p>
       </div>
       <form className="space-y-4" onSubmit={onSubmit}>

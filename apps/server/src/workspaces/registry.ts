@@ -97,7 +97,7 @@ async function validateWorkspaceDirectory(path: string): Promise<string> {
   const configPath = findConfigPath(absolutePath);
   if (!configPath) {
     throw new Error(
-      `Hive config not found in ${absolutePath}. Add ${PREFERRED_CONFIG_FILENAME} (or hive.config.json).`
+      `Hive config not found in ${absolutePath}. Add ${PREFERRED_CONFIG_FILENAME}.`
     );
   }
 

@@ -11,7 +11,7 @@
 > - **Step 4**: `cells` table stores `opencode_session_id` (OpenCode persists transcripts)
 > - **Step 3**: Adds `workspace_path` to cells table
 
-> **Template Storage**: Templates are intentionally stored as files (`hive.config.jsonc` / `hive.config.json`) rather than in the database. This architectural decision prioritizes version control, type safety, and developer experience over dynamic template management.
+> **Template Storage**: Templates are intentionally stored as files (`hive.config.json`) rather than in the database. This architectural decision prioritizes version control, type safety, and developer experience over dynamic template management.
 
 ## Goal
 Provide reliable storage for cells, transcripts, artifacts, and metadata with ACID guarantees and efficient access patterns.

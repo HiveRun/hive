@@ -13,8 +13,7 @@ const TEXT = {
   pageTitle: "Templates",
   pageDescription: "Browse available cell templates",
   noTemplates: "No templates available",
-  configFileHint:
-    "Create a hive.config.jsonc file (or hive.config.json) to define templates",
+  configFileHint: "Create a hive.config.json file to define templates",
 } as const;
 
 test.describe("Templates Page", () => {
