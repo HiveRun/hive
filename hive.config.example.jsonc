@@ -1,0 +1,32 @@
+{
+  "opencode": {
+    "defaultProvider": "zen",
+    "defaultModel": "big-pickle"
+  },
+  "promptSources": ["docs/prompts/**/*.md"],
+  "templates": {
+    "basic": {
+      "id": "basic",
+      "label": "Basic Template",
+      "type": "manual",
+      "includePatterns": [".env*"],
+      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"],
+      "agent": {
+        "providerId": "zen",
+        "modelId": "big-pickle"
+      },
+      "services": {
+        "api": {
+          "type": "process",
+          "run": "bun run dev",
+          "cwd": "./apps/server",
+          "env": {
+            "NODE_ENV": "development",
+            "DATABASE_URL": "./dev.db"
+          },
+          "readyTimeoutMs": 5000
+        }
+      }
+    }
+  }
+}
