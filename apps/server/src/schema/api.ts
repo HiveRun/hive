@@ -242,3 +242,84 @@ export const VoiceTranscriptionResponseSchema = t.Object({
     })
   ),
 });
+
+const HiveProcessServiceSchema = t.Object({
+  type: t.Literal("process"),
+  run: t.String(),
+  setup: t.Optional(t.Array(t.String())),
+  cwd: t.Optional(t.String()),
+  env: t.Optional(t.Record(t.String(), t.String())),
+  readyTimeoutMs: t.Optional(t.Number()),
+  stop: t.Optional(t.String()),
+});
+
+const HiveDockerServiceSchema = t.Object({
+  type: t.Literal("docker"),
+  image: t.String(),
+  command: t.Optional(t.String()),
+  ports: t.Optional(t.Array(t.String())),
+  env: t.Optional(t.Record(t.String(), t.String())),
+  volumes: t.Optional(t.Array(t.String())),
+  readyTimeoutMs: t.Optional(t.Number()),
+});
+
+const HiveComposeServiceSchema = t.Object({
+  type: t.Literal("compose"),
+  file: t.String(),
+  services: t.Optional(t.Array(t.String())),
+  env: t.Optional(t.Record(t.String(), t.String())),
+});
+
+const HiveServiceSchema = t.Union([
+  HiveProcessServiceSchema,
+  HiveDockerServiceSchema,
+  HiveComposeServiceSchema,
+]);
+
+const HiveTemplateAgentSchema = t.Object({
+  providerId: t.String(),
+  modelId: t.Optional(t.String()),
+  agentId: t.Optional(t.String()),
+});
+
+const HiveTemplateSchema = t.Object({
+  id: t.String(),
+  label: t.String(),
+  type: t.Literal("manual"),
+  services: t.Optional(t.Record(t.String(), HiveServiceSchema)),
+  env: t.Optional(t.Record(t.String(), t.String())),
+  setup: t.Optional(t.Array(t.String())),
+  prompts: t.Optional(t.Array(t.String())),
+  agent: t.Optional(HiveTemplateAgentSchema),
+  teardown: t.Optional(t.Array(t.String())),
+  includePatterns: t.Optional(t.Array(t.String())),
+  ignorePatterns: t.Optional(t.Array(t.String())),
+});
+
+export const HiveConfigSchema = t.Object({
+  opencode: t.Object({
+    token: t.Optional(t.String()),
+    defaultProvider: t.String(),
+    defaultModel: t.Optional(t.String()),
+  }),
+  promptSources: t.Array(t.String()),
+  templates: t.Record(t.String(), HiveTemplateSchema),
+  defaults: t.Optional(
+    t.Object({
+      templateId: t.Optional(t.String()),
+    })
+  ),
+});
+
+export const HiveSettingsResponseSchema = t.Object({
+  workspaceId: t.String(),
+  workspacePath: t.String(),
+  configPath: t.String(),
+  config: HiveConfigSchema,
+  schema: t.Any(),
+});
+
+export const HiveSettingsErrorSchema = t.Object({
+  message: t.String(),
+  issues: t.Optional(t.Array(t.String())),
+});

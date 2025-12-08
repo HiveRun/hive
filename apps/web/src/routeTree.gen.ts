@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TestErrorRouteImport } from './routes/test-error'
 import { Route as TemplatesRouteImport } from './routes/templates'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ExampleDashboardRouteImport } from './routes/example-dashboard'
 import { Route as DebugNotificationsRouteImport } from './routes/debug-notifications'
 import { Route as CellsRouteImport } from './routes/cells'
@@ -32,6 +33,11 @@ const TestErrorRoute = TestErrorRouteImport.update({
 const TemplatesRoute = TemplatesRouteImport.update({
   id: '/templates',
   path: '/templates',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ExampleDashboardRoute = ExampleDashboardRouteImport.update({
@@ -100,6 +106,7 @@ export interface FileRoutesByFullPath {
   '/cells': typeof CellsRouteWithChildren
   '/debug-notifications': typeof DebugNotificationsRoute
   '/example-dashboard': typeof ExampleDashboardRoute
+  '/settings': typeof SettingsRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
@@ -116,6 +123,7 @@ export interface FileRoutesByTo {
   '/cells': typeof CellsRouteWithChildren
   '/debug-notifications': typeof DebugNotificationsRoute
   '/example-dashboard': typeof ExampleDashboardRoute
+  '/settings': typeof SettingsRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
@@ -133,6 +141,7 @@ export interface FileRoutesById {
   '/cells': typeof CellsRouteWithChildren
   '/debug-notifications': typeof DebugNotificationsRoute
   '/example-dashboard': typeof ExampleDashboardRoute
+  '/settings': typeof SettingsRoute
   '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
@@ -151,6 +160,7 @@ export interface FileRouteTypes {
     | '/cells'
     | '/debug-notifications'
     | '/example-dashboard'
+    | '/settings'
     | '/templates'
     | '/test-error'
     | '/cells/$cellId'
@@ -167,6 +177,7 @@ export interface FileRouteTypes {
     | '/cells'
     | '/debug-notifications'
     | '/example-dashboard'
+    | '/settings'
     | '/templates'
     | '/test-error'
     | '/cells/$cellId'
@@ -183,6 +194,7 @@ export interface FileRouteTypes {
     | '/cells'
     | '/debug-notifications'
     | '/example-dashboard'
+    | '/settings'
     | '/templates'
     | '/test-error'
     | '/cells/$cellId'
@@ -200,6 +212,7 @@ export interface RootRouteChildren {
   CellsRoute: typeof CellsRouteWithChildren
   DebugNotificationsRoute: typeof DebugNotificationsRoute
   ExampleDashboardRoute: typeof ExampleDashboardRoute
+  SettingsRoute: typeof SettingsRoute
   TemplatesRoute: typeof TemplatesRoute
   TestErrorRoute: typeof TestErrorRoute
 }
@@ -218,6 +231,13 @@ declare module '@tanstack/react-router' {
       path: '/templates'
       fullPath: '/templates'
       preLoaderRoute: typeof TemplatesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/example-dashboard': {
@@ -346,6 +366,7 @@ const rootRouteChildren: RootRouteChildren = {
   CellsRoute: CellsRouteWithChildren,
   DebugNotificationsRoute: DebugNotificationsRoute,
   ExampleDashboardRoute: ExampleDashboardRoute,
+  SettingsRoute: SettingsRoute,
   TemplatesRoute: TemplatesRoute,
   TestErrorRoute: TestErrorRoute,
 }

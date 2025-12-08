@@ -27,6 +27,7 @@ import { resolveStaticAssetsDirectory } from "./config/static-assets";
 import { DatabaseService } from "./db";
 import { agentsRoutes } from "./routes/agents";
 import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
+import { settingsRoutes } from "./routes/settings";
 import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
 import { runServerEffect } from "./runtime";
@@ -234,6 +235,7 @@ const createApp = () =>
       timestamp: Date.now(),
     }))
     .use(templatesRoutes)
+    .use(settingsRoutes)
     .use(workspacesRoutes)
     .use(cellsRoutes)
     .use(agentsRoutes);

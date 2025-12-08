@@ -6,6 +6,7 @@ import {
   FileText,
   Home,
   Layers,
+  Settings,
 } from "lucide-react";
 
 export type MainNavItem = {
@@ -14,6 +15,7 @@ export type MainNavItem = {
     | "/example-dashboard"
     | "/test-error"
     | "/templates"
+    | "/settings"
     | "/cells/list"
     | "/debug-notifications";
   label: string;
@@ -41,6 +43,12 @@ export const MAIN_NAV_ITEMS: MainNavItem[] = [
     label: "Templates",
     icon: FileText,
     description: "Browse cell templates",
+  },
+  {
+    to: "/settings",
+    label: "Settings",
+    icon: Settings,
+    description: "Edit hive configuration",
   },
   {
     to: "/example-dashboard",

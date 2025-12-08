@@ -51,6 +51,16 @@ describe("Cell routes workspace enforcement", () => {
     await testDb.delete(cells);
   });
 
+  const stubDeps: Partial<Parameters<typeof createCellsRoutes>[0]> = {
+    ensureAgentSession: (() => Effect.never) as any,
+    sendAgentMessage: (() => Effect.never) as any,
+    closeAgentSession: (() => Effect.never) as any,
+    ensureServicesForCell: (() => Effect.never) as any,
+    startServiceById: (() => Effect.never) as any,
+    stopServiceById: (() => Effect.never) as any,
+    stopServicesForCell: (() => Effect.never) as any,
+  };
+
   it("returns 400 when workspace context cannot be resolved", async () => {
     const app = new Elysia().use(
       createCellsRoutes({
@@ -61,6 +71,7 @@ describe("Cell routes workspace enforcement", () => {
               "No active workspace. Register and activate a workspace to continue."
             )
           ),
+        ...stubDeps,
       })
     );
 
@@ -160,6 +171,7 @@ describe("Cell routes workspace enforcement", () => {
       createCellsRoutes({
         db: testDb,
         resolveWorkspaceContext,
+        ...stubDeps,
       })
     );
 

@@ -37,6 +37,7 @@ export default defineConfig(({ mode }) => {
         // Prevent OpenCode SDK server code from being bundled (browser incompatible)
         "@opencode-ai/sdk/dist/server.js": "@opencode-ai/sdk",
       },
+      dedupe: ["react", "react-dom"],
     },
     build: {
       rollupOptions: {
