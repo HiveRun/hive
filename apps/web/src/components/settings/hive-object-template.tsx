@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 type HiveObjectTemplateProps = {
-  properties: Array<{ content: ReactNode; name?: string; key?: string }>;
+  properties: Array<{ content: ReactNode; name?: string }>;
   description?: ReactNode;
   title?: string;
   disabled?: boolean;
@@ -24,6 +24,7 @@ type HiveObjectTemplateProps = {
     uiSchema?: unknown,
     formData?: unknown
   ) => void;
+  idSchema?: { $id?: string };
 };
 
 export function HiveObjectTemplate(props: HiveObjectTemplateProps) {
@@ -38,13 +39,16 @@ export function HiveObjectTemplate(props: HiveObjectTemplateProps) {
     formData,
     canExpand,
     onAddClick,
+    idSchema,
   } = props;
+
+  const isRoot = idSchema?.$id === "root";
 
   const uiOptions =
     (uiSchema?.["ui:options"] as
       | { collapsed?: boolean; addButtonText?: string }
       | undefined) ?? {};
-  const initialCollapsed = uiOptions.collapsed ?? false;
+  const initialCollapsed = isRoot ? false : (uiOptions.collapsed ?? false);
   const [collapsed, setCollapsed] = useState(initialCollapsed);
 
   const canShowAdd =
@@ -54,6 +58,17 @@ export function HiveObjectTemplate(props: HiveObjectTemplateProps) {
   const showAdd = canShowAdd && !(disabled || readonly);
   const addLabel = uiOptions.addButtonText;
   const handleAdd = () => onAddClick?.(schema, uiSchema, formData);
+
+  if (isRoot) {
+    return (
+      <div className="hive-object space-y-3" id={idSchema?.$id}>
+        {description}
+        {properties.map((element, index) => (
+          <div key={element.name ?? index}>{element.content}</div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="hive-object space-y-3">
@@ -90,8 +105,8 @@ export function HiveObjectTemplate(props: HiveObjectTemplateProps) {
       {collapsed ? null : (
         <div className="space-y-3">
           {description}
-          {properties.map((element) => (
-            <div key={element.key ?? element.name}>{element.content}</div>
+          {properties.map((element, index) => (
+            <div key={element.name ?? index}>{element.content}</div>
           ))}
         </div>
       )}

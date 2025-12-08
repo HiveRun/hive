@@ -1,6 +1,6 @@
 # Configuration Editor
 
-- [/] Configuration Editor #status/in-progress #phase-3 #feature/advanced
+- [x] Configuration Editor #status/done #phase-3 #feature/advanced
 
 ## Goal
 Provide a guided UI for editing `hive.config.ts` (or a future companion format) with validation and guardrails.
