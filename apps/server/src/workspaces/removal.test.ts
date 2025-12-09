@@ -241,6 +241,7 @@ const createTestAgentRuntime = (
     fetchAgentSession: () => unsupported(),
     fetchAgentSessionForCell: () => unsupported(),
     fetchAgentMessages: () => unsupported(),
+    fetchCompactionStats: () => unsupported(),
     updateAgentSessionModel: () => unsupported(),
     sendAgentMessage: () => unsupported(),
     interruptAgentSession: () => unsupported(),

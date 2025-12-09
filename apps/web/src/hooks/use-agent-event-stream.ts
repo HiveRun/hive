@@ -30,11 +30,26 @@ export type PermissionRequest = {
   };
 };
 
+export type CompactionStats = {
+  count: number;
+  lastCompactionAt: string | null;
+};
+
+const defaultCompactionStats: CompactionStats = {
+  count: 0,
+  lastCompactionAt: null,
+};
+
+export const COMPACTION_WARNING_THRESHOLD = 3;
+
 export function useAgentEventStream(sessionId: string | null, cellId: string) {
   const queryClient = useQueryClient();
   const messageStoreRef = useRef<Map<string, AgentMessage>>(new Map());
   const messagePartsRef = useRef<Map<string, AgentMessagePart[]>>(new Map());
   const [permissions, setPermissions] = useState<PermissionRequest[]>([]);
+  const [compaction, setCompaction] = useState<CompactionStats>(
+    defaultCompactionStats
+  );
 
   const updateMessagesCache = useCallback(() => {
     if (!sessionId) {
@@ -110,12 +125,14 @@ export function useAgentEventStream(sessionId: string | null, cellId: string) {
 
   useEffect(() => {
     if (!sessionId) {
+      setCompaction(defaultCompactionStats);
       return;
     }
 
     messageStoreRef.current.clear();
     messagePartsRef.current.clear();
     setPermissions([]);
+    setCompaction(defaultCompactionStats);
 
     const sessionKey = agentQueries.sessionByCell(cellId).queryKey;
     const messagesKey = agentQueries.messages(sessionId).queryKey;
@@ -238,6 +255,36 @@ export function useAgentEventStream(sessionId: string | null, cellId: string) {
       }
     };
 
+    const handleCompactionStats = (event: MessageEvent<string>) => {
+      try {
+        const payload = JSON.parse(event.data) as Partial<CompactionStats>;
+        setCompaction((previous) => {
+          const nextCount =
+            typeof payload.count === "number" ? payload.count : previous.count;
+          const nextLast =
+            typeof payload.lastCompactionAt === "string"
+              ? payload.lastCompactionAt
+              : previous.lastCompactionAt;
+          const next = { count: nextCount, lastCompactionAt: nextLast };
+          if (
+            previous.count !== next.count &&
+            next.count >= COMPACTION_WARNING_THRESHOLD
+          ) {
+            toast.warning(
+              `Context compacted ${next.count} times. Expect reduced recall.`
+            );
+          }
+          return next;
+        });
+      } catch (error) {
+        const title =
+          error instanceof Error
+            ? error.message
+            : "Failed to process compaction stats";
+        toast.error(title);
+      }
+    };
+
     const handlePermissionUpdated = (event: MessageEvent<string>) => {
       try {
         const payload = JSON.parse(event.data) as PermissionRequest;
@@ -279,17 +326,9 @@ export function useAgentEventStream(sessionId: string | null, cellId: string) {
     eventSource.addEventListener("history", handleHistory);
     eventSource.addEventListener("message", handleLegacyMessage);
     eventSource.addEventListener("message.updated", handleMessageUpdated);
-    eventSource.addEventListener(
-      "message.part.updated",
-      handleMessagePartUpdated
-    );
-    eventSource.addEventListener(
-      "message.part.removed",
-      handleMessagePartRemoved
-    );
-    eventSource.addEventListener("status", handleStatus);
     eventSource.addEventListener("permission.updated", handlePermissionUpdated);
     eventSource.addEventListener("permission.replied", handlePermissionReplied);
+    eventSource.addEventListener("session.compaction", handleCompactionStats);
     const handleSessionDiff = () => {
       queryClient.invalidateQueries({
         queryKey: ["cell-diff", cellId],
@@ -322,6 +361,10 @@ export function useAgentEventStream(sessionId: string | null, cellId: string) {
         "permission.replied",
         handlePermissionReplied
       );
+      eventSource.removeEventListener(
+        "session.compaction",
+        handleCompactionStats
+      );
       eventSource.removeEventListener("session.diff", handleSessionDiff);
       eventSource.close();
     };
@@ -335,7 +378,7 @@ export function useAgentEventStream(sessionId: string | null, cellId: string) {
     removePartRecord,
   ]);
 
-  return { permissions };
+  return { permissions, compaction };
 }
 
 function composeAgentMessage(

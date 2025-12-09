@@ -8,6 +8,7 @@ import {
   type ProviderModel,
 } from "../agents/service";
 import type {
+  AgentCompactionStats,
   AgentMessageRecord,
   AgentSessionRecord,
   AgentStreamEvent,
@@ -176,6 +177,12 @@ const fetchMessagesEffect = (id: string) =>
     "Failed to fetch messages"
   );
 
+const fetchCompactionStatsEffect = (id: string) =>
+  withAgentRuntime(
+    (agentRuntime) => agentRuntime.fetchCompactionStats(id),
+    "Failed to fetch compaction stats"
+  );
+
 const respondPermissionEffect = (
   id: string,
   permissionId: string,
@@ -223,8 +230,9 @@ const updateSessionModelEffect = (
 const eventStreamEffect = (sessionId: string, signal: AbortSignal) =>
   Effect.gen(function* () {
     const history = yield* fetchMessagesEffect(sessionId);
+    const compaction = yield* fetchCompactionStatsEffect(sessionId);
     const { iterator } = createEventIterator(sessionId, signal);
-    return { history, iterator };
+    return { history, iterator, compaction };
   });
 
 export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
@@ -544,13 +552,15 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
         return outcome.body;
       }
 
-      const { history, iterator } = outcome.body as {
+      const { history, iterator, compaction } = outcome.body as {
         history: AgentMessageRecord[];
+        compaction: AgentCompactionStats;
         iterator: AsyncIterable<AgentStreamEvent>;
       };
 
       async function* stream() {
         yield sse({ event: "history", data: { messages: history } });
+        yield sse({ event: "session.compaction", data: compaction });
 
         for await (const event of iterator) {
           if (event.type === "history") {
