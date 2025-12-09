@@ -97,6 +97,15 @@ const TRACE_EVENTS: AgentEventStreamEntry[] = [
   { event: "status", data: { status: "idle" } },
 ];
 
+const COMPACTION_EVENTS: AgentEventStreamEntry[] = [
+  { event: "history", data: { messages: TRACE_MESSAGES } },
+  {
+    event: "session.compaction",
+    data: { count: 4, lastCompactionAt: "2025-01-01T00:05:00.000Z" },
+  },
+  { event: "status", data: { status: "idle" } },
+];
+
 const SNAPSHOT_OPTIONS = {
   animations: "disabled" as const,
   fullPage: true,
@@ -107,6 +116,7 @@ async function navigateToAgentChat(
   options?: {
     theme?: "light" | "dark";
     viewport?: { width: number; height: number };
+    agentEvents?: AgentEventStreamEntry[];
   }
 ) {
   if (options?.viewport) {
@@ -120,7 +130,7 @@ async function navigateToAgentChat(
 
   await mockAppApi(page, {
     agentMessages: { [SESSION_ID]: TRACE_MESSAGES },
-    agentEvents: TRACE_EVENTS,
+    agentEvents: options?.agentEvents ?? TRACE_EVENTS,
   });
 
   await page.goto(`/cells/${TARGET_CELL_ID}/chat`);
@@ -164,6 +174,14 @@ test.describe("Agent Chat Traces", () => {
       fileName: "agent-chat-light.png",
       theme: "light",
     });
+  });
+
+  test("renders compaction warning", async ({ page }) => {
+    await navigateToAgentChat(page, { agentEvents: COMPACTION_EVENTS });
+    await expect(page).toHaveScreenshot(
+      "agent-chat-compaction.png",
+      SNAPSHOT_OPTIONS
+    );
   });
 
   test("captures trace stack in dark mode", async ({ page }) => {
