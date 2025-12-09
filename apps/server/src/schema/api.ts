@@ -141,6 +141,9 @@ export const TemplateResponseSchema = t.Object({
   type: t.String(),
   configJson: t.Any(),
   includeDirectories: t.Optional(t.Array(t.String())),
+  gitignorePatterns: t.Optional(t.Array(t.String())),
+  agentsContext: t.Optional(t.String()),
+  agentsContextTruncated: t.Optional(t.Boolean()),
 });
 
 export const DefaultsResponseSchema = t.Object({

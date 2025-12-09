@@ -468,14 +468,21 @@ function createWorkspaceBrowseHandler(mockData: MockApiData) {
 }
 
 function createTemplateListHandler(mockData: MockApiData) {
-  return createGetJsonHandler(() => ({
-    body: {
-      templates: mockData.templates,
-      defaults: {
-        templateId: mockData.templates[0]?.id,
+  return createGetJsonHandler(() => {
+    const primaryAgent = mockData.templates[0]?.configJson.agent;
+    return {
+      body: {
+        templates: mockData.templates,
+        defaults: {
+          templateId: mockData.templates[0]?.id,
+        },
+        agentDefaults: {
+          providerId: primaryAgent?.providerId ?? "openai",
+          modelId: primaryAgent?.modelId ?? "gpt-5.1-codex-high",
+        },
       },
-    },
-  }));
+    };
+  });
 }
 
 function createTemplateDetailHandler(mockData: MockApiData) {

@@ -1,5 +1,4 @@
 import { expect, test } from "./utils/app-test";
-
 import { setTheme } from "./utils/theme";
 
 // Shared constants for E2E tests
@@ -8,6 +7,8 @@ const SELECTORS = {
   templateCard: '[data-testid="template-card"]',
   templateId: '[data-testid="template-id"]',
 } as const;
+
+const TEMPLATE_DETAIL_URL_REGEX = /\/templates\/[^/]+/;
 
 const TEXT = {
   pageTitle: "Templates",
@@ -79,6 +80,29 @@ test.describe("Templates Page", () => {
     await page.waitForLoadState("networkidle");
     await page.emulateMedia({ colorScheme: "dark" });
     await expect(page).toHaveScreenshot("templates-dark.png", {
+      fullPage: true,
+      animations: "disabled",
+    });
+  });
+
+  test("should allow clicking into template detail view", async ({ page }) => {
+    await page.waitForSelector(SELECTORS.templateCard);
+    const firstCard = page.locator(SELECTORS.templateCard).first();
+    await firstCard.click();
+    await expect(page).toHaveURL(TEMPLATE_DETAIL_URL_REGEX);
+    await expect(page.getByTestId("template-detail-title")).toBeVisible();
+    await expect(page.getByTestId("template-context")).toBeVisible();
+  });
+
+  test("should match template detail snapshot (light mode)", async ({
+    page,
+  }) => {
+    await setTheme(page, "light");
+    await page.waitForSelector(SELECTORS.templateCard);
+    await page.locator(SELECTORS.templateCard).first().click();
+    await expect(page).toHaveURL(TEMPLATE_DETAIL_URL_REGEX);
+    await page.waitForSelector('[data-testid="template-agent-info"]');
+    await expect(page).toHaveScreenshot("template-detail-light.png", {
       fullPage: true,
       animations: "disabled",
     });

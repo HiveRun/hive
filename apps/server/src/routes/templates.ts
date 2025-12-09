@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { Effect } from "effect";
 import { Elysia, type Static, t } from "elysia";
@@ -34,6 +34,14 @@ const INCLUDE_PREVIEW_IGNORED_DIRECTORIES = [
 const LEADING_DOT_SLASH_REGEX = /^\.\/+/;
 const LEADING_GLOB_PREFIX_REGEX = /^\*\*\//;
 const TRAILING_SEPARATOR_REGEX = /\/+$/;
+const AGENTS_FILENAME = "AGENTS.md";
+const AGENTS_CONTEXT_MAX_LENGTH = 8000;
+const NEWLINE_REGEX = /\r?\n/;
+
+type AgentsContext = {
+  value: string;
+  truncated: boolean;
+};
 
 const logTemplatesWarning = (message: string) => {
   if (process.env.NODE_ENV === "test") {
@@ -144,10 +152,16 @@ const TEMPLATE_ERROR_STATUS: Record<TemplatesRouteError["_tag"], number> = {
   OpencodeConfigError: HTTP_STATUS.BAD_REQUEST,
 };
 
+type TemplateResponseExtras = {
+  includeDirectories?: string[];
+  gitignorePatterns?: string[];
+  agentsContext?: AgentsContext;
+};
+
 function templateToResponse(
   id: string,
   template: Template,
-  includeDirectories?: string[]
+  extras: TemplateResponseExtras = {}
 ): TemplateResponse {
   const response: TemplateResponse = {
     id,
@@ -156,8 +170,19 @@ function templateToResponse(
     configJson: template,
   } satisfies TemplateResponse;
 
-  if (includeDirectories && includeDirectories.length > 0) {
-    response.includeDirectories = includeDirectories;
+  if (extras.includeDirectories && extras.includeDirectories.length > 0) {
+    response.includeDirectories = extras.includeDirectories;
+  }
+
+  if (extras.gitignorePatterns && extras.gitignorePatterns.length > 0) {
+    response.gitignorePatterns = extras.gitignorePatterns;
+  }
+
+  if (extras.agentsContext?.value) {
+    response.agentsContext = extras.agentsContext.value;
+    if (extras.agentsContext.truncated) {
+      response.agentsContextTruncated = true;
+    }
   }
 
   return response;
@@ -172,6 +197,122 @@ const formatUnknown = (cause: unknown, fallback = "Unknown error") => {
   }
   return fallback;
 };
+
+const isFileMissing = (cause: unknown) =>
+  (cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+
+const buildAgentsContext = (content: string): AgentsContext | undefined => {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return;
+  }
+
+  const truncated = trimmed.length > AGENTS_CONTEXT_MAX_LENGTH;
+  const value = truncated
+    ? trimmed.slice(0, AGENTS_CONTEXT_MAX_LENGTH)
+    : trimmed;
+
+  return { value, truncated } satisfies AgentsContext;
+};
+
+const loadAgentsContextEffect = (
+  workspacePath: string,
+  promptSources?: string[]
+) =>
+  Effect.gen(function* () {
+    const candidatePaths = [
+      join(workspacePath, AGENTS_FILENAME),
+      join(workspacePath, ".ruler", AGENTS_FILENAME),
+    ];
+
+    for (const candidate of candidatePaths) {
+      const context = yield* Effect.tryPromise({
+        try: async (): Promise<AgentsContext | undefined> => {
+          const content = await readFile(candidate, "utf8");
+          return buildAgentsContext(content);
+        },
+        catch: (cause) => cause as Error,
+      }).pipe(
+        Effect.catchAll((cause) => {
+          if (!isFileMissing(cause)) {
+            logTemplatesWarning(
+              `Failed to read ${candidate}: ${formatUnknown(cause)}`
+            );
+          }
+          return Effect.succeed<AgentsContext | undefined>(undefined);
+        })
+      );
+
+      if (context) {
+        return context;
+      }
+    }
+
+    if (!promptSources || promptSources.length === 0) {
+      return;
+    }
+
+    const promptGlobs = promptSources.flatMap(expandPattern);
+    const promptFiles = yield* Effect.tryPromise({
+      try: async () =>
+        glob(promptGlobs, {
+          cwd: workspacePath,
+          absolute: true,
+          dot: true,
+        }),
+      catch: (cause) => cause as Error,
+    }).pipe(
+      Effect.catchAll((cause) => {
+        logTemplatesWarning(
+          `Failed to resolve promptSources for AGENTS context: ${formatUnknown(cause)}`
+        );
+        return Effect.succeed<string[]>([]);
+      })
+    );
+
+    if (promptFiles.length === 0) {
+      return;
+    }
+
+    const contents = yield* Effect.forEach(promptFiles, (filePath) =>
+      Effect.tryPromise({
+        try: () => readFile(filePath, "utf8"),
+        catch: (cause) => cause as Error,
+      }).pipe(
+        Effect.catchAll((cause) => {
+          logTemplatesWarning(
+            `Failed to read prompt source '${filePath}': ${formatUnknown(cause)}`
+          );
+          return Effect.succeed("");
+        })
+      )
+    );
+
+    return buildAgentsContext(contents.filter(Boolean).join("\n\n"));
+  });
+
+const gitignorePreviewEffect = (workspacePath: string) =>
+  Effect.tryPromise({
+    try: async () => {
+      const raw = await readFile(join(workspacePath, ".gitignore"), "utf8");
+      return raw
+        .split(NEWLINE_REGEX)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0 && !line.startsWith("#"));
+    },
+    catch: (cause) => cause as Error,
+  }).pipe(
+    Effect.catchAll((cause) => {
+      if (!isFileMissing(cause)) {
+        logTemplatesWarning(
+          `Failed to read .gitignore for workspace '${workspacePath}': ${formatUnknown(
+            cause
+          )}`
+        );
+      }
+      return Effect.succeed<string[]>([]);
+    })
+  );
 
 const describeHiveConfigError = (error: HiveConfigError) => {
   const location = error.workspaceRoot
@@ -282,8 +423,17 @@ const templateDetailEffect = (templateId: string, workspaceId?: string) =>
       templateId,
       template
     );
+    const gitignorePatterns = yield* gitignorePreviewEffect(workspacePath);
+    const agentsContext = yield* loadAgentsContextEffect(
+      workspacePath,
+      config.promptSources
+    );
 
-    return templateToResponse(templateId, template, includeDirectories);
+    return templateToResponse(templateId, template, {
+      includeDirectories,
+      gitignorePatterns,
+      agentsContext,
+    });
   });
 
 const matchTemplatesEffect = <T, R>(

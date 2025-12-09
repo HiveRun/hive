@@ -3,8 +3,10 @@ import { rpc } from "@/lib/rpc";
 export type TemplateService = {
   type: string;
   run?: string;
+  command?: string;
   image?: string;
   file?: string;
+  services?: string[];
   cwd?: string;
   env?: Record<string, string>;
   ports?: string[];
@@ -15,14 +17,21 @@ export type TemplateService = {
 };
 
 export type TemplateConfig = {
+  id?: string;
+  label?: string;
+  type?: string;
+  summary?: string;
+  includePatterns?: string[];
+  ignorePatterns?: string[];
   services?: Record<string, TemplateService>;
   env?: Record<string, string>;
   setup?: string[];
   prompts?: string[];
   teardown?: string[];
   agent?: {
-    providerId: string;
+    providerId?: string;
     modelId?: string;
+    agentId?: string;
   };
 };
 
@@ -32,6 +41,9 @@ export type Template = {
   type: string;
   configJson: TemplateConfig;
   includeDirectories?: string[];
+  gitignorePatterns?: string[];
+  agentsContext?: string;
+  agentsContextTruncated?: boolean;
 };
 
 export type Defaults = {

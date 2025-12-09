@@ -113,7 +113,7 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
   const resolveTemplateModelSelection = useCallback(
     (template?: Template) => {
       const agentConfig = template?.configJson.agent;
-      if (agentConfig?.modelId) {
+      if (agentConfig?.modelId && agentConfig.providerId) {
         return { id: agentConfig.modelId, providerId: agentConfig.providerId };
       }
 
@@ -141,9 +141,7 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
     }
 
     const nextSelection = resolveTemplateModelSelection(activeTemplate);
-    if (nextSelection) {
-      setSelectedModel(nextSelection);
-    }
+    setSelectedModel(nextSelection ?? undefined);
   }, [activeTemplate, resolveTemplateModelSelection, selectedModel]);
 
   const mutation = useMutation({
@@ -315,7 +313,7 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
                       );
                       const nextSelection =
                         resolveTemplateModelSelection(nextTemplate);
-                      setSelectedModel(nextSelection);
+                      setSelectedModel(nextSelection ?? undefined);
                     }}
                     value={field.state.value}
                   >

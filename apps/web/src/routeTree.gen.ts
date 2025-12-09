@@ -15,6 +15,8 @@ import { Route as ExampleDashboardRouteImport } from './routes/example-dashboard
 import { Route as DebugNotificationsRouteImport } from './routes/debug-notifications'
 import { Route as CellsRouteImport } from './routes/cells'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as TemplatesIndexRouteImport } from './routes/templates/index'
+import { Route as TemplatesTemplateIdRouteImport } from './routes/templates/$templateId'
 import { Route as CellsNewRouteImport } from './routes/cells/new'
 import { Route as CellsListRouteImport } from './routes/cells/list'
 import { Route as CellsCellIdRouteImport } from './routes/cells/$cellId'
@@ -53,6 +55,16 @@ const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const TemplatesIndexRoute = TemplatesIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => TemplatesRoute,
+} as any)
+const TemplatesTemplateIdRoute = TemplatesTemplateIdRouteImport.update({
+  id: '/$templateId',
+  path: '/$templateId',
+  getParentRoute: () => TemplatesRoute,
 } as any)
 const CellsNewRoute = CellsNewRouteImport.update({
   id: '/new',
@@ -100,11 +112,13 @@ export interface FileRoutesByFullPath {
   '/cells': typeof CellsRouteWithChildren
   '/debug-notifications': typeof DebugNotificationsRoute
   '/example-dashboard': typeof ExampleDashboardRoute
-  '/templates': typeof TemplatesRoute
+  '/templates': typeof TemplatesRouteWithChildren
   '/test-error': typeof TestErrorRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
   '/cells/list': typeof CellsListRoute
   '/cells/new': typeof CellsNewRoute
+  '/templates/$templateId': typeof TemplatesTemplateIdRoute
+  '/templates/': typeof TemplatesIndexRoute
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
   '/cells/$cellId/services': typeof CellsCellIdServicesRoute
@@ -116,11 +130,12 @@ export interface FileRoutesByTo {
   '/cells': typeof CellsRouteWithChildren
   '/debug-notifications': typeof DebugNotificationsRoute
   '/example-dashboard': typeof ExampleDashboardRoute
-  '/templates': typeof TemplatesRoute
   '/test-error': typeof TestErrorRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
   '/cells/list': typeof CellsListRoute
   '/cells/new': typeof CellsNewRoute
+  '/templates/$templateId': typeof TemplatesTemplateIdRoute
+  '/templates': typeof TemplatesIndexRoute
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
   '/cells/$cellId/services': typeof CellsCellIdServicesRoute
@@ -133,11 +148,13 @@ export interface FileRoutesById {
   '/cells': typeof CellsRouteWithChildren
   '/debug-notifications': typeof DebugNotificationsRoute
   '/example-dashboard': typeof ExampleDashboardRoute
-  '/templates': typeof TemplatesRoute
+  '/templates': typeof TemplatesRouteWithChildren
   '/test-error': typeof TestErrorRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
   '/cells/list': typeof CellsListRoute
   '/cells/new': typeof CellsNewRoute
+  '/templates/$templateId': typeof TemplatesTemplateIdRoute
+  '/templates/': typeof TemplatesIndexRoute
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
   '/cells/$cellId/services': typeof CellsCellIdServicesRoute
@@ -156,6 +173,8 @@ export interface FileRouteTypes {
     | '/cells/$cellId'
     | '/cells/list'
     | '/cells/new'
+    | '/templates/$templateId'
+    | '/templates/'
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
     | '/cells/$cellId/services'
@@ -167,11 +186,12 @@ export interface FileRouteTypes {
     | '/cells'
     | '/debug-notifications'
     | '/example-dashboard'
-    | '/templates'
     | '/test-error'
     | '/cells/$cellId'
     | '/cells/list'
     | '/cells/new'
+    | '/templates/$templateId'
+    | '/templates'
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
     | '/cells/$cellId/services'
@@ -188,6 +208,8 @@ export interface FileRouteTypes {
     | '/cells/$cellId'
     | '/cells/list'
     | '/cells/new'
+    | '/templates/$templateId'
+    | '/templates/'
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
     | '/cells/$cellId/services'
@@ -200,7 +222,7 @@ export interface RootRouteChildren {
   CellsRoute: typeof CellsRouteWithChildren
   DebugNotificationsRoute: typeof DebugNotificationsRoute
   ExampleDashboardRoute: typeof ExampleDashboardRoute
-  TemplatesRoute: typeof TemplatesRoute
+  TemplatesRoute: typeof TemplatesRouteWithChildren
   TestErrorRoute: typeof TestErrorRoute
 }
 
@@ -247,6 +269,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/templates/': {
+      id: '/templates/'
+      path: '/'
+      fullPath: '/templates/'
+      preLoaderRoute: typeof TemplatesIndexRouteImport
+      parentRoute: typeof TemplatesRoute
+    }
+    '/templates/$templateId': {
+      id: '/templates/$templateId'
+      path: '/$templateId'
+      fullPath: '/templates/$templateId'
+      preLoaderRoute: typeof TemplatesTemplateIdRouteImport
+      parentRoute: typeof TemplatesRoute
     }
     '/cells/new': {
       id: '/cells/new'
@@ -341,12 +377,26 @@ const CellsRouteChildren: CellsRouteChildren = {
 
 const CellsRouteWithChildren = CellsRoute._addFileChildren(CellsRouteChildren)
 
+interface TemplatesRouteChildren {
+  TemplatesTemplateIdRoute: typeof TemplatesTemplateIdRoute
+  TemplatesIndexRoute: typeof TemplatesIndexRoute
+}
+
+const TemplatesRouteChildren: TemplatesRouteChildren = {
+  TemplatesTemplateIdRoute: TemplatesTemplateIdRoute,
+  TemplatesIndexRoute: TemplatesIndexRoute,
+}
+
+const TemplatesRouteWithChildren = TemplatesRoute._addFileChildren(
+  TemplatesRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CellsRoute: CellsRouteWithChildren,
   DebugNotificationsRoute: DebugNotificationsRoute,
   ExampleDashboardRoute: ExampleDashboardRoute,
-  TemplatesRoute: TemplatesRoute,
+  TemplatesRoute: TemplatesRouteWithChildren,
   TestErrorRoute: TestErrorRoute,
 }
 export const routeTree = rootRouteImport

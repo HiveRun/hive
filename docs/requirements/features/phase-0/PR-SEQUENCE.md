@@ -49,6 +49,7 @@ This document outlines the sequential PR strategy for Phase 0 implementation, **
 - [x] Can define templates in `hive.config.json` with runtime validation
 - [x] Templates validate at compile time
 - [x] UI can list available templates
+- [x] Template detail view surfaces workspace metadata (HIVE-46, 2025-12-09)
 - [x] Tests pass with real template data
 - [x] File-based approach provides version control benefits
 - [x] E2E tests cover templates page functionality

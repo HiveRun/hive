@@ -27,11 +27,17 @@ type TemplateConfigFixture = {
   type: string;
   summary: string;
   includePatterns?: string[];
+  ignorePatterns?: string[];
   services?: Record<string, TemplateServiceFixture>;
   env?: Record<string, string>;
   setup?: string[];
   prompts?: string[];
   teardown?: string[];
+  agent?: {
+    providerId?: string;
+    modelId?: string;
+    agentId?: string;
+  };
 };
 
 export type TemplateFixture = Omit<Template, "configJson"> & {
@@ -71,11 +77,31 @@ function createServiceFixture(
 
 const DEFAULT_TEMPLATE_SETUP = ["bun setup"] as const;
 
-function buildTemplateConfigFixture(
+function createDefaultServices(
+  primaryServiceName: string,
+  supportServiceName: string
+) {
+  return {
+    [primaryServiceName]: createServiceFixture(),
+    [supportServiceName]: createServiceFixture({
+      type: "docker",
+      run: undefined,
+      cwd: undefined,
+      image: "ghcr.io/hive/runtime:latest",
+      ports: ["5432:5432"],
+      env: {
+        NODE_ENV: "production",
+        DATABASE_URL: "postgres://hive@localhost:5432/runtime",
+      },
+    }),
+  } satisfies Record<string, TemplateServiceFixture>;
+}
+
+function createTemplateBaseConfig(
   id: string,
   label: string,
   type: string,
-  overrides: Partial<TemplateConfigFixture> = {}
+  overrides: Partial<TemplateConfigFixture>
 ): TemplateConfigFixture {
   const primaryServiceName = `${templateFaker.helpers.arrayElement(
     SERVICE_NAMES
@@ -84,27 +110,17 @@ function buildTemplateConfigFixture(
     SUPPORT_SERVICE_NAMES
   )}-${templateFaker.helpers.arrayElement(SERVICE_SUFFIXES)}`;
 
-  const baseConfig: TemplateConfigFixture = {
+  return {
     id,
     label,
     type,
     summary:
       overrides.summary ?? templateFaker.lorem.sentence({ min: 6, max: 12 }),
     includePatterns: overrides.includePatterns ?? [".env*", "*.local"],
-    services: overrides.services ?? {
-      [primaryServiceName]: createServiceFixture(),
-      [supportServiceName]: createServiceFixture({
-        type: "docker",
-        run: undefined,
-        cwd: undefined,
-        image: "ghcr.io/hive/runtime:latest",
-        ports: ["5432:5432"],
-        env: {
-          NODE_ENV: "production",
-          DATABASE_URL: "postgres://hive@localhost:5432/runtime",
-        },
-      }),
-    },
+    ignorePatterns: overrides.ignorePatterns ?? ["**/.turbo/**"],
+    services:
+      overrides.services ??
+      createDefaultServices(primaryServiceName, supportServiceName),
     env: overrides.env ?? {
       API_URL: "http://localhost:3000",
       STORAGE_ROOT: `/var/hive/${id}`,
@@ -115,16 +131,33 @@ function buildTemplateConfigFixture(
       templateFaker.company.catchPhrase(),
     ],
     teardown: overrides.teardown ?? ["bun run cleanup", `rm -rf .hive/${id}`],
+    agent:
+      overrides.agent ??
+      ({
+        providerId: "openai",
+        modelId: "gpt-5.1-codex-high",
+      } satisfies TemplateConfigFixture["agent"]),
   };
+}
+
+function buildTemplateConfigFixture(
+  id: string,
+  label: string,
+  type: string,
+  overrides: Partial<TemplateConfigFixture> = {}
+): TemplateConfigFixture {
+  const baseConfig = createTemplateBaseConfig(id, label, type, overrides);
 
   return {
     ...baseConfig,
     includePatterns: overrides.includePatterns ?? baseConfig.includePatterns,
+    ignorePatterns: overrides.ignorePatterns ?? baseConfig.ignorePatterns,
     services: overrides.services ?? baseConfig.services,
     env: overrides.env ?? baseConfig.env,
     setup: overrides.setup ?? baseConfig.setup,
     prompts: overrides.prompts ?? baseConfig.prompts,
     teardown: overrides.teardown ?? baseConfig.teardown,
+    agent: overrides.agent ?? baseConfig.agent,
   };
 }
 
@@ -161,6 +194,16 @@ export function createTemplateFixture(
     label,
     type,
     configJson,
+    includeDirectories:
+      overrides.includeDirectories ?? configJson.includePatterns ?? [],
+    gitignorePatterns: overrides.gitignorePatterns ?? [
+      "node_modules",
+      ".turbo",
+    ],
+    agentsContext:
+      overrides.agentsContext ??
+      "## Context\n- Keep services predictable\n- Share prompt sources",
+    agentsContextTruncated: overrides.agentsContextTruncated ?? false,
   };
 
   return {
