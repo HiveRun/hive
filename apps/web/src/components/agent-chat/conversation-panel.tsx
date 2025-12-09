@@ -13,7 +13,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { PermissionRequest } from "@/hooks/use-agent-event-stream";
+import type {
+  CompactionStats,
+  PermissionRequest,
+} from "@/hooks/use-agent-event-stream";
 import { storage } from "@/lib/storage";
 import type { AgentMessage } from "@/queries/agents";
 
@@ -28,6 +31,8 @@ type ConversationPanelProps = {
   filteredMessages: ConversationMessage[];
   searchQuery: string;
   onSearchQueryChange: (value: string) => void;
+  compaction: CompactionStats;
+  compactionWarningThreshold: number;
 
   workspacePath: string;
   provider: string;
@@ -51,6 +56,9 @@ export function ConversationPanel({
   filteredMessages,
   searchQuery,
   onSearchQueryChange,
+  compaction,
+  compactionWarningThreshold,
+
   workspacePath,
   provider,
   permissions,
@@ -349,6 +357,17 @@ export function ConversationPanel({
         <span>Workspace · {workspacePath}</span>
         <span className="text-primary">•</span>
         <span>Provider · {provider}</span>
+        {compaction.count > 0 ? (
+          <span
+            className={`flex items-center gap-1 rounded border border-border/60 bg-card/70 px-2 py-[2px] text-[10px] text-muted-foreground uppercase tracking-[0.2em] ${
+              compaction.count >= compactionWarningThreshold && sessionId
+                ? "border-amber-500 bg-amber-500/15 text-amber-100"
+                : ""
+            }`}
+          >
+            Compactions · {compaction.count}
+          </span>
+        ) : null}
       </div>
       <div className="mt-2 flex flex-col gap-1.5 md:flex-row md:items-center md:justify-between">
         <div className="flex w-full flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2 md:flex-1">

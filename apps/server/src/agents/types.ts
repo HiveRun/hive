@@ -80,6 +80,11 @@ export type AgentMessageRecord = {
   errorMessage?: string | null;
 };
 
+export type AgentCompactionStats = {
+  count: number;
+  lastCompactionAt: string | null;
+};
+
 /**
  * Stream events sent over SSE to clients.
  * Combines our custom events (history, status) with OpenCode SDK events.
@@ -87,4 +92,5 @@ export type AgentMessageRecord = {
 export type AgentStreamEvent =
   | { type: "history"; messages: AgentMessageRecord[] }
   | { type: "status"; status: AgentSessionStatus; error?: string }
+  | { type: "session.compaction"; properties: AgentCompactionStats }
   | OpencodeEvent;

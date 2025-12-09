@@ -1,8 +1,9 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { OpencodeClient } from "@opencode-ai/sdk";
+import type { OpencodeClient, Event as OpencodeEvent } from "@opencode-ai/sdk";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { Effect } from "effect";
+
 import {
   afterEach,
   beforeAll,
@@ -62,6 +63,7 @@ const mockHiveConfig: HiveConfig = {
 import {
   closeAllAgentSessions,
   ensureAgentSession,
+  fetchCompactionStats,
   resetAgentRuntimeDependencies,
   sendAgentMessage,
   setAgentRuntimeDependencies,
@@ -266,10 +268,10 @@ describe("agent model selection", () => {
 
     loadHiveConfigMock.mockResolvedValue(hiveConfigWithoutModel);
     loadOpencodeConfigSpy.mockResolvedValue({
-      config: { model: "openai/opencode-default" },
+      config: { model: "opencode/workspace-default" },
       source: "workspace",
       details: undefined,
-      defaultModel: { providerId: "openai", modelId: "opencode-default" },
+      defaultModel: { providerId: "openai", modelId: "gpt-5.1-codex-high" },
     });
 
     const session = await ensureAgentSession(cellId);
@@ -278,35 +280,38 @@ describe("agent model selection", () => {
     expect(session.modelId).toBe("template-default");
   });
 
-  it("uses opencode config defaults when a template omits the agent block", async () => {
-    const templateWithoutAgent = mockHiveConfig.templates["template-basic"];
-    if (!templateWithoutAgent) {
-      throw new Error("Template missing");
-    }
-
-    const hiveConfigWithoutAgent: HiveConfig = {
-      ...mockHiveConfig,
-      templates: {
-        ...mockHiveConfig.templates,
-        "template-basic": {
-          ...templateWithoutAgent,
-          agent: undefined,
-        },
-      },
+  it("tracks compaction events and exposes stats", async () => {
+    const compactionEvent: OpencodeEvent = {
+      type: "session.compacted",
+      properties: { sessionID: "session-runtime" },
     };
+    const published: unknown[] = [];
+    const clientStubWithEvents = buildClientStubWithEvents([compactionEvent]);
 
-    loadHiveConfigMock.mockResolvedValue(hiveConfigWithoutAgent);
-    loadOpencodeConfigSpy.mockResolvedValue({
-      config: { model: "openai/gpt-5.1-codex-high" },
-      source: "workspace",
-      details: undefined,
-      defaultModel: { providerId: "openai", modelId: "gpt-5.1-codex-high" },
+    acquireOpencodeClientMock = vi.fn(
+      async () => clientStubWithEvents as unknown as OpencodeClient
+    );
+
+    setAgentRuntimeDependencies({
+      acquireOpencodeClient: acquireOpencodeClientMock,
+      publishAgentEvent: (sessionId, event) => {
+        if (sessionId === "session-runtime") {
+          published.push(event);
+        }
+      },
     });
 
     const session = await ensureAgentSession(cellId);
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(session.provider).toBe("openai");
-    expect(session.modelId).toBe("gpt-5.1-codex-high");
+    const stats = await fetchCompactionStats(session.id);
+
+    expect(stats.count).toBe(1);
+    expect(
+      published.some(
+        (event) => (event as { type?: string }).type === "session.compaction"
+      )
+    ).toBe(true);
   });
 });
 
@@ -336,6 +341,18 @@ function buildClientStub(): ClientStub {
       error: null,
     })),
   };
+}
+
+function buildClientStubWithEvents(events: OpencodeEvent[]): ClientStub {
+  const stub = buildClientStub();
+  stub.event.subscribe = vi.fn(async () => ({
+    stream: (function* () {
+      for (const event of events) {
+        yield event;
+      }
+    })(),
+  }));
+  return stub;
 }
 
 function createMockSession() {

@@ -33,6 +33,11 @@ type DirectoryQuery = {
   directory?: string;
 };
 
+type RuntimeCompactionState = {
+  count: number;
+  lastCompactionAt: string | null;
+};
+
 type RuntimeHandle = {
   session: Session;
   cell: Cell;
@@ -43,6 +48,7 @@ type RuntimeHandle = {
   abortController: AbortController;
   status: AgentSessionStatus;
   pendingInterrupt: boolean;
+  compaction: RuntimeCompactionState;
   sendMessage: (content: string) => Promise<void>;
   stop: () => Promise<void>;
 };
@@ -283,6 +289,13 @@ export async function fetchAgentMessages(
   return loadRemoteMessages(runtime);
 }
 
+export async function fetchCompactionStats(
+  sessionId: string
+): Promise<RuntimeCompactionState> {
+  const runtime = await ensureRuntimeForSession(sessionId);
+  return runtime.compaction;
+}
+
 export async function updateAgentSessionModel(
   sessionId: string,
   model: { modelId: string; providerId?: string }
@@ -381,6 +394,9 @@ export type AgentRuntimeService = {
   readonly fetchAgentMessages: (
     sessionId: string
   ) => Effect.Effect<AgentMessageRecord[], AgentRuntimeError>;
+  readonly fetchCompactionStats: (
+    sessionId: string
+  ) => Effect.Effect<RuntimeCompactionState, AgentRuntimeError>;
   readonly updateAgentSessionModel: (
     sessionId: string,
     model: { modelId: string; providerId?: string }
@@ -422,6 +438,8 @@ const makeAgentRuntimeService = (): AgentRuntimeService => ({
     wrapAgentRuntime(fetchAgentSessionForCell)(cellId),
   fetchAgentMessages: (sessionId) =>
     wrapAgentRuntime(fetchAgentMessages)(sessionId),
+  fetchCompactionStats: (sessionId) =>
+    wrapAgentRuntime(fetchCompactionStats)(sessionId),
   updateAgentSessionModel: (sessionId, model) =>
     wrapAgentRuntime(updateAgentSessionModel)(sessionId, model),
   sendAgentMessage: (sessionId, content) =>
@@ -643,6 +661,7 @@ async function startOpencodeRuntime({
     abortController,
     status: "awaiting_input",
     pendingInterrupt: false,
+    compaction: { count: 0, lastCompactionAt: null },
     async sendMessage(content) {
       setRuntimeStatus(runtime, "working");
 
@@ -780,6 +799,7 @@ async function startEventStream({
         continue;
       }
 
+      recordCompactionEvent(runtime, event);
       publish(runtime.session.id, event);
       updateRuntimeStatusFromEvent(runtime, event);
     }
@@ -1044,6 +1064,49 @@ function setRuntimeStatus(
       : { type: "status" as const, status, error };
   const { publishAgentEvent: publish } = getAgentRuntimeDependencies();
   publish(runtime.session.id, statusEvent);
+}
+
+function resolveCompactionCount(event: Event, previousCount: number): number {
+  if (event.type !== "session.compacted") {
+    return previousCount;
+  }
+
+  const properties = (event as { properties?: unknown }).properties;
+  if (properties && typeof properties === "object") {
+    const candidate = properties as {
+      compacted?: unknown;
+      count?: unknown;
+    };
+    if (typeof candidate.compacted === "number") {
+      return candidate.compacted;
+    }
+    if (typeof candidate.count === "number") {
+      return candidate.count;
+    }
+  }
+
+  return previousCount + 1;
+}
+
+function publishCompactionStats(runtime: RuntimeHandle): void {
+  const { publishAgentEvent: publish } = getAgentRuntimeDependencies();
+  publish(runtime.session.id, {
+    type: "session.compaction",
+    properties: {
+      count: runtime.compaction.count,
+      lastCompactionAt: runtime.compaction.lastCompactionAt,
+    },
+  });
+}
+
+function recordCompactionEvent(runtime: RuntimeHandle, event: Event): void {
+  if (event.type !== "session.compacted") {
+    return;
+  }
+  const nextCount = resolveCompactionCount(event, runtime.compaction.count);
+  const timestamp = new Date().toISOString();
+  runtime.compaction = { count: nextCount, lastCompactionAt: timestamp };
+  publishCompactionStats(runtime);
 }
 
 type RpcErrorPayload = {

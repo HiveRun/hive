@@ -3,7 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { ModelSelection } from "@/components/model-selector";
 import { Button } from "@/components/ui/button";
-import { useAgentEventStream } from "@/hooks/use-agent-event-stream";
+import {
+  COMPACTION_WARNING_THRESHOLD,
+  useAgentEventStream,
+} from "@/hooks/use-agent-event-stream";
 import type { AgentMessage } from "@/queries/agents";
 import { agentMutations, agentQueries } from "@/queries/agents";
 import { cellQueries } from "@/queries/cells";
@@ -35,7 +38,12 @@ export function AgentChat({ cellId }: AgentChatProps) {
   const interruptConfirmTimerRef = useRef<number | null>(null);
   const chatRootRef = useRef<HTMLDivElement | null>(null);
 
-  const { permissions } = useAgentEventStream(sessionId ?? null, cellId);
+  const { permissions, compaction } = useAgentEventStream(
+    sessionId ?? null,
+    cellId
+  );
+  const compactionWarning =
+    compaction.count >= COMPACTION_WARNING_THRESHOLD && Boolean(sessionId);
 
   useEffect(() => {
     if (!session?.modelId) {
@@ -299,9 +307,16 @@ export function AgentChat({ cellId }: AgentChatProps) {
       className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden border-2 border-border bg-background text-foreground"
       ref={chatRootRef}
     >
-      <AgentChatHeader cellId={cellId} session={session} />
+      <AgentChatHeader
+        cellId={cellId}
+        compaction={compaction}
+        compactionWarning={compactionWarning}
+        session={session}
+      />
       <div className="flex flex-1 flex-col gap-0 overflow-hidden lg:flex-row">
         <ConversationPanel
+          compaction={compaction}
+          compactionWarningThreshold={COMPACTION_WARNING_THRESHOLD}
           filteredMessages={filteredMessages}
           isLoading={messagesQuery.isPending}
           onSearchQueryChange={setSearchQuery}
