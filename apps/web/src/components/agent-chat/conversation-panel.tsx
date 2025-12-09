@@ -359,10 +359,10 @@ export function ConversationPanel({
         <span>Provider · {provider}</span>
         {compaction.count > 0 ? (
           <span
-            className={`flex items-center gap-1 rounded-full border px-2 py-[3px] text-[10px] uppercase tracking-[0.2em] ${
+            className={`flex items-center gap-1 rounded border border-border/60 bg-card/70 px-2 py-[2px] text-[10px] text-muted-foreground uppercase tracking-[0.2em] ${
               compaction.count >= compactionWarningThreshold && sessionId
-                ? "border-amber-500 bg-amber-500/10 text-amber-50"
-                : "border-border/80 text-foreground"
+                ? "border-amber-500 bg-amber-500/15 text-amber-100"
+                : ""
             }`}
           >
             Compactions · {compaction.count}
