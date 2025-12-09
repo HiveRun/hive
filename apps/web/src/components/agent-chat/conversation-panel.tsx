@@ -357,6 +357,17 @@ export function ConversationPanel({
         <span>Workspace · {workspacePath}</span>
         <span className="text-primary">•</span>
         <span>Provider · {provider}</span>
+        {compaction.count > 0 ? (
+          <span
+            className={`flex items-center gap-1 rounded-full border px-2 py-[3px] text-[10px] uppercase tracking-[0.2em] ${
+              compaction.count >= compactionWarningThreshold && sessionId
+                ? "border-amber-500 bg-amber-500/10 text-amber-50"
+                : "border-border/80 text-foreground"
+            }`}
+          >
+            Compactions · {compaction.count}
+          </span>
+        ) : null}
       </div>
       <CompactionNotice
         compaction={compaction}
