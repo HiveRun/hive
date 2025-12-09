@@ -1,19 +1,11 @@
 import type { LucideIcon } from "lucide-react";
-import {
-  Activity,
-  AlertTriangle,
-  Bell,
-  FileText,
-  Home,
-  Layers,
-} from "lucide-react";
+import { Activity, AlertTriangle, Bell, Home, Layers } from "lucide-react";
 
 export type MainNavItem = {
   to:
     | "/"
     | "/example-dashboard"
     | "/test-error"
-    | "/templates"
     | "/cells/list"
     | "/debug-notifications";
   label: string;
@@ -35,12 +27,6 @@ export const MAIN_NAV_ITEMS: MainNavItem[] = [
     label: "Cells",
     icon: Layers,
     description: "Manage your cells",
-  },
-  {
-    to: "/templates",
-    label: "Templates",
-    icon: FileText,
-    description: "Browse cell templates",
   },
   {
     to: "/example-dashboard",
