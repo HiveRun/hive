@@ -369,11 +369,6 @@ export function ConversationPanel({
           </span>
         ) : null}
       </div>
-      <CompactionNotice
-        compaction={compaction}
-        sessionId={sessionId}
-        threshold={compactionWarningThreshold}
-      />
       <div className="mt-2 flex flex-col gap-1.5 md:flex-row md:items-center md:justify-between">
         <div className="flex w-full flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2 md:flex-1">
           <Input
@@ -426,51 +421,6 @@ type TracePreferencesMenuProps = {
   onPreferenceChange: (key: keyof TracePreferences, nextValue: boolean) => void;
   className?: string;
 };
-
-type CompactionNoticeProps = {
-  compaction: CompactionStats;
-  threshold: number;
-  sessionId: string;
-};
-
-function CompactionNotice({
-  compaction,
-  threshold,
-  sessionId,
-}: CompactionNoticeProps) {
-  if (compaction.count <= 0) {
-    return null;
-  }
-
-  const warning = compaction.count >= threshold && Boolean(sessionId);
-  const lastCompactionLabel =
-    compaction.lastCompactionAt &&
-    !Number.isNaN(Date.parse(compaction.lastCompactionAt))
-      ? new Date(compaction.lastCompactionAt).toLocaleTimeString()
-      : null;
-
-  const frameClasses = warning
-    ? "border-amber-500/80 bg-amber-500/10 text-amber-50"
-    : "border-border/60 bg-card/40 text-foreground";
-
-  return (
-    <div
-      className={`mt-2 flex flex-col gap-1 rounded border px-3 py-2 ${frameClasses}`}
-    >
-      <div className="text-[10px] text-muted-foreground uppercase tracking-[0.25em]">
-        Compactions
-      </div>
-      <p className="text-foreground text-sm">
-        {compaction.count} total{warning ? " · nearing limit" : ""}
-      </p>
-      {lastCompactionLabel ? (
-        <p className="text-muted-foreground text-xs">
-          Last at {lastCompactionLabel}
-        </p>
-      ) : null}
-    </div>
-  );
-}
 
 function TracePreferencesMenu({
   preferences,
