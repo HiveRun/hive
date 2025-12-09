@@ -458,18 +458,14 @@ function CompactionNotice({
       className={`mt-2 flex flex-col gap-1 rounded border px-3 py-2 ${frameClasses}`}
     >
       <div className="text-[10px] text-muted-foreground uppercase tracking-[0.25em]">
-        Context Compaction
+        Compactions
       </div>
       <p className="text-foreground text-sm">
-        Context compacted {compaction.count} time
-        {compaction.count === 1 ? "" : "s"}.{" "}
-        {warning
-          ? "Quality may drop; consider summarizing or restarting the session."
-          : "Keep prompts tight to avoid truncation."}
+        {compaction.count} total{warning ? " · nearing limit" : ""}
       </p>
       {lastCompactionLabel ? (
         <p className="text-muted-foreground text-xs">
-          Last compacted at {lastCompactionLabel}
+          Last at {lastCompactionLabel}
         </p>
       ) : null}
     </div>
