@@ -326,6 +326,14 @@ export function createCellsRoutes(
           set.status = HTTP_STATUS.NOT_FOUND;
           return { message: "Cell not found" } satisfies { message: string };
         }
+        if (cell.status === "archived") {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return {
+            message: "Cell is archived and cannot be retried",
+          } satisfies {
+            message: string;
+          };
+        }
 
         const workspaceContext = await runServerEffect(
           deps.resolveWorkspaceContext(cell.workspaceId)
@@ -473,6 +481,12 @@ export function createCellsRoutes(
           set.status = HTTP_STATUS.NOT_FOUND;
           return { message: "Cell not found" } satisfies { message: string };
         }
+        if (cell.status === "archived") {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return { message: "Cell is archived" } satisfies {
+            message: string;
+          };
+        }
 
         const rows = await fetchServiceRows(database, params.id);
         const services = await Promise.all(
@@ -485,6 +499,7 @@ export function createCellsRoutes(
         params: t.Object({ id: t.String() }),
         response: {
           200: CellServiceListResponseSchema,
+          400: t.Object({ message: t.String() }),
           404: t.Object({ message: t.String() }),
         },
       }
@@ -497,6 +512,12 @@ export function createCellsRoutes(
         if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
           return { message: "Cell not found" };
+        }
+        if (cell.status === "archived") {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return { message: "Cell is archived" } satisfies {
+            message: string;
+          };
         }
 
         const encoder = new TextEncoder();
@@ -592,6 +613,12 @@ export function createCellsRoutes(
           set.status = HTTP_STATUS.NOT_FOUND;
           return { message: "Cell not found" } satisfies { message: string };
         }
+        if (cell.status === "archived") {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return { message: "Cell is archived" } satisfies {
+            message: string;
+          };
+        }
 
         const parsed = parseDiffRequest(cell, query);
         if (!parsed.ok) {
@@ -622,6 +649,101 @@ export function createCellsRoutes(
     )
 
     .post(
+      "/:id/archive",
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: archive handling needs multiple guarded cleanup steps
+      async ({ params, set, log }) => {
+        try {
+          const deps = await resolveDeps();
+          const {
+            db: database,
+            resolveWorkspaceContext: resolveWorkspaceCtx,
+            closeAgentSession: closeSession,
+            stopServicesForCell: stopCellServicesFn,
+          } = deps;
+
+          const cell = await loadCellById(database, params.id);
+          if (!cell) {
+            set.status = HTTP_STATUS.NOT_FOUND;
+            return { message: "Cell not found" } satisfies {
+              message: string;
+            };
+          }
+          if (cell.status === "archived") {
+            return cellToResponse(cell);
+          }
+
+          await runServerEffect(closeSession(cell.id));
+          try {
+            await runServerEffect(
+              stopCellServicesFn(cell.id, {
+                releasePorts: true,
+              })
+            );
+          } catch (error) {
+            log.warn(
+              { error, cellId: cell.id },
+              "Failed to stop services before archive"
+            );
+          }
+
+          try {
+            const workspaceManager = await runServerEffect(
+              resolveWorkspaceCtx(cell.workspaceId)
+            );
+            const worktreeService = await runServerEffect(
+              workspaceManager.createWorktreeManager()
+            );
+            await removeCellWorkspace(worktreeService, cell, log);
+          } catch (error) {
+            log.warn(
+              { error, cellId: cell.id },
+              "Failed to clean up worktree during archive"
+            );
+          }
+
+          await database
+            .update(cells)
+            .set({
+              status: "archived",
+              workspacePath: "",
+              lastSetupError: null,
+            })
+            .where(eq(cells.id, cell.id));
+
+          const updated = await loadCellById(database, cell.id);
+          if (!updated) {
+            set.status = HTTP_STATUS.INTERNAL_ERROR;
+            return {
+              message: "Failed to load cell after archive",
+            } satisfies {
+              message: string;
+            };
+          }
+
+          return cellToResponse(updated);
+        } catch (error) {
+          if (error instanceof Error) {
+            log.error(error, "Failed to archive cell");
+          } else {
+            log.error({ error }, "Failed to archive cell");
+          }
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          return { message: "Failed to archive cell" } satisfies {
+            message: string;
+          };
+        }
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        response: {
+          200: CellResponseSchema,
+          404: t.Object({ message: t.String() }),
+          500: ErrorResponseSchema,
+        },
+      }
+    )
+
+    .post(
       "/:id/services/:serviceId/start",
 
       async ({ params, set }) => {
@@ -635,7 +757,15 @@ export function createCellsRoutes(
         );
         if (!row) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" } satisfies { message: string };
+          return { message: "Service not found" } satisfies {
+            message: string;
+          };
+        }
+        if (row.cell.status === "archived") {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return { message: "Cell is archived" } satisfies {
+            message: string;
+          };
         }
 
         await runServerEffect(startService(params.serviceId));
@@ -646,7 +776,9 @@ export function createCellsRoutes(
         );
         if (!updated) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" } satisfies { message: string };
+          return { message: "Service not found" } satisfies {
+            message: string;
+          };
         }
 
         const serialized = await serializeService(database, updated);
@@ -656,6 +788,7 @@ export function createCellsRoutes(
         params: t.Object({ id: t.String(), serviceId: t.String() }),
         response: {
           200: CellServiceSchema,
+          400: t.Object({ message: t.String() }),
           404: t.Object({ message: t.String() }),
         },
       }
@@ -673,7 +806,15 @@ export function createCellsRoutes(
         );
         if (!row) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" } satisfies { message: string };
+          return { message: "Service not found" } satisfies {
+            message: string;
+          };
+        }
+        if (row.cell.status === "archived") {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return { message: "Cell is archived" } satisfies {
+            message: string;
+          };
         }
 
         await runServerEffect(stopService(params.serviceId));
@@ -684,7 +825,9 @@ export function createCellsRoutes(
         );
         if (!updated) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" } satisfies { message: string };
+          return { message: "Service not found" } satisfies {
+            message: string;
+          };
         }
 
         const serialized = await serializeService(database, updated);
@@ -694,6 +837,7 @@ export function createCellsRoutes(
         params: t.Object({ id: t.String(), serviceId: t.String() }),
         response: {
           200: CellServiceSchema,
+          400: t.Object({ message: t.String() }),
           404: t.Object({ message: t.String() }),
         },
       }

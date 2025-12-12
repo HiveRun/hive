@@ -31,6 +31,7 @@ export function AgentChat({ cellId }: AgentChatProps) {
   const session = sessionQuery.data ?? null;
   const sessionId = session?.id;
   const cellQuery = useQuery(cellQueries.detail(cellId));
+  const isArchived = cellQuery.data?.status === "archived";
   const messagesQuery = useQuery(agentQueries.messages(sessionId ?? null));
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedModel, setSelectedModel] = useState<ModelSelection>();
@@ -294,6 +295,14 @@ export function AgentChat({ cellId }: AgentChatProps) {
 
   if (sessionQuery.isPending || cellQuery.isPending) {
     return <LoadingState />;
+  }
+
+  if (isArchived) {
+    return (
+      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card p-6 text-muted-foreground">
+        Archived cells are read-only. Restore the branch to resume chatting.
+      </div>
+    );
   }
 
   if (!session) {

@@ -104,3 +104,4 @@ This comprehensive provisioning system will be implemented in **Phase 1A** after
 - [x] Surface template setup failures with detailed API/UI error context (2025-11-12)
 - [x] Preserve failed cells and expose provisioning status for manual recovery (2025-11-12)
 - [x] Allow cells to enter a spawning state while provisioning continues (HIVE-7, 2025-11-30)
+- [/] Add cell archival flow that removes the worktree while retaining commit and OpenCode session metadata (HIVE-48, 2025-12-10)

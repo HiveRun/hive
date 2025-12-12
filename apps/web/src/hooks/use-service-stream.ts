@@ -1,12 +1,23 @@
 import { useEffect, useState } from "react";
 import type { CellServiceSummary } from "@/queries/cells";
 
-export function useServiceStream(cellId: string) {
+export function useServiceStream(
+  cellId: string,
+  options: { enabled?: boolean } = {}
+) {
+  const { enabled = true } = options;
   const [services, setServices] = useState<CellServiceSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
 
   useEffect(() => {
+    if (!enabled) {
+      setServices([]);
+      setIsLoading(false);
+      setError(undefined);
+      return;
+    }
+
     if (!cellId || typeof window === "undefined") {
       return;
     }
@@ -64,7 +75,7 @@ export function useServiceStream(cellId: string) {
       source.removeEventListener("error", errorListener);
       source.close();
     };
-  }, [cellId]);
+  }, [cellId, enabled]);
 
   return { services, isLoading, error };
 }

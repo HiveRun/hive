@@ -80,6 +80,21 @@ export const cellMutations = {
     },
   },
 
+  archive: {
+    mutationFn: async (id: string) => {
+      const { data, error } = await rpc.api.cells({ id }).archive.post();
+      if (error) {
+        throw new Error(formatRpcError(error, "Failed to archive cell"));
+      }
+
+      if ("message" in data) {
+        throw new Error(formatRpcResponseError(data, "Failed to archive cell"));
+      }
+
+      return normalizeCell(data);
+    },
+  },
+
   deleteMany: {
     mutationFn: async (ids: string[]) => {
       const { data, error } = await rpc.api.cells.delete({ ids });
@@ -184,7 +199,12 @@ const normalizeCell = <T extends { status: string }>(
 });
 
 // Export inferred types for use in components
-export type CellStatus = "spawning" | "pending" | "ready" | "error";
+export type CellStatus =
+  | "spawning"
+  | "pending"
+  | "ready"
+  | "error"
+  | "archived";
 
 export type Cell = Awaited<
   ReturnType<ReturnType<typeof cellQueries.detail>["queryFn"]>

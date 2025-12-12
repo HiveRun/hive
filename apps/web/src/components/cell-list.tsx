@@ -155,6 +155,33 @@ export function CellList({ workspaceId }: CellListProps) {
     }
   }, [hasSelection]);
 
+  const archiveMutation = useMutation({
+    ...cellMutations.archive,
+    onSuccess: (updatedCell) => {
+      toast.success(`Archived ${updatedCell.name}`);
+      queryClient.setQueryData(
+        cellQueries.detail(updatedCell.id).queryKey,
+        updatedCell
+      );
+      queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
+      setSelectedCellIds((prev) => {
+        if (!prev.has(updatedCell.id)) {
+          return prev;
+        }
+        const next = new Set(prev);
+        next.delete(updatedCell.id);
+        return next;
+      });
+    },
+    onError: (unknownError) => {
+      const message =
+        unknownError instanceof Error
+          ? unknownError.message
+          : "Failed to archive cell";
+      toast.error(message);
+    },
+  });
+
   const bulkDeleteMutation = useMutation({
     ...cellMutations.deleteMany,
     onSuccess: (data: { deletedIds: string[] }) => {
@@ -328,19 +355,26 @@ export function CellList({ workspaceId }: CellListProps) {
         </Card>
       ) : (
         <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-          {cells?.map((cell) => (
-            <CellCard
-              cell={cell}
-              createdLabel={formatDate(cell.createdAt)}
-              disableSelection={bulkDeleteMutation.isPending}
-              isSelected={selectedCellIds.has(cell.id)}
-              key={cell.id}
-              onCopyText={copyToClipboard}
-              onToggleSelect={() => toggleCellSelection(cell.id)}
-              serviceStatus={serviceStatusMap.get(cell.id)}
-              templateLabel={getTemplateLabel(cell.templateId)}
-            />
-          ))}
+          {cells?.map((cell) => {
+            const isArchiving =
+              archiveMutation.isPending &&
+              archiveMutation.variables === cell.id;
+            return (
+              <CellCard
+                cell={cell}
+                createdLabel={formatDate(cell.createdAt)}
+                disableSelection={bulkDeleteMutation.isPending}
+                isArchiving={isArchiving}
+                isSelected={selectedCellIds.has(cell.id)}
+                key={cell.id}
+                onArchive={() => archiveMutation.mutate(cell.id)}
+                onCopyText={copyToClipboard}
+                onToggleSelect={() => toggleCellSelection(cell.id)}
+                serviceStatus={serviceStatusMap.get(cell.id)}
+                templateLabel={getTemplateLabel(cell.templateId)}
+              />
+            );
+          })}
         </div>
       )}
     </div>
@@ -416,6 +450,8 @@ type CellCardProps = {
   createdLabel: string;
   isSelected: boolean;
   disableSelection: boolean;
+  isArchiving: boolean;
+  onArchive: () => void;
   onToggleSelect: () => void;
   onCopyText: (value: string) => void;
   serviceStatus?: ServiceStatusState;
@@ -425,7 +461,9 @@ function CellCard({
   cell,
   createdLabel,
   disableSelection,
+  isArchiving,
   isSelected,
+  onArchive,
   onCopyText,
   onToggleSelect,
   templateLabel,
@@ -439,6 +477,17 @@ function CellCard({
   });
   const opencodeCommand = cell.opencodeCommand ?? null;
   const connectionLabel = describeServerConnection(cell);
+  const isArchived = cell.status === "archived";
+  const archiveDisabled = disableSelection || isArchiving || isArchived;
+  const archiveLabel = (() => {
+    if (isArchiving) {
+      return "Archiving…";
+    }
+    if (isArchived) {
+      return "Archived";
+    }
+    return "Archive";
+  })();
   return (
     <Card
       className={cn(
@@ -568,17 +617,39 @@ function CellCard({
         <div className="text-muted-foreground text-xs">
           <p>Created: {createdLabel}</p>
         </div>
-        <div className="flex justify-end gap-2">
-          <Link params={{ cellId: cell.id }} to="/cells/$cellId/services">
-            <Button size="sm" type="button" variant="secondary">
-              Services Panel
-            </Button>
-          </Link>
-          <Link params={{ cellId: cell.id }} to="/cells/$cellId/chat">
-            <Button size="sm" type="button" variant="outline">
-              Open Chat
-            </Button>
-          </Link>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            disabled={archiveDisabled}
+            onClick={onArchive}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            {archiveLabel}
+          </Button>
+          {isArchived ? (
+            <>
+              <Button disabled size="sm" type="button" variant="ghost">
+                Services Unavailable
+              </Button>
+              <Button disabled size="sm" type="button" variant="ghost">
+                Chat Unavailable
+              </Button>
+            </>
+          ) : (
+            <>
+              <Link params={{ cellId: cell.id }} to="/cells/$cellId/services">
+                <Button size="sm" type="button" variant="secondary">
+                  Services Panel
+                </Button>
+              </Link>
+              <Link params={{ cellId: cell.id }} to="/cells/$cellId/chat">
+                <Button size="sm" type="button" variant="outline">
+                  Open Chat
+                </Button>
+              </Link>
+            </>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -589,6 +660,19 @@ function CellStatusNotice({
   status,
   lastSetupError,
 }: Pick<Cell, "status" | "lastSetupError">) {
+  if (status === "archived") {
+    return (
+      <div className="space-y-2 rounded-md border border-border/60 bg-muted/10 p-3">
+        <p className="font-semibold text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+          Archived
+        </p>
+        <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+          Workspace removed; branch and session references retained
+        </p>
+      </div>
+    );
+  }
+
   if (status === "error") {
     return (
       <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/10 p-3">
