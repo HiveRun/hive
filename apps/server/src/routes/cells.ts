@@ -650,13 +650,11 @@ export function createCellsRoutes(
 
     .post(
       "/:id/archive",
-      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: archive handling needs multiple guarded cleanup steps
       async ({ params, set, log }) => {
         try {
           const deps = await resolveDeps();
           const {
             db: database,
-            resolveWorkspaceContext: resolveWorkspaceCtx,
             closeAgentSession: closeSession,
             stopServicesForCell: stopCellServicesFn,
           } = deps;
@@ -686,26 +684,10 @@ export function createCellsRoutes(
             );
           }
 
-          try {
-            const workspaceManager = await runServerEffect(
-              resolveWorkspaceCtx(cell.workspaceId)
-            );
-            const worktreeService = await runServerEffect(
-              workspaceManager.createWorktreeManager()
-            );
-            await removeCellWorkspace(worktreeService, cell, log);
-          } catch (error) {
-            log.warn(
-              { error, cellId: cell.id },
-              "Failed to clean up worktree during archive"
-            );
-          }
-
           await database
             .update(cells)
             .set({
               status: "archived",
-              workspacePath: "",
               lastSetupError: null,
             })
             .where(eq(cells.id, cell.id));

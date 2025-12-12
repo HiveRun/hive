@@ -529,15 +529,46 @@ describe("cell archival", () => {
       workspacePath: string;
     };
     expect(payload.status).toBe("archived");
-    expect(payload.workspacePath).toBe("");
+    expect(payload.workspacePath).toBe(workspacePath);
 
     expect(closeSession).toHaveBeenCalledWith(cellId);
     expect(stopServices).toHaveBeenCalledWith(cellId, { releasePorts: true });
-    expect(removeWorktree).toHaveBeenCalled();
+    expect(removeWorktree).not.toHaveBeenCalled();
 
     const [row] = await testDb.select().from(cells).where(eq(cells.id, cellId));
     expect(row?.status).toBe("archived");
-    expect(row?.workspacePath).toBe("");
+    expect(row?.workspacePath).toBe(workspacePath);
+  });
+
+  it("deletes archived cells and removes the worktree", async () => {
+    const cellId = "archived-delete";
+    await testDb.insert(cells).values({
+      id: cellId,
+      name: "Archived Cell",
+      templateId,
+      workspaceId: workspaceRecord.id,
+      workspacePath,
+      workspaceRootPath: workspaceRecord.path,
+      branchName: "cell-branch",
+      baseCommit: "abc123",
+      createdAt: new Date(),
+      status: "archived",
+    });
+
+    const dependencies = createDependencies();
+    const app = new Elysia().use(createCellsRoutes(dependencies));
+
+    const response = await app.handle(
+      new Request(`http://localhost/api/cells/${cellId}`, {
+        method: "DELETE",
+      })
+    );
+
+    expect(response.status).toBe(OK_STATUS);
+    expect(removeWorktreeCalls).toBe(1);
+
+    const remaining = await testDb.select().from(cells);
+    expect(remaining).toHaveLength(0);
   });
 
   it("prevents service start for archived cells", async () => {
@@ -556,7 +587,7 @@ describe("cell archival", () => {
       name: "Archived Cell",
       templateId,
       workspaceId: workspaceRecord.id,
-      workspacePath: "",
+      workspacePath,
       workspaceRootPath: workspaceRecord.path,
       branchName: "cell-branch",
       baseCommit: "abc123",

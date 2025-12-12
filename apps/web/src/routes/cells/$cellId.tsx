@@ -105,9 +105,7 @@ function CellLayout() {
             ) : null}
             <div className="flex flex-wrap gap-4 text-[11px] text-muted-foreground uppercase tracking-[0.2em]">
               <span>Template · {templateLabel ?? cell.templateId}</span>
-              <span>
-                Workspace · {cell.workspacePath || "Cleaned up after archive"}
-              </span>
+              <span>Workspace · {cell.workspacePath ?? "Unavailable"}</span>
             </div>
           </div>
         </section>
@@ -118,8 +116,9 @@ function CellLayout() {
               Archived cell
             </p>
             <p className="text-[12px] text-muted-foreground">
-              The worktree has been removed. Branch {branchLabel} and base
-              commit {baseCommitLabel} stay available for history.
+              The worktree remains on disk for offline analysis. Branch{" "}
+              {branchLabel} and base commit {baseCommitLabel} stay available
+              until you delete this cell.
             </p>
           </div>
         ) : null}
