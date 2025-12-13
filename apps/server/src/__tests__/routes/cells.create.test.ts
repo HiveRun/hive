@@ -571,6 +571,37 @@ describe("cell archival", () => {
     expect(remaining).toHaveLength(0);
   });
 
+  it("requires cells to be archived before deletion", async () => {
+    const cellId = "ready-delete";
+    await testDb.insert(cells).values({
+      id: cellId,
+      name: "Ready Cell",
+      templateId,
+      workspaceId: workspaceRecord.id,
+      workspacePath,
+      workspaceRootPath: workspaceRecord.path,
+      branchName: "cell-branch",
+      baseCommit: "abc123",
+      createdAt: new Date(),
+      status: "ready",
+    });
+
+    const app = new Elysia().use(createCellsRoutes(createDependencies()));
+
+    const response = await app.handle(
+      new Request(`http://localhost/api/cells/${cellId}`, {
+        method: "DELETE",
+      })
+    );
+
+    expect(response.status).toBe(BAD_REQUEST_STATUS);
+    const payload = (await response.json()) as { message: string };
+    expect(payload.message).toContain("archived");
+
+    const [row] = await testDb.select().from(cells).where(eq(cells.id, cellId));
+    expect(row?.status).toBe("ready");
+  });
+
   it("prevents service start for archived cells", async () => {
     const cellId = "archived-start";
     const serviceId = "service-1";

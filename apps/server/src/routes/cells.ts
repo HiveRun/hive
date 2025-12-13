@@ -889,6 +889,7 @@ export function createCellsRoutes(
               id: cells.id,
               workspacePath: cells.workspacePath,
               workspaceId: cells.workspaceId,
+              status: cells.status,
             })
             .from(cells)
             .where(inArray(cells.id, uniqueIds));
@@ -896,6 +897,16 @@ export function createCellsRoutes(
           if (cellsToDelete.length === 0) {
             set.status = HTTP_STATUS.NOT_FOUND;
             return { message: "No cells found for provided ids" };
+          }
+
+          const nonArchivedCells = cellsToDelete.filter(
+            (cell) => cell.status !== "archived"
+          );
+          if (nonArchivedCells.length > 0) {
+            set.status = HTTP_STATUS.BAD_REQUEST;
+            return {
+              message: "All cells must be archived before deletion",
+            } satisfies { message: string };
           }
 
           const managerCache = new Map<string, WorktreeManager>();
@@ -980,6 +991,12 @@ export function createCellsRoutes(
           if (!cell) {
             set.status = HTTP_STATUS.NOT_FOUND;
             return { message: "Cell not found" };
+          }
+          if (cell.status !== "archived") {
+            set.status = HTTP_STATUS.BAD_REQUEST;
+            return {
+              message: "Cell must be archived before deletion",
+            } satisfies { message: string };
           }
 
           await runServerEffect(closeSession(params.id));

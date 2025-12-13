@@ -42,8 +42,17 @@ const defaultCompactionStats: CompactionStats = {
 
 export const COMPACTION_WARNING_THRESHOLD = 3;
 
-export function useAgentEventStream(sessionId: string | null, cellId: string) {
+type AgentEventStreamOptions = {
+  enabled?: boolean;
+};
+
+export function useAgentEventStream(
+  sessionId: string | null,
+  cellId: string,
+  options?: AgentEventStreamOptions
+) {
   const queryClient = useQueryClient();
+  const enabled = options?.enabled ?? true;
   const messageStoreRef = useRef<Map<string, AgentMessage>>(new Map());
   const messagePartsRef = useRef<Map<string, AgentMessagePart[]>>(new Map());
   const [permissions, setPermissions] = useState<PermissionRequest[]>([]);
@@ -124,7 +133,10 @@ export function useAgentEventStream(sessionId: string | null, cellId: string) {
   );
 
   useEffect(() => {
-    if (!sessionId) {
+    if (!(sessionId && enabled)) {
+      messageStoreRef.current.clear();
+      messagePartsRef.current.clear();
+      setPermissions([]);
       setCompaction(defaultCompactionStats);
       return;
     }
@@ -376,6 +388,7 @@ export function useAgentEventStream(sessionId: string | null, cellId: string) {
     upsertMessageRecord,
     upsertPartRecord,
     removePartRecord,
+    enabled,
   ]);
 
   return { permissions, compaction };

@@ -37,6 +37,8 @@ type ComposePanelProps = {
   canInterrupt: boolean;
   isInterrupting: boolean;
   showInterruptHint: boolean;
+  readOnly?: boolean;
+  readOnlyMessage?: string;
 };
 
 type ComposeValues = z.infer<typeof formSchema>;
@@ -58,11 +60,14 @@ export function ComposePanel({
   canInterrupt,
   isInterrupting,
   showInterruptHint,
+  readOnly = false,
+  readOnlyMessage,
 }: ComposePanelProps) {
   const form = useForm<ComposeValues>({
     defaultValues: { message: "" },
     mode: "onChange",
   });
+  const composerDisabled = readOnly || isSending;
 
   const handleSubmit = form.handleSubmit(async (values) => {
     await onSend(values.message.trim());
@@ -85,6 +90,12 @@ export function ComposePanel({
         <span>Send Instructions</span>
         <span>{agentProvider}</span>
       </div>
+      {readOnly ? (
+        <div className="mt-3 rounded-md border border-border/70 bg-muted/10 p-3 text-[11px] text-muted-foreground normal-case tracking-normal">
+          {readOnlyMessage ??
+            "Archived cells are read-only. Restore the branch to resume chatting."}
+        </div>
+      ) : null}
       <div className="mt-3">
         <label
           className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]"
@@ -93,7 +104,7 @@ export function ComposePanel({
           Model
         </label>
         <ModelSelector
-          disabled={isSending || isModelChanging}
+          disabled={composerDisabled || isModelChanging}
           id="model-selector"
           onModelChange={onModelChange}
           providerId={agentProvider}
@@ -112,12 +123,12 @@ export function ComposePanel({
                 <FormControl>
                   <Textarea
                     className="min-h-[140px] border border-input bg-background text-foreground text-sm placeholder:text-muted-foreground focus-visible:ring-primary"
-                    disabled={isSending}
+                    disabled={composerDisabled}
                     onKeyDown={(event) => {
                       if (
                         (event.ctrlKey || event.metaKey) &&
                         event.key === "Enter" &&
-                        !isSending
+                        !composerDisabled
                       ) {
                         event.preventDefault();
                         handleSubmit();
@@ -150,14 +161,14 @@ export function ComposePanel({
               <div className="flex flex-col items-end gap-2">
                 <Button
                   className="w-full border border-primary bg-primary px-3 py-1 text-primary-foreground text-xs hover:bg-primary/90 focus-visible:ring-primary sm:w-40"
-                  disabled={isSending || !form.formState.isValid}
+                  disabled={composerDisabled || !form.formState.isValid}
                   type="submit"
                 >
                   {isSending ? "Sending..." : "Send"}
                 </Button>
                 <Button
                   className="w-full border border-primary/70 bg-transparent px-3 py-1 text-primary text-xs hover:bg-primary/10 focus-visible:ring-primary disabled:text-muted-foreground disabled:opacity-50 sm:w-40"
-                  disabled={!canInterrupt || isInterrupting}
+                  disabled={readOnly || !canInterrupt || isInterrupting}
                   onClick={onInterrupt}
                   type="button"
                   variant="outline"

@@ -6,7 +6,7 @@ import {
 } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Copy, Loader2, Plus } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   formatStatus,
@@ -135,9 +135,11 @@ export function CellList({ workspaceId }: CellListProps) {
       return;
     }
 
-    const validIds = new Set(cells.map((cell) => cell.id));
+    const validArchivedIds = new Set(
+      cells.filter((cell) => cell.status === "archived").map((cell) => cell.id)
+    );
     setSelectedCellIds((prev) => {
-      const filtered = [...prev].filter((id) => validIds.has(id));
+      const filtered = [...prev].filter((id) => validArchivedIds.has(id));
       if (filtered.length === prev.size) {
         return prev;
       }
@@ -145,8 +147,17 @@ export function CellList({ workspaceId }: CellListProps) {
     });
   }, [cells]);
 
-  const selectedCells =
-    cells?.filter((cell) => selectedCellIds.has(cell.id)) ?? [];
+  const archivedCells = useMemo(
+    () => cells?.filter((cell) => cell.status === "archived") ?? [],
+    [cells]
+  );
+  const archivedIds = useMemo(
+    () => archivedCells.map((cell) => cell.id),
+    [archivedCells]
+  );
+  const selectedCells = archivedCells.filter((cell) =>
+    selectedCellIds.has(cell.id)
+  );
   const selectedCount = selectedCells.length;
   const hasSelection = selectedCount > 0;
 
@@ -244,19 +255,25 @@ export function CellList({ workspaceId }: CellListProps) {
   };
 
   const handleSelectAllToggle = () => {
-    if (!cells?.length) {
+    if (!archivedIds.length) {
       return;
     }
 
     setSelectedCellIds((prev) => {
-      if (prev.size === cells.length) {
+      const hasAllArchived = archivedIds.every((id) => prev.has(id));
+      if (hasAllArchived && prev.size === archivedIds.length) {
         return new Set();
       }
-      return new Set(cells.map((cell) => cell.id));
+      return new Set(archivedIds);
     });
   };
 
   const toggleCellSelection = (cellId: string) => {
+    const targetCell = cells?.find((cell) => cell.id === cellId);
+    if (!targetCell || targetCell.status !== "archived") {
+      return;
+    }
+
     setSelectedCellIds((prev) => {
       const next = new Set(prev);
       if (next.has(cellId)) {
@@ -342,11 +359,12 @@ export function CellList({ workspaceId }: CellListProps) {
               <Button
                 className="flex-1 sm:flex-none"
                 data-testid="toggle-select-all-global"
+                disabled={!archivedIds.length}
                 onClick={handleSelectAllToggle}
                 type="button"
                 variant="outline"
               >
-                Select All
+                Select All Archived
               </Button>
             )}
             <Link className="flex-1 sm:flex-none" to="/cells/new">
@@ -447,8 +465,8 @@ function BulkDeleteDialog({
             Delete {selectedCount} {selectedCount === 1 ? "cell" : "cells"}?
           </AlertDialogTitle>
           <AlertDialogDescription>
-            This action permanently removes the selected cells and their
-            metadata. This cannot be undone.
+            Only archived cells can be deleted. This action removes the stored
+            worktrees and metadata permanently.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="rounded-md border border-muted bg-muted/30 p-4 text-sm">
@@ -516,6 +534,7 @@ function CellCard({
   const opencodeCommand = cell.opencodeCommand ?? null;
   const connectionLabel = describeServerConnection(cell);
   const isArchived = cell.status === "archived";
+  const selectionDisabled = disableSelection || !isArchived;
   const archiveDisabled = disableSelection || isArchiving || isArchived;
   const archiveLabel = (() => {
     if (isArchiving) {
@@ -542,7 +561,7 @@ function CellCard({
             className="mt-0.5 h-5 w-5 shrink-0 border-2 border-muted-foreground data-[state=checked]:border-primary data-[state=checked]:bg-primary"
             data-cell-id={cell.id}
             data-testid="cell-select"
-            disabled={disableSelection}
+            disabled={selectionDisabled}
             onCheckedChange={() => onToggleSelect()}
           />
           <CardTitle
