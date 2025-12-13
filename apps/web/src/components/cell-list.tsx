@@ -6,7 +6,7 @@ import {
 } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Copy, Loader2, Plus } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   formatStatus,
@@ -21,6 +21,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
+  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -134,9 +135,11 @@ export function CellList({ workspaceId }: CellListProps) {
       return;
     }
 
-    const validIds = new Set(cells.map((cell) => cell.id));
+    const validArchivedIds = new Set(
+      cells.filter((cell) => cell.status === "archived").map((cell) => cell.id)
+    );
     setSelectedCellIds((prev) => {
-      const filtered = [...prev].filter((id) => validIds.has(id));
+      const filtered = [...prev].filter((id) => validArchivedIds.has(id));
       if (filtered.length === prev.size) {
         return prev;
       }
@@ -144,8 +147,17 @@ export function CellList({ workspaceId }: CellListProps) {
     });
   }, [cells]);
 
-  const selectedCells =
-    cells?.filter((cell) => selectedCellIds.has(cell.id)) ?? [];
+  const archivedCells = useMemo(
+    () => cells?.filter((cell) => cell.status === "archived") ?? [],
+    [cells]
+  );
+  const archivedIds = useMemo(
+    () => archivedCells.map((cell) => cell.id),
+    [archivedCells]
+  );
+  const selectedCells = archivedCells.filter((cell) =>
+    selectedCellIds.has(cell.id)
+  );
   const selectedCount = selectedCells.length;
   const hasSelection = selectedCount > 0;
 
@@ -154,6 +166,62 @@ export function CellList({ workspaceId }: CellListProps) {
       setIsBulkDialogOpen(false);
     }
   }, [hasSelection]);
+
+  const archiveMutation = useMutation({
+    ...cellMutations.archive,
+    onSuccess: (updatedCell) => {
+      toast.success(`Archived ${updatedCell.name}`);
+      queryClient.setQueryData(
+        cellQueries.detail(updatedCell.id).queryKey,
+        updatedCell
+      );
+      queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
+      setSelectedCellIds((prev) => {
+        if (!prev.has(updatedCell.id)) {
+          return prev;
+        }
+        const next = new Set(prev);
+        next.delete(updatedCell.id);
+        return next;
+      });
+    },
+    onError: (unknownError) => {
+      const message =
+        unknownError instanceof Error
+          ? unknownError.message
+          : "Failed to archive cell";
+      toast.error(message);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    ...cellMutations.delete,
+    onSuccess: (_response, deletedId) => {
+      const cachedDetail = queryClient.getQueryData<Cell>(
+        cellQueries.detail(deletedId).queryKey
+      );
+      toast.success(`Deleted ${cachedDetail?.name ?? "cell"}`);
+      queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
+      queryClient.removeQueries({
+        queryKey: cellQueries.detail(deletedId).queryKey,
+      });
+      setSelectedCellIds((prev) => {
+        if (!prev.has(deletedId)) {
+          return prev;
+        }
+        const next = new Set(prev);
+        next.delete(deletedId);
+        return next;
+      });
+    },
+    onError: (unknownError) => {
+      const message =
+        unknownError instanceof Error
+          ? unknownError.message
+          : "Failed to delete cell";
+      toast.error(message);
+    },
+  });
 
   const bulkDeleteMutation = useMutation({
     ...cellMutations.deleteMany,
@@ -187,19 +255,25 @@ export function CellList({ workspaceId }: CellListProps) {
   };
 
   const handleSelectAllToggle = () => {
-    if (!cells?.length) {
+    if (!archivedIds.length) {
       return;
     }
 
     setSelectedCellIds((prev) => {
-      if (prev.size === cells.length) {
+      const hasAllArchived = archivedIds.every((id) => prev.has(id));
+      if (hasAllArchived && prev.size === archivedIds.length) {
         return new Set();
       }
-      return new Set(cells.map((cell) => cell.id));
+      return new Set(archivedIds);
     });
   };
 
   const toggleCellSelection = (cellId: string) => {
+    const targetCell = cells?.find((cell) => cell.id === cellId);
+    if (!targetCell || targetCell.status !== "archived") {
+      return;
+    }
+
     setSelectedCellIds((prev) => {
       const next = new Set(prev);
       if (next.has(cellId)) {
@@ -285,11 +359,12 @@ export function CellList({ workspaceId }: CellListProps) {
               <Button
                 className="flex-1 sm:flex-none"
                 data-testid="toggle-select-all-global"
+                disabled={!archivedIds.length}
                 onClick={handleSelectAllToggle}
                 type="button"
                 variant="outline"
               >
-                Select All
+                Select All Archived
               </Button>
             )}
             <Link className="flex-1 sm:flex-none" to="/cells/new">
@@ -328,19 +403,30 @@ export function CellList({ workspaceId }: CellListProps) {
         </Card>
       ) : (
         <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-          {cells?.map((cell) => (
-            <CellCard
-              cell={cell}
-              createdLabel={formatDate(cell.createdAt)}
-              disableSelection={bulkDeleteMutation.isPending}
-              isSelected={selectedCellIds.has(cell.id)}
-              key={cell.id}
-              onCopyText={copyToClipboard}
-              onToggleSelect={() => toggleCellSelection(cell.id)}
-              serviceStatus={serviceStatusMap.get(cell.id)}
-              templateLabel={getTemplateLabel(cell.templateId)}
-            />
-          ))}
+          {cells?.map((cell) => {
+            const isArchiving =
+              archiveMutation.isPending &&
+              archiveMutation.variables === cell.id;
+            const isDeleting =
+              deleteMutation.isPending && deleteMutation.variables === cell.id;
+            return (
+              <CellCard
+                cell={cell}
+                createdLabel={formatDate(cell.createdAt)}
+                disableSelection={bulkDeleteMutation.isPending}
+                isArchiving={isArchiving}
+                isDeleting={isDeleting}
+                isSelected={selectedCellIds.has(cell.id)}
+                key={cell.id}
+                onArchive={() => archiveMutation.mutate(cell.id)}
+                onCopyText={copyToClipboard}
+                onDelete={() => deleteMutation.mutate(cell.id)}
+                onToggleSelect={() => toggleCellSelection(cell.id)}
+                serviceStatus={serviceStatusMap.get(cell.id)}
+                templateLabel={getTemplateLabel(cell.templateId)}
+              />
+            );
+          })}
         </div>
       )}
     </div>
@@ -379,8 +465,8 @@ function BulkDeleteDialog({
             Delete {selectedCount} {selectedCount === 1 ? "cell" : "cells"}?
           </AlertDialogTitle>
           <AlertDialogDescription>
-            This action permanently removes the selected cells and their
-            metadata. This cannot be undone.
+            Only archived cells can be deleted. This action removes the stored
+            worktrees and metadata permanently.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="rounded-md border border-muted bg-muted/30 p-4 text-sm">
@@ -416,6 +502,10 @@ type CellCardProps = {
   createdLabel: string;
   isSelected: boolean;
   disableSelection: boolean;
+  isArchiving: boolean;
+  isDeleting?: boolean;
+  onArchive: () => void;
+  onDelete?: () => void;
   onToggleSelect: () => void;
   onCopyText: (value: string) => void;
   serviceStatus?: ServiceStatusState;
@@ -425,7 +515,11 @@ function CellCard({
   cell,
   createdLabel,
   disableSelection,
+  isArchiving,
+  isDeleting = false,
   isSelected,
+  onArchive,
+  onDelete,
   onCopyText,
   onToggleSelect,
   templateLabel,
@@ -439,6 +533,18 @@ function CellCard({
   });
   const opencodeCommand = cell.opencodeCommand ?? null;
   const connectionLabel = describeServerConnection(cell);
+  const isArchived = cell.status === "archived";
+  const selectionDisabled = disableSelection || !isArchived;
+  const archiveDisabled = disableSelection || isArchiving || isArchived;
+  const archiveLabel = (() => {
+    if (isArchiving) {
+      return "Archiving…";
+    }
+    if (isArchived) {
+      return "Archived";
+    }
+    return "Archive";
+  })();
   return (
     <Card
       className={cn(
@@ -455,7 +561,7 @@ function CellCard({
             className="mt-0.5 h-5 w-5 shrink-0 border-2 border-muted-foreground data-[state=checked]:border-primary data-[state=checked]:bg-primary"
             data-cell-id={cell.id}
             data-testid="cell-select"
-            disabled={disableSelection}
+            disabled={selectionDisabled}
             onCheckedChange={() => onToggleSelect()}
           />
           <CardTitle
@@ -568,20 +674,103 @@ function CellCard({
         <div className="text-muted-foreground text-xs">
           <p>Created: {createdLabel}</p>
         </div>
-        <div className="flex justify-end gap-2">
-          <Link params={{ cellId: cell.id }} to="/cells/$cellId/services">
-            <Button size="sm" type="button" variant="secondary">
-              Services Panel
-            </Button>
-          </Link>
-          <Link params={{ cellId: cell.id }} to="/cells/$cellId/chat">
-            <Button size="sm" type="button" variant="outline">
-              Open Chat
-            </Button>
-          </Link>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            disabled={archiveDisabled}
+            onClick={onArchive}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            {archiveLabel}
+          </Button>
+          {isArchived ? (
+            <ArchivedActions
+              cellName={cell.name}
+              isDeleting={isDeleting}
+              onDelete={onDelete}
+            />
+          ) : (
+            <>
+              <Link params={{ cellId: cell.id }} to="/cells/$cellId/services">
+                <Button size="sm" type="button" variant="secondary">
+                  Services Panel
+                </Button>
+              </Link>
+              <Link params={{ cellId: cell.id }} to="/cells/$cellId/chat">
+                <Button size="sm" type="button" variant="outline">
+                  Open Chat
+                </Button>
+              </Link>
+            </>
+          )}
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+type ArchivedActionsProps = {
+  cellName: string;
+  isDeleting: boolean;
+  onDelete?: () => void;
+};
+
+function ArchivedActions({
+  cellName,
+  isDeleting,
+  onDelete,
+}: ArchivedActionsProps) {
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  return (
+    <>
+      <Button disabled size="sm" type="button" variant="ghost">
+        Services Unavailable
+      </Button>
+      <Button disabled size="sm" type="button" variant="ghost">
+        Chat Unavailable
+      </Button>
+      {onDelete ? (
+        <AlertDialog onOpenChange={setIsDialogOpen} open={isDialogOpen}>
+          <AlertDialogTrigger asChild>
+            <Button
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={isDeleting}
+              size="sm"
+              type="button"
+              variant="destructive"
+            >
+              {isDeleting ? "Deleting…" : "Delete"}
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete {cellName}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This removes the archived worktree and cell metadata. The action
+                cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting} type="button">
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                data-testid="confirm-delete-archived"
+                disabled={isDeleting}
+                onClick={() => {
+                  setIsDialogOpen(false);
+                  onDelete();
+                }}
+              >
+                {isDeleting ? "Deleting…" : "Delete cell"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
+    </>
   );
 }
 
@@ -589,6 +778,19 @@ function CellStatusNotice({
   status,
   lastSetupError,
 }: Pick<Cell, "status" | "lastSetupError">) {
+  if (status === "archived") {
+    return (
+      <div className="space-y-2 rounded-md border border-border/60 bg-muted/10 p-3">
+        <p className="font-semibold text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+          Archived
+        </p>
+        <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+          Worktree preserved; services and chat are disabled until deleted
+        </p>
+      </div>
+    );
+  }
+
   if (status === "error") {
     return (
       <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/10 p-3">

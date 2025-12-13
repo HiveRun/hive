@@ -531,6 +531,9 @@ async function ensureRuntimeForCell(
   if (!cell) {
     throw new Error("Cell not found");
   }
+  if (cell.status === "archived") {
+    throw new Error("Cell is archived");
+  }
 
   const workspaceRootPath = cell.workspaceRootPath || cell.workspacePath;
   const deps = getAgentRuntimeDependencies();

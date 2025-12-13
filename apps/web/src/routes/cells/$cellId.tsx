@@ -71,6 +71,9 @@ function CellLayout() {
       to: "/cells/$cellId/chat",
     },
   ];
+  const isArchived = cell?.status === "archived";
+  const branchLabel = cell?.branchName ?? `cell-${cellId}`;
+  const baseCommitLabel = cell?.baseCommit ?? "unknown base";
 
   if (!cell) {
     return (
@@ -102,28 +105,45 @@ function CellLayout() {
             ) : null}
             <div className="flex flex-wrap gap-4 text-[11px] text-muted-foreground uppercase tracking-[0.2em]">
               <span>Template · {templateLabel ?? cell.templateId}</span>
-              <span>Workspace · {cell.workspacePath}</span>
+              <span>Workspace · {cell.workspacePath ?? "Unavailable"}</span>
             </div>
           </div>
         </section>
 
-        <div className="flex flex-wrap justify-end gap-2">
-          {navItems.map((item) => (
-            <Link key={item.routeId} params={{ cellId }} to={item.to}>
-              <Button
-                variant={
-                  activeRouteId === item.routeId ? "secondary" : "outline"
-                }
-              >
-                {item.label}
-              </Button>
-            </Link>
-          ))}
-        </div>
+        {isArchived ? (
+          <div className="rounded-md border border-border/70 bg-muted/10 p-4 text-muted-foreground text-sm">
+            <p className="font-semibold text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+              Archived cell
+            </p>
+            <p className="text-[12px] text-muted-foreground">
+              The worktree remains on disk for offline analysis. Branch{" "}
+              {branchLabel} and base commit {baseCommitLabel} stay available
+              until you delete this cell.
+            </p>
+          </div>
+        ) : null}
 
-        <div className="min-h-0 flex-1 overflow-hidden">
-          <Outlet />
-        </div>
+        {isArchived ? null : (
+          <>
+            <div className="flex flex-wrap justify-end gap-2">
+              {navItems.map((item) => (
+                <Link key={item.routeId} params={{ cellId }} to={item.to}>
+                  <Button
+                    variant={
+                      activeRouteId === item.routeId ? "secondary" : "outline"
+                    }
+                  >
+                    {item.label}
+                  </Button>
+                </Link>
+              ))}
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <Outlet />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

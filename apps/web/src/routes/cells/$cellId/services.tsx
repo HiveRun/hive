@@ -1,11 +1,15 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useServiceStream } from "@/hooks/use-service-stream";
 import { cn } from "@/lib/utils";
-import { type CellServiceSummary, cellMutations } from "@/queries/cells";
+import {
+  type CellServiceSummary,
+  cellMutations,
+  cellQueries,
+} from "@/queries/cells";
 
 export const Route = createFileRoute("/cells/$cellId/services")({
   component: CellServices,
@@ -13,7 +17,15 @@ export const Route = createFileRoute("/cells/$cellId/services")({
 
 function CellServices() {
   const { cellId } = Route.useParams();
-  const { services, isLoading, error: streamError } = useServiceStream(cellId);
+  const cellQuery = useQuery(cellQueries.detail(cellId));
+  const isArchived = cellQuery.data?.status === "archived";
+  const {
+    services,
+    isLoading,
+    error: streamError,
+  } = useServiceStream(cellId, {
+    enabled: !isArchived,
+  });
 
   const startServiceMutation = useMutation({
     mutationFn: cellMutations.startService.mutationFn,
@@ -46,6 +58,35 @@ function CellServices() {
   const pendingStopId = stopServiceMutation.isPending
     ? stopServiceMutation.variables?.serviceId
     : undefined;
+
+  if (cellQuery.isLoading) {
+    return (
+      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground">
+        Loading cell…
+      </div>
+    );
+  }
+
+  if (cellQuery.error) {
+    const message =
+      cellQuery.error instanceof Error
+        ? cellQuery.error.message
+        : "Failed to load cell";
+    return (
+      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-destructive/50 bg-destructive/10 text-destructive">
+        {message}
+      </div>
+    );
+  }
+
+  if (isArchived) {
+    return (
+      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground">
+        Archived cells cannot manage services. Restore the branch to reopen this
+        workspace.
+      </div>
+    );
+  }
 
   const handleStart = (service: CellServiceSummary) => {
     startServiceMutation.mutate({

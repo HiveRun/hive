@@ -1,10 +1,6 @@
 import { parseDiffFromFile } from "@pierre/precision-diffs";
 import { FileDiff as PrecisionFileDiff } from "@pierre/precision-diffs/react";
-import {
-  useQuery,
-  useQueryClient,
-  useSuspenseQuery,
-} from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   ChevronDown,
@@ -83,6 +79,7 @@ type DiffSortMode = keyof typeof DIFF_SORT_OPTIONS;
 
 type DiffLoaderData = {
   initialFiles: string[];
+  isArchived: boolean;
 };
 
 export const Route = createFileRoute("/cells/$cellId/diff")({
@@ -92,19 +89,30 @@ export const Route = createFileRoute("/cells/$cellId/diff")({
     initialFiles: search?.file ? [search.file] : [],
   }),
   loader: async ({ params, context: { queryClient }, deps }) => {
-    await queryClient.ensureQueryData(
-      cellDiffQueries.summary(params.cellId, deps.mode, {
-        files: deps.initialFiles,
-      })
+    const cell = await queryClient.ensureQueryData(
+      cellQueries.detail(params.cellId)
     );
-    return { initialFiles: deps.initialFiles } satisfies DiffLoaderData;
+    const isArchived = cell.status === "archived";
+
+    if (!isArchived) {
+      await queryClient.ensureQueryData(
+        cellDiffQueries.summary(params.cellId, deps.mode, {
+          files: deps.initialFiles,
+        })
+      );
+    }
+
+    return {
+      initialFiles: deps.initialFiles,
+      isArchived,
+    } satisfies DiffLoaderData;
   },
   component: CellDiffRoute,
 });
 
 function CellDiffRoute() {
   const { cellId } = Route.useParams();
-  const { initialFiles } = Route.useLoaderData() as DiffLoaderData;
+  const { initialFiles, isArchived } = Route.useLoaderData() as DiffLoaderData;
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const queryClient = useQueryClient();
@@ -115,15 +123,20 @@ function CellDiffRoute() {
 
   const mode = (search.mode ?? "workspace") as DiffMode;
 
-  const summaryQuery = useSuspenseQuery(
-    cellDiffQueries.summary(cellId, mode, {
+  const summaryQuery = useQuery({
+    ...cellDiffQueries.summary(cellId, mode, {
       files: initialFiles,
-    })
-  );
+    }),
+    enabled: !isArchived,
+  });
   const summary = summaryQuery.data;
 
   useEffect(() => {
     detailCacheRef.current.clear();
+    if (!summary) {
+      return;
+    }
+
     for (const fileDetail of summary.details ?? []) {
       detailCacheRef.current.set(fileDetail.path, fileDetail);
     }
@@ -134,14 +147,13 @@ function CellDiffRoute() {
   const branchAvailable = Boolean(cellQuery.data?.baseCommit);
 
   const filteredFiles = useMemo(() => {
+    const files = summary?.files ?? [];
     if (!filter.trim()) {
-      return summary.files;
+      return files;
     }
     const query = filter.trim().toLowerCase();
-    return summary.files.filter((file) =>
-      file.path.toLowerCase().includes(query)
-    );
-  }, [filter, summary.files]);
+    return files.filter((file) => file.path.toLowerCase().includes(query));
+  }, [filter, summary]);
 
   const sortedFiles = useMemo(
     () => sortFiles(filteredFiles, sortMode),
@@ -221,13 +233,15 @@ function CellDiffRoute() {
 
   const totals = useMemo(
     () =>
-      summary.files.reduce(
-        (acc, file) => ({
-          additions: acc.additions + file.additions,
-          deletions: acc.deletions + file.deletions,
-        }),
-        { additions: 0, deletions: 0 }
-      ),
+      summary
+        ? summary.files.reduce(
+            (acc, file) => ({
+              additions: acc.additions + file.additions,
+              deletions: acc.deletions + file.deletions,
+            }),
+            { additions: 0, deletions: 0 }
+          )
+        : { additions: 0, deletions: 0 },
     [summary]
   );
 
@@ -268,6 +282,35 @@ function CellDiffRoute() {
   };
 
   const hasVisibleFiles = sortedFiles.length > 0;
+
+  if (isArchived) {
+    return (
+      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground">
+        Diff is unavailable for archived cells. Restore the branch to inspect
+        changes.
+      </div>
+    );
+  }
+
+  if (summaryQuery.isError) {
+    const message =
+      summaryQuery.error instanceof Error
+        ? summaryQuery.error.message
+        : "Failed to load diff";
+    return (
+      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-destructive/50 bg-destructive/10 text-destructive">
+        {message}
+      </div>
+    );
+  }
+
+  if (summaryQuery.isLoading || !summary) {
+    return (
+      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground">
+        Loading diff…
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col gap-4 rounded-sm border-2 border-border bg-card p-4 text-muted-foreground text-sm">

@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { ExternalLink } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
@@ -10,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useServiceStream } from "@/hooks/use-service-stream";
-import type { CellServiceSummary } from "@/queries/cells";
+import { type CellServiceSummary, cellQueries } from "@/queries/cells";
 
 const BROWSER_REACHABILITY_TIMEOUT_MS = 3000;
 
@@ -28,7 +29,11 @@ export const Route = createFileRoute("/cells/$cellId/viewer")({
 
 function CellServiceViewer() {
   const { cellId } = Route.useParams();
-  const { services, isLoading, error } = useServiceStream(cellId);
+  const cellQuery = useQuery(cellQueries.detail(cellId));
+  const isArchived = cellQuery.data?.status === "archived";
+  const { services, isLoading, error } = useServiceStream(cellId, {
+    enabled: !isArchived,
+  });
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(
     null
   );
@@ -104,6 +109,35 @@ function CellServiceViewer() {
 
   const resolvedReachability =
     browserReachability ?? selectedService?.portReachable ?? null;
+
+  if (cellQuery.isLoading) {
+    return (
+      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground">
+        Loading cell…
+      </div>
+    );
+  }
+
+  if (cellQuery.error) {
+    const message =
+      cellQuery.error instanceof Error
+        ? cellQuery.error.message
+        : "Failed to load cell";
+    return (
+      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-destructive/50 bg-destructive/10 text-destructive">
+        {message}
+      </div>
+    );
+  }
+
+  if (isArchived) {
+    return (
+      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground">
+        Archived cells cannot expose live previews. Restore the branch to reopen
+        the workspace.
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">

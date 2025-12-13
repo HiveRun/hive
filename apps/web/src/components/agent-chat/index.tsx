@@ -25,12 +25,18 @@ type AgentChatProps = {
   cellId: string;
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Agent chat coordinates many hooks and guard states; extracting further would harm readability.
 export function AgentChat({ cellId }: AgentChatProps) {
   const queryClient = useQueryClient();
   const sessionQuery = useQuery(agentQueries.sessionByCell(cellId));
   const session = sessionQuery.data ?? null;
   const sessionId = session?.id;
   const cellQuery = useQuery(cellQueries.detail(cellId));
+  const isArchived = cellQuery.data?.status === "archived";
+  const isReadOnly = Boolean(isArchived);
+  const readOnlyMessage = isReadOnly
+    ? "Archived cells are read-only. Restore the branch to resume chatting."
+    : undefined;
   const messagesQuery = useQuery(agentQueries.messages(sessionId ?? null));
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedModel, setSelectedModel] = useState<ModelSelection>();
@@ -40,7 +46,8 @@ export function AgentChat({ cellId }: AgentChatProps) {
 
   const { permissions, compaction } = useAgentEventStream(
     sessionId ?? null,
-    cellId
+    cellId,
+    { enabled: Boolean(sessionId) && !isReadOnly }
   );
   const compactionWarning =
     compaction.count >= COMPACTION_WARNING_THRESHOLD && Boolean(sessionId);
@@ -173,6 +180,13 @@ export function AgentChat({ cellId }: AgentChatProps) {
   });
 
   const handleStartSession = () => {
+    if (isReadOnly) {
+      toast.info(
+        "Archived cells are read-only. Restore the branch to start a session."
+      );
+      return;
+    }
+
     startAgentMutation.mutate({
       cellId,
       modelId: selectedModel?.id,
@@ -181,6 +195,10 @@ export function AgentChat({ cellId }: AgentChatProps) {
   };
 
   const handleSendMessage = async (content: string) => {
+    if (isReadOnly) {
+      toast.info("Archived cells are read-only. Restore the branch to chat.");
+      return;
+    }
     if (!(session?.id && content.trim())) {
       return;
     }
@@ -193,6 +211,9 @@ export function AgentChat({ cellId }: AgentChatProps) {
   const handleModelChange = useCallback(
     (model: ModelSelection) => {
       setSelectedModel(model);
+      if (isReadOnly) {
+        return;
+      }
       if (session?.id) {
         setModelMutation.mutate({
           sessionId: session.id,
@@ -201,7 +222,7 @@ export function AgentChat({ cellId }: AgentChatProps) {
         });
       }
     },
-    [session?.id, setModelMutation]
+    [session?.id, setModelMutation, isReadOnly]
   );
 
   const clearInterruptConfirm = useCallback(() => {
@@ -298,7 +319,17 @@ export function AgentChat({ cellId }: AgentChatProps) {
 
   if (!session) {
     return (
-      <NoSessionState isStarting={isStarting} onStart={handleStartSession} />
+      <NoSessionState
+        isStarting={isReadOnly ? false : isStarting}
+        onStart={handleStartSession}
+        readOnly={isReadOnly}
+        readOnlyMessage={
+          isReadOnly
+            ? (readOnlyMessage ??
+              "Archived cells cannot start new sessions until restored.")
+            : undefined
+        }
+      />
     );
   }
 
@@ -313,6 +344,12 @@ export function AgentChat({ cellId }: AgentChatProps) {
         compactionWarning={compactionWarning}
         session={session}
       />
+      {isReadOnly ? (
+        <div className="border border-border/70 bg-muted/10 p-3 text-muted-foreground text-sm">
+          {readOnlyMessage ??
+            "Archived cells are read-only. Restore the branch or duplicate the workspace to continue chatting."}
+        </div>
+      ) : null}
       <div className="flex flex-1 flex-col gap-0 overflow-hidden lg:flex-row">
         <ConversationPanel
           compaction={compaction}
@@ -336,6 +373,8 @@ export function AgentChat({ cellId }: AgentChatProps) {
           onModelChange={handleModelChange}
           onSend={handleSendMessage}
           provider={session.provider}
+          readOnly={isReadOnly}
+          readOnlyMessage={readOnlyMessage}
           selectedModel={selectedModel}
           sessionId={session.id}
           showInterruptHint={showEscInterruptHint}
@@ -356,9 +395,13 @@ function LoadingState() {
 function NoSessionState({
   isStarting,
   onStart,
+  readOnly = false,
+  readOnlyMessage,
 }: {
   isStarting: boolean;
   onStart: () => void;
+  readOnly?: boolean;
+  readOnlyMessage?: string;
 }) {
   return (
     <div className="flex h-full flex-col justify-center gap-4 border-2 border-border bg-card px-4 py-6 text-foreground">
@@ -367,18 +410,22 @@ function NoSessionState({
           Agent Session
         </p>
         <p className="text-muted-foreground text-sm">
-          No agent is currently running for this cell. Start a session to chat
-          with the workspace agent.
+          {readOnly
+            ? (readOnlyMessage ??
+              "Archived cells cannot start new sessions until you restore the branch.")
+            : "No agent is currently running for this cell. Start a session to chat with the workspace agent."}
         </p>
       </div>
-      <Button
-        className="self-start border border-primary bg-primary px-4 text-primary-foreground hover:bg-primary/90"
-        disabled={isStarting}
-        onClick={onStart}
-        type="button"
-      >
-        {isStarting ? "Starting..." : "Start Agent Session"}
-      </Button>
+      {readOnly ? null : (
+        <Button
+          className="self-start border border-primary bg-primary px-4 text-primary-foreground hover:bg-primary/90"
+          disabled={isStarting}
+          onClick={onStart}
+          type="button"
+        >
+          {isStarting ? "Starting..." : "Start Agent Session"}
+        </Button>
+      )}
     </div>
   );
 }
