@@ -64,6 +64,7 @@ export function CellList({ workspaceId }: CellListProps) {
   const [selectedCellIds, setSelectedCellIds] = useState<Set<string>>(
     () => new Set()
   );
+  const [isBulkArchiveOpen, setIsBulkArchiveOpen] = useState(false);
   const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
 
   const queryClient = useQueryClient();
@@ -171,6 +172,12 @@ export function CellList({ workspaceId }: CellListProps) {
     }
   }, [hasSelection, canDeleteSelection]);
 
+  useEffect(() => {
+    if (!canArchiveSelection && isBulkArchiveOpen) {
+      setIsBulkArchiveOpen(false);
+    }
+  }, [canArchiveSelection, isBulkArchiveOpen]);
+
   const archiveManyMutation = useMutation({
     mutationFn: async (ids: string[]) => {
       const updates: Cell[] = [];
@@ -185,6 +192,17 @@ export function CellList({ workspaceId }: CellListProps) {
         queryClient.setQueryData(cellQueries.detail(cell.id).queryKey, cell);
       }
       queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
+      setSelectedCellIds((prev) => {
+        if (prev.size === 0) {
+          return prev;
+        }
+        const next = new Set(prev);
+        for (const cell of updatedCells) {
+          next.delete(cell.id);
+        }
+        return next;
+      });
+      setIsBulkArchiveOpen(false);
       const count = updatedCells.length;
       const label = count === 1 ? "cell" : "cells";
       toast.success(`Archived ${count} ${label}`);
@@ -252,6 +270,14 @@ export function CellList({ workspaceId }: CellListProps) {
       return;
     }
 
+    setIsBulkArchiveOpen(true);
+  };
+
+  const confirmArchiveSelected = () => {
+    if (!canArchiveSelection) {
+      toast.info("Select at least one active cell to archive");
+      return;
+    }
     archiveManyMutation.mutate(archivableSelection.map((cell) => cell.id));
   };
 
@@ -408,6 +434,15 @@ export function CellList({ workspaceId }: CellListProps) {
         </div>
       </div>
 
+      <BulkArchiveDialog
+        disableActions={archiveManyMutation.isPending}
+        isOpen={isBulkArchiveOpen && canArchiveSelection}
+        onConfirmArchive={confirmArchiveSelected}
+        onOpenChange={setIsBulkArchiveOpen}
+        selectedCells={archivableSelection}
+        selectedCount={archivableSelectionCount}
+      />
+
       <BulkDeleteDialog
         disableActions={bulkDeleteMutation.isPending}
         isOpen={isBulkDialogOpen && canDeleteSelection}
@@ -459,20 +494,89 @@ export function CellList({ workspaceId }: CellListProps) {
   );
 }
 
-type BulkDeleteDialogProps = {
+type BulkArchiveDialogProps = {
   disableActions: boolean;
   isOpen: boolean;
+  onConfirmArchive: () => void;
   onOpenChange: (open: boolean) => void;
-  onConfirmDelete: () => void;
   selectedCells: Cell[];
   selectedCount: number;
 };
 
+type BulkDeleteDialogProps = {
+  disableActions: boolean;
+  isOpen: boolean;
+  onConfirmDelete: () => void;
+  onOpenChange: (open: boolean) => void;
+  selectedCells: Cell[];
+  selectedCount: number;
+};
+
+function BulkArchiveDialog({
+  disableActions,
+  isOpen,
+  onConfirmArchive,
+  onOpenChange,
+  selectedCells,
+  selectedCount,
+}: BulkArchiveDialogProps) {
+  const archivedTargets = selectedCells.filter(
+    (cell) => cell.status === "archived"
+  );
+  return (
+    <AlertDialog onOpenChange={onOpenChange} open={isOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            Archive {selectedCount} {selectedCount === 1 ? "cell" : "cells"}?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            Archiving stops services, preserves the worktree, and blocks future
+            chat interactions until you delete or restore the cell.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="max-h-48 overflow-y-auto rounded border border-border/40 bg-muted/10 p-3 text-xs">
+          <ul className="space-y-1">
+            {selectedCells.map((cell) => (
+              <li
+                className="flex items-center justify-between gap-2"
+                key={cell.id}
+              >
+                <span className="font-medium text-foreground">{cell.name}</span>
+                <Badge variant="outline">{cell.status}</Badge>
+              </li>
+            ))}
+          </ul>
+        </div>
+        {archivedTargets.length > 0 ? (
+          <p className="text-[11px] text-muted-foreground">
+            {archivedTargets.length} already archived; confirming again keeps
+            them read-only.
+          </p>
+        ) : null}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={disableActions} type="button">
+            Cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-secondary text-secondary-foreground hover:bg-secondary/80"
+            data-testid="confirm-archive-selected"
+            disabled={disableActions}
+            onClick={onConfirmArchive}
+          >
+            {disableActions ? "Archiving…" : "Archive"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 function BulkDeleteDialog({
   disableActions,
   isOpen,
-  onOpenChange,
   onConfirmDelete,
+  onOpenChange,
   selectedCells,
   selectedCount,
 }: BulkDeleteDialogProps) {
