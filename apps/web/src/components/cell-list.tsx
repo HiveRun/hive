@@ -21,7 +21,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -212,35 +211,6 @@ export function CellList({ workspaceId }: CellListProps) {
         unknownError instanceof Error
           ? unknownError.message
           : "Failed to archive cells";
-      toast.error(message);
-    },
-  });
-
-  const deleteMutation = useMutation({
-    ...cellMutations.delete,
-    onSuccess: (_response, deletedId) => {
-      const cachedDetail = queryClient.getQueryData<Cell>(
-        cellQueries.detail(deletedId).queryKey
-      );
-      toast.success(`Deleted ${cachedDetail?.name ?? "cell"}`);
-      queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
-      queryClient.removeQueries({
-        queryKey: cellQueries.detail(deletedId).queryKey,
-      });
-      setSelectedCellIds((prev) => {
-        if (!prev.has(deletedId)) {
-          return prev;
-        }
-        const next = new Set(prev);
-        next.delete(deletedId);
-        return next;
-      });
-    },
-    onError: (unknownError) => {
-      const message =
-        unknownError instanceof Error
-          ? unknownError.message
-          : "Failed to delete cell";
       toast.error(message);
     },
   });
@@ -469,25 +439,19 @@ export function CellList({ workspaceId }: CellListProps) {
         </Card>
       ) : (
         <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-          {cells?.map((cell) => {
-            const isDeleting =
-              deleteMutation.isPending && deleteMutation.variables === cell.id;
-            return (
-              <CellCard
-                cell={cell}
-                createdLabel={formatDate(cell.createdAt)}
-                disableSelection={bulkDeleteMutation.isPending}
-                isDeleting={isDeleting}
-                isSelected={selectedCellIds.has(cell.id)}
-                key={cell.id}
-                onCopyText={copyToClipboard}
-                onDelete={() => deleteMutation.mutate(cell.id)}
-                onToggleSelect={() => toggleCellSelection(cell.id)}
-                serviceStatus={serviceStatusMap.get(cell.id)}
-                templateLabel={getTemplateLabel(cell.templateId)}
-              />
-            );
-          })}
+          {cells?.map((cell) => (
+            <CellCard
+              cell={cell}
+              createdLabel={formatDate(cell.createdAt)}
+              disableSelection={bulkDeleteMutation.isPending}
+              isSelected={selectedCellIds.has(cell.id)}
+              key={cell.id}
+              onCopyText={copyToClipboard}
+              onToggleSelect={() => toggleCellSelection(cell.id)}
+              serviceStatus={serviceStatusMap.get(cell.id)}
+              templateLabel={getTemplateLabel(cell.templateId)}
+            />
+          ))}
         </div>
       )}
     </div>
@@ -632,8 +596,6 @@ type CellCardProps = {
   createdLabel: string;
   isSelected: boolean;
   disableSelection: boolean;
-  isDeleting?: boolean;
-  onDelete?: () => void;
   onToggleSelect: () => void;
   onCopyText: (value: string) => void;
   serviceStatus?: ServiceStatusState;
@@ -643,9 +605,7 @@ function CellCard({
   cell,
   createdLabel,
   disableSelection,
-  isDeleting = false,
   isSelected,
-  onDelete,
   onCopyText,
   onToggleSelect,
   templateLabel,
@@ -687,13 +647,27 @@ function CellCard({
             {cell.name}
           </CardTitle>
         </div>
-        <Badge
-          className="w-fit"
-          data-testid="cell-template"
-          variant="secondary"
-        >
-          {templateLabel}
-        </Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge
+            className={cn(
+              "w-fit",
+              isArchived
+                ? "border-destructive/40 bg-destructive/10 text-destructive"
+                : "border-primary/40 bg-primary/10 text-primary"
+            )}
+            data-testid="cell-status"
+            variant="outline"
+          >
+            {isArchived ? "Archived" : "Active"}
+          </Badge>
+          <Badge
+            className="w-fit"
+            data-testid="cell-template"
+            variant="secondary"
+          >
+            {templateLabel}
+          </Badge>
+        </div>
         <CellStatusNotice
           lastSetupError={cell.lastSetupError}
           status={cell.status}
@@ -792,11 +766,20 @@ function CellCard({
         </div>
         <div className="flex flex-wrap justify-end gap-2">
           {isArchived ? (
-            <ArchivedActions
-              cellName={cell.name}
-              isDeleting={isDeleting}
-              onDelete={onDelete}
-            />
+            <div className="flex flex-1 flex-col gap-2">
+              <div className="flex flex-wrap gap-2">
+                <Button disabled size="sm" type="button" variant="ghost">
+                  Services Unavailable
+                </Button>
+                <Button disabled size="sm" type="button" variant="ghost">
+                  Chat Unavailable
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Select this cell and use the bulk actions above to archive again
+                or delete it.
+              </p>
+            </div>
           ) : (
             <>
               <Link params={{ cellId: cell.id }} to="/cells/$cellId/services">
@@ -814,70 +797,6 @@ function CellCard({
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-type ArchivedActionsProps = {
-  cellName: string;
-  isDeleting: boolean;
-  onDelete?: () => void;
-};
-
-function ArchivedActions({
-  cellName,
-  isDeleting,
-  onDelete,
-}: ArchivedActionsProps) {
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-  return (
-    <>
-      <Button disabled size="sm" type="button" variant="ghost">
-        Services Unavailable
-      </Button>
-      <Button disabled size="sm" type="button" variant="ghost">
-        Chat Unavailable
-      </Button>
-      {onDelete ? (
-        <AlertDialog onOpenChange={setIsDialogOpen} open={isDialogOpen}>
-          <AlertDialogTrigger asChild>
-            <Button
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={isDeleting}
-              size="sm"
-              type="button"
-              variant="destructive"
-            >
-              {isDeleting ? "Deleting…" : "Delete"}
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete {cellName}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                This removes the archived worktree and cell metadata. The action
-                cannot be undone.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={isDeleting} type="button">
-                Cancel
-              </AlertDialogCancel>
-              <AlertDialogAction
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                data-testid="confirm-delete-archived"
-                disabled={isDeleting}
-                onClick={() => {
-                  setIsDialogOpen(false);
-                  onDelete();
-                }}
-              >
-                {isDeleting ? "Deleting…" : "Delete cell"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      ) : null}
-    </>
   );
 }
 
