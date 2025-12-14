@@ -145,8 +145,10 @@ export function CellList({ workspaceId }: CellListProps) {
     });
   }, [cells]);
 
-  const selectedCells =
-    cells?.filter((cell) => selectedCellIds.has(cell.id)) ?? [];
+  const allCells = cells ?? [];
+  const activeCells = allCells.filter((cell) => cell.status !== "archived");
+  const archivedCells = allCells.filter((cell) => cell.status === "archived");
+  const selectedCells = allCells.filter((cell) => selectedCellIds.has(cell.id));
   const selectedCount = selectedCells.length;
   const hasSelection = selectedCount > 0;
   const archivableSelection = selectedCells.filter(
@@ -422,38 +424,86 @@ export function CellList({ workspaceId }: CellListProps) {
         selectedCount={deletableSelectionCount}
       />
 
-      {cells && cells.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <h3 className="mb-2 font-semibold text-lg">No cells yet</h3>
-            <p className="mb-4 text-center text-muted-foreground">
-              Create your first cell to get started with Hive.
+      <div className="space-y-10">
+        <section className="space-y-3">
+          <header>
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="font-semibold text-xl">Active Cells</h2>
+              <Badge variant="outline">{activeCells.length}</Badge>
+            </div>
+            <p className="text-muted-foreground">
+              Cells that can still run services and chat. Archive them when
+              you're done.
             </p>
-            <Link to="/cells/new">
-              <Button type="button">
-                <Plus className="mr-2 h-4 w-4" />
-                Create Cell
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-          {cells?.map((cell) => (
-            <CellCard
-              cell={cell}
-              createdLabel={formatDate(cell.createdAt)}
-              disableSelection={bulkDeleteMutation.isPending}
-              isSelected={selectedCellIds.has(cell.id)}
-              key={cell.id}
-              onCopyText={copyToClipboard}
-              onToggleSelect={() => toggleCellSelection(cell.id)}
-              serviceStatus={serviceStatusMap.get(cell.id)}
-              templateLabel={getTemplateLabel(cell.templateId)}
-            />
-          ))}
-        </div>
-      )}
+          </header>
+          {activeCells.length > 0 ? (
+            <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+              {activeCells.map((cell) => (
+                <CellCard
+                  cell={cell}
+                  createdLabel={formatDate(cell.createdAt)}
+                  disableSelection={bulkDeleteMutation.isPending}
+                  isSelected={selectedCellIds.has(cell.id)}
+                  key={cell.id}
+                  onCopyText={copyToClipboard}
+                  onToggleSelect={() => toggleCellSelection(cell.id)}
+                  serviceStatus={serviceStatusMap.get(cell.id)}
+                  templateLabel={getTemplateLabel(cell.templateId)}
+                />
+              ))}
+            </div>
+          ) : (
+            <Card className="border-dashed">
+              <CardContent className="flex flex-col items-center justify-center gap-3 py-10 text-center text-muted-foreground">
+                <p>No active cells in this workspace.</p>
+                <Link to="/cells/new">
+                  <Button type="button">
+                    <Plus className="mr-2 h-4 w-4" />
+                    Create Cell
+                  </Button>
+                </Link>
+              </CardContent>
+            </Card>
+          )}
+        </section>
+
+        <section className="space-y-3">
+          <header>
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="font-semibold text-xl">Archived Cells</h2>
+              <Badge variant="outline">{archivedCells.length}</Badge>
+            </div>
+            <p className="text-muted-foreground">
+              Preserved workspaces for offline review or deletion.
+            </p>
+          </header>
+          {archivedCells.length > 0 ? (
+            <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+              {archivedCells.map((cell) => (
+                <CellCard
+                  cell={cell}
+                  createdLabel={formatDate(cell.createdAt)}
+                  disableSelection={bulkDeleteMutation.isPending}
+                  isSelected={selectedCellIds.has(cell.id)}
+                  key={cell.id}
+                  onCopyText={copyToClipboard}
+                  onToggleSelect={() => toggleCellSelection(cell.id)}
+                  serviceStatus={serviceStatusMap.get(cell.id)}
+                  templateLabel={getTemplateLabel(cell.templateId)}
+                />
+              ))}
+            </div>
+          ) : (
+            <Card className="border-dashed">
+              <CardContent className="flex flex-col items-center justify-center gap-3 py-10 text-center text-muted-foreground">
+                <p>
+                  No archived cells yet. Archive finished work to free up slots.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </section>
+      </div>
     </div>
   );
 }
