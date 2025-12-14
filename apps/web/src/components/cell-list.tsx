@@ -282,11 +282,6 @@ export function CellList({ workspaceId }: CellListProps) {
   };
 
   const toggleCellSelection = (cellId: string) => {
-    const targetCell = cells?.find((cell) => cell.id === cellId);
-    if (!targetCell || targetCell.status !== "archived") {
-      return;
-    }
-
     setSelectedCellIds((prev) => {
       const next = new Set(prev);
       if (next.has(cellId)) {
