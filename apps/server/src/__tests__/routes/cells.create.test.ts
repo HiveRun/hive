@@ -602,6 +602,84 @@ describe("cell archival", () => {
     expect(row?.status).toBe("ready");
   });
 
+  it("restores archived cells and restarts services", async () => {
+    const cellId = "restore-cell";
+    await testDb.insert(cells).values({
+      id: cellId,
+      name: "Archived Cell",
+      templateId,
+      workspaceId: workspaceRecord.id,
+      workspacePath,
+      workspaceRootPath: workspaceRecord.path,
+      branchName: "cell-branch",
+      baseCommit: "abc123",
+      createdAt: new Date(),
+      status: "archived",
+    });
+
+    const ensureAgentSessionSpy = vi.fn();
+    const dependencies = createDependencies({
+      onEnsureAgentSession: ensureAgentSessionSpy,
+    });
+    const ensureServicesSpy = vi.fn();
+    dependencies.ensureServicesForCell = (args: any) => {
+      ensureServicesSpy(args);
+      return Effect.void;
+    };
+
+    const app = new Elysia().use(createCellsRoutes(dependencies));
+
+    const response = await app.handle(
+      new Request(`http://localhost/api/cells/${cellId}/restore`, {
+        method: "POST",
+      })
+    );
+
+    expect(response.status).toBe(OK_STATUS);
+    const payload = (await response.json()) as { status: string };
+    expect(payload.status).toBe("ready");
+    expect(ensureServicesSpy).toHaveBeenCalledTimes(1);
+    expect(ensureAgentSessionSpy).toHaveBeenCalledWith(
+      cellId,
+      expect.any(String),
+      expect.objectContaining({ force: true })
+    );
+
+    const [row] = await testDb.select().from(cells).where(eq(cells.id, cellId));
+    expect(row?.status).toBe("ready");
+  });
+
+  it("rejects restore for active cells", async () => {
+    const cellId = "restore-active";
+    await testDb.insert(cells).values({
+      id: cellId,
+      name: "Ready Cell",
+      templateId,
+      workspaceId: workspaceRecord.id,
+      workspacePath,
+      workspaceRootPath: workspaceRecord.path,
+      branchName: "cell-branch",
+      baseCommit: "abc123",
+      createdAt: new Date(),
+      status: "ready",
+    });
+
+    const app = new Elysia().use(createCellsRoutes(createDependencies()));
+
+    const response = await app.handle(
+      new Request(`http://localhost/api/cells/${cellId}/restore`, {
+        method: "POST",
+      })
+    );
+
+    expect(response.status).toBe(BAD_REQUEST_STATUS);
+    const payload = (await response.json()) as { message: string };
+    expect(payload.message.toLowerCase()).toContain("not archived");
+
+    const [row] = await testDb.select().from(cells).where(eq(cells.id, cellId));
+    expect(row?.status).toBe("ready");
+  });
+
   it("prevents service start for archived cells", async () => {
     const cellId = "archived-start";
     const serviceId = "service-1";

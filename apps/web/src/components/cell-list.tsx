@@ -59,11 +59,13 @@ type CellListProps = {
   workspaceId: string;
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Cell list orchestrates data fetching, bulk actions, and multiple dialogs in one component for UX clarity.
 export function CellList({ workspaceId }: CellListProps) {
   const [selectedCellIds, setSelectedCellIds] = useState<Set<string>>(
     () => new Set()
   );
   const [isBulkArchiveOpen, setIsBulkArchiveOpen] = useState(false);
+  const [isBulkRestoreOpen, setIsBulkRestoreOpen] = useState(false);
   const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
 
   const queryClient = useQueryClient();
@@ -159,7 +161,10 @@ export function CellList({ workspaceId }: CellListProps) {
   );
   const archivableSelectionCount = archivableSelection.length;
   const deletableSelectionCount = deletableSelection.length;
+  const restorableSelection = deletableSelection;
+  const restorableSelectionCount = restorableSelection.length;
   const canArchiveSelection = archivableSelectionCount > 0;
+  const canRestoreSelection = restorableSelectionCount > 0;
   const canDeleteSelection =
     hasSelection && deletableSelectionCount === selectedCount;
 
@@ -178,6 +183,12 @@ export function CellList({ workspaceId }: CellListProps) {
       setIsBulkArchiveOpen(false);
     }
   }, [canArchiveSelection, isBulkArchiveOpen]);
+
+  useEffect(() => {
+    if (!canRestoreSelection && isBulkRestoreOpen) {
+      setIsBulkRestoreOpen(false);
+    }
+  }, [canRestoreSelection, isBulkRestoreOpen]);
 
   const archiveManyMutation = useMutation({
     mutationFn: async (ids: string[]) => {
@@ -217,6 +228,44 @@ export function CellList({ workspaceId }: CellListProps) {
     },
   });
 
+  const restoreManyMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const updates: Cell[] = [];
+      for (const id of ids) {
+        const updated = await cellMutations.restore.mutationFn(id);
+        updates.push(updated);
+      }
+      return updates;
+    },
+    onSuccess: (restoredCells) => {
+      for (const cell of restoredCells) {
+        queryClient.setQueryData(cellQueries.detail(cell.id).queryKey, cell);
+      }
+      queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
+      setSelectedCellIds((prev) => {
+        if (prev.size === 0) {
+          return prev;
+        }
+        const next = new Set(prev);
+        for (const cell of restoredCells) {
+          next.delete(cell.id);
+        }
+        return next;
+      });
+      setIsBulkRestoreOpen(false);
+      const count = restoredCells.length;
+      const label = count === 1 ? "cell" : "cells";
+      toast.success(`Restored ${count} ${label}`);
+    },
+    onError: (unknownError) => {
+      const message =
+        unknownError instanceof Error
+          ? unknownError.message
+          : "Failed to restore cells";
+      toast.error(message);
+    },
+  });
+
   const bulkDeleteMutation = useMutation({
     ...cellMutations.deleteMany,
     onSuccess: (data: { deletedIds: string[] }) => {
@@ -251,6 +300,22 @@ export function CellList({ workspaceId }: CellListProps) {
       return;
     }
     archiveManyMutation.mutate(archivableSelection.map((cell) => cell.id));
+  };
+
+  const handleRestoreSelected = () => {
+    if (!canRestoreSelection) {
+      toast.info("Select at least one archived cell to restore");
+      return;
+    }
+    setIsBulkRestoreOpen(true);
+  };
+
+  const confirmRestoreSelected = () => {
+    if (!canRestoreSelection) {
+      toast.info("Select at least one archived cell to restore");
+      return;
+    }
+    restoreManyMutation.mutate(restorableSelection.map((cell) => cell.id));
   };
 
   const handleBulkDelete = () => {
@@ -348,6 +413,70 @@ export function CellList({ workspaceId }: CellListProps) {
               disabled={
                 !canArchiveSelection ||
                 archiveManyMutation.isPending ||
+                bulkDeleteMutation.isPending ||
+                restoreManyMutation.isPending
+              }
+              onClick={handleArchiveSelected}
+              type="button"
+              variant="secondary"
+            >
+              Archive Selected
+              <span
+                className="ml-2 inline-flex h-5 min-w-[2rem] items-center justify-center rounded-sm border border-secondary/40 bg-secondary/10 px-1 font-mono text-xs tabular-nums"
+                data-testid="archive-selected-count"
+              >
+                {archivableSelectionCount}
+              </span>
+            </Button>
+            <Button
+              className="flex-1 sm:flex-none"
+              data-testid="restore-selected"
+              disabled={
+                !canRestoreSelection ||
+                restoreManyMutation.isPending ||
+                archiveManyMutation.isPending ||
+                bulkDeleteMutation.isPending
+              }
+              onClick={handleRestoreSelected}
+              type="button"
+              variant="outline"
+            >
+              Restore Selected
+              <span
+                className="ml-2 inline-flex h-5 min-w-[2rem] items-center justify-center rounded-sm border border-primary/40 bg-primary/10 px-1 font-mono text-xs tabular-nums"
+                data-testid="restore-selected-count"
+              >
+                {restorableSelectionCount}
+              </span>
+            </Button>
+            <Button
+              className="flex-1 bg-destructive text-destructive-foreground hover:bg-destructive/90 sm:flex-none"
+              data-testid="delete-selected"
+              disabled={
+                !canDeleteSelection ||
+                bulkDeleteMutation.isPending ||
+                archiveManyMutation.isPending ||
+                restoreManyMutation.isPending
+              }
+              onClick={() => canDeleteSelection && setIsBulkDialogOpen(true)}
+              type="button"
+              variant="destructive"
+            >
+              Delete Selected
+              <span
+                className="ml-2 inline-flex h-5 min-w-[2rem] items-center justify-center rounded-sm border border-destructive-foreground/40 bg-destructive-foreground/10 px-1 font-mono text-xs tabular-nums"
+                data-testid="delete-selected-count"
+              >
+                {deletableSelectionCount}
+              </span>
+            </Button>
+
+            <Button
+              className="flex-1 sm:flex-none"
+              data-testid="archive-selected"
+              disabled={
+                !canArchiveSelection ||
+                archiveManyMutation.isPending ||
                 bulkDeleteMutation.isPending
               }
               onClick={handleArchiveSelected}
@@ -413,6 +542,15 @@ export function CellList({ workspaceId }: CellListProps) {
         onOpenChange={setIsBulkArchiveOpen}
         selectedCells={archivableSelection}
         selectedCount={archivableSelectionCount}
+      />
+
+      <BulkRestoreDialog
+        disableActions={restoreManyMutation.isPending}
+        isOpen={isBulkRestoreOpen && canRestoreSelection}
+        onConfirmRestore={confirmRestoreSelected}
+        onOpenChange={setIsBulkRestoreOpen}
+        selectedCells={restorableSelection}
+        selectedCount={restorableSelectionCount}
       />
 
       <BulkDeleteDialog
@@ -517,6 +655,15 @@ type BulkArchiveDialogProps = {
   selectedCount: number;
 };
 
+type BulkRestoreDialogProps = {
+  disableActions: boolean;
+  isOpen: boolean;
+  onConfirmRestore: () => void;
+  onOpenChange: (open: boolean) => void;
+  selectedCells: Cell[];
+  selectedCount: number;
+};
+
 type BulkDeleteDialogProps = {
   disableActions: boolean;
   isOpen: boolean;
@@ -579,6 +726,59 @@ function BulkArchiveDialog({
             onClick={onConfirmArchive}
           >
             {disableActions ? "Archiving…" : "Archive"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function BulkRestoreDialog({
+  disableActions,
+  isOpen,
+  onConfirmRestore,
+  onOpenChange,
+  selectedCells,
+  selectedCount,
+}: BulkRestoreDialogProps) {
+  if (!selectedCount) {
+    return null;
+  }
+
+  return (
+    <AlertDialog onOpenChange={onOpenChange} open={isOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            Restore {selectedCount} {selectedCount === 1 ? "cell" : "cells"}?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            Restoring re-enables services and chat for archived cells so the
+            workspace becomes active again.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="rounded-md border border-muted bg-muted/30 p-4 text-sm">
+          <p className="font-semibold">Selection Summary</p>
+          <ul className="list-disc pl-5 text-muted-foreground">
+            {selectedCells.slice(0, MAX_SELECTION_PREVIEW).map((cell) => (
+              <li key={cell.id}>{cell.name}</li>
+            ))}
+            {selectedCount > MAX_SELECTION_PREVIEW && (
+              <li>+{selectedCount - MAX_SELECTION_PREVIEW} more</li>
+            )}
+          </ul>
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={disableActions} type="button">
+            Cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
+            data-testid="confirm-restore-selected"
+            disabled={disableActions}
+            onClick={onConfirmRestore}
+          >
+            {disableActions ? "Restoring…" : `Restore ${selectedCount}`}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

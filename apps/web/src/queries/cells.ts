@@ -95,6 +95,21 @@ export const cellMutations = {
     },
   },
 
+  restore: {
+    mutationFn: async (id: string) => {
+      const { data, error } = await rpc.api.cells({ id }).restore.post();
+      if (error) {
+        throw new Error(formatRpcError(error, "Failed to restore cell"));
+      }
+
+      if ("message" in data) {
+        throw new Error(formatRpcResponseError(data, "Failed to restore cell"));
+      }
+
+      return normalizeCell(data);
+    },
+  },
+
   deleteMany: {
     mutationFn: async (ids: string[]) => {
       const { data, error } = await rpc.api.cells.delete({ ids });

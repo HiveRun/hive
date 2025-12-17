@@ -724,6 +724,121 @@ export function createCellsRoutes(
         },
       }
     )
+    .post(
+      "/:id/restore",
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: restore flow mirrors retry/archive cleanup and requires multiple guarded asynchronous steps
+      async ({ params, set, log }) => {
+        try {
+          const deps = await resolveDeps();
+          const {
+            db: database,
+            resolveWorkspaceContext: resolveWorkspaceCtx,
+            ensureServicesForCell: ensureServices,
+            ensureAgentSession: ensureSession,
+          } = deps;
+
+          const cell = await loadCellById(database, params.id);
+          if (!cell) {
+            set.status = HTTP_STATUS.NOT_FOUND;
+            return { message: "Cell not found" } satisfies {
+              message: string;
+            };
+          }
+          if (cell.status !== "archived") {
+            set.status = HTTP_STATUS.BAD_REQUEST;
+            return { message: "Cell is not archived" } satisfies {
+              message: string;
+            };
+          }
+          if (!cell.workspacePath) {
+            set.status = HTTP_STATUS.BAD_REQUEST;
+            return {
+              message: "Archived cell workspace is unavailable",
+            } satisfies { message: string };
+          }
+
+          const workspaceContext = await runServerEffect(
+            resolveWorkspaceCtx(cell.workspaceId)
+          );
+          const hiveConfig = await runServerEffect(
+            workspaceContext.loadConfig()
+          );
+          const template = hiveConfig.templates[cell.templateId];
+          if (!template) {
+            set.status = HTTP_STATUS.BAD_REQUEST;
+            return { message: "Template not found for cell" } satisfies {
+              message: string;
+            };
+          }
+
+          try {
+            await database
+              .update(cells)
+              .set({ status: "pending", lastSetupError: null })
+              .where(eq(cells.id, cell.id));
+
+            await runServerEffect(
+              ensureServices({
+                cell: {
+                  ...cell,
+                  status: "pending",
+                  lastSetupError: null,
+                },
+                template,
+              })
+            );
+
+            await runServerEffect(ensureSession(cell.id, { force: true }));
+
+            await database
+              .update(cells)
+              .set({ status: "ready", lastSetupError: null })
+              .where(eq(cells.id, cell.id));
+          } catch (error) {
+            const payload = buildCellCreationErrorPayload(error);
+            const lastSetupError = deriveSetupErrorDetails(payload);
+            await database
+              .update(cells)
+              .set({ status: "error", lastSetupError })
+              .where(eq(cells.id, cell.id));
+            set.status = HTTP_STATUS.BAD_REQUEST;
+            return {
+              message: payload.message,
+              ...(lastSetupError ? { details: lastSetupError } : {}),
+            } satisfies ErrorPayload;
+          }
+
+          const updated = await loadCellById(database, cell.id);
+          if (!updated) {
+            set.status = HTTP_STATUS.INTERNAL_ERROR;
+            return {
+              message: "Failed to load cell after restore",
+            } satisfies { message: string };
+          }
+
+          return cellToResponse(updated);
+        } catch (error) {
+          if (error instanceof Error) {
+            log.error(error, "Failed to restore cell");
+          } else {
+            log.error({ error }, "Failed to restore cell");
+          }
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          return { message: "Failed to restore cell" } satisfies {
+            message: string;
+          };
+        }
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        response: {
+          200: CellResponseSchema,
+          400: t.Object({ message: t.String() }),
+          404: t.Object({ message: t.String() }),
+          500: ErrorResponseSchema,
+        },
+      }
+    )
 
     .post(
       "/:id/services/:serviceId/start",
