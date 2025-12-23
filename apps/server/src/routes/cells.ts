@@ -326,6 +326,14 @@ export function createCellsRoutes(
           set.status = HTTP_STATUS.NOT_FOUND;
           return { message: "Cell not found" } satisfies { message: string };
         }
+        if (cell.status === "archived") {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return {
+            message: "Cell is archived and cannot be retried",
+          } satisfies {
+            message: string;
+          };
+        }
 
         const workspaceContext = await runServerEffect(
           deps.resolveWorkspaceContext(cell.workspaceId)
@@ -473,6 +481,12 @@ export function createCellsRoutes(
           set.status = HTTP_STATUS.NOT_FOUND;
           return { message: "Cell not found" } satisfies { message: string };
         }
+        if (cell.status === "archived") {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return { message: "Cell is archived" } satisfies {
+            message: string;
+          };
+        }
 
         const rows = await fetchServiceRows(database, params.id);
         const services = await Promise.all(
@@ -485,6 +499,7 @@ export function createCellsRoutes(
         params: t.Object({ id: t.String() }),
         response: {
           200: CellServiceListResponseSchema,
+          400: t.Object({ message: t.String() }),
           404: t.Object({ message: t.String() }),
         },
       }
@@ -497,6 +512,12 @@ export function createCellsRoutes(
         if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
           return { message: "Cell not found" };
+        }
+        if (cell.status === "archived") {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return { message: "Cell is archived" } satisfies {
+            message: string;
+          };
         }
 
         const encoder = new TextEncoder();
@@ -592,6 +613,12 @@ export function createCellsRoutes(
           set.status = HTTP_STATUS.NOT_FOUND;
           return { message: "Cell not found" } satisfies { message: string };
         }
+        if (cell.status === "archived") {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return { message: "Cell is archived" } satisfies {
+            message: string;
+          };
+        }
 
         const parsed = parseDiffRequest(cell, query);
         if (!parsed.ok) {
@@ -622,6 +649,198 @@ export function createCellsRoutes(
     )
 
     .post(
+      "/:id/archive",
+      async ({ params, set, log }) => {
+        try {
+          const deps = await resolveDeps();
+          const {
+            db: database,
+            closeAgentSession: closeSession,
+            stopServicesForCell: stopCellServicesFn,
+          } = deps;
+
+          const cell = await loadCellById(database, params.id);
+          if (!cell) {
+            set.status = HTTP_STATUS.NOT_FOUND;
+            return { message: "Cell not found" } satisfies {
+              message: string;
+            };
+          }
+          if (cell.status === "archived") {
+            return cellToResponse(cell);
+          }
+
+          await runServerEffect(closeSession(cell.id));
+          try {
+            await runServerEffect(
+              stopCellServicesFn(cell.id, {
+                releasePorts: true,
+              })
+            );
+          } catch (error) {
+            log.warn(
+              { error, cellId: cell.id },
+              "Failed to stop services before archive"
+            );
+          }
+
+          await database
+            .update(cells)
+            .set({
+              status: "archived",
+              lastSetupError: null,
+            })
+            .where(eq(cells.id, cell.id));
+
+          const updated = await loadCellById(database, cell.id);
+          if (!updated) {
+            set.status = HTTP_STATUS.INTERNAL_ERROR;
+            return {
+              message: "Failed to load cell after archive",
+            } satisfies {
+              message: string;
+            };
+          }
+
+          return cellToResponse(updated);
+        } catch (error) {
+          if (error instanceof Error) {
+            log.error(error, "Failed to archive cell");
+          } else {
+            log.error({ error }, "Failed to archive cell");
+          }
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          return { message: "Failed to archive cell" } satisfies {
+            message: string;
+          };
+        }
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        response: {
+          200: CellResponseSchema,
+          404: t.Object({ message: t.String() }),
+          500: ErrorResponseSchema,
+        },
+      }
+    )
+    .post(
+      "/:id/restore",
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: restore flow mirrors retry/archive cleanup and requires multiple guarded asynchronous steps
+      async ({ params, set, log }) => {
+        try {
+          const deps = await resolveDeps();
+          const {
+            db: database,
+            resolveWorkspaceContext: resolveWorkspaceCtx,
+            ensureServicesForCell: ensureServices,
+            ensureAgentSession: ensureSession,
+          } = deps;
+
+          const cell = await loadCellById(database, params.id);
+          if (!cell) {
+            set.status = HTTP_STATUS.NOT_FOUND;
+            return { message: "Cell not found" } satisfies {
+              message: string;
+            };
+          }
+          if (cell.status !== "archived") {
+            set.status = HTTP_STATUS.BAD_REQUEST;
+            return { message: "Cell is not archived" } satisfies {
+              message: string;
+            };
+          }
+          if (!cell.workspacePath) {
+            set.status = HTTP_STATUS.BAD_REQUEST;
+            return {
+              message: "Archived cell workspace is unavailable",
+            } satisfies { message: string };
+          }
+
+          const workspaceContext = await runServerEffect(
+            resolveWorkspaceCtx(cell.workspaceId)
+          );
+          const hiveConfig = await runServerEffect(
+            workspaceContext.loadConfig()
+          );
+          const template = hiveConfig.templates[cell.templateId];
+          if (!template) {
+            set.status = HTTP_STATUS.BAD_REQUEST;
+            return { message: "Template not found for cell" } satisfies {
+              message: string;
+            };
+          }
+
+          try {
+            await database
+              .update(cells)
+              .set({ status: "pending", lastSetupError: null })
+              .where(eq(cells.id, cell.id));
+
+            await runServerEffect(
+              ensureServices({
+                cell: {
+                  ...cell,
+                  status: "pending",
+                  lastSetupError: null,
+                },
+                template,
+              })
+            );
+
+            await runServerEffect(ensureSession(cell.id, { force: true }));
+
+            await database
+              .update(cells)
+              .set({ status: "ready", lastSetupError: null })
+              .where(eq(cells.id, cell.id));
+          } catch (error) {
+            const payload = buildCellCreationErrorPayload(error);
+            const lastSetupError = deriveSetupErrorDetails(payload);
+            await database
+              .update(cells)
+              .set({ status: "error", lastSetupError })
+              .where(eq(cells.id, cell.id));
+            set.status = HTTP_STATUS.BAD_REQUEST;
+            return {
+              message: payload.message,
+              ...(lastSetupError ? { details: lastSetupError } : {}),
+            } satisfies ErrorPayload;
+          }
+
+          const updated = await loadCellById(database, cell.id);
+          if (!updated) {
+            set.status = HTTP_STATUS.INTERNAL_ERROR;
+            return {
+              message: "Failed to load cell after restore",
+            } satisfies { message: string };
+          }
+
+          return cellToResponse(updated);
+        } catch (error) {
+          if (error instanceof Error) {
+            log.error(error, "Failed to restore cell");
+          } else {
+            log.error({ error }, "Failed to restore cell");
+          }
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          return { message: "Failed to restore cell" } satisfies {
+            message: string;
+          };
+        }
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        response: {
+          200: CellResponseSchema,
+          400: t.Object({ message: t.String() }),
+          404: t.Object({ message: t.String() }),
+          500: ErrorResponseSchema,
+        },
+      }
+    )
+
+    .post(
       "/:id/services/:serviceId/start",
 
       async ({ params, set }) => {
@@ -635,7 +854,15 @@ export function createCellsRoutes(
         );
         if (!row) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" } satisfies { message: string };
+          return { message: "Service not found" } satisfies {
+            message: string;
+          };
+        }
+        if (row.cell.status === "archived") {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return { message: "Cell is archived" } satisfies {
+            message: string;
+          };
         }
 
         await runServerEffect(startService(params.serviceId));
@@ -646,7 +873,9 @@ export function createCellsRoutes(
         );
         if (!updated) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" } satisfies { message: string };
+          return { message: "Service not found" } satisfies {
+            message: string;
+          };
         }
 
         const serialized = await serializeService(database, updated);
@@ -656,6 +885,7 @@ export function createCellsRoutes(
         params: t.Object({ id: t.String(), serviceId: t.String() }),
         response: {
           200: CellServiceSchema,
+          400: t.Object({ message: t.String() }),
           404: t.Object({ message: t.String() }),
         },
       }
@@ -673,7 +903,15 @@ export function createCellsRoutes(
         );
         if (!row) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" } satisfies { message: string };
+          return { message: "Service not found" } satisfies {
+            message: string;
+          };
+        }
+        if (row.cell.status === "archived") {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return { message: "Cell is archived" } satisfies {
+            message: string;
+          };
         }
 
         await runServerEffect(stopService(params.serviceId));
@@ -684,7 +922,9 @@ export function createCellsRoutes(
         );
         if (!updated) {
           set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" } satisfies { message: string };
+          return { message: "Service not found" } satisfies {
+            message: string;
+          };
         }
 
         const serialized = await serializeService(database, updated);
@@ -694,6 +934,7 @@ export function createCellsRoutes(
         params: t.Object({ id: t.String(), serviceId: t.String() }),
         response: {
           200: CellServiceSchema,
+          400: t.Object({ message: t.String() }),
           404: t.Object({ message: t.String() }),
         },
       }
@@ -763,6 +1004,7 @@ export function createCellsRoutes(
               id: cells.id,
               workspacePath: cells.workspacePath,
               workspaceId: cells.workspaceId,
+              status: cells.status,
             })
             .from(cells)
             .where(inArray(cells.id, uniqueIds));
@@ -770,6 +1012,16 @@ export function createCellsRoutes(
           if (cellsToDelete.length === 0) {
             set.status = HTTP_STATUS.NOT_FOUND;
             return { message: "No cells found for provided ids" };
+          }
+
+          const nonArchivedCells = cellsToDelete.filter(
+            (cell) => cell.status !== "archived"
+          );
+          if (nonArchivedCells.length > 0) {
+            set.status = HTTP_STATUS.BAD_REQUEST;
+            return {
+              message: "All cells must be archived before deletion",
+            } satisfies { message: string };
           }
 
           const managerCache = new Map<string, WorktreeManager>();
@@ -854,6 +1106,12 @@ export function createCellsRoutes(
           if (!cell) {
             set.status = HTTP_STATUS.NOT_FOUND;
             return { message: "Cell not found" };
+          }
+          if (cell.status !== "archived") {
+            set.status = HTTP_STATUS.BAD_REQUEST;
+            return {
+              message: "Cell must be archived before deletion",
+            } satisfies { message: string };
           }
 
           await runServerEffect(closeSession(params.id));

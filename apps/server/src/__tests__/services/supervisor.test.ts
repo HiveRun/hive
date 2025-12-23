@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
@@ -218,6 +219,7 @@ describe("service supervisor", () => {
     };
 
     const timestamp = new Date();
+    const persistedPort = await allocateFreePort();
 
     await testDb.insert(cellServices).values({
       id: "svc-bootstrap",
@@ -228,7 +230,7 @@ describe("service supervisor", () => {
       cwd: workspace,
       env: {},
       status: "running",
-      port: 5555,
+      port: persistedPort,
       pid: null,
       readyTimeoutMs: null,
       definition,
@@ -244,7 +246,7 @@ describe("service supervisor", () => {
     if (!call) {
       throw new Error("Expected process to restart");
     }
-    expect(call.options.env.WEB_PORT).toBe("5555");
+    expect(call.options.env.WEB_PORT).toBe(String(persistedPort));
 
     const [service] = await testDb
       .select()
@@ -363,5 +365,19 @@ describe("service supervisor", () => {
     const dir = await mkdtemp(join(tmpdir(), "hive-services-"));
     workspaceDirs.push(dir);
     return dir;
+  }
+
+  async function allocateFreePort(): Promise<number> {
+    return await new Promise((resolvePort, rejectPort) => {
+      const server = createServer();
+      server.once("error", (error) => {
+        server.close(() => rejectPort(error));
+      });
+      server.listen(0, () => {
+        const address = server.address();
+        const port = address && typeof address === "object" ? address.port : 0;
+        server.close(() => resolvePort(port));
+      });
+    });
   }
 });
