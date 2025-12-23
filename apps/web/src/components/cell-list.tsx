@@ -391,7 +391,7 @@ export function CellList({ workspaceId }: CellListProps) {
   }
 
   return (
-    <div className="space-y-6 p-4 md:p-6">
+    <div className="flex h-full w-full flex-col space-y-6 overflow-y-auto p-4 md:p-6">
       <div className="flex flex-col gap-4">
         <h1 className="font-bold text-2xl md:text-3xl">Cells</h1>
 
@@ -457,47 +457,6 @@ export function CellList({ workspaceId }: CellListProps) {
                 bulkDeleteMutation.isPending ||
                 archiveManyMutation.isPending ||
                 restoreManyMutation.isPending
-              }
-              onClick={() => canDeleteSelection && setIsBulkDialogOpen(true)}
-              type="button"
-              variant="destructive"
-            >
-              Delete Selected
-              <span
-                className="ml-2 inline-flex h-5 min-w-[2rem] items-center justify-center rounded-sm border border-destructive-foreground/40 bg-destructive-foreground/10 px-1 font-mono text-xs tabular-nums"
-                data-testid="delete-selected-count"
-              >
-                {deletableSelectionCount}
-              </span>
-            </Button>
-
-            <Button
-              className="flex-1 sm:flex-none"
-              data-testid="archive-selected"
-              disabled={
-                !canArchiveSelection ||
-                archiveManyMutation.isPending ||
-                bulkDeleteMutation.isPending
-              }
-              onClick={handleArchiveSelected}
-              type="button"
-              variant="secondary"
-            >
-              Archive Selected
-              <span
-                className="ml-2 inline-flex h-5 min-w-[2rem] items-center justify-center rounded-sm border border-secondary/40 bg-secondary/10 px-1 font-mono text-xs tabular-nums"
-                data-testid="archive-selected-count"
-              >
-                {archivableSelectionCount}
-              </span>
-            </Button>
-            <Button
-              className="flex-1 bg-destructive text-destructive-foreground hover:bg-destructive/90 sm:flex-none"
-              data-testid="delete-selected"
-              disabled={
-                !canDeleteSelection ||
-                bulkDeleteMutation.isPending ||
-                archiveManyMutation.isPending
               }
               onClick={() => canDeleteSelection && setIsBulkDialogOpen(true)}
               type="button"
