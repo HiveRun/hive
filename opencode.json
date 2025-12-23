@@ -1,7 +1,16 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-openai-codex-auth@4.0.2"],
-  "model": "openai/gpt-5.1-codex-high",
+  "instructions": ["AGENTS.md"],
+  "plugin": [
+    "opencode-openai-codex-auth@4.1.0",
+    "opencode-antigravity-auth@1.1.0",
+    "./.opencode/plugin/idle-validate.ts",
+    "./.opencode/plugin/ast-grep-plugin.ts",
+    "./.opencode/plugin/todo-continuation-enforcer.ts",
+    "opencode-pty@0.1.0",
+    "opencode-websearch-cited@1.1.1"
+  ],
+  "model": "openai/gpt-5.2-high",
   "autoupdate": false,
   "provider": {
     "openai": {
@@ -9,58 +18,82 @@
         "reasoningEffort": "medium",
         "reasoningSummary": "auto",
         "textVerbosity": "medium",
-        "store": false
+        "include": ["reasoning.encrypted_content"],
+        "store": false,
+        "websearch_cited": {
+          "model": "gpt-5.2"
+        }
       },
       "models": {
-        "gpt-5.1-codex-low": {
-          "name": "GPT 5.1 Codex Low (OAuth)",
+        "gpt-5.2-low": {
+          "name": "GPT 5.2 Low (OAuth)",
           "limit": {
             "context": 272000,
             "output": 128000
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "options": {
             "reasoningEffort": "low",
             "reasoningSummary": "auto",
             "textVerbosity": "medium",
+            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
-        "gpt-5.1-codex-medium": {
-          "name": "GPT 5.1 Codex Medium (OAuth)",
+        "gpt-5.2-medium": {
+          "name": "GPT 5.2 Medium (OAuth)",
           "limit": {
             "context": 272000,
             "output": 128000
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "options": {
             "reasoningEffort": "medium",
             "reasoningSummary": "auto",
             "textVerbosity": "medium",
+            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
-        "gpt-5.1-codex-high": {
-          "name": "GPT 5.1 Codex High (OAuth)",
+        "gpt-5.2-high": {
+          "name": "GPT 5.2 High (OAuth)",
           "limit": {
             "context": 272000,
             "output": 128000
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "options": {
             "reasoningEffort": "high",
             "reasoningSummary": "detailed",
             "textVerbosity": "medium",
+            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
-        "gpt-5.1-codex-max": {
-          "name": "GPT 5.1 Codex Max (OAuth)",
+        "gpt-5.2-xhigh": {
+          "name": "GPT 5.2 Extra High (OAuth)",
           "limit": {
             "context": 272000,
             "output": 128000
           },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
           "options": {
-            "reasoningEffort": "high",
+            "reasoningEffort": "xhigh",
             "reasoningSummary": "detailed",
             "textVerbosity": "medium",
+            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -70,10 +103,15 @@
             "context": 272000,
             "output": 128000
           },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
           "options": {
             "reasoningEffort": "low",
             "reasoningSummary": "detailed",
             "textVerbosity": "medium",
+            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -83,10 +121,15 @@
             "context": 272000,
             "output": 128000
           },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
           "options": {
             "reasoningEffort": "medium",
             "reasoningSummary": "detailed",
             "textVerbosity": "medium",
+            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -96,10 +139,15 @@
             "context": 272000,
             "output": 128000
           },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
           "options": {
             "reasoningEffort": "high",
             "reasoningSummary": "detailed",
             "textVerbosity": "medium",
+            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -109,10 +157,69 @@
             "context": 272000,
             "output": 128000
           },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
           "options": {
             "reasoningEffort": "xhigh",
             "reasoningSummary": "detailed",
             "textVerbosity": "medium",
+            "include": ["reasoning.encrypted_content"],
+            "store": false
+          }
+        },
+        "gpt-5.1-codex-low": {
+          "name": "GPT 5.1 Codex Low (OAuth)",
+          "limit": {
+            "context": 272000,
+            "output": 128000
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "options": {
+            "reasoningEffort": "low",
+            "reasoningSummary": "auto",
+            "textVerbosity": "medium",
+            "include": ["reasoning.encrypted_content"],
+            "store": false
+          }
+        },
+        "gpt-5.1-codex-medium": {
+          "name": "GPT 5.1 Codex Medium (OAuth)",
+          "limit": {
+            "context": 272000,
+            "output": 128000
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "options": {
+            "reasoningEffort": "medium",
+            "reasoningSummary": "auto",
+            "textVerbosity": "medium",
+            "include": ["reasoning.encrypted_content"],
+            "store": false
+          }
+        },
+        "gpt-5.1-codex-high": {
+          "name": "GPT 5.1 Codex High (OAuth)",
+          "limit": {
+            "context": 272000,
+            "output": 128000
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "options": {
+            "reasoningEffort": "high",
+            "reasoningSummary": "detailed",
+            "textVerbosity": "medium",
+            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -122,10 +229,15 @@
             "context": 272000,
             "output": 128000
           },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
           "options": {
             "reasoningEffort": "medium",
             "reasoningSummary": "auto",
             "textVerbosity": "medium",
+            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -135,10 +247,15 @@
             "context": 272000,
             "output": 128000
           },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
           "options": {
             "reasoningEffort": "high",
             "reasoningSummary": "detailed",
             "textVerbosity": "medium",
+            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -148,10 +265,15 @@
             "context": 272000,
             "output": 128000
           },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
           "options": {
             "reasoningEffort": "low",
             "reasoningSummary": "auto",
             "textVerbosity": "low",
+            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -161,10 +283,15 @@
             "context": 272000,
             "output": 128000
           },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
           "options": {
             "reasoningEffort": "medium",
             "reasoningSummary": "auto",
             "textVerbosity": "medium",
+            "include": ["reasoning.encrypted_content"],
             "store": false
           }
         },
@@ -174,21 +301,51 @@
             "context": 272000,
             "output": 128000
           },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
           "options": {
             "reasoningEffort": "high",
             "reasoningSummary": "detailed",
             "textVerbosity": "high",
+            "include": ["reasoning.encrypted_content"],
             "store": false
+          }
+        }
+      }
+    },
+    "google": {
+      "options": {
+        "websearch_cited": {
+          "model": "gemini-2.5-flash"
+        }
+      },
+      "models": {
+        "gemini-3-pro-high": {
+          "name": "Gemini 3 Pro High (Antigravity)",
+          "limit": {
+            "context": 1048576,
+            "output": 65535
+          },
+          "modalities": {
+            "input": ["image", "text"],
+            "output": ["text"]
           }
         }
       }
     }
   },
   "mcp": {
-    "exa": {
-      "type": "local",
-      "enabled": true,
-      "command": ["bunx", "mcp-remote", "https://mcp.exa.ai/mcp"]
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
+      "enabled": true
+    },
+    "grep": {
+      "type": "remote",
+      "url": "https://mcp.grep.app",
+      "enabled": true
     },
     "linear": {
       "type": "local",

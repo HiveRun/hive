@@ -44,23 +44,30 @@ test.describe("Cells Page", () => {
   });
 
   test("shows bulk delete dialog when selecting cells", async ({ page }) => {
-    const snapshotCell =
+    const snapshotCellBase =
       cellSnapshotFixture[0] ??
       createCellFixture({
         id: "snapshot-cell",
         name: "Snapshot Cell",
         workspacePath: "/home/hive/.hive/cells/snapshot-cell",
       });
+    const snapshotCell = {
+      ...snapshotCellBase,
+      status: "archived" as const,
+    };
 
     await mockAppApi(page, {
       cells: [
         snapshotCell,
-        createCellFixture({
-          id: "secondary-cell",
-          name: "Secondary Cell",
-          workspacePath: "/home/hive/.hive/cells/secondary-cell",
-          createdAt: "2024-02-01T10:00:00.000Z",
-        }),
+        {
+          ...createCellFixture({
+            id: "secondary-cell",
+            name: "Secondary Cell",
+            workspacePath: "/home/hive/.hive/cells/secondary-cell",
+            createdAt: "2024-02-01T10:00:00.000Z",
+          }),
+          status: "archived" as const,
+        },
       ],
     });
 
