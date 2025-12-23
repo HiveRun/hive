@@ -19,8 +19,8 @@
     "db:migrate": "bun run src/scripts/migrate.ts",
     "dev": "bun run --hot src/index.ts",
     "start": "bun run dist/index.js",
-    "test": "bun test",
-    "test:run": "bun test"
+    "test": "DATABASE_URL=file::memory:?cache=shared bun test",
+    "test:run": "DATABASE_URL=file::memory:?cache=shared bun test"
   },
   "dependencies": {
     "@bogeychan/elysia-logger": "^0.1.10",

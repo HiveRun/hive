@@ -1,7 +1,4 @@
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { OpencodeClient, Event as OpencodeEvent } from "@opencode-ai/sdk";
-import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { Effect } from "effect";
 
 import {
@@ -14,11 +11,13 @@ import {
   type Mock,
   vi,
 } from "vitest";
+import { setupTestDb, testDb } from "../__tests__/test-db";
 import type { HiveConfig } from "../config/schema";
-import { db } from "../db";
 import { cells } from "../schema/cells";
 // biome-ignore lint/performance/noNamespaceImport: tests need namespace import for spies
 import * as OpencodeConfig from "./opencode-config";
+
+type AppDb = typeof import("../db").db;
 
 type ClientStub = {
   session: {
@@ -78,9 +77,7 @@ describe("agent model selection", () => {
   let acquireOpencodeClientMock: Mock;
 
   beforeAll(async () => {
-    const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
-    const migrationsFolder = join(packageRoot, "src", "migrations");
-    await migrate(db, { migrationsFolder });
+    await setupTestDb();
   });
 
   beforeEach(async () => {
@@ -100,17 +97,18 @@ describe("agent model selection", () => {
       });
 
     setAgentRuntimeDependencies({
+      db: testDb as unknown as AppDb,
       loadHiveConfig: loadHiveConfigMock,
       loadOpencodeConfig: loadOpencodeConfigSpy,
       acquireOpencodeClient: acquireOpencodeClientMock,
     });
 
     await closeAllAgentSessions();
-    await db.delete(cells);
+    await testDb.delete(cells);
     sessionMessagesMock.mockReset();
     sessionMessagesMock.mockResolvedValue({ data: [] });
 
-    await db.insert(cells).values({
+    await testDb.insert(cells).values({
       id: cellId,
       name: "Model Test Cell",
       description: "",
