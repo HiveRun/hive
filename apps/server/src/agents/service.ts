@@ -624,6 +624,123 @@ const isIdleValidationPluginInstallError = (error: unknown): boolean => {
   return pkg === "./.opencode/plugin/idle-validate.ts";
 };
 
+const isIdleValidationConfigMissingError = (error: unknown): boolean => {
+  const candidate = error as
+    | { name?: unknown; data?: unknown }
+    | null
+    | undefined;
+  if (!candidate || typeof candidate !== "object") {
+    return false;
+  }
+
+  const name =
+    "name" in candidate ? (candidate as { name?: unknown }).name : undefined;
+  if (name !== "UnknownError") {
+    return false;
+  }
+
+  const data =
+    "data" in candidate ? (candidate as { data?: unknown }).data : undefined;
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+
+  const message = (data as { message?: unknown }).message;
+  if (typeof message !== "string") {
+    return false;
+  }
+
+  return message.includes(
+    "Idle validation plugin requires .opencode/plugin/idle-validate.json configuration file."
+  );
+};
+
+const buildProviderModelsFromConfig = (
+  rawModels: unknown
+): Record<string, ProviderModel> => {
+  if (!rawModels || typeof rawModels !== "object") {
+    return {};
+  }
+
+  const models: Record<string, ProviderModel> = {};
+
+  for (const [modelKey, rawModel] of Object.entries(
+    rawModels as Record<string, unknown>
+  )) {
+    if (!rawModel || typeof rawModel !== "object") {
+      models[modelKey] = { id: modelKey, name: modelKey };
+      continue;
+    }
+
+    const model = rawModel as { name?: unknown; id?: unknown };
+    const id =
+      typeof model.id === "string" && model.id.trim().length > 0
+        ? model.id.trim()
+        : modelKey;
+    const name =
+      typeof model.name === "string" && model.name.trim().length > 0
+        ? model.name.trim()
+        : id;
+
+    models[modelKey] = { id, name };
+  }
+
+  return models;
+};
+
+const buildProviderEntriesFromConfig = (
+  providersConfig: Record<string, unknown>
+): ProviderEntry[] => {
+  const providers: ProviderEntry[] = [];
+
+  for (const [providerId, rawProvider] of Object.entries(providersConfig)) {
+    if (!rawProvider || typeof rawProvider !== "object") {
+      continue;
+    }
+
+    const provider = rawProvider as {
+      name?: unknown;
+      models?: unknown;
+    };
+
+    const entry: ProviderEntry = { id: providerId };
+
+    if (typeof provider.name === "string" && provider.name.trim().length > 0) {
+      entry.name = provider.name.trim();
+    }
+
+    const models = buildProviderModelsFromConfig(provider.models);
+    if (Object.keys(models).length > 0) {
+      entry.models = models;
+    }
+
+    providers.push(entry);
+  }
+
+  return providers;
+};
+
+const buildProviderCatalogFromConfig = async (
+  workspaceRootPath: string
+): Promise<ProviderCatalogResponse> => {
+  const { loadOpencodeConfig: loadConfig } = getAgentRuntimeDependencies();
+  const loaded = await loadConfig(workspaceRootPath);
+  const config = loaded.config as {
+    provider?: Record<string, unknown>;
+  };
+
+  const providersConfig = config.provider ?? {};
+  const providers = buildProviderEntriesFromConfig(providersConfig);
+
+  const defaults: Record<string, string> = {};
+  const defaultModel = loaded.defaultModel;
+  if (defaultModel?.providerId && defaultModel.modelId) {
+    defaults[defaultModel.providerId] = defaultModel.modelId;
+  }
+
+  return { providers, default: defaults } as ProviderCatalogResponse;
+};
+
 export async function fetchProviderCatalogForWorkspace(
   workspaceRootPath: string
 ): Promise<ProviderCatalogResponse> {
@@ -647,12 +764,15 @@ export async function fetchProviderCatalogForWorkspace(
   try {
     return await fetchProviders(workspaceRootPath);
   } catch (error) {
-    if (isIdleValidationPluginInstallError(error)) {
+    if (
+      isIdleValidationPluginInstallError(error) ||
+      isIdleValidationConfigMissingError(error)
+    ) {
       try {
-        return await fetchProviders();
+        return await buildProviderCatalogFromConfig(workspaceRootPath);
       } catch (fallbackError) {
         // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
-        console.error("[opencode] config.providers fallback error", {
+        console.error("[opencode] config.providers local fallback error", {
           workspaceRootPath,
           error: fallbackError,
         });
