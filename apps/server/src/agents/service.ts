@@ -9,6 +9,7 @@ import type {
   Part,
   Session,
 } from "@opencode-ai/sdk";
+import { createOpencodeClient, createOpencodeServer } from "@opencode-ai/sdk";
 import { eq } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { type HiveConfigError, HiveConfigService } from "../config/context";
@@ -67,6 +68,16 @@ export type ProviderEntry = {
 type ProviderCatalogResponse = NonNullable<
   Awaited<ReturnType<OpencodeClient["config"]["providers"]>>["data"]
 >;
+
+type ProviderListPayload = {
+  all: Array<{
+    id: string;
+    name: string;
+    models: Record<string, ProviderModel>;
+  }>;
+  default: Record<string, string>;
+  connected: string[];
+};
 
 type ProviderAuthEntry = {
   token?: string;
@@ -599,29 +610,65 @@ async function ensureRuntimeForCell(
   return runtime;
 }
 
-const isIdleValidationPluginInstallError = (error: unknown): boolean => {
-  const candidate = error as
-    | { name?: unknown; data?: unknown }
-    | null
-    | undefined;
+const IDLE_VALIDATION_PLUGIN_PATH = "./.opencode/plugin/idle-validate.ts";
+
+type BunInstallFailedErrorShape = {
+  name?: unknown;
+  data?: { pkg?: unknown; version?: unknown };
+};
+
+const getPluginInstallErrorInfo = (
+  error: unknown
+): { pkg: string; version?: string } | null => {
+  const candidate = error as BunInstallFailedErrorShape | null | undefined;
   if (!candidate || typeof candidate !== "object") {
-    return false;
+    return null;
   }
 
   const name =
     "name" in candidate ? (candidate as { name?: unknown }).name : undefined;
   if (name !== "BunInstallFailedError") {
-    return false;
+    return null;
   }
 
   const data =
     "data" in candidate ? (candidate as { data?: unknown }).data : undefined;
   if (!data || typeof data !== "object") {
-    return false;
+    return null;
   }
 
   const pkg = (data as { pkg?: unknown }).pkg;
-  return pkg === "./.opencode/plugin/idle-validate.ts";
+  if (typeof pkg !== "string") {
+    return null;
+  }
+
+  const version = (data as { version?: unknown }).version;
+  return {
+    pkg,
+    ...(typeof version === "string" ? { version } : {}),
+  };
+};
+
+const shouldStopOnPluginInstallError = (
+  error: unknown,
+  disabledPlugins: Set<string>
+): boolean => {
+  const pluginError = getPluginInstallErrorInfo(error);
+  if (!pluginError) {
+    return true;
+  }
+
+  if (disabledPlugins.has(pluginError.pkg)) {
+    return true;
+  }
+
+  disabledPlugins.add(pluginError.pkg);
+  return false;
+};
+
+const isIdleValidationPluginInstallError = (error: unknown): boolean => {
+  const info = getPluginInstallErrorInfo(error);
+  return info?.pkg === IDLE_VALIDATION_PLUGIN_PATH;
 };
 
 const isIdleValidationConfigMissingError = (error: unknown): boolean => {
@@ -655,100 +702,17 @@ const isIdleValidationConfigMissingError = (error: unknown): boolean => {
   );
 };
 
-const buildProviderModelsFromConfig = (
-  rawModels: unknown
-): Record<string, ProviderModel> => {
-  if (!rawModels || typeof rawModels !== "object") {
-    return {};
-  }
-
-  const models: Record<string, ProviderModel> = {};
-
-  for (const [modelKey, rawModel] of Object.entries(
-    rawModels as Record<string, unknown>
-  )) {
-    if (!rawModel || typeof rawModel !== "object") {
-      models[modelKey] = { id: modelKey, name: modelKey };
-      continue;
-    }
-
-    const model = rawModel as { name?: unknown; id?: unknown };
-    const id =
-      typeof model.id === "string" && model.id.trim().length > 0
-        ? model.id.trim()
-        : modelKey;
-    const name =
-      typeof model.name === "string" && model.name.trim().length > 0
-        ? model.name.trim()
-        : id;
-
-    models[modelKey] = { id, name };
-  }
-
-  return models;
-};
-
-const buildProviderEntriesFromConfig = (
-  providersConfig: Record<string, unknown>
-): ProviderEntry[] => {
-  const providers: ProviderEntry[] = [];
-
-  for (const [providerId, rawProvider] of Object.entries(providersConfig)) {
-    if (!rawProvider || typeof rawProvider !== "object") {
-      continue;
-    }
-
-    const provider = rawProvider as {
-      name?: unknown;
-      models?: unknown;
-    };
-
-    const entry: ProviderEntry = { id: providerId };
-
-    if (typeof provider.name === "string" && provider.name.trim().length > 0) {
-      entry.name = provider.name.trim();
-    }
-
-    const models = buildProviderModelsFromConfig(provider.models);
-    if (Object.keys(models).length > 0) {
-      entry.models = models;
-    }
-
-    providers.push(entry);
-  }
-
-  return providers;
-};
-
-const buildProviderCatalogFromConfig = async (
-  workspaceRootPath: string
-): Promise<ProviderCatalogResponse> => {
-  const { loadOpencodeConfig: loadConfig } = getAgentRuntimeDependencies();
-  const loaded = await loadConfig(workspaceRootPath);
-  const config = loaded.config as {
-    provider?: Record<string, unknown>;
-  };
-
-  const providersConfig = config.provider ?? {};
-  const providers = buildProviderEntriesFromConfig(providersConfig);
-
-  const defaults: Record<string, string> = {};
-  const defaultModel = loaded.defaultModel;
-  if (defaultModel?.providerId && defaultModel.modelId) {
-    defaults[defaultModel.providerId] = defaultModel.modelId;
-  }
-
-  return { providers, default: defaults } as ProviderCatalogResponse;
-};
-
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider catalog fallback logic is intentionally explicit
 export async function fetchProviderCatalogForWorkspace(
   workspaceRootPath: string
 ): Promise<ProviderCatalogResponse> {
-  const { acquireOpencodeClient: acquireClient } =
-    getAgentRuntimeDependencies();
+  const {
+    acquireOpencodeClient: acquireClient,
+    loadOpencodeConfig: loadConfig,
+  } = getAgentRuntimeDependencies();
   const client = await acquireClient();
 
-  const fetchProviders = async (directory?: string) => {
+  const fetchProvidersFromSharedServer = async (directory?: string) => {
     const response = await client.config.providers({
       throwOnError: true,
       ...(directory ? { query: { directory } } : {}),
@@ -761,20 +725,144 @@ export async function fetchProviderCatalogForWorkspace(
     return response.data;
   };
 
-  try {
-    return await fetchProviders(workspaceRootPath);
-  } catch (error) {
-    if (
-      isIdleValidationPluginInstallError(error) ||
-      isIdleValidationConfigMissingError(error)
-    ) {
+  const fetchProvidersWithPluginDisabled = async (
+    initialDisabledPluginPkg: string
+  ): Promise<ProviderCatalogResponse> => {
+    const loadedConfig = await loadConfig(workspaceRootPath);
+    const baseConfig = loadedConfig.config as { plugin?: unknown } | undefined;
+
+    const originalPlugins = Array.isArray(baseConfig?.plugin)
+      ? (baseConfig.plugin as unknown[])
+      : [];
+
+    const disabledPlugins = new Set<string>([initialDisabledPluginPkg]);
+
+    const buildFilteredConfig = () =>
+      baseConfig && typeof baseConfig === "object"
+        ? {
+            ...baseConfig,
+            ...(originalPlugins.length > 0
+              ? {
+                  plugin: originalPlugins.filter(
+                    (entry) =>
+                      typeof entry !== "string" || !disabledPlugins.has(entry)
+                  ),
+                }
+              : {}),
+          }
+        : baseConfig;
+
+    const runWithCurrentConfig = async (): Promise<ProviderCatalogResponse> => {
+      const filteredConfig = buildFilteredConfig();
+
+      const server = await createOpencodeServer({
+        hostname: "127.0.0.1",
+        port: 0,
+        // biome-ignore lint/suspicious/noExplicitAny: fallback server uses dynamic config shape
+        config: filteredConfig as any,
+      });
+
       try {
-        return await buildProviderCatalogFromConfig(workspaceRootPath);
-      } catch (fallbackError) {
+        const fallbackClient = createOpencodeClient({
+          baseUrl: server.url as string,
+        });
+        // biome-ignore lint/suspicious/noExplicitAny: provider.list is not present on typed client in older SDK versions
+        const response = await (fallbackClient as any).provider.list({
+          throwOnError: true,
+          query: { directory: workspaceRootPath },
+        });
+
+        if (!response.data) {
+          throw new Error(
+            "OpenCode fallback server returned an empty provider catalog"
+          );
+        }
+
+        const payload = response.data as ProviderListPayload;
+
         // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
-        console.error("[opencode] config.providers local fallback error", {
+        console.error("[opencode] config.providers plugin fallback", {
+          workspaceRootPath,
+          disabledPlugins: Array.from(disabledPlugins),
+        });
+
+        return {
+          providers: payload.all.map((provider) => ({
+            id: provider.id,
+            name: provider.name,
+            models: provider.models,
+          })),
+          default: payload.default,
+        } as ProviderCatalogResponse;
+      } finally {
+        await server.close();
+      }
+    };
+
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < originalPlugins.length + 1; attempt += 1) {
+      try {
+        return await runWithCurrentConfig();
+      } catch (error) {
+        lastError = error;
+        if (shouldStopOnPluginInstallError(error, disabledPlugins)) {
+          break;
+        }
+      }
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("Failed to fetch provider catalog from OpenCode");
+  };
+
+  try {
+    return await fetchProvidersFromSharedServer(workspaceRootPath);
+  } catch (error) {
+    const isIdlePluginError =
+      isIdleValidationPluginInstallError(error) ||
+      isIdleValidationConfigMissingError(error);
+
+    if (isIdleValidationPluginInstallError(error)) {
+      try {
+        return await fetchProvidersFromSharedServer();
+      } catch (fallbackError) {
+        const fallbackIsIdlePluginError =
+          isIdleValidationPluginInstallError(fallbackError) ||
+          isIdleValidationConfigMissingError(fallbackError);
+
+        // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
+        console.error("[opencode] config.providers fallback error", {
           workspaceRootPath,
           error: fallbackError,
+          isIdlePluginError: fallbackIsIdlePluginError,
+        });
+
+        const message =
+          fallbackError instanceof Error && fallbackError.message
+            ? fallbackError.message
+            : "Failed to fetch provider catalog from OpenCode";
+        throw new Error(message);
+      }
+    }
+
+    const pluginInstall = getPluginInstallErrorInfo(error);
+    if (pluginInstall) {
+      try {
+        return await fetchProvidersWithPluginDisabled(pluginInstall.pkg);
+      } catch (fallbackError) {
+        const fallbackPluginInstall = getPluginInstallErrorInfo(fallbackError);
+        const fallbackIsIdlePluginError =
+          isIdleValidationPluginInstallError(fallbackError) ||
+          isIdleValidationConfigMissingError(fallbackError);
+
+        // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
+        console.error("[opencode] config.providers plugin fallback error", {
+          workspaceRootPath,
+          error: fallbackError,
+          plugin: fallbackPluginInstall?.pkg ?? pluginInstall.pkg,
+          isIdlePluginError: fallbackIsIdlePluginError,
         });
 
         const message =
@@ -789,6 +877,7 @@ export async function fetchProviderCatalogForWorkspace(
     console.error("[opencode] config.providers error", {
       workspaceRootPath,
       error,
+      isIdlePluginError,
     });
 
     const message =

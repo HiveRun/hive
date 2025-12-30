@@ -24,7 +24,7 @@
     "@elysiajs/eden": "^1.4.4",
     "@hive/server": "workspace:*",
     "@hookform/resolvers": "^5.2.2",
-    "@opencode-ai/sdk": "^1.0.51",
+    "@opencode-ai/sdk": "^1.0.215",
     "@pierre/precision-diffs": "^0.5.1",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-avatar": "^1.1.10",
