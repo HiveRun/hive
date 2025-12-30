@@ -600,23 +600,36 @@ async function ensureRuntimeForCell(
 }
 
 export async function fetchProviderCatalogForWorkspace(
-  _workspaceRootPath: string
+  workspaceRootPath: string
 ): Promise<ProviderCatalogResponse> {
   const { acquireOpencodeClient: acquireClient } =
     getAgentRuntimeDependencies();
   const client = await acquireClient();
-  const response = await client.config.providers();
 
-  if (response.error || !response.data) {
-    throw new Error(
-      getRpcErrorMessage(
-        response.error,
-        "Failed to fetch provider catalog from OpenCode"
-      )
-    );
+  try {
+    const response = await client.config.providers({
+      throwOnError: true,
+      query: { directory: workspaceRootPath },
+    });
+
+    if (!response.data) {
+      throw new Error("OpenCode server returned an empty provider catalog");
+    }
+
+    return response.data;
+  } catch (error) {
+    // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
+    console.error("[opencode] config.providers error", {
+      workspaceRootPath,
+      error,
+    });
+
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : "Failed to fetch provider catalog from OpenCode";
+    throw new Error(message);
   }
-
-  return response.data;
 }
 
 type StartRuntimeArgs = {
