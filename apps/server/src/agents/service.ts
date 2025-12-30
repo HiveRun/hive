@@ -69,16 +69,6 @@ type ProviderCatalogResponse = NonNullable<
   Awaited<ReturnType<OpencodeClient["config"]["providers"]>>["data"]
 >;
 
-type ProviderListPayload = {
-  all: Array<{
-    id: string;
-    name: string;
-    models: Record<string, ProviderModel>;
-  }>;
-  default: Record<string, string>;
-  connected: string[];
-};
-
 type ProviderAuthEntry = {
   token?: string;
   [key: string]: unknown;
@@ -766,8 +756,7 @@ export async function fetchProviderCatalogForWorkspace(
         const fallbackClient = createOpencodeClient({
           baseUrl: server.url as string,
         });
-        // biome-ignore lint/suspicious/noExplicitAny: provider.list is not present on typed client in older SDK versions
-        const response = await (fallbackClient as any).provider.list({
+        const response = await fallbackClient.config.providers({
           throwOnError: true,
           query: { directory: workspaceRootPath },
         });
@@ -778,22 +767,13 @@ export async function fetchProviderCatalogForWorkspace(
           );
         }
 
-        const payload = response.data as ProviderListPayload;
-
         // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
         console.error("[opencode] config.providers plugin fallback", {
           workspaceRootPath,
           disabledPlugins: Array.from(disabledPlugins),
         });
 
-        return {
-          providers: payload.all.map((provider) => ({
-            id: provider.id,
-            name: provider.name,
-            models: provider.models,
-          })),
-          default: payload.default,
-        } as ProviderCatalogResponse;
+        return response.data;
       } finally {
         await server.close();
       }
