@@ -46,6 +46,7 @@ import {
   ServiceSupervisorService,
   TemplateSetupError,
 } from "../services/supervisor";
+import { createTerminalProcess } from "../terminal/runtime";
 import {
   type ResolveWorkspaceContext,
   resolveWorkspaceContextEffect,
@@ -604,6 +605,149 @@ export function createCellsRoutes(
         params: t.Object({ id: t.String() }),
       }
     )
+    .ws("/:id/terminal", {
+      params: t.Object({ id: t.String() }),
+      // biome-ignore lint/suspicious/noExplicitAny: WebSocket context is dynamic per connection
+      open: async (socket: any) => {
+        const cellId = socket.data.params.id as string;
+        const { db: database } = await resolveDeps();
+        const cell = await loadCellById(database, cellId);
+
+        if (!cell) {
+          socket.send(
+            JSON.stringify({
+              type: "error",
+              message: "Cell not found",
+            })
+          );
+          socket.close();
+          return;
+        }
+
+        if (cell.status === "archived") {
+          socket.send(
+            JSON.stringify({
+              type: "error",
+              message: "Cell is archived",
+            })
+          );
+          socket.close();
+          return;
+        }
+
+        if (!cell.workspacePath) {
+          socket.send(
+            JSON.stringify({
+              type: "error",
+              message: "Cell workspace is unavailable",
+            })
+          );
+          socket.close();
+          return;
+        }
+
+        const terminal = createTerminalProcess({
+          cell,
+          hooks: {
+            onOutput: (event) => {
+              try {
+                socket.send(
+                  JSON.stringify({
+                    type: "output",
+                    data: event.data,
+                    stream: event.stream,
+                  })
+                );
+              } catch {
+                /* ignore send errors */
+              }
+            },
+            onExit: (event) => {
+              try {
+                socket.send(
+                  JSON.stringify({
+                    type: "exit",
+                    code: event.code,
+                  })
+                );
+              } catch {
+                /* ignore send errors */
+              }
+              try {
+                socket.close();
+              } catch {
+                /* ignore close errors */
+              }
+            },
+          },
+        });
+
+        socket.data.terminal = terminal;
+      },
+      // biome-ignore lint/suspicious/noExplicitAny: WebSocket message payload is untyped JSON
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: message handler coordinates parsing and control flow
+      message: async (socket: any, rawMessage: unknown) => {
+        const terminal = socket.data.terminal as
+          | import("../terminal/runtime").TerminalProcessHandle
+          | undefined;
+
+        if (!terminal) {
+          return;
+        }
+
+        let payload: unknown = rawMessage;
+        if (typeof rawMessage === "string") {
+          try {
+            payload = JSON.parse(rawMessage) as unknown;
+          } catch {
+            return;
+          }
+        }
+
+        if (!payload || typeof payload !== "object") {
+          return;
+        }
+
+        const message = payload as {
+          type?: string;
+          data?: string;
+          cols?: number;
+          rows?: number;
+        };
+
+        if (message.type === "input" && typeof message.data === "string") {
+          await terminal.write(message.data);
+          return;
+        }
+
+        if (message.type === "shutdown") {
+          await terminal.dispose();
+          try {
+            socket.close();
+          } catch {
+            /* ignore close errors */
+          }
+          return;
+        }
+
+        if (message.type === "resize") {
+          // Resize is currently a no-op; Bun.spawn uses stdio pipes, not a PTY.
+          return;
+        }
+      },
+      // biome-ignore lint/suspicious/noExplicitAny: WebSocket context is dynamic per connection
+      close: async (socket: any) => {
+        const terminal = socket.data.terminal as
+          | import("../terminal/runtime").TerminalProcessHandle
+          | undefined;
+
+        if (!terminal) {
+          return;
+        }
+
+        await terminal.dispose();
+      },
+    })
     .get(
       "/:id/diff",
       async ({ params, query, set }) => {
