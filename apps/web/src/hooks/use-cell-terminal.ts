@@ -22,15 +22,22 @@ export type UseCellTerminalOptions = {
   onExit?: (event: TerminalExitEvent) => void;
 };
 
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
+
 const resolveWebSocketUrl = (cellId: string): string | null => {
   if (typeof window === "undefined") {
     return null;
   }
 
   try {
-    const url = new URL(`/api/cells/${cellId}/terminal`, window.location.href);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    return url.toString();
+    const base = API_BASE?.trim();
+    if (!base || base === "undefined") {
+      return null;
+    }
+
+    const httpUrl = new URL(base);
+    const wsProtocol = httpUrl.protocol === "https:" ? "wss:" : "ws:";
+    return `${wsProtocol}//${httpUrl.host}/api/cells/${cellId}/terminal`;
   } catch {
     return null;
   }

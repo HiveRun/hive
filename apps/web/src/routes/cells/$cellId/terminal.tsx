@@ -1,13 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { FitAddon } from "@xterm/addon-fit";
 import { useEffect, useRef, useState } from "react";
-import { Terminal } from "xterm";
+import { useXTerm } from "react-xtermjs";
 
 import { Button } from "@/components/ui/button";
 import { useCellTerminal } from "@/hooks/use-cell-terminal";
 import { cellQueries } from "@/queries/cells";
 
-import "xterm/css/xterm.css";
+import "@xterm/xterm/css/xterm.css";
 
 // biome-ignore lint/suspicious/noExplicitAny: Route tree generator is unaware of the terminal path until next regeneration
 export const Route = createFileRoute("/cells/$cellId/terminal" as any)({
@@ -82,28 +83,25 @@ function CellTerminalRoute() {
   );
 }
 
-const MIN_TERMINAL_COLUMNS = 40;
-const MIN_TERMINAL_ROWS = 10;
-const APPROXIMATE_CHAR_WIDTH_PX = 8;
-const APPROXIMATE_CHAR_HEIGHT_PX = 16;
-
 type CellTerminalPanelProps = {
   cellId: string;
 };
 
 function CellTerminalPanel({ cellId }: CellTerminalPanelProps) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const terminalRef = useRef<Terminal | null>(null);
   const [exitCode, setExitCode] = useState<number | null>(null);
+
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const inputBufferRef = useRef<string>("");
+  const { instance: terminal, ref: xtermRef } = useXTerm();
 
   const { status, error, sendInput, sendResize, shutdown } = useCellTerminal(
     cellId,
     {
       onOutput: (event) => {
-        if (!terminalRef.current) {
+        if (!terminal) {
           return;
         }
-        terminalRef.current.write(event.data);
+        terminal.write(event.data);
       },
       onExit: (event) => {
         setExitCode(event.code);
@@ -112,94 +110,84 @@ function CellTerminalPanel({ cellId }: CellTerminalPanelProps) {
   );
 
   useEffect(() => {
-    const existing = terminalRef.current;
-    if (existing) {
-      existing.dispose();
-      terminalRef.current = null;
+    if (!terminal) {
+      return;
     }
 
-    const terminal = new Terminal({
-      cursorBlink: true,
-      convertEol: true,
-      scrollback: 10_000,
-      fontSize: 13,
-      theme: {
-        background: "#050708",
-        foreground: "#e5e7eb",
-        cursor: "#f5a524",
-        black: "#111827",
-        brightBlack: "#6b7280",
-        red: "#f97373",
-        brightRed: "#fecaca",
-        green: "#4ade80",
-        brightGreen: "#bbf7d0",
-        yellow: "#facc15",
-        brightYellow: "#fef9c3",
-        blue: "#60a5fa",
-        brightBlue: "#bfdbfe",
-        magenta: "#a855f7",
-        brightMagenta: "#e9d5ff",
-        cyan: "#22d3ee",
-        brightCyan: "#a5f3fc",
-        white: "#e5e7eb",
-        brightWhite: "#f9fafb",
-      },
-    });
+    // Configure terminal options in place to avoid touching constructor-only options like cols/rows
+    terminal.options.cursorBlink = true;
+    terminal.options.convertEol = true;
+    const scrollback = 10_000;
+    const fontSize = 13;
 
-    terminalRef.current = terminal;
+    terminal.options.scrollback = scrollback;
+    terminal.options.fontSize = fontSize;
+    terminal.options.theme = {
+      background: "#050708",
+      foreground: "#e5e7eb",
+      cursor: "#f5a524",
+      black: "#111827",
+      brightBlack: "#6b7280",
+      red: "#f97373",
+      brightRed: "#fecaca",
+      green: "#4ade80",
+      brightGreen: "#bbf7d0",
+      yellow: "#facc15",
+      brightYellow: "#fef9c3",
+      blue: "#60a5fa",
+      brightBlue: "#bfdbfe",
+      magenta: "#a855f7",
+      brightMagenta: "#e9d5ff",
+      cyan: "#22d3ee",
+      brightCyan: "#a5f3fc",
+      white: "#e5e7eb",
+      brightWhite: "#f9fafb",
+    };
 
-    if (containerRef.current) {
-      terminal.open(containerRef.current);
-      terminal.focus();
-      terminal.writeln(`Connected to cell ${cellId}`);
-    }
+    const fitAddon = new FitAddon();
+    terminal.loadAddon(fitAddon);
+    fitAddon.fit();
+    fitAddonRef.current = fitAddon;
 
+    terminal.focus();
+    terminal.writeln(`Connected to cell ${cellId}`);
+
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: local terminal input handling is intentionally explicit
     const dataDisposable = terminal.onData((data: string) => {
-      sendInput(data);
+      for (const char of data) {
+        if (char === "\r" || char === "\n") {
+          const line = inputBufferRef.current;
+          terminal.write("\r\n");
+          const payload = line.length > 0 ? `${line}\n` : "\n";
+          sendInput(payload);
+          inputBufferRef.current = "";
+        } else if (char === "\b" || char === "\x7f") {
+          if (inputBufferRef.current.length > 0) {
+            inputBufferRef.current = inputBufferRef.current.slice(0, -1);
+            terminal.write("\b \b");
+          }
+        } else if (char >= " " || char === "\t") {
+          inputBufferRef.current += char;
+          terminal.write(char);
+        }
+      }
     });
 
     return () => {
       dataDisposable.dispose();
-      terminal.dispose();
-      terminalRef.current = null;
+      fitAddonRef.current = null;
+      fitAddon.dispose();
     };
-  }, [cellId, sendInput]);
+  }, [cellId, sendInput, terminal]);
 
   useEffect(() => {
     const handleResize = () => {
-      const terminal = terminalRef.current;
-      const element = containerRef.current;
-      if (!terminal) {
-        return;
-      }
-      if (!element) {
+      if (!(terminal && fitAddonRef.current)) {
         return;
       }
 
-      const width = element.clientWidth;
-      const height = element.clientHeight;
-
-      if (!width) {
-        return;
-      }
-      if (!height) {
-        return;
-      }
-
-      const approxCharWidth = APPROXIMATE_CHAR_WIDTH_PX;
-      const approxCharHeight = APPROXIMATE_CHAR_HEIGHT_PX;
-
-      const cols = Math.max(
-        MIN_TERMINAL_COLUMNS,
-        Math.floor(width / approxCharWidth)
-      );
-      const rows = Math.max(
-        MIN_TERMINAL_ROWS,
-        Math.floor(height / approxCharHeight)
-      );
-
-      terminal.resize(cols, rows);
-      sendResize(cols, rows);
+      fitAddonRef.current.fit();
+      sendResize(terminal.cols, terminal.rows);
     };
 
     handleResize();
@@ -208,10 +196,10 @@ function CellTerminalPanel({ cellId }: CellTerminalPanelProps) {
     return () => {
       window.removeEventListener("resize", handleResize);
     };
-  }, [sendResize]);
+  }, [sendResize, terminal]);
 
   const handleClear = () => {
-    terminalRef.current?.clear();
+    terminal?.clear();
   };
 
   const statusLabelMap: Record<string, string> = {
@@ -255,7 +243,7 @@ function CellTerminalPanel({ cellId }: CellTerminalPanelProps) {
         </div>
       </div>
       <div className="flex min-h-0 flex-1 overflow-hidden rounded-sm border border-border bg-background">
-        <div className="h-full w-full" ref={containerRef} />
+        <div className="h-full w-full" ref={xtermRef} />
       </div>
     </div>
   );

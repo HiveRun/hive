@@ -154,7 +154,11 @@ export function createTerminalProcess(
       return;
     }
     try {
-      const payload = textEncoder.encode(data);
+      // Normalize carriage return to newline so shells running over
+      // stdio pipes (non-PTY) still see line endings when the user
+      // presses Enter in the terminal UI.
+      const normalized = data.replace(/\r/g, "\n");
+      const payload = textEncoder.encode(normalized);
       await stdin.write(payload);
     } catch {
       // Writing after exit or on error should be a no-op for callers
