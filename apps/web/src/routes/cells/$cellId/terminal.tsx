@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
-import { useXTerm } from "react-xtermjs";
 
 import { Button } from "@/components/ui/button";
 import { useCellTerminal } from "@/hooks/use-cell-terminal";
@@ -89,19 +91,19 @@ type CellTerminalPanelProps = {
 
 function CellTerminalPanel({ cellId }: CellTerminalPanelProps) {
   const [exitCode, setExitCode] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const inputBufferRef = useRef<string>("");
-  const { instance: terminal, ref: xtermRef } = useXTerm();
+  const searchAddonRef = useRef<SearchAddon | null>(null);
 
   const { status, error, sendInput, sendResize, shutdown } = useCellTerminal(
     cellId,
     {
       onOutput: (event) => {
-        if (!terminal) {
-          return;
-        }
-        terminal.write(event.data);
+        termRef.current?.write(event.data);
       },
       onExit: (event) => {
         setExitCode(event.code);
@@ -110,96 +112,171 @@ function CellTerminalPanel({ cellId }: CellTerminalPanelProps) {
   );
 
   useEffect(() => {
-    if (!terminal) {
+    let disposed = false;
+    let fitAddon: FitAddon | null = null;
+
+    const setup = () => {
+      try {
+        const term = new Terminal({
+          cursorBlink: true,
+          convertEol: true,
+          fontSize: 13,
+          scrollback: 10_000,
+          theme: {
+            background: "#050708",
+            foreground: "#e5e7eb",
+            cursor: "#f5a524",
+          },
+        });
+
+        if (disposed) {
+          term.dispose();
+          return;
+        }
+
+        const webLinksAddon = new WebLinksAddon();
+        term.loadAddon(webLinksAddon);
+
+        const searchAddon = new SearchAddon();
+        term.loadAddon(searchAddon);
+        searchAddonRef.current = searchAddon;
+
+        termRef.current = term;
+
+        fitAddon = new FitAddon();
+        term.loadAddon(fitAddon);
+
+        const container = containerRef.current;
+        if (container) {
+          term.open(container);
+          const handlePointerDown = () => {
+            const activeElement = document.activeElement;
+            if (
+              activeElement instanceof HTMLElement &&
+              activeElement !== container
+            ) {
+              activeElement.blur();
+            }
+            term.focus();
+          };
+          container.addEventListener("pointerdown", handlePointerDown);
+        }
+
+        fitAddon.fit();
+        fitAddonRef.current = fitAddon;
+
+        term.focus();
+        term.writeln(`Connected to cell ${cellId}`);
+
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Alt+Backspace handler is intentionally explicit
+        term.attachCustomKeyEventHandler((event) => {
+          if (event.key === "Backspace" && event.altKey) {
+            const buffer = inputBufferRef.current;
+            if (!buffer) {
+              event.preventDefault();
+              return false;
+            }
+
+            const lastIndex = buffer.length - 1;
+            let end = lastIndex;
+            while (end >= 0 && buffer[end] === " ") {
+              end -= 1;
+            }
+            let start = end;
+            while (start >= 0 && buffer[start] !== " ") {
+              start -= 1;
+            }
+
+            const charsToDelete = lastIndex - start;
+            if (charsToDelete > 0) {
+              inputBufferRef.current = buffer.slice(0, start + 1);
+              const eraseSequence = "\b \b".repeat(charsToDelete);
+              term.write(eraseSequence);
+            }
+
+            event.preventDefault();
+            return false;
+          }
+
+          return true;
+        });
+
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: local terminal input handling is intentionally explicit
+        const dataDisposable = term.onData((data: string) => {
+          for (const char of data) {
+            if (char === "\r" || char === "\n") {
+              const line = inputBufferRef.current;
+              term.write("\r\n");
+              const payload = line.length > 0 ? `${line}\n` : "\n";
+              sendInput(payload);
+              inputBufferRef.current = "";
+            } else if (char === "\b" || char === "\x7f") {
+              if (inputBufferRef.current.length > 0) {
+                inputBufferRef.current = inputBufferRef.current.slice(0, -1);
+                term.write("\b \b");
+              }
+            } else if (char >= " " || char === "\t") {
+              inputBufferRef.current += char;
+              term.write(char);
+            }
+          }
+        });
+
+        const handleResize = () => {
+          if (!fitAddon) {
+            return;
+          }
+          if (!term) {
+            return;
+          }
+          fitAddon.fit();
+          sendResize(term.cols, term.rows);
+        };
+
+        handleResize();
+        window.addEventListener("resize", handleResize);
+
+        return () => {
+          dataDisposable.dispose();
+          window.removeEventListener("resize", handleResize);
+          fitAddonRef.current = null;
+          fitAddon?.dispose();
+          term.dispose();
+          termRef.current = null;
+        };
+      } catch {
+        // If Ghostty fails to load, we leave the terminal empty.
+      }
+    };
+
+    const cleanup = setup();
+
+    return () => {
+      disposed = true;
+      if (cleanup) {
+        cleanup();
+      }
+    };
+  }, [cellId, sendInput, sendResize]);
+
+  const handleSearchNext = () => {
+    const addon = searchAddonRef.current;
+    if (!(addon && searchQuery)) {
       return;
     }
+    addon.findNext(searchQuery);
+  };
 
-    // Configure terminal options in place to avoid touching constructor-only options like cols/rows
-    terminal.options.cursorBlink = true;
-    terminal.options.convertEol = true;
-    const scrollback = 10_000;
-    const fontSize = 13;
-
-    terminal.options.scrollback = scrollback;
-    terminal.options.fontSize = fontSize;
-    terminal.options.theme = {
-      background: "#050708",
-      foreground: "#e5e7eb",
-      cursor: "#f5a524",
-      black: "#111827",
-      brightBlack: "#6b7280",
-      red: "#f97373",
-      brightRed: "#fecaca",
-      green: "#4ade80",
-      brightGreen: "#bbf7d0",
-      yellow: "#facc15",
-      brightYellow: "#fef9c3",
-      blue: "#60a5fa",
-      brightBlue: "#bfdbfe",
-      magenta: "#a855f7",
-      brightMagenta: "#e9d5ff",
-      cyan: "#22d3ee",
-      brightCyan: "#a5f3fc",
-      white: "#e5e7eb",
-      brightWhite: "#f9fafb",
-    };
-
-    const fitAddon = new FitAddon();
-    terminal.loadAddon(fitAddon);
-    fitAddon.fit();
-    fitAddonRef.current = fitAddon;
-
-    terminal.focus();
-    terminal.writeln(`Connected to cell ${cellId}`);
-
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: local terminal input handling is intentionally explicit
-    const dataDisposable = terminal.onData((data: string) => {
-      for (const char of data) {
-        if (char === "\r" || char === "\n") {
-          const line = inputBufferRef.current;
-          terminal.write("\r\n");
-          const payload = line.length > 0 ? `${line}\n` : "\n";
-          sendInput(payload);
-          inputBufferRef.current = "";
-        } else if (char === "\b" || char === "\x7f") {
-          if (inputBufferRef.current.length > 0) {
-            inputBufferRef.current = inputBufferRef.current.slice(0, -1);
-            terminal.write("\b \b");
-          }
-        } else if (char >= " " || char === "\t") {
-          inputBufferRef.current += char;
-          terminal.write(char);
-        }
-      }
-    });
-
-    return () => {
-      dataDisposable.dispose();
-      fitAddonRef.current = null;
-      fitAddon.dispose();
-    };
-  }, [cellId, sendInput, terminal]);
-
-  useEffect(() => {
-    const handleResize = () => {
-      if (!(terminal && fitAddonRef.current)) {
-        return;
-      }
-
-      fitAddonRef.current.fit();
-      sendResize(terminal.cols, terminal.rows);
-    };
-
-    handleResize();
-
-    window.addEventListener("resize", handleResize);
-    return () => {
-      window.removeEventListener("resize", handleResize);
-    };
-  }, [sendResize, terminal]);
+  const handleSearchPrev = () => {
+    const addon = searchAddonRef.current;
+    if (!(addon && searchQuery)) {
+      return;
+    }
+    addon.findPrevious(searchQuery);
+  };
 
   const handleClear = () => {
-    terminal?.clear();
+    termRef.current?.clear();
   };
 
   const statusLabelMap: Record<string, string> = {
@@ -223,6 +300,28 @@ function CellTerminalPanel({ cellId }: CellTerminalPanelProps) {
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <input
+            className="h-7 w-28 rounded border border-border bg-background px-2 text-xs"
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search"
+            value={searchQuery}
+          />
+          <Button
+            onClick={handleSearchPrev}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            Prev
+          </Button>
+          <Button
+            onClick={handleSearchNext}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            Next
+          </Button>
           <Button
             onClick={handleClear}
             size="sm"
@@ -243,7 +342,7 @@ function CellTerminalPanel({ cellId }: CellTerminalPanelProps) {
         </div>
       </div>
       <div className="flex min-h-0 flex-1 overflow-hidden rounded-sm border border-border bg-background">
-        <div className="h-full w-full" ref={xtermRef} />
+        <div className="h-full w-full" ref={containerRef} />
       </div>
     </div>
   );
