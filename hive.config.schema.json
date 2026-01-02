@@ -69,7 +69,7 @@
             },
             "additionalProperties": {
               "description": "Supported service definitions",
-              "anyOf": [
+              "oneOf": [
                 {
                   "type": "object",
                   "properties": {
