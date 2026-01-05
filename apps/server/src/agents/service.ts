@@ -599,33 +599,6 @@ async function ensureRuntimeForCell(
   return runtime;
 }
 
-const IDLE_VALIDATION_PLUGIN_PATH = "./.opencode/plugin/idle-validate.ts";
-
-const isIdleValidationPluginInstallError = (error: unknown): boolean => {
-  const candidate = error as
-    | { name?: unknown; data?: unknown }
-    | null
-    | undefined;
-  if (!candidate || typeof candidate !== "object") {
-    return false;
-  }
-
-  const name =
-    "name" in candidate ? (candidate as { name?: unknown }).name : undefined;
-  if (name !== "BunInstallFailedError") {
-    return false;
-  }
-
-  const data =
-    "data" in candidate ? (candidate as { data?: unknown }).data : undefined;
-  if (!data || typeof data !== "object") {
-    return false;
-  }
-
-  const pkg = (data as { pkg?: unknown }).pkg;
-  return pkg === IDLE_VALIDATION_PLUGIN_PATH;
-};
-
 const isIdleValidationConfigMissingError = (error: unknown): boolean => {
   const candidate = error as
     | { name?: unknown; data?: unknown }
@@ -676,9 +649,7 @@ export async function fetchProviderCatalogForWorkspace(
 
     return response.data;
   } catch (error) {
-    const isIdlePluginError =
-      isIdleValidationPluginInstallError(error) ||
-      isIdleValidationConfigMissingError(error);
+    const isIdlePluginError = isIdleValidationConfigMissingError(error);
 
     // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
     console.error("[opencode] config.providers error", {
