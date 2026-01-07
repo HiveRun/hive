@@ -599,6 +599,37 @@ async function ensureRuntimeForCell(
   return runtime;
 }
 
+const isIdleValidationConfigMissingError = (error: unknown): boolean => {
+  const candidate = error as
+    | { name?: unknown; data?: unknown }
+    | null
+    | undefined;
+  if (!candidate || typeof candidate !== "object") {
+    return false;
+  }
+
+  const name =
+    "name" in candidate ? (candidate as { name?: unknown }).name : undefined;
+  if (name !== "UnknownError") {
+    return false;
+  }
+
+  const data =
+    "data" in candidate ? (candidate as { data?: unknown }).data : undefined;
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+
+  const message = (data as { message?: unknown }).message;
+  if (typeof message !== "string") {
+    return false;
+  }
+
+  return message.includes(
+    "Idle validation plugin requires .opencode/plugin/idle-validate.json configuration file."
+  );
+};
+
 export async function fetchProviderCatalogForWorkspace(
   workspaceRootPath: string
 ): Promise<ProviderCatalogResponse> {
@@ -622,10 +653,13 @@ export async function fetchProviderCatalogForWorkspace(
   try {
     return await fetchProviders(workspaceRootPath);
   } catch (error) {
+    const isIdlePluginError = isIdleValidationConfigMissingError(error);
+
     // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
     console.error("[opencode] config.providers error", {
       workspaceRootPath,
       error,
+      isIdlePluginError,
     });
 
     const message =

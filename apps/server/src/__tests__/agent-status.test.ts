@@ -75,7 +75,7 @@ function buildMessageUpdatedEvent(
       created: Date.now(),
       ...options?.time,
     },
-  };
+  } as UserMessageInfo;
 
   return {
     type: "message.updated",

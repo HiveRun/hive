@@ -47,6 +47,8 @@ export default defineConfig({
     trace: "retain-on-failure",
     /* Screenshot on failure */
     screenshot: "only-on-failure",
+    /* Use a fixed browser timezone so visual snapshots are stable across machines. */
+    timezoneId: "UTC",
   },
 
   /* Configure projects for major browsers */
