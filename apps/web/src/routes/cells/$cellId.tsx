@@ -34,9 +34,8 @@ function CellLayout() {
   const { workspaceId } = Route.useLoaderData();
   const cellQuery = useQuery(cellQueries.detail(cellId));
   const templatesQuery = useQuery(templateQueries.all(workspaceId));
-  const activeRouteId = useRouterState({
-    select: (state) => state.matches.at(-1)?.routeId,
-  });
+  const routerState = useRouterState();
+  const activeRouteId = routerState.matches.at(-1)?.routeId;
 
   const cell = cellQuery.data;
   const templates = templatesQuery.data?.templates ?? [];
@@ -54,6 +53,11 @@ function CellLayout() {
       routeId: "/cells/$cellId/services",
       label: "Services",
       to: "/cells/$cellId/services",
+    },
+    {
+      routeId: "/cells/$cellId/terminal",
+      label: "Terminal",
+      to: "/cells/$cellId/terminal",
     },
     {
       routeId: "/cells/$cellId/viewer",

@@ -637,10 +637,10 @@ export async function fetchProviderCatalogForWorkspace(
     getAgentRuntimeDependencies();
   const client = await acquireClient();
 
-  try {
+  const fetchProviders = async (directory?: string) => {
     const response = await client.config.providers({
       throwOnError: true,
-      query: { directory: workspaceRootPath },
+      ...(directory ? { query: { directory } } : {}),
     });
 
     if (!response.data) {
@@ -648,6 +648,10 @@ export async function fetchProviderCatalogForWorkspace(
     }
 
     return response.data;
+  };
+
+  try {
+    return await fetchProviders(workspaceRootPath);
   } catch (error) {
     const isIdlePluginError = isIdleValidationConfigMissingError(error);
 
