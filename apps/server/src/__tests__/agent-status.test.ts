@@ -41,48 +41,36 @@ describe("resolveRuntimeStatusFromEvent", () => {
   });
 });
 
-type MessageUpdatedEvent = Extract<Event, { type: "message.updated" }>;
-type MessageUpdatedInfo = MessageUpdatedEvent["properties"]["info"];
-type UserMessageInfo = Extract<MessageUpdatedInfo, { role: "user" }>;
-type AssistantMessageInfo = Extract<MessageUpdatedInfo, { role: "assistant" }>;
-
 function buildMessageUpdatedEvent(
   role: "user" | "assistant",
   options?: { time?: { created: number; completed?: number } }
-): MessageUpdatedEvent {
+): Event {
   if (role === "assistant") {
-    const info: AssistantMessageInfo = {
+    const info = {
       id: "msg_test",
       sessionID: "ses_test",
-      role: "assistant",
+      role: "assistant" as const,
       parentID: "msg_user",
       time: {
         created: Date.now(),
         ...options?.time,
       },
-      modelID: "model_test",
-      providerID: "provider_test",
-      mode: "build",
-      path: { cwd: "/tmp", root: "/tmp" },
-      cost: 0,
-      tokens: {
-        input: 0,
-        output: 0,
-        reasoning: 0,
-        cache: { read: 0, write: 0 },
+      model: {
+        providerID: "provider_test",
+        modelID: "model_test",
       },
     };
 
     return {
       type: "message.updated",
       properties: { info },
-    } satisfies MessageUpdatedEvent;
+    } as unknown as Event;
   }
 
-  const info: UserMessageInfo = {
+  const info = {
     id: "msg_test",
     sessionID: "ses_test",
-    role: "user",
+    role: "user" as const,
     time: {
       created: Date.now(),
       ...options?.time,
@@ -92,5 +80,5 @@ function buildMessageUpdatedEvent(
   return {
     type: "message.updated",
     properties: { info },
-  } satisfies MessageUpdatedEvent;
+  } as unknown as Event;
 }

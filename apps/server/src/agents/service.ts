@@ -599,31 +599,6 @@ async function ensureRuntimeForCell(
   return runtime;
 }
 
-const isIdleValidationPluginInstallError = (error: unknown): boolean => {
-  const candidate = error as
-    | { name?: unknown; data?: unknown }
-    | null
-    | undefined;
-  if (!candidate || typeof candidate !== "object") {
-    return false;
-  }
-
-  const name =
-    "name" in candidate ? (candidate as { name?: unknown }).name : undefined;
-  if (name !== "BunInstallFailedError") {
-    return false;
-  }
-
-  const data =
-    "data" in candidate ? (candidate as { data?: unknown }).data : undefined;
-  if (!data || typeof data !== "object") {
-    return false;
-  }
-
-  const pkg = (data as { pkg?: unknown }).pkg;
-  return pkg === "./.opencode/plugin/idle-validate.ts";
-};
-
 export async function fetchProviderCatalogForWorkspace(
   workspaceRootPath: string
 ): Promise<ProviderCatalogResponse> {
@@ -647,24 +622,6 @@ export async function fetchProviderCatalogForWorkspace(
   try {
     return await fetchProviders(workspaceRootPath);
   } catch (error) {
-    if (isIdleValidationPluginInstallError(error)) {
-      try {
-        return await fetchProviders();
-      } catch (fallbackError) {
-        // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
-        console.error("[opencode] config.providers fallback error", {
-          workspaceRootPath,
-          error: fallbackError,
-        });
-
-        const message =
-          fallbackError instanceof Error && fallbackError.message
-            ? fallbackError.message
-            : "Failed to fetch provider catalog from OpenCode";
-        throw new Error(message);
-      }
-    }
-
     // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
     console.error("[opencode] config.providers error", {
       workspaceRootPath,

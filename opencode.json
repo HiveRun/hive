@@ -4,9 +4,6 @@
   "plugin": [
     "opencode-openai-codex-auth@4.1.0",
     "opencode-antigravity-auth@1.1.0",
-    "./.opencode/plugin/idle-validate.ts",
-    "./.opencode/plugin/ast-grep-plugin.ts",
-    "./.opencode/plugin/todo-continuation-enforcer.ts",
     "opencode-pty@0.1.0",
     "opencode-websearch-cited@1.1.1"
   ],

@@ -59,7 +59,7 @@
         "@elysiajs/eden": "^1.4.4",
         "@hive/server": "workspace:*",
         "@hookform/resolvers": "^5.2.2",
-        "@opencode-ai/sdk": "^1.0.51",
+        "@opencode-ai/sdk": "^1.1.4",
         "@pierre/precision-diffs": "^0.5.1",
         "@radix-ui/react-alert-dialog": "^1.1.15",
         "@radix-ui/react-avatar": "^1.1.10",
@@ -138,7 +138,7 @@
     },
   },
   "catalog": {
-    "@opencode-ai/sdk": "^1.0.51",
+    "@opencode-ai/sdk": "^1.1.4",
     "dotenv": "^17.2.2",
     "tsdown": "^0.15.5",
     "typescript": "^5.8.2",
@@ -455,7 +455,7 @@
 
     "@oozcitak/util": ["@oozcitak/util@8.3.8", "", {}, "sha512-T8TbSnGsxo6TDBJx/Sgv/BlVJL3tshxZP7Aq5R1mSnM5OcHY2dQaxLMu2+E8u3gN0MLOzdjurqN4ZRVuzQycOQ=="],
 
-    "@opencode-ai/sdk": ["@opencode-ai/sdk@1.0.51", "", {}, "sha512-lwL85Nq+qqqu+6Fe/h5i/cdcCJvtm6xuWPSt/4D+PpbcLpL2O/SD3S7ifnqIKq2Xf2orBeJekqoICOBN+1Mg1w=="],
+    "@opencode-ai/sdk": ["@opencode-ai/sdk@1.1.4", "", {}, "sha512-fhQH1U3b2K9HDTTJ6Ia7q4FoBwLlrsDf5pTF/D11FntOJPkZoFAhRBznjc8rwCqrGeDzg4YFs+68oLqWgCL/iA=="],
 
     "@opentelemetry/api": ["@opentelemetry/api@1.9.0", "", {}, "sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg=="],
 
