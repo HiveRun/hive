@@ -75,7 +75,12 @@ function buildMessageUpdatedEvent(
       created: Date.now(),
       ...options?.time,
     },
-  } as UserMessageInfo;
+  } as {
+    id: string;
+    sessionID: string;
+    role: "user";
+    time: { created: number; completed?: number };
+  };
 
   return {
     type: "message.updated",

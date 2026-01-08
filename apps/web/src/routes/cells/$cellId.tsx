@@ -55,11 +55,6 @@ function CellLayout() {
       to: "/cells/$cellId/services",
     },
     {
-      routeId: "/cells/$cellId/terminal",
-      label: "Terminal",
-      to: "/cells/$cellId/terminal",
-    },
-    {
       routeId: "/cells/$cellId/viewer",
       label: "Viewer",
       to: "/cells/$cellId/viewer",
