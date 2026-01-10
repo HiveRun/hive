@@ -14,8 +14,19 @@ type SharedOpencodeServerHandle = {
   configDetails?: string;
 };
 
-let sharedHandle: SharedOpencodeServerHandle | null = null;
-let startPromise: Promise<SharedOpencodeServerHandle> | null = null;
+// Global singleton to survive hot reloads (bun run --hot)
+// Without this, every hot reload spawns a new orphaned OpenCode server process
+declare global {
+  // eslint-disable-next-line no-var
+  var __HIVE_OPENCODE_HANDLE__: SharedOpencodeServerHandle | null;
+  // eslint-disable-next-line no-var
+  var __HIVE_OPENCODE_PROMISE__: Promise<SharedOpencodeServerHandle> | null;
+}
+
+let sharedHandle: SharedOpencodeServerHandle | null =
+  globalThis.__HIVE_OPENCODE_HANDLE__ ?? null;
+let startPromise: Promise<SharedOpencodeServerHandle> | null =
+  globalThis.__HIVE_OPENCODE_PROMISE__ ?? null;
 
 async function createSharedServer(
   config: LoadedOpencodeConfig
@@ -46,6 +57,7 @@ async function createSharedServer(
   };
 
   sharedHandle = handle;
+  globalThis.__HIVE_OPENCODE_HANDLE__ = handle;
   return handle;
 }
 
@@ -75,8 +87,10 @@ export async function startSharedOpencodeServer(
   if (!startPromise) {
     startPromise = createSharedServer(config).catch((error) => {
       startPromise = null;
+      globalThis.__HIVE_OPENCODE_PROMISE__ = null;
       throw error;
     });
+    globalThis.__HIVE_OPENCODE_PROMISE__ = startPromise;
   }
 
   await startPromise;
@@ -108,6 +122,8 @@ export async function stopSharedOpencodeServer(): Promise<void> {
 
   sharedHandle = null;
   startPromise = null;
+  globalThis.__HIVE_OPENCODE_HANDLE__ = null;
+  globalThis.__HIVE_OPENCODE_PROMISE__ = null;
 
   if (!handle) {
     return;
