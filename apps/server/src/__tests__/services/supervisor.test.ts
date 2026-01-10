@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resolveWorkspaceRoot } from "../../config/context";
@@ -122,11 +122,116 @@ describe("service supervisor", () => {
       },
     });
 
-    const expectedLogPath = resolve(
-      workspace,
-      "node_modules/.hive/logs/web.log"
-    );
-    expect(existsSync(expectedLogPath)).toBe(true);
+    const logPath = join(workspace, ".hive", "logs", "web.log");
+    expect(existsSync(logPath)).toBe(true);
+  });
+
+  it("does not start duplicate services when pid is alive", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-dup");
+
+    const harness = createHarness();
+
+    await harness.supervisor.ensureCellServices({
+      cell,
+      template: {
+        id: "template-dup",
+        label: "Template",
+        type: "manual",
+        services: {
+          server: {
+            type: "process",
+            run: "bun run dev",
+            cwd: ".",
+          },
+        },
+      },
+    });
+
+    const [service] = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+
+    if (!service?.pid) {
+      throw new Error("Expected service pid to be set");
+    }
+
+    const originalKill = process.kill;
+    process.kill = ((pid: number, signal?: number | NodeJS.Signals) => {
+      if (signal === 0 && pid === service.pid) {
+        return true as never;
+      }
+      throw new Error("unexpected kill");
+    }) as unknown as typeof process.kill;
+
+    await harness.supervisor.ensureCellServices({
+      cell,
+      template: {
+        id: "template-dup",
+        label: "Template",
+        type: "manual",
+        services: {
+          server: {
+            type: "process",
+            run: "bun run dev",
+            cwd: ".",
+          },
+        },
+      },
+    });
+
+    process.kill = originalKill;
+
+    expect(harness.processes).toHaveLength(1);
+  });
+
+  it("does not start duplicate services on concurrent start", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-concurrent");
+
+    const harness = createHarness();
+
+    await harness.supervisor.ensureCellServices({
+      cell,
+      template: {
+        id: "template-concurrent",
+        label: "Template",
+        type: "manual",
+        services: {
+          web: {
+            type: "process",
+            run: "bun run dev",
+            cwd: ".",
+          },
+        },
+      },
+    });
+
+    const [service] = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+
+    if (!service) {
+      throw new Error("Expected service to exist");
+    }
+
+    await harness.supervisor.stopCellService(service.id);
+
+    const startingCount = harness.processes.length;
+
+    await Promise.all([
+      harness.supervisor.startCellService(service.id),
+      harness.supervisor.startCellService(service.id),
+    ]);
+
+    expect(harness.processes).toHaveLength(startingCount + 1);
+
+    await harness.supervisor.stopCellServices(cell.id, {
+      releasePorts: true,
+    });
+    await Promise.all(harness.processes.map((proc) => proc.handle.exited));
   });
 
   it("runs template setup commands before starting services", async () => {

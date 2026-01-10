@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { constants as osConstants } from "node:os";
 import { dirname, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -23,13 +24,40 @@ const AUTO_RESTART_STATUSES: ReadonlySet<ServiceStatus> = new Set([
   "needs_resume",
 ]);
 
+const cellServiceLocks = new Map<string, Promise<void>>();
+const serviceStartLocks = new Map<string, Promise<void>>();
+
 const STOP_TIMEOUT_MS = 2000;
 const FORCE_KILL_DELAY_MS = 250;
 const DEFAULT_SHELL = process.env.SHELL || "/bin/bash";
 const SIGNAL_CODES = osConstants?.signals ?? {};
-const SERVICE_LOG_DIR = "node_modules/.hive/logs";
+const SERVICE_LOG_DIR = ".hive/logs";
 const KB_PER_MB = 1024;
 const SERVICE_MEMORY_MAX_MB_ENV = "HIVE_SERVICE_MEMORY_MAX_MB";
+
+function runWithCellLock(cellId: string, action: () => Promise<void>) {
+  const current = cellServiceLocks.get(cellId) ?? Promise.resolve();
+  const next = current.catch(() => null).then(action);
+  cellServiceLocks.set(cellId, next);
+  next.finally(() => {
+    if (cellServiceLocks.get(cellId) === next) {
+      cellServiceLocks.delete(cellId);
+    }
+  });
+  return next;
+}
+
+function runWithServiceLock(serviceId: string, action: () => Promise<void>) {
+  const current = serviceStartLocks.get(serviceId) ?? Promise.resolve();
+  const next = current.catch(() => null).then(action);
+  serviceStartLocks.set(serviceId, next);
+  next.finally(() => {
+    if (serviceStartLocks.get(serviceId) === next) {
+      serviceStartLocks.delete(serviceId);
+    }
+  });
+  return next;
+}
 
 function applyServiceResourceLimits(
   command: string,
@@ -118,6 +146,18 @@ export function isProcessAlive(pid?: number | null): boolean {
   } catch {
     return false;
   }
+}
+
+function isPortFree(port: number): Promise<boolean> {
+  return new Promise((resolvePort) => {
+    const server = createServer();
+    server.once("error", () => {
+      server.close(() => resolvePort(false));
+    });
+    server.listen(port, "127.0.0.1", () => {
+      server.close(() => resolvePort(true));
+    });
+  });
 }
 
 function resolveSignalValue(signal?: number | string): number | undefined {
@@ -294,6 +334,43 @@ export function createServiceSupervisor(
     }
   }
 
+  async function shouldSkipRestart(row: ServiceRow): Promise<boolean> {
+    if (!AUTO_RESTART_STATUSES.has(row.service.status)) {
+      return true;
+    }
+
+    if (row.service.pid && isProcessAlive(row.service.pid)) {
+      return true;
+    }
+
+    if (!row.service.pid && typeof row.service.port === "number") {
+      const portFree = await isPortFree(row.service.port);
+      if (!portFree) {
+        logger.warn("Skipping service restart because port is already in use", {
+          serviceId: row.service.id,
+          cellId: row.cell.id,
+          port: row.service.port,
+        });
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  async function normalizeServiceForRestart(row: ServiceRow): Promise<void> {
+    if (!row.service.pid) {
+      return;
+    }
+
+    await repository.updateService(row.service.id, {
+      pid: null,
+      status: "needs_resume",
+    });
+    row.service.pid = null;
+    row.service.status = "needs_resume";
+  }
+
   async function restartServicesForCell(args: {
     rows: ServiceRow[];
     portMap: Map<string, number>;
@@ -302,9 +379,11 @@ export function createServiceSupervisor(
     const { rows, portMap, templateEnv } = args;
 
     for (const row of rows) {
-      if (!AUTO_RESTART_STATUSES.has(row.service.status)) {
+      if (await shouldSkipRestart(row)) {
         continue;
       }
+
+      await normalizeServiceForRestart(row);
 
       await startService(row, undefined, templateEnv, portMap).catch(
         (error) => {
@@ -318,41 +397,43 @@ export function createServiceSupervisor(
     }
   }
 
-  async function ensureCellServices({
+  function ensureCellServices({
     cell,
     template,
   }: {
     cell: Cell;
     template?: Template;
   }): Promise<void> {
-    const resolvedTemplate =
-      template ??
-      (await loadTemplateCached(
-        cell.templateId,
-        cell.workspaceRootPath ?? cell.workspacePath
-      ));
+    return runWithCellLock(cell.id, async () => {
+      const resolvedTemplate =
+        template ??
+        (await loadTemplateCached(
+          cell.templateId,
+          cell.workspaceRootPath ?? cell.workspacePath
+        ));
 
-    if (!resolvedTemplate) {
-      return;
-    }
+      if (!resolvedTemplate) {
+        return;
+      }
 
-    const templateEnv = resolvedTemplate.env ?? {};
-    await runTemplateSetupCommands(cell, resolvedTemplate, templateEnv);
+      const templateEnv = resolvedTemplate.env ?? {};
+      await runTemplateSetupCommands(cell, resolvedTemplate, templateEnv);
 
-    if (!resolvedTemplate.services) {
-      return;
-    }
+      if (!resolvedTemplate.services) {
+        return;
+      }
 
-    const prepared = await prepareProcessServices(cell, resolvedTemplate);
-    if (!prepared.length) {
-      return;
-    }
+      const prepared = await prepareProcessServices(cell, resolvedTemplate);
+      if (!prepared.length) {
+        return;
+      }
 
-    const portMap = await buildPortMap(prepared.map((entry) => entry.row));
+      const portMap = await buildPortMap(prepared.map((entry) => entry.row));
 
-    for (const { row, definition } of prepared) {
-      await startOrFail(row, definition, templateEnv, portMap);
-    }
+      for (const { row, definition } of prepared) {
+        await startOrFail(row, definition, templateEnv, portMap);
+      }
+    });
   }
 
   async function prepareProcessServices(
@@ -524,56 +605,92 @@ export function createServiceSupervisor(
     }
   }
 
+  async function shouldSkipStartService(row: ServiceRow): Promise<boolean> {
+    if (row.service.pid && isProcessAlive(row.service.pid)) {
+      return true;
+    }
+
+    if (typeof row.service.port === "number") {
+      const portFree = await isPortFree(row.service.port);
+      if (!portFree) {
+        return true;
+      }
+    }
+
+    if (activeServices.has(row.service.id)) {
+      return true;
+    }
+
+    return false;
+  }
+
   async function startService(
     row: ServiceRow,
     definitionOverride?: ProcessService,
     templateEnv: Record<string, string> = {},
     portLookup?: Map<string, number>
   ): Promise<void> {
-    const definition =
-      definitionOverride ?? (row.service.definition as ProcessService | null);
+    await runWithServiceLock(row.service.id, async () => {
+      const latestRow = await repository.fetchServiceRowById(row.service.id);
+      const serviceRow = latestRow ?? row;
+      const definition =
+        definitionOverride ??
+        (serviceRow.service.definition as ProcessService | null);
 
-    if (!definition || definition.type !== "process") {
-      logger.warn("Cannot start non-process service", {
-        serviceId: row.service.id,
-        cellId: row.cell.id,
+      if (!definition || definition.type !== "process") {
+        logger.warn("Cannot start non-process service", {
+          serviceId: serviceRow.service.id,
+          cellId: serviceRow.cell.id,
+        });
+        return;
+      }
+
+      if (await shouldSkipStartService(serviceRow)) {
+        return;
+      }
+
+      const port = await prepareServicePort(serviceRow, portLookup);
+      const cwd = resolveServiceCwd(
+        serviceRow.cell.workspacePath,
+        definition.cwd
+      );
+
+      if (!(await ensureServiceDirectory(serviceRow, cwd))) {
+        return;
+      }
+
+      const env = buildServiceEnv({
+        serviceName: serviceRow.service.name,
+        port,
+        templateEnv,
+        serviceEnv: definition.env ?? {},
+        cell: serviceRow.cell,
+        portMap: portLookup,
       });
-      return;
-    }
 
-    if (activeServices.has(row.service.id)) {
-      return;
-    }
+      const commandWithLogging = prepareLoggingCommand(
+        serviceRow,
+        definition.run
+      );
 
-    const port = await prepareServicePort(row, portLookup);
-    const cwd = resolveServiceCwd(row.cell.workspacePath, definition.cwd);
+      await repository.updateService(serviceRow.service.id, {
+        status: "starting",
+        env,
+        port,
+        pid: null,
+        lastKnownError: null,
+      });
 
-    if (!(await ensureServiceDirectory(row, cwd))) {
-      return;
-    }
+      notifyServiceUpdate(serviceRow);
 
-    const env = buildServiceEnv({
-      serviceName: row.service.name,
-      port,
-      templateEnv,
-      serviceEnv: definition.env ?? {},
-      cell: row.cell,
-      portMap: portLookup,
+      await runServiceProcess({
+        row: serviceRow,
+        definition,
+        env,
+        cwd,
+        commandWithLogging,
+      });
     });
-
-    const commandWithLogging = prepareLoggingCommand(row, definition.run);
-
-    await repository.updateService(row.service.id, {
-      status: "starting",
-      env,
-      port,
-      pid: null,
-      lastKnownError: null,
-    });
-
-    notifyServiceUpdate(row);
-
-    await runServiceProcess({ row, definition, env, cwd, commandWithLogging });
   }
 
   async function prepareServicePort(

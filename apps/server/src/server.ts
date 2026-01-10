@@ -13,9 +13,11 @@ import { fileURLToPath } from "node:url";
 import { logger } from "@bogeychan/elysia-logger";
 
 import { cors } from "@elysiajs/cors";
+import { inArray, isNotNull, or } from "drizzle-orm";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { Effect } from "effect";
 import { Elysia } from "elysia";
+import { cleanupOrphanedServers } from "./agents/cleanup";
 import { loadOpencodeConfig } from "./agents/opencode-config";
 import {
   startSharedOpencodeServer,
@@ -30,6 +32,9 @@ import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
 import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
 import { runServerEffect } from "./runtime";
+import { cells } from "./schema/cells";
+import { cellServices } from "./schema/services";
+import { cleanupOrphanedServiceProcesses } from "./services/cleanup";
 import { ServiceSupervisorService } from "./services/supervisor";
 import {
   ensureWorkspaceRegisteredEffect,
@@ -197,6 +202,80 @@ const runMigrationsEffect = Effect.flatMap(DatabaseService, ({ db }) =>
       )
     )
   )
+);
+
+const cleanupServiceProcessesEffect = Effect.flatMap(
+  DatabaseService,
+  ({ db }) =>
+    Effect.tryPromise({
+      try: async () => {
+        const rows = await db
+          .select({
+            id: cellServices.id,
+            pid: cellServices.pid,
+            port: cellServices.port,
+            status: cellServices.status,
+          })
+          .from(cellServices)
+          .where(or(isNotNull(cellServices.pid), isNotNull(cellServices.port)));
+
+        if (rows.length === 0) {
+          return;
+        }
+
+        const { updatedServiceIds, cleanedPids, failedPids } =
+          await cleanupOrphanedServiceProcesses(rows);
+
+        if (updatedServiceIds.length > 0) {
+          await db
+            .update(cellServices)
+            .set({ pid: null, status: "needs_resume" })
+            .where(inArray(cellServices.id, updatedServiceIds));
+        }
+
+        if (cleanedPids.length > 0 || failedPids.length > 0) {
+          process.stderr.write(
+            `Service cleanup: cleaned ${cleanedPids.length}, failed ${failedPids.length}.
+`
+          );
+        }
+      },
+      catch: (error) =>
+        error instanceof Error ? error : new Error(String(error)),
+    })
+);
+
+const cleanupOpencodeServersEffect = Effect.flatMap(DatabaseService, ({ db }) =>
+  Effect.tryPromise({
+    try: async () => {
+      const rows = await db
+        .select({ port: cells.opencodeServerPort })
+        .from(cells)
+        .where(isNotNull(cells.opencodeServerPort));
+
+      const ports = Array.from(
+        new Set(
+          rows
+            .map((row) => row.port)
+            .filter((port): port is number => typeof port === "number")
+        )
+      );
+
+      if (ports.length === 0) {
+        return;
+      }
+
+      const { cleaned, failed } = await cleanupOrphanedServers(ports);
+      if (cleaned.length > 0 || failed.length > 0) {
+        process.stderr.write(
+          `OpenCode cleanup: cleaned ${cleaned.length}, failed ${failed.length}.
+`
+        );
+      }
+    },
+    catch: (error) =>
+      error instanceof Error ? error : new Error(String(error)),
+  })
 );
 
 const startOpencodeServerEffect = (workspaceRoot: string) =>
@@ -384,6 +463,8 @@ const bootstrapServerEffect = (workspaceRoot: string) =>
   Effect.gen(function* () {
     yield* runMigrationsEffect;
     yield* registerWorkspaceEffect(workspaceRoot);
+    yield* cleanupServiceProcessesEffect;
+    yield* cleanupOpencodeServersEffect;
     yield* startOpencodeServerEffect(workspaceRoot);
     yield* bootstrapSupervisorEffect;
     yield* resumeProvisioningEffect;

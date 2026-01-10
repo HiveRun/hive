@@ -1,8 +1,16 @@
 import type { ExecException } from "node:child_process";
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp, mkdir, rm } from "node:fs/promises";
-import { dirname, join, sep } from "node:path";
+import {
+  copyFile,
+  cp,
+  lstat,
+  mkdir,
+  readlink,
+  rm,
+  symlink,
+} from "node:fs/promises";
+import { dirname, join, resolve, sep } from "node:path";
 import { Context, Effect, Layer } from "effect";
 import { glob } from "tinyglobby";
 import { HiveConfigService } from "../config/context";
@@ -260,7 +268,8 @@ export function createWorktreeManager(
         absolute: false,
         ignore: ignorePatterns,
         dot: true,
-        onlyFiles: false,
+        followSymbolicLinks: false,
+        onlyFiles: true,
       });
 
       return files.map((file: string) => file.split(sep).join(POSIX_SEPARATOR));
@@ -298,10 +307,38 @@ export function createWorktreeManager(
   ): Promise<void> {
     const sourcePath = join(mainRepoPath, file);
     const targetPath = join(worktreePath, file);
+    const resolvedSource = resolve(sourcePath);
+    const resolvedTarget = resolve(targetPath);
+
+    if (
+      resolvedSource === resolvedTarget ||
+      resolvedTarget.startsWith(`${resolvedSource}${sep}`)
+    ) {
+      return;
+    }
 
     try {
+      const sourceStat = await lstat(sourcePath);
       await mkdir(dirname(targetPath), { recursive: true });
-      await cp(sourcePath, targetPath, { recursive: true });
+
+      if (sourceStat.isSymbolicLink()) {
+        const linkTarget = await readlink(sourcePath);
+        await rm(targetPath, { force: true });
+        await symlink(linkTarget, targetPath);
+        return;
+      }
+
+      if (sourceStat.isFile()) {
+        await copyFile(sourcePath, targetPath);
+        return;
+      }
+
+      const shouldCopy = (entry: string) => !entry.split(sep).includes(".git");
+      await cp(sourcePath, targetPath, {
+        recursive: true,
+        filter: shouldCopy,
+        dereference: false,
+      });
     } catch (error: unknown) {
       logWarn(`Failed to copy ${file} to worktree`, error);
     }
