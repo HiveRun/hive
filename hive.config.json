@@ -26,6 +26,7 @@
           "run": "bun run dev",
           "cwd": "./apps/server",
           "env": {
+            "DATABASE_URL": "local.db",
             "CORS_ORIGIN": "http://localhost:$PORT:web,http://127.0.0.1:$PORT:web"
           },
           "readyTimeoutMs": 5000

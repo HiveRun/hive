@@ -40,6 +40,7 @@ export const hiveConfigDefaults: HiveConfig = {
           cwd: "./apps/server",
           readyTimeoutMs: 5000,
           env: {
+            DATABASE_URL: "local.db",
             CORS_ORIGIN:
               "http://localhost:$PORT:web,http://127.0.0.1:$PORT:web",
           },
