@@ -731,6 +731,8 @@ function formatMessage(message: AgentMessageRecord) {
   };
 }
 
+const MAX_AGENT_EVENT_QUEUE = 500;
+
 function createEventIterator(sessionId: string, signal: AbortSignal) {
   const queue: AgentStreamEvent[] = [];
   let resolver: ((value: AgentStreamEvent | null) => void) | null = null;
@@ -741,6 +743,9 @@ function createEventIterator(sessionId: string, signal: AbortSignal) {
       resolver(event);
       resolver = null;
     } else {
+      if (queue.length >= MAX_AGENT_EVENT_QUEUE) {
+        queue.shift();
+      }
       queue.push(event);
     }
   });

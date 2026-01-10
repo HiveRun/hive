@@ -273,6 +273,11 @@ export async function fetchAgentSessionForCell(
   cellId: string
 ): Promise<AgentSessionRecord | null> {
   try {
+    const cell = await getCellById(cellId);
+    if (!cell?.opencodeSessionId) {
+      return null;
+    }
+
     const runtime = await ensureRuntimeForCell(cellId, {
       force: false,
     });

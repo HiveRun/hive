@@ -167,7 +167,7 @@ const ErrorResponseSchema = t.Object({
 const LOG_TAIL_MAX_BYTES = 64_000;
 const LOG_TAIL_MAX_LINES = 200;
 const LOG_LINE_SPLIT_RE = /\r?\n/;
-const SERVICE_LOG_DIR = ".hive/logs";
+const SERVICE_LOG_DIR = "node_modules/.hive/logs";
 const PORT_CHECK_TIMEOUT_MS = 500;
 const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
 const MAX_PROVISIONING_ATTEMPTS = 3;
@@ -598,6 +598,7 @@ export function createCellsRoutes(
             "Cache-Control": "no-cache",
             "Content-Type": "text/event-stream",
             Connection: "keep-alive",
+            "X-Accel-Buffering": "no",
           },
         });
       },
@@ -1463,16 +1464,6 @@ async function finalizeCellProvisioning(
     throw new Error("Cell record missing during provisioning");
   }
 
-  const sessionOptions = {
-    ...(body.modelId ? { modelId: body.modelId } : {}),
-    ...(body.providerId ? { providerId: body.providerId } : {}),
-  };
-  const session = await runServerEffect(
-    ensureSession(
-      state.cellId,
-      Object.keys(sessionOptions).length ? sessionOptions : undefined
-    )
-  );
   await runServerEffect(
     ensureServices({
       cell: state.createdCell,
@@ -1484,6 +1475,16 @@ async function finalizeCellProvisioning(
 
   const initialPrompt = body.description?.trim();
   if (initialPrompt) {
+    const sessionOptions = {
+      ...(body.modelId ? { modelId: body.modelId } : {}),
+      ...(body.providerId ? { providerId: body.providerId } : {}),
+    };
+    const session = await runServerEffect(
+      ensureSession(
+        state.cellId,
+        Object.keys(sessionOptions).length ? sessionOptions : undefined
+      )
+    );
     await runServerEffect(dispatchAgentMessage(session.id, initialPrompt));
   }
 

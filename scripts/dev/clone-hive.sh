@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ "${HIVE_WORKTREE_SETUP:-}" = "true" ]; then
+  echo "Skipping Hive reference clone in worktree setup mode."
+  exit 0
+fi
+
 SCRIPT_NAME="$(basename "$0")"
 
 usage() {

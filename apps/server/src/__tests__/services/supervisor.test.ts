@@ -122,7 +122,10 @@ describe("service supervisor", () => {
       },
     });
 
-    const expectedLogPath = resolve(workspace, ".hive/logs/web.log");
+    const expectedLogPath = resolve(
+      workspace,
+      "node_modules/.hive/logs/web.log"
+    );
     expect(existsSync(expectedLogPath)).toBe(true);
   });
 

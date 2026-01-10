@@ -53,10 +53,14 @@ export const pidFilePath =
   process.env.HIVE_PID_FILE ?? join(hiveHome, "hive.pid");
 export const DEFAULT_WEB_PORT =
   process.env.WEB_PORT ?? (isCompiledRuntime ? String(PORT) : "3001");
+const TAURI_ORIGIN_REGEX = /^tauri:\/\/localhost(?::\d+)?$/;
+const TAURI_LOCALHOST_ORIGIN_REGEX = /^https?:\/\/tauri\.localhost(?::\d+)?$/;
+
 const DEFAULT_CORS_ORIGINS = [
   `http://localhost:${DEFAULT_WEB_PORT}`,
   `http://127.0.0.1:${DEFAULT_WEB_PORT}`,
-  "tauri://localhost",
+  TAURI_ORIGIN_REGEX,
+  TAURI_LOCALHOST_ORIGIN_REGEX,
 ];
 export const DEFAULT_WEB_URL = `http://localhost:${DEFAULT_WEB_PORT}`;
 //

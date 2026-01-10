@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { CellServiceSummary } from "@/queries/cells";
 
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
+
 export function useServiceStream(
   cellId: string,
   options: { enabled?: boolean } = {}
@@ -27,7 +29,9 @@ export function useServiceStream(
     setIsLoading(true);
     setError(undefined);
 
-    const source = new EventSource(`/api/cells/${cellId}/services/stream`);
+    const source = new EventSource(
+      `${API_BASE}/api/cells/${cellId}/services/stream`
+    );
 
     const upsertService = (service: CellServiceSummary) => {
       setServices((current) => {
@@ -60,6 +64,7 @@ export function useServiceStream(
 
     const errorListener = () => {
       if (isActive) {
+        setIsLoading(false);
         setError("Lost connection to service stream");
       }
     };

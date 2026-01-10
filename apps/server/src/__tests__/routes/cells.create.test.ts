@@ -301,6 +301,7 @@ describe("POST /api/cells", () => {
           name: "Model Override",
           templateId,
           workspaceId: "test-workspace",
+          description: "Use the selected model during provisioning",
           modelId: "custom-model",
           providerId: "zen",
         }),

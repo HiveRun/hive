@@ -27,7 +27,28 @@ const STOP_TIMEOUT_MS = 2000;
 const FORCE_KILL_DELAY_MS = 250;
 const DEFAULT_SHELL = process.env.SHELL || "/bin/bash";
 const SIGNAL_CODES = osConstants?.signals ?? {};
-const SERVICE_LOG_DIR = ".hive/logs";
+const SERVICE_LOG_DIR = "node_modules/.hive/logs";
+const KB_PER_MB = 1024;
+const SERVICE_MEMORY_MAX_MB_ENV = "HIVE_SERVICE_MEMORY_MAX_MB";
+
+function applyServiceResourceLimits(
+  command: string,
+  env: Record<string, string>
+) {
+  const rawMaxMb = (env[SERVICE_MEMORY_MAX_MB_ENV] ?? "").trim();
+  if (!rawMaxMb) {
+    return command;
+  }
+
+  const maxMb = Number(rawMaxMb);
+  if (!Number.isFinite(maxMb) || maxMb <= 0) {
+    return command;
+  }
+
+  const maxKb = Math.floor(maxMb * KB_PER_MB);
+
+  return `ulimit -Sv ${maxKb} >/dev/null 2>&1 || true; ${command}`;
+}
 
 export class CommandExecutionError extends Error {
   readonly command: string;
@@ -194,7 +215,7 @@ function createDefaultLogger(): ServiceLogger {
 
 const defaultSpawnProcess: SpawnProcess = ({ command, cwd, env }) => {
   const child = Bun.spawn({
-    cmd: [DEFAULT_SHELL, "-lc", command],
+    cmd: [DEFAULT_SHELL, "-lc", applyServiceResourceLimits(command, env)],
     cwd,
     env: { ...process.env, ...env },
     stdio: ["inherit", "inherit", "inherit"],

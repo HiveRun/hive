@@ -478,6 +478,8 @@ const stopBackgroundProcess = (options?: { silent?: boolean }) => {
   return "stopped" as const;
 };
 
+const DEFAULT_LOG_TAIL_BYTES = 65_536;
+
 const streamLogs = () => {
   const logFile = resolveLogFilePath();
   if (!existsSync(logFile)) {
@@ -487,9 +489,27 @@ const streamLogs = () => {
     return Promise.resolve(1);
   }
 
-  logInfo(`Streaming logs from ${logFile}. Press Ctrl+C to stop.`);
+  const fromStart =
+    process.env.HIVE_LOGS_FROM_START === "1" ||
+    process.env.HIVE_LOGS_FROM_START === "true";
+
+  logInfo(
+    `Streaming logs from ${logFile}. Press Ctrl+C to stop.` +
+      (fromStart
+        ? ""
+        : " (tailing recent output; set HIVE_LOGS_FROM_START=1 to print full log)")
+  );
 
   let position = 0;
+
+  if (!fromStart) {
+    try {
+      const stats = statSync(logFile);
+      position = Math.max(0, stats.size - DEFAULT_LOG_TAIL_BYTES);
+    } catch {
+      position = 0;
+    }
+  }
 
   const readNewData = () => {
     const stats = statSync(logFile);
