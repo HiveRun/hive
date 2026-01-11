@@ -67,6 +67,7 @@ export function CellList({ workspaceId }: CellListProps) {
   const [isBulkArchiveOpen, setIsBulkArchiveOpen] = useState(false);
   const [isBulkRestoreOpen, setIsBulkRestoreOpen] = useState(false);
   const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
+  const [isArchiveAndDeleteOpen, setIsArchiveAndDeleteOpen] = useState(false);
 
   const queryClient = useQueryClient();
 
@@ -285,6 +286,25 @@ export function CellList({ workspaceId }: CellListProps) {
     },
   });
 
+  const archiveAndDeleteMutation = useMutation({
+    ...cellMutations.archiveAndDeleteMany,
+    onSuccess: (data: { deletedIds: string[] }) => {
+      const count = data.deletedIds.length;
+      const label = count === 1 ? "cell" : "cells";
+      toast.success(`Archived and deleted ${count} ${label}`);
+      queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
+      setSelectedCellIds(new Set());
+      setIsArchiveAndDeleteOpen(false);
+    },
+    onError: (unknownError) => {
+      const message =
+        unknownError instanceof Error
+          ? unknownError.message
+          : "Failed to archive and delete cells";
+      toast.error(message);
+    },
+  });
+
   const handleArchiveSelected = () => {
     if (!canArchiveSelection) {
       toast.info("Select at least one active cell to archive");
@@ -325,6 +345,23 @@ export function CellList({ workspaceId }: CellListProps) {
     }
 
     bulkDeleteMutation.mutate(deletableSelection.map((cell) => cell.id));
+  };
+
+  const handleArchiveAndDelete = () => {
+    if (!canArchiveSelection) {
+      toast.info("Select at least one active cell to archive and delete");
+      return;
+    }
+
+    setIsArchiveAndDeleteOpen(true);
+  };
+
+  const confirmArchiveAndDelete = () => {
+    if (!canArchiveSelection) {
+      toast.info("Select at least one active cell to archive and delete");
+      return;
+    }
+    archiveAndDeleteMutation.mutate(archivableSelection.map((cell) => cell.id));
   };
 
   const handleClearSelection = () => {
@@ -435,7 +472,8 @@ export function CellList({ workspaceId }: CellListProps) {
                 !canRestoreSelection ||
                 restoreManyMutation.isPending ||
                 archiveManyMutation.isPending ||
-                bulkDeleteMutation.isPending
+                bulkDeleteMutation.isPending ||
+                archiveAndDeleteMutation.isPending
               }
               onClick={handleRestoreSelected}
               type="button"
@@ -450,13 +488,36 @@ export function CellList({ workspaceId }: CellListProps) {
               </span>
             </Button>
             <Button
+              className="flex-1 bg-amber-500 text-amber-foreground hover:bg-amber-500/90 sm:flex-none"
+              data-testid="archive-and-delete-selected"
+              disabled={
+                !canArchiveSelection ||
+                archiveAndDeleteMutation.isPending ||
+                archiveManyMutation.isPending ||
+                bulkDeleteMutation.isPending ||
+                restoreManyMutation.isPending
+              }
+              onClick={handleArchiveAndDelete}
+              type="button"
+              variant="default"
+            >
+              Archive & Delete
+              <span
+                className="ml-2 inline-flex h-5 min-w-[2rem] items-center justify-center rounded-sm border border-amber-foreground/40 bg-amber-foreground/10 px-1 font-mono text-xs tabular-nums"
+                data-testid="archive-and-delete-selected-count"
+              >
+                {archivableSelectionCount}
+              </span>
+            </Button>
+            <Button
               className="flex-1 bg-destructive text-destructive-foreground hover:bg-destructive/90 sm:flex-none"
               data-testid="delete-selected"
               disabled={
                 !canDeleteSelection ||
                 bulkDeleteMutation.isPending ||
                 archiveManyMutation.isPending ||
-                restoreManyMutation.isPending
+                restoreManyMutation.isPending ||
+                archiveAndDeleteMutation.isPending
               }
               onClick={() => canDeleteSelection && setIsBulkDialogOpen(true)}
               type="button"
@@ -495,7 +556,9 @@ export function CellList({ workspaceId }: CellListProps) {
       </div>
 
       <BulkArchiveDialog
-        disableActions={archiveManyMutation.isPending}
+        disableActions={
+          archiveManyMutation.isPending || archiveAndDeleteMutation.isPending
+        }
         isOpen={isBulkArchiveOpen && canArchiveSelection}
         onConfirmArchive={confirmArchiveSelected}
         onOpenChange={setIsBulkArchiveOpen}
@@ -521,6 +584,15 @@ export function CellList({ workspaceId }: CellListProps) {
         selectedCount={deletableSelectionCount}
       />
 
+      <BulkArchiveAndDeleteDialog
+        disableActions={archiveAndDeleteMutation.isPending}
+        isOpen={isArchiveAndDeleteOpen && canArchiveSelection}
+        onConfirmArchiveAndDelete={confirmArchiveAndDelete}
+        onOpenChange={setIsArchiveAndDeleteOpen}
+        selectedCells={archivableSelection}
+        selectedCount={archivableSelectionCount}
+      />
+
       <div className="space-y-10">
         <section className="space-y-3">
           <header>
@@ -539,7 +611,10 @@ export function CellList({ workspaceId }: CellListProps) {
                 <CellCard
                   cell={cell}
                   createdLabel={formatDate(cell.createdAt)}
-                  disableSelection={bulkDeleteMutation.isPending}
+                  disableSelection={
+                    bulkDeleteMutation.isPending ||
+                    archiveAndDeleteMutation.isPending
+                  }
                   isSelected={selectedCellIds.has(cell.id)}
                   key={cell.id}
                   onCopyText={copyToClipboard}
@@ -580,7 +655,10 @@ export function CellList({ workspaceId }: CellListProps) {
                 <CellCard
                   cell={cell}
                   createdLabel={formatDate(cell.createdAt)}
-                  disableSelection={bulkDeleteMutation.isPending}
+                  disableSelection={
+                    bulkDeleteMutation.isPending ||
+                    archiveAndDeleteMutation.isPending
+                  }
                   isSelected={selectedCellIds.has(cell.id)}
                   key={cell.id}
                   onCopyText={copyToClipboard}
@@ -792,6 +870,73 @@ function BulkDeleteDialog({
             onClick={onConfirmDelete}
           >
             {disableActions ? "Deleting..." : `Delete ${selectedCount}`}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+type BulkArchiveAndDeleteDialogProps = {
+  disableActions: boolean;
+  isOpen: boolean;
+  onConfirmArchiveAndDelete: () => void;
+  onOpenChange: (open: boolean) => void;
+  selectedCells: Cell[];
+  selectedCount: number;
+};
+
+function BulkArchiveAndDeleteDialog({
+  disableActions,
+  isOpen,
+  onConfirmArchiveAndDelete,
+  onOpenChange,
+  selectedCells,
+  selectedCount,
+}: BulkArchiveAndDeleteDialogProps) {
+  if (!selectedCount) {
+    return null;
+  }
+
+  const selectionPreview = selectedCells.slice(0, MAX_SELECTION_PREVIEW);
+  const overflowCount = selectedCount - selectionPreview.length;
+
+  return (
+    <AlertDialog onOpenChange={onOpenChange} open={isOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            Archive & Delete {selectedCount}{" "}
+            {selectedCount === 1 ? "cell" : "cells"}?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            This will first archive the cells (stopping services) and then
+            permanently delete them and their worktrees. This action cannot be
+            undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="rounded-md border border-muted bg-muted/30 p-4 text-sm">
+          <p className="font-semibold">Selection Summary</p>
+          <ul className="list-disc pl-5 text-muted-foreground">
+            {selectionPreview.map((cell) => (
+              <li key={cell.id}>{cell.name}</li>
+            ))}
+            {overflowCount > 0 && <li>+{overflowCount} more</li>}
+          </ul>
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={disableActions} type="button">
+            Cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-amber-500 text-amber-foreground hover:bg-amber-500/90"
+            data-testid="confirm-bulk-archive-and-delete"
+            disabled={disableActions}
+            onClick={onConfirmArchiveAndDelete}
+          >
+            {disableActions
+              ? "Processing..."
+              : `Archive & Delete ${selectedCount}`}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

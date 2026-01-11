@@ -16,6 +16,7 @@ import {
 } from "../db";
 import { runServerEffect } from "../runtime";
 import {
+  ArchiveAndDeleteSchema,
   CellDiffResponseSchema,
   CellListResponseSchema,
   CellResponseSchema,
@@ -981,6 +982,71 @@ export function createCellsRoutes(
         response: {
           201: CellResponseSchema,
           400: t.Object({
+            message: t.String(),
+          }),
+          500: ErrorResponseSchema,
+        },
+      }
+    )
+    .post(
+      "/archive-and-delete",
+      async ({ body, set, log }) => {
+        try {
+          const deps = await resolveDeps();
+          const {
+            db: database,
+            resolveWorkspaceContext,
+            closeAgentSession,
+            stopServicesForCell,
+          } = deps;
+
+          const uniqueIds = [...new Set(body.ids)];
+
+          const cellsToProcess = await database
+            .select({
+              id: cells.id,
+              workspacePath: cells.workspacePath,
+              workspaceId: cells.workspaceId,
+              status: cells.status,
+            })
+            .from(cells)
+            .where(inArray(cells.id, uniqueIds));
+
+          if (cellsToProcess.length === 0) {
+            set.status = HTTP_STATUS.NOT_FOUND;
+            return { message: "No cells found for provided ids" };
+          }
+
+          const deletedIds = await processCellsForArchiveAndDelete({
+            cells: cellsToProcess,
+            database,
+            resolveWorkspaceContext,
+            closeAgentSession,
+            stopServicesForCell,
+            log,
+          });
+
+          return { deletedIds };
+        } catch (error) {
+          if (error instanceof Error) {
+            log.error(error, "Failed to archive and delete cells");
+          } else {
+            log.error({ error }, "Failed to archive and delete cells");
+          }
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          return { message: "Failed to archive and delete cells" };
+        }
+      },
+      {
+        body: ArchiveAndDeleteSchema,
+        response: {
+          200: t.Object({
+            deletedIds: t.Array(t.String()),
+          }),
+          400: t.Object({
+            message: t.String(),
+          }),
+          404: t.Object({
             message: t.String(),
           }),
           500: ErrorResponseSchema,
@@ -2251,4 +2317,83 @@ async function buildSetupLogPayload(workspacePath?: string | null) {
 function sanitizeServiceNameForLogs(name: string): string {
   const normalized = name.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
   return normalized.length > 0 ? normalized : "service";
+}
+
+type ProcessCellRecord = {
+  id: string;
+  workspacePath: string | null;
+  workspaceId: string;
+  status: string;
+};
+
+async function processCellsForArchiveAndDelete({
+  cells: cellsToProcess,
+  database,
+  resolveWorkspaceContext,
+  closeAgentSession,
+  stopServicesForCell,
+  log,
+}: {
+  cells: ProcessCellRecord[];
+  database: DatabaseClient;
+  resolveWorkspaceContext: CellRouteDependencies["resolveWorkspaceContext"];
+  closeAgentSession: CellRouteDependencies["closeAgentSession"];
+  stopServicesForCell: CellRouteDependencies["stopServicesForCell"];
+  log: LoggerLike;
+}): Promise<string[]> {
+  const deletedIds: string[] = [];
+  const managerCache = new Map<string, WorktreeManager>();
+
+  const fetchManager = async (workspaceId: string) => {
+    const cached = managerCache.get(workspaceId);
+    if (cached) {
+      return cached;
+    }
+    const context = await runServerEffect(resolveWorkspaceContext(workspaceId));
+    const manager = await runServerEffect(context.createWorktreeManager());
+    managerCache.set(workspaceId, manager);
+    return manager;
+  };
+
+  for (const cell of cellsToProcess) {
+    try {
+      if (cell.status !== "archived") {
+        await runServerEffect(closeAgentSession(cell.id));
+        try {
+          await runServerEffect(
+            stopServicesForCell(cell.id, { releasePorts: true })
+          );
+        } catch (error) {
+          log.warn(
+            { error, cellId: cell.id },
+            "Failed to stop services before archive"
+          );
+        }
+
+        await database
+          .update(cells)
+          .set({ status: "archived", lastSetupError: null })
+          .where(eq(cells.id, cell.id));
+      }
+
+      if (cell.workspacePath) {
+        const worktreeService = await fetchManager(cell.workspaceId);
+        const workspaceRecord: CellWorkspaceRecord = {
+          id: cell.id,
+          workspacePath: cell.workspacePath,
+        };
+        await removeCellWorkspace(worktreeService, workspaceRecord, log);
+      }
+
+      await database.delete(cells).where(eq(cells.id, cell.id));
+      deletedIds.push(cell.id);
+    } catch (error) {
+      log.error(
+        { error, cellId: cell.id },
+        "Failed to archive and delete cell"
+      );
+    }
+  }
+
+  return deletedIds;
 }
