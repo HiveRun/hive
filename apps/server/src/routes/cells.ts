@@ -172,6 +172,8 @@ const SERVICE_LOG_DIR = ".hive/logs";
 const PORT_CHECK_TIMEOUT_MS = 500;
 const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
 const MAX_PROVISIONING_ATTEMPTS = 3;
+const DEFAULT_SERVICE_HOST = process.env.SERVICE_HOST ?? "localhost";
+const DEFAULT_SERVICE_PROTOCOL = process.env.SERVICE_PROTOCOL ?? "http";
 
 const PROVISIONING_INTERRUPTED_MESSAGE =
   "Provisioning interrupted. Fix the workspace and rerun setup.";
@@ -180,6 +182,13 @@ const LOGGER_CONFIG = {
   level: process.env.LOG_LEVEL || "info",
   autoLogging: false,
 } as const;
+
+function buildServiceUrl(port?: number | null) {
+  if (typeof port !== "number") {
+    return null;
+  }
+  return `${DEFAULT_SERVICE_PROTOCOL}://${DEFAULT_SERVICE_HOST}:${port}`;
+}
 
 function isPortActive(port?: number | null): Promise<boolean> {
   if (!port) {
@@ -2212,6 +2221,7 @@ async function serializeService(database: DatabaseClient, row: ServiceRow) {
     typeof service.port === "number"
       ? await isPortActive(service.port)
       : undefined;
+  const serviceUrl = buildServiceUrl(service.port);
 
   let derivedStatus = service.status;
   let derivedLastKnownError = service.lastKnownError;
@@ -2249,6 +2259,7 @@ async function serializeService(database: DatabaseClient, row: ServiceRow) {
     type: service.type,
     status: derivedStatus,
     ...(service.port != null ? { port: service.port } : {}),
+    ...(serviceUrl ? { url: serviceUrl } : {}),
     ...(derivedPid != null ? { pid: derivedPid } : {}),
     command: service.command,
     cwd: service.cwd,

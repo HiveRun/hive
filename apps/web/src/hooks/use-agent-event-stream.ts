@@ -9,6 +9,7 @@ import {
   type OpenCodePartPayload,
   upsertPartWithDelta,
 } from "@/lib/agent-message-utils";
+import { getApiBase } from "@/lib/api-base";
 import type {
   AgentMessage,
   AgentMessagePart,
@@ -16,7 +17,7 @@ import type {
 } from "@/queries/agents";
 import { agentQueries } from "@/queries/agents";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
+const API_BASE = getApiBase();
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 10_000;
 const RECONNECT_BACKOFF_FACTOR = 2;

@@ -2,12 +2,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { useActiveWorkspace } from "@/hooks/use-active-workspace";
+import { getApiBase } from "@/lib/api-base";
 import type { AgentSession } from "@/queries/agents";
 import { agentQueries } from "@/queries/agents";
 import type { Cell } from "@/queries/cells";
 import { cellQueries } from "@/queries/cells";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
+const API_BASE = getApiBase();
 const NOTIFICATION_SOUND_PATH = "/sounds/agent-awaiting-input.wav";
 const NOTIFICATION_SOUND_VOLUME = 0.2;
 
