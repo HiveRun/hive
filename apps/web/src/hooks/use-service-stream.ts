@@ -1,20 +1,8 @@
 import { useEffect, useState } from "react";
+import { getApiBase } from "@/lib/api-base";
 import type { CellServiceSummary } from "@/queries/cells";
 
-const envApiUrl = import.meta.env.VITE_API_URL?.trim();
-const isTauri =
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-let apiBase: string | undefined;
-
-if (envApiUrl && envApiUrl !== "undefined") {
-  apiBase = envApiUrl;
-} else if (isTauri) {
-  apiBase = "http://localhost:3000";
-} else if (typeof window !== "undefined") {
-  apiBase = window.location.origin;
-}
-
-const API_BASE = apiBase ?? "http://localhost:3000";
+const API_BASE = getApiBase();
 
 export function useServiceStream(
   cellId: string,

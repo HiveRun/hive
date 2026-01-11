@@ -2,25 +2,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { useActiveWorkspace } from "@/hooks/use-active-workspace";
+import { getApiBase } from "@/lib/api-base";
 import type { AgentSession } from "@/queries/agents";
 import { agentQueries } from "@/queries/agents";
 import type { Cell } from "@/queries/cells";
 import { cellQueries } from "@/queries/cells";
 
-const envApiUrl = import.meta.env.VITE_API_URL?.trim();
-const isTauri =
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-let apiBase: string | undefined;
-
-if (envApiUrl && envApiUrl !== "undefined") {
-  apiBase = envApiUrl;
-} else if (isTauri) {
-  apiBase = "http://localhost:3000";
-} else if (typeof window !== "undefined") {
-  apiBase = window.location.origin;
-}
-
-const API_BASE = apiBase ?? "http://localhost:3000";
+const API_BASE = getApiBase();
 const NOTIFICATION_SOUND_PATH = "/sounds/agent-awaiting-input.wav";
 const NOTIFICATION_SOUND_VOLUME = 0.2;
 
