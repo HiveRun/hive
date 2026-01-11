@@ -1,13 +1,6 @@
 import "dotenv/config";
-import { existsSync, rmSync, statSync } from "node:fs";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-} from "node:path";
+import { existsSync, rmSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { logger } from "@bogeychan/elysia-logger";
@@ -23,7 +16,6 @@ import {
 } from "./agents/opencode-server";
 import { closeAllAgentSessions } from "./agents/service";
 import { resolveWorkspaceRoot } from "./config/context";
-import { resolveStaticAssetsDirectory } from "./config/static-assets";
 import { DatabaseService } from "./db";
 import { agentsRoutes } from "./routes/agents";
 import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
@@ -67,91 +59,6 @@ const resolvedCorsOrigins = (process.env.CORS_ORIGIN || "")
 //
 const allowedCorsOrigins =
   resolvedCorsOrigins.length > 0 ? resolvedCorsOrigins : DEFAULT_CORS_ORIGINS;
-
-const LEADING_SLASH_REGEX = /^\/+/,
-  DOT_SEQUENCE_REGEX = /\.\.+/g;
-
-const sanitizeAssetPath = (pathname: string) =>
-  pathname.replace(LEADING_SLASH_REGEX, "").replace(DOT_SEQUENCE_REGEX, "");
-
-const resolvePathWithin = (root: string, target: string) => {
-  const absolute = resolve(root, target);
-  const relativePath = relative(root, absolute);
-  if (relativePath === "") {
-    return absolute;
-  }
-  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
-    return null;
-  }
-  return absolute;
-};
-
-const resolveExistingFile = (filePath?: string | null) => {
-  if (!filePath) {
-    return null;
-  }
-
-  let exists = false;
-  try {
-    exists = existsSync(filePath) && statSync(filePath).isFile();
-  } catch {
-    exists = false;
-  }
-
-  return exists ? filePath : null;
-};
-
-const resolveAssetPath = (pathname: string, assetsDir: string) => {
-  const [rawPath] = pathname.split("?");
-  const cleanPath = sanitizeAssetPath(rawPath ?? "");
-  const explicitPath = cleanPath.length > 0 ? cleanPath : "index.html";
-
-  const direct = resolveExistingFile(
-    resolvePathWithin(assetsDir, explicitPath)
-  );
-  if (direct) {
-    return direct;
-  }
-
-  const nestedIndex = resolveExistingFile(
-    resolvePathWithin(assetsDir, join(explicitPath, "index.html"))
-  );
-  if (nestedIndex) {
-    return nestedIndex;
-  }
-
-  return resolveExistingFile(resolvePathWithin(assetsDir, "index.html"));
-};
-
-const registerStaticAssets = (app: App, assetsDir: string) => {
-  const sendFile = (pathname: string) => {
-    const filePath = resolveAssetPath(pathname, assetsDir);
-    if (!filePath) {
-      return new Response("Not Found", { status: 404 });
-    }
-    return new Response(Bun.file(filePath));
-  };
-
-  const sendHead = (pathname: string) => {
-    const filePath = resolveAssetPath(pathname, assetsDir);
-    if (!filePath) {
-      return new Response(null, { status: 404 });
-    }
-    const file = Bun.file(filePath);
-    const response = new Response(null, { status: 200 });
-    if (file.type) {
-      response.headers.set("content-type", file.type);
-    }
-    response.headers.set("content-length", file.size.toString());
-    return response;
-  };
-
-  app.get("/*", ({ request }) => sendFile(new URL(request.url).pathname));
-  app.get("/", ({ request }) => sendFile(new URL(request.url).pathname));
-
-  app.head("/*", ({ request }) => sendHead(new URL(request.url).pathname));
-  app.head("/", ({ request }) => sendHead(new URL(request.url).pathname));
-};
 
 const resolveMigrationsDirectory = () => {
   const candidates = [
@@ -301,29 +208,6 @@ const registerSignalHandlers = () => {
   });
 };
 
-const configureAssetServing = (
-  app: App,
-  shouldServeStaticAssets: boolean,
-  staticAssetsDirectory: string | null
-) => {
-  if (shouldServeStaticAssets && staticAssetsDirectory) {
-    registerStaticAssets(app, staticAssetsDirectory);
-    process.stderr.write(
-      `Serving frontend assets from: ${staticAssetsDirectory}\n`
-    );
-    return;
-  }
-
-  if (staticAssetsDirectory) {
-    process.stderr.write(
-      "Frontend build detected but static serving is disabled in this runtime.\n"
-    );
-    return;
-  }
-
-  process.stderr.write("No frontend build detected; API-only mode.\n");
-};
-
 const registerWorkspaceEffect = (workspaceRoot: string) =>
   ensureWorkspaceRegisteredEffect(workspaceRoot, {
     preserveActiveWorkspace: true,
@@ -388,18 +272,7 @@ const bootstrapServerEffect = (workspaceRoot: string) =>
 export const startServer = async () => {
   const app = createApp();
 
-  const staticAssetsDirectory = resolveStaticAssetsDirectory();
-  const shouldServeStaticAssets =
-    Boolean(staticAssetsDirectory) &&
-    (isCompiledRuntime ||
-      Boolean(process.env.HIVE_WEB_DIST) ||
-      process.env.HIVE_FORCE_STATIC === "1");
-
-  configureAssetServing(app, shouldServeStaticAssets, staticAssetsDirectory);
-
-  if (!shouldServeStaticAssets) {
-    app.get("/", () => "OK");
-  }
+  app.get("/", () => "OK");
 
   const workspaceRoot = resolveWorkspaceRoot();
 
