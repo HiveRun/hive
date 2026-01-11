@@ -125,6 +125,27 @@ export const cellMutations = {
     },
   },
 
+  archiveAndDeleteMany: {
+    mutationFn: async (ids: string[]) => {
+      const { data, error } = await rpc.api.cells["archive-and-delete"].post({
+        ids,
+      });
+      if (error) {
+        throw new Error(
+          formatRpcError(error, "Failed to archive and delete cells")
+        );
+      }
+
+      if ("message" in data) {
+        throw new Error(
+          formatRpcResponseError(data, "Failed to archive and delete cells")
+        );
+      }
+
+      return data;
+    },
+  },
+
   startService: {
     mutationFn: async ({ cellId, serviceId }: ServiceActionInput) => {
       const { data, error } = await rpc.api
