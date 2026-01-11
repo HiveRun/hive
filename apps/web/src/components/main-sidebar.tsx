@@ -52,7 +52,12 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
               aria-hidden
               className="block h-10 w-1 bg-primary shadow-[4px_0_0_0_color-mix(in_oklch,var(--color-shadow-color)_45%,transparent)] transition-none group-hover:bg-primary/80"
             />
-            <span className="font-semibold text-foreground text-sm">Hive</span>
+            <span className="flex items-center gap-2 font-semibold text-foreground text-sm">
+              <span aria-hidden className="text-lg leading-none">
+                🐝
+              </span>
+              <span>HIVE</span>
+            </span>
           </Link>
         </div>
       </SidebarHeader>
