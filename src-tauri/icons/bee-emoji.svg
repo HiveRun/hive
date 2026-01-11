@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!--
+    Bee-emoji style icon (no badge/background), designed to be readable
+    at small sizes and work well as a transparent app icon.
+  -->
+
+  <!-- Wings -->
+  <g opacity="0.95">
+    <ellipse cx="170" cy="210" rx="95" ry="70" fill="#D9F2FF" />
+    <ellipse cx="342" cy="210" rx="95" ry="70" fill="#D9F2FF" />
+    <ellipse cx="170" cy="210" rx="95" ry="70" fill="none" stroke="#0F172A" stroke-width="10" />
+    <ellipse cx="342" cy="210" rx="95" ry="70" fill="none" stroke="#0F172A" stroke-width="10" />
+  </g>
+
+  <!-- Antennae -->
+  <path d="M212 140c-22-28-55-30-82-18" fill="none" stroke="#0F172A" stroke-width="14" stroke-linecap="round" />
+  <path d="M300 140c22-28 55-30 82-18" fill="none" stroke="#0F172A" stroke-width="14" stroke-linecap="round" />
+
+  <!-- Body base -->
+  <ellipse cx="256" cy="290" rx="120" ry="150" fill="#0F172A" />
+
+  <!-- Stripes -->
+  <path d="M140 235h232" stroke="#FBBF24" stroke-width="46" stroke-linecap="round" />
+  <path d="M128 295h256" stroke="#F59E0B" stroke-width="46" stroke-linecap="round" />
+  <path d="M150 355h212" stroke="#FBBF24" stroke-width="46" stroke-linecap="round" />
+
+  <!-- Face highlights -->
+  <circle cx="222" cy="265" r="14" fill="#FDE68A" />
+  <circle cx="290" cy="265" r="14" fill="#FDE68A" />
+  <path d="M238 305c10 10 26 10 36 0" fill="none" stroke="#FDE68A" stroke-width="14" stroke-linecap="round" />
+
+  <!-- Stinger -->
+  <path d="M256 455l-36 40h72z" fill="#0F172A" />
+</svg>
