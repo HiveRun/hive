@@ -115,6 +115,8 @@ const WORKSPACE_BROWSE_PATTERN = /\/api\/workspaces\/browse(?:\?.*)?$/;
 
 const API_ROUTE_PATTERNS: (string | RegExp)[] = [
   "**/api/cells/*/services",
+  "**/api/cells/*/services/start",
+  "**/api/cells/*/services/stop",
   CONSTRUCT_DIFF_ROUTE_PATTERN,
   CONSTRUCT_DETAIL_PATTERN,
   "**/api/cells*",
@@ -128,6 +130,8 @@ const API_ROUTE_PATTERNS: (string | RegExp)[] = [
 ];
 
 const CONSTRUCT_SERVICES_REGEX = /\/api\/cells\/[^/]+\/services$/;
+const CONSTRUCT_SERVICES_ACTION_REGEX =
+  /\/api\/cells\/[^/]+\/services\/(?:start|stop)$/;
 const CONSTRUCT_DIFF_REGEX = /\/api\/cells\/[^/]+\/diff$/;
 const AGENT_EVENTS_REGEX = /\/api\/agents\/sessions\/.+\/events$/;
 
@@ -141,6 +145,11 @@ const API_ROUTE_MATCHERS = [
     description: "GET /api/cells/:id/services",
     match: (url: URL, method: string) =>
       method === "GET" && CONSTRUCT_SERVICES_REGEX.test(url.pathname),
+  },
+  {
+    description: "POST /api/cells/:id/services/start|stop",
+    match: (url: URL, method: string) =>
+      method === "POST" && CONSTRUCT_SERVICES_ACTION_REGEX.test(url.pathname),
   },
   {
     description: "GET /api/cells/:id/diff",
@@ -252,6 +261,14 @@ export async function mockAppApi(
   await page.route(
     "**/api/cells/*/services",
     createCellServicesHandler(mockData)
+  );
+  await page.route(
+    "**/api/cells/*/services/start",
+    createCellServicesActionHandler(mockData)
+  );
+  await page.route(
+    "**/api/cells/*/services/stop",
+    createCellServicesActionHandler(mockData)
   );
   await page.route(
     CONSTRUCT_DIFF_ROUTE_PATTERN,
@@ -412,6 +429,36 @@ function createCellDiffHandler(mockData: MockApiData) {
 
 function createCellServicesHandler(mockData: MockApiData) {
   return createGetJsonHandler((request) => {
+    const requestUrl = new URL(request.url());
+    const segments = requestUrl.pathname.split("/").filter(Boolean);
+    const cellId = segments.at(2);
+
+    if (!cellId) {
+      return {
+        status: 404,
+        body: { message: "Cell not found" },
+      };
+    }
+
+    const cellExists = mockData.cells.some((cell) => cell.id === cellId);
+
+    if (!cellExists) {
+      return {
+        status: 404,
+        body: { message: "Cell not found" },
+      };
+    }
+
+    return {
+      body: {
+        services: mockData.services[cellId] ?? [],
+      },
+    };
+  });
+}
+
+function createCellServicesActionHandler(mockData: MockApiData) {
+  return createPostJsonHandler((request) => {
     const requestUrl = new URL(request.url());
     const segments = requestUrl.pathname.split("/").filter(Boolean);
     const cellId = segments.at(2);
@@ -642,6 +689,38 @@ function createGetJsonHandler(
 ) {
   return async (route: Route) => {
     if (route.request().method() !== "GET") {
+      return route.continue();
+    }
+
+    const {
+      status = 200,
+      body,
+      contentType = "application/json",
+    } = await resolve(route.request());
+
+    await route.fulfill({
+      status,
+      contentType,
+      body: JSON.stringify(body),
+    });
+  };
+}
+
+function createPostJsonHandler(
+  resolve: (request: RouteRequest) =>
+    | {
+        status?: number;
+        body: unknown;
+        contentType?: string;
+      }
+    | Promise<{
+        status?: number;
+        body: unknown;
+        contentType?: string;
+      }>
+) {
+  return async (route: Route) => {
+    if (route.request().method() !== "POST") {
       return route.continue();
     }
 

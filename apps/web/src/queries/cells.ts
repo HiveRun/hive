@@ -54,6 +54,10 @@ type ServiceActionInput = {
   serviceName: string;
 };
 
+type ServiceBulkActionInput = {
+  cellId: string;
+};
+
 export const cellMutations = {
   create: {
     mutationFn: async (input: CreateCellInput) => {
@@ -167,6 +171,30 @@ export const cellMutations = {
         .stop.post();
       if (error) {
         throw new Error(formatRpcError(error, "Failed to stop service"));
+      }
+      return data;
+    },
+  },
+
+  startAllServices: {
+    mutationFn: async ({ cellId }: ServiceBulkActionInput) => {
+      const { data, error } = await rpc.api
+        .cells({ id: cellId })
+        .services.start.post();
+      if (error) {
+        throw new Error(formatRpcError(error, "Failed to start services"));
+      }
+      return data;
+    },
+  },
+
+  stopAllServices: {
+    mutationFn: async ({ cellId }: ServiceBulkActionInput) => {
+      const { data, error } = await rpc.api
+        .cells({ id: cellId })
+        .services.stop.post();
+      if (error) {
+        throw new Error(formatRpcError(error, "Failed to stop services"));
       }
       return data;
     },

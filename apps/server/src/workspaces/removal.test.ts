@@ -221,6 +221,7 @@ const createTestSupervisor = (
     bootstrap: notImplemented(),
     ensureCellServices: () => notImplemented(),
     startCellService: () => notImplemented(),
+    startCellServices: () => notImplemented(),
     stopCellService: () => notImplemented(),
     stopCellServices: stopCellServicesEffect,
     stopAll: notImplemented(),
