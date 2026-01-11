@@ -64,11 +64,11 @@ function CellServiceViewer() {
   );
 
   const viewerUrl = useMemo(() => {
-    if (!selectedService?.port) {
+    if (!selectedService?.url) {
       return null;
     }
-    return buildViewerUrl(selectedService.port);
-  }, [selectedService?.port]);
+    return selectedService.url;
+  }, [selectedService?.url]);
 
   const [browserReachability, setBrowserReachability] = useState<
     boolean | null
@@ -376,20 +376,6 @@ function resolveViewportStyle(preset: ViewportPreset) {
     maxWidth: "100%",
     maxHeight: "100%",
   } as const;
-}
-
-function buildViewerUrl(port: number) {
-  if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
-    return `http://localhost:${port}`;
-  }
-
-  const hostname =
-    typeof window !== "undefined" && window.location.hostname
-      ? window.location.hostname
-      : "localhost";
-  const protocol =
-    typeof window !== "undefined" ? window.location.protocol : "http:";
-  return `${protocol}//${hostname}:${port}`;
 }
 
 function describeReachability(state: boolean | null | undefined) {

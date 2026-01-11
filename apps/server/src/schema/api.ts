@@ -32,6 +32,7 @@ export const CellServiceSchema = t.Object({
   type: t.String(),
   status: t.String(),
   port: t.Optional(t.Number()),
+  url: t.Optional(t.String()),
   pid: t.Optional(t.Number()),
   command: t.String(),
   cwd: t.String(),
