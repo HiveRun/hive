@@ -17,6 +17,9 @@ import type {
 import { agentQueries } from "@/queries/agents";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
+const RECONNECT_BASE_DELAY_MS = 1000;
+const RECONNECT_MAX_DELAY_MS = 10_000;
+const RECONNECT_BACKOFF_FACTOR = 2;
 
 export type PermissionRequest = {
   id: string;
@@ -148,9 +151,10 @@ export function useAgentEventStream(
 
     const sessionKey = agentQueries.sessionByCell(cellId).queryKey;
     const messagesKey = agentQueries.messages(sessionId).queryKey;
-    const eventSource = new EventSource(
-      `${API_BASE}/api/agents/sessions/${sessionId}/events`
-    );
+    let eventSource: EventSource | null = null;
+    let reconnectTimeout: number | null = null;
+    let reconnectAttempts = 0;
+    let isActive = true;
 
     const handleHistory = (event: MessageEvent<string>) => {
       try {
@@ -335,50 +339,101 @@ export function useAgentEventStream(
       }
     };
 
-    eventSource.addEventListener("history", handleHistory);
-    eventSource.addEventListener("message", handleLegacyMessage);
-    eventSource.addEventListener("message.updated", handleMessageUpdated);
-    eventSource.addEventListener("permission.updated", handlePermissionUpdated);
-    eventSource.addEventListener("permission.replied", handlePermissionReplied);
-    eventSource.addEventListener("session.compaction", handleCompactionStats);
     const handleSessionDiff = () => {
       queryClient.invalidateQueries({
         queryKey: ["cell-diff", cellId],
       });
     };
-    eventSource.addEventListener("session.diff", handleSessionDiff);
 
-    eventSource.onerror = () => {
-      eventSource.close();
+    const attachListeners = (source: EventSource) => {
+      source.addEventListener("history", handleHistory);
+      source.addEventListener("message", handleLegacyMessage);
+      source.addEventListener("message.updated", handleMessageUpdated);
+      source.addEventListener("message.part.updated", handleMessagePartUpdated);
+      source.addEventListener("message.part.removed", handleMessagePartRemoved);
+      source.addEventListener("status", handleStatus);
+      source.addEventListener("permission.updated", handlePermissionUpdated);
+      source.addEventListener("permission.replied", handlePermissionReplied);
+      source.addEventListener("session.compaction", handleCompactionStats);
+      source.addEventListener("session.diff", handleSessionDiff);
     };
 
-    return () => {
-      eventSource.removeEventListener("history", handleHistory);
-      eventSource.removeEventListener("message", handleLegacyMessage);
-      eventSource.removeEventListener("message.updated", handleMessageUpdated);
-      eventSource.removeEventListener(
+    const detachListeners = (source: EventSource) => {
+      source.removeEventListener("history", handleHistory);
+      source.removeEventListener("message", handleLegacyMessage);
+      source.removeEventListener("message.updated", handleMessageUpdated);
+      source.removeEventListener(
         "message.part.updated",
         handleMessagePartUpdated
       );
-      eventSource.removeEventListener(
+      source.removeEventListener(
         "message.part.removed",
         handleMessagePartRemoved
       );
-      eventSource.removeEventListener("status", handleStatus);
-      eventSource.removeEventListener(
-        "permission.updated",
-        handlePermissionUpdated
+      source.removeEventListener("status", handleStatus);
+      source.removeEventListener("permission.updated", handlePermissionUpdated);
+      source.removeEventListener("permission.replied", handlePermissionReplied);
+      source.removeEventListener("session.compaction", handleCompactionStats);
+      source.removeEventListener("session.diff", handleSessionDiff);
+    };
+
+    const resetReconnect = () => {
+      reconnectAttempts = 0;
+      if (reconnectTimeout !== null) {
+        window.clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+      }
+    };
+
+    const scheduleReconnect = () => {
+      if (!isActive || reconnectTimeout !== null) {
+        return;
+      }
+      reconnectAttempts += 1;
+      const delay = Math.min(
+        RECONNECT_BASE_DELAY_MS *
+          RECONNECT_BACKOFF_FACTOR ** (reconnectAttempts - 1),
+        RECONNECT_MAX_DELAY_MS
       );
-      eventSource.removeEventListener(
-        "permission.replied",
-        handlePermissionReplied
+      reconnectTimeout = window.setTimeout(() => {
+        reconnectTimeout = null;
+        connect();
+      }, delay);
+    };
+
+    const connect = () => {
+      if (!isActive) {
+        return;
+      }
+      const source = new EventSource(
+        `${API_BASE}/api/agents/sessions/${sessionId}/events`
       );
-      eventSource.removeEventListener(
-        "session.compaction",
-        handleCompactionStats
-      );
-      eventSource.removeEventListener("session.diff", handleSessionDiff);
-      eventSource.close();
+      eventSource = source;
+      attachListeners(source);
+      source.onopen = () => {
+        resetReconnect();
+      };
+      source.onerror = () => {
+        detachListeners(source);
+        source.close();
+        if (eventSource === source) {
+          eventSource = null;
+        }
+        scheduleReconnect();
+      };
+    };
+
+    connect();
+
+    return () => {
+      isActive = false;
+      if (reconnectTimeout !== null) {
+        window.clearTimeout(reconnectTimeout);
+      }
+      if (eventSource) {
+        detachListeners(eventSource);
+        eventSource.close();
+      }
     };
   }, [
     cellId,
