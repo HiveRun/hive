@@ -1,4 +1,4 @@
-import { type SpawnOptions, spawn } from "node:child_process";
+import { type SpawnOptions, spawn, spawnSync } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -7,6 +7,7 @@ import {
   readFileSync,
   readSync,
   statSync,
+  unlinkSync,
   watch,
   writeFileSync,
 } from "node:fs";
@@ -96,6 +97,10 @@ const printSummary = (title: string, rows: [string, string][]) => {
 
 const resolveHiveHomePath = () =>
   process.env.HIVE_HOME ?? join(homedir(), ".hive");
+
+const resolveDesktopPidFilePath = () =>
+  process.env.HIVE_DESKTOP_PID_FILE ??
+  join(resolveHiveHomePath(), "desktop.pid");
 
 const normalizeShell = (shell?: string): CompletionShell | null => {
   if (!shell) {
@@ -345,6 +350,12 @@ const getTauriExecutableCandidates = () => {
   return candidates;
 };
 
+const resolveMacAppExecutable = (appPath: string) => {
+  const appName = basename(appPath, ".app");
+  const executable = join(appPath, "Contents", "MacOS", appName);
+  return existsSync(executable) ? executable : null;
+};
+
 const launchTauriApplication = () => {
   const target = getTauriExecutableCandidates().find(
     (candidate) => candidate && existsSync(candidate)
@@ -368,14 +379,24 @@ const launchTauriApplication = () => {
     };
 
     if (process.platform === "darwin" && target.endsWith(".app")) {
-      command = "open";
-      args = [target];
-      options = { stdio: "ignore", detached: true };
+      const appExecutable = resolveMacAppExecutable(target);
+      if (appExecutable) {
+        command = appExecutable;
+        options = {
+          stdio: "ignore",
+          detached: true,
+          cwd: dirname(appExecutable),
+        };
+      } else {
+        command = "open";
+        args = [target];
+        options = { stdio: "ignore", detached: true };
+      }
     }
 
     const child = spawn(command, args, options);
     child.unref();
-    return { ok: true, path: target } as const;
+    return { ok: true, path: target, pid: child.pid ?? null } as const;
   } catch (error) {
     return {
       ok: false,
@@ -385,6 +406,78 @@ const launchTauriApplication = () => {
           : "Failed to launch Hive desktop",
     } as const;
   }
+};
+
+const resolveDesktopProcessTargets = () => {
+  const candidates = getTauriExecutableCandidates();
+  const appNames = new Set<string>();
+  const processNames = new Set<string>();
+  const appExtension = ".app";
+
+  for (const candidate of candidates) {
+    const base = basename(candidate);
+    if (base.endsWith(appExtension)) {
+      const appName = base.slice(0, -appExtension.length);
+      if (appName) {
+        appNames.add(appName);
+        processNames.add(appName);
+      }
+      continue;
+    }
+    processNames.add(base);
+  }
+
+  return { appNames: [...appNames], processNames: [...processNames] };
+};
+
+const closeDesktopByName = (appNames: string[], processNames: string[]) => {
+  if (process.platform === "darwin") {
+    for (const appName of appNames) {
+      spawnSync("osascript", ["-e", `tell application "${appName}" to quit`], {
+        stdio: "ignore",
+      });
+    }
+    for (const processName of processNames) {
+      spawnSync("pkill", ["-f", processName], { stdio: "ignore" });
+    }
+    return;
+  }
+
+  if (process.platform === "win32") {
+    for (const processName of processNames) {
+      const executableName = processName.toLowerCase().endsWith(".exe")
+        ? processName
+        : `${processName}.exe`;
+      spawnSync("taskkill", ["/IM", executableName, "/T", "/F"], {
+        stdio: "ignore",
+      });
+    }
+    return;
+  }
+
+  for (const processName of processNames) {
+    spawnSync("pkill", ["-f", processName], { stdio: "ignore" });
+  }
+};
+
+const closeDesktopApplication = () => {
+  const { appNames, processNames } = resolveDesktopProcessTargets();
+  const desktopPid = readDesktopPid();
+
+  if (desktopPid && isPidAlive(desktopPid)) {
+    if (process.platform === "win32") {
+      spawnSync("taskkill", ["/PID", `${desktopPid}`, "/T", "/F"], {
+        stdio: "ignore",
+      });
+    } else {
+      process.kill(desktopPid, "SIGTERM");
+    }
+    cleanupDesktopPidFile();
+    return;
+  }
+
+  cleanupDesktopPidFile();
+  closeDesktopByName(appNames, processNames);
 };
 
 const ensureLogDirectory = (dir: string) => {
@@ -400,6 +493,56 @@ const ensurePidDirectory = () => {
     mkdirSync(dirname(pidFilePath), { recursive: true });
   } catch {
     /* ignore */
+  }
+};
+
+const ensureDesktopPidDirectory = () => {
+  try {
+    mkdirSync(dirname(resolveDesktopPidFilePath()), { recursive: true });
+  } catch {
+    /* ignore */
+  }
+};
+
+const cleanupDesktopPidFile = () => {
+  const pidPath = resolveDesktopPidFilePath();
+  if (!existsSync(pidPath)) {
+    return;
+  }
+  try {
+    unlinkSync(pidPath);
+  } catch {
+    /* ignore */
+  }
+};
+
+const persistDesktopPidFile = (pid: number | null) => {
+  if (!pid) {
+    return;
+  }
+  ensureDesktopPidDirectory();
+  try {
+    writeFileSync(resolveDesktopPidFilePath(), `${pid}\n`);
+  } catch {
+    /* ignore */
+  }
+};
+
+const readDesktopPid = (): number | null => {
+  const pidPath = resolveDesktopPidFilePath();
+  if (!existsSync(pidPath)) {
+    return null;
+  }
+
+  try {
+    const pid = Number(readFileSync(pidPath, "utf8").trim());
+    if (!pid || Number.isNaN(pid)) {
+      cleanupDesktopPidFile();
+      return null;
+    }
+    return pid;
+  } catch {
+    return null;
   }
 };
 
@@ -690,7 +833,11 @@ const runUpgradeEffect = Effect.tryPromise({
 });
 
 const stopCommandEffect = Effect.map(
-  Effect.sync(() => stopBackgroundProcess()),
+  Effect.sync(() => {
+    const result = stopBackgroundProcess();
+    closeDesktopApplication();
+    return result;
+  }),
   (result) => (result === "failed" ? 1 : 0)
 );
 
@@ -724,6 +871,7 @@ const desktopCommandEffect = Effect.gen(function* () {
     return 1;
   }
 
+  persistDesktopPidFile(result.pid ?? null);
   logSuccess("Launched Hive desktop application.");
   return 0;
 });
