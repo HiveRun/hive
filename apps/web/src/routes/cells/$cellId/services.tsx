@@ -298,6 +298,7 @@ function ServiceCard({
           ? "border-destructive shadow-[0_0_0_2px_color-mix(in_oklch,var(--color-destructive)_35%,transparent)]"
           : "border-border/60"
       )}
+      style={{ containerType: "inline-size" }}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -329,7 +330,10 @@ function ServiceCard({
         <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
           Recent logs
         </p>
-        <div className="min-h-0 flex-1 rounded-sm border border-border bg-card">
+        <div
+          className="min-h-0 flex-1 overflow-hidden rounded-sm border border-border bg-card"
+          style={{ maxHeight: "100cqw" }}
+        >
           <pre className="h-full min-h-0 overflow-auto whitespace-pre-wrap p-3 text-[11px] text-foreground leading-relaxed">
             {service.recentLogs && service.recentLogs.length > 0
               ? service.recentLogs
