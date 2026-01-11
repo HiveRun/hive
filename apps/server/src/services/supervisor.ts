@@ -878,12 +878,7 @@ export function createServiceSupervisor(
     const templateEnv = template?.env ?? {};
 
     const siblings = await repository.fetchServicesForCell(row.cell.id);
-    const portMap = new Map<string, number>();
-    for (const sibling of siblings) {
-      if (sibling.service.port) {
-        portMap.set(sibling.service.name, sibling.service.port);
-      }
-    }
+    const portMap = await buildPortMap(siblings);
 
     await startService(row, undefined, templateEnv, portMap);
   }
