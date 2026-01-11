@@ -16,7 +16,20 @@ import type {
 } from "@/queries/agents";
 import { agentQueries } from "@/queries/agents";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
+const envApiUrl = import.meta.env.VITE_API_URL?.trim();
+const isTauri =
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+let apiBase: string | undefined;
+
+if (envApiUrl && envApiUrl !== "undefined") {
+  apiBase = envApiUrl;
+} else if (isTauri) {
+  apiBase = "http://localhost:3000";
+} else if (typeof window !== "undefined") {
+  apiBase = window.location.origin;
+}
+
+const API_BASE = apiBase ?? "http://localhost:3000";
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 10_000;
 const RECONNECT_BACKOFF_FACTOR = 2;

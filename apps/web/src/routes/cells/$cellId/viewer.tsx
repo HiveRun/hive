@@ -379,6 +379,10 @@ function resolveViewportStyle(preset: ViewportPreset) {
 }
 
 function buildViewerUrl(port: number) {
+  if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+    return `http://localhost:${port}`;
+  }
+
   const hostname =
     typeof window !== "undefined" && window.location.hostname
       ? window.location.hostname

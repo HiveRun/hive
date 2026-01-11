@@ -7,7 +7,20 @@ import { agentQueries } from "@/queries/agents";
 import type { Cell } from "@/queries/cells";
 import { cellQueries } from "@/queries/cells";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
+const envApiUrl = import.meta.env.VITE_API_URL?.trim();
+const isTauri =
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+let apiBase: string | undefined;
+
+if (envApiUrl && envApiUrl !== "undefined") {
+  apiBase = envApiUrl;
+} else if (isTauri) {
+  apiBase = "http://localhost:3000";
+} else if (typeof window !== "undefined") {
+  apiBase = window.location.origin;
+}
+
+const API_BASE = apiBase ?? "http://localhost:3000";
 const NOTIFICATION_SOUND_PATH = "/sounds/agent-awaiting-input.wav";
 const NOTIFICATION_SOUND_VOLUME = 0.2;
 

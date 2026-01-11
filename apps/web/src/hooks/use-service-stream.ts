@@ -1,6 +1,21 @@
 import { useEffect, useState } from "react";
 import type { CellServiceSummary } from "@/queries/cells";
 
+const envApiUrl = import.meta.env.VITE_API_URL?.trim();
+const isTauri =
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+let apiBase: string | undefined;
+
+if (envApiUrl && envApiUrl !== "undefined") {
+  apiBase = envApiUrl;
+} else if (isTauri) {
+  apiBase = "http://localhost:3000";
+} else if (typeof window !== "undefined") {
+  apiBase = window.location.origin;
+}
+
+const API_BASE = apiBase ?? "http://localhost:3000";
+
 export function useServiceStream(
   cellId: string,
   options: { enabled?: boolean } = {}
@@ -27,7 +42,9 @@ export function useServiceStream(
     setIsLoading(true);
     setError(undefined);
 
-    const source = new EventSource(`/api/cells/${cellId}/services/stream`);
+    const source = new EventSource(
+      `${API_BASE}/api/cells/${cellId}/services/stream`
+    );
 
     const upsertService = (service: CellServiceSummary) => {
       setServices((current) => {
@@ -58,20 +75,37 @@ export function useServiceStream(
       }
     };
 
+    const readyListener = () => {
+      if (isActive) {
+        setIsLoading(false);
+      }
+    };
+
+    const heartbeatListener = () => {
+      if (isActive) {
+        setIsLoading(false);
+      }
+    };
+
     const errorListener = () => {
       if (isActive) {
         setError("Lost connection to service stream");
+        setIsLoading(false);
       }
     };
 
     source.addEventListener("service", serviceListener as EventListener);
     source.addEventListener("snapshot", snapshotListener);
+    source.addEventListener("ready", readyListener);
+    source.addEventListener("heartbeat", heartbeatListener);
     source.addEventListener("error", errorListener);
 
     return () => {
       isActive = false;
       source.removeEventListener("service", serviceListener as EventListener);
       source.removeEventListener("snapshot", snapshotListener);
+      source.removeEventListener("ready", readyListener);
+      source.removeEventListener("heartbeat", heartbeatListener);
       source.removeEventListener("error", errorListener);
       source.close();
     };
