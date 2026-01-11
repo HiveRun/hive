@@ -169,6 +169,7 @@ export type ServiceSupervisor = {
   bootstrap(): Promise<void>;
   ensureCellServices(args: { cell: Cell; template?: Template }): Promise<void>;
   startCellService(serviceId: string): Promise<void>;
+  startCellServices(cellId: string): Promise<void>;
   stopCellService(
     serviceId: string,
     options?: { releasePorts?: boolean }
@@ -565,6 +566,28 @@ export function createServiceSupervisor(
     return { service: record, cell };
   }
 
+  async function startCellServices(cellId: string): Promise<void> {
+    const rows = await repository.fetchServicesForCell(cellId);
+    if (rows.length === 0) {
+      return;
+    }
+
+    const cell = rows[0]?.cell;
+    if (!cell) {
+      return;
+    }
+    const template = await loadTemplateCached(
+      cell.templateId,
+      cell.workspaceRootPath ?? cell.workspacePath
+    );
+    const templateEnv = template?.env ?? {};
+    const portMap = await buildPortMap(rows);
+
+    for (const row of rows) {
+      await startService(row, undefined, templateEnv, portMap);
+    }
+  }
+
   async function stopCellServices(
     cellId: string,
     options?: { releasePorts?: boolean }
@@ -899,6 +922,7 @@ export function createServiceSupervisor(
     bootstrap,
     ensureCellServices,
     startCellService: startCellServiceById,
+    startCellServices,
     stopCellService: stopCellServiceById,
     stopCellServices,
     stopAll,
@@ -1157,6 +1181,9 @@ export type ServiceSupervisorService = {
   readonly startCellService: (
     serviceId: string
   ) => Effect.Effect<void, ServiceSupervisorError>;
+  readonly startCellServices: (
+    cellId: string
+  ) => Effect.Effect<void, ServiceSupervisorError>;
   readonly stopCellService: (
     serviceId: string,
     options?: { releasePorts?: boolean }
@@ -1176,6 +1203,8 @@ const makeEffectSupervisor = (
     wrapSupervisorPromise(supervisor.ensureCellServices)(args),
   startCellService: (serviceId) =>
     wrapSupervisorPromise(supervisor.startCellService)(serviceId),
+  startCellServices: (cellId) =>
+    wrapSupervisorPromise(supervisor.startCellServices)(cellId),
   stopCellService: (serviceId, options) =>
     wrapSupervisorPromise(supervisor.stopCellService)(serviceId, options),
   stopCellServices: (cellId, options) =>

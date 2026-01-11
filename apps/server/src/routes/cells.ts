@@ -72,6 +72,7 @@ export type CellRouteDependencies = {
   closeAgentSession: AgentRuntimeService["closeAgentSession"];
   ensureServicesForCell: ServiceSupervisorServiceType["ensureCellServices"];
   startServiceById: ServiceSupervisorServiceType["startCellService"];
+  startServicesForCell: ServiceSupervisorServiceType["startCellServices"];
   stopServiceById: ServiceSupervisorServiceType["stopCellService"];
   stopServicesForCell: ServiceSupervisorServiceType["stopCellServices"];
 };
@@ -84,6 +85,7 @@ const dependencyKeys: Array<keyof CellRouteDependencies> = [
   "closeAgentSession",
   "ensureServicesForCell",
   "startServiceById",
+  "startServicesForCell",
   "stopServiceById",
   "stopServicesForCell",
 ];
@@ -103,6 +105,7 @@ const buildDefaultCellDependencies = () =>
       closeAgentSession: agentRuntime.closeAgentSession,
       ensureServicesForCell: supervisor.ensureCellServices,
       startServiceById: supervisor.startCellService,
+      startServicesForCell: supervisor.startCellServices,
       stopServiceById: supervisor.stopCellService,
       stopServicesForCell: supervisor.stopCellServices,
     } satisfies CellRouteDependencies;
@@ -613,6 +616,74 @@ export function createCellsRoutes(
       },
       {
         params: t.Object({ id: t.String() }),
+      }
+    )
+
+    .post(
+      "/:id/services/start",
+      async ({ params, set }) => {
+        const { db: database, startServicesForCell } = await resolveDeps();
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+        if (cell.status === "archived") {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return { message: "Cell is archived" } satisfies {
+            message: string;
+          };
+        }
+
+        await runServerEffect(startServicesForCell(params.id));
+        const rows = await fetchServiceRows(database, params.id);
+        const services = await Promise.all(
+          rows.map((row) => serializeService(database, row))
+        );
+
+        return { services } satisfies CellServiceListResponse;
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        response: {
+          200: CellServiceListResponseSchema,
+          400: t.Object({ message: t.String() }),
+          404: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .post(
+      "/:id/services/stop",
+      async ({ params, set }) => {
+        const { db: database, stopServicesForCell } = await resolveDeps();
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+        if (cell.status === "archived") {
+          set.status = HTTP_STATUS.BAD_REQUEST;
+          return { message: "Cell is archived" } satisfies {
+            message: string;
+          };
+        }
+
+        await runServerEffect(stopServicesForCell(params.id));
+        const rows = await fetchServiceRows(database, params.id);
+        const services = await Promise.all(
+          rows.map((row) => serializeService(database, row))
+        );
+
+        return { services } satisfies CellServiceListResponse;
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        response: {
+          200: CellServiceListResponseSchema,
+          400: t.Object({ message: t.String() }),
+          404: t.Object({ message: t.String() }),
+        },
       }
     )
 

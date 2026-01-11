@@ -153,6 +153,7 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
             cause: options.setupError,
           } as ServiceSupervisorError)
         : Effect.void,
+    startServicesForCell: (_cellId: string) => Effect.void,
     stopServicesForCell: (
       _cellId: string,
       _options?: { releasePorts?: boolean }
@@ -507,6 +508,7 @@ describe("cell archival", () => {
       sendAgentMessage: () => Effect.void,
       closeAgentSession: (id: string) => closeSession(id),
       ensureServicesForCell: () => Effect.void,
+      startServicesForCell: () => Effect.void,
       startServiceById: () => Effect.void,
       stopServiceById: () => Effect.void,
       stopServicesForCell: (
@@ -757,6 +759,7 @@ describe("cell archival", () => {
       sendAgentMessage: () => Effect.void,
       closeAgentSession: (id: string) => closeSession(id),
       ensureServicesForCell: () => Effect.void,
+      startServicesForCell: () => Effect.void,
       startServiceById: (requestedServiceId: string) =>
         startService(requestedServiceId),
       stopServiceById: (_serviceId: string) => Effect.void,

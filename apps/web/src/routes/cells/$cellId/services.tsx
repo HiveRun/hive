@@ -52,12 +52,39 @@ function CellServices() {
     },
   });
 
+  const startAllServicesMutation = useMutation({
+    mutationFn: cellMutations.startAllServices.mutationFn,
+    onError: (mutationError) => {
+      const message =
+        mutationError instanceof Error
+          ? mutationError.message
+          : "Failed to start services";
+      toast.error(message || "Failed to start services");
+    },
+  });
+
+  const stopAllServicesMutation = useMutation({
+    mutationFn: cellMutations.stopAllServices.mutationFn,
+    onSuccess: () => {
+      toast.success("Stopped all services");
+    },
+    onError: (mutationError) => {
+      const message =
+        mutationError instanceof Error
+          ? mutationError.message
+          : "Failed to stop services";
+      toast.error(message || "Failed to stop services");
+    },
+  });
+
   const pendingStartId = startServiceMutation.isPending
     ? startServiceMutation.variables?.serviceId
     : undefined;
   const pendingStopId = stopServiceMutation.isPending
     ? stopServiceMutation.variables?.serviceId
     : undefined;
+  const isBulkActionPending =
+    startAllServicesMutation.isPending || stopAllServicesMutation.isPending;
 
   if (cellQuery.isLoading) {
     return (
@@ -104,12 +131,25 @@ function CellServices() {
     });
   };
 
+  const handleStartAll = () => {
+    startAllServicesMutation.mutate({ cellId });
+  };
+
+  const handleStopAll = () => {
+    stopAllServicesMutation.mutate({ cellId });
+  };
+
   return (
     <div className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
       <ServicesPanel
         errorMessage={streamError}
+        isBulkActionPending={isBulkActionPending}
         isLoading={isLoading}
+        isStartingAll={startAllServicesMutation.isPending}
+        isStoppingAll={stopAllServicesMutation.isPending}
+        onStartAll={handleStartAll}
         onStartService={handleStart}
+        onStopAll={handleStopAll}
         onStopService={handleStop}
         pendingStartId={pendingStartId}
         pendingStopId={pendingStopId}
@@ -123,7 +163,12 @@ function ServicesPanel({
   services,
   isLoading,
   errorMessage,
+  isBulkActionPending,
+  isStartingAll,
+  isStoppingAll,
+  onStartAll,
   onStartService,
+  onStopAll,
   onStopService,
   pendingStartId,
   pendingStopId,
@@ -131,12 +176,36 @@ function ServicesPanel({
   services: CellServiceSummary[];
   isLoading: boolean;
   errorMessage?: string;
+  isBulkActionPending: boolean;
+  isStartingAll: boolean;
+  isStoppingAll: boolean;
+  onStartAll: () => void;
   onStartService: (service: CellServiceSummary) => void;
+  onStopAll: () => void;
   onStopService: (service: CellServiceSummary) => void;
   pendingStartId?: string;
   pendingStopId?: string;
 }) {
   let body: ReactNode;
+
+  const hasServices = services.length > 0;
+  const hasStartableServices = services.some((service) => {
+    const normalized = service.status.toLowerCase();
+    return (
+      normalized !== "running" &&
+      normalized !== "starting" &&
+      normalized !== "pending"
+    );
+  });
+  const hasStoppableServices = services.some((service) => {
+    const normalized = service.status.toLowerCase();
+    return normalized === "running";
+  });
+
+  const disableStartAll =
+    isLoading || Boolean(errorMessage) || !hasServices || !hasStartableServices;
+  const disableStopAll =
+    isLoading || Boolean(errorMessage) || !hasServices || !hasStoppableServices;
 
   if (isLoading) {
     body = <p className="text-muted-foreground text-xs">Loading services…</p>;
@@ -153,6 +222,7 @@ function ServicesPanel({
       <div className="grid h-full min-h-0 auto-rows-[minmax(0,1fr)] gap-4 lg:grid-cols-2">
         {services.map((service) => (
           <ServiceCard
+            isBulkActionPending={isBulkActionPending}
             isStarting={pendingStartId === service.id}
             isStopping={pendingStopId === service.id}
             key={service.id}
@@ -167,7 +237,7 @@ function ServicesPanel({
 
   return (
     <section className="flex h-full w-full flex-col px-4 py-3 text-muted-foreground text-sm">
-      <div className="mb-3 flex items-center justify-between gap-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="font-semibold text-foreground text-lg uppercase tracking-[0.2em]">
             Services
@@ -175,6 +245,26 @@ function ServicesPanel({
           <p className="text-muted-foreground text-xs uppercase tracking-[0.3em]">
             Runtime status per cell
           </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            disabled={disableStartAll || isBulkActionPending}
+            onClick={onStartAll}
+            size="sm"
+            type="button"
+            variant="secondary"
+          >
+            {isStartingAll ? "Starting..." : "Start all"}
+          </Button>
+          <Button
+            disabled={disableStopAll || isBulkActionPending}
+            onClick={onStopAll}
+            size="sm"
+            type="button"
+            variant="destructive"
+          >
+            {isStoppingAll ? "Stopping..." : "Stop all"}
+          </Button>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto pb-2">{body}</div>
@@ -186,12 +276,14 @@ function ServiceCard({
   service,
   onStart,
   onStop,
+  isBulkActionPending,
   isStarting,
   isStopping,
 }: {
   service: CellServiceSummary;
   onStart: (service: CellServiceSummary) => void;
   onStop: (service: CellServiceSummary) => void;
+  isBulkActionPending: boolean;
   isStarting: boolean;
   isStopping: boolean;
 }) {
@@ -246,6 +338,7 @@ function ServiceCard({
         </div>
       </div>
       <ServiceActions
+        isBulkActionPending={isBulkActionPending}
         isStarting={isStarting}
         isStopping={isStopping}
         onStart={onStart}
@@ -260,12 +353,14 @@ function ServiceActions({
   service,
   onStart,
   onStop,
+  isBulkActionPending,
   isStarting,
   isStopping,
 }: {
   service: CellServiceSummary;
   onStart: (service: CellServiceSummary) => void;
   onStop: (service: CellServiceSummary) => void;
+  isBulkActionPending: boolean;
   isStarting: boolean;
   isStopping: boolean;
 }) {
@@ -278,7 +373,7 @@ function ServiceActions({
     <div className="flex flex-wrap justify-end gap-2">
       {isRunning ? (
         <Button
-          disabled={isStopping}
+          disabled={isStopping || isBulkActionPending}
           onClick={() => onStop(service)}
           size="sm"
           type="button"
@@ -288,7 +383,7 @@ function ServiceActions({
         </Button>
       ) : (
         <Button
-          disabled={isStarting || isTransitional}
+          disabled={isStarting || isTransitional || isBulkActionPending}
           onClick={() => onStart(service)}
           size="sm"
           type="button"
