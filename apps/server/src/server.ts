@@ -59,6 +59,23 @@ const resolvedCorsOrigins = (process.env.CORS_ORIGIN || "")
 //
 const allowedCorsOrigins =
   resolvedCorsOrigins.length > 0 ? resolvedCorsOrigins : DEFAULT_CORS_ORIGINS;
+const allowedCorsOriginSet = new Set(allowedCorsOrigins);
+const isLocalOrigin = (origin: string) =>
+  origin.startsWith("http://localhost:") ||
+  origin.startsWith("http://127.0.0.1:");
+const resolveCorsOrigin = (request: Request) => {
+  const origin = request.headers.get("origin");
+  if (!origin) {
+    return false;
+  }
+  if (allowedCorsOriginSet.has(origin)) {
+    return true;
+  }
+  if (isLocalOrigin(origin)) {
+    return true;
+  }
+  return false;
+};
 
 const resolveMigrationsDirectory = () => {
   const candidates = [
@@ -130,7 +147,7 @@ const createApp = () =>
 
     .use(
       cors({
-        origin: allowedCorsOrigins,
+        origin: resolveCorsOrigin,
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         credentials: true,
       })
