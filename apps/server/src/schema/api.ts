@@ -174,7 +174,7 @@ export const AgentSessionSchema = t.Object({
   id: t.String(),
   cellId: t.String(),
   templateId: t.String(),
-  provider: t.String(),
+  provider: t.Optional(t.String()),
   status: t.String(),
   workspacePath: t.String(),
   createdAt: t.String(),

@@ -41,7 +41,7 @@ type RuntimeCompactionState = {
 type RuntimeHandle = {
   session: Session;
   cell: Cell;
-  providerId: string;
+  providerId?: string;
   modelId?: string;
   directoryQuery: DirectoryQuery;
   client: OpencodeClient;
@@ -159,7 +159,13 @@ function assertIsProviderCredentialStore(
 
 const PROVIDERS_NOT_REQUIRING_AUTH = new Set(["zen", "opencode"]);
 
-async function ensureProviderCredentials(providerId: string): Promise<void> {
+async function ensureProviderCredentials(
+  providerId: string | undefined
+): Promise<void> {
+  if (!providerId) {
+    return;
+  }
+
   if (PROVIDERS_NOT_REQUIRING_AUTH.has(providerId)) {
     return;
   }
@@ -200,8 +206,8 @@ function resolveProviderId(
   options: { providerId?: string } | undefined,
   agentConfig: TemplateAgentConfig | undefined,
   defaultOpencodeModel: { providerId?: string } | undefined,
-  configDefaultProvider: string
-): string {
+  configDefaultProvider: string | undefined
+): string | undefined {
   if (options?.providerId) {
     return options.providerId;
   }
@@ -218,7 +224,7 @@ type ResolveModelArgs = {
   agentConfig?: TemplateAgentConfig;
   configDefaultModel?: string;
   defaultOpencodeModel?: { providerId?: string; modelId?: string };
-  resolvedProviderId: string;
+  resolvedProviderId?: string;
 };
 
 function resolveModelId({
@@ -248,6 +254,252 @@ function resolveModelId({
   }
 
   return configDefaultModel;
+}
+
+type ModelSelectionCandidate = {
+  providerId?: string;
+  modelId?: string;
+};
+
+type ProviderCatalogInfo = {
+  providers: ProviderEntry[];
+  defaults: Record<string, string>;
+};
+
+function buildProviderCatalogInfo(
+  catalog: ProviderCatalogResponse | undefined
+): ProviderCatalogInfo {
+  const providers: ProviderEntry[] = [];
+  const candidates = catalog?.providers;
+
+  if (Array.isArray(candidates)) {
+    for (const candidate of candidates) {
+      if (
+        typeof candidate !== "object" ||
+        candidate === null ||
+        typeof (candidate as { id?: unknown }).id !== "string"
+      ) {
+        continue;
+      }
+
+      const { id, name, models } = candidate as {
+        id: string;
+        name?: string;
+        models?: Record<string, ProviderModel>;
+      };
+      const providerEntry: ProviderEntry = { id };
+      if (name) {
+        providerEntry.name = name;
+      }
+      if (models) {
+        providerEntry.models = models;
+      }
+      providers.push(providerEntry);
+    }
+  }
+
+  const defaults = normalizeProviderDefaults(
+    (catalog as { default?: unknown } | undefined)?.default
+  );
+
+  return { providers, defaults };
+}
+
+function normalizeProviderDefaults(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const defaults: Record<string, string> = {};
+  for (const [providerId, modelId] of Object.entries(
+    value as Record<string, unknown>
+  )) {
+    if (typeof modelId === "string") {
+      defaults[providerId] = modelId;
+    }
+  }
+  return defaults;
+}
+
+function findProviderById(
+  providers: ProviderEntry[],
+  providerId: string | undefined
+): ProviderEntry | undefined {
+  if (!providerId) {
+    return;
+  }
+
+  return providers.find((provider) => provider.id === providerId);
+}
+
+function getFirstModelId(
+  models: Record<string, ProviderModel> | undefined
+): string | undefined {
+  if (!models) {
+    return;
+  }
+
+  const [firstModel] = Object.values(models);
+  if (firstModel?.id) {
+    return firstModel.id;
+  }
+
+  const modelIds = Object.keys(models);
+  return modelIds.length ? modelIds[0] : undefined;
+}
+
+function resolveCandidateModel({
+  candidate,
+  providers,
+}: {
+  candidate: ModelSelectionCandidate;
+  providers: ProviderEntry[];
+}): ModelSelectionCandidate | null {
+  if (!candidate.modelId) {
+    return null;
+  }
+
+  if (candidate.providerId) {
+    const provider = findProviderById(providers, candidate.providerId);
+    if (provider?.models?.[candidate.modelId]) {
+      return { providerId: provider.id, modelId: candidate.modelId };
+    }
+    return null;
+  }
+
+  for (const provider of providers) {
+    if (provider.models?.[candidate.modelId]) {
+      return { providerId: provider.id, modelId: candidate.modelId };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Mirrors the OpenCode TUI model fallback order:
+ * 1) CLI override, 2) opencode.json model, 3) recent model,
+ * 4) provider default, 5) first available model.
+ */
+function resolveModelFallback({
+  candidates,
+  providers,
+  defaults,
+}: {
+  candidates: ModelSelectionCandidate[];
+  providers: ProviderEntry[];
+  defaults: Record<string, string>;
+}): ModelSelectionCandidate | null {
+  for (const candidate of candidates) {
+    const resolved = resolveCandidateModel({ candidate, providers });
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  const [provider] = providers;
+  if (!provider?.models) {
+    return null;
+  }
+
+  const defaultModelId = defaults[provider.id];
+  if (defaultModelId && provider.models[defaultModelId]) {
+    return { providerId: provider.id, modelId: defaultModelId };
+  }
+
+  const modelId = getFirstModelId(provider.models);
+  return modelId ? { providerId: provider.id, modelId } : null;
+}
+
+type ModelSelectionContext = {
+  options?: { modelId?: string; providerId?: string };
+  agentConfig?: TemplateAgentConfig;
+  defaultOpencodeModel?: { providerId?: string; modelId?: string };
+  configDefaultProvider?: string;
+  configDefaultModel?: string;
+  providers: ProviderEntry[];
+  defaults: Record<string, string>;
+};
+
+function resolveModelSelection({
+  options,
+  agentConfig,
+  defaultOpencodeModel,
+  configDefaultProvider,
+  configDefaultModel,
+  providers,
+  defaults,
+}: ModelSelectionContext): ModelSelectionCandidate {
+  const overrideModel = resolveCandidateModel({
+    candidate: {
+      providerId: options?.providerId,
+      modelId: options?.modelId,
+    },
+    providers,
+  });
+
+  const agentModel = resolveCandidateModel({
+    candidate: {
+      providerId: agentConfig?.providerId,
+      modelId: agentConfig?.modelId,
+    },
+    providers,
+  });
+
+  const validOpencodeDefault = resolveCandidateModel({
+    candidate: {
+      providerId: defaultOpencodeModel?.providerId,
+      modelId: defaultOpencodeModel?.modelId,
+    },
+    providers,
+  });
+
+  const workspaceFallback = resolveModelFallback({
+    candidates: [
+      {
+        providerId: validOpencodeDefault?.providerId,
+        modelId: validOpencodeDefault?.modelId,
+      },
+    ],
+    providers,
+    defaults,
+  });
+
+  const providerFallback = resolveModelFallback({
+    candidates: [],
+    providers,
+    defaults,
+  });
+
+  const resolvedModel =
+    overrideModel ?? agentModel ?? workspaceFallback ?? providerFallback;
+  const effectiveOptions =
+    options?.modelId && !overrideModel
+      ? { ...options, modelId: undefined, providerId: undefined }
+      : options;
+  const effectiveAgentConfig =
+    agentConfig?.modelId && !agentModel ? undefined : agentConfig;
+
+  const providerId =
+    resolvedModel?.providerId ??
+    resolveProviderId(
+      effectiveOptions,
+      effectiveAgentConfig,
+      validOpencodeDefault ?? undefined,
+      configDefaultProvider
+    );
+
+  const modelId =
+    resolvedModel?.modelId ??
+    resolveModelId({
+      options: effectiveOptions,
+      agentConfig: effectiveAgentConfig,
+      configDefaultModel,
+      defaultOpencodeModel: validOpencodeDefault ?? undefined,
+      resolvedProviderId: providerId,
+    });
+
+  return { providerId, modelId };
 }
 
 export async function ensureAgentSession(
@@ -515,18 +767,19 @@ const isEffectValue = (value: unknown): value is Effect.Effect<unknown> =>
   "pipe" in (value as Record<string, unknown>) &&
   typeof (value as { pipe?: unknown }).pipe === "function";
 
-async function ensureRuntimeForCell(
+function getExistingRuntimeForCell(
   cellId: string,
-  options?: { force?: boolean; modelId?: string; providerId?: string }
-): Promise<RuntimeHandle> {
+  options?: { force?: boolean }
+): RuntimeHandle | null {
   const currentSessionId = cellSessionMap.get(cellId);
-  if (currentSessionId && !options?.force) {
-    const activeRuntime = runtimeRegistry.get(currentSessionId);
-    if (activeRuntime) {
-      return activeRuntime;
-    }
+  if (!currentSessionId || options?.force) {
+    return null;
   }
 
+  return runtimeRegistry.get(currentSessionId) ?? null;
+}
+
+async function loadCellForRuntime(cellId: string): Promise<Cell> {
   const cell = await getCellById(cellId);
   if (!cell) {
     throw new Error("Cell not found");
@@ -534,42 +787,69 @@ async function ensureRuntimeForCell(
   if (cell.status === "archived") {
     throw new Error("Cell is archived");
   }
+  return cell;
+}
 
-  const workspaceRootPath = cell.workspaceRootPath || cell.workspacePath;
-  const deps = getAgentRuntimeDependencies();
-
+function loadHiveConfigForWorkspace(
+  deps: AgentRuntimeDependencies,
+  workspaceRootPath: string
+): Promise<HiveConfig> {
   const hiveConfigResult = deps.loadHiveConfig(workspaceRootPath);
-  const hiveConfig = isEffectValue(hiveConfigResult)
-    ? await Effect.runPromise(hiveConfigResult as Effect.Effect<HiveConfig>)
-    : await Effect.runPromise(
-        Effect.promise(() => hiveConfigResult as unknown as Promise<HiveConfig>)
-      );
+  if (isEffectValue(hiveConfigResult)) {
+    return Effect.runPromise(hiveConfigResult as Effect.Effect<HiveConfig>);
+  }
 
-  const template = hiveConfig.templates[cell.templateId];
+  return Effect.runPromise(
+    Effect.promise(() => hiveConfigResult as unknown as Promise<HiveConfig>)
+  );
+}
+
+function resolveTemplateForCell(hiveConfig: HiveConfig, templateId: string) {
+  const template = hiveConfig.templates[templateId];
   if (!template) {
     throw new Error("Cell template configuration not found");
   }
+  return template;
+}
+
+async function ensureRuntimeForCell(
+  cellId: string,
+  options?: { force?: boolean; modelId?: string; providerId?: string }
+): Promise<RuntimeHandle> {
+  const activeRuntime = getExistingRuntimeForCell(cellId, options);
+  if (activeRuntime) {
+    return activeRuntime;
+  }
+
+  const cell = await loadCellForRuntime(cellId);
+  const workspaceRootPath = cell.workspaceRootPath || cell.workspacePath;
+  const deps = getAgentRuntimeDependencies();
+
+  const hiveConfig = await loadHiveConfigForWorkspace(deps, workspaceRootPath);
+  const template = resolveTemplateForCell(hiveConfig, cell.templateId);
 
   const agentConfig = resolveTemplateAgentConfig(template);
   const mergedConfig = await deps.loadOpencodeConfig(workspaceRootPath);
   const defaultOpencodeModel = mergedConfig.defaultModel;
-  const configDefaultProvider = hiveConfig.opencode.defaultProvider;
-  const configDefaultModel = hiveConfig.opencode.defaultModel;
+  const configDefaultProvider = hiveConfig.opencode?.defaultProvider;
+  const configDefaultModel = hiveConfig.opencode?.defaultModel;
 
-  const requestedProviderId = resolveProviderId(
+  const providerCatalog =
+    await fetchProviderCatalogForWorkspace(workspaceRootPath);
+  const { providers, defaults } = buildProviderCatalogInfo(providerCatalog);
+
+  const selection = resolveModelSelection({
     options,
     agentConfig,
     defaultOpencodeModel,
-    configDefaultProvider
-  );
-
-  const requestedModelId = resolveModelId({
-    options,
-    agentConfig,
+    configDefaultProvider,
     configDefaultModel,
-    defaultOpencodeModel,
-    resolvedProviderId: requestedProviderId,
+    providers,
+    defaults,
   });
+
+  const requestedProviderId = selection.providerId;
+  const requestedModelId = selection.modelId;
 
   await ensureProviderCredentials(requestedProviderId);
 
@@ -588,9 +868,6 @@ async function ensureRuntimeForCell(
       runtime.providerId = restoredModel.providerId;
       runtime.modelId = restoredModel.modelId;
     }
-  } else if (options.providerId) {
-    runtime.providerId = options.providerId;
-    runtime.modelId = options.modelId;
   }
 
   cellSessionMap.set(cell.id, runtime.session.id);
@@ -672,7 +949,7 @@ export async function fetchProviderCatalogForWorkspace(
 
 type StartRuntimeArgs = {
   cell: Cell;
-  providerId: string;
+  providerId?: string;
   modelId?: string;
   force: boolean;
   deps: AgentRuntimeDependencies;
@@ -721,37 +998,47 @@ async function startOpencodeRuntime({
 
       const activeModelId = runtime.modelId;
       const parts = [{ type: "text" as const, text: content }];
-      const promptBody = activeModelId
-        ? {
-            parts,
-            model: {
-              providerID: runtime.providerId,
-              modelID: activeModelId,
-            },
-          }
-        : { parts };
+      const promptBody =
+        activeModelId && runtime.providerId
+          ? {
+              parts,
+              model: {
+                providerID: runtime.providerId,
+                modelID: activeModelId,
+              },
+            }
+          : { parts };
 
-      const response = await client.session.prompt({
-        path: { id: session.id },
-        query: directoryQuery,
-        body: promptBody,
-      });
-
-      if (response.error) {
-        if (runtime.pendingInterrupt && isMessageAbortedError(response.error)) {
+      const handlePromptError = (error: unknown): boolean => {
+        if (runtime.pendingInterrupt && isMessageAbortedError(error)) {
           runtime.pendingInterrupt = false;
           setRuntimeStatus(runtime, "awaiting_input");
-          return;
+          return true;
         }
-        const errorMessage = getRpcErrorMessage(
-          response.error,
-          "Agent prompt failed"
-        );
+
+        const errorMessage = getRpcErrorMessage(error, "Agent prompt failed");
         setRuntimeStatus(runtime, "error", errorMessage);
         throw new Error(errorMessage);
-      }
+      };
 
-      runtime.pendingInterrupt = false;
+      const sendPrompt = async (): Promise<void> => {
+        const response = await client.session.prompt({
+          path: { id: session.id },
+          query: directoryQuery,
+          body: promptBody,
+        });
+
+        if (response.error) {
+          const retried = handlePromptError(response.error);
+          if (retried) {
+            await sendPrompt();
+          }
+        } else {
+          runtime.pendingInterrupt = false;
+        }
+      };
+
+      await sendPrompt();
     },
     stop() {
       abortController.abort();

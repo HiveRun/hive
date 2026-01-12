@@ -19,7 +19,6 @@
         },
         "defaultProvider": {
           "description": "Default provider identifier when templates omit one",
-          "default": "openai",
           "type": "string",
           "minLength": 1
         },
@@ -28,7 +27,6 @@
           "type": "string"
         }
       },
-      "required": ["defaultProvider"],
       "additionalProperties": false
     },
     "promptSources": {
@@ -286,6 +284,6 @@
       "additionalProperties": false
     }
   },
-  "required": ["opencode", "promptSources", "templates"],
+  "required": ["promptSources", "templates"],
   "additionalProperties": false
 }

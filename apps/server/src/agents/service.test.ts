@@ -206,6 +206,20 @@ describe("agent model selection", () => {
       defaultModel: { providerId: "openai", modelId: "gpt-5.1-codex-high" },
     });
 
+    clientStub.config.providers.mockResolvedValue({
+      data: {
+        providers: [
+          {
+            id: "opencode",
+            models: {
+              "template-default": { id: "template-default" },
+            },
+          },
+        ],
+        default: { opencode: "template-default" },
+      },
+    });
+
     const session = await ensureAgentSession(cellId);
 
     expect(session.provider).toBe("opencode");
@@ -237,6 +251,20 @@ describe("agent model selection", () => {
       source: "workspace",
       details: undefined,
       defaultModel: { providerId: "opencode", modelId: "workspace-default" },
+    });
+
+    clientStub.config.providers.mockResolvedValue({
+      data: {
+        providers: [
+          {
+            id: "opencode",
+            models: {
+              "workspace-default": { id: "workspace-default" },
+            },
+          },
+        ],
+        default: { opencode: "workspace-default" },
+      },
     });
 
     const session = await ensureAgentSession(cellId);
@@ -276,6 +304,57 @@ describe("agent model selection", () => {
 
     expect(session.provider).toBe("opencode");
     expect(session.modelId).toBe("template-default");
+  });
+
+  it("drops invalid explicit models and selects a valid fallback", async () => {
+    const baseTemplate = mockHiveConfig.templates["template-basic"];
+    if (!baseTemplate) {
+      throw new Error("Test template missing");
+    }
+
+    const hiveConfigWithoutModel: HiveConfig = {
+      ...mockHiveConfig,
+      templates: {
+        ...mockHiveConfig.templates,
+        "template-basic": {
+          ...baseTemplate,
+          agent: {
+            providerId: "opencode",
+          },
+        },
+      },
+    };
+
+    loadHiveConfigMock.mockResolvedValue(hiveConfigWithoutModel);
+    loadOpencodeConfigSpy.mockResolvedValue({
+      config: { model: "opencode/gpt-5.2-xhigh" },
+      source: "workspace",
+      details: undefined,
+      defaultModel: { providerId: "opencode", modelId: "gpt-5.2-xhigh" },
+    });
+
+    const defaultFallbackModel = "minimax-m2.1";
+    clientStub.config.providers.mockResolvedValue({
+      data: {
+        providers: [
+          {
+            id: "opencode",
+            models: {
+              [defaultFallbackModel]: { id: defaultFallbackModel },
+            },
+          },
+        ],
+        default: { opencode: defaultFallbackModel },
+      },
+    });
+
+    const session = await ensureAgentSession(cellId, {
+      modelId: "gpt-5.2-xhigh",
+      providerId: "opencode",
+    });
+
+    expect(session.provider).toBe("opencode");
+    expect(session.modelId).toBe(defaultFallbackModel);
   });
 
   it("tracks compaction events and exposes stats", async () => {

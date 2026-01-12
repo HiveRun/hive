@@ -3,10 +3,6 @@ import type { HiveConfig } from "../../apps/server/src/config/schema";
 const defaultIgnorePatterns = ["node_modules/**", ".hive/**", ".turbo/**"];
 
 export const hiveConfigDefaults: HiveConfig = {
-  opencode: {
-    defaultProvider: "opencode",
-    defaultModel: "big-pickle",
-  },
   promptSources: ["docs/prompts/**/*.md"],
   defaults: {
     templateId: "hive-dev",
@@ -18,10 +14,6 @@ export const hiveConfigDefaults: HiveConfig = {
       type: "manual",
       includePatterns: [".env*", "vendor/**"],
       ignorePatterns: defaultIgnorePatterns,
-      agent: {
-        providerId: "opencode",
-        modelId: "big-pickle",
-      },
       setup: ["bun setup"],
       services: {
         web: {
@@ -53,10 +45,6 @@ export const hiveConfigDefaults: HiveConfig = {
       type: "manual",
       includePatterns: [".env*", "*.db", "vendor/**"],
       ignorePatterns: defaultIgnorePatterns,
-      agent: {
-        providerId: "opencode",
-        modelId: "big-pickle",
-      },
       services: {
         api: {
           type: "process",
@@ -75,10 +63,6 @@ export const hiveConfigDefaults: HiveConfig = {
       type: "manual",
       includePatterns: [".env*", "vendor/**"],
       ignorePatterns: defaultIgnorePatterns,
-      agent: {
-        providerId: "opencode",
-        modelId: "big-pickle",
-      },
     },
     "provider-only": {
       id: "provider-only",

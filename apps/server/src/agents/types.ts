@@ -49,7 +49,7 @@ export type AgentSessionRecord = {
   id: string;
   cellId: string;
   templateId: string;
-  provider: string;
+  provider?: string;
   status: AgentSessionStatus;
   workspacePath: string;
   createdAt: string;
