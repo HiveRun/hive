@@ -1,9 +1,5 @@
 {
   "$schema": "./hive.config.schema.json",
-  "opencode": {
-    "defaultProvider": "opencode",
-    "defaultModel": "big-pickle"
-  },
   "promptSources": ["docs/prompts/**/*.md"],
   "templates": {
     "hive-dev": {
@@ -33,10 +29,6 @@
         }
       },
       "setup": ["bun setup"],
-      "agent": {
-        "providerId": "opencode",
-        "modelId": "big-pickle"
-      },
       "includePatterns": [".env*", "vendor/**"],
       "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
     },
@@ -55,10 +47,6 @@
           "readyTimeoutMs": 5000
         }
       },
-      "agent": {
-        "providerId": "opencode",
-        "modelId": "big-pickle"
-      },
       "includePatterns": [".env*", "*.db", "vendor/**"],
       "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
     },
@@ -66,10 +54,6 @@
       "id": "basic",
       "label": "Basic Template",
       "type": "manual",
-      "agent": {
-        "providerId": "opencode",
-        "modelId": "big-pickle"
-      },
       "includePatterns": [".env*", "vendor/**"],
       "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
     },

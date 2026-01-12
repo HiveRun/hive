@@ -89,7 +89,24 @@ describe("Hive Config Schema", () => {
 
     const result = hiveConfigSchema.parse(minimalConfig);
     expect(result.templates[EXPECTED.configKey]).toBeDefined();
-    expect(result.opencode.defaultProvider).toBe("zen");
+    expect(result.opencode?.defaultProvider).toBe("zen");
+  });
+
+  it("should validate a config without opencode block", () => {
+    const configWithoutOpencode = {
+      promptSources: ["docs/prompts/**/*.md"],
+      templates: {
+        basic: {
+          id: "basic",
+          label: "Basic",
+          type: "manual" as const,
+        },
+      },
+    };
+
+    const result = hiveConfigSchema.parse(configWithoutOpencode);
+    expect(result.templates.basic).toBeDefined();
+    expect(result.opencode).toBeUndefined();
   });
 });
 
@@ -109,6 +126,6 @@ describe("defineHiveConfig", () => {
 
     const config = defineHiveConfig(configForValidation);
     expect(config.templates.test?.id).toBe(EXPECTED.templateId);
-    expect(config.opencode.defaultProvider).toBe("zen");
+    expect(config.opencode?.defaultProvider).toBe("zen");
   });
 });

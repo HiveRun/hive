@@ -117,7 +117,7 @@ const opencodeConfigSchema = z
     defaultProvider: z
       .string()
       .min(1)
-      .default("openai")
+      .optional()
       .describe("Default provider identifier when templates omit one"),
     defaultModel: z
       .string()
@@ -137,7 +137,7 @@ export const defaultsSchema = z
 
 export const hiveConfigSchema = z
   .object({
-    opencode: opencodeConfigSchema,
+    opencode: opencodeConfigSchema.optional(),
     promptSources: z
       .array(z.string())
       .default([])
