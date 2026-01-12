@@ -1009,36 +1009,28 @@ async function startOpencodeRuntime({
             }
           : { parts };
 
-      const handlePromptError = (error: unknown): boolean => {
-        if (runtime.pendingInterrupt && isMessageAbortedError(error)) {
+      const response = await client.session.prompt({
+        path: { id: session.id },
+        query: directoryQuery,
+        body: promptBody,
+      });
+
+      if (response.error) {
+        if (runtime.pendingInterrupt && isMessageAbortedError(response.error)) {
           runtime.pendingInterrupt = false;
           setRuntimeStatus(runtime, "awaiting_input");
-          return true;
+          return;
         }
 
-        const errorMessage = getRpcErrorMessage(error, "Agent prompt failed");
+        const errorMessage = getRpcErrorMessage(
+          response.error,
+          "Agent prompt failed"
+        );
         setRuntimeStatus(runtime, "error", errorMessage);
         throw new Error(errorMessage);
-      };
+      }
 
-      const sendPrompt = async (): Promise<void> => {
-        const response = await client.session.prompt({
-          path: { id: session.id },
-          query: directoryQuery,
-          body: promptBody,
-        });
-
-        if (response.error) {
-          const retried = handlePromptError(response.error);
-          if (retried) {
-            await sendPrompt();
-          }
-        } else {
-          runtime.pendingInterrupt = false;
-        }
-      };
-
-      await sendPrompt();
+      runtime.pendingInterrupt = false;
     },
     stop() {
       abortController.abort();
