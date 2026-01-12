@@ -8,6 +8,8 @@ const WORKSPACE_CONFIG_CANDIDATES = [
   "opencode.json",
 ] as const;
 
+const HIVE_INSTRUCTIONS_PATH = ".hive/instructions.md";
+
 type OpencodeServerConfig = NonNullable<ServerOptions["config"]>;
 
 type DefaultModel = {
@@ -22,20 +24,36 @@ export type LoadedOpencodeConfig = {
   defaultModel?: DefaultModel;
 };
 
+function withHiveInstructions(
+  config: OpencodeServerConfig
+): OpencodeServerConfig {
+  const existing = Array.isArray(config.instructions)
+    ? config.instructions
+    : [];
+  if (existing.includes(HIVE_INSTRUCTIONS_PATH)) {
+    return config;
+  }
+  return {
+    ...config,
+    instructions: [...existing, HIVE_INSTRUCTIONS_PATH],
+  };
+}
+
 export async function loadOpencodeConfig(
   workspaceRootPath: string
 ): Promise<LoadedOpencodeConfig> {
   const fileConfig = await readWorkspaceConfig(workspaceRootPath);
   if (fileConfig) {
-    const defaultModel = extractDefaultModel(fileConfig);
+    const configWithHive = withHiveInstructions(fileConfig);
+    const defaultModel = extractDefaultModel(configWithHive);
     return {
-      config: fileConfig,
+      config: configWithHive,
       source: "workspace",
       ...(defaultModel ? { defaultModel } : {}),
     };
   }
 
-  const fallback: OpencodeServerConfig = {};
+  const fallback: OpencodeServerConfig = withHiveInstructions({});
   const fallbackDefaultModel = extractDefaultModel(fallback);
   return {
     config: fallback,

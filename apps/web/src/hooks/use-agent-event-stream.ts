@@ -156,6 +156,7 @@ export function useAgentEventStream(
     let reconnectTimeout: number | null = null;
     let reconnectAttempts = 0;
     let isActive = true;
+    let hasShownDisconnectToast = false;
 
     const handleHistory = (event: MessageEvent<string>) => {
       try {
@@ -380,6 +381,7 @@ export function useAgentEventStream(
 
     const resetReconnect = () => {
       reconnectAttempts = 0;
+      hasShownDisconnectToast = false;
       if (reconnectTimeout !== null) {
         window.clearTimeout(reconnectTimeout);
         reconnectTimeout = null;
@@ -389,6 +391,10 @@ export function useAgentEventStream(
     const scheduleReconnect = () => {
       if (!isActive || reconnectTimeout !== null) {
         return;
+      }
+      if (!hasShownDisconnectToast) {
+        toast.info("Reconnecting to agent stream...");
+        hasShownDisconnectToast = true;
       }
       reconnectAttempts += 1;
       const delay = Math.min(
