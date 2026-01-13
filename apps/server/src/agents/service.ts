@@ -1,6 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
 import type {
   AssistantMessage,
   Event,
@@ -15,6 +16,7 @@ import { type HiveConfigError, HiveConfigService } from "../config/context";
 import type { HiveConfig, Template } from "../config/schema";
 import { DatabaseService, db } from "../db";
 import { type Cell, cells } from "../schema/cells";
+import { type CellService, cellServices } from "../schema/services";
 import { publishAgentEvent } from "./events";
 import { loadOpencodeConfig } from "./opencode-config";
 import { acquireSharedOpencodeClient } from "./opencode-server";
@@ -29,9 +31,206 @@ const AUTH_PATH = join(homedir(), ".local", "share", "opencode", "auth.json");
 
 const runtimeRegistry = new Map<string, RuntimeHandle>();
 const cellSessionMap = new Map<string, string>();
+const DEFAULT_SERVICE_HOST = process.env.SERVICE_HOST ?? "localhost";
+const DEFAULT_SERVICE_PROTOCOL = process.env.SERVICE_PROTOCOL ?? "http";
+const HIVE_INSTRUCTIONS_RELATIVE_PATH = ".hive/instructions.md";
+
 type DirectoryQuery = {
   directory?: string;
 };
+
+type HiveSessionInstructionsService = Pick<
+  CellService,
+  "name" | "status" | "port" | "command" | "cwd"
+>;
+
+type HiveSessionInstructionsContext = {
+  cell: Cell;
+  template: Template;
+  services: HiveSessionInstructionsService[];
+  hiveUrl?: string;
+};
+
+function buildInstructionServices(
+  template: Template,
+  services: HiveSessionInstructionsService[]
+): HiveSessionInstructionsService[] {
+  if (services.length > 0) {
+    return services;
+  }
+
+  return Object.entries(template.services ?? {}).map(([name, definition]) => {
+    let command = "";
+    let cwd = "";
+
+    if (definition.type === "process") {
+      command = definition.run;
+      cwd = definition.cwd ?? "";
+    } else if (
+      "command" in definition &&
+      typeof definition.command === "string"
+    ) {
+      command = definition.command;
+    }
+
+    return {
+      name,
+      status: "pending" as const,
+      port: null,
+      command,
+      cwd,
+    };
+  });
+}
+
+function sanitizeServiceName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9]/g, "_").toUpperCase();
+}
+
+function buildServiceUrl(port?: number | null): string | null {
+  if (typeof port !== "number") {
+    return null;
+  }
+  return `${DEFAULT_SERVICE_PROTOCOL}://${DEFAULT_SERVICE_HOST}:${port}`;
+}
+
+function buildHiveHeaderLines(
+  context: HiveSessionInstructionsContext
+): string[] {
+  const { cell, template, hiveUrl } = context;
+  const workspaceRootPath = cell.workspaceRootPath || cell.workspacePath;
+  const taskDescription = cell.description?.trim()
+    ? cell.description.trim()
+    : "Follow the user instructions provided in this session.";
+
+  const lines = [
+    "# Hive Environment",
+    "",
+    "You are working in a Hive-managed development environment. This environment provides isolated, coordinated development sessions with automatic resource management.",
+    "",
+    "## Your Task",
+    `**Instructions**: ${taskDescription}`,
+    "",
+    "## CRITICAL: Hive Operational Constraints",
+    "You are running inside a Hive-managed environment. This is NOT a regular development setup.",
+    "",
+    "### What Hive Is",
+    "- Agent coordination tool: Hive creates isolated development sessions for AI agents.",
+    "- Resource management: automatic port allocation, service orchestration, cleanup.",
+    `- Session isolation: your work is contained within agent ${cell.name} (${cell.id}).`,
+    "- Multi-agent system: other agents may be running concurrently in separate environments.",
+    "",
+    "### CRITICAL: What You Must NOT Touch",
+    `- Other agent resources: never modify files or services outside your worktree path: ${cell.workspacePath}.`,
+    "- Port conflicts: only use your assigned ports. Other agents have their own allocations.",
+    "- Service dependencies: do not start/stop services manually; Hive manages the lifecycle.",
+    "- Database access: use only your environment's database connections and paths.",
+    "- Git operations: work only in your assigned worktree, not the main repository.",
+    "",
+    "### Your Isolated Environment",
+    `- Worktree Path: ${cell.workspacePath}`,
+    `- Workspace Root: ${workspaceRootPath}`,
+    `- Template: ${template.label} (${template.id})`,
+    `- Status: ${cell.status}`,
+  ];
+
+  if (hiveUrl) {
+    lines.push(`- Hive Dashboard: ${hiveUrl}`);
+  }
+
+  return lines;
+}
+
+function buildServiceLines(
+  services: HiveSessionInstructionsService[]
+): string[] {
+  const lines = ["## Services"];
+
+  if (services.length === 0) {
+    lines.push("- No services registered for this cell.");
+    return lines;
+  }
+
+  for (const service of services) {
+    lines.push(`### ${service.name}`);
+    lines.push(`- Status: ${service.status}`);
+    if (service.port != null) {
+      lines.push(`- Port: ${service.port}`);
+      const serviceUrl = buildServiceUrl(service.port);
+      if (serviceUrl) {
+        lines.push(`- URL: ${serviceUrl}`);
+      }
+    } else {
+      lines.push("- Port: pending");
+    }
+    lines.push("");
+  }
+
+  return lines;
+}
+
+function buildEnvironmentVariableLines(
+  context: HiveSessionInstructionsContext
+): string[] {
+  const { cell, services } = context;
+  const hiveHome = join(cell.workspacePath, ".hive", "home");
+
+  const lines = [
+    "## Hive-Generated Environment Variables",
+    `- HIVE_CELL_ID=${cell.id}`,
+    `- HIVE_HOME=${hiveHome}`,
+    `- HIVE_BROWSE_ROOT=${cell.workspacePath}`,
+    `- SERVICE_HOST=${DEFAULT_SERVICE_HOST}`,
+    `- SERVICE_PROTOCOL=${DEFAULT_SERVICE_PROTOCOL}`,
+    "",
+  ];
+
+  const servicesWithPorts = services.filter(
+    (service) => typeof service.port === "number"
+  );
+  if (servicesWithPorts.length > 0) {
+    lines.push("### Service Port Variables");
+    for (const service of servicesWithPorts) {
+      const portValue = String(service.port);
+      const envName = `${sanitizeServiceName(service.name)}_PORT`;
+      lines.push(`- ${envName}=${portValue}`);
+    }
+    lines.push("- PORT and SERVICE_PORT are set to the active service's port.");
+    lines.push("- HIVE_SERVICE is set to the active service name.");
+  } else if (services.length > 0) {
+    lines.push("- Service ports will populate once services start.");
+  }
+
+  return lines;
+}
+
+function renderHiveSessionInstructions(
+  context: HiveSessionInstructionsContext
+): string {
+  return [
+    ...buildHiveHeaderLines(context),
+    "",
+    ...buildServiceLines(context.services),
+    "",
+    ...buildEnvironmentVariableLines(context),
+    "",
+    "This environment context is generated by Hive for this agent session.",
+  ].join("\n");
+}
+
+async function writeHiveSessionInstructions(
+  context: HiveSessionInstructionsContext
+): Promise<void> {
+  const instructionsPath = join(
+    context.cell.workspacePath,
+    HIVE_INSTRUCTIONS_RELATIVE_PATH
+  );
+  await mkdir(join(context.cell.workspacePath, ".hive"), {
+    recursive: true,
+  });
+  const content = renderHiveSessionInstructions(context);
+  await writeFile(instructionsPath, content, "utf8");
+}
 
 type RuntimeCompactionState = {
   count: number;
@@ -128,7 +327,9 @@ async function readProviderCredentials(): Promise<ProviderCredentialsStore> {
       return {};
     }
     throw new Error(
-      `Failed to read provider credentials from ${AUTH_PATH}: ${error instanceof Error ? error.message : error}`
+      `Failed to read provider credentials from ${AUTH_PATH}: ${
+        error instanceof Error ? error.message : error
+      }`
     );
   }
 }
@@ -174,7 +375,7 @@ async function ensureProviderCredentials(
   const providerAuth = credentials[providerId];
   if (!providerAuth) {
     throw new Error(
-      `Missing authentication for ${providerId}. Run \\"opencode auth login ${providerId}\\".`
+      `Missing authentication for ${providerId}. Run opencode auth login ${providerId}.`
     );
   }
 }
@@ -812,21 +1013,49 @@ function resolveTemplateForCell(hiveConfig: HiveConfig, templateId: string) {
   return template;
 }
 
+async function hydrateInstructionsForCell(
+  deps: AgentRuntimeDependencies,
+  cell: Cell
+): Promise<{
+  hiveConfig: HiveConfig;
+  template: Template;
+  services: HiveSessionInstructionsService[];
+}> {
+  const workspaceRootPath = cell.workspaceRootPath || cell.workspacePath;
+  const hiveConfig = await loadHiveConfigForWorkspace(deps, workspaceRootPath);
+  const template = resolveTemplateForCell(hiveConfig, cell.templateId);
+
+  const serviceRows = await deps.db
+    .select()
+    .from(cellServices)
+    .where(eq(cellServices.cellId, cell.id));
+  const services = buildInstructionServices(template, serviceRows);
+
+  await writeHiveSessionInstructions({
+    cell,
+    template,
+    services,
+    hiveUrl: process.env.HIVE_URL,
+  });
+
+  return { hiveConfig, template, services };
+}
+
 async function ensureRuntimeForCell(
   cellId: string,
   options?: { force?: boolean; modelId?: string; providerId?: string }
 ): Promise<RuntimeHandle> {
+  const deps = getAgentRuntimeDependencies();
   const activeRuntime = getExistingRuntimeForCell(cellId, options);
   if (activeRuntime) {
+    await hydrateInstructionsForCell(deps, activeRuntime.cell);
     return activeRuntime;
   }
 
   const cell = await loadCellForRuntime(cellId);
   const workspaceRootPath = cell.workspaceRootPath || cell.workspacePath;
-  const deps = getAgentRuntimeDependencies();
 
-  const hiveConfig = await loadHiveConfigForWorkspace(deps, workspaceRootPath);
-  const template = resolveTemplateForCell(hiveConfig, cell.templateId);
+  const { hiveConfig, template } = await hydrateInstructionsForCell(deps, cell);
 
   const agentConfig = resolveTemplateAgentConfig(template);
   const mergedConfig = await deps.loadOpencodeConfig(workspaceRootPath);

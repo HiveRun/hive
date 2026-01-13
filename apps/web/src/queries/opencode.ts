@@ -1,8 +1,6 @@
 import { createOpencodeClient } from "@opencode-ai/sdk";
-
-type SessionPromptInput = Parameters<
-  ReturnType<typeof createOpencodeClient>["session"]["prompt"]
->[0];
+import { rpc } from "@/lib/rpc";
+import { formatRpcError, formatRpcResponseError } from "@/lib/rpc-error";
 
 export const opencodeQueries = {
   sessions: (baseUrl: string) => ({
@@ -106,20 +104,21 @@ export const opencodeQueries = {
 
 export const opencodeMutations = {
   createSession: {
-    mutationFn: async ({
-      baseUrl,
-      title,
-    }: {
-      baseUrl: string;
-      title?: string;
+    mutationFn: async (input: {
+      cellId: string;
+      force?: boolean;
+      modelId?: string;
+      providerId?: string;
     }) => {
-      const client = createOpencodeClient({ baseUrl });
-      const { data, error } = await client.session.create({
-        body: { title },
-      });
-
+      const { data, error } = await rpc.api.agents.sessions.post(input);
       if (error) {
-        throw new Error("Failed to create session");
+        throw new Error(formatRpcError(error, "Failed to create session"));
+      }
+
+      if ("message" in data) {
+        throw new Error(
+          formatRpcResponseError(data, "Failed to create session")
+        );
       }
 
       return data;
@@ -127,131 +126,51 @@ export const opencodeMutations = {
   },
 
   createSessionWithMessage: {
-    mutationFn: async ({
-      baseUrl,
-      title,
-      message,
-      directory,
-      agent,
-      model,
-    }: {
-      baseUrl: string;
-      title?: string;
+    mutationFn: async (input: {
+      cellId: string;
       message: string;
-      directory?: string;
-      agent?: string;
-      model?: {
-        providerID: string;
-        modelID: string;
-      };
+      force?: boolean;
+      modelId?: string;
+      providerId?: string;
     }) => {
-      const client = createOpencodeClient({ baseUrl });
-
-      // Step 1: Create session
-      const sessionResult = await client.session.create({
-        body: { title },
+      const { data, error } = await rpc.api.agents.sessions.post({
+        cellId: input.cellId,
+        force: input.force,
+        modelId: input.modelId,
+        providerId: input.providerId,
       });
-
-      if (sessionResult.error) {
-        throw new Error("Failed to create session");
+      if (error) {
+        throw new Error(formatRpcError(error, "Failed to create session"));
       }
 
-      const session = sessionResult.data;
-
-      // Step 2: Send initial message to the session (fire-and-forget)
-      const query: SessionPromptInput["query"] = directory
-        ? { directory }
-        : undefined;
-      const body: NonNullable<SessionPromptInput["body"]> = {
-        parts: [
-          {
-            type: "text",
-            text: message,
-          },
-        ],
-      };
-
-      if (agent) {
-        body.agent = agent;
+      if ("message" in data) {
+        throw new Error(
+          formatRpcResponseError(data, "Failed to create session")
+        );
       }
 
-      if (model) {
-        body.model = model;
+      const { error: messageError } = await rpc.api.agents
+        .sessions({ id: data.id })
+        .messages.post({ content: input.message });
+      if (messageError) {
+        throw new Error(formatRpcError(messageError, "Failed to send message"));
       }
-
-      // Don't await - fire and forget so UI can navigate immediately
-      // The SSE stream will handle showing the response in real-time
-      client.session.prompt({
-        path: { id: session.id },
-        query,
-        body,
-      });
 
       return {
-        sessionId: session.id,
-        title: session.title,
+        sessionId: data.id,
       };
     },
   },
 
   sendMessage: {
-    mutationFn: async ({
-      baseUrl,
-      sessionId,
-      text,
-      directory,
-      agent,
-      model,
-    }: {
-      baseUrl: string;
-      sessionId: string;
-      text: string;
-      directory?: string;
-      agent?: string;
-      model?: {
-        providerID: string;
-        modelID: string;
-      };
-    }) => {
-      const client = createOpencodeClient({ baseUrl });
-      const query: SessionPromptInput["query"] = directory
-        ? { directory }
-        : undefined;
-      const body: NonNullable<SessionPromptInput["body"]> = {
-        parts: [
-          {
-            type: "text",
-            text,
-          },
-        ],
-      };
-
-      if (agent) {
-        body.agent = agent;
+    mutationFn: async (input: { sessionId: string; text: string }) => {
+      const { error } = await rpc.api.agents
+        .sessions({ id: input.sessionId })
+        .messages.post({ content: input.text });
+      if (error) {
+        throw new Error(formatRpcError(error, "Failed to send message"));
       }
-
-      if (model) {
-        body.model = model;
-      }
-
-      // Force responseStyle to get the full response object so we can inspect errors
-      const result = await client.session.prompt({
-        path: { id: sessionId },
-        query,
-        body,
-      });
-
-      if (result.error) {
-        throw new Error(
-          `Failed to send message: ${JSON.stringify(result.error)}`
-        );
-      }
-
-      if (!result.data) {
-        throw new Error("No data returned from OpenCode server");
-      }
-
-      return result.data;
+      return true;
     },
   },
 };

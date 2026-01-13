@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { Effect } from "effect";
 import { Elysia, type Static, sse, t } from "elysia";
 import { subscribeAgentEvents } from "../agents/events";
@@ -13,6 +14,7 @@ import type {
   AgentSessionRecord,
   AgentStreamEvent,
 } from "../agents/types";
+import { DatabaseService } from "../db";
 import { LoggerService } from "../logger";
 import { runServerEffect } from "../runtime";
 
@@ -24,6 +26,7 @@ import {
   RespondPermissionSchema,
   SendAgentMessageSchema,
 } from "../schema/api";
+import { cells } from "../schema/cells";
 import { createWorkspaceContextPlugin } from "../workspaces/plugin";
 
 const updateModelSchema = t.Object({
@@ -148,15 +151,43 @@ const providerPayload = (catalog: unknown) => {
   return { models, defaults, providers };
 };
 
+const loadCellEffect = (cellId: string) =>
+  DatabaseService.pipe(
+    Effect.flatMap(({ db }) =>
+      Effect.tryPromise({
+        try: () => db.select().from(cells).where(eq(cells.id, cellId)).limit(1),
+        catch: mapAgentError("Failed to load cell"),
+      })
+    ),
+    Effect.map((rows) => rows[0] ?? null)
+  );
+
 const ensureSessionEffect = (body: Static<typeof CreateAgentSessionSchema>) =>
-  withAgentRuntime(
-    (agentRuntime) =>
-      agentRuntime.ensureAgentSession(body.cellId, {
-        ...(body.force !== undefined ? { force: body.force } : {}),
-        ...(body.modelId ? { modelId: body.modelId } : {}),
-        ...(body.providerId ? { providerId: body.providerId } : {}),
-      }),
-    "Failed to start agent session"
+  loadCellEffect(body.cellId).pipe(
+    Effect.flatMap((cell) => {
+      if (!cell) {
+        return Effect.fail(toError(HTTP_STATUS.NOT_FOUND, "Cell not found"));
+      }
+
+      if (cell.status !== "ready") {
+        return Effect.fail(
+          toError(
+            HTTP_STATUS.BAD_REQUEST,
+            `Cell is not ready (status: ${cell.status})`
+          )
+        );
+      }
+
+      return withAgentRuntime(
+        (agentRuntime) =>
+          agentRuntime.ensureAgentSession(body.cellId, {
+            ...(body.force !== undefined ? { force: body.force } : {}),
+            ...(body.modelId ? { modelId: body.modelId } : {}),
+            ...(body.providerId ? { providerId: body.providerId } : {}),
+          }),
+        "Failed to start agent session"
+      );
+    })
   );
 
 const fetchSessionEffect = (id: string, message: string) =>
@@ -389,6 +420,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
       response: {
         200: AgentSessionSchema,
         400: t.Object({ message: t.String() }),
+        404: t.Object({ message: t.String() }),
       },
     }
   )
@@ -470,6 +502,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
       response: {
         200: AgentSessionByCellResponseSchema,
         400: t.Object({ message: t.String() }),
+        404: t.Object({ message: t.String() }),
       },
     }
   )
@@ -586,11 +619,13 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
       response: {
         200: t.Any(),
         400: t.Object({ message: t.String() }),
+        404: t.Object({ message: t.String() }),
       },
     }
   )
   .post(
     "/sessions/:id/permissions/:permissionId",
+
     async ({ params, body, set }) => {
       const outcome = await runServerEffect(
         matchAgentEffect(

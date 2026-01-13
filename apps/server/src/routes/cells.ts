@@ -1609,6 +1609,15 @@ async function finalizeCellProvisioning(
     throw new Error("Cell record missing during provisioning");
   }
 
+  await runServerEffect(
+    ensureServices({
+      cell: state.createdCell,
+      template,
+    })
+  );
+
+  state.servicesStarted = true;
+
   const sessionOptions = {
     ...(body.modelId ? { modelId: body.modelId } : {}),
     ...(body.providerId ? { providerId: body.providerId } : {}),
@@ -1619,14 +1628,6 @@ async function finalizeCellProvisioning(
       Object.keys(sessionOptions).length ? sessionOptions : undefined
     )
   );
-  await runServerEffect(
-    ensureServices({
-      cell: state.createdCell,
-      template,
-    })
-  );
-
-  state.servicesStarted = true;
 
   const initialPrompt = body.description?.trim();
   if (initialPrompt) {
