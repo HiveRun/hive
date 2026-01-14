@@ -18,6 +18,7 @@ Provide comprehensive service management capabilities for both users and agents 
 
 ### Service Control Interface
 - Expose service control through both CLI/MCP tools (`list`, `stop`, `restart`, `resume`) so agents and humans can bounce services programmatically.
+- Provide OpenCode custom tools (`hive_services`, `hive_service_logs`, `hive_setup_logs`) to pull recent service logs via the local Hive API using `HIVE_CELL_ID`.
 - Make it easy to copy the exact command/env that the supervisor uses (e.g., `hive services info <cell> <service>` prints the command) so users can run it manually if needed.
 - Agent sessions should persist transcripts/context so a fresh OpenCode session can be created after restart.
 - Present a "Resume agent" button that replays the composed prompt before sending any new user input.
