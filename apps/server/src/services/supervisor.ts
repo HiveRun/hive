@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -234,22 +235,67 @@ function createDefaultLogger(): ServiceLogger {
 }
 
 const defaultSpawnProcess: SpawnProcess = ({ command, cwd, env }) => {
-  const child = Bun.spawn({
-    cmd: [DEFAULT_SHELL, "-lc", command],
+  const child = spawn(DEFAULT_SHELL, ["-lc", command], {
     cwd,
     env: { ...process.env, ...env },
-    stdio: ["inherit", "inherit", "inherit"],
+    stdio: "inherit",
+    detached: true,
+  });
+
+  const pid = child.pid;
+  if (!pid) {
+    throw new Error("Failed to spawn service process");
+  }
+
+  const exited = new Promise<number>((resolveExit, rejectExit) => {
+    child.once("exit", (code: number | null) => {
+      resolveExit(code ?? -1);
+    });
+    child.once("error", (error: Error) => {
+      rejectExit(error);
+    });
   });
 
   const kill: ProcessHandle["kill"] = (signal) => {
     const resolved = resolveSignalValue(signal);
-    child.kill(resolved);
+    const signalValue: NodeJS.Signals | number | undefined =
+      resolved ??
+      (typeof signal === "string" ? (signal as NodeJS.Signals) : undefined);
+    const sendSignal = (target: number) => {
+      if (signalValue === undefined) {
+        process.kill(target);
+        return;
+      }
+      process.kill(target, signalValue);
+    };
+    const attemptSignal = (target: number) => {
+      try {
+        sendSignal(target);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    if (attemptSignal(-pid)) {
+      return;
+    }
+
+    if (attemptSignal(pid)) {
+      return;
+    }
+
+    if (signalValue === undefined) {
+      child.kill();
+      return;
+    }
+    child.kill(signalValue);
   };
 
   return {
-    pid: child.pid,
+    pid,
     kill,
-    exited: child.exited,
+    exited,
   };
 };
 
@@ -962,18 +1008,27 @@ export function createServiceSupervisor(
   }
 
   async function terminatePid(pid: number): Promise<void> {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
+    const signalProcess = (target: number, signal: NodeJS.Signals) => {
+      try {
+        process.kill(target, signal);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    if (!(signalProcess(-pid, "SIGTERM") || signalProcess(pid, "SIGTERM"))) {
       return;
     }
+
     await delay(FORCE_KILL_DELAY_MS);
-    try {
-      process.kill(pid, 0);
-      process.kill(pid, "SIGKILL");
-    } catch {
-      /* ignore forced termination errors */
+
+    if (!isProcessAlive(pid)) {
+      return;
     }
+
+    signalProcess(-pid, "SIGKILL");
+    signalProcess(pid, "SIGKILL");
   }
 }
 

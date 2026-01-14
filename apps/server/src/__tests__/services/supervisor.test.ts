@@ -404,6 +404,57 @@ describe("service supervisor", () => {
     expect(service?.pid).toBeNull();
   });
 
+  it("signals process groups when stopping by pid", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-stop-group");
+
+    const definition = {
+      type: "process" as const,
+      run: "bun run dev",
+      cwd: ".",
+      env: {},
+    };
+    const pid = 4242;
+
+    await testDb.insert(cellServices).values({
+      id: "svc-stop-group",
+      cellId: cell.id,
+      name: "web",
+      type: "process",
+      command: definition.run,
+      cwd: workspace,
+      env: {},
+      status: "running",
+      port: null,
+      pid,
+      readyTimeoutMs: null,
+      definition,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const calls: Array<{ pid: number; signal?: NodeJS.Signals | number }> = [];
+    const originalKill = process.kill;
+    process.kill = ((target: number, signal?: NodeJS.Signals | number) => {
+      calls.push({ pid: target, signal });
+      return true as never;
+    }) as typeof process.kill;
+
+    try {
+      const harness = createHarness();
+      await harness.supervisor.stopCellService("svc-stop-group");
+    } finally {
+      process.kill = originalKill;
+    }
+
+    expect(
+      calls.some((call) => call.pid === -pid && call.signal === "SIGTERM")
+    ).toBe(true);
+    expect(
+      calls.some((call) => call.pid === -pid && call.signal === "SIGKILL")
+    ).toBe(true);
+  });
+
   async function insertCell(workspacePath: string, templateId: string) {
     const [cell] = await testDb
       .insert(cells)
