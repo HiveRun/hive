@@ -10,7 +10,7 @@ import type {
   Part,
   Session,
 } from "@opencode-ai/sdk";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { type HiveConfigError, HiveConfigService } from "../config/context";
 import type { HiveConfig, Template } from "../config/schema";
@@ -813,6 +813,94 @@ export async function closeAllAgentSessions(): Promise<void> {
   for (const sessionId of sessionIds) {
     await stopAgentSession(sessionId);
   }
+}
+
+const RESUME_SESSION_PROMPT = "Please continue";
+
+export async function markAgentSessionsForResume(): Promise<void> {
+  const activeRuntimes = Array.from(runtimeRegistry.values()).filter(
+    (runtime) => runtime.status === "working" && !runtime.pendingInterrupt
+  );
+  if (activeRuntimes.length === 0) {
+    return;
+  }
+
+  const { db: runtimeDb } = getAgentRuntimeDependencies();
+  const cellIds = activeRuntimes.map((runtime) => runtime.cell.id);
+  await runtimeDb
+    .update(cells)
+    .set({ resumeAgentSessionOnStartup: true })
+    .where(inArray(cells.id, cellIds));
+}
+
+export async function resumeAgentSessionsOnStartup(): Promise<void> {
+  const { db: runtimeDb } = getAgentRuntimeDependencies();
+  const cellsToResume = await runtimeDb
+    .select()
+    .from(cells)
+    .where(eq(cells.resumeAgentSessionOnStartup, true));
+
+  if (cellsToResume.length === 0) {
+    return;
+  }
+
+  for (const cell of cellsToResume) {
+    if (cell.status === "archived") {
+      await runtimeDb
+        .update(cells)
+        .set({ resumeAgentSessionOnStartup: false })
+        .where(eq(cells.id, cell.id));
+      continue;
+    }
+
+    try {
+      const runtime = await ensureRuntimeForCell(cell.id, { force: false });
+      const shouldResume = await shouldResumeRuntime(runtime);
+      if (shouldResume) {
+        await runtime.sendMessage(RESUME_SESSION_PROMPT);
+      }
+      await runtimeDb
+        .update(cells)
+        .set({ resumeAgentSessionOnStartup: false })
+        .where(eq(cells.id, cell.id));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(
+        `[agent] Failed to resume agent session for ${cell.id}: ${message}\n`
+      );
+    }
+  }
+}
+
+async function shouldResumeRuntime(runtime: RuntimeHandle): Promise<boolean> {
+  const query = runtime.directoryQuery.directory
+    ? { directory: runtime.directoryQuery.directory, limit: 100 }
+    : { limit: 100 };
+  const response = await runtime.client.session.messages({
+    path: { id: runtime.session.id },
+    query,
+  });
+
+  if (response.error || !response.data?.length) {
+    return false;
+  }
+
+  const lastMessage = response.data.at(-1)?.info;
+  if (!lastMessage) {
+    return false;
+  }
+
+  return shouldResumeFromMessage(lastMessage);
+}
+
+function shouldResumeFromMessage(message: Message): boolean {
+  if (message.role !== "assistant") {
+    return false;
+  }
+  if (message.error) {
+    return false;
+  }
+  return !message.time.completed;
 }
 
 type AgentRuntimeError = {
