@@ -1,4 +1,4 @@
-import { tool } from "@opencode-ai/plugin";
+export const HIVE_TOOL_SOURCE = String.raw`import { tool } from "@opencode-ai/plugin";
 
 type HiveService = {
   id: string;
@@ -46,7 +46,7 @@ function resolveBaseUrl() {
   }
   return {
     ok: true as const,
-    baseUrl: `${DEFAULT_PROTOCOL}://${DEFAULT_HOST}:${port}`,
+    baseUrl: \`\${DEFAULT_PROTOCOL}://\${DEFAULT_HOST}:\${port}\`,
   };
 }
 
@@ -58,9 +58,9 @@ async function fetchJson<T>(url: string, signal: AbortSignal): Promise<T> {
   const response = await fetch(url, { signal });
   if (!response.ok) {
     const body = await response.text().catch(() => "");
-    const details = body ? ` ${body}` : "";
+    const details = body ? \` \${body}\` : "";
     throw new Error(
-      `Request failed (${response.status}) for ${url}.${details}`
+      \`Request failed (\${response.status}) for \${url}.\${details}\`
     );
   }
   return (await response.json()) as T;
@@ -101,11 +101,11 @@ function formatSingleServiceText(
   ];
 
   const output = lines.flatMap(([label, value]) =>
-    value ? [`${label}: ${value}`] : []
+    value ? [\`\${label}: \${value}\`] : []
   );
 
   if (includeLogs) {
-    output.push(`Recent logs:\n${service.recentLogs ?? "(no log output yet)"}`);
+    output.push(\`Recent logs:\n\${service.recentLogs ?? "(no log output yet)"}\`);
   }
 
   return output.join("\n");
@@ -127,7 +127,7 @@ export const services = tool({
   async execute(args, context) {
     const base = resolveBaseUrl();
     if (!base.ok) {
-      return `Error: ${base.error}`;
+      return \`Error: \${base.error}\`;
     }
 
     const cellId = resolveCellId(args.cellId);
@@ -140,7 +140,7 @@ export const services = tool({
 
     try {
       const payload = await fetchJson<ServiceListResponse>(
-        `${base.baseUrl}/api/cells/${cellId}/services`,
+        \`\${base.baseUrl}/api/cells/\${cellId}/services\`,
         context.abort
       );
 
@@ -156,7 +156,7 @@ export const services = tool({
 
       return formatServicesText(payload.services, includeLogs);
     } catch (error) {
-      return `Error: ${error instanceof Error ? error.message : String(error)}`;
+      return \`Error: \${error instanceof Error ? error.message : String(error)}\`;
     }
   },
 });
@@ -176,7 +176,7 @@ export const service_logs = tool({
   async execute(args, context) {
     const base = resolveBaseUrl();
     if (!base.ok) {
-      return `Error: ${base.error}`;
+      return \`Error: \${base.error}\`;
     }
 
     const cellId = resolveCellId(args.cellId);
@@ -188,7 +188,7 @@ export const service_logs = tool({
 
     try {
       const payload = await fetchJson<ServiceListResponse>(
-        `${base.baseUrl}/api/cells/${cellId}/services`,
+        \`\${base.baseUrl}/api/cells/\${cellId}/services\`,
         context.abort
       );
 
@@ -198,7 +198,7 @@ export const service_logs = tool({
 
       if (!match) {
         const names = payload.services.map((service) => service.name).sort();
-        return `Error: Service "${args.serviceName}" not found. Available: ${names.join(", ")}`;
+        return \`Error: Service "\${args.serviceName}" not found. Available: \${names.join(", ")}\`;
       }
 
       if (format === "json") {
@@ -215,14 +215,14 @@ export const service_logs = tool({
       }
 
       return [
-        `Service: ${match.name}`,
-        `Status: ${match.status}`,
-        `Log path: ${match.logPath ?? "(unknown)"}`,
+        \`Service: \${match.name}\`,
+        \`Status: \${match.status}\`,
+        \`Log path: \${match.logPath ?? "(unknown)"}\`,
         "Recent logs:",
         match.recentLogs ?? "(no log output yet)",
       ].join("\n");
     } catch (error) {
-      return `Error: ${error instanceof Error ? error.message : String(error)}`;
+      return \`Error: \${error instanceof Error ? error.message : String(error)}\`;
     }
   },
 });
@@ -239,7 +239,7 @@ export const setup_logs = tool({
   async execute(args, context) {
     const base = resolveBaseUrl();
     if (!base.ok) {
-      return `Error: ${base.error}`;
+      return \`Error: \${base.error}\`;
     }
 
     const cellId = resolveCellId(args.cellId);
@@ -251,7 +251,7 @@ export const setup_logs = tool({
 
     try {
       const payload = await fetchJson<CellResponse>(
-        `${base.baseUrl}/api/cells/${cellId}`,
+        \`\${base.baseUrl}/api/cells/\${cellId}\`,
         context.abort
       );
 
@@ -267,12 +267,13 @@ export const setup_logs = tool({
       }
 
       return [
-        `Setup log path: ${payload.setupLogPath ?? "(unknown)"}`,
+        \`Setup log path: \${payload.setupLogPath ?? "(unknown)"}\`,
         "Setup logs:",
         payload.setupLog ?? "(no setup log output yet)",
       ].join("\n");
     } catch (error) {
-      return `Error: ${error instanceof Error ? error.message : String(error)}`;
+      return \`Error: \${error instanceof Error ? error.message : String(error)}\`;
     }
   },
 });
+`;

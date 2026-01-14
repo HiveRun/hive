@@ -1,10 +1,11 @@
 import type { ExecException } from "node:child_process";
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 import { Context, Effect, Layer } from "effect";
 import { glob } from "tinyglobby";
+import { HIVE_TOOL_SOURCE } from "../agents/hive-opencode-tool";
 import { HiveConfigService } from "../config/context";
 import type { HiveConfig, Template } from "../config/schema";
 import { resolveCellsRoot } from "../workspaces/registry";
@@ -291,6 +292,18 @@ export function createWorktreeManager(
     }
   }
 
+  async function ensureHiveTool(worktreePath: string): Promise<void> {
+    const toolDir = join(worktreePath, ".opencode", "tool");
+    const toolPath = join(toolDir, "hive.ts");
+
+    try {
+      await mkdir(toolDir, { recursive: true });
+      await writeFile(toolPath, HIVE_TOOL_SOURCE, "utf8");
+    } catch (error: unknown) {
+      logWarn("Failed to write Hive tool for worktree", error);
+    }
+  }
+
   async function copyToWorktree(
     mainRepoPath: string,
     worktreePath: string,
@@ -450,6 +463,7 @@ export function createWorktreeManager(
           yield* Effect.promise(() =>
             copyIncludedFiles(worktreePath, includePatterns, ignorePatterns)
           );
+          yield* Effect.promise(() => ensureHiveTool(worktreePath));
 
           const baseCommit = git("rev-parse", branch);
           return {
