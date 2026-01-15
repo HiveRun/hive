@@ -14,7 +14,11 @@ import {
   startSharedOpencodeServer,
   stopSharedOpencodeServer,
 } from "./agents/opencode-server";
-import { closeAllAgentSessions } from "./agents/service";
+import {
+  closeAllAgentSessions,
+  markAgentSessionsForResume,
+  resumeAgentSessionsOnStartup,
+} from "./agents/service";
 import { resolveWorkspaceRoot } from "./config/context";
 import { DatabaseService } from "./db";
 import { agentsRoutes } from "./routes/agents";
@@ -22,6 +26,7 @@ import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
 import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
 import { runServerEffect } from "./runtime";
+import { cells } from "./schema/cells";
 import { ServiceSupervisorService } from "./services/supervisor";
 import {
   ensureWorkspaceRegisteredEffect,
@@ -172,6 +177,21 @@ const shutdownEffect = Effect.gen(function* () {
     Effect.flatMap((service) => service.stopAll)
   );
   yield* Effect.tryPromise({
+    try: () => markAgentSessionsForResume(),
+    catch: (error) =>
+      error instanceof Error ? error : new Error(String(error)),
+  }).pipe(
+    Effect.catchAll((failure) =>
+      Effect.sync(() =>
+        process.stderr.write(
+          `Failed to mark agent sessions for resume: ${
+            failure instanceof Error ? failure.message : String(failure)
+          }\n`
+        )
+      )
+    )
+  );
+  yield* Effect.tryPromise({
     try: () => closeAllAgentSessions(),
     catch: (error) =>
       error instanceof Error ? error : new Error(String(error)),
@@ -277,6 +297,55 @@ const resumeProvisioningEffect = Effect.tryPromise({
   )
 );
 
+const startAllServicesEffect = Effect.gen(function* () {
+  const { db } = yield* DatabaseService;
+  const supervisor = yield* ServiceSupervisorService;
+  const allCells = yield* Effect.tryPromise({
+    try: () => db.select().from(cells),
+    catch: (failure) =>
+      failure instanceof Error ? failure : new Error(String(failure)),
+  });
+  const activeCells = allCells.filter((cell) => cell.status !== "archived");
+  if (activeCells.length === 0) {
+    return;
+  }
+
+  yield* Effect.forEach(
+    activeCells,
+    (cell) =>
+      supervisor
+        .startCellServices(cell.id)
+        .pipe(
+          Effect.catchAll((failure) =>
+            Effect.sync(() =>
+              process.stderr.write(
+                `Failed to start services for cell ${cell.id}: ${
+                  failure instanceof Error ? failure.message : String(failure)
+                }\n`
+              )
+            )
+          )
+        ),
+    { discard: true, concurrency: 1 }
+  );
+});
+
+const resumeAgentSessionsEffect = Effect.tryPromise({
+  try: () => resumeAgentSessionsOnStartup(),
+  catch: (failure) =>
+    failure instanceof Error ? failure : new Error(String(failure)),
+}).pipe(
+  Effect.catchAll((failure) =>
+    Effect.sync(() =>
+      process.stderr.write(
+        `Failed to resume agent sessions: ${
+          failure instanceof Error ? failure.message : String(failure)
+        }\n`
+      )
+    )
+  )
+);
+
 const bootstrapServerEffect = (workspaceRoot: string) =>
   Effect.gen(function* () {
     yield* runMigrationsEffect;
@@ -284,6 +353,8 @@ const bootstrapServerEffect = (workspaceRoot: string) =>
     yield* startOpencodeServerEffect(workspaceRoot);
     yield* bootstrapSupervisorEffect;
     yield* resumeProvisioningEffect;
+    yield* startAllServicesEffect;
+    yield* resumeAgentSessionsEffect;
   });
 
 export const startServer = async () => {

@@ -20,6 +20,11 @@ export const cells = sqliteTable("cells", {
   opencodeSessionId: text("opencode_session_id"),
   opencodeServerUrl: text("opencode_server_url"),
   opencodeServerPort: integer("opencode_server_port"),
+  resumeAgentSessionOnStartup: integer("resume_agent_session_on_startup", {
+    mode: "boolean",
+  })
+    .notNull()
+    .default(false),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   status: text("status").notNull().default("ready"),
   lastSetupError: text("last_setup_error"),
