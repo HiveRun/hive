@@ -1,8 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { ExternalLink } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
+import {
+  ArrowLeft,
+  ArrowRight,
+  ExternalLink,
+  Maximize2,
+  RefreshCw,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  WebPreview,
+  WebPreviewBody,
+  WebPreviewNavigation,
+  WebPreviewNavigationButton,
+  WebPreviewUrl,
+  WebPreviewViewportControls,
+} from "@/components/ai-elements/web-preview";
 import {
   Select,
   SelectContent,
@@ -11,7 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useServiceStream } from "@/hooks/use-service-stream";
-import { type CellServiceSummary, cellQueries } from "@/queries/cells";
+import { cellQueries } from "@/queries/cells";
 
 const BROWSER_REACHABILITY_TIMEOUT_MS = 3000;
 
@@ -73,8 +86,6 @@ function CellServiceViewer() {
   const [browserReachability, setBrowserReachability] = useState<
     boolean | null
   >(null);
-  const [viewportPreset, setViewportPreset] =
-    useState<ViewportPreset>("desktop");
 
   useEffect(() => {
     setBrowserReachability(null);
@@ -109,6 +120,38 @@ function CellServiceViewer() {
 
   const resolvedReachability =
     browserReachability ?? selectedService?.portReachable ?? null;
+
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  const handleRefresh = () => {
+    if (iframeRef.current && viewerUrl) {
+      iframeRef.current.src = viewerUrl;
+    }
+  };
+
+  const handleBack = () => {
+    if (iframeRef.current) {
+      iframeRef.current.contentWindow?.history?.back();
+    }
+  };
+
+  const handleForward = () => {
+    if (iframeRef.current) {
+      iframeRef.current.contentWindow?.history?.forward();
+    }
+  };
+
+  const handleOpenInNewTab = () => {
+    if (viewerUrl) {
+      window.open(viewerUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleMaximize = () => {
+    if (iframeRef.current) {
+      iframeRef.current.requestFullscreen?.();
+    }
+  };
 
   if (cellQuery.isLoading) {
     return (
@@ -195,138 +238,72 @@ function CellServiceViewer() {
           ) : null}
         </div>
 
-        <div className="flex items-center gap-2 rounded-sm border border-border bg-background/70 px-3 py-2 text-foreground text-sm">
-          <span className="text-[11px] text-muted-foreground uppercase tracking-[0.25em]">
-            URL
-          </span>
-          <span className="break-all font-mono text-foreground text-xs">
-            {viewerUrl ?? "Not available"}
-          </span>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            disabled={!isServiceViewable(selectedService)}
-            onClick={() =>
-              viewerUrl &&
-              window.open(viewerUrl, "_blank", "noopener,noreferrer")
-            }
-            size="sm"
-            type="button"
-            variant="outline"
-          >
-            <ExternalLink className="mr-2 h-3.5 w-3.5" />
-            Open in new tab
-          </Button>
-          {resolvedReachability === false ? (
-            <span className="text-destructive text-xs uppercase tracking-[0.2em]">
-              Browser could not reach the service; verify networking
-            </span>
-          ) : null}
-          {error ? (
-            <span className="text-destructive text-xs uppercase tracking-[0.2em]">
-              {error}
-            </span>
-          ) : null}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[11px] text-muted-foreground uppercase tracking-[0.25em]">
-            Viewport
-          </span>
-          {viewportOptions.map((option) => (
-            <Button
-              key={option.id}
-              onClick={() => setViewportPreset(option.id)}
-              size="sm"
-              type="button"
-              variant={option.id === viewportPreset ? "secondary" : "outline"}
-            >
-              {option.label}
-            </Button>
-          ))}
-        </div>
-
-        <div className="flex min-h-0 flex-1 overflow-hidden rounded-sm border border-border bg-background">
-          <ServiceViewerFrame
-            isLoading={isLoading}
-            selectedService={selectedService ?? null}
-            viewerUrl={viewerUrl}
-            viewportPreset={viewportPreset}
+        <WebPreview
+          error={error ?? undefined}
+          isLoading={isLoading}
+          url={viewerUrl}
+        >
+          <WebPreviewNavigation>
+            <div className="flex flex-wrap items-center gap-2">
+              <WebPreviewNavigationButton
+                disabled={!viewerUrl}
+                onClick={handleBack}
+                tooltip="Back"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+              </WebPreviewNavigationButton>
+              <WebPreviewNavigationButton
+                disabled={!viewerUrl}
+                onClick={handleForward}
+                tooltip="Forward"
+              >
+                <ArrowRight className="h-3.5 w-3.5" />
+              </WebPreviewNavigationButton>
+              <WebPreviewNavigationButton
+                disabled={!viewerUrl}
+                onClick={handleRefresh}
+                tooltip="Refresh"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+              </WebPreviewNavigationButton>
+              <WebPreviewUrl />
+              <WebPreviewNavigationButton
+                disabled={!viewerUrl}
+                onClick={handleOpenInNewTab}
+                tooltip="Open in new tab"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </WebPreviewNavigationButton>
+              <WebPreviewNavigationButton
+                disabled={!viewerUrl}
+                onClick={handleMaximize}
+                tooltip="Fullscreen"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+              </WebPreviewNavigationButton>
+            </div>
+            {resolvedReachability === false ? (
+              <span className="text-destructive text-xs uppercase tracking-[0.2em]">
+                Browser could not reach the service; verify networking
+              </span>
+            ) : null}
+            {error ? (
+              <span className="text-destructive text-xs uppercase tracking-[0.2em]">
+                {error}
+              </span>
+            ) : null}
+          </WebPreviewNavigation>
+          <WebPreviewViewportControls options={viewportOptions} />
+          <WebPreviewBody
+            iframeProps={{
+              ref: iframeRef,
+              title: selectedService
+                ? `Service ${selectedService.name} viewer`
+                : "Web preview",
+            }}
           />
-        </div>
+        </WebPreview>
       </div>
-    </div>
-  );
-}
-
-function ServiceViewerFrame({
-  selectedService,
-  isLoading,
-  viewerUrl,
-  viewportPreset,
-}: {
-  selectedService: CellServiceSummary | null;
-  isLoading: boolean;
-  viewerUrl: string | null;
-  viewportPreset: ViewportPreset;
-}) {
-  if (isLoading) {
-    return <ViewerMessage>Loading services…</ViewerMessage>;
-  }
-
-  if (!selectedService) {
-    return (
-      <ViewerMessage>
-        Select a service that exposes a port to render its UI.
-      </ViewerMessage>
-    );
-  }
-
-  if (!selectedService.port) {
-    return <ViewerMessage>This service does not expose a port.</ViewerMessage>;
-  }
-
-  const normalizedStatus = selectedService.status.toLowerCase();
-  if (normalizedStatus !== "running") {
-    return (
-      <ViewerMessage>Start the service to load its preview.</ViewerMessage>
-    );
-  }
-
-  if (!viewerUrl) {
-    return <ViewerMessage>Unable to build a preview URL.</ViewerMessage>;
-  }
-
-  const viewportStyle = resolveViewportStyle(viewportPreset);
-  const frameStyle =
-    viewportPreset === "desktop"
-      ? { width: "100%", height: "100%" }
-      : viewportStyle;
-
-  return (
-    <div className="flex h-full w-full items-center justify-center overflow-auto px-2">
-      <div
-        className="overflow-hidden rounded-sm border border-border bg-card shadow-sm"
-        style={frameStyle}
-      >
-        <iframe
-          className="h-full w-full border-0 bg-background"
-          key={`${selectedService.id}-${viewportPreset}`}
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          src={viewerUrl}
-          title={`Service ${selectedService.name} viewer`}
-        />
-      </div>
-    </div>
-  );
-}
-
-function ViewerMessage({ children }: { children: ReactNode }) {
-  return (
-    <div className="flex h-full w-full items-center justify-center px-6 text-center text-muted-foreground text-sm">
-      {children}
     </div>
   );
 }
@@ -351,33 +328,6 @@ function ServiceStatusBadge({ status }: { status: string }) {
   );
 }
 
-function resolveViewportStyle(preset: ViewportPreset) {
-  if (preset === "desktop") {
-    return {
-      width: "100%",
-      height: "100%",
-      maxWidth: "100%",
-      maxHeight: "100%",
-    } as const;
-  }
-
-  if (preset === "tablet") {
-    return {
-      width: "900px",
-      height: "1100px",
-      maxWidth: "100%",
-      maxHeight: "100%",
-    } as const;
-  }
-
-  return {
-    width: "428px",
-    height: "926px",
-    maxWidth: "100%",
-    maxHeight: "100%",
-  } as const;
-}
-
 function describeReachability(state: boolean | null | undefined) {
   if (state === true) {
     return "Reachable";
@@ -386,11 +336,4 @@ function describeReachability(state: boolean | null | undefined) {
     return "Not reachable";
   }
   return "Unknown";
-}
-
-function isServiceViewable(service: CellServiceSummary | undefined | null) {
-  if (!service?.port) {
-    return false;
-  }
-  return service.status.toLowerCase() === "running";
 }
