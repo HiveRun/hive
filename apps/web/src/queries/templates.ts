@@ -36,6 +36,11 @@ export type Template = {
 
 export type Defaults = {
   templateId?: string;
+  planningEnabled?: boolean;
+  opencodeAgents?: {
+    planning: string;
+    implementation: string;
+  };
 };
 
 export type AgentDefaults = {

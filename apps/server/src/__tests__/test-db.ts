@@ -12,6 +12,7 @@ export const testDb = drizzle(sqlite, { schema });
 
 export async function setupTestDb() {
   sqlite.exec("DROP TABLE IF EXISTS cell_services;");
+  sqlite.exec("DROP TABLE IF EXISTS cell_plans;");
   sqlite.exec("DROP TABLE IF EXISTS cell_provisioning_state;");
   sqlite.exec("DROP TABLE IF EXISTS cells;");
   sqlite.exec("DROP TABLE IF EXISTS __drizzle_migrations;");

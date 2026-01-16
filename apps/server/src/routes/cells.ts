@@ -30,7 +30,12 @@ import {
   type CellProvisioningState,
   cellProvisioningStates,
 } from "../schema/cell-provisioning";
-import { type CellStatus, cells, type NewCell } from "../schema/cells";
+import {
+  type CellPhase,
+  type CellStatus,
+  cells,
+  type NewCell,
+} from "../schema/cells";
 import { cellServices } from "../schema/services";
 import {
   buildCellDiffPayload,
@@ -63,6 +68,24 @@ import {
 } from "../worktree/manager";
 
 type DatabaseClient = DatabaseServiceType["db"];
+
+type CreateCellPhaseInput = "planning" | "implementation";
+
+type WorkspaceDefaultsWithPlanning = {
+  planningEnabled?: boolean;
+};
+
+function resolveInitialCellPhase(args: {
+  requested?: CreateCellPhaseInput;
+  defaults?: WorkspaceDefaultsWithPlanning;
+}): CellPhase {
+  if (args.requested === "planning" || args.requested === "implementation") {
+    return args.requested;
+  }
+
+  const enabled = Boolean(args.defaults?.planningEnabled);
+  return enabled ? "planning" : "implementation";
+}
 
 export type CellRouteDependencies = {
   db: DatabaseClient;
@@ -231,6 +254,7 @@ function cellToResponse(cell: typeof cells.$inferSelect) {
     opencodeCommand: buildOpencodeCommand(cell),
     createdAt: cell.createdAt.toISOString(),
     status: cell.status,
+    phase: cell.phase,
     ...(cell.lastSetupError != null
       ? { lastSetupError: cell.lastSetupError }
       : {}),
@@ -1355,6 +1379,11 @@ async function handleCellCreationRequest(
     };
   }
 
+  const resolvedPhase = resolveInitialCellPhase({
+    requested: body.phase,
+    defaults: hiveConfig.defaults,
+  });
+
   const worktreeService = await runServerEffect(
     workspaceContext.createWorktreeManager()
   );
@@ -1369,6 +1398,7 @@ async function handleCellCreationRequest(
     worktreeService,
     workspace: workspaceContext.workspace,
     log,
+    phase: resolvedPhase,
   });
 
   try {
@@ -1399,6 +1429,7 @@ type ProvisionContext = {
 
 type CellProvisionState = {
   cellId: string;
+  phase: CellPhase;
   worktreeCreated: boolean;
   recordCreated: boolean;
   servicesStarted: boolean;
@@ -1420,11 +1451,13 @@ function createProvisionContext(args: {
   worktreeService: WorktreeManager;
   workspace: WorkspaceRecord;
   log: LoggerLike;
+  phase: CellPhase;
 }): ProvisionContext {
   return {
     ...args,
     state: {
       cellId: randomUUID(),
+      phase: args.phase,
       worktreeCreated: false,
       recordCreated: false,
       servicesStarted: false,
@@ -1464,6 +1497,7 @@ function createExistingProvisionContextEffect(args: {
       log: args.log,
       state: {
         cellId: args.cell.id,
+        phase: args.cell.phase,
         worktreeCreated: true,
         recordCreated: true,
         servicesStarted: false,
@@ -1523,6 +1557,7 @@ async function createCellRecord(
     opencodeServerPort: null,
     createdAt: timestamp,
     status: "spawning",
+    phase: state.phase,
     lastSetupError: null,
   };
 
@@ -1592,18 +1627,45 @@ async function beginProvisioningAttempt(
   };
 }
 
+async function sendInitialAgentMessage(args: {
+  context: ProvisionContext;
+  sessionId: string;
+  prompt: string;
+  sessionOptions: { modelId?: string; providerId?: string };
+}): Promise<void> {
+  const { context, sessionId, prompt, sessionOptions } = args;
+
+  try {
+    await runServerEffect(context.sendAgentMessage(sessionId, prompt));
+    return;
+  } catch (error) {
+    context.log.error(
+      error instanceof Error ? error : { error },
+      "Failed to send initial agent message"
+    );
+  }
+
+  const retry = await runServerEffect(
+    context.ensureSession(context.state.cellId, {
+      ...sessionOptions,
+      force: true,
+    })
+  );
+
+  try {
+    await runServerEffect(context.sendAgentMessage(retry.id, prompt));
+  } catch (retryError) {
+    context.log.error(
+      retryError instanceof Error ? retryError : { error: retryError },
+      "Failed to send initial agent message after retry"
+    );
+  }
+}
+
 async function finalizeCellProvisioning(
   context: ProvisionContext
 ): Promise<void> {
-  const {
-    body,
-    template,
-    ensureSession,
-    sendAgentMessage: dispatchAgentMessage,
-    ensureServices,
-    database,
-    state,
-  } = context;
+  const { body, template, ensureServices, database, state } = context;
 
   if (!state.createdCell) {
     throw new Error("Cell record missing during provisioning");
@@ -1622,8 +1684,9 @@ async function finalizeCellProvisioning(
     ...(body.modelId ? { modelId: body.modelId } : {}),
     ...(body.providerId ? { providerId: body.providerId } : {}),
   };
+
   const session = await runServerEffect(
-    ensureSession(
+    context.ensureSession(
       state.cellId,
       Object.keys(sessionOptions).length ? sessionOptions : undefined
     )
@@ -1631,7 +1694,12 @@ async function finalizeCellProvisioning(
 
   const initialPrompt = body.description?.trim();
   if (initialPrompt) {
-    await runServerEffect(dispatchAgentMessage(session.id, initialPrompt));
+    await sendInitialAgentMessage({
+      context,
+      sessionId: session.id,
+      prompt: initialPrompt,
+      sessionOptions,
+    });
   }
 
   const finishedAt = await updateCellProvisioningStatus(

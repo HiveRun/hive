@@ -1,6 +1,6 @@
 # Planning-to-Implementation Handoff
 
-- [ ] Planning-to-Implementation Handoff #status/planned #phase-3 #feature/advanced
+- [/] Planning-to-Implementation Handoff #status/planned #phase-3 #feature/advanced
 
 ## Goal
 Enable seamless workflow transitions between planning and implementation phases, including planning agent type and plan submission/approval process.

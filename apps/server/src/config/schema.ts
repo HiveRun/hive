@@ -126,12 +126,34 @@ const opencodeConfigSchema = z
   })
   .describe("Global OpenCode configuration shared across templates");
 
+const opencodeAgentOverridesSchema = z
+  .object({
+    planning: z
+      .string()
+      .min(1)
+      .describe("OpenCode agent name for planning mode"),
+    implementation: z
+      .string()
+      .min(1)
+      .describe("OpenCode agent name for implementation mode"),
+  })
+  .describe("Agent name overrides for OpenCode sessions");
+
 export const defaultsSchema = z
   .object({
     templateId: z
       .string()
       .optional()
       .describe("Default template to use when creating cells"),
+    planningEnabled: z
+      .boolean()
+      .optional()
+      .describe("Default whether new cells start in planning phase"),
+    opencodeAgents: opencodeAgentOverridesSchema
+      .optional()
+      .describe(
+        "Default OpenCode agent names used when switching between planning and implementation"
+      ),
   })
   .describe("Default values for cell creation");
 

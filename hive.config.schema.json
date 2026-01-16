@@ -279,6 +279,28 @@
         "templateId": {
           "description": "Default template to use when creating cells",
           "type": "string"
+        },
+        "planningEnabled": {
+          "description": "Default whether new cells start in planning phase",
+          "type": "boolean"
+        },
+        "opencodeAgents": {
+          "description": "Default OpenCode agent names used when switching between planning and implementation",
+          "type": "object",
+          "properties": {
+            "planning": {
+              "description": "OpenCode agent name for planning mode",
+              "type": "string",
+              "minLength": 1
+            },
+            "implementation": {
+              "description": "OpenCode agent name for implementation mode",
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["planning", "implementation"],
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

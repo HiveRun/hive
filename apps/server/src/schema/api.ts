@@ -15,6 +15,7 @@ export const CellResponseSchema = t.Object({
   opencodeCommand: t.Union([t.String(), t.Null()]),
   createdAt: t.String(),
   status: t.String(),
+  phase: t.String(),
   lastSetupError: t.Optional(t.String()),
   branchName: t.Optional(t.String()),
   baseCommit: t.Optional(t.String()),
@@ -122,6 +123,9 @@ export const CreateCellSchema = t.Object({
   workspaceId: t.String({
     minLength: 1,
   }),
+  phase: t.Optional(
+    t.Union([t.Literal("planning"), t.Literal("implementation")])
+  ),
 });
 
 export const DeleteCellsSchema = t.Object({
@@ -157,6 +161,13 @@ export const TemplateResponseSchema = t.Object({
 
 export const DefaultsResponseSchema = t.Object({
   templateId: t.Optional(t.String()),
+  planningEnabled: t.Optional(t.Boolean()),
+  opencodeAgents: t.Optional(
+    t.Object({
+      planning: t.String(),
+      implementation: t.String(),
+    })
+  ),
 });
 
 const AgentDefaultsSchema = t.Object({
@@ -222,6 +233,31 @@ export const RespondPermissionSchema = t.Object({
     t.Literal("always"),
     t.Literal("reject"),
   ]),
+});
+
+export const SubmitCellPlanSchema = t.Object({
+  content: t.String({ minLength: 1 }),
+});
+
+export const RequestPlanRevisionSchema = t.Object({
+  feedback: t.String({ minLength: 1 }),
+});
+
+export const CellPlanSchema = t.Object({
+  id: t.String(),
+  cellId: t.String(),
+  version: t.Number(),
+  content: t.String(),
+  createdAt: t.String(),
+  feedback: t.Optional(t.Union([t.String(), t.Null()])),
+});
+
+export const CellPlanResponseSchema = t.Object({
+  plan: t.Union([CellPlanSchema, t.Null()]),
+});
+
+export const CellPlanVersionsResponseSchema = t.Object({
+  plans: t.Array(CellPlanSchema),
 });
 
 export const VoiceTranscriptionRequestSchema = t.Object({

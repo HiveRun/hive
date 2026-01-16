@@ -23,6 +23,7 @@ import { resolveWorkspaceRoot } from "./config/context";
 import { DatabaseService } from "./db";
 import { agentsRoutes } from "./routes/agents";
 import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
+import { cellPlansRoutes } from "./routes/plans";
 import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
 import { runServerEffect } from "./runtime";
@@ -142,7 +143,7 @@ export const cleanupPidFile = () => {
   }
 };
 
-const createApp = () =>
+export const createApp = () =>
   new Elysia()
     .use(
       logger({
@@ -165,6 +166,7 @@ const createApp = () =>
     .use(templatesRoutes)
     .use(workspacesRoutes)
     .use(cellsRoutes)
+    .use(cellPlansRoutes)
     .use(agentsRoutes);
 
 export type App = ReturnType<typeof createApp>;
