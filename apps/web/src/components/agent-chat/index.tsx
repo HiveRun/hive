@@ -9,10 +9,12 @@ import {
 } from "@/hooks/use-agent-event-stream";
 import type { AgentMessage } from "@/queries/agents";
 import { agentMutations, agentQueries } from "@/queries/agents";
-import { cellQueries } from "@/queries/cells";
+import { type CellPhase, cellQueries } from "@/queries/cells";
+import { planMutations, planQueries } from "@/queries/plans";
 import { ComposePanel } from "./compose-panel";
 import { ConversationPanel } from "./conversation-panel";
 import { AgentChatHeader } from "./header";
+import { PlanPanel } from "./plan-panel";
 
 const INTERRUPT_CONFIRM_WINDOW_MS = 5000;
 const INTERRUPT_FALLBACK_REASON = "THE OPERATION WAS ABORTED.";
@@ -23,15 +25,17 @@ type DisplayAgentMessage = AgentMessage & {
 
 type AgentChatProps = {
   cellId: string;
+  phase?: CellPhase;
 };
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Agent chat coordinates many hooks and guard states; extracting further would harm readability.
-export function AgentChat({ cellId }: AgentChatProps) {
+export function AgentChat({ cellId, phase }: AgentChatProps) {
   const queryClient = useQueryClient();
   const sessionQuery = useQuery(agentQueries.sessionByCell(cellId));
   const session = sessionQuery.data ?? null;
   const sessionId = session?.id;
   const cellQuery = useQuery(cellQueries.detail(cellId));
+  const effectivePhase = phase ?? cellQuery.data?.phase;
   const isArchived = cellQuery.data?.status === "archived";
   const isReadOnly = Boolean(isArchived);
   const readOnlyMessage = isReadOnly
@@ -60,6 +64,74 @@ export function AgentChat({ cellId }: AgentChatProps) {
     const providerId = session.modelProviderId ?? session.provider;
     setSelectedModel({ id: session.modelId, providerId });
   }, [session]);
+
+  const planEnabled =
+    effectivePhase === "planning" || effectivePhase === "plan_review";
+  const planQuery = useQuery({
+    ...planQueries.latest(cellId),
+    enabled: planEnabled,
+  });
+
+  const plan = planEnabled ? (planQuery.data ?? null) : null;
+
+  const submitPlanMutation = useMutation({
+    ...planMutations.submit,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: cellQueries.detail(cellId).queryKey,
+      });
+      await queryClient.invalidateQueries({
+        queryKey: planQueries.latest(cellId).queryKey,
+      });
+      toast.success("Plan submitted");
+    },
+    onError: (error) => {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to submit plan";
+      toast.error(errorMessage);
+    },
+  });
+
+  const requestRevisionMutation = useMutation({
+    ...planMutations.requestRevision,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: cellQueries.detail(cellId).queryKey,
+      });
+      await queryClient.invalidateQueries({
+        queryKey: planQueries.latest(cellId).queryKey,
+      });
+      toast.success("Revision requested");
+    },
+    onError: (error) => {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to request revision";
+      toast.error(errorMessage);
+    },
+  });
+
+  const approvePlanMutation = useMutation({
+    ...planMutations.approve,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: cellQueries.detail(cellId).queryKey,
+      });
+      await queryClient.invalidateQueries({
+        queryKey: planQueries.latest(cellId).queryKey,
+      });
+      if (sessionId) {
+        await queryClient.invalidateQueries({
+          queryKey: agentQueries.messages(sessionId).queryKey,
+        });
+      }
+      toast.success("Plan approved");
+    },
+    onError: (error) => {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to approve plan";
+      toast.error(errorMessage);
+    },
+  });
 
   const orderedMessages = useMemo<DisplayAgentMessage[]>(() => {
     const base = (messagesQuery.data ?? [])
@@ -350,6 +422,24 @@ export function AgentChat({ cellId }: AgentChatProps) {
             "Archived cells are read-only. Restore the branch or duplicate the workspace to continue chatting."}
         </div>
       ) : null}
+      <PlanPanel
+        isApproving={approvePlanMutation.isPending}
+        isLoading={planQuery.isPending}
+        isReadOnly={isReadOnly}
+        isRequestingRevision={requestRevisionMutation.isPending}
+        isSubmitting={submitPlanMutation.isPending}
+        onApprove={async () => {
+          await approvePlanMutation.mutateAsync({ cellId });
+        }}
+        onRequestRevision={async (feedback: string) => {
+          await requestRevisionMutation.mutateAsync({ cellId, feedback });
+        }}
+        onSubmitPlan={async (content: string) => {
+          await submitPlanMutation.mutateAsync({ cellId, content });
+        }}
+        phase={effectivePhase}
+        plan={plan}
+      />
       <div className="flex flex-1 flex-col gap-0 overflow-hidden lg:flex-row">
         <ConversationPanel
           compaction={compaction}

@@ -207,10 +207,27 @@ function buildEnvironmentVariableLines(
 function renderHiveSessionInstructions(
   context: HiveSessionInstructionsContext
 ): string {
+  const { cell } = context;
+  const planningPhase =
+    cell.phase === "planning" || cell.phase === "plan_review";
+
+  const phaseLines = planningPhase
+    ? [
+        "## Planning Phase",
+        "You are in a planning phase. Your role is to analyze and create a plan, not to modify the repository.",
+        "",
+        "### Plan Submission",
+        "When your plan is complete, call `hive_submit_plan` with:",
+        `- \`cellId\`: ${cell.id}`,
+        "- `content`: your complete plan (markdown format)",
+      ]
+    : [];
+
   return [
     ...buildHiveHeaderLines(context),
     "",
     ...buildServiceLines(context.services),
+    ...(phaseLines.length ? ["", ...phaseLines] : []),
     "",
     ...buildEnvironmentVariableLines(context),
     "",
@@ -1168,12 +1185,24 @@ async function ensureRuntimeForCell(
   const requestedProviderId = selection.providerId;
   const requestedModelId = selection.modelId;
 
+  const defaultPlanningAgent = hiveConfig.defaults?.opencodeAgents?.planning;
+  const defaultImplementationAgent =
+    hiveConfig.defaults?.opencodeAgents?.implementation;
+
+  const phaseAgentId =
+    cell.phase === "planning" || cell.phase === "plan_review"
+      ? defaultPlanningAgent
+      : defaultImplementationAgent;
+
+  const requestedAgentId = phaseAgentId;
+
   await ensureProviderCredentials(requestedProviderId);
 
   const runtime = await startOpencodeRuntime({
     cell,
     providerId: requestedProviderId,
     modelId: requestedModelId,
+    agentId: requestedAgentId,
     force: options?.force ?? false,
     deps,
   });
@@ -1268,19 +1297,52 @@ type StartRuntimeArgs = {
   cell: Cell;
   providerId?: string;
   modelId?: string;
+  agentId?: string;
   force: boolean;
   deps: AgentRuntimeDependencies;
 };
+
+async function resolveAgentId(
+  client: OpencodeClient,
+  directoryQuery: DirectoryQuery,
+  requested?: string
+): Promise<string | undefined> {
+  if (!requested) {
+    return;
+  }
+
+  try {
+    const agents = await client.app.agents({ query: directoryQuery });
+    const match = agents.data?.find((agent) => agent.name === requested);
+    if (!match) {
+      return;
+    }
+
+    if (match.mode === "primary" || match.mode === "all") {
+      return requested;
+    }
+
+    return;
+  } catch {
+    return requested;
+  }
+}
 
 async function startOpencodeRuntime({
   cell,
   providerId,
   modelId,
+  agentId,
   force,
   deps,
 }: StartRuntimeArgs): Promise<RuntimeHandle> {
   const client = await deps.acquireOpencodeClient();
   const directoryQuery: DirectoryQuery = { directory: cell.workspacePath };
+  const effectiveAgentId = await resolveAgentId(
+    client,
+    directoryQuery,
+    agentId
+  );
   const { session, created } = await resolveOpencodeSession({
     client,
     cell,
@@ -1323,8 +1385,12 @@ async function startOpencodeRuntime({
                 providerID: runtime.providerId,
                 modelID: activeModelId,
               },
+              ...(effectiveAgentId ? { agent: effectiveAgentId } : {}),
             }
-          : { parts };
+          : {
+              parts,
+              ...(effectiveAgentId ? { agent: effectiveAgentId } : {}),
+            };
 
       const response = await client.session.prompt({
         path: { id: session.id },

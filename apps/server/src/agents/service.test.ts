@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 import type { OpencodeClient, Event as OpencodeEvent } from "@opencode-ai/sdk";
 import { Effect } from "effect";
 
@@ -32,6 +34,9 @@ type ClientStub = {
   config: {
     providers: ReturnType<typeof vi.fn>;
   };
+  app: {
+    agents: ReturnType<typeof vi.fn>;
+  };
   postSessionIdPermissionsPermissionId: ReturnType<typeof vi.fn>;
 };
 
@@ -56,7 +61,12 @@ const mockHiveConfig: HiveConfig = {
       },
     },
   },
-  defaults: {},
+  defaults: {
+    opencodeAgents: {
+      planning: "plan",
+      implementation: "build",
+    },
+  },
 };
 
 import {
@@ -70,6 +80,18 @@ import {
 } from "./service";
 
 describe("agent model selection", () => {
+  it("writes submit_plan instructions for planning phases", async () => {
+    const session = await ensureAgentSession(cellId);
+
+    expect(session.id).toBeTruthy();
+
+    const instructionsPath = "/tmp/model-test/.hive/instructions.md";
+    const content = await readFile(instructionsPath, "utf8");
+
+    expect(content).toContain("## Planning Phase");
+    expect(content).toContain("hive_submit_plan");
+    expect(content).toContain(cellId);
+  });
   const cellId = "cell-model-test";
   let clientStub: ClientStub;
   let loadHiveConfigMock: Mock;
@@ -118,6 +140,7 @@ describe("agent model selection", () => {
       workspaceRootPath: "/tmp/model-test",
       createdAt: new Date(),
       status: "ready",
+      phase: "planning",
     });
   });
 
@@ -152,6 +175,17 @@ describe("agent model selection", () => {
     expect(session.modelId).toBe("restored-model");
     expect(session.modelProviderId).toBe("opencode");
     expect(sessionMessagesMock).toHaveBeenCalled();
+
+    await sendAgentMessage(session.id, "Planning work");
+
+    const promptCall = clientStub.session.prompt.mock.calls.at(-1);
+    expect(promptCall).toBeDefined();
+    const promptPayload = (
+      promptCall?.[0] as {
+        body?: { agent?: string };
+      }
+    )?.body;
+    expect(promptPayload?.agent).toBeUndefined();
   });
 
   it("sends prompts using the updated provider/model selection", async () => {
@@ -189,13 +223,17 @@ describe("agent model selection", () => {
     expect(promptCall).toBeDefined();
     const promptPayload = (
       promptCall?.[0] as {
-        body?: { model?: { providerID: string; modelID: string } };
+        body?: {
+          model?: { providerID: string; modelID: string };
+          agent?: string;
+        };
       }
     )?.body;
     expect(promptPayload?.model).toEqual({
       providerID: "opencode",
       modelID: "big-pickle",
     });
+    expect(promptPayload?.agent).toBeUndefined();
   });
 
   it("prefers the template's agent configuration over opencode defaults", async () => {
@@ -412,6 +450,11 @@ function buildClientStub(): ClientStub {
     config: {
       providers: vi.fn(async () => ({
         data: { providers: [], default: {} },
+      })),
+    },
+    app: {
+      agents: vi.fn(async () => ({
+        data: [{ name: "plan", mode: "subagent" }],
       })),
     },
     postSessionIdPermissionsPermissionId: vi.fn(async () => ({

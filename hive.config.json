@@ -76,6 +76,11 @@
     }
   },
   "defaults": {
-    "templateId": "hive-dev"
+    "templateId": "hive-dev",
+    "planningEnabled": false,
+    "opencodeAgents": {
+      "planning": "plan",
+      "implementation": "build"
+    }
   }
 }

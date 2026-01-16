@@ -9,6 +9,13 @@ export const cellStatusValues = [
 ] as const;
 export type CellStatus = (typeof cellStatusValues)[number];
 
+export const cellPhaseValues = [
+  "planning",
+  "plan_review",
+  "implementation",
+] as const;
+export type CellPhase = (typeof cellPhaseValues)[number];
+
 export const cells = sqliteTable("cells", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -27,6 +34,9 @@ export const cells = sqliteTable("cells", {
     .default(false),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   status: text("status").notNull().default("ready"),
+  phase: text("phase", { enum: cellPhaseValues })
+    .notNull()
+    .default("implementation"),
   lastSetupError: text("last_setup_error"),
   branchName: text("branch_name"),
   baseCommit: text("base_commit"),

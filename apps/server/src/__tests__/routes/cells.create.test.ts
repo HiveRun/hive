@@ -278,6 +278,50 @@ describe("POST /api/cells", () => {
     );
   });
 
+  it("retries initial prompt if agent send fails", async () => {
+    const sendAgentMessage = vi
+      .fn<SendAgentMessageFn>()
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValue(undefined);
+
+    const ensureAgentSession = vi
+      .fn<EnsureAgentSessionFn>()
+      .mockResolvedValueOnce({ id: "ses_first" })
+      .mockResolvedValueOnce({ id: "ses_retry" });
+
+    const routes = createCellsRoutes(
+      createDependencies({
+        sendAgentMessage,
+        ensureAgentSession,
+      })
+    );
+    const app = new Elysia().use(routes);
+
+    const response = await app.handle(
+      new Request("http://localhost/api/cells", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Retry Cell",
+          templateId,
+          workspaceId: "test-workspace",
+          description: "Try again",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(CREATED_STATUS);
+    const payload = (await response.json()) as { id: string; status: string };
+    await waitForCellStatus(payload.id, "ready");
+
+    await waitForCondition(() => sendAgentMessage.mock.calls.length === 2);
+
+    expect(sendAgentMessage.mock.calls[0]?.[1]).toBe("Try again");
+    expect(sendAgentMessage.mock.calls[1]?.[1]).toBe("Try again");
+  });
+
   it("passes selected model overrides to agent provisioning", async () => {
     let capturedOverrides:
       | { modelId?: string; providerId?: string }
@@ -381,7 +425,8 @@ describe("resumeSpawningCells", () => {
       opencodeServerUrl: null,
       opencodeServerPort: null,
       createdAt,
-      status: "spawning",
+      status: "spawning" as const,
+      phase: "implementation" as const,
       lastSetupError: null,
     });
 
@@ -423,7 +468,8 @@ describe("resumeSpawningCells", () => {
       workspacePath,
       workspaceRootPath: "/tmp/test-workspace-root",
       createdAt: new Date(),
-      status: "spawning",
+      status: "spawning" as const,
+      phase: "implementation" as const,
     });
 
     await testDb.insert(cellProvisioningStates).values({
@@ -477,7 +523,8 @@ describe("cell archival", () => {
       branchName: "cell-branch",
       baseCommit: "abc123",
       createdAt: new Date(),
-      status: "ready",
+      status: "ready" as const,
+      phase: "implementation" as const,
     });
 
     const dependencies = {
@@ -585,7 +632,8 @@ describe("cell archival", () => {
       branchName: "cell-branch",
       baseCommit: "abc123",
       createdAt: new Date(),
-      status: "ready",
+      status: "ready" as const,
+      phase: "implementation" as const,
     });
 
     const app = new Elysia().use(createCellsRoutes(createDependencies()));
@@ -702,8 +750,9 @@ describe("cell archival", () => {
       workspaceRootPath: workspaceRecord.path,
       branchName: "cell-branch",
       baseCommit: "abc123",
-      createdAt,
-      status: "archived",
+      createdAt: new Date(),
+      status: "archived" as const,
+      phase: "implementation" as const,
     });
 
     await testDb.insert(cellServices).values({

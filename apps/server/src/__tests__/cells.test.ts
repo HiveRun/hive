@@ -33,7 +33,8 @@ describe("Cells CRUD Operations", () => {
         templateId: "basic",
         workspacePath: "/tmp/test-worktree-1",
         createdAt: new Date(),
-        status: "ready",
+        status: "ready" as const,
+        phase: "implementation" as const,
         ...workspaceFields,
       };
 
@@ -59,7 +60,8 @@ describe("Cells CRUD Operations", () => {
         templateId: "basic",
         workspacePath: "/tmp/test-worktree-2",
         createdAt: new Date(),
-        status: "ready",
+        status: "ready" as const,
+        phase: "implementation" as const,
         ...workspaceFields,
       };
 
@@ -85,7 +87,8 @@ describe("Cells CRUD Operations", () => {
           templateId: "basic",
           workspacePath: "/tmp/test-worktree-1",
           createdAt: new Date(),
-          status: "ready",
+          status: "ready" as const,
+          phase: "implementation" as const,
           ...workspaceFields,
         },
         {
@@ -95,7 +98,8 @@ describe("Cells CRUD Operations", () => {
           templateId: "web-api",
           workspacePath: "/tmp/test-worktree-2",
           createdAt: new Date(),
-          status: "ready",
+          status: "ready" as const,
+          phase: "implementation" as const,
           ...workspaceFields,
         },
       ]);

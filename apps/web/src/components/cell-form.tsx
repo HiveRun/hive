@@ -38,6 +38,7 @@ const cellSchema = z.object({
     .max(DESCRIPTION_MAX_LENGTH, "Description too long")
     .optional(),
   templateId: z.string().min(1, "Template is required"),
+  phase: z.enum(["planning", "implementation"]).optional(),
   modelId: z.string().optional(),
   providerId: z.string().optional(),
 });
@@ -87,10 +88,11 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
       name: "",
       description: "",
       templateId: defaults?.templateId ?? "",
+      phase: defaults?.planningEnabled ? "planning" : "implementation",
       modelId: undefined,
       providerId: undefined,
     }),
-    [defaults?.templateId]
+    [defaults?.templateId, defaults?.planningEnabled]
   );
 
   const [activeTemplateId, setActiveTemplateId] = useState(
@@ -337,6 +339,36 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
                     {field.state.meta.errors[0]}
                   </p>
                 )}
+              </div>
+            )}
+          </form.Field>
+
+          <form.Field name="phase">
+            {(field) => (
+              <div className="space-y-2">
+                <Label htmlFor={field.name}>Start Mode</Label>
+                <Select
+                  disabled={mutation.isPending}
+                  onValueChange={(value) => {
+                    if (value === "planning" || value === "implementation") {
+                      field.handleChange(value);
+                    }
+                  }}
+                  value={field.state.value ?? "implementation"}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select start mode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="implementation">
+                      Implementation
+                    </SelectItem>
+                    <SelectItem value="planning">Planning</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-muted-foreground text-xs">
+                  Planning starts with OpenCode’s read-only plan agent.
+                </p>
               </div>
             )}
           </form.Field>

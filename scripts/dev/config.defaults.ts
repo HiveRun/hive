@@ -6,6 +6,11 @@ export const hiveConfigDefaults: HiveConfig = {
   promptSources: ["docs/prompts/**/*.md"],
   defaults: {
     templateId: "hive-dev",
+    planningEnabled: false,
+    opencodeAgents: {
+      planning: "plan",
+      implementation: "build",
+    },
   },
   templates: {
     "hive-dev": {

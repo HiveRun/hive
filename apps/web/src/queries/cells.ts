@@ -255,11 +255,12 @@ export const cellDiffQueries = {
   }),
 };
 
-const normalizeCell = <T extends { status: string }>(
+const normalizeCell = <T extends { status: string; phase: string }>(
   cell: T
-): T & { status: CellStatus } => ({
+): T & { status: CellStatus; phase: CellPhase } => ({
   ...cell,
   status: cell.status as CellStatus,
+  phase: cell.phase as CellPhase,
 });
 
 // Export inferred types for use in components
@@ -270,10 +271,13 @@ export type CellStatus =
   | "error"
   | "archived";
 
+export type CellPhase = "planning" | "plan_review" | "implementation";
+
 export type Cell = Awaited<
   ReturnType<ReturnType<typeof cellQueries.detail>["queryFn"]>
 > & {
   status: CellStatus;
+  phase: CellPhase;
   opencodeCommand?: string | null;
   lastSetupError?: string;
   branchName?: string | null;

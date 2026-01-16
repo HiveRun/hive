@@ -103,7 +103,8 @@ describe("Cell routes workspace enforcement", () => {
         branchName: "feature/x",
         baseCommit: "abc123",
         createdAt: now,
-        status: "ready",
+        status: "ready" as const,
+        phase: "implementation" as const,
       },
       {
         id: "cell-secondary",
@@ -116,7 +117,8 @@ describe("Cell routes workspace enforcement", () => {
         branchName: "feature/y",
         baseCommit: "def456",
         createdAt: now,
-        status: "ready",
+        status: "ready" as const,
+        phase: "implementation" as const,
       },
     ]);
 
