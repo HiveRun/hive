@@ -248,7 +248,7 @@ export function WebPreviewViewportControls({
   options,
 }: {
   className?: string;
-  options?: Array<{ id: ViewportPreset; label: string }>;
+  options?: ReadonlyArray<{ id: ViewportPreset; label: string }>;
 }) {
   const { viewportPreset, setViewportPreset } = useWebPreviewContext();
 

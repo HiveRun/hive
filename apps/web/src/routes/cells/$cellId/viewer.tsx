@@ -7,11 +7,10 @@ import {
   Maximize2,
   RefreshCw,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   WebPreview,
   WebPreviewBody,
-  WebPreviewNavigation,
   WebPreviewNavigationButton,
   WebPreviewUrl,
   WebPreviewViewportControls,
@@ -24,17 +23,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useServiceStream } from "@/hooks/use-service-stream";
-import { cellQueries } from "@/queries/cells";
+import { type CellServiceSummary, cellQueries } from "@/queries/cells";
 
 const BROWSER_REACHABILITY_TIMEOUT_MS = 3000;
 
-type ViewportPreset = "mobile" | "tablet" | "desktop";
-
-const viewportOptions: Array<{ id: ViewportPreset; label: string }> = [
+const viewportOptions = [
   { id: "mobile", label: "Mobile" },
   { id: "tablet", label: "Tablet" },
   { id: "desktop", label: "Laptop" },
-];
+] as const;
 
 export const Route = createFileRoute("/cells/$cellId/viewer")({
   component: CellServiceViewer,
@@ -43,10 +40,41 @@ export const Route = createFileRoute("/cells/$cellId/viewer")({
 function CellServiceViewer() {
   const { cellId } = Route.useParams();
   const cellQuery = useQuery(cellQueries.detail(cellId));
-  const isArchived = cellQuery.data?.status === "archived";
-  const { services, isLoading, error } = useServiceStream(cellId, {
-    enabled: !isArchived,
-  });
+
+  if (cellQuery.isLoading) {
+    return (
+      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground">
+        Loading cell…
+      </div>
+    );
+  }
+
+  if (cellQuery.error) {
+    const message =
+      cellQuery.error instanceof Error
+        ? cellQuery.error.message
+        : "Failed to load cell";
+
+    return (
+      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-destructive/50 bg-destructive/10 text-destructive">
+        {message}
+      </div>
+    );
+  }
+
+  if (cellQuery.data?.status === "archived") {
+    return (
+      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground">
+        Archived cells cannot expose live previews. Restore the branch to reopen
+        the workspace.
+      </div>
+    );
+  }
+
+  return <CellServiceViewerLive cellId={cellId} />;
+}
+
+function useServiceSelection(services: CellServiceSummary[]) {
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(
     null
   );
@@ -56,12 +84,14 @@ function CellServiceViewer() {
       setSelectedServiceId(null);
       return;
     }
+
     if (
       selectedServiceId &&
       services.some((service) => service.id === selectedServiceId)
     ) {
       return;
     }
+
     const fallback =
       services.find(
         (service) =>
@@ -69,6 +99,7 @@ function CellServiceViewer() {
       ) ??
       services.find((service) => service.port != null) ??
       null;
+
     setSelectedServiceId(fallback?.id ?? null);
   }, [services, selectedServiceId]);
 
@@ -76,25 +107,35 @@ function CellServiceViewer() {
     (service) => service.id === selectedServiceId
   );
 
-  const viewerUrl = useMemo(() => {
-    if (!selectedService?.url) {
-      return null;
-    }
-    return selectedService.url;
-  }, [selectedService?.url]);
+  return {
+    selectedService,
+    selectedServiceId,
+    setSelectedServiceId,
+  };
+}
 
+function useBrowserReachability({
+  viewerUrl,
+  serviceStatus,
+}: {
+  viewerUrl: string | null;
+  serviceStatus: string | undefined;
+}) {
   const [browserReachability, setBrowserReachability] = useState<
     boolean | null
   >(null);
 
   useEffect(() => {
     setBrowserReachability(null);
-    if (!viewerUrl || selectedService?.status.toLowerCase() !== "running") {
+
+    if (!viewerUrl || serviceStatus?.toLowerCase() !== "running") {
       return;
     }
+
     if (typeof window === "undefined") {
       return;
     }
+
     const controller = new AbortController();
     const timeout = window.setTimeout(
       () => controller.abort(),
@@ -116,13 +157,18 @@ function CellServiceViewer() {
       controller.abort();
       window.clearTimeout(timeout);
     };
-  }, [selectedService?.status, viewerUrl]);
+  }, [serviceStatus, viewerUrl]);
 
-  const resolvedReachability =
-    browserReachability ?? selectedService?.portReachable ?? null;
+  return browserReachability;
+}
 
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-
+function createViewerActions({
+  iframeRef,
+  viewerUrl,
+}: {
+  iframeRef: { current: HTMLIFrameElement | null };
+  viewerUrl: string | null;
+}) {
   const handleRefresh = () => {
     if (iframeRef.current && viewerUrl) {
       iframeRef.current.src = viewerUrl;
@@ -153,97 +199,64 @@ function CellServiceViewer() {
     }
   };
 
-  if (cellQuery.isLoading) {
-    return (
-      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground">
-        Loading cell…
-      </div>
-    );
-  }
+  return {
+    handleBack,
+    handleForward,
+    handleMaximize,
+    handleOpenInNewTab,
+    handleRefresh,
+  };
+}
 
-  if (cellQuery.error) {
-    const message =
-      cellQuery.error instanceof Error
-        ? cellQuery.error.message
-        : "Failed to load cell";
-    return (
-      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-destructive/50 bg-destructive/10 text-destructive">
-        {message}
-      </div>
-    );
-  }
+function CellServiceViewerLive({ cellId }: { cellId: string }) {
+  const { services, isLoading, error } = useServiceStream(cellId, {
+    enabled: true,
+  });
 
-  if (isArchived) {
-    return (
-      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground">
-        Archived cells cannot expose live previews. Restore the branch to reopen
-        the workspace.
-      </div>
-    );
-  }
+  const { selectedService, selectedServiceId, setSelectedServiceId } =
+    useServiceSelection(services);
+
+  const viewerUrl = selectedService?.url ?? null;
+
+  const browserReachability = useBrowserReachability({
+    viewerUrl,
+    serviceStatus: selectedService?.status,
+  });
+
+  const resolvedReachability =
+    browserReachability ?? selectedService?.portReachable ?? null;
+
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  const {
+    handleBack,
+    handleForward,
+    handleMaximize,
+    handleOpenInNewTab,
+    handleRefresh,
+  } = createViewerActions({ iframeRef, viewerUrl });
 
   return (
     <div className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
       <div className="flex h-full w-full flex-col gap-4 p-4">
-        <header className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-muted-foreground text-xs uppercase tracking-[0.3em]">
-              Service Viewer
-            </p>
-            <p className="text-[11px] text-muted-foreground uppercase tracking-[0.25em]">
-              Render running service frontends inline with full height.
-            </p>
-          </div>
-          <Select
-            disabled={!services.some((service) => service.port != null)}
-            onValueChange={setSelectedServiceId}
-            value={selectedService?.id ?? ""}
-          >
-            <SelectTrigger className="w-[260px] border-border bg-background text-foreground">
-              <SelectValue placeholder="Select service" />
-            </SelectTrigger>
-            <SelectContent className="border-border bg-card text-foreground">
-              {services
-                .filter((service) => service.port != null)
-                .map((service) => (
-                  <SelectItem key={service.id} value={service.id}>
-                    <span className="flex flex-col gap-0.5">
-                      <span className="font-semibold text-[12px] text-foreground uppercase tracking-[0.2em]">
-                        {service.name}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground">
-                        Port {service.port}
-                      </span>
-                    </span>
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
-        </header>
+        <ServiceViewerHeader
+          onSelectService={setSelectedServiceId}
+          selectedServiceId={selectedServiceId}
+          services={services}
+        />
 
-        <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground uppercase tracking-[0.25em]">
-          <span>
-            Target ·{selectedService?.port ? viewerUrl : " No port available"}
-          </span>
-          {selectedService ? (
-            <ServiceStatusBadge status={selectedService.status} />
-          ) : null}
-          {selectedService?.port ? (
-            <span>Port · {selectedService.port}</span>
-          ) : null}
-          {selectedService ? (
-            <span>
-              Reachability · {describeReachability(resolvedReachability)}
-            </span>
-          ) : null}
-        </div>
+        <ServiceViewerMeta
+          resolvedReachability={resolvedReachability}
+          selectedService={selectedService}
+          viewerUrl={viewerUrl}
+        />
 
         <WebPreview
           error={error ?? undefined}
           isLoading={isLoading}
           url={viewerUrl}
         >
-          <WebPreviewNavigation>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-sm border-2 border-border bg-card p-2">
             <div className="flex flex-wrap items-center gap-2">
               <WebPreviewNavigationButton
                 disabled={!viewerUrl}
@@ -267,33 +280,35 @@ function CellServiceViewer() {
                 <RefreshCw className="h-3.5 w-3.5" />
               </WebPreviewNavigationButton>
               <WebPreviewUrl />
-              <WebPreviewNavigationButton
-                disabled={!viewerUrl}
-                onClick={handleOpenInNewTab}
-                tooltip="Open in new tab"
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-              </WebPreviewNavigationButton>
-              <WebPreviewNavigationButton
-                disabled={!viewerUrl}
-                onClick={handleMaximize}
-                tooltip="Fullscreen"
-              >
-                <Maximize2 className="h-3.5 w-3.5" />
-              </WebPreviewNavigationButton>
             </div>
-            {resolvedReachability === false ? (
-              <span className="text-destructive text-xs uppercase tracking-[0.2em]">
-                Browser could not reach the service; verify networking
-              </span>
-            ) : null}
-            {error ? (
-              <span className="text-destructive text-xs uppercase tracking-[0.2em]">
-                {error}
-              </span>
-            ) : null}
-          </WebPreviewNavigation>
-          <WebPreviewViewportControls options={viewportOptions} />
+
+            <div className="flex flex-wrap items-center gap-3">
+              <WebPreviewViewportControls options={viewportOptions} />
+
+              <div className="flex flex-wrap items-center gap-2">
+                <WebPreviewNavigationButton
+                  disabled={!viewerUrl}
+                  onClick={handleOpenInNewTab}
+                  tooltip="Open in new tab"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </WebPreviewNavigationButton>
+                <WebPreviewNavigationButton
+                  disabled={!viewerUrl}
+                  onClick={handleMaximize}
+                  tooltip="Fullscreen"
+                >
+                  <Maximize2 className="h-3.5 w-3.5" />
+                </WebPreviewNavigationButton>
+              </div>
+
+              <ReachabilityWarning
+                error={error}
+                resolvedReachability={resolvedReachability}
+              />
+            </div>
+          </div>
+
           <WebPreviewBody
             iframeProps={{
               ref: iframeRef,
@@ -305,6 +320,105 @@ function CellServiceViewer() {
         </WebPreview>
       </div>
     </div>
+  );
+}
+
+function ServiceViewerHeader({
+  services,
+  selectedServiceId,
+  onSelectService,
+}: {
+  services: CellServiceSummary[];
+  selectedServiceId: string | null;
+  onSelectService: (serviceId: string) => void;
+}) {
+  const portServices = services.filter((service) => service.port != null);
+
+  return (
+    <header className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <p className="text-muted-foreground text-xs uppercase tracking-[0.3em]">
+          Service Viewer
+        </p>
+        <p className="text-[11px] text-muted-foreground uppercase tracking-[0.25em]">
+          Render running service frontends inline with full height.
+        </p>
+      </div>
+
+      <Select
+        disabled={portServices.length === 0}
+        onValueChange={onSelectService}
+        value={selectedServiceId ?? ""}
+      >
+        <SelectTrigger className="w-[260px] border-border bg-background text-foreground">
+          <SelectValue placeholder="Select service" />
+        </SelectTrigger>
+        <SelectContent className="border-border bg-card text-foreground">
+          {portServices.map((service) => (
+            <SelectItem key={service.id} value={service.id}>
+              <span className="flex flex-col gap-0.5">
+                <span className="font-semibold text-[12px] text-foreground uppercase tracking-[0.2em]">
+                  {service.name}
+                </span>
+                <span className="text-[10px] text-muted-foreground">
+                  Port {service.port}
+                </span>
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </header>
+  );
+}
+
+function ServiceViewerMeta({
+  selectedService,
+  viewerUrl,
+  resolvedReachability,
+}: {
+  selectedService: CellServiceSummary | undefined;
+  viewerUrl: string | null;
+  resolvedReachability: boolean | null;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground uppercase tracking-[0.25em]">
+      <span>
+        Target ·{selectedService?.port ? viewerUrl : " No port available"}
+      </span>
+
+      {selectedService ? (
+        <ServiceStatusBadge status={selectedService.status} />
+      ) : null}
+
+      {selectedService?.port ? (
+        <span>Port · {selectedService.port}</span>
+      ) : null}
+
+      {selectedService ? (
+        <span>Reachability · {describeReachability(resolvedReachability)}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function ReachabilityWarning({
+  resolvedReachability,
+  error,
+}: {
+  resolvedReachability: boolean | null;
+  error: string | undefined;
+}) {
+  if (resolvedReachability !== false && !error) {
+    return null;
+  }
+
+  return (
+    <span className="text-destructive text-xs uppercase tracking-[0.2em]">
+      {resolvedReachability === false
+        ? "Browser could not reach the service; verify networking"
+        : error}
+    </span>
   );
 }
 
