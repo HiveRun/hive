@@ -19,13 +19,9 @@
     "setup": "bun install && ./scripts/dev/clone-opencode.sh && ./scripts/dev/clone-hive.sh && bun run config:generate && bun run db:migrate",
     "check": "bun run check:commit",
     "check:commit": "bun run check:config && bun run check:staged && bun run check:secrets && bun run check:audit && biome check --no-errors-on-unmatched --files-ignore-unknown=true && bun run test:run && turbo check check-types --ui=stream --force && bun run build",
-    "check:push": "bun run check:commit && bun run test:e2e",
+    "check:push": "bun run check:commit",
     "test": "turbo test --ui=stream --force",
     "test:run": "turbo test:run --ui=stream --force",
-    "test:e2e": "turbo test:e2e --ui=stream",
-    "test:e2e:ui": "turbo -F web test:e2e:ui --ui=stream",
-    "test:e2e:headed": "turbo -F web test:e2e:headed --ui=stream",
-    "test:e2e:update-snapshots": "turbo -F web test:e2e:update-snapshots --ui=stream",
     "check:config": "bun run config:generate && bunx biome check --write hive.config.json hive.config.schema.json && git diff --exit-code hive.config.json hive.config.schema.json",
     "check:biome": "biome check --write .",
     "check:staged": "lint-staged --allow-empty",
@@ -54,7 +50,6 @@
   },
   "dependencies": {
     "dotenv": "^17.2.2",
-    "playwright": "^1.57.0",
     "zod": "^4.1.13"
   },
   "devDependencies": {

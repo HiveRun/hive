@@ -54,37 +54,6 @@
         "**/package.json"
       ]
     },
-    "test:e2e": {
-      "dependsOn": ["^build"],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "**/playwright.config.*",
-        "package.json",
-        "**/package.json"
-      ],
-      "cache": false
-    },
-    "test:e2e:ui": {
-      "dependsOn": ["^build"],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "**/playwright.config.*",
-        "package.json",
-        "**/package.json"
-      ],
-      "cache": false,
-      "persistent": true
-    },
-    "test:e2e:update-snapshots": {
-      "dependsOn": ["^build"],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "**/playwright.config.*",
-        "package.json",
-        "**/package.json"
-      ],
-      "cache": false
-    },
     "dev": {
       "cache": false,
       "persistent": true
