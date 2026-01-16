@@ -123,6 +123,5 @@ Provide a comprehensive diff review experience within Hive so users can review a
   - Testing plan:
     - Unit-test the new DiffService with fixture repositories exercising added/modified/deleted, rename detection, and partial staging.
     - Integration tests covering staging API error paths and precision diff fallback (mocked by swapping the renderer with a stub).
-    - Playwright visual tests (apps/web/e2e) for the new diff tab across both inline and split layouts plus the semantic toggle to guard Forest Brutalism styling.
 
 - Document how to install and theme `@pierre/precision-diffs` so agents have consistent semantic rendering locally.

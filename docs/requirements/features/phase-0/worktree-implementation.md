@@ -47,10 +47,6 @@ Git worktree functionality has been successfully implemented to provide isolated
    - Optimistic updates and proper cache invalidation
    - Toast notifications for user feedback
 
-3. **E2E Testing** (`apps/web/e2e/`)
-   - Comprehensive test coverage for worktree workflows
-   - Visual snapshot tests updated to include new UI elements
-   - Tests for create/remove workflows and error handling
 
 ## Technical Decisions
 

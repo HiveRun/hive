@@ -6,9 +6,7 @@ import { defineConfig } from "vitest/config";
 /**
  * Frontend Vitest Configuration
  *
- * UI correctness is still gated on Playwright visual snapshots, but we
- * allow lightweight logic tests (e.g., streaming helpers) to run in Vitest
- * so regressions surface quickly during local development.
+ * UI correctness is validated via Vitest-backed unit tests.
  */
 export default defineConfig({
   plugins: [tsconfigPaths({ root: "./" })],
