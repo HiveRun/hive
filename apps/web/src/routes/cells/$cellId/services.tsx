@@ -246,25 +246,6 @@ function ServicesPanel({
   } else {
     body = (
       <div className="flex h-full min-h-0 flex-col">
-        <Select onValueChange={setSelectedServiceId} value={selectedServiceId}>
-          <SelectTrigger className="mb-3 w-fit">
-            <SelectValue placeholder="Select a service" />
-          </SelectTrigger>
-          <SelectContent>
-            {services.map((service) => (
-              <SelectItem key={service.id} value={service.id}>
-                <div className="flex flex-col">
-                  <span>{service.name}</span>
-                  {service.port && (
-                    <span className="text-muted-foreground text-xs">
-                      Port: {service.port}
-                    </span>
-                  )}
-                </div>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
         {selectedService && (
           <ServiceCard
             isBulkActionPending={isBulkActionPending}
@@ -281,25 +262,51 @@ function ServicesPanel({
 
   return (
     <section className="flex h-full w-full flex-col px-4 py-3 text-muted-foreground text-sm">
-      <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
-        <Button
-          disabled={disableStartAll || isBulkActionPending}
-          onClick={onStartAll}
-          size="sm"
-          type="button"
-          variant="secondary"
-        >
-          {isStartingAll ? "Starting..." : "Start all"}
-        </Button>
-        <Button
-          disabled={disableStopAll || isBulkActionPending}
-          onClick={onStopAll}
-          size="sm"
-          type="button"
-          variant="destructive"
-        >
-          {isStoppingAll ? "Stopping..." : "Stop all"}
-        </Button>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        {hasServices && (
+          <Select
+            onValueChange={setSelectedServiceId}
+            value={selectedServiceId}
+          >
+            <SelectTrigger className="h-8 w-fit">
+              <SelectValue placeholder="Select a service" />
+            </SelectTrigger>
+            <SelectContent>
+              {services.map((service) => (
+                <SelectItem key={service.id} value={service.id}>
+                  <div className="flex flex-col">
+                    <span>{service.name}</span>
+                    {service.port && (
+                      <span className="text-muted-foreground text-xs">
+                        Port: {service.port}
+                      </span>
+                    )}
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            disabled={disableStartAll || isBulkActionPending}
+            onClick={onStartAll}
+            size="sm"
+            type="button"
+            variant="secondary"
+          >
+            {isStartingAll ? "Starting..." : "Start all"}
+          </Button>
+          <Button
+            disabled={disableStopAll || isBulkActionPending}
+            onClick={onStopAll}
+            size="sm"
+            type="button"
+            variant="destructive"
+          >
+            {isStoppingAll ? "Stopping..." : "Stop all"}
+          </Button>
+        </div>
       </div>
       <div className="min-h-0 flex-1 pb-2">{body}</div>
     </section>
@@ -355,38 +362,6 @@ function ServiceCard({
             <p className="font-semibold text-base text-foreground uppercase tracking-[0.15em]">
               {service.name}
             </p>
-            <div className="space-y-0.5">
-              <div className="flex items-center justify-between gap-2">
-                <p className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground text-xs">
-                  {service.command}
-                </p>
-                <Button
-                  aria-label="Copy command"
-                  className="h-4 w-4 shrink-0 p-0"
-                  onClick={() => service.command && handleCopy(service.command)}
-                  size="icon-sm"
-                  type="button"
-                  variant="ghost"
-                >
-                  <Copy className="h-2.5 w-2.5" />
-                </Button>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <p className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground text-xs">
-                  {service.cwd}
-                </p>
-                <Button
-                  aria-label="Copy directory"
-                  className="h-4 w-4 shrink-0 p-0"
-                  onClick={() => service.cwd && handleCopy(service.cwd)}
-                  size="icon-sm"
-                  type="button"
-                  variant="ghost"
-                >
-                  <Copy className="h-2.5 w-2.5" />
-                </Button>
-              </div>
-            </div>
           </div>
           <div className="flex min-h-[1.75rem] items-center">
             <ServiceStatusBadge status={service.status} />
@@ -401,86 +376,129 @@ function ServiceCard({
           service={service}
         />
       </div>
-      <div className="grid gap-2 text-[11px] uppercase tracking-[0.3em] lg:grid-cols-2">
-        <div className="space-y-1">
-          <p className="text-muted-foreground">Type</p>
-          <p className="font-medium text-foreground">{service.type}</p>
-        </div>
-        {service.port ? (
-          <div className="space-y-1">
-            <p className="text-muted-foreground">Port</p>
-            <div className="flex items-center justify-between gap-2">
-              <p className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium text-foreground">
+
+      <div className="grid gap-2.5 border border-border/70 bg-muted/10 p-3 text-xs">
+        <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+            Type
+          </p>
+          <p className="font-medium text-foreground">{service.type || "—"}</p>
+
+          {service.command && (
+            <>
+              <div className="flex items-center gap-1.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                  Command
+                </p>
+                <Button
+                  aria-label="Copy command"
+                  className="h-5 w-5 shrink-0 p-0"
+                  onClick={() => handleCopy(service.command)}
+                  size="icon-sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  <Copy className="h-3 w-3" />
+                </Button>
+              </div>
+              <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-foreground">
+                {service.command}
+              </pre>
+            </>
+          )}
+
+          {service.cwd && (
+            <>
+              <div className="flex items-center gap-1.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                  Working directory
+                </p>
+                <Button
+                  aria-label="Copy working directory"
+                  className="h-5 w-5 shrink-0 p-0"
+                  onClick={() => handleCopy(service.cwd)}
+                  size="icon-sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  <Copy className="h-3 w-3" />
+                </Button>
+              </div>
+              <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-foreground">
+                {service.cwd}
+              </pre>
+            </>
+          )}
+
+          {service.port ? (
+            <>
+              <div className="flex items-center gap-1.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                  Port
+                </p>
+                <Button
+                  aria-label="Copy port"
+                  className="h-5 w-5 shrink-0 p-0"
+                  onClick={() => handleCopy(String(service.port))}
+                  size="icon-sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  <Copy className="h-3 w-3" />
+                </Button>
+              </div>
+              <p className="break-all font-mono text-[11px] text-foreground">
                 {service.port}
               </p>
-              <Button
-                aria-label="Copy port"
-                className="h-5 w-5 shrink-0 p-0"
-                onClick={() => handleCopy(String(service.port))}
-                size="icon-sm"
-                type="button"
-                variant="ghost"
-              >
-                <Copy className="h-3 w-3" />
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-1">
-            <p className="text-muted-foreground">Port</p>
-            <p className="font-medium text-muted-foreground">—</p>
-          </div>
-        )}
-        {service.pid ? (
-          <div className="space-y-1">
-            <p className="text-muted-foreground">PID</p>
-            <div className="flex items-center justify-between gap-2">
-              <p className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium text-foreground">
+            </>
+          ) : null}
+
+          {service.pid ? (
+            <>
+              <div className="flex items-center gap-1.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                  PID
+                </p>
+                <Button
+                  aria-label="Copy PID"
+                  className="h-5 w-5 shrink-0 p-0"
+                  onClick={() => handleCopy(String(service.pid))}
+                  size="icon-sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  <Copy className="h-3 w-3" />
+                </Button>
+              </div>
+              <p className="break-all font-mono text-[11px] text-foreground">
                 {service.pid}
               </p>
-              <Button
-                aria-label="Copy PID"
-                className="h-5 w-5 shrink-0 p-0"
-                onClick={() => handleCopy(String(service.pid))}
-                size="icon-sm"
-                type="button"
-                variant="ghost"
-              >
-                <Copy className="h-3 w-3" />
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-1">
-            <p className="text-muted-foreground">PID</p>
-            <p className="font-medium text-muted-foreground">—</p>
-          </div>
-        )}
-        {service.logPath ? (
-          <div className="space-y-1">
-            <p className="text-muted-foreground">Log Path</p>
-            <div className="flex items-center justify-between gap-2">
-              <p className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-medium text-foreground">
+            </>
+          ) : null}
+
+          {service.logPath ? (
+            <>
+              <div className="flex items-center gap-1.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                  Log path
+                </p>
+                <Button
+                  aria-label="Copy log path"
+                  className="h-5 w-5 shrink-0 p-0"
+                  onClick={() => handleCopy(service.logPath ?? "")}
+                  size="icon-sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  <Copy className="h-3 w-3" />
+                </Button>
+              </div>
+              <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-foreground">
                 {service.logPath}
-              </p>
-              <Button
-                aria-label="Copy log path"
-                className="h-5 w-5 shrink-0 p-0"
-                onClick={() => service.logPath && handleCopy(service.logPath)}
-                size="icon-sm"
-                type="button"
-                variant="ghost"
-              >
-                <Copy className="h-3 w-3" />
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-1">
-            <p className="text-muted-foreground">Log Path</p>
-            <p className="font-medium text-muted-foreground">—</p>
-          </div>
-        )}
+              </pre>
+            </>
+          ) : null}
+        </div>
       </div>
       {isErrorState ? null : (
         <div className="min-h-[1.25rem] text-destructive text-xs">
