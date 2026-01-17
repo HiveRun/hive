@@ -84,36 +84,6 @@ export const cellMutations = {
     },
   },
 
-  archive: {
-    mutationFn: async (id: string) => {
-      const { data, error } = await rpc.api.cells({ id }).archive.post();
-      if (error) {
-        throw new Error(formatRpcError(error, "Failed to archive cell"));
-      }
-
-      if ("message" in data) {
-        throw new Error(formatRpcResponseError(data, "Failed to archive cell"));
-      }
-
-      return normalizeCell(data);
-    },
-  },
-
-  restore: {
-    mutationFn: async (id: string) => {
-      const { data, error } = await rpc.api.cells({ id }).restore.post();
-      if (error) {
-        throw new Error(formatRpcError(error, "Failed to restore cell"));
-      }
-
-      if ("message" in data) {
-        throw new Error(formatRpcResponseError(data, "Failed to restore cell"));
-      }
-
-      return normalizeCell(data);
-    },
-  },
-
   deleteMany: {
     mutationFn: async (ids: string[]) => {
       const { data, error } = await rpc.api.cells.delete({ ids });
@@ -123,27 +93,6 @@ export const cellMutations = {
 
       if ("message" in data) {
         throw new Error(formatRpcResponseError(data, "Failed to delete cells"));
-      }
-
-      return data;
-    },
-  },
-
-  archiveAndDeleteMany: {
-    mutationFn: async (ids: string[]) => {
-      const { data, error } = await rpc.api.cells["archive-and-delete"].post({
-        ids,
-      });
-      if (error) {
-        throw new Error(
-          formatRpcError(error, "Failed to archive and delete cells")
-        );
-      }
-
-      if ("message" in data) {
-        throw new Error(
-          formatRpcResponseError(data, "Failed to archive and delete cells")
-        );
       }
 
       return data;
@@ -263,12 +212,7 @@ const normalizeCell = <T extends { status: string }>(
 });
 
 // Export inferred types for use in components
-export type CellStatus =
-  | "spawning"
-  | "pending"
-  | "ready"
-  | "error"
-  | "archived";
+export type CellStatus = "spawning" | "pending" | "ready" | "error";
 
 export type Cell = Awaited<
   ReturnType<ReturnType<typeof cellQueries.detail>["queryFn"]>

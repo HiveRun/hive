@@ -27,13 +27,12 @@ export const Route = createFileRoute("/cells/$cellId/services")({
 function CellServices() {
   const { cellId } = Route.useParams();
   const cellQuery = useQuery(cellQueries.detail(cellId));
-  const isArchived = cellQuery.data?.status === "archived";
   const {
     services,
     isLoading,
     error: streamError,
   } = useServiceStream(cellId, {
-    enabled: !isArchived,
+    enabled: true,
   });
 
   const startServiceMutation = useMutation({
@@ -111,15 +110,6 @@ function CellServices() {
     return (
       <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-destructive/50 bg-destructive/10 text-destructive">
         {message}
-      </div>
-    );
-  }
-
-  if (isArchived) {
-    return (
-      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground">
-        Archived cells cannot manage services. Restore the branch to reopen this
-        workspace.
       </div>
     );
   }

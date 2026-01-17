@@ -135,17 +135,6 @@ export const DeleteCellsSchema = t.Object({
   ),
 });
 
-export const ArchiveAndDeleteSchema = t.Object({
-  ids: t.Array(
-    t.String({
-      minLength: 1,
-    }),
-    {
-      minItems: 1,
-    }
-  ),
-});
-
 // Template schemas
 export const TemplateResponseSchema = t.Object({
   id: t.String(),
