@@ -1,7 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { ChevronDown, Copy } from "lucide-react";
-import { useState } from "react";
+import { Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import type { Cell } from "@/queries/cells";
@@ -101,10 +100,8 @@ function CellSetupPanel() {
           />
           <SetupLogPanel
             cell={cell}
-            isRefreshing={cellQuery.isFetching}
             isRetrying={retryMutation.isPending}
             lastUpdatedLabel={lastUpdatedLabel}
-            onRefresh={() => cellQuery.refetch()}
             onRetry={() => retryMutation.mutate(cellId)}
           />
         </div>
@@ -200,32 +197,20 @@ function TemplateCommandsPanel({
 
 type SetupLogPanelProps = {
   cell: Cell;
-  isRefreshing: boolean;
   isRetrying: boolean;
   lastUpdatedLabel: string | null;
-  onRefresh: () => void;
   onRetry: () => void;
 };
 
 function SetupLogPanel({
   cell,
-  isRefreshing,
   isRetrying,
   lastUpdatedLabel,
-  onRefresh,
   onRetry,
 }: SetupLogPanelProps) {
-  const [isLogExpanded, setIsLogExpanded] = useState(false);
-
   return (
-    <details
-      className="flex min-h-0 flex-col gap-3 border border-border/70 bg-muted/10 p-4"
-      onToggle={(e) =>
-        setIsLogExpanded((e.currentTarget as HTMLDetailsElement).open)
-      }
-      open={isLogExpanded}
-    >
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+    <section className="flex min-h-0 flex-col gap-3 border border-border/70 bg-muted/10 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="font-semibold text-base text-foreground uppercase tracking-[0.25em]">
             Setup logs
@@ -234,34 +219,18 @@ function SetupLogPanel({
             {cell.setupLogPath ?? "No log path yet"}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex flex-wrap gap-2">
-            <Button
-              disabled={isRetrying || isRefreshing}
-              onClick={onRetry}
-              size="sm"
-              type="button"
-              variant="secondary"
-            >
-              {isRetrying ? "Retrying…" : "Retry"}
-            </Button>
-            <Button
-              disabled={isRefreshing || isRetrying}
-              onClick={onRefresh}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              {isRefreshing ? "Refreshing…" : "Refresh"}
-            </Button>
-          </div>
-          <ChevronDown
-            className={`h-4 w-4 text-muted-foreground transition-transform ${
-              isLogExpanded ? "rotate-180" : ""
-            }`}
-          />
+        <div className="flex flex-wrap gap-2">
+          <Button
+            disabled={isRetrying}
+            onClick={onRetry}
+            size="sm"
+            type="button"
+            variant="secondary"
+          >
+            {isRetrying ? "Retrying…" : "Retry"}
+          </Button>
         </div>
-      </summary>
+      </div>
       <p className="text-muted-foreground text-xs">
         Last updated {lastUpdatedLabel ?? "just now"}.
       </p>
@@ -272,7 +241,7 @@ function SetupLogPanel({
             : "No setup log output yet."}
         </pre>
       </div>
-    </details>
+    </section>
   );
 }
 
