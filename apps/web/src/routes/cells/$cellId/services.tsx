@@ -1,8 +1,17 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { Copy } from "lucide-react";
 import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useServiceStream } from "@/hooks/use-service-stream";
 import { cn } from "@/lib/utils";
 import {
@@ -186,6 +195,23 @@ function ServicesPanel({
   pendingStartId?: string;
   pendingStopId?: string;
 }) {
+  const [selectedServiceId, setSelectedServiceId] = useState<string>("");
+
+  useEffect(() => {
+    const first = services[0]?.id;
+    if (!first) {
+      return;
+    }
+
+    const selectionExists = services.some(
+      (service) => service.id === selectedServiceId
+    );
+    if (!(selectedServiceId && selectionExists)) {
+      setSelectedServiceId(first);
+    }
+  }, [selectedServiceId, services]);
+
+  const selectedService = services.find((s) => s.id === selectedServiceId);
   let body: ReactNode;
 
   const hasServices = services.length > 0;
@@ -219,33 +245,48 @@ function ServicesPanel({
     );
   } else {
     body = (
-      <div className="grid h-full min-h-0 auto-rows-[minmax(0,1fr)] gap-4 lg:grid-cols-2">
-        {services.map((service) => (
+      <div className="flex h-full min-h-0 flex-col">
+        {selectedService && (
           <ServiceCard
             isBulkActionPending={isBulkActionPending}
-            isStarting={pendingStartId === service.id}
-            isStopping={pendingStopId === service.id}
-            key={service.id}
+            isStarting={pendingStartId === selectedService.id}
+            isStopping={pendingStopId === selectedService.id}
             onStart={onStartService}
             onStop={onStopService}
-            service={service}
+            service={selectedService}
           />
-        ))}
+        )}
       </div>
     );
   }
 
   return (
     <section className="flex h-full w-full flex-col px-4 py-3 text-muted-foreground text-sm">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 className="font-semibold text-foreground text-lg uppercase tracking-[0.2em]">
-            Services
-          </h2>
-          <p className="text-muted-foreground text-xs uppercase tracking-[0.3em]">
-            Runtime status per cell
-          </p>
-        </div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        {hasServices && (
+          <Select
+            onValueChange={setSelectedServiceId}
+            value={selectedServiceId}
+          >
+            <SelectTrigger className="h-8 w-fit">
+              <SelectValue placeholder="Select a service" />
+            </SelectTrigger>
+            <SelectContent>
+              {services.map((service) => (
+                <SelectItem key={service.id} value={service.id}>
+                  <div className="flex flex-col">
+                    <span>{service.name}</span>
+                    {service.port && (
+                      <span className="text-muted-foreground text-xs">
+                        Port: {service.port}
+                      </span>
+                    )}
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <Button
             disabled={disableStartAll || isBulkActionPending}
@@ -267,7 +308,7 @@ function ServicesPanel({
           </Button>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto pb-2">{body}</div>
+      <div className="min-h-0 flex-1 pb-2">{body}</div>
     </section>
   );
 }
@@ -289,11 +330,26 @@ function ServiceCard({
 }) {
   const normalizedStatus = service.status.toLowerCase();
   const isErrorState = normalizedStatus === "error";
+  const [clearedSnapshot, setClearedSnapshot] = useState<string | null>(null);
+  const logsSnapshot = service.recentLogs ?? "";
+
+  const handleCopy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Copied to clipboard");
+    } catch (_error) {
+      toast.error("Failed to copy to clipboard");
+    }
+  };
+
+  const displayedLogs = logsSnapshot === clearedSnapshot ? "" : logsSnapshot;
+  const hasLogs = logsSnapshot.length > 0;
+  const isClearDisabled = !hasLogs || logsSnapshot === clearedSnapshot;
 
   return (
     <div
       className={cn(
-        "flex h-full min-h-0 flex-col gap-3 border border-border bg-card p-4",
+        "flex min-h-0 flex-1 flex-col gap-3 overflow-hidden border border-border bg-card p-4",
         isErrorState
           ? "border-destructive shadow-[0_0_0_2px_color-mix(in_oklch,var(--color-destructive)_35%,transparent)]"
           : "border-border/60"
@@ -301,23 +357,148 @@ function ServiceCard({
       style={{ containerType: "inline-size" }}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="font-semibold text-base text-foreground uppercase tracking-[0.15em]">
-            {service.name}
-          </p>
-          <p className="text-muted-foreground text-xs">
-            {service.command} · {service.cwd}
-          </p>
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold text-base text-foreground uppercase tracking-[0.15em]">
+              {service.name}
+            </p>
+          </div>
+          <div className="flex min-h-[1.75rem] items-center">
+            <ServiceStatusBadge status={service.status} />
+          </div>
         </div>
-        <div className="flex min-h-[1.75rem] items-center">
-          <ServiceStatusBadge status={service.status} />
-        </div>
+        <ServiceActions
+          isBulkActionPending={isBulkActionPending}
+          isStarting={isStarting}
+          isStopping={isStopping}
+          onStart={onStart}
+          onStop={onStop}
+          service={service}
+        />
       </div>
-      <div className="flex flex-wrap gap-4 text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
-        <span>type · {service.type}</span>
-        <span>port · {service.port ?? "—"}</span>
-        <span>pid · {service.pid ?? "—"}</span>
-        <span>log · {service.logPath ?? "—"}</span>
+
+      <div className="grid gap-2.5 border border-border/70 bg-muted/10 p-3 text-xs">
+        <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+            Type
+          </p>
+          <p className="font-medium text-foreground">{service.type || "—"}</p>
+
+          {service.command && (
+            <>
+              <div className="flex items-center gap-1.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                  Command
+                </p>
+                <Button
+                  aria-label="Copy command"
+                  className="h-5 w-5 shrink-0 p-0"
+                  onClick={() => handleCopy(service.command)}
+                  size="icon-sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  <Copy className="h-3 w-3" />
+                </Button>
+              </div>
+              <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-foreground">
+                {service.command}
+              </pre>
+            </>
+          )}
+
+          {service.cwd && (
+            <>
+              <div className="flex items-center gap-1.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                  Working directory
+                </p>
+                <Button
+                  aria-label="Copy working directory"
+                  className="h-5 w-5 shrink-0 p-0"
+                  onClick={() => handleCopy(service.cwd)}
+                  size="icon-sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  <Copy className="h-3 w-3" />
+                </Button>
+              </div>
+              <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-foreground">
+                {service.cwd}
+              </pre>
+            </>
+          )}
+
+          {service.port ? (
+            <>
+              <div className="flex items-center gap-1.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                  Port
+                </p>
+                <Button
+                  aria-label="Copy port"
+                  className="h-5 w-5 shrink-0 p-0"
+                  onClick={() => handleCopy(String(service.port))}
+                  size="icon-sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  <Copy className="h-3 w-3" />
+                </Button>
+              </div>
+              <p className="break-all font-mono text-[11px] text-foreground">
+                {service.port}
+              </p>
+            </>
+          ) : null}
+
+          {service.pid ? (
+            <>
+              <div className="flex items-center gap-1.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                  PID
+                </p>
+                <Button
+                  aria-label="Copy PID"
+                  className="h-5 w-5 shrink-0 p-0"
+                  onClick={() => handleCopy(String(service.pid))}
+                  size="icon-sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  <Copy className="h-3 w-3" />
+                </Button>
+              </div>
+              <p className="break-all font-mono text-[11px] text-foreground">
+                {service.pid}
+              </p>
+            </>
+          ) : null}
+
+          {service.logPath ? (
+            <>
+              <div className="flex items-center gap-1.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                  Log path
+                </p>
+                <Button
+                  aria-label="Copy log path"
+                  className="h-5 w-5 shrink-0 p-0"
+                  onClick={() => handleCopy(service.logPath ?? "")}
+                  size="icon-sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  <Copy className="h-3 w-3" />
+                </Button>
+              </div>
+              <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-foreground">
+                {service.logPath}
+              </pre>
+            </>
+          ) : null}
+        </div>
       </div>
       {isErrorState ? null : (
         <div className="min-h-[1.25rem] text-destructive text-xs">
@@ -326,29 +507,29 @@ function ServiceCard({
             : " "}
         </div>
       )}
-      <div className="flex flex-1 flex-col gap-2">
-        <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
-          Recent logs
-        </p>
-        <div
-          className="min-h-0 flex-1 overflow-hidden rounded-sm border border-border bg-card"
-          style={{ maxHeight: "100cqw" }}
-        >
+      <div className="flex min-h-0 flex-1 flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+            Logs
+          </p>
+          <Button
+            disabled={isClearDisabled}
+            onClick={() => setClearedSnapshot(logsSnapshot)}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            Clear
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-hidden rounded-sm border border-border bg-card">
           <pre className="h-full min-h-0 overflow-auto whitespace-pre-wrap p-3 text-[11px] text-foreground leading-relaxed">
-            {service.recentLogs && service.recentLogs.length > 0
-              ? service.recentLogs
+            {displayedLogs && displayedLogs.length > 0
+              ? displayedLogs
               : "No log output yet."}
           </pre>
         </div>
       </div>
-      <ServiceActions
-        isBulkActionPending={isBulkActionPending}
-        isStarting={isStarting}
-        isStopping={isStopping}
-        onStart={onStart}
-        onStop={onStop}
-        service={service}
-      />
     </div>
   );
 }
