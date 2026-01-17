@@ -62,15 +62,6 @@ function CellServiceViewer() {
     );
   }
 
-  if (cellQuery.data?.status === "archived") {
-    return (
-      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground">
-        Archived cells cannot expose live previews. Restore the branch to reopen
-        the workspace.
-      </div>
-    );
-  }
-
   return <CellServiceViewerLive cellId={cellId} />;
 }
 

@@ -55,7 +55,6 @@ type DiffSortMode = "impact-desc" | "impact-asc" | "path";
 
 type DiffLoaderData = {
   initialFiles: string[];
-  isArchived: boolean;
 };
 
 export const Route = createFileRoute("/cells/$cellId/diff")({
@@ -65,22 +64,16 @@ export const Route = createFileRoute("/cells/$cellId/diff")({
     initialFiles: search?.file ? [search.file] : [],
   }),
   loader: async ({ params, context: { queryClient }, deps }) => {
-    const cell = await queryClient.ensureQueryData(
-      cellQueries.detail(params.cellId)
-    );
-    const isArchived = cell.status === "archived";
+    await queryClient.ensureQueryData(cellQueries.detail(params.cellId));
 
-    if (!isArchived) {
-      await queryClient.ensureQueryData(
-        cellDiffQueries.summary(params.cellId, deps.mode, {
-          files: deps.initialFiles,
-        })
-      );
-    }
+    await queryClient.ensureQueryData(
+      cellDiffQueries.summary(params.cellId, deps.mode, {
+        files: deps.initialFiles,
+      })
+    );
 
     return {
       initialFiles: deps.initialFiles,
-      isArchived,
     } satisfies DiffLoaderData;
   },
   component: CellDiffRoute,
@@ -88,7 +81,7 @@ export const Route = createFileRoute("/cells/$cellId/diff")({
 
 function CellDiffRoute() {
   const { cellId } = Route.useParams();
-  const { initialFiles, isArchived } = Route.useLoaderData() as DiffLoaderData;
+  const { initialFiles } = Route.useLoaderData() as DiffLoaderData;
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const queryClient = useQueryClient();
@@ -103,7 +96,6 @@ function CellDiffRoute() {
     ...cellDiffQueries.summary(cellId, mode, {
       files: initialFiles,
     }),
-    enabled: !isArchived,
   });
   const summary = summaryQuery.data;
 
@@ -258,15 +250,6 @@ function CellDiffRoute() {
   };
 
   const hasVisibleFiles = sortedFiles.length > 0;
-
-  if (isArchived) {
-    return (
-      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground">
-        Diff is unavailable for archived cells. Restore the branch to inspect
-        changes.
-      </div>
-    );
-  }
 
   if (summaryQuery.isError) {
     const message =

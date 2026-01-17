@@ -341,10 +341,6 @@ export function createServiceSupervisor(
     const grouped = groupServicesByCell(await repository.fetchAllServices());
 
     for (const { cell, rows: cellRows } of grouped.values()) {
-      if (cell.status === "archived") {
-        continue;
-      }
-
       const template = await loadTemplateCached(
         cell.templateId,
         cell.workspaceRootPath ?? cell.workspacePath

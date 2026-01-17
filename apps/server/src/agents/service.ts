@@ -845,14 +845,6 @@ export async function resumeAgentSessionsOnStartup(): Promise<void> {
   }
 
   for (const cell of cellsToResume) {
-    if (cell.status === "archived") {
-      await runtimeDb
-        .update(cells)
-        .set({ resumeAgentSessionOnStartup: false })
-        .where(eq(cells.id, cell.id));
-      continue;
-    }
-
     try {
       const runtime = await ensureRuntimeForCell(cell.id, { force: false });
       const shouldResume = await shouldResumeRuntime(runtime);
@@ -1072,9 +1064,6 @@ async function loadCellForRuntime(cellId: string): Promise<Cell> {
   const cell = await getCellById(cellId);
   if (!cell) {
     throw new Error("Cell not found");
-  }
-  if (cell.status === "archived") {
-    throw new Error("Cell is archived");
   }
   return cell;
 }

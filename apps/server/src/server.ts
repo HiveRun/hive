@@ -305,13 +305,12 @@ const startAllServicesEffect = Effect.gen(function* () {
     catch: (failure) =>
       failure instanceof Error ? failure : new Error(String(failure)),
   });
-  const activeCells = allCells.filter((cell) => cell.status !== "archived");
-  if (activeCells.length === 0) {
+  if (allCells.length === 0) {
     return;
   }
 
   yield* Effect.forEach(
-    activeCells,
+    allCells,
     (cell) =>
       supervisor
         .startCellServices(cell.id)

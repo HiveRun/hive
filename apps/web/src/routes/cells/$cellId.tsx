@@ -63,9 +63,6 @@ function CellLayout() {
       to: "/cells/$cellId/chat",
     },
   ];
-  const isArchived = cell?.status === "archived";
-  const branchLabel = cell?.branchName ?? `cell-${cellId}`;
-  const baseCommitLabel = cell?.baseCommit ?? "unknown base";
 
   if (!cell) {
     return (
@@ -108,24 +105,9 @@ function CellLayout() {
           </div>
         </section>
 
-        {isArchived ? (
-          <div className="rounded-md border border-border/70 bg-muted/10 p-4 text-muted-foreground text-sm">
-            <p className="font-semibold text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
-              Archived cell
-            </p>
-            <p className="text-[12px] text-muted-foreground">
-              The worktree remains on disk for offline analysis. Branch{" "}
-              {branchLabel} and base commit {baseCommitLabel} stay available
-              until you delete this cell.
-            </p>
-          </div>
-        ) : null}
-
-        {isArchived ? null : (
-          <div className="min-h-0 flex-1 overflow-hidden">
-            <Outlet />
-          </div>
-        )}
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <Outlet />
+        </div>
       </div>
     </div>
   );
