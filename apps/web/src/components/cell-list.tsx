@@ -5,7 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Copy, Loader2, Plus } from "lucide-react";
+import { Copy, Loader2, MoreHorizontal, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -26,6 +26,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { agentQueries } from "@/queries/agents";
 import {
@@ -68,6 +75,9 @@ export function CellList({ workspaceId }: CellListProps) {
   const [isBulkRestoreOpen, setIsBulkRestoreOpen] = useState(false);
   const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
   const [isArchiveAndDeleteOpen, setIsArchiveAndDeleteOpen] = useState(false);
+  const [isMetadataModalOpen, setIsMetadataModalOpen] = useState(false);
+  const [selectedCellForMetadata, setSelectedCellForMetadata] =
+    useState<Cell | null>(null);
 
   const queryClient = useQueryClient();
 
@@ -368,19 +378,6 @@ export function CellList({ workspaceId }: CellListProps) {
     setSelectedCellIds(new Set());
   };
 
-  const handleSelectAllToggle = () => {
-    if (!cells?.length) {
-      return;
-    }
-
-    setSelectedCellIds((prev) => {
-      if (prev.size === cells.length) {
-        return new Set();
-      }
-      return new Set(cells.map((cell) => cell.id));
-    });
-  };
-
   const toggleCellSelection = (cellId: string) => {
     setSelectedCellIds((prev) => {
       const next = new Set(prev);
@@ -397,24 +394,6 @@ export function CellList({ workspaceId }: CellListProps) {
     templates?.find((template) => template.id === templateId)?.label ??
     templateId;
 
-  const formatDate = (dateString: string) =>
-    new Date(dateString).toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-
-  const copyToClipboard = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success("Copied to clipboard");
-    } catch (_error) {
-      toast.error("Failed to copy to clipboard");
-    }
-  };
-
   if (isLoading) {
     return <div className="p-6">Loading cells...</div>;
   }
@@ -429,23 +408,29 @@ export function CellList({ workspaceId }: CellListProps) {
 
   return (
     <div className="flex h-full w-full flex-col space-y-6 overflow-y-auto p-4 md:p-6">
+      <CellMetadataDialog
+        isOpen={isMetadataModalOpen}
+        onOpenChange={setIsMetadataModalOpen}
+        selectedCell={selectedCellForMetadata}
+      />
       <div className="flex flex-col gap-4">
         <h1 className="font-bold text-2xl md:text-3xl">Cells</h1>
 
-        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
             <Button
-              className="flex-1 sm:flex-none"
+              className="text-xs"
               data-testid="clear-selection"
               disabled={!hasSelection}
               onClick={handleClearSelection}
+              size="sm"
               type="button"
-              variant="outline"
+              variant="ghost"
             >
-              Clear Selection
+              Clear
             </Button>
             <Button
-              className="flex-1 sm:flex-none"
+              className="text-xs"
               data-testid="archive-selected"
               disabled={
                 !canArchiveSelection ||
@@ -454,19 +439,20 @@ export function CellList({ workspaceId }: CellListProps) {
                 restoreManyMutation.isPending
               }
               onClick={handleArchiveSelected}
+              size="sm"
               type="button"
-              variant="secondary"
+              variant="outline"
             >
-              Archive Selected
+              Archive
               <span
-                className="ml-2 inline-flex h-5 min-w-[2rem] items-center justify-center rounded-sm border border-secondary/40 bg-secondary/10 px-1 font-mono text-xs tabular-nums"
+                className="ml-1.5 inline-flex h-4.5 min-w-[1.5rem] items-center justify-center rounded-sm border border-secondary/40 bg-secondary/10 px-0.5 font-mono text-[10px] tabular-nums"
                 data-testid="archive-selected-count"
               >
                 {archivableSelectionCount}
               </span>
             </Button>
             <Button
-              className="flex-1 sm:flex-none"
+              className="text-xs"
               data-testid="restore-selected"
               disabled={
                 !canRestoreSelection ||
@@ -476,19 +462,20 @@ export function CellList({ workspaceId }: CellListProps) {
                 archiveAndDeleteMutation.isPending
               }
               onClick={handleRestoreSelected}
+              size="sm"
               type="button"
               variant="outline"
             >
-              Restore Selected
+              Restore
               <span
-                className="ml-2 inline-flex h-5 min-w-[2rem] items-center justify-center rounded-sm border border-primary/40 bg-primary/10 px-1 font-mono text-xs tabular-nums"
+                className="ml-1.5 inline-flex h-4.5 min-w-[1.5rem] items-center justify-center rounded-sm border border-primary/40 bg-primary/10 px-0.5 font-mono text-[10px] tabular-nums"
                 data-testid="restore-selected-count"
               >
                 {restorableSelectionCount}
               </span>
             </Button>
             <Button
-              className="flex-1 bg-amber-500 text-amber-foreground hover:bg-amber-500/90 sm:flex-none"
+              className="bg-amber-500 text-amber-foreground text-xs hover:bg-amber-500/90"
               data-testid="archive-and-delete-selected"
               disabled={
                 !canArchiveSelection ||
@@ -498,19 +485,20 @@ export function CellList({ workspaceId }: CellListProps) {
                 restoreManyMutation.isPending
               }
               onClick={handleArchiveAndDelete}
+              size="sm"
               type="button"
               variant="default"
             >
-              Archive & Delete
+              Delete
               <span
-                className="ml-2 inline-flex h-5 min-w-[2rem] items-center justify-center rounded-sm border border-amber-foreground/40 bg-amber-foreground/10 px-1 font-mono text-xs tabular-nums"
+                className="ml-1.5 inline-flex h-4.5 min-w-[1.5rem] items-center justify-center rounded-sm border border-amber-foreground/40 bg-amber-foreground/10 px-0.5 font-mono text-[10px] tabular-nums"
                 data-testid="archive-and-delete-selected-count"
               >
                 {archivableSelectionCount}
               </span>
             </Button>
             <Button
-              className="flex-1 bg-destructive text-destructive-foreground hover:bg-destructive/90 sm:flex-none"
+              className="bg-destructive text-destructive-foreground text-xs hover:bg-destructive/90"
               data-testid="delete-selected"
               disabled={
                 !canDeleteSelection ||
@@ -520,12 +508,13 @@ export function CellList({ workspaceId }: CellListProps) {
                 archiveAndDeleteMutation.isPending
               }
               onClick={() => canDeleteSelection && setIsBulkDialogOpen(true)}
+              size="sm"
               type="button"
               variant="destructive"
             >
-              Delete Selected
+              Delete
               <span
-                className="ml-2 inline-flex h-5 min-w-[2rem] items-center justify-center rounded-sm border border-destructive-foreground/40 bg-destructive-foreground/10 px-1 font-mono text-xs tabular-nums"
+                className="ml-1.5 inline-flex h-4.5 min-w-[1.5rem] items-center justify-center rounded-sm border border-destructive-foreground/40 bg-destructive-foreground/10 px-0.5 font-mono text-[10px] tabular-nums"
                 data-testid="delete-selected-count"
               >
                 {deletableSelectionCount}
@@ -533,25 +522,12 @@ export function CellList({ workspaceId }: CellListProps) {
             </Button>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {cells && cells.length > 0 && (
-              <Button
-                className="flex-1 sm:flex-none"
-                data-testid="toggle-select-all-global"
-                onClick={handleSelectAllToggle}
-                type="button"
-                variant="outline"
-              >
-                Select All
-              </Button>
-            )}
-            <Link className="flex-1 sm:flex-none" to="/cells/new">
-              <Button className="w-full" type="button">
-                <Plus className="mr-2 h-4 w-4" />
-                New Cell
-              </Button>
-            </Link>
-          </div>
+          <Link className="flex-none sm:flex-none" to="/cells/new">
+            <Button className="w-auto" size="sm" type="button">
+              <Plus className="mr-1.5 h-4 w-4" />
+              New Cell
+            </Button>
+          </Link>
         </div>
       </div>
 
@@ -610,14 +586,16 @@ export function CellList({ workspaceId }: CellListProps) {
               {activeCells.map((cell) => (
                 <CellCard
                   cell={cell}
-                  createdLabel={formatDate(cell.createdAt)}
                   disableSelection={
                     bulkDeleteMutation.isPending ||
                     archiveAndDeleteMutation.isPending
                   }
                   isSelected={selectedCellIds.has(cell.id)}
                   key={cell.id}
-                  onCopyText={copyToClipboard}
+                  onOpenMetadata={(c) => {
+                    setSelectedCellForMetadata(c);
+                    setIsMetadataModalOpen(true);
+                  }}
                   onToggleSelect={() => toggleCellSelection(cell.id)}
                   serviceStatus={serviceStatusMap.get(cell.id)}
                   templateLabel={getTemplateLabel(cell.templateId)}
@@ -628,12 +606,6 @@ export function CellList({ workspaceId }: CellListProps) {
             <Card className="border-dashed">
               <CardContent className="flex flex-col items-center justify-center gap-3 py-10 text-center text-muted-foreground">
                 <p>No active cells in this workspace.</p>
-                <Link to="/cells/new">
-                  <Button type="button">
-                    <Plus className="mr-2 h-4 w-4" />
-                    Create Cell
-                  </Button>
-                </Link>
               </CardContent>
             </Card>
           )}
@@ -654,14 +626,16 @@ export function CellList({ workspaceId }: CellListProps) {
               {archivedCells.map((cell) => (
                 <CellCard
                   cell={cell}
-                  createdLabel={formatDate(cell.createdAt)}
                   disableSelection={
                     bulkDeleteMutation.isPending ||
                     archiveAndDeleteMutation.isPending
                   }
                   isSelected={selectedCellIds.has(cell.id)}
                   key={cell.id}
-                  onCopyText={copyToClipboard}
+                  onOpenMetadata={(c) => {
+                    setSelectedCellForMetadata(c);
+                    setIsMetadataModalOpen(true);
+                  }}
                   onToggleSelect={() => toggleCellSelection(cell.id)}
                   serviceStatus={serviceStatusMap.get(cell.id)}
                   templateLabel={getTemplateLabel(cell.templateId)}
@@ -947,23 +921,21 @@ function BulkArchiveAndDeleteDialog({
 type CellCardProps = {
   cell: Cell;
   templateLabel: string;
-  createdLabel: string;
   isSelected: boolean;
   disableSelection: boolean;
   onToggleSelect: () => void;
-  onCopyText: (value: string) => void;
   serviceStatus?: ServiceStatusState;
+  onOpenMetadata: (cell: Cell) => void;
 };
 
 function CellCard({
   cell,
-  createdLabel,
   disableSelection,
   isSelected,
-  onCopyText,
   onToggleSelect,
   templateLabel,
   serviceStatus,
+  onOpenMetadata,
 }: CellCardProps) {
   const sessionQueryConfig = agentQueries.sessionByCell(cell.id);
   const agentSessionQuery = useQuery({
@@ -971,8 +943,6 @@ function CellCard({
     enabled: cell.status === "ready" && Boolean(cell.id),
     staleTime: 30_000,
   });
-  const opencodeCommand = cell.opencodeCommand ?? null;
-  const connectionLabel = describeServerConnection(cell);
   const isArchived = cell.status === "archived";
   const selectionDisabled = disableSelection;
   return (
@@ -1000,6 +970,17 @@ function CellCard({
           >
             {cell.name}
           </CardTitle>
+          <Button
+            aria-label="Cell menu"
+            className="ml-auto h-6 w-6 shrink-0 p-0"
+            data-testid="cell-metadata"
+            onClick={() => onOpenMetadata(cell)}
+            size="icon-sm"
+            type="button"
+            variant="ghost"
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </Button>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge
@@ -1038,86 +1019,16 @@ function CellCard({
         )}
       </CardHeader>
 
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-3">
         {cell.description && (
           <p
-            className="line-clamp-3 break-words text-muted-foreground text-sm"
+            className="line-clamp-2 break-words text-muted-foreground text-sm"
             data-testid="cell-description"
           >
             {cell.description}
           </p>
         )}
 
-        {cell.workspacePath && (
-          <div className="space-y-3">
-            <div>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="font-medium text-muted-foreground text-xs">
-                  Workspace
-                </p>
-                <Button
-                  className="h-7 w-7 p-0"
-                  data-testid="copy-workspace-path"
-                  onClick={() => onCopyText(cell.workspacePath)}
-                  size="sm"
-                  title="Copy workspace path"
-                  type="button"
-                  variant="ghost"
-                >
-                  <Copy className="h-3 w-3" />
-                </Button>
-              </div>
-              <p className="mt-1 overflow-hidden break-all rounded bg-muted/50 p-2 font-mono text-muted-foreground text-xs">
-                {cell.workspacePath}
-              </p>
-            </div>
-
-            <div className="space-y-2 rounded border border-border/70 bg-background/70 p-2 text-xs">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="font-semibold text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
-                    OpenCode CLI
-                  </p>
-                  <p className="text-[10px] text-muted-foreground/80 uppercase tracking-[0.3em]">
-                    {opencodeCommand
-                      ? "Copy command to resume in TUI"
-                      : "Session must be running"}
-                  </p>
-                </div>
-                <Button
-                  className="shrink-0"
-                  data-testid="copy-opencode-command"
-                  disabled={!opencodeCommand}
-                  onClick={() => opencodeCommand && onCopyText(opencodeCommand)}
-                  size="sm"
-                  title={
-                    opencodeCommand
-                      ? "Copy OpenCode CLI command"
-                      : "OpenCode session not ready"
-                  }
-                  type="button"
-                  variant="outline"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                  Copy CLI
-                </Button>
-              </div>
-              <pre className="min-h-[2.5rem] overflow-x-auto whitespace-pre-wrap break-all rounded border border-border/40 bg-card/70 p-2 font-mono text-[11px] text-muted-foreground">
-                {opencodeCommand ?? "OpenCode session not available"}
-              </pre>
-              <div className="flex flex-wrap gap-3 text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-                <span>Session · {cell.opencodeSessionId ?? "pending"}</span>
-                {connectionLabel ? (
-                  <span>Server · {connectionLabel}</span>
-                ) : null}
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="text-muted-foreground text-xs">
-          <p>Created: {createdLabel}</p>
-        </div>
         <div className="flex flex-wrap justify-end gap-2">
           {isArchived ? (
             <div className="flex flex-1 flex-col gap-2">
@@ -1130,8 +1041,8 @@ function CellCard({
                 </Button>
               </div>
               <p className="text-[11px] text-muted-foreground">
-                Select this cell and use the bulk actions above to archive again
-                or delete it.
+                Select this cell and use bulk actions above to archive again or
+                delete it.
               </p>
             </div>
           ) : (
@@ -1151,6 +1062,178 @@ function CellCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function CellMetadataDialog({
+  isOpen,
+  onOpenChange,
+  selectedCell,
+}: {
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
+  selectedCell: Cell | null;
+}) {
+  if (!selectedCell) {
+    return null;
+  }
+
+  const handleCopy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Copied to clipboard");
+      return;
+    } catch (_error) {
+      toast.error("Failed to copy to clipboard");
+      return;
+    }
+  };
+
+  const connectionLabel = () => {
+    const { hostname, port } = selectedCell.opencodeServerUrl
+      ? (() => {
+          try {
+            const parsed = new URL(selectedCell.opencodeServerUrl);
+            return {
+              hostname: parsed.hostname,
+              port: parsed.port || selectedCell.opencodeServerPort,
+            };
+          } catch {
+            return { hostname: null, port: selectedCell.opencodeServerPort };
+          }
+        })()
+      : { hostname: null, port: selectedCell.opencodeServerPort };
+
+    if (!(hostname || port)) {
+      return null;
+    }
+    if (hostname && port) {
+      return `${hostname}:${port}`;
+    }
+    return hostname ?? port ?? null;
+  };
+
+  return (
+    <Dialog onOpenChange={onOpenChange} open={isOpen}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{selectedCell.name}</DialogTitle>
+          <DialogDescription>Cell details and metadata</DialogDescription>
+        </DialogHeader>
+        <div className="max-h-[70vh] space-y-4 overflow-y-auto py-2">
+          <div className="space-y-2">
+            <h3 className="font-semibold text-foreground text-sm uppercase tracking-[0.2em]">
+              Cell Info
+            </h3>
+            <div className="grid grid-cols-2 gap-4 text-muted-foreground text-xs">
+              <div>
+                <p className="mb-1 text-[10px] uppercase tracking-[0.3em]">
+                  ID
+                </p>
+                <p className="break-all font-mono text-foreground">
+                  {selectedCell.id}
+                </p>
+              </div>
+              <div>
+                <p className="mb-1 text-[10px] uppercase tracking-[0.3em]">
+                  Status
+                </p>
+                <p>{selectedCell.status}</p>
+              </div>
+              <div>
+                <p className="mb-1 text-[10px] uppercase tracking-[0.3em]">
+                  Template
+                </p>
+                <p>{selectedCell.templateId}</p>
+              </div>
+            </div>
+          </div>
+          {selectedCell.workspacePath && (
+            <div className="space-y-2">
+              <h3 className="font-semibold text-foreground text-sm uppercase tracking-[0.2em]">
+                Workspace
+              </h3>
+              <div className="rounded border border-border bg-muted/10 p-3 text-xs">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="font-medium text-foreground">Path</p>
+                  <Button
+                    aria-label="Copy workspace path"
+                    className="h-6 w-6 p-0"
+                    onClick={() => handleCopy(selectedCell.workspacePath)}
+                    size="icon-sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+                <pre className="overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-muted-foreground">
+                  {selectedCell.workspacePath}
+                </pre>
+              </div>
+            </div>
+          )}
+          {selectedCell.opencodeCommand && (
+            <div className="space-y-2">
+              <h3 className="font-semibold text-foreground text-sm uppercase tracking-[0.2em]">
+                OpenCode CLI
+              </h3>
+              <div className="rounded border border-border bg-muted/10 p-3 text-xs">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="font-medium text-foreground">Command</p>
+                  <Button
+                    aria-label="Copy OpenCode CLI command"
+                    className="h-6 w-6 p-0"
+                    disabled={!selectedCell.opencodeCommand}
+                    onClick={() =>
+                      selectedCell.opencodeCommand &&
+                      handleCopy(selectedCell.opencodeCommand)
+                    }
+                    size="icon-sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+                <pre className="overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-muted-foreground">
+                  {selectedCell.opencodeCommand}
+                </pre>
+                <div className="flex flex-wrap gap-3 text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                  <span>
+                    Session · {selectedCell.opencodeSessionId ?? "pending"}
+                  </span>
+                  {connectionLabel() && (
+                    <span>Server · {connectionLabel()}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          {selectedCell.branchName || selectedCell.baseCommit ? (
+            <div className="space-y-2">
+              <h3 className="font-semibold text-foreground text-sm uppercase tracking-[0.2em]">
+                Git Info
+              </h3>
+              <div className="rounded border border-border bg-muted/10 p-3 text-xs">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="font-medium text-foreground">Branch</p>
+                  <p className="break-all font-mono text-foreground">
+                    {selectedCell.branchName ?? "—"}
+                  </p>
+                </div>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="font-medium text-foreground">Base Commit</p>
+                  <p className="break-all font-mono text-foreground">
+                    {selectedCell.baseCommit ?? "—"}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1215,43 +1298,6 @@ function CellStatusNotice({
       </p>
     </div>
   );
-}
-
-function describeServerConnection(cell: Cell): string | null {
-  const { hostname, port } = deriveServerOptions(cell);
-  if (!(hostname || port)) {
-    return null;
-  }
-  if (hostname && port) {
-    return `${hostname}:${port}`;
-  }
-  return hostname ?? port ?? null;
-}
-
-function deriveServerOptions(
-  cell: Pick<Cell, "opencodeServerUrl" | "opencodeServerPort">
-): { hostname?: string; port?: string } {
-  const options: { hostname?: string; port?: string } = {};
-
-  if (cell.opencodeServerUrl) {
-    try {
-      const parsed = new URL(cell.opencodeServerUrl);
-      if (parsed.hostname) {
-        options.hostname = parsed.hostname;
-      }
-      if (parsed.port) {
-        options.port = parsed.port;
-      }
-    } catch {
-      // ignore invalid url fragments; fallback to explicit port if provided
-    }
-  }
-
-  if (cell.opencodeServerPort) {
-    options.port = String(cell.opencodeServerPort);
-  }
-
-  return options;
 }
 
 function AgentStatusIndicator({

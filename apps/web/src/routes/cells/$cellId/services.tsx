@@ -328,7 +328,7 @@ function ServiceCard({
       )}
       <div className="flex flex-1 flex-col gap-2">
         <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
-          Recent logs
+          Logs
         </p>
         <div
           className="min-h-0 flex-1 overflow-hidden rounded-sm border border-border bg-card"
