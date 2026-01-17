@@ -489,7 +489,7 @@ export function CellList({ workspaceId }: CellListProps) {
               type="button"
               variant="default"
             >
-              Delete
+              Archive & Delete
               <span
                 className="ml-1.5 inline-flex h-4.5 min-w-[1.5rem] items-center justify-center rounded-sm border border-amber-foreground/40 bg-amber-foreground/10 px-0.5 font-mono text-[10px] tabular-nums"
                 data-testid="archive-and-delete-selected-count"
