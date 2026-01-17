@@ -131,13 +131,10 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
       <SidebarFooter className="border-border border-t bg-sidebar text-[0.55rem] text-muted-foreground uppercase tracking-[0.28em]">
         <div
           className={cn(
-            "flex items-center justify-between gap-3 px-2 py-2",
+            "flex items-center justify-end gap-3 px-2 py-2",
             sidebarState === "collapsed" && "justify-center px-0"
           )}
         >
-          {sidebarState !== "collapsed" && (
-            <p className="px-0 text-left">Press ⌘B to toggle</p>
-          )}
           <div className="shrink-0">
             <ModeToggle />
           </div>

@@ -216,6 +216,8 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
   const { selectedService, selectedServiceId, setSelectedServiceId } =
     useServiceSelection(services);
 
+  const portServices = services.filter((service) => service.port != null);
+
   const viewerUrl = selectedService?.url ?? null;
 
   const browserReachability = useBrowserReachability({
@@ -239,18 +241,6 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
   return (
     <div className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
       <div className="flex h-full w-full flex-col gap-4 p-4">
-        <ServiceViewerHeader
-          onSelectService={setSelectedServiceId}
-          selectedServiceId={selectedServiceId}
-          services={services}
-        />
-
-        <ServiceViewerMeta
-          resolvedReachability={resolvedReachability}
-          selectedService={selectedService}
-          viewerUrl={viewerUrl}
-        />
-
         <WebPreview
           error={error ?? undefined}
           isLoading={isLoading}
@@ -302,6 +292,35 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
                 </WebPreviewNavigationButton>
               </div>
 
+              <div className="flex flex-col gap-1">
+                <span className="font-semibold text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
+                  Service
+                </span>
+                <Select
+                  disabled={portServices.length === 0}
+                  onValueChange={setSelectedServiceId}
+                  value={selectedServiceId ?? ""}
+                >
+                  <SelectTrigger className="w-[180px] border-border bg-background text-foreground">
+                    <SelectValue placeholder="Select service" />
+                  </SelectTrigger>
+                  <SelectContent className="border-border bg-card text-foreground">
+                    {portServices.map((service) => (
+                      <SelectItem key={service.id} value={service.id}>
+                        <span className="flex flex-col gap-0.5">
+                          <span className="font-semibold text-[12px] text-foreground uppercase tracking-[0.2em]">
+                            {service.name}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">
+                            Port {service.port}
+                          </span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <ReachabilityWarning
                 error={error}
                 resolvedReachability={resolvedReachability}
@@ -319,85 +338,6 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
           />
         </WebPreview>
       </div>
-    </div>
-  );
-}
-
-function ServiceViewerHeader({
-  services,
-  selectedServiceId,
-  onSelectService,
-}: {
-  services: CellServiceSummary[];
-  selectedServiceId: string | null;
-  onSelectService: (serviceId: string) => void;
-}) {
-  const portServices = services.filter((service) => service.port != null);
-
-  return (
-    <header className="flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <p className="text-muted-foreground text-xs uppercase tracking-[0.3em]">
-          Service Viewer
-        </p>
-        <p className="text-[11px] text-muted-foreground uppercase tracking-[0.25em]">
-          Render running service frontends inline with full height.
-        </p>
-      </div>
-
-      <Select
-        disabled={portServices.length === 0}
-        onValueChange={onSelectService}
-        value={selectedServiceId ?? ""}
-      >
-        <SelectTrigger className="w-[260px] border-border bg-background text-foreground">
-          <SelectValue placeholder="Select service" />
-        </SelectTrigger>
-        <SelectContent className="border-border bg-card text-foreground">
-          {portServices.map((service) => (
-            <SelectItem key={service.id} value={service.id}>
-              <span className="flex flex-col gap-0.5">
-                <span className="font-semibold text-[12px] text-foreground uppercase tracking-[0.2em]">
-                  {service.name}
-                </span>
-                <span className="text-[10px] text-muted-foreground">
-                  Port {service.port}
-                </span>
-              </span>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </header>
-  );
-}
-
-function ServiceViewerMeta({
-  selectedService,
-  viewerUrl,
-  resolvedReachability,
-}: {
-  selectedService: CellServiceSummary | undefined;
-  viewerUrl: string | null;
-  resolvedReachability: boolean | null;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground uppercase tracking-[0.25em]">
-      <span>
-        Target ·{selectedService?.port ? viewerUrl : " No port available"}
-      </span>
-
-      {selectedService ? (
-        <ServiceStatusBadge status={selectedService.status} />
-      ) : null}
-
-      {selectedService?.port ? (
-        <span>Port · {selectedService.port}</span>
-      ) : null}
-
-      {selectedService ? (
-        <span>Reachability · {describeReachability(resolvedReachability)}</span>
-      ) : null}
     </div>
   );
 }
@@ -420,34 +360,4 @@ function ReachabilityWarning({
         : error}
     </span>
   );
-}
-
-function ServiceStatusBadge({ status }: { status: string }) {
-  const normalized = status.toLowerCase();
-  const toneMap: Record<string, string> = {
-    running: "bg-primary/15 text-primary",
-    starting: "bg-secondary/20 text-secondary-foreground",
-    pending: "bg-muted text-muted-foreground",
-    error: "bg-destructive/10 text-destructive",
-    stopped: "bg-border/20 text-muted-foreground",
-  };
-  const tone = toneMap[normalized] ?? "bg-muted text-muted-foreground";
-
-  return (
-    <span
-      className={`rounded-sm px-3 py-1 text-xs uppercase tracking-[0.4em] ${tone}`}
-    >
-      {status}
-    </span>
-  );
-}
-
-function describeReachability(state: boolean | null | undefined) {
-  if (state === true) {
-    return "Reachable";
-  }
-  if (state === false) {
-    return "Not reachable";
-  }
-  return "Unknown";
 }

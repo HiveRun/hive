@@ -112,6 +112,7 @@ export function WebPreviewNavigationButton({
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
+          aria-label={tooltip}
           disabled={disabled}
           onClick={onClick}
           size="icon-sm"

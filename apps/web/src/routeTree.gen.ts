@@ -9,9 +9,6 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as TestErrorRouteImport } from './routes/test-error'
-import { Route as ExampleDashboardRouteImport } from './routes/example-dashboard'
-import { Route as DebugNotificationsRouteImport } from './routes/debug-notifications'
 import { Route as CellsRouteImport } from './routes/cells'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as CellsNewRouteImport } from './routes/cells/new'
@@ -23,21 +20,6 @@ import { Route as CellsCellIdServicesRouteImport } from './routes/cells/$cellId/
 import { Route as CellsCellIdDiffRouteImport } from './routes/cells/$cellId/diff'
 import { Route as CellsCellIdChatRouteImport } from './routes/cells/$cellId/chat'
 
-const TestErrorRoute = TestErrorRouteImport.update({
-  id: '/test-error',
-  path: '/test-error',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ExampleDashboardRoute = ExampleDashboardRouteImport.update({
-  id: '/example-dashboard',
-  path: '/example-dashboard',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DebugNotificationsRoute = DebugNotificationsRouteImport.update({
-  id: '/debug-notifications',
-  path: '/debug-notifications',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const CellsRoute = CellsRouteImport.update({
   id: '/cells',
   path: '/cells',
@@ -92,9 +74,6 @@ const CellsCellIdChatRoute = CellsCellIdChatRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/cells': typeof CellsRouteWithChildren
-  '/debug-notifications': typeof DebugNotificationsRoute
-  '/example-dashboard': typeof ExampleDashboardRoute
-  '/test-error': typeof TestErrorRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
   '/cells/list': typeof CellsListRoute
   '/cells/new': typeof CellsNewRoute
@@ -107,9 +86,6 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/cells': typeof CellsRouteWithChildren
-  '/debug-notifications': typeof DebugNotificationsRoute
-  '/example-dashboard': typeof ExampleDashboardRoute
-  '/test-error': typeof TestErrorRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
   '/cells/list': typeof CellsListRoute
   '/cells/new': typeof CellsNewRoute
@@ -123,9 +99,6 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/cells': typeof CellsRouteWithChildren
-  '/debug-notifications': typeof DebugNotificationsRoute
-  '/example-dashboard': typeof ExampleDashboardRoute
-  '/test-error': typeof TestErrorRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
   '/cells/list': typeof CellsListRoute
   '/cells/new': typeof CellsNewRoute
@@ -140,9 +113,6 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/cells'
-    | '/debug-notifications'
-    | '/example-dashboard'
-    | '/test-error'
     | '/cells/$cellId'
     | '/cells/list'
     | '/cells/new'
@@ -155,9 +125,6 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/cells'
-    | '/debug-notifications'
-    | '/example-dashboard'
-    | '/test-error'
     | '/cells/$cellId'
     | '/cells/list'
     | '/cells/new'
@@ -170,9 +137,6 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/cells'
-    | '/debug-notifications'
-    | '/example-dashboard'
-    | '/test-error'
     | '/cells/$cellId'
     | '/cells/list'
     | '/cells/new'
@@ -186,34 +150,10 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CellsRoute: typeof CellsRouteWithChildren
-  DebugNotificationsRoute: typeof DebugNotificationsRoute
-  ExampleDashboardRoute: typeof ExampleDashboardRoute
-  TestErrorRoute: typeof TestErrorRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/test-error': {
-      id: '/test-error'
-      path: '/test-error'
-      fullPath: '/test-error'
-      preLoaderRoute: typeof TestErrorRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/example-dashboard': {
-      id: '/example-dashboard'
-      path: '/example-dashboard'
-      fullPath: '/example-dashboard'
-      preLoaderRoute: typeof ExampleDashboardRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/debug-notifications': {
-      id: '/debug-notifications'
-      path: '/debug-notifications'
-      fullPath: '/debug-notifications'
-      preLoaderRoute: typeof DebugNotificationsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/cells': {
       id: '/cells'
       path: '/cells'
@@ -324,9 +264,6 @@ const CellsRouteWithChildren = CellsRoute._addFileChildren(CellsRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CellsRoute: CellsRouteWithChildren,
-  DebugNotificationsRoute: DebugNotificationsRoute,
-  ExampleDashboardRoute: ExampleDashboardRoute,
-  TestErrorRoute: TestErrorRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -15,17 +15,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 import {
-  type CellDiffResponse,
   cellDiffQueries,
   cellQueries,
   type DiffFileDetail,
@@ -40,7 +32,6 @@ const diffSearchSchema = z.object({
 
 type DiffSearch = z.infer<typeof diffSearchSchema>;
 
-const COMMIT_PREVIEW_LENGTH = 8;
 const DIFF_MODE_META: Record<
   DiffMode,
   { button: string; description: string }
@@ -50,7 +41,7 @@ const DIFF_MODE_META: Record<
     description: "Uncommitted changes (working tree)",
   },
   branch: {
-    button: "All",
+    button: "From origin",
     description: "All changes since cell base",
   },
 };
@@ -58,24 +49,9 @@ const DIFF_MODE_META: Record<
 const DIRECTORY_INDENT_PX = 12;
 const FILE_INDENT_OFFSET_PX = 16;
 
-const DIFF_SORT_OPTIONS = {
-  "impact-desc": {
-    label: "Impact ↓",
-    description: "Most changed first",
-  },
-  "impact-asc": {
-    label: "Impact ↑",
-    description: "Least changed first",
-  },
-  path: {
-    label: "Path",
-    description: "A → Z",
-  },
-} as const;
-
 const DEFAULT_SORT_MODE = "impact-desc" as const;
 
-type DiffSortMode = keyof typeof DIFF_SORT_OPTIONS;
+type DiffSortMode = "impact-desc" | "impact-asc" | "path";
 
 type DiffLoaderData = {
   initialFiles: string[];
@@ -117,7 +93,7 @@ function CellDiffRoute() {
   const navigate = Route.useNavigate();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState("");
-  const [sortMode, setSortMode] = useState<DiffSortMode>(DEFAULT_SORT_MODE);
+  const sortMode = DEFAULT_SORT_MODE;
   const detailCacheRef = useRef<Map<string, DiffFileDetail>>(new Map());
   const [, setDetailCacheVersion] = useState(0);
 
@@ -319,7 +295,6 @@ function CellDiffRoute() {
         mode={mode}
         onModeChange={handleModeChange}
         onRefresh={handleRefresh}
-        summary={summary}
         totals={totals}
       />
       <div className="flex min-h-0 flex-1 gap-4">
@@ -328,10 +303,8 @@ function CellDiffRoute() {
           filter={filter}
           onFilterChange={setFilter}
           onSelectFile={handleFileSelect}
-          onSortModeChange={setSortMode}
           onToggleDir={toggleDirectory}
           selectedFile={selectedFile}
-          sortMode={sortMode}
           totalCount={sortedFiles.length}
           tree={fileTree}
         />
@@ -348,7 +321,6 @@ function CellDiffRoute() {
 
 type DiffHeaderProps = {
   mode: DiffMode;
-  summary: CellDiffResponse;
   totals: { additions: number; deletions: number };
   branchAvailable: boolean;
   onModeChange: (mode: DiffMode) => void;
@@ -357,35 +329,19 @@ type DiffHeaderProps = {
 
 function DiffHeader({
   mode,
-  summary,
   totals,
   branchAvailable,
   onModeChange,
   onRefresh,
 }: DiffHeaderProps) {
-  const renderCommitStats = (label: string, value?: string | null) => {
-    if (!value) {
-      return null;
-    }
-    return (
-      <span>
-        {label} · {value.slice(0, COMMIT_PREVIEW_LENGTH)}
-      </span>
-    );
-  };
-
   return (
     <header className="flex flex-wrap items-center justify-between gap-3 border-border border-b pb-3">
-      <div className="space-y-1">
-        <p className="text-muted-foreground text-xs uppercase tracking-[0.3em]">
-          Cell Diff
-        </p>
-        <div className="flex flex-wrap gap-4 text-[11px] text-muted-foreground uppercase tracking-[0.2em]">
-          <span>Mode · {DIFF_MODE_META[mode].description}</span>
-          {renderCommitStats("Base", summary.baseCommit)}
-          {renderCommitStats("Head", summary.headCommit)}
-          <span>
-            Δ · +{totals.additions} / -{totals.deletions}
+      <div className="flex items-center gap-3">
+        <div className="rounded-sm border-2 border-border bg-background px-3 py-1.5">
+          <span className="font-semibold text-sm tabular-nums">
+            <span className="text-emerald-600">+{totals.additions}</span>
+            <span className="mx-1 text-muted-foreground">/</span>
+            <span className="text-red-500">-{totals.deletions}</span>
           </span>
         </div>
       </div>
@@ -419,10 +375,8 @@ type FileSidebarProps = {
   filter: string;
   selectedFile: string | null;
   expandedDirs: Set<string>;
-  sortMode: DiffSortMode;
   onFilterChange: (value: string) => void;
   onSelectFile: (path: string) => void;
-  onSortModeChange: (mode: DiffSortMode) => void;
   onToggleDir: (path: string) => void;
 };
 
@@ -432,10 +386,8 @@ function FileSidebar({
   filter,
   selectedFile,
   expandedDirs,
-  sortMode,
   onFilterChange,
   onSelectFile,
-  onSortModeChange,
   onToggleDir,
 }: FileSidebarProps) {
   return (
@@ -450,28 +402,6 @@ function FileSidebar({
         <div className="text-[11px] text-muted-foreground uppercase tracking-[0.2em]">
           Files ({totalCount})
         </div>
-        <Select
-          onValueChange={(value) => onSortModeChange(value as DiffSortMode)}
-          value={sortMode}
-        >
-          <SelectTrigger className="h-8 border-border bg-background text-foreground">
-            <SelectValue placeholder="Sort" />
-          </SelectTrigger>
-          <SelectContent className="border-border bg-card text-foreground">
-            {Object.entries(DIFF_SORT_OPTIONS).map(([value, option]) => (
-              <SelectItem key={value} value={value}>
-                <span className="flex flex-col">
-                  <span className="text-xs uppercase tracking-[0.2em]">
-                    {option.label}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">
-                    {option.description}
-                  </span>
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       </div>
       <div className="flex-1 overflow-auto pr-1">
         {tree.length === 0 ? (

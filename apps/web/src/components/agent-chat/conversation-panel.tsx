@@ -13,10 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type {
-  CompactionStats,
-  PermissionRequest,
-} from "@/hooks/use-agent-event-stream";
+import type { PermissionRequest } from "@/hooks/use-agent-event-stream";
 import { storage } from "@/lib/storage";
 import type { AgentMessage } from "@/queries/agents";
 
@@ -24,21 +21,6 @@ import { MessageBubble, type TracePreferences } from "./message-bubble";
 
 type ConversationMessage = AgentMessage & {
   interruptionReason?: string;
-};
-
-type ConversationPanelProps = {
-  totalMessages: number;
-  filteredMessages: ConversationMessage[];
-  searchQuery: string;
-  onSearchQueryChange: (value: string) => void;
-  compaction: CompactionStats;
-  compactionWarningThreshold: number;
-
-  workspacePath: string;
-  provider: string;
-  permissions: PermissionRequest[];
-  sessionId: string;
-  isLoading: boolean;
 };
 
 const SCROLL_STORAGE_PREFIX = "agent-chat-scroll";
@@ -51,16 +33,21 @@ const DEFAULT_TRACE_PREFERENCES: TracePreferences = {
   showDiffs: true,
 };
 
+type ConversationPanelProps = {
+  totalMessages: number;
+  filteredMessages: ConversationMessage[];
+  searchQuery: string;
+  onSearchQueryChange: (value: string) => void;
+  permissions: PermissionRequest[];
+  sessionId: string;
+  isLoading: boolean;
+};
+
 export function ConversationPanel({
   totalMessages,
   filteredMessages,
   searchQuery,
   onSearchQueryChange,
-  compaction,
-  compactionWarningThreshold,
-
-  workspacePath,
-  provider,
   permissions,
   sessionId,
   isLoading,
@@ -353,21 +340,6 @@ export function ConversationPanel({
         <span>
           {totalMessages} message{totalMessages === 1 ? "" : "s"}
         </span>
-        <span className="text-primary">•</span>
-        <span>Workspace · {workspacePath}</span>
-        <span className="text-primary">•</span>
-        <span>Provider · {provider}</span>
-        {compaction.count > 0 ? (
-          <span
-            className={`flex items-center gap-1 rounded border border-border/60 bg-card/70 px-2 py-[2px] text-[10px] text-muted-foreground uppercase tracking-[0.2em] ${
-              compaction.count >= compactionWarningThreshold && sessionId
-                ? "border-amber-500 bg-amber-500/15 text-amber-100"
-                : ""
-            }`}
-          >
-            Compactions · {compaction.count}
-          </span>
-        ) : null}
       </div>
       <div className="mt-2 flex flex-col gap-1.5 md:flex-row md:items-center md:justify-between">
         <div className="flex w-full flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2 md:flex-1">
@@ -383,9 +355,6 @@ export function ConversationPanel({
             preferences={tracePreferences}
           />
         </div>
-        <span className="whitespace-nowrap text-[10px] text-muted-foreground uppercase tracking-[0.25em]">
-          Conversation Log
-        </span>
       </div>
       <div className="relative mt-2 flex min-h-0 flex-1">
         <ScrollArea

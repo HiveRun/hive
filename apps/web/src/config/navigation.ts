@@ -1,13 +1,8 @@
 import type { LucideIcon } from "lucide-react";
-import { Activity, AlertTriangle, Bell, Home, Layers } from "lucide-react";
+import { Layers } from "lucide-react";
 
 export type MainNavItem = {
-  to:
-    | "/"
-    | "/example-dashboard"
-    | "/test-error"
-    | "/cells/list"
-    | "/debug-notifications";
+  to: "/cells/list";
   label: string;
   description?: string;
   icon: LucideIcon;
@@ -16,34 +11,10 @@ export type MainNavItem = {
 
 export const MAIN_NAV_ITEMS: MainNavItem[] = [
   {
-    to: "/",
-    label: "Home",
-    icon: Home,
-    exact: true,
-    description: "System status and API health",
-  },
-  {
     to: "/cells/list",
     label: "Cells",
     icon: Layers,
+    exact: true,
     description: "Manage your cells",
-  },
-  {
-    to: "/example-dashboard",
-    label: "Example Dashboard",
-    icon: Activity,
-    description: "Interactive telemetry and analytics",
-  },
-  {
-    to: "/test-error",
-    label: "Example Error",
-    icon: AlertTriangle,
-    description: "Intentional failure route for error flows",
-  },
-  {
-    to: "/debug-notifications",
-    label: "Debug Notifications",
-    icon: Bell,
-    description: "Open the Tauri notification trigger",
   },
 ];

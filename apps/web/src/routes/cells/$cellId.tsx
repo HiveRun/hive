@@ -31,22 +31,15 @@ export const Route = createFileRoute("/cells/$cellId")({
 
 function CellLayout() {
   const { cellId } = Route.useParams();
-  const { workspaceId } = Route.useLoaderData();
   const cellQuery = useQuery(cellQueries.detail(cellId));
-  const templatesQuery = useQuery(templateQueries.all(workspaceId));
   const routerState = useRouterState();
   const activeRouteId = routerState.matches.at(-1)?.routeId;
 
   const cell = cellQuery.data;
-  const templates = templatesQuery.data?.templates ?? [];
-
-  const templateLabel = templates.find(
-    (template) => template.id === cell?.templateId
-  )?.label;
   const navItems = [
     {
       routeId: "/cells/$cellId/setup",
-      label: "Setup",
+      label: "Info",
       to: "/cells/$cellId/setup",
     },
     {
@@ -89,23 +82,29 @@ function CellLayout() {
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 lg:p-6">
         <section className="w-full shrink-0 border-2 border-border bg-card px-4 py-3 text-muted-foreground text-sm">
           <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <h1 className="font-semibold text-2xl text-foreground tracking-wide">
                 {cell.name}
               </h1>
-              <span className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
-                {cell.id}
-              </span>
+              <div className="flex flex-wrap gap-2">
+                {navItems.map((item) => (
+                  <Link key={item.routeId} params={{ cellId }} to={item.to}>
+                    <Button
+                      variant={
+                        activeRouteId === item.routeId ? "secondary" : "outline"
+                      }
+                    >
+                      {item.label}
+                    </Button>
+                  </Link>
+                ))}
+              </div>
             </div>
             {cell.description ? (
               <p className="max-w-3xl text-muted-foreground text-sm">
                 {cell.description}
               </p>
             ) : null}
-            <div className="flex flex-wrap gap-4 text-[11px] text-muted-foreground uppercase tracking-[0.2em]">
-              <span>Template · {templateLabel ?? cell.templateId}</span>
-              <span>Workspace · {cell.workspacePath ?? "Unavailable"}</span>
-            </div>
           </div>
         </section>
 
@@ -123,25 +122,9 @@ function CellLayout() {
         ) : null}
 
         {isArchived ? null : (
-          <>
-            <div className="flex flex-wrap justify-end gap-2">
-              {navItems.map((item) => (
-                <Link key={item.routeId} params={{ cellId }} to={item.to}>
-                  <Button
-                    variant={
-                      activeRouteId === item.routeId ? "secondary" : "outline"
-                    }
-                  >
-                    {item.label}
-                  </Button>
-                </Link>
-              ))}
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-hidden">
-              <Outlet />
-            </div>
-          </>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <Outlet />
+          </div>
         )}
       </div>
     </div>
