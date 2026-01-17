@@ -2,8 +2,16 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Copy } from "lucide-react";
 import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useServiceStream } from "@/hooks/use-service-stream";
 import { cn } from "@/lib/utils";
 import {
@@ -187,6 +195,23 @@ function ServicesPanel({
   pendingStartId?: string;
   pendingStopId?: string;
 }) {
+  const [selectedServiceId, setSelectedServiceId] = useState<string>("");
+
+  useEffect(() => {
+    const first = services[0]?.id;
+    if (!first) {
+      return;
+    }
+
+    const selectionExists = services.some(
+      (service) => service.id === selectedServiceId
+    );
+    if (!(selectedServiceId && selectionExists)) {
+      setSelectedServiceId(first);
+    }
+  }, [selectedServiceId, services]);
+
+  const selectedService = services.find((s) => s.id === selectedServiceId);
   let body: ReactNode;
 
   const hasServices = services.length > 0;
@@ -220,52 +245,63 @@ function ServicesPanel({
     );
   } else {
     body = (
-      <div className="grid h-full min-h-0 auto-rows-[minmax(0,1fr)] gap-4 lg:grid-cols-2">
-        {services.map((service) => (
+      <div className="flex h-full min-h-0 flex-col">
+        <Select onValueChange={setSelectedServiceId} value={selectedServiceId}>
+          <SelectTrigger className="mb-3 w-fit">
+            <SelectValue placeholder="Select a service" />
+          </SelectTrigger>
+          <SelectContent>
+            {services.map((service) => (
+              <SelectItem key={service.id} value={service.id}>
+                <div className="flex flex-col">
+                  <span>{service.name}</span>
+                  {service.port && (
+                    <span className="text-muted-foreground text-xs">
+                      Port: {service.port}
+                    </span>
+                  )}
+                </div>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {selectedService && (
           <ServiceCard
             isBulkActionPending={isBulkActionPending}
-            isStarting={pendingStartId === service.id}
-            isStopping={pendingStopId === service.id}
-            key={service.id}
+            isStarting={pendingStartId === selectedService.id}
+            isStopping={pendingStopId === selectedService.id}
             onStart={onStartService}
             onStop={onStopService}
-            service={service}
+            service={selectedService}
           />
-        ))}
+        )}
       </div>
     );
   }
 
   return (
     <section className="flex h-full w-full flex-col px-4 py-3 text-muted-foreground text-sm">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 className="font-semibold text-foreground text-lg uppercase tracking-[0.2em]">
-            Services
-          </h2>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            disabled={disableStartAll || isBulkActionPending}
-            onClick={onStartAll}
-            size="sm"
-            type="button"
-            variant="secondary"
-          >
-            {isStartingAll ? "Starting..." : "Start all"}
-          </Button>
-          <Button
-            disabled={disableStopAll || isBulkActionPending}
-            onClick={onStopAll}
-            size="sm"
-            type="button"
-            variant="destructive"
-          >
-            {isStoppingAll ? "Stopping..." : "Stop all"}
-          </Button>
-        </div>
+      <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+        <Button
+          disabled={disableStartAll || isBulkActionPending}
+          onClick={onStartAll}
+          size="sm"
+          type="button"
+          variant="secondary"
+        >
+          {isStartingAll ? "Starting..." : "Start all"}
+        </Button>
+        <Button
+          disabled={disableStopAll || isBulkActionPending}
+          onClick={onStopAll}
+          size="sm"
+          type="button"
+          variant="destructive"
+        >
+          {isStoppingAll ? "Stopping..." : "Stop all"}
+        </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto pb-2">{body}</div>
+      <div className="min-h-0 flex-1 pb-2">{body}</div>
     </section>
   );
 }
@@ -300,7 +336,7 @@ function ServiceCard({
   return (
     <div
       className={cn(
-        "flex h-full min-h-0 flex-col gap-3 border border-border bg-card p-4",
+        "flex min-h-0 flex-1 flex-col gap-3 overflow-hidden border border-border bg-card p-4",
         isErrorState
           ? "border-destructive shadow-[0_0_0_2px_color-mix(in_oklch,var(--color-destructive)_35%,transparent)]"
           : "border-border/60"
@@ -447,14 +483,11 @@ function ServiceCard({
             : " "}
         </div>
       )}
-      <div className="flex flex-1 flex-col gap-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-2">
         <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
           Logs
         </p>
-        <div
-          className="min-h-0 flex-1 overflow-hidden rounded-sm border border-border bg-card"
-          style={{ maxHeight: "100cqw" }}
-        >
+        <div className="min-h-0 flex-1 overflow-hidden rounded-sm border border-border bg-card">
           <pre className="h-full min-h-0 overflow-auto whitespace-pre-wrap p-3 text-[11px] text-foreground leading-relaxed">
             {service.recentLogs && service.recentLogs.length > 0
               ? service.recentLogs
