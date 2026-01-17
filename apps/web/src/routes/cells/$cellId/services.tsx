@@ -323,6 +323,8 @@ function ServiceCard({
 }) {
   const normalizedStatus = service.status.toLowerCase();
   const isErrorState = normalizedStatus === "error";
+  const [clearedSnapshot, setClearedSnapshot] = useState<string | null>(null);
+  const logsSnapshot = service.recentLogs ?? "";
 
   const handleCopy = async (text: string) => {
     try {
@@ -332,6 +334,10 @@ function ServiceCard({
       toast.error("Failed to copy to clipboard");
     }
   };
+
+  const displayedLogs = logsSnapshot === clearedSnapshot ? "" : logsSnapshot;
+  const hasLogs = logsSnapshot.length > 0;
+  const isClearDisabled = !hasLogs || logsSnapshot === clearedSnapshot;
 
   return (
     <div
@@ -484,13 +490,24 @@ function ServiceCard({
         </div>
       )}
       <div className="flex min-h-0 flex-1 flex-col gap-2">
-        <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
-          Logs
-        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+            Logs
+          </p>
+          <Button
+            disabled={isClearDisabled}
+            onClick={() => setClearedSnapshot(logsSnapshot)}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            Clear
+          </Button>
+        </div>
         <div className="min-h-0 flex-1 overflow-hidden rounded-sm border border-border bg-card">
           <pre className="h-full min-h-0 overflow-auto whitespace-pre-wrap p-3 text-[11px] text-foreground leading-relaxed">
-            {service.recentLogs && service.recentLogs.length > 0
-              ? service.recentLogs
+            {displayedLogs && displayedLogs.length > 0
+              ? displayedLogs
               : "No log output yet."}
           </pre>
         </div>
