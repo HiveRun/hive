@@ -70,28 +70,32 @@ function CellSetupPanel() {
 
   return (
     <div className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
-      <div className="flex h-full w-full flex-col gap-4 px-4 py-3 text-muted-foreground text-sm">
-        <header className="border-border/60 border-b pb-3">
-          <h2 className="font-semibold text-foreground text-lg uppercase tracking-[0.3em]">
-            Info
-          </h2>
-          <p className="text-muted-foreground text-xs uppercase tracking-[0.25em]">
-            Cell details, provisioning commands, and setup logs
-          </p>
-          {cell.lastSetupError ? (
-            <p className="mt-2 text-destructive text-xs">
+      <div className="flex h-full w-full flex-col gap-3 px-4 py-3 text-muted-foreground text-sm">
+        <header className="flex flex-wrap items-center justify-between gap-2 border-border/60 border-b pb-2">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs uppercase tracking-[0.3em]">
+              Setup:
+            </span>
+            <span
+              className={`rounded-sm border px-2 py-0.5 font-medium text-xs uppercase tracking-[0.2em] ${
+                cell.lastSetupError
+                  ? "border-destructive/50 bg-destructive/10 text-destructive"
+                  : "border-emerald-500/50 bg-emerald-500/10 text-emerald-500"
+              }`}
+            >
+              {cell.lastSetupError ? "Error" : "OK"}
+            </span>
+          </div>
+          {cell.lastSetupError && (
+            <p className="w-full text-destructive text-xs">
               Last setup error: {cell.lastSetupError}
-            </p>
-          ) : (
-            <p className="mt-2 text-muted-foreground text-xs">
-              No recorded setup errors.
             </p>
           )}
         </header>
 
         <CellInfoSection cell={cell} templateLabel={templateLabel} />
 
-        <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-2">
+        <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[1fr_1.4fr]">
           <TemplateCommandsPanel
             errorMessage={templateError}
             includeDirectories={includeDirectories}
@@ -146,7 +150,7 @@ function TemplateCommandsPanel({
   }
 
   return (
-    <section className="flex min-h-0 flex-col gap-3 border border-border/70 bg-muted/10 p-4">
+    <section className="flex min-h-0 flex-col gap-2 border border-border/70 bg-muted/10 p-3">
       <div>
         <h3 className="font-semibold text-base text-foreground uppercase tracking-[0.25em]">
           Template Commands
@@ -154,10 +158,10 @@ function TemplateCommandsPanel({
         {description}
       </div>
       {setupCommands.length > 0 ? (
-        <ol className="min-h-0 space-y-3 overflow-auto">
+        <ol className="min-h-0 space-y-2 overflow-auto">
           {setupCommands.map((item) => (
             <li
-              className="space-y-2 rounded-sm border border-border/50 bg-background/40 px-3 py-2"
+              className="space-y-1 rounded-sm border border-border/50 bg-background/40 px-2.5 py-2"
               key={item.id}
             >
               <span className="text-[11px] text-muted-foreground uppercase tracking-[0.4em]">
@@ -209,28 +213,24 @@ function SetupLogPanel({
   onRetry,
 }: SetupLogPanelProps) {
   return (
-    <section className="flex min-h-0 flex-col gap-3 border border-border/70 bg-muted/10 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h3 className="font-semibold text-base text-foreground uppercase tracking-[0.25em]">
-            Setup logs
-          </h3>
-          <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
-            {cell.setupLogPath ?? "No log path yet"}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            disabled={isRetrying}
-            onClick={onRetry}
-            size="sm"
-            type="button"
-            variant="secondary"
-          >
-            {isRetrying ? "Retrying…" : "Retry"}
-          </Button>
-        </div>
+    <section className="flex min-h-0 flex-col gap-2 border border-border/70 bg-muted/10 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-semibold text-base text-foreground uppercase tracking-[0.25em]">
+          Setup logs
+        </h3>
+        <Button
+          disabled={isRetrying}
+          onClick={onRetry}
+          size="sm"
+          type="button"
+          variant="secondary"
+        >
+          {isRetrying ? "Retrying…" : "Retry"}
+        </Button>
       </div>
+      <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+        {cell.setupLogPath ?? "No log path yet"}
+      </p>
       <p className="text-muted-foreground text-xs">
         Last updated {lastUpdatedLabel ?? "just now"}.
       </p>
@@ -285,76 +285,68 @@ function CellInfoSection({ cell, templateLabel }: CellInfoSectionProps) {
   };
 
   return (
-    <section className="space-y-4 border border-border/70 bg-muted/10 p-4">
-      <h2 className="font-semibold text-base text-foreground uppercase tracking-[0.25em]">
-        Info
-      </h2>
-
-      <div className="space-y-3 text-xs">
-        <div className="space-y-0.5">
-          <div className="flex items-center gap-1.5">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-              ID
-            </p>
-            <Button
-              aria-label="Copy cell ID"
-              className="h-6 w-6 shrink-0 p-0"
-              onClick={() => handleCopy(cell.id)}
-              size="icon-sm"
-              type="button"
-              variant="ghost"
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-          <p className="inline-block min-w-0 max-w-full break-all font-mono text-foreground">
-            {cell.id}
+    <section className="grid gap-2.5 border border-border/70 bg-muted/10 p-3 text-xs">
+      <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+        <div className="flex items-center gap-1.5">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+            ID
           </p>
+          <Button
+            aria-label="Copy cell ID"
+            className="h-5 w-5 shrink-0 p-0"
+            onClick={() => handleCopy(cell.id)}
+            size="icon-sm"
+            type="button"
+            variant="ghost"
+          >
+            <Copy className="h-3 w-3" />
+          </Button>
         </div>
+        <p className="break-all font-mono text-[11px] text-foreground">
+          {cell.id}
+        </p>
 
-        {templateLabel && templateLabel !== "Hive Development Environment" ? (
-          <div className="space-y-1">
+        {templateLabel && templateLabel !== "Hive Development Environment" && (
+          <>
             <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
               Template
             </p>
-            <div className="rounded border border-border bg-background/60 p-2">
-              <p className="font-medium text-foreground">{templateLabel}</p>
-            </div>
-          </div>
-        ) : null}
+            <p className="font-medium text-foreground">{templateLabel}</p>
+          </>
+        )}
 
         {cell.workspacePath && (
-          <div className="space-y-0.5">
+          <>
             <div className="flex items-center gap-1.5">
               <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
                 Workspace path
               </p>
               <Button
                 aria-label="Copy workspace path"
-                className="h-6 w-6 shrink-0 p-0"
+                className="h-5 w-5 shrink-0 p-0"
                 onClick={() => handleCopy(cell.workspacePath)}
                 size="icon-sm"
                 type="button"
                 variant="ghost"
               >
-                <Copy className="h-3.5 w-3.5" />
+                <Copy className="h-3 w-3" />
               </Button>
             </div>
-            <pre className="inline-block min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-muted-foreground">
+            <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-foreground">
               {cell.workspacePath}
             </pre>
-          </div>
+          </>
         )}
 
         {cell.opencodeCommand && (
-          <div className="space-y-0.5">
+          <>
             <div className="flex items-center gap-1.5">
               <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
                 OpenCode command
               </p>
               <Button
                 aria-label="Copy OpenCode command"
-                className="h-6 w-6 shrink-0 p-0"
+                className="h-5 w-5 shrink-0 p-0"
                 disabled={!cell.opencodeCommand}
                 onClick={() =>
                   cell.opencodeCommand && handleCopy(cell.opencodeCommand)
@@ -363,71 +355,69 @@ function CellInfoSection({ cell, templateLabel }: CellInfoSectionProps) {
                 type="button"
                 variant="ghost"
               >
-                <Copy className="h-3.5 w-3.5" />
+                <Copy className="h-3 w-3" />
               </Button>
             </div>
-            <pre className="inline-block min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-muted-foreground">
-              {cell.opencodeCommand}
-            </pre>
-            {connectionLabel() ? (
-              <div className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-                Server · {connectionLabel()}
-              </div>
-            ) : null}
-          </div>
+            <div className="space-y-0.5">
+              <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-foreground">
+                {cell.opencodeCommand}
+              </pre>
+              {connectionLabel() && (
+                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                  Server · {connectionLabel()}
+                </p>
+              )}
+            </div>
+          </>
         )}
 
-        {cell.branchName || cell.baseCommit ? (
-          <div className="space-y-1">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-              Git info
-            </p>
-            <div className="space-y-1 rounded border border-border bg-background/60 p-2">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  <p className="font-medium text-foreground">Branch</p>
-                  <Button
-                    aria-label="Copy branch name"
-                    className="h-6 w-6 shrink-0 p-0"
-                    disabled={!cell.branchName}
-                    onClick={() =>
-                      cell.branchName && handleCopy(cell.branchName)
-                    }
-                    size="icon-sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    <Copy className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-                <p className="break-all font-mono text-foreground">
-                  {cell.branchName ?? "—"}
-                </p>
-              </div>
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  <p className="font-medium text-foreground">Base commit</p>
-                  <Button
-                    aria-label="Copy base commit"
-                    className="h-6 w-6 shrink-0 p-0"
-                    disabled={!cell.baseCommit}
-                    onClick={() =>
-                      cell.baseCommit && handleCopy(cell.baseCommit)
-                    }
-                    size="icon-sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    <Copy className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-                <p className="break-all font-mono text-foreground">
-                  {cell.baseCommit ?? "—"}
-                </p>
-              </div>
+        {cell.branchName && (
+          <>
+            <div className="flex items-center gap-1.5">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                Branch
+              </p>
+              <Button
+                aria-label="Copy branch name"
+                className="h-5 w-5 shrink-0 p-0"
+                disabled={!cell.branchName}
+                onClick={() => cell.branchName && handleCopy(cell.branchName)}
+                size="icon-sm"
+                type="button"
+                variant="ghost"
+              >
+                <Copy className="h-3 w-3" />
+              </Button>
             </div>
-          </div>
-        ) : null}
+            <p className="break-all font-mono text-[11px] text-foreground">
+              {cell.branchName}
+            </p>
+          </>
+        )}
+
+        {cell.baseCommit && (
+          <>
+            <div className="flex items-center gap-1.5">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                Base commit
+              </p>
+              <Button
+                aria-label="Copy base commit"
+                className="h-5 w-5 shrink-0 p-0"
+                disabled={!cell.baseCommit}
+                onClick={() => cell.baseCommit && handleCopy(cell.baseCommit)}
+                size="icon-sm"
+                type="button"
+                variant="ghost"
+              >
+                <Copy className="h-3 w-3" />
+              </Button>
+            </div>
+            <p className="break-all font-mono text-[11px] text-foreground">
+              {cell.baseCommit}
+            </p>
+          </>
+        )}
       </div>
     </section>
   );
