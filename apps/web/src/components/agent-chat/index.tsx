@@ -339,10 +339,8 @@ export function AgentChat({ cellId }: AgentChatProps) {
       ref={chatRootRef}
     >
       <AgentChatHeader
-        cellId={cellId}
         compaction={compaction}
         compactionWarning={compactionWarning}
-        session={session}
       />
       {isReadOnly ? (
         <div className="border border-border/70 bg-muted/10 p-3 text-muted-foreground text-sm">
@@ -352,17 +350,13 @@ export function AgentChat({ cellId }: AgentChatProps) {
       ) : null}
       <div className="flex flex-1 flex-col gap-0 overflow-hidden lg:flex-row">
         <ConversationPanel
-          compaction={compaction}
-          compactionWarningThreshold={COMPACTION_WARNING_THRESHOLD}
           filteredMessages={filteredMessages}
           isLoading={messagesQuery.isPending}
           onSearchQueryChange={setSearchQuery}
           permissions={permissions}
-          provider={session.provider}
           searchQuery={searchQuery}
           sessionId={session.id}
           totalMessages={totalMessages}
-          workspacePath={session.workspacePath}
         />
         <ComposePanel
           canInterrupt={canInterrupt}

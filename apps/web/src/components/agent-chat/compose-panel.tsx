@@ -85,18 +85,14 @@ export function ComposePanel({
   })();
 
   return (
-    <section className="min-h-0 w-full overflow-y-auto border border-border/60 bg-card p-3 text-[10px] text-muted-foreground uppercase tracking-[0.25em] lg:w-80 lg:border-l-2">
-      <div className="flex items-center justify-between">
-        <span>Send Instructions</span>
-        <span>{agentProvider}</span>
-      </div>
+    <section className="min-h-0 w-full overflow-y-auto overflow-x-hidden border border-border/60 bg-card p-3 text-[10px] text-muted-foreground uppercase tracking-[0.25em] lg:w-80 lg:border-l-2">
       {readOnly ? (
         <div className="mt-3 rounded-md border border-border/70 bg-muted/10 p-3 text-[11px] text-muted-foreground normal-case tracking-normal">
           {readOnlyMessage ??
             "Archived cells are read-only. Restore the branch to resume chatting."}
         </div>
       ) : null}
-      <div className="mt-3">
+      <div>
         <label
           className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]"
           htmlFor="model-selector"
@@ -144,21 +140,21 @@ export function ComposePanel({
             rules={{ validate: validateMessage }}
           />
           <div className="flex flex-col gap-2">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-              <div className="flex flex-col gap-1">
-                <span className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
+            <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div className="w-full min-w-0 flex-1 break-words pr-2 sm:pr-4">
+                <span className="block text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
                   Ctrl+Enter to send
                 </span>
-                <span className="text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
+                <span className="mt-1.5 block text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
                   Esc twice to interrupt
                 </span>
                 {showInterruptHint ? (
-                  <span className="text-[10px] text-primary uppercase tracking-[0.2em]">
+                  <span className="mt-1.5 block text-[10px] text-primary uppercase tracking-[0.2em]">
                     Press Esc again to confirm interrupt
                   </span>
                 ) : null}
               </div>
-              <div className="flex flex-col items-end gap-2">
+              <div className="flex w-full flex-col items-end gap-2 sm:w-auto">
                 <Button
                   className="w-full border border-primary bg-primary px-3 py-1 text-primary-foreground text-xs hover:bg-primary/90 focus-visible:ring-primary sm:w-40"
                   disabled={composerDisabled || !form.formState.isValid}
@@ -167,7 +163,7 @@ export function ComposePanel({
                   {isSending ? "Sending..." : "Send"}
                 </Button>
                 <Button
-                  className="w-full border border-primary/70 bg-transparent px-3 py-1 text-primary text-xs hover:bg-primary/10 focus-visible:ring-primary disabled:text-muted-foreground disabled:opacity-50 sm:w-40"
+                  className="w-full whitespace-normal border border-primary/70 bg-transparent px-3 text-center text-primary text-xs leading-tight hover:bg-primary/10 focus-visible:ring-primary disabled:text-muted-foreground disabled:opacity-50 sm:w-40"
                   disabled={readOnly || !canInterrupt || isInterrupting}
                   onClick={onInterrupt}
                   type="button"
