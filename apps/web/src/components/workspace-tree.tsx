@@ -17,24 +17,24 @@ type WorkspaceTreeProps = {
 };
 
 export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
-  const pathname = useRouterState({
-    select: (routerState) => routerState.location.pathname,
+  const location = useRouterState({
+    select: (routerState) => routerState.location,
   });
 
   return (
     <SidebarMenu>
-      <WorkspaceTreeContent collapsed={_collapsed} pathname={pathname} />
+      <WorkspaceTreeContent collapsed={_collapsed} location={location} />
     </SidebarMenu>
   );
 }
 
 type WorkspaceTreeContentProps = {
-  pathname: string;
+  location: { pathname: string; search: Record<string, string> };
   collapsed: boolean;
 };
 
 function WorkspaceTreeContent({
-  pathname,
+  location,
   collapsed,
 }: WorkspaceTreeContentProps) {
   const workspacesQuery = useQuery(workspaceQueries.list());
@@ -64,7 +64,7 @@ function WorkspaceTreeContent({
   return workspaces.map((workspace) => (
     <WorkspaceSection
       key={workspace.id}
-      pathname={pathname}
+      location={location}
       workspace={workspace}
     />
   ));
@@ -72,27 +72,35 @@ function WorkspaceTreeContent({
 
 type WorkspaceSectionProps = {
   workspace: { id: string; label: string; path: string };
-  pathname: string;
+  location: { pathname: string; search: Record<string, string> };
 };
 
-function WorkspaceSection({ workspace, pathname }: WorkspaceSectionProps) {
+function WorkspaceSection({ workspace, location }: WorkspaceSectionProps) {
   const cellsQuery = useQuery(cellQueries.all(workspace.id));
   const cells = cellsQuery.data ?? [];
   const cellsLoading = cellsQuery.isPending || cellsQuery.isRefetching;
-  const isWorkspaceActive = pathname.includes(workspace.id);
+  const isWorkspaceActive = location.search.workspaceId === workspace.id;
 
   return (
     <div className="flex flex-col gap-1">
       <SidebarMenuItem>
-        <div
+        <SidebarMenuButton
+          asChild
           className={cn(
-            "flex items-center gap-2 px-3 py-2 text-left font-semibold text-muted-foreground text-xs uppercase tracking-[0.2em]",
-            isWorkspaceActive && "text-foreground"
+            "w-full justify-start rounded-none border-2 border-transparent px-3 py-2 text-left font-semibold text-muted-foreground text-xs uppercase tracking-[0.2em] transition-none",
+            "hover:border-primary hover:bg-primary/10 hover:text-foreground",
+            isWorkspaceActive && "border-primary bg-primary/15 text-foreground"
           )}
         >
-          <ChevronRight className="size-3" />
-          <span className="truncate">{workspace.label}</span>
-        </div>
+          <Link
+            className="flex items-center gap-2"
+            search={{ workspaceId: workspace.id }}
+            to="/cells/list"
+          >
+            <ChevronRight className="size-3" />
+            <span className="truncate">{workspace.label}</span>
+          </Link>
+        </SidebarMenuButton>
       </SidebarMenuItem>
 
       {cellsLoading && (
@@ -113,7 +121,7 @@ function WorkspaceSection({ workspace, pathname }: WorkspaceSectionProps) {
       {!cellsLoading &&
         cells.map((cell) => {
           const cellPath = `/cells/${cell.id}`;
-          const isCellActive = pathname.startsWith(cellPath);
+          const isCellActive = location.pathname.startsWith(cellPath);
           return (
             <SidebarMenuItem key={cell.id}>
               <SidebarMenuButton

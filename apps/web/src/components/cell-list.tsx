@@ -293,7 +293,11 @@ export function CellList({ workspaceId }: CellListProps) {
             </Button>
           </div>
 
-          <Link className="flex-none sm:flex-none" to="/cells/new">
+          <Link
+            className="flex-none sm:flex-none"
+            search={{ workspaceId }}
+            to="/cells/new"
+          >
             <Button className="w-auto" size="sm" type="button">
               <Plus className="mr-1.5 h-4 w-4" />
               New Cell
