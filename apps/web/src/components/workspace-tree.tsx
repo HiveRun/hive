@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Link, useRouterState } from "@tanstack/react-router";
-import { ChevronRight, CircleDot, Loader2 } from "lucide-react";
+import { ChevronRight, CircleDot, Loader2, Plus } from "lucide-react";
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -84,23 +84,34 @@ function WorkspaceSection({ workspace, location }: WorkspaceSectionProps) {
   return (
     <div className="flex flex-col gap-1">
       <SidebarMenuItem>
-        <SidebarMenuButton
-          asChild
-          className={cn(
-            "box-border w-full justify-start rounded-none border-2 border-transparent px-3 py-2 text-left font-semibold text-muted-foreground text-xs uppercase tracking-[0.2em] transition-none",
-            "hover:border-primary hover:bg-primary/10 hover:text-foreground",
-            isWorkspaceActive && "border-primary bg-primary/15 text-foreground"
-          )}
-        >
-          <Link
-            className="flex items-center gap-2"
-            search={{ workspaceId: workspace.id }}
-            to="/cells/list"
+        <div className="flex items-center gap-1">
+          <SidebarMenuButton
+            asChild
+            className={cn(
+              "box-border flex-1 justify-start rounded-none border-2 border-transparent px-3 py-2 text-left font-semibold text-muted-foreground text-xs uppercase tracking-[0.2em] transition-none",
+              "hover:border-primary hover:bg-primary/10 hover:text-foreground",
+              isWorkspaceActive &&
+                "border-primary bg-primary/15 text-foreground"
+            )}
           >
-            <ChevronRight className="size-3" />
-            <span className="truncate">{workspace.label}</span>
+            <Link
+              className="flex items-center gap-2"
+              search={{ workspaceId: workspace.id }}
+              to="/cells/list"
+            >
+              <ChevronRight className="size-3" />
+              <span className="truncate">{workspace.label}</span>
+            </Link>
+          </SidebarMenuButton>
+          <Link
+            aria-label={`Create new cell in ${workspace.label}`}
+            className="flex size-7 shrink-0 items-center justify-center rounded border-2 border-border transition-none hover:border-primary hover:bg-primary/10"
+            search={{ workspaceId: workspace.id }}
+            to="/cells/new"
+          >
+            <Plus className="size-3" />
           </Link>
-        </SidebarMenuButton>
+        </div>
       </SidebarMenuItem>
 
       {cellsLoading && (
