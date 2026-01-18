@@ -1,5 +1,7 @@
 import { Link, useRouterState } from "@tanstack/react-router";
+import { Minus, Plus } from "lucide-react";
 import type { ComponentProps } from "react";
+import { useState } from "react";
 import { ModeToggle } from "@/components/mode-toggle";
 import {
   Sidebar,
@@ -16,7 +18,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { WorkspaceSwitcher } from "@/components/workspace-switcher";
+import { WorkspaceManagementSheet } from "@/components/workspace-management-sheet";
 import { MAIN_NAV_ITEMS } from "@/config/navigation";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +29,10 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
     select: (routerState) => routerState.location.pathname,
   });
   const { state: sidebarState } = useSidebar();
+  const [workspaceSheetOpen, setWorkspaceSheetOpen] = useState(false);
+  const [sheetDefaultSection, setSheetDefaultSection] = useState<
+    "register" | "list"
+  >("list");
 
   return (
     <Sidebar
@@ -63,9 +69,45 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
       </SidebarHeader>
       <SidebarContent className="gap-6 bg-transparent">
         <SidebarGroup>
-          <SidebarGroupContent>
-            <WorkspaceSwitcher collapsed={sidebarState === "collapsed"} />
-          </SidebarGroupContent>
+          <SidebarGroupLabel
+            className={cn(
+              "flex items-center justify-between gap-2 text-[0.6rem] text-muted-foreground uppercase tracking-[0.32em]",
+              sidebarState === "collapsed" && "hidden"
+            )}
+          >
+            <span>Workspaces</span>
+            <div className="flex gap-1">
+              <button
+                aria-label="Register new workspace"
+                className="flex size-5 items-center justify-center rounded border-2 border-border transition-none hover:border-primary hover:bg-primary/10"
+                onClick={() => {
+                  setSheetDefaultSection("register");
+                  setWorkspaceSheetOpen(true);
+                }}
+                type="button"
+              >
+                <Plus className="size-3" />
+              </button>
+              <button
+                aria-label="Manage workspaces"
+                className="flex size-5 items-center justify-center rounded border-2 border-border transition-none hover:border-primary hover:bg-primary/10"
+                onClick={() => {
+                  setSheetDefaultSection("list");
+                  setWorkspaceSheetOpen(true);
+                }}
+                type="button"
+              >
+                <Minus className="size-3" />
+              </button>
+            </div>
+            <WorkspaceManagementSheet
+              defaultRegisterOpen={sheetDefaultSection === "register"}
+              onOpenChange={setWorkspaceSheetOpen}
+              open={workspaceSheetOpen}
+              section={sheetDefaultSection}
+            />
+          </SidebarGroupLabel>
+          <SidebarGroupContent />
         </SidebarGroup>
 
         <SidebarGroup>
