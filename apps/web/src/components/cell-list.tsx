@@ -43,6 +43,7 @@ import {
   cellQueries,
 } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
+import { workspaceQueries } from "@/queries/workspaces";
 
 const MAX_SELECTION_PREVIEW = 3;
 const PROVISIONING_STATUSES: CellStatus[] = ["spawning", "pending"];
@@ -87,6 +88,10 @@ export function CellList({ workspaceId }: CellListProps) {
   });
   const { data: templatesData } = useQuery(templateQueries.all(workspaceId));
   const templates = templatesData?.templates;
+  const { data: workspaceData } = useQuery(workspaceQueries.list());
+  const workspaceLabel =
+    workspaceData?.workspaces.find((workspace) => workspace.id === workspaceId)
+      ?.label ?? "Workspace";
 
   useEffect(() => {
     const hasProvisioningCells = cells?.some((cell) =>
@@ -319,7 +324,7 @@ export function CellList({ workspaceId }: CellListProps) {
         <section className="space-y-3">
           <header>
             <div className="flex flex-wrap items-center gap-3">
-              <h2 className="font-semibold text-xl">Cells</h2>
+              <h2 className="font-semibold text-xl">{workspaceLabel} Cells</h2>
               <Badge variant="outline">{allCells.length}</Badge>
             </div>
             <p className="text-muted-foreground">
