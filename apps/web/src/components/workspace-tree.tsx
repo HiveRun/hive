@@ -87,7 +87,7 @@ function WorkspaceSection({ workspace, location }: WorkspaceSectionProps) {
         <SidebarMenuButton
           asChild
           className={cn(
-            "w-full justify-start rounded-none border-2 border-transparent px-3 py-2 text-left font-semibold text-muted-foreground text-xs uppercase tracking-[0.2em] transition-none",
+            "box-border w-full justify-start rounded-none border-2 border-transparent px-3 py-2 text-left font-semibold text-muted-foreground text-xs uppercase tracking-[0.2em] transition-none",
             "hover:border-primary hover:bg-primary/10 hover:text-foreground",
             isWorkspaceActive && "border-primary bg-primary/15 text-foreground"
           )}
@@ -127,7 +127,7 @@ function WorkspaceSection({ workspace, location }: WorkspaceSectionProps) {
               <SidebarMenuButton
                 asChild
                 className={cn(
-                  "ml-4 rounded-none border-2 border-transparent px-3 py-1.5 text-left text-muted-foreground text-xs tracking-normal transition-none",
+                  "ml-4 box-border rounded-none border-2 border-transparent px-3 py-1.5 text-left text-muted-foreground text-xs tracking-normal transition-none",
                   "hover:border-primary hover:bg-primary/10 hover:text-foreground",
                   isCellActive && "border-primary bg-primary/15 text-foreground"
                 )}
