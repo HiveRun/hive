@@ -19,7 +19,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { WorkspaceManagementSheet } from "@/components/workspace-management-sheet";
-import { WorkspaceSwitcher } from "@/components/workspace-switcher";
+import { WorkspaceTree } from "@/components/workspace-tree";
 import { MAIN_NAV_ITEMS } from "@/config/navigation";
 import { cn } from "@/lib/utils";
 
@@ -109,7 +109,7 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
             />
           </SidebarGroupLabel>
           <SidebarGroupContent>
-            <WorkspaceSwitcher collapsed={sidebarState === "collapsed"} />
+            <WorkspaceTree collapsed={sidebarState === "collapsed"} />
           </SidebarGroupContent>
         </SidebarGroup>
 
