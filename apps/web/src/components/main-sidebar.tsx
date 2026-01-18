@@ -19,6 +19,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { WorkspaceManagementSheet } from "@/components/workspace-management-sheet";
+import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { MAIN_NAV_ITEMS } from "@/config/navigation";
 import { cn } from "@/lib/utils";
 
@@ -107,7 +108,9 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
               section={sheetDefaultSection}
             />
           </SidebarGroupLabel>
-          <SidebarGroupContent />
+          <SidebarGroupContent>
+            <WorkspaceSwitcher collapsed={sidebarState === "collapsed"} />
+          </SidebarGroupContent>
         </SidebarGroup>
 
         <SidebarGroup>
