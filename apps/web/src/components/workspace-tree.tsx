@@ -127,7 +127,7 @@ function WorkspaceSection({ workspace, location }: WorkspaceSectionProps) {
               <SidebarMenuButton
                 asChild
                 className={cn(
-                  "ml-4 box-border rounded-none border-2 border-transparent px-3 py-1.5 text-left text-muted-foreground text-xs tracking-normal transition-none",
+                  "box-border w-full rounded-none border-2 border-transparent py-1.5 pr-4 pl-4 text-left text-muted-foreground text-xs tracking-normal transition-none",
                   "hover:border-primary hover:bg-primary/10 hover:text-foreground",
                   isCellActive && "border-primary bg-primary/15 text-foreground"
                 )}
