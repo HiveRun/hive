@@ -246,7 +246,9 @@ export function CellList({ workspaceId }: CellListProps) {
         selectedCell={selectedCellForMetadata}
       />
       <div className="flex flex-col gap-4">
-        <h1 className="font-bold text-2xl md:text-3xl">Cells</h1>
+        <h1 className="font-bold text-2xl md:text-3xl">
+          {workspaceLabel} Cells
+        </h1>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
@@ -324,7 +326,7 @@ export function CellList({ workspaceId }: CellListProps) {
         <section className="space-y-3">
           <header>
             <div className="flex flex-wrap items-center gap-3">
-              <h2 className="font-semibold text-xl">{workspaceLabel} Cells</h2>
+              <h2 className="font-semibold text-xl">Cells</h2>
               <Badge variant="outline">{allCells.length}</Badge>
             </div>
             <p className="text-muted-foreground">
