@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { ChevronRight, CircleDot, Loader2, Plus } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -28,13 +28,6 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
   );
 
   const activeWorkspaceId = location.search.workspaceId;
-  const expandedSet = useMemo(() => {
-    const next = new Set(expandedWorkspaceIds);
-    if (activeWorkspaceId) {
-      next.add(activeWorkspaceId);
-    }
-    return next;
-  }, [activeWorkspaceId, expandedWorkspaceIds]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -75,7 +68,7 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
     <SidebarMenu>
       <WorkspaceTreeContent
         collapsed={_collapsed}
-        expandedWorkspaceIds={expandedSet}
+        expandedWorkspaceIds={expandedWorkspaceIds}
         location={location}
         onToggleWorkspace={toggleWorkspace}
       />
