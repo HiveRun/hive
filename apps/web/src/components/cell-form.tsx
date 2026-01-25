@@ -67,9 +67,15 @@ type CellFormProps = {
   workspaceId: string;
   onSuccess?: () => void;
   onCancel?: () => void;
+  onCreated?: (cell: { id: string; name: string; workspaceId: string }) => void;
 };
 
-export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
+export function CellForm({
+  workspaceId,
+  onSuccess,
+  onCancel,
+  onCreated,
+}: CellFormProps) {
   const queryClient = useQueryClient();
 
   const {
@@ -164,6 +170,11 @@ export function CellForm({ workspaceId, onSuccess, onCancel }: CellFormProps) {
       }
 
       queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
+      onCreated?.({
+        id: cell.id,
+        name: cell.name,
+        workspaceId: cell.workspaceId,
+      });
       form.reset();
       setSelectedModel(undefined);
       setActiveTemplateId(defaultValues.templateId);

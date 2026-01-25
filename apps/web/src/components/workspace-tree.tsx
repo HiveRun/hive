@@ -5,6 +5,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { ChevronRight, CircleDot, Loader2, Plus, Trash2 } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { CellCreationSheet } from "@/components/cell-creation-sheet";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,6 +22,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { storage } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 import { cellMutations, cellQueries } from "@/queries/cells";
 import { workspaceQueries } from "@/queries/workspaces";
@@ -35,10 +37,13 @@ type PendingCellDelete = {
   workspaceId: string;
 };
 
+const EXPANDED_WORKSPACES_STORAGE_KEY = "hive.sidebar.expanded-workspaces";
+
 export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
-  const location = useRouterState({
-    select: (routerState) => routerState.location,
+  const routerState = useRouterState({
+    select: (state) => ({ location: state.location, matches: state.matches }),
   });
+  const location = routerState.location;
 
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -49,7 +54,49 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
   const [pendingCellDelete, setPendingCellDelete] =
     useState<PendingCellDelete | null>(null);
 
-  const activeWorkspaceId = location.search.workspaceId;
+  const [pendingCellCreateWorkspaceId, setPendingCellCreateWorkspaceId] =
+    useState<string | null>(null);
+
+  const workspaceIdFromSearch = location.search.workspaceId;
+  const cellRouteMatch = routerState.matches.find(
+    (match) => match.routeId === "/cells/$cellId"
+  );
+  const workspaceIdFromLoaderData = (() => {
+    const loaderData = cellRouteMatch?.loaderData;
+    if (!loaderData || typeof loaderData !== "object") {
+      return;
+    }
+    if (!("workspaceId" in loaderData)) {
+      return;
+    }
+    const value = (loaderData as { workspaceId?: unknown }).workspaceId;
+    return typeof value === "string" ? value : undefined;
+  })();
+
+  const activeWorkspaceId = workspaceIdFromSearch ?? workspaceIdFromLoaderData;
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const savedIds = storage.get<string[]>(EXPANDED_WORKSPACES_STORAGE_KEY);
+    if (!Array.isArray(savedIds)) {
+      return;
+    }
+    setExpandedWorkspaceIds(
+      () => new Set(savedIds.filter((entry) => typeof entry === "string"))
+    );
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    storage.set(
+      EXPANDED_WORKSPACES_STORAGE_KEY,
+      Array.from(expandedWorkspaceIds)
+    );
+  }, [expandedWorkspaceIds]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -93,7 +140,7 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
 
       if (location.pathname.startsWith(`/cells/${deletedCellId}`)) {
         navigate({
-          to: "/cells/list",
+          to: "/",
           search: workspaceId ? { workspaceId } : undefined,
           replace: true,
         });
@@ -114,6 +161,18 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
 
   return (
     <SidebarMenu>
+      {pendingCellCreateWorkspaceId ? (
+        <CellCreationSheet
+          onOpenChange={(open) => {
+            if (!open) {
+              setPendingCellCreateWorkspaceId(null);
+            }
+          }}
+          open={pendingCellCreateWorkspaceId !== null}
+          workspaceId={pendingCellCreateWorkspaceId}
+        />
+      ) : null}
+
       <AlertDialog
         onOpenChange={(open) => {
           if (!(open || deleteCell.isPending || confirmDeleteRef.current)) {
@@ -159,9 +218,13 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
       </AlertDialog>
 
       <WorkspaceTreeContent
+        activeWorkspaceId={activeWorkspaceId}
         collapsed={_collapsed}
         expandedWorkspaceIds={expandedWorkspaceIds}
         location={location}
+        onRequestCreateCell={(workspaceId) =>
+          setPendingCellCreateWorkspaceId(workspaceId)
+        }
         onRequestDeleteCell={(cell: PendingCellDelete) =>
           setPendingCellDelete(cell)
         }
@@ -173,16 +236,20 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
 
 type WorkspaceTreeContentProps = {
   location: { pathname: string; search: Record<string, string> };
+  activeWorkspaceId?: string;
   collapsed: boolean;
   expandedWorkspaceIds: Set<string>;
+  onRequestCreateCell: (workspaceId: string) => void;
   onRequestDeleteCell: (cell: PendingCellDelete) => void;
   onToggleWorkspace: (workspaceId: string) => void;
 };
 
 function WorkspaceTreeContent({
   location,
+  activeWorkspaceId,
   collapsed,
   expandedWorkspaceIds,
+  onRequestCreateCell,
   onRequestDeleteCell,
   onToggleWorkspace,
 }: WorkspaceTreeContentProps) {
@@ -212,9 +279,11 @@ function WorkspaceTreeContent({
 
   return workspaces.map((workspace) => (
     <WorkspaceSection
+      activeWorkspaceId={activeWorkspaceId}
       expandedWorkspaceIds={expandedWorkspaceIds}
       key={workspace.id}
       location={location}
+      onRequestCreateCell={onRequestCreateCell}
       onRequestDeleteCell={onRequestDeleteCell}
       onToggleWorkspace={onToggleWorkspace}
       workspace={workspace}
@@ -224,20 +293,24 @@ function WorkspaceTreeContent({
 
 type WorkspaceSectionProps = {
   workspace: { id: string; label: string; path: string };
+  activeWorkspaceId?: string;
   location: { pathname: string; search: Record<string, string> };
   expandedWorkspaceIds: Set<string>;
+  onRequestCreateCell: (workspaceId: string) => void;
   onRequestDeleteCell: (cell: PendingCellDelete) => void;
   onToggleWorkspace: (workspaceId: string) => void;
 };
 
 function WorkspaceSection({
   workspace,
+  activeWorkspaceId,
   location,
   expandedWorkspaceIds,
+  onRequestCreateCell,
   onRequestDeleteCell,
   onToggleWorkspace,
 }: WorkspaceSectionProps) {
-  const isWorkspaceActive = location.search.workspaceId === workspace.id;
+  const isWorkspaceActive = activeWorkspaceId === workspace.id;
   const isExpanded = expandedWorkspaceIds.has(workspace.id);
 
   const cellsQuery = useQuery({
@@ -262,10 +335,12 @@ function WorkspaceSection({
         <div className="flex items-center gap-1">
           <SidebarMenuButton
             className={cn(
-              "box-border flex-1 justify-start rounded-none border-2 border-transparent px-3 py-2 text-left font-semibold text-muted-foreground text-xs uppercase tracking-[0.2em] transition-none",
-              "hover:border-primary hover:bg-primary/10 hover:text-foreground",
+              "relative box-border flex-1 justify-start rounded-none border-2 border-border/40 bg-transparent px-3 py-2 text-left font-semibold text-[0.65rem] text-muted-foreground uppercase tracking-[0.22em] transition-none",
+              "hover:border-border/70 hover:bg-primary/5 hover:text-foreground",
+              (isExpanded || isWorkspaceActive) && "text-foreground",
+              isExpanded && "bg-primary/5",
               isWorkspaceActive &&
-                "border-primary bg-primary/15 text-foreground"
+                "before:absolute before:top-0 before:left-0 before:h-full before:w-[3px] before:bg-primary before:content-['']"
             )}
             onClick={() => onToggleWorkspace(workspace.id)}
             type="button"
@@ -273,21 +348,25 @@ function WorkspaceSection({
             <span className="flex min-w-0 items-center gap-2">
               <ChevronRight
                 className={cn(
-                  "size-4 transition-transform",
+                  "size-4 text-muted-foreground transition-transform",
                   isExpanded ? "rotate-90" : "rotate-0"
                 )}
               />
               <span className="truncate">{workspace.label}</span>
             </span>
           </SidebarMenuButton>
-          <Link
+          <button
             aria-label={`Create new cell in ${workspace.label}`}
-            className="flex size-7 shrink-0 items-center justify-center rounded border-2 border-border transition-none hover:border-primary hover:bg-primary/10"
-            search={{ workspaceId: workspace.id }}
-            to="/cells/new"
+            className="flex size-7 shrink-0 items-center justify-center rounded border-2 border-border/40 bg-transparent text-muted-foreground opacity-80 transition-none hover:border-border/70 hover:bg-primary/5 hover:text-foreground hover:opacity-100"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onRequestCreateCell(workspace.id);
+            }}
+            type="button"
           >
             <Plus className="size-4" />
-          </Link>
+          </button>
         </div>
       </SidebarMenuItem>
 
@@ -318,7 +397,7 @@ function renderWorkspaceCells({
   if (cellsLoading) {
     return (
       <SidebarMenuItem>
-        <div className="ml-4 px-3 py-1.5 text-muted-foreground text-xs">
+        <div className="ml-7 px-3 py-1.5 text-muted-foreground text-xs">
           <Loader2 className="mr-2 inline-block size-4 animate-spin" />
           Loading...
         </div>
@@ -329,7 +408,7 @@ function renderWorkspaceCells({
   if (cells.length === 0) {
     return (
       <SidebarMenuItem>
-        <div className="ml-4 px-3 py-1.5 text-muted-foreground text-xs">
+        <div className="ml-7 px-3 py-1.5 text-muted-foreground text-xs">
           No cells
         </div>
       </SidebarMenuItem>
@@ -344,25 +423,31 @@ function renderWorkspaceCells({
         <SidebarMenuButton
           asChild
           className={cn(
-            "box-border w-full rounded-none border-2 border-transparent py-1.5 pr-10 pl-4 text-left text-muted-foreground text-xs tracking-normal transition-none",
-            "hover:border-primary hover:bg-primary/10 hover:text-foreground",
-            isCellActive && "border-primary bg-primary/15 text-foreground"
+            "relative box-border w-full rounded-none border-2 border-transparent bg-transparent py-1.5 pr-10 pl-8 text-left text-muted-foreground text-xs tracking-normal transition-none",
+            "hover:bg-primary/5 hover:text-foreground",
+            isCellActive &&
+              "bg-primary/10 text-foreground shadow-[inset_3px_0_0_0_hsl(var(--primary))]"
           )}
         >
           <Link
             aria-label={cell.name}
-            className="flex items-center gap-2"
+            className="flex min-w-0 items-center gap-2"
             search={{ workspaceId }}
             to={cellPath}
           >
-            <CircleDot className="size-4 shrink-0" />
+            <CircleDot
+              className={cn(
+                "size-4 shrink-0",
+                isCellActive ? "text-primary" : "text-muted-foreground/70"
+              )}
+            />
             <span className="truncate">{cell.name}</span>
           </Link>
         </SidebarMenuButton>
 
         <SidebarMenuAction
           aria-label={`Delete ${cell.name}`}
-          className="rounded-sm text-destructive hover:bg-destructive/10 hover:text-destructive"
+          className="rounded-sm text-destructive/70 opacity-70 transition-none hover:bg-destructive/10 hover:text-destructive hover:opacity-100"
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();

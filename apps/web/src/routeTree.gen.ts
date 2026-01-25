@@ -12,7 +12,6 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as CellsRouteImport } from './routes/cells'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as CellsNewRouteImport } from './routes/cells/new'
-import { Route as CellsListRouteImport } from './routes/cells/list'
 import { Route as CellsCellIdRouteImport } from './routes/cells/$cellId'
 import { Route as CellsCellIdViewerRouteImport } from './routes/cells/$cellId/viewer'
 import { Route as CellsCellIdSetupRouteImport } from './routes/cells/$cellId/setup'
@@ -33,11 +32,6 @@ const IndexRoute = IndexRouteImport.update({
 const CellsNewRoute = CellsNewRouteImport.update({
   id: '/new',
   path: '/new',
-  getParentRoute: () => CellsRoute,
-} as any)
-const CellsListRoute = CellsListRouteImport.update({
-  id: '/list',
-  path: '/list',
   getParentRoute: () => CellsRoute,
 } as any)
 const CellsCellIdRoute = CellsCellIdRouteImport.update({
@@ -75,7 +69,6 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/cells': typeof CellsRouteWithChildren
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
-  '/cells/list': typeof CellsListRoute
   '/cells/new': typeof CellsNewRoute
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
@@ -87,7 +80,6 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/cells': typeof CellsRouteWithChildren
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
-  '/cells/list': typeof CellsListRoute
   '/cells/new': typeof CellsNewRoute
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
@@ -100,7 +92,6 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/cells': typeof CellsRouteWithChildren
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
-  '/cells/list': typeof CellsListRoute
   '/cells/new': typeof CellsNewRoute
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
@@ -114,7 +105,6 @@ export interface FileRouteTypes {
     | '/'
     | '/cells'
     | '/cells/$cellId'
-    | '/cells/list'
     | '/cells/new'
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
@@ -126,7 +116,6 @@ export interface FileRouteTypes {
     | '/'
     | '/cells'
     | '/cells/$cellId'
-    | '/cells/list'
     | '/cells/new'
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
@@ -138,7 +127,6 @@ export interface FileRouteTypes {
     | '/'
     | '/cells'
     | '/cells/$cellId'
-    | '/cells/list'
     | '/cells/new'
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
@@ -173,13 +161,6 @@ declare module '@tanstack/react-router' {
       path: '/new'
       fullPath: '/cells/new'
       preLoaderRoute: typeof CellsNewRouteImport
-      parentRoute: typeof CellsRoute
-    }
-    '/cells/list': {
-      id: '/cells/list'
-      path: '/list'
-      fullPath: '/cells/list'
-      preLoaderRoute: typeof CellsListRouteImport
       parentRoute: typeof CellsRoute
     }
     '/cells/$cellId': {
@@ -249,13 +230,11 @@ const CellsCellIdRouteWithChildren = CellsCellIdRoute._addFileChildren(
 
 interface CellsRouteChildren {
   CellsCellIdRoute: typeof CellsCellIdRouteWithChildren
-  CellsListRoute: typeof CellsListRoute
   CellsNewRoute: typeof CellsNewRoute
 }
 
 const CellsRouteChildren: CellsRouteChildren = {
   CellsCellIdRoute: CellsCellIdRouteWithChildren,
-  CellsListRoute: CellsListRoute,
   CellsNewRoute: CellsNewRoute,
 }
 
