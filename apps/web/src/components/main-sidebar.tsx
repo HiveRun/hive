@@ -1,4 +1,4 @@
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { Minus, Plus } from "lucide-react";
 import type { ComponentProps } from "react";
 import { useState } from "react";
@@ -11,24 +11,16 @@ import {
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarSeparator,
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
 import { WorkspaceManagementSheet } from "@/components/workspace-management-sheet";
 import { WorkspaceTree } from "@/components/workspace-tree";
-import { MAIN_NAV_ITEMS } from "@/config/navigation";
 import { cn } from "@/lib/utils";
 
 type MainSidebarProps = ComponentProps<typeof Sidebar>;
 
 export function MainSidebar({ className, ...props }: MainSidebarProps) {
-  const pathname = useRouterState({
-    select: (routerState) => routerState.location.pathname,
-  });
   const { state: sidebarState } = useSidebar();
   const [workspaceSheetOpen, setWorkspaceSheetOpen] = useState(false);
   const [sheetDefaultSection, setSheetDefaultSection] = useState<
@@ -87,7 +79,7 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
                 }}
                 type="button"
               >
-                <Plus className="size-3" />
+                <Plus className="size-4" />
               </button>
               <button
                 aria-label="Manage workspaces"
@@ -98,7 +90,7 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
                 }}
                 type="button"
               >
-                <Minus className="size-3" />
+                <Minus className="size-4" />
               </button>
             </div>
             <WorkspaceManagementSheet
@@ -110,66 +102,6 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <WorkspaceTree collapsed={sidebarState === "collapsed"} />
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel
-            className={cn(
-              "text-[0.6rem] text-muted-foreground uppercase tracking-[0.32em]",
-              sidebarState === "collapsed" && "hidden"
-            )}
-          >
-            Navigate
-          </SidebarGroupLabel>
-
-          <SidebarSeparator
-            className={cn(
-              "mx-0 bg-border",
-              sidebarState === "collapsed" && "hidden"
-            )}
-          />
-
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {MAIN_NAV_ITEMS.map(({ to, label, icon: Icon, exact }) => {
-                const isActive = exact
-                  ? pathname === to
-                  : pathname.startsWith(to);
-                return (
-                  <SidebarMenuItem key={to}>
-                    <SidebarMenuButton
-                      asChild
-                      className={cn(
-                        "rounded-none border-2 border-transparent text-muted-foreground uppercase tracking-[0.18em] transition-none",
-                        "data-[active=true]:border-primary data-[active=true]:bg-primary/15 data-[active=true]:text-foreground",
-                        "hover:border-primary hover:bg-primary/10 hover:text-foreground",
-                        "group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:border-0 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-2 group-data-[collapsible=icon]:text-foreground"
-                      )}
-                      isActive={isActive}
-                      tooltip={label}
-                    >
-                      <Link
-                        aria-label={label}
-                        className="flex items-center gap-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0"
-                        title={label}
-                        to={to}
-                      >
-                        <Icon aria-hidden className="size-4 shrink-0" />
-                        <span
-                          className={cn(
-                            "text-xs",
-                            sidebarState === "collapsed" && "hidden"
-                          )}
-                        >
-                          {label}
-                        </span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>

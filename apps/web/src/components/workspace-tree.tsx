@@ -1,20 +1,38 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { ChevronRight, CircleDot, Loader2, Plus } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { ChevronRight, CircleDot, Loader2, Plus, Trash2 } from "lucide-react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
-import { cellQueries } from "@/queries/cells";
+import { cellMutations, cellQueries } from "@/queries/cells";
 import { workspaceQueries } from "@/queries/workspaces";
 
 type WorkspaceTreeProps = {
   collapsed: boolean;
+};
+
+type PendingCellDelete = {
+  id: string;
+  name: string;
+  workspaceId: string;
 };
 
 export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
@@ -23,9 +41,13 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
   });
 
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
     () => new Set()
   );
+  const confirmDeleteRef = useRef(false);
+  const [pendingCellDelete, setPendingCellDelete] =
+    useState<PendingCellDelete | null>(null);
 
   const activeWorkspaceId = location.search.workspaceId;
 
@@ -53,23 +75,96 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
       }
       return next;
     });
-
-    navigate({
-      to: location.pathname,
-      replace: true,
-      search: (prev) => ({
-        ...(prev ?? {}),
-        workspaceId,
-      }),
-    });
   };
+
+  const deleteCell = useMutation({
+    mutationFn: async ({ id }: { id: string; workspaceId: string }) =>
+      cellMutations.delete.mutationFn(id),
+    onSuccess: async (
+      _result: unknown,
+      variables: { id: string; workspaceId: string }
+    ) => {
+      const deletedCellId = variables.id;
+      const workspaceId = variables.workspaceId;
+      await queryClient.invalidateQueries({
+        queryKey: cellQueries.all(workspaceId).queryKey,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["cells"] });
+
+      if (location.pathname.startsWith(`/cells/${deletedCellId}`)) {
+        navigate({
+          to: "/cells/list",
+          search: workspaceId ? { workspaceId } : undefined,
+          replace: true,
+        });
+      }
+
+      toast.success("Cell deleted");
+    },
+    onError: (error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : "Failed to delete cell";
+      toast.error(message);
+    },
+    onSettled: () => {
+      confirmDeleteRef.current = false;
+      setPendingCellDelete(null);
+    },
+  });
 
   return (
     <SidebarMenu>
+      <AlertDialog
+        onOpenChange={(open) => {
+          if (!(open || deleteCell.isPending || confirmDeleteRef.current)) {
+            setPendingCellDelete(null);
+          }
+        }}
+        open={pendingCellDelete !== null}
+      >
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete cell?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This deletes the cell and its worktree.
+              {pendingCellDelete ? (
+                <span className="mt-2 block font-mono text-xs">
+                  {pendingCellDelete.name}
+                </span>
+              ) : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteCell.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={!pendingCellDelete || deleteCell.isPending}
+              onClick={() => {
+                if (!pendingCellDelete) {
+                  return;
+                }
+                confirmDeleteRef.current = true;
+                deleteCell.mutate({
+                  id: pendingCellDelete.id,
+                  workspaceId: pendingCellDelete.workspaceId,
+                });
+              }}
+            >
+              {deleteCell.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <WorkspaceTreeContent
         collapsed={_collapsed}
         expandedWorkspaceIds={expandedWorkspaceIds}
         location={location}
+        onRequestDeleteCell={(cell: PendingCellDelete) =>
+          setPendingCellDelete(cell)
+        }
         onToggleWorkspace={toggleWorkspace}
       />
     </SidebarMenu>
@@ -80,6 +175,7 @@ type WorkspaceTreeContentProps = {
   location: { pathname: string; search: Record<string, string> };
   collapsed: boolean;
   expandedWorkspaceIds: Set<string>;
+  onRequestDeleteCell: (cell: PendingCellDelete) => void;
   onToggleWorkspace: (workspaceId: string) => void;
 };
 
@@ -87,6 +183,7 @@ function WorkspaceTreeContent({
   location,
   collapsed,
   expandedWorkspaceIds,
+  onRequestDeleteCell,
   onToggleWorkspace,
 }: WorkspaceTreeContentProps) {
   const workspacesQuery = useQuery(workspaceQueries.list());
@@ -102,7 +199,7 @@ function WorkspaceTreeContent({
     return (
       <SidebarMenuItem>
         <div className="flex items-center gap-2 px-3 py-2 text-muted-foreground text-xs">
-          <Loader2 className="size-3 animate-spin" />
+          <Loader2 className="size-4 animate-spin" />
           Loading workspaces...
         </div>
       </SidebarMenuItem>
@@ -118,6 +215,7 @@ function WorkspaceTreeContent({
       expandedWorkspaceIds={expandedWorkspaceIds}
       key={workspace.id}
       location={location}
+      onRequestDeleteCell={onRequestDeleteCell}
       onToggleWorkspace={onToggleWorkspace}
       workspace={workspace}
     />
@@ -128,6 +226,7 @@ type WorkspaceSectionProps = {
   workspace: { id: string; label: string; path: string };
   location: { pathname: string; search: Record<string, string> };
   expandedWorkspaceIds: Set<string>;
+  onRequestDeleteCell: (cell: PendingCellDelete) => void;
   onToggleWorkspace: (workspaceId: string) => void;
 };
 
@@ -135,6 +234,7 @@ function WorkspaceSection({
   workspace,
   location,
   expandedWorkspaceIds,
+  onRequestDeleteCell,
   onToggleWorkspace,
 }: WorkspaceSectionProps) {
   const isWorkspaceActive = location.search.workspaceId === workspace.id;
@@ -152,6 +252,7 @@ function WorkspaceSection({
     cellsLoading,
     isExpanded,
     location,
+    onRequestDeleteCell,
     workspaceId: workspace.id,
   });
 
@@ -172,7 +273,7 @@ function WorkspaceSection({
             <span className="flex min-w-0 items-center gap-2">
               <ChevronRight
                 className={cn(
-                  "size-3 transition-transform",
+                  "size-4 transition-transform",
                   isExpanded ? "rotate-90" : "rotate-0"
                 )}
               />
@@ -185,7 +286,7 @@ function WorkspaceSection({
             search={{ workspaceId: workspace.id }}
             to="/cells/new"
           >
-            <Plus className="size-3" />
+            <Plus className="size-4" />
           </Link>
         </div>
       </SidebarMenuItem>
@@ -200,12 +301,14 @@ function renderWorkspaceCells({
   cellsLoading,
   isExpanded,
   location,
+  onRequestDeleteCell,
   workspaceId,
 }: {
   cells: Array<{ id: string; name: string }>;
   cellsLoading: boolean;
   isExpanded: boolean;
   location: { pathname: string; search: Record<string, string> };
+  onRequestDeleteCell: (cell: PendingCellDelete) => void;
   workspaceId: string;
 }): ReactNode {
   if (!isExpanded) {
@@ -216,7 +319,7 @@ function renderWorkspaceCells({
     return (
       <SidebarMenuItem>
         <div className="ml-4 px-3 py-1.5 text-muted-foreground text-xs">
-          <Loader2 className="mr-2 inline-block size-3 animate-spin" />
+          <Loader2 className="mr-2 inline-block size-4 animate-spin" />
           Loading...
         </div>
       </SidebarMenuItem>
@@ -241,7 +344,7 @@ function renderWorkspaceCells({
         <SidebarMenuButton
           asChild
           className={cn(
-            "box-border w-full rounded-none border-2 border-transparent py-1.5 pr-4 pl-4 text-left text-muted-foreground text-xs tracking-normal transition-none",
+            "box-border w-full rounded-none border-2 border-transparent py-1.5 pr-10 pl-4 text-left text-muted-foreground text-xs tracking-normal transition-none",
             "hover:border-primary hover:bg-primary/10 hover:text-foreground",
             isCellActive && "border-primary bg-primary/15 text-foreground"
           )}
@@ -252,10 +355,28 @@ function renderWorkspaceCells({
             search={{ workspaceId }}
             to={cellPath}
           >
-            <CircleDot className="size-3 shrink-0" />
+            <CircleDot className="size-4 shrink-0" />
             <span className="truncate">{cell.name}</span>
           </Link>
         </SidebarMenuButton>
+
+        <SidebarMenuAction
+          aria-label={`Delete ${cell.name}`}
+          className="rounded-sm text-destructive hover:bg-destructive/10 hover:text-destructive"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onRequestDeleteCell({
+              id: cell.id,
+              name: cell.name,
+              workspaceId,
+            });
+          }}
+          type="button"
+        >
+          <Trash2 className="size-4" />
+          <span className="sr-only">Delete</span>
+        </SidebarMenuAction>
       </SidebarMenuItem>
     );
   });
