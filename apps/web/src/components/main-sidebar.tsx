@@ -1,5 +1,5 @@
-import { Link } from "@tanstack/react-router";
-import { Minus, Plus } from "lucide-react";
+import { Link, useRouterState } from "@tanstack/react-router";
+import { Home, Minus, Plus } from "lucide-react";
 import type { ComponentProps } from "react";
 import { useState } from "react";
 import { ModeToggle } from "@/components/mode-toggle";
@@ -14,6 +14,11 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { WorkspaceManagementSheet } from "@/components/workspace-management-sheet";
 import { WorkspaceTree } from "@/components/workspace-tree";
 import { cn } from "@/lib/utils";
@@ -22,6 +27,9 @@ type MainSidebarProps = ComponentProps<typeof Sidebar>;
 
 export function MainSidebar({ className, ...props }: MainSidebarProps) {
   const { state: sidebarState } = useSidebar();
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
   const [workspaceSheetOpen, setWorkspaceSheetOpen] = useState(false);
   const [sheetDefaultSection, setSheetDefaultSection] = useState<
     "register" | "list"
@@ -37,27 +45,56 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
       {...props}
     >
       <SidebarHeader className="border-border border-b bg-sidebar px-3 py-3">
-        <div className="flex h-12 items-center gap-3 transition-none group-data-[collapsible=icon]:justify-center">
+        <div
+          className={cn(
+            "transition-none",
+            sidebarState === "collapsed"
+              ? "flex flex-col items-center gap-2"
+              : "flex h-12 items-center justify-between gap-3"
+          )}
+        >
           <SidebarTrigger
             aria-label="Toggle sidebar"
-            className="size-9 rounded-none border-2 border-border bg-sidebar text-sidebar-foreground shadow-[3px_3px_0_color-mix(in_oklch,var(--color-shadow-color)_65%,transparent)] transition-none hover:bg-sidebar/80 hover:text-sidebar-foreground group-data-[collapsible=icon]:mx-auto"
+            className="size-9 rounded-none border-2 border-border bg-sidebar text-sidebar-foreground shadow-[3px_3px_0_color-mix(in_oklch,var(--color-shadow-color)_65%,transparent)] transition-none hover:bg-sidebar/80 hover:text-sidebar-foreground"
           />
-          <Link
-            aria-label="Hive home"
-            className="group flex h-full items-center gap-3 uppercase tracking-[0.28em] transition-none group-data-[collapsible=icon]:hidden"
-            to="/"
-          >
-            <span
-              aria-hidden
-              className="block h-10 w-1 bg-primary shadow-[4px_0_0_0_color-mix(in_oklch,var(--color-shadow-color)_45%,transparent)] transition-none group-hover:bg-primary/80"
-            />
-            <span className="flex items-center gap-2 font-semibold text-foreground text-sm">
-              <span aria-hidden className="text-lg leading-none">
-                🐝
+
+          {sidebarState === "collapsed" ? null : (
+            <Link
+              aria-label="Hive home"
+              className="group flex h-full items-center gap-3 uppercase tracking-[0.28em] transition-none"
+              to="/"
+            >
+              <span
+                aria-hidden
+                className="block h-10 w-1 bg-primary shadow-[4px_0_0_0_color-mix(in_oklch,var(--color-shadow-color)_45%,transparent)] transition-none group-hover:bg-primary/80"
+              />
+              <span className="flex items-center gap-2 font-semibold text-foreground text-sm">
+                <span aria-hidden className="text-lg leading-none">
+                  🐝
+                </span>
+                <span>HIVE</span>
               </span>
-              <span>HIVE</span>
-            </span>
-          </Link>
+            </Link>
+          )}
+
+          {sidebarState === "collapsed" ? null : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Link
+                  aria-label="Overview"
+                  className={cn(
+                    "flex size-9 items-center justify-center rounded-none border-2 border-border bg-sidebar text-sidebar-foreground shadow-[3px_3px_0_color-mix(in_oklch,var(--color-shadow-color)_65%,transparent)] transition-none hover:bg-sidebar/80 hover:text-sidebar-foreground",
+                    pathname === "/" && "border-primary bg-primary/10"
+                  )}
+                  title="Overview"
+                  to="/"
+                >
+                  <Home aria-hidden className="size-4" />
+                </Link>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Overview</TooltipContent>
+            </Tooltip>
+          )}
         </div>
       </SidebarHeader>
       <SidebarContent className="gap-6 bg-transparent">
