@@ -9,6 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cellQueries } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
+import { workspaceQueries } from "@/queries/workspaces";
 
 export const Route = createFileRoute("/cells/$cellId")({
   beforeLoad: ({ params, location }) => {
@@ -23,14 +24,21 @@ export const Route = createFileRoute("/cells/$cellId")({
     const cell = await queryClient.ensureQueryData(
       cellQueries.detail(params.cellId)
     );
+    const workspaces = await queryClient.ensureQueryData(
+      workspaceQueries.list()
+    );
+    const workspaceLabel =
+      workspaces.workspaces.find((entry) => entry.id === cell.workspaceId)
+        ?.label ?? undefined;
     await queryClient.ensureQueryData(templateQueries.all(cell.workspaceId));
-    return { workspaceId: cell.workspaceId };
+    return { workspaceId: cell.workspaceId, workspaceLabel };
   },
   component: CellLayout,
 });
 
 function CellLayout() {
   const { cellId } = Route.useParams();
+  const { workspaceLabel } = Route.useLoaderData();
   const cellQuery = useQuery(cellQueries.detail(cellId));
   const routerState = useRouterState();
   const activeRouteId = routerState.matches.at(-1)?.routeId;
@@ -74,15 +82,26 @@ function CellLayout() {
     );
   }
 
+  const titlePrefix = workspaceLabel?.trim();
+
   return (
     <div className="flex h-full w-full flex-1 flex-col overflow-hidden">
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 lg:p-6">
         <section className="w-full shrink-0 border-2 border-border bg-card px-4 py-3 text-muted-foreground text-sm">
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h1 className="font-semibold text-2xl text-foreground tracking-wide">
-                {cell.name}
-              </h1>
+              <div className="flex flex-col gap-1">
+                {titlePrefix ? (
+                  <div className="flex items-center gap-2 text-[0.65rem] text-muted-foreground uppercase tracking-[0.22em]">
+                    <span>Workspace</span>
+                    <span className="h-3 w-px bg-border/60" />
+                    <span className="text-primary">{titlePrefix}</span>
+                  </div>
+                ) : null}
+                <h1 className="font-semibold text-2xl text-foreground tracking-wide">
+                  {cell.name}
+                </h1>
+              </div>
               <div className="flex flex-wrap gap-2">
                 {navItems.map((item) => (
                   <Link key={item.routeId} params={{ cellId }} to={item.to}>

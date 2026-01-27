@@ -43,6 +43,7 @@ import {
   cellQueries,
 } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
+import { workspaceQueries } from "@/queries/workspaces";
 
 const MAX_SELECTION_PREVIEW = 3;
 const PROVISIONING_STATUSES: CellStatus[] = ["spawning", "pending"];
@@ -87,6 +88,10 @@ export function CellList({ workspaceId }: CellListProps) {
   });
   const { data: templatesData } = useQuery(templateQueries.all(workspaceId));
   const templates = templatesData?.templates;
+  const { data: workspaceData } = useQuery(workspaceQueries.list());
+  const workspaceLabel =
+    workspaceData?.workspaces.find((workspace) => workspace.id === workspaceId)
+      ?.label ?? "Workspace";
 
   useEffect(() => {
     const hasProvisioningCells = cells?.some((cell) =>
@@ -241,7 +246,9 @@ export function CellList({ workspaceId }: CellListProps) {
         selectedCell={selectedCellForMetadata}
       />
       <div className="flex flex-col gap-4">
-        <h1 className="font-bold text-2xl md:text-3xl">Cells</h1>
+        <h1 className="font-bold text-2xl md:text-3xl">
+          {workspaceLabel} Cells
+        </h1>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
@@ -293,7 +300,11 @@ export function CellList({ workspaceId }: CellListProps) {
             </Button>
           </div>
 
-          <Link className="flex-none sm:flex-none" to="/cells/new">
+          <Link
+            className="flex-none sm:flex-none"
+            search={{ workspaceId }}
+            to="/cells/new"
+          >
             <Button className="w-auto" size="sm" type="button">
               <Plus className="mr-1.5 h-4 w-4" />
               New Cell

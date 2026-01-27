@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { ModelSelection } from "@/components/model-selector";
@@ -7,8 +8,10 @@ import {
   COMPACTION_WARNING_THRESHOLD,
   useAgentEventStream,
 } from "@/hooks/use-agent-event-stream";
+import { cn } from "@/lib/utils";
 import type { AgentMessage } from "@/queries/agents";
 import { agentMutations, agentQueries } from "@/queries/agents";
+import { type CellStatus, cellQueries } from "@/queries/cells";
 import { ComposePanel } from "./compose-panel";
 import { ConversationPanel } from "./conversation-panel";
 import { AgentChatHeader } from "./header";
@@ -292,7 +295,7 @@ export function AgentChat({ cellId }: AgentChatProps) {
   ]);
 
   if (sessionQuery.isPending) {
-    return <LoadingState />;
+    return <LoadingState cellId={cellId} />;
   }
 
   if (!session) {
@@ -338,12 +341,149 @@ export function AgentChat({ cellId }: AgentChatProps) {
   );
 }
 
-function LoadingState() {
+function LoadingState({ cellId }: { cellId: string }) {
+  const cellQuery = useQuery({
+    ...cellQueries.detail(cellId),
+    staleTime: 2000,
+  });
+  const cell = cellQuery.data;
+  const status = cell?.status;
+
+  const statusLabel = status ? formatCellStatus(status) : "Loading cell…";
+
   return (
-    <div className="flex h-full items-center justify-center border-2 border-border bg-card text-muted-foreground text-sm">
-      Loading agent session...
+    <div className="flex h-full min-h-0 w-full flex-1 items-center justify-center border-2 border-border bg-card p-6 text-foreground">
+      <div className="w-full max-w-xl border-2 border-border bg-background p-5 shadow-[2px_2px_0_rgba(0,0,0,0.6),-1px_-1px_0_rgba(255,143,31,0.35)]">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[0.65rem] text-muted-foreground uppercase tracking-[0.3em]">
+              Agent Session
+            </p>
+            <h2 className="mt-1 font-semibold text-foreground text-lg uppercase tracking-[0.14em]">
+              Preparing…
+            </h2>
+          </div>
+
+          <span
+            className={cn(
+              "shrink-0 rounded-sm px-3 py-1 text-[10px] uppercase tracking-[0.35em]",
+              status ? statusTone(status) : "bg-muted text-muted-foreground"
+            )}
+          >
+            {statusLabel}
+          </span>
+        </div>
+
+        <div className="mt-4 grid gap-3">
+          <div className="rounded-sm border border-border/70 bg-muted/10 px-3 py-2 text-muted-foreground text-sm">
+            This cell is getting ready. You can keep this tab open — the chat
+            will appear automatically.
+          </div>
+
+          <div className="grid gap-2 text-muted-foreground text-xs">
+            <StepRow label="Cell provisioning" state={stepStateFor(status)} />
+            <StepRow label="Starting services" state={stepStateFor(status)} />
+            <StepRow label="Connecting agent" state={stepStateFor(status)} />
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Link params={{ cellId }} to="/cells/$cellId/setup">
+              <Button type="button" variant="outline">
+                View setup info
+              </Button>
+            </Link>
+            <Link params={{ cellId }} to="/cells/$cellId/services">
+              <Button type="button" variant="outline">
+                View services
+              </Button>
+            </Link>
+          </div>
+
+          {status === "error" && cell?.lastSetupError ? (
+            <div className="rounded-sm border border-destructive/60 bg-destructive/10 px-3 py-2 text-destructive text-xs">
+              {cell.lastSetupError}
+            </div>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
+}
+
+function StepRow({
+  label,
+  state,
+}: {
+  label: string;
+  state: "pending" | "working" | "done" | "error";
+}) {
+  const dotClassByState: Record<typeof state, string> = {
+    done: "bg-primary",
+    working: "bg-secondary",
+    error: "bg-destructive",
+    pending: "bg-border",
+  };
+
+  const textByState: Record<typeof state, string> = {
+    done: "Done",
+    working: "Working",
+    error: "Error",
+    pending: "Pending",
+  };
+
+  const dotClass = dotClassByState[state];
+  const text = textByState[state];
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className={cn("h-2 w-2 shrink-0 rounded-full", dotClass)} />
+        <span className="truncate uppercase tracking-[0.22em]">{label}</span>
+      </div>
+      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+        {text}
+      </span>
+    </div>
+  );
+}
+
+function stepStateFor(
+  status?: CellStatus
+): "pending" | "working" | "done" | "error" {
+  if (!status) {
+    return "working";
+  }
+  if (status === "ready") {
+    return "done";
+  }
+  if (status === "error") {
+    return "error";
+  }
+  return "working";
+}
+
+function formatCellStatus(status: CellStatus) {
+  switch (status) {
+    case "ready":
+      return "Cell ready";
+    case "pending":
+      return "Cell pending";
+    case "spawning":
+      return "Cell spawning";
+    case "error":
+      return "Cell error";
+    default:
+      return "Cell";
+  }
+}
+
+function statusTone(status: CellStatus) {
+  const toneMap: Record<CellStatus, string> = {
+    ready: "bg-primary/15 text-primary",
+    pending: "bg-muted text-muted-foreground",
+    spawning: "bg-secondary/20 text-secondary-foreground",
+    error: "bg-destructive/10 text-destructive",
+  };
+  return toneMap[status];
 }
 
 function NoSessionState({
