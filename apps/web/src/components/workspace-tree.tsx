@@ -1,8 +1,21 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { ChevronRight, CircleDot, Loader2, Plus, Trash2 } from "lucide-react";
+import {
+  Check,
+  ChevronRight,
+  CircleX,
+  Loader2,
+  Plus,
+  Trash2,
+  Wrench,
+} from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CellCreationSheet } from "@/components/cell-creation-sheet";
@@ -24,6 +37,8 @@ import {
 } from "@/components/ui/sidebar";
 import { storage } from "@/lib/storage";
 import { cn } from "@/lib/utils";
+import { agentQueries } from "@/queries/agents";
+import type { Cell, CellStatus } from "@/queries/cells";
 import { cellMutations, cellQueries } from "@/queries/cells";
 import { workspaceQueries } from "@/queries/workspaces";
 
@@ -38,6 +53,10 @@ type PendingCellDelete = {
 };
 
 const EXPANDED_WORKSPACES_STORAGE_KEY = "hive.sidebar.expanded-workspaces";
+
+const AGENT_STATUS_POLL_WORKING_MS = 2000;
+const AGENT_STATUS_POLL_AWAITING_INPUT_MS = 5000;
+const AGENT_STATUS_POLL_IDLE_MS = 12_000;
 
 export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
   const routerState = useRouterState({
@@ -320,11 +339,44 @@ function WorkspaceSection({
   const cells = cellsQuery.data ?? [];
   const cellsLoading = cellsQuery.isPending || cellsQuery.isRefetching;
 
+  const readyCells = isExpanded
+    ? cells.filter((cell) => cell.status === "ready")
+    : [];
+
+  const agentSessionQueries = useQueries({
+    queries: readyCells.map((cell) => {
+      const query = agentQueries.sessionByCell(cell.id);
+      return {
+        queryKey: query.queryKey,
+        queryFn: query.queryFn,
+        staleTime: 2000,
+        refetchInterval: (queryInstance: {
+          state: { data: { status?: string } | null | undefined };
+        }) => {
+          const status = queryInstance.state.data?.status;
+          if (status === "working") {
+            return AGENT_STATUS_POLL_WORKING_MS;
+          }
+          if (status === "awaiting_input") {
+            return AGENT_STATUS_POLL_AWAITING_INPUT_MS;
+          }
+          return AGENT_STATUS_POLL_IDLE_MS;
+        },
+      };
+    }),
+  });
+
+  const agentStatusByCellId = new Map<string, string | undefined>();
+  readyCells.forEach((cell, index) => {
+    agentStatusByCellId.set(cell.id, agentSessionQueries[index]?.data?.status);
+  });
+
   const cellsContent = renderWorkspaceCells({
     cells,
     cellsLoading,
     isExpanded,
     location,
+    agentStatusByCellId,
     onRequestDeleteCell,
     workspaceId: workspace.id,
   });
@@ -380,13 +432,15 @@ function renderWorkspaceCells({
   cellsLoading,
   isExpanded,
   location,
+  agentStatusByCellId,
   onRequestDeleteCell,
   workspaceId,
 }: {
-  cells: Array<{ id: string; name: string }>;
+  cells: Pick<Cell, "id" | "name" | "status">[];
   cellsLoading: boolean;
   isExpanded: boolean;
   location: { pathname: string; search: Record<string, string> };
+  agentStatusByCellId: Map<string, string | undefined>;
   onRequestDeleteCell: (cell: PendingCellDelete) => void;
   workspaceId: string;
 }): ReactNode {
@@ -418,6 +472,18 @@ function renderWorkspaceCells({
   return cells.map((cell) => {
     const cellPath = `/cells/${cell.id}`;
     const isCellActive = location.pathname.startsWith(cellPath);
+
+    const agentStatus =
+      cell.status === "ready" ? agentStatusByCellId.get(cell.id) : undefined;
+    const statusIcon = getCellStatusIcon({
+      agentStatus,
+      cellStatus: cell.status,
+      isActive: isCellActive,
+    });
+    const agentDotClass = agentStatus
+      ? getAgentStatusDotClass(agentStatus)
+      : "bg-border/60";
+
     return (
       <SidebarMenuItem key={cell.id}>
         <SidebarMenuButton
@@ -435,13 +501,19 @@ function renderWorkspaceCells({
             search={{ workspaceId }}
             to={cellPath}
           >
-            <CircleDot
-              className={cn(
-                "size-4 shrink-0",
-                isCellActive ? "text-primary" : "text-muted-foreground/70"
-              )}
-            />
+            {statusIcon}
             <span className="truncate">{cell.name}</span>
+            {cell.status === "ready" ? (
+              <span
+                className={cn(
+                  "ml-1 inline-flex h-2 w-2 shrink-0 rounded-full",
+                  agentDotClass
+                )}
+                title={
+                  agentStatus ? `Agent ${agentStatus}` : "Agent status unknown"
+                }
+              />
+            ) : null}
           </Link>
         </SidebarMenuButton>
 
@@ -473,4 +545,64 @@ function EmptyState() {
       No workspaces registered
     </div>
   );
+}
+
+function getCellStatusIcon({
+  cellStatus,
+  agentStatus,
+  isActive,
+}: {
+  cellStatus: CellStatus;
+  agentStatus?: string;
+  isActive: boolean;
+}): ReactNode {
+  const iconClass = cn(
+    "size-4 shrink-0",
+    isActive ? "text-foreground" : "text-muted-foreground/70"
+  );
+
+  if (cellStatus === "error") {
+    return <CircleX className={cn(iconClass, "text-destructive")} />;
+  }
+
+  if (cellStatus === "pending") {
+    return <Wrench className={cn(iconClass, "text-amber-400")} />;
+  }
+
+  if (cellStatus === "spawning") {
+    return <Wrench className={cn(iconClass, "text-amber-400")} />;
+  }
+
+  if (agentStatus === "awaiting_input") {
+    return <Check className={cn(iconClass, "text-teal-400")} />;
+  }
+
+  if (agentStatus === "working" || agentStatus === "starting") {
+    return (
+      <Loader2 className={cn(iconClass, "animate-spin text-primary/80")} />
+    );
+  }
+
+  if (agentStatus === "error") {
+    return <CircleX className={cn(iconClass, "text-destructive")} />;
+  }
+
+  return <Check className={cn(iconClass, "text-emerald-500")} />;
+}
+
+function getAgentStatusDotClass(status: string): string {
+  switch (status) {
+    case "working":
+      return "bg-primary";
+    case "awaiting_input":
+      return "bg-secondary";
+    case "completed":
+      return "bg-primary/70";
+    case "error":
+      return "bg-destructive";
+    case "starting":
+      return "bg-muted";
+    default:
+      return "bg-border/60";
+  }
 }
