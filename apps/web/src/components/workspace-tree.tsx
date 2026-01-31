@@ -35,12 +35,15 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { useCellStatusStream } from "@/hooks/use-cell-status-stream";
 import { storage } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 import { agentQueries } from "@/queries/agents";
 import type { Cell, CellStatus } from "@/queries/cells";
 import { cellMutations, cellQueries } from "@/queries/cells";
 import { workspaceQueries } from "@/queries/workspaces";
+
+const PROVISIONING_STATUSES: CellStatus[] = ["spawning", "pending"];
 
 type WorkspaceTreeProps = {
   collapsed: boolean;
@@ -338,6 +341,14 @@ function WorkspaceSection({
   });
   const cells = cellsQuery.data ?? [];
   const cellsLoading = cellsQuery.isPending || cellsQuery.isRefetching;
+
+  const hasProvisioningCells = cells.some((cell) =>
+    PROVISIONING_STATUSES.includes(cell.status)
+  );
+
+  useCellStatusStream(workspace.id, {
+    enabled: isExpanded && hasProvisioningCells,
+  });
 
   const readyCells = isExpanded
     ? cells.filter((cell) => cell.status === "ready")
