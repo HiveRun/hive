@@ -6,7 +6,7 @@ import { resolve as resolvePath } from "node:path";
 import { logger } from "@bogeychan/elysia-logger";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { Effect } from "effect";
-import { Elysia, type Static, t } from "elysia";
+import { Elysia, type Static, sse, t } from "elysia";
 import type { AgentRuntimeService } from "../agents/service";
 import { AgentRuntimeServiceTag } from "../agents/service";
 import type { Template } from "../config/schema";
@@ -31,11 +31,17 @@ import {
 } from "../schema/cell-provisioning";
 import { type CellStatus, cells, type NewCell } from "../schema/cells";
 import { cellServices } from "../schema/services";
+import { createAsyncEventIterator } from "../services/async-iterator";
 import {
   buildCellDiffPayload,
   parseDiffRequest,
 } from "../services/diff-route-helpers";
-import { subscribeToServiceEvents } from "../services/events";
+import {
+  type CellStatusEvent,
+  emitCellStatusUpdate,
+  subscribeToCellStatusEvents,
+  subscribeToServiceEvents,
+} from "../services/events";
 import type {
   ServiceSupervisorError,
   ServiceSupervisorService as ServiceSupervisorServiceType,
@@ -358,6 +364,13 @@ export function createCellsRoutes(
             .set({ status: "pending", lastSetupError: null })
             .where(eq(cells.id, cell.id));
 
+          emitCellStatusUpdate({
+            workspaceId: cell.workspaceId,
+            cellId: cell.id,
+            status: "pending",
+            lastSetupError: null,
+          });
+
           await runServerEffect(
             deps.ensureServicesForCell({
               cell: {
@@ -373,6 +386,13 @@ export function createCellsRoutes(
             .update(cells)
             .set({ status: "ready", lastSetupError: null })
             .where(eq(cells.id, cell.id));
+
+          emitCellStatusUpdate({
+            workspaceId: cell.workspaceId,
+            cellId: cell.id,
+            status: "ready",
+            lastSetupError: null,
+          });
         } catch (error) {
           const payload = buildCellCreationErrorPayload(error);
           const lastSetupError = deriveSetupErrorDetails(payload);
@@ -380,6 +400,14 @@ export function createCellsRoutes(
             .update(cells)
             .set({ status: "error", lastSetupError })
             .where(eq(cells.id, cell.id));
+
+          emitCellStatusUpdate({
+            workspaceId: cell.workspaceId,
+            cellId: cell.id,
+            status: "error",
+            lastSetupError,
+          });
+
           set.status = HTTP_STATUS.BAD_REQUEST;
           return {
             message: payload.message,
@@ -438,6 +466,68 @@ export function createCellsRoutes(
         response: {
           200: CellListResponseSchema,
           400: ErrorResponseSchema,
+        },
+      }
+    )
+    .get(
+      "/workspace/:workspaceId/stream",
+      async ({ params, set, getWorkspaceContext, log, request }) => {
+        let workspaceContext: WorkspaceRuntimeContext;
+        try {
+          workspaceContext = await getWorkspaceContext(params.workspaceId);
+        } catch {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Workspace not found" };
+        }
+
+        const workspaceId = workspaceContext.workspace.id;
+        const { db: database } = await resolveDeps();
+
+        const { iterator, cleanup } = createAsyncEventIterator<CellStatusEvent>(
+          (handler) => subscribeToCellStatusEvents(workspaceId, handler),
+          request.signal
+        );
+
+        async function* stream() {
+          try {
+            yield sse({ event: "ready", data: { timestamp: Date.now() } });
+
+            const initialCells = await database
+              .select()
+              .from(cells)
+              .where(eq(cells.workspaceId, workspaceId));
+
+            for (const cell of initialCells) {
+              yield sse({ event: "cell", data: cellToResponse(cell) });
+            }
+
+            yield sse({ event: "snapshot", data: { timestamp: Date.now() } });
+
+            for await (const event of iterator) {
+              try {
+                const cell = await loadCellById(database, event.cellId);
+                if (cell) {
+                  yield sse({ event: "cell", data: cellToResponse(cell) });
+                }
+              } catch (error) {
+                log.error(
+                  { error, cellId: event.cellId },
+                  "Failed to stream cell update"
+                );
+              }
+            }
+          } finally {
+            cleanup();
+          }
+        }
+
+        return stream();
+      },
+      {
+        params: t.Object({ workspaceId: t.String() }),
+        response: {
+          200: t.Any(),
+          404: t.Object({ message: t.String() }),
         },
       }
     )
@@ -1777,6 +1867,20 @@ async function updateCellProvisioningStatus(
       .update(cellProvisioningStates)
       .set({ finishedAt })
       .where(eq(cellProvisioningStates.cellId, cellId));
+  }
+
+  const cell = await database.query.cells.findFirst({
+    where: eq(cells.id, cellId),
+    columns: { workspaceId: true },
+  });
+
+  if (cell) {
+    emitCellStatusUpdate({
+      workspaceId: cell.workspaceId,
+      cellId,
+      status,
+      lastSetupError,
+    });
   }
 
   return finishedAt;
