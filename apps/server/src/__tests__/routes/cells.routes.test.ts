@@ -1,0 +1,157 @@
+/**
+ * Route reachability tests - ensures routes don't shadow each other.
+ *
+ * These tests verify that each route pattern is reachable and doesn't
+ * return 404 due to route ordering issues (e.g., /:id matching before
+ * /workspace/:workspaceId/stream).
+ *
+ * The key distinction:
+ * - "Route not matched" = Elysia returns 404 with body "NOT_FOUND"
+ * - "Resource not found" = Our handler returns 404 with a meaningful message
+ *
+ * We test for route matching by checking that we get our handler's response,
+ * not Elysia's default "NOT_FOUND".
+ */
+import { Effect } from "effect";
+import { Elysia } from "elysia";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createCellsRoutes } from "../../routes/cells";
+import { cells } from "../../schema/cells";
+import { setupTestDb, testDb } from "../test-db";
+
+const TEST_WORKSPACE_ID = "test-workspace";
+const TEST_CELL_ID = "test-cell-id";
+const HTTP_OK = 200;
+const HTTP_NOT_FOUND = 404;
+
+function createMinimalDependencies(): any {
+  const workspaceRecord = {
+    id: TEST_WORKSPACE_ID,
+    label: "Test Workspace",
+    path: "/tmp/test-workspace-root",
+    addedAt: new Date().toISOString(),
+  };
+
+  return {
+    db: testDb,
+    resolveWorkspaceContext: (() =>
+      Effect.succeed({
+        workspace: workspaceRecord,
+        loadConfig: () =>
+          Effect.succeed({
+            opencode: { defaultProvider: "opencode", defaultModel: "mock" },
+            promptSources: [],
+            templates: {},
+            defaults: {},
+          }),
+        createWorktreeManager: () =>
+          Effect.succeed({
+            createWorktree: () =>
+              Effect.succeed({ path: "/tmp", branch: "b", baseCommit: "c" }),
+            removeWorktree: () => Effect.void,
+          }),
+        createWorktree: () =>
+          Effect.succeed({ path: "/tmp", branch: "b", baseCommit: "c" }),
+        removeWorktree: () => Effect.void,
+      })) as any,
+    ensureAgentSession: () =>
+      Effect.succeed({ id: "session", cellId: TEST_CELL_ID }),
+    closeAgentSession: () => Effect.void,
+    ensureServicesForCell: () => Effect.void,
+    startServicesForCell: () => Effect.void,
+    stopServicesForCell: () => Effect.void,
+    startServiceById: () => Effect.void,
+    stopServiceById: () => Effect.void,
+    sendAgentMessage: () => Effect.void,
+  };
+}
+
+/**
+ * Check if a 404 response is from Elysia's "route not found" vs our handler.
+ * Elysia returns "NOT_FOUND" as plain text when no route matches.
+ */
+async function isRouteNotFound(response: Response): Promise<boolean> {
+  if (response.status !== HTTP_NOT_FOUND) {
+    return false;
+  }
+  const text = await response.clone().text();
+  return text === "NOT_FOUND";
+}
+
+describe("cells route reachability", () => {
+  // biome-ignore lint/suspicious/noExplicitAny: Elysia type is complex, we just need .handle()
+  let app: any;
+
+  beforeAll(async () => {
+    await setupTestDb();
+    const routes = createCellsRoutes(createMinimalDependencies());
+    app = new Elysia().use(routes);
+  });
+
+  beforeEach(async () => {
+    await testDb.delete(cells);
+  });
+
+  /**
+   * Routes that don't require existing resources - should return 200
+   */
+  it("GET /api/cells/workspace/:id/stream is reachable and returns SSE", async () => {
+    const response = await app.handle(
+      new Request(
+        `http://localhost/api/cells/workspace/${TEST_WORKSPACE_ID}/stream`
+      )
+    );
+
+    expect(response.status).toBe(HTTP_OK);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+  });
+
+  /**
+   * Routes that require existing resources - should return handler's 404, not Elysia's
+   */
+  const resourceRoutes: [string, string, string][] = [
+    ["GET", `/api/cells/${TEST_CELL_ID}`, "Get cell by ID"],
+    ["GET", `/api/cells/${TEST_CELL_ID}/services`, "Get cell services"],
+    ["GET", `/api/cells/${TEST_CELL_ID}/diff`, "Get cell diff"],
+    ["DELETE", `/api/cells/${TEST_CELL_ID}`, "Delete cell"],
+    [
+      "POST",
+      `/api/cells/${TEST_CELL_ID}/setup/retry`,
+      "Retry cell provisioning",
+    ],
+  ];
+
+  for (const [method, path, description] of resourceRoutes) {
+    it(`${method} ${path} route is matched (${description})`, async () => {
+      const response = await app.handle(
+        new Request(`http://localhost${path}`, { method })
+      );
+
+      // The route should be matched (not Elysia's default NOT_FOUND)
+      // It will return 404 "Cell not found" which is fine - the route was matched
+      const routeNotFound = await isRouteNotFound(response);
+      expect(
+        routeNotFound,
+        `Route ${path} was not matched (got Elysia NOT_FOUND)`
+      ).toBe(false);
+    });
+  }
+
+  /**
+   * Regression test: /workspace/:id/stream must not be shadowed by /:id
+   *
+   * This was a real bug where the /:id route was registered before
+   * /workspace/:workspaceId/stream, causing "workspace" to be matched as a cell ID.
+   */
+  it("SSE stream route is not shadowed by /:id route", async () => {
+    const response = await app.handle(
+      new Request(
+        `http://localhost/api/cells/workspace/${TEST_WORKSPACE_ID}/stream`
+      )
+    );
+
+    // Should get SSE response, not a "Cell not found" from /:id handler
+    expect(response.status).toBe(HTTP_OK);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+  });
+});
