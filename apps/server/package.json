@@ -37,6 +37,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@opencode-ai/plugin": "1.1.48",
     "@types/bun": "^1.2.6",
     "drizzle-kit": "^0.31.7",
     "tsdown": "catalog:",

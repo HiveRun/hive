@@ -1,12 +1,40 @@
 import type { ExecException } from "node:child_process";
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 import { Context, Effect, Layer } from "effect";
 import { glob } from "tinyglobby";
+import {
+  generateHiveToolConfig,
+  HIVE_TOOL_SOURCE,
+} from "../agents/hive-opencode-tool";
 import { HiveConfigService } from "../config/context";
 import type { HiveConfig, Template } from "../config/schema";
+
+/**
+ * Resolves the Hive server URL for tool configuration.
+ * This URL is written to .hive/config.json in each worktree so tools
+ * can communicate back to the Hive server.
+ *
+ * Uses HIVE_URL if set, otherwise constructs from PORT (defaulting to 3000).
+ *
+ * IMPORTANT: Uses "localhost" not "127.0.0.1" to handle IPv4/IPv6 binding.
+ * The server may bind to IPv6 only, and "localhost" resolves correctly
+ * for either protocol while "127.0.0.1" is IPv4-only.
+ */
+export function resolveHiveServerUrl(): string {
+  if (process.env.HIVE_URL) {
+    return process.env.HIVE_URL;
+  }
+
+  const port = process.env.PORT ?? "3000";
+  const hostname = process.env.HOST ?? process.env.HOSTNAME ?? "localhost";
+  const protocol = process.env.HIVE_PROTOCOL ?? "http";
+
+  return `${protocol}://${hostname}:${port}`;
+}
+
 import { resolveCellsRoot } from "../workspaces/registry";
 
 const WORKTREE_PREFIX = "worktree ";
@@ -307,6 +335,36 @@ export function createWorktreeManager(
     }
   }
 
+  async function ensureHiveToolAndConfig(
+    worktreePath: string,
+    cellId: string
+  ): Promise<void> {
+    const hiveUrl = resolveHiveServerUrl();
+
+    // Write .opencode/tools/hive.ts (the tool source)
+    const toolDir = join(worktreePath, ".opencode", "tools");
+    const toolPath = join(toolDir, "hive.ts");
+
+    try {
+      await mkdir(toolDir, { recursive: true });
+      await writeFile(toolPath, HIVE_TOOL_SOURCE, "utf8");
+    } catch (error: unknown) {
+      logWarn("Failed to write Hive tool for worktree", error);
+    }
+
+    // Write .hive/config.json (tool configuration)
+    const hiveDir = join(worktreePath, ".hive");
+    const configPath = join(hiveDir, "config.json");
+    const configContent = generateHiveToolConfig({ cellId, hiveUrl });
+
+    try {
+      await mkdir(hiveDir, { recursive: true });
+      await writeFile(configPath, configContent, "utf8");
+    } catch (error: unknown) {
+      logWarn("Failed to write Hive config for worktree", error);
+    }
+  }
+
   function getCurrentBranch(): string {
     return git("rev-parse", "--abbrev-ref", "HEAD");
   }
@@ -449,6 +507,9 @@ export function createWorktreeManager(
           const ignorePatterns = getIgnorePatterns(options.templateId);
           yield* Effect.promise(() =>
             copyIncludedFiles(worktreePath, includePatterns, ignorePatterns)
+          );
+          yield* Effect.promise(() =>
+            ensureHiveToolAndConfig(worktreePath, cellId)
           );
 
           const baseCommit = git("rev-parse", branch);
