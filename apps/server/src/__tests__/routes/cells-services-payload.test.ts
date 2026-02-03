@@ -8,6 +8,7 @@
  */
 
 import { promises as fs } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Elysia } from "elysia";
@@ -23,6 +24,7 @@ const TEST_CELL_ID = "test-cell-services-id";
 const TEST_SERVICE_ID = "test-service-id";
 const LOG_TAIL_MAX_LINES = 200;
 const TEST_LOG_LINES_SMALL = 50;
+const TEST_LOG_LINES_TINY = 5;
 const SERVICE_LOG_DIR = ".hive/logs";
 const HTTP_OK = 200;
 
@@ -119,7 +121,18 @@ async function createLogFileWithManyLines(
  */
 async function insertCellAndServiceRecords(
   workspacePath: string,
-  serviceName: string
+  serviceName: string,
+  options?: {
+    port?: number | null;
+    pid?: number | null;
+    status?:
+      | "pending"
+      | "starting"
+      | "running"
+      | "needs_resume"
+      | "stopped"
+      | "error";
+  }
 ): Promise<{ cellId: string; serviceId: string }> {
   const cellId = TEST_CELL_ID;
   const serviceId = TEST_SERVICE_ID;
@@ -159,9 +172,9 @@ async function insertCellAndServiceRecords(
       command: "echo test",
       cwd: workspacePath,
       env: { TEST_VAR: "test" },
-      status: "running",
-      port: null,
-      pid: null,
+      status: options?.status ?? "running",
+      port: options?.port ?? null,
+      pid: options?.pid ?? null,
       readyTimeoutMs: null,
       definition: {
         type: "process",
@@ -176,6 +189,48 @@ async function insertCellAndServiceRecords(
     .returning();
 
   return { cellId, serviceId };
+}
+
+function createIpv6LoopbackListener(): Promise<
+  | { port: number; close: () => Promise<void> }
+  | { port: null; close: () => Promise<void> }
+> {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.once("error", (error) => {
+      const code = (error as NodeJS.ErrnoException).code;
+      const close = () =>
+        new Promise<void>((resolveClose) => {
+          try {
+            server.close(() => resolveClose());
+          } catch {
+            resolveClose();
+          }
+        });
+      // If IPv6 loopback isn't available, treat as unsupported and let the test skip.
+      if (
+        code === "EADDRNOTAVAIL" ||
+        code === "EAFNOSUPPORT" ||
+        code === "EPROTONOSUPPORT"
+      ) {
+        resolve({ port: null, close });
+        return;
+      }
+      // For other errors, surface via a rejected close in the test.
+      resolve({ port: null, close });
+    });
+
+    server.listen(0, "::1", () => {
+      const address = server.address();
+      const port =
+        address && typeof address === "object" ? Number(address.port) : null;
+      const close = () =>
+        new Promise<void>((resolveClose) => {
+          server.close(() => resolveClose());
+        });
+      resolve({ port: port ?? null, close });
+    });
+  });
 }
 
 /**
@@ -370,6 +425,44 @@ describe("GET /api/cells/:id/services - payload validation", () => {
       expect(service.logPath).toBe(
         join(tempWorkspace, SERVICE_LOG_DIR, `${sanitizedName}.log`)
       );
+    });
+  });
+
+  describe("port reachability", () => {
+    it("reports portReachable true for services bound to ::1 (IPv6 localhost)", async () => {
+      const listener = await createIpv6LoopbackListener();
+      if (!listener.port) {
+        // IPv6 loopback isn't supported in this environment.
+        return;
+      }
+
+      const serviceName = "server";
+      await createLogFileWithManyLines(
+        tempWorkspace,
+        serviceName,
+        TEST_LOG_LINES_TINY
+      );
+      await insertCellAndServiceRecords(tempWorkspace, serviceName, {
+        port: listener.port,
+        status: "starting",
+      });
+
+      const response = await app.handle(
+        new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
+      );
+
+      expect(response.status).toBe(HTTP_OK);
+
+      const body = (await response.json()) as {
+        services: Array<{ portReachable?: boolean; port?: number }>;
+      };
+      expect(body.services).toHaveLength(1);
+
+      const service = getFirstService(body.services);
+      expect(service.port).toBe(listener.port);
+      expect(service.portReachable).toBe(true);
+
+      await listener.close();
     });
   });
 

@@ -205,22 +205,29 @@ function isPortActive(port?: number | null): Promise<boolean> {
     return Promise.resolve(false);
   }
 
-  return new Promise((resolve) => {
-    const socket = createConnection({ host: "127.0.0.1", port })
-      .once("connect", () => {
-        socket.end();
-        resolve(true);
-      })
-      .once("error", () => {
-        resolve(false);
-      })
-      .once("timeout", () => {
-        socket.destroy();
-        resolve(false);
-      });
+  const probeHost = (host: string): Promise<true> =>
+    new Promise((resolve, reject) => {
+      const socket = createConnection({ host, port })
+        .once("connect", () => {
+          socket.end();
+          resolve(true);
+        })
+        .once("error", () => {
+          reject(new Error("connect_failed"));
+        })
+        .once("timeout", () => {
+          socket.destroy();
+          reject(new Error("connect_timeout"));
+        });
 
-    socket.setTimeout(PORT_CHECK_TIMEOUT_MS);
-  });
+      socket.setTimeout(PORT_CHECK_TIMEOUT_MS);
+    });
+
+  // Some services bind to IPv6 loopback (::1) when HOST/HOSTNAME is "localhost".
+  // Probe both loopback families to avoid false negatives.
+  return Promise.any([probeHost("127.0.0.1"), probeHost("::1")])
+    .then(() => true)
+    .catch(() => false);
 }
 
 function cellToResponse(cell: typeof cells.$inferSelect) {
