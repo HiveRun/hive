@@ -8,6 +8,5 @@
       "@/*": ["./src/*"]
     },
     "jsx": "react-jsx"
-  },
-  "exclude": ["src/agents/tools/**/*"]
+  }
 }

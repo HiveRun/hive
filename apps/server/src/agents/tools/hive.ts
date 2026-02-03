@@ -12,7 +12,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { tool } from "@opencode-ai/plugin";
+import { type ToolDefinition, tool } from "@opencode-ai/plugin";
 
 type HiveService = {
   id: string;
@@ -218,7 +218,7 @@ function formatSingleServiceText(
   return output.join("\n");
 }
 
-export const services = tool({
+export const services: ToolDefinition = tool({
   description: `Check the status of all services (backend, frontend, database, etc.) running in this cell.
 
 USE THIS TOOL WHEN:
@@ -294,7 +294,7 @@ PAGINATION: By default returns last 200 log lines per service. Use logLines/logO
   },
 });
 
-export const service_logs = tool({
+export const service_logs: ToolDefinition = tool({
   description: `Get log output for a specific service by name.
 
 USE THIS TOOL WHEN:
@@ -381,7 +381,7 @@ TIP: If you don't know the service name, call hive_services first to see availab
   },
 });
 
-export const setup_logs = tool({
+export const setup_logs: ToolDefinition = tool({
   description: `Get logs from the cell's initial setup/provisioning phase.
 
 USE THIS TOOL WHEN:
