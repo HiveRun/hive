@@ -41,8 +41,28 @@ export const CellServiceSchema = t.Object({
   updatedAt: t.String(),
   env: t.Record(t.String(), t.String()),
   recentLogs: t.Union([t.String(), t.Null()]),
+  totalLogLines: t.Union([t.Number(), t.Null()]),
+  hasMoreLogs: t.Boolean(),
   processAlive: t.Optional(t.Boolean()),
   portReachable: t.Optional(t.Boolean()),
+});
+
+export const ServiceLogQuerySchema = t.Object({
+  logLines: t.Optional(
+    t.Number({
+      minimum: 1,
+      maximum: 2000,
+      default: 200,
+      description: "Number of log lines to return (1-2000, default: 200)",
+    })
+  ),
+  logOffset: t.Optional(
+    t.Number({
+      minimum: 0,
+      default: 0,
+      description: "Number of lines to skip from the end (for pagination)",
+    })
+  ),
 });
 
 export const CellServiceListResponseSchema = t.Object({

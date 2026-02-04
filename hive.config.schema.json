@@ -19,8 +19,7 @@
         },
         "defaultProvider": {
           "description": "Default provider identifier when templates omit one",
-          "type": "string",
-          "minLength": 1
+          "type": "string"
         },
         "defaultModel": {
           "description": "Fallback model identifier used when templates omit one",

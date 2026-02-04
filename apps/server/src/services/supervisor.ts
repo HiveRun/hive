@@ -129,15 +129,32 @@ export function isProcessAlive(pid?: number | null): boolean {
 }
 
 function isPortFree(port: number): Promise<boolean> {
-  return new Promise((resolvePort) => {
-    const server = createServer();
-    server.once("error", () => {
-      server.close(() => resolvePort(false));
+  const supportsIpv6 = (code: string | undefined) =>
+    code !== "EADDRNOTAVAIL" &&
+    code !== "EAFNOSUPPORT" &&
+    code !== "EPROTONOSUPPORT";
+
+  const probeHost = (host: string): Promise<boolean> =>
+    new Promise((resolvePort) => {
+      const server = createServer();
+      server.once("error", (error) => {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (host === "::1" && !supportsIpv6(code)) {
+          // IPv6 loopback isn't available on this host; don't block allocation.
+          server.close(() => resolvePort(true));
+          return;
+        }
+        server.close(() => resolvePort(false));
+      });
+      server.listen(port, host, () => {
+        server.close(() => resolvePort(true));
+      });
     });
-    server.listen(port, "127.0.0.1", () => {
-      server.close(() => resolvePort(true));
-    });
-  });
+
+  // Ensure the port isn't already claimed on either loopback family.
+  return Promise.all([probeHost("127.0.0.1"), probeHost("::1")]).then(
+    (results) => results.every(Boolean)
+  );
 }
 
 function resolveSignalValue(signal?: number | string): number | undefined {

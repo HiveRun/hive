@@ -24,6 +24,7 @@ import {
   CreateCellSchema,
   DeleteCellsSchema,
   DiffQuerySchema,
+  ServiceLogQuerySchema,
 } from "../schema/api";
 import {
   type CellProvisioningState,
@@ -175,6 +176,7 @@ const ErrorResponseSchema = t.Object({
 
 const LOG_TAIL_MAX_BYTES = 64_000;
 const LOG_TAIL_MAX_LINES = 200;
+const LOG_TAIL_API_MAX_LINES = 2000;
 const LOG_LINE_SPLIT_RE = /\r?\n/;
 const SERVICE_LOG_DIR = ".hive/logs";
 const PORT_CHECK_TIMEOUT_MS = 500;
@@ -203,22 +205,29 @@ function isPortActive(port?: number | null): Promise<boolean> {
     return Promise.resolve(false);
   }
 
-  return new Promise((resolve) => {
-    const socket = createConnection({ host: "127.0.0.1", port })
-      .once("connect", () => {
-        socket.end();
-        resolve(true);
-      })
-      .once("error", () => {
-        resolve(false);
-      })
-      .once("timeout", () => {
-        socket.destroy();
-        resolve(false);
-      });
+  const probeHost = (host: string): Promise<true> =>
+    new Promise((resolve, reject) => {
+      const socket = createConnection({ host, port })
+        .once("connect", () => {
+          socket.end();
+          resolve(true);
+        })
+        .once("error", () => {
+          reject(new Error("connect_failed"));
+        })
+        .once("timeout", () => {
+          socket.destroy();
+          reject(new Error("connect_timeout"));
+        });
 
-    socket.setTimeout(PORT_CHECK_TIMEOUT_MS);
-  });
+      socket.setTimeout(PORT_CHECK_TIMEOUT_MS);
+    });
+
+  // Some services bind to IPv6 loopback (::1) when HOST/HOSTNAME is "localhost".
+  // Probe both loopback families to avoid false negatives.
+  return Promise.any([probeHost("127.0.0.1"), probeHost("::1")])
+    .then(() => true)
+    .catch(() => false);
 }
 
 function cellToResponse(cell: typeof cells.$inferSelect) {
@@ -569,7 +578,7 @@ export function createCellsRoutes(
     )
     .get(
       "/:id/services",
-      async ({ params, set }) => {
+      async ({ params, query, set }) => {
         const { db: database } = await resolveDeps();
         const cell = await loadCellById(database, params.id);
         if (!cell) {
@@ -577,15 +586,21 @@ export function createCellsRoutes(
           return { message: "Cell not found" } satisfies { message: string };
         }
 
+        const logOptions: LogTailOptions = {
+          lines: query.logLines,
+          offset: query.logOffset,
+        };
+
         const rows = await fetchServiceRows(database, params.id);
         const services = await Promise.all(
-          rows.map((row) => serializeService(database, row))
+          rows.map((row) => serializeService(database, row, logOptions))
         );
 
         return { services } satisfies CellServiceListResponse;
       },
       {
         params: t.Object({ id: t.String() }),
+        query: ServiceLogQuerySchema,
         response: {
           200: CellServiceListResponseSchema,
           400: t.Object({ message: t.String() }),
@@ -2064,10 +2079,14 @@ async function fetchServiceRow(
   return row ?? null;
 }
 
-async function serializeService(database: DatabaseClient, row: ServiceRow) {
+async function serializeService(
+  database: DatabaseClient,
+  row: ServiceRow,
+  logOptions?: LogTailOptions
+) {
   const { service, cell } = row;
   const logPath = computeServiceLogPath(cell.workspacePath, service.name);
-  const recentLogs = await readLogTail(logPath);
+  const logResult = await readLogTail(logPath, logOptions);
   const processAlive = isProcessAlive(service.pid);
   const portReachable =
     typeof service.port === "number"
@@ -2119,16 +2138,43 @@ async function serializeService(database: DatabaseClient, row: ServiceRow) {
     lastKnownError: derivedLastKnownError,
     env: service.env,
     updatedAt: service.updatedAt.toISOString(),
-    recentLogs,
+    recentLogs: logResult.content,
+    totalLogLines: logResult.totalLines,
+    hasMoreLogs: logResult.hasMore,
     processAlive,
     ...(portReachable !== undefined ? { portReachable } : {}),
   };
 }
 
-async function readLogTail(logPath?: string | null): Promise<string | null> {
+type LogTailOptions = {
+  /** Maximum number of lines to return (default: 200, max: 2000) */
+  lines?: number;
+  /** Number of lines to skip from the end before taking `lines` (default: 0) */
+  offset?: number;
+};
+
+type LogTailResult = {
+  content: string | null;
+  /** Total number of lines in the file (approximate for large files) */
+  totalLines: number | null;
+  /** Whether there are more lines before the returned content */
+  hasMore: boolean;
+};
+
+async function readLogTail(
+  logPath?: string | null,
+  options?: LogTailOptions
+): Promise<LogTailResult> {
   if (!logPath) {
-    return null;
+    return { content: null, totalLines: null, hasMore: false };
   }
+
+  // Clamp lines to reasonable bounds
+  const requestedLines = Math.min(
+    Math.max(options?.lines ?? LOG_TAIL_MAX_LINES, 1),
+    LOG_TAIL_API_MAX_LINES
+  );
+  const offset = Math.max(options?.offset ?? 0, 0);
 
   try {
     const file = await fs.open(logPath, "r");
@@ -2136,19 +2182,34 @@ async function readLogTail(logPath?: string | null): Promise<string | null> {
       const stats = await file.stat();
       const totalBytes = Number(stats.size ?? 0);
       if (totalBytes === 0) {
-        return "";
+        return { content: "", totalLines: 0, hasMore: false };
       }
+
+      // Read more bytes to accommodate offset
       const bytesToRead = Math.min(totalBytes, LOG_TAIL_MAX_BYTES);
       const start = totalBytes - bytesToRead;
       const buffer = Buffer.alloc(bytesToRead);
       await file.read(buffer, 0, bytesToRead, start);
-      const lines = buffer.toString("utf8").split(LOG_LINE_SPLIT_RE);
-      return lines.slice(-LOG_TAIL_MAX_LINES).join("\n").trimEnd();
+      const allLines = buffer.toString("utf8").split(LOG_LINE_SPLIT_RE);
+
+      // Apply offset from the end, then take requested lines
+      const endIndex = allLines.length - offset;
+      const startIndex = Math.max(endIndex - requestedLines, 0);
+      const selectedLines = allLines.slice(startIndex, endIndex);
+
+      const totalLines = allLines.length;
+      const hasMore = startIndex > 0 || start > 0;
+
+      return {
+        content: selectedLines.join("\n").trimEnd(),
+        totalLines,
+        hasMore,
+      };
     } finally {
       await file.close();
     }
   } catch {
-    return null;
+    return { content: null, totalLines: null, hasMore: false };
   }
 }
 
@@ -2164,16 +2225,19 @@ function computeSetupLogPath(workspacePath: string): string {
   return resolvePath(workspacePath, SERVICE_LOG_DIR, "setup.log");
 }
 
-async function buildSetupLogPayload(workspacePath?: string | null) {
+async function buildSetupLogPayload(
+  workspacePath?: string | null,
+  logOptions?: LogTailOptions
+) {
   if (!workspacePath) {
     return {};
   }
 
   const setupLogPath = computeSetupLogPath(workspacePath);
-  const setupLog = await readLogTail(setupLogPath);
+  const logResult = await readLogTail(setupLogPath, logOptions);
   return {
     setupLogPath,
-    ...(setupLog != null ? { setupLog } : {}),
+    ...(logResult.content != null ? { setupLog: logResult.content } : {}),
   };
 }
 
