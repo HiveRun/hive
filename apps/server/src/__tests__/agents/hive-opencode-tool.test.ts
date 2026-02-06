@@ -12,8 +12,8 @@ import {
 
 const TEST_SERVICE_PORT = 39_993;
 const HTTP_OK = 200;
-const RESTART_ALL_FETCH_CALLS = 3;
-const RESTART_SINGLE_FETCH_CALLS = 4;
+const RESTART_ALL_FETCH_CALLS = 2;
+const RESTART_SINGLE_FETCH_CALLS = 3;
 
 function resolveFetchUrl(input: unknown): string {
   if (typeof input === "string") {
@@ -135,17 +135,7 @@ describe("Hive OpenCode tools", () => {
 
         const method = init?.method ?? "GET";
 
-        if (url === `${hiveUrl}/api/cells/${cellId}/services/stop`) {
-          expect(method).toBe("POST");
-          return Promise.resolve(
-            new Response(JSON.stringify({ services: [] }), {
-              status: HTTP_OK,
-              headers: { "content-type": "application/json" },
-            })
-          );
-        }
-
-        if (url === `${hiveUrl}/api/cells/${cellId}/services/start`) {
+        if (url === `${hiveUrl}/api/cells/${cellId}/services/restart`) {
           expect(method).toBe("POST");
           return Promise.resolve(
             new Response(JSON.stringify({ services: [] }), {
@@ -250,23 +240,9 @@ describe("Hive OpenCode tools", () => {
           );
         }
 
-        if (url === `${hiveUrl}/api/cells/${cellId}/services/service-1/stop`) {
-          expect(method).toBe("POST");
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                id: "service-1",
-                name: "server",
-              }),
-              {
-                status: HTTP_OK,
-                headers: { "content-type": "application/json" },
-              }
-            )
-          );
-        }
-
-        if (url === `${hiveUrl}/api/cells/${cellId}/services/service-1/start`) {
+        if (
+          url === `${hiveUrl}/api/cells/${cellId}/services/service-1/restart`
+        ) {
           expect(method).toBe("POST");
           return Promise.resolve(
             new Response(

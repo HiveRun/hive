@@ -170,13 +170,7 @@ async function restartAllCellServices(args: {
   headers: Record<string, string>;
 }) {
   await fetchJsonWithInit<ServiceListResponse>(
-    `${args.config.hiveUrl}/api/cells/${args.config.cellId}/services/stop`,
-    { method: "POST", headers: args.headers },
-    args.signal
-  );
-
-  await fetchJsonWithInit<ServiceListResponse>(
-    `${args.config.hiveUrl}/api/cells/${args.config.cellId}/services/start`,
+    `${args.config.hiveUrl}/api/cells/${args.config.cellId}/services/restart`,
     { method: "POST", headers: args.headers },
     args.signal
   );
@@ -214,13 +208,7 @@ async function restartSingleService(args: {
   const serviceId = await resolveServiceIdByName(args);
 
   await fetchJsonWithInit<HiveService>(
-    `${args.config.hiveUrl}/api/cells/${args.config.cellId}/services/${serviceId}/stop`,
-    { method: "POST", headers: args.headers },
-    args.signal
-  );
-
-  await fetchJsonWithInit<HiveService>(
-    `${args.config.hiveUrl}/api/cells/${args.config.cellId}/services/${serviceId}/start`,
+    `${args.config.hiveUrl}/api/cells/${args.config.cellId}/services/${serviceId}/restart`,
     { method: "POST", headers: args.headers },
     args.signal
   );
