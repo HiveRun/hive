@@ -155,6 +155,42 @@ describe("Cell activity events", () => {
     expect(stopEvent?.toolName).toBe("hive_restart_service");
   });
 
+  it("records restart events", async () => {
+    await seedCellAndService();
+
+    const routes = createCellsRoutes(createMinimalDependencies());
+    const app = new Elysia().use(routes);
+
+    const response = await app.handle(
+      new Request(
+        `http://localhost/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/restart`,
+        {
+          method: "POST",
+          headers: {
+            "x-hive-source": "opencode",
+            "x-hive-tool": "hive_restart_service",
+          },
+        }
+      )
+    );
+
+    expect(response.status).toBe(HTTP_OK);
+
+    const activityResponse = await app.handle(
+      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/activity`)
+    );
+    expect(activityResponse.status).toBe(HTTP_OK);
+    const body = (await activityResponse.json()) as {
+      events: Array<{ type: string; metadata: Record<string, unknown> }>;
+    };
+
+    const restartEvent = body.events.find(
+      (event) => event.type === "service.restart"
+    );
+    expect(restartEvent).toBeDefined();
+    expect(restartEvent?.metadata.serviceName).toBe("server");
+  });
+
   it("records log reads only when audit headers are present", async () => {
     await seedCellAndService();
 

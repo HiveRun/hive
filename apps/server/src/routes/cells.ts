@@ -1158,6 +1158,107 @@ export function createCellsRoutes(
         },
       }
     )
+
+    .post(
+      "/:id/services/restart",
+      async ({ params, set, request }) => {
+        const {
+          db: database,
+          startServicesForCell,
+          stopServicesForCell,
+        } = await resolveDeps();
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+
+        const audit = readHiveAuditHeaders(request);
+        await insertCellActivityEvent({
+          database,
+          cellId: params.id,
+          type: "services.restart",
+          source: audit.source,
+          toolName: audit.toolName,
+          metadata: {},
+        });
+
+        await runServerEffect(stopServicesForCell(params.id));
+        await runServerEffect(startServicesForCell(params.id));
+
+        const rows = await fetchServiceRows(database, params.id);
+        const services = await Promise.all(
+          rows.map((row) => serializeService(database, row))
+        );
+        return { services } satisfies CellServiceListResponse;
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        response: {
+          200: CellServiceListResponseSchema,
+          400: t.Object({ message: t.String() }),
+          404: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .post(
+      "/:id/services/:serviceId/restart",
+      async ({ params, set, request }) => {
+        const {
+          db: database,
+          startServiceById: startService,
+          stopServiceById: stopService,
+        } = await resolveDeps();
+
+        const row = await fetchServiceRow(
+          database,
+          params.id,
+          params.serviceId
+        );
+        if (!row) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Service not found" } satisfies { message: string };
+        }
+
+        const audit = readHiveAuditHeaders(request);
+        await insertCellActivityEvent({
+          database,
+          cellId: params.id,
+          serviceId: params.serviceId,
+          type: "service.restart",
+          source: audit.source,
+          toolName: audit.toolName,
+          metadata: {
+            serviceName: row.service.name,
+          },
+        });
+
+        await runServerEffect(stopService(params.serviceId));
+        await runServerEffect(startService(params.serviceId));
+
+        const updated = await fetchServiceRow(
+          database,
+          params.id,
+          params.serviceId
+        );
+        if (!updated) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Service not found" } satisfies { message: string };
+        }
+
+        const serialized = await serializeService(database, updated);
+        return serialized satisfies CellServiceResponse;
+      },
+      {
+        params: t.Object({ id: t.String(), serviceId: t.String() }),
+        response: {
+          200: CellServiceSchema,
+          400: t.Object({ message: t.String() }),
+          404: t.Object({ message: t.String() }),
+        },
+      }
+    )
     .post(
       "/",
       async ({ body, set, log, getWorkspaceContext }) => {

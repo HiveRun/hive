@@ -5,8 +5,10 @@ import { cellServices } from "./services";
 export const ACTIVITY_EVENT_TYPES = [
   "service.start",
   "service.stop",
+  "service.restart",
   "services.start",
   "services.stop",
+  "services.restart",
   "setup.retry",
   "service.logs.read",
   "setup.logs.read",

@@ -114,6 +114,12 @@ describe("cells route reachability", () => {
     ["GET", `/api/cells/${TEST_CELL_ID}/activity`, "Get cell activity"],
     ["GET", `/api/cells/${TEST_CELL_ID}/diff`, "Get cell diff"],
     ["DELETE", `/api/cells/${TEST_CELL_ID}`, "Delete cell"],
+    ["POST", `/api/cells/${TEST_CELL_ID}/services/restart`, "Restart services"],
+    [
+      "POST",
+      `/api/cells/${TEST_CELL_ID}/services/test-service-id/restart`,
+      "Restart service",
+    ],
     [
       "POST",
       `/api/cells/${TEST_CELL_ID}/setup/retry`,
