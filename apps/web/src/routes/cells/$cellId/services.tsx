@@ -4,6 +4,7 @@ import { Copy } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { LogTerminal } from "@/components/log-terminal";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -333,8 +334,6 @@ function ServiceCard({
   };
 
   const displayedLogs = logsSnapshot === clearedSnapshot ? "" : logsSnapshot;
-  const hasLogs = logsSnapshot.length > 0;
-  const isClearDisabled = !hasLogs || logsSnapshot === clearedSnapshot;
 
   return (
     <div
@@ -497,29 +496,12 @@ function ServiceCard({
             : " "}
         </div>
       )}
-      <div className="flex min-h-0 flex-1 flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
-            Logs
-          </p>
-          <Button
-            disabled={isClearDisabled}
-            onClick={() => setClearedSnapshot(logsSnapshot)}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
-            Clear
-          </Button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-hidden rounded-sm border border-border bg-card">
-          <pre className="h-full min-h-0 overflow-auto whitespace-pre-wrap p-3 text-[11px] text-foreground leading-relaxed">
-            {displayedLogs && displayedLogs.length > 0
-              ? displayedLogs
-              : "No log output yet."}
-          </pre>
-        </div>
-      </div>
+      <LogTerminal
+        autoScroll
+        onClear={() => setClearedSnapshot(logsSnapshot)}
+        output={displayedLogs || "No log output yet."}
+        title="Logs"
+      />
     </div>
   );
 }

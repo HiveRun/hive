@@ -534,6 +534,7 @@ export function createServiceSupervisor(
       ...templateEnv,
       HIVE_WORKTREE_SETUP: "true",
       HIVE_MAIN_REPO: cell.workspaceRootPath ?? cell.workspacePath,
+      FORCE_COLOR: "1",
     };
 
     const logPath = computeSetupLogPath(cell.workspacePath);
@@ -1116,6 +1117,7 @@ function buildBaseEnv({
     HIVE_SERVICE: serviceName,
     HIVE_HOME: hiveHome,
     HIVE_BROWSE_ROOT: workspacePath,
+    FORCE_COLOR: "1",
   };
 }
 
@@ -1155,6 +1157,7 @@ function buildServiceEnv({
     PORT: portString,
     SERVICE_PORT: portString,
     [`${upper}_PORT`]: portString,
+    FORCE_COLOR: "1",
   };
 
   const interpolatedEnv = interpolatePorts(baseEnv, portLookup, serviceName);

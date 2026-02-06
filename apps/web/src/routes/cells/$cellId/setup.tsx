@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Copy } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { LogTerminal } from "@/components/log-terminal";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -431,13 +432,11 @@ function SetupLogPanel({
       <p className="text-muted-foreground text-xs">
         Last updated {lastUpdatedLabel ?? "just now"}.
       </p>
-      <div className="min-h-0 flex-1 overflow-hidden rounded-sm border border-border bg-background/40">
-        <pre className="h-full min-h-0 overflow-auto whitespace-pre-wrap p-3 text-[13px] text-foreground leading-relaxed">
-          {cell.setupLog && cell.setupLog.length > 0
-            ? cell.setupLog
-            : "No setup log output yet."}
-        </pre>
-      </div>
+      <LogTerminal
+        autoScroll
+        output={cell.setupLog || "No setup log output yet."}
+        title="Setup Logs"
+      />
     </section>
   );
 }
