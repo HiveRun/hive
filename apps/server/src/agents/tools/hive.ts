@@ -137,6 +137,93 @@ async function fetchJson<T>(url: string, signal: AbortSignal): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function fetchJsonWithInit<T>(
+  url: string,
+  init: RequestInit,
+  signal: AbortSignal
+): Promise<T> {
+  const response = await fetch(url, { ...init, signal });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    const details = body ? ` ${body}` : "";
+    throw new Error(
+      `Request failed (${response.status}) for ${url}.${details}`
+    );
+  }
+  return (await response.json()) as T;
+}
+
+function buildHiveToolHeaders(
+  toolName: string,
+  extra?: Record<string, string>
+): Record<string, string> {
+  return {
+    "x-hive-source": "opencode",
+    "x-hive-tool": toolName,
+    ...(extra ?? {}),
+  };
+}
+
+async function restartAllCellServices(args: {
+  config: HiveConfig;
+  signal: AbortSignal;
+  headers: Record<string, string>;
+}) {
+  await fetchJsonWithInit<ServiceListResponse>(
+    `${args.config.hiveUrl}/api/cells/${args.config.cellId}/services/restart`,
+    { method: "POST", headers: args.headers },
+    args.signal
+  );
+}
+
+async function resolveServiceIdByName(args: {
+  config: HiveConfig;
+  signal: AbortSignal;
+  serviceName: string;
+}): Promise<string> {
+  const list = await fetchJson<ServiceListResponse>(
+    `${args.config.hiveUrl}/api/cells/${args.config.cellId}/services`,
+    args.signal
+  );
+
+  const match = list.services.find(
+    (service) => service.name === args.serviceName
+  );
+  if (!match) {
+    const names = list.services.map((service) => service.name).sort();
+    throw new Error(
+      `Service "${args.serviceName}" not found. Available: ${names.join(", ")}`
+    );
+  }
+
+  return match.id;
+}
+
+async function restartSingleService(args: {
+  config: HiveConfig;
+  signal: AbortSignal;
+  serviceName: string;
+  headers: Record<string, string>;
+}): Promise<void> {
+  const serviceId = await resolveServiceIdByName(args);
+
+  await fetchJsonWithInit<HiveService>(
+    `${args.config.hiveUrl}/api/cells/${args.config.cellId}/services/${serviceId}/restart`,
+    { method: "POST", headers: args.headers },
+    args.signal
+  );
+}
+
+function removeServiceLogs(service: HiveService): HiveService {
+  return { ...service, recentLogs: undefined };
+}
+
+function formatRestartTitle(serviceName?: string): string {
+  return serviceName
+    ? `Restarted service: ${serviceName}`
+    : "Restarted all services.";
+}
+
 function formatServicesText(
   serviceList: HiveService[],
   includeLogs: boolean
@@ -343,10 +430,15 @@ TIP: If you don't know the service name, call hive_services first to see availab
 
     const format = args.format ?? "text";
     const queryParams = buildLogQueryParams(args.logLines, args.logOffset);
+    const headers = buildHiveToolHeaders("hive_service_logs", {
+      "x-hive-audit-event": "service.logs.read",
+      "x-hive-service-name": args.serviceName,
+    });
 
     try {
-      const payload = await fetchJson<ServiceListResponse>(
+      const payload = await fetchJsonWithInit<ServiceListResponse>(
         `${config.hiveUrl}/api/cells/${config.cellId}/services${queryParams}`,
+        { method: "GET", headers },
         context.abort
       );
 
@@ -413,10 +505,14 @@ NOTE: This is different from service logs - setup runs once when the cell is cre
     }
 
     const format = args.format ?? "text";
+    const headers = buildHiveToolHeaders("hive_setup_logs", {
+      "x-hive-audit-event": "setup.logs.read",
+    });
 
     try {
-      const payload = await fetchJson<CellResponse>(
+      const payload = await fetchJsonWithInit<CellResponse>(
         `${config.hiveUrl}/api/cells/${config.cellId}`,
+        { method: "GET", headers },
         context.abort
       );
 
@@ -435,6 +531,286 @@ NOTE: This is different from service logs - setup runs once when the cell is cre
         `Setup log path: ${payload.setupLogPath ?? "(unknown)"}`,
         "Setup logs:",
         payload.setupLog ?? "(no setup log output yet)",
+      ].join("\n");
+    } catch (error) {
+      return `Error: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  },
+});
+
+export const restart_services: ToolDefinition = tool({
+  description: `Restart ALL services for this cell.
+
+THIS IS A DESTRUCTIVE OPERATION:
+- Stops services and starts them again
+- Interrupts any in-flight requests
+
+USE THIS TOOL WHEN:
+- You need a full clean restart of the cell (e.g., after broad config changes)
+
+IF YOU ONLY NEED ONE SERVICE: use hive_restart_service instead.
+
+SAFETY: You must pass confirm=true or the tool will refuse to run.
+
+TIP: Call hive_services after restarting to confirm everything is healthy.`,
+  args: {
+    includeLogs: tool.schema
+      .boolean()
+      .optional()
+      .describe(
+        "Include recent log output in the final status display. Default: false."
+      ),
+    logLines: tool.schema
+      .number()
+      .optional()
+      .describe(
+        "Number of log lines to show in the final status display (1-2000). Default: 200."
+      ),
+    logOffset: tool.schema
+      .number()
+      .optional()
+      .describe(
+        "Skip this many lines from the end in the final status display (pagination)."
+      ),
+    format: tool.schema
+      .enum(["text", "json"])
+      .optional()
+      .describe(
+        "Output format. Use 'json' for programmatic parsing. Default: text."
+      ),
+    confirm: tool.schema
+      .boolean()
+      .optional()
+      .describe(
+        "Required. Set true to actually restart services. This prevents accidental restarts."
+      ),
+  },
+  async execute(args, context) {
+    if (args.confirm !== true) {
+      return "Refusing to restart services without confirm=true.";
+    }
+
+    const worktreePath = resolveWorktreePath(context);
+    if (worktreePath instanceof Error) {
+      return `Error: ${worktreePath.message}`;
+    }
+
+    const config = readHiveConfig(worktreePath);
+    if (config instanceof Error) {
+      return `Error: ${config.message}`;
+    }
+
+    const includeLogs = args.includeLogs ?? false;
+    const format = args.format ?? "text";
+    const queryParams = buildLogQueryParams(args.logLines, args.logOffset);
+    const headers = buildHiveToolHeaders("hive_restart_services");
+
+    try {
+      await restartAllCellServices({ config, signal: context.abort, headers });
+
+      const final = await fetchJson<ServiceListResponse>(
+        `${config.hiveUrl}/api/cells/${config.cellId}/services${queryParams}`,
+        context.abort
+      );
+
+      if (format === "json") {
+        const servicesPayload = includeLogs
+          ? final.services
+          : final.services.map((service) => removeServiceLogs(service));
+        return JSON.stringify(
+          {
+            restarted: "all",
+            services: servicesPayload,
+          },
+          null,
+          2
+        );
+      }
+
+      const title = formatRestartTitle();
+      return [title, "", formatServicesText(final.services, includeLogs)].join(
+        "\n"
+      );
+    } catch (error) {
+      return `Error: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  },
+});
+
+export const restart_service: ToolDefinition = tool({
+  description: `Restart a SINGLE service for this cell.
+
+THIS IS A DESTRUCTIVE OPERATION:
+- Stops the service and starts it again
+- Interrupts any in-flight requests to that service
+
+USE THIS TOOL WHEN:
+- One service is wedged/crashed and you want minimal blast radius
+
+SAFETY: You must pass confirm=true or the tool will refuse to run.
+
+TIP: Call hive_services after restarting to confirm everything is healthy.`,
+  args: {
+    serviceName: tool.schema
+      .string()
+      .describe(
+        "The service name to restart (exact match). Call hive_services first if unsure of available names."
+      ),
+    includeLogs: tool.schema
+      .boolean()
+      .optional()
+      .describe(
+        "Include recent log output in the final status display. Default: false."
+      ),
+    logLines: tool.schema
+      .number()
+      .optional()
+      .describe(
+        "Number of log lines to show in the final status display (1-2000). Default: 200."
+      ),
+    logOffset: tool.schema
+      .number()
+      .optional()
+      .describe(
+        "Skip this many lines from the end in the final status display (pagination)."
+      ),
+    format: tool.schema
+      .enum(["text", "json"])
+      .optional()
+      .describe(
+        "Output format. Use 'json' for programmatic parsing. Default: text."
+      ),
+    confirm: tool.schema
+      .boolean()
+      .optional()
+      .describe(
+        "Required. Set true to actually restart the service. This prevents accidental restarts."
+      ),
+  },
+  async execute(args, context) {
+    if (args.confirm !== true) {
+      return "Refusing to restart a service without confirm=true.";
+    }
+
+    const worktreePath = resolveWorktreePath(context);
+    if (worktreePath instanceof Error) {
+      return `Error: ${worktreePath.message}`;
+    }
+
+    const config = readHiveConfig(worktreePath);
+    if (config instanceof Error) {
+      return `Error: ${config.message}`;
+    }
+
+    const includeLogs = args.includeLogs ?? false;
+    const format = args.format ?? "text";
+    const queryParams = buildLogQueryParams(args.logLines, args.logOffset);
+    const headers = buildHiveToolHeaders("hive_restart_service");
+
+    try {
+      await restartSingleService({
+        config,
+        signal: context.abort,
+        serviceName: args.serviceName,
+        headers,
+      });
+
+      const final = await fetchJson<ServiceListResponse>(
+        `${config.hiveUrl}/api/cells/${config.cellId}/services${queryParams}`,
+        context.abort
+      );
+
+      if (format === "json") {
+        const servicesPayload = includeLogs
+          ? final.services
+          : final.services.map((service) => removeServiceLogs(service));
+        return JSON.stringify(
+          {
+            restarted: args.serviceName,
+            services: servicesPayload,
+          },
+          null,
+          2
+        );
+      }
+
+      const title = formatRestartTitle(args.serviceName);
+      return [title, "", formatServicesText(final.services, includeLogs)].join(
+        "\n"
+      );
+    } catch (error) {
+      return `Error: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  },
+});
+
+export const rerun_setup: ToolDefinition = tool({
+  description: `Re-run cell setup/provisioning.
+
+This re-executes the template setup commands (dependency installs, migrations, etc.) and re-ensures services.
+
+USE THIS TOOL WHEN:
+- The cell failed provisioning and needs a retry after fixing the workspace
+- Dependencies or migrations are out of date and you want to re-run setup
+
+SAFETY: You must pass confirm=true or the tool will refuse to run.`,
+  args: {
+    format: tool.schema
+      .enum(["text", "json"])
+      .optional()
+      .describe(
+        "Output format. Use 'json' for programmatic parsing. Default: text."
+      ),
+    confirm: tool.schema
+      .boolean()
+      .optional()
+      .describe(
+        "Required. Set true to actually rerun setup. This prevents accidental provisioning retries."
+      ),
+  },
+  async execute(args, context) {
+    if (args.confirm !== true) {
+      return "Refusing to rerun setup without confirm=true.";
+    }
+
+    const worktreePath = resolveWorktreePath(context);
+    if (worktreePath instanceof Error) {
+      return `Error: ${worktreePath.message}`;
+    }
+
+    const config = readHiveConfig(worktreePath);
+    if (config instanceof Error) {
+      return `Error: ${config.message}`;
+    }
+
+    const format = args.format ?? "text";
+    const headers = buildHiveToolHeaders("hive_rerun_setup");
+
+    try {
+      const payload = await fetchJsonWithInit<Record<string, unknown>>(
+        `${config.hiveUrl}/api/cells/${config.cellId}/setup/retry`,
+        { method: "POST", headers },
+        context.abort
+      );
+
+      if (format === "json") {
+        return JSON.stringify(payload, null, 2);
+      }
+
+      const status =
+        typeof payload.status === "string" ? payload.status : "(unknown)";
+      const setupLogPath =
+        typeof payload.setupLogPath === "string"
+          ? payload.setupLogPath
+          : "(unknown)";
+      const setupLog =
+        typeof payload.setupLog === "string" ? payload.setupLog : null;
+
+      return [
+        `Setup rerun requested. Current cell status: ${status}`,
+        `Setup log path: ${setupLogPath}`,
+        "Setup logs:",
+        setupLog ?? "(no setup log output yet)",
       ].join("\n");
     } catch (error) {
       return `Error: ${error instanceof Error ? error.message : String(error)}`;

@@ -4,7 +4,7 @@ import { createConnection } from "node:net";
 import { resolve as resolvePath } from "node:path";
 
 import { logger } from "@bogeychan/elysia-logger";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { Effect } from "effect";
 import { Elysia, type Static, sse, t } from "elysia";
 import type { AgentRuntimeService } from "../agents/service";
@@ -16,6 +16,12 @@ import {
 } from "../db";
 import { runServerEffect } from "../runtime";
 import {
+  ACTIVITY_EVENT_TYPES,
+  type ActivityEventType,
+  cellActivityEvents,
+} from "../schema/activity-events";
+import {
+  CellActivityEventListResponseSchema,
   CellDiffResponseSchema,
   CellListResponseSchema,
   CellResponseSchema,
@@ -154,6 +160,86 @@ type CellServiceListResponse = Static<typeof CellServiceListResponseSchema>;
 type CellDiffResponse = Static<typeof CellDiffResponseSchema>;
 type CellServiceResponse = Static<typeof CellServiceSchema>;
 type CellResponse = Static<typeof CellResponseSchema>;
+type CellActivityEventListResponse = Static<
+  typeof CellActivityEventListResponseSchema
+>;
+
+const DEFAULT_ACTIVITY_LIMIT = 50;
+const MAX_ACTIVITY_LIMIT = 200;
+
+function encodeActivityCursor(createdAt: Date, id: string): string {
+  return `${createdAt.getTime()}:${id}`;
+}
+
+function parseActivityCursor(cursor: string): { createdAt: Date; id: string } {
+  const separatorIndex = cursor.indexOf(":");
+  if (separatorIndex <= 0) {
+    throw new Error("Invalid cursor");
+  }
+
+  const millis = Number(cursor.slice(0, separatorIndex));
+  const id = cursor.slice(separatorIndex + 1);
+  if (!(Number.isFinite(millis) && id.length)) {
+    throw new Error("Invalid cursor");
+  }
+
+  return { createdAt: new Date(millis), id };
+}
+
+function normalizeActivityLimit(limit?: number): number {
+  const fallback = DEFAULT_ACTIVITY_LIMIT;
+  if (typeof limit !== "number" || !Number.isFinite(limit)) {
+    return fallback;
+  }
+  return Math.min(Math.max(Math.trunc(limit), 1), MAX_ACTIVITY_LIMIT);
+}
+
+function normalizeActivityTypes(types?: string): ActivityEventType[] | null {
+  if (!types) {
+    return null;
+  }
+  const allowed = new Set<string>(ACTIVITY_EVENT_TYPES);
+  const filtered = types
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => allowed.has(value));
+  return filtered.length ? (filtered as ActivityEventType[]) : null;
+}
+
+function readHiveAuditHeaders(request: Request): {
+  source: string | null;
+  toolName: string | null;
+  auditEvent: string | null;
+  serviceName: string | null;
+} {
+  return {
+    source: request.headers.get("x-hive-source"),
+    toolName: request.headers.get("x-hive-tool"),
+    auditEvent: request.headers.get("x-hive-audit-event"),
+    serviceName: request.headers.get("x-hive-service-name"),
+  };
+}
+
+async function insertCellActivityEvent(args: {
+  database: DatabaseClient;
+  cellId: string;
+  serviceId?: string | null;
+  type: ActivityEventType;
+  source?: string | null;
+  toolName?: string | null;
+  metadata?: Record<string, unknown>;
+}) {
+  await args.database.insert(cellActivityEvents).values({
+    id: crypto.randomUUID(),
+    cellId: args.cellId,
+    serviceId: args.serviceId ?? null,
+    type: args.type,
+    source: args.source ?? null,
+    toolName: args.toolName ?? null,
+    metadata: args.metadata ?? {},
+    createdAt: new Date(),
+  });
+}
 
 type ServiceRow = {
   service: typeof cellServices.$inferSelect;
@@ -347,13 +433,23 @@ export function createCellsRoutes(
     .use(workspaceContextPlugin)
     .post(
       "/:id/setup/retry",
-      async ({ params, set }) => {
+      async ({ params, set, request }) => {
         const deps = await resolveDeps();
         const cell = await loadCellById(deps.db, params.id);
         if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
           return { message: "Cell not found" } satisfies { message: string };
         }
+
+        const audit = readHiveAuditHeaders(request);
+        await insertCellActivityEvent({
+          database: deps.db,
+          cellId: cell.id,
+          type: "setup.retry",
+          source: audit.source,
+          toolName: audit.toolName,
+          metadata: { templateId: cell.templateId },
+        });
 
         const workspaceContext = await runServerEffect(
           deps.resolveWorkspaceContext(cell.workspaceId)
@@ -542,7 +638,7 @@ export function createCellsRoutes(
     )
     .get(
       "/:id",
-      async ({ params, set }) => {
+      async ({ params, set, request }) => {
         const { db: database } = await resolveDeps();
         const result = await database
           .select()
@@ -559,6 +655,18 @@ export function createCellsRoutes(
         if (!cell) {
           set.status = HTTP_STATUS.INTERNAL_ERROR;
           return { message: "Failed to load cell" };
+        }
+
+        const audit = readHiveAuditHeaders(request);
+        if (audit.auditEvent === "setup.logs.read") {
+          await insertCellActivityEvent({
+            database,
+            cellId: cell.id,
+            type: "setup.logs.read",
+            source: audit.source,
+            toolName: audit.toolName,
+            metadata: {},
+          });
         }
 
         const extras = await buildSetupLogPayload(cell.workspacePath);
@@ -578,7 +686,7 @@ export function createCellsRoutes(
     )
     .get(
       "/:id/services",
-      async ({ params, query, set }) => {
+      async ({ params, query, set, request }) => {
         const { db: database } = await resolveDeps();
         const cell = await loadCellById(database, params.id);
         if (!cell) {
@@ -596,6 +704,26 @@ export function createCellsRoutes(
           rows.map((row) => serializeService(database, row, logOptions))
         );
 
+        const audit = readHiveAuditHeaders(request);
+        if (audit.auditEvent === "service.logs.read" && audit.serviceName) {
+          const matchedRow = rows.find(
+            (row) => row.service.name === audit.serviceName
+          );
+          await insertCellActivityEvent({
+            database,
+            cellId: params.id,
+            serviceId: matchedRow?.service.id ?? null,
+            type: "service.logs.read",
+            source: audit.source,
+            toolName: audit.toolName,
+            metadata: {
+              serviceName: audit.serviceName,
+              logLines: query.logLines,
+              logOffset: query.logOffset,
+            },
+          });
+        }
+
         return { services } satisfies CellServiceListResponse;
       },
       {
@@ -603,6 +731,110 @@ export function createCellsRoutes(
         query: ServiceLogQuerySchema,
         response: {
           200: CellServiceListResponseSchema,
+          400: t.Object({ message: t.String() }),
+          404: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .get(
+      "/:id/activity",
+      async ({ params, query, set }) => {
+        const { db: database } = await resolveDeps();
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return {
+            message: "Cell not found",
+          } satisfies { message: string };
+        }
+
+        const limit = normalizeActivityLimit(query.limit);
+        const types = normalizeActivityTypes(query.types);
+
+        let cursor: { createdAt: Date; id: string } | null = null;
+        if (query.cursor) {
+          try {
+            cursor = parseActivityCursor(query.cursor);
+          } catch {
+            set.status = HTTP_STATUS.BAD_REQUEST;
+            return {
+              message: "Invalid cursor",
+            } satisfies { message: string };
+          }
+        }
+
+        const whereClause = and(
+          eq(cellActivityEvents.cellId, params.id),
+          types ? inArray(cellActivityEvents.type, types) : undefined,
+          cursor
+            ? or(
+                lt(cellActivityEvents.createdAt, cursor.createdAt),
+                and(
+                  eq(cellActivityEvents.createdAt, cursor.createdAt),
+                  lt(cellActivityEvents.id, cursor.id)
+                )
+              )
+            : undefined
+        );
+
+        const rows = await database
+          .select()
+          .from(cellActivityEvents)
+          .where(whereClause)
+          .orderBy(
+            desc(cellActivityEvents.createdAt),
+            desc(cellActivityEvents.id)
+          )
+          .limit(limit + 1);
+
+        const hasMore = rows.length > limit;
+        const slice = hasMore ? rows.slice(0, limit) : rows;
+        const nextCursor = hasMore
+          ? (() => {
+              const last = slice.at(-1);
+              if (!last) {
+                return null;
+              }
+              return encodeActivityCursor(last.createdAt, last.id);
+            })()
+          : null;
+
+        return {
+          events: slice.map((event) => ({
+            id: event.id,
+            cellId: event.cellId,
+            serviceId: event.serviceId ?? null,
+            type: event.type,
+            source: event.source ?? null,
+            toolName: event.toolName ?? null,
+            metadata: event.metadata,
+            createdAt: event.createdAt.toISOString(),
+          })),
+          nextCursor,
+        } satisfies CellActivityEventListResponse;
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        query: t.Object({
+          limit: t.Optional(
+            t.Number({
+              minimum: 1,
+              maximum: MAX_ACTIVITY_LIMIT,
+              default: DEFAULT_ACTIVITY_LIMIT,
+              description: "Max events to return (1-200)",
+            })
+          ),
+          cursor: t.Optional(t.String()),
+          types: t.Optional(
+            t.String({
+              description:
+                "Optional comma-separated list of activity types to include",
+            })
+          ),
+        }),
+        response: {
+          200: CellActivityEventListResponseSchema,
           400: t.Object({ message: t.String() }),
           404: t.Object({ message: t.String() }),
         },
@@ -705,13 +937,23 @@ export function createCellsRoutes(
 
     .post(
       "/:id/services/start",
-      async ({ params, set }) => {
+      async ({ params, set, request }) => {
         const { db: database, startServicesForCell } = await resolveDeps();
         const cell = await loadCellById(database, params.id);
         if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
           return { message: "Cell not found" } satisfies { message: string };
         }
+
+        const audit = readHiveAuditHeaders(request);
+        await insertCellActivityEvent({
+          database,
+          cellId: params.id,
+          type: "services.start",
+          source: audit.source,
+          toolName: audit.toolName,
+          metadata: {},
+        });
 
         await runServerEffect(startServicesForCell(params.id));
         const rows = await fetchServiceRows(database, params.id);
@@ -733,13 +975,23 @@ export function createCellsRoutes(
 
     .post(
       "/:id/services/stop",
-      async ({ params, set }) => {
+      async ({ params, set, request }) => {
         const { db: database, stopServicesForCell } = await resolveDeps();
         const cell = await loadCellById(database, params.id);
         if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
           return { message: "Cell not found" } satisfies { message: string };
         }
+
+        const audit = readHiveAuditHeaders(request);
+        await insertCellActivityEvent({
+          database,
+          cellId: params.id,
+          type: "services.stop",
+          source: audit.source,
+          toolName: audit.toolName,
+          metadata: {},
+        });
 
         await runServerEffect(stopServicesForCell(params.id));
         const rows = await fetchServiceRows(database, params.id);
@@ -800,7 +1052,7 @@ export function createCellsRoutes(
     .post(
       "/:id/services/:serviceId/start",
 
-      async ({ params, set }) => {
+      async ({ params, set, request }) => {
         const { db: database, startServiceById: startService } =
           await resolveDeps();
 
@@ -815,6 +1067,17 @@ export function createCellsRoutes(
             message: string;
           };
         }
+
+        const audit = readHiveAuditHeaders(request);
+        await insertCellActivityEvent({
+          database,
+          cellId: params.id,
+          serviceId: params.serviceId,
+          type: "service.start",
+          source: audit.source,
+          toolName: audit.toolName,
+          metadata: {},
+        });
 
         await runServerEffect(startService(params.serviceId));
         const updated = await fetchServiceRow(
@@ -843,7 +1106,7 @@ export function createCellsRoutes(
     )
     .post(
       "/:id/services/:serviceId/stop",
-      async ({ params, set }) => {
+      async ({ params, set, request }) => {
         const { db: database, stopServiceById: stopService } =
           await resolveDeps();
 
@@ -859,6 +1122,17 @@ export function createCellsRoutes(
           };
         }
 
+        const audit = readHiveAuditHeaders(request);
+        await insertCellActivityEvent({
+          database,
+          cellId: params.id,
+          serviceId: params.serviceId,
+          type: "service.stop",
+          source: audit.source,
+          toolName: audit.toolName,
+          metadata: {},
+        });
+
         await runServerEffect(stopService(params.serviceId));
         const updated = await fetchServiceRow(
           database,
@@ -870,6 +1144,107 @@ export function createCellsRoutes(
           return { message: "Service not found" } satisfies {
             message: string;
           };
+        }
+
+        const serialized = await serializeService(database, updated);
+        return serialized satisfies CellServiceResponse;
+      },
+      {
+        params: t.Object({ id: t.String(), serviceId: t.String() }),
+        response: {
+          200: CellServiceSchema,
+          400: t.Object({ message: t.String() }),
+          404: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .post(
+      "/:id/services/restart",
+      async ({ params, set, request }) => {
+        const {
+          db: database,
+          startServicesForCell,
+          stopServicesForCell,
+        } = await resolveDeps();
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+
+        const audit = readHiveAuditHeaders(request);
+        await insertCellActivityEvent({
+          database,
+          cellId: params.id,
+          type: "services.restart",
+          source: audit.source,
+          toolName: audit.toolName,
+          metadata: {},
+        });
+
+        await runServerEffect(stopServicesForCell(params.id));
+        await runServerEffect(startServicesForCell(params.id));
+
+        const rows = await fetchServiceRows(database, params.id);
+        const services = await Promise.all(
+          rows.map((row) => serializeService(database, row))
+        );
+        return { services } satisfies CellServiceListResponse;
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        response: {
+          200: CellServiceListResponseSchema,
+          400: t.Object({ message: t.String() }),
+          404: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .post(
+      "/:id/services/:serviceId/restart",
+      async ({ params, set, request }) => {
+        const {
+          db: database,
+          startServiceById: startService,
+          stopServiceById: stopService,
+        } = await resolveDeps();
+
+        const row = await fetchServiceRow(
+          database,
+          params.id,
+          params.serviceId
+        );
+        if (!row) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Service not found" } satisfies { message: string };
+        }
+
+        const audit = readHiveAuditHeaders(request);
+        await insertCellActivityEvent({
+          database,
+          cellId: params.id,
+          serviceId: params.serviceId,
+          type: "service.restart",
+          source: audit.source,
+          toolName: audit.toolName,
+          metadata: {
+            serviceName: row.service.name,
+          },
+        });
+
+        await runServerEffect(stopService(params.serviceId));
+        await runServerEffect(startService(params.serviceId));
+
+        const updated = await fetchServiceRow(
+          database,
+          params.id,
+          params.serviceId
+        );
+        if (!updated) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Service not found" } satisfies { message: string };
         }
 
         const serialized = await serializeService(database, updated);

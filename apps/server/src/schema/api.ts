@@ -69,6 +69,22 @@ export const CellServiceListResponseSchema = t.Object({
   services: t.Array(CellServiceSchema),
 });
 
+export const CellActivityEventSchema = t.Object({
+  id: t.String(),
+  cellId: t.String(),
+  serviceId: t.Union([t.String(), t.Null()]),
+  type: t.String(),
+  source: t.Union([t.String(), t.Null()]),
+  toolName: t.Union([t.String(), t.Null()]),
+  metadata: t.Any(),
+  createdAt: t.String(),
+});
+
+export const CellActivityEventListResponseSchema = t.Object({
+  events: t.Array(CellActivityEventSchema),
+  nextCursor: t.Union([t.String(), t.Null()]),
+});
+
 const DiffStatusSchema = t.Union([
   t.Literal("modified"),
   t.Literal("added"),

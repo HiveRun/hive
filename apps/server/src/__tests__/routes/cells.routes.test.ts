@@ -79,7 +79,6 @@ async function isRouteNotFound(response: Response): Promise<boolean> {
 }
 
 describe("cells route reachability", () => {
-  // biome-ignore lint/suspicious/noExplicitAny: Elysia type is complex, we just need .handle()
   let app: any;
 
   beforeAll(async () => {
@@ -112,8 +111,15 @@ describe("cells route reachability", () => {
   const resourceRoutes: [string, string, string][] = [
     ["GET", `/api/cells/${TEST_CELL_ID}`, "Get cell by ID"],
     ["GET", `/api/cells/${TEST_CELL_ID}/services`, "Get cell services"],
+    ["GET", `/api/cells/${TEST_CELL_ID}/activity`, "Get cell activity"],
     ["GET", `/api/cells/${TEST_CELL_ID}/diff`, "Get cell diff"],
     ["DELETE", `/api/cells/${TEST_CELL_ID}`, "Delete cell"],
+    ["POST", `/api/cells/${TEST_CELL_ID}/services/restart`, "Restart services"],
+    [
+      "POST",
+      `/api/cells/${TEST_CELL_ID}/services/test-service-id/restart`,
+      "Restart service",
+    ],
     [
       "POST",
       `/api/cells/${TEST_CELL_ID}/setup/retry`,
