@@ -46,6 +46,50 @@ export const cellQueries = {
       return data.services;
     },
   }),
+
+  activity: (
+    id: string,
+    options: {
+      limit?: number;
+      cursor?: string;
+      types?: string[];
+    } = {}
+  ) => ({
+    queryKey: [
+      "cells",
+      id,
+      "activity",
+      options.limit ?? null,
+      options.cursor ?? null,
+      options.types?.join(",") ?? null,
+    ] as const,
+    queryFn: async () => {
+      const query: Record<string, string | number> = {};
+      if (typeof options.limit === "number") {
+        query.limit = options.limit;
+      }
+      if (options.cursor) {
+        query.cursor = options.cursor;
+      }
+      if (options.types?.length) {
+        query.types = options.types.join(",");
+      }
+
+      const { data, error } = await rpc.api.cells({ id }).activity.get({
+        query,
+      });
+      if (error) {
+        throw new Error(formatRpcError(error, "Failed to load activity"));
+      }
+      if ("message" in data) {
+        throw new Error(
+          formatRpcResponseError(data, "Failed to load activity")
+        );
+      }
+
+      return data;
+    },
+  }),
 };
 
 type ServiceActionInput = {
@@ -229,6 +273,12 @@ export type Cell = Awaited<
 export type CellServiceSummary = Awaited<
   ReturnType<ReturnType<typeof cellQueries.services>["queryFn"]>
 >[number];
+
+export type CellActivityEventListResponse = Awaited<
+  ReturnType<ReturnType<typeof cellQueries.activity>["queryFn"]>
+>;
+
+export type CellActivityEvent = CellActivityEventListResponse["events"][number];
 
 export type DiffMode = "workspace" | "branch";
 

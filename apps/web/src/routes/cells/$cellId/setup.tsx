@@ -1,9 +1,19 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Copy } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import type { Cell } from "@/queries/cells";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import type { Cell, CellActivityEvent } from "@/queries/cells";
 import { cellMutations, cellQueries } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
 
@@ -109,9 +119,196 @@ function CellSetupPanel() {
             onRetry={() => retryMutation.mutate(cellId)}
           />
         </div>
+
+        <CellActivityPanel cellId={cellId} />
       </div>
     </div>
   );
+}
+
+function CellActivityPanel({ cellId }: { cellId: string }) {
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+  const activityQuery = useInfiniteQuery({
+    queryKey: ["cells", cellId, "activity"] as const,
+    enabled: isDialogOpen,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      cellQueries.activity(cellId, { limit: 20, cursor: pageParam }).queryFn(),
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+  });
+
+  const events = activityQuery.data?.pages.flatMap((page) => page.events) ?? [];
+  const hasNext = Boolean(activityQuery.hasNextPage);
+
+  const isBusy = activityQuery.isFetching || activityQuery.isPending;
+
+  let body: React.ReactNode;
+  if (activityQuery.isPending) {
+    body = <p className="text-muted-foreground text-xs">Loading activity…</p>;
+  } else if (activityQuery.error instanceof Error) {
+    body = (
+      <p className="text-destructive text-xs">{activityQuery.error.message}</p>
+    );
+  } else if (events.length === 0) {
+    body = <p className="text-muted-foreground text-xs">No activity yet.</p>;
+  } else {
+    body = (
+      <ScrollArea className="max-h-[50vh] rounded-sm border border-border bg-background/40">
+        <ol className="divide-y divide-border/60">
+          {events.map((event) => (
+            <ActivityEventRow event={event} key={event.id} />
+          ))}
+        </ol>
+      </ScrollArea>
+    );
+  }
+
+  return (
+    <section className="flex min-h-0 flex-col gap-2 border border-border/70 bg-muted/10 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="font-semibold text-base text-foreground uppercase tracking-[0.25em]">
+            Activity
+          </h3>
+          <p className="text-muted-foreground text-xs">
+            Meaningful events: restarts, setup retries, and tool log reads.
+          </p>
+        </div>
+
+        <Dialog onOpenChange={setIsDialogOpen} open={isDialogOpen}>
+          <Button
+            onClick={() => setIsDialogOpen(true)}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            View
+          </Button>
+          <DialogContent className="max-w-3xl rounded-sm border-2 border-border bg-card p-4 shadow-[2px_2px_0_rgba(0,0,0,0.6)] sm:p-6">
+            <DialogHeader>
+              <DialogTitle className="text-foreground uppercase tracking-[0.25em]">
+                Cell Activity
+              </DialogTitle>
+              <DialogDescription>
+                Service lifecycle actions, setup retries, and tool-triggered log
+                reads.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="flex flex-col gap-3">
+              {body}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+                  {events.length} event{events.length === 1 ? "" : "s"}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    disabled={!hasNext || activityQuery.isFetchingNextPage}
+                    onClick={() => activityQuery.fetchNextPage()}
+                    size="sm"
+                    type="button"
+                    variant="secondary"
+                  >
+                    {activityQuery.isFetchingNextPage
+                      ? "Loading…"
+                      : "Load more"}
+                  </Button>
+                  <Button
+                    disabled={isBusy}
+                    onClick={() => activityQuery.refetch()}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    Refresh
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button
+                disabled={isBusy}
+                onClick={() => setIsDialogOpen(false)}
+                type="button"
+                variant="outline"
+              >
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </section>
+  );
+}
+
+function ActivityEventRow({ event }: { event: CellActivityEvent }) {
+  const createdAt = (() => {
+    try {
+      return new Date(event.createdAt).toLocaleString();
+    } catch {
+      return event.createdAt;
+    }
+  })();
+
+  const details = describeActivityEvent(event);
+
+  return (
+    <li className="grid gap-2 px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-sm border border-border/60 bg-background/60 px-2 py-1 font-medium text-[10px] text-foreground uppercase tracking-[0.35em]">
+            {event.type}
+          </span>
+          <span className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
+            {createdAt}
+          </span>
+        </div>
+        {event.toolName ? (
+          <span className="rounded-sm border border-border/60 bg-background/60 px-2 py-1 font-mono text-[11px] text-foreground">
+            {event.toolName}
+          </span>
+        ) : null}
+      </div>
+      <p className="text-[13px] text-foreground leading-relaxed">{details}</p>
+    </li>
+  );
+}
+
+function describeActivityEvent(event: CellActivityEvent): string {
+  const metadata =
+    event.metadata && typeof event.metadata === "object"
+      ? (event.metadata as Record<string, unknown>)
+      : {};
+  const serviceName =
+    typeof metadata.serviceName === "string" ? metadata.serviceName : null;
+
+  switch (event.type) {
+    case "service.start":
+      return serviceName ? `Started ${serviceName}.` : "Started a service.";
+    case "service.stop":
+      return serviceName ? `Stopped ${serviceName}.` : "Stopped a service.";
+    case "service.restart":
+      return serviceName ? `Restarted ${serviceName}.` : "Restarted a service.";
+    case "services.start":
+      return "Started all services.";
+    case "services.stop":
+      return "Stopped all services.";
+    case "services.restart":
+      return "Restarted all services.";
+    case "setup.retry":
+      return "Retried setup.";
+    case "service.logs.read":
+      return serviceName
+        ? `Read logs for ${serviceName}.`
+        : "Read service logs.";
+    case "setup.logs.read":
+      return "Read setup logs.";
+    default:
+      return "Recorded activity event.";
+  }
 }
 
 type TemplateCommandsPanelProps = {
