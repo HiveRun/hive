@@ -153,17 +153,32 @@ async function fetchJsonWithInit<T>(
   return (await response.json()) as T;
 }
 
-async function restartAllCellServices(config: HiveConfig, signal: AbortSignal) {
+function buildHiveToolHeaders(
+  toolName: string,
+  extra?: Record<string, string>
+): Record<string, string> {
+  return {
+    "x-hive-source": "opencode",
+    "x-hive-tool": toolName,
+    ...(extra ?? {}),
+  };
+}
+
+async function restartAllCellServices(args: {
+  config: HiveConfig;
+  signal: AbortSignal;
+  headers: Record<string, string>;
+}) {
   await fetchJsonWithInit<ServiceListResponse>(
-    `${config.hiveUrl}/api/cells/${config.cellId}/services/stop`,
-    { method: "POST" },
-    signal
+    `${args.config.hiveUrl}/api/cells/${args.config.cellId}/services/stop`,
+    { method: "POST", headers: args.headers },
+    args.signal
   );
 
   await fetchJsonWithInit<ServiceListResponse>(
-    `${config.hiveUrl}/api/cells/${config.cellId}/services/start`,
-    { method: "POST" },
-    signal
+    `${args.config.hiveUrl}/api/cells/${args.config.cellId}/services/start`,
+    { method: "POST", headers: args.headers },
+    args.signal
   );
 }
 
@@ -194,18 +209,19 @@ async function restartSingleService(args: {
   config: HiveConfig;
   signal: AbortSignal;
   serviceName: string;
+  headers: Record<string, string>;
 }): Promise<void> {
   const serviceId = await resolveServiceIdByName(args);
 
   await fetchJsonWithInit<HiveService>(
     `${args.config.hiveUrl}/api/cells/${args.config.cellId}/services/${serviceId}/stop`,
-    { method: "POST" },
+    { method: "POST", headers: args.headers },
     args.signal
   );
 
   await fetchJsonWithInit<HiveService>(
     `${args.config.hiveUrl}/api/cells/${args.config.cellId}/services/${serviceId}/start`,
-    { method: "POST" },
+    { method: "POST", headers: args.headers },
     args.signal
   );
 }
@@ -426,10 +442,15 @@ TIP: If you don't know the service name, call hive_services first to see availab
 
     const format = args.format ?? "text";
     const queryParams = buildLogQueryParams(args.logLines, args.logOffset);
+    const headers = buildHiveToolHeaders("hive_service_logs", {
+      "x-hive-audit-event": "service.logs.read",
+      "x-hive-service-name": args.serviceName,
+    });
 
     try {
-      const payload = await fetchJson<ServiceListResponse>(
+      const payload = await fetchJsonWithInit<ServiceListResponse>(
         `${config.hiveUrl}/api/cells/${config.cellId}/services${queryParams}`,
+        { method: "GET", headers },
         context.abort
       );
 
@@ -496,10 +517,14 @@ NOTE: This is different from service logs - setup runs once when the cell is cre
     }
 
     const format = args.format ?? "text";
+    const headers = buildHiveToolHeaders("hive_setup_logs", {
+      "x-hive-audit-event": "setup.logs.read",
+    });
 
     try {
-      const payload = await fetchJson<CellResponse>(
+      const payload = await fetchJsonWithInit<CellResponse>(
         `${config.hiveUrl}/api/cells/${config.cellId}`,
+        { method: "GET", headers },
         context.abort
       );
 
@@ -590,9 +615,10 @@ TIP: Call hive_services after restarting to confirm everything is healthy.`,
     const includeLogs = args.includeLogs ?? false;
     const format = args.format ?? "text";
     const queryParams = buildLogQueryParams(args.logLines, args.logOffset);
+    const headers = buildHiveToolHeaders("hive_restart_services");
 
     try {
-      await restartAllCellServices(config, context.abort);
+      await restartAllCellServices({ config, signal: context.abort, headers });
 
       const final = await fetchJson<ServiceListResponse>(
         `${config.hiveUrl}/api/cells/${config.cellId}/services${queryParams}`,
@@ -691,12 +717,14 @@ TIP: Call hive_services after restarting to confirm everything is healthy.`,
     const includeLogs = args.includeLogs ?? false;
     const format = args.format ?? "text";
     const queryParams = buildLogQueryParams(args.logLines, args.logOffset);
+    const headers = buildHiveToolHeaders("hive_restart_service");
 
     try {
       await restartSingleService({
         config,
         signal: context.abort,
         serviceName: args.serviceName,
+        headers,
       });
 
       const final = await fetchJson<ServiceListResponse>(
@@ -768,11 +796,12 @@ SAFETY: You must pass confirm=true or the tool will refuse to run.`,
     }
 
     const format = args.format ?? "text";
+    const headers = buildHiveToolHeaders("hive_rerun_setup");
 
     try {
       const payload = await fetchJsonWithInit<Record<string, unknown>>(
         `${config.hiveUrl}/api/cells/${config.cellId}/setup/retry`,
-        { method: "POST" },
+        { method: "POST", headers },
         context.abort
       );
 
