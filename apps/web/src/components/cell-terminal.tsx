@@ -47,6 +47,7 @@ type CellTerminalProps = {
   title?: string;
   restartLabel?: string;
   reconnectLabel?: string;
+  connectCommand?: string | null;
 };
 
 export function CellTerminal({
@@ -55,6 +56,7 @@ export function CellTerminal({
   title = "Cell Terminal",
   restartLabel = "Restart shell",
   reconnectLabel = "Reconnect",
+  connectCommand = null,
 }: CellTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
@@ -144,6 +146,19 @@ export function CellTerminal({
       toast.error("Failed to copy terminal output");
     }
   }, []);
+
+  const copyConnectCommand = useCallback(async () => {
+    if (!connectCommand) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(connectCommand);
+      toast.success("Copied connect command");
+    } catch {
+      toast.error("Failed to copy connect command");
+    }
+  }, [connectCommand]);
 
   const restartTerminal = useCallback(async () => {
     setIsRestarting(true);
@@ -480,6 +495,23 @@ export function CellTerminal({
             </span>
           </div>
         </header>
+
+        {connectCommand ? (
+          <div className="flex items-center justify-between gap-2 border border-border/70 bg-background/60 px-2 py-1.5">
+            <p className="truncate font-mono text-[11px] text-muted-foreground">
+              {connectCommand}
+            </p>
+            <Button
+              className="h-6 px-2 text-[10px] uppercase tracking-[0.2em]"
+              onClick={copyConnectCommand}
+              size="sm"
+              type="button"
+              variant="secondary"
+            >
+              Copy command
+            </Button>
+          </div>
+        ) : null}
 
         <div className="min-h-0 flex-1 border border-border/70 bg-[#050708] p-2">
           <div className="h-full min-h-0 w-full" ref={containerRef} />
