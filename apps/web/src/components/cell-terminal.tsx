@@ -291,6 +291,7 @@ export function CellTerminal({
         }
 
         outputRef.current = snapshot;
+        scheduleResizeSync();
       });
 
       source.addEventListener("data", (event) => {
