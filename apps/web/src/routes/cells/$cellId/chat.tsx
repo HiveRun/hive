@@ -18,7 +18,7 @@ function CellChat() {
       endpointBase="chat/terminal"
       reconnectLabel="Reconnect chat"
       restartLabel="Restart chat"
-      terminalLineHeight={1}
+      terminalLineHeight={1.08}
       title="Cell Chat"
     />
   );
