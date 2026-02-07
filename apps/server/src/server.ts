@@ -28,6 +28,7 @@ import { workspacesRoutes } from "./routes/workspaces";
 import { runServerEffect } from "./runtime";
 import { cells } from "./schema/cells";
 import { ServiceSupervisorService } from "./services/supervisor";
+import { CellTerminalServiceTag } from "./services/terminal";
 import {
   ensureWorkspaceRegisteredEffect,
   resolveHiveHome,
@@ -176,6 +177,8 @@ const shutdownEffect = Effect.gen(function* () {
   yield* ServiceSupervisorService.pipe(
     Effect.flatMap((service) => service.stopAll)
   );
+  const terminalService = yield* CellTerminalServiceTag;
+  yield* Effect.sync(() => terminalService.stopAll());
   yield* Effect.tryPromise({
     try: () => markAgentSessionsForResume(),
     catch: (error) =>

@@ -69,6 +69,31 @@ export const CellServiceListResponseSchema = t.Object({
   services: t.Array(CellServiceSchema),
 });
 
+export const CellTerminalSessionSchema = t.Object({
+  sessionId: t.String(),
+  cellId: t.String(),
+  pid: t.Number(),
+  cwd: t.String(),
+  cols: t.Number(),
+  rows: t.Number(),
+  status: t.Union([t.Literal("running"), t.Literal("exited")]),
+  exitCode: t.Union([t.Number(), t.Null()]),
+  startedAt: t.String(),
+});
+
+export const CellTerminalInputSchema = t.Object({
+  data: t.String({ minLength: 1 }),
+});
+
+export const CellTerminalResizeSchema = t.Object({
+  cols: t.Number({ minimum: 20, maximum: 500 }),
+  rows: t.Number({ minimum: 5, maximum: 200 }),
+});
+
+export const CellTerminalActionResponseSchema = t.Object({
+  ok: t.Boolean(),
+});
+
 export const CellActivityEventSchema = t.Object({
   id: t.String(),
   cellId: t.String(),

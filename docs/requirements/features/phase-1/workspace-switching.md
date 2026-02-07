@@ -2,6 +2,7 @@
 
 - [/] Workspace Discovery & Switching #status/in-progress #phase-1 #feature/ux
   - [/] [HIVE-10] Add copy-to-clipboard OpenCode CLI command to cell detail view
+  - [x] Add a per-cell `Terminal` route with an interactive PTY shell bound to the cell workspace
 
 ## Goal
 Allow users to easily manage multiple workspaces and switch between them within Hive.
@@ -92,6 +93,6 @@ Allow users to easily manage multiple workspaces and switch between them within 
 - **Hero section**: Summarises brief, owner, template used, current state, start/end timestamps, and quick action buttons (pause, terminate, escalate).
 - **Organized sections**: Sections for agent chat entry point (with last message preview), running services (status, ports, open link buttons), diffs/changes (links into diff viewer), task metadata (acceptance criteria, related documents), and history timeline (state changes, human interactions).
 - **Resume functionality**: If services or the agent need to be restarted after a host restart, surface a prominent "Resume cell" banner (with secondary options for services/agent individually) that triggers manifest replay so everything comes back online together.
-  - **Service controls**: For each service, show status plus quick actions: `Restart`, `Stop`, and a copy-to-clipboard button for the underlying command/env. No embedded shell; users can manually rerun the copied command in their own terminal if needed.
+  - **Service controls**: For each service, show status plus quick actions: `Restart`, `Stop`, and a copy-to-clipboard button for the underlying command/env. Pair this with a dedicated `Terminal` route so operators can run ad-hoc commands inside the cell worktree.
   - **OpenCode CLI escape hatch**: Each cell card in the workspace list must surface the exact `opencode` command (workspace path, session ID, host, and port) with a copy-to-clipboard action so operators can jump into the TUI immediately without opening the chat route.
-  - **Navigation tabs**: Offer contextual navigation tabs or anchors (`Overview`, `Chat`, `Diffs`, `Services`) so the user can jump to the relevant payload quickly; remember scroll position if they return from another cell.
+  - **Navigation tabs**: Offer contextual navigation tabs or anchors (`Overview`, `Chat`, `Diffs`, `Services`, `Terminal`) so the user can jump to the relevant payload quickly; remember scroll position if they return from another cell.

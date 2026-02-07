@@ -162,6 +162,22 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
     ) => Effect.void,
     sendAgentMessage: (sessionId: string, content: string) =>
       Effect.promise(() => sendAgentMessageImpl(sessionId, content)),
+    ensureTerminalSession: ({ cellId }) => ({
+      sessionId: `terminal-${cellId}`,
+      cellId,
+      pid: 123,
+      cwd: workspacePath,
+      cols: 120,
+      rows: 36,
+      status: "running" as const,
+      exitCode: null,
+      startedAt: new Date().toISOString(),
+    }),
+    readTerminalOutput: () => "",
+    subscribeToTerminal: () => () => 0,
+    writeTerminalInput: () => 0,
+    resizeTerminal: () => 0,
+    closeTerminalSession: () => 0,
   };
 }
 

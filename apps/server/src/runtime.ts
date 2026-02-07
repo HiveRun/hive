@@ -6,6 +6,7 @@ import { LoggerLayer } from "./logger";
 import { PortManagerLayer } from "./services/port-manager";
 import { ServiceRepositoryLayer } from "./services/repository";
 import { ServiceSupervisorLayer } from "./services/supervisor";
+import { CellTerminalServiceLayer } from "./services/terminal";
 import { WorkspaceRegistryLayer } from "./workspaces/registry";
 import { WorktreeManagerLayer } from "./worktree/manager";
 
@@ -15,6 +16,7 @@ export const serverLayer = Layer.mergeAll(
   ServiceRepositoryLayer,
   PortManagerLayer,
   ServiceSupervisorLayer,
+  CellTerminalServiceLayer,
   WorkspaceRegistryLayer,
   WorktreeManagerLayer,
   AgentRuntimeLayer
