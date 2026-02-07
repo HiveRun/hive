@@ -32,7 +32,7 @@ const OUTPUT_BUFFER_LIMIT = 250_000;
 const RESIZE_DEBOUNCE_MS = 120;
 const PAGE_UP_SEQUENCE = "\u001b[5~";
 const PAGE_DOWN_SEQUENCE = "\u001b[6~";
-const PAGE_KEY_SCROLL_MIN_INTERVAL_MS = 220;
+const PAGE_KEY_SCROLL_DELTA_THRESHOLD = 180;
 const TERMINAL_SCROLLBACK_LINES = 10_000;
 const PAGE_KEY_SCROLLBACK_LINES = 0;
 const TERMINAL_FONT_FAMILY =
@@ -51,7 +51,8 @@ function createWheelBridge(
   wheelScrollBehavior: "terminal" | "page-keys",
   sendInput: (data: string) => void
 ): () => void {
-  let lastScrollAt = 0;
+  let deltaCarry = 0;
+  let lastDirection = 0;
 
   const handleWheel = (event: WheelEvent) => {
     if (wheelScrollBehavior !== "page-keys") {
@@ -65,11 +66,22 @@ function createWheelBridge(
     event.preventDefault();
     event.stopPropagation();
 
-    const now = Date.now();
-    if (now - lastScrollAt < PAGE_KEY_SCROLL_MIN_INTERVAL_MS) {
+    const direction = Math.sign(event.deltaY);
+    if (direction === 0) {
       return;
     }
-    lastScrollAt = now;
+
+    if (direction !== lastDirection) {
+      lastDirection = direction;
+      deltaCarry = 0;
+    }
+
+    deltaCarry += Math.abs(event.deltaY);
+    if (deltaCarry < PAGE_KEY_SCROLL_DELTA_THRESHOLD) {
+      return;
+    }
+
+    deltaCarry -= PAGE_KEY_SCROLL_DELTA_THRESHOLD;
 
     const sequence = event.deltaY < 0 ? PAGE_UP_SEQUENCE : PAGE_DOWN_SEQUENCE;
     sendInput(sequence);
