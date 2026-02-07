@@ -30,6 +30,10 @@ type TerminalSession = {
 const API_BASE = getApiBase();
 const OUTPUT_BUFFER_LIMIT = 250_000;
 const RESIZE_DEBOUNCE_MS = 120;
+const PAGE_UP_SEQUENCE = "\u001b[5~";
+const PAGE_DOWN_SEQUENCE = "\u001b[6~";
+const WHEEL_STEP_DELTA = 80;
+const WHEEL_MAX_PAGE_STEPS = 4;
 const TERMINAL_FONT_FAMILY =
   '"JetBrainsMono Nerd Font", "MesloLGS NF", "CaskaydiaMono Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font Mono", "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Noto Color Emoji", monospace';
 
@@ -41,6 +45,42 @@ const appendOutput = (current: string, chunk: string): string => {
   return next.slice(next.length - OUTPUT_BUFFER_LIMIT);
 };
 
+function createWheelBridge(
+  target: HTMLElement,
+  wheelScrollBehavior: "terminal" | "page-keys",
+  sendInput: (data: string) => void
+): () => void {
+  const handleWheel = (event: WheelEvent) => {
+    if (wheelScrollBehavior !== "page-keys") {
+      return;
+    }
+
+    if (event.deltaY === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    const sequence = event.deltaY < 0 ? PAGE_UP_SEQUENCE : PAGE_DOWN_SEQUENCE;
+    const steps = Math.max(
+      1,
+      Math.min(
+        WHEEL_MAX_PAGE_STEPS,
+        Math.round(Math.abs(event.deltaY) / WHEEL_STEP_DELTA)
+      )
+    );
+
+    for (let step = 0; step < steps; step += 1) {
+      sendInput(sequence);
+    }
+  };
+
+  target.addEventListener("wheel", handleWheel, { passive: false });
+
+  return () => {
+    target.removeEventListener("wheel", handleWheel);
+  };
+}
+
 type CellTerminalProps = {
   cellId: string;
   endpointBase?: string;
@@ -49,6 +89,7 @@ type CellTerminalProps = {
   reconnectLabel?: string;
   connectCommand?: string | null;
   terminalLineHeight?: number;
+  wheelScrollBehavior?: "terminal" | "page-keys";
 };
 
 export function CellTerminal({
@@ -59,6 +100,7 @@ export function CellTerminal({
   reconnectLabel = "Reconnect",
   connectCommand = null,
   terminalLineHeight = 1.25,
+  wheelScrollBehavior = "terminal",
 }: CellTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
@@ -375,20 +417,37 @@ export function CellTerminal({
       });
       resizeObserverRef.current.observe(containerRef.current);
 
+      const cleanupWheelBridge = createWheelBridge(
+        containerRef.current,
+        wheelScrollBehavior,
+        sendInput
+      );
+
       window.addEventListener("resize", scheduleResizeSync);
       connectStream();
       scheduleResizeSync();
+
+      return () => {
+        cleanupWheelBridge();
+      };
     };
 
-    initializeTerminal().catch((error) => {
-      setConnection("disconnected");
-      setErrorMessage(
-        error instanceof Error ? error.message : "Terminal failed"
-      );
-    });
+    let cleanupTerminalInteractions: (() => void) | null = null;
+
+    initializeTerminal()
+      .then((cleanup) => {
+        cleanupTerminalInteractions = cleanup ?? null;
+      })
+      .catch((error) => {
+        setConnection("disconnected");
+        setErrorMessage(
+          error instanceof Error ? error.message : "Terminal failed"
+        );
+      });
 
     return () => {
       disposed = true;
+      cleanupTerminalInteractions?.();
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);
       }
@@ -402,7 +461,13 @@ export function CellTerminal({
       fitAddonRef.current = null;
       serializeAddonRef.current = null;
     };
-  }, [terminalApiBase, scheduleResizeSync, sendInput, terminalLineHeight]);
+  }, [
+    terminalApiBase,
+    scheduleResizeSync,
+    sendInput,
+    terminalLineHeight,
+    wheelScrollBehavior,
+  ]);
 
   const connectionLabelMap: Record<ConnectionState, string> = {
     online: "Connected",
