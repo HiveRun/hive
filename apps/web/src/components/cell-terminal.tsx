@@ -30,18 +30,12 @@ type TerminalSession = {
 const API_BASE = getApiBase();
 const OUTPUT_BUFFER_LIMIT = 250_000;
 const RESIZE_DEBOUNCE_MS = 120;
-const SESSION_BOOT_TIMEOUT_MS = 45_000;
-const ESCAPE_CODE = 27;
-const BEL_CODE = 7;
-const DELETE_CODE = 127;
+const SESSION_BOOT_TIMEOUT_MS = 15_000;
+const ESCAPE_CHAR_CODE = 27;
 const FIRST_PRINTABLE_CODE = 33;
-const CSI_INTRO_CODE = 91;
-const OSC_INTRO_CODE = 93;
-const DCS_INTRO_CODE = 80;
-const ST_TERMINATOR_CODE = 92;
-const ANSI_FINAL_MIN_CODE = 64;
-const ANSI_FINAL_MAX_CODE = 126;
-const RENDERABLE_TEXT_SEQUENCE = /[A-Za-z0-9]/;
+const DELETE_CHAR_CODE = 127;
+const ANSI_SEQUENCE_TERMINATOR_MIN = 64;
+const ANSI_SEQUENCE_TERMINATOR_MAX = 126;
 const WHEEL_LINE_UP_SEQUENCE = "\u001b\u0019";
 const WHEEL_LINE_DOWN_SEQUENCE = "\u001b\u0005";
 const TERMINAL_SCROLLBACK_LINES = 10_000;
@@ -102,92 +96,33 @@ const appendOutput = (current: string, chunk: string): string => {
   return next.slice(next.length - OUTPUT_BUFFER_LIMIT);
 };
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: parser tracks ANSI CSI/OSC/DCS escape states to avoid premature boot completion.
 function hasRenderableTerminalContent(value: string): boolean {
   if (!value.length) {
     return false;
   }
 
-  let state: "normal" | "esc" | "csi" | "osc" | "dcs" = "normal";
-  let oscEscapePending = false;
-  let dcsEscapePending = false;
+  let inEscape = false;
 
   for (const char of value) {
     const code = char.charCodeAt(0);
 
-    if (state === "normal") {
-      if (code === ESCAPE_CODE) {
-        state = "esc";
-        continue;
-      }
-
+    if (inEscape) {
       if (
-        code >= FIRST_PRINTABLE_CODE &&
-        code !== DELETE_CODE &&
-        RENDERABLE_TEXT_SEQUENCE.test(char)
+        code >= ANSI_SEQUENCE_TERMINATOR_MIN &&
+        code <= ANSI_SEQUENCE_TERMINATOR_MAX
       ) {
-        return true;
+        inEscape = false;
       }
       continue;
     }
 
-    if (state === "esc") {
-      if (code === CSI_INTRO_CODE) {
-        state = "csi";
-        continue;
-      }
-      if (code === OSC_INTRO_CODE) {
-        state = "osc";
-        oscEscapePending = false;
-        continue;
-      }
-      if (code === DCS_INTRO_CODE) {
-        state = "dcs";
-        dcsEscapePending = false;
-        continue;
-      }
-
-      state = "normal";
+    if (code === ESCAPE_CHAR_CODE) {
+      inEscape = true;
       continue;
     }
 
-    if (state === "csi") {
-      if (code >= ANSI_FINAL_MIN_CODE && code <= ANSI_FINAL_MAX_CODE) {
-        state = "normal";
-      }
-      continue;
-    }
-
-    if (state === "osc") {
-      if (oscEscapePending) {
-        oscEscapePending = false;
-        if (code === ST_TERMINATOR_CODE) {
-          state = "normal";
-        }
-        continue;
-      }
-
-      if (code === BEL_CODE) {
-        state = "normal";
-        continue;
-      }
-
-      if (code === ESCAPE_CODE) {
-        oscEscapePending = true;
-      }
-      continue;
-    }
-
-    if (dcsEscapePending) {
-      dcsEscapePending = false;
-      if (code === ST_TERMINATOR_CODE) {
-        state = "normal";
-      }
-      continue;
-    }
-
-    if (code === ESCAPE_CODE) {
-      dcsEscapePending = true;
+    if (code >= FIRST_PRINTABLE_CODE && code !== DELETE_CHAR_CODE) {
+      return true;
     }
   }
 
