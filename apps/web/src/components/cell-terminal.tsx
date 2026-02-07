@@ -164,6 +164,8 @@ export function CellTerminal({
       if (terminal) {
         terminal.write("\x1bc");
       }
+      fitAddonRef.current?.fit();
+      scheduleResizeSync();
       outputRef.current = "";
       toast.success("Terminal restarted");
     } catch {
@@ -171,7 +173,7 @@ export function CellTerminal({
     } finally {
       setIsRestarting(false);
     }
-  }, [terminalApiBase]);
+  }, [scheduleResizeSync, terminalApiBase]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
