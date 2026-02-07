@@ -17,8 +17,6 @@ export const cells = sqliteTable("cells", {
   workspaceId: text("workspace_id").notNull(),
   workspaceRootPath: text("workspace_root_path").notNull().default(""),
   opencodeSessionId: text("opencode_session_id"),
-  opencodeServerUrl: text("opencode_server_url"),
-  opencodeServerPort: integer("opencode_server_port"),
   resumeAgentSessionOnStartup: integer("resume_agent_session_on_startup", {
     mode: "boolean",
   })

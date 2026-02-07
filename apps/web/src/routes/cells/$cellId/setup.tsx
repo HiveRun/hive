@@ -457,30 +457,6 @@ function CellInfoSection({ cell, templateLabel }: CellInfoSectionProps) {
     }
   };
 
-  const connectionLabel = () => {
-    const { hostname, port } = cell.opencodeServerUrl
-      ? (() => {
-          try {
-            const parsed = new URL(cell.opencodeServerUrl);
-            return {
-              hostname: parsed.hostname,
-              port: parsed.port || cell.opencodeServerPort,
-            };
-          } catch {
-            return { hostname: null, port: cell.opencodeServerPort };
-          }
-        })()
-      : { hostname: null, port: cell.opencodeServerPort };
-
-    if (!(hostname || port)) {
-      return null;
-    }
-    if (hostname && port) {
-      return `${hostname}:${port}`;
-    }
-    return hostname ?? port ?? null;
-  };
-
   return (
     <section className="grid gap-2.5 border border-border/70 bg-muted/10 p-3 text-xs">
       <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
@@ -559,11 +535,6 @@ function CellInfoSection({ cell, templateLabel }: CellInfoSectionProps) {
               <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-foreground">
                 {cell.opencodeCommand}
               </pre>
-              {connectionLabel() && (
-                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-                  Server · {connectionLabel()}
-                </p>
-              )}
             </div>
           </>
         )}

@@ -27,6 +27,7 @@ import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
 import { runServerEffect } from "./runtime";
 import { cells } from "./schema/cells";
+import { ChatTerminalServiceTag } from "./services/chat-terminal";
 import { ServiceSupervisorService } from "./services/supervisor";
 import { CellTerminalServiceTag } from "./services/terminal";
 import {
@@ -177,6 +178,8 @@ const shutdownEffect = Effect.gen(function* () {
   yield* ServiceSupervisorService.pipe(
     Effect.flatMap((service) => service.stopAll)
   );
+  const chatTerminalService = yield* ChatTerminalServiceTag;
+  yield* Effect.sync(() => chatTerminalService.stopAll());
   const terminalService = yield* CellTerminalServiceTag;
   yield* Effect.sync(() => terminalService.stopAll());
   yield* Effect.tryPromise({

@@ -6,6 +6,7 @@ import { logger } from "@bogeychan/elysia-logger";
 import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { Effect } from "effect";
 import { Elysia, type Static, sse, t } from "elysia";
+import { getSharedOpencodeServerBaseUrl } from "../agents/opencode-server";
 import type { AgentRuntimeService } from "../agents/service";
 import { AgentRuntimeServiceTag } from "../agents/service";
 import type { Template } from "../config/schema";
@@ -43,6 +44,11 @@ import {
 import { type CellStatus, cells, type NewCell } from "../schema/cells";
 import { cellServices } from "../schema/services";
 import { createAsyncEventIterator } from "../services/async-iterator";
+import type {
+  ChatTerminalEvent,
+  ChatTerminalSession,
+} from "../services/chat-terminal";
+import { ChatTerminalServiceTag } from "../services/chat-terminal";
 import {
   buildCellDiffPayload,
   parseDiffRequest,
@@ -112,6 +118,20 @@ export type CellRouteDependencies = {
   writeTerminalInput: (cellId: string, data: string) => void;
   resizeTerminal: (cellId: string, cols: number, rows: number) => void;
   closeTerminalSession: (cellId: string) => void;
+  ensureChatTerminalSession?: (args: {
+    cellId: string;
+    workspacePath: string;
+    opencodeSessionId: string;
+    opencodeServerUrl: string;
+  }) => ChatTerminalSession;
+  readChatTerminalOutput?: (cellId: string) => string;
+  subscribeToChatTerminal?: (
+    cellId: string,
+    listener: (event: ChatTerminalEvent) => void
+  ) => () => void;
+  writeChatTerminalInput?: (cellId: string, data: string) => void;
+  resizeChatTerminal?: (cellId: string, cols: number, rows: number) => void;
+  closeChatTerminalSession?: (cellId: string) => void;
   getServiceTerminalSession: (
     serviceId: string
   ) => ServiceTerminalSession | null;
@@ -175,6 +195,7 @@ const buildDefaultCellDependencies = () =>
     const agentRuntime = yield* AgentRuntimeServiceTag;
     const supervisor = yield* ServiceSupervisorService;
     const terminal = yield* CellTerminalServiceTag;
+    const chatTerminal = yield* ChatTerminalServiceTag;
 
     return {
       db: database,
@@ -194,6 +215,12 @@ const buildDefaultCellDependencies = () =>
       writeTerminalInput: terminal.write,
       resizeTerminal: terminal.resize,
       closeTerminalSession: terminal.closeSession,
+      ensureChatTerminalSession: chatTerminal.ensureSession,
+      readChatTerminalOutput: chatTerminal.readOutput,
+      subscribeToChatTerminal: chatTerminal.subscribe,
+      writeChatTerminalInput: chatTerminal.write,
+      resizeChatTerminal: chatTerminal.resize,
+      closeChatTerminalSession: chatTerminal.closeSession,
       getServiceTerminalSession: supervisor.getServiceTerminalSession,
       readServiceTerminalOutput: supervisor.readServiceTerminalOutput,
       subscribeToServiceTerminal: supervisor.subscribeToServiceTerminal,
@@ -220,7 +247,12 @@ const resolveCellRouteDependenciesEffect = (
   hasAllDependencies(overrides)
     ? Effect.succeed(overrides)
     : buildDefaultCellDependencies().pipe(
-        Effect.map((base) => ({ ...base, ...overrides }))
+        Effect.map(
+          (base): CellRouteDependencies => ({
+            ...base,
+            ...overrides,
+          })
+        )
       );
 
 const resolveCellRouteDependencies = (() => {
@@ -410,9 +442,10 @@ function cellToResponse(cell: typeof cells.$inferSelect) {
     workspaceRootPath: cell.workspaceRootPath,
     workspacePath: cell.workspacePath,
     opencodeSessionId: cell.opencodeSessionId,
-    opencodeServerUrl: cell.opencodeServerUrl,
-    opencodeServerPort: cell.opencodeServerPort,
-    opencodeCommand: buildOpencodeCommand(cell),
+    opencodeCommand: buildOpencodeCommand({
+      workspacePath: cell.workspacePath,
+      opencodeSessionId: cell.opencodeSessionId,
+    }),
     createdAt: cell.createdAt.toISOString(),
     status: cell.status,
     ...(cell.lastSetupError != null
@@ -424,67 +457,108 @@ function cellToResponse(cell: typeof cells.$inferSelect) {
 }
 
 function buildOpencodeCommand(
-  cell: Pick<
-    typeof cells.$inferSelect,
-    | "workspacePath"
-    | "opencodeSessionId"
-    | "opencodeServerUrl"
-    | "opencodeServerPort"
-  >
+  cell: Pick<typeof cells.$inferSelect, "workspacePath" | "opencodeSessionId">
 ): string | null {
   if (!(cell.workspacePath && cell.opencodeSessionId)) {
     return null;
   }
 
+  const serverUrl =
+    process.env.HIVE_OPENCODE_SERVER_URL ?? getSharedOpencodeServerBaseUrl();
+  if (!serverUrl) {
+    return [
+      "opencode",
+      shellQuote(cell.workspacePath),
+      "--session",
+      shellQuote(cell.opencodeSessionId),
+    ].join(" ");
+  }
+
   const args = [
     "opencode",
+    "attach",
+    shellQuote(serverUrl),
+    "--dir",
     shellQuote(cell.workspacePath),
     "--session",
     shellQuote(cell.opencodeSessionId),
   ];
 
-  const { hostname, port } = deriveServerOptions(cell);
-  if (hostname) {
-    args.push("--hostname", shellQuote(hostname));
-  }
-  if (port) {
-    args.push("--port", shellQuote(port));
-  }
-
   return args.join(" ");
-}
-
-function deriveServerOptions(
-  cell: Pick<
-    typeof cells.$inferSelect,
-    "opencodeServerUrl" | "opencodeServerPort"
-  >
-): { hostname?: string; port?: string } {
-  const options: { hostname?: string; port?: string } = {};
-
-  if (cell.opencodeServerUrl) {
-    try {
-      const parsed = new URL(cell.opencodeServerUrl);
-      if (parsed.hostname) {
-        options.hostname = parsed.hostname;
-      }
-      if (parsed.port) {
-        options.port = parsed.port;
-      }
-    } catch {
-      // ignore invalid url fragments; fall back to explicit port if provided
-    }
-  }
-
-  if (cell.opencodeServerPort) {
-    options.port = String(cell.opencodeServerPort);
-  }
-
-  return options;
 }
 
 function shellQuote(value: string): string {
   return JSON.stringify(value);
+}
+
+type ChatTerminalDependencies = {
+  ensureChatTerminalSession: NonNullable<
+    CellRouteDependencies["ensureChatTerminalSession"]
+  >;
+  readChatTerminalOutput: NonNullable<
+    CellRouteDependencies["readChatTerminalOutput"]
+  >;
+  subscribeToChatTerminal: NonNullable<
+    CellRouteDependencies["subscribeToChatTerminal"]
+  >;
+  writeChatTerminalInput: NonNullable<
+    CellRouteDependencies["writeChatTerminalInput"]
+  >;
+  resizeChatTerminal: NonNullable<CellRouteDependencies["resizeChatTerminal"]>;
+  closeChatTerminalSession: NonNullable<
+    CellRouteDependencies["closeChatTerminalSession"]
+  >;
+};
+
+function getChatTerminalDependencies(
+  deps: CellRouteDependencies
+): ChatTerminalDependencies {
+  if (
+    !(
+      deps.ensureChatTerminalSession &&
+      deps.readChatTerminalOutput &&
+      deps.subscribeToChatTerminal &&
+      deps.writeChatTerminalInput &&
+      deps.resizeChatTerminal &&
+      deps.closeChatTerminalSession
+    )
+  ) {
+    throw new Error("Chat terminal service is unavailable");
+  }
+
+  return {
+    ensureChatTerminalSession: deps.ensureChatTerminalSession,
+    readChatTerminalOutput: deps.readChatTerminalOutput,
+    subscribeToChatTerminal: deps.subscribeToChatTerminal,
+    writeChatTerminalInput: deps.writeChatTerminalInput,
+    resizeChatTerminal: deps.resizeChatTerminal,
+    closeChatTerminalSession: deps.closeChatTerminalSession,
+  };
+}
+
+async function ensureChatTerminalSessionForCell(
+  deps: CellRouteDependencies,
+  cell: typeof cells.$inferSelect
+) {
+  const serverUrl =
+    process.env.HIVE_OPENCODE_SERVER_URL ?? getSharedOpencodeServerBaseUrl();
+  if (!serverUrl) {
+    throw new Error("Shared OpenCode server is not running");
+  }
+
+  const agentSession = await runServerEffect(deps.ensureAgentSession(cell.id));
+  const chatTerminal = getChatTerminalDependencies(deps);
+  const session = chatTerminal.ensureChatTerminalSession({
+    cellId: cell.id,
+    workspacePath: cell.workspacePath,
+    opencodeSessionId: agentSession.id,
+    opencodeServerUrl: serverUrl,
+  });
+
+  return {
+    session,
+    chatTerminal,
+  };
 }
 
 type ErrorPayload = {
@@ -1361,6 +1435,224 @@ export function createCellsRoutes(
     )
 
     .get(
+      "/:id/chat/terminal/stream",
+      async ({ params, set, request, log }) => {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+
+        let session: ChatTerminalSession;
+        let chatTerminal: ChatTerminalDependencies;
+        try {
+          const prepared = await ensureChatTerminalSessionForCell(deps, cell);
+          session = prepared.session;
+          chatTerminal = prepared.chatTerminal;
+        } catch (error) {
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          log.error(
+            { error, cellId: cell.id },
+            "Failed to initialize chat terminal session"
+          );
+          return {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to initialize chat terminal session",
+          } satisfies { message: string };
+        }
+
+        const initialOutput = chatTerminal.readChatTerminalOutput(cell.id);
+        const { iterator, cleanup } =
+          createAsyncEventIterator<ChatTerminalEvent>(
+            (listener) =>
+              chatTerminal.subscribeToChatTerminal(cell.id, listener),
+            request.signal
+          );
+
+        async function* stream() {
+          try {
+            yield sse({ event: "ready", data: session });
+
+            if (initialOutput.length > 0) {
+              yield sse({
+                event: "snapshot",
+                data: { output: initialOutput },
+              });
+            }
+
+            for await (const event of iterator) {
+              if (event.type === "data") {
+                yield sse({ event: "data", data: { chunk: event.chunk } });
+                continue;
+              }
+
+              yield sse({
+                event: "exit",
+                data: {
+                  exitCode: event.exitCode,
+                  signal: event.signal,
+                },
+              });
+            }
+          } finally {
+            cleanup();
+          }
+        }
+
+        return stream();
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        response: {
+          200: t.Any(),
+          404: t.Object({ message: t.String() }),
+          500: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .post(
+      "/:id/chat/terminal/input",
+      async ({ params, body, set, log }) => {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+
+        try {
+          const { chatTerminal } = await ensureChatTerminalSessionForCell(
+            deps,
+            cell
+          );
+          chatTerminal.writeChatTerminalInput(cell.id, body.data);
+          return { ok: true };
+        } catch (error) {
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          log.error(
+            { error, cellId: cell.id },
+            "Failed to write to chat terminal session"
+          );
+          return {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to write to chat terminal session",
+          } satisfies { message: string };
+        }
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        body: CellTerminalInputSchema,
+        response: {
+          200: CellTerminalActionResponseSchema,
+          404: t.Object({ message: t.String() }),
+          500: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .post(
+      "/:id/chat/terminal/resize",
+      async ({ params, body, set, log }) => {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+
+        try {
+          const { session, chatTerminal } =
+            await ensureChatTerminalSessionForCell(deps, cell);
+          chatTerminal.resizeChatTerminal(cell.id, body.cols, body.rows);
+          return {
+            ok: true,
+            session: {
+              ...session,
+              cols: body.cols,
+              rows: body.rows,
+            },
+          };
+        } catch (error) {
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          log.error(
+            { error, cellId: cell.id },
+            "Failed to resize chat terminal session"
+          );
+          return {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to resize chat terminal session",
+          } satisfies { message: string };
+        }
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        body: CellTerminalResizeSchema,
+        response: {
+          200: t.Object({
+            ok: t.Boolean(),
+            session: CellTerminalSessionSchema,
+          }),
+          404: t.Object({ message: t.String() }),
+          500: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .post(
+      "/:id/chat/terminal/restart",
+      async ({ params, set, log }) => {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+
+        try {
+          const chatTerminal = getChatTerminalDependencies(deps);
+          chatTerminal.closeChatTerminalSession(cell.id);
+          const { session } = await ensureChatTerminalSessionForCell(
+            deps,
+            cell
+          );
+          return session;
+        } catch (error) {
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          log.error(
+            { error, cellId: cell.id },
+            "Failed to restart chat terminal session"
+          );
+          return {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to restart chat terminal session",
+          } satisfies { message: string };
+        }
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        response: {
+          200: CellTerminalSessionSchema,
+          404: t.Object({ message: t.String() }),
+          500: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .get(
       "/:id/terminal/stream",
       async ({ params, set, request, log }) => {
         const deps = await resolveDeps();
@@ -1963,6 +2255,7 @@ export function createCellsRoutes(
             closeAgentSession: closeSession,
             stopServicesForCell: stopCellServicesFn,
             closeTerminalSession,
+            closeChatTerminalSession,
             clearSetupTerminal,
           } = deps;
 
@@ -2002,6 +2295,7 @@ export function createCellsRoutes(
           for (const cell of cellsToDelete) {
             await runServerEffect(closeSession(cell.id));
             closeTerminalSession(cell.id);
+            closeChatTerminalSession?.(cell.id);
             clearSetupTerminal(cell.id);
             try {
               await runServerEffect(
@@ -2062,6 +2356,7 @@ export function createCellsRoutes(
             closeAgentSession: closeSession,
             stopServicesForCell: stopCellServicesFn,
             closeTerminalSession,
+            closeChatTerminalSession,
             clearSetupTerminal,
           } = deps;
 
@@ -2073,6 +2368,7 @@ export function createCellsRoutes(
 
           await runServerEffect(closeSession(params.id));
           closeTerminalSession(params.id);
+          closeChatTerminalSession?.(params.id);
           clearSetupTerminal(params.id);
           try {
             await runServerEffect(
@@ -2330,8 +2626,6 @@ async function createCellRecord(
     branchName: worktree.branch,
     baseCommit: worktree.baseCommit,
     opencodeSessionId: null,
-    opencodeServerUrl: null,
-    opencodeServerPort: null,
     createdAt: timestamp,
     status: "spawning",
     lastSetupError: null,

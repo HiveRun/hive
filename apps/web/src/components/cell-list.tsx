@@ -575,30 +575,6 @@ function CellMetadataDialog({
     }
   };
 
-  const connectionLabel = () => {
-    const { hostname, port } = selectedCell.opencodeServerUrl
-      ? (() => {
-          try {
-            const parsed = new URL(selectedCell.opencodeServerUrl);
-            return {
-              hostname: parsed.hostname,
-              port: parsed.port || selectedCell.opencodeServerPort,
-            };
-          } catch {
-            return { hostname: null, port: selectedCell.opencodeServerPort };
-          }
-        })()
-      : { hostname: null, port: selectedCell.opencodeServerPort };
-
-    if (!(hostname || port)) {
-      return null;
-    }
-    if (hostname && port) {
-      return `${hostname}:${port}`;
-    }
-    return hostname ?? port ?? null;
-  };
-
   return (
     <Dialog onOpenChange={onOpenChange} open={isOpen}>
       <DialogContent className="sm:max-w-2xl">
@@ -689,9 +665,6 @@ function CellMetadataDialog({
                   <span>
                     Session · {selectedCell.opencodeSessionId ?? "pending"}
                   </span>
-                  {connectionLabel() && (
-                    <span>Server · {connectionLabel()}</span>
-                  )}
                 </div>
               </div>
             </div>

@@ -147,6 +147,11 @@ describe("cells route reachability", () => {
     ],
     [
       "GET",
+      `/api/cells/${TEST_CELL_ID}/chat/terminal/stream`,
+      "Stream chat terminal",
+    ],
+    [
+      "GET",
       `/api/cells/${TEST_CELL_ID}/setup/terminal/stream`,
       "Stream setup terminal",
     ],
@@ -167,13 +172,28 @@ describe("cells route reachability", () => {
     ],
     [
       "POST",
+      `/api/cells/${TEST_CELL_ID}/chat/terminal/input`,
+      "Write chat terminal input",
+    ],
+    [
+      "POST",
       `/api/cells/${TEST_CELL_ID}/terminal/resize`,
       "Resize terminal session",
     ],
     [
       "POST",
+      `/api/cells/${TEST_CELL_ID}/chat/terminal/resize`,
+      "Resize chat terminal session",
+    ],
+    [
+      "POST",
       `/api/cells/${TEST_CELL_ID}/terminal/restart`,
       "Restart terminal session",
+    ],
+    [
+      "POST",
+      `/api/cells/${TEST_CELL_ID}/chat/terminal/restart`,
+      "Restart chat terminal session",
     ],
     [
       "GET",

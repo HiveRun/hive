@@ -403,8 +403,6 @@ describe("resumeSpawningCells", () => {
       branchName: "cell-branch",
       baseCommit: "abc123",
       opencodeSessionId: null,
-      opencodeServerUrl: null,
-      opencodeServerPort: null,
       createdAt,
       status: "spawning",
       lastSetupError: null,

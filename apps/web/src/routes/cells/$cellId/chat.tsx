@@ -1,5 +1,7 @@
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { AgentChat } from "@/components/agent-chat";
+import { CellTerminal } from "@/components/cell-terminal";
+import { cellQueries } from "@/queries/cells";
 
 export const Route = createFileRoute("/cells/$cellId/chat")({
   component: CellChat,
@@ -7,9 +9,18 @@ export const Route = createFileRoute("/cells/$cellId/chat")({
 
 function CellChat() {
   const { cellId } = Route.useParams();
+  const cellQuery = useQuery(cellQueries.detail(cellId));
+
   return (
-    <div className="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
-      <AgentChat cellId={cellId} />
-    </div>
+    <CellTerminal
+      cellId={cellId}
+      connectCommand={cellQuery.data?.opencodeCommand ?? null}
+      endpointBase="chat/terminal"
+      reconnectLabel="Reconnect chat"
+      restartLabel="Restart chat"
+      terminalLineHeight={1.08}
+      title="Cell Chat"
+      wheelScrollBehavior="line-keys"
+    />
   );
 }

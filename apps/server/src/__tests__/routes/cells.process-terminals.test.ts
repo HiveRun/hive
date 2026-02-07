@@ -208,8 +208,6 @@ const seedData = async () => {
     workspaceId: TEST_WORKSPACE_ID,
     workspaceRootPath: "/tmp/test-workspace-root",
     opencodeSessionId: null,
-    opencodeServerUrl: null,
-    opencodeServerPort: null,
     createdAt: now,
     status: "ready",
     lastSetupError: null,

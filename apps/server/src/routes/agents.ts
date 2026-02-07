@@ -1,6 +1,5 @@
-import { eq } from "drizzle-orm";
 import { Effect } from "effect";
-import { Elysia, type Static, sse, t } from "elysia";
+import { Elysia, sse, t } from "elysia";
 import { subscribeAgentEvents } from "../agents/events";
 import {
   type AgentRuntimeService,
@@ -8,37 +7,16 @@ import {
   type ProviderEntry,
   type ProviderModel,
 } from "../agents/service";
-import type {
-  AgentCompactionStats,
-  AgentMessageRecord,
-  AgentSessionRecord,
-  AgentStreamEvent,
-} from "../agents/types";
-import { DatabaseService } from "../db";
+import type { AgentSessionRecord, AgentStreamEvent } from "../agents/types";
 import { LoggerService } from "../logger";
 import { runServerEffect } from "../runtime";
-
-import {
-  AgentMessageListResponseSchema,
-  AgentSessionByCellResponseSchema,
-  AgentSessionSchema,
-  CreateAgentSessionSchema,
-  RespondPermissionSchema,
-  SendAgentMessageSchema,
-} from "../schema/api";
-import { cells } from "../schema/cells";
+import { AgentSessionByCellResponseSchema } from "../schema/api";
 import { createWorkspaceContextPlugin } from "../workspaces/plugin";
-
-const updateModelSchema = t.Object({
-  modelId: t.String(),
-  providerId: t.Optional(t.String()),
-});
 
 const HTTP_STATUS = {
   OK: 200,
   NOT_FOUND: 404,
   BAD_REQUEST: 400,
-  INTERNAL_ERROR: 500,
 } as const;
 
 type AgentRouteError = { status: number; message: string };
@@ -137,6 +115,18 @@ const providerEntriesEffect = (
     )
   );
 
+const fetchSessionEffect = (id: string, message: string) =>
+  withAgentRuntime(
+    (agentRuntime) => agentRuntime.fetchAgentSession(id),
+    message
+  ).pipe(
+    Effect.flatMap((session) =>
+      session
+        ? Effect.succeed(session)
+        : Effect.fail(toError(HTTP_STATUS.NOT_FOUND, "Agent session not found"))
+    )
+  );
+
 const providerPayload = (catalog: unknown) => {
   const providerEntries = normalizeProviderEntries(
     (catalog as { providers?: unknown }).providers
@@ -150,121 +140,6 @@ const providerPayload = (catalog: unknown) => {
   );
   return { models, defaults, providers };
 };
-
-const loadCellEffect = (cellId: string) =>
-  DatabaseService.pipe(
-    Effect.flatMap(({ db }) =>
-      Effect.tryPromise({
-        try: () => db.select().from(cells).where(eq(cells.id, cellId)).limit(1),
-        catch: mapAgentError("Failed to load cell"),
-      })
-    ),
-    Effect.map((rows) => rows[0] ?? null)
-  );
-
-const ensureSessionEffect = (body: Static<typeof CreateAgentSessionSchema>) =>
-  loadCellEffect(body.cellId).pipe(
-    Effect.flatMap((cell) => {
-      if (!cell) {
-        return Effect.fail(toError(HTTP_STATUS.NOT_FOUND, "Cell not found"));
-      }
-
-      if (cell.status !== "ready") {
-        return Effect.fail(
-          toError(
-            HTTP_STATUS.BAD_REQUEST,
-            `Cell is not ready (status: ${cell.status})`
-          )
-        );
-      }
-
-      return withAgentRuntime(
-        (agentRuntime) =>
-          agentRuntime.ensureAgentSession(body.cellId, {
-            ...(body.force !== undefined ? { force: body.force } : {}),
-            ...(body.modelId ? { modelId: body.modelId } : {}),
-            ...(body.providerId ? { providerId: body.providerId } : {}),
-          }),
-        "Failed to start agent session"
-      );
-    })
-  );
-
-const fetchSessionEffect = (id: string, message: string) =>
-  withAgentRuntime(
-    (agentRuntime) => agentRuntime.fetchAgentSession(id),
-    message
-  ).pipe(
-    Effect.flatMap((session) =>
-      session
-        ? Effect.succeed(session)
-        : Effect.fail(toError(HTTP_STATUS.NOT_FOUND, "Agent session not found"))
-    )
-  );
-
-const fetchMessagesEffect = (id: string) =>
-  withAgentRuntime(
-    (agentRuntime) => agentRuntime.fetchAgentMessages(id),
-    "Failed to fetch messages"
-  );
-
-const fetchCompactionStatsEffect = (id: string) =>
-  withAgentRuntime(
-    (agentRuntime) => agentRuntime.fetchCompactionStats(id),
-    "Failed to fetch compaction stats"
-  );
-
-const respondPermissionEffect = (
-  id: string,
-  permissionId: string,
-  response: Static<typeof RespondPermissionSchema>["response"]
-) =>
-  withAgentRuntime(
-    (agentRuntime) =>
-      agentRuntime.respondAgentPermission(id, permissionId, response),
-    "Failed to respond to permission"
-  ).pipe(Effect.as({ ok: true }));
-
-const sendMessageEffect = (id: string, content: string) =>
-  withAgentRuntime(
-    (agentRuntime) => agentRuntime.sendAgentMessage(id, content),
-    "Failed to send agent message"
-  ).pipe(Effect.as({ ok: true }));
-
-const interruptSessionEffect = (id: string) =>
-  withAgentRuntime(
-    (agentRuntime) => agentRuntime.interruptAgentSession(id),
-    "Failed to interrupt agent session"
-  ).pipe(Effect.as({ ok: true }));
-
-const stopSessionEffect = (id: string) =>
-  withAgentRuntime(
-    (agentRuntime) => agentRuntime.stopAgentSession(id),
-    "Failed to stop agent session"
-  ).pipe(Effect.as({ message: "Agent session stopped" }));
-
-const updateSessionModelEffect = (
-  id: string,
-  body: Static<typeof updateModelSchema>
-) =>
-  withAgentRuntime(
-    (agentRuntime) =>
-      agentRuntime.updateAgentSessionModel(
-        id,
-        body.providerId
-          ? { modelId: body.modelId, providerId: body.providerId }
-          : { modelId: body.modelId }
-      ),
-    "Failed to update session model"
-  );
-
-const eventStreamEffect = (sessionId: string, signal: AbortSignal) =>
-  Effect.gen(function* () {
-    const history = yield* fetchMessagesEffect(sessionId);
-    const compaction = yield* fetchCompactionStatsEffect(sessionId);
-    const { iterator } = createEventIterator(sessionId, signal);
-    return { history, iterator, compaction };
-  });
 
 export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .use(createWorkspaceContextPlugin())
@@ -291,6 +166,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
           }
         )
       );
+
       set.status = outcome.status;
       return outcome.body;
     },
@@ -363,10 +239,10 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
           }
         )
       );
+
       set.status = outcome.status;
       return outcome.body;
     },
-
     {
       params: t.Object({ id: t.String() }),
       response: {
@@ -400,81 +276,6 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
       },
     }
   )
-  .post(
-    "/sessions",
-    async ({ body, set }) => {
-      const outcome = await runServerEffect(
-        matchAgentEffect(
-          withRouteLogger(ensureSessionEffect(body), {
-            route: "agents/create-session",
-            cellId: body.cellId,
-          }).pipe(Effect.map(formatSession)),
-          HTTP_STATUS.OK
-        )
-      );
-      set.status = outcome.status;
-      return outcome.body;
-    },
-    {
-      body: CreateAgentSessionSchema,
-      response: {
-        200: AgentSessionSchema,
-        400: t.Object({ message: t.String() }),
-        404: t.Object({ message: t.String() }),
-      },
-    }
-  )
-  .patch(
-    "/sessions/:id/model",
-    async ({ params, body, set }) => {
-      const outcome = await runServerEffect(
-        matchAgentEffect(
-          withRouteLogger(updateSessionModelEffect(params.id, body), {
-            route: "agents/update-model",
-            sessionId: params.id,
-          }).pipe(Effect.map(formatSession))
-        )
-      );
-      set.status = outcome.status;
-      return outcome.body;
-    },
-    {
-      params: t.Object({ id: t.String() }),
-      body: t.Object({
-        modelId: t.String(),
-        providerId: t.Optional(t.String()),
-      }),
-      response: {
-        200: AgentSessionSchema,
-        400: t.Object({ message: t.String() }),
-      },
-    }
-  )
-  .get(
-    "/sessions/:id",
-    async ({ params, set }) => {
-      const outcome = await runServerEffect(
-        matchAgentEffect(
-          withRouteLogger(
-            fetchSessionEffect(params.id, "Failed to fetch session").pipe(
-              Effect.map(formatSession)
-            ),
-            { route: "agents/session", sessionId: params.id }
-          )
-        )
-      );
-      set.status = outcome.status;
-      return outcome.body;
-    },
-    {
-      params: t.Object({ id: t.String() }),
-      response: {
-        200: AgentSessionSchema,
-        400: t.Object({ message: t.String() }),
-        404: t.Object({ message: t.String() }),
-      },
-    }
-  )
   .get(
     "/sessions/byCell/:cellId",
     async ({ params, set }) => {
@@ -494,6 +295,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
           )
         )
       );
+
       set.status = outcome.status;
       return outcome.body;
     },
@@ -506,77 +308,16 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
       },
     }
   )
-  .post(
-    "/sessions/:id/messages",
-    async ({ params, body, set }) => {
-      const outcome = await runServerEffect(
-        matchAgentEffect(
-          sendMessageEffect(params.id, body.content),
-          HTTP_STATUS.OK
-        )
-      );
-      set.status = outcome.status;
-      return outcome.body;
-    },
-    {
-      params: t.Object({ id: t.String() }),
-      body: SendAgentMessageSchema,
-      response: {
-        200: t.Object({ ok: t.Boolean() }),
-        400: t.Object({ message: t.String() }),
-      },
-    }
-  )
-  .post(
-    "/sessions/:id/interrupt",
-    async ({ params, set }) => {
-      const outcome = await runServerEffect(
-        matchAgentEffect(interruptSessionEffect(params.id), HTTP_STATUS.OK)
-      );
-      set.status = outcome.status;
-      return outcome.body;
-    },
-    {
-      params: t.Object({ id: t.String() }),
-      response: {
-        200: t.Object({ ok: t.Boolean() }),
-        400: t.Object({ message: t.String() }),
-      },
-    }
-  )
-  .get(
-    "/sessions/:id/messages",
-    async ({ params, set }) => {
-      const outcome = await runServerEffect(
-        matchAgentEffect(
-          fetchSessionEffect(params.id, "Failed to fetch session").pipe(
-            Effect.flatMap(() =>
-              fetchMessagesEffect(params.id).pipe(
-                Effect.map((messages) => ({
-                  messages: messages.map(formatMessage),
-                }))
-              )
-            )
-          )
-        )
-      );
-      set.status = outcome.status;
-      return outcome.body;
-    },
-    {
-      params: t.Object({ id: t.String() }),
-      response: {
-        200: AgentMessageListResponseSchema,
-        400: t.Object({ message: t.String() }),
-        404: t.Object({ message: t.String() }),
-      },
-    }
-  )
   .get(
     "/sessions/:id/events",
     async ({ params, request, set }) => {
       const outcome = await runServerEffect(
-        matchAgentEffect(eventStreamEffect(params.id, request.signal))
+        matchAgentEffect(
+          withRouteLogger(
+            fetchSessionEffect(params.id, "Failed to fetch session"),
+            { route: "agents/events", sessionId: params.id }
+          )
+        )
       );
 
       set.status = outcome.status;
@@ -585,30 +326,24 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
         return outcome.body;
       }
 
-      const { history, iterator, compaction } = outcome.body as {
-        history: AgentMessageRecord[];
-        compaction: AgentCompactionStats;
-        iterator: AsyncIterable<AgentStreamEvent>;
-      };
+      const session = outcome.body as AgentSessionRecord;
+      const { iterator } = createEventIterator(params.id, request.signal);
 
       async function* stream() {
-        yield sse({ event: "history", data: { messages: history } });
-        yield sse({ event: "session.compaction", data: compaction });
+        yield sse({ event: "status", data: { status: session.status } });
 
         for await (const event of iterator) {
-          if (event.type === "history") {
+          if (event.type !== "status") {
             continue;
           }
 
-          if (event.type === "status") {
-            yield sse({
-              event: "status",
-              data: { status: event.status, error: event.error },
-            });
-            continue;
-          }
-
-          yield sse({ event: event.type, data: event.properties });
+          yield sse({
+            event: "status",
+            data: {
+              status: event.status,
+              ...(event.error ? { error: event.error } : {}),
+            },
+          });
         }
       }
 
@@ -618,54 +353,6 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
       params: t.Object({ id: t.String() }),
       response: {
         200: t.Any(),
-        400: t.Object({ message: t.String() }),
-        404: t.Object({ message: t.String() }),
-      },
-    }
-  )
-  .post(
-    "/sessions/:id/permissions/:permissionId",
-
-    async ({ params, body, set }) => {
-      const outcome = await runServerEffect(
-        matchAgentEffect(
-          respondPermissionEffect(
-            params.id,
-            params.permissionId,
-            body.response
-          ),
-          HTTP_STATUS.OK
-        )
-      );
-      set.status = outcome.status;
-      return outcome.body;
-    },
-    {
-      params: t.Object({ id: t.String(), permissionId: t.String() }),
-      body: RespondPermissionSchema,
-      response: {
-        200: t.Object({ ok: t.Boolean() }),
-        400: t.Object({ message: t.String() }),
-      },
-    }
-  )
-  .delete(
-    "/sessions/:id",
-    async ({ params, set }) => {
-      const outcome = await runServerEffect(
-        matchAgentEffect(
-          fetchSessionEffect(params.id, "Failed to stop agent session").pipe(
-            Effect.flatMap(() => stopSessionEffect(params.id))
-          )
-        )
-      );
-      set.status = outcome.status;
-      return outcome.body;
-    },
-    {
-      params: t.Object({ id: t.String() }),
-      response: {
-        200: t.Object({ message: t.String() }),
         400: t.Object({ message: t.String() }),
         404: t.Object({ message: t.String() }),
       },
@@ -751,18 +438,6 @@ function formatSession(session: AgentSessionRecord) {
     ...(session.modelProviderId
       ? { modelProviderId: session.modelProviderId }
       : {}),
-  };
-}
-
-function formatMessage(message: AgentMessageRecord) {
-  return {
-    id: message.id,
-    sessionId: message.sessionId,
-    role: message.role,
-    content: message.content ?? null,
-    state: message.state,
-    createdAt: message.createdAt,
-    parts: message.parts,
   };
 }
 

@@ -30,6 +30,13 @@ type TerminalSession = {
 const API_BASE = getApiBase();
 const OUTPUT_BUFFER_LIMIT = 250_000;
 const RESIZE_DEBOUNCE_MS = 120;
+const WHEEL_PAGE_UP_SEQUENCE = "\u001b[5~";
+const WHEEL_PAGE_DOWN_SEQUENCE = "\u001b[6~";
+const WHEEL_LINE_UP_SEQUENCE = "\u001b\u0019";
+const WHEEL_LINE_DOWN_SEQUENCE = "\u001b\u0005";
+const WHEEL_LINE_COMMANDS_PER_EVENT = 2;
+const TERMINAL_SCROLLBACK_LINES = 10_000;
+const PAGE_KEY_SCROLLBACK_LINES = 0;
 const TERMINAL_FONT_FAMILY =
   '"JetBrainsMono Nerd Font", "MesloLGS NF", "CaskaydiaMono Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font Mono", "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Noto Color Emoji", monospace';
 
@@ -41,7 +48,73 @@ const appendOutput = (current: string, chunk: string): string => {
   return next.slice(next.length - OUTPUT_BUFFER_LIMIT);
 };
 
-export function CellTerminal({ cellId }: { cellId: string }) {
+function createWheelBridge(
+  target: HTMLElement,
+  wheelScrollBehavior: "terminal" | "page-keys" | "line-keys",
+  sendInput: (data: string) => void
+): () => void {
+  const handleWheel = (event: WheelEvent) => {
+    if (wheelScrollBehavior === "terminal") {
+      return;
+    }
+
+    if (event.deltaY === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const direction = Math.sign(event.deltaY);
+    if (direction === 0) {
+      return;
+    }
+
+    const [upSequence, downSequence] =
+      wheelScrollBehavior === "line-keys"
+        ? [WHEEL_LINE_UP_SEQUENCE, WHEEL_LINE_DOWN_SEQUENCE]
+        : [WHEEL_PAGE_UP_SEQUENCE, WHEEL_PAGE_DOWN_SEQUENCE];
+
+    const sequence = direction < 0 ? upSequence : downSequence;
+    const commandsPerEvent =
+      wheelScrollBehavior === "line-keys" ? WHEEL_LINE_COMMANDS_PER_EVENT : 1;
+
+    for (let index = 0; index < commandsPerEvent; index += 1) {
+      sendInput(sequence);
+    }
+  };
+
+  target.addEventListener("wheel", handleWheel, {
+    capture: true,
+    passive: false,
+  });
+
+  return () => {
+    target.removeEventListener("wheel", handleWheel, true);
+  };
+}
+
+type CellTerminalProps = {
+  cellId: string;
+  endpointBase?: string;
+  title?: string;
+  restartLabel?: string;
+  reconnectLabel?: string;
+  connectCommand?: string | null;
+  terminalLineHeight?: number;
+  wheelScrollBehavior?: "terminal" | "page-keys" | "line-keys";
+};
+
+export function CellTerminal({
+  cellId,
+  endpointBase = "terminal",
+  title = "Cell Terminal",
+  restartLabel = "Restart shell",
+  reconnectLabel = "Reconnect",
+  connectCommand = null,
+  terminalLineHeight = 1.25,
+  wheelScrollBehavior = "terminal",
+}: CellTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<{ fit: () => void } | null>(null);
@@ -54,19 +127,17 @@ export function CellTerminal({ cellId }: { cellId: string }) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [session, setSession] = useState<TerminalSession | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
+  const terminalApiBase = `${API_BASE}/api/cells/${cellId}/${endpointBase}`;
 
   const sendResize = useCallback(
     async (cols: number, rows: number) => {
-      const response = await fetch(
-        `${API_BASE}/api/cells/${cellId}/terminal/resize`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ cols, rows }),
-        }
-      );
+      const response = await fetch(`${terminalApiBase}/resize`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ cols, rows }),
+      });
 
       if (!response.ok) {
         throw new Error(`Resize failed with ${response.status}`);
@@ -80,12 +151,12 @@ export function CellTerminal({ cellId }: { cellId: string }) {
         setSession(payload.session);
       }
     },
-    [cellId]
+    [terminalApiBase]
   );
 
   const sendInput = useCallback(
     (data: string) => {
-      fetch(`${API_BASE}/api/cells/${cellId}/terminal/input`, {
+      fetch(`${terminalApiBase}/input`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -97,7 +168,7 @@ export function CellTerminal({ cellId }: { cellId: string }) {
         );
       });
     },
-    [cellId]
+    [terminalApiBase]
   );
 
   const scheduleResizeSync = useCallback(() => {
@@ -133,15 +204,25 @@ export function CellTerminal({ cellId }: { cellId: string }) {
     }
   }, []);
 
+  const copyConnectCommand = useCallback(async () => {
+    if (!connectCommand) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(connectCommand);
+      toast.success("Copied connect command");
+    } catch {
+      toast.error("Failed to copy connect command");
+    }
+  }, [connectCommand]);
+
   const restartTerminal = useCallback(async () => {
     setIsRestarting(true);
     try {
-      const response = await fetch(
-        `${API_BASE}/api/cells/${cellId}/terminal/restart`,
-        {
-          method: "POST",
-        }
-      );
+      const response = await fetch(`${terminalApiBase}/restart`, {
+        method: "POST",
+      });
       if (!response.ok) {
         throw new Error(`Restart failed with ${response.status}`);
       }
@@ -155,6 +236,8 @@ export function CellTerminal({ cellId }: { cellId: string }) {
       if (terminal) {
         terminal.write("\x1bc");
       }
+      fitAddonRef.current?.fit();
+      scheduleResizeSync();
       outputRef.current = "";
       toast.success("Terminal restarted");
     } catch {
@@ -162,7 +245,7 @@ export function CellTerminal({ cellId }: { cellId: string }) {
     } finally {
       setIsRestarting(false);
     }
-  }, [cellId]);
+  }, [scheduleResizeSync, terminalApiBase]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -176,9 +259,7 @@ export function CellTerminal({ cellId }: { cellId: string }) {
     setErrorMessage(null);
 
     const connectStream = () => {
-      const source = new EventSource(
-        `${API_BASE}/api/cells/${cellId}/terminal/stream`
-      );
+      const source = new EventSource(`${terminalApiBase}/stream`);
       eventSourceRef.current = source;
 
       source.addEventListener("ready", (event) => {
@@ -300,8 +381,11 @@ export function CellTerminal({ cellId }: { cellId: string }) {
         cursorBlink: true,
         fontFamily: TERMINAL_FONT_FAMILY,
         fontSize: 13,
-        lineHeight: 1.4,
-        scrollback: 10_000,
+        lineHeight: terminalLineHeight,
+        scrollback:
+          wheelScrollBehavior === "page-keys"
+            ? PAGE_KEY_SCROLLBACK_LINES
+            : TERMINAL_SCROLLBACK_LINES,
         theme: {
           background: "#050708",
           foreground: "#FFE9A8",
@@ -349,20 +433,37 @@ export function CellTerminal({ cellId }: { cellId: string }) {
       });
       resizeObserverRef.current.observe(containerRef.current);
 
+      const cleanupWheelBridge = createWheelBridge(
+        containerRef.current,
+        wheelScrollBehavior,
+        sendInput
+      );
+
       window.addEventListener("resize", scheduleResizeSync);
       connectStream();
       scheduleResizeSync();
+
+      return () => {
+        cleanupWheelBridge();
+      };
     };
 
-    initializeTerminal().catch((error) => {
-      setConnection("disconnected");
-      setErrorMessage(
-        error instanceof Error ? error.message : "Terminal failed"
-      );
-    });
+    let cleanupTerminalInteractions: (() => void) | null = null;
+
+    initializeTerminal()
+      .then((cleanup) => {
+        cleanupTerminalInteractions = cleanup ?? null;
+      })
+      .catch((error) => {
+        setConnection("disconnected");
+        setErrorMessage(
+          error instanceof Error ? error.message : "Terminal failed"
+        );
+      });
 
     return () => {
       disposed = true;
+      cleanupTerminalInteractions?.();
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);
       }
@@ -376,7 +477,13 @@ export function CellTerminal({ cellId }: { cellId: string }) {
       fitAddonRef.current = null;
       serializeAddonRef.current = null;
     };
-  }, [cellId, scheduleResizeSync, sendInput]);
+  }, [
+    terminalApiBase,
+    scheduleResizeSync,
+    sendInput,
+    terminalLineHeight,
+    wheelScrollBehavior,
+  ]);
 
   const connectionLabelMap: Record<ConnectionState, string> = {
     online: "Connected",
@@ -391,10 +498,10 @@ export function CellTerminal({ cellId }: { cellId: string }) {
     disconnected: "text-destructive",
   };
   const connectionDetailMap: Record<ConnectionState, string> = {
-    online: "Terminal stream connected",
-    connecting: "Connecting to terminal stream",
-    exited: "Shell exited. Restart to reconnect",
-    disconnected: "Terminal stream disconnected. Reconnecting",
+    online: `${title} stream connected`,
+    connecting: `Connecting to ${title.toLowerCase()} stream`,
+    exited: `${title} exited. Restart to reconnect`,
+    disconnected: `${title} stream disconnected. Reconnecting`,
   };
   const connectionDotToneMap: Record<ConnectionState, string> = {
     online: "bg-[#2DD4BF]",
@@ -406,8 +513,8 @@ export function CellTerminal({ cellId }: { cellId: string }) {
   const statusTone = statusToneMap[connection];
   const connectionDetail = connectionDetailMap[connection];
   const connectionDotTone = connectionDotToneMap[connection];
-  const restartLabel =
-    connection === "disconnected" ? "Reconnect" : "Restart shell";
+  const restartActionLabel =
+    connection === "disconnected" ? reconnectLabel : restartLabel;
   let footer: ReactNode = null;
   if (errorMessage) {
     footer = (
@@ -429,7 +536,7 @@ export function CellTerminal({ cellId }: { cellId: string }) {
         <header className="flex flex-wrap items-center justify-between gap-2 border-border/60 border-b pb-2">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <p className="font-semibold text-[11px] text-foreground uppercase tracking-[0.3em]">
-              Cell Terminal
+              {title}
             </p>
             <span
               className={`text-[11px] uppercase tracking-[0.25em] ${statusTone}`}
@@ -460,7 +567,7 @@ export function CellTerminal({ cellId }: { cellId: string }) {
               type="button"
               variant="outline"
             >
-              {isRestarting ? "Restarting" : restartLabel}
+              {isRestarting ? "Restarting" : restartActionLabel}
             </Button>
             <span
               className="inline-flex h-7 items-center gap-1.5 border border-border/70 px-2 text-[10px] text-muted-foreground uppercase tracking-[0.2em]"
@@ -471,6 +578,23 @@ export function CellTerminal({ cellId }: { cellId: string }) {
             </span>
           </div>
         </header>
+
+        {connectCommand ? (
+          <div className="flex items-center justify-between gap-2 border border-border/70 bg-background/60 px-2 py-1.5">
+            <p className="truncate font-mono text-[11px] text-muted-foreground">
+              {connectCommand}
+            </p>
+            <Button
+              className="h-6 px-2 text-[10px] uppercase tracking-[0.2em]"
+              onClick={copyConnectCommand}
+              size="sm"
+              type="button"
+              variant="secondary"
+            >
+              Copy command
+            </Button>
+          </div>
+        ) : null}
 
         <div className="min-h-0 flex-1 border border-border/70 bg-[#050708] p-2">
           <div className="h-full min-h-0 w-full" ref={containerRef} />
