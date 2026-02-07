@@ -482,8 +482,6 @@ describe("service supervisor", () => {
         workspaceRootPath: resolveWorkspaceRoot(),
         description: null,
         opencodeSessionId: null,
-        opencodeServerUrl: null,
-        opencodeServerPort: null,
         createdAt: new Date(),
         status: "ready",
         lastSetupError: null,

@@ -255,7 +255,7 @@ apps/server/src/
 web/src/
 ├── components/
 │   ├── cell/     # Cell creation/listing
-│   ├── chat/         # Agent chat interface
+│   ├── terminal/     # PTY-backed chat + shell terminals
 │   └── templates/    # Template browser (existing)
 └── routes/           # Frontend routes
 ```
@@ -267,10 +267,12 @@ POST /api/cells              # Create cell
 GET /api/cells               # List cells
 DELETE /api/cells/:id        # Delete cell
 
-POST /api/agents/sessions         # Create agent session
-POST /api/agents/sessions/:id/messages  # Send message
-GET /api/agents/sessions/:id/messages/stream   # Stream messages
-DELETE /api/agents/sessions/:id    # Stop session
+GET /api/agents/sessions/byCell/:cellId  # Sidebar agent status lookup
+GET /api/agents/sessions/:id/events      # Status SSE for notifications
+
+GET /api/cells/:id/chat/terminal/stream   # OpenCode chat PTY stream
+POST /api/cells/:id/chat/terminal/input   # Chat PTY input
+POST /api/cells/:id/chat/terminal/resize  # Chat PTY resize
 ```
 
 This focused path delivers a complete, usable agent workspace system quickly while preserving all the advanced capabilities for future implementation.

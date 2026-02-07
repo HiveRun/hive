@@ -41,7 +41,21 @@ const appendOutput = (current: string, chunk: string): string => {
   return next.slice(next.length - OUTPUT_BUFFER_LIMIT);
 };
 
-export function CellTerminal({ cellId }: { cellId: string }) {
+type CellTerminalProps = {
+  cellId: string;
+  endpointBase?: string;
+  title?: string;
+  restartLabel?: string;
+  reconnectLabel?: string;
+};
+
+export function CellTerminal({
+  cellId,
+  endpointBase = "terminal",
+  title = "Cell Terminal",
+  restartLabel = "Restart shell",
+  reconnectLabel = "Reconnect",
+}: CellTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<{ fit: () => void } | null>(null);
@@ -54,19 +68,17 @@ export function CellTerminal({ cellId }: { cellId: string }) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [session, setSession] = useState<TerminalSession | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
+  const terminalApiBase = `${API_BASE}/api/cells/${cellId}/${endpointBase}`;
 
   const sendResize = useCallback(
     async (cols: number, rows: number) => {
-      const response = await fetch(
-        `${API_BASE}/api/cells/${cellId}/terminal/resize`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ cols, rows }),
-        }
-      );
+      const response = await fetch(`${terminalApiBase}/resize`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ cols, rows }),
+      });
 
       if (!response.ok) {
         throw new Error(`Resize failed with ${response.status}`);
@@ -80,12 +92,12 @@ export function CellTerminal({ cellId }: { cellId: string }) {
         setSession(payload.session);
       }
     },
-    [cellId]
+    [terminalApiBase]
   );
 
   const sendInput = useCallback(
     (data: string) => {
-      fetch(`${API_BASE}/api/cells/${cellId}/terminal/input`, {
+      fetch(`${terminalApiBase}/input`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -97,7 +109,7 @@ export function CellTerminal({ cellId }: { cellId: string }) {
         );
       });
     },
-    [cellId]
+    [terminalApiBase]
   );
 
   const scheduleResizeSync = useCallback(() => {
@@ -136,12 +148,9 @@ export function CellTerminal({ cellId }: { cellId: string }) {
   const restartTerminal = useCallback(async () => {
     setIsRestarting(true);
     try {
-      const response = await fetch(
-        `${API_BASE}/api/cells/${cellId}/terminal/restart`,
-        {
-          method: "POST",
-        }
-      );
+      const response = await fetch(`${terminalApiBase}/restart`, {
+        method: "POST",
+      });
       if (!response.ok) {
         throw new Error(`Restart failed with ${response.status}`);
       }
@@ -162,7 +171,7 @@ export function CellTerminal({ cellId }: { cellId: string }) {
     } finally {
       setIsRestarting(false);
     }
-  }, [cellId]);
+  }, [terminalApiBase]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -176,9 +185,7 @@ export function CellTerminal({ cellId }: { cellId: string }) {
     setErrorMessage(null);
 
     const connectStream = () => {
-      const source = new EventSource(
-        `${API_BASE}/api/cells/${cellId}/terminal/stream`
-      );
+      const source = new EventSource(`${terminalApiBase}/stream`);
       eventSourceRef.current = source;
 
       source.addEventListener("ready", (event) => {
@@ -376,7 +383,7 @@ export function CellTerminal({ cellId }: { cellId: string }) {
       fitAddonRef.current = null;
       serializeAddonRef.current = null;
     };
-  }, [cellId, scheduleResizeSync, sendInput]);
+  }, [terminalApiBase, scheduleResizeSync, sendInput]);
 
   const connectionLabelMap: Record<ConnectionState, string> = {
     online: "Connected",
@@ -391,10 +398,10 @@ export function CellTerminal({ cellId }: { cellId: string }) {
     disconnected: "text-destructive",
   };
   const connectionDetailMap: Record<ConnectionState, string> = {
-    online: "Terminal stream connected",
-    connecting: "Connecting to terminal stream",
-    exited: "Shell exited. Restart to reconnect",
-    disconnected: "Terminal stream disconnected. Reconnecting",
+    online: `${title} stream connected`,
+    connecting: `Connecting to ${title.toLowerCase()} stream`,
+    exited: `${title} exited. Restart to reconnect`,
+    disconnected: `${title} stream disconnected. Reconnecting`,
   };
   const connectionDotToneMap: Record<ConnectionState, string> = {
     online: "bg-[#2DD4BF]",
@@ -406,8 +413,8 @@ export function CellTerminal({ cellId }: { cellId: string }) {
   const statusTone = statusToneMap[connection];
   const connectionDetail = connectionDetailMap[connection];
   const connectionDotTone = connectionDotToneMap[connection];
-  const restartLabel =
-    connection === "disconnected" ? "Reconnect" : "Restart shell";
+  const restartActionLabel =
+    connection === "disconnected" ? reconnectLabel : restartLabel;
   let footer: ReactNode = null;
   if (errorMessage) {
     footer = (
@@ -429,7 +436,7 @@ export function CellTerminal({ cellId }: { cellId: string }) {
         <header className="flex flex-wrap items-center justify-between gap-2 border-border/60 border-b pb-2">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <p className="font-semibold text-[11px] text-foreground uppercase tracking-[0.3em]">
-              Cell Terminal
+              {title}
             </p>
             <span
               className={`text-[11px] uppercase tracking-[0.25em] ${statusTone}`}
@@ -460,7 +467,7 @@ export function CellTerminal({ cellId }: { cellId: string }) {
               type="button"
               variant="outline"
             >
-              {isRestarting ? "Restarting" : restartLabel}
+              {isRestarting ? "Restarting" : restartActionLabel}
             </Button>
             <span
               className="inline-flex h-7 items-center gap-1.5 border border-border/70 px-2 text-[10px] text-muted-foreground uppercase tracking-[0.2em]"

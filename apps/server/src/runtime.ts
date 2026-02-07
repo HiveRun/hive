@@ -3,6 +3,7 @@ import { AgentRuntimeLayer } from "./agents/service";
 import { HiveConfigLayer } from "./config/context";
 import { DatabaseLayer } from "./db";
 import { LoggerLayer } from "./logger";
+import { ChatTerminalServiceLayer } from "./services/chat-terminal";
 import { PortManagerLayer } from "./services/port-manager";
 import { ServiceRepositoryLayer } from "./services/repository";
 import { ServiceTerminalRuntimeLayer } from "./services/service-terminal";
@@ -21,6 +22,7 @@ export const serverLayer = Layer.mergeAll(
   ServiceRepositoryLayer,
   PortManagerLayer,
   supervisorLayer,
+  ChatTerminalServiceLayer,
   CellTerminalServiceLayer,
   WorkspaceRegistryLayer,
   WorktreeManagerLayer,

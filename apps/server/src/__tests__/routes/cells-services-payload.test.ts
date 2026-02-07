@@ -145,8 +145,6 @@ async function insertCellAndServiceRecords(
     branchName: "test-branch",
     baseCommit: "test-commit",
     opencodeSessionId: null,
-    opencodeServerUrl: null,
-    opencodeServerPort: null,
     createdAt: now,
     status: "ready",
     lastSetupError: null,
