@@ -538,6 +538,13 @@ export function CellTerminal({
     connection === "disconnected" ? reconnectLabel : restartLabel;
   const terminalFrameTone =
     themeMode === "light" ? "bg-[#EDE3CD]" : "bg-[#070504]";
+  const loadingPanelTone =
+    themeMode === "light"
+      ? "bg-[#F3EAD7]/90 border-[#C7BDA6]/70"
+      : "bg-[#111416]/80 border-border/70";
+  const loadingLabelTone =
+    themeMode === "light" ? "text-[#7A5C2A]" : "text-[#FFC857]";
+  const showLoadingOverlay = connection === "connecting" && !session;
   let footer: ReactNode = null;
   if (errorMessage) {
     footer = (
@@ -620,9 +627,19 @@ export function CellTerminal({
         ) : null}
 
         <div
-          className={`min-h-0 flex-1 border border-border/70 p-2 ${terminalFrameTone}`}
+          className={`relative min-h-0 flex-1 border border-border/70 p-2 ${terminalFrameTone}`}
         >
           <div className="h-full min-h-0 w-full" ref={containerRef} />
+          {showLoadingOverlay ? (
+            <div className="pointer-events-none absolute inset-2 flex items-center justify-center">
+              <div
+                className={`flex items-center gap-2 border px-3 py-2 text-[11px] uppercase tracking-[0.24em] ${loadingPanelTone} ${loadingLabelTone}`}
+              >
+                <span className="h-2 w-2 animate-pulse bg-current" />
+                Starting OpenCode session
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {footer}
