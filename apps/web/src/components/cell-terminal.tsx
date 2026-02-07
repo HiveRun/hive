@@ -34,8 +34,6 @@ const WHEEL_PAGE_UP_SEQUENCE = "\u001b[5~";
 const WHEEL_PAGE_DOWN_SEQUENCE = "\u001b[6~";
 const WHEEL_LINE_UP_SEQUENCE = "\u001b\u0019";
 const WHEEL_LINE_DOWN_SEQUENCE = "\u001b\u0005";
-const WHEEL_DELTA_THRESHOLD = 200;
-const WHEEL_MAX_COMMANDS_PER_EVENT = 3;
 const TERMINAL_SCROLLBACK_LINES = 10_000;
 const PAGE_KEY_SCROLLBACK_LINES = 0;
 const TERMINAL_FONT_FAMILY =
@@ -54,10 +52,6 @@ function createWheelBridge(
   wheelScrollBehavior: "terminal" | "page-keys" | "line-keys",
   sendInput: (data: string) => void
 ): () => void {
-  let deltaCarry = 0;
-  let lastDirection = 0;
-
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: wheel handling needs mode + direction + carry reconciliation.
   const handleWheel = (event: WheelEvent) => {
     if (wheelScrollBehavior === "terminal") {
       return;
@@ -75,32 +69,12 @@ function createWheelBridge(
       return;
     }
 
-    if (direction !== lastDirection) {
-      lastDirection = direction;
-      deltaCarry = 0;
-    }
-
-    deltaCarry += Math.abs(event.deltaY);
-    if (deltaCarry < WHEEL_DELTA_THRESHOLD) {
-      return;
-    }
-
     const [upSequence, downSequence] =
       wheelScrollBehavior === "line-keys"
         ? [WHEEL_LINE_UP_SEQUENCE, WHEEL_LINE_DOWN_SEQUENCE]
         : [WHEEL_PAGE_UP_SEQUENCE, WHEEL_PAGE_DOWN_SEQUENCE];
 
-    const sequence = event.deltaY < 0 ? upSequence : downSequence;
-    let commands = 0;
-
-    while (
-      deltaCarry >= WHEEL_DELTA_THRESHOLD &&
-      commands < WHEEL_MAX_COMMANDS_PER_EVENT
-    ) {
-      deltaCarry -= WHEEL_DELTA_THRESHOLD;
-      sendInput(sequence);
-      commands += 1;
-    }
+    sendInput(direction < 0 ? upSequence : downSequence);
   };
 
   target.addEventListener("wheel", handleWheel, {
