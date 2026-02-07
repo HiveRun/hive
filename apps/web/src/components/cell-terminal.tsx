@@ -30,6 +30,8 @@ type TerminalSession = {
 const API_BASE = getApiBase();
 const OUTPUT_BUFFER_LIMIT = 250_000;
 const RESIZE_DEBOUNCE_MS = 120;
+const INPUT_FLUSH_DEBOUNCE_MS = 16;
+const INPUT_FLUSH_MAX_CHARS = 4096;
 const WHEEL_LINE_UP_SEQUENCE = "\u001b\u0019";
 const WHEEL_LINE_DOWN_SEQUENCE = "\u001b\u0005";
 const TERMINAL_SCROLLBACK_LINES = 10_000;
@@ -109,6 +111,8 @@ export function CellTerminal({
   const serializeAddonRef = useRef<{ serialize: () => string } | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const inputBufferRef = useRef("");
+  const inputFlushTimeoutRef = useRef<number | null>(null);
   const outputRef = useRef<string>("");
   const resizeTimeoutRef = useRef<number | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -142,21 +146,59 @@ export function CellTerminal({
     [terminalApiBase]
   );
 
+  const flushInput = useCallback(() => {
+    const chunk = inputBufferRef.current;
+    if (!chunk.length) {
+      return;
+    }
+
+    inputBufferRef.current = "";
+    if (
+      inputFlushTimeoutRef.current !== null &&
+      typeof window !== "undefined"
+    ) {
+      window.clearTimeout(inputFlushTimeoutRef.current);
+    }
+    inputFlushTimeoutRef.current = null;
+
+    fetch(`${terminalApiBase}/input`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ data: chunk }),
+    }).catch(() => {
+      setConnection((current) =>
+        current === "exited" ? "exited" : "disconnected"
+      );
+    });
+  }, [terminalApiBase]);
+
   const sendInput = useCallback(
     (data: string) => {
-      fetch(`${terminalApiBase}/input`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ data }),
-      }).catch(() => {
-        setConnection((current) =>
-          current === "exited" ? "exited" : "disconnected"
-        );
-      });
+      if (!data.length) {
+        return;
+      }
+
+      inputBufferRef.current = `${inputBufferRef.current}${data}`;
+
+      if (inputBufferRef.current.length >= INPUT_FLUSH_MAX_CHARS) {
+        flushInput();
+        return;
+      }
+
+      if (
+        inputFlushTimeoutRef.current !== null ||
+        typeof window === "undefined"
+      ) {
+        return;
+      }
+
+      inputFlushTimeoutRef.current = window.setTimeout(() => {
+        flushInput();
+      }, INPUT_FLUSH_DEBOUNCE_MS);
     },
-    [terminalApiBase]
+    [flushInput]
   );
 
   const scheduleResizeSync = useCallback(() => {
@@ -456,6 +498,11 @@ export function CellTerminal({
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);
       }
+      if (inputFlushTimeoutRef.current !== null) {
+        window.clearTimeout(inputFlushTimeoutRef.current);
+      }
+      inputFlushTimeoutRef.current = null;
+      inputBufferRef.current = "";
       window.removeEventListener("resize", scheduleResizeSync);
       resizeObserverRef.current?.disconnect();
       resizeObserverRef.current = null;
