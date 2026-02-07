@@ -30,6 +30,8 @@ type TerminalSession = {
 const API_BASE = getApiBase();
 const OUTPUT_BUFFER_LIMIT = 250_000;
 const RESIZE_DEBOUNCE_MS = 120;
+const TERMINAL_FONT_FAMILY =
+  '"JetBrainsMono Nerd Font", "MesloLGS NF", "CaskaydiaMono Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font Mono", "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Noto Color Emoji", monospace';
 
 const appendOutput = (current: string, chunk: string): string => {
   const next = `${current}${chunk}`;
@@ -296,7 +298,7 @@ export function CellTerminal({ cellId }: { cellId: string }) {
         rows: 36,
         convertEol: true,
         cursorBlink: true,
-        fontFamily: "Geist Mono, monospace",
+        fontFamily: TERMINAL_FONT_FAMILY,
         fontSize: 13,
         lineHeight: 1.4,
         scrollback: 10_000,
