@@ -3,29 +3,19 @@
  *
  * This module provides the source code for the Hive OpenCode custom tools
  * that are written to each cell worktree. The actual tool implementation
- * is in ./tools/hive.ts which is type-checked during development.
+ * is in ./tools/hive.ts which is type-checked during development. The source
+ * string exported here is generated from that file via scripts/dev.
  */
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { HIVE_TOOL_SOURCE_EMBEDDED_BASE64 } from "./hive-opencode-tool-source.generated";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-/**
- * Read the tool source from the separate TypeScript file.
- * This file is type-checked during development but read as text at runtime.
- */
-function loadToolSource(): string {
-  const toolPath = join(__dirname, "tools", "hive.ts");
-  return readFileSync(toolPath, "utf-8");
-}
+const decodeEmbeddedToolSource = (): string =>
+  Buffer.from(HIVE_TOOL_SOURCE_EMBEDDED_BASE64, "base64").toString("utf8");
 
 /**
  * The source code for the Hive OpenCode tools.
  * This is written to .opencode/tools/hive.ts in each cell worktree.
  */
-export const HIVE_TOOL_SOURCE = loadToolSource();
+export const HIVE_TOOL_SOURCE = decodeEmbeddedToolSource();
 
 /**
  * Configuration written to .hive/config.json in each cell worktree.
