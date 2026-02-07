@@ -30,13 +30,10 @@ type TerminalSession = {
 const API_BASE = getApiBase();
 const OUTPUT_BUFFER_LIMIT = 250_000;
 const RESIZE_DEBOUNCE_MS = 120;
-const WHEEL_PAGE_UP_SEQUENCE = "\u001b[5~";
-const WHEEL_PAGE_DOWN_SEQUENCE = "\u001b[6~";
 const WHEEL_LINE_UP_SEQUENCE = "\u001b\u0019";
 const WHEEL_LINE_DOWN_SEQUENCE = "\u001b\u0005";
-const WHEEL_LINE_COMMANDS_PER_EVENT = 1;
 const TERMINAL_SCROLLBACK_LINES = 10_000;
-const PAGE_KEY_SCROLLBACK_LINES = 0;
+const KEY_SCROLLED_TERMINAL_SCROLLBACK_LINES = 0;
 const TERMINAL_FONT_FAMILY =
   '"JetBrainsMono Nerd Font", "MesloLGS NF", "CaskaydiaMono Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font Mono", "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Noto Color Emoji", monospace';
 
@@ -50,7 +47,7 @@ const appendOutput = (current: string, chunk: string): string => {
 
 function createWheelBridge(
   target: HTMLElement,
-  wheelScrollBehavior: "terminal" | "page-keys" | "line-keys",
+  wheelScrollBehavior: "terminal" | "line-keys",
   sendInput: (data: string) => void
 ): () => void {
   const handleWheel = (event: WheelEvent) => {
@@ -70,18 +67,9 @@ function createWheelBridge(
       return;
     }
 
-    const [upSequence, downSequence] =
-      wheelScrollBehavior === "line-keys"
-        ? [WHEEL_LINE_UP_SEQUENCE, WHEEL_LINE_DOWN_SEQUENCE]
-        : [WHEEL_PAGE_UP_SEQUENCE, WHEEL_PAGE_DOWN_SEQUENCE];
-
-    const sequence = direction < 0 ? upSequence : downSequence;
-    const commandsPerEvent =
-      wheelScrollBehavior === "line-keys" ? WHEEL_LINE_COMMANDS_PER_EVENT : 1;
-
-    for (let index = 0; index < commandsPerEvent; index += 1) {
-      sendInput(sequence);
-    }
+    sendInput(
+      direction < 0 ? WHEEL_LINE_UP_SEQUENCE : WHEEL_LINE_DOWN_SEQUENCE
+    );
   };
 
   target.addEventListener("wheel", handleWheel, {
@@ -102,7 +90,7 @@ type CellTerminalProps = {
   reconnectLabel?: string;
   connectCommand?: string | null;
   terminalLineHeight?: number;
-  wheelScrollBehavior?: "terminal" | "page-keys" | "line-keys";
+  wheelScrollBehavior?: "terminal" | "line-keys";
 };
 
 export function CellTerminal({
@@ -383,8 +371,8 @@ export function CellTerminal({
         fontSize: 13,
         lineHeight: terminalLineHeight,
         scrollback:
-          wheelScrollBehavior === "page-keys"
-            ? PAGE_KEY_SCROLLBACK_LINES
+          wheelScrollBehavior === "line-keys"
+            ? KEY_SCROLLED_TERMINAL_SCROLLBACK_LINES
             : TERMINAL_SCROLLBACK_LINES,
         theme: {
           background: "#050708",
