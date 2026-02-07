@@ -48,6 +48,7 @@ type CellTerminalProps = {
   restartLabel?: string;
   reconnectLabel?: string;
   connectCommand?: string | null;
+  terminalLineHeight?: number;
 };
 
 export function CellTerminal({
@@ -57,6 +58,7 @@ export function CellTerminal({
   restartLabel = "Restart shell",
   reconnectLabel = "Reconnect",
   connectCommand = null,
+  terminalLineHeight = 1.25,
 }: CellTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
@@ -324,7 +326,7 @@ export function CellTerminal({
         cursorBlink: true,
         fontFamily: TERMINAL_FONT_FAMILY,
         fontSize: 13,
-        lineHeight: 1.4,
+        lineHeight: terminalLineHeight,
         scrollback: 10_000,
         theme: {
           background: "#050708",
@@ -400,7 +402,7 @@ export function CellTerminal({
       fitAddonRef.current = null;
       serializeAddonRef.current = null;
     };
-  }, [terminalApiBase, scheduleResizeSync, sendInput]);
+  }, [terminalApiBase, scheduleResizeSync, sendInput, terminalLineHeight]);
 
   const connectionLabelMap: Record<ConnectionState, string> = {
     online: "Connected",
