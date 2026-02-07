@@ -8,6 +8,7 @@
   - [x] Replace custom chat renderer with an OpenCode-attached PTY route while keeping `/cells/$id/terminal` as a shell escape hatch
   - [x] Attempt OpenCode CLI installation during Hive installer flow when missing
   - [x] Add regression tests for sidebar status SSE stream behavior on `/api/agents/sessions/:id/events`
+  - [x] Apply a Hive-branded OpenCode theme automatically for embedded chat terminals
 
 ## Goal
 Allow users to easily manage multiple workspaces and switch between them within Hive.
