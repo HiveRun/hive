@@ -90,6 +90,7 @@ const HIVE_THEME_CONTENT = `${JSON.stringify(
       syntaxType: { dark: "amber", light: "signal" },
       syntaxOperator: { dark: "steel", light: "#6A6359" },
       syntaxPunctuation: { dark: "fog", light: "#7B7368" },
+      thinkingOpacity: 0.9,
     },
   },
   null,
