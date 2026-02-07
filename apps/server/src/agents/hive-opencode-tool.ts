@@ -6,16 +6,13 @@
  * is in ./tools/hive.ts which is type-checked during development. The source
  * string exported here is generated from that file via scripts/dev.
  */
-import { HIVE_TOOL_SOURCE_EMBEDDED_BASE64 } from "./hive-opencode-tool-source.generated";
-
-const decodeEmbeddedToolSource = (): string =>
-  Buffer.from(HIVE_TOOL_SOURCE_EMBEDDED_BASE64, "base64").toString("utf8");
+import { HIVE_TOOL_SOURCE_EMBEDDED } from "./hive-opencode-tool-source.generated";
 
 /**
  * The source code for the Hive OpenCode tools.
  * This is written to .opencode/tools/hive.ts in each cell worktree.
  */
-export const HIVE_TOOL_SOURCE = decodeEmbeddedToolSource();
+export const HIVE_TOOL_SOURCE = HIVE_TOOL_SOURCE_EMBEDDED;
 
 /**
  * Configuration written to .hive/config.json in each cell worktree.
