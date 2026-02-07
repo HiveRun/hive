@@ -536,6 +536,8 @@ export function CellTerminal({
   const connectionDotTone = connectionDotToneMap[connection];
   const restartActionLabel =
     connection === "disconnected" ? reconnectLabel : restartLabel;
+  const terminalFrameTone =
+    themeMode === "light" ? "bg-[#EDE3CD]" : "bg-[#070504]";
   let footer: ReactNode = null;
   if (errorMessage) {
     footer = (
@@ -617,7 +619,9 @@ export function CellTerminal({
           </div>
         ) : null}
 
-        <div className="min-h-0 flex-1 border border-border/70 bg-[#050708] p-2">
+        <div
+          className={`min-h-0 flex-1 border border-border/70 p-2 ${terminalFrameTone}`}
+        >
           <div className="h-full min-h-0 w-full" ref={containerRef} />
         </div>
 
