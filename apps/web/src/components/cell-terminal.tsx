@@ -1,7 +1,7 @@
 import "@xterm/xterm/css/xterm.css";
 
 import type { Terminal as XTerm } from "@xterm/xterm";
-import { Copy, Wifi, WifiOff } from "lucide-react";
+import { Copy } from "lucide-react";
 import {
   type ReactNode,
   useCallback,
@@ -390,9 +390,22 @@ export function CellTerminal({ cellId }: { cellId: string }) {
     exited: "text-secondary-foreground",
     disconnected: "text-destructive",
   };
+  const connectionDetailMap: Record<ConnectionState, string> = {
+    online: "Terminal stream connected",
+    connecting: "Connecting to terminal stream",
+    exited: "Shell exited. Restart to reconnect",
+    disconnected: "Terminal stream disconnected. Reconnecting",
+  };
+  const connectionDotToneMap: Record<ConnectionState, string> = {
+    online: "bg-[#2DD4BF]",
+    connecting: "animate-pulse bg-[#FFC857]",
+    exited: "bg-muted-foreground",
+    disconnected: "animate-pulse bg-[#FF5C5C]",
+  };
   const connectionLabel = connectionLabelMap[connection];
   const statusTone = statusToneMap[connection];
-  const ConnectionIcon = connection === "online" ? Wifi : WifiOff;
+  const connectionDetail = connectionDetailMap[connection];
+  const connectionDotTone = connectionDotToneMap[connection];
   const restartLabel =
     connection === "disconnected" ? "Reconnect" : "Restart shell";
   let footer: ReactNode = null;
@@ -449,8 +462,12 @@ export function CellTerminal({ cellId }: { cellId: string }) {
             >
               {isRestarting ? "Restarting" : restartLabel}
             </Button>
-            <span className="inline-flex items-center px-1.5 text-muted-foreground">
-              <ConnectionIcon className="h-3.5 w-3.5" />
+            <span
+              className="inline-flex h-7 items-center gap-1.5 border border-border/70 px-2 text-[10px] text-muted-foreground uppercase tracking-[0.2em]"
+              title={connectionDetail}
+            >
+              <span className={`h-2 w-2 rounded-full ${connectionDotTone}`} />
+              {connectionLabel}
             </span>
           </div>
         </header>
