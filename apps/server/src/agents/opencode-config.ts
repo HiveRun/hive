@@ -9,6 +9,7 @@ const WORKSPACE_CONFIG_CANDIDATES = [
 ] as const;
 
 const HIVE_INSTRUCTIONS_PATH = ".hive/instructions.md";
+const HIVE_THEME_NAME = "hive-resonant";
 
 type OpencodeServerConfig = NonNullable<ServerOptions["config"]>;
 
@@ -39,12 +40,27 @@ function withHiveInstructions(
   };
 }
 
+function withHiveTheme(config: OpencodeServerConfig): OpencodeServerConfig {
+  if (typeof config.theme === "string" && config.theme.trim().length > 0) {
+    return config;
+  }
+
+  return {
+    ...config,
+    theme: HIVE_THEME_NAME,
+  };
+}
+
+function withHiveDefaults(config: OpencodeServerConfig): OpencodeServerConfig {
+  return withHiveTheme(withHiveInstructions(config));
+}
+
 export async function loadOpencodeConfig(
   workspaceRootPath: string
 ): Promise<LoadedOpencodeConfig> {
   const fileConfig = await readWorkspaceConfig(workspaceRootPath);
   if (fileConfig) {
-    const configWithHive = withHiveInstructions(fileConfig);
+    const configWithHive = withHiveDefaults(fileConfig);
     const defaultModel = extractDefaultModel(configWithHive);
     return {
       config: configWithHive,
@@ -53,7 +69,7 @@ export async function loadOpencodeConfig(
     };
   }
 
-  const fallback: OpencodeServerConfig = withHiveInstructions({});
+  const fallback: OpencodeServerConfig = withHiveDefaults({});
   const fallbackDefaultModel = extractDefaultModel(fallback);
   return {
     config: fallback,
