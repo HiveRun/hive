@@ -258,6 +258,9 @@ export function CellTerminal({
 
   const restartTerminal = useCallback(async () => {
     setIsRestarting(true);
+    setConnection("connecting");
+    setSession(null);
+    setErrorMessage(null);
     try {
       const response = await fetch(buildTerminalEndpoint("restart"), {
         method: "POST",
@@ -280,6 +283,7 @@ export function CellTerminal({
       outputRef.current = "";
       toast.success("Terminal restarted");
     } catch {
+      setConnection("disconnected");
       toast.error("Failed to restart terminal");
     } finally {
       setIsRestarting(false);
