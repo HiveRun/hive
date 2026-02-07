@@ -54,7 +54,6 @@ const appendOutput = (current: string, chunk: string): string => {
   return next.slice(next.length - OUTPUT_BUFFER_LIMIT);
 };
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: terminal stream handling keeps reconnect, snapshot reconciliation, and status rendering in one component.
 export function PtyStreamTerminal({
   title,
   streamPath,
