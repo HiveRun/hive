@@ -16,6 +16,8 @@ curl -fsSL https://raw.githubusercontent.com/HiveRun/hive/main/scripts/install.s
 
 The installer downloads the latest published release for your platform, expands it into `~/.hive`, writes a local SQLite database path to `hive.env`, symlinks `hive` into `~/.hive/bin`, and updates your shell PATH so the CLI is immediately available. Run `hive` to start the bundled server + UI on the default ports.
 
+During install, Hive also checks for the `opencode` CLI. If missing, it attempts to install OpenCode automatically via `https://opencode.ai/install` so cell chat sessions work out of the box.
+
 Environment variables:
 - `HIVE_VERSION`: install a specific tag (defaults to `latest`).
 - `HIVE_HOME`: override the install root (defaults to `~/.hive`).
@@ -25,6 +27,9 @@ Environment variables:
 - `HIVE_LOG_DIR`: where background logs are written (defaults to `~/.hive/logs` for installed builds, or `<binary>/logs` when running from source).
 - `HIVE_PID_FILE`: override the pid file path (defaults to `~/.hive/hive.pid`).
 - `HIVE_INSTALL_COMMAND`: override the command executed by `hive upgrade` (defaults to the stored installer behavior).
+- `HIVE_SKIP_OPENCODE_INSTALL`: set to `1` to skip OpenCode auto-install.
+- `HIVE_OPENCODE_INSTALL_URL`: override the OpenCode installer URL.
+- `HIVE_OPENCODE_BIN`: pin the OpenCode executable path written to `hive.env`.
 
 ### Using the installed binary
 
