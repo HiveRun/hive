@@ -1,6 +1,5 @@
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { type IExitEvent, type IPty, spawn } from "bun-pty";
@@ -14,7 +13,6 @@ const TERMINAL_RESET_SEQUENCE = "\x1bc";
 const TERMINAL_NAME = "xterm-256color";
 const INSTALL_HINT = "curl -fsSL https://opencode.ai/install | bash";
 const HIVE_THEME_NAME = "hive-resonant";
-const HIVE_CONFIG_DIR_NAME = "hive-opencode-config";
 
 const HIVE_THEME_CONTENT = `${JSON.stringify(
   {
@@ -96,18 +94,6 @@ const HIVE_THEME_CONTENT = `${JSON.stringify(
   2
 )}\n`;
 
-function resolveThemeConfigDir(): string {
-  const configured =
-    process.env.HIVE_OPENCODE_CONFIG_DIR?.trim() ??
-    process.env.OPENCODE_CONFIG_DIR?.trim();
-
-  if (configured && configured.length > 0) {
-    return configured;
-  }
-
-  return join(tmpdir(), HIVE_CONFIG_DIR_NAME);
-}
-
 function parseInlineConfig(
   content: string | undefined
 ): Record<string, unknown> {
@@ -127,9 +113,8 @@ function parseInlineConfig(
   return {};
 }
 
-function createOpencodeThemeEnv(): Record<string, string> {
-  const configDir = resolveThemeConfigDir();
-  const themeDir = join(configDir, "themes");
+function createOpencodeThemeEnv(workspacePath: string): Record<string, string> {
+  const themeDir = join(workspacePath, ".opencode", "themes");
   const themePath = join(themeDir, `${HIVE_THEME_NAME}.json`);
 
   mkdirSync(themeDir, { recursive: true });
@@ -148,7 +133,6 @@ function createOpencodeThemeEnv(): Record<string, string> {
   };
 
   return {
-    OPENCODE_CONFIG_DIR: configDir,
     OPENCODE_CONFIG_CONTENT: JSON.stringify(mergedInlineConfig),
   };
 }
@@ -300,7 +284,7 @@ const createChatTerminalService = (): ChatTerminalService => {
     const opencodeBinary = resolveOpencodeBinary();
     let opencodeThemeEnv: Record<string, string> = {};
     try {
-      opencodeThemeEnv = createOpencodeThemeEnv();
+      opencodeThemeEnv = createOpencodeThemeEnv(workspacePath);
     } catch {
       // proceed without custom Hive theme if runtime cannot write config artifacts
     }
