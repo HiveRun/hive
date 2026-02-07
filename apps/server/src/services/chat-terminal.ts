@@ -5,7 +5,9 @@ import { Context, Layer } from "effect";
 
 const DEFAULT_TERMINAL_COLS = 120;
 const DEFAULT_TERMINAL_ROWS = 36;
-const MAX_TERMINAL_BUFFER_CHARS = 250_000;
+const MAX_TERMINAL_BUFFER_CHARS = 2_000_000;
+const BUFFER_RETAIN_CHARS = 1_600_000;
+const TERMINAL_RESET_SEQUENCE = "\x1bc";
 const TERMINAL_NAME = "xterm-256color";
 const INSTALL_HINT = "curl -fsSL https://opencode.ai/install | bash";
 
@@ -87,7 +89,12 @@ const appendBuffer = (current: string, chunk: string): string => {
     return next;
   }
 
-  return next.slice(next.length - MAX_TERMINAL_BUFFER_CHARS);
+  const retainStart = Math.max(0, next.length - BUFFER_RETAIN_CHARS);
+  const newlineBoundary = next.indexOf("\n", retainStart);
+  const sliceStart = newlineBoundary >= 0 ? newlineBoundary + 1 : retainStart;
+  const trimmed = next.slice(sliceStart);
+
+  return `${TERMINAL_RESET_SEQUENCE}${trimmed}`;
 };
 
 const normalizeSignal = (
