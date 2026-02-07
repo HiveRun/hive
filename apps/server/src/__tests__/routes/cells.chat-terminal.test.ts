@@ -222,7 +222,7 @@ describe("Cell chat terminal routes", () => {
 
     const response = await app.handle(
       new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/chat/terminal/stream`
+        `http://localhost/api/cells/${TEST_CELL_ID}/chat/terminal/stream?themeMode=light`
       )
     );
 
@@ -234,6 +234,7 @@ describe("Cell chat terminal routes", () => {
       workspacePath: "/tmp/mock-worktree",
       opencodeSessionId: AGENT_SESSION_ID,
       opencodeServerUrl: SERVER_URL,
+      opencodeThemeMode: "light",
     });
 
     const reader = response.body?.getReader();
@@ -354,6 +355,7 @@ describe("Cell chat terminal routes", () => {
       workspacePath: "/tmp/mock-worktree",
       opencodeSessionId: AGENT_SESSION_ID,
       opencodeServerUrl: SERVER_URL,
+      opencodeThemeMode: "dark",
     });
   });
 });

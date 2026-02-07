@@ -36,6 +36,51 @@ const TERMINAL_SCROLLBACK_LINES = 10_000;
 const KEY_SCROLLED_TERMINAL_SCROLLBACK_LINES = 0;
 const TERMINAL_FONT_FAMILY =
   '"JetBrainsMono Nerd Font", "MesloLGS NF", "CaskaydiaMono Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font Mono", "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Noto Color Emoji", monospace';
+const TERMINAL_THEME_DARK = {
+  background: "#070504",
+  foreground: "#F4E6CD",
+  cursor: "#F5A524",
+  cursorAccent: "#070504",
+  black: "#070504",
+  brightBlack: "#8A7A63",
+  red: "#FF5C5C",
+  brightRed: "#FF8F1F",
+  green: "#8EDB5D",
+  brightGreen: "#B4F28B",
+  yellow: "#FFC857",
+  brightYellow: "#FFE9A8",
+  blue: "#A35D11",
+  brightBlue: "#D4862B",
+  magenta: "#FF8F1F",
+  brightMagenta: "#FFC857",
+  cyan: "#C18B2F",
+  brightCyan: "#E3B157",
+  white: "#E8DCC4",
+  brightWhite: "#FFFFFF",
+};
+
+const TERMINAL_THEME_LIGHT = {
+  background: "#F6F1E6",
+  foreground: "#2B2520",
+  cursor: "#A35D11",
+  cursorAccent: "#F6F1E6",
+  black: "#2B2520",
+  brightBlack: "#6B6156",
+  red: "#B93D3D",
+  brightRed: "#D04A3C",
+  green: "#2F7D4A",
+  brightGreen: "#4F9C63",
+  yellow: "#A35D11",
+  brightYellow: "#C5771E",
+  blue: "#8E5A16",
+  brightBlue: "#AF7422",
+  magenta: "#A35D11",
+  brightMagenta: "#C5771E",
+  cyan: "#8C6E2A",
+  brightCyan: "#A8863B",
+  white: "#F1E7D5",
+  brightWhite: "#FBF7EE",
+};
 
 const appendOutput = (current: string, chunk: string): string => {
   const next = `${current}${chunk}`;
@@ -91,6 +136,7 @@ type CellTerminalProps = {
   connectCommand?: string | null;
   terminalLineHeight?: number;
   wheelScrollBehavior?: "terminal" | "line-keys";
+  themeMode?: "dark" | "light";
 };
 
 export function CellTerminal({
@@ -102,6 +148,7 @@ export function CellTerminal({
   connectCommand = null,
   terminalLineHeight = 1.25,
   wheelScrollBehavior = "terminal",
+  themeMode = "dark",
 }: CellTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
@@ -116,10 +163,14 @@ export function CellTerminal({
   const [session, setSession] = useState<TerminalSession | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
   const terminalApiBase = `${API_BASE}/api/cells/${cellId}/${endpointBase}`;
+  const buildTerminalEndpoint = useCallback(
+    (path: string) => `${terminalApiBase}/${path}?themeMode=${themeMode}`,
+    [terminalApiBase, themeMode]
+  );
 
   const sendResize = useCallback(
     async (cols: number, rows: number) => {
-      const response = await fetch(`${terminalApiBase}/resize`, {
+      const response = await fetch(buildTerminalEndpoint("resize"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -139,12 +190,12 @@ export function CellTerminal({
         setSession(payload.session);
       }
     },
-    [terminalApiBase]
+    [buildTerminalEndpoint]
   );
 
   const sendInput = useCallback(
     (data: string) => {
-      fetch(`${terminalApiBase}/input`, {
+      fetch(buildTerminalEndpoint("input"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -156,7 +207,7 @@ export function CellTerminal({
         );
       });
     },
-    [terminalApiBase]
+    [buildTerminalEndpoint]
   );
 
   const scheduleResizeSync = useCallback(() => {
@@ -208,7 +259,7 @@ export function CellTerminal({
   const restartTerminal = useCallback(async () => {
     setIsRestarting(true);
     try {
-      const response = await fetch(`${terminalApiBase}/restart`, {
+      const response = await fetch(buildTerminalEndpoint("restart"), {
         method: "POST",
       });
       if (!response.ok) {
@@ -233,7 +284,7 @@ export function CellTerminal({
     } finally {
       setIsRestarting(false);
     }
-  }, [scheduleResizeSync, terminalApiBase]);
+  }, [buildTerminalEndpoint, scheduleResizeSync]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -247,7 +298,7 @@ export function CellTerminal({
     setErrorMessage(null);
 
     const connectStream = () => {
-      const source = new EventSource(`${terminalApiBase}/stream`);
+      const source = new EventSource(buildTerminalEndpoint("stream"));
       eventSourceRef.current = source;
 
       source.addEventListener("ready", (event) => {
@@ -375,28 +426,8 @@ export function CellTerminal({
           wheelScrollBehavior === "line-keys"
             ? KEY_SCROLLED_TERMINAL_SCROLLBACK_LINES
             : TERMINAL_SCROLLBACK_LINES,
-        theme: {
-          background: "#070504",
-          foreground: "#F4E6CD",
-          cursor: "#F5A524",
-          cursorAccent: "#070504",
-          black: "#070504",
-          brightBlack: "#8A7A63",
-          red: "#FF5C5C",
-          brightRed: "#FF8F1F",
-          green: "#8EDB5D",
-          brightGreen: "#B4F28B",
-          yellow: "#FFC857",
-          brightYellow: "#FFE9A8",
-          blue: "#A35D11",
-          brightBlue: "#D4862B",
-          magenta: "#FF8F1F",
-          brightMagenta: "#FFC857",
-          cyan: "#C18B2F",
-          brightCyan: "#E3B157",
-          white: "#E8DCC4",
-          brightWhite: "#FFFFFF",
-        },
+        theme:
+          themeMode === "light" ? TERMINAL_THEME_LIGHT : TERMINAL_THEME_DARK,
       });
 
       const fitAddon = new FitAddon();
@@ -467,9 +498,10 @@ export function CellTerminal({
       serializeAddonRef.current = null;
     };
   }, [
-    terminalApiBase,
+    buildTerminalEndpoint,
     scheduleResizeSync,
     sendInput,
+    themeMode,
     terminalLineHeight,
     wheelScrollBehavior,
   ]);

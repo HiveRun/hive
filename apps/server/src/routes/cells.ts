@@ -123,6 +123,7 @@ export type CellRouteDependencies = {
     workspacePath: string;
     opencodeSessionId: string;
     opencodeServerUrl: string;
+    opencodeThemeMode?: OpencodeThemeMode;
   }) => ChatTerminalSession;
   readChatTerminalOutput?: (cellId: string) => string;
   subscribeToChatTerminal?: (
@@ -386,6 +387,10 @@ const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
 const MAX_PROVISIONING_ATTEMPTS = 3;
 const DEFAULT_SERVICE_HOST = process.env.SERVICE_HOST ?? "localhost";
 const DEFAULT_SERVICE_PROTOCOL = process.env.SERVICE_PROTOCOL ?? "http";
+type OpencodeThemeMode = "dark" | "light";
+const ChatThemeModeQuerySchema = t.Object({
+  themeMode: t.Optional(t.Union([t.Literal("dark"), t.Literal("light")])),
+});
 
 const PROVISIONING_INTERRUPTED_MESSAGE =
   "Provisioning interrupted. Fix the workspace and rerun setup.";
@@ -536,9 +541,14 @@ function getChatTerminalDependencies(
   };
 }
 
+function normalizeOpencodeThemeMode(value?: string): OpencodeThemeMode {
+  return value === "light" ? "light" : "dark";
+}
+
 async function ensureChatTerminalSessionForCell(
   deps: CellRouteDependencies,
-  cell: typeof cells.$inferSelect
+  cell: typeof cells.$inferSelect,
+  themeMode: OpencodeThemeMode
 ) {
   const serverUrl =
     process.env.HIVE_OPENCODE_SERVER_URL ?? getSharedOpencodeServerBaseUrl();
@@ -553,6 +563,7 @@ async function ensureChatTerminalSessionForCell(
     workspacePath: cell.workspacePath,
     opencodeSessionId: agentSession.id,
     opencodeServerUrl: serverUrl,
+    opencodeThemeMode: themeMode,
   });
 
   return {
@@ -1436,7 +1447,7 @@ export function createCellsRoutes(
 
     .get(
       "/:id/chat/terminal/stream",
-      async ({ params, set, request, log }) => {
+      async ({ params, query, set, request, log }) => {
         const deps = await resolveDeps();
         const { db: database } = deps;
         const cell = await loadCellById(database, params.id);
@@ -1447,8 +1458,13 @@ export function createCellsRoutes(
 
         let session: ChatTerminalSession;
         let chatTerminal: ChatTerminalDependencies;
+        const themeMode = normalizeOpencodeThemeMode(query.themeMode);
         try {
-          const prepared = await ensureChatTerminalSessionForCell(deps, cell);
+          const prepared = await ensureChatTerminalSessionForCell(
+            deps,
+            cell,
+            themeMode
+          );
           session = prepared.session;
           chatTerminal = prepared.chatTerminal;
         } catch (error) {
@@ -1507,6 +1523,7 @@ export function createCellsRoutes(
       },
       {
         params: t.Object({ id: t.String() }),
+        query: ChatThemeModeQuerySchema,
         response: {
           200: t.Any(),
           404: t.Object({ message: t.String() }),
@@ -1517,7 +1534,7 @@ export function createCellsRoutes(
 
     .post(
       "/:id/chat/terminal/input",
-      async ({ params, body, set, log }) => {
+      async ({ params, query, body, set, log }) => {
         const deps = await resolveDeps();
         const { db: database } = deps;
         const cell = await loadCellById(database, params.id);
@@ -1527,9 +1544,11 @@ export function createCellsRoutes(
         }
 
         try {
+          const themeMode = normalizeOpencodeThemeMode(query.themeMode);
           const { chatTerminal } = await ensureChatTerminalSessionForCell(
             deps,
-            cell
+            cell,
+            themeMode
           );
           chatTerminal.writeChatTerminalInput(cell.id, body.data);
           return { ok: true };
@@ -1549,6 +1568,7 @@ export function createCellsRoutes(
       },
       {
         params: t.Object({ id: t.String() }),
+        query: ChatThemeModeQuerySchema,
         body: CellTerminalInputSchema,
         response: {
           200: CellTerminalActionResponseSchema,
@@ -1560,7 +1580,7 @@ export function createCellsRoutes(
 
     .post(
       "/:id/chat/terminal/resize",
-      async ({ params, body, set, log }) => {
+      async ({ params, query, body, set, log }) => {
         const deps = await resolveDeps();
         const { db: database } = deps;
         const cell = await loadCellById(database, params.id);
@@ -1570,8 +1590,9 @@ export function createCellsRoutes(
         }
 
         try {
+          const themeMode = normalizeOpencodeThemeMode(query.themeMode);
           const { session, chatTerminal } =
-            await ensureChatTerminalSessionForCell(deps, cell);
+            await ensureChatTerminalSessionForCell(deps, cell, themeMode);
           chatTerminal.resizeChatTerminal(cell.id, body.cols, body.rows);
           return {
             ok: true,
@@ -1597,6 +1618,7 @@ export function createCellsRoutes(
       },
       {
         params: t.Object({ id: t.String() }),
+        query: ChatThemeModeQuerySchema,
         body: CellTerminalResizeSchema,
         response: {
           200: t.Object({
@@ -1611,7 +1633,7 @@ export function createCellsRoutes(
 
     .post(
       "/:id/chat/terminal/restart",
-      async ({ params, set, log }) => {
+      async ({ params, query, set, log }) => {
         const deps = await resolveDeps();
         const { db: database } = deps;
         const cell = await loadCellById(database, params.id);
@@ -1623,9 +1645,11 @@ export function createCellsRoutes(
         try {
           const chatTerminal = getChatTerminalDependencies(deps);
           chatTerminal.closeChatTerminalSession(cell.id);
+          const themeMode = normalizeOpencodeThemeMode(query.themeMode);
           const { session } = await ensureChatTerminalSessionForCell(
             deps,
-            cell
+            cell,
+            themeMode
           );
           return session;
         } catch (error) {
@@ -1644,6 +1668,7 @@ export function createCellsRoutes(
       },
       {
         params: t.Object({ id: t.String() }),
+        query: ChatThemeModeQuerySchema,
         response: {
           200: CellTerminalSessionSchema,
           404: t.Object({ message: t.String() }),
