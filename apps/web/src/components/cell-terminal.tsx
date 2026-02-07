@@ -34,6 +34,7 @@ const WHEEL_PAGE_UP_SEQUENCE = "\u001b[5~";
 const WHEEL_PAGE_DOWN_SEQUENCE = "\u001b[6~";
 const WHEEL_LINE_UP_SEQUENCE = "\u001b\u0019";
 const WHEEL_LINE_DOWN_SEQUENCE = "\u001b\u0005";
+const WHEEL_LINE_COMMANDS_PER_EVENT = 2;
 const TERMINAL_SCROLLBACK_LINES = 10_000;
 const PAGE_KEY_SCROLLBACK_LINES = 0;
 const TERMINAL_FONT_FAMILY =
@@ -74,7 +75,13 @@ function createWheelBridge(
         ? [WHEEL_LINE_UP_SEQUENCE, WHEEL_LINE_DOWN_SEQUENCE]
         : [WHEEL_PAGE_UP_SEQUENCE, WHEEL_PAGE_DOWN_SEQUENCE];
 
-    sendInput(direction < 0 ? upSequence : downSequence);
+    const sequence = direction < 0 ? upSequence : downSequence;
+    const commandsPerEvent =
+      wheelScrollBehavior === "line-keys" ? WHEEL_LINE_COMMANDS_PER_EVENT : 1;
+
+    for (let index = 0; index < commandsPerEvent; index += 1) {
+      sendInput(sequence);
+    }
   };
 
   target.addEventListener("wheel", handleWheel, {
