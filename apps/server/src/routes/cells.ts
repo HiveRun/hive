@@ -27,6 +27,10 @@ import {
   CellResponseSchema,
   CellServiceListResponseSchema,
   CellServiceSchema,
+  CellTerminalActionResponseSchema,
+  CellTerminalInputSchema,
+  CellTerminalResizeSchema,
+  CellTerminalSessionSchema,
   CreateCellSchema,
   DeleteCellsSchema,
   DiffQuerySchema,
@@ -60,6 +64,11 @@ import {
   TemplateSetupError,
 } from "../services/supervisor";
 import {
+  type CellTerminalEvent,
+  CellTerminalServiceTag,
+  type CellTerminalSession,
+} from "../services/terminal";
+import {
   type ResolveWorkspaceContext,
   resolveWorkspaceContextEffect,
   type WorkspaceRuntimeContext,
@@ -87,6 +96,18 @@ export type CellRouteDependencies = {
   startServicesForCell: ServiceSupervisorServiceType["startCellServices"];
   stopServiceById: ServiceSupervisorServiceType["stopCellService"];
   stopServicesForCell: ServiceSupervisorServiceType["stopCellServices"];
+  ensureTerminalSession: (args: {
+    cellId: string;
+    workspacePath: string;
+  }) => CellTerminalSession;
+  readTerminalOutput: (cellId: string) => string;
+  subscribeToTerminal: (
+    cellId: string,
+    listener: (event: CellTerminalEvent) => void
+  ) => () => void;
+  writeTerminalInput: (cellId: string, data: string) => void;
+  resizeTerminal: (cellId: string, cols: number, rows: number) => void;
+  closeTerminalSession: (cellId: string) => void;
 };
 
 const dependencyKeys: Array<keyof CellRouteDependencies> = [
@@ -100,6 +121,12 @@ const dependencyKeys: Array<keyof CellRouteDependencies> = [
   "startServicesForCell",
   "stopServiceById",
   "stopServicesForCell",
+  "ensureTerminalSession",
+  "readTerminalOutput",
+  "subscribeToTerminal",
+  "writeTerminalInput",
+  "resizeTerminal",
+  "closeTerminalSession",
 ];
 
 const buildDefaultCellDependencies = () =>
@@ -107,6 +134,7 @@ const buildDefaultCellDependencies = () =>
     const { db: database } = yield* DatabaseService;
     const agentRuntime = yield* AgentRuntimeServiceTag;
     const supervisor = yield* ServiceSupervisorService;
+    const terminal = yield* CellTerminalServiceTag;
 
     return {
       db: database,
@@ -120,6 +148,12 @@ const buildDefaultCellDependencies = () =>
       startServicesForCell: supervisor.startCellServices,
       stopServiceById: supervisor.stopCellService,
       stopServicesForCell: supervisor.stopCellServices,
+      ensureTerminalSession: terminal.ensureSession,
+      readTerminalOutput: terminal.readOutput,
+      subscribeToTerminal: terminal.subscribe,
+      writeTerminalInput: terminal.write,
+      resizeTerminal: terminal.resize,
+      closeTerminalSession: terminal.closeSession,
     } satisfies CellRouteDependencies;
   });
 
@@ -935,6 +969,224 @@ export function createCellsRoutes(
       }
     )
 
+    .get(
+      "/:id/terminal/stream",
+      async ({ params, set, request, log }) => {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+
+        let session: CellTerminalSession;
+        try {
+          session = deps.ensureTerminalSession({
+            cellId: cell.id,
+            workspacePath: cell.workspacePath,
+          });
+        } catch (error) {
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          log.error(
+            { error, cellId: cell.id },
+            "Failed to initialize cell terminal session"
+          );
+          return {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to initialize terminal session",
+          } satisfies { message: string };
+        }
+
+        const initialOutput = deps.readTerminalOutput(cell.id);
+        const { iterator, cleanup } =
+          createAsyncEventIterator<CellTerminalEvent>(
+            (listener) => deps.subscribeToTerminal(cell.id, listener),
+            request.signal
+          );
+
+        async function* stream() {
+          try {
+            yield sse({ event: "ready", data: session });
+
+            if (initialOutput.length > 0) {
+              yield sse({
+                event: "snapshot",
+                data: { output: initialOutput },
+              });
+            }
+
+            for await (const event of iterator) {
+              if (event.type === "data") {
+                yield sse({ event: "data", data: { chunk: event.chunk } });
+                continue;
+              }
+
+              yield sse({
+                event: "exit",
+                data: {
+                  exitCode: event.exitCode,
+                  signal: event.signal,
+                },
+              });
+            }
+          } finally {
+            cleanup();
+          }
+        }
+
+        return stream();
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        response: {
+          200: t.Any(),
+          404: t.Object({ message: t.String() }),
+          500: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .post(
+      "/:id/terminal/input",
+      async ({ params, body, set, log }) => {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+
+        try {
+          deps.ensureTerminalSession({
+            cellId: cell.id,
+            workspacePath: cell.workspacePath,
+          });
+          deps.writeTerminalInput(cell.id, body.data);
+          return { ok: true };
+        } catch (error) {
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          log.error(
+            { error, cellId: cell.id },
+            "Failed to write to terminal session"
+          );
+          return {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to write to terminal session",
+          } satisfies { message: string };
+        }
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        body: CellTerminalInputSchema,
+        response: {
+          200: CellTerminalActionResponseSchema,
+          404: t.Object({ message: t.String() }),
+          500: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .post(
+      "/:id/terminal/resize",
+      async ({ params, body, set, log }) => {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+
+        try {
+          const session = deps.ensureTerminalSession({
+            cellId: cell.id,
+            workspacePath: cell.workspacePath,
+          });
+          deps.resizeTerminal(cell.id, body.cols, body.rows);
+          return {
+            ok: true,
+            session: {
+              ...session,
+              cols: body.cols,
+              rows: body.rows,
+            },
+          };
+        } catch (error) {
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          log.error(
+            { error, cellId: cell.id },
+            "Failed to resize terminal session"
+          );
+          return {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to resize terminal session",
+          } satisfies { message: string };
+        }
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        body: CellTerminalResizeSchema,
+        response: {
+          200: t.Object({
+            ok: t.Boolean(),
+            session: CellTerminalSessionSchema,
+          }),
+          404: t.Object({ message: t.String() }),
+          500: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .post(
+      "/:id/terminal/restart",
+      async ({ params, set, log }) => {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+
+        try {
+          deps.closeTerminalSession(cell.id);
+          const session = deps.ensureTerminalSession({
+            cellId: cell.id,
+            workspacePath: cell.workspacePath,
+          });
+          return session;
+        } catch (error) {
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          log.error(
+            { error, cellId: cell.id },
+            "Failed to restart terminal session"
+          );
+          return {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to restart terminal session",
+          } satisfies { message: string };
+        }
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        response: {
+          200: CellTerminalSessionSchema,
+          404: t.Object({ message: t.String() }),
+          500: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
     .post(
       "/:id/services/start",
       async ({ params, set, request }) => {
@@ -1315,6 +1567,7 @@ export function createCellsRoutes(
             resolveWorkspaceContext: resolveWorkspaceCtx,
             closeAgentSession: closeSession,
             stopServicesForCell: stopCellServicesFn,
+            closeTerminalSession,
           } = deps;
 
           const uniqueIds = [...new Set(body.ids)];
@@ -1352,6 +1605,7 @@ export function createCellsRoutes(
 
           for (const cell of cellsToDelete) {
             await runServerEffect(closeSession(cell.id));
+            closeTerminalSession(cell.id);
             try {
               await runServerEffect(
                 stopCellServicesFn(cell.id, {
@@ -1410,6 +1664,7 @@ export function createCellsRoutes(
             resolveWorkspaceContext: resolveWorkspaceCtx,
             closeAgentSession: closeSession,
             stopServicesForCell: stopCellServicesFn,
+            closeTerminalSession,
           } = deps;
 
           const cell = await loadCellById(database, params.id);
@@ -1419,6 +1674,7 @@ export function createCellsRoutes(
           }
 
           await runServerEffect(closeSession(params.id));
+          closeTerminalSession(params.id);
           try {
             await runServerEffect(
               stopCellServicesFn(params.id, { releasePorts: true })

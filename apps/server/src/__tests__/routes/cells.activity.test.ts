@@ -51,6 +51,22 @@ function createMinimalDependencies(): any {
     startServiceById: () => Effect.void,
     stopServiceById: () => Effect.void,
     sendAgentMessage: () => Effect.void,
+    ensureTerminalSession: () => ({
+      sessionId: "terminal-session",
+      cellId: TEST_CELL_ID,
+      pid: 123,
+      cwd: "/tmp/mock-worktree",
+      cols: 120,
+      rows: 36,
+      status: "running" as const,
+      exitCode: null,
+      startedAt: new Date().toISOString(),
+    }),
+    readTerminalOutput: () => "",
+    subscribeToTerminal: () => () => 0,
+    writeTerminalInput: () => 0,
+    resizeTerminal: () => 0,
+    closeTerminalSession: () => 0,
   };
 }
 
