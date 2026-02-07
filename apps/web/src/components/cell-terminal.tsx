@@ -32,8 +32,9 @@ const OUTPUT_BUFFER_LIMIT = 250_000;
 const RESIZE_DEBOUNCE_MS = 120;
 const PAGE_UP_SEQUENCE = "\u001b[5~";
 const PAGE_DOWN_SEQUENCE = "\u001b[6~";
-const WHEEL_STEP_DELTA = 80;
-const WHEEL_MAX_PAGE_STEPS = 4;
+const PAGE_KEY_SCROLL_MIN_INTERVAL_MS = 140;
+const TERMINAL_SCROLLBACK_LINES = 10_000;
+const PAGE_KEY_SCROLLBACK_LINES = 0;
 const TERMINAL_FONT_FAMILY =
   '"JetBrainsMono Nerd Font", "MesloLGS NF", "CaskaydiaMono Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font Mono", "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Noto Color Emoji", monospace';
 
@@ -50,6 +51,8 @@ function createWheelBridge(
   wheelScrollBehavior: "terminal" | "page-keys",
   sendInput: (data: string) => void
 ): () => void {
+  let lastScrollAt = 0;
+
   const handleWheel = (event: WheelEvent) => {
     if (wheelScrollBehavior !== "page-keys") {
       return;
@@ -60,24 +63,25 @@ function createWheelBridge(
     }
 
     event.preventDefault();
-    const sequence = event.deltaY < 0 ? PAGE_UP_SEQUENCE : PAGE_DOWN_SEQUENCE;
-    const steps = Math.max(
-      1,
-      Math.min(
-        WHEEL_MAX_PAGE_STEPS,
-        Math.round(Math.abs(event.deltaY) / WHEEL_STEP_DELTA)
-      )
-    );
+    event.stopPropagation();
 
-    for (let step = 0; step < steps; step += 1) {
-      sendInput(sequence);
+    const now = Date.now();
+    if (now - lastScrollAt < PAGE_KEY_SCROLL_MIN_INTERVAL_MS) {
+      return;
     }
+    lastScrollAt = now;
+
+    const sequence = event.deltaY < 0 ? PAGE_UP_SEQUENCE : PAGE_DOWN_SEQUENCE;
+    sendInput(sequence);
   };
 
-  target.addEventListener("wheel", handleWheel, { passive: false });
+  target.addEventListener("wheel", handleWheel, {
+    capture: true,
+    passive: false,
+  });
 
   return () => {
-    target.removeEventListener("wheel", handleWheel);
+    target.removeEventListener("wheel", handleWheel, true);
   };
 }
 
@@ -369,7 +373,10 @@ export function CellTerminal({
         fontFamily: TERMINAL_FONT_FAMILY,
         fontSize: 13,
         lineHeight: terminalLineHeight,
-        scrollback: 10_000,
+        scrollback:
+          wheelScrollBehavior === "page-keys"
+            ? PAGE_KEY_SCROLLBACK_LINES
+            : TERMINAL_SCROLLBACK_LINES,
         theme: {
           background: "#050708",
           foreground: "#FFE9A8",
