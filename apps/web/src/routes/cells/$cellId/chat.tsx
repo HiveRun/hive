@@ -20,7 +20,6 @@ function CellChat() {
       restartLabel="Restart chat"
       terminalLineHeight={1.08}
       title="Cell Chat"
-      wheelScrollBehavior="line-keys"
     />
   );
 }
