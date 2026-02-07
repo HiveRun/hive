@@ -113,17 +113,58 @@ function parseInlineConfig(
   return {};
 }
 
+function parseJsonRecord(content: string | undefined): Record<string, unknown> {
+  if (!content) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(content);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // ignore malformed persisted state payloads
+  }
+
+  return {};
+}
+
 function createOpencodeThemeEnv(workspacePath: string): Record<string, string> {
-  const themeDir = join(workspacePath, ".opencode", "themes");
+  const configRoot = join(workspacePath, ".opencode");
+  const themeDir = join(configRoot, "themes");
   const themePath = join(themeDir, `${HIVE_THEME_NAME}.json`);
+  const stateHome = join(configRoot, "state");
+  const stateDir = join(stateHome, "opencode");
+  const kvPath = join(stateDir, "kv.json");
 
   mkdirSync(themeDir, { recursive: true });
+  mkdirSync(stateDir, { recursive: true });
 
   const existingTheme = existsSync(themePath)
     ? readFileSync(themePath, "utf8")
     : null;
   if (existingTheme !== HIVE_THEME_CONTENT) {
     writeFileSync(themePath, HIVE_THEME_CONTENT, "utf8");
+  }
+
+  const existingKv = existsSync(kvPath)
+    ? readFileSync(kvPath, "utf8")
+    : undefined;
+  const kvRecord = parseJsonRecord(existingKv);
+  if (kvRecord.theme !== HIVE_THEME_NAME) {
+    writeFileSync(
+      kvPath,
+      JSON.stringify(
+        {
+          ...kvRecord,
+          theme: HIVE_THEME_NAME,
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
   }
 
   const inlineConfig = parseInlineConfig(process.env.OPENCODE_CONFIG_CONTENT);
@@ -133,6 +174,7 @@ function createOpencodeThemeEnv(workspacePath: string): Record<string, string> {
   };
 
   return {
+    XDG_STATE_HOME: stateHome,
     OPENCODE_CONFIG_CONTENT: JSON.stringify(mergedInlineConfig),
   };
 }
