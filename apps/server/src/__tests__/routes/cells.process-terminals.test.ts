@@ -19,6 +19,8 @@ const SETUP_RESIZE_COLS = 150;
 const SETUP_RESIZE_ROWS = 40;
 const SERVICE_RESIZE_COLS = 132;
 const SERVICE_RESIZE_ROWS = 44;
+const SETUP_INPUT = "echo setup\n";
+const SERVICE_INPUT = "echo service\n";
 
 const createTerminalHarness = () => {
   const setupListeners = new Set<(event: ServiceTerminalEvent) => void>();
@@ -48,6 +50,8 @@ const createTerminalHarness = () => {
 
   let setupOutput = "setup snapshot\n";
   let serviceOutput = "service snapshot\n";
+  const setupInputs: string[] = [];
+  const serviceInputs: string[] = [];
 
   return {
     getSetupSession: () => setupSession,
@@ -63,6 +67,9 @@ const createTerminalHarness = () => {
         throw new Error("setup session unavailable");
       }
       setupSession = { ...setupSession, cols, rows };
+    },
+    writeSetup: (data: string) => {
+      setupInputs.push(data);
     },
     emitSetup: (event: ServiceTerminalEvent) => {
       for (const listener of setupListeners) {
@@ -84,6 +91,9 @@ const createTerminalHarness = () => {
       }
       serviceSession = { ...serviceSession, cols, rows };
     },
+    writeService: (data: string) => {
+      serviceInputs.push(data);
+    },
     emitService: (event: ServiceTerminalEvent) => {
       for (const listener of serviceListeners) {
         listener(event);
@@ -95,6 +105,12 @@ const createTerminalHarness = () => {
     },
     setServiceOutput(value: string) {
       serviceOutput = value;
+    },
+    getSetupInputs() {
+      return [...setupInputs];
+    },
+    getServiceInputs() {
+      return [...serviceInputs];
     },
   };
 };
@@ -162,6 +178,8 @@ const createDependencies = (
       _serviceId: string,
       listener: (event: ServiceTerminalEvent) => void
     ) => harness.subscribeService(listener),
+    writeServiceTerminalInput: (_serviceId: string, data: string) =>
+      harness.writeService(data),
     resizeServiceTerminal: (_serviceId: string, cols: number, rows: number) =>
       harness.resizeService(cols, rows),
     clearServiceTerminal: () => 0,
@@ -171,6 +189,8 @@ const createDependencies = (
       _cellId: string,
       listener: (event: ServiceTerminalEvent) => void
     ) => harness.subscribeSetup(listener),
+    writeSetupTerminalInput: (_cellId: string, data: string) =>
+      harness.writeSetup(data),
     resizeSetupTerminal: (_cellId: string, cols: number, rows: number) =>
       harness.resizeSetup(cols, rows),
     clearSetupTerminal: () => 0,
@@ -340,6 +360,28 @@ describe("service/setup terminal routes", () => {
     expect(payload.session.rows).toBe(SETUP_RESIZE_ROWS);
   });
 
+  it("writes setup terminal input", async () => {
+    await seedData();
+    const harness = createTerminalHarness();
+    const app = new Elysia().use(
+      createCellsRoutes(createDependencies(harness))
+    );
+
+    const response = await app.handle(
+      new Request(
+        `http://localhost/api/cells/${TEST_CELL_ID}/setup/terminal/input`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data: SETUP_INPUT }),
+        }
+      )
+    );
+
+    expect(response.status).toBe(HTTP_OK);
+    expect(harness.getSetupInputs()).toEqual([SETUP_INPUT]);
+  });
+
   it("resizes service terminal session", async () => {
     await seedData();
     const harness = createTerminalHarness();
@@ -369,5 +411,27 @@ describe("service/setup terminal routes", () => {
     expect(payload.ok).toBe(true);
     expect(payload.session.cols).toBe(SERVICE_RESIZE_COLS);
     expect(payload.session.rows).toBe(SERVICE_RESIZE_ROWS);
+  });
+
+  it("writes service terminal input", async () => {
+    await seedData();
+    const harness = createTerminalHarness();
+    const app = new Elysia().use(
+      createCellsRoutes(createDependencies(harness))
+    );
+
+    const response = await app.handle(
+      new Request(
+        `http://localhost/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/terminal/input`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data: SERVICE_INPUT }),
+        }
+      )
+    );
+
+    expect(response.status).toBe(HTTP_OK);
+    expect(harness.getServiceInputs()).toEqual([SERVICE_INPUT]);
   });
 });

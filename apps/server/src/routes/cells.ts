@@ -120,6 +120,7 @@ export type CellRouteDependencies = {
     serviceId: string,
     listener: (event: ServiceTerminalEvent) => void
   ) => () => void;
+  writeServiceTerminalInput: (serviceId: string, data: string) => void;
   resizeServiceTerminal: (
     serviceId: string,
     cols: number,
@@ -132,6 +133,7 @@ export type CellRouteDependencies = {
     cellId: string,
     listener: (event: ServiceTerminalEvent) => void
   ) => () => void;
+  writeSetupTerminalInput: (cellId: string, data: string) => void;
   resizeSetupTerminal: (cellId: string, cols: number, rows: number) => void;
   clearSetupTerminal: (cellId: string) => void;
 };
@@ -156,11 +158,13 @@ const dependencyKeys: Array<keyof CellRouteDependencies> = [
   "getServiceTerminalSession",
   "readServiceTerminalOutput",
   "subscribeToServiceTerminal",
+  "writeServiceTerminalInput",
   "resizeServiceTerminal",
   "clearServiceTerminal",
   "getSetupTerminalSession",
   "readSetupTerminalOutput",
   "subscribeToSetupTerminal",
+  "writeSetupTerminalInput",
   "resizeSetupTerminal",
   "clearSetupTerminal",
 ];
@@ -193,11 +197,13 @@ const buildDefaultCellDependencies = () =>
       getServiceTerminalSession: supervisor.getServiceTerminalSession,
       readServiceTerminalOutput: supervisor.readServiceTerminalOutput,
       subscribeToServiceTerminal: supervisor.subscribeToServiceTerminal,
+      writeServiceTerminalInput: supervisor.writeServiceTerminalInput,
       resizeServiceTerminal: supervisor.resizeServiceTerminal,
       clearServiceTerminal: supervisor.clearServiceTerminal,
       getSetupTerminalSession: supervisor.getSetupTerminalSession,
       readSetupTerminalOutput: supervisor.readSetupTerminalOutput,
       subscribeToSetupTerminal: supervisor.subscribeToSetupTerminal,
+      writeSetupTerminalInput: supervisor.writeSetupTerminalInput,
       resizeSetupTerminal: supervisor.resizeSetupTerminal,
       clearSetupTerminal: supervisor.clearSetupTerminal,
     } satisfies CellRouteDependencies;
@@ -1137,6 +1143,54 @@ export function createCellsRoutes(
       }
     )
 
+    .post(
+      "/:id/setup/terminal/input",
+      async ({ params, body, set, log }) => {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+
+        const session = deps.getSetupTerminalSession(cell.id);
+        if (!session || session.status !== "running") {
+          set.status = HTTP_STATUS.CONFLICT;
+          return {
+            message: "Setup terminal session not available",
+          } satisfies { message: string };
+        }
+
+        try {
+          deps.writeSetupTerminalInput(cell.id, body.data);
+          return { ok: true };
+        } catch (error) {
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          log.error(
+            { error, cellId: cell.id },
+            "Failed to write to setup terminal session"
+          );
+          return {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to write to setup terminal session",
+          } satisfies { message: string };
+        }
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        body: CellTerminalInputSchema,
+        response: {
+          200: CellTerminalActionResponseSchema,
+          404: t.Object({ message: t.String() }),
+          409: t.Object({ message: t.String() }),
+          500: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
     .get(
       "/:id/services/:serviceId/terminal/stream",
       async ({ params, set, request }) => {
@@ -1195,6 +1249,58 @@ export function createCellsRoutes(
         response: {
           200: t.Any(),
           404: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .post(
+      "/:id/services/:serviceId/terminal/input",
+      async ({ params, body, set, log }) => {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const row = await fetchServiceRow(
+          database,
+          params.id,
+          params.serviceId
+        );
+        if (!row) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Service not found" } satisfies { message: string };
+        }
+
+        const session = deps.getServiceTerminalSession(row.service.id);
+        if (!session || session.status !== "running") {
+          set.status = HTTP_STATUS.CONFLICT;
+          return {
+            message: "Service terminal session not available",
+          } satisfies { message: string };
+        }
+
+        try {
+          deps.writeServiceTerminalInput(row.service.id, body.data);
+          return { ok: true };
+        } catch (error) {
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          log.error(
+            { error, serviceId: row.service.id },
+            "Failed to write to service terminal session"
+          );
+          return {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to write to service terminal session",
+          } satisfies { message: string };
+        }
+      },
+      {
+        params: t.Object({ id: t.String(), serviceId: t.String() }),
+        body: CellTerminalInputSchema,
+        response: {
+          200: CellTerminalActionResponseSchema,
+          404: t.Object({ message: t.String() }),
+          409: t.Object({ message: t.String() }),
+          500: t.Object({ message: t.String() }),
         },
       }
     )

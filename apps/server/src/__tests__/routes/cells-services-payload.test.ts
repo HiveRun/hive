@@ -105,12 +105,14 @@ function createMinimalDependencies(
     readServiceTerminalOutput: (serviceId: string) =>
       harness.readServiceOutput(serviceId),
     subscribeToServiceTerminal: () => () => 0,
+    writeServiceTerminalInput: () => 0,
     resizeServiceTerminal: () => 0,
     clearServiceTerminal: () => 0,
     getSetupTerminalSession: () => null,
     readSetupTerminalOutput: (cellId: string) =>
       harness.readSetupOutput(cellId),
     subscribeToSetupTerminal: () => () => 0,
+    writeSetupTerminalInput: () => 0,
     resizeSetupTerminal: () => 0,
     clearSetupTerminal: () => 0,
   };

@@ -476,7 +476,9 @@ function ServiceCard({
         </div>
       )}
       <PtyStreamTerminal
+        allowInput
         emptyMessage="No service output yet."
+        inputPath={`/api/cells/${cellId}/services/${service.id}/terminal/input`}
         resizePath={`/api/cells/${cellId}/services/${service.id}/terminal/resize`}
         streamPath={`/api/cells/${cellId}/services/${service.id}/terminal/stream`}
         title="Service Terminal"

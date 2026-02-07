@@ -191,6 +191,7 @@ export type ProcessHandle = {
   kill: (signal?: number | string) => void;
   exited: Promise<number>;
   resize?: (cols: number, rows: number) => void;
+  write?: (data: string) => void;
 };
 
 export type SpawnProcess = (options: SpawnProcessOptions) => ProcessHandle;
@@ -356,6 +357,9 @@ const defaultSpawnProcess: SpawnProcess = ({
     exited,
     resize(colsValue, rowsValue) {
       pty.resize(colsValue, rowsValue);
+    },
+    write(data) {
+      pty.write(data);
     },
   };
 };
@@ -614,6 +618,7 @@ export function createServiceSupervisor(
             pid: proc.pid,
             kill: proc.kill,
             resize: proc.resize,
+            write: proc.write,
           },
         });
 
@@ -919,6 +924,7 @@ export function createServiceSupervisor(
           pid: handle.pid,
           kill: handle.kill,
           resize: handle.resize,
+          write: handle.write,
         },
       });
 
@@ -1377,6 +1383,7 @@ export type ServiceSupervisorService = {
     cols: number,
     rows: number
   ) => void;
+  readonly writeServiceTerminalInput: (serviceId: string, data: string) => void;
   readonly clearServiceTerminal: (serviceId: string) => void;
   readonly getSetupTerminalSession: (
     cellId: string
@@ -1391,6 +1398,7 @@ export type ServiceSupervisorService = {
     cols: number,
     rows: number
   ) => void;
+  readonly writeSetupTerminalInput: (cellId: string, data: string) => void;
   readonly clearSetupTerminal: (cellId: string) => void;
 };
 
@@ -1414,11 +1422,13 @@ const makeEffectSupervisor = (
   readServiceTerminalOutput: terminalRuntime.readServiceOutput,
   subscribeToServiceTerminal: terminalRuntime.subscribeToService,
   resizeServiceTerminal: terminalRuntime.resizeService,
+  writeServiceTerminalInput: terminalRuntime.writeService,
   clearServiceTerminal: terminalRuntime.clearServiceSession,
   getSetupTerminalSession: terminalRuntime.getSetupSession,
   readSetupTerminalOutput: terminalRuntime.readSetupOutput,
   subscribeToSetupTerminal: terminalRuntime.subscribeToSetup,
   resizeSetupTerminal: terminalRuntime.resizeSetup,
+  writeSetupTerminalInput: terminalRuntime.writeSetup,
   clearSetupTerminal: terminalRuntime.clearSetupSession,
 });
 

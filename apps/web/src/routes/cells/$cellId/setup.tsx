@@ -430,7 +430,9 @@ function SetupLogPanel({
         Last updated {lastUpdatedLabel ?? "just now"}.
       </p>
       <PtyStreamTerminal
+        allowInput
         emptyMessage="Setup output will appear when setup runs."
+        inputPath={`/api/cells/${cell.id}/setup/terminal/input`}
         mode="setup"
         resizePath={`/api/cells/${cell.id}/setup/terminal/resize`}
         streamPath={`/api/cells/${cell.id}/setup/terminal/stream`}

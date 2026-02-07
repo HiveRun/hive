@@ -58,12 +58,16 @@ export function PtyStreamTerminal({
   title,
   streamPath,
   resizePath,
+  inputPath,
+  allowInput = false,
   emptyMessage = "No output yet.",
   mode = "generic",
 }: {
   title: string;
   streamPath: string;
   resizePath: string;
+  inputPath?: string;
+  allowInput?: boolean;
   emptyMessage?: string;
   mode?: "generic" | "setup";
 }) {
@@ -73,6 +77,7 @@ export function PtyStreamTerminal({
   const serializeAddonRef = useRef<{ serialize: () => string } | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const inputListenerRef = useRef<{ dispose: () => void } | null>(null);
   const outputRef = useRef<string>("");
   const resizeTimeoutRef = useRef<number | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -126,6 +131,27 @@ export function PtyStreamTerminal({
       });
     }, RESIZE_DEBOUNCE_MS);
   }, [sendResize]);
+
+  const sendInput = useCallback(
+    async (data: string) => {
+      if (!(allowInput && inputPath)) {
+        return;
+      }
+
+      const response = await fetch(`${API_BASE}${inputPath}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ data }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Input failed with ${response.status}`);
+      }
+    },
+    [allowInput, inputPath]
+  );
 
   const copyTerminalOutput = useCallback(async () => {
     try {
@@ -326,7 +352,7 @@ export function PtyStreamTerminal({
         rows: 36,
         convertEol: true,
         cursorBlink: true,
-        disableStdin: true,
+        disableStdin: !(allowInput && inputPath),
         fontFamily: TERMINAL_FONT_FAMILY,
         fontSize: 13,
         lineHeight: 1.4,
@@ -367,6 +393,16 @@ export function PtyStreamTerminal({
       fitAddonRef.current = fitAddon;
       serializeAddonRef.current = serializeAddon;
 
+      inputListenerRef.current?.dispose();
+      inputListenerRef.current =
+        allowInput && inputPath
+          ? terminal.onData((data) => {
+              sendInput(data).catch(() => {
+                // ignore transient input failures while reconnecting
+              });
+            })
+          : null;
+
       resizeObserverRef.current = new ResizeObserver(() => {
         fitAddonRef.current?.fit();
         scheduleResizeSync();
@@ -395,12 +431,14 @@ export function PtyStreamTerminal({
       resizeObserverRef.current = null;
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
+      inputListenerRef.current?.dispose();
+      inputListenerRef.current = null;
       terminalRef.current?.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
       serializeAddonRef.current = null;
     };
-  }, [mode, scheduleResizeSync, streamPath]);
+  }, [allowInput, inputPath, mode, scheduleResizeSync, sendInput, streamPath]);
 
   const connectionLabelMap: Record<ConnectionState, string> = {
     online: "Connected",

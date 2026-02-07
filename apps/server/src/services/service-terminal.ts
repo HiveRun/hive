@@ -39,12 +39,14 @@ type TerminalRecord = {
   output: string;
   kill?: (signal?: number | string) => void;
   resize?: (cols: number, rows: number) => void;
+  write?: (data: string) => void;
 };
 
 type SpawnAttachment = {
   pid: number;
   kill?: (signal?: number | string) => void;
   resize?: (cols: number, rows: number) => void;
+  write?: (data: string) => void;
 };
 
 export type ServiceTerminalRuntime = {
@@ -65,6 +67,7 @@ export type ServiceTerminalRuntime = {
     serviceId: string,
     listener: (event: ServiceTerminalEvent) => void
   ): () => void;
+  writeService(serviceId: string, data: string): void;
   resizeService(serviceId: string, cols: number, rows: number): void;
   clearServiceSession(serviceId: string): void;
 
@@ -86,6 +89,7 @@ export type ServiceTerminalRuntime = {
     cellId: string,
     listener: (event: ServiceTerminalEvent) => void
   ): () => void;
+  writeSetup(cellId: string, data: string): void;
   resizeSetup(cellId: string, cols: number, rows: number): void;
   clearSetupSession(cellId: string): void;
 
@@ -135,6 +139,7 @@ const buildRecord = (
   output: existingOutput,
   kill: process.kill,
   resize: process.resize,
+  write: process.write,
 });
 
 export const createServiceTerminalRuntime = (): ServiceTerminalRuntime => {
@@ -179,6 +184,7 @@ export const createServiceTerminalRuntime = (): ServiceTerminalRuntime => {
     record.exitCode = exitCode;
     record.kill = undefined;
     record.resize = undefined;
+    record.write = undefined;
     emitEvent(channel, { type: "exit", exitCode, signal });
   };
 
@@ -218,6 +224,13 @@ export const createServiceTerminalRuntime = (): ServiceTerminalRuntime => {
         emitter.off(channel, listener);
       };
     },
+    writeService(serviceId, data) {
+      const record = serviceRecords.get(serviceId);
+      if (!record || record.status !== "running" || !record.write) {
+        throw new Error("Service terminal is not accepting input");
+      }
+      record.write(data);
+    },
     resizeService(serviceId, cols, rows) {
       const record = serviceRecords.get(serviceId);
       if (!record || record.status !== "running") {
@@ -246,6 +259,7 @@ export const createServiceTerminalRuntime = (): ServiceTerminalRuntime => {
       current.pid = process.pid;
       current.kill = process.kill;
       current.resize = process.resize;
+      current.write = process.write;
       current.status = "running";
       current.exitCode = null;
     },
@@ -286,6 +300,13 @@ export const createServiceTerminalRuntime = (): ServiceTerminalRuntime => {
       return () => {
         emitter.off(channel, listener);
       };
+    },
+    writeSetup(cellId, data) {
+      const record = setupRecords.get(cellId);
+      if (!record || record.status !== "running" || !record.write) {
+        throw new Error("Setup terminal is not accepting input");
+      }
+      record.write(data);
     },
     resizeSetup(cellId, cols, rows) {
       const record = setupRecords.get(cellId);
