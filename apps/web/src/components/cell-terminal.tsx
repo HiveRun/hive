@@ -30,9 +30,12 @@ type TerminalSession = {
 const API_BASE = getApiBase();
 const OUTPUT_BUFFER_LIMIT = 250_000;
 const RESIZE_DEBOUNCE_MS = 120;
-const PAGE_UP_SEQUENCE = "\u001b[5~";
-const PAGE_DOWN_SEQUENCE = "\u001b[6~";
-const PAGE_KEY_SCROLL_DELTA_THRESHOLD = 180;
+const WHEEL_PAGE_UP_SEQUENCE = "\u001b[5~";
+const WHEEL_PAGE_DOWN_SEQUENCE = "\u001b[6~";
+const WHEEL_LINE_UP_SEQUENCE = "\u001b\u0019";
+const WHEEL_LINE_DOWN_SEQUENCE = "\u001b\u0005";
+const WHEEL_DELTA_THRESHOLD = 100;
+const WHEEL_MAX_COMMANDS_PER_EVENT = 3;
 const TERMINAL_SCROLLBACK_LINES = 10_000;
 const PAGE_KEY_SCROLLBACK_LINES = 0;
 const TERMINAL_FONT_FAMILY =
@@ -48,14 +51,15 @@ const appendOutput = (current: string, chunk: string): string => {
 
 function createWheelBridge(
   target: HTMLElement,
-  wheelScrollBehavior: "terminal" | "page-keys",
+  wheelScrollBehavior: "terminal" | "page-keys" | "line-keys",
   sendInput: (data: string) => void
 ): () => void {
   let deltaCarry = 0;
   let lastDirection = 0;
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: wheel handling needs mode + direction + carry reconciliation.
   const handleWheel = (event: WheelEvent) => {
-    if (wheelScrollBehavior !== "page-keys") {
+    if (wheelScrollBehavior === "terminal") {
       return;
     }
 
@@ -77,14 +81,26 @@ function createWheelBridge(
     }
 
     deltaCarry += Math.abs(event.deltaY);
-    if (deltaCarry < PAGE_KEY_SCROLL_DELTA_THRESHOLD) {
+    if (deltaCarry < WHEEL_DELTA_THRESHOLD) {
       return;
     }
 
-    deltaCarry -= PAGE_KEY_SCROLL_DELTA_THRESHOLD;
+    const [upSequence, downSequence] =
+      wheelScrollBehavior === "line-keys"
+        ? [WHEEL_LINE_UP_SEQUENCE, WHEEL_LINE_DOWN_SEQUENCE]
+        : [WHEEL_PAGE_UP_SEQUENCE, WHEEL_PAGE_DOWN_SEQUENCE];
 
-    const sequence = event.deltaY < 0 ? PAGE_UP_SEQUENCE : PAGE_DOWN_SEQUENCE;
-    sendInput(sequence);
+    const sequence = event.deltaY < 0 ? upSequence : downSequence;
+    let commands = 0;
+
+    while (
+      deltaCarry >= WHEEL_DELTA_THRESHOLD &&
+      commands < WHEEL_MAX_COMMANDS_PER_EVENT
+    ) {
+      deltaCarry -= WHEEL_DELTA_THRESHOLD;
+      sendInput(sequence);
+      commands += 1;
+    }
   };
 
   target.addEventListener("wheel", handleWheel, {
@@ -105,7 +121,7 @@ type CellTerminalProps = {
   reconnectLabel?: string;
   connectCommand?: string | null;
   terminalLineHeight?: number;
-  wheelScrollBehavior?: "terminal" | "page-keys";
+  wheelScrollBehavior?: "terminal" | "page-keys" | "line-keys";
 };
 
 export function CellTerminal({
