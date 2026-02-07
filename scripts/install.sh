@@ -10,12 +10,70 @@ RELEASES_DIR="$INSTALL_ROOT/releases"
 STATE_DIR="$INSTALL_ROOT/state"
 VERSION="${HIVE_VERSION:-latest}"
 CUSTOM_URL="${HIVE_INSTALL_URL:-}"
+OPENCODE_INSTALL_URL="${HIVE_OPENCODE_INSTALL_URL:-https://opencode.ai/install}"
+SKIP_OPENCODE_INSTALL="${HIVE_SKIP_OPENCODE_INSTALL:-0}"
+OPENCODE_BIN="${HIVE_OPENCODE_BIN:-}"
 
 require() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "Error: missing required command '$1'" >&2
     exit 1
   fi
+}
+
+resolve_opencode_bin() {
+  if [ -n "$OPENCODE_BIN" ] && [ -x "$OPENCODE_BIN" ]; then
+    printf '%s\n' "$OPENCODE_BIN"
+    return 0
+  fi
+
+  if command -v opencode >/dev/null 2>&1; then
+    command -v opencode
+    return 0
+  fi
+
+  for candidate in "$HOME/.opencode/bin/opencode" "$HOME/.local/bin/opencode" "$HOME/bin/opencode"; do
+    if [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+ensure_opencode_cli() {
+  if [ "$SKIP_OPENCODE_INSTALL" = "1" ]; then
+    if resolved=$(resolve_opencode_bin); then
+      OPENCODE_BIN="$resolved"
+      echo "Using existing OpenCode CLI at $OPENCODE_BIN"
+    else
+      echo "Skipping OpenCode CLI install (HIVE_SKIP_OPENCODE_INSTALL=1)"
+    fi
+    return
+  fi
+
+  if resolved=$(resolve_opencode_bin); then
+    OPENCODE_BIN="$resolved"
+    echo "Using existing OpenCode CLI at $OPENCODE_BIN"
+    return
+  fi
+
+  echo "OpenCode CLI not found. Installing via $OPENCODE_INSTALL_URL"
+  if ! curl -fsSL "$OPENCODE_INSTALL_URL" | bash; then
+    echo "Error: failed to install OpenCode CLI" >&2
+    exit 1
+  fi
+
+  if resolved=$(resolve_opencode_bin); then
+    OPENCODE_BIN="$resolved"
+    echo "Installed OpenCode CLI at $OPENCODE_BIN"
+    return
+  fi
+
+  echo "Error: OpenCode CLI is still unavailable after install" >&2
+  echo "Try running: curl -fsSL https://opencode.ai/install | bash" >&2
+  exit 1
 }
 
 add_path_entry() {
@@ -117,6 +175,7 @@ fi
 require curl
 require tar
 mkdir -p "$BIN_DIR" "$RELEASES_DIR" "$STATE_DIR"
+ensure_opencode_cli
 
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
@@ -158,6 +217,10 @@ EOF
 
 if [ -n "$install_command_override" ]; then
   echo "HIVE_INSTALL_COMMAND=\"$install_command_override\"" >> "$target/hive.env"
+fi
+
+if [ -n "$OPENCODE_BIN" ]; then
+  echo "HIVE_OPENCODE_BIN=\"$OPENCODE_BIN\"" >> "$target/hive.env"
 fi
 
 ln -snf "$target" "$INSTALL_ROOT/current"

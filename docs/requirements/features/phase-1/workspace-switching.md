@@ -1,10 +1,15 @@
 # Workspace Discovery & Switching
 
 - [/] Workspace Discovery & Switching #status/in-progress #phase-1 #feature/ux
-  - [/] [HIVE-10] Add copy-to-clipboard OpenCode CLI command to cell detail view
+  - [x] [HIVE-10] Add copy-to-clipboard OpenCode CLI command to cell detail view
   - [x] Add a per-cell `Terminal` route with an interactive PTY shell bound to the cell workspace
   - [x] Replace setup/service log viewers with PTY-backed terminals (no filesystem log persistence)
   - [x] Add keyboard input forwarding for setup/service PTY terminals
+  - [x] Replace custom chat renderer with an OpenCode-attached PTY route while keeping `/cells/$id/terminal` as a shell escape hatch
+  - [x] Attempt OpenCode CLI installation during Hive installer flow when missing
+  - [x] Add regression tests for sidebar status SSE stream behavior on `/api/agents/sessions/:id/events`
+  - [x] Apply a Hive-branded OpenCode theme automatically for embedded chat terminals
+  - [x] Add light-mode support for the embedded Hive OpenCode theme and sync it from the web theme selection
 
 ## Goal
 Allow users to easily manage multiple workspaces and switch between them within Hive.

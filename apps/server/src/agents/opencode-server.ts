@@ -101,6 +101,10 @@ export async function acquireSharedOpencodeClient() {
   return createOpencodeClient({ baseUrl: handle.baseUrl });
 }
 
+export function getSharedOpencodeServerBaseUrl(): string | null {
+  return sharedHandle?.baseUrl ?? null;
+}
+
 export async function stopSharedOpencodeServer(): Promise<void> {
   const handle =
     sharedHandle ??

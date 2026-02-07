@@ -22,9 +22,10 @@ Hive must be installable with a single `curl | bash` command that downloads a co
    - `bun run build:installer` compiles the server (`bun --compile`), runs the Vite build, and assembles a release directory containing `hive`, `public/`, and `manifest.json`.
    - The script archives the directory to `dist/install/hive-<platform>-<arch>.tar.gz` and emits a matching `.sha256` checksum for GitHub Releases.
 4. **Installer script**
-   - `scripts/install.sh` detects OS/arch, downloads the matching GitHub release tarball, expands it into `~/.hive/releases/<name>`, writes `hive.env` with a local SQLite path, and symlinks `hive` into `~/.hive/bin`.
-    - After linking, the script automatically appends the bin directory to the user’s shell PATH (bash/zsh/fish/posix) so `hive` is immediately available.
-    - Configuration knobs: `HIVE_VERSION`, `HIVE_HOME`, `HIVE_BIN_DIR`, `HIVE_MIGRATIONS_DIR`, `HIVE_LOG_DIR`, `HIVE_PID_FILE`, `HIVE_INSTALL_COMMAND`, and `HIVE_INSTALL_URL` (local testing only) keep the installer flexible without adding flags.
+    - `scripts/install.sh` detects OS/arch, downloads the matching GitHub release tarball, expands it into `~/.hive/releases/<name>`, writes `hive.env` with a local SQLite path, and symlinks `hive` into `~/.hive/bin`.
+     - After linking, the script automatically appends the bin directory to the user’s shell PATH (bash/zsh/fish/posix) so `hive` is immediately available.
+    - Installer ensures OpenCode CLI is available. If `opencode` is missing, it attempts installation via `https://opencode.ai/install` unless `HIVE_SKIP_OPENCODE_INSTALL=1` is set.
+     - Configuration knobs: `HIVE_VERSION`, `HIVE_HOME`, `HIVE_BIN_DIR`, `HIVE_MIGRATIONS_DIR`, `HIVE_LOG_DIR`, `HIVE_PID_FILE`, `HIVE_INSTALL_COMMAND`, and `HIVE_INSTALL_URL` (local testing only) keep the installer flexible without adding flags.
 
 5. **Bundled migrations**
    - The release tarball must include `apps/server/src/migrations` (SQL + `meta/_journal.json`) so compiled binaries can run Drizzle migrations at startup without manual bootstrapping.
