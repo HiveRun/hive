@@ -30,12 +30,6 @@ type TerminalSession = {
 const API_BASE = getApiBase();
 const OUTPUT_BUFFER_LIMIT = 250_000;
 const RESIZE_DEBOUNCE_MS = 120;
-const SESSION_BOOT_TIMEOUT_MS = 15_000;
-const ESCAPE_CHAR_CODE = 27;
-const FIRST_PRINTABLE_CODE = 33;
-const DELETE_CHAR_CODE = 127;
-const ANSI_SEQUENCE_TERMINATOR_MIN = 64;
-const ANSI_SEQUENCE_TERMINATOR_MAX = 126;
 const WHEEL_LINE_UP_SEQUENCE = "\u001b\u0019";
 const WHEEL_LINE_DOWN_SEQUENCE = "\u001b\u0005";
 const TERMINAL_SCROLLBACK_LINES = 10_000;
@@ -95,39 +89,6 @@ const appendOutput = (current: string, chunk: string): string => {
   }
   return next.slice(next.length - OUTPUT_BUFFER_LIMIT);
 };
-
-function hasRenderableTerminalContent(value: string): boolean {
-  if (!value.length) {
-    return false;
-  }
-
-  let inEscape = false;
-
-  for (const char of value) {
-    const code = char.charCodeAt(0);
-
-    if (inEscape) {
-      if (
-        code >= ANSI_SEQUENCE_TERMINATOR_MIN &&
-        code <= ANSI_SEQUENCE_TERMINATOR_MAX
-      ) {
-        inEscape = false;
-      }
-      continue;
-    }
-
-    if (code === ESCAPE_CHAR_CODE) {
-      inEscape = true;
-      continue;
-    }
-
-    if (code >= FIRST_PRINTABLE_CODE && code !== DELETE_CHAR_CODE) {
-      return true;
-    }
-  }
-
-  return false;
-}
 
 function createWheelBridge(
   target: HTMLElement,
@@ -197,12 +158,10 @@ export function CellTerminal({
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const outputRef = useRef<string>("");
   const resizeTimeoutRef = useRef<number | null>(null);
-  const bootTimeoutRef = useRef<number | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [session, setSession] = useState<TerminalSession | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
-  const [isBooting, setIsBooting] = useState(true);
   const terminalApiBase = `${API_BASE}/api/cells/${cellId}/${endpointBase}`;
   const buildTerminalEndpoint = useCallback(
     (path: string) => `${terminalApiBase}/${path}?themeMode=${themeMode}`,
@@ -272,34 +231,6 @@ export function CellTerminal({
     }, RESIZE_DEBOUNCE_MS);
   }, [sendResize]);
 
-  const markBooting = useCallback(() => {
-    setIsBooting(true);
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    if (bootTimeoutRef.current !== null) {
-      window.clearTimeout(bootTimeoutRef.current);
-    }
-
-    bootTimeoutRef.current = window.setTimeout(() => {
-      setIsBooting(false);
-      bootTimeoutRef.current = null;
-    }, SESSION_BOOT_TIMEOUT_MS);
-  }, []);
-
-  const markBootReady = useCallback(() => {
-    setIsBooting(false);
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    if (bootTimeoutRef.current !== null) {
-      window.clearTimeout(bootTimeoutRef.current);
-      bootTimeoutRef.current = null;
-    }
-  }, []);
-
   const copyTerminalOutput = useCallback(async () => {
     try {
       const serialized = serializeAddonRef.current?.serialize();
@@ -327,7 +258,6 @@ export function CellTerminal({
 
   const restartTerminal = useCallback(async () => {
     setIsRestarting(true);
-    markBooting();
     setConnection("connecting");
     setSession(null);
     setErrorMessage(null);
@@ -353,13 +283,12 @@ export function CellTerminal({
       outputRef.current = "";
       toast.success("Terminal restarted");
     } catch {
-      markBootReady();
       setConnection("disconnected");
       toast.error("Failed to restart terminal");
     } finally {
       setIsRestarting(false);
     }
-  }, [buildTerminalEndpoint, markBootReady, markBooting, scheduleResizeSync]);
+  }, [buildTerminalEndpoint, scheduleResizeSync]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -368,7 +297,6 @@ export function CellTerminal({
 
     let disposed = false;
     outputRef.current = "";
-    markBooting();
     setSession(null);
     setConnection("connecting");
     setErrorMessage(null);
@@ -419,12 +347,8 @@ export function CellTerminal({
 
         outputRef.current = snapshot;
         scheduleResizeSync();
-        if (hasRenderableTerminalContent(snapshot)) {
-          markBootReady();
-        }
       });
 
-      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: stream data handler coordinates output replay and boot-state transitions.
       source.addEventListener("data", (event) => {
         if (disposed) {
           return;
@@ -444,9 +368,6 @@ export function CellTerminal({
 
         terminal.write(chunk);
         outputRef.current = appendOutput(outputRef.current, chunk);
-        if (hasRenderableTerminalContent(chunk)) {
-          markBootReady();
-        }
         setConnection((current) =>
           current === "exited" ? "exited" : "online"
         );
@@ -460,7 +381,6 @@ export function CellTerminal({
           exitCode: number;
           signal: number | string | null;
         };
-        markBootReady();
         setConnection("exited");
         setSession((current) =>
           current
@@ -478,7 +398,6 @@ export function CellTerminal({
           return;
         }
 
-        markBootReady();
         setConnection((current) =>
           current === "exited" ? "exited" : "disconnected"
         );
@@ -569,7 +488,6 @@ export function CellTerminal({
     return () => {
       disposed = true;
       cleanupTerminalInteractions?.();
-      markBootReady();
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);
       }
@@ -585,8 +503,6 @@ export function CellTerminal({
     };
   }, [
     buildTerminalEndpoint,
-    markBootReady,
-    markBooting,
     scheduleResizeSync,
     sendInput,
     themeMode,
@@ -632,7 +548,7 @@ export function CellTerminal({
       : "bg-[#111416]/80 border-border/70";
   const loadingLabelTone =
     themeMode === "light" ? "text-[#7A5C2A]" : "text-[#FFC857]";
-  const showLoadingOverlay = isBooting && !errorMessage;
+  const showLoadingOverlay = connection === "connecting" && !session;
   let footer: ReactNode = null;
   if (errorMessage) {
     footer = (
