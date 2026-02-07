@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Copy } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { LogTerminal } from "@/components/log-terminal";
+import { PtyStreamTerminal } from "@/components/pty-stream-terminal";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -426,16 +426,15 @@ function SetupLogPanel({
           {isRetrying ? "Retrying…" : "Retry"}
         </Button>
       </div>
-      <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
-        {cell.setupLogPath ?? "No log path yet"}
-      </p>
       <p className="text-muted-foreground text-xs">
         Last updated {lastUpdatedLabel ?? "just now"}.
       </p>
-      <LogTerminal
-        autoScroll
-        output={cell.setupLog || "No setup log output yet."}
-        title="Setup Logs"
+      <PtyStreamTerminal
+        emptyMessage="Setup output will appear when setup runs."
+        mode="setup"
+        resizePath={`/api/cells/${cell.id}/setup/terminal/resize`}
+        streamPath={`/api/cells/${cell.id}/setup/terminal/stream`}
+        title="Setup Terminal"
       />
     </section>
   );

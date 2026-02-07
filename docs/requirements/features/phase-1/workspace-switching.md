@@ -3,6 +3,7 @@
 - [/] Workspace Discovery & Switching #status/in-progress #phase-1 #feature/ux
   - [/] [HIVE-10] Add copy-to-clipboard OpenCode CLI command to cell detail view
   - [x] Add a per-cell `Terminal` route with an interactive PTY shell bound to the cell workspace
+  - [x] Replace setup/service log viewers with PTY-backed terminals (no filesystem log persistence)
 
 ## Goal
 Allow users to easily manage multiple workspaces and switch between them within Hive.

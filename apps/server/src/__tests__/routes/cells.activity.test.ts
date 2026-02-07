@@ -67,6 +67,16 @@ function createMinimalDependencies(): any {
     writeTerminalInput: () => 0,
     resizeTerminal: () => 0,
     closeTerminalSession: () => 0,
+    getServiceTerminalSession: () => null,
+    readServiceTerminalOutput: () => "",
+    subscribeToServiceTerminal: () => () => 0,
+    resizeServiceTerminal: () => 0,
+    clearServiceTerminal: () => 0,
+    getSetupTerminalSession: () => null,
+    readSetupTerminalOutput: () => "",
+    subscribeToSetupTerminal: () => () => 0,
+    resizeSetupTerminal: () => 0,
+    clearSetupTerminal: () => 0,
   };
 }
 

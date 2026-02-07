@@ -1,16 +1,5 @@
-/**
- * Services API payload + log tail bounds test
- *
- * Validates that:
- * - GET /api/cells/:id/services returns logPath and recentLogs fields
- * - recentLogs is bounded to <= 200 lines (LOG_TAIL_MAX_LINES)
- * - logPath points to <workspacePath>/.hive/logs/<service>.log
- */
-
-import { promises as fs } from "node:fs";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+
 import { Elysia } from "elysia";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -23,28 +12,42 @@ const TEST_WORKSPACE_ID = "test-workspace-services";
 const TEST_CELL_ID = "test-cell-services-id";
 const TEST_SERVICE_ID = "test-service-id";
 const LOG_TAIL_MAX_LINES = 200;
-const TEST_LOG_LINES_SMALL = 50;
-const TEST_LOG_LINES_TINY = 5;
-const SERVICE_LOG_DIR = ".hive/logs";
 const HTTP_OK = 200;
+const SMALL_OUTPUT_LINES = 50;
+const LARGE_OUTPUT_LINES = 320;
+const EXPECTED_FIRST_TAILED_LINE = 121;
 
-/**
- * Helper to get first service from response, asserting it exists.
- * This satisfies both biome (no non-null assertion) and TypeScript (proper narrowing).
- */
-function getFirstService<T>(services: T[]): T {
+const getFirstService = <T>(services: T[]): T => {
   const first = services[0];
-  if (first === undefined) {
+  if (!first) {
     throw new Error("Expected at least one service in response");
   }
   return first;
+};
+
+function createRuntimeHarness() {
+  const serviceOutputs = new Map<string, string>();
+  const setupOutputByCell = new Map<string, string>();
+
+  return {
+    setServiceOutput(serviceId: string, output: string) {
+      serviceOutputs.set(serviceId, output);
+    },
+    setSetupOutput(cellId: string, output: string) {
+      setupOutputByCell.set(cellId, output);
+    },
+    readServiceOutput(serviceId: string) {
+      return serviceOutputs.get(serviceId) ?? "";
+    },
+    readSetupOutput(cellId: string) {
+      return setupOutputByCell.get(cellId) ?? "";
+    },
+  };
 }
 
-/**
- * Create a minimal set of dependencies for the cells routes.
- * We don't need real workspace resolution or service supervision for this test.
- */
-function createMinimalDependencies(): any {
+function createMinimalDependencies(
+  harness: ReturnType<typeof createRuntimeHarness>
+): any {
   const workspaceRecord = {
     id: TEST_WORKSPACE_ID,
     label: "Test Workspace Services",
@@ -98,45 +101,22 @@ function createMinimalDependencies(): any {
     writeTerminalInput: () => 0,
     resizeTerminal: () => 0,
     closeTerminalSession: () => 0,
+    getServiceTerminalSession: () => null,
+    readServiceTerminalOutput: (serviceId: string) =>
+      harness.readServiceOutput(serviceId),
+    subscribeToServiceTerminal: () => () => 0,
+    resizeServiceTerminal: () => 0,
+    clearServiceTerminal: () => 0,
+    getSetupTerminalSession: () => null,
+    readSetupTerminalOutput: (cellId: string) =>
+      harness.readSetupOutput(cellId),
+    subscribeToSetupTerminal: () => () => 0,
+    resizeSetupTerminal: () => 0,
+    clearSetupTerminal: () => 0,
   };
 }
 
-/**
- * Create a temporary directory for workspace testing.
- */
-async function createTempWorkspace(): Promise<string> {
-  const tempDir = await fs.mkdtemp(join(tmpdir(), "hive-test-"));
-  return tempDir;
-}
-
-/**
- * Create a log file with more than 200 lines.
- */
-async function createLogFileWithManyLines(
-  workspacePath: string,
-  serviceName: string,
-  lineCount = 300
-): Promise<string> {
-  const logDir = join(workspacePath, SERVICE_LOG_DIR);
-  await fs.mkdir(logDir, { recursive: true });
-
-  const logPath = join(logDir, `${serviceName}.log`);
-  const lines: string[] = [];
-  for (let i = 1; i <= lineCount; i++) {
-    lines.push(
-      `Log line ${i}: This is test log content for service ${serviceName}`
-    );
-  }
-  await fs.writeFile(logPath, lines.join("\n"));
-
-  return logPath;
-}
-
-/**
- * Insert minimal cell and service records into the test database.
- */
 async function insertCellAndServiceRecords(
-  workspacePath: string,
   serviceName: string,
   options?: {
     port?: number | null;
@@ -149,62 +129,56 @@ async function insertCellAndServiceRecords(
       | "stopped"
       | "error";
   }
-): Promise<{ cellId: string; serviceId: string }> {
-  const cellId = TEST_CELL_ID;
-  const serviceId = TEST_SERVICE_ID;
-
+) {
   const now = new Date();
 
-  // Insert cell record
-  await testDb
-    .insert(cells)
-    .values({
-      id: cellId,
-      name: "Test Cell Services",
-      description: "Test cell for services payload validation",
-      templateId: "test-template",
-      workspaceId: TEST_WORKSPACE_ID,
-      workspaceRootPath: workspacePath,
-      workspacePath,
-      branchName: "test-branch",
-      baseCommit: "test-commit",
-      opencodeSessionId: null,
-      opencodeServerUrl: null,
-      opencodeServerPort: null,
-      createdAt: now,
-      status: "ready",
-      lastSetupError: null,
-    })
-    .returning();
+  await testDb.insert(cells).values({
+    id: TEST_CELL_ID,
+    name: "Test Cell Services",
+    description: "Test cell for services payload validation",
+    templateId: "test-template",
+    workspaceId: TEST_WORKSPACE_ID,
+    workspaceRootPath: "/tmp/test-workspace-services-root",
+    workspacePath: "/tmp/test-workspace-services-root",
+    branchName: "test-branch",
+    baseCommit: "test-commit",
+    opencodeSessionId: null,
+    opencodeServerUrl: null,
+    opencodeServerPort: null,
+    createdAt: now,
+    status: "ready",
+    lastSetupError: null,
+  });
 
-  // Insert service record
-  await testDb
-    .insert(cellServices)
-    .values({
-      id: serviceId,
-      cellId,
-      name: serviceName,
+  await testDb.insert(cellServices).values({
+    id: TEST_SERVICE_ID,
+    cellId: TEST_CELL_ID,
+    name: serviceName,
+    type: "process",
+    command: "echo test",
+    cwd: "/tmp/test-workspace-services-root",
+    env: { TEST_VAR: "test" },
+    status: options?.status ?? "running",
+    port: options?.port ?? null,
+    pid: options?.pid ?? null,
+    readyTimeoutMs: null,
+    definition: {
       type: "process",
-      command: "echo test",
-      cwd: workspacePath,
-      env: { TEST_VAR: "test" },
-      status: options?.status ?? "running",
-      port: options?.port ?? null,
-      pid: options?.pid ?? null,
-      readyTimeoutMs: null,
-      definition: {
-        type: "process",
-        run: "echo test",
-        cwd: workspacePath,
-        env: {},
-      },
-      lastKnownError: null,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .returning();
+      run: "echo test",
+      cwd: "/tmp/test-workspace-services-root",
+      env: {},
+    },
+    lastKnownError: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
 
-  return { cellId, serviceId };
+function buildLogLines(serviceName: string, count: number): string {
+  return Array.from({ length: count }, (_, index) => {
+    const line = index + 1;
+    return `Log line ${line}: runtime output for ${serviceName}`;
+  }).join("\n");
 }
 
 function createIpv6LoopbackListener(): Promise<
@@ -223,7 +197,7 @@ function createIpv6LoopbackListener(): Promise<
             resolveClose();
           }
         });
-      // If IPv6 loopback isn't available, treat as unsupported and let the test skip.
+
       if (
         code === "EADDRNOTAVAIL" ||
         code === "EAFNOSUPPORT" ||
@@ -232,7 +206,7 @@ function createIpv6LoopbackListener(): Promise<
         resolve({ port: null, close });
         return;
       }
-      // For other errors, surface via a rejected close in the test.
+
       resolve({ port: null, close });
     });
 
@@ -249,256 +223,115 @@ function createIpv6LoopbackListener(): Promise<
   });
 }
 
-/**
- * Clean up the temporary workspace directory.
- */
-async function cleanupTempWorkspace(workspacePath: string): Promise<void> {
-  try {
-    await fs.rm(workspacePath, { recursive: true, force: true });
-  } catch {
-    // Ignore cleanup errors
-  }
-}
-
-describe("GET /api/cells/:id/services - payload validation", () => {
+describe("GET /api/cells/:id/services payload", () => {
   let app: any;
-  let tempWorkspace: string;
+  let harness: ReturnType<typeof createRuntimeHarness>;
 
   beforeAll(async () => {
     await setupTestDb();
-    const routes = createCellsRoutes(createMinimalDependencies());
-    app = new Elysia().use(routes);
   });
 
   beforeEach(async () => {
-    // Clear database tables
     await testDb.delete(cellServices);
     await testDb.delete(cells);
-
-    // Create a new temp workspace for each test
-    tempWorkspace = await createTempWorkspace();
+    harness = createRuntimeHarness();
+    app = new Elysia().use(
+      createCellsRoutes(createMinimalDependencies(harness))
+    );
   });
 
-  describe("logPath and recentLogs fields", () => {
-    it("returns logPath pointing to <workspacePath>/.hive/logs/<service>.log", async () => {
-      const serviceName = "web";
-      await createLogFileWithManyLines(
-        tempWorkspace,
-        serviceName,
-        TEST_LOG_LINES_SMALL
-      );
-      await insertCellAndServiceRecords(tempWorkspace, serviceName);
+  it("returns null logPath and runtime-backed recentLogs", async () => {
+    const serviceName = "web";
+    await insertCellAndServiceRecords(serviceName);
+    harness.setServiceOutput(
+      TEST_SERVICE_ID,
+      buildLogLines(serviceName, SMALL_OUTPUT_LINES)
+    );
 
-      const response = await app.handle(
-        new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-      );
+    const response = await app.handle(
+      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
+    );
 
-      expect(response.status).toBe(HTTP_OK);
+    expect(response.status).toBe(HTTP_OK);
+    const body = (await response.json()) as {
+      services: Array<{ logPath: string | null; recentLogs: string | null }>;
+    };
 
-      const body = (await response.json()) as {
-        services: Array<{ logPath: string }>;
-      };
-      expect(body.services).toHaveLength(1);
-
-      const service = getFirstService(body.services);
-      expect(service.logPath).toBe(
-        join(tempWorkspace, SERVICE_LOG_DIR, `${serviceName}.log`)
-      );
-    });
-
-    it("returns recentLogs with the last N lines from the log file", async () => {
-      const serviceName = "api";
-      const totalLines = TEST_LOG_LINES_SMALL;
-      await createLogFileWithManyLines(tempWorkspace, serviceName, totalLines);
-      await insertCellAndServiceRecords(tempWorkspace, serviceName);
-
-      const response = await app.handle(
-        new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-      );
-
-      expect(response.status).toBe(HTTP_OK);
-
-      const body = (await response.json()) as {
-        services: Array<{ recentLogs: string }>;
-      };
-      expect(body.services).toHaveLength(1);
-
-      const service = getFirstService(body.services);
-      expect(service.recentLogs).toBeTruthy();
-
-      // Verify that recentLogs contains the expected tail
-      const recentLogsLines = service.recentLogs.split("\n");
-      expect(recentLogsLines.length).toBe(totalLines);
-
-      // Verify that the last line matches the last line in the file
-      const lastLineExpected = `Log line ${totalLines}: This is test log content for service ${serviceName}`;
-      expect(recentLogsLines.at(-1)).toBe(lastLineExpected);
-    });
+    const service = getFirstService(body.services);
+    expect(service.logPath).toBeNull();
+    expect(service.recentLogs?.split("\n").length).toBe(SMALL_OUTPUT_LINES);
   });
 
-  describe("log tail line bounds", () => {
-    it("limits recentLogs to 200 lines when log file has more lines", async () => {
-      const serviceName = "web";
-      const totalLines = 300; // More than LOG_TAIL_MAX_LINES
-      await createLogFileWithManyLines(tempWorkspace, serviceName, totalLines);
-      await insertCellAndServiceRecords(tempWorkspace, serviceName);
+  it("caps runtime recentLogs to 200 lines", async () => {
+    const serviceName = "api";
+    await insertCellAndServiceRecords(serviceName);
+    harness.setServiceOutput(
+      TEST_SERVICE_ID,
+      buildLogLines(serviceName, LARGE_OUTPUT_LINES)
+    );
 
-      const response = await app.handle(
-        new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-      );
+    const response = await app.handle(
+      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
+    );
 
-      expect(response.status).toBe(HTTP_OK);
+    expect(response.status).toBe(HTTP_OK);
+    const body = (await response.json()) as {
+      services: Array<{ recentLogs: string | null }>;
+    };
 
-      const body = (await response.json()) as {
-        services: Array<{ recentLogs: string }>;
-      };
-      expect(body.services).toHaveLength(1);
-
-      const service = getFirstService(body.services);
-      expect(service.recentLogs).toBeTruthy();
-
-      const recentLogsLines = service.recentLogs.split("\n");
-      expect(recentLogsLines.length).toBe(LOG_TAIL_MAX_LINES);
-
-      // Verify that the returned logs are the LAST 200 lines, not the first 200
-      const lastLineExpected = `Log line ${totalLines}: This is test log content for service ${serviceName}`;
-      expect(recentLogsLines.at(-1)).toBe(lastLineExpected);
-
-      const firstReturnedLine = recentLogsLines[0];
-      const expectedFirstReturnedLine = `Log line ${totalLines - LOG_TAIL_MAX_LINES + 1}: This is test log content for service ${serviceName}`;
-      expect(firstReturnedLine).toBe(expectedFirstReturnedLine);
-    });
-
-    it("returns all lines when log file has fewer than 200 lines", async () => {
-      const serviceName = "api";
-      const totalLines = TEST_LOG_LINES_SMALL; // Fewer than LOG_TAIL_MAX_LINES
-      await createLogFileWithManyLines(tempWorkspace, serviceName, totalLines);
-      await insertCellAndServiceRecords(tempWorkspace, serviceName);
-
-      const response = await app.handle(
-        new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-      );
-
-      expect(response.status).toBe(HTTP_OK);
-
-      const body = (await response.json()) as {
-        services: Array<{ recentLogs: string }>;
-      };
-      expect(body.services).toHaveLength(1);
-
-      const service = getFirstService(body.services);
-      expect(service.recentLogs).toBeTruthy();
-
-      const recentLogsLines = service.recentLogs.split("\n");
-      expect(recentLogsLines.length).toBe(totalLines);
-    });
-
-    it("handles empty log file", async () => {
-      const serviceName = "empty";
-      const logDir = join(tempWorkspace, SERVICE_LOG_DIR);
-      await fs.mkdir(logDir, { recursive: true });
-      await fs.writeFile(join(logDir, `${serviceName}.log`), "");
-      await insertCellAndServiceRecords(tempWorkspace, serviceName);
-
-      const response = await app.handle(
-        new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-      );
-
-      expect(response.status).toBe(HTTP_OK);
-
-      const body = (await response.json()) as {
-        services: Array<{ recentLogs: string | null }>;
-      };
-      expect(body.services).toHaveLength(1);
-
-      const service = getFirstService(body.services);
-      // Empty file should return empty string or null
-      expect(service.recentLogs === "" || service.recentLogs === null).toBe(
-        true
-      );
-    });
+    const service = getFirstService(body.services);
+    const lines = service.recentLogs?.split("\n") ?? [];
+    expect(lines.length).toBe(LOG_TAIL_MAX_LINES);
+    expect(lines[0]).toBe(
+      `Log line ${EXPECTED_FIRST_TAILED_LINE}: runtime output for ${serviceName}`
+    );
+    expect(lines.at(-1)).toBe(
+      `Log line ${LARGE_OUTPUT_LINES}: runtime output for ${serviceName}`
+    );
   });
 
-  describe("service name sanitization in log path", () => {
-    it("sanitizes service name for log file path", async () => {
-      const serviceName = "My Web Service";
-      const sanitizedName = "my_web_service"; // Non-alphanumeric chars replaced with _
-      await createLogFileWithManyLines(tempWorkspace, sanitizedName, 10);
-      await insertCellAndServiceRecords(tempWorkspace, serviceName);
+  it("returns null recentLogs when runtime output is empty", async () => {
+    const serviceName = "empty";
+    await insertCellAndServiceRecords(serviceName);
+    harness.setServiceOutput(TEST_SERVICE_ID, "");
 
-      const response = await app.handle(
-        new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-      );
+    const response = await app.handle(
+      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
+    );
 
-      expect(response.status).toBe(HTTP_OK);
+    expect(response.status).toBe(HTTP_OK);
+    const body = (await response.json()) as {
+      services: Array<{ recentLogs: string | null }>;
+    };
 
-      const body = (await response.json()) as {
-        services: Array<{ logPath: string }>;
-      };
-      expect(body.services).toHaveLength(1);
-
-      const service = getFirstService(body.services);
-      expect(service.logPath).toBe(
-        join(tempWorkspace, SERVICE_LOG_DIR, `${sanitizedName}.log`)
-      );
-    });
+    const service = getFirstService(body.services);
+    expect(service.recentLogs).toBeNull();
   });
 
-  describe("port reachability", () => {
-    it("reports portReachable true for services bound to ::1 (IPv6 localhost)", async () => {
-      const listener = await createIpv6LoopbackListener();
-      if (!listener.port) {
-        // IPv6 loopback isn't supported in this environment.
-        return;
-      }
+  it("reports portReachable true for services bound to ::1", async () => {
+    const listener = await createIpv6LoopbackListener();
+    if (!listener.port) {
+      return;
+    }
 
-      const serviceName = "server";
-      await createLogFileWithManyLines(
-        tempWorkspace,
-        serviceName,
-        TEST_LOG_LINES_TINY
-      );
-      await insertCellAndServiceRecords(tempWorkspace, serviceName, {
-        port: listener.port,
-        status: "starting",
-      });
-
-      const response = await app.handle(
-        new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-      );
-
-      expect(response.status).toBe(HTTP_OK);
-
-      const body = (await response.json()) as {
-        services: Array<{ portReachable?: boolean; port?: number }>;
-      };
-      expect(body.services).toHaveLength(1);
-
-      const service = getFirstService(body.services);
-      expect(service.port).toBe(listener.port);
-      expect(service.portReachable).toBe(true);
-
-      await listener.close();
+    await insertCellAndServiceRecords("server", {
+      port: listener.port,
+      status: "starting",
     });
-  });
 
-  describe("cleanup", () => {
-    it("cleans up temp workspace after test", async () => {
-      // This test validates that cleanupTempWorkspace works
-      const workspacePath = await createTempWorkspace();
-      await fs.mkdir(join(workspacePath, SERVICE_LOG_DIR), { recursive: true });
-      const logPath = join(workspacePath, SERVICE_LOG_DIR, "test.log");
-      await fs.writeFile(logPath, "test");
+    const response = await app.handle(
+      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
+    );
 
-      // Verify the directory and file exist
-      await fs.stat(workspacePath);
-      await fs.stat(logPath);
+    expect(response.status).toBe(HTTP_OK);
+    const body = (await response.json()) as {
+      services: Array<{ portReachable?: boolean; port?: number }>;
+    };
 
-      // Clean up
-      await cleanupTempWorkspace(workspacePath);
+    const service = getFirstService(body.services);
+    expect(service.port).toBe(listener.port);
+    expect(service.portReachable).toBe(true);
 
-      // Verify the directory is removed (should throw ENOENT)
-      await expect(fs.stat(workspacePath)).rejects.toThrow();
-    });
+    await listener.close();
   });
 });

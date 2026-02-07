@@ -94,6 +94,22 @@ export const CellTerminalActionResponseSchema = t.Object({
   ok: t.Boolean(),
 });
 
+export const RuntimeTerminalSessionSchema = t.Object({
+  sessionId: t.String(),
+  pid: t.Number(),
+  cwd: t.String(),
+  cols: t.Number(),
+  rows: t.Number(),
+  status: t.Union([t.Literal("running"), t.Literal("exited")]),
+  exitCode: t.Union([t.Number(), t.Null()]),
+  startedAt: t.String(),
+});
+
+export const RuntimeTerminalResizeResponseSchema = t.Object({
+  ok: t.Boolean(),
+  session: RuntimeTerminalSessionSchema,
+});
+
 export const CellActivityEventSchema = t.Object({
   id: t.String(),
   cellId: t.String(),

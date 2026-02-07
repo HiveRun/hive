@@ -131,6 +131,16 @@ function createDependencies(
     writeTerminalInput: harness.write,
     resizeTerminal: harness.resize,
     closeTerminalSession: harness.closeSession,
+    getServiceTerminalSession: () => null,
+    readServiceTerminalOutput: () => "",
+    subscribeToServiceTerminal: () => () => 0,
+    resizeServiceTerminal: () => 0,
+    clearServiceTerminal: () => 0,
+    getSetupTerminalSession: () => null,
+    readSetupTerminalOutput: () => "",
+    subscribeToSetupTerminal: () => () => 0,
+    resizeSetupTerminal: () => 0,
+    clearSetupTerminal: () => 0,
   };
 }
 

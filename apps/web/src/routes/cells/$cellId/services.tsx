@@ -4,7 +4,7 @@ import { Copy } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { LogTerminal } from "@/components/log-terminal";
+import { PtyStreamTerminal } from "@/components/pty-stream-terminal";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -142,6 +142,7 @@ function CellServices() {
   return (
     <div className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
       <ServicesPanel
+        cellId={cellId}
         errorMessage={streamError}
         isBulkActionPending={isBulkActionPending}
         isLoading={isLoading}
@@ -160,6 +161,7 @@ function CellServices() {
 }
 
 function ServicesPanel({
+  cellId,
   services,
   isLoading,
   errorMessage,
@@ -173,6 +175,7 @@ function ServicesPanel({
   pendingStartId,
   pendingStopId,
 }: {
+  cellId: string;
   services: CellServiceSummary[];
   isLoading: boolean;
   errorMessage?: string;
@@ -239,6 +242,7 @@ function ServicesPanel({
       <div className="flex h-full min-h-0 flex-col">
         {selectedService && (
           <ServiceCard
+            cellId={cellId}
             isBulkActionPending={isBulkActionPending}
             isStarting={pendingStartId === selectedService.id}
             isStopping={pendingStopId === selectedService.id}
@@ -305,6 +309,7 @@ function ServicesPanel({
 }
 
 function ServiceCard({
+  cellId,
   service,
   onStart,
   onStop,
@@ -312,6 +317,7 @@ function ServiceCard({
   isStarting,
   isStopping,
 }: {
+  cellId: string;
   service: CellServiceSummary;
   onStart: (service: CellServiceSummary) => void;
   onStop: (service: CellServiceSummary) => void;
@@ -321,8 +327,6 @@ function ServiceCard({
 }) {
   const normalizedStatus = service.status.toLowerCase();
   const isErrorState = normalizedStatus === "error";
-  const [clearedSnapshot, setClearedSnapshot] = useState<string | null>(null);
-  const logsSnapshot = service.recentLogs ?? "";
 
   const handleCopy = async (text: string) => {
     try {
@@ -332,8 +336,6 @@ function ServiceCard({
       toast.error("Failed to copy to clipboard");
     }
   };
-
-  const displayedLogs = logsSnapshot === clearedSnapshot ? "" : logsSnapshot;
 
   return (
     <div
@@ -464,29 +466,6 @@ function ServiceCard({
               </p>
             </>
           ) : null}
-
-          {service.logPath ? (
-            <>
-              <div className="flex items-center gap-1.5">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-                  Log path
-                </p>
-                <Button
-                  aria-label="Copy log path"
-                  className="h-5 w-5 shrink-0 p-0"
-                  onClick={() => handleCopy(service.logPath ?? "")}
-                  size="icon-sm"
-                  type="button"
-                  variant="ghost"
-                >
-                  <Copy className="h-3 w-3" />
-                </Button>
-              </div>
-              <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-foreground">
-                {service.logPath}
-              </pre>
-            </>
-          ) : null}
         </div>
       </div>
       {isErrorState ? null : (
@@ -496,11 +475,11 @@ function ServiceCard({
             : " "}
         </div>
       )}
-      <LogTerminal
-        autoScroll
-        onClear={() => setClearedSnapshot(logsSnapshot)}
-        output={displayedLogs || "No log output yet."}
-        title="Logs"
+      <PtyStreamTerminal
+        emptyMessage="No service output yet."
+        resizePath={`/api/cells/${cellId}/services/${service.id}/terminal/resize`}
+        streamPath={`/api/cells/${cellId}/services/${service.id}/terminal/stream`}
+        title="Service Terminal"
       />
     </div>
   );

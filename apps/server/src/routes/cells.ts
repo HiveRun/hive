@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { createConnection } from "node:net";
-import { resolve as resolvePath } from "node:path";
 
 import { logger } from "@bogeychan/elysia-logger";
 import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
@@ -34,6 +33,7 @@ import {
   CreateCellSchema,
   DeleteCellsSchema,
   DiffQuerySchema,
+  RuntimeTerminalResizeResponseSchema,
   ServiceLogQuerySchema,
 } from "../schema/api";
 import {
@@ -53,6 +53,10 @@ import {
   subscribeToCellStatusEvents,
   subscribeToServiceEvents,
 } from "../services/events";
+import type {
+  ServiceTerminalEvent,
+  ServiceTerminalSession,
+} from "../services/service-terminal";
 import type {
   ServiceSupervisorError,
   ServiceSupervisorService as ServiceSupervisorServiceType,
@@ -108,6 +112,28 @@ export type CellRouteDependencies = {
   writeTerminalInput: (cellId: string, data: string) => void;
   resizeTerminal: (cellId: string, cols: number, rows: number) => void;
   closeTerminalSession: (cellId: string) => void;
+  getServiceTerminalSession: (
+    serviceId: string
+  ) => ServiceTerminalSession | null;
+  readServiceTerminalOutput: (serviceId: string) => string;
+  subscribeToServiceTerminal: (
+    serviceId: string,
+    listener: (event: ServiceTerminalEvent) => void
+  ) => () => void;
+  resizeServiceTerminal: (
+    serviceId: string,
+    cols: number,
+    rows: number
+  ) => void;
+  clearServiceTerminal: (serviceId: string) => void;
+  getSetupTerminalSession: (cellId: string) => ServiceTerminalSession | null;
+  readSetupTerminalOutput: (cellId: string) => string;
+  subscribeToSetupTerminal: (
+    cellId: string,
+    listener: (event: ServiceTerminalEvent) => void
+  ) => () => void;
+  resizeSetupTerminal: (cellId: string, cols: number, rows: number) => void;
+  clearSetupTerminal: (cellId: string) => void;
 };
 
 const dependencyKeys: Array<keyof CellRouteDependencies> = [
@@ -127,6 +153,16 @@ const dependencyKeys: Array<keyof CellRouteDependencies> = [
   "writeTerminalInput",
   "resizeTerminal",
   "closeTerminalSession",
+  "getServiceTerminalSession",
+  "readServiceTerminalOutput",
+  "subscribeToServiceTerminal",
+  "resizeServiceTerminal",
+  "clearServiceTerminal",
+  "getSetupTerminalSession",
+  "readSetupTerminalOutput",
+  "subscribeToSetupTerminal",
+  "resizeSetupTerminal",
+  "clearSetupTerminal",
 ];
 
 const buildDefaultCellDependencies = () =>
@@ -154,6 +190,16 @@ const buildDefaultCellDependencies = () =>
       writeTerminalInput: terminal.write,
       resizeTerminal: terminal.resize,
       closeTerminalSession: terminal.closeSession,
+      getServiceTerminalSession: supervisor.getServiceTerminalSession,
+      readServiceTerminalOutput: supervisor.readServiceTerminalOutput,
+      subscribeToServiceTerminal: supervisor.subscribeToServiceTerminal,
+      resizeServiceTerminal: supervisor.resizeServiceTerminal,
+      clearServiceTerminal: supervisor.clearServiceTerminal,
+      getSetupTerminalSession: supervisor.getSetupTerminalSession,
+      readSetupTerminalOutput: supervisor.readSetupTerminalOutput,
+      subscribeToSetupTerminal: supervisor.subscribeToSetupTerminal,
+      resizeSetupTerminal: supervisor.resizeSetupTerminal,
+      clearSetupTerminal: supervisor.clearSetupTerminal,
     } satisfies CellRouteDependencies;
   });
 
@@ -294,11 +340,9 @@ const ErrorResponseSchema = t.Object({
   details: t.Optional(t.String()),
 });
 
-const LOG_TAIL_MAX_BYTES = 64_000;
 const LOG_TAIL_MAX_LINES = 200;
 const LOG_TAIL_API_MAX_LINES = 2000;
 const LOG_LINE_SPLIT_RE = /\r?\n/;
-const SERVICE_LOG_DIR = ".hive/logs";
 const PORT_CHECK_TIMEOUT_MS = 500;
 const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
 const MAX_PROVISIONING_ATTEMPTS = 3;
@@ -562,7 +606,7 @@ export function createCellsRoutes(
           } satisfies ErrorPayload;
         }
 
-        const extras = await buildSetupLogPayload(updated.workspacePath);
+        const extras = buildSetupLogPayload(updated.id, deps);
         return {
           ...cellToResponse(updated),
           ...extras,
@@ -673,7 +717,8 @@ export function createCellsRoutes(
     .get(
       "/:id",
       async ({ params, set, request }) => {
-        const { db: database } = await resolveDeps();
+        const deps = await resolveDeps();
+        const { db: database } = deps;
         const result = await database
           .select()
           .from(cells)
@@ -703,7 +748,7 @@ export function createCellsRoutes(
           });
         }
 
-        const extras = await buildSetupLogPayload(cell.workspacePath);
+        const extras = buildSetupLogPayload(cell.id, deps);
         return { ...cellToResponse(cell), ...extras };
       },
       {
@@ -721,7 +766,8 @@ export function createCellsRoutes(
     .get(
       "/:id/services",
       async ({ params, query, set, request }) => {
-        const { db: database } = await resolveDeps();
+        const deps = await resolveDeps();
+        const { db: database } = deps;
         const cell = await loadCellById(database, params.id);
         if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
@@ -735,7 +781,7 @@ export function createCellsRoutes(
 
         const rows = await fetchServiceRows(database, params.id);
         const services = await Promise.all(
-          rows.map((row) => serializeService(database, row, logOptions))
+          rows.map((row) => serializeService(deps, database, row, logOptions))
         );
 
         const audit = readHiveAuditHeaders(request);
@@ -877,7 +923,8 @@ export function createCellsRoutes(
     .get(
       "/:id/services/stream",
       async ({ params, set, log }) => {
-        const { db: database } = await resolveDeps();
+        const deps = await resolveDeps();
+        const { db: database } = deps;
         const cell = await loadCellById(database, params.id);
         if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
@@ -904,7 +951,7 @@ export function createCellsRoutes(
                 if (!row) {
                   return;
                 }
-                const payload = await serializeService(database, row);
+                const payload = await serializeService(deps, database, row);
                 sendEvent("service", JSON.stringify(payload));
               } catch (error) {
                 log.error(
@@ -930,7 +977,7 @@ export function createCellsRoutes(
               try {
                 const rows = await fetchServiceRows(database, params.id);
                 for (const row of rows) {
-                  const payload = await serializeService(database, row);
+                  const payload = await serializeService(deps, database, row);
                   sendEvent("service", JSON.stringify(payload));
                 }
                 sendEvent(
@@ -966,6 +1013,244 @@ export function createCellsRoutes(
       },
       {
         params: t.Object({ id: t.String() }),
+      }
+    )
+
+    .get(
+      "/:id/setup/terminal/stream",
+      async ({ params, set, request }) => {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+
+        const resolvedCell = cell;
+
+        const session = deps.getSetupTerminalSession(resolvedCell.id);
+        const setupState = deriveSetupTerminalState(resolvedCell, session);
+        const initialOutput = deps.readSetupTerminalOutput(resolvedCell.id);
+        const { iterator, cleanup } =
+          createAsyncEventIterator<ServiceTerminalEvent>(
+            (listener) =>
+              deps.subscribeToSetupTerminal(resolvedCell.id, listener),
+            request.signal
+          );
+
+        async function* stream() {
+          try {
+            yield sse({
+              event: "ready",
+              data: {
+                session,
+                setupState,
+                lastSetupError: resolvedCell.lastSetupError,
+              },
+            });
+
+            if (initialOutput.length > 0) {
+              yield sse({
+                event: "snapshot",
+                data: { output: initialOutput },
+              });
+            }
+
+            for await (const event of iterator) {
+              if (event.type === "data") {
+                yield sse({ event: "data", data: { chunk: event.chunk } });
+                continue;
+              }
+
+              yield sse({
+                event: "exit",
+                data: {
+                  exitCode: event.exitCode,
+                  signal: event.signal,
+                },
+              });
+            }
+          } finally {
+            cleanup();
+          }
+        }
+
+        return stream();
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        response: {
+          200: t.Any(),
+          404: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .post(
+      "/:id/setup/terminal/resize",
+      async ({ params, body, set, log }) => {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+
+        try {
+          deps.resizeSetupTerminal(cell.id, body.cols, body.rows);
+          const session = deps.getSetupTerminalSession(cell.id);
+          if (!session) {
+            set.status = HTTP_STATUS.CONFLICT;
+            return {
+              message: "Setup terminal session not available",
+            } satisfies { message: string };
+          }
+          return {
+            ok: true,
+            session,
+          };
+        } catch (error) {
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          log.error(
+            { error, cellId: cell.id },
+            "Failed to resize setup terminal session"
+          );
+          return {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to resize setup terminal session",
+          } satisfies { message: string };
+        }
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        body: CellTerminalResizeSchema,
+        response: {
+          200: RuntimeTerminalResizeResponseSchema,
+          404: t.Object({ message: t.String() }),
+          409: t.Object({ message: t.String() }),
+          500: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .get(
+      "/:id/services/:serviceId/terminal/stream",
+      async ({ params, set, request }) => {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const row = await fetchServiceRow(
+          database,
+          params.id,
+          params.serviceId
+        );
+        if (!row) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Service not found" } satisfies { message: string };
+        }
+
+        const session = deps.getServiceTerminalSession(row.service.id);
+        const initialOutput = deps.readServiceTerminalOutput(row.service.id);
+        const { iterator, cleanup } =
+          createAsyncEventIterator<ServiceTerminalEvent>(
+            (listener) =>
+              deps.subscribeToServiceTerminal(row.service.id, listener),
+            request.signal
+          );
+
+        async function* stream() {
+          try {
+            yield sse({ event: "ready", data: { session } });
+
+            if (initialOutput.length > 0) {
+              yield sse({ event: "snapshot", data: { output: initialOutput } });
+            }
+
+            for await (const event of iterator) {
+              if (event.type === "data") {
+                yield sse({ event: "data", data: { chunk: event.chunk } });
+                continue;
+              }
+
+              yield sse({
+                event: "exit",
+                data: {
+                  exitCode: event.exitCode,
+                  signal: event.signal,
+                },
+              });
+            }
+          } finally {
+            cleanup();
+          }
+        }
+
+        return stream();
+      },
+      {
+        params: t.Object({ id: t.String(), serviceId: t.String() }),
+        response: {
+          200: t.Any(),
+          404: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .post(
+      "/:id/services/:serviceId/terminal/resize",
+      async ({ params, body, set, log }) => {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const row = await fetchServiceRow(
+          database,
+          params.id,
+          params.serviceId
+        );
+        if (!row) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Service not found" } satisfies { message: string };
+        }
+
+        try {
+          deps.resizeServiceTerminal(row.service.id, body.cols, body.rows);
+          const session = deps.getServiceTerminalSession(row.service.id);
+          if (!session) {
+            set.status = HTTP_STATUS.CONFLICT;
+            return {
+              message: "Service terminal session not available",
+            } satisfies { message: string };
+          }
+
+          return {
+            ok: true,
+            session,
+          };
+        } catch (error) {
+          set.status = HTTP_STATUS.INTERNAL_ERROR;
+          log.error(
+            { error, serviceId: row.service.id },
+            "Failed to resize service terminal session"
+          );
+          return {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to resize service terminal session",
+          } satisfies { message: string };
+        }
+      },
+      {
+        params: t.Object({ id: t.String(), serviceId: t.String() }),
+        body: CellTerminalResizeSchema,
+        response: {
+          200: RuntimeTerminalResizeResponseSchema,
+          404: t.Object({ message: t.String() }),
+          409: t.Object({ message: t.String() }),
+          500: t.Object({ message: t.String() }),
+        },
       }
     )
 
@@ -1190,7 +1475,8 @@ export function createCellsRoutes(
     .post(
       "/:id/services/start",
       async ({ params, set, request }) => {
-        const { db: database, startServicesForCell } = await resolveDeps();
+        const deps = await resolveDeps();
+        const { db: database, startServicesForCell } = deps;
         const cell = await loadCellById(database, params.id);
         if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
@@ -1210,7 +1496,7 @@ export function createCellsRoutes(
         await runServerEffect(startServicesForCell(params.id));
         const rows = await fetchServiceRows(database, params.id);
         const services = await Promise.all(
-          rows.map((row) => serializeService(database, row))
+          rows.map((row) => serializeService(deps, database, row))
         );
 
         return { services } satisfies CellServiceListResponse;
@@ -1228,7 +1514,8 @@ export function createCellsRoutes(
     .post(
       "/:id/services/stop",
       async ({ params, set, request }) => {
-        const { db: database, stopServicesForCell } = await resolveDeps();
+        const deps = await resolveDeps();
+        const { db: database, stopServicesForCell } = deps;
         const cell = await loadCellById(database, params.id);
         if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
@@ -1248,7 +1535,7 @@ export function createCellsRoutes(
         await runServerEffect(stopServicesForCell(params.id));
         const rows = await fetchServiceRows(database, params.id);
         const services = await Promise.all(
-          rows.map((row) => serializeService(database, row))
+          rows.map((row) => serializeService(deps, database, row))
         );
 
         return { services } satisfies CellServiceListResponse;
@@ -1305,8 +1592,8 @@ export function createCellsRoutes(
       "/:id/services/:serviceId/start",
 
       async ({ params, set, request }) => {
-        const { db: database, startServiceById: startService } =
-          await resolveDeps();
+        const deps = await resolveDeps();
+        const { db: database, startServiceById: startService } = deps;
 
         const row = await fetchServiceRow(
           database,
@@ -1344,7 +1631,7 @@ export function createCellsRoutes(
           };
         }
 
-        const serialized = await serializeService(database, updated);
+        const serialized = await serializeService(deps, database, updated);
         return serialized satisfies CellServiceResponse;
       },
       {
@@ -1359,8 +1646,8 @@ export function createCellsRoutes(
     .post(
       "/:id/services/:serviceId/stop",
       async ({ params, set, request }) => {
-        const { db: database, stopServiceById: stopService } =
-          await resolveDeps();
+        const deps = await resolveDeps();
+        const { db: database, stopServiceById: stopService } = deps;
 
         const row = await fetchServiceRow(
           database,
@@ -1398,7 +1685,7 @@ export function createCellsRoutes(
           };
         }
 
-        const serialized = await serializeService(database, updated);
+        const serialized = await serializeService(deps, database, updated);
         return serialized satisfies CellServiceResponse;
       },
       {
@@ -1414,11 +1701,12 @@ export function createCellsRoutes(
     .post(
       "/:id/services/restart",
       async ({ params, set, request }) => {
+        const deps = await resolveDeps();
         const {
           db: database,
           startServicesForCell,
           stopServicesForCell,
-        } = await resolveDeps();
+        } = deps;
         const cell = await loadCellById(database, params.id);
         if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
@@ -1440,7 +1728,7 @@ export function createCellsRoutes(
 
         const rows = await fetchServiceRows(database, params.id);
         const services = await Promise.all(
-          rows.map((row) => serializeService(database, row))
+          rows.map((row) => serializeService(deps, database, row))
         );
         return { services } satisfies CellServiceListResponse;
       },
@@ -1457,11 +1745,12 @@ export function createCellsRoutes(
     .post(
       "/:id/services/:serviceId/restart",
       async ({ params, set, request }) => {
+        const deps = await resolveDeps();
         const {
           db: database,
           startServiceById: startService,
           stopServiceById: stopService,
-        } = await resolveDeps();
+        } = deps;
 
         const row = await fetchServiceRow(
           database,
@@ -1499,7 +1788,7 @@ export function createCellsRoutes(
           return { message: "Service not found" } satisfies { message: string };
         }
 
-        const serialized = await serializeService(database, updated);
+        const serialized = await serializeService(deps, database, updated);
         return serialized satisfies CellServiceResponse;
       },
       {
@@ -1568,6 +1857,7 @@ export function createCellsRoutes(
             closeAgentSession: closeSession,
             stopServicesForCell: stopCellServicesFn,
             closeTerminalSession,
+            clearSetupTerminal,
           } = deps;
 
           const uniqueIds = [...new Set(body.ids)];
@@ -1606,6 +1896,7 @@ export function createCellsRoutes(
           for (const cell of cellsToDelete) {
             await runServerEffect(closeSession(cell.id));
             closeTerminalSession(cell.id);
+            clearSetupTerminal(cell.id);
             try {
               await runServerEffect(
                 stopCellServicesFn(cell.id, {
@@ -1665,6 +1956,7 @@ export function createCellsRoutes(
             closeAgentSession: closeSession,
             stopServicesForCell: stopCellServicesFn,
             closeTerminalSession,
+            clearSetupTerminal,
           } = deps;
 
           const cell = await loadCellById(database, params.id);
@@ -1675,6 +1967,7 @@ export function createCellsRoutes(
 
           await runServerEffect(closeSession(params.id));
           closeTerminalSession(params.id);
+          clearSetupTerminal(params.id);
           try {
             await runServerEffect(
               stopCellServicesFn(params.id, { releasePorts: true })
@@ -2710,15 +3003,22 @@ async function fetchServiceRow(
   return row ?? null;
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: normalizes persisted service state against runtime process state.
 async function serializeService(
+  deps: CellRouteDependencies,
   database: DatabaseClient,
   row: ServiceRow,
   logOptions?: LogTailOptions
 ) {
-  const { service, cell } = row;
-  const logPath = computeServiceLogPath(cell.workspacePath, service.name);
-  const logResult = await readLogTail(logPath, logOptions);
-  const processAlive = isProcessAlive(service.pid);
+  const { service } = row;
+  const output = deps.readServiceTerminalOutput(service.id);
+  const logResult = readOutputTail(
+    output.length > 0 ? output : null,
+    logOptions
+  );
+  const runtimeSession = deps.getServiceTerminalSession(service.id);
+  const processAlive =
+    runtimeSession?.status === "running" || isProcessAlive(service.pid);
   const portReachable =
     typeof service.port === "number"
       ? await isPortActive(service.port)
@@ -2737,7 +3037,12 @@ async function serializeService(
     derivedLastKnownError = null;
   }
 
-  const derivedPid = processAlive ? service.pid : null;
+  let derivedPid: number | null = null;
+  if (runtimeSession?.status === "running") {
+    derivedPid = runtimeSession.pid;
+  } else if (processAlive) {
+    derivedPid = service.pid;
+  }
   const shouldPersist =
     derivedStatus !== service.status ||
     derivedLastKnownError !== service.lastKnownError ||
@@ -2765,7 +3070,7 @@ async function serializeService(
     ...(derivedPid != null ? { pid: derivedPid } : {}),
     command: service.command,
     cwd: service.cwd,
-    logPath,
+    logPath: null,
     lastKnownError: derivedLastKnownError,
     env: service.env,
     updatedAt: service.updatedAt.toISOString(),
@@ -2792,87 +3097,67 @@ type LogTailResult = {
   hasMore: boolean;
 };
 
-async function readLogTail(
-  logPath?: string | null,
+function readOutputTail(
+  output?: string | null,
   options?: LogTailOptions
-): Promise<LogTailResult> {
-  if (!logPath) {
+): LogTailResult {
+  if (output == null) {
     return { content: null, totalLines: null, hasMore: false };
   }
 
-  // Clamp lines to reasonable bounds
+  const normalizedOutput = output.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const allLines =
+    normalizedOutput.length > 0
+      ? normalizedOutput.split(LOG_LINE_SPLIT_RE)
+      : [];
+
   const requestedLines = Math.min(
     Math.max(options?.lines ?? LOG_TAIL_MAX_LINES, 1),
     LOG_TAIL_API_MAX_LINES
   );
   const offset = Math.max(options?.offset ?? 0, 0);
 
-  try {
-    const file = await fs.open(logPath, "r");
-    try {
-      const stats = await file.stat();
-      const totalBytes = Number(stats.size ?? 0);
-      if (totalBytes === 0) {
-        return { content: "", totalLines: 0, hasMore: false };
-      }
+  const endIndex = Math.max(allLines.length - offset, 0);
+  const startIndex = Math.max(endIndex - requestedLines, 0);
+  const selectedLines = allLines.slice(startIndex, endIndex);
 
-      // Read more bytes to accommodate offset
-      const bytesToRead = Math.min(totalBytes, LOG_TAIL_MAX_BYTES);
-      const start = totalBytes - bytesToRead;
-      const buffer = Buffer.alloc(bytesToRead);
-      await file.read(buffer, 0, bytesToRead, start);
-      const allLines = buffer.toString("utf8").split(LOG_LINE_SPLIT_RE);
-
-      // Apply offset from the end, then take requested lines
-      const endIndex = allLines.length - offset;
-      const startIndex = Math.max(endIndex - requestedLines, 0);
-      const selectedLines = allLines.slice(startIndex, endIndex);
-
-      const totalLines = allLines.length;
-      const hasMore = startIndex > 0 || start > 0;
-
-      return {
-        content: selectedLines.join("\n").trimEnd(),
-        totalLines,
-        hasMore,
-      };
-    } finally {
-      await file.close();
-    }
-  } catch {
-    return { content: null, totalLines: null, hasMore: false };
-  }
+  return {
+    content: selectedLines.join("\n").trimEnd(),
+    totalLines: allLines.length,
+    hasMore: startIndex > 0,
+  };
 }
 
-function computeServiceLogPath(
-  workspacePath: string,
-  serviceName: string
-): string {
-  const safe = sanitizeServiceNameForLogs(serviceName);
-  return resolvePath(workspacePath, SERVICE_LOG_DIR, `${safe}.log`);
-}
-
-function computeSetupLogPath(workspacePath: string): string {
-  return resolvePath(workspacePath, SERVICE_LOG_DIR, "setup.log");
-}
-
-async function buildSetupLogPayload(
-  workspacePath?: string | null,
+function buildSetupLogPayload(
+  cellId: string,
+  deps: CellRouteDependencies,
   logOptions?: LogTailOptions
 ) {
-  if (!workspacePath) {
-    return {};
-  }
-
-  const setupLogPath = computeSetupLogPath(workspacePath);
-  const logResult = await readLogTail(setupLogPath, logOptions);
+  const output = deps.readSetupTerminalOutput(cellId);
+  const logResult = readOutputTail(
+    output.length > 0 ? output : null,
+    logOptions
+  );
   return {
-    setupLogPath,
     ...(logResult.content != null ? { setupLog: logResult.content } : {}),
   };
 }
 
-function sanitizeServiceNameForLogs(name: string): string {
-  const normalized = name.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
-  return normalized.length > 0 ? normalized : "service";
+function deriveSetupTerminalState(
+  cell: typeof cells.$inferSelect,
+  session: ServiceTerminalSession | null
+): "active" | "completed" | "failed" | "pending" {
+  if (session?.status === "running") {
+    return "active";
+  }
+
+  if (cell.lastSetupError) {
+    return "failed";
+  }
+
+  if (cell.status === "ready") {
+    return "completed";
+  }
+
+  return "pending";
 }
