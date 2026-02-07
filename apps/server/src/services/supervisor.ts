@@ -1,11 +1,11 @@
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { createServer } from "node:net";
 import { constants as osConstants } from "node:os";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { type IExitEvent, spawn as spawnPty } from "bun-pty";
 import { Context, Effect, Layer } from "effect";
 
 import { HiveConfigService, resolveWorkspaceRoot } from "../config/context";
@@ -17,6 +17,13 @@ import type { CellService, ServiceStatus } from "../schema/services";
 import { emitServiceUpdate } from "./events";
 import { createPortManager } from "./port-manager";
 import { createServiceRepository } from "./repository";
+import {
+  createServiceTerminalRuntime,
+  type ServiceTerminalEvent,
+  type ServiceTerminalRuntime,
+  ServiceTerminalRuntimeTag,
+  type ServiceTerminalSession,
+} from "./service-terminal";
 
 const AUTO_RESTART_STATUSES: ReadonlySet<ServiceStatus> = new Set([
   "pending",
@@ -31,8 +38,10 @@ const serviceStartLocks = new Map<string, Promise<void>>();
 const STOP_TIMEOUT_MS = 2000;
 const FORCE_KILL_DELAY_MS = 250;
 const DEFAULT_SHELL = process.env.SHELL || "/bin/bash";
+const TERMINAL_NAME = "xterm-256color";
+const DEFAULT_TERMINAL_COLS = 120;
+const DEFAULT_TERMINAL_ROWS = 36;
 const SIGNAL_CODES = osConstants?.signals ?? {};
-const SERVICE_LOG_DIR = ".hive/logs";
 
 function runWithCellLock(cellId: string, action: () => Promise<void>) {
   const current = cellServiceLocks.get(cellId) ?? Promise.resolve();
@@ -168,19 +177,36 @@ export type SpawnProcessOptions = {
   command: string;
   cwd: string;
   env: Record<string, string>;
+  onData?: (chunk: string) => void;
+  onExit?: (event: {
+    exitCode: number;
+    signal: number | string | null;
+  }) => void;
+  cols?: number;
+  rows?: number;
 };
 
 export type ProcessHandle = {
   pid: number;
   kill: (signal?: number | string) => void;
   exited: Promise<number>;
+  resize?: (cols: number, rows: number) => void;
+  write?: (data: string) => void;
 };
 
 export type SpawnProcess = (options: SpawnProcessOptions) => ProcessHandle;
 
 export type RunCommand = (
   command: string,
-  options: { cwd: string; env: Record<string, string> }
+  options: {
+    cwd: string;
+    env: Record<string, string>;
+    onData?: (chunk: string) => void;
+    onExit?: (event: {
+      exitCode: number;
+      signal: number | string | null;
+    }) => void;
+  }
 ) => Promise<void>;
 
 export type ServiceSupervisor = {
@@ -206,6 +232,7 @@ export type SupervisorDependencies = {
   now: () => Date;
   logger: ServiceLogger;
   loadHiveConfig: (workspaceRoot?: string) => Promise<HiveConfig>;
+  terminalRuntime: ServiceTerminalRuntime;
 };
 
 type ServiceLogger = {
@@ -228,7 +255,7 @@ type ServiceProcessOptions = {
   definition: ProcessService;
   env: Record<string, string>;
   cwd: string;
-  commandWithLogging: string;
+  command: string;
 };
 
 function createDefaultLogger(): ServiceLogger {
@@ -251,68 +278,89 @@ function createDefaultLogger(): ServiceLogger {
   };
 }
 
-const defaultSpawnProcess: SpawnProcess = ({ command, cwd, env }) => {
-  const child = spawn(DEFAULT_SHELL, ["-lc", command], {
+const defaultSpawnProcess: SpawnProcess = ({
+  command,
+  cwd,
+  env,
+  onData,
+  onExit,
+  cols,
+  rows,
+}) => {
+  const pty = spawnPty(DEFAULT_SHELL, ["-lc", command], {
+    name: TERMINAL_NAME,
+    cols: cols ?? DEFAULT_TERMINAL_COLS,
+    rows: rows ?? DEFAULT_TERMINAL_ROWS,
     cwd,
-    env: { ...process.env, ...env },
-    stdio: "inherit",
-    detached: true,
+    env: {
+      ...process.env,
+      ...env,
+      TERM: TERMINAL_NAME,
+    },
   });
 
-  const pid = child.pid;
+  const pid = pty.pid;
   if (!pid) {
     throw new Error("Failed to spawn service process");
   }
 
-  const exited = new Promise<number>((resolveExit, rejectExit) => {
-    child.once("exit", (code: number | null) => {
-      resolveExit(code ?? -1);
-    });
-    child.once("error", (error: Error) => {
-      rejectExit(error);
+  const exited = new Promise<number>((resolveExit) => {
+    pty.onExit((event: IExitEvent) => {
+      const exitCode = event.exitCode ?? -1;
+      onExit?.({
+        exitCode,
+        signal:
+          typeof event.signal === "number" || typeof event.signal === "string"
+            ? event.signal
+            : null,
+      });
+      resolveExit(exitCode);
     });
   });
 
-  const kill: ProcessHandle["kill"] = (signal) => {
+  pty.onData((chunk: string) => {
+    onData?.(chunk);
+  });
+
+  const sendSignal = (target: number, signal?: number | string): boolean => {
     const resolved = resolveSignalValue(signal);
     const signalValue: NodeJS.Signals | number | undefined =
       resolved ??
       (typeof signal === "string" ? (signal as NodeJS.Signals) : undefined);
-    const sendSignal = (target: number) => {
+    try {
       if (signalValue === undefined) {
         process.kill(target);
-        return;
+      } else {
+        process.kill(target, signalValue);
       }
-      process.kill(target, signalValue);
-    };
-    const attemptSignal = (target: number) => {
-      try {
-        sendSignal(target);
-        return true;
-      } catch {
-        return false;
-      }
-    };
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
-    if (attemptSignal(-pid)) {
+  const kill: ProcessHandle["kill"] = (signal) => {
+    if (sendSignal(-pid, signal) || sendSignal(pid, signal)) {
       return;
     }
 
-    if (attemptSignal(pid)) {
-      return;
+    try {
+      pty.kill();
+    } catch {
+      // ignore kill failures on exited processes
     }
-
-    if (signalValue === undefined) {
-      child.kill();
-      return;
-    }
-    child.kill(signalValue);
   };
 
   return {
     pid,
     kill,
     exited,
+    resize(colsValue, rowsValue) {
+      pty.resize(colsValue, rowsValue);
+    },
+    write(data) {
+      pty.write(data);
+    },
   };
 };
 
@@ -323,6 +371,8 @@ const createDefaultRunCommand =
       command,
       cwd: options.cwd,
       env: options.env,
+      onData: options.onData,
+      onExit: options.onExit,
     });
 
     const exitCode = await proc.exited;
@@ -348,6 +398,8 @@ export function createServiceSupervisor(
     overrides.loadHiveConfig ??
     ((workspaceRoot?: string) =>
       loadConfig(workspaceRoot ?? resolveWorkspaceRoot()));
+  const terminalRuntime =
+    overrides.terminalRuntime ?? createServiceTerminalRuntime();
 
   const activeServices = new Map<string, ActiveServiceHandle>();
   const repository = createServiceRepository(db, now);
@@ -516,6 +568,7 @@ export function createServiceSupervisor(
     }
   }
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: setup flow must stream lifecycle, handle command failures, and preserve TemplateSetupError semantics.
   async function runTemplateSetupCommands(
     cell: Cell,
     template: Template,
@@ -537,43 +590,90 @@ export function createServiceSupervisor(
       FORCE_COLOR: "1",
     };
 
-    const logPath = computeSetupLogPath(cell.workspacePath);
-    ensureLogFile(logPath);
-    logSetupEvent(
-      logPath,
-      `Starting template setup for ${template.id} (${template.setup.length} command${
+    terminalRuntime.startSetupSession({
+      cellId: cell.id,
+      cwd: cell.workspacePath,
+    });
+
+    terminalRuntime.appendSetupLine(
+      cell.id,
+      `[setup] Starting template setup for ${template.id} (${template.setup.length} command${
         template.setup.length === 1 ? "" : "s"
       })`
     );
 
-    const executeCommand = async (command: string) => {
-      logSetupEvent(logPath, `Running: ${command}`);
-      const commandWithLogging = wrapCommandWithLogging(command, logPath);
-
-      try {
-        await runCommand(commandWithLogging, {
+    try {
+      for (const command of template.setup) {
+        terminalRuntime.appendSetupLine(cell.id, `[setup] Running: ${command}`);
+        const proc = spawnProcess({
+          command,
           cwd: cell.workspacePath,
           env,
+          onData: (chunk) => terminalRuntime.appendSetupOutput(cell.id, chunk),
         });
-        logSetupEvent(logPath, `Completed: ${command}`);
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error ?? "unknown");
-        logSetupEvent(logPath, `Failed: ${command} (${message})`);
-        throw new TemplateSetupError({
-          command,
-          templateId: template.id,
-          workspacePath: cell.workspacePath,
-          cause: error,
+
+        terminalRuntime.attachSetupProcess({
+          cellId: cell.id,
+          process: {
+            pid: proc.pid,
+            kill: proc.kill,
+            resize: proc.resize,
+            write: proc.write,
+          },
         });
+
+        const exitCode = await proc.exited;
+        if (exitCode !== 0) {
+          terminalRuntime.appendSetupLine(
+            cell.id,
+            `[setup] Failed: ${command} (exit ${exitCode})`
+          );
+          terminalRuntime.markSetupExit({
+            cellId: cell.id,
+            exitCode,
+            signal: null,
+          });
+          throw new TemplateSetupError({
+            command,
+            templateId: template.id,
+            workspacePath: cell.workspacePath,
+            exitCode,
+          });
+        }
+
+        terminalRuntime.appendSetupLine(
+          cell.id,
+          `[setup] Completed: ${command}`
+        );
       }
-    };
 
-    for (const command of template.setup) {
-      await executeCommand(command);
+      terminalRuntime.appendSetupLine(
+        cell.id,
+        `[setup] Template setup finished for ${template.id}`
+      );
+      terminalRuntime.markSetupExit({
+        cellId: cell.id,
+        exitCode: 0,
+        signal: null,
+      });
+    } catch (error) {
+      if (error instanceof TemplateSetupError) {
+        throw error;
+      }
+
+      terminalRuntime.appendSetupLine(
+        cell.id,
+        `[setup] Failed: ${
+          error instanceof Error ? error.message : String(error ?? "unknown")
+        }`
+      );
+      terminalRuntime.markSetupExit({
+        cellId: cell.id,
+        exitCode: 1,
+        signal: null,
+      });
+      throw error;
     }
-
-    logSetupEvent(logPath, `Template setup finished for ${template.id}`);
   }
 
   async function ensureService(
@@ -614,8 +714,6 @@ export function createServiceSupervisor(
         definition,
         lastKnownError: null,
       });
-
-      ensureLogFile(computeServiceLogPath(cell.workspacePath, name));
     }
 
     if (!record) {
@@ -665,6 +763,8 @@ export function createServiceSupervisor(
     for (const row of rows) {
       await stopService(row, true);
     }
+
+    terminalRuntime.stopAll();
   }
 
   async function shouldSkipStartService(row: ServiceRow): Promise<boolean> {
@@ -730,11 +830,6 @@ export function createServiceSupervisor(
         portMap: portLookup,
       });
 
-      const commandWithLogging = prepareLoggingCommand(
-        serviceRow,
-        definition.run
-      );
-
       await repository.updateService(serviceRow.service.id, {
         status: "starting",
         env,
@@ -750,7 +845,7 @@ export function createServiceSupervisor(
         definition,
         env,
         cwd,
-        commandWithLogging,
+        command: definition.run,
       });
     });
   }
@@ -785,29 +880,52 @@ export function createServiceSupervisor(
     return false;
   }
 
-  function prepareLoggingCommand(row: ServiceRow, command: string) {
-    const logPath = computeServiceLogPath(
-      row.cell.workspacePath,
-      row.service.name
-    );
-    ensureLogFile(logPath);
-    return wrapCommandWithLogging(command, logPath);
-  }
-
   async function runServiceProcess({
     row,
     definition,
     env,
     cwd,
-    commandWithLogging,
+    command,
   }: ServiceProcessOptions) {
     try {
-      await runServiceSetup(definition, cwd, env);
+      terminalRuntime.startServiceSession({
+        serviceId: row.service.id,
+        cwd,
+        process: {
+          pid: 0,
+        },
+      });
+      terminalRuntime.appendServiceOutput(
+        row.service.id,
+        `[service:${row.service.name}] Starting ${command}\n`
+      );
+
+      await runServiceSetup(row, definition, cwd, env);
 
       const handle = spawnProcess({
-        command: commandWithLogging,
+        command,
         cwd,
         env,
+        onData: (chunk) =>
+          terminalRuntime.appendServiceOutput(row.service.id, chunk),
+        onExit: ({ exitCode, signal }) => {
+          terminalRuntime.markServiceExit({
+            serviceId: row.service.id,
+            exitCode,
+            signal,
+          });
+        },
+      });
+
+      terminalRuntime.startServiceSession({
+        serviceId: row.service.id,
+        cwd,
+        process: {
+          pid: handle.pid,
+          kill: handle.kill,
+          resize: handle.resize,
+          write: handle.write,
+        },
       });
 
       activeServices.set(row.service.id, { handle });
@@ -840,6 +958,11 @@ export function createServiceSupervisor(
         });
     } catch (error) {
       activeServices.delete(row.service.id);
+      terminalRuntime.markServiceExit({
+        serviceId: row.service.id,
+        exitCode: 1,
+        signal: null,
+      });
       await markServiceError(
         row.service.id,
         row.cell.id,
@@ -850,6 +973,7 @@ export function createServiceSupervisor(
   }
 
   async function runServiceSetup(
+    row: ServiceRow,
     definition: ProcessService,
     cwd: string,
     env: Record<string, string>
@@ -859,7 +983,16 @@ export function createServiceSupervisor(
     }
 
     for (const setupCommand of definition.setup) {
-      await runCommand(setupCommand, { cwd, env });
+      terminalRuntime.appendServiceOutput(
+        row.service.id,
+        `[service:${row.service.name}] setup: ${setupCommand}\n`
+      );
+      await runCommand(setupCommand, {
+        cwd,
+        env,
+        onData: (chunk) =>
+          terminalRuntime.appendServiceOutput(row.service.id, chunk),
+      });
     }
   }
 
@@ -893,10 +1026,17 @@ export function createServiceSupervisor(
       pid: null,
     });
 
+    terminalRuntime.markServiceExit({
+      serviceId: row.service.id,
+      exitCode: 0,
+      signal: null,
+    });
+
     notifyServiceUpdate(row);
 
     if (releasePort) {
       releasePortFor(row.service.id);
+      terminalRuntime.clearServiceSession(row.service.id);
     }
   }
 
@@ -1189,40 +1329,6 @@ function interpolatePorts(
   return result;
 }
 
-function computeServiceLogPath(
-  workspacePath: string,
-  serviceName: string
-): string {
-  const safeName = sanitizeServiceName(serviceName).toLowerCase() || "service";
-  const logsDir = resolve(workspacePath, SERVICE_LOG_DIR);
-  return resolve(logsDir, `${safeName}.log`);
-}
-
-function computeSetupLogPath(workspacePath: string): string {
-  const logsDir = resolve(workspacePath, SERVICE_LOG_DIR);
-  return resolve(logsDir, "setup.log");
-}
-
-function ensureLogFile(logPath: string): void {
-  const directory = dirname(logPath);
-  mkdirSync(directory, { recursive: true });
-  if (!existsSync(logPath)) {
-    writeFileSync(logPath, "");
-  }
-}
-
-function logSetupEvent(logPath: string, message: string): void {
-  const timestamp = new Date().toISOString();
-  appendFileSync(logPath, `[${timestamp}] ${message}\n`);
-}
-
-function wrapCommandWithLogging(command: string, logPath: string): string {
-  const directory = dirname(logPath);
-  const quotedDir = JSON.stringify(directory);
-  const quotedPath = JSON.stringify(logPath);
-  return `set -o pipefail; mkdir -p ${quotedDir} && touch ${quotedPath} && ( ${command} ) 2>&1 | tee -a ${quotedPath}`;
-}
-
 export type ServiceSupervisorError = {
   readonly _tag: "ServiceSupervisorError";
   readonly cause: unknown;
@@ -1264,10 +1370,41 @@ export type ServiceSupervisorService = {
     options?: { releasePorts?: boolean }
   ) => Effect.Effect<void, ServiceSupervisorError>;
   readonly stopAll: Effect.Effect<void, ServiceSupervisorError>;
+  readonly getServiceTerminalSession: (
+    serviceId: string
+  ) => ServiceTerminalSession | null;
+  readonly readServiceTerminalOutput: (serviceId: string) => string;
+  readonly subscribeToServiceTerminal: (
+    serviceId: string,
+    listener: (event: ServiceTerminalEvent) => void
+  ) => () => void;
+  readonly resizeServiceTerminal: (
+    serviceId: string,
+    cols: number,
+    rows: number
+  ) => void;
+  readonly writeServiceTerminalInput: (serviceId: string, data: string) => void;
+  readonly clearServiceTerminal: (serviceId: string) => void;
+  readonly getSetupTerminalSession: (
+    cellId: string
+  ) => ServiceTerminalSession | null;
+  readonly readSetupTerminalOutput: (cellId: string) => string;
+  readonly subscribeToSetupTerminal: (
+    cellId: string,
+    listener: (event: ServiceTerminalEvent) => void
+  ) => () => void;
+  readonly resizeSetupTerminal: (
+    cellId: string,
+    cols: number,
+    rows: number
+  ) => void;
+  readonly writeSetupTerminalInput: (cellId: string, data: string) => void;
+  readonly clearSetupTerminal: (cellId: string) => void;
 };
 
 const makeEffectSupervisor = (
-  supervisor: ServiceSupervisor
+  supervisor: ServiceSupervisor,
+  terminalRuntime: ServiceTerminalRuntime
 ): ServiceSupervisorService => ({
   bootstrap: wrapSupervisorPromise(supervisor.bootstrap)(),
   ensureCellServices: (args) =>
@@ -1281,6 +1418,18 @@ const makeEffectSupervisor = (
   stopCellServices: (cellId, options) =>
     wrapSupervisorPromise(supervisor.stopCellServices)(cellId, options),
   stopAll: wrapSupervisorPromise(supervisor.stopAll)(),
+  getServiceTerminalSession: terminalRuntime.getServiceSession,
+  readServiceTerminalOutput: terminalRuntime.readServiceOutput,
+  subscribeToServiceTerminal: terminalRuntime.subscribeToService,
+  resizeServiceTerminal: terminalRuntime.resizeService,
+  writeServiceTerminalInput: terminalRuntime.writeService,
+  clearServiceTerminal: terminalRuntime.clearServiceSession,
+  getSetupTerminalSession: terminalRuntime.getSetupSession,
+  readSetupTerminalOutput: terminalRuntime.readSetupOutput,
+  subscribeToSetupTerminal: terminalRuntime.subscribeToSetup,
+  resizeSetupTerminal: terminalRuntime.resizeSetup,
+  writeSetupTerminalInput: terminalRuntime.writeSetup,
+  clearSetupTerminal: terminalRuntime.clearSetupSession,
 });
 
 export const ServiceSupervisorService =
@@ -1292,10 +1441,12 @@ export const ServiceSupervisorLayer = Layer.effect(
   ServiceSupervisorService,
   Effect.gen(function* () {
     const hiveConfigService = yield* HiveConfigService;
+    const terminalRuntime = yield* ServiceTerminalRuntimeTag;
     const supervisor = createServiceSupervisor({
       loadHiveConfig: (workspaceRoot?: string) =>
         Effect.runPromise(hiveConfigService.load(workspaceRoot)),
+      terminalRuntime,
     });
-    return makeEffectSupervisor(supervisor);
+    return makeEffectSupervisor(supervisor, terminalRuntime);
   })
 );

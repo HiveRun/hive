@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -9,6 +8,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resolveWorkspaceRoot } from "../../config/context";
 import { cells } from "../../schema/cells";
 import { cellServices } from "../../schema/services";
+import { createServiceTerminalRuntime } from "../../services/service-terminal";
 import type {
   ProcessHandle,
   RunCommand,
@@ -100,7 +100,7 @@ describe("service supervisor", () => {
     await Promise.all(harness.processes.map((proc) => proc.handle.exited));
   });
 
-  it("creates log files inside cell workspace", async () => {
+  it("captures runtime output in service terminal buffers", async () => {
     const workspace = await createWorkspaceDir();
     const cell = await insertCell(workspace, "template-web");
 
@@ -122,8 +122,16 @@ describe("service supervisor", () => {
       },
     });
 
-    const logPath = join(workspace, ".hive", "logs", "web.log");
-    expect(existsSync(logPath)).toBe(true);
+    const [service] = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+    if (!service) {
+      throw new Error("Expected service record");
+    }
+
+    const output = harness.terminalRuntime.readServiceOutput(service.id);
+    expect(output).toContain("bun run dev");
   });
 
   it("does not start duplicate services when pid is alive", async () => {
@@ -257,8 +265,11 @@ describe("service supervisor", () => {
       },
     });
 
-    expect(harness.runCommandCalls).toHaveLength(1);
-    expect(harness.runCommandCalls[0]).toContain("echo template-setup");
+    expect(harness.processes).toHaveLength(2);
+    expect(harness.processes[0]?.options.command).toContain(
+      "echo template-setup"
+    );
+    expect(harness.processes[1]?.options.command).toBe("bun run dev");
   });
 
   it("can stop and restart a single service", async () => {
@@ -362,6 +373,10 @@ describe("service supervisor", () => {
       .where(eq(cellServices.id, "svc-bootstrap"));
 
     expect(service?.pid).toBe(call.handle.pid);
+    const terminalSession =
+      harness.terminalRuntime.getServiceSession("svc-bootstrap");
+    expect(terminalSession?.status).toBe("running");
+    expect(terminalSession?.pid).toBe(call.handle.pid);
 
     await harness.supervisor.stopAll();
     await Promise.all(harness.processes.map((proc) => proc.handle.exited));
@@ -487,6 +502,7 @@ describe("service supervisor", () => {
     const runCommandCalls: string[] = [];
     let pidCounter = 10_000;
     let clock = Date.now();
+    const terminalRuntime = createServiceTerminalRuntime();
 
     const spawnProcess: SpawnProcess = (options) => {
       let exit!: (code: number) => void;
@@ -501,6 +517,17 @@ describe("service supervisor", () => {
       };
 
       processes.push({ options, exit, handle });
+      if (options.command.includes("template-setup")) {
+        queueMicrotask(() => {
+          options.onData?.("template setup complete\n");
+          options.onExit?.({ exitCode: 0, signal: null });
+          exit(0);
+        });
+      } else {
+        queueMicrotask(() => {
+          options.onData?.(`[mock] started ${options.command}\n`);
+        });
+      }
       return handle;
     };
 
@@ -515,9 +542,10 @@ describe("service supervisor", () => {
       runCommand,
       now: () => new Date(clock++),
       logger: silentLogger,
+      terminalRuntime,
     });
 
-    return { supervisor, processes, runCommandCalls };
+    return { supervisor, processes, runCommandCalls, terminalRuntime };
   }
 
   async function createWorkspaceDir() {

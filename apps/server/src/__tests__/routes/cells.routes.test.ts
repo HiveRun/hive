@@ -79,6 +79,18 @@ function createMinimalDependencies(): any {
     writeTerminalInput: () => 0,
     resizeTerminal: () => 0,
     closeTerminalSession: () => 0,
+    getServiceTerminalSession: () => null,
+    readServiceTerminalOutput: () => "",
+    subscribeToServiceTerminal: () => () => 0,
+    writeServiceTerminalInput: () => 0,
+    resizeServiceTerminal: () => 0,
+    clearServiceTerminal: () => 0,
+    getSetupTerminalSession: () => null,
+    readSetupTerminalOutput: () => "",
+    subscribeToSetupTerminal: () => () => 0,
+    writeSetupTerminalInput: () => 0,
+    resizeSetupTerminal: () => 0,
+    clearSetupTerminal: () => 0,
   };
 }
 
@@ -134,6 +146,21 @@ describe("cells route reachability", () => {
       "Stream cell terminal",
     ],
     [
+      "GET",
+      `/api/cells/${TEST_CELL_ID}/setup/terminal/stream`,
+      "Stream setup terminal",
+    ],
+    [
+      "POST",
+      `/api/cells/${TEST_CELL_ID}/setup/terminal/resize`,
+      "Resize setup terminal",
+    ],
+    [
+      "POST",
+      `/api/cells/${TEST_CELL_ID}/setup/terminal/input`,
+      "Write setup terminal input",
+    ],
+    [
       "POST",
       `/api/cells/${TEST_CELL_ID}/terminal/input`,
       "Write terminal input",
@@ -147,6 +174,21 @@ describe("cells route reachability", () => {
       "POST",
       `/api/cells/${TEST_CELL_ID}/terminal/restart`,
       "Restart terminal session",
+    ],
+    [
+      "GET",
+      `/api/cells/${TEST_CELL_ID}/services/test-service-id/terminal/stream`,
+      "Stream service terminal",
+    ],
+    [
+      "POST",
+      `/api/cells/${TEST_CELL_ID}/services/test-service-id/terminal/resize`,
+      "Resize service terminal",
+    ],
+    [
+      "POST",
+      `/api/cells/${TEST_CELL_ID}/services/test-service-id/terminal/input`,
+      "Write service terminal input",
     ],
     ["GET", `/api/cells/${TEST_CELL_ID}/diff`, "Get cell diff"],
     ["DELETE", `/api/cells/${TEST_CELL_ID}`, "Delete cell"],
