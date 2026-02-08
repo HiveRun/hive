@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRuntimeContext, type RuntimeContext } from "./runtime-context";
 import { waitForHttpOk } from "./wait";
@@ -15,6 +15,12 @@ const SIGTERM_EXIT_CODE = 143;
 const SERVER_READY_PATH = "/health";
 const WEB_READY_PATH = "/";
 const PLAYWRIGHT_CONFIG_PATH = "playwright.config.ts";
+
+type WorkspaceMode = "fixture" | "clone";
+
+const WORKSPACE_MODE_ENV = "HIVE_E2E_WORKSPACE_MODE";
+const WORKSPACE_SOURCE_ENV = "HIVE_E2E_WORKSPACE_SOURCE";
+const DEFAULT_WORKSPACE_MODE: WorkspaceMode = "fixture";
 
 type ManagedProcess = {
   name: string;
@@ -45,9 +51,12 @@ const sharedHiveHomePath = join(repoRoot, "tmp", "e2e-shared", "hive-home");
 
 async function run() {
   const args = parseArgs(process.argv.slice(2));
+  const workspaceMode = resolveWorkspaceMode();
+  const workspaceRootName = workspaceMode === "clone" ? "hive" : "workspace";
   const context = await createRuntimeContext({
     hiveHomePath: useSharedHiveHome ? sharedHiveHomePath : undefined,
     repoRoot,
+    workspaceName: workspaceRootName,
   });
   const managedProcesses: ManagedProcess[] = [];
   let runSucceeded = false;
@@ -57,7 +66,18 @@ async function run() {
       process.stdout.write(`Using shared E2E HIVE_HOME: ${context.hiveHome}\n`);
     }
 
-    await createFixtureWorkspace(context.workspaceRoot);
+    if (workspaceMode === "clone") {
+      const workspaceSource = resolveWorkspaceSource();
+      process.stdout.write(
+        `Preparing cloned E2E workspace from ${workspaceSource}\n`
+      );
+      await createClonedWorkspace({
+        sourceRoot: workspaceSource,
+        workspaceRoot: context.workspaceRoot,
+      });
+    } else {
+      await createFixtureWorkspace(context.workspaceRoot);
+    }
 
     const server = await startServerWithRetries({
       context,
@@ -264,6 +284,72 @@ async function createFixtureWorkspace(workspaceRoot: string): Promise<void> {
   );
 }
 
+async function createClonedWorkspace(options: {
+  sourceRoot: string;
+  workspaceRoot: string;
+}): Promise<void> {
+  await rm(options.workspaceRoot, { recursive: true, force: true });
+
+  const branch = await resolveSourceBranch(options.sourceRoot);
+  const cloneArgs = [
+    "clone",
+    "--no-hardlinks",
+    ...(branch ? ["--branch", branch, "--single-branch"] : []),
+    options.sourceRoot,
+    options.workspaceRoot,
+  ];
+
+  await runCommand("git", cloneArgs, {
+    cwd: repoRoot,
+    label: "Clone fixture workspace",
+  });
+}
+
+async function resolveSourceBranch(sourceRoot: string): Promise<string | null> {
+  try {
+    const branch = await runCommandCapture(
+      "git",
+      ["rev-parse", "--abbrev-ref", "HEAD"],
+      {
+        cwd: sourceRoot,
+        label: "Resolve source workspace branch",
+      }
+    );
+
+    if (!branch || branch === "HEAD") {
+      return null;
+    }
+
+    return branch;
+  } catch {
+    return null;
+  }
+}
+
+function resolveWorkspaceMode(): WorkspaceMode {
+  const configured = process.env[WORKSPACE_MODE_ENV]?.trim().toLowerCase();
+  if (!configured) {
+    return DEFAULT_WORKSPACE_MODE;
+  }
+
+  if (configured === "fixture" || configured === "clone") {
+    return configured;
+  }
+
+  throw new Error(
+    `${WORKSPACE_MODE_ENV} must be either 'fixture' or 'clone' (received '${configured}')`
+  );
+}
+
+function resolveWorkspaceSource(): string {
+  const configured = process.env[WORKSPACE_SOURCE_ENV]?.trim();
+  if (!configured) {
+    return repoRoot;
+  }
+
+  return resolvePath(configured);
+}
+
 async function runCommand(
   command: string,
   args: string[],
@@ -289,6 +375,44 @@ async function runCommand(
     child.on("exit", (code) => {
       if (code === 0) {
         resolve();
+        return;
+      }
+      reject(
+        new Error(
+          `${options.label} failed (exit ${String(
+            code
+          )})\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`
+        )
+      );
+    });
+  });
+}
+
+async function runCommandCapture(
+  command: string,
+  args: string[],
+  options: CommandOptions
+): Promise<string> {
+  return await new Promise<string>((resolveOutput, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stderr = "";
+    let stdout = "";
+
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolveOutput(stdout.trim());
         return;
       }
       reject(

@@ -29,8 +29,11 @@ const SEND_ATTEMPT_TIMEOUT_MS = 20_000;
 const FINAL_VIDEO_SETTLE_MS = 1500;
 const POLL_INTERVAL_MS = 500;
 const TERMINAL_RECOVERY_WAIT_MS = 750;
+const TEMPLATE_OPTION_TIMEOUT_MS = 750;
 const CELL_CHAT_URL_PATTERN = /\/cells\/[^/]+\/chat/;
 const CELL_ID_PATTERN = /\/cells\/([^/]+)\/chat/;
+const PREFERRED_TEMPLATE_LABELS = ["Basic Template", "E2E Template"];
+const USE_DEFAULT_TEMPLATE = process.env.HIVE_E2E_USE_DEFAULT_TEMPLATE === "1";
 
 test.describe("cell chat flow", () => {
   test("creates a cell and sends a chat message", async ({
@@ -46,6 +49,9 @@ test.describe("cell chat flow", () => {
 
     const testCellName = `E2E Cell ${Date.now()}`;
     await page.locator(selectors.cellNameInput).fill(testCellName);
+    if (!USE_DEFAULT_TEMPLATE) {
+      await selectPreferredTemplate(page);
+    }
     await page.locator(selectors.cellSubmitButton).click();
 
     await expect(page).toHaveURL(CELL_CHAT_URL_PATTERN, {
@@ -311,6 +317,33 @@ async function openCellCreationSheet(page: Page): Promise<void> {
   }
 
   throw new Error("Failed to open create-cell form for any workspace");
+}
+
+async function selectPreferredTemplate(page: Page): Promise<void> {
+  const trigger = page.locator(selectors.templateSelectTrigger);
+  const hasTemplateSelect = await trigger
+    .isVisible({ timeout: 2000 })
+    .catch(() => false);
+
+  if (!hasTemplateSelect) {
+    return;
+  }
+
+  await trigger.click();
+
+  for (const label of PREFERRED_TEMPLATE_LABELS) {
+    const option = page.getByRole("option", { name: label });
+    const isVisible = await option
+      .isVisible({ timeout: TEMPLATE_OPTION_TIMEOUT_MS })
+      .catch(() => false);
+
+    if (isVisible) {
+      await option.click();
+      return;
+    }
+  }
+
+  await page.keyboard.press("Escape").catch(() => null);
 }
 
 async function maybeRecoverRouteError(page: Page): Promise<void> {
