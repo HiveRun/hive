@@ -27,6 +27,8 @@ function CellChat() {
       endpointBase="chat/terminal"
       reconnectLabel="Reconnect chat"
       restartLabel="Restart chat"
+      startupReadiness="terminal-content"
+      startupTextMatch={cellQuery.data?.name ?? null}
       terminalLineHeight={1}
       themeMode={themeMode}
       title="Cell Chat"

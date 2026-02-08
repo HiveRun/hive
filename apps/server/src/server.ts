@@ -375,7 +375,7 @@ export const startServer = async () => {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(
       `${message}\nStartup failed. Check the logs above for details; database issues may require rerunning migrations with ` +
-        "`bun run apps/server db:push`.\n"
+        "`bun run db:push` (repo root) or `bun -C apps/server run db:push`.\n"
     );
     cleanupPidFile();
     process.exit(1);

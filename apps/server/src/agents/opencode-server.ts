@@ -17,14 +17,31 @@ type SharedOpencodeServerHandle = {
 let sharedHandle: SharedOpencodeServerHandle | null = null;
 let startPromise: Promise<SharedOpencodeServerHandle> | null = null;
 
+const DEFAULT_SHARED_SERVER_START_TIMEOUT_MS = 20_000;
+
+function resolveSharedServerStartTimeoutMs(): number {
+  const raw = process.env.HIVE_OPENCODE_START_TIMEOUT_MS;
+  if (!raw) {
+    return DEFAULT_SHARED_SERVER_START_TIMEOUT_MS;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_SHARED_SERVER_START_TIMEOUT_MS;
+  }
+
+  return parsed;
+}
+
 async function createSharedServer(
   config: LoadedOpencodeConfig
 ): Promise<SharedOpencodeServerHandle> {
   const sourceLabel = config.source ?? "default";
   const detailSuffix = config.details ? ` (${config.details})` : "";
+  const startupTimeoutMs = resolveSharedServerStartTimeoutMs();
   // biome-ignore lint/suspicious/noConsole: temporary until structured logging is wired up
   console.info(
-    `[opencode] Starting shared server with config source '${sourceLabel}${detailSuffix}'`
+    `[opencode] Starting shared server with config source '${sourceLabel}${detailSuffix}' (startup timeout ${startupTimeoutMs}ms)`
   );
 
   logProviderCatalog(config.config);
@@ -32,6 +49,7 @@ async function createSharedServer(
   const server = await createOpencodeServer({
     hostname: "127.0.0.1",
     port: 0,
+    timeout: startupTimeoutMs,
     config: config.config,
   });
 
