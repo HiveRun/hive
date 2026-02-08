@@ -10,6 +10,7 @@
   - [x] Add regression tests for sidebar status SSE stream behavior on `/api/agents/sessions/:id/events`
   - [x] Apply a Hive-branded OpenCode theme automatically for embedded chat terminals
   - [x] Add light-mode support for the embedded Hive OpenCode theme and sync it from the web theme selection
+  - [x] Keep chat loading overlay visible until OpenCode renders terminal content
 
 ## Goal
 Allow users to easily manage multiple workspaces and switch between them within Hive.
