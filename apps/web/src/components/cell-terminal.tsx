@@ -34,6 +34,23 @@ const WHEEL_LINE_UP_SEQUENCE = "\u001b\u0019";
 const WHEEL_LINE_DOWN_SEQUENCE = "\u001b\u0005";
 const TERMINAL_SCROLLBACK_LINES = 10_000;
 const KEY_SCROLLED_TERMINAL_SCROLLBACK_LINES = 0;
+const STARTUP_VISIBLE_BUFFER_LIMIT = 8192;
+const STARTUP_FALLBACK_VISIBLE_LENGTH = 48;
+const ASCII_NULL_CODE = 0x00;
+const ASCII_ESCAPE_CODE = 0x1b;
+const ASCII_BELL_CODE = 0x07;
+const ASCII_BACKSPACE_CODE = 0x08;
+const ASCII_VERTICAL_TAB_CODE = 0x0b;
+const ASCII_SUBSTITUTE_CODE = 0x1a;
+const ASCII_FILE_SEPARATOR_CODE = 0x1c;
+const ASCII_SPACE_CODE = 0x20;
+const ASCII_DELETE_CODE = 0x7f;
+const CSI_FINAL_BYTE_START = 0x40;
+const CSI_FINAL_BYTE_END = 0x7e;
+const CSI_MARKER = "[";
+const OSC_MARKER = "]";
+const OSC_ESCAPE_TERMINATOR = "\\";
+const NON_WHITESPACE_RE = /\S/;
 const TERMINAL_FONT_FAMILY =
   '"JetBrainsMono Nerd Font", "MesloLGS NF", "CaskaydiaMono Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font Mono", "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Noto Color Emoji", monospace';
 const TERMINAL_THEME_DARK = {
@@ -90,6 +107,82 @@ const appendOutput = (current: string, chunk: string): string => {
   return next.slice(next.length - OUTPUT_BUFFER_LIMIT);
 };
 
+const skipCsiSequence = (value: string, startIndex: number): number => {
+  let index = startIndex;
+  while (index < value.length) {
+    const code = value.charCodeAt(index);
+    index += 1;
+    if (code >= CSI_FINAL_BYTE_START && code <= CSI_FINAL_BYTE_END) {
+      return index;
+    }
+  }
+  return index;
+};
+
+const skipOscSequence = (value: string, startIndex: number): number => {
+  let index = startIndex;
+  while (index < value.length) {
+    const code = value.charCodeAt(index);
+    if (code === ASCII_BELL_CODE) {
+      return index + 1;
+    }
+    if (
+      code === ASCII_ESCAPE_CODE &&
+      value[index + 1] === OSC_ESCAPE_TERMINATOR
+    ) {
+      return index + 2;
+    }
+    index += 1;
+  }
+  return index;
+};
+
+const isFilteredControlCode = (code: number): boolean =>
+  (code >= ASCII_NULL_CODE && code <= ASCII_BACKSPACE_CODE) ||
+  (code >= ASCII_VERTICAL_TAB_CODE && code <= ASCII_SUBSTITUTE_CODE) ||
+  (code >= ASCII_FILE_SEPARATOR_CODE && code < ASCII_SPACE_CODE) ||
+  code === ASCII_DELETE_CODE;
+
+const extractVisibleText = (value: string): string => {
+  let output = "";
+  let index = 0;
+
+  while (index < value.length) {
+    const code = value.charCodeAt(index);
+    if (code === ASCII_ESCAPE_CODE) {
+      const marker = value[index + 1];
+      if (marker === CSI_MARKER) {
+        index = skipCsiSequence(value, index + 2);
+        continue;
+      }
+      if (marker === OSC_MARKER) {
+        index = skipOscSequence(value, index + 2);
+        continue;
+      }
+      index += 2;
+      continue;
+    }
+
+    if (isFilteredControlCode(code)) {
+      index += 1;
+      continue;
+    }
+
+    output += value[index];
+    index += 1;
+  }
+
+  return output;
+};
+
+const appendVisibleBuffer = (current: string, chunk: string): string => {
+  const next = `${current}${extractVisibleText(chunk)}`;
+  if (next.length <= STARTUP_VISIBLE_BUFFER_LIMIT) {
+    return next;
+  }
+  return next.slice(next.length - STARTUP_VISIBLE_BUFFER_LIMIT);
+};
+
 function createWheelBridge(
   target: HTMLElement,
   wheelScrollBehavior: "terminal" | "line-keys",
@@ -137,6 +230,8 @@ type CellTerminalProps = {
   terminalLineHeight?: number;
   wheelScrollBehavior?: "terminal" | "line-keys";
   themeMode?: "dark" | "light";
+  startupReadiness?: "session" | "terminal-content";
+  startupTextMatch?: string | null;
 };
 
 export function CellTerminal({
@@ -149,6 +244,8 @@ export function CellTerminal({
   terminalLineHeight = 1.25,
   wheelScrollBehavior = "terminal",
   themeMode = "dark",
+  startupReadiness = "session",
+  startupTextMatch = null,
 }: CellTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
@@ -157,12 +254,43 @@ export function CellTerminal({
   const eventSourceRef = useRef<EventSource | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const outputRef = useRef<string>("");
+  const visibleOutputRef = useRef<string>("");
   const resizeTimeoutRef = useRef<number | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [session, setSession] = useState<TerminalSession | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
+  const [isStartupReady, setIsStartupReady] = useState(
+    startupReadiness === "session"
+  );
   const terminalApiBase = `${API_BASE}/api/cells/${cellId}/${endpointBase}`;
+  const normalizedStartupMatch = startupTextMatch?.trim().toLowerCase() ?? "";
+
+  const updateStartupReadiness = useCallback(
+    (visibleOutput: string) => {
+      if (startupReadiness === "session") {
+        return;
+      }
+      if (!NON_WHITESPACE_RE.test(visibleOutput)) {
+        return;
+      }
+
+      if (normalizedStartupMatch.length > 0) {
+        const normalizedVisibleOutput = visibleOutput.toLowerCase();
+        if (
+          !normalizedVisibleOutput.includes(normalizedStartupMatch) &&
+          normalizedVisibleOutput.trim().length <
+            STARTUP_FALLBACK_VISIBLE_LENGTH
+        ) {
+          return;
+        }
+        setIsStartupReady(true);
+        return;
+      }
+      setIsStartupReady(true);
+    },
+    [normalizedStartupMatch, startupReadiness]
+  );
   const buildTerminalEndpoint = useCallback(
     (path: string) => `${terminalApiBase}/${path}?themeMode=${themeMode}`,
     [terminalApiBase, themeMode]
@@ -261,6 +389,8 @@ export function CellTerminal({
     setConnection("connecting");
     setSession(null);
     setErrorMessage(null);
+    visibleOutputRef.current = "";
+    setIsStartupReady(startupReadiness === "session");
     try {
       const response = await fetch(buildTerminalEndpoint("restart"), {
         method: "POST",
@@ -288,7 +418,7 @@ export function CellTerminal({
     } finally {
       setIsRestarting(false);
     }
-  }, [buildTerminalEndpoint, scheduleResizeSync]);
+  }, [buildTerminalEndpoint, scheduleResizeSync, startupReadiness]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -297,9 +427,11 @@ export function CellTerminal({
 
     let disposed = false;
     outputRef.current = "";
+    visibleOutputRef.current = "";
     setSession(null);
     setConnection("connecting");
     setErrorMessage(null);
+    setIsStartupReady(startupReadiness === "session");
 
     const connectStream = () => {
       const source = new EventSource(buildTerminalEndpoint("stream"));
@@ -315,6 +447,9 @@ export function CellTerminal({
         setSession(payload);
         setConnection(payload.status === "exited" ? "exited" : "online");
         setErrorMessage(null);
+        if (startupReadiness === "session") {
+          setIsStartupReady(true);
+        }
         scheduleResizeSync();
       });
 
@@ -346,6 +481,10 @@ export function CellTerminal({
         }
 
         outputRef.current = snapshot;
+        visibleOutputRef.current = extractVisibleText(snapshot).slice(
+          -STARTUP_VISIBLE_BUFFER_LIMIT
+        );
+        updateStartupReadiness(visibleOutputRef.current);
         scheduleResizeSync();
       });
 
@@ -368,6 +507,11 @@ export function CellTerminal({
 
         terminal.write(chunk);
         outputRef.current = appendOutput(outputRef.current, chunk);
+        visibleOutputRef.current = appendVisibleBuffer(
+          visibleOutputRef.current,
+          chunk
+        );
+        updateStartupReadiness(visibleOutputRef.current);
         setConnection((current) =>
           current === "exited" ? "exited" : "online"
         );
@@ -507,6 +651,8 @@ export function CellTerminal({
     sendInput,
     themeMode,
     terminalLineHeight,
+    startupReadiness,
+    updateStartupReadiness,
     wheelScrollBehavior,
   ]);
 
@@ -548,7 +694,10 @@ export function CellTerminal({
       : "bg-[#111416]/80 border-border/70";
   const loadingLabelTone =
     themeMode === "light" ? "text-[#7A5C2A]" : "text-[#FFC857]";
-  const showLoadingOverlay = connection === "connecting" && !session;
+  const loadingBackdropTone =
+    themeMode === "light" ? "bg-[#F6F1E6]/96" : "bg-[#070504]/94";
+  const showLoadingOverlay =
+    !isStartupReady && connection !== "disconnected" && connection !== "exited";
   let footer: ReactNode = null;
   if (errorMessage) {
     footer = (
@@ -633,9 +782,14 @@ export function CellTerminal({
         <div
           className={`relative min-h-0 flex-1 border border-border/70 p-2 ${terminalFrameTone}`}
         >
-          <div className="h-full min-h-0 w-full" ref={containerRef} />
+          <div
+            className={`h-full min-h-0 w-full ${showLoadingOverlay ? "opacity-0" : "opacity-100"}`}
+            ref={containerRef}
+          />
           {showLoadingOverlay ? (
-            <div className="pointer-events-none absolute inset-2 flex items-center justify-center">
+            <div
+              className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center ${loadingBackdropTone}`}
+            >
               <div
                 className={`flex items-center gap-2 border px-3 py-2 text-[11px] uppercase tracking-[0.24em] ${loadingPanelTone} ${loadingLabelTone}`}
               >
