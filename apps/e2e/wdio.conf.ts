@@ -1,5 +1,13 @@
+import { join } from "node:path";
+import VideoReporter from "wdio-video-reporter";
+
 const isHeaded = process.env.HIVE_E2E_HEADED === "1";
 const baseUrl = process.env.HIVE_E2E_BASE_URL ?? "http://127.0.0.1:3001";
+const artifactsDir =
+  process.env.HIVE_E2E_ARTIFACTS_DIR ??
+  join(process.cwd(), "reports", "latest");
+const allureResultsDir = join(artifactsDir, "allure-results");
+const videosDir = join(artifactsDir, "videos");
 
 export const config = {
   runner: "local",
@@ -7,11 +15,30 @@ export const config = {
   specs: ["./specs/**/*.e2e.ts"],
   maxInstances: 1,
   logLevel: "info",
+  outputDir: artifactsDir,
   baseUrl,
   mochaOpts: {
     timeout: 180_000,
   },
-  reporters: ["spec"],
+  reporters: [
+    "spec",
+    [
+      VideoReporter,
+      {
+        saveAllVideos: true,
+        videoSlowdownMultiplier: 3,
+        outputDir: videosDir,
+      },
+    ],
+    [
+      "allure",
+      {
+        outputDir: allureResultsDir,
+        disableWebdriverStepsReporting: true,
+        disableWebdriverScreenshotsReporting: false,
+      },
+    ],
+  ],
   capabilities: [
     {
       browserName: "chrome",

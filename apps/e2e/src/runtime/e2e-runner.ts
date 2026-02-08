@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRuntimeContext } from "./runtime-context";
@@ -35,6 +35,7 @@ type CommandOptions = {
 const modulePath = fileURLToPath(import.meta.url);
 const moduleDir = dirname(modulePath);
 const e2eRoot = join(moduleDir, "..", "..");
+const stableArtifactsDir = join(e2eRoot, "reports", "latest");
 const repoRoot = join(e2eRoot, "..", "..");
 const serverRoot = join(repoRoot, "apps", "server");
 const webRoot = join(repoRoot, "apps", "web");
@@ -126,12 +127,24 @@ async function run() {
         .map((managedProcess) => stopManagedProcess(managedProcess))
     );
 
+    await publishArtifacts(context.artifactsDir, stableArtifactsDir);
+    process.stdout.write(`E2E reports: ${stableArtifactsDir}\n`);
+
     if (!KEEP_ARTIFACTS && runSucceeded) {
       await rm(context.runRoot, { recursive: true, force: true });
     } else {
       process.stdout.write(`E2E run artifacts: ${context.runRoot}\n`);
     }
   }
+}
+
+async function publishArtifacts(
+  sourceArtifactsDir: string,
+  targetArtifactsDir: string
+): Promise<void> {
+  await rm(targetArtifactsDir, { recursive: true, force: true });
+  await mkdir(targetArtifactsDir, { recursive: true });
+  await cp(sourceArtifactsDir, targetArtifactsDir, { recursive: true });
 }
 
 function parseArgs(argv: string[]): ParsedArgs {

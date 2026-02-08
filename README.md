@@ -172,12 +172,19 @@ bun run test:e2e
 
 # Run headed mode for local debugging
 bun run test:e2e:headed
+
+# Build an Allure HTML report from latest run artifacts
+bun run test:e2e:report
+
+# Open the generated Allure report
+bun run test:e2e:report:open
 ```
 
 Notes:
 - The E2E harness creates a dedicated temp workspace and SQLite database per run.
 - Local dev DB/state are not reused.
-- Set `HIVE_E2E_KEEP_ARTIFACTS=1` to keep run logs/artifacts under `tmp/e2e-runs/`.
+- WDIO artifacts are copied to `apps/e2e/reports/latest/` (including videos for all tests).
+- Set `HIVE_E2E_KEEP_ARTIFACTS=1` to also keep raw run logs/artifacts under `tmp/e2e-runs/`.
 
 ### Git Hooks & Validation
 
@@ -209,6 +216,8 @@ Notes:
 - `bun test:run`: Run unit tests once (CI mode)
 - `bun test:e2e`: Run WebdriverIO true E2E suite (opt-in)
 - `bun test:e2e:headed`: Run WebdriverIO in headed Chromium mode
+- `bun test:e2e:report`: Generate Allure HTML report from latest E2E run
+- `bun test:e2e:report:open`: Open generated Allure report locally
 
 ### Quality Checks
 - `bun check`: Run all pre-commit checks (alias for `check:commit`)
