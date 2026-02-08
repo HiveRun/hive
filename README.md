@@ -164,7 +164,20 @@ bun test:run
 **Test location:** `apps/server/src/**/*.test.ts`
 
 ### UI Testing
-UI E2E testing is currently not configured in this repo.
+True end-to-end browser testing runs with WebdriverIO (Chromium only for now).
+
+```bash
+# Run true E2E flow (starts isolated API + web + dedicated DB)
+bun run test:e2e
+
+# Run headed mode for local debugging
+bun run test:e2e:headed
+```
+
+Notes:
+- The E2E harness creates a dedicated temp workspace and SQLite database per run.
+- Local dev DB/state are not reused.
+- Set `HIVE_E2E_KEEP_ARTIFACTS=1` to keep run logs/artifacts under `tmp/e2e-runs/`.
 
 ### Git Hooks & Validation
 
@@ -194,6 +207,8 @@ UI E2E testing is currently not configured in this repo.
 ### Testing
 - `bun test`: Run unit tests in watch mode
 - `bun test:run`: Run unit tests once (CI mode)
+- `bun test:e2e`: Run WebdriverIO true E2E suite (opt-in)
+- `bun test:e2e:headed`: Run WebdriverIO in headed Chromium mode
 
 ### Quality Checks
 - `bun check`: Run all pre-commit checks (alias for `check:commit`)

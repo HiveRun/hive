@@ -393,7 +393,11 @@ function WorkspaceSection({
   });
 
   return (
-    <div className="flex flex-col gap-1">
+    <div
+      className="flex flex-col gap-1"
+      data-testid="workspace-section"
+      data-workspace-id={workspace.id}
+    >
       <SidebarMenuItem>
         <div className="flex items-center gap-1">
           <SidebarMenuButton
@@ -421,6 +425,7 @@ function WorkspaceSection({
           <button
             aria-label={`Create new cell in ${workspace.label}`}
             className="flex size-7 shrink-0 items-center justify-center rounded border-2 border-border/40 bg-transparent text-muted-foreground opacity-80 transition-none hover:border-border/70 hover:bg-primary/5 hover:text-foreground hover:opacity-100"
+            data-testid="workspace-create-cell"
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -509,6 +514,7 @@ function renderWorkspaceCells({
           <Link
             aria-label={cell.name}
             className="flex min-w-0 items-center gap-2"
+            data-testid="workspace-cell-link"
             search={{ workspaceId }}
             to={cellPath}
           >

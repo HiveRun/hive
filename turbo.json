@@ -54,6 +54,16 @@
         "**/package.json"
       ]
     },
+    "test:e2e": {
+      "dependsOn": ["^test:e2e"],
+      "cache": false,
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "**/wdio.conf.*",
+        "package.json",
+        "**/package.json"
+      ]
+    },
     "dev": {
       "cache": false,
       "persistent": true

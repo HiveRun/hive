@@ -565,7 +565,10 @@ export function CellTerminal({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
+    <div
+      className="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-border bg-card"
+      data-testid="cell-terminal"
+    >
       <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4">
         <header className="flex flex-wrap items-center justify-between gap-2 border-border/60 border-b pb-2">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -574,6 +577,8 @@ export function CellTerminal({
             </p>
             <span
               className={`text-[11px] uppercase tracking-[0.25em] ${statusTone}`}
+              data-connection-state={connection}
+              data-testid="terminal-connection"
             >
               {connectionLabel}
             </span>
@@ -633,7 +638,11 @@ export function CellTerminal({
         <div
           className={`relative min-h-0 flex-1 border border-border/70 p-2 ${terminalFrameTone}`}
         >
-          <div className="h-full min-h-0 w-full" ref={containerRef} />
+          <div
+            className="h-full min-h-0 w-full"
+            data-testid="cell-terminal-input"
+            ref={containerRef}
+          />
           {showLoadingOverlay ? (
             <div className="pointer-events-none absolute inset-2 flex items-center justify-center">
               <div

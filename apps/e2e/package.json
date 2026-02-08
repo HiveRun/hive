@@ -1,0 +1,21 @@
+{
+  "name": "@hive/e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:e2e": "bun run src/runtime/e2e-runner.ts",
+    "test:e2e:headed": "HIVE_E2E_HEADED=1 bun run src/runtime/e2e-runner.ts"
+  },
+  "devDependencies": {
+    "@wdio/cli": "^8.43.0",
+    "@wdio/globals": "^8.43.0",
+    "@wdio/local-runner": "^8.43.0",
+    "@wdio/mocha-framework": "^8.43.0",
+    "@wdio/spec-reporter": "^8.43.0",
+    "@types/mocha": "^10.0.10",
+    "tsx": "^4.20.6",
+    "ts-node": "^10.9.2",
+    "typescript": "catalog:",
+    "webdriverio": "^8.43.0"
+  }
+}

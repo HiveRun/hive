@@ -249,6 +249,7 @@ export function CellForm({
         )}
         <form
           className="space-y-6"
+          data-testid="cell-form"
           onSubmit={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -265,6 +266,7 @@ export function CellForm({
               <div className="space-y-2">
                 <Label htmlFor={field.name}>Name</Label>
                 <Input
+                  data-testid="cell-name-input"
                   disabled={mutation.isPending}
                   id={field.name}
                   onChange={(event) => field.handleChange(event.target.value)}
@@ -378,7 +380,11 @@ export function CellForm({
                 Cancel
               </Button>
             )}
-            <Button disabled={mutation.isPending} type="submit">
+            <Button
+              data-testid="cell-submit-button"
+              disabled={mutation.isPending}
+              type="submit"
+            >
               {mutation.isPending ? "Creating..." : "Create Cell"}
             </Button>
           </div>
