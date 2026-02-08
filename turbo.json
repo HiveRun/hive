@@ -59,7 +59,7 @@
       "cache": false,
       "inputs": [
         "$TURBO_DEFAULT$",
-        "**/wdio.conf.*",
+        "**/playwright.config.*",
         "package.json",
         "**/package.json"
       ]

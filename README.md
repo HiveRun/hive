@@ -164,7 +164,7 @@ bun test:run
 **Test location:** `apps/server/src/**/*.test.ts`
 
 ### UI Testing
-True end-to-end browser testing runs with WebdriverIO (Chromium only for now).
+True end-to-end browser testing runs with Playwright (Chromium only for now).
 
 ```bash
 # Run true E2E flow (starts isolated API + web + dedicated DB)
@@ -173,20 +173,20 @@ bun run test:e2e
 # Run headed mode for local debugging
 bun run test:e2e:headed
 
-# Build an Allure HTML report from latest run artifacts
+# Open the latest Playwright HTML report
 bun run test:e2e:report
 
-# Open the generated Allure report
+# Alias for opening the Playwright report
 bun run test:e2e:report:open
 
-# Generate + open a temporary report server directly
+# Serve/open the Playwright report directly
 bun run test:e2e:report:serve
 ```
 
 Notes:
 - The E2E harness creates a dedicated temp workspace and SQLite database per run.
 - Local dev DB/state are not reused.
-- WDIO artifacts are copied to `apps/e2e/reports/latest/` (including videos for all tests).
+- Playwright artifacts are copied to `apps/e2e/reports/latest/` (including per-test videos and `playwright-report`).
 - Set `HIVE_E2E_KEEP_ARTIFACTS=1` to also keep raw run logs/artifacts under `tmp/e2e-runs/`.
 
 ### Git Hooks & Validation
@@ -217,11 +217,11 @@ Notes:
 ### Testing
 - `bun test`: Run unit tests in watch mode
 - `bun test:run`: Run unit tests once (CI mode)
-- `bun test:e2e`: Run WebdriverIO true E2E suite (opt-in)
-- `bun test:e2e:headed`: Run WebdriverIO in headed Chromium mode
-- `bun test:e2e:report`: Generate Allure 3 HTML report from latest E2E run
-- `bun test:e2e:report:open`: Open generated Allure report locally
-- `bun test:e2e:report:serve`: Serve Allure report directly from result files
+- `bun test:e2e`: Run Playwright true E2E suite (opt-in)
+- `bun test:e2e:headed`: Run Playwright in headed Chromium mode
+- `bun test:e2e:report`: Open the latest Playwright HTML report
+- `bun test:e2e:report:open`: Alias for opening the Playwright report
+- `bun test:e2e:report:serve`: Serve/open the Playwright report directly
 
 ### Quality Checks
 - `bun check`: Run all pre-commit checks (alias for `check:commit`)

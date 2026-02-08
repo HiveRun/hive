@@ -1,9 +1,5 @@
-import allureReporter from "@wdio/allure-reporter";
-import { $, browser } from "@wdio/globals";
+import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import { selectors } from "../src/selectors";
-
-declare const describe: (name: string, fn: () => void) => void;
-declare const it: (name: string, fn: () => Promise<void>) => void;
 
 type AgentSession = {
   id: string;
@@ -31,75 +27,64 @@ const OUTPUT_QUIET_WINDOW_MS = 3000;
 const MIN_RESPONSE_GROWTH_CHARS = 20;
 const SEND_ATTEMPTS = 2;
 const SEND_ATTEMPT_TIMEOUT_MS = 20_000;
+const FINAL_VIDEO_SETTLE_MS = 1500;
+const POLL_INTERVAL_MS = 500;
 const CELL_CHAT_URL_PATTERN = /\/cells\/[^/]+\/chat/;
 const CELL_ID_PATTERN = /\/cells\/([^/]+)\/chat/;
 
-describe("cell chat flow", () => {
-  it("creates a cell and sends a chat message", async () => {
+test.describe("cell chat flow", () => {
+  test("creates a cell and sends a chat message", async ({
+    page,
+  }, testInfo) => {
     const apiUrl = process.env.HIVE_E2E_API_URL;
     if (!apiUrl) {
       throw new Error("HIVE_E2E_API_URL is required for E2E tests");
     }
 
-    await browser.url("/");
-
-    const createCellButton = await $(selectors.workspaceCreateCellButton);
-    await createCellButton.waitForClickable({ timeout: CHAT_ROUTE_TIMEOUT_MS });
-    await createCellButton.click();
-
-    const cellNameInput = await $(selectors.cellNameInput);
-    await cellNameInput.waitForDisplayed({ timeout: CHAT_ROUTE_TIMEOUT_MS });
+    await page.goto("/");
+    await page.locator(selectors.workspaceCreateCellButton).click();
 
     const testCellName = `E2E Cell ${Date.now()}`;
-    await cellNameInput.setValue(testCellName);
+    await page.locator(selectors.cellNameInput).fill(testCellName);
+    await page.locator(selectors.cellSubmitButton).click();
 
-    const submitButton = await $(selectors.cellSubmitButton);
-    await submitButton.click();
+    await expect(page).toHaveURL(CELL_CHAT_URL_PATTERN, {
+      timeout: CHAT_ROUTE_TIMEOUT_MS,
+    });
 
-    await browser.waitUntil(
-      async () => {
-        const url = await browser.getUrl();
-        return CELL_CHAT_URL_PATTERN.test(url);
-      },
-      {
-        timeout: CHAT_ROUTE_TIMEOUT_MS,
-        timeoutMsg: "Expected to navigate to cell chat route after creation",
-      }
-    );
+    const cellId = parseCellIdFromUrl(page.url());
 
-    const chatUrl = await browser.getUrl();
-    const cellId = parseCellIdFromUrl(chatUrl);
+    await expect
+      .poll(
+        async () =>
+          page
+            .locator(selectors.terminalConnectionBadge)
+            .getAttribute("data-connection-state"),
+        {
+          timeout: TERMINAL_READY_TIMEOUT_MS,
+          message: "Terminal connection never reached online state",
+        }
+      )
+      .toBe("online");
 
-    const terminalConnectionBadge = await $(selectors.terminalConnectionBadge);
-    await browser.waitUntil(
-      async () => {
-        const state = await terminalConnectionBadge.getAttribute(
-          "data-connection-state"
-        );
-        return state === "online";
-      },
-      {
-        timeout: TERMINAL_READY_TIMEOUT_MS,
-        timeoutMsg: "Terminal connection never reached online state",
-      }
-    );
-
-    await browser.waitUntil(
-      async () => {
-        const terminalReadySurface = await $(selectors.terminalReadySurface);
-        return terminalReadySurface.isExisting();
-      },
-      {
-        timeout: TERMINAL_READY_TIMEOUT_MS,
-        timeoutMsg: "Terminal shell was not marked ready for input",
-      }
-    );
+    await expect(page.locator(selectors.terminalReadySurface)).toBeVisible({
+      timeout: TERMINAL_READY_TIMEOUT_MS,
+    });
 
     const prompt = `E2E token ${Date.now()}`;
-    const baselineMetrics = await readTerminalMetrics();
-    await sendPromptWithRetries(apiUrl, cellId, prompt, baselineMetrics);
-    await attachFinalStateScreenshot(cellId);
-    await captureFinalVideoFrame();
+    const baselineMetrics = await readTerminalMetrics(page);
+
+    await sendPromptWithRetries({
+      apiUrl,
+      baselineMetrics,
+      cellId,
+      page,
+      prompt,
+    });
+
+    await attachFinalStateScreenshot({ cellId, page, testInfo });
+    await captureFinalVideoFrame(page);
+    await page.waitForTimeout(FINAL_VIDEO_SETTLE_MS);
   });
 });
 
@@ -115,16 +100,14 @@ async function waitForAgentSession(
   apiUrl: string,
   cellId: string
 ): Promise<AgentSession> {
-  await browser.waitUntil(
-    async () => {
+  await waitForCondition({
+    check: async () => {
       const session = await fetchAgentSession(apiUrl, cellId);
       return Boolean(session);
     },
-    {
-      timeout: SESSION_UPDATE_TIMEOUT_MS,
-      timeoutMsg: "Agent session was not available for the created cell",
-    }
-  );
+    errorMessage: "Agent session was not available for the created cell",
+    timeoutMs: SESSION_UPDATE_TIMEOUT_MS,
+  });
 
   const session = await fetchAgentSession(apiUrl, cellId);
   if (!session) {
@@ -157,8 +140,8 @@ async function waitForSessionToSettle(
   let latestUpdatedAt = "";
   let stableSince = 0;
 
-  await browser.waitUntil(
-    async () => {
+  await waitForCondition({
+    check: async () => {
       const session = await fetchAgentSession(apiUrl, cellId);
       if (!session) {
         return false;
@@ -180,51 +163,56 @@ async function waitForSessionToSettle(
 
       return Date.now() - stableSince >= SESSION_STABLE_WINDOW_MS;
     },
-    {
-      timeout: RESPONSE_SETTLE_TIMEOUT_MS,
-      timeoutMsg: "Agent session did not reach a stable post-send state",
-      interval: 1000,
-    }
-  );
+    errorMessage: "Agent session did not reach a stable post-send state",
+    intervalMs: 1000,
+    timeoutMs: RESPONSE_SETTLE_TIMEOUT_MS,
+  });
 }
 
-async function sendPromptWithRetries(
-  apiUrl: string,
-  cellId: string,
-  prompt: string,
-  baselineMetrics: TerminalMetrics
-): Promise<void> {
-  let baselineSession = await waitForAgentSession(apiUrl, cellId);
+async function sendPromptWithRetries(options: {
+  apiUrl: string;
+  baselineMetrics: TerminalMetrics;
+  cellId: string;
+  page: Page;
+  prompt: string;
+}): Promise<void> {
+  let baselineSession = await waitForAgentSession(
+    options.apiUrl,
+    options.cellId
+  );
 
   for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt += 1) {
-    await focusTerminalInput();
-    await browser.keys(prompt);
-    await browser.keys("Enter");
+    await focusTerminalInput(options.page);
+    await options.page.keyboard.type(options.prompt);
+    await options.page.keyboard.press("Enter");
 
     const updated = await waitForSessionUpdate(
-      apiUrl,
-      cellId,
+      options.apiUrl,
+      options.cellId,
       baselineSession,
       SEND_ATTEMPT_TIMEOUT_MS
     );
 
     if (updated) {
       await waitForAssistantOutput({
-        apiUrl,
-        baselineMetrics,
-        cellId,
+        apiUrl: options.apiUrl,
+        baselineMetrics: options.baselineMetrics,
+        cellId: options.cellId,
         firstUpdateAt: updated.updatedAt,
-        prompt,
+        page: options.page,
+        prompt: options.prompt,
         timeoutMs: ASSISTANT_OUTPUT_TIMEOUT_MS,
       });
 
-      await waitForSessionToSettle(apiUrl, cellId, updated.updatedAt).catch(
-        (error) => error
-      );
+      await waitForSessionToSettle(
+        options.apiUrl,
+        options.cellId,
+        updated.updatedAt
+      ).catch((error) => error);
       return;
     }
 
-    baselineSession = await waitForAgentSession(apiUrl, cellId);
+    baselineSession = await waitForAgentSession(options.apiUrl, options.cellId);
   }
 
   throw new Error(
@@ -241,8 +229,8 @@ async function waitForSessionUpdate(
   let updatedSession: AgentSession | null = null;
 
   try {
-    await browser.waitUntil(
-      async () => {
+    await waitForCondition({
+      check: async () => {
         const currentSession = await fetchAgentSession(apiUrl, cellId);
         if (!currentSession) {
           return false;
@@ -258,11 +246,11 @@ async function waitForSessionUpdate(
 
         return changed;
       },
-      {
-        timeout: timeoutMs,
-        interval: 1000,
-      }
-    );
+      errorMessage: "Session did not update after prompt send",
+      intervalMs: 1000,
+      timeoutMs,
+    });
+
     return updatedSession;
   } catch {
     return null;
@@ -274,12 +262,13 @@ async function waitForAssistantOutput(options: {
   baselineMetrics: TerminalMetrics;
   cellId: string;
   firstUpdateAt: string;
+  page: Page;
   prompt: string;
   timeoutMs: number;
 }): Promise<void> {
-  await browser.waitUntil(
-    async () => {
-      const metrics = await readTerminalMetrics();
+  await waitForCondition({
+    check: async () => {
+      const metrics = await readTerminalMetrics(options.page);
       const currentSession = await fetchAgentSession(
         options.apiUrl,
         options.cellId
@@ -293,6 +282,7 @@ async function waitForAssistantOutput(options: {
         metrics.outputSeq - options.baselineMetrics.outputSeq;
       const outputLengthGrowth =
         metrics.outputLength - options.baselineMetrics.outputLength;
+
       const outputSuggestsAssistantResponse =
         outputSeqGrowth >= 2 ||
         outputLengthGrowth >= options.prompt.length + MIN_RESPONSE_GROWTH_CHARS;
@@ -306,17 +296,15 @@ async function waitForAssistantOutput(options: {
 
       return Date.now() - metrics.outputUpdatedAt >= OUTPUT_QUIET_WINDOW_MS;
     },
-    {
-      timeout: options.timeoutMs,
-      interval: 1000,
-      timeoutMsg:
-        "Agent response was not observed in terminal output after sending prompt",
-    }
-  );
+    errorMessage:
+      "Agent response was not observed in terminal output after sending prompt",
+    intervalMs: 1000,
+    timeoutMs: options.timeoutMs,
+  });
 }
 
-async function readTerminalMetrics(): Promise<TerminalMetrics> {
-  const terminalRoot = await $(selectors.terminalRoot);
+async function readTerminalMetrics(page: Page): Promise<TerminalMetrics> {
+  const terminalRoot = page.locator(selectors.terminalRoot);
 
   const [outputLengthRaw, outputSeqRaw, outputUpdatedAtRaw] = await Promise.all(
     [
@@ -333,49 +321,61 @@ async function readTerminalMetrics(): Promise<TerminalMetrics> {
   };
 }
 
-async function focusTerminalInput(): Promise<void> {
-  const terminalInputSurface = await $(selectors.terminalInputSurface);
-  await terminalInputSurface.waitForDisplayed({
-    timeout: TERMINAL_READY_TIMEOUT_MS,
-  });
-  await terminalInputSurface.click();
+async function focusTerminalInput(page: Page): Promise<void> {
+  await page.locator(selectors.terminalInputSurface).click();
+  await page.locator(selectors.terminalInputTextarea).focus();
 
-  const inputTextarea = await $(selectors.terminalInputTextarea);
-  await inputTextarea.waitForExist({ timeout: TERMINAL_READY_TIMEOUT_MS });
-  await browser.execute(() => {
-    const textarea = document.querySelector(
-      '[data-testid="cell-terminal-input"] .xterm-helper-textarea'
-    ) as HTMLTextAreaElement | null;
-    textarea?.focus();
-  });
-
-  await browser.waitUntil(
-    async () => {
-      const isFocused = await browser.execute(() => {
+  await waitForCondition({
+    check: async () =>
+      page.evaluate(() => {
         const active = document.activeElement;
         return active?.classList.contains("xterm-helper-textarea") ?? false;
-      });
-      return isFocused;
-    },
-    {
-      timeout: 10_000,
-      timeoutMsg: "Terminal input textarea did not receive focus",
-    }
-  );
+      }),
+    errorMessage: "Terminal input textarea did not receive focus",
+    timeoutMs: 10_000,
+  });
 }
 
-async function attachFinalStateScreenshot(cellId: string): Promise<void> {
-  const screenshotBase64 = await browser.takeScreenshot();
-  allureReporter.addAttachment(
-    `Final terminal state (${cellId})`,
-    Buffer.from(screenshotBase64, "base64"),
-    "image/png"
-  );
+async function attachFinalStateScreenshot(options: {
+  cellId: string;
+  page: Page;
+  testInfo: TestInfo;
+}): Promise<void> {
+  const screenshotBuffer = await options.page.screenshot();
+  await options.testInfo.attach(`Final terminal state (${options.cellId})`, {
+    body: screenshotBuffer,
+    contentType: "image/png",
+  });
 }
 
-async function captureFinalVideoFrame(): Promise<void> {
-  await browser.execute(() => {
+async function captureFinalVideoFrame(page: Page): Promise<void> {
+  await page.evaluate(() => {
     const terminal = document.querySelector('[data-testid="cell-terminal"]');
     terminal?.setAttribute("data-e2e-final-frame", String(Date.now()));
+  });
+}
+
+async function waitForCondition(options: {
+  check: () => Promise<boolean>;
+  errorMessage: string;
+  timeoutMs: number;
+  intervalMs?: number;
+}): Promise<void> {
+  const startedAt = Date.now();
+  const intervalMs = options.intervalMs ?? POLL_INTERVAL_MS;
+
+  while (Date.now() - startedAt < options.timeoutMs) {
+    if (await options.check()) {
+      return;
+    }
+    await wait(intervalMs);
+  }
+
+  throw new Error(options.errorMessage);
+}
+
+async function wait(ms: number): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms);
   });
 }
