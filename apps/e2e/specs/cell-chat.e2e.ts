@@ -15,11 +15,20 @@ type AgentSessionResponse = {
   session: AgentSession | null;
 };
 
+type TerminalMetrics = {
+  outputLength: number;
+  outputSeq: number;
+  outputUpdatedAt: number;
+};
+
 const CHAT_ROUTE_TIMEOUT_MS = 120_000;
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
 const SESSION_UPDATE_TIMEOUT_MS = 120_000;
+const ASSISTANT_OUTPUT_TIMEOUT_MS = 120_000;
 const RESPONSE_SETTLE_TIMEOUT_MS = 30_000;
 const SESSION_STABLE_WINDOW_MS = 3000;
+const OUTPUT_QUIET_WINDOW_MS = 3000;
+const MIN_RESPONSE_GROWTH_CHARS = 20;
 const SEND_ATTEMPTS = 2;
 const SEND_ATTEMPT_TIMEOUT_MS = 20_000;
 const CELL_CHAT_URL_PATTERN = /\/cells\/[^/]+\/chat/;
@@ -87,8 +96,10 @@ describe("cell chat flow", () => {
     );
 
     const prompt = `E2E token ${Date.now()}`;
-    await sendPromptWithRetries(apiUrl, cellId, prompt);
+    const baselineMetrics = await readTerminalMetrics();
+    await sendPromptWithRetries(apiUrl, cellId, prompt, baselineMetrics);
     await attachFinalStateScreenshot(cellId);
+    await captureFinalVideoFrame();
   });
 });
 
@@ -180,7 +191,8 @@ async function waitForSessionToSettle(
 async function sendPromptWithRetries(
   apiUrl: string,
   cellId: string,
-  prompt: string
+  prompt: string,
+  baselineMetrics: TerminalMetrics
 ): Promise<void> {
   let baselineSession = await waitForAgentSession(apiUrl, cellId);
 
@@ -197,11 +209,18 @@ async function sendPromptWithRetries(
     );
 
     if (updated) {
-      await waitForSessionToSettle(
+      await waitForAssistantOutput({
         apiUrl,
+        baselineMetrics,
         cellId,
-        baselineSession.updatedAt
-      ).catch((error) => error);
+        firstUpdateAt: updated.updatedAt,
+        prompt,
+        timeoutMs: ASSISTANT_OUTPUT_TIMEOUT_MS,
+      });
+
+      await waitForSessionToSettle(apiUrl, cellId, updated.updatedAt).catch(
+        (error) => error
+      );
       return;
     }
 
@@ -218,7 +237,9 @@ async function waitForSessionUpdate(
   cellId: string,
   baselineSession: AgentSession,
   timeoutMs: number
-): Promise<boolean> {
+): Promise<AgentSession | null> {
+  let updatedSession: AgentSession | null = null;
+
   try {
     await browser.waitUntil(
       async () => {
@@ -227,20 +248,89 @@ async function waitForSessionUpdate(
           return false;
         }
 
-        return (
+        const changed =
           currentSession.updatedAt !== baselineSession.updatedAt ||
-          currentSession.status !== baselineSession.status
-        );
+          currentSession.status !== baselineSession.status;
+
+        if (changed) {
+          updatedSession = currentSession;
+        }
+
+        return changed;
       },
       {
         timeout: timeoutMs,
         interval: 1000,
       }
     );
-    return true;
+    return updatedSession;
   } catch {
-    return false;
+    return null;
   }
+}
+
+async function waitForAssistantOutput(options: {
+  apiUrl: string;
+  baselineMetrics: TerminalMetrics;
+  cellId: string;
+  firstUpdateAt: string;
+  prompt: string;
+  timeoutMs: number;
+}): Promise<void> {
+  await browser.waitUntil(
+    async () => {
+      const metrics = await readTerminalMetrics();
+      const currentSession = await fetchAgentSession(
+        options.apiUrl,
+        options.cellId
+      );
+
+      const hasSecondSessionUpdate =
+        currentSession?.updatedAt !== undefined &&
+        currentSession.updatedAt !== options.firstUpdateAt;
+
+      const outputSeqGrowth =
+        metrics.outputSeq - options.baselineMetrics.outputSeq;
+      const outputLengthGrowth =
+        metrics.outputLength - options.baselineMetrics.outputLength;
+      const outputSuggestsAssistantResponse =
+        outputSeqGrowth >= 2 ||
+        outputLengthGrowth >= options.prompt.length + MIN_RESPONSE_GROWTH_CHARS;
+
+      const hasResponseSignal =
+        hasSecondSessionUpdate || outputSuggestsAssistantResponse;
+
+      if (!hasResponseSignal || metrics.outputUpdatedAt <= 0) {
+        return false;
+      }
+
+      return Date.now() - metrics.outputUpdatedAt >= OUTPUT_QUIET_WINDOW_MS;
+    },
+    {
+      timeout: options.timeoutMs,
+      interval: 1000,
+      timeoutMsg:
+        "Agent response was not observed in terminal output after sending prompt",
+    }
+  );
+}
+
+async function readTerminalMetrics(): Promise<TerminalMetrics> {
+  const terminalRoot = await $(selectors.terminalRoot);
+
+  const [outputLengthRaw, outputSeqRaw, outputUpdatedAtRaw] = await Promise.all(
+    [
+      terminalRoot.getAttribute("data-terminal-output-length"),
+      terminalRoot.getAttribute("data-terminal-output-seq"),
+      terminalRoot.getAttribute("data-terminal-output-updated-at"),
+    ]
+  );
+
+  return {
+    outputLength: Number(outputLengthRaw ?? "0"),
+    outputSeq: Number(outputSeqRaw ?? "0"),
+    outputUpdatedAt: Number(outputUpdatedAtRaw ?? "0"),
+  };
 }
 
 async function focusTerminalInput(): Promise<void> {
@@ -281,4 +371,11 @@ async function attachFinalStateScreenshot(cellId: string): Promise<void> {
     Buffer.from(screenshotBase64, "base64"),
     "image/png"
   );
+}
+
+async function captureFinalVideoFrame(): Promise<void> {
+  await browser.execute(() => {
+    const terminal = document.querySelector('[data-testid="cell-terminal"]');
+    terminal?.setAttribute("data-e2e-final-frame", String(Date.now()));
+  });
 }

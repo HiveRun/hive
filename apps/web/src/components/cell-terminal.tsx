@@ -163,6 +163,9 @@ export function CellTerminal({
   const [session, setSession] = useState<TerminalSession | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
   const [isTerminalInitialized, setIsTerminalInitialized] = useState(false);
+  const [terminalOutputSeq, setTerminalOutputSeq] = useState(0);
+  const [terminalOutputLength, setTerminalOutputLength] = useState(0);
+  const [terminalOutputUpdatedAt, setTerminalOutputUpdatedAt] = useState(0);
   const terminalApiBase = `${API_BASE}/api/cells/${cellId}/${endpointBase}`;
   const buildTerminalEndpoint = useCallback(
     (path: string) => `${terminalApiBase}/${path}?themeMode=${themeMode}`,
@@ -231,6 +234,12 @@ export function CellTerminal({
       });
     }, RESIZE_DEBOUNCE_MS);
   }, [sendResize]);
+
+  const recordOutputActivity = useCallback((nextOutput: string) => {
+    setTerminalOutputSeq((current) => current + 1);
+    setTerminalOutputLength(nextOutput.length);
+    setTerminalOutputUpdatedAt(Date.now());
+  }, []);
 
   const copyTerminalOutput = useCallback(async () => {
     try {
@@ -302,6 +311,9 @@ export function CellTerminal({
     setConnection("connecting");
     setErrorMessage(null);
     setIsTerminalInitialized(false);
+    setTerminalOutputSeq(0);
+    setTerminalOutputLength(0);
+    setTerminalOutputUpdatedAt(0);
 
     const connectStream = () => {
       const source = new EventSource(buildTerminalEndpoint("stream"));
@@ -334,6 +346,7 @@ export function CellTerminal({
           output: string;
         };
         const snapshot = payload.output ?? "";
+        const previousOutput = outputRef.current;
 
         if (snapshot.startsWith(outputRef.current)) {
           const delta = snapshot.slice(outputRef.current.length);
@@ -348,6 +361,9 @@ export function CellTerminal({
         }
 
         outputRef.current = snapshot;
+        if (snapshot !== previousOutput) {
+          recordOutputActivity(snapshot);
+        }
         scheduleResizeSync();
       });
 
@@ -370,6 +386,7 @@ export function CellTerminal({
 
         terminal.write(chunk);
         outputRef.current = appendOutput(outputRef.current, chunk);
+        recordOutputActivity(outputRef.current);
         setConnection((current) =>
           current === "exited" ? "exited" : "online"
         );
@@ -512,6 +529,7 @@ export function CellTerminal({
     themeMode,
     terminalLineHeight,
     wheelScrollBehavior,
+    recordOutputActivity,
   ]);
 
   const connectionLabelMap: Record<ConnectionState, string> = {
@@ -575,6 +593,9 @@ export function CellTerminal({
   return (
     <div
       className="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-border bg-card"
+      data-terminal-output-length={String(terminalOutputLength)}
+      data-terminal-output-seq={String(terminalOutputSeq)}
+      data-terminal-output-updated-at={String(terminalOutputUpdatedAt)}
       data-terminal-ready={terminalReady ? "true" : "false"}
       data-testid="cell-terminal"
     >

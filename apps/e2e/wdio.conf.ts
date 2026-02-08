@@ -28,6 +28,8 @@ export const config = {
       {
         saveAllVideos: true,
         videoSlowdownMultiplier: 3,
+        screenshotIntervalSecs: 1,
+        videoRenderTimeout: 30_000,
         outputDir: videosDir,
       },
     ],
