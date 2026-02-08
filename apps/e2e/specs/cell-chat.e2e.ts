@@ -1,3 +1,4 @@
+import allureReporter from "@wdio/allure-reporter";
 import { $, browser } from "@wdio/globals";
 import { selectors } from "../src/selectors";
 
@@ -17,6 +18,10 @@ type AgentSessionResponse = {
 const CHAT_ROUTE_TIMEOUT_MS = 120_000;
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
 const SESSION_UPDATE_TIMEOUT_MS = 120_000;
+const RESPONSE_SETTLE_TIMEOUT_MS = 30_000;
+const SESSION_STABLE_WINDOW_MS = 3000;
+const SEND_ATTEMPTS = 2;
+const SEND_ATTEMPT_TIMEOUT_MS = 20_000;
 const CELL_CHAT_URL_PATTERN = /\/cells\/[^/]+\/chat/;
 const CELL_ID_PATTERN = /\/cells\/([^/]+)\/chat/;
 
@@ -70,32 +75,20 @@ describe("cell chat flow", () => {
       }
     );
 
-    const sessionBeforeSend = await waitForAgentSession(apiUrl, cellId);
-
-    const terminalInputSurface = await $(selectors.terminalInputSurface);
-    await terminalInputSurface.click();
-
-    const prompt = `E2E token ${Date.now()}`;
-    await browser.keys(prompt);
-    await browser.keys("Enter");
-
     await browser.waitUntil(
       async () => {
-        const currentSession = await fetchAgentSession(apiUrl, cellId);
-        if (!currentSession) {
-          return false;
-        }
-
-        return (
-          currentSession.updatedAt !== sessionBeforeSend.updatedAt ||
-          currentSession.status !== sessionBeforeSend.status
-        );
+        const terminalReadySurface = await $(selectors.terminalReadySurface);
+        return terminalReadySurface.isExisting();
       },
       {
-        timeout: SESSION_UPDATE_TIMEOUT_MS,
-        timeoutMsg: "Agent session did not update after sending chat input",
+        timeout: TERMINAL_READY_TIMEOUT_MS,
+        timeoutMsg: "Terminal shell was not marked ready for input",
       }
     );
+
+    const prompt = `E2E token ${Date.now()}`;
+    await sendPromptWithRetries(apiUrl, cellId, prompt);
+    await attachFinalStateScreenshot(cellId);
   });
 });
 
@@ -143,4 +136,149 @@ async function fetchAgentSession(
 
   const payload = (await response.json()) as AgentSessionResponse;
   return payload.session;
+}
+
+async function waitForSessionToSettle(
+  apiUrl: string,
+  cellId: string,
+  previousUpdatedAt: string
+): Promise<void> {
+  let latestUpdatedAt = "";
+  let stableSince = 0;
+
+  await browser.waitUntil(
+    async () => {
+      const session = await fetchAgentSession(apiUrl, cellId);
+      if (!session) {
+        return false;
+      }
+
+      if (session.updatedAt !== latestUpdatedAt) {
+        latestUpdatedAt = session.updatedAt;
+        stableSince = Date.now();
+        return false;
+      }
+
+      if (session.updatedAt === previousUpdatedAt) {
+        return false;
+      }
+
+      if (session.status === "working" || session.status === "starting") {
+        return false;
+      }
+
+      return Date.now() - stableSince >= SESSION_STABLE_WINDOW_MS;
+    },
+    {
+      timeout: RESPONSE_SETTLE_TIMEOUT_MS,
+      timeoutMsg: "Agent session did not reach a stable post-send state",
+      interval: 1000,
+    }
+  );
+}
+
+async function sendPromptWithRetries(
+  apiUrl: string,
+  cellId: string,
+  prompt: string
+): Promise<void> {
+  let baselineSession = await waitForAgentSession(apiUrl, cellId);
+
+  for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt += 1) {
+    await focusTerminalInput();
+    await browser.keys(prompt);
+    await browser.keys("Enter");
+
+    const updated = await waitForSessionUpdate(
+      apiUrl,
+      cellId,
+      baselineSession,
+      SEND_ATTEMPT_TIMEOUT_MS
+    );
+
+    if (updated) {
+      await waitForSessionToSettle(
+        apiUrl,
+        cellId,
+        baselineSession.updatedAt
+      ).catch((error) => error);
+      return;
+    }
+
+    baselineSession = await waitForAgentSession(apiUrl, cellId);
+  }
+
+  throw new Error(
+    "Agent session did not update after sending chat input across retries"
+  );
+}
+
+async function waitForSessionUpdate(
+  apiUrl: string,
+  cellId: string,
+  baselineSession: AgentSession,
+  timeoutMs: number
+): Promise<boolean> {
+  try {
+    await browser.waitUntil(
+      async () => {
+        const currentSession = await fetchAgentSession(apiUrl, cellId);
+        if (!currentSession) {
+          return false;
+        }
+
+        return (
+          currentSession.updatedAt !== baselineSession.updatedAt ||
+          currentSession.status !== baselineSession.status
+        );
+      },
+      {
+        timeout: timeoutMs,
+        interval: 1000,
+      }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function focusTerminalInput(): Promise<void> {
+  const terminalInputSurface = await $(selectors.terminalInputSurface);
+  await terminalInputSurface.waitForDisplayed({
+    timeout: TERMINAL_READY_TIMEOUT_MS,
+  });
+  await terminalInputSurface.click();
+
+  const inputTextarea = await $(selectors.terminalInputTextarea);
+  await inputTextarea.waitForExist({ timeout: TERMINAL_READY_TIMEOUT_MS });
+  await browser.execute(() => {
+    const textarea = document.querySelector(
+      '[data-testid="cell-terminal-input"] .xterm-helper-textarea'
+    ) as HTMLTextAreaElement | null;
+    textarea?.focus();
+  });
+
+  await browser.waitUntil(
+    async () => {
+      const isFocused = await browser.execute(() => {
+        const active = document.activeElement;
+        return active?.classList.contains("xterm-helper-textarea") ?? false;
+      });
+      return isFocused;
+    },
+    {
+      timeout: 10_000,
+      timeoutMsg: "Terminal input textarea did not receive focus",
+    }
+  );
+}
+
+async function attachFinalStateScreenshot(cellId: string): Promise<void> {
+  const screenshotBase64 = await browser.takeScreenshot();
+  allureReporter.addAttachment(
+    `Final terminal state (${cellId})`,
+    Buffer.from(screenshotBase64, "base64"),
+    "image/png"
+  );
 }

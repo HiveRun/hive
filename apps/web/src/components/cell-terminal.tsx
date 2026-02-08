@@ -162,6 +162,7 @@ export function CellTerminal({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [session, setSession] = useState<TerminalSession | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
+  const [isTerminalInitialized, setIsTerminalInitialized] = useState(false);
   const terminalApiBase = `${API_BASE}/api/cells/${cellId}/${endpointBase}`;
   const buildTerminalEndpoint = useCallback(
     (path: string) => `${terminalApiBase}/${path}?themeMode=${themeMode}`,
@@ -300,6 +301,7 @@ export function CellTerminal({
     setSession(null);
     setConnection("connecting");
     setErrorMessage(null);
+    setIsTerminalInitialized(false);
 
     const connectStream = () => {
       const source = new EventSource(buildTerminalEndpoint("stream"));
@@ -446,6 +448,7 @@ export function CellTerminal({
       terminalRef.current = terminal;
       fitAddonRef.current = fitAddon;
       serializeAddonRef.current = serializeAddon;
+      setIsTerminalInitialized(true);
 
       terminal.onData((data) => {
         sendInput(data);
@@ -500,6 +503,7 @@ export function CellTerminal({
       terminalRef.current = null;
       fitAddonRef.current = null;
       serializeAddonRef.current = null;
+      setIsTerminalInitialized(false);
     };
   }, [
     buildTerminalEndpoint,
@@ -549,6 +553,10 @@ export function CellTerminal({
   const loadingLabelTone =
     themeMode === "light" ? "text-[#7A5C2A]" : "text-[#FFC857]";
   const showLoadingOverlay = connection === "connecting" && !session;
+  const terminalReady =
+    isTerminalInitialized &&
+    connection === "online" &&
+    session?.status === "running";
   let footer: ReactNode = null;
   if (errorMessage) {
     footer = (
@@ -567,6 +575,7 @@ export function CellTerminal({
   return (
     <div
       className="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-border bg-card"
+      data-terminal-ready={terminalReady ? "true" : "false"}
       data-testid="cell-terminal"
     >
       <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4">
