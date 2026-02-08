@@ -5,8 +5,9 @@
   "scripts": {
     "test:e2e": "bun run src/runtime/e2e-runner.ts",
     "test:e2e:headed": "HIVE_E2E_HEADED=1 bun run src/runtime/e2e-runner.ts",
-    "report:e2e": "allure generate reports/latest/allure-results --clean -o reports/latest/allure-report",
-    "report:e2e:open": "allure open reports/latest/allure-report"
+    "report:e2e": "allure generate --output reports/latest/allure-report reports/latest/allure-results",
+    "report:e2e:open": "allure open reports/latest/allure-report",
+    "report:e2e:serve": "allure serve reports/latest/allure-results"
   },
   "devDependencies": {
     "@wdio/allure-reporter": "^8.43.0",
@@ -16,7 +17,7 @@
     "@wdio/mocha-framework": "^8.43.0",
     "@wdio/spec-reporter": "^8.43.0",
     "@types/mocha": "^10.0.10",
-    "allure-commandline": "^2.34.1",
+    "allure": "^3.1.0",
     "tsx": "^4.20.6",
     "ts-node": "^10.9.2",
     "typescript": "catalog:",

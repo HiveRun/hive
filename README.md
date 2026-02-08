@@ -178,6 +178,9 @@ bun run test:e2e:report
 
 # Open the generated Allure report
 bun run test:e2e:report:open
+
+# Generate + open a temporary report server directly
+bun run test:e2e:report:serve
 ```
 
 Notes:
@@ -216,8 +219,9 @@ Notes:
 - `bun test:run`: Run unit tests once (CI mode)
 - `bun test:e2e`: Run WebdriverIO true E2E suite (opt-in)
 - `bun test:e2e:headed`: Run WebdriverIO in headed Chromium mode
-- `bun test:e2e:report`: Generate Allure HTML report from latest E2E run
+- `bun test:e2e:report`: Generate Allure 3 HTML report from latest E2E run
 - `bun test:e2e:report:open`: Open generated Allure report locally
+- `bun test:e2e:report:serve`: Serve Allure report directly from result files
 
 ### Quality Checks
 - `bun check`: Run all pre-commit checks (alias for `check:commit`)

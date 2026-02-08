@@ -1,3 +1,4 @@
+import os from "node:os";
 import { join } from "node:path";
 import VideoReporter from "wdio-video-reporter";
 
@@ -36,6 +37,12 @@ export const config = {
         outputDir: allureResultsDir,
         disableWebdriverStepsReporting: true,
         disableWebdriverScreenshotsReporting: false,
+        reportedEnvironmentVars: {
+          os_platform: os.platform(),
+          os_release: os.release(),
+          os_version: os.version(),
+          node_version: process.version,
+        },
       },
     ],
   ],
