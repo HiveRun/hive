@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { findAvailablePort } from "./wait";
 
 type CreateRuntimeContextOptions = {
+  hiveHomePath?: string;
   repoRoot: string;
 };
 
@@ -28,7 +29,7 @@ export async function createRuntimeContext(
   const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`;
   const runRoot = join(options.repoRoot, ...RUNS_DIRECTORY, runId);
   const workspaceRoot = join(runRoot, "workspace");
-  const hiveHome = join(runRoot, "hive-home");
+  const hiveHome = options.hiveHomePath ?? join(runRoot, "hive-home");
   const dbPath = join(runRoot, "e2e.db");
   const logsDir = join(runRoot, "logs");
   const artifactsDir = join(runRoot, "artifacts");

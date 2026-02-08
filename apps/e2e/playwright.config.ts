@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { defineConfig, devices } from "@playwright/test";
+import { defineConfig } from "@playwright/test";
 
 const isHeaded = process.env.HIVE_E2E_HEADED === "1";
 const baseURL = process.env.HIVE_E2E_BASE_URL ?? "http://127.0.0.1:3001";
@@ -28,18 +28,22 @@ export default defineConfig({
   ],
   outputDir: join(artifactsDir, "test-results"),
   use: {
+    actionTimeout: 15_000,
     baseURL,
     headless: !isHeaded,
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
-    video: "on",
-    viewport: { width: 1440, height: 900 },
+    video: {
+      mode: "on",
+      size: { width: 1920, height: 1080 },
+    },
+    viewport: { width: 1920, height: 1080 },
   },
   projects: [
     {
       name: "chromium",
       use: {
-        ...devices["Desktop Chrome"],
+        browserName: "chromium",
       },
     },
   ],

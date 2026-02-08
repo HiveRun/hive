@@ -38,14 +38,23 @@ const stableArtifactsDir = join(e2eRoot, "reports", "latest");
 const repoRoot = join(e2eRoot, "..", "..");
 const serverRoot = join(repoRoot, "apps", "server");
 const webRoot = join(repoRoot, "apps", "web");
+const useSharedHiveHome = process.env.HIVE_E2E_SHARED_HOME !== "0";
+const sharedHiveHomePath = join(repoRoot, "tmp", "e2e-shared", "hive-home");
 
 async function run() {
   const args = parseArgs(process.argv.slice(2));
-  const context = await createRuntimeContext({ repoRoot });
+  const context = await createRuntimeContext({
+    hiveHomePath: useSharedHiveHome ? sharedHiveHomePath : undefined,
+    repoRoot,
+  });
   const managedProcesses: ManagedProcess[] = [];
   let runSucceeded = false;
 
   try {
+    if (useSharedHiveHome) {
+      process.stdout.write(`Using shared E2E HIVE_HOME: ${context.hiveHome}\n`);
+    }
+
     await createFixtureWorkspace(context.workspaceRoot);
 
     const server = startManagedProcess({

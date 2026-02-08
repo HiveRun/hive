@@ -186,6 +186,7 @@ bun run test:e2e:report:serve
 Notes:
 - The E2E harness creates a dedicated temp workspace and SQLite database per run.
 - Local dev DB/state are not reused.
+- `HIVE_HOME` is shared across E2E runs by default at `tmp/e2e-shared/hive-home` to reduce cold-start churn; set `HIVE_E2E_SHARED_HOME=0` to force fully ephemeral home per run.
 - Playwright artifacts are copied to `apps/e2e/reports/latest/` (including per-test videos and `playwright-report`).
 - Set `HIVE_E2E_KEEP_ARTIFACTS=1` to also keep raw run logs/artifacts under `tmp/e2e-runs/`.
 
