@@ -139,6 +139,7 @@ type CellTerminalProps = {
   themeMode?: "dark" | "light";
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Terminal lifecycle handling intentionally coordinates stream events, reconnects, and UI status in one component.
 export function CellTerminal({
   cellId,
   endpointBase = "terminal",
@@ -593,6 +594,7 @@ export function CellTerminal({
   return (
     <div
       className="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-border bg-card"
+      data-terminal-error-message={errorMessage ?? ""}
       data-terminal-output-length={String(terminalOutputLength)}
       data-terminal-output-seq={String(terminalOutputSeq)}
       data-terminal-output-updated-at={String(terminalOutputUpdatedAt)}
@@ -608,6 +610,9 @@ export function CellTerminal({
             <span
               className={`text-[11px] uppercase tracking-[0.25em] ${statusTone}`}
               data-connection-state={connection}
+              data-exit-code={
+                connection === "exited" ? String(session?.exitCode ?? "") : ""
+              }
               data-testid="terminal-connection"
             >
               {connectionLabel}
@@ -630,6 +635,7 @@ export function CellTerminal({
             </Button>
             <Button
               className="h-7 px-2 text-[10px] uppercase tracking-[0.2em]"
+              data-testid="terminal-restart-button"
               disabled={isRestarting}
               onClick={restartTerminal}
               size="sm"

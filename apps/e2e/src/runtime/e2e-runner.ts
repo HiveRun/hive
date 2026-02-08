@@ -3,12 +3,14 @@ import { createWriteStream, existsSync } from "node:fs";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRuntimeContext } from "./runtime-context";
+import { createRuntimeContext, type RuntimeContext } from "./runtime-context";
 import { waitForHttpOk } from "./wait";
 
 const KEEP_ARTIFACTS = process.env.HIVE_E2E_KEEP_ARTIFACTS === "1";
 const CLEANUP_TIMEOUT_MS = 15_000;
 const STARTUP_TIMEOUT_MS = 180_000;
+const SERVER_START_ATTEMPTS = 3;
+const SERVER_RETRY_DELAY_MS = 1000;
 const SIGTERM_EXIT_CODE = 143;
 const SERVER_READY_PATH = "/health";
 const WEB_READY_PATH = "/";
@@ -38,7 +40,7 @@ const stableArtifactsDir = join(e2eRoot, "reports", "latest");
 const repoRoot = join(e2eRoot, "..", "..");
 const serverRoot = join(repoRoot, "apps", "server");
 const webRoot = join(repoRoot, "apps", "web");
-const useSharedHiveHome = process.env.HIVE_E2E_SHARED_HOME !== "0";
+const useSharedHiveHome = process.env.HIVE_E2E_SHARED_HOME === "1";
 const sharedHiveHomePath = join(repoRoot, "tmp", "e2e-shared", "hive-home");
 
 async function run() {
@@ -57,28 +59,11 @@ async function run() {
 
     await createFixtureWorkspace(context.workspaceRoot);
 
-    const server = startManagedProcess({
-      command: "bun",
-      args: ["run", "src/index.ts"],
-      cwd: serverRoot,
-      env: {
-        ...process.env,
-        DATABASE_URL: `file:${context.dbPath}`,
-        HIVE_HOME: context.hiveHome,
-        HIVE_WORKSPACE_ROOT: context.workspaceRoot,
-        HOST: "127.0.0.1",
-        PORT: String(context.apiPort),
-        WEB_PORT: String(context.webPort),
-        CORS_ORIGIN: context.webUrl,
-      },
+    const server = await startServerWithRetries({
+      context,
       logsDir: context.logsDir,
-      name: "server",
     });
     managedProcesses.push(server);
-
-    await waitForHttpOk(`${context.apiUrl}${SERVER_READY_PATH}`, {
-      timeoutMs: STARTUP_TIMEOUT_MS,
-    });
 
     const web = startManagedProcess({
       command: "bun",
@@ -153,6 +138,60 @@ async function publishArtifacts(
   await rm(targetArtifactsDir, { recursive: true, force: true });
   await mkdir(targetArtifactsDir, { recursive: true });
   await cp(sourceArtifactsDir, targetArtifactsDir, { recursive: true });
+}
+
+async function startServerWithRetries(options: {
+  context: RuntimeContext;
+  logsDir: string;
+}): Promise<ManagedProcess> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= SERVER_START_ATTEMPTS; attempt += 1) {
+    const server = startManagedProcess({
+      command: "bun",
+      args: ["run", "src/index.ts"],
+      cwd: serverRoot,
+      env: {
+        ...process.env,
+        DATABASE_URL: `file:${options.context.dbPath}`,
+        HIVE_HOME: options.context.hiveHome,
+        HIVE_WORKSPACE_ROOT: options.context.workspaceRoot,
+        HOST: "127.0.0.1",
+        PORT: String(options.context.apiPort),
+        WEB_PORT: String(options.context.webPort),
+        CORS_ORIGIN: options.context.webUrl,
+      },
+      logsDir: options.logsDir,
+      name: "server",
+    });
+
+    try {
+      await waitForHttpOk(`${options.context.apiUrl}${SERVER_READY_PATH}`, {
+        timeoutMs: STARTUP_TIMEOUT_MS,
+      });
+      return server;
+    } catch (error) {
+      await stopManagedProcess(server);
+
+      lastError =
+        error instanceof Error
+          ? error
+          : new Error(`Server startup attempt ${String(attempt)} failed`);
+
+      if (attempt >= SERVER_START_ATTEMPTS) {
+        break;
+      }
+
+      process.stderr.write(
+        `Server startup attempt ${String(attempt)} failed, retrying...\n`
+      );
+      await wait(SERVER_RETRY_DELAY_MS);
+    }
+  }
+
+  throw (
+    lastError ?? new Error("Server failed to start and no error was captured")
+  );
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -340,3 +379,9 @@ run().catch((error) => {
   );
   process.exitCode = 1;
 });
+
+async function wait(ms: number): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}

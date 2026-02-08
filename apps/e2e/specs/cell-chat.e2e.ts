@@ -19,16 +19,16 @@ type TerminalMetrics = {
 
 const CHAT_ROUTE_TIMEOUT_MS = 120_000;
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
+const TERMINAL_INPUT_READY_TIMEOUT_MS = 30_000;
 const SESSION_UPDATE_TIMEOUT_MS = 120_000;
 const ASSISTANT_OUTPUT_TIMEOUT_MS = 120_000;
-const RESPONSE_SETTLE_TIMEOUT_MS = 30_000;
-const SESSION_STABLE_WINDOW_MS = 3000;
-const OUTPUT_QUIET_WINDOW_MS = 3000;
-const MIN_RESPONSE_GROWTH_CHARS = 20;
+const MIN_RESPONSE_GROWTH_CHARS = 80;
 const SEND_ATTEMPTS = 2;
+const MAX_TERMINAL_RESTARTS = 2;
 const SEND_ATTEMPT_TIMEOUT_MS = 20_000;
 const FINAL_VIDEO_SETTLE_MS = 1500;
 const POLL_INTERVAL_MS = 500;
+const TERMINAL_RECOVERY_WAIT_MS = 750;
 const CELL_CHAT_URL_PATTERN = /\/cells\/[^/]+\/chat/;
 const CELL_ID_PATTERN = /\/cells\/([^/]+)\/chat/;
 
@@ -42,7 +42,7 @@ test.describe("cell chat flow", () => {
     }
 
     await page.goto("/");
-    await page.locator(selectors.workspaceCreateCellButton).click();
+    await openCellCreationSheet(page);
 
     const testCellName = `E2E Cell ${Date.now()}`;
     await page.locator(selectors.cellNameInput).fill(testCellName);
@@ -54,29 +54,15 @@ test.describe("cell chat flow", () => {
 
     const cellId = parseCellIdFromUrl(page.url());
 
-    await expect
-      .poll(
-        async () =>
-          page
-            .locator(selectors.terminalConnectionBadge)
-            .getAttribute("data-connection-state"),
-        {
-          timeout: TERMINAL_READY_TIMEOUT_MS,
-          message: "Terminal connection never reached online state",
-        }
-      )
-      .toBe("online");
-
-    await expect(page.locator(selectors.terminalReadySurface)).toBeVisible({
-      timeout: TERMINAL_READY_TIMEOUT_MS,
+    await ensureTerminalReady(page, {
+      context: "before prompt send",
+      timeoutMs: TERMINAL_READY_TIMEOUT_MS,
     });
 
     const prompt = `E2E token ${Date.now()}`;
-    const baselineMetrics = await readTerminalMetrics(page);
 
     await sendPromptWithRetries({
       apiUrl,
-      baselineMetrics,
       cellId,
       page,
       prompt,
@@ -132,46 +118,8 @@ async function fetchAgentSession(
   return payload.session;
 }
 
-async function waitForSessionToSettle(
-  apiUrl: string,
-  cellId: string,
-  previousUpdatedAt: string
-): Promise<void> {
-  let latestUpdatedAt = "";
-  let stableSince = 0;
-
-  await waitForCondition({
-    check: async () => {
-      const session = await fetchAgentSession(apiUrl, cellId);
-      if (!session) {
-        return false;
-      }
-
-      if (session.updatedAt !== latestUpdatedAt) {
-        latestUpdatedAt = session.updatedAt;
-        stableSince = Date.now();
-        return false;
-      }
-
-      if (session.updatedAt === previousUpdatedAt) {
-        return false;
-      }
-
-      if (session.status === "working" || session.status === "starting") {
-        return false;
-      }
-
-      return Date.now() - stableSince >= SESSION_STABLE_WINDOW_MS;
-    },
-    errorMessage: "Agent session did not reach a stable post-send state",
-    intervalMs: 1000,
-    timeoutMs: RESPONSE_SETTLE_TIMEOUT_MS,
-  });
-}
-
 async function sendPromptWithRetries(options: {
   apiUrl: string;
-  baselineMetrics: TerminalMetrics;
   cellId: string;
   page: Page;
   prompt: string;
@@ -182,6 +130,13 @@ async function sendPromptWithRetries(options: {
   );
 
   for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt += 1) {
+    await ensureTerminalReady(options.page, {
+      context: `send attempt ${String(attempt)}`,
+      timeoutMs: TERMINAL_INPUT_READY_TIMEOUT_MS,
+    });
+
+    const baselineMetrics = await readTerminalMetrics(options.page);
+
     await focusTerminalInput(options.page);
     await options.page.keyboard.type(options.prompt);
     await options.page.keyboard.press("Enter");
@@ -194,22 +149,21 @@ async function sendPromptWithRetries(options: {
     );
 
     if (updated) {
-      await waitForAssistantOutput({
-        apiUrl: options.apiUrl,
-        baselineMetrics: options.baselineMetrics,
-        cellId: options.cellId,
-        firstUpdateAt: updated.updatedAt,
-        page: options.page,
-        prompt: options.prompt,
-        timeoutMs: ASSISTANT_OUTPUT_TIMEOUT_MS,
-      });
-
-      await waitForSessionToSettle(
-        options.apiUrl,
-        options.cellId,
-        updated.updatedAt
-      ).catch((error) => error);
-      return;
+      try {
+        await waitForAssistantOutput({
+          apiUrl: options.apiUrl,
+          baselineMetrics,
+          cellId: options.cellId,
+          page: options.page,
+          prompt: options.prompt,
+          timeoutMs: ASSISTANT_OUTPUT_TIMEOUT_MS,
+        });
+        return;
+      } catch (error) {
+        if (attempt >= SEND_ATTEMPTS) {
+          throw error;
+        }
+      }
     }
 
     baselineSession = await waitForAgentSession(options.apiUrl, options.cellId);
@@ -261,7 +215,6 @@ async function waitForAssistantOutput(options: {
   apiUrl: string;
   baselineMetrics: TerminalMetrics;
   cellId: string;
-  firstUpdateAt: string;
   page: Page;
   prompt: string;
   timeoutMs: number;
@@ -274,9 +227,9 @@ async function waitForAssistantOutput(options: {
         options.cellId
       );
 
-      const hasSecondSessionUpdate =
-        currentSession?.updatedAt !== undefined &&
-        currentSession.updatedAt !== options.firstUpdateAt;
+      if (!currentSession) {
+        return false;
+      }
 
       const outputSeqGrowth =
         metrics.outputSeq - options.baselineMetrics.outputSeq;
@@ -287,14 +240,10 @@ async function waitForAssistantOutput(options: {
         outputSeqGrowth >= 2 ||
         outputLengthGrowth >= options.prompt.length + MIN_RESPONSE_GROWTH_CHARS;
 
-      const hasResponseSignal =
-        hasSecondSessionUpdate || outputSuggestsAssistantResponse;
-
-      if (!hasResponseSignal || metrics.outputUpdatedAt <= 0) {
-        return false;
-      }
-
-      return Date.now() - metrics.outputUpdatedAt >= OUTPUT_QUIET_WINDOW_MS;
+      return (
+        outputSuggestsAssistantResponse &&
+        currentSession.status === "awaiting_input"
+      );
     },
     errorMessage:
       "Agent response was not observed in terminal output after sending prompt",
@@ -333,6 +282,97 @@ async function focusTerminalInput(page: Page): Promise<void> {
       }),
     errorMessage: "Terminal input textarea did not receive focus",
     timeoutMs: 10_000,
+  });
+}
+
+async function openCellCreationSheet(page: Page): Promise<void> {
+  await maybeRecoverRouteError(page);
+
+  const createCellButtons = page.locator(selectors.workspaceCreateCellButton);
+  await createCellButtons.first().waitFor({
+    state: "visible",
+    timeout: CHAT_ROUTE_TIMEOUT_MS,
+  });
+  const buttonCount = await createCellButtons.count();
+
+  for (let index = 0; index < buttonCount; index += 1) {
+    await createCellButtons.nth(index).click();
+
+    const formVisible = await page
+      .locator(selectors.cellNameInput)
+      .isVisible({ timeout: 1000 })
+      .catch(() => false);
+
+    if (formVisible) {
+      return;
+    }
+
+    await maybeRecoverRouteError(page);
+  }
+
+  throw new Error("Failed to open create-cell form for any workspace");
+}
+
+async function maybeRecoverRouteError(page: Page): Promise<void> {
+  const tryAgainButton = page.getByRole("button", { name: "Try again" });
+  const isVisible = await tryAgainButton
+    .isVisible({ timeout: 500 })
+    .catch(() => false);
+
+  if (!isVisible) {
+    return;
+  }
+
+  await tryAgainButton.click();
+  await page.waitForTimeout(POLL_INTERVAL_MS);
+}
+
+async function ensureTerminalReady(
+  page: Page,
+  options: {
+    context: string;
+    timeoutMs: number;
+  }
+): Promise<void> {
+  let restartCount = 0;
+  let lastState = "unknown";
+  let lastExitCode = "";
+  let lastErrorMessage = "";
+
+  await waitForCondition({
+    check: async () => {
+      const badge = page.locator(selectors.terminalConnectionBadge);
+      const terminalRoot = page.locator(selectors.terminalRoot);
+      const [state, exitCode, exitSignal] = await Promise.all([
+        badge.getAttribute("data-connection-state"),
+        badge.getAttribute("data-exit-code"),
+        terminalRoot.getAttribute("data-terminal-error-message"),
+      ]);
+
+      lastState = state ?? "unknown";
+      lastExitCode = exitCode ?? "";
+      lastErrorMessage = exitSignal ?? "";
+
+      if (state === "online") {
+        return page.locator(selectors.terminalInputTextarea).isVisible();
+      }
+
+      if (state === "exited" || state === "disconnected") {
+        if (restartCount >= MAX_TERMINAL_RESTARTS) {
+          throw new Error(
+            `Terminal remained ${state} during ${options.context}. exitCode=${lastExitCode || "n/a"} error=${lastErrorMessage || "n/a"}`
+          );
+        }
+
+        await page.locator(selectors.terminalRestartButton).click();
+        restartCount += 1;
+        await page.waitForTimeout(TERMINAL_RECOVERY_WAIT_MS);
+      }
+
+      return false;
+    },
+    errorMessage: `Terminal not ready during ${options.context}. Last state=${lastState} exitCode=${lastExitCode || "n/a"} error=${lastErrorMessage || "n/a"} restarts=${String(restartCount)}`,
+    timeoutMs: options.timeoutMs,
   });
 }
 

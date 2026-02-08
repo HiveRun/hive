@@ -6,6 +6,7 @@ export const selectors = {
   terminalReadySurface:
     '[data-testid="cell-terminal"][data-terminal-ready="true"]',
   terminalConnectionBadge: '[data-testid="terminal-connection"]',
+  terminalRestartButton: '[data-testid="terminal-restart-button"]',
   terminalInputSurface: '[data-testid="cell-terminal-input"]',
   terminalInputTextarea:
     '[data-testid="cell-terminal-input"] .xterm-helper-textarea',
