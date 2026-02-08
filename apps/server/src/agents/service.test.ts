@@ -1,4 +1,5 @@
 import type { OpencodeClient, Event as OpencodeEvent } from "@opencode-ai/sdk";
+import { eq } from "drizzle-orm";
 import { Effect } from "effect";
 
 import {
@@ -62,6 +63,8 @@ const mockHiveConfig: HiveConfig = {
 import {
   closeAllAgentSessions,
   ensureAgentSession,
+  fetchAgentSession,
+  fetchAgentSessionForCell,
   fetchCompactionStats,
   resetAgentRuntimeDependencies,
   sendAgentMessage,
@@ -355,6 +358,48 @@ describe("agent model selection", () => {
 
     expect(session.provider).toBe("opencode");
     expect(session.modelId).toBe(defaultFallbackModel);
+  });
+
+  it("returns persisted sessions without hydrating runtime for cell lookups", async () => {
+    await testDb
+      .update(cells)
+      .set({ opencodeSessionId: "session-persisted" })
+      .where(eq(cells.id, cellId));
+
+    const session = await fetchAgentSessionForCell(cellId);
+
+    expect(session).toMatchObject({
+      id: "session-persisted",
+      cellId,
+      status: "awaiting_input",
+    });
+    expect(acquireOpencodeClientMock).not.toHaveBeenCalled();
+  });
+
+  it("returns persisted sessions without hydrating runtime for session lookups", async () => {
+    await testDb
+      .update(cells)
+      .set({ opencodeSessionId: "session-persisted" })
+      .where(eq(cells.id, cellId));
+
+    const session = await fetchAgentSession("session-persisted");
+
+    expect(session).toMatchObject({
+      id: "session-persisted",
+      cellId,
+      status: "awaiting_input",
+    });
+    expect(acquireOpencodeClientMock).not.toHaveBeenCalled();
+  });
+
+  it("hydrates runtime when ready cells are missing persisted sessions", async () => {
+    const session = await fetchAgentSessionForCell(cellId);
+
+    expect(session).toMatchObject({
+      id: "session-runtime",
+      cellId,
+    });
+    expect(acquireOpencodeClientMock).toHaveBeenCalled();
   });
 
   it("tracks compaction events and exposes stats", async () => {

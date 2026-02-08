@@ -17,6 +17,7 @@ Provide the core engine for managing agent sessions, authentication, and lifecyc
 - [x] [HIVE-16] Ship repo-level `.ignore` overrides so OpenCode/ripgrep can inspect gitignored dependencies
 - [x] [HIVE-9] Adopt Effect-friendly Result helpers for consistent agent/provider error handling (2025-11-30)
 - [x] [HIVE-18] Tighten TypeScript and linting configs so repo-wide checks stay aligned
+- [x] [HIVE-62] Avoid eager runtime hydration for agent status lookups to speed up cold `bun dev` loads (2026-02-08)
 
 ## Current Status: DEFERRED
 

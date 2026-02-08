@@ -742,17 +742,40 @@ export async function ensureAgentSession(
 export async function fetchAgentSession(
   sessionId: string
 ): Promise<AgentSessionRecord | null> {
-  try {
-    const runtime = await ensureRuntimeForSession(sessionId);
-    return toSessionRecord(runtime);
-  } catch {
+  const activeRuntime = runtimeRegistry.get(sessionId);
+  if (activeRuntime) {
+    return toSessionRecord(activeRuntime);
+  }
+
+  const cell = await getCellBySessionId(sessionId);
+  if (!cell?.opencodeSessionId) {
     return null;
   }
+
+  return toPersistedSessionRecord(cell);
 }
 
 export async function fetchAgentSessionForCell(
   cellId: string
 ): Promise<AgentSessionRecord | null> {
+  const activeRuntime = getExistingRuntimeForCell(cellId, { force: false });
+  if (activeRuntime) {
+    return toSessionRecord(activeRuntime);
+  }
+
+  const cell = await getCellById(cellId);
+  if (!cell) {
+    return null;
+  }
+
+  if (cell.opencodeSessionId) {
+    return toPersistedSessionRecord(cell);
+  }
+
+  if (cell.status !== "ready") {
+    return null;
+  }
+
   try {
     const runtime = await ensureRuntimeForCell(cellId, {
       force: false,
@@ -1717,6 +1740,36 @@ function toSessionRecord(runtime: RuntimeHandle): AgentSessionRecord {
     updatedAt: new Date(runtime.session.time.updated).toISOString(),
     ...modelFields,
   };
+}
+
+function toPersistedSessionRecord(cell: Cell): AgentSessionRecord {
+  if (!cell.opencodeSessionId) {
+    throw new Error("Cell does not have an OpenCode session ID");
+  }
+
+  return {
+    id: cell.opencodeSessionId,
+    cellId: cell.id,
+    templateId: cell.templateId,
+    status: mapCellStatusToAgentStatus(cell.status),
+    workspacePath: cell.workspacePath,
+    createdAt: new Date(cell.createdAt).toISOString(),
+    updatedAt: new Date(cell.createdAt).toISOString(),
+  };
+}
+
+function mapCellStatusToAgentStatus(
+  status: Cell["status"]
+): AgentSessionStatus {
+  if (status === "error") {
+    return "error";
+  }
+
+  if (status === "spawning" || status === "pending") {
+    return "starting";
+  }
+
+  return "awaiting_input";
 }
 
 function setRuntimeStatus(
