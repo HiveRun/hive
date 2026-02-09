@@ -16,6 +16,22 @@ bun -C apps/server run test:run    # CI mode
 
 Example targeted run: `bun -C apps/server run test -- src/db.test.ts -t "creates user"`.
 
+### True E2E (Playwright runtime flow)
+The opt-in true end-to-end flow lives under `apps/e2e` and validates cell creation + agent chat against a real Hive runtime.
+
+```bash
+bun run test:e2e
+bun run test:e2e:headed
+bun run test:e2e:spec specs/cell-chat.e2e.ts
+```
+
+- Pre-push validation must include `bun run test:e2e` (via `bun run check:push`).
+- Prefer deterministic assertions (session/messages/metadata) over timing-only waits.
+- Keep fixture defaults aligned with runtime providers/models (currently `opencode/big-pickle`).
+- Use `HIVE_E2E_KEEP_ARTIFACTS=1` when debugging failures; inspect screenshots/video/trace in `tmp/e2e-runs/`.
+- Use `HIVE_E2E_WORKSPACE_MODE=clone` for dev-parity debugging without mutating your real workspace.
+- If pre-push fails on the known flaky backend spec (`apps/server/src/__tests__/routes/cells.create.test.ts`), run `bun -C apps/server run test -- src/__tests__/routes/cells.create.test.ts -t "returns detailed payload when template setup fails"` once, then rerun `bun run check:push`.
+
 ### UI Testing (Playwright - Visual Snapshots Only)
 All UI testing is done through **visual snapshot testing**. No component unit tests - UI correctness is validated entirely through snapshot comparisons across multiple viewports and themes.
 

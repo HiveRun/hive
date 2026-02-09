@@ -4,7 +4,7 @@
 
 - Install dependencies from the repo root with `bun install`; workspace-aware scripts resolve packages automatically.
 - Start dev servers using `bun run dev`, or target `bun run dev:web` / `bun run dev:server` when you only need one side.
-- Run `bun run check:commit` before committing and `bun run check:push` before pushing; the latter adds Playwright snapshots.
+- Run `bun run check:commit` before committing and `bun run check:push` before pushing; the latter enforces the Playwright E2E suite (`bun run test:e2e`).
 - Build the workspace with `bun run build` and rely on package-level `bun -C apps/* run build` only for scoped verifications.
 - Lint/format via `bun run check:biome` or each package's `bun -C <dir> run check` script; Biome applies fixes in place.
 - Husky hooks enforce the check pipeline automatically—do not skip or rewrite them.
@@ -54,5 +54,4 @@ The Effect Solutions CLI provides curated best practices and patterns for Effect
 **Avoid overbearing error handling** that adds no value. Let errors bubble up to where they can be meaningfully addressed.
 
 **Don't create custom Error classes** - Just throw `new Error("message")`. Custom error classes add complexity without benefit. If you need to distinguish error types, use error messages or codes.
-
 
