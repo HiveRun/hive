@@ -41,7 +41,6 @@ const SEND_ATTEMPTS = 2;
 const MAX_TERMINAL_RESTARTS = 2;
 const SEND_ATTEMPT_TIMEOUT_MS = 20_000;
 const POST_RESPONSE_VIDEO_SETTLE_MS = 500;
-const FINAL_VIDEO_SETTLE_MS = 2000;
 const POLL_INTERVAL_MS = 500;
 const TERMINAL_RECOVERY_WAIT_MS = 750;
 const TEMPLATE_OPTION_TIMEOUT_MS = 750;
@@ -91,7 +90,6 @@ test.describe("cell chat flow", () => {
 
     await attachFinalStateScreenshot({ cellId, page, testInfo });
     await captureFinalVideoFrame(page);
-    await page.waitForTimeout(FINAL_VIDEO_SETTLE_MS);
   });
 });
 
