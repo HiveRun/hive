@@ -3,6 +3,9 @@ import { selectors } from "../src/selectors";
 
 type AgentSession = {
   id: string;
+  modelId?: string;
+  modelProviderId?: string;
+  provider?: string;
   status: string;
   updatedAt: string;
 };
@@ -47,6 +50,8 @@ const TEMPLATE_OPTION_TIMEOUT_MS = 750;
 const CELL_CHAT_URL_PATTERN = /\/cells\/[^/]+\/chat/;
 const CELL_ID_PATTERN = /\/cells\/([^/]+)\/chat/;
 const PREFERRED_TEMPLATE_LABELS = ["E2E Template", "Basic Template"];
+const EXPECTED_MODEL_ID = "big-pickle";
+const EXPECTED_MODEL_PROVIDER_ID = "opencode";
 const USE_DEFAULT_TEMPLATE = process.env.HIVE_E2E_USE_DEFAULT_TEMPLATE === "1";
 
 test.describe("cell chat flow", () => {
@@ -89,6 +94,12 @@ test.describe("cell chat flow", () => {
       cellId,
       page,
       prompt,
+    });
+    await assertSessionModelSelection({
+      apiUrl,
+      cellId,
+      expectedModelId: EXPECTED_MODEL_ID,
+      expectedProviderId: EXPECTED_MODEL_PROVIDER_ID,
     });
 
     await attachFinalStateScreenshot({ cellId, page, testInfo });
@@ -441,6 +452,36 @@ async function readVisibleTerminalText(page: Page): Promise<string> {
     .locator(selectors.terminalInputSurface)
     .innerText()
     .catch(() => "");
+}
+
+async function assertSessionModelSelection(options: {
+  apiUrl: string;
+  cellId: string;
+  expectedModelId: string;
+  expectedProviderId: string;
+}): Promise<void> {
+  let observedModelId = "unknown";
+  let observedProviderId = "unknown";
+
+  await waitForCondition({
+    check: async () => {
+      const session = await fetchAgentSession(options.apiUrl, options.cellId);
+      if (!session) {
+        return false;
+      }
+
+      observedModelId = session.modelId ?? "none";
+      observedProviderId =
+        session.modelProviderId ?? session.provider ?? "none";
+
+      return (
+        session.modelId === options.expectedModelId &&
+        observedProviderId === options.expectedProviderId
+      );
+    },
+    errorMessage: `Agent session model mismatch. expected=${options.expectedProviderId}/${options.expectedModelId} observed=${observedProviderId}/${observedModelId}`,
+    timeoutMs: SESSION_UPDATE_TIMEOUT_MS,
+  });
 }
 
 async function readTerminalMetrics(page: Page): Promise<TerminalMetrics> {

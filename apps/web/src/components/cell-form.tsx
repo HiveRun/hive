@@ -1,10 +1,16 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import {
+  isSameModelSelection,
+  resolveAutoSelectedModel,
+  resolveTemplateModelSelection,
+} from "@/components/cell-form.model-selection";
+import {
   type ModelSelection,
+  type ModelSelectionSource,
   ModelSelector,
 } from "@/components/model-selector";
 import { Button } from "@/components/ui/button";
@@ -21,7 +27,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import type { CreateCellInput } from "@/lib/rpc";
 import { cellMutations } from "@/queries/cells";
-import { type Template, templateQueries } from "@/queries/templates";
+import { templateQueries } from "@/queries/templates";
 
 type CellFormValues = CreateCellInput;
 
@@ -120,52 +126,18 @@ export function CellForm({
   const providerPreference =
     selectedModel?.providerId ?? templateAgent?.providerId;
 
-  const resolveTemplateModelSelection = useCallback(
-    (template?: Template) => {
-      const agentConfig = template?.configJson.agent;
-      if (agentConfig?.modelId) {
-        return { id: agentConfig.modelId, providerId: agentConfig.providerId };
-      }
-
-      const defaultModelId = agentDefaults?.modelId;
-      const defaultProviderId = agentDefaults?.providerId;
-      const templateProviderId = agentConfig?.providerId;
-
-      const providerCompatible =
-        !(templateProviderId && defaultProviderId) ||
-        templateProviderId === defaultProviderId;
-
-      if (defaultModelId && providerCompatible) {
-        const providerId = templateProviderId ?? defaultProviderId;
-        if (providerId) {
-          return { id: defaultModelId, providerId };
-        }
-      }
-    },
-    [agentDefaults]
-  );
-
   useEffect(() => {
-    if (!activeTemplate || hasExplicitModelSelection) {
-      return;
-    }
+    const nextSelection = resolveAutoSelectedModel({
+      activeTemplate,
+      agentDefaults,
+      currentSelection: selectedModel,
+      hasExplicitModelSelection,
+    });
 
-    const nextSelection = resolveTemplateModelSelection(activeTemplate);
-    const alreadySelected =
-      nextSelection != null &&
-      selectedModel != null &&
-      selectedModel.id === nextSelection.id &&
-      selectedModel.providerId === nextSelection.providerId;
-
-    if (nextSelection && !alreadySelected) {
+    if (!isSameModelSelection(selectedModel, nextSelection)) {
       setSelectedModel(nextSelection);
     }
-  }, [
-    activeTemplate,
-    hasExplicitModelSelection,
-    resolveTemplateModelSelection,
-    selectedModel,
-  ]);
+  }, [activeTemplate, agentDefaults, hasExplicitModelSelection, selectedModel]);
 
   const mutation = useMutation({
     mutationFn: cellMutations.create.mutationFn,
@@ -222,7 +194,7 @@ export function CellForm({
 
   const handleModelChange = (
     model: ModelSelection,
-    source: "auto" | "user"
+    source: ModelSelectionSource
   ) => {
     setSelectedModel(model);
     setHasExplicitModelSelection(source === "user");
@@ -353,8 +325,10 @@ export function CellForm({
                       const nextTemplate = templates?.find(
                         (template) => template.id === value
                       );
-                      const nextSelection =
-                        resolveTemplateModelSelection(nextTemplate);
+                      const nextSelection = resolveTemplateModelSelection(
+                        nextTemplate,
+                        agentDefaults
+                      );
                       setSelectedModel(nextSelection);
                       setHasExplicitModelSelection(false);
                     }}

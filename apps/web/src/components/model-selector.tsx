@@ -27,7 +27,7 @@ export type ModelSelection = {
   providerId: string;
 };
 
-type ModelSelectionSource = "auto" | "user";
+export type ModelSelectionSource = "auto" | "user";
 
 const PROVIDER_LABEL_OVERRIDES: Record<string, string> = {
   opencode: "Zen",
