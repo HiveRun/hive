@@ -43,6 +43,7 @@ type ModelSelectorProps = {
   workspaceId?: string;
   selectedModel?: ModelSelection;
   onModelChange: (model: ModelSelection) => void;
+  onLoadingChange?: (isLoading: boolean) => void;
   disabled?: boolean;
 };
 
@@ -53,6 +54,7 @@ export function ModelSelector({
   workspaceId,
   selectedModel,
   onModelChange,
+  onLoadingChange,
   disabled = false,
 }: ModelSelectorProps) {
   if (!(sessionId || workspaceId)) {
@@ -69,6 +71,10 @@ export function ModelSelector({
     isError,
   } = useQuery<ModelListResponse>(queryOptions);
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    onLoadingChange?.(isLoading);
+  }, [isLoading, onLoadingChange]);
 
   const providerNames = useMemo(() => {
     const providers = modelsData?.providers ?? [];

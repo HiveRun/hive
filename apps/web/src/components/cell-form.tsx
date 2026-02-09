@@ -102,6 +102,7 @@ export function CellForm({
   const [activeTemplateId, setActiveTemplateId] = useState(
     defaultValues.templateId
   );
+  const [isModelSelectorLoading, setIsModelSelectorLoading] = useState(true);
   const [selectedModel, setSelectedModel] = useState<ModelSelection>();
 
   useEffect(() => {
@@ -210,6 +211,7 @@ export function CellForm({
 
   const mutationErrorMessage =
     mutation.error instanceof Error ? mutation.error.message : undefined;
+  const submitDisabled = mutation.isPending || isModelSelectorLoading;
 
   if (templatesLoading) {
     return <div>Loading templates...</div>;
@@ -359,6 +361,7 @@ export function CellForm({
             <ModelSelector
               disabled={mutation.isPending}
               id="cell-model-selector"
+              onLoadingChange={setIsModelSelectorLoading}
               onModelChange={handleModelChange}
               providerId={providerPreference}
               selectedModel={selectedModel}
@@ -382,7 +385,7 @@ export function CellForm({
             )}
             <Button
               data-testid="cell-submit-button"
-              disabled={mutation.isPending}
+              disabled={submitDisabled}
               type="submit"
             >
               {mutation.isPending ? "Creating..." : "Create Cell"}

@@ -66,6 +66,9 @@ test.describe("cell chat flow", () => {
     if (!USE_DEFAULT_TEMPLATE) {
       await selectPreferredTemplate(page);
     }
+    await expect(page.locator(selectors.cellSubmitButton)).toBeEnabled({
+      timeout: CHAT_ROUTE_TIMEOUT_MS,
+    });
     await page.locator(selectors.cellSubmitButton).click();
 
     await expect(page).toHaveURL(CELL_CHAT_URL_PATTERN, {
