@@ -11,7 +11,19 @@ type AgentSessionResponse = {
   session: AgentSession | null;
 };
 
+type AgentMessage = {
+  id: string;
+  role: string;
+  state: string;
+  content: string | null;
+};
+
+type AgentMessageListResponse = {
+  messages: AgentMessage[];
+};
+
 type TerminalMetrics = {
+  visibleOutputLength: number;
   outputLength: number;
   outputSeq: number;
   outputUpdatedAt: number;
@@ -21,12 +33,15 @@ const CHAT_ROUTE_TIMEOUT_MS = 120_000;
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
 const TERMINAL_INPUT_READY_TIMEOUT_MS = 30_000;
 const SESSION_UPDATE_TIMEOUT_MS = 120_000;
-const ASSISTANT_OUTPUT_TIMEOUT_MS = 120_000;
-const MIN_RESPONSE_GROWTH_CHARS = 80;
+const ASSISTANT_OUTPUT_TIMEOUT_MS = 25_000;
+const MIN_VISIBLE_RESPONSE_TAIL_CHARS = 12;
+const MIN_TERMINAL_MATCH_TOKEN_LENGTH = 4;
+const MIN_REPEATED_TOKEN_LENGTH = 6;
 const SEND_ATTEMPTS = 2;
 const MAX_TERMINAL_RESTARTS = 2;
 const SEND_ATTEMPT_TIMEOUT_MS = 20_000;
-const FINAL_VIDEO_SETTLE_MS = 1500;
+const POST_RESPONSE_VIDEO_SETTLE_MS = 500;
+const FINAL_VIDEO_SETTLE_MS = 2000;
 const POLL_INTERVAL_MS = 500;
 const TERMINAL_RECOVERY_WAIT_MS = 750;
 const TEMPLATE_OPTION_TIMEOUT_MS = 750;
@@ -142,28 +157,39 @@ async function sendPromptWithRetries(options: {
     });
 
     const baselineMetrics = await readTerminalMetrics(options.page);
+    const baselineMessages = await fetchAgentMessages(
+      options.apiUrl,
+      baselineSession.id
+    );
+    const baselineMessageIds = new Set(
+      baselineMessages.map((message) => message.id)
+    );
 
     await focusTerminalInput(options.page);
     await options.page.keyboard.type(options.prompt);
     await options.page.keyboard.press("Enter");
 
-    const updated = await waitForSessionUpdate(
-      options.apiUrl,
-      options.cellId,
+    const promptAccepted = await waitForPromptAccepted({
+      apiUrl: options.apiUrl,
+      baselineMetrics,
       baselineSession,
-      SEND_ATTEMPT_TIMEOUT_MS
-    );
+      cellId: options.cellId,
+      page: options.page,
+      timeoutMs: SEND_ATTEMPT_TIMEOUT_MS,
+    });
 
-    if (updated) {
+    if (promptAccepted) {
       try {
         await waitForAssistantOutput({
           apiUrl: options.apiUrl,
+          baselineMessageIds,
           baselineMetrics,
           cellId: options.cellId,
           page: options.page,
           prompt: options.prompt,
           timeoutMs: ASSISTANT_OUTPUT_TIMEOUT_MS,
         });
+        await options.page.waitForTimeout(POST_RESPONSE_VIDEO_SETTLE_MS);
         return;
       } catch (error) {
         if (attempt >= SEND_ATTEMPTS) {
@@ -176,49 +202,58 @@ async function sendPromptWithRetries(options: {
   }
 
   throw new Error(
-    "Agent session did not update after sending chat input across retries"
+    "Prompt was not accepted after sending chat input across retries"
   );
 }
 
-async function waitForSessionUpdate(
-  apiUrl: string,
-  cellId: string,
-  baselineSession: AgentSession,
-  timeoutMs: number
-): Promise<AgentSession | null> {
-  let updatedSession: AgentSession | null = null;
+async function waitForPromptAccepted(options: {
+  apiUrl: string;
+  baselineMetrics: TerminalMetrics;
+  baselineSession: AgentSession;
+  cellId: string;
+  page: Page;
+  timeoutMs: number;
+}): Promise<boolean> {
+  let promptAccepted = false;
 
   try {
     await waitForCondition({
       check: async () => {
-        const currentSession = await fetchAgentSession(apiUrl, cellId);
-        if (!currentSession) {
-          return false;
+        const currentSession = await fetchAgentSession(
+          options.apiUrl,
+          options.cellId
+        );
+        const metrics = await readTerminalMetrics(options.page);
+
+        const sessionChanged =
+          currentSession != null &&
+          (currentSession.updatedAt !== options.baselineSession.updatedAt ||
+            currentSession.status !== options.baselineSession.status);
+
+        const outputChanged =
+          metrics.outputSeq > options.baselineMetrics.outputSeq ||
+          metrics.outputLength > options.baselineMetrics.outputLength;
+
+        if (sessionChanged || outputChanged) {
+          promptAccepted = true;
         }
 
-        const changed =
-          currentSession.updatedAt !== baselineSession.updatedAt ||
-          currentSession.status !== baselineSession.status;
-
-        if (changed) {
-          updatedSession = currentSession;
-        }
-
-        return changed;
+        return sessionChanged || outputChanged;
       },
-      errorMessage: "Session did not update after prompt send",
+      errorMessage: "Prompt did not change terminal output or session state",
       intervalMs: 1000,
-      timeoutMs,
+      timeoutMs: options.timeoutMs,
     });
 
-    return updatedSession;
+    return promptAccepted;
   } catch {
-    return null;
+    return false;
   }
 }
 
 async function waitForAssistantOutput(options: {
   apiUrl: string;
+  baselineMessageIds: ReadonlySet<string>;
   baselineMetrics: TerminalMetrics;
   cellId: string;
   page: Page;
@@ -228,6 +263,7 @@ async function waitForAssistantOutput(options: {
   await waitForCondition({
     check: async () => {
       const metrics = await readTerminalMetrics(options.page);
+      const visibleOutput = await readVisibleTerminalText(options.page);
       const currentSession = await fetchAgentSession(
         options.apiUrl,
         options.cellId
@@ -242,12 +278,38 @@ async function waitForAssistantOutput(options: {
       const outputLengthGrowth =
         metrics.outputLength - options.baselineMetrics.outputLength;
 
-      const outputSuggestsAssistantResponse =
-        outputSeqGrowth >= 2 ||
-        outputLengthGrowth >= options.prompt.length + MIN_RESPONSE_GROWTH_CHARS;
+      const outputChangedAfterPrompt =
+        outputSeqGrowth > 0 || outputLengthGrowth > options.prompt.length;
+
+      const messages = await fetchAgentMessages(
+        options.apiUrl,
+        currentSession.id
+      );
+      const latestAssistantMessage = findLatestAssistantMessage(
+        messages,
+        options.baselineMessageIds
+      );
+      if (!latestAssistantMessage?.content) {
+        return false;
+      }
+
+      const responseVisible = doesTerminalContainAssistantResponse({
+        assistantContent: latestAssistantMessage.content,
+        prompt: options.prompt,
+        terminalVisibleText: visibleOutput,
+      });
+
+      const visibleOutputGrowth =
+        metrics.visibleOutputLength -
+        options.baselineMetrics.visibleOutputLength;
+      const visibleOutputGrowthBeyondPrompt =
+        visibleOutputGrowth - options.prompt.length;
+      const visibleSuggestsAssistantResponse =
+        visibleOutputGrowthBeyondPrompt >= MIN_VISIBLE_RESPONSE_TAIL_CHARS;
 
       return (
-        outputSuggestsAssistantResponse &&
+        (outputChangedAfterPrompt || visibleSuggestsAssistantResponse) &&
+        responseVisible &&
         currentSession.status === "awaiting_input"
       );
     },
@@ -258,18 +320,145 @@ async function waitForAssistantOutput(options: {
   });
 }
 
+async function fetchAgentMessages(
+  apiUrl: string,
+  sessionId: string
+): Promise<AgentMessage[]> {
+  const response = await fetch(
+    `${apiUrl}/api/agents/sessions/${sessionId}/messages`
+  );
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = (await response.json()) as AgentMessageListResponse;
+  return payload.messages;
+}
+
+function findLatestAssistantMessage(
+  messages: AgentMessage[],
+  baselineMessageIds: ReadonlySet<string>
+): AgentMessage | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (baselineMessageIds.has(message.id)) {
+      continue;
+    }
+    if (message.role !== "assistant") {
+      continue;
+    }
+    if (!message.content?.trim()) {
+      continue;
+    }
+    return message;
+  }
+
+  return null;
+}
+
+function doesTerminalContainAssistantResponse(options: {
+  assistantContent: string;
+  prompt: string;
+  terminalVisibleText: string;
+}): boolean {
+  const terminalTokens = tokenizeText(options.terminalVisibleText);
+  const assistantTokens = tokenizeText(options.assistantContent);
+  if (assistantTokens.length === 0) {
+    return false;
+  }
+
+  const promptTokenSet = new Set(tokenizeText(options.prompt));
+  const novelAssistantTokens = assistantTokens.filter(
+    (token) => !promptTokenSet.has(token)
+  );
+
+  if (novelAssistantTokens.length > 0) {
+    let matchedNovelTokens = 0;
+    for (const token of novelAssistantTokens) {
+      if (terminalTokens.includes(token)) {
+        matchedNovelTokens += 1;
+      }
+    }
+
+    return matchedNovelTokens >= Math.min(2, novelAssistantTokens.length);
+  }
+
+  const normalizedTerminal = normalizeText(options.terminalVisibleText);
+  for (const token of assistantTokens) {
+    if (token.length < MIN_REPEATED_TOKEN_LENGTH) {
+      continue;
+    }
+    if (countOccurrences(normalizedTerminal, token) >= 2) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function normalizeText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenizeText(value: string): string[] {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return [];
+  }
+
+  return normalized
+    .split(" ")
+    .map((token) => token.trim())
+    .filter((token) => token.length >= MIN_TERMINAL_MATCH_TOKEN_LENGTH);
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+  if (!needle.length) {
+    return 0;
+  }
+
+  let count = 0;
+  let cursor = 0;
+  while (cursor <= haystack.length - needle.length) {
+    const index = haystack.indexOf(needle, cursor);
+    if (index === -1) {
+      break;
+    }
+    count += 1;
+    cursor = index + needle.length;
+  }
+
+  return count;
+}
+
+async function readVisibleTerminalText(page: Page): Promise<string> {
+  return await page
+    .locator(selectors.terminalInputSurface)
+    .innerText()
+    .catch(() => "");
+}
+
 async function readTerminalMetrics(page: Page): Promise<TerminalMetrics> {
   const terminalRoot = page.locator(selectors.terminalRoot);
 
-  const [outputLengthRaw, outputSeqRaw, outputUpdatedAtRaw] = await Promise.all(
-    [
-      terminalRoot.getAttribute("data-terminal-output-length"),
-      terminalRoot.getAttribute("data-terminal-output-seq"),
-      terminalRoot.getAttribute("data-terminal-output-updated-at"),
-    ]
-  );
+  const [
+    visibleOutputLengthRaw,
+    outputLengthRaw,
+    outputSeqRaw,
+    outputUpdatedAtRaw,
+  ] = await Promise.all([
+    terminalRoot.getAttribute("data-terminal-visible-output-length"),
+    terminalRoot.getAttribute("data-terminal-output-length"),
+    terminalRoot.getAttribute("data-terminal-output-seq"),
+    terminalRoot.getAttribute("data-terminal-output-updated-at"),
+  ]);
 
   return {
+    visibleOutputLength: Number(visibleOutputLengthRaw ?? "0"),
     outputLength: Number(outputLengthRaw ?? "0"),
     outputSeq: Number(outputSeqRaw ?? "0"),
     outputUpdatedAt: Number(outputUpdatedAtRaw ?? "0"),

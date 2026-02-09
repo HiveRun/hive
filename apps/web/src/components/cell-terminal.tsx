@@ -264,6 +264,8 @@ export function CellTerminal({
   const [isTerminalInitialized, setIsTerminalInitialized] = useState(false);
   const [terminalOutputSeq, setTerminalOutputSeq] = useState(0);
   const [terminalOutputLength, setTerminalOutputLength] = useState(0);
+  const [terminalVisibleOutputLength, setTerminalVisibleOutputLength] =
+    useState(0);
   const [terminalOutputUpdatedAt, setTerminalOutputUpdatedAt] = useState(0);
   const [isStartupReady, setIsStartupReady] = useState(
     startupReadiness === "session"
@@ -401,6 +403,7 @@ export function CellTerminal({
     setSession(null);
     setErrorMessage(null);
     visibleOutputRef.current = "";
+    setTerminalVisibleOutputLength(0);
     setIsStartupReady(startupReadiness === "session");
     try {
       const response = await fetch(buildTerminalEndpoint("restart"), {
@@ -445,6 +448,7 @@ export function CellTerminal({
     setIsTerminalInitialized(false);
     setTerminalOutputSeq(0);
     setTerminalOutputLength(0);
+    setTerminalVisibleOutputLength(0);
     setTerminalOutputUpdatedAt(0);
     setIsStartupReady(startupReadiness === "session");
 
@@ -503,6 +507,7 @@ export function CellTerminal({
         visibleOutputRef.current = extractVisibleText(snapshot).slice(
           -STARTUP_VISIBLE_BUFFER_LIMIT
         );
+        setTerminalVisibleOutputLength(visibleOutputRef.current.length);
         updateStartupReadiness(visibleOutputRef.current);
         scheduleResizeSync();
       });
@@ -530,6 +535,7 @@ export function CellTerminal({
           visibleOutputRef.current,
           chunk
         );
+        setTerminalVisibleOutputLength(visibleOutputRef.current.length);
         updateStartupReadiness(visibleOutputRef.current);
         recordOutputActivity(outputRef.current);
         setConnection((current) =>
@@ -749,6 +755,7 @@ export function CellTerminal({
       data-terminal-output-seq={String(terminalOutputSeq)}
       data-terminal-output-updated-at={String(terminalOutputUpdatedAt)}
       data-terminal-ready={terminalReady ? "true" : "false"}
+      data-terminal-visible-output-length={String(terminalVisibleOutputLength)}
       data-testid="cell-terminal"
     >
       <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4">
