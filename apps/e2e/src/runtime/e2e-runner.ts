@@ -226,7 +226,7 @@ async function createFixtureWorkspace(workspaceRoot: string): Promise<void> {
   const hiveConfig = {
     opencode: {
       defaultModel: "big-pickle",
-      defaultProvider: "zen",
+      defaultProvider: "opencode",
     },
     defaults: {
       templateId: "e2e-template",
@@ -238,7 +238,7 @@ async function createFixtureWorkspace(workspaceRoot: string): Promise<void> {
         type: "manual",
         agent: {
           modelId: "big-pickle",
-          providerId: "zen",
+          providerId: "opencode",
         },
       },
     },
@@ -252,7 +252,7 @@ async function createFixtureWorkspace(workspaceRoot: string): Promise<void> {
 
   await writeFile(
     join(workspaceRoot, "@opencode.json"),
-    `${JSON.stringify({ model: "zen/big-pickle" }, null, 2)}\n`,
+    `${JSON.stringify({ model: "opencode/big-pickle" }, null, 2)}\n`,
     "utf8"
   );
 

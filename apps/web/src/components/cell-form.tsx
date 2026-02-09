@@ -103,11 +103,14 @@ export function CellForm({
     defaultValues.templateId
   );
   const [isModelSelectorLoading, setIsModelSelectorLoading] = useState(true);
+  const [hasExplicitModelSelection, setHasExplicitModelSelection] =
+    useState(false);
   const [selectedModel, setSelectedModel] = useState<ModelSelection>();
 
   useEffect(() => {
     setActiveTemplateId(defaultValues.templateId);
     setSelectedModel(undefined);
+    setHasExplicitModelSelection(false);
   }, [defaultValues.templateId]);
 
   const activeTemplate = templates?.find(
@@ -143,15 +146,26 @@ export function CellForm({
   );
 
   useEffect(() => {
-    if (!activeTemplate || selectedModel) {
+    if (!activeTemplate || hasExplicitModelSelection) {
       return;
     }
 
     const nextSelection = resolveTemplateModelSelection(activeTemplate);
-    if (nextSelection) {
+    const alreadySelected =
+      nextSelection != null &&
+      selectedModel != null &&
+      selectedModel.id === nextSelection.id &&
+      selectedModel.providerId === nextSelection.providerId;
+
+    if (nextSelection && !alreadySelected) {
       setSelectedModel(nextSelection);
     }
-  }, [activeTemplate, resolveTemplateModelSelection, selectedModel]);
+  }, [
+    activeTemplate,
+    hasExplicitModelSelection,
+    resolveTemplateModelSelection,
+    selectedModel,
+  ]);
 
   const mutation = useMutation({
     mutationFn: cellMutations.create.mutationFn,
@@ -178,6 +192,7 @@ export function CellForm({
       });
       form.reset();
       setSelectedModel(undefined);
+      setHasExplicitModelSelection(false);
       setActiveTemplateId(defaultValues.templateId);
       onSuccess?.();
     },
@@ -205,13 +220,23 @@ export function CellForm({
     },
   });
 
-  const handleModelChange = (model: ModelSelection) => {
+  const handleModelChange = (
+    model: ModelSelection,
+    source: "auto" | "user"
+  ) => {
     setSelectedModel(model);
+    setHasExplicitModelSelection(source === "user");
   };
 
   const mutationErrorMessage =
     mutation.error instanceof Error ? mutation.error.message : undefined;
-  const submitDisabled = mutation.isPending || isModelSelectorLoading;
+  const hasModelSelection =
+    typeof selectedModel?.id === "string" &&
+    selectedModel.id.length > 0 &&
+    typeof selectedModel.providerId === "string" &&
+    selectedModel.providerId.length > 0;
+  const submitDisabled =
+    mutation.isPending || isModelSelectorLoading || !hasModelSelection;
 
   if (templatesLoading) {
     return <div>Loading templates...</div>;
@@ -331,6 +356,7 @@ export function CellForm({
                       const nextSelection =
                         resolveTemplateModelSelection(nextTemplate);
                       setSelectedModel(nextSelection);
+                      setHasExplicitModelSelection(false);
                     }}
                     value={field.state.value}
                   >

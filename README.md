@@ -189,7 +189,7 @@ Notes:
 - `HIVE_HOME` is ephemeral per run by default; set `HIVE_E2E_SHARED_HOME=1` to opt into a shared cache at `tmp/e2e-shared/hive-home` when debugging startup behavior.
 - `HIVE_E2E_WORKSPACE_MODE=clone` clones a source repo into the run sandbox (default source is this repo) and registers it as `hive` for closer dev parity.
 - `HIVE_E2E_WORKSPACE_SOURCE=/abs/path/to/repo` overrides the clone source when using `HIVE_E2E_WORKSPACE_MODE=clone`.
-- By default, the chat spec prefers lightweight templates (`Basic Template`, then `E2E Template`) to avoid heavy setup commands in test runs; set `HIVE_E2E_USE_DEFAULT_TEMPLATE=1` to keep each workspace's configured default template for strict parity debugging.
+- By default, the chat spec prefers lightweight templates (`E2E Template`, then `Basic Template`) to avoid heavy setup commands in test runs; set `HIVE_E2E_USE_DEFAULT_TEMPLATE=1` to keep each workspace's configured default template for strict parity debugging.
 - Playwright artifacts are copied to `apps/e2e/reports/latest/` (including per-test videos and `playwright-report`).
 - Set `HIVE_E2E_KEEP_ARTIFACTS=1` to also keep raw run logs/artifacts under `tmp/e2e-runs/`.
 

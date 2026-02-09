@@ -46,7 +46,7 @@ const TERMINAL_RECOVERY_WAIT_MS = 750;
 const TEMPLATE_OPTION_TIMEOUT_MS = 750;
 const CELL_CHAT_URL_PATTERN = /\/cells\/[^/]+\/chat/;
 const CELL_ID_PATTERN = /\/cells\/([^/]+)\/chat/;
-const PREFERRED_TEMPLATE_LABELS = ["Basic Template", "E2E Template"];
+const PREFERRED_TEMPLATE_LABELS = ["E2E Template", "Basic Template"];
 const USE_DEFAULT_TEMPLATE = process.env.HIVE_E2E_USE_DEFAULT_TEMPLATE === "1";
 
 test.describe("cell chat flow", () => {
