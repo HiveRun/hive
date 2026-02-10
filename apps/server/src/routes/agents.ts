@@ -10,7 +10,10 @@ import {
 import type { AgentSessionRecord, AgentStreamEvent } from "../agents/types";
 import { LoggerService } from "../logger";
 import { runServerEffect } from "../runtime";
-import { AgentSessionByCellResponseSchema } from "../schema/api";
+import {
+  AgentMessageListResponseSchema,
+  AgentSessionByCellResponseSchema,
+} from "../schema/api";
 import { createWorkspaceContextPlugin } from "../workspaces/plugin";
 
 const HTTP_STATUS = {
@@ -273,6 +276,38 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
           ),
           message: t.String(),
         }),
+      },
+    }
+  )
+  .get(
+    "/sessions/:id/messages",
+    async ({ params, set }) => {
+      const outcome = await runServerEffect(
+        matchAgentEffect(
+          withRouteLogger(
+            fetchSessionEffect(params.id, "Failed to fetch session").pipe(
+              Effect.flatMap((session) =>
+                withAgentRuntime(
+                  (agentRuntime) => agentRuntime.fetchAgentMessages(session.id),
+                  "Failed to fetch messages"
+                )
+              ),
+              Effect.map((messages) => ({ messages }))
+            ),
+            { route: "agents/session-messages", sessionId: params.id }
+          )
+        )
+      );
+
+      set.status = outcome.status;
+      return outcome.body;
+    },
+    {
+      params: t.Object({ id: t.String() }),
+      response: {
+        200: AgentMessageListResponseSchema,
+        400: t.Object({ message: t.String() }),
+        404: t.Object({ message: t.String() }),
       },
     }
   )

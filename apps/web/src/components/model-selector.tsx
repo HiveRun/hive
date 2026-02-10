@@ -27,6 +27,8 @@ export type ModelSelection = {
   providerId: string;
 };
 
+export type ModelSelectionSource = "auto" | "user";
+
 const PROVIDER_LABEL_OVERRIDES: Record<string, string> = {
   opencode: "Zen",
 };
@@ -42,7 +44,8 @@ type ModelSelectorProps = {
   sessionId?: string;
   workspaceId?: string;
   selectedModel?: ModelSelection;
-  onModelChange: (model: ModelSelection) => void;
+  onModelChange: (model: ModelSelection, source: ModelSelectionSource) => void;
+  onLoadingChange?: (isLoading: boolean) => void;
   disabled?: boolean;
 };
 
@@ -53,6 +56,7 @@ export function ModelSelector({
   workspaceId,
   selectedModel,
   onModelChange,
+  onLoadingChange,
   disabled = false,
 }: ModelSelectorProps) {
   if (!(sessionId || workspaceId)) {
@@ -69,6 +73,10 @@ export function ModelSelector({
     isError,
   } = useQuery<ModelListResponse>(queryOptions);
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    onLoadingChange?.(isLoading);
+  }, [isLoading, onLoadingChange]);
 
   const providerNames = useMemo(() => {
     const providers = modelsData?.providers ?? [];
@@ -163,7 +171,10 @@ export function ModelSelector({
       defaultModel = flattenedModels[0];
     }
     if (defaultModel) {
-      onModelChange({ id: defaultModel.id, providerId: defaultModel.provider });
+      onModelChange(
+        { id: defaultModel.id, providerId: defaultModel.provider },
+        "auto"
+      );
     }
   }, [flattenedModels, defaultSelection, onModelChange, selectedModel]);
 
@@ -177,7 +188,7 @@ export function ModelSelector({
 
   const handleSelect = useCallback(
     (model: AvailableModel) => {
-      onModelChange({ id: model.id, providerId: model.provider });
+      onModelChange({ id: model.id, providerId: model.provider }, "user");
       setOpen(false);
     },
     [onModelChange]

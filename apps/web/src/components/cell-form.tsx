@@ -1,10 +1,16 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import {
+  isSameModelSelection,
+  resolveAutoSelectedModel,
+  resolveTemplateModelSelection,
+} from "@/components/cell-form.model-selection";
+import {
   type ModelSelection,
+  type ModelSelectionSource,
   ModelSelector,
 } from "@/components/model-selector";
 import { Button } from "@/components/ui/button";
@@ -21,7 +27,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import type { CreateCellInput } from "@/lib/rpc";
 import { cellMutations } from "@/queries/cells";
-import { type Template, templateQueries } from "@/queries/templates";
+import { templateQueries } from "@/queries/templates";
 
 type CellFormValues = CreateCellInput;
 
@@ -102,11 +108,15 @@ export function CellForm({
   const [activeTemplateId, setActiveTemplateId] = useState(
     defaultValues.templateId
   );
+  const [isModelSelectorLoading, setIsModelSelectorLoading] = useState(true);
+  const [hasExplicitModelSelection, setHasExplicitModelSelection] =
+    useState(false);
   const [selectedModel, setSelectedModel] = useState<ModelSelection>();
 
   useEffect(() => {
     setActiveTemplateId(defaultValues.templateId);
     setSelectedModel(undefined);
+    setHasExplicitModelSelection(false);
   }, [defaultValues.templateId]);
 
   const activeTemplate = templates?.find(
@@ -116,41 +126,18 @@ export function CellForm({
   const providerPreference =
     selectedModel?.providerId ?? templateAgent?.providerId;
 
-  const resolveTemplateModelSelection = useCallback(
-    (template?: Template) => {
-      const agentConfig = template?.configJson.agent;
-      if (agentConfig?.modelId) {
-        return { id: agentConfig.modelId, providerId: agentConfig.providerId };
-      }
-
-      const defaultModelId = agentDefaults?.modelId;
-      const defaultProviderId = agentDefaults?.providerId;
-      const templateProviderId = agentConfig?.providerId;
-
-      const providerCompatible =
-        !(templateProviderId && defaultProviderId) ||
-        templateProviderId === defaultProviderId;
-
-      if (defaultModelId && providerCompatible) {
-        const providerId = templateProviderId ?? defaultProviderId;
-        if (providerId) {
-          return { id: defaultModelId, providerId };
-        }
-      }
-    },
-    [agentDefaults]
-  );
-
   useEffect(() => {
-    if (!activeTemplate || selectedModel) {
-      return;
-    }
+    const nextSelection = resolveAutoSelectedModel({
+      activeTemplate,
+      agentDefaults,
+      currentSelection: selectedModel,
+      hasExplicitModelSelection,
+    });
 
-    const nextSelection = resolveTemplateModelSelection(activeTemplate);
-    if (nextSelection) {
+    if (!isSameModelSelection(selectedModel, nextSelection)) {
       setSelectedModel(nextSelection);
     }
-  }, [activeTemplate, resolveTemplateModelSelection, selectedModel]);
+  }, [activeTemplate, agentDefaults, hasExplicitModelSelection, selectedModel]);
 
   const mutation = useMutation({
     mutationFn: cellMutations.create.mutationFn,
@@ -177,6 +164,7 @@ export function CellForm({
       });
       form.reset();
       setSelectedModel(undefined);
+      setHasExplicitModelSelection(false);
       setActiveTemplateId(defaultValues.templateId);
       onSuccess?.();
     },
@@ -204,12 +192,23 @@ export function CellForm({
     },
   });
 
-  const handleModelChange = (model: ModelSelection) => {
+  const handleModelChange = (
+    model: ModelSelection,
+    source: ModelSelectionSource
+  ) => {
     setSelectedModel(model);
+    setHasExplicitModelSelection(source === "user");
   };
 
   const mutationErrorMessage =
     mutation.error instanceof Error ? mutation.error.message : undefined;
+  const hasModelSelection =
+    typeof selectedModel?.id === "string" &&
+    selectedModel.id.length > 0 &&
+    typeof selectedModel.providerId === "string" &&
+    selectedModel.providerId.length > 0;
+  const submitDisabled =
+    mutation.isPending || isModelSelectorLoading || !hasModelSelection;
 
   if (templatesLoading) {
     return <div>Loading templates...</div>;
@@ -249,6 +248,7 @@ export function CellForm({
         )}
         <form
           className="space-y-6"
+          data-testid="cell-form"
           onSubmit={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -265,6 +265,7 @@ export function CellForm({
               <div className="space-y-2">
                 <Label htmlFor={field.name}>Name</Label>
                 <Input
+                  data-testid="cell-name-input"
                   disabled={mutation.isPending}
                   id={field.name}
                   onChange={(event) => field.handleChange(event.target.value)}
@@ -324,9 +325,12 @@ export function CellForm({
                       const nextTemplate = templates?.find(
                         (template) => template.id === value
                       );
-                      const nextSelection =
-                        resolveTemplateModelSelection(nextTemplate);
+                      const nextSelection = resolveTemplateModelSelection(
+                        nextTemplate,
+                        agentDefaults
+                      );
                       setSelectedModel(nextSelection);
+                      setHasExplicitModelSelection(false);
                     }}
                     value={field.state.value}
                   >
@@ -357,6 +361,7 @@ export function CellForm({
             <ModelSelector
               disabled={mutation.isPending}
               id="cell-model-selector"
+              onLoadingChange={setIsModelSelectorLoading}
               onModelChange={handleModelChange}
               providerId={providerPreference}
               selectedModel={selectedModel}
@@ -378,7 +383,11 @@ export function CellForm({
                 Cancel
               </Button>
             )}
-            <Button disabled={mutation.isPending} type="submit">
+            <Button
+              data-testid="cell-submit-button"
+              disabled={submitDisabled}
+              type="submit"
+            >
               {mutation.isPending ? "Creating..." : "Create Cell"}
             </Button>
           </div>

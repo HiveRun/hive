@@ -14,6 +14,9 @@
   - **Status updates**: `[ ]` → `[/]` when starting work, `[/]` → `[x]` when completed, `[ ]` → `[-]` if blocked
   - **Phase ordering provides natural priority**: Phase 0 → Phase 1 → Phase 2 → Phase 3 → Phase 4
   - **Always check feature file first** for requirements, integration points, and testing strategy before starting work
+- Before pushing, run `bun run check:push`; Playwright E2E (`bun run test:e2e`) must pass.
+- For `apps/e2e` changes, prefer deterministic checks (session/message metadata + UI confirmation) instead of fixed sleeps.
+- Keep E2E fixtures/config in sync with runtime defaults (provider/model IDs, template labels) so test behavior matches production paths.
 - When the user requests a change to agent guidance or project docs, proactively locate the relevant file(s) and make the update without waiting for another reminder.
 - Update `.ruler/prompts/*.md` whenever guidance for agents changes; the prompt bundle is our source of truth for AI behavior.
 - Commit prompt changes like any other source code so CI and Husky enforce lint/type/build checks.

@@ -92,4 +92,8 @@ docs/.obsidian/appearance.json
 # Track OpenCode config in repo
 !opencode.json
 
+# OpenCode local planning artifacts
+.opencode/plans/
 
+# WDIO generated reports/videos
+apps/e2e/reports/

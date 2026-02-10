@@ -234,6 +234,7 @@ type CellTerminalProps = {
   startupTextMatch?: string | null;
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Terminal lifecycle handling intentionally coordinates stream events, reconnects, and UI status in one component.
 export function CellTerminal({
   cellId,
   endpointBase = "terminal",
@@ -260,6 +261,12 @@ export function CellTerminal({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [session, setSession] = useState<TerminalSession | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
+  const [isTerminalInitialized, setIsTerminalInitialized] = useState(false);
+  const [terminalOutputSeq, setTerminalOutputSeq] = useState(0);
+  const [terminalOutputLength, setTerminalOutputLength] = useState(0);
+  const [terminalVisibleOutputLength, setTerminalVisibleOutputLength] =
+    useState(0);
+  const [terminalOutputUpdatedAt, setTerminalOutputUpdatedAt] = useState(0);
   const [isStartupReady, setIsStartupReady] = useState(
     startupReadiness === "session"
   );
@@ -359,6 +366,12 @@ export function CellTerminal({
     }, RESIZE_DEBOUNCE_MS);
   }, [sendResize]);
 
+  const recordOutputActivity = useCallback((nextOutput: string) => {
+    setTerminalOutputSeq((current) => current + 1);
+    setTerminalOutputLength(nextOutput.length);
+    setTerminalOutputUpdatedAt(Date.now());
+  }, []);
+
   const copyTerminalOutput = useCallback(async () => {
     try {
       const serialized = serializeAddonRef.current?.serialize();
@@ -390,6 +403,7 @@ export function CellTerminal({
     setSession(null);
     setErrorMessage(null);
     visibleOutputRef.current = "";
+    setTerminalVisibleOutputLength(0);
     setIsStartupReady(startupReadiness === "session");
     try {
       const response = await fetch(buildTerminalEndpoint("restart"), {
@@ -431,6 +445,11 @@ export function CellTerminal({
     setSession(null);
     setConnection("connecting");
     setErrorMessage(null);
+    setIsTerminalInitialized(false);
+    setTerminalOutputSeq(0);
+    setTerminalOutputLength(0);
+    setTerminalVisibleOutputLength(0);
+    setTerminalOutputUpdatedAt(0);
     setIsStartupReady(startupReadiness === "session");
 
     const connectStream = () => {
@@ -467,6 +486,7 @@ export function CellTerminal({
           output: string;
         };
         const snapshot = payload.output ?? "";
+        const previousOutput = outputRef.current;
 
         if (snapshot.startsWith(outputRef.current)) {
           const delta = snapshot.slice(outputRef.current.length);
@@ -481,9 +501,13 @@ export function CellTerminal({
         }
 
         outputRef.current = snapshot;
+        if (snapshot !== previousOutput) {
+          recordOutputActivity(snapshot);
+        }
         visibleOutputRef.current = extractVisibleText(snapshot).slice(
           -STARTUP_VISIBLE_BUFFER_LIMIT
         );
+        setTerminalVisibleOutputLength(visibleOutputRef.current.length);
         updateStartupReadiness(visibleOutputRef.current);
         scheduleResizeSync();
       });
@@ -511,7 +535,9 @@ export function CellTerminal({
           visibleOutputRef.current,
           chunk
         );
+        setTerminalVisibleOutputLength(visibleOutputRef.current.length);
         updateStartupReadiness(visibleOutputRef.current);
+        recordOutputActivity(outputRef.current);
         setConnection((current) =>
           current === "exited" ? "exited" : "online"
         );
@@ -590,6 +616,7 @@ export function CellTerminal({
       terminalRef.current = terminal;
       fitAddonRef.current = fitAddon;
       serializeAddonRef.current = serializeAddon;
+      setIsTerminalInitialized(true);
 
       terminal.onData((data) => {
         sendInput(data);
@@ -644,6 +671,7 @@ export function CellTerminal({
       terminalRef.current = null;
       fitAddonRef.current = null;
       serializeAddonRef.current = null;
+      setIsTerminalInitialized(false);
     };
   }, [
     buildTerminalEndpoint,
@@ -654,6 +682,7 @@ export function CellTerminal({
     startupReadiness,
     updateStartupReadiness,
     wheelScrollBehavior,
+    recordOutputActivity,
   ]);
 
   const connectionLabelMap: Record<ConnectionState, string> = {
@@ -698,6 +727,11 @@ export function CellTerminal({
     themeMode === "light" ? "bg-[#F6F1E6]/96" : "bg-[#070504]/94";
   const showLoadingOverlay =
     !isStartupReady && connection !== "disconnected" && connection !== "exited";
+  const terminalReady =
+    isTerminalInitialized &&
+    isStartupReady &&
+    connection === "online" &&
+    session?.status === "running";
   let footer: ReactNode = null;
   if (errorMessage) {
     footer = (
@@ -714,7 +748,16 @@ export function CellTerminal({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
+    <div
+      className="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-border bg-card"
+      data-terminal-error-message={errorMessage ?? ""}
+      data-terminal-output-length={String(terminalOutputLength)}
+      data-terminal-output-seq={String(terminalOutputSeq)}
+      data-terminal-output-updated-at={String(terminalOutputUpdatedAt)}
+      data-terminal-ready={terminalReady ? "true" : "false"}
+      data-terminal-visible-output-length={String(terminalVisibleOutputLength)}
+      data-testid="cell-terminal"
+    >
       <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4">
         <header className="flex flex-wrap items-center justify-between gap-2 border-border/60 border-b pb-2">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -723,6 +766,11 @@ export function CellTerminal({
             </p>
             <span
               className={`text-[11px] uppercase tracking-[0.25em] ${statusTone}`}
+              data-connection-state={connection}
+              data-exit-code={
+                connection === "exited" ? String(session?.exitCode ?? "") : ""
+              }
+              data-testid="terminal-connection"
             >
               {connectionLabel}
             </span>
@@ -744,6 +792,7 @@ export function CellTerminal({
             </Button>
             <Button
               className="h-7 px-2 text-[10px] uppercase tracking-[0.2em]"
+              data-testid="terminal-restart-button"
               disabled={isRestarting}
               onClick={restartTerminal}
               size="sm"
@@ -784,6 +833,7 @@ export function CellTerminal({
         >
           <div
             className={`h-full min-h-0 w-full ${showLoadingOverlay ? "opacity-0" : "opacity-100"}`}
+            data-testid="cell-terminal-input"
             ref={containerRef}
           />
           {showLoadingOverlay ? (
