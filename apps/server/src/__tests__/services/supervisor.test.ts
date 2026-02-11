@@ -656,6 +656,67 @@ describe("service supervisor", () => {
     ).toBe(true);
   });
 
+  it("restarts a stopped service even when its previous port is occupied", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-port-collision");
+    const occupiedPort = await allocateFreePort();
+
+    const listener = createServer();
+    await new Promise<void>((resolve, reject) => {
+      listener.once("error", reject);
+      listener.listen(occupiedPort, "127.0.0.1", () => resolve());
+    });
+
+    await testDb.insert(cellServices).values({
+      id: "svc-port-collision",
+      cellId: cell.id,
+      name: "web",
+      type: "process",
+      command: "bun run dev",
+      cwd: workspace,
+      env: {},
+      status: "stopped",
+      port: occupiedPort,
+      pid: null,
+      readyTimeoutMs: null,
+      definition: {
+        type: "process",
+        run: "bun run dev",
+        cwd: ".",
+        env: {},
+      },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const harness = createHarness();
+
+    try {
+      await harness.supervisor.startCellService("svc-port-collision");
+
+      expect(harness.processes).toHaveLength(1);
+      const assignedPort = Number(
+        harness.processes[0]?.options.env.WEB_PORT ?? "0"
+      );
+      expect(assignedPort).toBeGreaterThan(0);
+      expect(assignedPort).not.toBe(occupiedPort);
+
+      const [service] = await testDb
+        .select()
+        .from(cellServices)
+        .where(eq(cellServices.id, "svc-port-collision"));
+
+      expect(service?.status).toBe("running");
+      expect(service?.pid).toBe(harness.processes[0]?.handle.pid ?? null);
+      expect(service?.port).toBe(assignedPort);
+
+      await harness.supervisor.stopCellService("svc-port-collision");
+      await Promise.all(harness.processes.map((proc) => proc.handle.exited));
+    } finally {
+      await new Promise<void>((resolve) => listener.close(() => resolve()));
+    }
+  });
+
   async function insertCell(workspacePath: string, templateId: string) {
     const [cell] = await testDb
       .insert(cells)
