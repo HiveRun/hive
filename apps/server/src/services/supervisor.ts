@@ -775,7 +775,9 @@ export function createServiceSupervisor(
     const rows = await repository.fetchAllServices();
 
     for (const row of rows) {
-      await stopService(row, true, "needs_resume");
+      const statusAfterStop =
+        row.service.status === "stopped" ? "stopped" : "needs_resume";
+      await stopService(row, true, statusAfterStop);
     }
 
     terminalRuntime.stopAll();

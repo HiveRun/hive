@@ -485,6 +485,89 @@ describe("service supervisor", () => {
     expect(stillStopped?.pid).toBeNull();
   });
 
+  it("restarts only shutdown-marked services after mixed stop states", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-mixed-resume");
+
+    const initialHarness = createHarness();
+
+    await initialHarness.supervisor.ensureCellServices({
+      cell,
+      template: {
+        id: "template-mixed-resume",
+        label: "Template",
+        type: "manual",
+        services: {
+          web: {
+            type: "process",
+            run: "bun run dev",
+            cwd: ".",
+          },
+          worker: {
+            type: "process",
+            run: "bun run worker",
+            cwd: ".",
+          },
+        },
+      },
+    });
+
+    const initialRows = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+    const workerService = initialRows.find(
+      (service) => service.name === "worker"
+    );
+    if (!workerService) {
+      throw new Error("Expected worker service to exist");
+    }
+
+    await initialHarness.supervisor.stopCellService(workerService.id);
+    await initialHarness.supervisor.stopAll();
+    await Promise.all(
+      initialHarness.processes.map((proc) => proc.handle.exited)
+    );
+
+    const afterShutdown = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+    const webAfterShutdown = afterShutdown.find(
+      (service) => service.name === "web"
+    );
+    const workerAfterShutdown = afterShutdown.find(
+      (service) => service.name === "worker"
+    );
+
+    expect(webAfterShutdown?.status).toBe("needs_resume");
+    expect(workerAfterShutdown?.status).toBe("stopped");
+
+    const restartHarness = createHarness();
+    await restartHarness.supervisor.bootstrap();
+
+    expect(restartHarness.processes).toHaveLength(1);
+
+    const afterBootstrap = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+    const webAfterBootstrap = afterBootstrap.find(
+      (service) => service.name === "web"
+    );
+    const workerAfterBootstrap = afterBootstrap.find(
+      (service) => service.name === "worker"
+    );
+
+    expect(webAfterBootstrap?.status).toBe("running");
+    expect(workerAfterBootstrap?.status).toBe("stopped");
+
+    await restartHarness.supervisor.stopAll();
+    await Promise.all(
+      restartHarness.processes.map((proc) => proc.handle.exited)
+    );
+  });
+
   it("stops running services and clears pid", async () => {
     const workspace = await createWorkspaceDir();
     const cell = await insertCell(workspace, "template-stop");
