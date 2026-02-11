@@ -24,6 +24,8 @@ type ServiceRecord = {
   id: string;
   name: string;
   status: string;
+  pid?: number;
+  port?: number;
 };
 
 type ActivityRecord = {

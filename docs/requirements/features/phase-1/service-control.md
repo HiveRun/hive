@@ -10,6 +10,7 @@
   - [x] Scope runtime E2E teardown to each spawned test process tree so cleanup does not touch user/dev/prod OpenCode processes
   - [x] Preserve service restart intent across Hive daemon restarts (`needs_resume` on daemon shutdown, `stopped` only for manual stop)
   - [x] Add mixed-state restart coverage so daemon bootstrap resumes only `needs_resume` services while keeping manual stops down
+  - [x] Add runtime E2E coverage to assert cell deletion reaps persisted service processes and removes service routes
 
 ## Goal
 Provide comprehensive service management capabilities for both users and agents through UI, CLI, and MCP tools.
