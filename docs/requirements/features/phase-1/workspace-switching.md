@@ -13,6 +13,7 @@
   - [x] Keep chat loading overlay visible until OpenCode renders terminal content
   - [x] Add true runtime E2E coverage for registering a second workspace and validating workspace-scoped cell isolation
   - [x] Add true runtime E2E coverage for `/cells/$id/terminal` route input/restart behavior
+  - [x] Add true runtime E2E coverage for `/cells/$id/terminal` refresh reconnect behavior
 
 ## Goal
 Allow users to easily manage multiple workspaces and switch between them within Hive.
