@@ -775,7 +775,7 @@ export function createServiceSupervisor(
     const rows = await repository.fetchAllServices();
 
     for (const row of rows) {
-      await stopService(row, true);
+      await stopService(row, true, "needs_resume");
     }
 
     terminalRuntime.stopAll();
@@ -1029,7 +1029,8 @@ export function createServiceSupervisor(
 
   async function stopService(
     row: ServiceRow,
-    releasePort: boolean
+    releasePort: boolean,
+    statusAfterStop: ServiceStatus = "stopped"
   ): Promise<void> {
     const definition = row.service.definition as ProcessService | null;
     const env = row.service.env;
@@ -1053,7 +1054,7 @@ export function createServiceSupervisor(
     }
 
     await repository.updateService(row.service.id, {
-      status: "stopped",
+      status: statusAfterStop,
       pid: null,
     });
 

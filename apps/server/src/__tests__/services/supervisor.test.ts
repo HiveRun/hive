@@ -382,6 +382,109 @@ describe("service supervisor", () => {
     await Promise.all(harness.processes.map((proc) => proc.handle.exited));
   });
 
+  it("restarts services after Hive shutdown stopAll", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-shutdown-restart");
+
+    const initialHarness = createHarness();
+
+    await initialHarness.supervisor.ensureCellServices({
+      cell,
+      template: {
+        id: "template-shutdown-restart",
+        label: "Template",
+        type: "manual",
+        services: {
+          web: {
+            type: "process",
+            run: "bun run dev",
+            cwd: ".",
+          },
+        },
+      },
+    });
+
+    await initialHarness.supervisor.stopAll();
+    await Promise.all(
+      initialHarness.processes.map((proc) => proc.handle.exited)
+    );
+
+    const [stoppedForShutdown] = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+
+    expect(stoppedForShutdown?.status).toBe("needs_resume");
+    expect(stoppedForShutdown?.pid).toBeNull();
+
+    const restartHarness = createHarness();
+    await restartHarness.supervisor.bootstrap();
+
+    expect(restartHarness.processes).toHaveLength(1);
+
+    const [restarted] = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+
+    expect(restarted?.status).toBe("running");
+    expect(restarted?.pid).toBe(
+      restartHarness.processes[0]?.handle.pid ?? null
+    );
+
+    await restartHarness.supervisor.stopAll();
+    await Promise.all(
+      restartHarness.processes.map((proc) => proc.handle.exited)
+    );
+  });
+
+  it("does not restart manually stopped services during bootstrap", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-manual-stop");
+
+    const initialHarness = createHarness();
+
+    await initialHarness.supervisor.ensureCellServices({
+      cell,
+      template: {
+        id: "template-manual-stop",
+        label: "Template",
+        type: "manual",
+        services: {
+          web: {
+            type: "process",
+            run: "bun run dev",
+            cwd: ".",
+          },
+        },
+      },
+    });
+
+    const [service] = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+
+    if (!service) {
+      throw new Error("Expected service to exist");
+    }
+
+    await initialHarness.supervisor.stopCellService(service.id);
+
+    const restartHarness = createHarness();
+    await restartHarness.supervisor.bootstrap();
+
+    expect(restartHarness.processes).toHaveLength(0);
+
+    const [stillStopped] = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.id, service.id));
+
+    expect(stillStopped?.status).toBe("stopped");
+    expect(stillStopped?.pid).toBeNull();
+  });
+
   it("stops running services and clears pid", async () => {
     const workspace = await createWorkspaceDir();
     const cell = await insertCell(workspace, "template-stop");
