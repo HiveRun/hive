@@ -504,7 +504,7 @@ export async function sendTerminalCommand(
 ): Promise<void> {
   await page.locator(selectors.terminalInputSurface).click();
   await page.locator(selectors.terminalInputTextarea).focus();
-  await page.keyboard.type(command);
+  await page.keyboard.insertText(command);
   await page.keyboard.press("Enter");
 }
 

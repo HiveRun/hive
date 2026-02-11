@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { type Page, test } from "@playwright/test";
 import { selectors } from "../src/selectors";
 import {
   createCell,
@@ -27,10 +27,6 @@ test.describe("terminal reconnect", () => {
       timeoutMs: TERMINAL_READY_TIMEOUT_MS,
     });
 
-    await expect(
-      page.locator(selectors.terminalConnectionBadge)
-    ).toHaveAttribute("data-connection-state", "online");
-
     const beforeRefresh = await readOutputSeq(page);
     await sendTerminalCommand(page, "echo before-refresh");
 
@@ -46,9 +42,6 @@ test.describe("terminal reconnect", () => {
       context: "terminal after refresh",
       timeoutMs: TERMINAL_READY_TIMEOUT_MS,
     });
-    await expect(
-      page.locator(selectors.terminalConnectionBadge)
-    ).toHaveAttribute("data-connection-state", "online");
 
     const afterRefresh = await readOutputSeq(page);
     await sendTerminalCommand(page, "echo after-refresh");

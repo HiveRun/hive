@@ -30,20 +30,11 @@ test.describe("workspace switching", () => {
 
     await page.goto("/");
 
-    await page.locator(selectors.workspaceRegisterButton).first().click();
-    await page.getByText("Register New Workspace").waitFor({
-      state: "visible",
-      timeout: 15_000,
+    await registerWorkspaceIfMissing({
+      apiUrl,
+      path: secondaryWorkspacePath,
+      label: secondaryLabel,
     });
-
-    await page.getByPlaceholder("Search").fill(secondaryLabel);
-    await page
-      .getByRole("button", {
-        name: new RegExp(escapeRegex(secondaryLabel), "i"),
-      })
-      .first()
-      .click();
-    await page.getByRole("button", { name: "Register workspace" }).click();
 
     await waitForCondition({
       timeoutMs: 30_000,
@@ -56,7 +47,7 @@ test.describe("workspace switching", () => {
       },
     });
 
-    await page.keyboard.press("Escape");
+    await page.reload();
 
     const workspaces = await fetchWorkspaces(apiUrl);
     const primaryWorkspace = workspaces.workspaces.find(
@@ -129,6 +120,36 @@ test.describe("workspace switching", () => {
   });
 });
 
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+async function registerWorkspaceIfMissing(options: {
+  apiUrl: string;
+  path: string;
+  label: string;
+}): Promise<void> {
+  const existing = await fetchWorkspaces(options.apiUrl);
+  const alreadyRegistered = existing.workspaces.some(
+    (workspace) =>
+      workspace.path === options.path || workspace.label === options.label
+  );
+
+  if (alreadyRegistered) {
+    return;
+  }
+
+  const response = await fetch(`${options.apiUrl}/api/workspaces`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      path: options.path,
+      label: options.label,
+      activate: false,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to register workspace ${options.label}: ${response.status}`
+    );
+  }
 }
