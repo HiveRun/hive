@@ -15,6 +15,7 @@ const SIGTERM_EXIT_CODE = 143;
 const SERVER_READY_PATH = "/health";
 const WEB_READY_PATH = "/";
 const PLAYWRIGHT_CONFIG_PATH = "playwright.config.ts";
+const SECONDARY_WORKSPACE_NAME = "workspace-secondary";
 
 type WorkspaceMode = "fixture" | "clone";
 
@@ -58,6 +59,10 @@ async function run() {
     repoRoot,
     workspaceName: workspaceRootName,
   });
+  const secondaryWorkspaceRoot = join(
+    context.runRoot,
+    SECONDARY_WORKSPACE_NAME
+  );
   const managedProcesses: ManagedProcess[] = [];
   let runSucceeded = false;
 
@@ -75,8 +80,10 @@ async function run() {
         sourceRoot: workspaceSource,
         workspaceRoot: context.workspaceRoot,
       });
+      await createFixtureWorkspace(secondaryWorkspaceRoot);
     } else {
       await createFixtureWorkspace(context.workspaceRoot);
+      await createFixtureWorkspace(secondaryWorkspaceRoot);
     }
 
     const server = await startServerWithRetries({
@@ -127,6 +134,9 @@ async function run() {
         HIVE_E2E_BASE_URL: context.webUrl,
         HIVE_E2E_API_URL: context.apiUrl,
         HIVE_E2E_ARTIFACTS_DIR: context.artifactsDir,
+        HIVE_E2E_WORKSPACE_PATH: context.workspaceRoot,
+        HIVE_E2E_SECOND_WORKSPACE_PATH: secondaryWorkspaceRoot,
+        HIVE_E2E_HIVE_HOME: context.hiveHome,
       },
       label: "Playwright suite",
     });
@@ -176,6 +186,8 @@ async function startServerWithRetries(options: {
         DATABASE_URL: `file:${options.context.dbPath}`,
         HIVE_HOME: options.context.hiveHome,
         HIVE_WORKSPACE_ROOT: options.context.workspaceRoot,
+        HIVE_BROWSE_ROOT: options.context.runRoot,
+        HIVE_OPENCODE_START_TIMEOUT_MS: "120000",
         HOST: "127.0.0.1",
         PORT: String(options.context.apiPort),
         WEB_PORT: String(options.context.webPort),
@@ -241,6 +253,29 @@ async function createFixtureWorkspace(workspaceRoot: string): Promise<void> {
           providerId: "opencode",
         },
       },
+      "e2e-services-template": {
+        id: "e2e-services-template",
+        label: "E2E Services Template",
+        type: "manual",
+        services: {
+          api: {
+            type: "process",
+            run: "tail -f /dev/null",
+          },
+          worker: {
+            type: "process",
+            run: "tail -f /dev/null",
+          },
+        },
+      },
+      "e2e-setup-retry-template": {
+        id: "e2e-setup-retry-template",
+        label: "E2E Setup Retry Template",
+        type: "manual",
+        setup: [
+          'test -f .hive-setup-pass || { echo "marker missing: .hive-setup-pass" >&2; exit 37; }',
+        ],
+      },
     },
   };
 
@@ -257,6 +292,8 @@ async function createFixtureWorkspace(workspaceRoot: string): Promise<void> {
   );
 
   await writeFile(join(workspaceRoot, "README.md"), "# Hive E2E Workspace\n");
+
+  await writeFile(join(workspaceRoot, ".hive-setup-pass"), "ok\n", "utf8");
 
   await runCommand("git", ["init"], {
     cwd: workspaceRoot,

@@ -47,11 +47,18 @@ function runWithCellLock(cellId: string, action: () => Promise<void>) {
   const current = cellServiceLocks.get(cellId) ?? Promise.resolve();
   const next = current.catch(() => null).then(action);
   cellServiceLocks.set(cellId, next);
-  next.finally(() => {
-    if (cellServiceLocks.get(cellId) === next) {
-      cellServiceLocks.delete(cellId);
+  next.then(
+    () => {
+      if (cellServiceLocks.get(cellId) === next) {
+        cellServiceLocks.delete(cellId);
+      }
+    },
+    () => {
+      if (cellServiceLocks.get(cellId) === next) {
+        cellServiceLocks.delete(cellId);
+      }
     }
-  });
+  );
   return next;
 }
 
@@ -59,11 +66,18 @@ function runWithServiceLock(serviceId: string, action: () => Promise<void>) {
   const current = serviceStartLocks.get(serviceId) ?? Promise.resolve();
   const next = current.catch(() => null).then(action);
   serviceStartLocks.set(serviceId, next);
-  next.finally(() => {
-    if (serviceStartLocks.get(serviceId) === next) {
-      serviceStartLocks.delete(serviceId);
+  next.then(
+    () => {
+      if (serviceStartLocks.get(serviceId) === next) {
+        serviceStartLocks.delete(serviceId);
+      }
+    },
+    () => {
+      if (serviceStartLocks.get(serviceId) === next) {
+        serviceStartLocks.delete(serviceId);
+      }
     }
-  });
+  );
   return next;
 }
 
@@ -775,7 +789,14 @@ export function createServiceSupervisor(
     if (typeof row.service.port === "number") {
       const portFree = await isPortFree(row.service.port);
       if (!portFree) {
-        return true;
+        const status = row.service.status;
+        if (
+          status === "running" ||
+          status === "starting" ||
+          status === "needs_resume"
+        ) {
+          return true;
+        }
       }
     }
 
@@ -939,6 +960,11 @@ export function createServiceSupervisor(
 
       handle.exited
         .then(async (code) => {
+          const active = activeServices.get(row.service.id);
+          if (!active || active.handle !== handle) {
+            return;
+          }
+
           activeServices.delete(row.service.id);
           await repository.updateService(row.service.id, {
             status: code === 0 ? "stopped" : "error",
@@ -950,6 +976,11 @@ export function createServiceSupervisor(
           notifyServiceUpdate(row);
         })
         .catch((error) => {
+          const active = activeServices.get(row.service.id);
+          if (!active || active.handle !== handle) {
+            return;
+          }
+
           activeServices.delete(row.service.id);
           logger.error("Service exited with error", {
             serviceId: row.service.id,
