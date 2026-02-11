@@ -28,6 +28,7 @@ type ManagedProcess = {
   child: ReturnType<typeof spawn>;
   stdoutPath: string;
   stderrPath: string;
+  processGroupId: number | null;
 };
 
 type ParsedArgs = {
@@ -479,6 +480,7 @@ function startManagedProcess(options: {
   const child = spawn(options.command, options.args, {
     cwd: options.cwd,
     env: options.env,
+    detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -500,20 +502,22 @@ function startManagedProcess(options: {
     child,
     stdoutPath,
     stderrPath,
+    processGroupId: process.platform !== "win32" ? (child.pid ?? null) : null,
   };
 }
 
 async function stopManagedProcess(
   managedProcess: ManagedProcess
 ): Promise<void> {
-  const { child, name, stdoutPath, stderrPath } = managedProcess;
+  const { child, name, stdoutPath, stderrPath, processGroupId } =
+    managedProcess;
   if (child.exitCode !== null || child.killed) {
     return;
   }
 
   await new Promise<void>((resolve) => {
     const timeout = setTimeout(() => {
-      child.kill("SIGKILL");
+      sendManagedProcessSignal(child, processGroupId, "SIGKILL");
     }, CLEANUP_TIMEOUT_MS);
 
     child.once("exit", () => {
@@ -521,7 +525,7 @@ async function stopManagedProcess(
       resolve();
     });
 
-    child.kill("SIGTERM");
+    sendManagedProcessSignal(child, processGroupId, "SIGTERM");
   });
 
   const missingLogs = [stdoutPath, stderrPath].filter(
@@ -532,6 +536,44 @@ async function stopManagedProcess(
       `Warning: missing ${name} log files: ${missingLogs.join(", ")}\n`
     );
   }
+}
+
+function sendManagedProcessSignal(
+  child: ReturnType<typeof spawn>,
+  processGroupId: number | null,
+  signal: NodeJS.Signals
+): void {
+  if (processGroupId) {
+    try {
+      process.kill(-processGroupId, signal);
+      return;
+    } catch (error) {
+      if (!isMissingProcessError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  if (child.exitCode !== null || child.killed) {
+    return;
+  }
+
+  try {
+    child.kill(signal);
+  } catch (error) {
+    if (!isMissingProcessError(error)) {
+      throw error;
+    }
+  }
+}
+
+function isMissingProcessError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "ESRCH"
+  );
 }
 
 run().catch((error) => {
