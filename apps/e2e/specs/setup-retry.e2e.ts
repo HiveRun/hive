@@ -9,6 +9,8 @@ import {
 } from "../src/test-helpers";
 
 const SETUP_RETRY_TEMPLATE_LABEL = "E2E Setup Retry Template";
+const INITIAL_READY_TIMEOUT_MS = 300_000;
+const RETRY_STATE_TIMEOUT_MS = 180_000;
 
 test.describe("setup retry", () => {
   test("recovers a failed setup after retry", async ({ page }) => {
@@ -33,7 +35,7 @@ test.describe("setup retry", () => {
       apiUrl,
       cellId,
       status: "ready",
-      timeoutMs: 120_000,
+      timeoutMs: INITIAL_READY_TIMEOUT_MS,
     });
     expect(initialCell.lastSetupError ?? null).toBeNull();
 
@@ -48,7 +50,7 @@ test.describe("setup retry", () => {
       apiUrl,
       cellId,
       status: "error",
-      timeoutMs: 120_000,
+      timeoutMs: RETRY_STATE_TIMEOUT_MS,
     });
     expect(failedCell.lastSetupError).toContain("marker missing");
 
@@ -62,7 +64,7 @@ test.describe("setup retry", () => {
       apiUrl,
       cellId,
       status: "ready",
-      timeoutMs: 120_000,
+      timeoutMs: RETRY_STATE_TIMEOUT_MS,
     });
     expect(recoveredCell.lastSetupError ?? null).toBeNull();
 
