@@ -3,7 +3,7 @@ import { selectors } from "../src/selectors";
 import {
   createCell,
   ensureTerminalReady,
-  sendTerminalCommand,
+  sendCellTerminalCommand,
   waitForCondition,
 } from "../src/test-helpers";
 
@@ -28,7 +28,7 @@ test.describe("terminal reconnect", () => {
     });
 
     const beforeRefresh = await readOutputSeq(page);
-    await sendTerminalCommand(page, "echo before-refresh");
+    await sendCellTerminalCommand(page, "echo before-refresh");
 
     await waitForCondition({
       timeoutMs: OUTPUT_TIMEOUT_MS,
@@ -44,7 +44,7 @@ test.describe("terminal reconnect", () => {
     });
 
     const afterRefresh = await readOutputSeq(page);
-    await sendTerminalCommand(page, "echo after-refresh");
+    await sendCellTerminalCommand(page, "echo after-refresh");
 
     await waitForCondition({
       timeoutMs: OUTPUT_TIMEOUT_MS,

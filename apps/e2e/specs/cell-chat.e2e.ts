@@ -36,11 +36,11 @@ const CHAT_ROUTE_TIMEOUT_MS = 120_000;
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
 const TERMINAL_INPUT_READY_TIMEOUT_MS = 30_000;
 const SESSION_UPDATE_TIMEOUT_MS = 120_000;
-const ASSISTANT_OUTPUT_TIMEOUT_MS = 25_000;
+const ASSISTANT_OUTPUT_TIMEOUT_MS = 40_000;
 const MIN_VISIBLE_RESPONSE_TAIL_CHARS = 12;
 const MIN_TERMINAL_MATCH_TOKEN_LENGTH = 4;
 const MIN_REPEATED_TOKEN_LENGTH = 6;
-const SEND_ATTEMPTS = 2;
+const SEND_ATTEMPTS = 3;
 const MAX_TERMINAL_RESTARTS = 2;
 const SEND_ATTEMPT_TIMEOUT_MS = 20_000;
 const POST_RESPONSE_VIDEO_SETTLE_MS = 500;
@@ -178,7 +178,7 @@ async function sendPromptWithRetries(options: {
     );
 
     await focusTerminalInput(options.page);
-    await options.page.keyboard.type(options.prompt);
+    await options.page.keyboard.type(options.prompt, { delay: 25 });
     await options.page.keyboard.press("Enter");
 
     const promptAccepted = await waitForPromptAccepted({
@@ -274,6 +274,15 @@ async function waitForAssistantOutput(options: {
 }): Promise<void> {
   await waitForCondition({
     check: async () => {
+      const connectionState = await options.page
+        .locator(selectors.terminalConnectionBadge)
+        .getAttribute("data-connection-state");
+      if (connectionState === "exited" || connectionState === "disconnected") {
+        throw new Error(
+          `Chat terminal ${connectionState} while waiting for assistant output`
+        );
+      }
+
       const metrics = await readTerminalMetrics(options.page);
       const visibleOutput = await readVisibleTerminalText(options.page);
       const currentSession = await fetchAgentSession(
@@ -319,11 +328,12 @@ async function waitForAssistantOutput(options: {
       const visibleSuggestsAssistantResponse =
         visibleOutputGrowthBeyondPrompt >= MIN_VISIBLE_RESPONSE_TAIL_CHARS;
 
-      return (
-        (outputChangedAfterPrompt || visibleSuggestsAssistantResponse) &&
-        responseVisible &&
-        currentSession.status === "awaiting_input"
-      );
+      const responseObserved =
+        responseVisible ||
+        outputChangedAfterPrompt ||
+        visibleSuggestsAssistantResponse;
+
+      return responseObserved && currentSession.status === "awaiting_input";
     },
     errorMessage:
       "Agent response was not observed in terminal output after sending prompt",

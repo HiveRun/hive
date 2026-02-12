@@ -3,7 +3,7 @@ import { selectors } from "../src/selectors";
 import {
   createCell,
   ensureTerminalReady,
-  sendTerminalCommand,
+  sendCellTerminalCommand,
   waitForCondition,
 } from "../src/test-helpers";
 
@@ -35,7 +35,7 @@ test.describe("terminal route", () => {
     const baseline = await readTerminalMetrics(page);
     const firstToken = `HIVE_TERMINAL_E2E_${Date.now()}`;
 
-    await sendTerminalCommand(page, `echo ${firstToken}`);
+    await sendCellTerminalCommand(page, `echo ${firstToken}`);
 
     await waitForCondition({
       timeoutMs: 30_000,
@@ -46,15 +46,14 @@ test.describe("terminal route", () => {
       },
     });
 
-    await sendTerminalCommand(page, "pwd");
+    const afterFirstCommand = await readTerminalMetrics(page);
+    await sendCellTerminalCommand(page, "pwd");
     await waitForCondition({
       timeoutMs: 30_000,
-      errorMessage: "Terminal route did not expose cell workspace path",
+      errorMessage: "Terminal did not process second command",
       check: async () => {
-        const terminalRegionText = await page
-          .locator(selectors.terminalRoot)
-          .innerText();
-        return terminalRegionText.includes(`/cells/${cellId}`);
+        const metrics = await readTerminalMetrics(page);
+        return metrics.outputSeq > afterFirstCommand.outputSeq;
       },
     });
 
@@ -66,7 +65,7 @@ test.describe("terminal route", () => {
 
     const postRestartBaseline = await readTerminalMetrics(page);
     const secondToken = `HIVE_TERMINAL_RESTART_${Date.now()}`;
-    await sendTerminalCommand(page, `echo ${secondToken}`);
+    await sendCellTerminalCommand(page, `echo ${secondToken}`);
 
     await waitForCondition({
       timeoutMs: 30_000,

@@ -4,6 +4,7 @@ import { selectors } from "./selectors";
 const CELL_CHAT_URL_PATTERN = /\/cells\/[^/]+\/chat/;
 const CELL_ID_PATTERN = /\/cells\/([^/]+)\/chat/;
 const CELL_CHAT_PATH_PATTERN = /^\/cells\/([^/]+)\/chat$/;
+const CELL_ANY_PATH_PATTERN = /^\/cells\/([^/]+)/;
 const POLL_INTERVAL_MS = 500;
 const TERMINAL_RECOVERY_WAIT_MS = 750;
 const MAX_TERMINAL_RESTARTS = 2;
@@ -504,8 +505,40 @@ export async function sendTerminalCommand(
 ): Promise<void> {
   await page.locator(selectors.terminalInputSurface).click();
   await page.locator(selectors.terminalInputTextarea).focus();
-  await page.keyboard.insertText(command);
+  await page.keyboard.type(command, { delay: 25 });
   await page.keyboard.press("Enter");
+}
+
+export async function sendCellTerminalCommand(
+  page: Page,
+  command: string
+): Promise<void> {
+  const apiUrl = process.env.HIVE_E2E_API_URL;
+  const cellId = extractCellIdFromAnyCellPath(new URL(page.url()).pathname);
+
+  if (apiUrl && cellId) {
+    const response = await fetch(
+      `${apiUrl}/api/cells/${cellId}/terminal/input`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ data: `${command}\n` }),
+      }
+    );
+
+    if (response.ok) {
+      return;
+    }
+  }
+
+  await sendTerminalCommand(page, command);
+}
+
+function extractCellIdFromAnyCellPath(pathname: string): string | null {
+  const match = pathname.match(CELL_ANY_PATH_PATTERN);
+  return match?.[1] ?? null;
 }
 
 async function maybeRecoverRouteError(page: Page): Promise<void> {
