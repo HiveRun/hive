@@ -41,7 +41,7 @@ Hive must be installable with a single `curl | bash` command that downloads a co
 - [x] Automate release assembly + checksum generation (`bun run build:installer`).
 - [x] Ship curlable installer script with env overrides and PATH guidance.
 - [x] Document installer usage and contribution workflow in `README.md`.
-- [x] Add GitHub Actions CI on Blacksmith runners for `check:commit` + `test:e2e` validation.
+- [x] Add GitHub Actions CI on Blacksmith runners for `check:commit` + `test:e2e` validation, including merge-queue triggers, workflow linting, and non-blocking strict security audit visibility.
 
 ## Testing Strategy
 
