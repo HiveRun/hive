@@ -16,6 +16,7 @@ concurrency:
 
 env:
   CI: "true"
+  VITE_API_URL: http://localhost:3000
 
 jobs:
   quality:
