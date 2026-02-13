@@ -23,6 +23,7 @@
     "test": "turbo test --ui=stream --force",
     "test:run": "turbo test:run --ui=stream --force",
     "test:e2e": "bun run --cwd apps/e2e test:e2e",
+    "test:e2e:tune": "bun run --cwd apps/e2e test:e2e:tune",
     "test:e2e:headed": "bun run --cwd apps/e2e test:e2e:headed",
     "test:e2e:spec": "bun run --cwd apps/e2e test:e2e -- --spec",
     "test:e2e:report": "bun run --cwd apps/e2e report:e2e",

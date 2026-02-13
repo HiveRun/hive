@@ -1366,10 +1366,27 @@ async function startOpencodeRuntime({
 
       runtime.pendingInterrupt = false;
     },
-    stop() {
+    async stop() {
       abortController.abort();
+      const response = await client.session
+        .delete({
+          path: { id: session.id },
+          query: directoryQuery,
+        })
+        .catch((error: unknown) => ({ error }));
+
+      if (response.error) {
+        const message = getRpcErrorMessage(
+          response.error,
+          "Failed to delete OpenCode session during runtime shutdown"
+        );
+        if (!isSessionMissingError(message)) {
+          process.stderr.write(
+            `[agent] Failed to delete OpenCode session ${session.id}: ${message}\n`
+          );
+        }
+      }
       setRuntimeStatus(runtime, "completed");
-      return Promise.resolve();
     },
   };
 
@@ -1860,6 +1877,13 @@ function getRpcErrorMessage(error: unknown, fallback: string): string {
     return rpcError.message;
   }
   return fallback;
+}
+
+function isSessionMissingError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("not found") || normalized.includes("unknown session")
+  );
 }
 
 async function getCellById(id: string): Promise<Cell | null> {

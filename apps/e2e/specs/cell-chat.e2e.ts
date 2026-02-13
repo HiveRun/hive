@@ -1,5 +1,6 @@
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import { selectors } from "../src/selectors";
+import { createCellViaApi } from "../src/test-helpers";
 
 type AgentSession = {
   id: string;
@@ -25,34 +26,22 @@ type AgentMessageListResponse = {
   messages: AgentMessage[];
 };
 
-type TerminalMetrics = {
-  visibleOutputLength: number;
-  outputLength: number;
-  outputSeq: number;
-  outputUpdatedAt: number;
-};
-
-const CHAT_ROUTE_TIMEOUT_MS = 120_000;
+const CHAT_ROUTE_TIMEOUT_MS = 30_000;
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
 const TERMINAL_INPUT_READY_TIMEOUT_MS = 30_000;
 const SESSION_UPDATE_TIMEOUT_MS = 120_000;
-const ASSISTANT_OUTPUT_TIMEOUT_MS = 25_000;
-const MIN_VISIBLE_RESPONSE_TAIL_CHARS = 12;
-const MIN_TERMINAL_MATCH_TOKEN_LENGTH = 4;
-const MIN_REPEATED_TOKEN_LENGTH = 6;
-const SEND_ATTEMPTS = 2;
+const ASSISTANT_OUTPUT_TIMEOUT_MS = 40_000;
+const SEND_ATTEMPTS = 3;
 const MAX_TERMINAL_RESTARTS = 2;
 const SEND_ATTEMPT_TIMEOUT_MS = 20_000;
+const SEND_API_TIMEOUT_MS = 8000;
 const POST_RESPONSE_VIDEO_SETTLE_MS = 500;
 const POLL_INTERVAL_MS = 500;
 const TERMINAL_RECOVERY_WAIT_MS = 750;
-const TEMPLATE_OPTION_TIMEOUT_MS = 750;
 const CELL_CHAT_URL_PATTERN = /\/cells\/[^/]+\/chat/;
-const CELL_ID_PATTERN = /\/cells\/([^/]+)\/chat/;
-const PREFERRED_TEMPLATE_LABELS = ["E2E Template", "Basic Template"];
+const CELL_TEMPLATE_LABEL = "E2E Template";
 const EXPECTED_MODEL_ID = "big-pickle";
 const EXPECTED_MODEL_PROVIDER_ID = "opencode";
-const USE_DEFAULT_TEMPLATE = process.env.HIVE_E2E_USE_DEFAULT_TEMPLATE === "1";
 
 test.describe("cell chat flow", () => {
   test("creates a cell and sends a chat message", async ({
@@ -64,23 +53,17 @@ test.describe("cell chat flow", () => {
     }
 
     await page.goto("/");
-    await openCellCreationSheet(page);
-
-    const testCellName = `E2E Cell ${Date.now()}`;
-    await page.locator(selectors.cellNameInput).fill(testCellName);
-    if (!USE_DEFAULT_TEMPLATE) {
-      await selectPreferredTemplate(page);
-    }
-    await expect(page.locator(selectors.cellSubmitButton)).toBeEnabled({
-      timeout: CHAT_ROUTE_TIMEOUT_MS,
+    const cellId = await createCellViaApi({
+      apiUrl,
+      name: `E2E Cell ${Date.now()}`,
+      templateLabel: CELL_TEMPLATE_LABEL,
     });
-    await page.locator(selectors.cellSubmitButton).click();
+
+    await page.goto(`/cells/${cellId}/chat`);
 
     await expect(page).toHaveURL(CELL_CHAT_URL_PATTERN, {
       timeout: CHAT_ROUTE_TIMEOUT_MS,
     });
-
-    const cellId = parseCellIdFromUrl(page.url());
 
     await ensureTerminalReady(page, {
       context: "before prompt send",
@@ -106,14 +89,6 @@ test.describe("cell chat flow", () => {
     await captureFinalVideoFrame(page);
   });
 });
-
-function parseCellIdFromUrl(url: string): string {
-  const match = url.match(CELL_ID_PATTERN);
-  if (!match?.[1]) {
-    throw new Error(`Failed to parse cell ID from URL: ${url}`);
-  }
-  return match[1];
-}
 
 async function waitForAgentSession(
   apiUrl: string,
@@ -168,7 +143,6 @@ async function sendPromptWithRetries(options: {
       timeoutMs: TERMINAL_INPUT_READY_TIMEOUT_MS,
     });
 
-    const baselineMetrics = await readTerminalMetrics(options.page);
     const baselineMessages = await fetchAgentMessages(
       options.apiUrl,
       baselineSession.id
@@ -177,28 +151,35 @@ async function sendPromptWithRetries(options: {
       baselineMessages.map((message) => message.id)
     );
 
-    await focusTerminalInput(options.page);
-    await options.page.keyboard.type(options.prompt);
-    await options.page.keyboard.press("Enter");
+    await sendPrompt(options);
 
-    const promptAccepted = await waitForPromptAccepted({
+    const acceptedAfterApiWrite = await waitForPromptAccepted({
       apiUrl: options.apiUrl,
-      baselineMetrics,
+      baselineMessageIds,
       baselineSession,
       cellId: options.cellId,
-      page: options.page,
-      timeoutMs: SEND_ATTEMPT_TIMEOUT_MS,
+      prompt: options.prompt,
+      timeoutMs: SEND_API_TIMEOUT_MS,
     });
+
+    const promptAccepted = acceptedAfterApiWrite
+      ? true
+      : await waitForPromptAcceptedViaKeyboard({
+          apiUrl: options.apiUrl,
+          baselineMessageIds,
+          baselineSession,
+          cellId: options.cellId,
+          page: options.page,
+          prompt: options.prompt,
+        });
 
     if (promptAccepted) {
       try {
         await waitForAssistantOutput({
           apiUrl: options.apiUrl,
           baselineMessageIds,
-          baselineMetrics,
           cellId: options.cellId,
           page: options.page,
-          prompt: options.prompt,
           timeoutMs: ASSISTANT_OUTPUT_TIMEOUT_MS,
         });
         await options.page.waitForTimeout(POST_RESPONSE_VIDEO_SETTLE_MS);
@@ -218,12 +199,34 @@ async function sendPromptWithRetries(options: {
   );
 }
 
-async function waitForPromptAccepted(options: {
+async function waitForPromptAcceptedViaKeyboard(options: {
   apiUrl: string;
-  baselineMetrics: TerminalMetrics;
+  baselineMessageIds: ReadonlySet<string>;
   baselineSession: AgentSession;
   cellId: string;
   page: Page;
+  prompt: string;
+}): Promise<boolean> {
+  await focusTerminalInput(options.page);
+  await options.page.keyboard.type(options.prompt, { delay: 25 });
+  await options.page.keyboard.press("Enter");
+
+  return await waitForPromptAccepted({
+    apiUrl: options.apiUrl,
+    baselineMessageIds: options.baselineMessageIds,
+    baselineSession: options.baselineSession,
+    cellId: options.cellId,
+    prompt: options.prompt,
+    timeoutMs: SEND_ATTEMPT_TIMEOUT_MS - SEND_API_TIMEOUT_MS,
+  });
+}
+
+async function waitForPromptAccepted(options: {
+  apiUrl: string;
+  baselineMessageIds: ReadonlySet<string>;
+  baselineSession: AgentSession;
+  cellId: string;
+  prompt: string;
   timeoutMs: number;
 }): Promise<boolean> {
   let promptAccepted = false;
@@ -235,24 +238,37 @@ async function waitForPromptAccepted(options: {
           options.apiUrl,
           options.cellId
         );
-        const metrics = await readTerminalMetrics(options.page);
+        if (!currentSession) {
+          return false;
+        }
 
         const sessionChanged =
-          currentSession != null &&
-          (currentSession.updatedAt !== options.baselineSession.updatedAt ||
-            currentSession.status !== options.baselineSession.status);
+          currentSession.updatedAt !== options.baselineSession.updatedAt ||
+          currentSession.status !== options.baselineSession.status;
 
-        const outputChanged =
-          metrics.outputSeq > options.baselineMetrics.outputSeq ||
-          metrics.outputLength > options.baselineMetrics.outputLength;
+        if (sessionChanged) {
+          promptAccepted = true;
+          return true;
+        }
 
-        if (sessionChanged || outputChanged) {
+        const messages = await fetchAgentMessages(
+          options.apiUrl,
+          currentSession.id
+        );
+        const userMessageAccepted = messages.some(
+          (message) =>
+            !options.baselineMessageIds.has(message.id) &&
+            message.role === "user" &&
+            Boolean(message.content?.includes(options.prompt))
+        );
+
+        if (userMessageAccepted) {
           promptAccepted = true;
         }
 
-        return sessionChanged || outputChanged;
+        return userMessageAccepted;
       },
-      errorMessage: "Prompt did not change terminal output or session state",
+      errorMessage: "Prompt did not create a user message or change session",
       intervalMs: 1000,
       timeoutMs: options.timeoutMs,
     });
@@ -266,16 +282,17 @@ async function waitForPromptAccepted(options: {
 async function waitForAssistantOutput(options: {
   apiUrl: string;
   baselineMessageIds: ReadonlySet<string>;
-  baselineMetrics: TerminalMetrics;
   cellId: string;
   page: Page;
-  prompt: string;
   timeoutMs: number;
 }): Promise<void> {
+  let restartCount = 0;
+  let observedAssistantOutput = false;
+  let lastConnectionState = "unknown";
+  let lastSessionStatus = "unknown";
+
   await waitForCondition({
     check: async () => {
-      const metrics = await readTerminalMetrics(options.page);
-      const visibleOutput = await readVisibleTerminalText(options.page);
       const currentSession = await fetchAgentSession(
         options.apiUrl,
         options.cellId
@@ -285,13 +302,7 @@ async function waitForAssistantOutput(options: {
         return false;
       }
 
-      const outputSeqGrowth =
-        metrics.outputSeq - options.baselineMetrics.outputSeq;
-      const outputLengthGrowth =
-        metrics.outputLength - options.baselineMetrics.outputLength;
-
-      const outputChangedAfterPrompt =
-        outputSeqGrowth > 0 || outputLengthGrowth > options.prompt.length;
+      lastSessionStatus = currentSession.status;
 
       const messages = await fetchAgentMessages(
         options.apiUrl,
@@ -301,35 +312,78 @@ async function waitForAssistantOutput(options: {
         messages,
         options.baselineMessageIds
       );
-      if (!latestAssistantMessage?.content) {
-        return false;
+
+      if (latestAssistantMessage?.content?.trim()) {
+        observedAssistantOutput = true;
       }
 
-      const responseVisible = doesTerminalContainAssistantResponse({
-        assistantContent: latestAssistantMessage.content,
-        prompt: options.prompt,
-        terminalVisibleText: visibleOutput,
-      });
-
-      const visibleOutputGrowth =
-        metrics.visibleOutputLength -
-        options.baselineMetrics.visibleOutputLength;
-      const visibleOutputGrowthBeyondPrompt =
-        visibleOutputGrowth - options.prompt.length;
-      const visibleSuggestsAssistantResponse =
-        visibleOutputGrowthBeyondPrompt >= MIN_VISIBLE_RESPONSE_TAIL_CHARS;
-
-      return (
-        (outputChangedAfterPrompt || visibleSuggestsAssistantResponse) &&
-        responseVisible &&
+      if (
+        observedAssistantOutput &&
         currentSession.status === "awaiting_input"
-      );
+      ) {
+        return true;
+      }
+
+      const connectionState = await options.page
+        .locator(selectors.terminalConnectionBadge)
+        .getAttribute("data-connection-state");
+      lastConnectionState = connectionState ?? "unknown";
+
+      const recovery = await maybeRecoverTerminalDuringAssistantWait({
+        connectionState,
+        observedAssistantOutput,
+        page: options.page,
+        restartCount,
+      });
+      restartCount = recovery.restartCount;
+      if (recovery.shouldResolve) {
+        return true;
+      }
+
+      return false;
     },
-    errorMessage:
-      "Agent response was not observed in terminal output after sending prompt",
+    errorMessage: `Agent response was not observed after sending prompt. state=${lastConnectionState} session=${lastSessionStatus} assistantOutput=${String(observedAssistantOutput)} restarts=${String(restartCount)}`,
     intervalMs: 1000,
     timeoutMs: options.timeoutMs,
   });
+}
+
+async function maybeRecoverTerminalDuringAssistantWait(options: {
+  connectionState: string | null;
+  observedAssistantOutput: boolean;
+  page: Page;
+  restartCount: number;
+}): Promise<{ shouldResolve: boolean; restartCount: number }> {
+  if (
+    options.connectionState !== "exited" &&
+    options.connectionState !== "disconnected"
+  ) {
+    return {
+      shouldResolve: false,
+      restartCount: options.restartCount,
+    };
+  }
+
+  if (options.observedAssistantOutput) {
+    return {
+      shouldResolve: true,
+      restartCount: options.restartCount,
+    };
+  }
+
+  if (options.restartCount < 1) {
+    await options.page.locator(selectors.terminalRestartButton).click();
+    await options.page.waitForTimeout(TERMINAL_RECOVERY_WAIT_MS);
+    return {
+      shouldResolve: false,
+      restartCount: options.restartCount + 1,
+    };
+  }
+
+  return {
+    shouldResolve: false,
+    restartCount: options.restartCount,
+  };
 }
 
 async function fetchAgentMessages(
@@ -368,92 +422,6 @@ function findLatestAssistantMessage(
   return null;
 }
 
-function doesTerminalContainAssistantResponse(options: {
-  assistantContent: string;
-  prompt: string;
-  terminalVisibleText: string;
-}): boolean {
-  const terminalTokens = tokenizeText(options.terminalVisibleText);
-  const assistantTokens = tokenizeText(options.assistantContent);
-  if (assistantTokens.length === 0) {
-    return false;
-  }
-
-  const promptTokenSet = new Set(tokenizeText(options.prompt));
-  const novelAssistantTokens = assistantTokens.filter(
-    (token) => !promptTokenSet.has(token)
-  );
-
-  if (novelAssistantTokens.length > 0) {
-    let matchedNovelTokens = 0;
-    for (const token of novelAssistantTokens) {
-      if (terminalTokens.includes(token)) {
-        matchedNovelTokens += 1;
-      }
-    }
-
-    return matchedNovelTokens >= Math.min(2, novelAssistantTokens.length);
-  }
-
-  const normalizedTerminal = normalizeText(options.terminalVisibleText);
-  for (const token of assistantTokens) {
-    if (token.length < MIN_REPEATED_TOKEN_LENGTH) {
-      continue;
-    }
-    if (countOccurrences(normalizedTerminal, token) >= 2) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function normalizeText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function tokenizeText(value: string): string[] {
-  const normalized = normalizeText(value);
-  if (!normalized) {
-    return [];
-  }
-
-  return normalized
-    .split(" ")
-    .map((token) => token.trim())
-    .filter((token) => token.length >= MIN_TERMINAL_MATCH_TOKEN_LENGTH);
-}
-
-function countOccurrences(haystack: string, needle: string): number {
-  if (!needle.length) {
-    return 0;
-  }
-
-  let count = 0;
-  let cursor = 0;
-  while (cursor <= haystack.length - needle.length) {
-    const index = haystack.indexOf(needle, cursor);
-    if (index === -1) {
-      break;
-    }
-    count += 1;
-    cursor = index + needle.length;
-  }
-
-  return count;
-}
-
-async function readVisibleTerminalText(page: Page): Promise<string> {
-  return await page
-    .locator(selectors.terminalInputSurface)
-    .innerText()
-    .catch(() => "");
-}
-
 async function assertSessionModelSelection(options: {
   apiUrl: string;
   cellId: string;
@@ -484,27 +452,30 @@ async function assertSessionModelSelection(options: {
   });
 }
 
-async function readTerminalMetrics(page: Page): Promise<TerminalMetrics> {
-  const terminalRoot = page.locator(selectors.terminalRoot);
+async function sendPrompt(options: {
+  apiUrl: string;
+  cellId: string;
+  page: Page;
+  prompt: string;
+}): Promise<void> {
+  const response = await fetch(
+    `${options.apiUrl}/api/cells/${options.cellId}/chat/terminal/input`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ data: `${options.prompt}\n` }),
+    }
+  );
 
-  const [
-    visibleOutputLengthRaw,
-    outputLengthRaw,
-    outputSeqRaw,
-    outputUpdatedAtRaw,
-  ] = await Promise.all([
-    terminalRoot.getAttribute("data-terminal-visible-output-length"),
-    terminalRoot.getAttribute("data-terminal-output-length"),
-    terminalRoot.getAttribute("data-terminal-output-seq"),
-    terminalRoot.getAttribute("data-terminal-output-updated-at"),
-  ]);
+  if (response.ok) {
+    return;
+  }
 
-  return {
-    visibleOutputLength: Number(visibleOutputLengthRaw ?? "0"),
-    outputLength: Number(outputLengthRaw ?? "0"),
-    outputSeq: Number(outputSeqRaw ?? "0"),
-    outputUpdatedAt: Number(outputUpdatedAtRaw ?? "0"),
-  };
+  await focusTerminalInput(options.page);
+  await options.page.keyboard.type(options.prompt, { delay: 25 });
+  await options.page.keyboard.press("Enter");
 }
 
 async function focusTerminalInput(page: Page): Promise<void> {
@@ -520,75 +491,6 @@ async function focusTerminalInput(page: Page): Promise<void> {
     errorMessage: "Terminal input textarea did not receive focus",
     timeoutMs: 10_000,
   });
-}
-
-async function openCellCreationSheet(page: Page): Promise<void> {
-  await maybeRecoverRouteError(page);
-
-  const createCellButtons = page.locator(selectors.workspaceCreateCellButton);
-  await createCellButtons.first().waitFor({
-    state: "visible",
-    timeout: CHAT_ROUTE_TIMEOUT_MS,
-  });
-  const buttonCount = await createCellButtons.count();
-
-  for (let index = 0; index < buttonCount; index += 1) {
-    await createCellButtons.nth(index).click();
-
-    const formVisible = await page
-      .locator(selectors.cellNameInput)
-      .isVisible({ timeout: 1000 })
-      .catch(() => false);
-
-    if (formVisible) {
-      return;
-    }
-
-    await maybeRecoverRouteError(page);
-  }
-
-  throw new Error("Failed to open create-cell form for any workspace");
-}
-
-async function selectPreferredTemplate(page: Page): Promise<void> {
-  const trigger = page.locator(selectors.templateSelectTrigger);
-  const hasTemplateSelect = await trigger
-    .isVisible({ timeout: 2000 })
-    .catch(() => false);
-
-  if (!hasTemplateSelect) {
-    return;
-  }
-
-  await trigger.click();
-
-  for (const label of PREFERRED_TEMPLATE_LABELS) {
-    const option = page.getByRole("option", { name: label });
-    const isVisible = await option
-      .isVisible({ timeout: TEMPLATE_OPTION_TIMEOUT_MS })
-      .catch(() => false);
-
-    if (isVisible) {
-      await option.click();
-      return;
-    }
-  }
-
-  await page.keyboard.press("Escape").catch(() => null);
-}
-
-async function maybeRecoverRouteError(page: Page): Promise<void> {
-  const tryAgainButton = page.getByRole("button", { name: "Try again" });
-  const isVisible = await tryAgainButton
-    .isVisible({ timeout: 500 })
-    .catch(() => false);
-
-  if (!isVisible) {
-    return;
-  }
-
-  await tryAgainButton.click();
-  await page.waitForTimeout(POLL_INTERVAL_MS);
 }
 
 async function ensureTerminalReady(

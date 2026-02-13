@@ -1,11 +1,17 @@
 # Service Control
 
-- [/] Service Control #status/active #phase-1 #feature/infrastructure
+- [x] Service Control #status/active #phase-1 #feature/infrastructure
   - [x] Split cell detail into dedicated `/cells/$id/chat` and `/cells/$id/services` routes linked from cell cards
   - [x] Add per-service start/stop controls with backend enforcement of unhealthy states
   - [x] [HIVE-19] Expose Effect layers for service orchestration and agent runtime adapters
   - [x] Replace the opt-in true E2E flow with Playwright (Chromium) for cell creation + chat send against isolated runtime DB/state
   - [x] Add Playwright workspace parity mode (`HIVE_E2E_WORKSPACE_MODE=clone`) to run against a cloned `hive` workspace while keeping isolated runtime state
+  - [x] Add true runtime E2E coverage for service start/stop flows (single + bulk) and activity event assertions
+  - [x] Scope runtime E2E teardown to each spawned test process tree so cleanup does not touch user/dev/prod OpenCode processes
+  - [x] Preserve service restart intent across Hive daemon restarts (`needs_resume` on daemon shutdown, `stopped` only for manual stop)
+  - [x] Add mixed-state restart coverage so daemon bootstrap resumes only `needs_resume` services while keeping manual stops down
+  - [x] Add runtime E2E coverage to assert cell deletion reaps persisted service processes and removes service routes
+  - [x] Add supervisor coverage for stale/occupied port recovery when restarting manually stopped services
 
 ## Goal
 Provide comprehensive service management capabilities for both users and agents through UI, CLI, and MCP tools.
