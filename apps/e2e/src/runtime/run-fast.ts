@@ -1,10 +1,9 @@
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getFastWorkersFilePath, readSavedFastWorkers } from "./fast-workers";
 
 type WorkerResolution = {
-  source: "env" | "saved" | "default";
+  source: "env" | "default";
   value: string;
 };
 
@@ -12,21 +11,16 @@ const modulePath = fileURLToPath(import.meta.url);
 const moduleDir = dirname(modulePath);
 const e2eRoot = join(moduleDir, "..", "..");
 const FAILURE_EXIT_CODE = 1;
+const DEFAULT_FAST_WORKERS = 4;
 
 async function run(): Promise<void> {
-  const workerResolution = await resolveWorkerSetting();
+  const workerResolution = resolveWorkerSetting();
   const forwardedArgs = process.argv.slice(2);
   const videoMode = process.env.HIVE_E2E_VIDEO_MODE ?? "on";
 
   process.stdout.write(
     `Running fast E2E with workers=${workerResolution.value} (source=${workerResolution.source}) video=${videoMode}\n`
   );
-
-  if (workerResolution.source === "saved") {
-    process.stdout.write(
-      `Using saved worker recommendation from ${getFastWorkersFilePath()}\n`
-    );
-  }
 
   const exitCode = await new Promise<number>((resolve) => {
     const child = spawn(
@@ -60,18 +54,13 @@ async function run(): Promise<void> {
   process.exitCode = exitCode;
 }
 
-async function resolveWorkerSetting(): Promise<WorkerResolution> {
+function resolveWorkerSetting(): WorkerResolution {
   const envWorkers = process.env.HIVE_E2E_WORKERS?.trim();
   if (envWorkers) {
     return { source: "env", value: envWorkers };
   }
 
-  const savedWorkers = await readSavedFastWorkers();
-  if (savedWorkers) {
-    return { source: "saved", value: String(savedWorkers) };
-  }
-
-  return { source: "default", value: "fast" };
+  return { source: "default", value: String(DEFAULT_FAST_WORKERS) };
 }
 
 run().catch((error) => {

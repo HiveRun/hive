@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getFastWorkersFilePath, writeSavedFastWorkers } from "./fast-workers";
 
 const DEFAULT_FAST_WORKERS_LOW = 2;
 const DEFAULT_FAST_WORKERS_MEDIUM = 3;
@@ -15,7 +14,6 @@ const DEFAULT_REPEATS = 1;
 const FAILURE_EXIT_CODE = 1;
 const MILLISECONDS_PER_SECOND = 1000;
 const DURATION_DECIMALS = 1;
-const BENCH_SAVE_ENV = "HIVE_E2E_BENCH_SAVE";
 
 type BenchmarkRun = {
   exitCode: number;
@@ -34,7 +32,6 @@ const e2eRoot = join(moduleDir, "..", "..");
 async function run(): Promise<void> {
   const workersToTest = parseWorkerList(process.env.HIVE_E2E_BENCH_WORKERS);
   const repeats = parseRepeats(process.env.HIVE_E2E_BENCH_REPEATS);
-  const shouldSaveRecommendation = process.env[BENCH_SAVE_ENV] !== "0";
 
   process.stdout.write(
     `Benchmarking E2E worker counts: ${workersToTest.join(", ")} (repeats: ${String(repeats)})\n`
@@ -105,13 +102,6 @@ async function run(): Promise<void> {
   process.stdout.write(
     `\nRecommended workers: ${String(winner.workers)} (avg ${formatDuration(winner.avgMs)})\n`
   );
-
-  if (shouldSaveRecommendation) {
-    await writeSavedFastWorkers(winner.workers);
-    process.stdout.write(
-      `Saved recommendation to ${getFastWorkersFilePath()}\n`
-    );
-  }
 }
 
 function summarizeCase(currentCase: BenchmarkCase) {
