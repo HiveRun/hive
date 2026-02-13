@@ -205,6 +205,13 @@ Notes:
 **Pre-push** (`bun run check:push`):
 - Same as pre-commit
 
+### GitHub CI (Blacksmith)
+
+- CI runs on Blacksmith-hosted GitHub Actions runners (`blacksmith-4vcpu-ubuntu-2404`).
+- `Quality Checks` job runs `bun run check:commit`.
+- `E2E Runtime Suite` job runs `bun run test:e2e` and uploads Playwright artifacts from `apps/e2e/reports/latest`.
+- Ensure the Blacksmith GitHub App is installed for your organization before relying on this workflow.
+
 ## Available Scripts
 
 ### Setup
