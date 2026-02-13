@@ -43,6 +43,47 @@ const secondaryWorkspace: WorkspaceRecord = {
 };
 
 describe("Cell routes workspace enforcement", () => {
+  const createRouteDependencies = (resolveWorkspaceContext: any): any => ({
+    db: testDb,
+    resolveWorkspaceContext,
+    ensureAgentSession: () => Effect.succeed({ id: "session", cellId: "cell" }),
+    sendAgentMessage: () => Effect.void,
+    closeAgentSession: () => Effect.void,
+    ensureServicesForCell: () => Effect.void,
+    startServiceById: () => Effect.void,
+    startServicesForCell: () => Effect.void,
+    stopServiceById: () => Effect.void,
+    stopServicesForCell: () => Effect.void,
+    ensureTerminalSession: () => ({
+      sessionId: "terminal-session",
+      cellId: "cell",
+      pid: 1,
+      cwd: "/tmp",
+      cols: 120,
+      rows: 36,
+      status: "running" as const,
+      exitCode: null,
+      startedAt: new Date().toISOString(),
+    }),
+    readTerminalOutput: () => "",
+    subscribeToTerminal: () => () => 0,
+    writeTerminalInput: () => 0,
+    resizeTerminal: () => 0,
+    closeTerminalSession: () => 0,
+    getServiceTerminalSession: () => null,
+    readServiceTerminalOutput: () => "",
+    subscribeToServiceTerminal: () => () => 0,
+    writeServiceTerminalInput: () => 0,
+    resizeServiceTerminal: () => 0,
+    clearServiceTerminal: () => 0,
+    getSetupTerminalSession: () => null,
+    readSetupTerminalOutput: () => "",
+    subscribeToSetupTerminal: () => () => 0,
+    writeSetupTerminalInput: () => 0,
+    resizeSetupTerminal: () => 0,
+    clearSetupTerminal: () => 0,
+  });
+
   beforeAll(async () => {
     await setupTestDb();
   });
@@ -53,15 +94,15 @@ describe("Cell routes workspace enforcement", () => {
 
   it("returns 400 when workspace context cannot be resolved", async () => {
     const app = new Elysia().use(
-      createCellsRoutes({
-        db: testDb,
-        resolveWorkspaceContext: () =>
+      createCellsRoutes(
+        createRouteDependencies(() =>
           Effect.fail(
             new WorkspaceContextError(
               "No active workspace. Register and activate a workspace to continue."
             )
-          ),
-      })
+          )
+        )
+      )
     );
 
     const listResponse = await app.handle(
@@ -157,10 +198,7 @@ describe("Cell routes workspace enforcement", () => {
     };
 
     const app = new Elysia().use(
-      createCellsRoutes({
-        db: testDb,
-        resolveWorkspaceContext,
-      })
+      createCellsRoutes(createRouteDependencies(resolveWorkspaceContext))
     );
 
     const primaryResponse = await app.handle(
