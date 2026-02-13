@@ -40,7 +40,6 @@ jobs:
     name: Security Audit
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
-    continue-on-error: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -62,7 +61,16 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run strict high-severity audit
-        run: bun audit --audit-level high
+        run: |
+          if ! bun audit --audit-level high; then
+            echo "::warning::Security audit detected high/critical vulnerabilities."
+            {
+              echo "### Security Audit"
+              echo ""
+              echo "Detected high/critical vulnerabilities via \\`bun audit --audit-level high\\`."
+              echo "This job is non-blocking for now while dependency remediation is tracked."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   quality:
     name: Quality Checks
