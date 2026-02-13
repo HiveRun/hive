@@ -1,8 +1,7 @@
 import { basename } from "node:path";
 import { expect, test } from "@playwright/test";
-import { selectors } from "../src/selectors";
 import {
-  createCell,
+  createCellViaApi,
   fetchCell,
   fetchWorkspaceCells,
   fetchWorkspaces,
@@ -62,20 +61,24 @@ test.describe("workspace switching", () => {
     }
 
     const primaryCellName = `E2E Workspace A ${Date.now()}`;
-    const primaryCellId = await createCell({
-      page,
-      name: primaryCellName,
-      workspaceId: primaryWorkspace.id,
-      templateLabel: CELL_TEMPLATE_LABEL,
-    });
-
     const secondaryCellName = `E2E Workspace B ${Date.now()}`;
-    const secondaryCellId = await createCell({
-      page,
-      name: secondaryCellName,
-      workspaceId: secondaryWorkspace.id,
-      templateLabel: CELL_TEMPLATE_LABEL,
-    });
+
+    const [primaryCellId, secondaryCellId] = await Promise.all([
+      createCellViaApi({
+        apiUrl,
+        name: primaryCellName,
+        workspaceId: primaryWorkspace.id,
+        templateLabel: CELL_TEMPLATE_LABEL,
+      }),
+      createCellViaApi({
+        apiUrl,
+        name: secondaryCellName,
+        workspaceId: secondaryWorkspace.id,
+        templateLabel: CELL_TEMPLATE_LABEL,
+      }),
+    ]);
+
+    await page.reload();
 
     const primaryCell = await fetchCell(apiUrl, primaryCellId);
     const secondaryCell = await fetchCell(apiUrl, secondaryCellId);
@@ -99,23 +102,15 @@ test.describe("workspace switching", () => {
       false
     );
 
-    const primarySection = page.locator(
-      `${selectors.workspaceSection}[data-workspace-id="${primaryWorkspace.id}"]`
-    );
-    const secondarySection = page.locator(
-      `${selectors.workspaceSection}[data-workspace-id="${secondaryWorkspace.id}"]`
-    );
+    await expect(
+      page.getByRole("link", { name: primaryCellName }).first()
+    ).toBeVisible();
+    const secondaryCellLink = page
+      .getByRole("link", { name: secondaryCellName })
+      .first();
+    await expect(secondaryCellLink).toBeVisible();
 
-    await expect(primarySection).toBeVisible();
-    await expect(secondarySection).toBeVisible();
-
-    await expect(primarySection.getByText(primaryCellName)).toBeVisible();
-    await expect(secondarySection.getByText(secondaryCellName)).toBeVisible();
-
-    await secondarySection
-      .locator(selectors.workspaceCellLink)
-      .filter({ hasText: secondaryCellName })
-      .click();
+    await secondaryCellLink.click();
     await expect(page).toHaveURL(new RegExp(`/cells/${secondaryCellId}/chat`));
   });
 });

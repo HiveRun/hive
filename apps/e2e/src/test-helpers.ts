@@ -138,7 +138,7 @@ function extractCellIdFromPath(pathname: string): string | null {
   return match?.[1] ?? null;
 }
 
-async function createCellViaApi(options: {
+export async function createCellViaApi(options: {
   apiUrl: string;
   name: string;
   workspaceId?: string;

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve as resolvePath } from "node:path";
@@ -12,6 +12,7 @@ const STARTUP_TIMEOUT_MS = 180_000;
 const SERVER_START_ATTEMPTS = 3;
 const SERVER_RETRY_DELAY_MS = 1000;
 const SIGTERM_EXIT_CODE = 143;
+const OPENCODE_TERMINATE_WAIT_MS = 1000;
 const SERVER_READY_PATH = "/health";
 const WEB_READY_PATH = "/";
 const PLAYWRIGHT_CONFIG_PATH = "playwright.config.ts";
@@ -48,8 +49,14 @@ const stableArtifactsDir = join(e2eRoot, "reports", "latest");
 const repoRoot = join(e2eRoot, "..", "..");
 const serverRoot = join(repoRoot, "apps", "server");
 const webRoot = join(repoRoot, "apps", "web");
+const e2eRunsRoot = join(repoRoot, "tmp", "e2e-runs");
 const useSharedHiveHome = process.env.HIVE_E2E_SHARED_HOME === "1";
 const sharedHiveHomePath = join(repoRoot, "tmp", "e2e-shared", "hive-home");
+
+type ProcessEntry = {
+  pid: number;
+  args: string;
+};
 
 async function run() {
   const args = parseArgs(process.argv.slice(2));
@@ -68,6 +75,12 @@ async function run() {
   let runSucceeded = false;
 
   try {
+    await cleanupOrphanedOpencodeProcesses({
+      currentPid: process.pid,
+      e2eRunsRoot,
+      preserveRunRoot: context.runRoot,
+    });
+
     if (useSharedHiveHome) {
       process.stdout.write(`Using shared E2E HIVE_HOME: ${context.hiveHome}\n`);
     }
@@ -151,6 +164,8 @@ async function run() {
         .map((managedProcess) => stopManagedProcess(managedProcess))
     );
 
+    await cleanupOpencodeProcessesForRunRoot(context.runRoot);
+
     await publishArtifacts(context.artifactsDir, stableArtifactsDir);
     process.stdout.write(`E2E reports: ${stableArtifactsDir}\n`);
 
@@ -169,6 +184,127 @@ async function publishArtifacts(
   await rm(targetArtifactsDir, { recursive: true, force: true });
   await mkdir(targetArtifactsDir, { recursive: true });
   await cp(sourceArtifactsDir, targetArtifactsDir, { recursive: true });
+}
+
+async function cleanupOrphanedOpencodeProcesses(options: {
+  currentPid: number;
+  e2eRunsRoot: string;
+  preserveRunRoot: string;
+}): Promise<void> {
+  const processTable = readProcessTable();
+  const concurrentRunnerPids = processTable
+    .filter(
+      (entry) =>
+        entry.pid !== options.currentPid &&
+        entry.args.includes("src/runtime/e2e-runner.ts")
+    )
+    .map((entry) => entry.pid);
+
+  if (concurrentRunnerPids.length > 0) {
+    process.stdout.write(
+      `Skipping stale opencode cleanup while other e2e runners are active: ${concurrentRunnerPids.join(", ")}\n`
+    );
+    return;
+  }
+
+  const orphanedPids = processTable
+    .filter(
+      (entry) =>
+        entry.args.includes("opencode") &&
+        entry.args.includes(options.e2eRunsRoot) &&
+        !entry.args.includes(options.preserveRunRoot)
+    )
+    .map((entry) => entry.pid);
+
+  const terminated = await terminateProcessIds(orphanedPids);
+  if (terminated > 0) {
+    process.stdout.write(
+      `Cleaned ${String(terminated)} stale opencode process(es) from previous e2e runs\n`
+    );
+  }
+}
+
+async function cleanupOpencodeProcessesForRunRoot(
+  runRoot: string
+): Promise<void> {
+  const runRootPids = readProcessTable()
+    .filter(
+      (entry) => entry.args.includes("opencode") && entry.args.includes(runRoot)
+    )
+    .map((entry) => entry.pid);
+
+  const terminated = await terminateProcessIds(runRootPids);
+  if (terminated > 0) {
+    process.stdout.write(
+      `Cleaned ${String(terminated)} opencode process(es) for run ${runRoot}\n`
+    );
+  }
+}
+
+function readProcessTable(): ProcessEntry[] {
+  let output = "";
+  try {
+    output = execFileSync("ps", ["-eo", "pid,args"], {
+      encoding: "utf8",
+    });
+  } catch {
+    return [];
+  }
+
+  const entries: ProcessEntry[] = [];
+  for (const line of output.split("\n").slice(1)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const firstSpace = trimmed.indexOf(" ");
+    if (firstSpace <= 0) {
+      continue;
+    }
+
+    const pid = Number(trimmed.slice(0, firstSpace));
+    const args = trimmed.slice(firstSpace + 1).trim();
+    if (!(Number.isFinite(pid) && args)) {
+      continue;
+    }
+
+    entries.push({ args, pid });
+  }
+
+  return entries;
+}
+
+async function terminateProcessIds(pids: number[]): Promise<number> {
+  const uniquePids = [...new Set(pids)].filter((pid) => Number.isFinite(pid));
+  if (uniquePids.length === 0) {
+    return 0;
+  }
+
+  for (const pid of uniquePids) {
+    sendSignalSafe(pid, "SIGTERM");
+  }
+
+  await wait(OPENCODE_TERMINATE_WAIT_MS);
+
+  const stillRunning = new Set(readProcessTable().map((entry) => entry.pid));
+  const remaining = uniquePids.filter((pid) => stillRunning.has(pid));
+
+  for (const pid of remaining) {
+    sendSignalSafe(pid, "SIGKILL");
+  }
+
+  return uniquePids.length;
+}
+
+function sendSignalSafe(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if (!isMissingProcessError(error)) {
+      throw error;
+    }
+  }
 }
 
 async function startServerWithRetries(options: {

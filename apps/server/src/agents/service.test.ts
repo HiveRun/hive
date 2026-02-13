@@ -22,6 +22,7 @@ type AppDb = typeof import("../db").db;
 type ClientStub = {
   session: {
     create: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
     get: ReturnType<typeof vi.fn>;
     messages: ReturnType<typeof vi.fn>;
     prompt: ReturnType<typeof vi.fn>;
@@ -390,11 +391,34 @@ describe("agent model selection", () => {
       )
     ).toBe(true);
   });
+
+  it("deletes remote opencode session when runtime stops", async () => {
+    const session = await ensureAgentSession(cellId);
+
+    await closeAllAgentSessions();
+
+    expect(clientStub.session.delete).toHaveBeenCalledWith({
+      path: { id: session.id },
+      query: { directory: "/tmp/model-test" },
+    });
+  });
+
+  it("ignores missing session errors during runtime shutdown", async () => {
+    clientStub.session.delete.mockResolvedValue({
+      error: { message: "session not found" },
+    });
+
+    await ensureAgentSession(cellId);
+
+    await expect(closeAllAgentSessions()).resolves.toBeUndefined();
+    expect(clientStub.session.delete).toHaveBeenCalled();
+  });
 });
 
 function buildClientStub(): ClientStub {
   const session = {
     create: vi.fn(async () => ({ data: createMockSession() })),
+    delete: vi.fn(async () => ({ error: null })),
     get: vi.fn(async () => ({ data: createMockSession() })),
     messages: sessionMessagesMock,
     prompt: vi.fn(async () => ({ error: null })),
