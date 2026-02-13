@@ -67,7 +67,7 @@ jobs:
             {
               echo "### Security Audit"
               echo ""
-              echo "Detected high/critical vulnerabilities via \\`bun audit --audit-level high\\`."
+              echo "Detected high/critical vulnerabilities via bun audit --audit-level high."
               echo "This job is non-blocking for now while dependency remediation is tracked."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
