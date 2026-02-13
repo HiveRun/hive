@@ -42,6 +42,9 @@ Hive must be installable with a single `curl | bash` command that downloads a co
 - [x] Ship curlable installer script with env overrides and PATH guidance.
 - [x] Document installer usage and contribution workflow in `README.md`.
 - [x] Add GitHub Actions CI on Blacksmith runners for `check:commit` + `test:e2e` validation, including merge-queue triggers, workflow linting, and non-blocking strict security audit visibility (E2E runs at merge-queue/main/manual stages rather than every PR checkpoint commit).
+- [x] Add CI-only distribution guardrail that validates desktop build + installer smoke flow in an isolated environment.
+- [x] Cache Cargo/Tauri artifacts for the CI desktop installer gate to keep runtime stable and faster.
+- [x] Align desktop installer gate trigger cadence with E2E (run on merge queue/main/manual, skip PR event).
 
 ## Testing Strategy
 
@@ -49,3 +52,4 @@ Hive must be installable with a single `curl | bash` command that downloads a co
 - After uploading (or staging) a release artifact, run `HIVE_VERSION=<tag> scripts/install.sh` (or `HIVE_INSTALL_URL=file://... scripts/install.sh` for local tarballs) to verify the flow end-to-end and ensure `~/.hive/bin/hive` launches with the bundled UI. `bun run local:install` first runs `build:installer`, then shells into `bash scripts/install.sh` with the file:// override to automate the local path.
 - Smoke-test the installed binary: ensure `/health` responds, frontend loads, migrations run against the generated SQLite database, and `hive.env` is respected when edited.
 - Ensure GitHub Actions CI jobs complete on Blacksmith runners before merge so installer/release changes keep passing `check:commit` and true runtime E2E coverage.
+- Ensure CI runs `bun run check:distribution` at merge queue/main/manual stages so desktop bundle generation + installer smoke flow stay protected before trunk merges.
