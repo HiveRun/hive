@@ -105,3 +105,4 @@ This comprehensive provisioning system will be implemented in **Phase 1A** after
 - [x] Preserve failed cells and expose provisioning status for manual recovery (2025-11-12)
 - [x] Allow cells to enter a spawning state while provisioning continues (HIVE-7, 2025-11-30)
 - [/] Add cell archival flow that preserves the worktree for offline replay, disables runtime surfaces, adds a restore path for archived sessions, and exposes a cleanup path for deleting archived cells (HIVE-48, 2025-12-10)
+- [x] Add true runtime E2E coverage for failed setup -> manual fix -> setup retry recovery flow

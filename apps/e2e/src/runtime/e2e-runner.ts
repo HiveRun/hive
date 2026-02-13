@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve as resolvePath } from "node:path";
@@ -12,9 +12,11 @@ const STARTUP_TIMEOUT_MS = 180_000;
 const SERVER_START_ATTEMPTS = 3;
 const SERVER_RETRY_DELAY_MS = 1000;
 const SIGTERM_EXIT_CODE = 143;
+const OPENCODE_TERMINATE_WAIT_MS = 1000;
 const SERVER_READY_PATH = "/health";
 const WEB_READY_PATH = "/";
 const PLAYWRIGHT_CONFIG_PATH = "playwright.config.ts";
+const SECONDARY_WORKSPACE_NAME = "workspace-secondary";
 
 type WorkspaceMode = "fixture" | "clone";
 
@@ -27,6 +29,7 @@ type ManagedProcess = {
   child: ReturnType<typeof spawn>;
   stdoutPath: string;
   stderrPath: string;
+  processGroupId: number | null;
 };
 
 type ParsedArgs = {
@@ -46,8 +49,14 @@ const stableArtifactsDir = join(e2eRoot, "reports", "latest");
 const repoRoot = join(e2eRoot, "..", "..");
 const serverRoot = join(repoRoot, "apps", "server");
 const webRoot = join(repoRoot, "apps", "web");
+const e2eRunsRoot = join(repoRoot, "tmp", "e2e-runs");
 const useSharedHiveHome = process.env.HIVE_E2E_SHARED_HOME === "1";
 const sharedHiveHomePath = join(repoRoot, "tmp", "e2e-shared", "hive-home");
+
+type ProcessEntry = {
+  pid: number;
+  args: string;
+};
 
 async function run() {
   const args = parseArgs(process.argv.slice(2));
@@ -58,10 +67,20 @@ async function run() {
     repoRoot,
     workspaceName: workspaceRootName,
   });
+  const secondaryWorkspaceRoot = join(
+    context.runRoot,
+    SECONDARY_WORKSPACE_NAME
+  );
   const managedProcesses: ManagedProcess[] = [];
   let runSucceeded = false;
 
   try {
+    await cleanupOrphanedOpencodeProcesses({
+      currentPid: process.pid,
+      e2eRunsRoot,
+      preserveRunRoot: context.runRoot,
+    });
+
     if (useSharedHiveHome) {
       process.stdout.write(`Using shared E2E HIVE_HOME: ${context.hiveHome}\n`);
     }
@@ -75,8 +94,10 @@ async function run() {
         sourceRoot: workspaceSource,
         workspaceRoot: context.workspaceRoot,
       });
+      await createFixtureWorkspace(secondaryWorkspaceRoot);
     } else {
       await createFixtureWorkspace(context.workspaceRoot);
+      await createFixtureWorkspace(secondaryWorkspaceRoot);
     }
 
     const server = await startServerWithRetries({
@@ -127,6 +148,9 @@ async function run() {
         HIVE_E2E_BASE_URL: context.webUrl,
         HIVE_E2E_API_URL: context.apiUrl,
         HIVE_E2E_ARTIFACTS_DIR: context.artifactsDir,
+        HIVE_E2E_WORKSPACE_PATH: context.workspaceRoot,
+        HIVE_E2E_SECOND_WORKSPACE_PATH: secondaryWorkspaceRoot,
+        HIVE_E2E_HIVE_HOME: context.hiveHome,
       },
       label: "Playwright suite",
     });
@@ -139,6 +163,8 @@ async function run() {
         .reverse()
         .map((managedProcess) => stopManagedProcess(managedProcess))
     );
+
+    await cleanupOpencodeProcessesForRunRoot(context.runRoot);
 
     await publishArtifacts(context.artifactsDir, stableArtifactsDir);
     process.stdout.write(`E2E reports: ${stableArtifactsDir}\n`);
@@ -160,6 +186,127 @@ async function publishArtifacts(
   await cp(sourceArtifactsDir, targetArtifactsDir, { recursive: true });
 }
 
+async function cleanupOrphanedOpencodeProcesses(options: {
+  currentPid: number;
+  e2eRunsRoot: string;
+  preserveRunRoot: string;
+}): Promise<void> {
+  const processTable = readProcessTable();
+  const concurrentRunnerPids = processTable
+    .filter(
+      (entry) =>
+        entry.pid !== options.currentPid &&
+        entry.args.includes("src/runtime/e2e-runner.ts")
+    )
+    .map((entry) => entry.pid);
+
+  if (concurrentRunnerPids.length > 0) {
+    process.stdout.write(
+      `Skipping stale opencode cleanup while other e2e runners are active: ${concurrentRunnerPids.join(", ")}\n`
+    );
+    return;
+  }
+
+  const orphanedPids = processTable
+    .filter(
+      (entry) =>
+        entry.args.includes("opencode") &&
+        entry.args.includes(options.e2eRunsRoot) &&
+        !entry.args.includes(options.preserveRunRoot)
+    )
+    .map((entry) => entry.pid);
+
+  const terminated = await terminateProcessIds(orphanedPids);
+  if (terminated > 0) {
+    process.stdout.write(
+      `Cleaned ${String(terminated)} stale opencode process(es) from previous e2e runs\n`
+    );
+  }
+}
+
+async function cleanupOpencodeProcessesForRunRoot(
+  runRoot: string
+): Promise<void> {
+  const runRootPids = readProcessTable()
+    .filter(
+      (entry) => entry.args.includes("opencode") && entry.args.includes(runRoot)
+    )
+    .map((entry) => entry.pid);
+
+  const terminated = await terminateProcessIds(runRootPids);
+  if (terminated > 0) {
+    process.stdout.write(
+      `Cleaned ${String(terminated)} opencode process(es) for run ${runRoot}\n`
+    );
+  }
+}
+
+function readProcessTable(): ProcessEntry[] {
+  let output = "";
+  try {
+    output = execFileSync("ps", ["-eo", "pid,args"], {
+      encoding: "utf8",
+    });
+  } catch {
+    return [];
+  }
+
+  const entries: ProcessEntry[] = [];
+  for (const line of output.split("\n").slice(1)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const firstSpace = trimmed.indexOf(" ");
+    if (firstSpace <= 0) {
+      continue;
+    }
+
+    const pid = Number(trimmed.slice(0, firstSpace));
+    const args = trimmed.slice(firstSpace + 1).trim();
+    if (!(Number.isFinite(pid) && args)) {
+      continue;
+    }
+
+    entries.push({ args, pid });
+  }
+
+  return entries;
+}
+
+async function terminateProcessIds(pids: number[]): Promise<number> {
+  const uniquePids = [...new Set(pids)].filter((pid) => Number.isFinite(pid));
+  if (uniquePids.length === 0) {
+    return 0;
+  }
+
+  for (const pid of uniquePids) {
+    sendSignalSafe(pid, "SIGTERM");
+  }
+
+  await wait(OPENCODE_TERMINATE_WAIT_MS);
+
+  const stillRunning = new Set(readProcessTable().map((entry) => entry.pid));
+  const remaining = uniquePids.filter((pid) => stillRunning.has(pid));
+
+  for (const pid of remaining) {
+    sendSignalSafe(pid, "SIGKILL");
+  }
+
+  return uniquePids.length;
+}
+
+function sendSignalSafe(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if (!isMissingProcessError(error)) {
+      throw error;
+    }
+  }
+}
+
 async function startServerWithRetries(options: {
   context: RuntimeContext;
   logsDir: string;
@@ -176,6 +323,8 @@ async function startServerWithRetries(options: {
         DATABASE_URL: `file:${options.context.dbPath}`,
         HIVE_HOME: options.context.hiveHome,
         HIVE_WORKSPACE_ROOT: options.context.workspaceRoot,
+        HIVE_BROWSE_ROOT: options.context.runRoot,
+        HIVE_OPENCODE_START_TIMEOUT_MS: "120000",
         HOST: "127.0.0.1",
         PORT: String(options.context.apiPort),
         WEB_PORT: String(options.context.webPort),
@@ -241,6 +390,29 @@ async function createFixtureWorkspace(workspaceRoot: string): Promise<void> {
           providerId: "opencode",
         },
       },
+      "e2e-services-template": {
+        id: "e2e-services-template",
+        label: "E2E Services Template",
+        type: "manual",
+        services: {
+          api: {
+            type: "process",
+            run: "tail -f /dev/null",
+          },
+          worker: {
+            type: "process",
+            run: "tail -f /dev/null",
+          },
+        },
+      },
+      "e2e-setup-retry-template": {
+        id: "e2e-setup-retry-template",
+        label: "E2E Setup Retry Template",
+        type: "manual",
+        setup: [
+          'test -f .hive-setup-pass || { echo "marker missing: .hive-setup-pass" >&2; exit 37; }',
+        ],
+      },
     },
   };
 
@@ -257,6 +429,8 @@ async function createFixtureWorkspace(workspaceRoot: string): Promise<void> {
   );
 
   await writeFile(join(workspaceRoot, "README.md"), "# Hive E2E Workspace\n");
+
+  await writeFile(join(workspaceRoot, ".hive-setup-pass"), "ok\n", "utf8");
 
   await runCommand("git", ["init"], {
     cwd: workspaceRoot,
@@ -442,6 +616,7 @@ function startManagedProcess(options: {
   const child = spawn(options.command, options.args, {
     cwd: options.cwd,
     env: options.env,
+    detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -463,20 +638,22 @@ function startManagedProcess(options: {
     child,
     stdoutPath,
     stderrPath,
+    processGroupId: process.platform !== "win32" ? (child.pid ?? null) : null,
   };
 }
 
 async function stopManagedProcess(
   managedProcess: ManagedProcess
 ): Promise<void> {
-  const { child, name, stdoutPath, stderrPath } = managedProcess;
+  const { child, name, stdoutPath, stderrPath, processGroupId } =
+    managedProcess;
   if (child.exitCode !== null || child.killed) {
     return;
   }
 
   await new Promise<void>((resolve) => {
     const timeout = setTimeout(() => {
-      child.kill("SIGKILL");
+      sendManagedProcessSignal(child, processGroupId, "SIGKILL");
     }, CLEANUP_TIMEOUT_MS);
 
     child.once("exit", () => {
@@ -484,7 +661,7 @@ async function stopManagedProcess(
       resolve();
     });
 
-    child.kill("SIGTERM");
+    sendManagedProcessSignal(child, processGroupId, "SIGTERM");
   });
 
   const missingLogs = [stdoutPath, stderrPath].filter(
@@ -495,6 +672,44 @@ async function stopManagedProcess(
       `Warning: missing ${name} log files: ${missingLogs.join(", ")}\n`
     );
   }
+}
+
+function sendManagedProcessSignal(
+  child: ReturnType<typeof spawn>,
+  processGroupId: number | null,
+  signal: NodeJS.Signals
+): void {
+  if (processGroupId) {
+    try {
+      process.kill(-processGroupId, signal);
+      return;
+    } catch (error) {
+      if (!isMissingProcessError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  if (child.exitCode !== null || child.killed) {
+    return;
+  }
+
+  try {
+    child.kill(signal);
+  } catch (error) {
+    if (!isMissingProcessError(error)) {
+      throw error;
+    }
+  }
+}
+
+function isMissingProcessError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "ESRCH"
+  );
 }
 
 run().catch((error) => {

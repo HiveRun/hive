@@ -1,5 +1,9 @@
 export const selectors = {
+  workspaceSection: '[data-testid="workspace-section"]',
   workspaceCreateCellButton: '[data-testid="workspace-create-cell"]',
+  workspaceCellLink: '[data-testid="workspace-cell-link"]',
+  workspaceManageButton: '[aria-label="Manage workspaces"]',
+  workspaceRegisterButton: '[aria-label="Register new workspace"]',
   cellNameInput: '[data-testid="cell-name-input"]',
   templateSelect: '[data-testid="template-select"]',
   templateSelectTrigger: '[data-testid="template-select"] [role="combobox"]',

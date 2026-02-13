@@ -382,6 +382,192 @@ describe("service supervisor", () => {
     await Promise.all(harness.processes.map((proc) => proc.handle.exited));
   });
 
+  it("restarts services after Hive shutdown stopAll", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-shutdown-restart");
+
+    const initialHarness = createHarness();
+
+    await initialHarness.supervisor.ensureCellServices({
+      cell,
+      template: {
+        id: "template-shutdown-restart",
+        label: "Template",
+        type: "manual",
+        services: {
+          web: {
+            type: "process",
+            run: "bun run dev",
+            cwd: ".",
+          },
+        },
+      },
+    });
+
+    await initialHarness.supervisor.stopAll();
+    await Promise.all(
+      initialHarness.processes.map((proc) => proc.handle.exited)
+    );
+
+    const [stoppedForShutdown] = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+
+    expect(stoppedForShutdown?.status).toBe("needs_resume");
+    expect(stoppedForShutdown?.pid).toBeNull();
+
+    const restartHarness = createHarness();
+    await restartHarness.supervisor.bootstrap();
+
+    expect(restartHarness.processes).toHaveLength(1);
+
+    const [restarted] = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+
+    expect(restarted?.status).toBe("running");
+    expect(restarted?.pid).toBe(
+      restartHarness.processes[0]?.handle.pid ?? null
+    );
+
+    await restartHarness.supervisor.stopAll();
+    await Promise.all(
+      restartHarness.processes.map((proc) => proc.handle.exited)
+    );
+  });
+
+  it("does not restart manually stopped services during bootstrap", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-manual-stop");
+
+    const initialHarness = createHarness();
+
+    await initialHarness.supervisor.ensureCellServices({
+      cell,
+      template: {
+        id: "template-manual-stop",
+        label: "Template",
+        type: "manual",
+        services: {
+          web: {
+            type: "process",
+            run: "bun run dev",
+            cwd: ".",
+          },
+        },
+      },
+    });
+
+    const [service] = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+
+    if (!service) {
+      throw new Error("Expected service to exist");
+    }
+
+    await initialHarness.supervisor.stopCellService(service.id);
+
+    const restartHarness = createHarness();
+    await restartHarness.supervisor.bootstrap();
+
+    expect(restartHarness.processes).toHaveLength(0);
+
+    const [stillStopped] = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.id, service.id));
+
+    expect(stillStopped?.status).toBe("stopped");
+    expect(stillStopped?.pid).toBeNull();
+  });
+
+  it("restarts only shutdown-marked services after mixed stop states", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-mixed-resume");
+
+    const initialHarness = createHarness();
+
+    await initialHarness.supervisor.ensureCellServices({
+      cell,
+      template: {
+        id: "template-mixed-resume",
+        label: "Template",
+        type: "manual",
+        services: {
+          web: {
+            type: "process",
+            run: "bun run dev",
+            cwd: ".",
+          },
+          worker: {
+            type: "process",
+            run: "bun run worker",
+            cwd: ".",
+          },
+        },
+      },
+    });
+
+    const initialRows = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+    const workerService = initialRows.find(
+      (service) => service.name === "worker"
+    );
+    if (!workerService) {
+      throw new Error("Expected worker service to exist");
+    }
+
+    await initialHarness.supervisor.stopCellService(workerService.id);
+    await initialHarness.supervisor.stopAll();
+    await Promise.all(
+      initialHarness.processes.map((proc) => proc.handle.exited)
+    );
+
+    const afterShutdown = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+    const webAfterShutdown = afterShutdown.find(
+      (service) => service.name === "web"
+    );
+    const workerAfterShutdown = afterShutdown.find(
+      (service) => service.name === "worker"
+    );
+
+    expect(webAfterShutdown?.status).toBe("needs_resume");
+    expect(workerAfterShutdown?.status).toBe("stopped");
+
+    const restartHarness = createHarness();
+    await restartHarness.supervisor.bootstrap();
+
+    expect(restartHarness.processes).toHaveLength(1);
+
+    const afterBootstrap = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+    const webAfterBootstrap = afterBootstrap.find(
+      (service) => service.name === "web"
+    );
+    const workerAfterBootstrap = afterBootstrap.find(
+      (service) => service.name === "worker"
+    );
+
+    expect(webAfterBootstrap?.status).toBe("running");
+    expect(workerAfterBootstrap?.status).toBe("stopped");
+
+    await restartHarness.supervisor.stopAll();
+    await Promise.all(
+      restartHarness.processes.map((proc) => proc.handle.exited)
+    );
+  });
+
   it("stops running services and clears pid", async () => {
     const workspace = await createWorkspaceDir();
     const cell = await insertCell(workspace, "template-stop");
@@ -468,6 +654,67 @@ describe("service supervisor", () => {
     expect(
       calls.some((call) => call.pid === -pid && call.signal === "SIGKILL")
     ).toBe(true);
+  });
+
+  it("restarts a stopped service even when its previous port is occupied", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-port-collision");
+    const occupiedPort = await allocateFreePort();
+
+    const listener = createServer();
+    await new Promise<void>((resolve, reject) => {
+      listener.once("error", reject);
+      listener.listen(occupiedPort, "127.0.0.1", () => resolve());
+    });
+
+    await testDb.insert(cellServices).values({
+      id: "svc-port-collision",
+      cellId: cell.id,
+      name: "web",
+      type: "process",
+      command: "bun run dev",
+      cwd: workspace,
+      env: {},
+      status: "stopped",
+      port: occupiedPort,
+      pid: null,
+      readyTimeoutMs: null,
+      definition: {
+        type: "process",
+        run: "bun run dev",
+        cwd: ".",
+        env: {},
+      },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const harness = createHarness();
+
+    try {
+      await harness.supervisor.startCellService("svc-port-collision");
+
+      expect(harness.processes).toHaveLength(1);
+      const assignedPort = Number(
+        harness.processes[0]?.options.env.WEB_PORT ?? "0"
+      );
+      expect(assignedPort).toBeGreaterThan(0);
+      expect(assignedPort).not.toBe(occupiedPort);
+
+      const [service] = await testDb
+        .select()
+        .from(cellServices)
+        .where(eq(cellServices.id, "svc-port-collision"));
+
+      expect(service?.status).toBe("running");
+      expect(service?.pid).toBe(harness.processes[0]?.handle.pid ?? null);
+      expect(service?.port).toBe(assignedPort);
+
+      await harness.supervisor.stopCellService("svc-port-collision");
+      await Promise.all(harness.processes.map((proc) => proc.handle.exited));
+    } finally {
+      await new Promise<void>((resolve) => listener.close(() => resolve()));
+    }
   });
 
   async function insertCell(workspacePath: string, templateId: string) {
