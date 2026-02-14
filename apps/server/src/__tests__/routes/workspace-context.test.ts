@@ -1,4 +1,3 @@
-import { Effect } from "effect";
 import { Elysia } from "elysia";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { HiveConfig } from "../../config/schema";
@@ -46,14 +45,15 @@ describe("Cell routes workspace enforcement", () => {
   const createRouteDependencies = (resolveWorkspaceContext: any): any => ({
     db: testDb,
     resolveWorkspaceContext,
-    ensureAgentSession: () => Effect.succeed({ id: "session", cellId: "cell" }),
-    sendAgentMessage: () => Effect.void,
-    closeAgentSession: () => Effect.void,
-    ensureServicesForCell: () => Effect.void,
-    startServiceById: () => Effect.void,
-    startServicesForCell: () => Effect.void,
-    stopServiceById: () => Effect.void,
-    stopServicesForCell: () => Effect.void,
+    ensureAgentSession: () =>
+      Promise.resolve({ id: "session", cellId: "cell" }),
+    sendAgentMessage: () => Promise.resolve(),
+    closeAgentSession: () => Promise.resolve(),
+    ensureServicesForCell: () => Promise.resolve(),
+    startServiceById: () => Promise.resolve(),
+    startServicesForCell: () => Promise.resolve(),
+    stopServiceById: () => Promise.resolve(),
+    stopServicesForCell: () => Promise.resolve(),
     ensureTerminalSession: () => ({
       sessionId: "terminal-session",
       cellId: "cell",
@@ -96,7 +96,7 @@ describe("Cell routes workspace enforcement", () => {
     const app = new Elysia().use(
       createCellsRoutes(
         createRouteDependencies(() =>
-          Effect.fail(
+          Promise.reject(
             new WorkspaceContextError(
               "No active workspace. Register and activate a workspace to continue."
             )
@@ -168,32 +168,31 @@ describe("Cell routes workspace enforcement", () => {
       };
       const resolved = workspaceId ? registry[workspaceId] : primaryWorkspace;
       if (!resolved) {
-        return Effect.fail(
+        return Promise.reject(
           new WorkspaceContextError(`Workspace '${workspaceId}' not found`)
         );
       }
 
       const mockManager: WorktreeManager = {
-        createWorktree: () =>
-          Effect.succeed({
-            path: `${resolved.path}/.hive/cells/new`,
-            branch: "main",
-            baseCommit: "base",
-          }),
-        removeWorktree: () => Effect.void,
+        createWorktree: async () => ({
+          path: `${resolved.path}/.hive/cells/new`,
+          branch: "main",
+          baseCommit: "base",
+        }),
+        removeWorktree: () => Promise.resolve(),
       };
 
-      return Effect.succeed({
+      return Promise.resolve({
         workspace: resolved,
-        loadConfig: () => Effect.succeed(hiveConfig),
-        createWorktreeManager: () => Effect.succeed(mockManager),
+        loadConfig: () => Promise.resolve(hiveConfig),
+        createWorktreeManager: () => Promise.resolve(mockManager),
         createWorktree: () =>
-          Effect.succeed({
+          Promise.resolve({
             path: `${resolved.path}/.hive/cells/new`,
             branch: "main",
             baseCommit: "base",
           }),
-        removeWorktree: () => Effect.void,
+        removeWorktree: () => Promise.resolve(),
       });
     };
 

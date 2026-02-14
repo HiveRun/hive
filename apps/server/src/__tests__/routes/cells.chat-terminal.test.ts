@@ -1,4 +1,3 @@
-import { Effect } from "effect";
 import { Elysia } from "elysia";
 import {
   afterEach,
@@ -104,45 +103,49 @@ function createChatTerminalHarness() {
 function createDependencies(
   harness: ReturnType<typeof createChatTerminalHarness>
 ): any {
-  const ensureAgentSession = vi.fn(() =>
-    Effect.succeed({ id: AGENT_SESSION_ID, cellId: TEST_CELL_ID })
-  );
+  const ensureAgentSession = vi.fn(async () => ({
+    id: AGENT_SESSION_ID,
+    cellId: TEST_CELL_ID,
+  }));
 
   return {
     db: testDb,
-    resolveWorkspaceContext: (() =>
-      Effect.succeed({
-        workspace: {
-          id: TEST_WORKSPACE_ID,
-          label: "Test Workspace",
-          path: "/tmp/test-workspace-root",
-          addedAt: new Date().toISOString(),
-        },
-        loadConfig: () =>
-          Effect.succeed({
-            opencode: { defaultProvider: "opencode", defaultModel: "mock" },
-            promptSources: [],
-            templates: {},
-            defaults: {},
-          }),
-        createWorktreeManager: () =>
-          Effect.succeed({
-            createWorktree: () =>
-              Effect.succeed({ path: "/tmp", branch: "b", baseCommit: "c" }),
-            removeWorktree: () => Effect.void,
-          }),
-        createWorktree: () =>
-          Effect.succeed({ path: "/tmp", branch: "b", baseCommit: "c" }),
-        removeWorktree: () => Effect.void,
-      })) as any,
+    resolveWorkspaceContext: (async () => ({
+      workspace: {
+        id: TEST_WORKSPACE_ID,
+        label: "Test Workspace",
+        path: "/tmp/test-workspace-root",
+        addedAt: new Date().toISOString(),
+      },
+      loadConfig: async () => ({
+        opencode: { defaultProvider: "opencode", defaultModel: "mock" },
+        promptSources: [],
+        templates: {},
+        defaults: {},
+      }),
+      createWorktreeManager: async () => ({
+        createWorktree: async () => ({
+          path: "/tmp",
+          branch: "b",
+          baseCommit: "c",
+        }),
+        removeWorktree: async () => Promise.resolve(),
+      }),
+      createWorktree: async () => ({
+        path: "/tmp",
+        branch: "b",
+        baseCommit: "c",
+      }),
+      removeWorktree: async () => Promise.resolve(),
+    })) as any,
     ensureAgentSession: ensureAgentSession as any,
-    closeAgentSession: () => Effect.void,
-    ensureServicesForCell: () => Effect.void,
-    startServicesForCell: () => Effect.void,
-    stopServicesForCell: () => Effect.void,
-    startServiceById: () => Effect.void,
-    stopServiceById: () => Effect.void,
-    sendAgentMessage: () => Effect.void,
+    closeAgentSession: async () => Promise.resolve(),
+    ensureServicesForCell: async () => Promise.resolve(),
+    startServicesForCell: async () => Promise.resolve(),
+    stopServicesForCell: async () => Promise.resolve(),
+    startServiceById: async () => Promise.resolve(),
+    stopServiceById: async () => Promise.resolve(),
+    sendAgentMessage: async () => Promise.resolve(),
     ensureTerminalSession: vi.fn(({ cellId, workspacePath }) => ({
       sessionId: "terminal-0",
       cellId,

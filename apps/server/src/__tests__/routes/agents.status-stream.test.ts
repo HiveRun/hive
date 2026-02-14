@@ -1,65 +1,10 @@
-import { Effect } from "effect";
 import { Elysia } from "elysia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { publishAgentEvent } from "../../agents/events";
-import { AgentRuntimeServiceTag } from "../../agents/service";
+// biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
+import * as AgentService from "../../agents/service";
 import type { AgentSessionRecord } from "../../agents/types";
-import { LoggerService } from "../../logger";
 import { agentsRoutes } from "../../routes/agents";
-
-type RuntimeMocks = {
-  logger: {
-    debug: () => Effect.Effect<void>;
-    info: () => Effect.Effect<void>;
-    warn: () => Effect.Effect<void>;
-    error: () => Effect.Effect<void>;
-    child: () => RuntimeMocks["logger"];
-  };
-  agentRuntime: {
-    fetchAgentSession: ReturnType<typeof vi.fn>;
-  };
-};
-
-let runtimeMocks: RuntimeMocks | null = null;
-
-function getRuntimeMocks(): RuntimeMocks {
-  if (runtimeMocks) {
-    return runtimeMocks;
-  }
-
-  const logger: RuntimeMocks["logger"] = {
-    debug: () => Effect.void,
-    info: () => Effect.void,
-    warn: () => Effect.void,
-    error: () => Effect.void,
-    child: () => logger,
-  };
-
-  runtimeMocks = {
-    logger,
-    agentRuntime: {
-      fetchAgentSession: vi.fn(),
-    },
-  };
-
-  return runtimeMocks;
-}
-
-vi.mock("../../runtime", () => ({
-  runServerEffect: (effect: any) => {
-    const mocks = getRuntimeMocks();
-
-    return Effect.runPromise(
-      effect.pipe(
-        Effect.provideService(
-          AgentRuntimeServiceTag,
-          mocks.agentRuntime as any
-        ),
-        Effect.provideService(LoggerService, mocks.logger as any)
-      )
-    );
-  },
-}));
 
 const TEST_SESSION: AgentSessionRecord = {
   id: "session-status-test",
@@ -77,13 +22,13 @@ const HTTP_NOT_FOUND = 404;
 
 describe("agent status stream", () => {
   beforeEach(() => {
-    getRuntimeMocks().agentRuntime.fetchAgentSession.mockReset();
+    vi.restoreAllMocks();
+    vi.spyOn(AgentService, "fetchAgentSession").mockResolvedValue(null);
   });
 
   it("emits initial status and forwards status updates", async () => {
-    getRuntimeMocks().agentRuntime.fetchAgentSession.mockImplementation(
-      (id: string) =>
-        Effect.succeed(id === TEST_SESSION.id ? TEST_SESSION : null)
+    vi.spyOn(AgentService, "fetchAgentSession").mockImplementation(
+      async (id: string) => (id === TEST_SESSION.id ? TEST_SESSION : null)
     );
 
     const app = new Elysia().use(agentsRoutes);
@@ -138,9 +83,7 @@ describe("agent status stream", () => {
   });
 
   it("returns 404 when session cannot be found", async () => {
-    getRuntimeMocks().agentRuntime.fetchAgentSession.mockImplementation(() =>
-      Effect.succeed(null)
-    );
+    vi.spyOn(AgentService, "fetchAgentSession").mockResolvedValue(null);
 
     const app = new Elysia().use(agentsRoutes);
     const response = await app.handle(

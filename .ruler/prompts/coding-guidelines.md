@@ -9,19 +9,11 @@
 - Lint/format via `bun run check:biome` or each package's `bun -C <dir> run check` script; Biome applies fixes in place.
 - Husky hooks enforce the check pipeline automatically—do not skip or rewrite them.
 
-## Effect Solutions Usage
-The Effect Solutions CLI provides curated best practices and patterns for Effect TypeScript. Before working on Effect code, check if there's a relevant topic that covers your use case.
-- `effect-solutions list` - List all available topics
-- `effect-solutions show <slug...>` - Read one or more topics
-- `effect-solutions search <term>` - Search topics by keyword
-
-**Local Effect Source:** The upstream Effect repository lives in `vendor/effect/`. Use it to grep for implementation patterns and API examples when Effect docs or solutions need deeper references.
-
-## Effect Runtime Patterns
-- The backend runtime is built on Effect. All new services must expose a Context tag + Layer and be wired through `runServerEffect`.
-- Route/CLI/business logic should be implemented as `Effect` programs (prefer `Effect.gen`) that depend on tagged services; do not add new promise-based helpers.
-- Tests must execute the same effects (via `runServerEffect` or dedicated test layers) so behavior stays consistent.
-- Avoid introducing new globals—inject dependencies through Layers so the runtime graph remains the single source of truth.
+## Runtime Patterns
+- Backend and CLI runtime code is Promise-first. Use `async`/`await` with small factory services and explicit dependencies.
+- Keep shared orchestration in focused helper modules (service supervisors, registry helpers, worktree manager), then call them directly from routes/commands.
+- Prefer deterministic wrappers for external boundaries (filesystem, child processes, network calls) so tests can stub behavior cleanly.
+- Do not introduce new Effect/@effect dependencies or language-service tooling.
 
 ## Programming Style
 
@@ -54,4 +46,3 @@ The Effect Solutions CLI provides curated best practices and patterns for Effect
 **Avoid overbearing error handling** that adds no value. Let errors bubble up to where they can be meaningfully addressed.
 
 **Don't create custom Error classes** - Just throw `new Error("message")`. Custom error classes add complexity without benefit. If you need to distinguish error types, use error messages or codes.
-

@@ -1,6 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { Context, Effect, Layer } from "effect";
-import { DatabaseService } from "../db";
+import { db } from "../db";
 import type { Cell } from "../schema/cells";
 import { cells } from "../schema/cells";
 import type { CellService } from "../schema/services";
@@ -13,12 +12,12 @@ type ServiceRow = {
   cell: Cell;
 };
 
-export function createServiceRepository(db: DbClient, now: () => Date) {
+export function createServiceRepository(database: DbClient, now: () => Date) {
   async function findByCellAndName(
     cellId: string,
     serviceName: string
   ): Promise<CellService | undefined> {
-    const [record] = await db
+    const [record] = await database
       .select()
       .from(cellServices)
       .where(
@@ -36,7 +35,7 @@ export function createServiceRepository(db: DbClient, now: () => Date) {
     }
   ) {
     const timestamp = now();
-    const [record] = await db
+    const [record] = await database
       .insert(cellServices)
       .values({
         ...data,
@@ -53,7 +52,7 @@ export function createServiceRepository(db: DbClient, now: () => Date) {
     serviceId: string,
     update: Partial<CellService>
   ) {
-    const [record] = await db
+    const [record] = await database
       .update(cellServices)
       .set({ ...update, updatedAt: now() })
       .where(eq(cellServices.id, serviceId))
@@ -63,7 +62,7 @@ export function createServiceRepository(db: DbClient, now: () => Date) {
   }
 
   async function markError(serviceId: string, message: string): Promise<void> {
-    await db
+    await database
       .update(cellServices)
       .set({
         status: "error",
@@ -77,7 +76,7 @@ export function createServiceRepository(db: DbClient, now: () => Date) {
   async function fetchServiceRowById(
     serviceId: string
   ): Promise<ServiceRow | undefined> {
-    const [row] = await db
+    const [row] = await database
       .select()
       .from(cellServices)
       .innerJoin(cells, eq(cells.id, cellServices.cellId))
@@ -88,7 +87,7 @@ export function createServiceRepository(db: DbClient, now: () => Date) {
   }
 
   async function fetchServicesForCell(cellId: string): Promise<ServiceRow[]> {
-    const rows = await db
+    const rows = await database
       .select()
       .from(cellServices)
       .innerJoin(cells, eq(cells.id, cellServices.cellId))
@@ -98,7 +97,7 @@ export function createServiceRepository(db: DbClient, now: () => Date) {
   }
 
   async function fetchAllServices(): Promise<ServiceRow[]> {
-    const rows = await db
+    const rows = await database
       .select()
       .from(cellServices)
       .innerJoin(cells, eq(cells.id, cellServices.cellId));
@@ -124,79 +123,30 @@ function mapRow(row: { cell_services: CellService; cells: Cell }): ServiceRow {
   };
 }
 
-type RepositoryError = {
-  readonly _tag: "ServiceRepositoryError";
-  readonly cause: unknown;
-};
-
-const makeRepositoryError = (cause: unknown): RepositoryError => ({
-  _tag: "ServiceRepositoryError",
-  cause,
-});
-
-const wrapPromise =
-  <Args extends unknown[], Result>(fn: (...args: Args) => Promise<Result>) =>
-  (...args: Args): Effect.Effect<Result, RepositoryError> =>
-    Effect.tryPromise({
-      try: () => fn(...args),
-      catch: (cause) => makeRepositoryError(cause),
-    });
-
 export type ServiceRepositoryService = {
   readonly findByCellAndName: (
     cellId: string,
     serviceName: string
-  ) => Effect.Effect<CellService | undefined, RepositoryError>;
+  ) => Promise<CellService | undefined>;
   readonly insertService: (
     cell: Cell,
     data: Omit<CellService, "id" | "cellId" | "createdAt" | "updatedAt"> & {
       id: string;
     }
-  ) => Effect.Effect<CellService | undefined, RepositoryError>;
+  ) => Promise<CellService | undefined>;
   readonly updateService: (
     serviceId: string,
     update: Partial<CellService>
-  ) => Effect.Effect<CellService | undefined, RepositoryError>;
-  readonly markError: (
-    serviceId: string,
-    message: string
-  ) => Effect.Effect<void, RepositoryError>;
+  ) => Promise<CellService | undefined>;
+  readonly markError: (serviceId: string, message: string) => Promise<void>;
   readonly fetchServiceRowById: (
     serviceId: string
-  ) => Effect.Effect<ServiceRow | undefined, RepositoryError>;
-  readonly fetchServicesForCell: (
-    cellId: string
-  ) => Effect.Effect<ServiceRow[], RepositoryError>;
-  readonly fetchAllServices: () => Effect.Effect<ServiceRow[], RepositoryError>;
+  ) => Promise<ServiceRow | undefined>;
+  readonly fetchServicesForCell: (cellId: string) => Promise<ServiceRow[]>;
+  readonly fetchAllServices: () => Promise<ServiceRow[]>;
 };
 
-export const ServiceRepository = Context.GenericTag<ServiceRepositoryService>(
-  "@hive/server/ServiceRepository"
-);
+export const serviceRepository: ServiceRepositoryService =
+  createServiceRepository(db, () => new Date());
 
-const createEffectRepository = (db: DbClient): ServiceRepositoryService => {
-  const repository = createServiceRepository(db, () => new Date());
-  return {
-    findByCellAndName: (cellId, serviceName) =>
-      wrapPromise(repository.findByCellAndName)(cellId, serviceName),
-    insertService: (cell, data) =>
-      wrapPromise(repository.insertService)(cell, data),
-    updateService: (serviceId, update) =>
-      wrapPromise(repository.updateService)(serviceId, update),
-    markError: (serviceId, message) =>
-      wrapPromise(repository.markError)(serviceId, message),
-    fetchServiceRowById: (serviceId) =>
-      wrapPromise(repository.fetchServiceRowById)(serviceId),
-    fetchServicesForCell: (cellId) =>
-      wrapPromise(repository.fetchServicesForCell)(cellId),
-    fetchAllServices: () => wrapPromise(repository.fetchAllServices)(),
-  } satisfies ServiceRepositoryService;
-};
-
-export const ServiceRepositoryLayer = Layer.effect(
-  ServiceRepository,
-  Effect.gen(function* () {
-    const { db } = yield* DatabaseService;
-    return createEffectRepository(db);
-  })
-);
+export const ServiceRepository = serviceRepository;

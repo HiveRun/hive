@@ -26,11 +26,6 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "types": ["bun"],
-    "plugins": [
-      {
-        "name": "@effect/language-service"
-      }
-    ],
     "baseUrl": "./",
     "paths": {
       "@hive/server": ["apps/server/src/server.ts"],

@@ -7,7 +7,6 @@ import { logger } from "@bogeychan/elysia-logger";
 
 import { cors } from "@elysiajs/cors";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import { Effect } from "effect";
 import { Elysia } from "elysia";
 import { loadOpencodeConfig } from "./agents/opencode-config";
 import {
@@ -25,13 +24,12 @@ import { agentsRoutes } from "./routes/agents";
 import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
 import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
-import { runServerEffect } from "./runtime";
 import { cells } from "./schema/cells";
-import { ChatTerminalServiceTag } from "./services/chat-terminal";
+import { chatTerminalService } from "./services/chat-terminal";
 import { ServiceSupervisorService } from "./services/supervisor";
-import { CellTerminalServiceTag } from "./services/terminal";
+import { cellTerminalService } from "./services/terminal";
 import {
-  ensureWorkspaceRegisteredEffect,
+  ensureWorkspaceRegistered,
   resolveHiveHome,
 } from "./workspaces/registry";
 
@@ -102,39 +100,25 @@ const resolveMigrationsDirectory = () => {
   );
 };
 
-const runMigrationsEffect = Effect.flatMap(DatabaseService, ({ db }) =>
-  Effect.tryPromise({
-    try: async () => {
-      const migrationsFolder = resolveMigrationsDirectory();
-      await migrate(db, { migrationsFolder });
-    },
-    catch: (error) =>
-      error instanceof Error ? error : new Error(String(error)),
-  }).pipe(
-    Effect.tap(() =>
-      Effect.sync(() => process.stderr.write("Database migrations applied.\n"))
-    ),
-    Effect.tapError((error) =>
-      Effect.sync(() =>
-        process.stderr.write(
-          `Failed to run database migrations: ${
-            error instanceof Error ? error.message : String(error)
-          }\n`
-        )
-      )
-    )
-  )
-);
+const runMigrations = async (): Promise<void> => {
+  try {
+    const migrationsFolder = resolveMigrationsDirectory();
+    await migrate(DatabaseService.db, { migrationsFolder });
+    process.stderr.write("Database migrations applied.\n");
+  } catch (error) {
+    process.stderr.write(
+      `Failed to run database migrations: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`
+    );
+    throw error;
+  }
+};
 
-const startOpencodeServerEffect = (workspaceRoot: string) =>
-  Effect.tryPromise({
-    try: async () => {
-      const config = await loadOpencodeConfig(workspaceRoot);
-      await startSharedOpencodeServer(config);
-    },
-    catch: (error) =>
-      error instanceof Error ? error : new Error(String(error)),
-  });
+const startOpencodeServer = async (workspaceRoot: string): Promise<void> => {
+  const config = await loadOpencodeConfig(workspaceRoot);
+  await startSharedOpencodeServer(config);
+};
 
 export const cleanupPidFile = () => {
   try {
@@ -174,41 +158,23 @@ export type App = ReturnType<typeof createApp>;
 let shuttingDown = false;
 let signalsRegistered = false;
 
-const shutdownEffect = Effect.gen(function* () {
-  yield* ServiceSupervisorService.pipe(
-    Effect.flatMap((service) => service.stopAll)
-  );
-  const chatTerminalService = yield* ChatTerminalServiceTag;
-  yield* Effect.sync(() => chatTerminalService.stopAll());
-  const terminalService = yield* CellTerminalServiceTag;
-  yield* Effect.sync(() => terminalService.stopAll());
-  yield* Effect.tryPromise({
-    try: () => markAgentSessionsForResume(),
-    catch: (error) =>
-      error instanceof Error ? error : new Error(String(error)),
-  }).pipe(
-    Effect.catchAll((failure) =>
-      Effect.sync(() =>
-        process.stderr.write(
-          `Failed to mark agent sessions for resume: ${
-            failure instanceof Error ? failure.message : String(failure)
-          }\n`
-        )
-      )
-    )
-  );
-  yield* Effect.tryPromise({
-    try: () => closeAllAgentSessions(),
-    catch: (error) =>
-      error instanceof Error ? error : new Error(String(error)),
-  });
-  yield* Effect.tryPromise({
-    try: () => stopSharedOpencodeServer(),
-    catch: (error) =>
-      error instanceof Error ? error : new Error(String(error)),
-  });
-  yield* Effect.sync(cleanupPidFile);
-});
+const shutdown = async (): Promise<void> => {
+  await ServiceSupervisorService.stopAll();
+  chatTerminalService.stopAll();
+  cellTerminalService.stopAll();
+  try {
+    await markAgentSessionsForResume();
+  } catch (failure) {
+    process.stderr.write(
+      `Failed to mark agent sessions for resume: ${
+        failure instanceof Error ? failure.message : String(failure)
+      }\n`
+    );
+  }
+  await closeAllAgentSessions();
+  await stopSharedOpencodeServer();
+  cleanupPidFile();
+};
 
 const registerSignalHandlers = () => {
   if (signalsRegistered) {
@@ -217,7 +183,7 @@ const registerSignalHandlers = () => {
   signalsRegistered = true;
 
   const performShutdown = async () => {
-    await runServerEffect(shutdownEffect);
+    await shutdown();
   };
 
   const handleShutdown = async (signal: string) => {
@@ -251,116 +217,86 @@ const registerSignalHandlers = () => {
   });
 };
 
-const registerWorkspaceEffect = (workspaceRoot: string) =>
-  ensureWorkspaceRegisteredEffect(workspaceRoot, {
-    preserveActiveWorkspace: true,
-  }).pipe(
-    Effect.tap(() =>
-      Effect.sync(() =>
-        process.stderr.write(`Workspace registered: ${workspaceRoot}\n`)
-      )
-    ),
-    Effect.catchAll((failure) =>
-      Effect.sync(() =>
-        process.stderr.write(
-          `Warning: Failed to register workspace ${workspaceRoot}: ${
-            failure instanceof Error ? failure.message : String(failure)
-          }\n`
-        )
-      )
-    )
-  );
+const registerWorkspace = async (workspaceRoot: string): Promise<void> => {
+  try {
+    await ensureWorkspaceRegistered(workspaceRoot, {
+      preserveActiveWorkspace: true,
+    });
+    process.stderr.write(`Workspace registered: ${workspaceRoot}\n`);
+  } catch (failure) {
+    process.stderr.write(
+      `Warning: Failed to register workspace ${workspaceRoot}: ${
+        failure instanceof Error ? failure.message : String(failure)
+      }\n`
+    );
+  }
+};
 
-const bootstrapSupervisorEffect = ServiceSupervisorService.pipe(
-  Effect.flatMap((service) => service.bootstrap),
-  Effect.tap(() =>
-    Effect.sync(() => process.stderr.write("Service supervisor initialized.\n"))
-  ),
-  Effect.catchAll((failure) =>
-    Effect.sync(() =>
-      process.stderr.write(
-        `Failed to bootstrap service supervisor: ${
-          failure instanceof Error ? failure.message : String(failure)
-        }\n`
-      )
-    )
-  )
-);
+const bootstrapSupervisor = async (): Promise<void> => {
+  try {
+    await ServiceSupervisorService.bootstrap();
+    process.stderr.write("Service supervisor initialized.\n");
+  } catch (failure) {
+    process.stderr.write(
+      `Failed to bootstrap service supervisor: ${
+        failure instanceof Error ? failure.message : String(failure)
+      }\n`
+    );
+  }
+};
 
-const resumeProvisioningEffect = Effect.tryPromise({
-  try: () => resumeSpawningCells(),
-  catch: (failure) =>
-    failure instanceof Error ? failure : new Error(String(failure)),
-}).pipe(
-  Effect.catchAll((failure) =>
-    Effect.sync(() =>
-      process.stderr.write(
-        `Failed to resume cell provisioning: ${
-          failure instanceof Error ? failure.message : String(failure)
-        }\n`
-      )
-    )
-  )
-);
+const resumeProvisioning = async (): Promise<void> => {
+  try {
+    await resumeSpawningCells();
+  } catch (failure) {
+    process.stderr.write(
+      `Failed to resume cell provisioning: ${
+        failure instanceof Error ? failure.message : String(failure)
+      }\n`
+    );
+  }
+};
 
-const startAllServicesEffect = Effect.gen(function* () {
-  const { db } = yield* DatabaseService;
-  const supervisor = yield* ServiceSupervisorService;
-  const allCells = yield* Effect.tryPromise({
-    try: () => db.select().from(cells),
-    catch: (failure) =>
-      failure instanceof Error ? failure : new Error(String(failure)),
-  });
+const startAllServices = async (): Promise<void> => {
+  const allCells = await DatabaseService.db.select().from(cells);
   if (allCells.length === 0) {
     return;
   }
 
-  yield* Effect.forEach(
-    allCells,
-    (cell) =>
-      supervisor
-        .startCellServices(cell.id)
-        .pipe(
-          Effect.catchAll((failure) =>
-            Effect.sync(() =>
-              process.stderr.write(
-                `Failed to start services for cell ${cell.id}: ${
-                  failure instanceof Error ? failure.message : String(failure)
-                }\n`
-              )
-            )
-          )
-        ),
-    { discard: true, concurrency: 1 }
-  );
-});
-
-const resumeAgentSessionsEffect = Effect.tryPromise({
-  try: () => resumeAgentSessionsOnStartup(),
-  catch: (failure) =>
-    failure instanceof Error ? failure : new Error(String(failure)),
-}).pipe(
-  Effect.catchAll((failure) =>
-    Effect.sync(() =>
+  for (const cell of allCells) {
+    try {
+      await ServiceSupervisorService.startCellServices(cell.id);
+    } catch (failure) {
       process.stderr.write(
-        `Failed to resume agent sessions: ${
+        `Failed to start services for cell ${cell.id}: ${
           failure instanceof Error ? failure.message : String(failure)
         }\n`
-      )
-    )
-  )
-);
+      );
+    }
+  }
+};
 
-const bootstrapServerEffect = (workspaceRoot: string) =>
-  Effect.gen(function* () {
-    yield* runMigrationsEffect;
-    yield* registerWorkspaceEffect(workspaceRoot);
-    yield* startOpencodeServerEffect(workspaceRoot);
-    yield* bootstrapSupervisorEffect;
-    yield* resumeProvisioningEffect;
-    yield* startAllServicesEffect;
-    yield* resumeAgentSessionsEffect;
-  });
+const resumeAgentSessions = async (): Promise<void> => {
+  try {
+    await resumeAgentSessionsOnStartup();
+  } catch (failure) {
+    process.stderr.write(
+      `Failed to resume agent sessions: ${
+        failure instanceof Error ? failure.message : String(failure)
+      }\n`
+    );
+  }
+};
+
+const bootstrapServer = async (workspaceRoot: string): Promise<void> => {
+  await runMigrations();
+  await registerWorkspace(workspaceRoot);
+  await startOpencodeServer(workspaceRoot);
+  await bootstrapSupervisor();
+  await resumeProvisioning();
+  await startAllServices();
+  await resumeAgentSessions();
+};
 
 export const startServer = async () => {
   const app = createApp();
@@ -370,7 +306,7 @@ export const startServer = async () => {
   const workspaceRoot = resolveWorkspaceRoot();
 
   try {
-    await runServerEffect(bootstrapServerEffect(workspaceRoot));
+    await bootstrapServer(workspaceRoot);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(

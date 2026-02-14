@@ -6,9 +6,8 @@ import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { type IExitEvent, spawn as spawnPty } from "bun-pty";
-import { Context, Effect, Layer } from "effect";
 
-import { HiveConfigService, resolveWorkspaceRoot } from "../config/context";
+import { resolveWorkspaceRoot } from "../config/context";
 import { loadConfig } from "../config/loader";
 import type { HiveConfig, ProcessService, Template } from "../config/schema";
 import { db as defaultDb } from "../db";
@@ -21,8 +20,8 @@ import {
   createServiceTerminalRuntime,
   type ServiceTerminalEvent,
   type ServiceTerminalRuntime,
-  ServiceTerminalRuntimeTag,
   type ServiceTerminalSession,
+  serviceTerminalRuntime,
 } from "./service-terminal";
 
 const AUTO_RESTART_STATUSES: ReadonlySet<ServiceStatus> = new Set([
@@ -1377,33 +1376,31 @@ const makeServiceSupervisorError = (
 
 const wrapSupervisorPromise =
   <Args extends unknown[]>(fn: (...args: Args) => Promise<void>) =>
-  (...args: Args): Effect.Effect<void, ServiceSupervisorError> =>
-    Effect.tryPromise({
-      try: () => fn(...args),
-      catch: (cause) => makeServiceSupervisorError(cause),
-    });
+  async (...args: Args): Promise<void> => {
+    try {
+      await fn(...args);
+    } catch (cause) {
+      throw makeServiceSupervisorError(cause);
+    }
+  };
 
 export type ServiceSupervisorService = {
-  readonly bootstrap: Effect.Effect<void, ServiceSupervisorError>;
+  readonly bootstrap: () => Promise<void>;
   readonly ensureCellServices: (args: {
     cell: Cell;
     template?: Template;
-  }) => Effect.Effect<void, ServiceSupervisorError>;
-  readonly startCellService: (
-    serviceId: string
-  ) => Effect.Effect<void, ServiceSupervisorError>;
-  readonly startCellServices: (
-    cellId: string
-  ) => Effect.Effect<void, ServiceSupervisorError>;
+  }) => Promise<void>;
+  readonly startCellService: (serviceId: string) => Promise<void>;
+  readonly startCellServices: (cellId: string) => Promise<void>;
   readonly stopCellService: (
     serviceId: string,
     options?: { releasePorts?: boolean }
-  ) => Effect.Effect<void, ServiceSupervisorError>;
+  ) => Promise<void>;
   readonly stopCellServices: (
     cellId: string,
     options?: { releasePorts?: boolean }
-  ) => Effect.Effect<void, ServiceSupervisorError>;
-  readonly stopAll: Effect.Effect<void, ServiceSupervisorError>;
+  ) => Promise<void>;
+  readonly stopAll: () => Promise<void>;
   readonly getServiceTerminalSession: (
     serviceId: string
   ) => ServiceTerminalSession | null;
@@ -1436,11 +1433,11 @@ export type ServiceSupervisorService = {
   readonly clearSetupTerminal: (cellId: string) => void;
 };
 
-const makeEffectSupervisor = (
+const makeServiceSupervisorService = (
   supervisor: ServiceSupervisor,
   terminalRuntime: ServiceTerminalRuntime
 ): ServiceSupervisorService => ({
-  bootstrap: wrapSupervisorPromise(supervisor.bootstrap)(),
+  bootstrap: wrapSupervisorPromise(supervisor.bootstrap),
   ensureCellServices: (args) =>
     wrapSupervisorPromise(supervisor.ensureCellServices)(args),
   startCellService: (serviceId) =>
@@ -1451,7 +1448,7 @@ const makeEffectSupervisor = (
     wrapSupervisorPromise(supervisor.stopCellService)(serviceId, options),
   stopCellServices: (cellId, options) =>
     wrapSupervisorPromise(supervisor.stopCellServices)(cellId, options),
-  stopAll: wrapSupervisorPromise(supervisor.stopAll)(),
+  stopAll: wrapSupervisorPromise(supervisor.stopAll),
   getServiceTerminalSession: terminalRuntime.getServiceSession,
   readServiceTerminalOutput: terminalRuntime.readServiceOutput,
   subscribeToServiceTerminal: terminalRuntime.subscribeToService,
@@ -1466,21 +1463,9 @@ const makeEffectSupervisor = (
   clearSetupTerminal: terminalRuntime.clearSetupSession,
 });
 
-export const ServiceSupervisorService =
-  Context.GenericTag<ServiceSupervisorService>(
-    "@hive/server/ServiceSupervisorService"
-  );
-
-export const ServiceSupervisorLayer = Layer.effect(
-  ServiceSupervisorService,
-  Effect.gen(function* () {
-    const hiveConfigService = yield* HiveConfigService;
-    const terminalRuntime = yield* ServiceTerminalRuntimeTag;
-    const supervisor = createServiceSupervisor({
-      loadHiveConfig: (workspaceRoot?: string) =>
-        Effect.runPromise(hiveConfigService.load(workspaceRoot)),
-      terminalRuntime,
-    });
-    return makeEffectSupervisor(supervisor, terminalRuntime);
-  })
+export const ServiceSupervisorService = makeServiceSupervisorService(
+  createServiceSupervisor({ terminalRuntime: serviceTerminalRuntime }),
+  serviceTerminalRuntime
 );
+
+export const serviceSupervisor = ServiceSupervisorService;

@@ -1,14 +1,15 @@
-import { Effect } from "effect";
 import { Elysia, t } from "elysia";
-import { LoggerService } from "../logger";
-import { runServerEffect } from "../runtime";
-import { browseWorkspaceDirectories } from "../workspaces/browser";
 import {
-  activateWorkspaceEffect,
-  ensureWorkspaceRegisteredEffect,
-  getWorkspaceRegistryEffect,
-  registerWorkspaceEffect,
-  updateWorkspaceLabelEffect,
+  browseWorkspaceDirectories,
+  type WorkspaceBrowseResult,
+} from "../workspaces/browser";
+import {
+  activateWorkspace,
+  ensureWorkspaceRegistered,
+  getWorkspaceRegistry,
+  registerWorkspace,
+  updateWorkspaceLabel,
+  type WorkspaceRecord,
 } from "../workspaces/registry";
 import { removeWorkspaceCascade } from "../workspaces/removal";
 
@@ -23,6 +24,11 @@ const HTTP_STATUS = {
 type WorkspaceRouteError = {
   status: number;
   message: string;
+};
+
+type WorkspaceRouteResponse<T> = {
+  status: number;
+  body: T | { message: string };
 };
 
 const formatUnknown = (cause: unknown, fallback: string) => {
@@ -40,112 +46,137 @@ const toError = (status: number, message: string): WorkspaceRouteError => ({
   message,
 });
 
-const matchWorkspaceEffect = <A, R>(
-  effect: Effect.Effect<A, WorkspaceRouteError, R>,
-  successStatus: number = HTTP_STATUS.OK
-) =>
-  Effect.match(effect, {
-    onFailure: (error) => ({
-      status: error.status,
-      body: { message: error.message },
-    }),
-    onSuccess: (value) => ({ status: successStatus, body: value }),
-  });
+const success = <T>(
+  body: T,
+  status: number = HTTP_STATUS.OK
+): WorkspaceRouteResponse<T> => ({
+  status,
+  body,
+});
 
-const withRouteLogger = <A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-  context: Record<string, unknown>
-) =>
-  LoggerService.pipe(
-    Effect.flatMap((logger) =>
-      effect.pipe(Effect.provideService(LoggerService, logger.child(context)))
-    )
-  );
+const failure = <T>(error: WorkspaceRouteError): WorkspaceRouteResponse<T> => ({
+  status: error.status,
+  body: { message: error.message },
+});
 
-const safeBrowseEffect = (path?: string, filter?: string) =>
-  Effect.tryPromise({
-    try: () => browseWorkspaceDirectories(path, filter),
-    catch: (cause) =>
+const safeBrowse = async (
+  path?: string,
+  filter?: string
+): Promise<WorkspaceRouteResponse<WorkspaceBrowseResult>> => {
+  try {
+    const directories = await browseWorkspaceDirectories(path, filter);
+    return success(directories);
+  } catch (cause) {
+    return failure(
       toError(
         HTTP_STATUS.BAD_REQUEST,
         formatUnknown(cause, "Failed to browse directories")
-      ),
-  });
+      )
+    );
+  }
+};
 
-const safeRegisterEffect = (body: {
+const safeRegister = async (body: {
   path: string;
   label?: string;
   activate?: boolean;
-}) =>
-  registerWorkspaceEffect(
-    { path: body.path, label: body.label },
-    { setActive: body.activate ?? false }
-  ).pipe(
-    Effect.map((workspace) => ({ workspace })),
-    Effect.mapError((cause) =>
+}): Promise<WorkspaceRouteResponse<{ workspace: WorkspaceRecord }>> => {
+  try {
+    const workspace = await registerWorkspace(
+      { path: body.path, label: body.label },
+      { setActive: body.activate ?? false }
+    );
+    return success({ workspace }, HTTP_STATUS.CREATED);
+  } catch (cause) {
+    return failure(
       toError(
         HTTP_STATUS.BAD_REQUEST,
         formatUnknown(cause, "Failed to register workspace")
       )
-    )
-  );
+    );
+  }
+};
 
-const safeActivateEffect = (id: string) =>
-  activateWorkspaceEffect(id).pipe(
-    Effect.flatMap((workspace) =>
-      workspace
-        ? Effect.succeed({ workspace })
-        : Effect.fail(toError(HTTP_STATUS.NOT_FOUND, "Workspace not found"))
-    ),
-    Effect.mapError((cause) =>
+const safeActivate = async (
+  id: string
+): Promise<WorkspaceRouteResponse<{ workspace: WorkspaceRecord }>> => {
+  try {
+    const workspace = await activateWorkspace(id);
+    if (!workspace) {
+      return failure(toError(HTTP_STATUS.NOT_FOUND, "Workspace not found"));
+    }
+
+    return success({ workspace });
+  } catch (cause) {
+    return failure(
       toError(
         HTTP_STATUS.BAD_REQUEST,
         formatUnknown(cause, "Failed to activate workspace")
       )
-    )
-  );
+    );
+  }
+};
 
-const safeUpdateEffect = (id: string, label: string) =>
-  updateWorkspaceLabelEffect({ id, label }).pipe(
-    Effect.flatMap((workspace) =>
-      workspace
-        ? Effect.succeed({ workspace })
-        : Effect.fail(toError(HTTP_STATUS.NOT_FOUND, "Workspace not found"))
-    ),
-    Effect.mapError((cause) =>
+const safeUpdate = async (
+  id: string,
+  label: string
+): Promise<WorkspaceRouteResponse<{ workspace: WorkspaceRecord }>> => {
+  try {
+    const workspace = await updateWorkspaceLabel({ id, label });
+    if (!workspace) {
+      return failure(toError(HTTP_STATUS.NOT_FOUND, "Workspace not found"));
+    }
+
+    return success({ workspace });
+  } catch (cause) {
+    return failure(
       toError(
         HTTP_STATUS.BAD_REQUEST,
         formatUnknown(cause, "Failed to update workspace")
       )
-    )
-  );
+    );
+  }
+};
 
-const safeDeleteEffect = (id: string) =>
-  Effect.tryPromise({
-    try: () => removeWorkspaceCascade(id),
-    catch: (cause) =>
+const safeDelete = async (
+  id: string
+): Promise<WorkspaceRouteResponse<null>> => {
+  try {
+    const result = await removeWorkspaceCascade(id);
+    if (!result) {
+      return failure(toError(HTTP_STATUS.NOT_FOUND, "Workspace not found"));
+    }
+
+    return success(null, HTTP_STATUS.NO_CONTENT);
+  } catch (cause) {
+    return failure(
       toError(
         HTTP_STATUS.BAD_REQUEST,
         formatUnknown(cause, "Failed to remove workspace")
-      ),
-  }).pipe(
-    Effect.flatMap((result) =>
-      result
-        ? Effect.succeed(null)
-        : Effect.fail(toError(HTTP_STATUS.NOT_FOUND, "Workspace not found"))
-    )
-  );
+      )
+    );
+  }
+};
 
-const safeAutoRegisterEffect = (body: { path: string; label?: string }) =>
-  ensureWorkspaceRegisteredEffect(body.path, { label: body.label }).pipe(
-    Effect.map((workspace) => ({ workspace })),
-    Effect.mapError((cause) =>
+const safeAutoRegister = async (body: {
+  path: string;
+  label?: string;
+}): Promise<WorkspaceRouteResponse<{ workspace: WorkspaceRecord }>> => {
+  try {
+    const workspace = await ensureWorkspaceRegistered(body.path, {
+      label: body.label,
+    });
+
+    return success({ workspace }, HTTP_STATUS.CREATED);
+  } catch (cause) {
+    return failure(
       toError(
         HTTP_STATUS.BAD_REQUEST,
         formatUnknown(cause, "Failed to auto-register workspace")
       )
-    )
-  );
+    );
+  }
+};
 
 const WorkspaceSchema = t.Object({
   id: t.String(),
@@ -184,23 +215,16 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   .get(
     "/",
     async ({ set }) => {
-      const outcome = await runServerEffect(
-        matchWorkspaceEffect(
-          withRouteLogger(
-            getWorkspaceRegistryEffect.pipe(
-              Effect.mapError((cause) =>
-                toError(
-                  HTTP_STATUS.BAD_REQUEST,
-                  formatUnknown(cause, "Failed to load workspaces")
-                )
-              )
-            ),
-            { route: "workspaces/list" }
-          )
-        )
-      );
-      set.status = outcome.status;
-      return outcome.body;
+      try {
+        const registry = await getWorkspaceRegistry();
+        set.status = HTTP_STATUS.OK;
+        return registry;
+      } catch (cause) {
+        set.status = HTTP_STATUS.BAD_REQUEST;
+        return {
+          message: formatUnknown(cause, "Failed to load workspaces"),
+        };
+      }
     },
     {
       response: {
@@ -212,14 +236,7 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   .get(
     "/browse",
     async ({ query, set }) => {
-      const outcome = await runServerEffect(
-        matchWorkspaceEffect(
-          withRouteLogger(safeBrowseEffect(query.path, query.filter), {
-            route: "workspaces/browse",
-            path: query.path ?? null,
-          })
-        )
-      );
+      const outcome = await safeBrowse(query.path, query.filter);
       set.status = outcome.status;
       return outcome.body;
     },
@@ -237,15 +254,7 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   .post(
     "/",
     async ({ body, set }) => {
-      const outcome = await runServerEffect(
-        matchWorkspaceEffect(
-          withRouteLogger(safeRegisterEffect(body), {
-            route: "workspaces/register",
-            path: body.path,
-          }),
-          HTTP_STATUS.CREATED
-        )
-      );
+      const outcome = await safeRegister(body);
       set.status = outcome.status;
       return outcome.body;
     },
@@ -264,14 +273,7 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   .post(
     "/:id/activate",
     async ({ params, set }) => {
-      const outcome = await runServerEffect(
-        matchWorkspaceEffect(
-          withRouteLogger(safeActivateEffect(params.id), {
-            route: "workspaces/activate",
-            id: params.id,
-          })
-        )
-      );
+      const outcome = await safeActivate(params.id);
       set.status = outcome.status;
       return outcome.body;
     },
@@ -289,14 +291,7 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   .patch(
     "/:id",
     async ({ params, body, set }) => {
-      const outcome = await runServerEffect(
-        matchWorkspaceEffect(
-          withRouteLogger(safeUpdateEffect(params.id, body.label), {
-            route: "workspaces/update",
-            id: params.id,
-          })
-        )
-      );
+      const outcome = await safeUpdate(params.id, body.label);
       set.status = outcome.status;
       return outcome.body;
     },
@@ -317,15 +312,7 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   .delete(
     "/:id",
     async ({ params, set }) => {
-      const outcome = await runServerEffect(
-        matchWorkspaceEffect(
-          withRouteLogger(safeDeleteEffect(params.id), {
-            route: "workspaces/delete",
-            id: params.id,
-          }),
-          HTTP_STATUS.NO_CONTENT
-        )
-      );
+      const outcome = await safeDelete(params.id);
       set.status = outcome.status;
       return outcome.body;
     },
@@ -343,15 +330,7 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   .post(
     "/auto-register",
     async ({ body, set }) => {
-      const outcome = await runServerEffect(
-        matchWorkspaceEffect(
-          withRouteLogger(safeAutoRegisterEffect(body), {
-            route: "workspaces/auto-register",
-            path: body.path,
-          }),
-          HTTP_STATUS.CREATED
-        )
-      );
+      const outcome = await safeAutoRegister(body);
       set.status = outcome.status;
       return outcome.body;
     },

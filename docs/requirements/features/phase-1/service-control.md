@@ -3,7 +3,7 @@
 - [x] Service Control #status/active #phase-1 #feature/infrastructure
   - [x] Split cell detail into dedicated `/cells/$id/chat` and `/cells/$id/services` routes linked from cell cards
   - [x] Add per-service start/stop controls with backend enforcement of unhealthy states
-  - [x] [HIVE-19] Expose Effect layers for service orchestration and agent runtime adapters
+  - [x] [HIVE-19] Expose runtime service adapters for service orchestration and agent runtime integration
   - [x] Replace the opt-in true E2E flow with Playwright (Chromium) for cell creation + chat send against isolated runtime DB/state
   - [x] Add Playwright workspace parity mode (`HIVE_E2E_WORKSPACE_MODE=clone`) to run against a cloned `hive` workspace while keeping isolated runtime state
   - [x] Add true runtime E2E coverage for service start/stop flows (single + bulk) and activity event assertions

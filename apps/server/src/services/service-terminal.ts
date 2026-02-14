@@ -1,7 +1,5 @@
 import { EventEmitter } from "node:events";
 
-import { Context, Layer } from "effect";
-
 const DEFAULT_TERMINAL_COLS = 120;
 const DEFAULT_TERMINAL_ROWS = 36;
 const MAX_TERMINAL_BUFFER_CHARS = 250_000;
@@ -334,12 +332,6 @@ export const createServiceTerminalRuntime = (): ServiceTerminalRuntime => {
   };
 };
 
-export const ServiceTerminalRuntimeTag =
-  Context.GenericTag<ServiceTerminalRuntime>(
-    "@hive/server/ServiceTerminalRuntime"
-  );
+export const serviceTerminalRuntime = createServiceTerminalRuntime();
 
-export const ServiceTerminalRuntimeLayer = Layer.succeed(
-  ServiceTerminalRuntimeTag,
-  createServiceTerminalRuntime()
-);
+export const ServiceTerminalRuntimeTag = serviceTerminalRuntime;

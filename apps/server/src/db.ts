@@ -1,6 +1,5 @@
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import { Context, Layer } from "effect";
 import { sqliteDatabasePath } from "./config/database";
 import { schema } from "./schema";
 
@@ -11,8 +10,6 @@ export type DatabaseService = {
   readonly db: typeof db;
 };
 
-export const DatabaseService = Context.GenericTag<DatabaseService>(
-  "@hive/server/DatabaseService"
-);
+export const databaseService: DatabaseService = { db };
 
-export const DatabaseLayer = Layer.succeed(DatabaseService, { db });
+export const DatabaseService = databaseService;

@@ -1,4 +1,3 @@
-import { Effect } from "effect";
 import { Elysia } from "elysia";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -127,35 +126,37 @@ const createDependencies = (
 
   return {
     db: testDb,
-    resolveWorkspaceContext: (() =>
-      Effect.succeed({
-        workspace: workspaceRecord,
-        loadConfig: () =>
-          Effect.succeed({
-            opencode: { defaultProvider: "opencode", defaultModel: "mock" },
-            promptSources: [],
-            templates: {},
-            defaults: {},
-          }),
-        createWorktreeManager: () =>
-          Effect.succeed({
-            createWorktree: () =>
-              Effect.succeed({ path: "/tmp", branch: "b", baseCommit: "c" }),
-            removeWorktree: () => Effect.void,
-          }),
-        createWorktree: () =>
-          Effect.succeed({ path: "/tmp", branch: "b", baseCommit: "c" }),
-        removeWorktree: () => Effect.void,
-      })) as any,
-    ensureAgentSession: () =>
-      Effect.succeed({ id: "session", cellId: TEST_CELL_ID }),
-    closeAgentSession: () => Effect.void,
-    ensureServicesForCell: () => Effect.void,
-    startServicesForCell: () => Effect.void,
-    stopServicesForCell: () => Effect.void,
-    startServiceById: () => Effect.void,
-    stopServiceById: () => Effect.void,
-    sendAgentMessage: () => Effect.void,
+    resolveWorkspaceContext: (async () => ({
+      workspace: workspaceRecord,
+      loadConfig: async () => ({
+        opencode: { defaultProvider: "opencode", defaultModel: "mock" },
+        promptSources: [],
+        templates: {},
+        defaults: {},
+      }),
+      createWorktreeManager: async () => ({
+        createWorktree: async () => ({
+          path: "/tmp",
+          branch: "b",
+          baseCommit: "c",
+        }),
+        removeWorktree: async () => Promise.resolve(),
+      }),
+      createWorktree: async () => ({
+        path: "/tmp",
+        branch: "b",
+        baseCommit: "c",
+      }),
+      removeWorktree: () => Promise.resolve(),
+    })) as any,
+    ensureAgentSession: async () => ({ id: "session", cellId: TEST_CELL_ID }),
+    closeAgentSession: () => Promise.resolve(),
+    ensureServicesForCell: () => Promise.resolve(),
+    startServicesForCell: () => Promise.resolve(),
+    stopServicesForCell: () => Promise.resolve(),
+    startServiceById: () => Promise.resolve(),
+    stopServiceById: () => Promise.resolve(),
+    sendAgentMessage: () => Promise.resolve(),
     ensureTerminalSession: () => ({
       sessionId: "cell-session",
       cellId: TEST_CELL_ID,

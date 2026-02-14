@@ -1,17 +1,18 @@
 import { stat } from "node:fs/promises";
 import { join, sep } from "node:path";
-import { Effect } from "effect";
 import { Elysia, type Static, t } from "elysia";
 import { glob } from "tinyglobby";
 import { loadOpencodeConfig } from "../agents/opencode-config";
-import { type HiveConfigError, HiveConfigService } from "../config/context";
+import { loadConfig } from "../config/loader";
 import type { Template } from "../config/schema";
-import { runServerEffect } from "../runtime";
 import {
   TemplateListResponseSchema,
   TemplateResponseSchema,
 } from "../schema/api";
-import { resolveWorkspaceContextEffect } from "../workspaces/context";
+import {
+  getWorkspaceRegistry,
+  type WorkspaceRecord,
+} from "../workspaces/registry";
 
 const HTTP_STATUS = {
   OK: 200,
@@ -144,6 +145,11 @@ const TEMPLATE_ERROR_STATUS: Record<TemplatesRouteError["_tag"], number> = {
   OpencodeConfigError: HTTP_STATUS.BAD_REQUEST,
 };
 
+type TemplatesRouteResponse<T> = {
+  status: number;
+  body: T | { message: string };
+};
+
 function templateToResponse(
   id: string,
   template: Template,
@@ -173,133 +179,172 @@ const formatUnknown = (cause: unknown, fallback = "Unknown error") => {
   return fallback;
 };
 
-const describeHiveConfigError = (error: HiveConfigError) => {
-  const location = error.workspaceRoot
-    ? ` for workspace '${error.workspaceRoot}'`
-    : "";
-  return `Failed to load workspace config${location}: ${formatUnknown(
-    error.cause
+const describeHiveConfigError = (workspacePath: string, cause: unknown) =>
+  `Failed to load workspace config for workspace '${workspacePath}': ${formatUnknown(
+    cause
   )}`;
+
+const resolveWorkspace = async (
+  workspaceId?: string
+): Promise<WorkspaceRecord> => {
+  const registry = await getWorkspaceRegistry();
+
+  let workspace: WorkspaceRecord | undefined;
+  if (workspaceId) {
+    workspace = registry.workspaces.find((entry) => entry.id === workspaceId);
+  } else if (registry.activeWorkspaceId) {
+    workspace = registry.workspaces.find(
+      (entry) => entry.id === registry.activeWorkspaceId
+    );
+  }
+
+  if (!workspace) {
+    throw {
+      _tag: "WorkspaceError",
+      message: workspaceId
+        ? `Workspace '${workspaceId}' not found`
+        : "No active workspace. Register and activate a workspace to continue.",
+    } satisfies TemplatesRouteError;
+  }
+
+  return workspace;
 };
 
-const workspaceConfigEffect = (workspaceId?: string) =>
-  Effect.gen(function* () {
-    const context = yield* resolveWorkspaceContextEffect(workspaceId).pipe(
-      Effect.mapError(
-        (error) =>
-          ({
-            _tag: "WorkspaceError",
-            message: error.message,
-          }) satisfies TemplatesRouteError
-      )
-    );
+const workspaceConfig = async (workspaceId?: string) => {
+  let workspace: WorkspaceRecord;
+  try {
+    workspace = await resolveWorkspace(workspaceId);
+  } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "_tag" in (error as { _tag?: unknown })
+    ) {
+      throw error as TemplatesRouteError;
+    }
 
-    const hiveConfigService = yield* HiveConfigService;
-    const config = yield* hiveConfigService.load(context.workspace.path).pipe(
-      Effect.mapError(
-        (error) =>
-          ({
-            _tag: "ConfigError",
-            message: describeHiveConfigError(error),
-          }) satisfies TemplatesRouteError
-      )
-    );
+    throw {
+      _tag: "WorkspaceError",
+      message: formatUnknown(error, "Failed to resolve workspace"),
+    } satisfies TemplatesRouteError;
+  }
 
+  try {
+    const config = await loadConfig(workspace.path);
     return {
       config,
-      workspacePath: context.workspace.path,
+      workspacePath: workspace.path,
     };
-  });
+  } catch (error) {
+    throw {
+      _tag: "ConfigError",
+      message: describeHiveConfigError(workspace.path, error),
+    } satisfies TemplatesRouteError;
+  }
+};
 
-const loadOpencodeConfigEffect = (workspacePath: string) =>
-  Effect.tryPromise({
-    try: () => loadOpencodeConfig(workspacePath),
-    catch: (cause) =>
-      ({
-        _tag: "OpencodeConfigError",
-        message: `Failed to load OpenCode config for workspace '${workspacePath}': ${formatUnknown(
-          cause
-        )}`,
-      }) satisfies TemplatesRouteError,
-  });
+const loadOpencodeForWorkspace = async (workspacePath: string) => {
+  try {
+    return await loadOpencodeConfig(workspacePath);
+  } catch (cause) {
+    throw {
+      _tag: "OpencodeConfigError",
+      message: `Failed to load OpenCode config for workspace '${workspacePath}': ${formatUnknown(
+        cause
+      )}`,
+    } satisfies TemplatesRouteError;
+  }
+};
 
-const listTemplatesEffect = (workspaceId?: string) =>
-  Effect.gen(function* () {
-    const { config, workspacePath } = yield* workspaceConfigEffect(workspaceId);
-    const templates = yield* Effect.forEach(
-      Object.entries(config.templates),
-      ([id, template]) => Effect.succeed(templateToResponse(id, template)),
-      { concurrency: 4 }
-    );
-    const opencodeConfig = yield* loadOpencodeConfigEffect(workspacePath);
-    return {
-      templates,
-      ...(config.defaults ? { defaults: config.defaults } : {}),
-      ...(opencodeConfig.defaultModel
-        ? { agentDefaults: opencodeConfig.defaultModel }
-        : {}),
-    } satisfies TemplateListResponse;
-  });
+const listTemplates = async (
+  workspaceId?: string
+): Promise<TemplateListResponse> => {
+  const { config, workspacePath } = await workspaceConfig(workspaceId);
 
-const previewIncludeDirectoriesEffect = (
+  const templates = Object.entries(config.templates).map(([id, template]) =>
+    templateToResponse(id, template)
+  );
+
+  const opencodeConfig = await loadOpencodeForWorkspace(workspacePath);
+
+  return {
+    templates,
+    ...(config.defaults ? { defaults: config.defaults } : {}),
+    ...(opencodeConfig.defaultModel
+      ? { agentDefaults: opencodeConfig.defaultModel }
+      : {}),
+  } satisfies TemplateListResponse;
+};
+
+const previewIncludeDirectories = async (
   workspacePath: string,
   templateId: string,
   template: Template
 ) => {
   const includePatterns = template.includePatterns ?? [];
   if (includePatterns.length === 0) {
-    return Effect.succeed<string[]>([]);
+    return [];
   }
 
-  return Effect.tryPromise({
-    try: () => resolveIncludeDirectories(workspacePath, includePatterns),
-    catch: (cause) => cause as Error,
-  }).pipe(
-    Effect.catchAll((cause) => {
-      logTemplatesWarning(
-        `Failed to preview include patterns for template '${templateId}': ${formatUnknown(
-          cause
-        )}`
-      );
-      return Effect.succeed<string[]>([]);
-    })
-  );
+  try {
+    return await resolveIncludeDirectories(workspacePath, includePatterns);
+  } catch (cause) {
+    logTemplatesWarning(
+      `Failed to preview include patterns for template '${templateId}': ${formatUnknown(
+        cause
+      )}`
+    );
+    return [];
+  }
 };
 
-const templateDetailEffect = (templateId: string, workspaceId?: string) =>
-  Effect.gen(function* () {
-    const { config, workspacePath } = yield* workspaceConfigEffect(workspaceId);
-    const template = config.templates[templateId];
-    if (!template) {
-      return yield* Effect.fail<TemplatesRouteError>({
-        _tag: "TemplateNotFound",
-        message: `Template '${templateId}' not found`,
-      });
-    }
+const loadTemplateDetail = async (
+  templateId: string,
+  workspaceId?: string
+): Promise<TemplateResponse> => {
+  const { config, workspacePath } = await workspaceConfig(workspaceId);
+  const template = config.templates[templateId];
+  if (!template) {
+    throw {
+      _tag: "TemplateNotFound",
+      message: `Template '${templateId}' not found`,
+    } satisfies TemplatesRouteError;
+  }
 
-    const includeDirectories = yield* previewIncludeDirectoriesEffect(
-      workspacePath,
-      templateId,
-      template
-    );
+  const includeDirectories = await previewIncludeDirectories(
+    workspacePath,
+    templateId,
+    template
+  );
 
-    return templateToResponse(templateId, template, includeDirectories);
-  });
+  return templateToResponse(templateId, template, includeDirectories);
+};
 
-const matchTemplatesEffect = <T, R>(
-  effect: Effect.Effect<T, TemplatesRouteError, R>,
+const matchTemplatesResult = async <T>(
+  operation: () => Promise<T>,
   successStatus = HTTP_STATUS.OK
-) =>
-  Effect.match(effect, {
-    onFailure: (error) => ({
-      status: TEMPLATE_ERROR_STATUS[error._tag],
-      body: { message: error.message },
-    }),
-    onSuccess: (value) => ({
-      status: successStatus,
-      body: value,
-    }),
-  });
+): Promise<TemplatesRouteResponse<T>> => {
+  try {
+    const value = await operation();
+    return { status: successStatus, body: value };
+  } catch (error) {
+    const routeError =
+      error &&
+      typeof error === "object" &&
+      "_tag" in (error as { _tag?: unknown }) &&
+      "message" in (error as { message?: unknown })
+        ? (error as TemplatesRouteError)
+        : ({
+            _tag: "ConfigError",
+            message: formatUnknown(error, "Failed to load templates"),
+          } satisfies TemplatesRouteError);
+
+    return {
+      status: TEMPLATE_ERROR_STATUS[routeError._tag],
+      body: { message: routeError.message },
+    };
+  }
+};
 
 const resolveWorkspaceId = (
   explicit: string | undefined,
@@ -317,8 +362,8 @@ export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
     "/",
     async ({ query, request, set }) => {
       const workspaceId = resolveWorkspaceId(query.workspaceId, request);
-      const outcome = await runServerEffect(
-        matchTemplatesEffect(listTemplatesEffect(workspaceId))
+      const outcome = await matchTemplatesResult(() =>
+        listTemplates(workspaceId)
       );
       set.status = outcome.status;
       return outcome.body;
@@ -337,8 +382,8 @@ export const templatesRoutes = new Elysia({ prefix: "/api/templates" })
     "/:id",
     async ({ params, query, request, set }) => {
       const workspaceId = resolveWorkspaceId(query.workspaceId, request);
-      const outcome = await runServerEffect(
-        matchTemplatesEffect(templateDetailEffect(params.id, workspaceId))
+      const outcome = await matchTemplatesResult(() =>
+        loadTemplateDetail(params.id, workspaceId)
       );
       set.status = outcome.status;
       return outcome.body;

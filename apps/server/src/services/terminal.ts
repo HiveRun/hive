@@ -1,7 +1,6 @@
 import { EventEmitter } from "node:events";
 
 import { type IExitEvent, type IPty, spawn } from "bun-pty";
-import { Context, Layer } from "effect";
 
 const DEFAULT_TERMINAL_COLS = 120;
 const DEFAULT_TERMINAL_ROWS = 36;
@@ -218,11 +217,4 @@ const createCellTerminalService = (): CellTerminalService => {
   };
 };
 
-export const CellTerminalServiceTag = Context.GenericTag<CellTerminalService>(
-  "@hive/server/CellTerminalService"
-);
-
-export const CellTerminalServiceLayer = Layer.succeed(
-  CellTerminalServiceTag,
-  createCellTerminalService()
-);
+export const cellTerminalService = createCellTerminalService();
