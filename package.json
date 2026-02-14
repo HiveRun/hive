@@ -16,7 +16,8 @@
     }
   },
   "scripts": {
-    "setup": "bun install && ./scripts/dev/clone-opencode.sh && ./scripts/dev/clone-hive.sh && bun run config:generate && bun run tool:generate && bun run db:migrate",
+    "setup": "bun install && bun run setup:desktop-e2e && ./scripts/dev/clone-opencode.sh && ./scripts/dev/clone-hive.sh && bun run config:generate && bun run tool:generate && bun run db:migrate",
+    "setup:desktop-e2e": "./scripts/dev/setup-desktop-e2e.sh",
     "check": "bun run check:commit",
     "check:commit": "bun run check:config && bun run check:tool-source && bun run check:staged && bun run check:secrets && bun run check:audit && biome check --no-errors-on-unmatched --files-ignore-unknown=true && bun run test:run && turbo check check-types --ui=stream --force && bun run build",
     "check:distribution": "bun run scripts/distribution/check-distribution.ts",
@@ -30,6 +31,8 @@
     "test:e2e:report": "bun run --cwd apps/e2e report:e2e",
     "test:e2e:report:open": "bun run --cwd apps/e2e report:e2e:open",
     "test:e2e:report:serve": "bun run --cwd apps/e2e report:e2e:serve",
+    "test:e2e:desktop": "bun run --cwd apps/e2e-desktop test:e2e",
+    "test:e2e:desktop:spec": "bun run --cwd apps/e2e-desktop test:e2e -- --spec",
     "check:config": "bun run config:generate && bunx biome check --write hive.config.json hive.config.schema.json && git diff --exit-code hive.config.json hive.config.schema.json",
     "tool:generate": "bun scripts/dev/generate-hive-opencode-tool-source.ts",
     "check:tool-source": "bun run tool:generate && git diff --exit-code apps/server/src/agents/hive-opencode-tool-source.generated.ts",

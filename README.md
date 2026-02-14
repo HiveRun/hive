@@ -108,7 +108,7 @@ This command runs `bun run build:installer` under the hood, then installs from t
 # Install tools defined in .tool-versions
 mise install
 
-# One-time setup (install deps + push database schema)
+# One-time setup (installs deps, prepares desktop E2E prereqs when possible, pushes DB schema)
 bun setup
 
 
@@ -120,7 +120,7 @@ bun dev
 ### Manual Setup
 
 ```bash
-# One-time setup (install deps + push database schema)
+# One-time setup (installs deps, prepares desktop E2E prereqs when possible, pushes DB schema)
 bun setup
 
 # Set up local database (create .env with DATABASE_URL="local.db")  
@@ -193,6 +193,58 @@ Notes:
 - Playwright artifacts are copied to `apps/e2e/reports/latest/` (including per-test videos and `playwright-report`).
 - Set `HIVE_E2E_KEEP_ARTIFACTS=1` to also keep raw run logs/artifacts under `tmp/e2e-runs/`.
 
+### Desktop Smoke Testing (WebDriver + Tauri)
+Desktop-only runtime checks run via WebDriver (`tauri-driver`) against a debug Tauri binary.
+
+Setup (local):
+
+```bash
+# One-time setup (includes best-effort desktop WebDriver prep)
+bun setup
+
+# Optional: rerun desktop setup only
+bun run setup:desktop-e2e
+
+# Ensure Cargo binaries are on PATH for this shell
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+Linux-only system dependencies (required for local desktop smoke on Linux):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  libwebkit2gtk-4.1-dev \
+  libgtk-3-dev \
+  libayatana-appindicator3-dev \
+  librsvg2-dev \
+  libxdo-dev \
+  libssl-dev \
+  patchelf \
+  webkit2gtk-driver \
+  xvfb
+```
+
+```bash
+# Run desktop smoke suite (Linux/macOS local prerequisites required)
+bun run test:e2e:desktop
+
+# Run a single desktop smoke spec
+bun run test:e2e:desktop:spec specs/smoke-launch.e2e.mjs
+
+# Linux headless local run (optional)
+xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" bun run test:e2e:desktop
+```
+
+Notes:
+- The desktop harness creates a dedicated temp workspace and SQLite database per run.
+- The runner compiles a debug desktop binary via `bun run build:tauri -- --debug --no-bundle` and points the bundled web UI at the ephemeral API URL.
+- Desktop artifacts are copied to `apps/e2e-desktop/reports/latest/`.
+- Use `HIVE_E2E_KEEP_ARTIFACTS=1` to keep raw logs/artifacts under `tmp/e2e-desktop-runs/`.
+- `bun setup` performs desktop WebDriver prep on a best-effort basis; if Cargo is missing it prints follow-up steps instead of failing setup.
+- On Linux, setup automatically attempts to install missing desktop packages via `sudo apt-get` and prints manual commands if installation fails.
+- If you need deeper setup/troubleshooting notes, see `apps/e2e-desktop/README.md`.
+
 ### Git Hooks & Validation
 
 **Pre-commit** (`bun run check:commit`):
@@ -211,13 +263,15 @@ Notes:
 - Workflow triggers on pull requests, merge queue (`merge_group`), pushes to `main`, and manual dispatch.
 - `Workflow Lint` runs `actionlint`; `Quality Checks` runs `bun run check:commit`.
 - `E2E Runtime Suite` runs `bun run test:e2e` on merge queue (`merge_group`), `main` pushes, and manual dispatch (skipped on regular `pull_request` commits), caches Playwright/OpenCode artifacts, and uploads reports from `apps/e2e/reports/latest`.
+- `Desktop WebDriver Smoke Suite` runs `bun run test:e2e:desktop` on merge queue (`merge_group`), `main` pushes, and manual dispatch (skipped on `pull_request` commits), installs `tauri-driver`, executes under `xvfb-run`, and uploads reports from `apps/e2e-desktop/reports/latest`.
 - `Security Audit` runs a strict `bun audit --audit-level high` job in non-blocking mode for visibility while dependency remediation is in progress.
 - Ensure the Blacksmith GitHub App is installed for your organization before relying on this workflow.
 
 ## Available Scripts
 
 ### Setup
-- `bun setup`: One-time setup (install dependencies + push database schema)
+- `bun setup`: One-time setup (install dependencies, best-effort desktop E2E prep, push database schema)
+- `bun run setup:desktop-e2e`: Prepare desktop WebDriver local prerequisites (`tauri-driver` + Linux dependency checks/auto-install)
 
 ### Development
 - `bun dev`: Start all applications in development mode
@@ -235,6 +289,8 @@ Notes:
 - `bun test:e2e:report`: Open the latest Playwright HTML report
 - `bun test:e2e:report:open`: Alias for opening the Playwright report
 - `bun test:e2e:report:serve`: Serve/open the Playwright report directly
+- `bun test:e2e:desktop`: Run Tauri desktop WebDriver smoke suite
+- `bun test:e2e:desktop:spec`: Run one desktop smoke spec by path
 
 ### Quality Checks
 - `bun check`: Run all pre-commit checks (alias for `check:commit`)
