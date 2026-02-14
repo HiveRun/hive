@@ -960,7 +960,7 @@ export type AgentRuntimeService = {
   readonly interruptAgentSession: (sessionId: string) => Promise<void>;
   readonly stopAgentSession: (sessionId: string) => Promise<void>;
   readonly closeAgentSession: (cellId: string) => Promise<void>;
-  readonly closeAllAgentSessions: Promise<void>;
+  readonly closeAllAgentSessions: () => Promise<void>;
   readonly respondAgentPermission: (
     sessionId: string,
     permissionId: string,
@@ -991,7 +991,7 @@ const makeAgentRuntimeService = (): AgentRuntimeService => ({
   stopAgentSession: (sessionId) =>
     wrapAgentRuntime(stopAgentSession)(sessionId),
   closeAgentSession: (cellId) => wrapAgentRuntime(closeAgentSession)(cellId),
-  closeAllAgentSessions: wrapAgentRuntime(closeAllAgentSessions)(),
+  closeAllAgentSessions: () => wrapAgentRuntime(closeAllAgentSessions)(),
   respondAgentPermission: (sessionId, permissionId, response) =>
     wrapAgentRuntime(respondAgentPermission)(sessionId, permissionId, response),
   fetchProviderCatalogForWorkspace: (workspaceRootPath) =>

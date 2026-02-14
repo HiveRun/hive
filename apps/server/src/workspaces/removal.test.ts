@@ -246,7 +246,7 @@ const createTestAgentRuntime = (
     interruptAgentSession: unsupported,
     stopAgentSession: unsupported,
     closeAgentSession,
-    closeAllAgentSessions: Promise.resolve(),
+    closeAllAgentSessions: () => Promise.resolve(),
     respondAgentPermission: unsupported,
     fetchProviderCatalogForWorkspace: unsupported,
   };
