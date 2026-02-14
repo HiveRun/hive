@@ -1,43 +1,29 @@
-import { Effect } from "effect";
-import { HiveConfigService } from "../config/context";
+import { hiveConfigService } from "../config/context";
 import type { HiveConfig } from "../config/schema";
 import {
+  createWorktreeManager,
+  toAsyncWorktreeManager,
   type WorktreeCreateOptions,
   type WorktreeLocation,
   type WorktreeManager,
-  type WorktreeManagerService,
-  WorktreeManagerServiceTag,
 } from "../worktree/manager";
-import type {
-  WorkspaceRecord,
-  WorkspaceRegistryError,
-  WorkspaceRegistryService,
-} from "./registry";
-import { getWorkspaceRegistryEffect } from "./registry";
+import type { WorkspaceRecord } from "./registry";
+import { getWorkspaceRegistry } from "./registry";
 
 export type WorkspaceRuntimeContext = {
   workspace: WorkspaceRecord;
-  loadConfig: () => Effect.Effect<HiveConfig, WorkspaceContextError>;
-  createWorktreeManager: () => Effect.Effect<
-    WorktreeManager,
-    WorkspaceContextError
-  >;
+  loadConfig: () => Promise<HiveConfig>;
+  createWorktreeManager: () => Promise<WorktreeManager>;
   createWorktree: (
     cellId: string,
     options?: WorktreeCreateOptions
-  ) => Effect.Effect<WorktreeLocation, WorkspaceContextError>;
-  removeWorktree: (
-    cellId: string
-  ) => Effect.Effect<void, WorkspaceContextError>;
+  ) => Promise<WorktreeLocation>;
+  removeWorktree: (cellId: string) => Promise<void>;
 };
 
 export type ResolveWorkspaceContext = (
   workspaceId?: string
-) => Effect.Effect<
-  WorkspaceRuntimeContext,
-  WorkspaceContextError,
-  WorkspaceRegistryService | HiveConfigService | WorktreeManagerService
->;
+) => Promise<WorkspaceRuntimeContext>;
 
 export class WorkspaceContextError extends Error {
   constructor(message: string) {
@@ -46,94 +32,87 @@ export class WorkspaceContextError extends Error {
   }
 }
 
-const mapRegistryError = (error: WorkspaceRegistryError) =>
-  new WorkspaceContextError(error.message);
-
 const formatError = (cause: unknown) =>
   cause instanceof Error ? cause.message : String(cause);
 
-export const resolveWorkspaceContextEffect = (
+export const resolveWorkspaceContext: ResolveWorkspaceContext = async (
   workspaceId?: string
-): Effect.Effect<
-  WorkspaceRuntimeContext,
-  WorkspaceContextError,
-  WorkspaceRegistryService | HiveConfigService | WorktreeManagerService
-> =>
-  Effect.gen(function* () {
-    const registry = yield* getWorkspaceRegistryEffect.pipe(
-      Effect.mapError(mapRegistryError)
+) => {
+  const registry = await getWorkspaceRegistry();
+
+  let workspace: WorkspaceRecord | undefined;
+  if (workspaceId) {
+    workspace = registry.workspaces.find((entry) => entry.id === workspaceId);
+  } else if (registry.activeWorkspaceId) {
+    workspace = registry.workspaces.find(
+      (entry) => entry.id === registry.activeWorkspaceId
     );
+  }
 
-    let workspace: WorkspaceRecord | undefined;
-    if (workspaceId) {
-      workspace = registry.workspaces.find((entry) => entry.id === workspaceId);
-    } else if (registry.activeWorkspaceId) {
-      workspace = registry.workspaces.find(
-        (entry) => entry.id === registry.activeWorkspaceId
+  if (!workspace) {
+    throw new WorkspaceContextError(
+      workspaceId
+        ? `Workspace '${workspaceId}' not found`
+        : "No active workspace. Register and activate a workspace to continue."
+    );
+  }
+
+  const resolvedWorkspace = workspace;
+
+  const loadConfig: WorkspaceRuntimeContext["loadConfig"] = async () => {
+    try {
+      return await hiveConfigService.load(resolvedWorkspace.path);
+    } catch (cause) {
+      throw new WorkspaceContextError(
+        `Failed to load workspace config: ${formatError(cause)}`
       );
     }
+  };
 
-    if (!workspace) {
-      return yield* Effect.fail(
-        new WorkspaceContextError(
-          workspaceId
-            ? `Workspace '${workspaceId}' not found`
-            : "No active workspace. Register and activate a workspace to continue."
-        )
+  const createManager: WorkspaceRuntimeContext["createWorktreeManager"] =
+    async () => {
+      try {
+        const hiveConfig = await loadConfig();
+        return createWorktreeManager(resolvedWorkspace.path, hiveConfig);
+      } catch (cause) {
+        throw new WorkspaceContextError(
+          `Failed to initialize worktree manager: ${formatError(cause)}`
+        );
+      }
+    };
+
+  const createWorktree: WorkspaceRuntimeContext["createWorktree"] = async (
+    cellId,
+    options
+  ) => {
+    try {
+      const manager = toAsyncWorktreeManager(await createManager());
+      return await manager.createWorktree(cellId, options);
+    } catch (cause) {
+      throw new WorkspaceContextError(
+        `Failed to create git worktree: ${formatError(cause)}`
       );
     }
+  };
 
-    const resolvedWorkspace = workspace;
-    const hiveConfigService = yield* HiveConfigService;
-    const worktreeService = yield* WorktreeManagerServiceTag;
-
-    const wrap =
-      <A>(message: string) =>
-      (
-        effect: Effect.Effect<A, unknown>
-      ): Effect.Effect<A, WorkspaceContextError> =>
-        effect.pipe(
-          Effect.mapError(
-            (cause) =>
-              new WorkspaceContextError(`${message}: ${formatError(cause)}`)
-          )
-        );
-
-    const loadConfig: WorkspaceRuntimeContext["loadConfig"] = () =>
-      wrap<HiveConfig>("Failed to load workspace config")(
-        hiveConfigService.load(resolvedWorkspace.path)
+  const removeWorktree: WorkspaceRuntimeContext["removeWorktree"] = async (
+    cellId
+  ) => {
+    try {
+      const manager = toAsyncWorktreeManager(await createManager());
+      await manager.removeWorktree(cellId);
+    } catch (cause) {
+      throw new WorkspaceContextError(
+        `Failed to remove git worktree: ${formatError(cause)}`
       );
+    }
+  };
 
-    const createManager: WorkspaceRuntimeContext["createWorktreeManager"] =
-      () =>
-        wrap<WorktreeManager>("Failed to initialize worktree manager")(
-          worktreeService.createManager(resolvedWorkspace.path)
-        );
-
-    const createWorktree: WorkspaceRuntimeContext["createWorktree"] = (
-      cellId,
-      options
-    ) =>
-      wrap<WorktreeLocation>("Failed to create git worktree")(
-        worktreeService.createWorktree({
-          workspacePath: resolvedWorkspace.path,
-          cellId,
-          ...(options ?? {}),
-        })
-      );
-
-    const removeWorktree: WorkspaceRuntimeContext["removeWorktree"] = (
-      cellId
-    ) =>
-      wrap<void>("Failed to remove git worktree")(
-        worktreeService.removeWorktree(resolvedWorkspace.path, cellId)
-      );
-
-    return {
-      workspace: resolvedWorkspace,
-      loadConfig,
-      createWorktreeManager: createManager,
-      createWorktree,
-      removeWorktree,
-    } satisfies WorkspaceRuntimeContext;
-  });
+  return {
+    workspace: resolvedWorkspace,
+    loadConfig,
+    createWorktreeManager: createManager,
+    createWorktree,
+    removeWorktree,
+  };
+};

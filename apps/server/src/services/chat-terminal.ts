@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { type IExitEvent, type IPty, spawn } from "bun-pty";
-import { Context, Layer } from "effect";
 
 const DEFAULT_TERMINAL_COLS = 120;
 const DEFAULT_TERMINAL_ROWS = 36;
@@ -454,11 +453,4 @@ const createChatTerminalService = (): ChatTerminalService => {
   };
 };
 
-export const ChatTerminalServiceTag = Context.GenericTag<ChatTerminalService>(
-  "@hive/server/ChatTerminalService"
-);
-
-export const ChatTerminalServiceLayer = Layer.succeed(
-  ChatTerminalServiceTag,
-  createChatTerminalService()
-);
+export const chatTerminalService = createChatTerminalService();

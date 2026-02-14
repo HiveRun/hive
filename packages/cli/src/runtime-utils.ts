@@ -1,8 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import { Effect } from "effect";
-
 import { type CompletionShell, renderCompletionScript } from "./completions";
 
 export type WaitForServerReadyConfig = {
@@ -12,38 +10,34 @@ export type WaitForServerReadyConfig = {
   fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
 };
 
-const sleepEffect = (ms: number) =>
-  Effect.async<void>((resume) => {
-    const timer = setTimeout(() => resume(Effect.succeed(undefined)), ms);
-    return Effect.sync(() => clearTimeout(timer));
+const sleep = (ms: number) =>
+  new Promise<void>((resolvePromise) => {
+    setTimeout(resolvePromise, ms);
   });
 
-export const waitForServerReadyEffect = ({
+export const waitForServerReady = async ({
   url,
   timeoutMs = 10_000,
   intervalMs = 500,
   fetchImpl = fetch,
-}: WaitForServerReadyConfig) =>
-  Effect.gen(function* () {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      const response = yield* Effect.catchAll(
-        Effect.tryPromise({
-          try: () => fetchImpl(url, { method: "GET" }),
-          catch: (cause) =>
-            cause instanceof Error ? cause : new Error(String(cause)),
-        }),
-        () => Effect.succeed<Response | null>(null)
-      );
-
-      if (response?.ok) {
-        return true;
-      }
-
-      yield* sleepEffect(intervalMs);
+}: WaitForServerReadyConfig): Promise<boolean> => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let response: Response | null = null;
+    try {
+      response = await fetchImpl(url, { method: "GET" });
+    } catch {
+      response = null;
     }
-    return false;
-  });
+
+    if (response?.ok) {
+      return true;
+    }
+
+    await sleep(intervalMs);
+  }
+  return false;
+};
 
 export const ensureTrailingNewline = (script: string) =>
   script.endsWith("\n") ? script : `${script}\n`;
@@ -71,13 +65,3 @@ export const installCompletionScript = (
 
   return { ok: true, path: resolvedPath } as const;
 };
-
-export const installCompletionScriptEffect = (
-  shell: CompletionShell,
-  targetPath: string
-) =>
-  Effect.try({
-    try: () => installCompletionScript(shell, targetPath),
-    catch: (cause) =>
-      cause instanceof Error ? cause : new Error(String(cause)),
-  });

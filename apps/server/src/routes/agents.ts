@@ -1,15 +1,14 @@
-import { Effect } from "effect";
 import { Elysia, sse, t } from "elysia";
 import { subscribeAgentEvents } from "../agents/events";
 import {
-  type AgentRuntimeService,
-  AgentRuntimeServiceTag,
+  fetchAgentMessages,
+  fetchAgentSession,
+  fetchAgentSessionForCell,
+  fetchProviderCatalogForWorkspace,
   type ProviderEntry,
   type ProviderModel,
 } from "../agents/service";
 import type { AgentSessionRecord, AgentStreamEvent } from "../agents/types";
-import { LoggerService } from "../logger";
-import { runServerEffect } from "../runtime";
 import {
   AgentMessageListResponseSchema,
   AgentSessionByCellResponseSchema,
@@ -52,83 +51,8 @@ const toError = (status: number, message: string): AgentRouteError => ({
   message,
 });
 
-const mapAgentError =
-  (message: string) =>
-  (cause: unknown): AgentRouteError =>
-    toError(HTTP_STATUS.BAD_REQUEST, formatUnknown(cause, message));
-
-const matchAgentEffect = <A, R>(
-  effect: Effect.Effect<A, AgentRouteError, R>,
-  successStatus: number = HTTP_STATUS.OK
-) =>
-  Effect.match(effect, {
-    onFailure: (error) => ({
-      status: error.status,
-      body: { message: error.message },
-    }),
-    onSuccess: (value) => ({ status: successStatus, body: value }),
-  });
-
-const withRouteLogger = <A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-  context: Record<string, unknown>
-) =>
-  LoggerService.pipe(
-    Effect.flatMap((logger) =>
-      effect.pipe(Effect.provideService(LoggerService, logger.child(context)))
-    )
-  );
-
-const withAgentRuntime = <A>(
-  selector: (service: AgentRuntimeService) => Effect.Effect<A, unknown>,
-  message: string
-) =>
-  AgentRuntimeServiceTag.pipe(
-    Effect.flatMap(selector),
-    Effect.mapError(mapAgentError(message))
-  );
-
-const workspaceContextEffect = (
-  getWorkspaceContext: WorkspaceContextFetcher,
-  workspaceId: string | undefined,
-  message: string
-) =>
-  Effect.tryPromise({
-    try: () => getWorkspaceContext(workspaceId),
-    catch: mapAgentError(message),
-  });
-
-const providerEntriesEffect = (
-  getWorkspaceContext: WorkspaceContextFetcher,
-  workspaceId: string | undefined
-) =>
-  workspaceContextEffect(
-    getWorkspaceContext,
-    workspaceId,
-    "Failed to resolve workspace"
-  ).pipe(
-    Effect.flatMap((workspaceContext) =>
-      withAgentRuntime(
-        (agentRuntime) =>
-          agentRuntime.fetchProviderCatalogForWorkspace(
-            workspaceContext.workspace.path
-          ),
-        "Failed to list models"
-      ).pipe(Effect.map((catalog) => ({ catalog })))
-    )
-  );
-
-const fetchSessionEffect = (id: string, message: string) =>
-  withAgentRuntime(
-    (agentRuntime) => agentRuntime.fetchAgentSession(id),
-    message
-  ).pipe(
-    Effect.flatMap((session) =>
-      session
-        ? Effect.succeed(session)
-        : Effect.fail(toError(HTTP_STATUS.NOT_FOUND, "Agent session not found"))
-    )
-  );
+const mapAgentError = (message: string, cause: unknown): AgentRouteError =>
+  toError(HTTP_STATUS.BAD_REQUEST, formatUnknown(cause, message));
 
 const providerPayload = (catalog: unknown) => {
   const providerEntries = normalizeProviderEntries(
@@ -144,34 +68,77 @@ const providerPayload = (catalog: unknown) => {
   return { models, defaults, providers };
 };
 
+const emptyProviderPayload = (message: string) => ({
+  models: [],
+  defaults: {},
+  providers: [],
+  message,
+});
+
+const resolveWorkspaceCatalog = async (
+  getWorkspaceContext: WorkspaceContextFetcher,
+  workspaceId: string | undefined
+) => {
+  const context = await getWorkspaceContext(workspaceId);
+  return await fetchProviderCatalogForWorkspace(context.workspace.path);
+};
+
+const fetchSessionOrThrow = async (
+  id: string,
+  message: string
+): Promise<AgentSessionRecord> => {
+  try {
+    const session = await fetchAgentSession(id);
+    if (!session) {
+      throw toError(HTTP_STATUS.NOT_FOUND, "Agent session not found");
+    }
+    return session;
+  } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "status" in (error as { status?: unknown }) &&
+      "message" in (error as { message?: unknown })
+    ) {
+      throw error as AgentRouteError;
+    }
+    throw mapAgentError(message, error);
+  }
+};
+
+const asAgentRouteError = (
+  error: unknown,
+  fallbackMessage: string
+): AgentRouteError => {
+  if (
+    error &&
+    typeof error === "object" &&
+    typeof (error as { status?: unknown }).status === "number" &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    return error as AgentRouteError;
+  }
+
+  return mapAgentError(fallbackMessage, error);
+};
+
 export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .use(createWorkspaceContextPlugin())
   .get(
     "/models",
     async ({ query, set, getWorkspaceContext }) => {
-      const outcome = await runServerEffect(
-        Effect.match(
-          withRouteLogger(
-            providerEntriesEffect(getWorkspaceContext, query.workspaceId),
-            { route: "agents/models", workspaceId: query.workspaceId ?? null }
-          ).pipe(Effect.map(({ catalog }) => providerPayload(catalog))),
-          {
-            onFailure: (error) => ({
-              status: error.status,
-              body: {
-                models: [],
-                defaults: {},
-                providers: [],
-                message: error.message,
-              },
-            }),
-            onSuccess: (value) => ({ status: HTTP_STATUS.OK, body: value }),
-          }
-        )
-      );
-
-      set.status = outcome.status;
-      return outcome.body;
+      try {
+        const catalog = await resolveWorkspaceCatalog(
+          getWorkspaceContext,
+          query.workspaceId
+        );
+        set.status = HTTP_STATUS.OK;
+        return providerPayload(catalog);
+      } catch (error) {
+        const routeError = asAgentRouteError(error, "Failed to list models");
+        set.status = routeError.status;
+        return emptyProviderPayload(routeError.message);
+      }
     },
     {
       query: t.Object({
@@ -211,40 +178,21 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .get(
     "/sessions/:id/models",
     async ({ params, set }) => {
-      const outcome = await runServerEffect(
-        Effect.match(
-          withRouteLogger(
-            fetchSessionEffect(params.id, "Failed to list models").pipe(
-              Effect.flatMap((session) =>
-                withAgentRuntime(
-                  (agentRuntime) =>
-                    agentRuntime.fetchProviderCatalogForWorkspace(
-                      session.workspacePath
-                    ),
-                  "Failed to list models"
-                )
-              ),
-              Effect.map((catalog) => providerPayload(catalog))
-            ),
-            { route: "agents/session-models", sessionId: params.id }
-          ),
-          {
-            onFailure: (error) => ({
-              status: error.status,
-              body: {
-                models: [],
-                defaults: {},
-                providers: [],
-                message: error.message,
-              },
-            }),
-            onSuccess: (value) => ({ status: HTTP_STATUS.OK, body: value }),
-          }
-        )
-      );
-
-      set.status = outcome.status;
-      return outcome.body;
+      try {
+        const session = await fetchSessionOrThrow(
+          params.id,
+          "Failed to list models"
+        );
+        const catalog = await fetchProviderCatalogForWorkspace(
+          session.workspacePath
+        );
+        set.status = HTTP_STATUS.OK;
+        return providerPayload(catalog);
+      } catch (error) {
+        const routeError = asAgentRouteError(error, "Failed to list models");
+        set.status = routeError.status;
+        return emptyProviderPayload(routeError.message);
+      }
     },
     {
       params: t.Object({ id: t.String() }),
@@ -282,25 +230,19 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .get(
     "/sessions/:id/messages",
     async ({ params, set }) => {
-      const outcome = await runServerEffect(
-        matchAgentEffect(
-          withRouteLogger(
-            fetchSessionEffect(params.id, "Failed to fetch session").pipe(
-              Effect.flatMap((session) =>
-                withAgentRuntime(
-                  (agentRuntime) => agentRuntime.fetchAgentMessages(session.id),
-                  "Failed to fetch messages"
-                )
-              ),
-              Effect.map((messages) => ({ messages }))
-            ),
-            { route: "agents/session-messages", sessionId: params.id }
-          )
-        )
-      );
-
-      set.status = outcome.status;
-      return outcome.body;
+      try {
+        const session = await fetchSessionOrThrow(
+          params.id,
+          "Failed to fetch session"
+        );
+        const messages = await fetchAgentMessages(session.id);
+        set.status = HTTP_STATUS.OK;
+        return { messages };
+      } catch (error) {
+        const routeError = asAgentRouteError(error, "Failed to fetch messages");
+        set.status = routeError.status;
+        return { message: routeError.message };
+      }
     },
     {
       params: t.Object({ id: t.String() }),
@@ -314,25 +256,15 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .get(
     "/sessions/byCell/:cellId",
     async ({ params, set }) => {
-      const outcome = await runServerEffect(
-        matchAgentEffect(
-          withRouteLogger(
-            withAgentRuntime(
-              (agentRuntime) =>
-                agentRuntime.fetchAgentSessionForCell(params.cellId),
-              "Failed to fetch session"
-            ).pipe(
-              Effect.map((session) => ({
-                session: session ? formatSession(session) : null,
-              }))
-            ),
-            { route: "agents/session-by-cell", cellId: params.cellId }
-          )
-        )
-      );
-
-      set.status = outcome.status;
-      return outcome.body;
+      try {
+        const session = await fetchAgentSessionForCell(params.cellId);
+        set.status = HTTP_STATUS.OK;
+        return { session: session ? formatSession(session) : null };
+      } catch (error) {
+        const routeError = asAgentRouteError(error, "Failed to fetch session");
+        set.status = routeError.status;
+        return { message: routeError.message };
+      }
     },
     {
       params: t.Object({ cellId: t.String() }),
@@ -346,22 +278,20 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .get(
     "/sessions/:id/events",
     async ({ params, request, set }) => {
-      const outcome = await runServerEffect(
-        matchAgentEffect(
-          withRouteLogger(
-            fetchSessionEffect(params.id, "Failed to fetch session"),
-            { route: "agents/events", sessionId: params.id }
-          )
-        )
-      );
-
-      set.status = outcome.status;
-
-      if (outcome.status !== HTTP_STATUS.OK) {
-        return outcome.body;
+      let session: AgentSessionRecord;
+      try {
+        session = await fetchSessionOrThrow(
+          params.id,
+          "Failed to fetch session"
+        );
+      } catch (error) {
+        const routeError = asAgentRouteError(error, "Failed to fetch session");
+        set.status = routeError.status;
+        return { message: routeError.message };
       }
 
-      const session = outcome.body as AgentSessionRecord;
+      set.status = HTTP_STATUS.OK;
+
       const { iterator } = createEventIterator(params.id, request.signal);
 
       async function* stream() {

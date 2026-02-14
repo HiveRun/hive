@@ -22,7 +22,6 @@ import {
   startServer,
 } from "@hive/server";
 import { Builtins, Cli, Command, Option } from "clipanion";
-import { Effect } from "effect";
 import pc from "picocolors";
 
 import {
@@ -32,10 +31,10 @@ import {
 } from "./completions";
 import {
   ensureTrailingNewline,
-  installCompletionScriptEffect,
+  installCompletionScript,
   type WaitForServerReadyConfig,
-  waitForServerReadyEffect,
-} from "./effects";
+  waitForServerReady,
+} from "./runtime-utils";
 
 const rawArgv = process.argv.slice(2);
 if (process.env.HIVE_DEBUG_ARGS === "1") {
@@ -246,42 +245,34 @@ const launchDetachedServer = (): LaunchResult => {
   }
 };
 
-const ensureDaemonRunningEffect = (
+const ensureDaemonRunning = async (
   config?: Omit<WaitForServerReadyConfig, "url">
-): Effect.Effect<boolean> =>
-  Effect.catchAll(
-    Effect.gen(function* () {
-      if (isDaemonRunning()) {
-        return true;
-      }
-
-      logInfo("Hive is not running. Starting background daemon...");
-      yield* Effect.try({
-        try: () => launchDetachedServer(),
-        catch: (cause) =>
-          cause instanceof Error ? cause : new Error(String(cause)),
-      });
-
-      const ready = yield* waitForServerReadyEffect({
-        url: HEALTHCHECK_URL,
-        ...config,
-      });
-      if (!ready) {
-        logWarning(
-          "Daemon started, but /health did not respond before timeout."
-        );
-      }
+): Promise<boolean> => {
+  try {
+    if (isDaemonRunning()) {
       return true;
-    }),
-    (error) => {
-      logError(
-        `Failed to start Hive: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-      return Effect.succeed(false);
     }
-  );
+
+    logInfo("Hive is not running. Starting background daemon...");
+    launchDetachedServer();
+
+    const ready = await waitForServerReady({
+      url: HEALTHCHECK_URL,
+      ...config,
+    });
+    if (!ready) {
+      logWarning("Daemon started, but /health did not respond before timeout.");
+    }
+    return true;
+  } catch (error) {
+    logError(
+      `Failed to start Hive: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return false;
+  }
+};
 
 const resolveLogDirectory = () =>
   process.env.HIVE_LOG_DIR ?? join(binaryDirectory, "logs");
@@ -815,34 +806,14 @@ const bootstrap = async (options?: { forceForeground?: boolean }) => {
   });
 };
 
-const bootstrapEffect = (options?: { forceForeground?: boolean }) =>
-  Effect.tryPromise({
-    try: () => bootstrap(options),
-    catch: (cause) =>
-      cause instanceof Error ? cause : new Error(String(cause)),
-  });
+const stopCommand = () => {
+  const result = stopBackgroundProcess();
+  closeDesktopApplication();
+  return result === "failed" ? 1 : 0;
+};
 
-const streamLogsEffect = Effect.tryPromise({
-  try: () => streamLogs(),
-  catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-});
-
-const runUpgradeEffect = Effect.tryPromise({
-  try: () => runUpgrade(),
-  catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-});
-
-const stopCommandEffect = Effect.map(
-  Effect.sync(() => {
-    const result = stopBackgroundProcess();
-    closeDesktopApplication();
-    return result;
-  }),
-  (result) => (result === "failed" ? 1 : 0)
-);
-
-const webCommandEffect = Effect.gen(function* () {
-  const ready = yield* ensureDaemonRunningEffect();
+const webCommand = async () => {
+  const ready = await ensureDaemonRunning();
   if (!ready) {
     return 1;
   }
@@ -855,10 +826,10 @@ const webCommandEffect = Effect.gen(function* () {
 
   logSuccess(`Opened ${DEFAULT_WEB_URL} in your default browser.`);
   return 0;
-});
+};
 
-const desktopCommandEffect = Effect.gen(function* () {
-  const ready = yield* ensureDaemonRunningEffect();
+const desktopCommand = async () => {
+  const ready = await ensureDaemonRunning();
   if (!ready) {
     return 1;
   }
@@ -874,9 +845,9 @@ const desktopCommandEffect = Effect.gen(function* () {
   persistDesktopPidFile(result.pid ?? null);
   logSuccess("Launched Hive desktop application.");
   return 0;
-});
+};
 
-const infoCommandEffect = Effect.sync(() => {
+const infoCommand = () => {
   const hiveHome = resolveHiveHomePath();
   const logDir = resolveLogDirectory();
   const logFile = resolveLogFilePath();
@@ -894,68 +865,64 @@ const infoCommandEffect = Effect.sync(() => {
 
   printSummary("Hive environment", summaryRows);
   return 0;
-});
+};
 
-const completionsCommandEffect = (shell: string) =>
-  Effect.sync(() => {
-    const normalized = normalizeShell(shell);
-    if (!normalized) {
-      logError(
-        `Unsupported shell "${shell}". Supported shells: ${supportedShellList()}`
-      );
-      return 1;
-    }
+const completionsCommand = (shell: string) => {
+  const normalized = normalizeShell(shell);
+  if (!normalized) {
+    logError(
+      `Unsupported shell "${shell}". Supported shells: ${supportedShellList()}`
+    );
+    return 1;
+  }
 
-    const script = renderCompletionScript(normalized);
-    if (!script) {
-      logError("Failed to render completion script.");
-      return 1;
-    }
+  const script = renderCompletionScript(normalized);
+  if (!script) {
+    logError("Failed to render completion script.");
+    return 1;
+  }
 
-    process.stdout.write(ensureTrailingNewline(script));
-    return 0;
-  });
+  process.stdout.write(ensureTrailingNewline(script));
+  return 0;
+};
 
-const completionsInstallCommandEffect = (
+const completionsInstallCommand = (
   shell: string,
   destination?: string | null
-) =>
-  Effect.gen(function* () {
-    const normalized = normalizeShell(shell);
+) => {
+  const normalized = normalizeShell(shell);
 
-    if (!normalized) {
-      logError(
-        `Unsupported shell "${shell}". Supported shells: ${supportedShellList()}`
-      );
-      return 1;
-    }
-
-    const targetPath =
-      destination ?? getDefaultCompletionInstallPath(normalized);
-
-    const result = yield* installCompletionScriptEffect(normalized, targetPath);
-    if (!result.ok) {
-      logError(`Failed to install completions: ${result.message}`);
-      return 1;
-    }
-
-    logSuccess(
-      `Installed hive completions for ${normalized} at ${result.path}`
+  if (!normalized) {
+    logError(
+      `Unsupported shell "${shell}". Supported shells: ${supportedShellList()}`
     );
-    logInfo("Restart your shell to load them.");
-    return 0;
-  });
+    return 1;
+  }
 
-const runCommandEffect = (
-  effect: Effect.Effect<number, unknown>,
+  const targetPath = destination ?? getDefaultCompletionInstallPath(normalized);
+
+  const result = installCompletionScript(normalized, targetPath);
+  if (!result.ok) {
+    logError(`Failed to install completions: ${result.message}`);
+    return 1;
+  }
+
+  logSuccess(`Installed hive completions for ${normalized} at ${result.path}`);
+  logInfo("Restart your shell to load them.");
+  return 0;
+};
+
+const runCommand = async (
+  operation: () => number | Promise<number>,
   label: string
-) =>
-  Effect.runPromise(
-    Effect.catchAll(effect, (error) => {
-      logError(`${label} failed: ${formatError(error)}`);
-      return Effect.succeed(1);
-    })
-  );
+) => {
+  try {
+    return await operation();
+  } catch (error) {
+    logError(`${label} failed: ${formatError(error)}`);
+    return 1;
+  }
+};
 
 class StartCommand extends Command {
   static override paths = [Command.Default];
@@ -976,14 +943,9 @@ Starts Hive in the background unless you pass --foreground. When running detache
   });
 
   override execute() {
-    return Effect.runPromise(
-      Effect.catchAll(
-        bootstrapEffect({ forceForeground: Boolean(this.forceForeground) }),
-        (error) => {
-          logError(`Failed to start Hive: ${formatError(error)}`);
-          return Effect.succeed(1);
-        }
-      )
+    return runCommand(
+      () => bootstrap({ forceForeground: Boolean(this.forceForeground) }),
+      "start"
     );
   }
 }
@@ -999,7 +961,7 @@ class StopCommand extends Command {
   });
 
   override execute() {
-    return runCommandEffect(stopCommandEffect, "stop");
+    return runCommand(() => stopCommand(), "stop");
   }
 }
 
@@ -1014,7 +976,7 @@ class LogsCommand extends Command {
   });
 
   override execute() {
-    return runCommandEffect(streamLogsEffect, "logs");
+    return runCommand(() => streamLogs(), "logs");
   }
 }
 
@@ -1029,7 +991,7 @@ class WebCommand extends Command {
   });
 
   override execute() {
-    return runCommandEffect(webCommandEffect, "web");
+    return runCommand(() => webCommand(), "web");
   }
 }
 
@@ -1044,7 +1006,7 @@ class DesktopCommand extends Command {
   });
 
   override execute() {
-    return runCommandEffect(desktopCommandEffect, "desktop");
+    return runCommand(() => desktopCommand(), "desktop");
   }
 }
 
@@ -1059,7 +1021,7 @@ class UpgradeCommand extends Command {
   });
 
   override execute() {
-    return runCommandEffect(runUpgradeEffect, "upgrade");
+    return runCommand(() => runUpgrade(), "upgrade");
   }
 }
 
@@ -1072,7 +1034,7 @@ class InfoCommand extends Command {
   });
 
   override execute() {
-    return runCommandEffect(infoCommandEffect, "info");
+    return runCommand(() => infoCommand(), "info");
   }
 }
 
@@ -1090,8 +1052,8 @@ class CompletionsCommand extends Command {
   });
 
   override execute() {
-    return runCommandEffect(
-      completionsCommandEffect(this.shell),
+    return runCommand(
+      () => Promise.resolve(completionsCommand(this.shell)),
       "completions"
     );
   }
@@ -1124,8 +1086,8 @@ class CompletionsInstallCommand extends Command {
   });
 
   override execute() {
-    return runCommandEffect(
-      completionsInstallCommandEffect(this.shell, this.destination),
+    return runCommand(
+      () => completionsInstallCommand(this.shell, this.destination),
       "completions install"
     );
   }

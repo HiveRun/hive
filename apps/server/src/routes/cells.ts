@@ -4,17 +4,15 @@ import { createConnection } from "node:net";
 
 import { logger } from "@bogeychan/elysia-logger";
 import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
-import { Effect } from "effect";
 import { Elysia, type Static, sse, t } from "elysia";
 import { getSharedOpencodeServerBaseUrl } from "../agents/opencode-server";
 import type { AgentRuntimeService } from "../agents/service";
-import { AgentRuntimeServiceTag } from "../agents/service";
+import { agentRuntimeService } from "../agents/service";
 import type { Template } from "../config/schema";
 import {
   DatabaseService,
   type DatabaseService as DatabaseServiceType,
 } from "../db";
-import { runServerEffect } from "../runtime";
 import {
   ACTIVITY_EVENT_TYPES,
   type ActivityEventType,
@@ -48,7 +46,7 @@ import type {
   ChatTerminalEvent,
   ChatTerminalSession,
 } from "../services/chat-terminal";
-import { ChatTerminalServiceTag } from "../services/chat-terminal";
+import { chatTerminalService } from "../services/chat-terminal";
 import {
   buildCellDiffPayload,
   parseDiffRequest,
@@ -75,29 +73,38 @@ import {
 } from "../services/supervisor";
 import {
   type CellTerminalEvent,
-  CellTerminalServiceTag,
   type CellTerminalSession,
+  cellTerminalService,
 } from "../services/terminal";
 import {
-  type ResolveWorkspaceContext,
-  resolveWorkspaceContextEffect,
+  resolveWorkspaceContext,
   type WorkspaceRuntimeContext,
 } from "../workspaces/context";
 
 import { createWorkspaceContextPlugin } from "../workspaces/plugin";
 import type { WorkspaceRecord } from "../workspaces/registry";
 import {
+  type AsyncWorktreeManager,
   describeWorktreeError,
-  type WorktreeManager,
+  toAsyncWorktreeManager,
   type WorktreeManagerError,
-  worktreeErrorToError,
 } from "../worktree/manager";
 
 type DatabaseClient = DatabaseServiceType["db"];
 
+type WorkspaceContextResolverLike = (
+  workspaceId?: string
+) => WorkspaceRuntimeContext | Promise<WorkspaceRuntimeContext>;
+
+const resolveWorkspaceContextFromDeps = async (
+  resolver: WorkspaceContextResolverLike,
+  workspaceId?: string
+): Promise<WorkspaceRuntimeContext> =>
+  await Promise.resolve(resolver(workspaceId));
+
 export type CellRouteDependencies = {
   db: DatabaseClient;
-  resolveWorkspaceContext: ResolveWorkspaceContext;
+  resolveWorkspaceContext: WorkspaceContextResolverLike;
   ensureAgentSession: AgentRuntimeService["ensureAgentSession"];
   sendAgentMessage: AgentRuntimeService["sendAgentMessage"];
   closeAgentSession: AgentRuntimeService["closeAgentSession"];
@@ -190,78 +197,63 @@ const dependencyKeys: Array<keyof CellRouteDependencies> = [
   "clearSetupTerminal",
 ];
 
-const buildDefaultCellDependencies = () =>
-  Effect.gen(function* () {
-    const { db: database } = yield* DatabaseService;
-    const agentRuntime = yield* AgentRuntimeServiceTag;
-    const supervisor = yield* ServiceSupervisorService;
-    const terminal = yield* CellTerminalServiceTag;
-    const chatTerminal = yield* ChatTerminalServiceTag;
+const buildDefaultCellDependencies = (): CellRouteDependencies => {
+  const { db: database } = DatabaseService;
+  const agentRuntime = agentRuntimeService;
+  const supervisor = ServiceSupervisorService;
+  const terminal = cellTerminalService;
+  const chatTerminal = chatTerminalService;
 
-    return {
-      db: database,
-      resolveWorkspaceContext: (workspaceId) =>
-        resolveWorkspaceContextEffect(workspaceId),
-      ensureAgentSession: agentRuntime.ensureAgentSession,
-      sendAgentMessage: agentRuntime.sendAgentMessage,
-      closeAgentSession: agentRuntime.closeAgentSession,
-      ensureServicesForCell: supervisor.ensureCellServices,
-      startServiceById: supervisor.startCellService,
-      startServicesForCell: supervisor.startCellServices,
-      stopServiceById: supervisor.stopCellService,
-      stopServicesForCell: supervisor.stopCellServices,
-      ensureTerminalSession: terminal.ensureSession,
-      readTerminalOutput: terminal.readOutput,
-      subscribeToTerminal: terminal.subscribe,
-      writeTerminalInput: terminal.write,
-      resizeTerminal: terminal.resize,
-      closeTerminalSession: terminal.closeSession,
-      ensureChatTerminalSession: chatTerminal.ensureSession,
-      readChatTerminalOutput: chatTerminal.readOutput,
-      subscribeToChatTerminal: chatTerminal.subscribe,
-      writeChatTerminalInput: chatTerminal.write,
-      resizeChatTerminal: chatTerminal.resize,
-      closeChatTerminalSession: chatTerminal.closeSession,
-      getServiceTerminalSession: supervisor.getServiceTerminalSession,
-      readServiceTerminalOutput: supervisor.readServiceTerminalOutput,
-      subscribeToServiceTerminal: supervisor.subscribeToServiceTerminal,
-      writeServiceTerminalInput: supervisor.writeServiceTerminalInput,
-      resizeServiceTerminal: supervisor.resizeServiceTerminal,
-      clearServiceTerminal: supervisor.clearServiceTerminal,
-      getSetupTerminalSession: supervisor.getSetupTerminalSession,
-      readSetupTerminalOutput: supervisor.readSetupTerminalOutput,
-      subscribeToSetupTerminal: supervisor.subscribeToSetupTerminal,
-      writeSetupTerminalInput: supervisor.writeSetupTerminalInput,
-      resizeSetupTerminal: supervisor.resizeSetupTerminal,
-      clearSetupTerminal: supervisor.clearSetupTerminal,
-    } satisfies CellRouteDependencies;
-  });
+  return {
+    db: database,
+    resolveWorkspaceContext: (workspaceId) =>
+      resolveWorkspaceContext(workspaceId),
+    ensureAgentSession: agentRuntime.ensureAgentSession,
+    sendAgentMessage: agentRuntime.sendAgentMessage,
+    closeAgentSession: agentRuntime.closeAgentSession,
+    ensureServicesForCell: supervisor.ensureCellServices,
+    startServiceById: supervisor.startCellService,
+    startServicesForCell: supervisor.startCellServices,
+    stopServiceById: supervisor.stopCellService,
+    stopServicesForCell: supervisor.stopCellServices,
+    ensureTerminalSession: terminal.ensureSession,
+    readTerminalOutput: terminal.readOutput,
+    subscribeToTerminal: terminal.subscribe,
+    writeTerminalInput: terminal.write,
+    resizeTerminal: terminal.resize,
+    closeTerminalSession: terminal.closeSession,
+    ensureChatTerminalSession: chatTerminal.ensureSession,
+    readChatTerminalOutput: chatTerminal.readOutput,
+    subscribeToChatTerminal: chatTerminal.subscribe,
+    writeChatTerminalInput: chatTerminal.write,
+    resizeChatTerminal: chatTerminal.resize,
+    closeChatTerminalSession: chatTerminal.closeSession,
+    getServiceTerminalSession: supervisor.getServiceTerminalSession,
+    readServiceTerminalOutput: supervisor.readServiceTerminalOutput,
+    subscribeToServiceTerminal: supervisor.subscribeToServiceTerminal,
+    writeServiceTerminalInput: supervisor.writeServiceTerminalInput,
+    resizeServiceTerminal: supervisor.resizeServiceTerminal,
+    clearServiceTerminal: supervisor.clearServiceTerminal,
+    getSetupTerminalSession: supervisor.getSetupTerminalSession,
+    readSetupTerminalOutput: supervisor.readSetupTerminalOutput,
+    subscribeToSetupTerminal: supervisor.subscribeToSetupTerminal,
+    writeSetupTerminalInput: supervisor.writeSetupTerminalInput,
+    resizeSetupTerminal: supervisor.resizeSetupTerminal,
+    clearSetupTerminal: supervisor.clearSetupTerminal,
+  } satisfies CellRouteDependencies;
+};
 
 const hasAllDependencies = (
   overrides: Partial<CellRouteDependencies>
 ): overrides is CellRouteDependencies =>
   dependencyKeys.every((key) => overrides[key] !== undefined);
 
-const resolveCellRouteDependenciesEffect = (
-  overrides: Partial<CellRouteDependencies> = {}
-) =>
-  hasAllDependencies(overrides)
-    ? Effect.succeed(overrides)
-    : buildDefaultCellDependencies().pipe(
-        Effect.map(
-          (base): CellRouteDependencies => ({
-            ...base,
-            ...overrides,
-          })
-        )
-      );
-
 const resolveCellRouteDependencies = (() => {
-  let cachedBaseDeps: Promise<CellRouteDependencies> | null = null;
+  let cachedBaseDeps: Promise<CellRouteDependencies> | undefined;
 
   const loadBase = () => {
     if (!cachedBaseDeps) {
-      cachedBaseDeps = runServerEffect(buildDefaultCellDependencies());
+      cachedBaseDeps = Promise.resolve(buildDefaultCellDependencies());
     }
     return cachedBaseDeps;
   };
@@ -556,7 +548,7 @@ async function ensureChatTerminalSessionForCell(
     throw new Error("Shared OpenCode server is not running");
   }
 
-  const agentSession = await runServerEffect(deps.ensureAgentSession(cell.id));
+  const agentSession = await deps.ensureAgentSession(cell.id);
   const chatTerminal = getChatTerminalDependencies(deps);
   const session = chatTerminal.ensureChatTerminalSession({
     cellId: cell.id,
@@ -591,10 +583,13 @@ export function createCellsRoutes(
   })();
 
   const workspaceContextPlugin = createWorkspaceContextPlugin({
-    resolveWorkspaceContext: (workspaceId) =>
-      Effect.promise(() => resolveDeps()).pipe(
-        Effect.flatMap((deps) => deps.resolveWorkspaceContext(workspaceId))
-      ),
+    resolveWorkspaceContext: async (workspaceId) => {
+      const deps = await resolveDeps();
+      return await resolveWorkspaceContextFromDeps(
+        deps.resolveWorkspaceContext,
+        workspaceId
+      );
+    },
   });
 
   return new Elysia({ prefix: "/api/cells" })
@@ -620,10 +615,11 @@ export function createCellsRoutes(
           metadata: { templateId: cell.templateId },
         });
 
-        const workspaceContext = await runServerEffect(
-          deps.resolveWorkspaceContext(cell.workspaceId)
+        const workspaceContext = await resolveWorkspaceContextFromDeps(
+          deps.resolveWorkspaceContext,
+          cell.workspaceId
         );
-        const hiveConfig = await runServerEffect(workspaceContext.loadConfig());
+        const hiveConfig = await workspaceContext.loadConfig();
         const template = hiveConfig.templates[cell.templateId];
         if (!template) {
           set.status = HTTP_STATUS.BAD_REQUEST;
@@ -645,16 +641,14 @@ export function createCellsRoutes(
             lastSetupError: null,
           });
 
-          await runServerEffect(
-            deps.ensureServicesForCell({
-              cell: {
-                ...cell,
-                status: "pending",
-                lastSetupError: null,
-              },
-              template,
-            })
-          );
+          await deps.ensureServicesForCell({
+            cell: {
+              ...cell,
+              status: "pending",
+              lastSetupError: null,
+            },
+            template,
+          });
 
           await deps.db
             .update(cells)
@@ -1916,7 +1910,7 @@ export function createCellsRoutes(
           metadata: {},
         });
 
-        await runServerEffect(startServicesForCell(params.id));
+        await startServicesForCell(params.id);
         const rows = await fetchServiceRows(database, params.id);
         const services = await Promise.all(
           rows.map((row) => serializeService(deps, database, row))
@@ -1955,7 +1949,7 @@ export function createCellsRoutes(
           metadata: {},
         });
 
-        await runServerEffect(stopServicesForCell(params.id));
+        await stopServicesForCell(params.id);
         const rows = await fetchServiceRows(database, params.id);
         const services = await Promise.all(
           rows.map((row) => serializeService(deps, database, row))
@@ -2041,7 +2035,7 @@ export function createCellsRoutes(
           metadata: {},
         });
 
-        await runServerEffect(startService(params.serviceId));
+        await startService(params.serviceId);
         const updated = await fetchServiceRow(
           database,
           params.id,
@@ -2095,7 +2089,7 @@ export function createCellsRoutes(
           metadata: {},
         });
 
-        await runServerEffect(stopService(params.serviceId));
+        await stopService(params.serviceId);
         const updated = await fetchServiceRow(
           database,
           params.id,
@@ -2146,8 +2140,8 @@ export function createCellsRoutes(
           metadata: {},
         });
 
-        await runServerEffect(stopServicesForCell(params.id));
-        await runServerEffect(startServicesForCell(params.id));
+        await stopServicesForCell(params.id);
+        await startServicesForCell(params.id);
 
         const rows = await fetchServiceRows(database, params.id);
         const services = await Promise.all(
@@ -2198,8 +2192,8 @@ export function createCellsRoutes(
           },
         });
 
-        await runServerEffect(stopService(params.serviceId));
-        await runServerEffect(startService(params.serviceId));
+        await stopService(params.serviceId);
+        await startService(params.serviceId);
 
         const updated = await fetchServiceRow(
           database,
@@ -2301,33 +2295,32 @@ export function createCellsRoutes(
             return { message: "No cells found for provided ids" };
           }
 
-          const managerCache = new Map<string, WorktreeManager>();
+          const managerCache = new Map<string, AsyncWorktreeManager>();
           const fetchManager = async (workspaceId: string) => {
             const cached = managerCache.get(workspaceId);
             if (cached) {
               return cached;
             }
-            const context = await runServerEffect(
-              resolveWorkspaceCtx(workspaceId)
+            const context = await resolveWorkspaceContextFromDeps(
+              resolveWorkspaceCtx,
+              workspaceId
             );
-            const manager = await runServerEffect(
-              context.createWorktreeManager()
+            const manager = toAsyncWorktreeManager(
+              await context.createWorktreeManager()
             );
             managerCache.set(workspaceId, manager);
             return manager;
           };
 
           for (const cell of cellsToDelete) {
-            await runServerEffect(closeSession(cell.id));
+            await closeSession(cell.id);
             closeTerminalSession(cell.id);
             closeChatTerminalSession?.(cell.id);
             clearSetupTerminal(cell.id);
             try {
-              await runServerEffect(
-                stopCellServicesFn(cell.id, {
-                  releasePorts: true,
-                })
-              );
+              await stopCellServicesFn(cell.id, {
+                releasePorts: true,
+              });
             } catch (error) {
               log.warn(
                 { error, cellId: cell.id },
@@ -2391,14 +2384,12 @@ export function createCellsRoutes(
             return { message: "Cell not found" };
           }
 
-          await runServerEffect(closeSession(params.id));
+          await closeSession(params.id);
           closeTerminalSession(params.id);
           closeChatTerminalSession?.(params.id);
           clearSetupTerminal(params.id);
           try {
-            await runServerEffect(
-              stopCellServicesFn(params.id, { releasePorts: true })
-            );
+            await stopCellServicesFn(params.id, { releasePorts: true });
           } catch (error) {
             log.warn(
               { error, cellId: params.id },
@@ -2406,11 +2397,12 @@ export function createCellsRoutes(
             );
           }
 
-          const workspaceManager = await runServerEffect(
-            resolveWorkspaceCtx(cell.workspaceId)
+          const workspaceManager = await resolveWorkspaceContextFromDeps(
+            resolveWorkspaceCtx,
+            cell.workspaceId
           );
-          const worktreeService = await runServerEffect(
-            workspaceManager.createWorktreeManager()
+          const worktreeService = toAsyncWorktreeManager(
+            await workspaceManager.createWorktreeManager()
           );
           await removeCellWorkspace(worktreeService, cell, log);
 
@@ -2478,7 +2470,7 @@ async function handleCellCreationRequest(
     log,
   } = args;
 
-  const hiveConfig = await runServerEffect(workspaceContext.loadConfig());
+  const hiveConfig = await workspaceContext.loadConfig();
   const template = hiveConfig.templates[body.templateId];
   if (!template) {
     return {
@@ -2487,8 +2479,8 @@ async function handleCellCreationRequest(
     };
   }
 
-  const worktreeService = await runServerEffect(
-    workspaceContext.createWorktreeManager()
+  const worktreeService = toAsyncWorktreeManager(
+    await workspaceContext.createWorktreeManager()
   );
   const context = createProvisionContext({
     body,
@@ -2523,7 +2515,7 @@ type ProvisionContext = {
   sendAgentMessage: CellRouteDependencies["sendAgentMessage"];
   ensureServices: CellRouteDependencies["ensureServicesForCell"];
   stopCellServices: CellRouteDependencies["stopServicesForCell"];
-  worktreeService: WorktreeManager;
+  worktreeService: AsyncWorktreeManager;
   workspace: WorkspaceRecord;
   log: LoggerLike;
   state: CellProvisionState;
@@ -2549,7 +2541,7 @@ function createProvisionContext(args: {
   sendAgentMessage: CellRouteDependencies["sendAgentMessage"];
   ensureServices: CellRouteDependencies["ensureServicesForCell"];
   stopCellServices: CellRouteDependencies["stopServicesForCell"];
-  worktreeService: WorktreeManager;
+  worktreeService: AsyncWorktreeManager;
   workspace: WorkspaceRecord;
   log: LoggerLike;
 }): ProvisionContext {
@@ -2569,7 +2561,7 @@ function createProvisionContext(args: {
   };
 }
 
-function createExistingProvisionContextEffect(args: {
+async function createExistingProvisionContext(args: {
   cell: typeof cells.$inferSelect;
   provisioningState: CellProvisioningState | null;
   body: Static<typeof CreateCellSchema>;
@@ -2582,31 +2574,33 @@ function createExistingProvisionContextEffect(args: {
   workspaceContext: WorkspaceRuntimeContext;
   log: LoggerLike;
 }) {
-  return args.workspaceContext.createWorktreeManager().pipe(
-    Effect.map((worktreeService) => ({
-      body: args.body,
-      template: args.template,
-      database: args.database,
-      ensureSession: args.ensureSession,
-      sendAgentMessage: args.sendAgentMessage,
-      ensureServices: args.ensureServices,
-      stopCellServices: args.stopCellServices,
-      worktreeService,
-      workspace: args.workspaceContext.workspace,
-      log: args.log,
-      state: {
-        cellId: args.cell.id,
-        worktreeCreated: true,
-        recordCreated: true,
-        servicesStarted: false,
-        workspacePath: args.cell.workspacePath,
-        branchName: args.cell.branchName,
-        baseCommit: args.cell.baseCommit,
-        createdCell: args.cell,
-        provisioningState: args.provisioningState,
-      },
-    }))
+  const worktreeService = toAsyncWorktreeManager(
+    await args.workspaceContext.createWorktreeManager()
   );
+
+  return {
+    body: args.body,
+    template: args.template,
+    database: args.database,
+    ensureSession: args.ensureSession,
+    sendAgentMessage: args.sendAgentMessage,
+    ensureServices: args.ensureServices,
+    stopCellServices: args.stopCellServices,
+    worktreeService,
+    workspace: args.workspaceContext.workspace,
+    log: args.log,
+    state: {
+      cellId: args.cell.id,
+      worktreeCreated: true,
+      recordCreated: true,
+      servicesStarted: false,
+      workspacePath: args.cell.workspacePath,
+      branchName: args.cell.branchName,
+      baseCommit: args.cell.baseCommit,
+      createdCell: args.cell,
+      provisioningState: args.provisioningState,
+    },
+  };
 }
 
 async function createCellRecord(
@@ -2614,26 +2608,25 @@ async function createCellRecord(
 ): Promise<typeof cells.$inferSelect> {
   const { body, database, worktreeService, workspace, state } = context;
 
-  const worktree = await Effect.runPromise(
-    worktreeService
-      .createWorktree(state.cellId, {
-        templateId: body.templateId,
-      })
-      .pipe(
-        Effect.tapError((error) =>
-          Effect.sync(() =>
-            context.log.error(
-              {
-                error: describeWorktreeError(error),
-                cellId: state.cellId,
-              },
-              "Failed to create git worktree"
-            )
-          )
-        ),
-        Effect.mapError(worktreeErrorToError)
-      )
-  );
+  let worktree: { path: string; branch: string; baseCommit: string };
+  try {
+    worktree = await worktreeService.createWorktree(state.cellId, {
+      templateId: body.templateId,
+    });
+  } catch (error) {
+    const details =
+      error && typeof error === "object" && "kind" in error
+        ? describeWorktreeError(error as WorktreeManagerError)
+        : error;
+    context.log.error(
+      {
+        error: details,
+        cellId: state.cellId,
+      },
+      "Failed to create git worktree"
+    );
+    throw error;
+  }
   state.worktreeCreated = true;
   state.workspacePath = worktree.path;
   state.branchName = worktree.branch;
@@ -2739,12 +2732,10 @@ async function finalizeCellProvisioning(
     throw new Error("Cell record missing during provisioning");
   }
 
-  await runServerEffect(
-    ensureServices({
-      cell: state.createdCell,
-      template,
-    })
-  );
+  await ensureServices({
+    cell: state.createdCell,
+    template,
+  });
 
   state.servicesStarted = true;
 
@@ -2752,16 +2743,14 @@ async function finalizeCellProvisioning(
     ...(body.modelId ? { modelId: body.modelId } : {}),
     ...(body.providerId ? { providerId: body.providerId } : {}),
   };
-  const session = await runServerEffect(
-    ensureSession(
-      state.cellId,
-      Object.keys(sessionOptions).length ? sessionOptions : undefined
-    )
+  const session = await ensureSession(
+    state.cellId,
+    Object.keys(sessionOptions).length ? sessionOptions : undefined
   );
 
   const initialPrompt = body.description?.trim();
   if (initialPrompt) {
-    await runServerEffect(dispatchAgentMessage(session.id, initialPrompt));
+    await dispatchAgentMessage(session.id, initialPrompt);
   }
 
   const finishedAt = await updateCellProvisioningStatus(
@@ -2900,11 +2889,9 @@ async function stopServicesIfStarted(context: ProvisionContext) {
   }
 
   try {
-    await runServerEffect(
-      context.stopCellServices(context.state.cellId, {
-        releasePorts: true,
-      })
-    );
+    await context.stopCellServices(context.state.cellId, {
+      releasePorts: true,
+    });
   } catch (cleanupError) {
     context.log.warn(
       { cleanupError },
@@ -2991,44 +2978,41 @@ const backgroundProvisioningLogger: LoggerLike = {
   },
 };
 
-const resumeSingleCellEffect = (
+const resumeSingleCell = async (
   deps: CellRouteDependencies,
   cell: typeof cells.$inferSelect,
   provisioningState: typeof cellProvisioningStates.$inferSelect | null
-) =>
-  Effect.gen(function* () {
+) => {
+  try {
     const attemptCount = provisioningState?.attemptCount ?? 0;
     if (attemptCount >= MAX_PROVISIONING_ATTEMPTS) {
-      yield* Effect.tryPromise(() =>
-        updateCellProvisioningStatus(
-          deps.db,
-          cell.id,
-          "error",
-          `${PROVISIONING_INTERRUPTED_MESSAGE}\nRetry limit exceeded.`
-        )
+      await updateCellProvisioningStatus(
+        deps.db,
+        cell.id,
+        "error",
+        `${PROVISIONING_INTERRUPTED_MESSAGE}\nRetry limit exceeded.`
       );
       return;
     }
 
-    const workspaceContext = yield* deps.resolveWorkspaceContext(
+    const workspaceContext = await resolveWorkspaceContextFromDeps(
+      deps.resolveWorkspaceContext,
       cell.workspaceId
     );
-    const hiveConfig = yield* workspaceContext.loadConfig();
+    const hiveConfig = await workspaceContext.loadConfig();
 
     const template = hiveConfig.templates[cell.templateId];
     if (!template) {
-      yield* Effect.tryPromise(() =>
-        updateCellProvisioningStatus(
-          deps.db,
-          cell.id,
-          "error",
-          `${PROVISIONING_INTERRUPTED_MESSAGE}\nTemplate ${cell.templateId} no longer exists.`
-        )
+      await updateCellProvisioningStatus(
+        deps.db,
+        cell.id,
+        "error",
+        `${PROVISIONING_INTERRUPTED_MESSAGE}\nTemplate ${cell.templateId} no longer exists.`
       );
       return;
     }
 
-    const context = yield* createExistingProvisionContextEffect({
+    const context = await createExistingProvisionContext({
       cell,
       provisioningState,
       body: resolveProvisioningParams(cell, provisioningState),
@@ -3043,62 +3027,43 @@ const resumeSingleCellEffect = (
     });
 
     startProvisioningWorkflow(context);
-  }).pipe(
-    Effect.catchAll((error) =>
-      Effect.tryPromise(() =>
-        updateCellProvisioningStatus(
-          deps.db,
-          cell.id,
-          "error",
-          `${PROVISIONING_INTERRUPTED_MESSAGE}\n${
-            error instanceof Error ? error.message : String(error)
-          }`
-        )
-      )
-    )
-  );
+  } catch (error) {
+    await updateCellProvisioningStatus(
+      deps.db,
+      cell.id,
+      "error",
+      `${PROVISIONING_INTERRUPTED_MESSAGE}\n${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+};
 
-const resumePendingCellsEffect = (
+const resumePendingCells = async (
   overrides: Partial<CellRouteDependencies> = {}
-) =>
-  resolveCellRouteDependenciesEffect(overrides).pipe(
-    Effect.flatMap((deps) =>
-      Effect.gen(function* () {
-        const pendingCells = yield* Effect.tryPromise({
-          try: () =>
-            deps.db
-              .select({
-                cell: cells,
-                provisioningState: cellProvisioningStates,
-              })
-              .from(cells)
-              .innerJoin(
-                cellProvisioningStates,
-                eq(cellProvisioningStates.cellId, cells.id)
-              )
-              .where(eq(cells.status, "spawning")),
-          catch: (error) =>
-            error instanceof Error ? error : new Error(String(error)),
-        });
-
-        if (pendingCells.length === 0) {
-          return;
-        }
-
-        yield* Effect.forEach(
-          pendingCells,
-          ({ cell, provisioningState }) =>
-            resumeSingleCellEffect(deps, cell, provisioningState),
-          { discard: true, concurrency: 1 }
-        );
-      })
+) => {
+  const deps = await resolveCellRouteDependencies(overrides);
+  const pendingCells = await deps.db
+    .select({
+      cell: cells,
+      provisioningState: cellProvisioningStates,
+    })
+    .from(cells)
+    .innerJoin(
+      cellProvisioningStates,
+      eq(cellProvisioningStates.cellId, cells.id)
     )
-  );
+    .where(eq(cells.status, "spawning"));
+
+  for (const { cell, provisioningState } of pendingCells) {
+    await resumeSingleCell(deps, cell, provisioningState);
+  }
+};
 
 export async function resumeSpawningCells(
   overrides: Partial<CellRouteDependencies> = {}
 ): Promise<void> {
-  await runServerEffect(resumePendingCellsEffect(overrides));
+  await resumePendingCells(overrides);
 }
 
 const isServiceSupervisorError = (
@@ -3353,12 +3318,12 @@ function formatStackTrace(error?: Error): string | undefined {
 }
 
 async function removeCellWorkspace(
-  worktreeService: WorktreeManager,
+  worktreeService: AsyncWorktreeManager,
   cell: CellWorkspaceRecord,
   log: LoggerLike
 ) {
   try {
-    await Effect.runPromise(worktreeService.removeWorktree(cell.id));
+    await worktreeService.removeWorktree(cell.id);
     return;
   } catch (error) {
     const worktreeError = error as WorktreeManagerError;

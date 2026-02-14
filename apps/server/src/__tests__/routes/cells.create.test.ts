@@ -1,6 +1,5 @@
 // @ts-nocheck
 import { eq } from "drizzle-orm";
-import { Effect } from "effect";
 import { Elysia } from "elysia";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSessionRecord } from "../../agents/types";
@@ -95,14 +94,14 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
     Promise.resolve(options.hiveConfigOverride ?? hiveConfig);
 
   const buildWorktree = () =>
-    Effect.succeed({
+    Promise.resolve({
       path: workspacePath,
       branch: "cell-branch",
       baseCommit: "abc123",
     });
 
-  const removeWorktreeEffect = () =>
-    Effect.sync(() => {
+  const removeWorktreeCall = () =>
+    Promise.resolve().then(() => {
       removeWorktreeCalls += 1;
     });
 
@@ -111,24 +110,22 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
 
   return {
     db: testDb,
-    resolveWorkspaceContext: (() =>
-      Effect.succeed({
-        workspace: workspaceRecord,
-        loadConfig: () => Effect.promise(loadWorkspaceConfig),
-        createWorktreeManager: () =>
-          Effect.succeed({
-            createWorktree: (_cellId: string) => buildWorktree(),
-            removeWorktree: (_cellId: string) => removeWorktreeEffect(),
-          }),
+    resolveWorkspaceContext: (async () => ({
+      workspace: workspaceRecord,
+      loadConfig: loadWorkspaceConfig,
+      createWorktreeManager: async () => ({
         createWorktree: (_cellId: string) => buildWorktree(),
-        removeWorktree: (_cellId: string) => removeWorktreeEffect(),
-      })) as any,
+        removeWorktree: (_cellId: string) => removeWorktreeCall(),
+      }),
+      createWorktree: (_cellId: string) => buildWorktree(),
+      removeWorktree: (_cellId: string) => removeWorktreeCall(),
+    })) as any,
 
     ensureAgentSession: (
       cellId: string,
       overrides?: { modelId?: string; providerId?: string }
     ) =>
-      Effect.sync(() => {
+      Promise.resolve().then(() => {
         const session: AgentSessionRecord = {
           id: `session-${cellId}`,
           cellId,
@@ -142,26 +139,28 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
         options.onEnsureAgentSession?.(cellId, session.id, overrides);
         return session;
       }),
-    closeAgentSession: (_cellId: string) => Effect.void,
-    ensureServicesForCell: (_args: any) =>
-      options.setupError
-        ? Effect.fail({
-            _tag: "ServiceSupervisorError",
-            cause: options.setupError,
-          } as ServiceSupervisorError)
-        : Effect.void,
-    startServicesForCell: (_cellId: string) => Effect.void,
+    closeAgentSession: async (_cellId: string) => Promise.resolve(),
+    ensureServicesForCell: (_args: any) => {
+      if (options.setupError) {
+        throw {
+          _tag: "ServiceSupervisorError",
+          cause: options.setupError,
+        } as ServiceSupervisorError;
+      }
+      return Promise.resolve();
+    },
+    startServicesForCell: async (_cellId: string) => Promise.resolve(),
     stopServicesForCell: (
       _cellId: string,
       _options?: { releasePorts?: boolean }
-    ) => Effect.void,
-    startServiceById: (_serviceId: string) => Effect.void,
+    ) => Promise.resolve(),
+    startServiceById: (_serviceId: string) => Promise.resolve(),
     stopServiceById: (
       _serviceId: string,
       _options?: { releasePorts?: boolean }
-    ) => Effect.void,
+    ) => Promise.resolve(),
     sendAgentMessage: (sessionId: string, content: string) =>
-      Effect.promise(() => sendAgentMessageImpl(sessionId, content)),
+      sendAgentMessageImpl(sessionId, content),
     ensureTerminalSession: ({ cellId }) => ({
       sessionId: `terminal-${cellId}`,
       cellId,

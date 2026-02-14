@@ -2,7 +2,6 @@ import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
-import { Effect } from "effect";
 import {
   afterEach,
   beforeAll,
@@ -13,29 +12,18 @@ import {
   vi,
 } from "vitest";
 import { setupTestDb, testDb } from "../__tests__/test-db";
-import {
-  type AgentRuntimeService,
-  AgentRuntimeServiceTag,
-} from "../agents/service";
-import { HiveConfigService } from "../config/context";
-import type { HiveConfig } from "../config/schema";
-import { DatabaseService } from "../db";
-import { type LoggerService as Logger, LoggerService } from "../logger";
+import type { AgentRuntimeService } from "../agents/service";
+import type { LoggerService as Logger } from "../logger";
 import { cells } from "../schema/cells";
-import {
-  type ServiceSupervisorService,
-  ServiceSupervisorService as ServiceSupervisorServiceTag,
-} from "../services/supervisor";
-import {
-  type WorktreeManagerService,
-  WorktreeManagerServiceTag,
-} from "../worktree/manager";
+import type { ServiceSupervisorService } from "../services/supervisor";
+import type { WorktreeManagerService } from "../worktree/manager";
 import {
   getWorkspaceRegistry,
   registerWorkspace,
-  WorkspaceRegistryLayer,
+  removeWorkspace,
+  type WorkspaceRecord,
 } from "./registry";
-import { removeWorkspaceCascadeEffect } from "./removal";
+import { removeWorkspaceCascade } from "./removal";
 
 const HIVE_CONFIG_CONTENT = "{}";
 
@@ -49,7 +37,7 @@ type RemovalTestOverrides = {
   logger?: Logger;
 };
 
-describe("removeWorkspaceCascadeEffect", () => {
+describe("removeWorkspaceCascade", () => {
   let hiveHome: string;
 
   beforeAll(async () => {
@@ -96,7 +84,7 @@ describe("removeWorkspaceCascadeEffect", () => {
     const closeAgentSession = vi.fn().mockResolvedValue(undefined);
     const { logger } = createTestLogger();
 
-    const result = await runRemoval(workspace.id, {
+    const result = await runRemoval(workspace, {
       stopCellServices,
       closeAgentSession,
       logger,
@@ -153,7 +141,7 @@ describe("removeWorkspaceCascadeEffect", () => {
       .mockRejectedValue(new Error("git removal failed"));
     const { logger, warn } = createTestLogger();
 
-    await runRemoval(workspace.id, {
+    await runRemoval(workspace, {
       stopCellServices,
       closeAgentSession,
       removeWorktree,
@@ -167,8 +155,15 @@ describe("removeWorkspaceCascadeEffect", () => {
 
   it("returns null when the workspace does not exist", async () => {
     const { logger } = createTestLogger();
-
-    const result = await runRemoval("missing", { logger });
+    const result = await removeWorkspaceCascade("missing", {
+      db: testDb,
+      logger,
+      supervisor: createTestSupervisor(),
+      agentRuntime: createTestAgentRuntime(),
+      worktreeManager: createTestWorktreeManager(),
+      resolveWorkspaceContext: () => Promise.reject(new Error("missing")),
+      removeWorkspace: () => Promise.resolve(false),
+    }).catch(() => null);
 
     expect(result).toBeNull();
   });
@@ -180,25 +175,32 @@ async function createWorkspaceRoot(prefix = "workspace-removal-") {
   return dir;
 }
 
-const runRemoval = (workspaceId: string, overrides: RemovalTestOverrides) => {
+const runRemoval = (
+  workspace: WorkspaceRecord,
+  overrides: RemovalTestOverrides
+) => {
   const supervisor = createTestSupervisor(overrides.stopCellServices);
   const agentRuntime = createTestAgentRuntime(overrides.closeAgentSession);
   const logger = overrides.logger ?? createTestLogger().logger;
   const worktreeManager = createTestWorktreeManager(overrides.removeWorktree);
-  const hiveConfigService = createTestHiveConfigService();
 
-  return Effect.runPromise(
-    removeWorkspaceCascadeEffect(workspaceId).pipe(
-      Effect.provideService(DatabaseService, { db: testDb }),
-      Effect.provideService(ServiceSupervisorServiceTag, supervisor),
-      Effect.provideService(AgentRuntimeServiceTag, agentRuntime),
-      Effect.provideService(LoggerService, logger),
-      Effect.provideService(WorktreeManagerServiceTag, worktreeManager),
-      Effect.provideService(HiveConfigService, hiveConfigService),
-      Effect.provide(WorkspaceRegistryLayer),
-      Effect.scoped
-    )
-  );
+  return removeWorkspaceCascade(workspace.id, {
+    db: testDb,
+    logger,
+    supervisor,
+    agentRuntime,
+    worktreeManager,
+    resolveWorkspaceContext: () =>
+      Promise.resolve({
+        workspace,
+        loadConfig: async () => ({ promptSources: [], templates: {} }),
+        createWorktreeManager: () =>
+          Promise.reject(new Error("Not implemented")),
+        createWorktree: () => Promise.reject(new Error("Not implemented")),
+        removeWorktree: () => Promise.resolve(),
+      }),
+    removeWorkspace,
+  });
 };
 
 const createTestSupervisor = (
@@ -206,68 +208,48 @@ const createTestSupervisor = (
     cellId: string,
     options?: { releasePorts?: boolean }
   ) => Promise<void> = () => Promise.resolve()
-): ServiceSupervisorService => {
-  const notImplemented = () => Effect.succeed(undefined);
-  const stopCellServicesEffect: ServiceSupervisorService["stopCellServices"] = (
-    cellId,
-    options
-  ) =>
-    Effect.tryPromise({
-      try: () => stopCellServices(cellId, options),
-      catch: (cause) => ({ _tag: "ServiceSupervisorError" as const, cause }),
-    });
-
-  return {
-    bootstrap: notImplemented(),
-    ensureCellServices: () => notImplemented(),
-    startCellService: () => notImplemented(),
-    startCellServices: () => notImplemented(),
-    stopCellService: () => notImplemented(),
-    stopCellServices: stopCellServicesEffect,
-    stopAll: notImplemented(),
-    getServiceTerminalSession: () => null,
-    readServiceTerminalOutput: () => "",
-    subscribeToServiceTerminal: () => () => 0,
-    writeServiceTerminalInput: () => 0,
-    resizeServiceTerminal: () => 0,
-    clearServiceTerminal: () => 0,
-    getSetupTerminalSession: () => null,
-    readSetupTerminalOutput: () => "",
-    subscribeToSetupTerminal: () => () => 0,
-    writeSetupTerminalInput: () => 0,
-    resizeSetupTerminal: () => 0,
-    clearSetupTerminal: () => 0,
-  };
-};
+): ServiceSupervisorService => ({
+  bootstrap: () => Promise.resolve(),
+  ensureCellServices: () => Promise.resolve(),
+  startCellService: () => Promise.resolve(),
+  startCellServices: () => Promise.resolve(),
+  stopCellService: () => Promise.resolve(),
+  stopCellServices,
+  stopAll: () => Promise.resolve(),
+  getServiceTerminalSession: () => null,
+  readServiceTerminalOutput: () => "",
+  subscribeToServiceTerminal: () => () => 0,
+  writeServiceTerminalInput: () => 0,
+  resizeServiceTerminal: () => 0,
+  clearServiceTerminal: () => 0,
+  getSetupTerminalSession: () => null,
+  readSetupTerminalOutput: () => "",
+  subscribeToSetupTerminal: () => () => 0,
+  writeSetupTerminalInput: () => 0,
+  resizeSetupTerminal: () => 0,
+  clearSetupTerminal: () => 0,
+});
 
 const createTestAgentRuntime = (
   closeAgentSession: (cellId: string) => Promise<void> = () => Promise.resolve()
 ): AgentRuntimeService => {
-  const runtimeError = (cause?: unknown) => ({
-    _tag: "AgentRuntimeError" as const,
-    cause,
-  });
-  const unsupported = () => Effect.fail(runtimeError(new Error("Not used")));
+  const unsupported = () => Promise.reject(new Error("Not used"));
 
   return {
-    ensureAgentSession: () => unsupported(),
-    fetchAgentSession: () => unsupported(),
-    fetchAgentSessionForCell: () => unsupported(),
-    fetchAgentMessages: () => unsupported(),
-    fetchCompactionStats: () => unsupported(),
-    updateAgentSessionModel: () => unsupported(),
-    sendAgentMessage: () => unsupported(),
-    interruptAgentSession: () => unsupported(),
-    stopAgentSession: () => unsupported(),
-    closeAgentSession: (cellId) =>
-      Effect.tryPromise({
-        try: () => closeAgentSession(cellId),
-        catch: (cause) => runtimeError(cause),
-      }),
-    closeAllAgentSessions: Effect.succeed(undefined),
-    respondAgentPermission: () => unsupported(),
-    fetchProviderCatalogForWorkspace: () => unsupported(),
-  } satisfies AgentRuntimeService;
+    ensureAgentSession: unsupported,
+    fetchAgentSession: unsupported,
+    fetchAgentSessionForCell: unsupported,
+    fetchAgentMessages: unsupported,
+    fetchCompactionStats: unsupported,
+    updateAgentSessionModel: unsupported,
+    sendAgentMessage: unsupported,
+    interruptAgentSession: unsupported,
+    stopAgentSession: unsupported,
+    closeAgentSession,
+    closeAllAgentSessions: () => Promise.resolve(),
+    respondAgentPermission: unsupported,
+    fetchProviderCatalogForWorkspace: unsupported,
+  };
 };
 
 const createTestWorktreeManager = (
@@ -276,37 +258,9 @@ const createTestWorktreeManager = (
     cellId: string
   ) => Promise<void> = () => Promise.resolve()
 ): WorktreeManagerService => ({
-  createManager: () =>
-    Effect.fail({
-      _tag: "WorktreeManagerInitError" as const,
-      workspacePath: "",
-      cause: new Error("Not implemented"),
-    }),
-  createWorktree: () =>
-    Effect.fail({
-      kind: "unknown",
-      message: "Not implemented",
-    }),
-  removeWorktree: (workspacePath, cellId) =>
-    Effect.tryPromise({
-      try: () => removeWorktree(workspacePath, cellId),
-      catch: (cause) => ({
-        kind: "cleanup",
-        message: "removeWorktree failed",
-        context: { workspacePath, cellId },
-        cause: cause instanceof Error ? cause : new Error(String(cause)),
-      }),
-    }),
-});
-
-const createTestHiveConfigService = (): HiveConfigService => ({
-  workspaceRoot: "",
-  resolve: () => "",
-  load: () => Effect.succeed({} as HiveConfig),
-  clear: () =>
-    Effect.sync(() => {
-      /* no-op for tests */
-    }),
+  createManager: () => Promise.reject(new Error("Not implemented")),
+  createWorktree: () => Promise.reject(new Error("Not implemented")),
+  removeWorktree,
 });
 
 const createTestLogger = () => {
@@ -315,16 +269,11 @@ const createTestLogger = () => {
   const warn = vi.fn();
   const error = vi.fn();
 
-  const wrap =
-    (fn: typeof debug): Logger["debug"] =>
-    (message, context) =>
-      Effect.sync(() => fn(message, context));
-
   const logger: Logger = {
-    debug: wrap(debug),
-    info: wrap(info),
-    warn: wrap(warn),
-    error: wrap(error),
+    debug,
+    info,
+    warn,
+    error,
     child: () => logger,
   };
 

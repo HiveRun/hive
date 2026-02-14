@@ -1,5 +1,4 @@
 import type { OpencodeClient, Event as OpencodeEvent } from "@opencode-ai/sdk";
-import { Effect } from "effect";
 
 import {
   afterEach,
@@ -89,7 +88,7 @@ describe("agent model selection", () => {
       async () => clientStub as unknown as OpencodeClient
     );
 
-    loadHiveConfigMock = vi.fn(() => Effect.succeed(mockHiveConfig));
+    loadHiveConfigMock = vi.fn(async () => mockHiveConfig);
     loadOpencodeConfigSpy = vi
       .spyOn(OpencodeConfig, "loadOpencodeConfig")
       .mockResolvedValue({

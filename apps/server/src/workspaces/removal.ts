@@ -1,223 +1,205 @@
 import { rm } from "node:fs/promises";
 import { eq } from "drizzle-orm";
-import { Effect } from "effect";
-import { AgentRuntimeServiceTag } from "../agents/service";
+import {
+  type AgentRuntimeService,
+  agentRuntimeService,
+} from "../agents/service";
 import { DatabaseService } from "../db";
-import { LoggerService } from "../logger";
-import { runServerEffect } from "../runtime";
+import { type LoggerService as Logger, LoggerService } from "../logger";
 import { cells } from "../schema/cells";
-import { ServiceSupervisorService } from "../services/supervisor";
+import {
+  type ServiceSupervisorService as ServiceSupervisorApi,
+  ServiceSupervisorService,
+} from "../services/supervisor";
 import {
   type WorktreeManagerService,
-  WorktreeManagerServiceTag,
+  worktreeManagerService,
 } from "../worktree/manager";
 import {
-  resolveWorkspaceContextEffect,
+  resolveWorkspaceContext,
   WorkspaceContextError,
   type WorkspaceRuntimeContext,
 } from "./context";
-import { removeWorkspaceEffect, type WorkspaceRecord } from "./registry";
+import { removeWorkspace, type WorkspaceRecord } from "./registry";
 
 export type WorkspaceRemovalResult = {
   workspace: WorkspaceRecord;
   deletedCellIds: string[];
 };
 
-type WorkspaceRemovalError = {
-  readonly _tag: "WorkspaceRemovalError";
-  readonly message: string;
-  readonly cause?: unknown;
-};
-
-const makeWorkspaceRemovalError = (
-  message: string,
-  cause?: unknown
-): WorkspaceRemovalError => ({
-  _tag: "WorkspaceRemovalError",
-  message,
-  cause,
-});
-
 type WorkspaceCellRow = {
   id: string;
   workspacePath: string | null;
 };
 
-export const removeWorkspaceCascadeEffect = (workspaceId: string) =>
-  Effect.gen(function* () {
-    const logger = yield* LoggerService;
-    const { db } = yield* DatabaseService;
-    const supervisor = yield* ServiceSupervisorService;
-    const agentRuntime = yield* AgentRuntimeServiceTag;
-    const worktreeManager = yield* WorktreeManagerServiceTag;
+type WorkspaceRemovalDependencies = {
+  db: typeof DatabaseService.db;
+  logger: Logger;
+  supervisor: ServiceSupervisorApi;
+  agentRuntime: AgentRuntimeService;
+  worktreeManager: WorktreeManagerService;
+  resolveWorkspaceContext: (
+    workspaceId: string
+  ) => Promise<WorkspaceRuntimeContext>;
+  removeWorkspace: (workspaceId: string) => Promise<boolean>;
+};
 
-    const context = yield* resolveWorkspaceContextEffect(workspaceId).pipe(
-      Effect.catchIf(
-        (error): error is WorkspaceContextError =>
-          error instanceof WorkspaceContextError,
-        () => Effect.succeed<WorkspaceRuntimeContext | null>(null)
-      )
+const defaultDependencies = (): WorkspaceRemovalDependencies => ({
+  db: DatabaseService.db,
+  logger: LoggerService,
+  supervisor: ServiceSupervisorService,
+  agentRuntime: agentRuntimeService,
+  worktreeManager: worktreeManagerService,
+  resolveWorkspaceContext,
+  removeWorkspace,
+});
+
+export async function removeWorkspaceCascade(
+  workspaceId: string,
+  overrides: Partial<WorkspaceRemovalDependencies> = {}
+): Promise<WorkspaceRemovalResult | null> {
+  const deps = { ...defaultDependencies(), ...overrides };
+
+  const context = await deps
+    .resolveWorkspaceContext(workspaceId)
+    .catch((error: unknown) => {
+      if (error instanceof WorkspaceContextError) {
+        return null;
+      }
+      throw error;
+    });
+
+  if (!context) {
+    return null;
+  }
+
+  const workspaceCells = await fetchCellsForWorkspace(deps.db, workspaceId);
+  const deletedCellIds: string[] = [];
+
+  for (const cell of workspaceCells) {
+    await deps.agentRuntime.closeAgentSession(cell.id).catch((cause: unknown) =>
+      logWarning(deps.logger, "Failed to close agent session", {
+        cellId: cell.id,
+        error: formatError(cause),
+      })
     );
 
-    if (!context) {
-      return null;
-    }
-
-    const workspaceCells = yield* fetchCellsForWorkspace(db, workspaceId);
-
-    const deletedCellIds: string[] = [];
-
-    for (const cell of workspaceCells) {
-      yield* agentRuntime.closeAgentSession(cell.id).pipe(
-        Effect.catchAll((cause) =>
-          logWarning(logger, "Failed to close agent session", {
-            cellId: cell.id,
-            error: formatError(cause),
-          })
-        )
-      );
-
-      yield* supervisor.stopCellServices(cell.id, { releasePorts: true }).pipe(
-        Effect.catchAll((cause) =>
-          logWarning(logger, "Failed to stop cell services", {
-            cellId: cell.id,
-            error: formatError(cause),
-          })
-        )
-      );
-
-      yield* cleanupCellWorkspace({
-        workspaceRootPath: context.workspace.path,
-        cellWorkspacePath: cell.workspacePath,
-        cellId: cell.id,
-        worktreeManager,
-        logger,
-      });
-
-      deletedCellIds.push(cell.id);
-    }
-
-    if (deletedCellIds.length > 0) {
-      yield* deleteCellsForWorkspace(db, workspaceId);
-    }
-
-    yield* removeWorkspaceEffect(workspaceId).pipe(
-      Effect.catchAll((cause) =>
-        logWarning(logger, "Failed to remove workspace registry entry", {
-          workspaceId,
+    await deps.supervisor
+      .stopCellServices(cell.id, { releasePorts: true })
+      .catch((cause: unknown) =>
+        logWarning(deps.logger, "Failed to stop cell services", {
+          cellId: cell.id,
           error: formatError(cause),
         })
-      )
-    );
+      );
 
-    return { workspace: context.workspace, deletedCellIds };
-  });
+    await cleanupCellWorkspace({
+      workspaceRootPath: context.workspace.path,
+      cellWorkspacePath: cell.workspacePath,
+      cellId: cell.id,
+      worktreeManager: deps.worktreeManager,
+      logger: deps.logger,
+    });
 
-export function removeWorkspaceCascade(
-  workspaceId: string
-): Promise<WorkspaceRemovalResult | null> {
-  return runServerEffect(removeWorkspaceCascadeEffect(workspaceId));
+    deletedCellIds.push(cell.id);
+  }
+
+  if (deletedCellIds.length > 0) {
+    await deleteCellsForWorkspace(deps.db, workspaceId);
+  }
+
+  await deps.removeWorkspace(workspaceId).catch((cause: unknown) =>
+    logWarning(deps.logger, "Failed to remove workspace registry entry", {
+      workspaceId,
+      error: formatError(cause),
+    })
+  );
+
+  return { workspace: context.workspace, deletedCellIds };
 }
 
-const fetchCellsForWorkspace = (
-  database: typeof import("../db").db,
+const fetchCellsForWorkspace = async (
+  db: typeof DatabaseService.db,
   workspaceId: string
-) =>
-  Effect.tryPromise<WorkspaceCellRow[], WorkspaceRemovalError>({
-    try: () =>
-      database
-        .select({ id: cells.id, workspacePath: cells.workspacePath })
-        .from(cells)
-        .where(eq(cells.workspaceId, workspaceId)),
-    catch: (cause) =>
-      makeWorkspaceRemovalError("Failed to load cells for workspace", cause),
-  });
+): Promise<WorkspaceCellRow[]> =>
+  await db
+    .select({ id: cells.id, workspacePath: cells.workspacePath })
+    .from(cells)
+    .where(eq(cells.workspaceId, workspaceId));
 
-const deleteCellsForWorkspace = (
-  database: typeof import("../db").db,
+const deleteCellsForWorkspace = async (
+  db: typeof DatabaseService.db,
   workspaceId: string
-) =>
-  Effect.tryPromise<unknown, WorkspaceRemovalError>({
-    try: () => database.delete(cells).where(eq(cells.workspaceId, workspaceId)),
-    catch: (cause) =>
-      makeWorkspaceRemovalError("Failed to delete cells for workspace", cause),
-  }).pipe(Effect.map(() => ({})));
+): Promise<void> => {
+  await db.delete(cells).where(eq(cells.workspaceId, workspaceId));
+};
 
 type CleanupArgs = {
   workspaceRootPath: string;
   cellWorkspacePath: string | null;
   cellId: string;
   worktreeManager: WorktreeManagerService;
-  logger: import("../logger").LoggerService;
+  logger: Logger;
 };
 
-const cleanupCellWorkspace = ({
+const cleanupCellWorkspace = async ({
   workspaceRootPath,
   cellWorkspacePath,
   cellId,
   worktreeManager,
   logger,
-}: CleanupArgs) =>
-  worktreeManager.removeWorktree(workspaceRootPath, cellId).pipe(
-    Effect.catchAll((worktreeError) =>
-      fallbackWorkspaceRemoval({
-        cellWorkspacePath,
-        cellId,
-        worktreeError,
-        logger,
-      })
-    )
-  );
+}: CleanupArgs): Promise<void> => {
+  try {
+    await worktreeManager.removeWorktree(workspaceRootPath, cellId);
+  } catch (worktreeError) {
+    await fallbackWorkspaceRemoval({
+      cellWorkspacePath,
+      cellId,
+      worktreeError,
+      logger,
+    });
+  }
+};
 
 type FallbackArgs = {
   cellWorkspacePath: string | null;
   cellId: string;
   worktreeError: unknown;
-  logger: import("../logger").LoggerService;
+  logger: Logger;
 };
 
-const fallbackWorkspaceRemoval = ({
+const fallbackWorkspaceRemoval = async ({
   cellWorkspacePath,
   cellId,
   worktreeError,
   logger,
-}: FallbackArgs) => {
+}: FallbackArgs): Promise<void> => {
   if (!cellWorkspacePath?.trim()) {
-    return logWarning(
-      logger,
-      "Worktree removal failed with no workspace path",
-      {
-        cellId,
-        error: formatError(worktreeError),
-      }
-    );
+    logWarning(logger, "Worktree removal failed with no workspace path", {
+      cellId,
+      error: formatError(worktreeError),
+    });
+    return;
   }
 
-  return Effect.tryPromise<unknown, WorkspaceRemovalError>({
-    try: () => rm(cellWorkspacePath, { recursive: true, force: true }),
-    catch: (cause) =>
-      makeWorkspaceRemovalError("Failed to remove workspace directory", cause),
-  }).pipe(
-    Effect.tap(() =>
-      logger.debug("Removed workspace directory after git cleanup failure", {
-        cellId,
-        workspacePath: cellWorkspacePath,
-      })
-    ),
-    Effect.catchAll((fsError) =>
-      logWarning(logger, "Failed to remove workspace directory", {
-        cellId,
-        workspacePath: cellWorkspacePath,
-        worktreeError: formatError(worktreeError),
-        error: formatError(fsError),
-      })
-    ),
-    Effect.map(() => ({}))
-  );
+  try {
+    await rm(cellWorkspacePath, { recursive: true, force: true });
+    logger.debug("Removed workspace directory after git cleanup failure", {
+      cellId,
+      workspacePath: cellWorkspacePath,
+    });
+  } catch (fsError) {
+    logWarning(logger, "Failed to remove workspace directory", {
+      cellId,
+      workspacePath: cellWorkspacePath,
+      worktreeError: formatError(worktreeError),
+      error: formatError(fsError),
+    });
+  }
 };
 
 const logWarning = (
-  logger: import("../logger").LoggerService,
+  logger: Logger,
   message: string,
   context?: Record<string, unknown>
 ) => logger.warn(message, context);

@@ -1,8 +1,7 @@
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { eq } from "drizzle-orm";
-import { Context, Effect, Layer } from "effect";
-import { DatabaseService } from "../db";
+import { db } from "../db";
 import type { CellService } from "../schema/services";
 import { cellServices } from "../schema/services";
 
@@ -15,7 +14,7 @@ type PortManagerDeps = {
 
 const FORCE_KILL_DELAY_MS = 250;
 
-export function createPortManager({ db, now }: PortManagerDeps) {
+export function createPortManager({ db: database, now }: PortManagerDeps) {
   const servicePortMap = new Map<string, number>();
   const reservedPorts = new Set<number>();
 
@@ -48,7 +47,7 @@ export function createPortManager({ db, now }: PortManagerDeps) {
     const port = await findFreePort();
     rememberSpecificPort(service.id, port);
 
-    await db
+    await database
       .update(cellServices)
       .set({ port, updatedAt: now() })
       .where(eq(cellServices.id, service.id));
@@ -154,56 +153,16 @@ async function terminatePid(pid: number): Promise<void> {
   }
 }
 
-type PortManagerError = {
-  readonly _tag: "PortManagerError";
-  readonly cause: unknown;
+export type PortManagerService = {
+  readonly ensureServicePort: (service: CellService) => Promise<number>;
+  readonly rememberSpecificPort: (serviceId: string, port: number) => void;
+  readonly releasePortFor: (serviceId: string) => void;
+  readonly findFreePort: () => Promise<number>;
 };
 
-const makePortManagerError = (cause: unknown): PortManagerError => ({
-  _tag: "PortManagerError",
-  cause,
+export const portManager: PortManagerService = createPortManager({
+  db,
+  now: () => new Date(),
 });
 
-export type PortManagerService = {
-  readonly ensureServicePort: (
-    service: CellService
-  ) => Effect.Effect<number, PortManagerError>;
-  readonly rememberSpecificPort: (
-    serviceId: string,
-    port: number
-  ) => Effect.Effect<void>;
-  readonly releasePortFor: (serviceId: string) => Effect.Effect<void>;
-  readonly findFreePort: () => Effect.Effect<number, PortManagerError>;
-};
-
-export const PortManagerService = Context.GenericTag<PortManagerService>(
-  "@hive/server/PortManagerService"
-);
-
-export const PortManagerLayer = Layer.effect(
-  PortManagerService,
-  Effect.gen(function* () {
-    const { db } = yield* DatabaseService;
-    const manager = createPortManager({ db, now: () => new Date() });
-    return {
-      ensureServicePort: (service) =>
-        Effect.tryPromise({
-          try: () => manager.ensureServicePort(service),
-          catch: (cause) => makePortManagerError(cause),
-        }),
-      rememberSpecificPort: (serviceId, port) =>
-        Effect.sync(() => {
-          manager.rememberSpecificPort(serviceId, port);
-        }),
-      releasePortFor: (serviceId) =>
-        Effect.sync(() => {
-          manager.releasePortFor(serviceId);
-        }),
-      findFreePort: () =>
-        Effect.tryPromise({
-          try: () => manager.findFreePort(),
-          catch: (cause) => makePortManagerError(cause),
-        }),
-    } satisfies PortManagerService;
-  })
-);
+export const PortManagerService = portManager;

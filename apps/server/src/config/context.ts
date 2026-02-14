@@ -1,13 +1,6 @@
 import { resolve as resolvePath } from "node:path";
-
-import { Context, Effect, Layer } from "effect";
-
-import {
-  getWorkspaceRegistryEffect,
-  type WorkspaceRegistry,
-  type WorkspaceRegistryError,
-  WorkspaceRegistryLayer,
-} from "../workspaces/registry";
+import type { WorkspaceRegistryError } from "../workspaces/registry";
+import { getWorkspaceRegistry } from "../workspaces/registry";
 import { hasConfigFile } from "./files";
 import { loadConfig } from "./loader";
 import type { HiveConfig } from "./schema";
@@ -107,44 +100,32 @@ const makeHiveConfigWorkspaceError = (
 export type HiveConfigService = {
   readonly workspaceRoot: string;
   readonly resolve: () => string;
-  readonly load: (
-    workspaceRoot?: string
-  ) => Effect.Effect<HiveConfig, HiveConfigError>;
-  readonly clear: (workspaceRoot?: string) => Effect.Effect<void>;
+  readonly load: (workspaceRoot?: string) => Promise<HiveConfig>;
+  readonly clear: (workspaceRoot?: string) => void;
 };
 
-export const HiveConfigService = Context.GenericTag<HiveConfigService>(
-  "@hive/server/HiveConfigService"
-);
+const resolvedAtStartup = resolveWorkspaceRoot();
 
-export const HiveConfigLayer = Layer.effect(
-  HiveConfigService,
-  Effect.gen(function* () {
-    const resolvedAtStartup = resolveWorkspaceRoot();
+export const hiveConfigService: HiveConfigService = {
+  workspaceRoot: resolvedAtStartup,
+  resolve: () => resolveWorkspaceRoot(),
+  load: async (workspaceRoot?: string) => {
+    const resolvedRoot = workspaceRoot ?? resolvedAtStartup;
+    try {
+      return await loadHiveConfigCached(resolvedRoot);
+    } catch (cause) {
+      throw makeHiveConfigError(resolvedRoot, cause);
+    }
+  },
+  clear: (workspaceRoot?: string) => {
+    clearHiveConfigCache(workspaceRoot ?? resolvedAtStartup);
+  },
+};
 
-    const load = (workspaceRoot?: string) =>
-      Effect.tryPromise({
-        try: () => loadHiveConfigCached(workspaceRoot ?? resolvedAtStartup),
-        catch: (cause) =>
-          makeHiveConfigError(workspaceRoot ?? resolvedAtStartup, cause),
-      });
-
-    const clear = (workspaceRoot?: string) =>
-      Effect.sync(() => {
-        clearHiveConfigCache(workspaceRoot ?? resolvedAtStartup);
-      });
-
-    return {
-      workspaceRoot: resolvedAtStartup,
-      resolve: () => resolveWorkspaceRoot(),
-      load,
-      clear,
-    } satisfies HiveConfigService;
-  })
-);
+export const HiveConfigService = hiveConfigService;
 
 const selectWorkspaceForConfig = (
-  registry: WorkspaceRegistry,
+  registry: Awaited<ReturnType<typeof getWorkspaceRegistry>>,
   workspaceId?: string
 ) => {
   if (workspaceId) {
@@ -158,29 +139,14 @@ const selectWorkspaceForConfig = (
   return null;
 };
 
-export const loadHiveConfigEffect = (workspaceRoot?: string) =>
-  Effect.flatMap(HiveConfigService, (service) => service.load(workspaceRoot));
+export const loadHiveConfig = (workspaceRoot?: string) =>
+  hiveConfigService.load(workspaceRoot);
 
-export const loadWorkspaceHiveConfigEffect = (workspaceId?: string) =>
-  Effect.gen(function* () {
-    const registry = yield* getWorkspaceRegistryEffect;
-    const workspace = selectWorkspaceForConfig(registry, workspaceId);
-
-    if (!workspace) {
-      return yield* Effect.fail(makeHiveConfigWorkspaceError(workspaceId));
-    }
-
-    return yield* loadHiveConfigEffect(workspace.path);
-  });
-
-export const loadHiveConfig = (
-  workspaceRoot?: string
-): Effect.Effect<HiveConfig, HiveConfigError> =>
-  Effect.provide(HiveConfigLayer)(loadHiveConfigEffect(workspaceRoot));
-
-export const loadWorkspaceHiveConfig = (
-  workspaceId?: string
-): Effect.Effect<HiveConfig, HiveConfigResolutionError> =>
-  Effect.provide(Layer.mergeAll(HiveConfigLayer, WorkspaceRegistryLayer))(
-    loadWorkspaceHiveConfigEffect(workspaceId)
-  );
+export const loadWorkspaceHiveConfig = async (workspaceId?: string) => {
+  const registry = await getWorkspaceRegistry();
+  const workspace = selectWorkspaceForConfig(registry, workspaceId);
+  if (!workspace) {
+    throw makeHiveConfigWorkspaceError(workspaceId);
+  }
+  return await loadHiveConfig(workspace.path);
+};

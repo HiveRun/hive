@@ -93,7 +93,7 @@ CREATE TABLE cells (
 interface WorktreeManager {
   createWorktree(
     cellId: string
-  ): Effect.Effect<WorktreeLocation, WorktreeManagerError> // Effect-first API with structured errors
+  ): Promise<WorktreeLocation> // Promise-based API with structured error payloads
   listWorktrees(): Promise<WorktreeInfo[]>
   pruneWorktree(cellId: string): Promise<void>
   cleanupWorktree(cellId: string): Promise<void>
@@ -107,7 +107,7 @@ interface CellService {
 // Status tracking not needed until PR #4
 ```
 
-> **Implementation update (2025-12-04)**: The production `WorktreeManager` now returns `Effect` values. Git/filesystem failures surface as `WorktreeManagerError` so routes can handle them via `Effect.match` / `runServerEffect` without Result helpers.
+> **Implementation update (2026-02-14)**: The production `WorktreeManager` is Promise-based. Git/filesystem failures surface as structured `WorktreeManagerError` payloads and are handled directly in route/CLI handlers.
 
 #### Database Schema Updates
 ```sql

@@ -3,13 +3,12 @@ import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
-import { Context, Effect, Layer } from "effect";
 import { glob } from "tinyglobby";
 import {
   generateHiveToolConfig,
   HIVE_TOOL_SOURCE,
 } from "../agents/hive-opencode-tool";
-import { HiveConfigService } from "../config/context";
+import { hiveConfigService } from "../config/context";
 import type { HiveConfig, Template } from "../config/schema";
 
 /**
@@ -154,9 +153,24 @@ export type WorktreeManager = {
   createWorktree(
     cellId: string,
     options?: WorktreeCreateOptions
-  ): Effect.Effect<WorktreeLocation, WorktreeManagerError>;
-  removeWorktree(cellId: string): Effect.Effect<void, WorktreeManagerError>;
+  ): Promise<WorktreeLocation>;
+  removeWorktree(cellId: string): Promise<void>;
 };
+
+export type AsyncWorktreeManager = {
+  createWorktree(
+    cellId: string,
+    options?: WorktreeCreateOptions
+  ): Promise<WorktreeLocation>;
+  removeWorktree(cellId: string): Promise<void>;
+};
+
+export const toAsyncWorktreeManager = (
+  manager: WorktreeManager
+): AsyncWorktreeManager => ({
+  createWorktree: (cellId, options) => manager.createWorktree(cellId, options),
+  removeWorktree: (cellId) => manager.removeWorktree(cellId),
+});
 
 const DEFAULT_INCLUDE_PATTERNS: string[] = [];
 
@@ -369,51 +383,46 @@ export function createWorktreeManager(
     return git("rev-parse", "--abbrev-ref", "HEAD");
   }
 
-  const handleExistingWorktree = (
+  const handleExistingWorktree = async (
     worktreePath: string,
     force: boolean
-  ): Effect.Effect<void, WorktreeManagerError> =>
-    Effect.gen(function* () {
-      if (!existsSync(worktreePath)) {
-        return;
-      }
+  ): Promise<void> => {
+    if (!existsSync(worktreePath)) {
+      return;
+    }
 
-      if (!force) {
-        return yield* Effect.fail(
-          toWorktreeError(
-            {
-              message: `Worktree already exists at ${worktreePath}`,
-              kind: "conflict",
-              context: { worktreePath },
-            },
-            undefined
-          )
-        );
-      }
-
-      return yield* Effect.tryPromise({
-        try: async () => {
-          try {
-            git("worktree", "remove", "--force", worktreePath);
-          } catch (error) {
-            logWarn(
-              "Git worktree remove failed, falling back to filesystem removal",
-              error
-            );
-            await rm(worktreePath, { recursive: true, force: true });
-          }
+    if (!force) {
+      throw toWorktreeError(
+        {
+          message: `Worktree already exists at ${worktreePath}`,
+          kind: "conflict",
+          context: { worktreePath },
         },
-        catch: (cause) =>
-          toWorktreeError(
-            {
-              message: "Failed to clean up existing worktree",
-              kind: "cleanup",
-              context: { worktreePath },
-            },
-            cause
-          ),
-      });
-    });
+        undefined
+      );
+    }
+
+    try {
+      try {
+        git("worktree", "remove", "--force", worktreePath);
+      } catch (error) {
+        logWarn(
+          "Git worktree remove failed, falling back to filesystem removal",
+          error
+        );
+        await rm(worktreePath, { recursive: true, force: true });
+      }
+    } catch (cause) {
+      throw toWorktreeError(
+        {
+          message: "Failed to clean up existing worktree",
+          kind: "cleanup",
+          context: { worktreePath },
+        },
+        cause
+      );
+    }
+  };
 
   function ensureBranchExists(branchName: string): string {
     try {
@@ -476,119 +485,106 @@ export function createWorktreeManager(
   }
 
   return {
-    createWorktree(
+    async createWorktree(
       cellId: string,
       options: WorktreeCreateOptions = {}
-    ): Effect.Effect<WorktreeLocation, WorktreeManagerError> {
+    ): Promise<WorktreeLocation> {
       const worktreePath = join(cellsDir, cellId);
 
-      return Effect.gen(function* () {
-        yield* Effect.tryPromise({
-          try: () => ensureCellsDir(),
-          catch: (cause) =>
-            toWorktreeError(
-              {
-                message: "Failed to prepare cells directory",
-                kind: "filesystem",
-                context: { worktreePath },
-              },
-              cause
-            ),
-        });
+      try {
+        await ensureCellsDir();
+      } catch (cause) {
+        throw toWorktreeError(
+          {
+            message: "Failed to prepare cells directory",
+            kind: "filesystem",
+            context: { worktreePath },
+          },
+          cause
+        );
+      }
 
-        yield* handleExistingWorktree(worktreePath, options.force ?? false);
+      await handleExistingWorktree(worktreePath, options.force ?? false);
 
-        const branch = ensureBranchExists(`cell-${cellId}`);
+      const branch = ensureBranchExists(`cell-${cellId}`);
 
+      try {
+        git("worktree", "add", worktreePath, branch);
+
+        const includePatterns = getIncludePatterns(options.templateId);
+        const ignorePatterns = getIgnorePatterns(options.templateId);
+        await copyIncludedFiles(worktreePath, includePatterns, ignorePatterns);
+        await ensureHiveToolAndConfig(worktreePath, cellId);
+
+        const baseCommit = git("rev-parse", branch);
+        return {
+          path: worktreePath,
+          branch,
+          baseCommit,
+        } satisfies WorktreeLocation;
+      } catch (cause) {
         try {
-          git("worktree", "add", worktreePath, branch);
-
-          const includePatterns = getIncludePatterns(options.templateId);
-          const ignorePatterns = getIgnorePatterns(options.templateId);
-          yield* Effect.promise(() =>
-            copyIncludedFiles(worktreePath, includePatterns, ignorePatterns)
-          );
-          yield* Effect.promise(() =>
-            ensureHiveToolAndConfig(worktreePath, cellId)
-          );
-
-          const baseCommit = git("rev-parse", branch);
-          return {
-            path: worktreePath,
-            branch,
-            baseCommit,
-          } satisfies WorktreeLocation;
-        } catch (cause) {
-          try {
-            if (existsSync(worktreePath)) {
-              git("worktree", "remove", "--force", worktreePath);
-            }
-          } catch (cleanupError: unknown) {
-            logWarn("Failed to cleanup worktree after failure", cleanupError);
+          if (existsSync(worktreePath)) {
+            git("worktree", "remove", "--force", worktreePath);
           }
-
-          return yield* Effect.fail(
-            toWorktreeError(
-              {
-                message: "Failed to create git worktree",
-                kind: "git",
-                context: {
-                  cellId,
-                  worktreePath,
-                  templateId: options.templateId,
-                },
-              },
-              cause
-            )
-          );
+        } catch (cleanupError: unknown) {
+          logWarn("Failed to cleanup worktree after failure", cleanupError);
         }
-      });
+
+        throw toWorktreeError(
+          {
+            message: "Failed to create git worktree",
+            kind: "git",
+            context: {
+              cellId,
+              worktreePath,
+              templateId: options.templateId,
+            },
+          },
+          cause
+        );
+      }
     },
 
-    removeWorktree(cellId: string): Effect.Effect<void, WorktreeManagerError> {
+    removeWorktree(cellId: string): Promise<void> {
       const worktreeInfo = findWorktreeInfo(cellId);
 
       if (!worktreeInfo) {
-        return Effect.fail(
-          toWorktreeError(
-            {
-              message: `Worktree not found for cell ${cellId}`,
-              kind: "not-found",
-              context: { cellId },
-            },
-            undefined
-          )
+        throw toWorktreeError(
+          {
+            message: `Worktree not found for cell ${cellId}`,
+            kind: "not-found",
+            context: { cellId },
+          },
+          undefined
         );
       }
 
       if (worktreeInfo.isMain) {
-        return Effect.fail(
-          toWorktreeError(
-            {
-              message: "Cannot remove the main worktree",
-              kind: "validation",
-              context: { cellId },
-            },
-            undefined
-          )
+        throw toWorktreeError(
+          {
+            message: "Cannot remove the main worktree",
+            kind: "validation",
+            context: { cellId },
+          },
+          undefined
         );
       }
 
-      return Effect.try({
-        try: () => {
-          git("worktree", "remove", "--force", worktreeInfo.path);
-          git("worktree", "prune");
-        },
-        catch: (cause) =>
-          toWorktreeError(
-            {
-              message: "Failed to remove git worktree",
-              kind: "cleanup",
-              context: { cellId, worktreePath: worktreeInfo.path },
-            },
-            cause
-          ),
-      });
+      try {
+        git("worktree", "remove", "--force", worktreeInfo.path);
+        git("worktree", "prune");
+        return Promise.resolve();
+      } catch (cause) {
+        throw toWorktreeError(
+          {
+            message: "Failed to remove git worktree",
+            kind: "cleanup",
+            context: { cellId, worktreePath: worktreeInfo.path },
+          },
+          cause
+        );
+      }
     },
   };
 }
@@ -608,86 +604,72 @@ const makeWorktreeManagerInitError = (
   cause,
 });
 
-const toManagerEffect = (
+const toManagerPromise = (
   workspacePath: string,
   config?: HiveConfig
-): Effect.Effect<WorktreeManager, WorktreeManagerInitError> =>
-  Effect.try({
-    try: () => createWorktreeManager(workspacePath, config),
-    catch: (cause) => makeWorktreeManagerInitError(workspacePath, cause),
-  });
+): Promise<WorktreeManager> => {
+  try {
+    return Promise.resolve(createWorktreeManager(workspacePath, config));
+  } catch (cause) {
+    return Promise.reject(makeWorktreeManagerInitError(workspacePath, cause));
+  }
+};
 
 export type WorktreeManagerService = {
   readonly createManager: (
     workspacePath: string,
     config?: HiveConfig
-  ) => Effect.Effect<WorktreeManager, WorktreeManagerInitError>;
+  ) => Promise<WorktreeManager>;
   readonly createWorktree: (
     args: {
       workspacePath: string;
       cellId: string;
     } & WorktreeCreateOptions
-  ) => Effect.Effect<
-    WorktreeLocation,
-    WorktreeManagerError | WorktreeManagerInitError
-  >;
+  ) => Promise<WorktreeLocation>;
   readonly removeWorktree: (
     workspacePath: string,
     cellId: string
-  ) => Effect.Effect<void, WorktreeManagerError | WorktreeManagerInitError>;
+  ) => Promise<void>;
 };
 
-export const WorktreeManagerServiceTag =
-  Context.GenericTag<WorktreeManagerService>(
-    "@hive/server/WorktreeManagerService"
-  );
-
 type HiveConfigServiceInstance = {
-  load: (workspaceRoot?: string) => Effect.Effect<HiveConfig, unknown>;
+  load: (workspaceRoot?: string) => Promise<HiveConfig>;
 };
 
 const makeWorktreeManagerService = (
-  hiveConfigService: HiveConfigServiceInstance
+  configService: HiveConfigServiceInstance
 ): WorktreeManagerService => {
-  const loadConfig = (workspacePath: string) =>
-    hiveConfigService
-      .load(workspacePath)
-      .pipe(
-        Effect.mapError((cause) =>
-          makeWorktreeManagerInitError(workspacePath, cause)
-        )
-      );
+  const loadConfig = async (workspacePath: string) => {
+    try {
+      return await configService.load(workspacePath);
+    } catch (cause) {
+      throw makeWorktreeManagerInitError(workspacePath, cause);
+    }
+  };
 
   const managerFor = (
     workspacePath: string,
     config?: HiveConfig
-  ): Effect.Effect<WorktreeManager, WorktreeManagerInitError> =>
+  ): Promise<WorktreeManager> =>
     config
-      ? toManagerEffect(workspacePath, config)
-      : Effect.flatMap(loadConfig(workspacePath), (loadedConfig) =>
-          toManagerEffect(workspacePath, loadedConfig)
+      ? toManagerPromise(workspacePath, config)
+      : loadConfig(workspacePath).then((loadedConfig) =>
+          toManagerPromise(workspacePath, loadedConfig)
         );
 
   return {
     createManager: managerFor,
-    createWorktree: (args) =>
-      Effect.gen(function* () {
-        const { workspacePath, cellId, ...options } = args;
-        const manager = yield* managerFor(workspacePath);
-        return yield* manager.createWorktree(cellId, options);
-      }),
-    removeWorktree: (workspacePath, cellId) =>
-      Effect.gen(function* () {
-        const manager = yield* managerFor(workspacePath);
-        return yield* manager.removeWorktree(cellId);
-      }),
+    createWorktree: async (args) => {
+      const { workspacePath, cellId, ...options } = args;
+      const manager = await managerFor(workspacePath);
+      return await manager.createWorktree(cellId, options);
+    },
+    removeWorktree: async (workspacePath, cellId) => {
+      const manager = await managerFor(workspacePath);
+      await manager.removeWorktree(cellId);
+    },
   };
 };
 
-export const WorktreeManagerLayer = Layer.effect(
-  WorktreeManagerServiceTag,
-  Effect.gen(function* () {
-    const hiveConfigService = yield* HiveConfigService;
-    return makeWorktreeManagerService(hiveConfigService);
-  })
-);
+export const worktreeManagerService =
+  makeWorktreeManagerService(hiveConfigService);

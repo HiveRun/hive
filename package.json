@@ -59,7 +59,7 @@
     "db:studio": "turbo -F @hive/server db:studio",
     "db:generate": "turbo -F @hive/server db:generate",
     "db:migrate": "turbo -F @hive/server db:migrate",
-    "prepare": "husky && effect-language-service patch"
+    "prepare": "husky"
   },
   "dependencies": {
     "dotenv": "^17.2.2",
@@ -69,7 +69,6 @@
     "@biomejs/biome": "2.3.0",
     "@commitlint/cli": "^20.1.0",
     "@commitlint/config-conventional": "^20.0.0",
-    "@effect/language-service": "^0.57.1",
     "@tauri-apps/api": "^2.9.0",
     "@tauri-apps/cli": "^2.9.4",
     "@types/bun": "^1.2.6",

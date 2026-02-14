@@ -1,7 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-
 import type {
   AssistantMessage,
   Event,
@@ -11,10 +10,9 @@ import type {
   Session,
 } from "@opencode-ai/sdk";
 import { eq, inArray } from "drizzle-orm";
-import { Context, Effect, Layer } from "effect";
-import { type HiveConfigError, HiveConfigService } from "../config/context";
+import { loadHiveConfig } from "../config/context";
 import type { HiveConfig, Template } from "../config/schema";
-import { DatabaseService, db } from "../db";
+import { db } from "../db";
 import { type Cell, cells } from "../schema/cells";
 import { type CellService, cellServices } from "../schema/services";
 import { publishAgentEvent } from "./events";
@@ -304,9 +302,7 @@ type ProviderCredentialsStore = Record<string, ProviderAuthEntry>;
 
 type AgentRuntimeDependencies = {
   db: typeof db;
-  loadHiveConfig: (
-    workspaceRoot?: string
-  ) => Effect.Effect<HiveConfig, HiveConfigError>;
+  loadHiveConfig: (workspaceRoot?: string) => Promise<HiveConfig>;
   loadOpencodeConfig: typeof loadOpencodeConfig;
   publishAgentEvent: typeof publishAgentEvent;
   acquireOpencodeClient: () => Promise<OpencodeClient>;
@@ -326,23 +322,16 @@ export const resetAgentRuntimeDependencies = () => {
   }
 };
 
-const getAgentRuntimeDependencies = (): AgentRuntimeDependencies => {
-  if (!agentRuntimeOverrides.loadHiveConfig) {
-    throw new Error("Agent runtime loadHiveConfig not configured");
-  }
-
-  return {
-    db: agentRuntimeOverrides.db ?? db,
-    loadHiveConfig: agentRuntimeOverrides.loadHiveConfig,
-    loadOpencodeConfig:
-      agentRuntimeOverrides.loadOpencodeConfig ?? loadOpencodeConfig,
-    publishAgentEvent:
-      agentRuntimeOverrides.publishAgentEvent ?? publishAgentEvent,
-    acquireOpencodeClient:
-      agentRuntimeOverrides.acquireOpencodeClient ??
-      acquireSharedOpencodeClient,
-  };
-};
+const getAgentRuntimeDependencies = (): AgentRuntimeDependencies => ({
+  db: agentRuntimeOverrides.db ?? db,
+  loadHiveConfig: agentRuntimeOverrides.loadHiveConfig ?? loadHiveConfig,
+  loadOpencodeConfig:
+    agentRuntimeOverrides.loadOpencodeConfig ?? loadOpencodeConfig,
+  publishAgentEvent:
+    agentRuntimeOverrides.publishAgentEvent ?? publishAgentEvent,
+  acquireOpencodeClient:
+    agentRuntimeOverrides.acquireOpencodeClient ?? acquireSharedOpencodeClient,
+});
 
 async function readProviderCredentials(): Promise<ProviderCredentialsStore> {
   try {
@@ -935,60 +924,52 @@ const makeAgentRuntimeError = (cause: unknown): AgentRuntimeError => ({
 
 const wrapAgentRuntime =
   <Args extends unknown[], Result>(fn: (...args: Args) => Promise<Result>) =>
-  (...args: Args): Effect.Effect<Result, AgentRuntimeError> =>
-    Effect.tryPromise({
-      try: () => fn(...args),
-      catch: (cause) => makeAgentRuntimeError(cause),
-    });
+  async (...args: Args): Promise<Result> => {
+    try {
+      return await fn(...args);
+    } catch (cause) {
+      throw makeAgentRuntimeError(cause);
+    }
+  };
 
 export type AgentRuntimeService = {
   readonly ensureAgentSession: (
     cellId: string,
     options?: { force?: boolean; modelId?: string; providerId?: string }
-  ) => Effect.Effect<AgentSessionRecord, AgentRuntimeError>;
+  ) => Promise<AgentSessionRecord>;
   readonly fetchAgentSession: (
     sessionId: string
-  ) => Effect.Effect<AgentSessionRecord | null, AgentRuntimeError>;
+  ) => Promise<AgentSessionRecord | null>;
   readonly fetchAgentSessionForCell: (
     cellId: string
-  ) => Effect.Effect<AgentSessionRecord | null, AgentRuntimeError>;
+  ) => Promise<AgentSessionRecord | null>;
   readonly fetchAgentMessages: (
     sessionId: string
-  ) => Effect.Effect<AgentMessageRecord[], AgentRuntimeError>;
+  ) => Promise<AgentMessageRecord[]>;
   readonly fetchCompactionStats: (
     sessionId: string
-  ) => Effect.Effect<RuntimeCompactionState, AgentRuntimeError>;
+  ) => Promise<RuntimeCompactionState>;
   readonly updateAgentSessionModel: (
     sessionId: string,
     model: { modelId: string; providerId?: string }
-  ) => Effect.Effect<AgentSessionRecord, AgentRuntimeError>;
+  ) => Promise<AgentSessionRecord>;
   readonly sendAgentMessage: (
     sessionId: string,
     content: string
-  ) => Effect.Effect<void, AgentRuntimeError>;
-  readonly interruptAgentSession: (
-    sessionId: string
-  ) => Effect.Effect<void, AgentRuntimeError>;
-  readonly stopAgentSession: (
-    sessionId: string
-  ) => Effect.Effect<void, AgentRuntimeError>;
-  readonly closeAgentSession: (
-    cellId: string
-  ) => Effect.Effect<void, AgentRuntimeError>;
-  readonly closeAllAgentSessions: Effect.Effect<void, AgentRuntimeError>;
+  ) => Promise<void>;
+  readonly interruptAgentSession: (sessionId: string) => Promise<void>;
+  readonly stopAgentSession: (sessionId: string) => Promise<void>;
+  readonly closeAgentSession: (cellId: string) => Promise<void>;
+  readonly closeAllAgentSessions: () => Promise<void>;
   readonly respondAgentPermission: (
     sessionId: string,
     permissionId: string,
     response: "once" | "always" | "reject"
-  ) => Effect.Effect<void, AgentRuntimeError>;
+  ) => Promise<void>;
   readonly fetchProviderCatalogForWorkspace: (
     workspaceRootPath: string
-  ) => Effect.Effect<ProviderCatalogResponse, AgentRuntimeError>;
+  ) => Promise<ProviderCatalogResponse>;
 };
-
-export const AgentRuntimeServiceTag = Context.GenericTag<AgentRuntimeService>(
-  "@hive/server/AgentRuntimeService"
-);
 
 const makeAgentRuntimeService = (): AgentRuntimeService => ({
   ensureAgentSession: (cellId, options) =>
@@ -1010,27 +991,14 @@ const makeAgentRuntimeService = (): AgentRuntimeService => ({
   stopAgentSession: (sessionId) =>
     wrapAgentRuntime(stopAgentSession)(sessionId),
   closeAgentSession: (cellId) => wrapAgentRuntime(closeAgentSession)(cellId),
-  closeAllAgentSessions: wrapAgentRuntime(closeAllAgentSessions)(),
+  closeAllAgentSessions: () => wrapAgentRuntime(closeAllAgentSessions)(),
   respondAgentPermission: (sessionId, permissionId, response) =>
     wrapAgentRuntime(respondAgentPermission)(sessionId, permissionId, response),
   fetchProviderCatalogForWorkspace: (workspaceRootPath) =>
     wrapAgentRuntime(fetchProviderCatalogForWorkspace)(workspaceRootPath),
 });
 
-export const AgentRuntimeLayer = Layer.effect(
-  AgentRuntimeServiceTag,
-  Effect.gen(function* () {
-    const { db: runtimeDb } = yield* DatabaseService;
-    const hiveConfigService = yield* HiveConfigService;
-
-    setAgentRuntimeDependencies({
-      db: runtimeDb,
-      loadHiveConfig: (workspaceRoot?: string) =>
-        hiveConfigService.load(workspaceRoot),
-    });
-    return makeAgentRuntimeService();
-  })
-);
+export const agentRuntimeService = makeAgentRuntimeService();
 
 export async function respondAgentPermission(
   sessionId: string,
@@ -1070,12 +1038,6 @@ export async function ensureRuntimeForSession(
   return runtime;
 }
 
-const isEffectValue = (value: unknown): value is Effect.Effect<unknown> =>
-  typeof value === "object" &&
-  value !== null &&
-  "pipe" in (value as Record<string, unknown>) &&
-  typeof (value as { pipe?: unknown }).pipe === "function";
-
 function getExistingRuntimeForCell(
   cellId: string,
   options?: { force?: boolean }
@@ -1100,14 +1062,7 @@ function loadHiveConfigForWorkspace(
   deps: AgentRuntimeDependencies,
   workspaceRootPath: string
 ): Promise<HiveConfig> {
-  const hiveConfigResult = deps.loadHiveConfig(workspaceRootPath);
-  if (isEffectValue(hiveConfigResult)) {
-    return Effect.runPromise(hiveConfigResult as Effect.Effect<HiveConfig>);
-  }
-
-  return Effect.runPromise(
-    Effect.promise(() => hiveConfigResult as unknown as Promise<HiveConfig>)
-  );
+  return deps.loadHiveConfig(workspaceRootPath);
 }
 
 function resolveTemplateForCell(hiveConfig: HiveConfig, templateId: string) {

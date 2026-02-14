@@ -3,13 +3,11 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
-import { AgentRuntimeServiceTag } from "./agents/service";
+import { agentRuntimeService } from "./agents/service";
 import { DatabaseService } from "./db";
 import { LoggerService } from "./logger";
-import { runServerEffect } from "./runtime";
-import { WorktreeManagerServiceTag } from "./worktree/manager";
+import { worktreeManagerService } from "./worktree/manager";
 
 const originalHiveHome = process.env.HIVE_HOME;
 const originalWorkspaceRoot = process.env.HIVE_WORKSPACE_ROOT;
@@ -25,7 +23,7 @@ const gitEnv = {
   GIT_COMMITTER_EMAIL: "hive-test@hive.local",
 };
 
-describe("serverLayer wiring", () => {
+describe("runtime service wiring", () => {
   afterEach(async () => {
     if (tempWorkspaceRoot) {
       await rm(tempWorkspaceRoot, { recursive: true, force: true });
@@ -39,16 +37,13 @@ describe("serverLayer wiring", () => {
     process.env.HIVE_WORKSPACE_ROOT = originalWorkspaceRoot;
   });
 
-  test("provides core service tags", async () => {
-    const resolved = await runServerEffect(
-      Effect.gen(function* () {
-        const worktree = yield* WorktreeManagerServiceTag;
-        const agent = yield* AgentRuntimeServiceTag;
-        const dbService = yield* DatabaseService;
-        const logger = yield* LoggerService;
-        return { worktree, agent, dbService, logger } as const;
-      })
-    );
+  test("provides core services", () => {
+    const resolved = {
+      worktree: worktreeManagerService,
+      agent: agentRuntimeService,
+      dbService: DatabaseService,
+      logger: LoggerService,
+    } as const;
 
     expect(typeof resolved.worktree.createManager).toBe("function");
     expect(typeof resolved.agent.ensureAgentSession).toBe("function");
@@ -56,9 +51,9 @@ describe("serverLayer wiring", () => {
     expect(typeof resolved.logger.info).toBe("function");
   });
 
-  test("creates and removes worktrees via WorktreeManagerService effect", async () => {
-    tempWorkspaceRoot = await mkdtemp(join(tmpdir(), "worktree-effect-"));
-    tempHiveHome = await mkdtemp(join(tmpdir(), "hive-home-effect-"));
+  test("creates and removes worktrees via WorktreeManagerService", async () => {
+    tempWorkspaceRoot = await mkdtemp(join(tmpdir(), "worktree-service-"));
+    tempHiveHome = await mkdtemp(join(tmpdir(), "hive-home-service-"));
     process.env.HIVE_WORKSPACE_ROOT = tempWorkspaceRoot;
     process.env.HIVE_HOME = tempHiveHome;
 
@@ -86,26 +81,16 @@ describe("serverLayer wiring", () => {
       throw new Error("Temporary workspace root not initialized");
     }
 
-    const cellId = "effect-cell";
-    const location = await runServerEffect(
-      Effect.gen(function* () {
-        const worktree = yield* WorktreeManagerServiceTag;
-        return yield* worktree.createWorktree({
-          workspacePath,
-          cellId,
-        });
-      })
-    );
+    const cellId = "service-cell";
+    const location = await worktreeManagerService.createWorktree({
+      workspacePath,
+      cellId,
+    });
 
     expect(location.path).toContain(cellId);
     expect(existsSync(location.path)).toBe(true);
 
-    await runServerEffect(
-      Effect.gen(function* () {
-        const worktree = yield* WorktreeManagerServiceTag;
-        return yield* worktree.removeWorktree(workspacePath, cellId);
-      })
-    );
+    await worktreeManagerService.removeWorktree(workspacePath, cellId);
 
     expect(existsSync(location.path)).toBe(false);
   });

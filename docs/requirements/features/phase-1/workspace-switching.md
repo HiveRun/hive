@@ -82,7 +82,7 @@ Allow users to easily manage multiple workspaces and switch between them within 
 - Conflict resolution for duplicate entries
 
 ### Runtime Integration
-- Workspace context, plugins, and removal flows rely on `WorktreeManagerService` via `runServerEffect` so worktree lifecycle stays inside Effect layers.
+- Workspace context, plugins, and removal flows use shared runtime services so worktree lifecycle logic stays centralized and testable.
 
 ## Integration Points
 - **All Features**: Workspace context affects all feature behavior

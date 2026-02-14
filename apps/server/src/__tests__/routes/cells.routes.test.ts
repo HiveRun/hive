@@ -12,7 +12,6 @@
  * We test for route matching by checking that we get our handler's response,
  * not Elysia's default "NOT_FOUND".
  */
-import { Effect } from "effect";
 import { Elysia } from "elysia";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createCellsRoutes } from "../../routes/cells";
@@ -34,35 +33,37 @@ function createMinimalDependencies(): any {
 
   return {
     db: testDb,
-    resolveWorkspaceContext: (() =>
-      Effect.succeed({
-        workspace: workspaceRecord,
-        loadConfig: () =>
-          Effect.succeed({
-            opencode: { defaultProvider: "opencode", defaultModel: "mock" },
-            promptSources: [],
-            templates: {},
-            defaults: {},
-          }),
-        createWorktreeManager: () =>
-          Effect.succeed({
-            createWorktree: () =>
-              Effect.succeed({ path: "/tmp", branch: "b", baseCommit: "c" }),
-            removeWorktree: () => Effect.void,
-          }),
-        createWorktree: () =>
-          Effect.succeed({ path: "/tmp", branch: "b", baseCommit: "c" }),
-        removeWorktree: () => Effect.void,
-      })) as any,
-    ensureAgentSession: () =>
-      Effect.succeed({ id: "session", cellId: TEST_CELL_ID }),
-    closeAgentSession: () => Effect.void,
-    ensureServicesForCell: () => Effect.void,
-    startServiceById: () => Effect.void,
-    startServicesForCell: () => Effect.void,
-    stopServiceById: () => Effect.void,
-    stopServicesForCell: () => Effect.void,
-    sendAgentMessage: () => Effect.void,
+    resolveWorkspaceContext: (async () => ({
+      workspace: workspaceRecord,
+      loadConfig: async () => ({
+        opencode: { defaultProvider: "opencode", defaultModel: "mock" },
+        promptSources: [],
+        templates: {},
+        defaults: {},
+      }),
+      createWorktreeManager: async () => ({
+        createWorktree: async () => ({
+          path: "/tmp",
+          branch: "b",
+          baseCommit: "c",
+        }),
+        removeWorktree: async () => Promise.resolve(),
+      }),
+      createWorktree: async () => ({
+        path: "/tmp",
+        branch: "b",
+        baseCommit: "c",
+      }),
+      removeWorktree: async () => Promise.resolve(),
+    })) as any,
+    ensureAgentSession: async () => ({ id: "session", cellId: TEST_CELL_ID }),
+    closeAgentSession: async () => Promise.resolve(),
+    ensureServicesForCell: async () => Promise.resolve(),
+    startServiceById: async () => Promise.resolve(),
+    startServicesForCell: async () => Promise.resolve(),
+    stopServiceById: async () => Promise.resolve(),
+    stopServicesForCell: async () => Promise.resolve(),
+    sendAgentMessage: async () => Promise.resolve(),
     ensureTerminalSession: () => ({
       sessionId: "terminal-session",
       cellId: TEST_CELL_ID,

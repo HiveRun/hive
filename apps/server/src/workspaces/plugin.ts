@@ -1,10 +1,9 @@
 import { Elysia } from "elysia";
-import { runServerEffect } from "../runtime";
 import type {
   ResolveWorkspaceContext,
   WorkspaceRuntimeContext,
 } from "./context";
-import { resolveWorkspaceContextEffect } from "./context";
+import { resolveWorkspaceContext as resolveWorkspaceContextDefault } from "./context";
 
 const HTTP_STATUS = {
   BAD_REQUEST: 400,
@@ -35,14 +34,16 @@ export type WorkspaceContextFetcher = (
   workspaceId?: string
 ) => Promise<WorkspaceRuntimeContext>;
 
+type WorkspaceContextResolver = ResolveWorkspaceContext;
+
 export function createWorkspaceContextPlugin({
   resolveWorkspaceContext,
 }: {
-  resolveWorkspaceContext?: ResolveWorkspaceContext;
+  resolveWorkspaceContext?: WorkspaceContextResolver;
 } = {}) {
   const resolveContext =
     resolveWorkspaceContext ??
-    ((workspaceId?: string) => resolveWorkspaceContextEffect(workspaceId));
+    ((workspaceId?: string) => resolveWorkspaceContextDefault(workspaceId));
 
   return new Elysia({ name: "workspace-context" })
     .derive(({ body, query, params, request }) => {
@@ -70,15 +71,13 @@ export function createWorkspaceContextPlugin({
         const resolvedId = inferWorkspaceId(workspaceId);
         if (!cachedPromise || cachedFor !== resolvedId) {
           cachedFor = resolvedId ?? null;
-          cachedPromise = runServerEffect(resolveContext(resolvedId)).catch(
-            (error: unknown) => {
-              const message =
-                error instanceof Error
-                  ? error.message
-                  : "Failed to resolve workspace context";
-              throw new WorkspaceContextResolutionError(message);
-            }
-          );
+          cachedPromise = resolveContext(resolvedId).catch((error: unknown) => {
+            const message =
+              error instanceof Error
+                ? error.message
+                : "Failed to resolve workspace context";
+            throw new WorkspaceContextResolutionError(message);
+          });
         }
 
         if (!cachedPromise) {

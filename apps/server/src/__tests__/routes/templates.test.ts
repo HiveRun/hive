@@ -1,22 +1,13 @@
-import { Effect } from "effect";
 import { Elysia } from "elysia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 // biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
 import * as OpencodeConfig from "../../agents/opencode-config";
-import {
-  type HiveConfigError,
-  HiveConfigService,
-  type HiveConfigService as HiveConfigServiceType,
-} from "../../config/context";
+// biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
+import * as Loader from "../../config/loader";
 import type { HiveConfig } from "../../config/schema";
 import { templatesRoutes } from "../../routes/templates";
 // biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
-import * as Runtime from "../../runtime";
-import type { WorkspaceRuntimeContext } from "../../workspaces/context";
-// biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
-import * as WorkspaceContext from "../../workspaces/context";
-import { WorkspaceContextError } from "../../workspaces/context";
-import type { WorktreeManager } from "../../worktree/manager";
+import * as WorkspaceRegistry from "../../workspaces/registry";
 
 const HTTP_OK = 200;
 const HTTP_BAD_REQUEST = 400;
@@ -41,83 +32,34 @@ const baseHiveConfig: HiveConfig = {
   },
 };
 
-let runServerEffectSpy: any;
-let workspaceContextEffectSpy: any;
-let loadOpencodeConfigSpy: any;
-
-const provideHiveConfig = (service: HiveConfigServiceType) =>
-  runServerEffectSpy.mockImplementation(
-    (effect: Parameters<typeof Runtime.runServerEffect>[0]) =>
-      Effect.runPromise(
-        Effect.provideService(effect as any, HiveConfigService, service) as any
-      )
-  );
-
-const createSuccessfulHiveConfigService = (
-  config: HiveConfig
-): HiveConfigServiceType => ({
-  workspaceRoot: workspacePath,
-  resolve: () => workspacePath,
-  load: () => Effect.succeed(config),
-  clear: () => Effect.void,
-});
-
-const createFailingHiveConfigService = (
-  message: string
-): HiveConfigServiceType => ({
-  workspaceRoot: workspacePath,
-  resolve: () => workspacePath,
-  load: () =>
-    Effect.fail<HiveConfigError>({
-      _tag: "HiveConfigError",
-      workspaceRoot: workspacePath,
-      cause: new Error(message),
-    }),
-  clear: () => Effect.void,
-});
-
-const createWorkspaceContext = (
-  path = workspacePath
-): WorkspaceRuntimeContext => {
-  const mockManager: WorktreeManager = {
-    createWorktree: () =>
-      Effect.succeed({
-        path: `${path}/.hive/cells/sample`,
-        branch: "main",
-        baseCommit: "abc",
-      }),
-    removeWorktree: () => Effect.void,
-  };
-
-  return {
-    workspace: {
-      id: "workspace-basic",
-      label: "Workspace",
-      path,
-      addedAt: new Date("2024-01-01T00:00:00Z").toISOString(),
-    },
-    loadConfig: () => Effect.succeed(baseHiveConfig),
-    createWorktreeManager: () => Effect.succeed(mockManager),
-    createWorktree: () =>
-      Effect.succeed({
-        path: `${path}/.hive/cells/sample`,
-        branch: "main",
-        baseCommit: "abc",
-      }),
-    removeWorktree: () => Effect.void,
-  };
+const workspaceRecord: WorkspaceRegistry.WorkspaceRecord = {
+  id: "workspace-basic",
+  label: "Workspace",
+  path: workspacePath,
+  addedAt: new Date("2024-01-01T00:00:00Z").toISOString(),
 };
+
+let getWorkspaceRegistrySpy: any;
+let loadConfigSpy: any;
+let loadOpencodeConfigSpy: any;
 
 const createApp = () => new Elysia().use(templatesRoutes);
 
 describe("templatesRoutes", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    runServerEffectSpy = vi.spyOn(Runtime, "runServerEffect");
-    provideHiveConfig(createSuccessfulHiveConfigService(baseHiveConfig));
-    workspaceContextEffectSpy = vi
-      .spyOn(WorkspaceContext, "resolveWorkspaceContextEffect")
-      .mockReturnValue(Effect.succeed(createWorkspaceContext()));
+
+    getWorkspaceRegistrySpy = vi
+      .spyOn(WorkspaceRegistry, "getWorkspaceRegistry")
+      .mockResolvedValue({
+        workspaces: [workspaceRecord],
+        activeWorkspaceId: workspaceRecord.id,
+      });
+
+    loadConfigSpy = vi
+      .spyOn(Loader, "loadConfig")
+      .mockResolvedValue(baseHiveConfig);
+
     loadOpencodeConfigSpy = vi
       .spyOn(OpencodeConfig, "loadOpencodeConfig")
       .mockResolvedValue({ config: {}, source: "workspace" });
@@ -133,7 +75,7 @@ describe("templatesRoutes", () => {
 
     const app = createApp();
     const response = await app.handle(
-      new Request("http://localhost/api/templates?workspaceId=w-123")
+      new Request("http://localhost/api/templates?workspaceId=workspace-basic")
     );
 
     expect(response.status).toBe(HTTP_OK);
@@ -146,7 +88,8 @@ describe("templatesRoutes", () => {
     expect(payload.templates[0]?.id).toBe("template-basic");
     expect(payload.defaults).toEqual(baseHiveConfig.defaults);
     expect(payload.agentDefaults).toEqual(agentDefaults);
-    expect(workspaceContextEffectSpy).toHaveBeenCalledWith("w-123");
+    expect(getWorkspaceRegistrySpy).toHaveBeenCalled();
+    expect(loadConfigSpy).toHaveBeenCalledWith(workspacePath);
   });
 
   it("returns a template by id", async () => {
@@ -167,7 +110,7 @@ describe("templatesRoutes", () => {
     const app = createApp();
     const response = await app.handle(
       new Request(
-        "http://localhost/api/templates/missing-template?workspaceId=w-123"
+        "http://localhost/api/templates/missing-template?workspaceId=workspace-basic"
       )
     );
 
@@ -177,26 +120,31 @@ describe("templatesRoutes", () => {
   });
 
   it("returns 400 when workspace cannot be resolved", async () => {
-    workspaceContextEffectSpy.mockReturnValueOnce(
-      Effect.fail(new WorkspaceContextError("No workspace"))
-    );
+    getWorkspaceRegistrySpy.mockResolvedValueOnce({
+      workspaces: [workspaceRecord],
+      activeWorkspaceId: workspaceRecord.id,
+    });
 
     const app = createApp();
     const response = await app.handle(
-      new Request("http://localhost/api/templates")
+      new Request(
+        "http://localhost/api/templates?workspaceId=missing-workspace"
+      )
     );
 
     expect(response.status).toBe(HTTP_BAD_REQUEST);
     const payload = (await response.json()) as { message: string };
-    expect(payload.message).toContain("workspace");
+    expect(payload.message).toContain(
+      "Workspace 'missing-workspace' not found"
+    );
   });
 
   it("returns 400 when hive config loading fails", async () => {
-    provideHiveConfig(createFailingHiveConfigService("load error"));
+    loadConfigSpy.mockRejectedValueOnce(new Error("load error"));
 
     const app = createApp();
     const response = await app.handle(
-      new Request("http://localhost/api/templates?workspaceId=w-123")
+      new Request("http://localhost/api/templates?workspaceId=workspace-basic")
     );
 
     expect(response.status).toBe(HTTP_BAD_REQUEST);
@@ -209,7 +157,7 @@ describe("templatesRoutes", () => {
 
     const app = createApp();
     const response = await app.handle(
-      new Request("http://localhost/api/templates?workspaceId=w-123")
+      new Request("http://localhost/api/templates?workspaceId=workspace-basic")
     );
 
     expect(response.status).toBe(HTTP_BAD_REQUEST);
