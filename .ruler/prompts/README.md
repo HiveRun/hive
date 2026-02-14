@@ -16,6 +16,8 @@ curl -fsSL https://raw.githubusercontent.com/HiveRun/hive/main/scripts/install.s
 
 The installer downloads the latest published release for your platform, expands it into `~/.hive`, writes a local SQLite database path to `hive.env`, symlinks `hive` into `~/.hive/bin`, and updates your shell PATH so the CLI is immediately available. Run `hive` to start the bundled server + UI on the default ports.
 
+During install, Hive also checks for the `opencode` CLI. If missing, it attempts to install OpenCode automatically via `https://opencode.ai/install` so cell chat sessions work out of the box.
+
 Environment variables:
 - `HIVE_VERSION`: install a specific tag (defaults to `latest`).
 - `HIVE_HOME`: override the install root (defaults to `~/.hive`).
@@ -25,6 +27,9 @@ Environment variables:
 - `HIVE_LOG_DIR`: where background logs are written (defaults to `~/.hive/logs` for installed builds, or `<binary>/logs` when running from source).
 - `HIVE_PID_FILE`: override the pid file path (defaults to `~/.hive/hive.pid`).
 - `HIVE_INSTALL_COMMAND`: override the command executed by `hive upgrade` (defaults to the stored installer behavior).
+- `HIVE_SKIP_OPENCODE_INSTALL`: set to `1` to skip OpenCode auto-install.
+- `HIVE_OPENCODE_INSTALL_URL`: override the OpenCode installer URL.
+- `HIVE_OPENCODE_BIN`: pin the OpenCode executable path written to `hive.env`.
 
 ### Using the installed binary
 
@@ -103,11 +108,9 @@ This command runs `bun run build:installer` under the hood, then installs from t
 # Install tools defined in .tool-versions
 mise install
 
-# One-time setup (install deps + push database schema)
+# One-time setup (installs deps, prepares desktop E2E prereqs when possible, pushes DB schema)
 bun setup
 
-# Install Playwright browsers (for E2E testing)
-cd apps/web && bunx playwright install --with-deps
 
 # Set up local database (create .env with DATABASE_URL="local.db")
 # Then run development servers
@@ -117,7 +120,7 @@ bun dev
 ### Manual Setup
 
 ```bash
-# One-time setup (install deps + push database schema)
+# One-time setup (installs deps, prepares desktop E2E prereqs when possible, pushes DB schema)
 bun setup
 
 # Set up local database (create .env with DATABASE_URL="local.db")  
@@ -160,109 +163,87 @@ bun test:run
 
 **Test location:** `apps/server/src/**/*.test.ts`
 
-### UI Testing (Playwright - Visual Snapshots Only)
-All UI testing is done through **visual snapshot testing**. No component unit tests - UI correctness is validated entirely through snapshot comparisons across multiple viewports and themes.
+### UI Testing
+True end-to-end browser testing runs with Playwright (Chromium only for now).
 
 ```bash
-# Run E2E tests
-bun test:e2e
+# Run true E2E flow (starts isolated API + web + dedicated DB)
+bun run test:e2e
 
-# Run with interactive UI (debugging)
-bun test:e2e:ui
+# Run headed mode for local debugging
+bun run test:e2e:headed
 
-# Run in headed mode (see browser)
-bun test:e2e:headed
+# Open the latest Playwright HTML report
+bun run test:e2e:report
+
+# Alias for opening the Playwright report
+bun run test:e2e:report:open
+
+# Serve/open the Playwright report directly
+bun run test:e2e:report:serve
 ```
 
-**Test location:** `apps/web/e2e/*.spec.ts`
-**Snapshots location:** `apps/web/e2e/**/__snapshots__/`
+Notes:
+- The E2E harness creates a dedicated temp workspace and SQLite database per run.
+- Local dev DB/state are not reused.
+- `HIVE_HOME` is ephemeral per run by default; set `HIVE_E2E_SHARED_HOME=1` to opt into a shared cache at `tmp/e2e-shared/hive-home` when debugging startup behavior.
+- `HIVE_E2E_WORKSPACE_MODE=clone` clones a source repo into the run sandbox (default source is this repo) and registers it as `hive` for closer dev parity.
+- `HIVE_E2E_WORKSPACE_SOURCE=/abs/path/to/repo` overrides the clone source when using `HIVE_E2E_WORKSPACE_MODE=clone`.
+- By default, the chat spec prefers lightweight templates (`E2E Template`, then `Basic Template`) to avoid heavy setup commands in test runs; set `HIVE_E2E_USE_DEFAULT_TEMPLATE=1` to keep each workspace's configured default template for strict parity debugging.
+- Playwright artifacts are copied to `apps/e2e/reports/latest/` (including per-test videos and `playwright-report`).
+- Set `HIVE_E2E_KEEP_ARTIFACTS=1` to also keep raw run logs/artifacts under `tmp/e2e-runs/`.
 
-**Snapshot coverage:**
-- Light/Dark mode
-- Desktop/Tablet/Mobile viewports (375x667, 768x1024, 1280x720)
+### Desktop Smoke Testing (WebDriver + Tauri)
+Desktop-only runtime checks run via WebDriver (`tauri-driver`) against a debug Tauri binary.
 
-#### Updating Snapshots After UI Changes
-
-When you intentionally change the UI (styling, layout, content), snapshot tests will fail. This is expected.
-
-**To update snapshots:**
+Setup (local):
 
 ```bash
-# Update all snapshots
-bun test:e2e:update-snapshots
+# One-time setup (includes best-effort desktop WebDriver prep)
+bun setup
+
+# Optional: rerun desktop setup only
+bun run setup:desktop-e2e
+
+# Ensure Cargo binaries are on PATH for this shell
+export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-**When to update:**
-- ✅ After intentional design changes
-- ✅ After adding/removing UI elements
-- ✅ After changing text content or images
-- ❌ Never update to "fix" a failing test without understanding why it failed
+Linux-only system dependencies (required for local desktop smoke on Linux):
 
-**Workflow for UI changes:**
-1. Make your UI changes
-2. Run `bun test:e2e` - tests will fail showing visual diffs
-3. Review the diff images in `test-results/` to verify changes look correct
-4. Run `bun test:e2e:update-snapshots` to accept the new visuals
-5. Commit both your code changes AND the updated snapshot images
-
-## Voice Input (Beta)
-
-Hive now ships optional push-to-talk controls in the agent chat experience. To enable voice input:
-
-1. Update `hive.config.ts` with a `voice` block. Local mode is the default and spins up a bundled Whisper (Transformers.js) transcriber on demand. Remote mode forwards the audio to providers such as OpenAI or Groq via the Vercel AI SDK.
-2. If you pick a remote provider, expose the API key via the referenced environment variable (defaults are `OPENAI_API_KEY` or `GROQ_API_KEY`). Remote mode automatically selects our recommended Whisper variant for that provider (OpenAI `whisper-1`, Groq `whisper-large-v3-turbo`).
-3. Restart the server so `/api/voice/config` and `/api/voice/transcriptions` pick up the new settings.
-4. Visit the agent chat UI — a microphone button appears inside the compose panel when browser recording is allowed.
-
-```ts
-// Local (default)
-voice: {
-  enabled: true,
-  transcription: {
-    mode: "local",
-    model: "Xenova/whisper-small",
-    language: "en",
-  },
-},
-
-// Remote example
-voice: {
-  enabled: true,
-  transcription: {
-    mode: "remote",
-    provider: "openai", // or "groq"
-    language: "en",
-    apiKeyEnv: "OPENAI_API_KEY",
-  },
-},
-```
-
-Local models are cached under `.hive/models` and the first transcription run downloads them automatically. All audio is captured in-browser, converted to WAV, sent once to `/api/voice/transcriptions`, and discarded when a transcript is returned.
-
-#### Debugging Failed Snapshot Tests
-
-When snapshot tests fail, Playwright generates several artifacts to help debug:
-
-**Test Artifacts Location:** `apps/web/test-results/`
-
-For each failed test, you'll find:
-- **`*-actual.png`** - What was actually rendered
-- **`*-diff.png`** - Visual diff highlighting changes (red = pixels that changed)
-- **`trace.zip`** - Full test trace with network logs, console output, DOM snapshots
-- **`test-failed-*.png`** - Screenshot at the point of failure
-
-**For AI Agents:**
-All these files are accessible via the Read tool. When a test fails:
-1. Read the `-actual.png` to see what was rendered
-2. Read the `-diff.png` to see exactly what changed
-3. Compare with the expected snapshot in `e2e/**/__snapshots__/`
-4. Review the trace file for network/console errors if needed
-
-**For Humans:**
-Open the HTML report to view traces interactively:
 ```bash
-npx playwright show-report
+sudo apt-get update
+sudo apt-get install -y \
+  libwebkit2gtk-4.1-dev \
+  libgtk-3-dev \
+  libayatana-appindicator3-dev \
+  librsvg2-dev \
+  libxdo-dev \
+  libssl-dev \
+  patchelf \
+  webkit2gtk-driver \
+  xvfb
 ```
+
+```bash
+# Run desktop smoke suite (Linux/macOS local prerequisites required)
+bun run test:e2e:desktop
+
+# Run a single desktop smoke spec
+bun run test:e2e:desktop:spec specs/smoke-launch.e2e.mjs
+
+# Linux headless local run (optional)
+xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" bun run test:e2e:desktop
+```
+
+Notes:
+- The desktop harness creates a dedicated temp workspace and SQLite database per run.
+- The runner compiles a debug desktop binary via `bun run build:tauri -- --debug --no-bundle` and points the bundled web UI at the ephemeral API URL.
+- Desktop artifacts are copied to `apps/e2e-desktop/reports/latest/`.
+- Use `HIVE_E2E_KEEP_ARTIFACTS=1` to keep raw logs/artifacts under `tmp/e2e-desktop-runs/`.
+- `bun setup` performs desktop WebDriver prep on a best-effort basis; if Cargo is missing it prints follow-up steps instead of failing setup.
+- On Linux, setup automatically attempts to install missing desktop packages via `sudo apt-get` and prints manual commands if installation fails.
+- If you need deeper setup/troubleshooting notes, see `apps/e2e-desktop/README.md`.
 
 ### Git Hooks & Validation
 
@@ -274,13 +255,23 @@ npx playwright show-report
 - Build validation
 
 **Pre-push** (`bun run check:push`):
-- Everything from pre-commit
-- E2E tests (Playwright with visual snapshots)
+- Same as pre-commit
+
+### GitHub CI (Blacksmith)
+
+- CI runs on Blacksmith-hosted GitHub Actions runners (`blacksmith-2vcpu-ubuntu-2404` for lint/check jobs and `blacksmith-4vcpu-ubuntu-2404` for E2E runtime).
+- Workflow triggers on pull requests, merge queue (`merge_group`), pushes to `main`, and manual dispatch.
+- `Workflow Lint` runs `actionlint`; `Quality Checks` runs `bun run check:commit`.
+- `E2E Runtime Suite` runs `bun run test:e2e` on merge queue (`merge_group`), `main` pushes, and manual dispatch (skipped on regular `pull_request` commits), caches Playwright/OpenCode artifacts, and uploads reports from `apps/e2e/reports/latest`.
+- `Desktop WebDriver Smoke Suite` runs `bun run test:e2e:desktop` on merge queue (`merge_group`), `main` pushes, and manual dispatch (skipped on `pull_request` commits), installs `tauri-driver`, executes under `xvfb-run`, and uploads reports from `apps/e2e-desktop/reports/latest`.
+- `Security Audit` runs a strict `bun audit --audit-level high` job in non-blocking mode for visibility while dependency remediation is in progress.
+- Ensure the Blacksmith GitHub App is installed for your organization before relying on this workflow.
 
 ## Available Scripts
 
 ### Setup
-- `bun setup`: One-time setup (install dependencies + push database schema)
+- `bun setup`: One-time setup (install dependencies, best-effort desktop E2E prep, push database schema)
+- `bun run setup:desktop-e2e`: Prepare desktop WebDriver local prerequisites (`tauri-driver` + Linux dependency checks/auto-install)
 
 ### Development
 - `bun dev`: Start all applications in development mode
@@ -293,15 +284,18 @@ npx playwright show-report
 ### Testing
 - `bun test`: Run unit tests in watch mode
 - `bun test:run`: Run unit tests once (CI mode)
-- `bun test:e2e`: Run E2E tests
-- `bun test:e2e:ui`: Run E2E tests with interactive UI
-- `bun test:e2e:headed`: Run E2E tests in headed mode (see browser)
-- `bun test:e2e:update-snapshots`: Update visual snapshots
+- `bun test:e2e`: Run Playwright true E2E suite (opt-in)
+- `bun test:e2e:headed`: Run Playwright in headed Chromium mode
+- `bun test:e2e:report`: Open the latest Playwright HTML report
+- `bun test:e2e:report:open`: Alias for opening the Playwright report
+- `bun test:e2e:report:serve`: Serve/open the Playwright report directly
+- `bun test:e2e:desktop`: Run Tauri desktop WebDriver smoke suite
+- `bun test:e2e:desktop:spec`: Run one desktop smoke spec by path
 
 ### Quality Checks
 - `bun check`: Run all pre-commit checks (alias for `check:commit`)
 - `bun check:commit`: Run all pre-commit checks (~5-10s)
-- `bun check:push`: Run all pre-push checks (~30-60s with E2E tests)
+- `bun check:push`: Run all pre-push checks (same as `check:commit`)
 - `bun check-types`: Check TypeScript types across all apps
 
 ### Database
@@ -365,6 +359,6 @@ This command:
 
 ### Ripgrep Overrides for Agents
 
-OpenCode's search shell respects `.gitignore` by default, which hides dependencies and build outputs that agents often need to inspect. We keep a project-level `.ignore` file in the repo root with negated patterns for `node_modules`, build directories (`dist`, `build`, `dist-electron`, `apps/server/server`, `src-tauri/target`), cached artifacts (`.turbo`, `.cache`, `tmp`, `temp`), coverage data, and Playwright reports (`test-results/`, `playwright-report/`). Ripgrep automatically merges these overrides, so agents can still search through those trees without humans having to toggle settings.
+OpenCode's search shell respects `.gitignore` by default, which hides dependencies and build outputs that agents often need to inspect. We keep a project-level `.ignore` file in the repo root with negated patterns for `node_modules`, build directories (`dist`, `build`, `dist-electron`, `apps/server/server`, `src-tauri/target`), cached artifacts (`.turbo`, `.cache`, `tmp`, `temp`), and coverage data. Ripgrep automatically merges these overrides, so agents can still search through those trees without humans having to toggle settings.
 
 If you add new tooling that writes important gitignored files, extend `.ignore` with another `!` pattern so the content remains discoverable to opencode agents.
