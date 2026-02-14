@@ -25,7 +25,7 @@ bun run test:e2e:headed
 bun run test:e2e:spec specs/cell-chat.e2e.ts
 ```
 
-- Pre-push validation must include `bun run test:e2e` (via `bun run check:push`).
+- Run `bun run test:e2e` locally when changing cell creation, terminal handling, service orchestration, or workspace management.
 - Prefer deterministic assertions (session/messages/metadata) over timing-only waits.
 - Keep fixture defaults aligned with runtime providers/models (currently `opencode/big-pickle`).
 - Use `HIVE_E2E_KEEP_ARTIFACTS=1` when debugging failures; inspect screenshots/video/trace in `tmp/e2e-runs/`.
@@ -134,5 +134,5 @@ Run these scripts manually when you need to validate outside the hook flow.
 - ~5-10 seconds
 
 **Pre-push** (`bun run check:push`):
-- Everything from pre-commit + E2E visual snapshot tests
-- ~30-60 seconds
+- Everything from pre-commit
+- ~5-10 seconds (E2E runs in merge queue)
