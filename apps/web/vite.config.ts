@@ -6,6 +6,7 @@ import tsconfigPaths from "vite-tsconfig-paths";
 
 const DEFAULT_DEV_SERVER_PORT = 3001;
 const DEFAULT_API_SERVER_PORT = "3000";
+const ROUTE_FILE_IGNORE_PATTERN = "\\.(test|spec)\\.(ts|tsx|js|jsx)$";
 const resolvedDevPort = Number(process.env.PORT ?? DEFAULT_DEV_SERVER_PORT);
 const devServerPort = Number.isNaN(resolvedDevPort)
   ? DEFAULT_DEV_SERVER_PORT
@@ -29,7 +30,9 @@ export default defineConfig(({ mode }) => {
         root: "./",
       }),
       tailwindcss(),
-      tanstackRouter(),
+      tanstackRouter({
+        routeFileIgnorePattern: ROUTE_FILE_IGNORE_PATTERN,
+      }),
       viteReact(),
     ],
     resolve: {
