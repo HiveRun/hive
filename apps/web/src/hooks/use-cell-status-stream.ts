@@ -43,15 +43,16 @@ export function useCellStatusStream(
             );
           }
         );
+        queryClient.setQueryData<Cell>(["cells", cellData.id], (currentCell) =>
+          currentCell ? { ...currentCell, ...cellData } : cellData
+        );
       } catch {
         /* ignore malformed events */
       }
     };
 
     const errorListener = () => {
-      if (isActive) {
-        source.close();
-      }
+      // Keep the stream open so EventSource can auto-reconnect.
     };
 
     source.addEventListener("cell", cellListener as EventListener);

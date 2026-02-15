@@ -17,11 +17,19 @@ import { workspaceQueries } from "@/queries/workspaces";
 const PROVISIONING_POLL_MS = 1500;
 
 export const Route = createFileRoute("/cells/$cellId")({
-  beforeLoad: ({ params, location }) => {
+  beforeLoad: async ({ params, location, context: { queryClient } }) => {
     if (location.pathname === `/cells/${params.cellId}`) {
+      const cell = await queryClient.ensureQueryData(
+        cellQueries.detail(params.cellId)
+      );
+
       throw redirect({
-        to: "/cells/$cellId/chat",
+        to:
+          cell.status === "ready"
+            ? "/cells/$cellId/chat"
+            : "/cells/$cellId/provisioning",
         params,
+        replace: true,
       });
     }
   },
@@ -47,6 +55,7 @@ function CellLayout() {
   const cellQuery = useQuery(cellQueries.detail(cellId));
   const routerState = useRouterState();
   const activeRouteId = routerState.matches.at(-1)?.routeId;
+  const isProvisioningRoute = activeRouteId === "/cells/$cellId/provisioning";
 
   const cell = cellQuery.data;
   const shouldPollProvisioningTimings =
@@ -82,6 +91,15 @@ function CellLayout() {
     [cell?.status, activeRunSteps]
   );
   const navItems = [
+    ...(cell?.status !== "ready"
+      ? [
+          {
+            routeId: "/cells/$cellId/provisioning",
+            label: "Provisioning",
+            to: "/cells/$cellId/provisioning",
+          } as const,
+        ]
+      : []),
     {
       routeId: "/cells/$cellId/setup",
       label: "Info",
@@ -185,7 +203,7 @@ function CellLayout() {
               <span className="h-1.5 w-1.5 animate-pulse bg-current" />
               <span>{statusMessage}</span>
             </div>
-            {shouldShowProvisioningTimeline ? (
+            {shouldShowProvisioningTimeline && !isProvisioningRoute ? (
               <ProvisioningChecklistPanel
                 checklist={provisioningChecklist}
                 statusMessage={statusMessage}

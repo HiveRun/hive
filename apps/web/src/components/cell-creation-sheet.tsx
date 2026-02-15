@@ -44,7 +44,7 @@ export function CellCreationSheet({
             onCreated={(cell) => {
               onOpenChange(false);
               navigate({
-                to: "/cells/$cellId/chat",
+                to: "/cells/$cellId",
                 params: { cellId: cell.id },
                 search: { workspaceId: cell.workspaceId },
               });

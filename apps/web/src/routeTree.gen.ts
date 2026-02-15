@@ -19,6 +19,7 @@ import { Route as CellsCellIdTimingsRouteImport } from './routes/cells/$cellId/t
 import { Route as CellsCellIdTerminalRouteImport } from './routes/cells/$cellId/terminal'
 import { Route as CellsCellIdSetupRouteImport } from './routes/cells/$cellId/setup'
 import { Route as CellsCellIdServicesRouteImport } from './routes/cells/$cellId/services'
+import { Route as CellsCellIdProvisioningRouteImport } from './routes/cells/$cellId/provisioning'
 import { Route as CellsCellIdDiffRouteImport } from './routes/cells/$cellId/diff'
 import { Route as CellsCellIdChatRouteImport } from './routes/cells/$cellId/chat'
 
@@ -72,6 +73,11 @@ const CellsCellIdServicesRoute = CellsCellIdServicesRouteImport.update({
   path: '/services',
   getParentRoute: () => CellsCellIdRoute,
 } as any)
+const CellsCellIdProvisioningRoute = CellsCellIdProvisioningRouteImport.update({
+  id: '/provisioning',
+  path: '/provisioning',
+  getParentRoute: () => CellsCellIdRoute,
+} as any)
 const CellsCellIdDiffRoute = CellsCellIdDiffRouteImport.update({
   id: '/diff',
   path: '/diff',
@@ -91,6 +97,7 @@ export interface FileRoutesByFullPath {
   '/cells/new': typeof CellsNewRoute
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
+  '/cells/$cellId/provisioning': typeof CellsCellIdProvisioningRoute
   '/cells/$cellId/services': typeof CellsCellIdServicesRoute
   '/cells/$cellId/setup': typeof CellsCellIdSetupRoute
   '/cells/$cellId/terminal': typeof CellsCellIdTerminalRoute
@@ -105,6 +112,7 @@ export interface FileRoutesByTo {
   '/cells/new': typeof CellsNewRoute
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
+  '/cells/$cellId/provisioning': typeof CellsCellIdProvisioningRoute
   '/cells/$cellId/services': typeof CellsCellIdServicesRoute
   '/cells/$cellId/setup': typeof CellsCellIdSetupRoute
   '/cells/$cellId/terminal': typeof CellsCellIdTerminalRoute
@@ -120,6 +128,7 @@ export interface FileRoutesById {
   '/cells/new': typeof CellsNewRoute
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
+  '/cells/$cellId/provisioning': typeof CellsCellIdProvisioningRoute
   '/cells/$cellId/services': typeof CellsCellIdServicesRoute
   '/cells/$cellId/setup': typeof CellsCellIdSetupRoute
   '/cells/$cellId/terminal': typeof CellsCellIdTerminalRoute
@@ -136,6 +145,7 @@ export interface FileRouteTypes {
     | '/cells/new'
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
+    | '/cells/$cellId/provisioning'
     | '/cells/$cellId/services'
     | '/cells/$cellId/setup'
     | '/cells/$cellId/terminal'
@@ -150,6 +160,7 @@ export interface FileRouteTypes {
     | '/cells/new'
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
+    | '/cells/$cellId/provisioning'
     | '/cells/$cellId/services'
     | '/cells/$cellId/setup'
     | '/cells/$cellId/terminal'
@@ -164,6 +175,7 @@ export interface FileRouteTypes {
     | '/cells/new'
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
+    | '/cells/$cellId/provisioning'
     | '/cells/$cellId/services'
     | '/cells/$cellId/setup'
     | '/cells/$cellId/terminal'
@@ -249,6 +261,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CellsCellIdServicesRouteImport
       parentRoute: typeof CellsCellIdRoute
     }
+    '/cells/$cellId/provisioning': {
+      id: '/cells/$cellId/provisioning'
+      path: '/provisioning'
+      fullPath: '/cells/$cellId/provisioning'
+      preLoaderRoute: typeof CellsCellIdProvisioningRouteImport
+      parentRoute: typeof CellsCellIdRoute
+    }
     '/cells/$cellId/diff': {
       id: '/cells/$cellId/diff'
       path: '/diff'
@@ -269,6 +288,7 @@ declare module '@tanstack/react-router' {
 interface CellsCellIdRouteChildren {
   CellsCellIdChatRoute: typeof CellsCellIdChatRoute
   CellsCellIdDiffRoute: typeof CellsCellIdDiffRoute
+  CellsCellIdProvisioningRoute: typeof CellsCellIdProvisioningRoute
   CellsCellIdServicesRoute: typeof CellsCellIdServicesRoute
   CellsCellIdSetupRoute: typeof CellsCellIdSetupRoute
   CellsCellIdTerminalRoute: typeof CellsCellIdTerminalRoute
@@ -279,6 +299,7 @@ interface CellsCellIdRouteChildren {
 const CellsCellIdRouteChildren: CellsCellIdRouteChildren = {
   CellsCellIdChatRoute: CellsCellIdChatRoute,
   CellsCellIdDiffRoute: CellsCellIdDiffRoute,
+  CellsCellIdProvisioningRoute: CellsCellIdProvisioningRoute,
   CellsCellIdServicesRoute: CellsCellIdServicesRoute,
   CellsCellIdSetupRoute: CellsCellIdSetupRoute,
   CellsCellIdTerminalRoute: CellsCellIdTerminalRoute,

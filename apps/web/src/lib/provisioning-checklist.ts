@@ -1,6 +1,7 @@
 import type { CellTimingStep } from "@/queries/cells";
 
 export type ProvisioningChecklistStepKey =
+  | "create_cell_record"
   | "create_worktree"
   | "ensure_services"
   | "ensure_agent_session"
@@ -41,6 +42,7 @@ const CHECKLIST_STEPS: Array<{
   key: ProvisioningChecklistStepKey;
   label: string;
 }> = [
+  { key: "create_cell_record", label: "Create cell record" },
   { key: "create_worktree", label: "Create workspace" },
   { key: "ensure_services", label: "Run setup and start services" },
   { key: "ensure_agent_session", label: "Prepare agent session" },
@@ -194,6 +196,14 @@ export function toTimingTimestamp(value: unknown): number {
 function normalizeChecklistStepKey(
   step: string
 ): ProvisioningChecklistStepKey | null {
+  if (
+    step === "create_cell_record" ||
+    step === "insert_cell_record" ||
+    step === "insert_provisioning_state" ||
+    step === "create_request_received"
+  ) {
+    return "create_cell_record";
+  }
   if (step.startsWith("create_worktree")) {
     return "create_worktree";
   }

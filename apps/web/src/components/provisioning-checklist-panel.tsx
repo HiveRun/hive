@@ -10,12 +10,16 @@ type ProvisioningChecklistPanelProps = {
   checklist: ProvisioningChecklist;
   statusMessage: string;
   variant?: "inline" | "overlay";
+  className?: string;
+  fillHeight?: boolean;
 };
 
 export function ProvisioningChecklistPanel({
   checklist,
   statusMessage,
   variant = "inline",
+  className,
+  fillHeight = false,
 }: ProvisioningChecklistPanelProps) {
   const stepNumber =
     checklist.remainingCount === 0
@@ -28,7 +32,9 @@ export function ProvisioningChecklistPanel({
     <div
       className={cn(
         "border-2 border-border bg-card/95 px-4 py-3 shadow-[2px_2px_0_rgba(0,0,0,0.6)]",
-        variant === "overlay" ? "w-[min(620px,94%)]" : "mt-3 w-full"
+        fillHeight && "flex h-full min-h-0 flex-col",
+        variant === "overlay" ? "w-[min(620px,94%)]" : "mt-3 w-full",
+        className
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -48,7 +54,12 @@ export function ProvisioningChecklistPanel({
         {checklist.completedCount}/{checklist.totalCount} complete - {leftLabel}
       </p>
 
-      <ol className="mt-3 space-y-2">
+      <ol
+        className={cn(
+          "mt-3 space-y-2",
+          fillHeight && "min-h-0 flex-1 overflow-auto pr-1"
+        )}
+      >
         {checklist.steps.map((step, index) => (
           <li
             className={cn(
