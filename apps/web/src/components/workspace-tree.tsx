@@ -118,7 +118,7 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
 
     const savedIds = storage.get<string[]>(EXPANDED_WORKSPACES_STORAGE_KEY);
 
-    if (Array.isArray(savedIds)) {
+    if (Array.isArray(savedIds) && savedIds.length > 0) {
       setExpandedWorkspaceIds(
         () => new Set(savedIds.filter((entry) => typeof entry === "string"))
       );
@@ -150,14 +150,22 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
   }, [hasHydratedExpandedWorkspaces, shouldApplyDefaultExpansion, workspaces]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (
+      typeof window === "undefined" ||
+      !hasHydratedExpandedWorkspaces ||
+      shouldApplyDefaultExpansion
+    ) {
       return;
     }
     storage.set(
       EXPANDED_WORKSPACES_STORAGE_KEY,
       Array.from(expandedWorkspaceIds)
     );
-  }, [expandedWorkspaceIds]);
+  }, [
+    expandedWorkspaceIds,
+    hasHydratedExpandedWorkspaces,
+    shouldApplyDefaultExpansion,
+  ]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
