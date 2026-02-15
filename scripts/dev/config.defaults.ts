@@ -12,7 +12,7 @@ export const hiveConfigDefaults: HiveConfig = {
       id: "hive-dev",
       label: "Hive Development Environment",
       type: "manual",
-      includePatterns: [".env*", "vendor/**"],
+      includePatterns: [".env*"],
       ignorePatterns: defaultIgnorePatterns,
       setup: ["bun setup"],
       services: {
@@ -43,7 +43,7 @@ export const hiveConfigDefaults: HiveConfig = {
       id: "web-api",
       label: "Web API Server",
       type: "manual",
-      includePatterns: [".env*", "*.db", "vendor/**"],
+      includePatterns: [".env*", "*.db"],
       ignorePatterns: defaultIgnorePatterns,
       services: {
         api: {
@@ -61,14 +61,14 @@ export const hiveConfigDefaults: HiveConfig = {
       id: "basic",
       label: "Basic Template",
       type: "manual",
-      includePatterns: [".env*", "vendor/**"],
+      includePatterns: [".env*"],
       ignorePatterns: defaultIgnorePatterns,
     },
     "provider-only": {
       id: "provider-only",
       label: "Provider Only Agent",
       type: "manual",
-      includePatterns: [".env*", "vendor/**"],
+      includePatterns: [".env*"],
       ignorePatterns: defaultIgnorePatterns,
       agent: {
         providerId: "opencode",
@@ -78,7 +78,7 @@ export const hiveConfigDefaults: HiveConfig = {
       id: "agentless",
       label: "No Agent Overrides",
       type: "manual",
-      includePatterns: [".env*", "vendor/**"],
+      includePatterns: [".env*"],
       ignorePatterns: defaultIgnorePatterns,
     },
   },

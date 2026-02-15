@@ -34,7 +34,7 @@ This comprehensive orchestration system will be implemented in **Phase 1A** afte
 
 ### Core Engine
 - Anchor on the official OpenCode SDK for all agent interactions (init sessions, send prompts, stream tool events, fetch artifacts). Avoid TUI screen scraping.
-- Keep a local clone of <https://github.com/sst/opencode> in `vendor/opencode/` for reference only; production code must depend on the published `@opencode-ai/sdk` package, never the clone.
+- Use the published `@opencode-ai/sdk` package for production integrations; reference upstream OpenCode source directly on GitHub when needed.
 - Run cells directly in the host environment so agents share the user's credentials, PATH, and dependencies; no supervised pods for v1.
 - Before creating an OpenCode session, inspect the user's OpenCode config/auth store (`auth.json`) to confirm credentials exist for the provider the template demands; if missing, block the session and prompt the user to run `opencode auth login` (no additional runtime retries beyond surfacing the error toast).
 - Handle agent state transitions (starting, working, awaiting input, completed, error) and emit events for the UI to consume.

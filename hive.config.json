@@ -29,7 +29,7 @@
         }
       },
       "setup": ["bun setup"],
-      "includePatterns": [".env*", "vendor/**"],
+      "includePatterns": [".env*"],
       "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
     },
     "web-api": {
@@ -47,14 +47,14 @@
           "readyTimeoutMs": 5000
         }
       },
-      "includePatterns": [".env*", "*.db", "vendor/**"],
+      "includePatterns": [".env*", "*.db"],
       "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
     },
     "basic": {
       "id": "basic",
       "label": "Basic Template",
       "type": "manual",
-      "includePatterns": [".env*", "vendor/**"],
+      "includePatterns": [".env*"],
       "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
     },
     "provider-only": {
@@ -64,14 +64,14 @@
       "agent": {
         "providerId": "opencode"
       },
-      "includePatterns": [".env*", "vendor/**"],
+      "includePatterns": [".env*"],
       "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
     },
     "agentless": {
       "id": "agentless",
       "label": "No Agent Overrides",
       "type": "manual",
-      "includePatterns": [".env*", "vendor/**"],
+      "includePatterns": [".env*"],
       "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
     }
   },
