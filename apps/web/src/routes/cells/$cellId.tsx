@@ -6,10 +6,15 @@ import {
   redirect,
   useRouterState,
 } from "@tanstack/react-router";
+import { useMemo } from "react";
+import { ProvisioningChecklistPanel } from "@/components/provisioning-checklist-panel";
 import { Button } from "@/components/ui/button";
+import { buildProvisioningChecklist } from "@/lib/provisioning-checklist";
 import { cellQueries } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
 import { workspaceQueries } from "@/queries/workspaces";
+
+const PROVISIONING_POLL_MS = 1500;
 
 export const Route = createFileRoute("/cells/$cellId")({
   beforeLoad: ({ params, location }) => {
@@ -44,6 +49,38 @@ function CellLayout() {
   const activeRouteId = routerState.matches.at(-1)?.routeId;
 
   const cell = cellQuery.data;
+  const shouldPollProvisioningTimings =
+    cell?.status === "spawning" || cell?.status === "pending";
+  const shouldShowProvisioningTimeline =
+    shouldPollProvisioningTimings || cell?.status === "error";
+  const timingsQuery = useQuery({
+    ...cellQueries.timings(cellId, {
+      workflow: "create",
+      limit: 300,
+    }),
+    enabled: shouldShowProvisioningTimeline,
+    refetchInterval: shouldPollProvisioningTimings
+      ? PROVISIONING_POLL_MS
+      : false,
+  });
+  const activeRunId = timingsQuery.data?.runs[0]?.runId;
+  const activeRunSteps = useMemo(() => {
+    if (!activeRunId) {
+      return [];
+    }
+
+    return (timingsQuery.data?.steps ?? []).filter(
+      (step) => step.runId === activeRunId
+    );
+  }, [activeRunId, timingsQuery.data?.steps]);
+  const provisioningChecklist = useMemo(
+    () =>
+      buildProvisioningChecklist({
+        cellStatus: cell?.status,
+        steps: activeRunSteps,
+      }),
+    [cell?.status, activeRunSteps]
+  );
   const navItems = [
     {
       routeId: "/cells/$cellId/setup",
@@ -148,6 +185,12 @@ function CellLayout() {
               <span className="h-1.5 w-1.5 animate-pulse bg-current" />
               <span>{statusMessage}</span>
             </div>
+            {shouldShowProvisioningTimeline ? (
+              <ProvisioningChecklistPanel
+                checklist={provisioningChecklist}
+                statusMessage={statusMessage}
+              />
+            ) : null}
           </div>
         </section>
 

@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createCellsRoutes } from "../../routes/cells";
@@ -22,7 +23,15 @@ const TIMING_DELETE_TOTAL_DURATION_MS = 55;
 const EXPECTED_DELETE_TIMING_STEP_COUNT = 2;
 const EXPECTED_TIMING_RUN_COUNT = 1;
 
-function createMinimalDependencies(): any {
+type MinimalDependencyOverrides = {
+  closeAgentSession?: (...args: unknown[]) => Promise<void>;
+  stopServicesForCell?: (...args: unknown[]) => Promise<void>;
+  removeWorktree?: (...args: unknown[]) => Promise<void>;
+};
+
+function createMinimalDependencies(
+  overrides: MinimalDependencyOverrides = {}
+): any {
   const workspaceRecord = {
     id: TEST_WORKSPACE_ID,
     label: "Test Workspace",
@@ -46,20 +55,24 @@ function createMinimalDependencies(): any {
           branch: "b",
           baseCommit: "c",
         }),
-        removeWorktree: () => Promise.resolve(),
+        removeWorktree: (...args: unknown[]) =>
+          overrides.removeWorktree?.(...args) ?? Promise.resolve(),
       }),
       createWorktree: async () => ({
         path: "/tmp",
         branch: "b",
         baseCommit: "c",
       }),
-      removeWorktree: () => Promise.resolve(),
+      removeWorktree: (...args: unknown[]) =>
+        overrides.removeWorktree?.(...args) ?? Promise.resolve(),
     })) as any,
     ensureAgentSession: async () => ({ id: "session", cellId: TEST_CELL_ID }),
-    closeAgentSession: () => Promise.resolve(),
+    closeAgentSession: (...args: unknown[]) =>
+      overrides.closeAgentSession?.(...args) ?? Promise.resolve(),
     ensureServicesForCell: () => Promise.resolve(),
     startServicesForCell: () => Promise.resolve(),
-    stopServicesForCell: () => Promise.resolve(),
+    stopServicesForCell: (...args: unknown[]) =>
+      overrides.stopServicesForCell?.(...args) ?? Promise.resolve(),
     startServiceById: () => Promise.resolve(),
     stopServiceById: () => Promise.resolve(),
     sendAgentMessage: () => Promise.resolve(),
@@ -473,6 +486,79 @@ describe("Cell activity events", () => {
     expect(globalPayload.runs.every((run) => run.cellId === TEST_CELL_ID)).toBe(
       true
     );
+  });
+
+  it("continues cell deletion when cleanup steps fail", async () => {
+    await seedCellAndService();
+
+    const routes = createCellsRoutes(
+      createMinimalDependencies({
+        closeAgentSession: () =>
+          Promise.reject(new Error("close session failed")),
+        stopServicesForCell: () =>
+          Promise.reject(new Error("stop services failed")),
+        removeWorktree: () =>
+          Promise.reject(new Error("remove workspace failed")),
+      })
+    );
+    const app = new Elysia().use(routes);
+
+    const deleteResponse = await app.handle(
+      new Request(`http://localhost/api/cells/${TEST_CELL_ID}`, {
+        method: "DELETE",
+      })
+    );
+    expect(deleteResponse.status).toBe(HTTP_OK);
+
+    const remainingCell = await testDb
+      .select({ id: cells.id })
+      .from(cells)
+      .where(eq(cells.id, TEST_CELL_ID))
+      .limit(1);
+    expect(remainingCell).toHaveLength(0);
+
+    const timingsResponse = await app.handle(
+      new Request(
+        `http://localhost/api/cells/timings/global?workflow=delete&cellId=${TEST_CELL_ID}`
+      )
+    );
+    expect(timingsResponse.status).toBe(HTTP_OK);
+
+    const timingsPayload = (await timingsResponse.json()) as {
+      steps: Array<{
+        step: string;
+        status: "ok" | "error";
+        error: string | null;
+      }>;
+      runs: Array<{
+        status: "ok" | "error";
+      }>;
+    };
+
+    const closeAgentStep = timingsPayload.steps.find(
+      (step) => step.step === "close_agent_session"
+    );
+    const stopServicesStep = timingsPayload.steps.find(
+      (step) => step.step === "stop_services"
+    );
+    const removeWorkspaceStep = timingsPayload.steps.find(
+      (step) => step.step === "remove_workspace"
+    );
+    const deleteRecordStep = timingsPayload.steps.find(
+      (step) => step.step === "delete_cell_record"
+    );
+    const totalStep = timingsPayload.steps.find(
+      (step) => step.step === "total"
+    );
+
+    expect(closeAgentStep?.status).toBe("error");
+    expect(closeAgentStep?.error).toBe("close session failed");
+    expect(stopServicesStep?.status).toBe("error");
+    expect(stopServicesStep?.error).toBe("stop services failed");
+    expect(removeWorkspaceStep).toBeDefined();
+    expect(deleteRecordStep?.status).toBe("ok");
+    expect(totalStep?.status).toBe("ok");
+    expect(timingsPayload.runs[0]?.status).toBe("error");
   });
 
   it("paginates activity events with cursors", async () => {

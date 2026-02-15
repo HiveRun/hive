@@ -4081,6 +4081,57 @@ type CellDeleteRecord = Pick<
   "id" | "name" | "templateId" | "workspaceId" | "workspacePath"
 >;
 
+const DELETE_CLOSE_AGENT_SESSION_TIMEOUT_MS = 15_000;
+const DELETE_CLOSE_TERMINALS_TIMEOUT_MS = 5000;
+const DELETE_STOP_SERVICES_TIMEOUT_MS = 30_000;
+const DELETE_REMOVE_WORKSPACE_TIMEOUT_MS = 120_000;
+const DELETE_REMOVE_RECORD_TIMEOUT_MS = 10_000;
+
+function runDeleteStepWithTimeout<T>(args: {
+  step: string;
+  timeoutMs: number;
+  action: () => Promise<T> | T;
+}): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let completed = false;
+    const timer = setTimeout(() => {
+      if (completed) {
+        return;
+      }
+
+      completed = true;
+      reject(
+        new Error(
+          `Delete step '${args.step}' timed out after ${args.timeoutMs}ms`
+        )
+      );
+    }, args.timeoutMs);
+
+    Promise.resolve()
+      .then(args.action)
+      .then(
+        (result) => {
+          if (completed) {
+            return;
+          }
+
+          completed = true;
+          clearTimeout(timer);
+          resolve(result);
+        },
+        (error) => {
+          if (completed) {
+            return;
+          }
+
+          completed = true;
+          clearTimeout(timer);
+          reject(error);
+        }
+      );
+  });
+}
+
 async function deleteCellWithTiming(args: {
   database: DatabaseClient;
   cell: CellDeleteRecord;
@@ -4098,6 +4149,7 @@ async function deleteCellWithTiming(args: {
   const runStep = async <T>(params: {
     step: string;
     action: () => Promise<T> | T;
+    timeoutMs?: number;
     continueOnError?: boolean;
     warnMessage?: string;
   }): Promise<T | undefined> => {
@@ -4106,7 +4158,13 @@ async function deleteCellWithTiming(args: {
     let errorMessage: string | null = null;
 
     try {
-      return await params.action();
+      return typeof params.timeoutMs === "number"
+        ? await runDeleteStepWithTimeout({
+            step: params.step,
+            timeoutMs: params.timeoutMs,
+            action: params.action,
+          })
+        : await params.action();
     } catch (error) {
       status = "error";
       errorMessage = error instanceof Error ? error.message : String(error);
@@ -4142,6 +4200,9 @@ async function deleteCellWithTiming(args: {
     await runStep({
       step: "close_agent_session",
       action: () => args.closeSession(args.cell.id),
+      timeoutMs: DELETE_CLOSE_AGENT_SESSION_TIMEOUT_MS,
+      continueOnError: true,
+      warnMessage: "Failed to close agent session before cell removal",
     });
 
     await runStep({
@@ -4151,11 +4212,15 @@ async function deleteCellWithTiming(args: {
         args.closeChatTerminalSession?.(args.cell.id);
         args.clearSetupTerminal(args.cell.id);
       },
+      timeoutMs: DELETE_CLOSE_TERMINALS_TIMEOUT_MS,
+      continueOnError: true,
+      warnMessage: "Failed to close terminal sessions before cell removal",
     });
 
     await runStep({
       step: "stop_services",
       action: () => args.stopCellServices(args.cell.id, { releasePorts: true }),
+      timeoutMs: DELETE_STOP_SERVICES_TIMEOUT_MS,
       continueOnError: true,
       warnMessage: "Failed to stop services before cell removal",
     });
@@ -4168,12 +4233,16 @@ async function deleteCellWithTiming(args: {
         );
         await removeCellWorkspace(worktreeService, args.cell, args.log);
       },
+      timeoutMs: DELETE_REMOVE_WORKSPACE_TIMEOUT_MS,
+      continueOnError: true,
+      warnMessage: "Failed to remove cell workspace during deletion",
     });
 
     await runStep({
       step: "delete_cell_record",
       action: () =>
         args.database.delete(cells).where(eq(cells.id, args.cell.id)),
+      timeoutMs: DELETE_REMOVE_RECORD_TIMEOUT_MS,
     });
 
     await insertCellTimingEvent({
