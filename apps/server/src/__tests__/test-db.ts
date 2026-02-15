@@ -11,6 +11,7 @@ const sqlite = new Database(":memory:");
 export const testDb = drizzle(sqlite, { schema });
 
 export async function setupTestDb() {
+  sqlite.exec("DROP TABLE IF EXISTS cell_timing_events;");
   sqlite.exec("DROP TABLE IF EXISTS cell_activity_events;");
   sqlite.exec("DROP TABLE IF EXISTS cell_services;");
   sqlite.exec("DROP TABLE IF EXISTS cell_provisioning_state;");

@@ -12,6 +12,10 @@
   - [x] Add mixed-state restart coverage so daemon bootstrap resumes only `needs_resume` services while keeping manual stops down
   - [x] Add runtime E2E coverage to assert cell deletion reaps persisted service processes and removes service routes
   - [x] Add supervisor coverage for stale/occupied port recovery when restarting manually stopped services
+  - [x] Reduce runtime request-log noise by muting terminal transport + high-frequency polling/OPTIONS auto logs by default, with env toggles for debugging (2026-02-14)
+  - [x] Make delete confirmations non-blocking in UI (single + bulk): close dialogs immediately after confirmation, continue requests asynchronously, and keep success/error toasts on actual completion (2026-02-15)
+  - [x] Surface in-progress delete state directly in sidebar cell rows (spinner + `deleting` tag) so users see deletion progress until backend cleanup completes (2026-02-15)
+  - [x] Avoid API stall during long delete cleanup by switching worktree removal git calls to async subprocesses (non-blocking event loop) instead of synchronous `execSync` in delete path (2026-02-15)
 
 ## Goal
 Provide comprehensive service management capabilities for both users and agents through UI, CLI, and MCP tools.

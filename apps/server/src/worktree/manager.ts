@@ -1,8 +1,8 @@
 import type { ExecException } from "node:child_process";
 import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, constants as fsConstants } from "node:fs";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { glob } from "tinyglobby";
 import {
   generateHiveToolConfig,
@@ -47,6 +47,32 @@ const BRANCH_PREFIX_LENGTH = BRANCH_PREFIX.length;
 
 const POSIX_SEPARATOR = "/";
 const DEFAULT_IGNORE_PATTERNS: string[] = [];
+const ALWAYS_IGNORED_INCLUDE_PATTERNS = [
+  ".git",
+  ".git/**",
+  "**/.git",
+  "**/.git/**",
+];
+const COPY_FAILURE_LOG_SAMPLE_SIZE = 3;
+const COPY_CONCURRENCY = 32;
+const GLOB_MAGIC_PATTERN = /[*?{}[\]!]/;
+const LEADING_DOT_SLASH_PATTERN = /^\.\//;
+const TRAILING_SLASHES_PATTERN = /\/+$/;
+const RECURSIVE_GLOB_SUFFIX = "/**";
+const RECURSIVE_GLOB_SUFFIX_LENGTH = RECURSIVE_GLOB_SUFFIX.length;
+const DOT_GIT_SEGMENT = ".git";
+const GLOBSTAR_PREFIX = "**/";
+const COPYFILE_REFLINK_FORCE_MODE = fsConstants.COPYFILE_FICLONE_FORCE;
+const REFLINK_UNSUPPORTED_ERROR_CODES = new Set([
+  "ENOTSUP",
+  "EOPNOTSUPP",
+  "EXDEV",
+  "EINVAL",
+  "ENOSYS",
+]);
+
+type CopyOptions = NonNullable<Parameters<typeof cp>[2]>;
+type CopyStrategy = "reflink" | "copy";
 
 export type WorktreeInfo = {
   id: string;
@@ -59,6 +85,13 @@ export type WorktreeInfo = {
 export type WorktreeCreateOptions = {
   force?: boolean;
   templateId?: string;
+  onTimingEvent?: (event: WorktreeCreateTimingEvent) => void;
+};
+
+export type WorktreeCreateTimingEvent = {
+  step: string;
+  durationMs: number;
+  metadata?: Record<string, unknown>;
 };
 
 export type WorktreeLocation = {
@@ -203,6 +236,67 @@ export function createWorktreeManager(
     }
   }
 
+  function logInfo(message: string, context?: Record<string, unknown>): void {
+    if (process.env.NODE_ENV !== "test") {
+      process.stderr.write(
+        `[worktree] ${message}${context ? ` ${JSON.stringify(context)}` : ""}\n`
+      );
+    }
+  }
+
+  const reflinkDisabledByEnv =
+    process.env.HIVE_WORKTREE_DISABLE_REFLINK === "1" ||
+    process.env.HIVE_WORKTREE_COPY_MODE === "copy";
+  let reflinkState: "unknown" | "supported" | "unsupported" =
+    reflinkDisabledByEnv ? "unsupported" : "unknown";
+  let reflinkFallbackLogged = false;
+
+  const readErrorCode = (error: unknown): string | null => {
+    if (!(error && typeof error === "object" && "code" in error)) {
+      return null;
+    }
+
+    const raw = (error as { code?: unknown }).code;
+    return typeof raw === "string" ? raw : null;
+  };
+
+  const isReflinkUnsupportedError = (error: unknown): boolean => {
+    const code = readErrorCode(error);
+    return code ? REFLINK_UNSUPPORTED_ERROR_CODES.has(code) : false;
+  };
+
+  const copyWithStrategy = async (args: {
+    sourcePath: string;
+    targetPath: string;
+    options: CopyOptions;
+  }): Promise<CopyStrategy> => {
+    if (reflinkState !== "unsupported") {
+      try {
+        await cp(args.sourcePath, args.targetPath, {
+          ...args.options,
+          mode: COPYFILE_REFLINK_FORCE_MODE,
+        });
+        reflinkState = "supported";
+        return "reflink";
+      } catch (error) {
+        if (!isReflinkUnsupportedError(error)) {
+          throw error;
+        }
+
+        reflinkState = "unsupported";
+        if (!reflinkFallbackLogged) {
+          reflinkFallbackLogged = true;
+          logInfo("Reflink unavailable, falling back to standard copy", {
+            errorCode: readErrorCode(error),
+          });
+        }
+      }
+    }
+
+    await cp(args.sourcePath, args.targetPath, args.options);
+    return "copy";
+  };
+
   type ExecError = ExecException & {
     stdout?: Buffer | string;
     stderr?: Buffer | string;
@@ -238,10 +332,42 @@ export function createWorktreeManager(
       return execSync(`git ${command}`, {
         encoding: "utf8",
         cwd: baseDir,
+        stdio: "pipe",
       }).trim();
     } catch (error) {
       throw formatExecError(command, error);
     }
+  }
+
+  async function gitAsync(...args: string[]): Promise<string> {
+    const child = Bun.spawn({
+      cmd: ["git", ...args],
+      cwd: baseDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdoutPromise = new Response(child.stdout).text();
+    const stderrPromise = new Response(child.stderr).text();
+    const exitCode = await child.exited;
+    const stdout = (await stdoutPromise).trim();
+    const stderr = (await stderrPromise).trim();
+
+    if (exitCode !== 0) {
+      const command = args.join(" ");
+      const details = [stderr, stdout].filter(Boolean).join(" | ");
+      throw new Error(
+        [
+          `Git command failed: git ${command}`,
+          `exit code ${exitCode}`,
+          details ? `DETAILS: ${details}` : undefined,
+        ]
+          .filter(Boolean)
+          .join(" | ")
+      );
+    }
+
+    return stdout;
   }
 
   async function ensureCellsDir(): Promise<void> {
@@ -268,16 +394,207 @@ export function createWorktreeManager(
   }
 
   function getIgnorePatterns(templateId?: string): string[] {
+    const mergeWithAlwaysIgnored = (patterns: string[]) =>
+      Array.from(new Set([...patterns, ...ALWAYS_IGNORED_INCLUDE_PATTERNS]));
+
     if (!(templateId && hiveConfig)) {
-      return DEFAULT_IGNORE_PATTERNS;
+      return mergeWithAlwaysIgnored(DEFAULT_IGNORE_PATTERNS);
     }
 
     const template = hiveConfig.templates[templateId] as Template | undefined;
     if (!template?.ignorePatterns) {
-      return DEFAULT_IGNORE_PATTERNS;
+      return mergeWithAlwaysIgnored(DEFAULT_IGNORE_PATTERNS);
     }
 
-    return template.ignorePatterns;
+    return mergeWithAlwaysIgnored(template.ignorePatterns);
+  }
+
+  function normalizePattern(pattern: string): string {
+    return pattern
+      .split(sep)
+      .join(POSIX_SEPARATOR)
+      .replace(LEADING_DOT_SLASH_PATTERN, "")
+      .replace(TRAILING_SLASHES_PATTERN, "");
+  }
+
+  function stripRecursiveGlobSuffix(pattern: string): string {
+    return pattern
+      .slice(0, -RECURSIVE_GLOB_SUFFIX_LENGTH)
+      .replace(TRAILING_SLASHES_PATTERN, "");
+  }
+
+  function isDotGitIgnorePattern(pattern: string): boolean {
+    return (
+      pattern === DOT_GIT_SEGMENT ||
+      pattern === `${DOT_GIT_SEGMENT}/**` ||
+      pattern === `**/${DOT_GIT_SEGMENT}` ||
+      pattern === `**/${DOT_GIT_SEGMENT}/**`
+    );
+  }
+
+  function toStaticIgnorePrefix(pattern: string): string | null {
+    const prefix = pattern.endsWith(RECURSIVE_GLOB_SUFFIX)
+      ? stripRecursiveGlobSuffix(pattern)
+      : pattern;
+
+    if (!prefix || GLOB_MAGIC_PATTERN.test(prefix)) {
+      return null;
+    }
+
+    return prefix;
+  }
+
+  function toAnyDepthIgnoreToken(pattern: string): string | null {
+    if (
+      !(
+        pattern.startsWith(GLOBSTAR_PREFIX) &&
+        pattern.endsWith(RECURSIVE_GLOB_SUFFIX)
+      )
+    ) {
+      return null;
+    }
+
+    const token = stripRecursiveGlobSuffix(
+      pattern.slice(GLOBSTAR_PREFIX.length)
+    );
+    if (
+      !token ||
+      token.includes(POSIX_SEPARATOR) ||
+      GLOB_MAGIC_PATTERN.test(token)
+    ) {
+      return null;
+    }
+
+    return token;
+  }
+
+  function getStaticIncludeRoot(pattern: string): string | null {
+    const normalized = normalizePattern(pattern);
+    if (!normalized.endsWith(RECURSIVE_GLOB_SUFFIX)) {
+      return null;
+    }
+
+    const root = stripRecursiveGlobSuffix(normalized);
+    if (!root || GLOB_MAGIC_PATTERN.test(root)) {
+      return null;
+    }
+
+    return root;
+  }
+
+  function partitionIncludePatterns(includePatterns: string[]): {
+    staticRoots: string[];
+    filePatterns: string[];
+  } {
+    const staticRoots = new Set<string>();
+    const filePatterns: string[] = [];
+
+    for (const pattern of includePatterns) {
+      const root = getStaticIncludeRoot(pattern);
+      if (root) {
+        staticRoots.add(root);
+      } else {
+        filePatterns.push(pattern);
+      }
+    }
+
+    return {
+      staticRoots: Array.from(staticRoots),
+      filePatterns,
+    };
+  }
+
+  function parseIgnoreMatcherConfig(ignorePatterns: string[]): {
+    prefixPatterns: string[];
+    anyDepthTokens: string[];
+    ignoreDotGitAnywhere: boolean;
+  } {
+    const prefixPatterns = new Set<string>();
+    const anyDepthTokens = new Set<string>();
+    let ignoreDotGitAnywhere = false;
+
+    for (const pattern of ignorePatterns) {
+      const normalized = normalizePattern(pattern);
+      if (isDotGitIgnorePattern(normalized)) {
+        ignoreDotGitAnywhere = true;
+        continue;
+      }
+
+      const token = toAnyDepthIgnoreToken(normalized);
+      if (token) {
+        anyDepthTokens.add(token);
+        continue;
+      }
+
+      const prefix = toStaticIgnorePrefix(normalized);
+      if (prefix) {
+        prefixPatterns.add(prefix);
+      }
+    }
+
+    return {
+      prefixPatterns: Array.from(prefixPatterns),
+      anyDepthTokens: Array.from(anyDepthTokens),
+      ignoreDotGitAnywhere,
+    };
+  }
+
+  function matchesIgnorePrefix(
+    normalizedPath: string,
+    prefixPatterns: string[]
+  ): boolean {
+    for (const prefix of prefixPatterns) {
+      if (
+        normalizedPath === prefix ||
+        normalizedPath.startsWith(`${prefix}/`)
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function matchesAnyDepthIgnoreToken(
+    normalizedPath: string,
+    anyDepthTokens: string[]
+  ): boolean {
+    for (const token of anyDepthTokens) {
+      if (
+        normalizedPath === token ||
+        normalizedPath.startsWith(`${token}/`) ||
+        normalizedPath.endsWith(`/${token}`) ||
+        normalizedPath.includes(`/${token}/`)
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function createIgnoreMatcher(ignorePatterns: string[]) {
+    const config = parseIgnoreMatcherConfig(ignorePatterns);
+
+    return (relativePath: string) => {
+      const normalized = normalizePattern(relativePath);
+      if (!normalized) {
+        return false;
+      }
+
+      if (config.ignoreDotGitAnywhere) {
+        const segments = normalized.split(POSIX_SEPARATOR);
+        if (segments.includes(DOT_GIT_SEGMENT)) {
+          return true;
+        }
+      }
+
+      if (matchesAnyDepthIgnoreToken(normalized, config.anyDepthTokens)) {
+        return true;
+      }
+
+      return matchesIgnorePrefix(normalized, config.prefixPatterns);
+    };
   }
 
   async function getIncludedPaths(
@@ -302,7 +619,7 @@ export function createWorktreeManager(
         absolute: false,
         ignore: ignorePatterns,
         dot: true,
-        onlyFiles: false,
+        onlyFiles: true,
       });
 
       return files.map((file: string) => file.split(sep).join(POSIX_SEPARATOR));
@@ -312,40 +629,226 @@ export function createWorktreeManager(
     }
   }
 
+  async function copyIncludedRoot(
+    mainRepoPath: string,
+    worktreePath: string,
+    root: string,
+    shouldIgnore: (relativePath: string) => boolean
+  ): Promise<CopyStrategy | null> {
+    const sourcePath = join(mainRepoPath, root);
+    if (!existsSync(sourcePath)) {
+      return null;
+    }
+
+    const targetPath = join(worktreePath, root);
+
+    try {
+      await mkdir(dirname(targetPath), { recursive: true });
+      return await copyWithStrategy({
+        sourcePath,
+        targetPath,
+        options: {
+          recursive: true,
+          filter: (source) => {
+            const rel = normalizePattern(relative(mainRepoPath, source));
+            if (!rel || rel === ".") {
+              return true;
+            }
+
+            return !shouldIgnore(rel);
+          },
+        },
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  function isUnderCopiedRoot(path: string, copiedRoots: string[]): boolean {
+    for (const root of copiedRoots) {
+      if (path === root || path.startsWith(`${root}/`)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function incrementCopyStrategyCounts(
+    strategy: CopyStrategy,
+    counters: {
+      reflinkCopiedPathCount: number;
+      standardCopiedPathCount: number;
+    }
+  ): void {
+    if (strategy === "reflink") {
+      counters.reflinkCopiedPathCount += 1;
+      return;
+    }
+
+    counters.standardCopiedPathCount += 1;
+  }
+
+  function logCopyFailures(failedPaths: string[]): void {
+    if (failedPaths.length === 0) {
+      return;
+    }
+
+    const sample = failedPaths
+      .slice(0, COPY_FAILURE_LOG_SAMPLE_SIZE)
+      .join(", ");
+    const suffix =
+      failedPaths.length > COPY_FAILURE_LOG_SAMPLE_SIZE ? ", ..." : "";
+    logWarn(
+      `Failed to copy ${failedPaths.length} included path(s) to worktree`,
+      `${sample}${suffix}`
+    );
+  }
+
   async function copyIncludedFiles(
     worktreePath: string,
     includePatterns: string[],
     ignorePatterns: string[]
-  ): Promise<void> {
+  ): Promise<{
+    copiedPathCount: number;
+    copiedRootCount: number;
+    copiedFileCount: number;
+    reflinkCopiedPathCount: number;
+    standardCopiedPathCount: number;
+    reflinkEnabled: boolean;
+    globMatchDurationMs: number;
+    staticRootCopyDurationMs: number;
+    fileCopyDurationMs: number;
+  }> {
     if (includePatterns.length === 0) {
-      return;
+      return {
+        copiedPathCount: 0,
+        copiedRootCount: 0,
+        copiedFileCount: 0,
+        reflinkCopiedPathCount: 0,
+        standardCopiedPathCount: 0,
+        reflinkEnabled: reflinkState !== "unsupported",
+        globMatchDurationMs: 0,
+        staticRootCopyDurationMs: 0,
+        fileCopyDurationMs: 0,
+      };
     }
 
     const mainRepoPath = getMainRepoPath();
+    const { staticRoots, filePatterns } =
+      partitionIncludePatterns(includePatterns);
+    const shouldIgnore = createIgnoreMatcher(ignorePatterns);
+    const copiedRoots: string[] = [];
+    const failedPaths: string[] = [];
+    const copyCounters = {
+      reflinkCopiedPathCount: 0,
+      standardCopiedPathCount: 0,
+    };
+    let copiedFileCount = 0;
+    let staticRootCopyDurationMs = 0;
+
+    for (const root of staticRoots) {
+      const rootCopyStartedAt = Date.now();
+      const strategy = await copyIncludedRoot(
+        mainRepoPath,
+        worktreePath,
+        root,
+        shouldIgnore
+      );
+      staticRootCopyDurationMs += Date.now() - rootCopyStartedAt;
+      if (strategy) {
+        copiedRoots.push(root);
+        incrementCopyStrategyCounts(strategy, copyCounters);
+      } else {
+        failedPaths.push(`${root}/**`);
+      }
+    }
+
+    const globMatchStartedAt = Date.now();
     const includedPaths = await getIncludedPaths(
       mainRepoPath,
-      includePatterns,
+      filePatterns,
       ignorePatterns
     );
+    const globMatchDurationMs = Date.now() - globMatchStartedAt;
+    const pendingPaths = includedPaths.filter(
+      (relativePath) => !isUnderCopiedRoot(relativePath, copiedRoots)
+    );
 
-    for (const relativePath of includedPaths) {
-      await copyToWorktree(mainRepoPath, worktreePath, relativePath);
-    }
+    const ensuredDirs = new Set<string>();
+    let nextIndex = 0;
+
+    const worker = async () => {
+      while (nextIndex < pendingPaths.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+
+        const relativePath = pendingPaths[currentIndex];
+        if (!relativePath) {
+          continue;
+        }
+
+        const strategy = await copyToWorktree(
+          mainRepoPath,
+          worktreePath,
+          relativePath,
+          ensuredDirs
+        );
+        if (!strategy) {
+          failedPaths.push(relativePath);
+          continue;
+        }
+
+        copiedFileCount += 1;
+        incrementCopyStrategyCounts(strategy, copyCounters);
+      }
+    };
+
+    const workerCount = Math.max(
+      1,
+      Math.min(COPY_CONCURRENCY, pendingPaths.length)
+    );
+    const fileCopyStartedAt = Date.now();
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    const fileCopyDurationMs = Date.now() - fileCopyStartedAt;
+
+    logCopyFailures(failedPaths);
+
+    return {
+      copiedPathCount: copiedRoots.length + copiedFileCount,
+      copiedRootCount: copiedRoots.length,
+      copiedFileCount,
+      reflinkCopiedPathCount: copyCounters.reflinkCopiedPathCount,
+      standardCopiedPathCount: copyCounters.standardCopiedPathCount,
+      reflinkEnabled: reflinkState !== "unsupported",
+      globMatchDurationMs,
+      staticRootCopyDurationMs,
+      fileCopyDurationMs,
+    };
   }
 
   async function copyToWorktree(
     mainRepoPath: string,
     worktreePath: string,
-    file: string
-  ): Promise<void> {
+    file: string,
+    ensuredDirs: Set<string>
+  ): Promise<CopyStrategy | null> {
     const sourcePath = join(mainRepoPath, file);
     const targetPath = join(worktreePath, file);
+    const targetDir = dirname(targetPath);
 
     try {
-      await mkdir(dirname(targetPath), { recursive: true });
-      await cp(sourcePath, targetPath, { recursive: true });
-    } catch (error: unknown) {
-      logWarn(`Failed to copy ${file} to worktree`, error);
+      if (!ensuredDirs.has(targetDir)) {
+        await mkdir(targetDir, { recursive: true });
+        ensuredDirs.add(targetDir);
+      }
+      return await copyWithStrategy({
+        sourcePath,
+        targetPath,
+        options: { recursive: true },
+      });
+    } catch {
+      return null;
     }
   }
 
@@ -509,14 +1012,98 @@ export function createWorktreeManager(
       const branch = ensureBranchExists(`cell-${cellId}`);
 
       try {
+        const emitTiming = (event: WorktreeCreateTimingEvent) => {
+          options.onTimingEvent?.(event);
+        };
+
+        const worktreeAddStartedAt = Date.now();
         git("worktree", "add", worktreePath, branch);
+        const worktreeAddDurationMs = Date.now() - worktreeAddStartedAt;
+        emitTiming({
+          step: "git_worktree_add",
+          durationMs: worktreeAddDurationMs,
+          metadata: {
+            branch,
+          },
+        });
 
         const includePatterns = getIncludePatterns(options.templateId);
         const ignorePatterns = getIgnorePatterns(options.templateId);
-        await copyIncludedFiles(worktreePath, includePatterns, ignorePatterns);
-        await ensureHiveToolAndConfig(worktreePath, cellId);
+        const includeCopyStartedAt = Date.now();
+        const includeCopySummary = await copyIncludedFiles(
+          worktreePath,
+          includePatterns,
+          ignorePatterns
+        );
+        const includeCopyDurationMs = Date.now() - includeCopyStartedAt;
+        emitTiming({
+          step: "include_copy_glob_match",
+          durationMs: includeCopySummary.globMatchDurationMs,
+          metadata: {
+            includePatternCount: includePatterns.length,
+          },
+        });
+        emitTiming({
+          step: "include_copy_static_roots",
+          durationMs: includeCopySummary.staticRootCopyDurationMs,
+          metadata: {
+            copiedRootCount: includeCopySummary.copiedRootCount,
+          },
+        });
+        emitTiming({
+          step: "include_copy_files",
+          durationMs: includeCopySummary.fileCopyDurationMs,
+          metadata: {
+            copiedFileCount: includeCopySummary.copiedFileCount,
+          },
+        });
+        emitTiming({
+          step: "include_copy",
+          durationMs: includeCopyDurationMs,
+          metadata: {
+            copiedPathCount: includeCopySummary.copiedPathCount,
+            copiedRootCount: includeCopySummary.copiedRootCount,
+            copiedFileCount: includeCopySummary.copiedFileCount,
+            reflinkCopiedPathCount: includeCopySummary.reflinkCopiedPathCount,
+            standardCopiedPathCount: includeCopySummary.standardCopiedPathCount,
+            reflinkEnabled: includeCopySummary.reflinkEnabled,
+            includePatternCount: includePatterns.length,
+            ignorePatternCount: ignorePatterns.length,
+          },
+        });
 
+        const ensureHiveToolStartedAt = Date.now();
+        await ensureHiveToolAndConfig(worktreePath, cellId);
+        emitTiming({
+          step: "ensure_hive_tool_config",
+          durationMs: Date.now() - ensureHiveToolStartedAt,
+        });
+
+        const baseCommitStartedAt = Date.now();
         const baseCommit = git("rev-parse", branch);
+        const baseCommitDurationMs = Date.now() - baseCommitStartedAt;
+        emitTiming({
+          step: "resolve_base_commit",
+          durationMs: baseCommitDurationMs,
+          metadata: {
+            branch,
+          },
+        });
+        logInfo("Worktree create completed", {
+          cellId,
+          templateId: options.templateId ?? null,
+          worktreePath,
+          branch,
+          worktreeAddDurationMs,
+          includeCopyDurationMs,
+          copiedPathCount: includeCopySummary.copiedPathCount,
+          copiedRootCount: includeCopySummary.copiedRootCount,
+          copiedFileCount: includeCopySummary.copiedFileCount,
+          reflinkCopiedPathCount: includeCopySummary.reflinkCopiedPathCount,
+          standardCopiedPathCount: includeCopySummary.standardCopiedPathCount,
+          reflinkEnabled: includeCopySummary.reflinkEnabled,
+          baseCommitDurationMs,
+        });
         return {
           path: worktreePath,
           branch,
@@ -546,7 +1133,7 @@ export function createWorktreeManager(
       }
     },
 
-    removeWorktree(cellId: string): Promise<void> {
+    async removeWorktree(cellId: string): Promise<void> {
       const worktreeInfo = findWorktreeInfo(cellId);
 
       if (!worktreeInfo) {
@@ -572,9 +1159,9 @@ export function createWorktreeManager(
       }
 
       try {
-        git("worktree", "remove", "--force", worktreeInfo.path);
-        git("worktree", "prune");
-        return Promise.resolve();
+        await gitAsync("worktree", "remove", "--force", worktreeInfo.path);
+        await gitAsync("worktree", "prune");
+        return;
       } catch (cause) {
         throw toWorktreeError(
           {

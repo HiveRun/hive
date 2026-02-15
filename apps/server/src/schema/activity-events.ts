@@ -12,6 +12,8 @@ export const ACTIVITY_EVENT_TYPES = [
   "setup.retry",
   "service.logs.read",
   "setup.logs.read",
+  "cell.create.timing",
+  "cell.delete.timing",
 ] as const;
 
 export type ActivityEventType = (typeof ACTIVITY_EVENT_TYPES)[number];

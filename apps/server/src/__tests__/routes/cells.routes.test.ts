@@ -134,6 +134,14 @@ describe("cells route reachability", () => {
     expect(response.headers.get("content-type")).toBe("text/event-stream");
   });
 
+  it("GET /api/cells/timings/global is reachable", async () => {
+    const response = await app.handle(
+      new Request("http://localhost/api/cells/timings/global")
+    );
+
+    expect(response.status).toBe(HTTP_OK);
+  });
+
   /**
    * Routes that require existing resources - should return handler's 404, not Elysia's
    */
@@ -141,6 +149,7 @@ describe("cells route reachability", () => {
     ["GET", `/api/cells/${TEST_CELL_ID}`, "Get cell by ID"],
     ["GET", `/api/cells/${TEST_CELL_ID}/services`, "Get cell services"],
     ["GET", `/api/cells/${TEST_CELL_ID}/activity`, "Get cell activity"],
+    ["GET", `/api/cells/${TEST_CELL_ID}/timings`, "Get cell timings"],
     [
       "GET",
       `/api/cells/${TEST_CELL_ID}/terminal/stream`,

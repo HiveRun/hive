@@ -232,6 +232,8 @@ type CellTerminalProps = {
   themeMode?: "dark" | "light";
   startupReadiness?: "session" | "terminal-content";
   startupTextMatch?: string | null;
+  startupStatusMessage?: string | null;
+  startupOverlay?: ReactNode;
 };
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Terminal lifecycle handling intentionally coordinates stream events, reconnects, and UI status in one component.
@@ -247,6 +249,8 @@ export function CellTerminal({
   themeMode = "dark",
   startupReadiness = "session",
   startupTextMatch = null,
+  startupStatusMessage = null,
+  startupOverlay = null,
 }: CellTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
@@ -330,6 +334,10 @@ export function CellTerminal({
 
   const sendInput = useCallback(
     (data: string) => {
+      if (data.length === 0) {
+        return;
+      }
+
       fetch(buildTerminalEndpoint("input"), {
         method: "POST",
         headers: {
@@ -727,6 +735,8 @@ export function CellTerminal({
     themeMode === "light" ? "bg-[#F6F1E6]/96" : "bg-[#070504]/94";
   const showLoadingOverlay =
     !isStartupReady && connection !== "disconnected" && connection !== "exited";
+  const startupMessage =
+    startupStatusMessage?.trim() || "Starting OpenCode session";
   const terminalReady =
     isTerminalInitialized &&
     isStartupReady &&
@@ -840,12 +850,16 @@ export function CellTerminal({
             <div
               className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center ${loadingBackdropTone}`}
             >
-              <div
-                className={`flex items-center gap-2 border px-3 py-2 text-[11px] uppercase tracking-[0.24em] ${loadingPanelTone} ${loadingLabelTone}`}
-              >
-                <span className="h-2 w-2 animate-pulse bg-current" />
-                Starting OpenCode session
-              </div>
+              {startupOverlay ? (
+                startupOverlay
+              ) : (
+                <div
+                  className={`flex items-center gap-2 border px-3 py-2 text-[11px] uppercase tracking-[0.24em] ${loadingPanelTone} ${loadingLabelTone}`}
+                >
+                  <span className="h-2 w-2 animate-pulse bg-current" />
+                  {startupMessage}
+                </div>
+              )}
             </div>
           ) : null}
         </div>

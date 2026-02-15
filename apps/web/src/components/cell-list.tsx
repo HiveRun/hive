@@ -178,7 +178,6 @@ export function CellList({ workspaceId }: CellListProps) {
       toast.success(`Deleted ${count} ${label}`);
       queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
       setSelectedCellIds(new Set());
-      setIsBulkDialogOpen(false);
     },
     onError: (unknownError) => {
       const message =
@@ -195,7 +194,13 @@ export function CellList({ workspaceId }: CellListProps) {
       return;
     }
 
-    bulkDeleteMutation.mutate(selectedCells.map((cell) => cell.id));
+    const ids = selectedCells.map((cell) => cell.id);
+    const count = ids.length;
+    const label = count === 1 ? "cell" : "cells";
+
+    setIsBulkDialogOpen(false);
+    toast.info(`Deleting ${count} ${label}...`);
+    bulkDeleteMutation.mutate(ids);
   };
 
   const handleClearSelection = () => {

@@ -88,6 +88,22 @@ function CellLayout() {
   }
 
   const titlePrefix = workspaceLabel?.trim();
+  let statusMessage = "Ready";
+  if (cell.status === "spawning") {
+    statusMessage = "Provisioning workspace and services";
+  } else if (cell.status === "pending") {
+    statusMessage = "Preparing agent session";
+  } else if (cell.status === "error") {
+    statusMessage =
+      "Provisioning failed. Open Info to inspect setup logs and retry.";
+  }
+
+  let statusTone = "text-amber-200 border-amber-500/40 bg-amber-500/10";
+  if (cell.status === "ready") {
+    statusTone = "text-emerald-300 border-emerald-500/40 bg-emerald-500/10";
+  } else if (cell.status === "error") {
+    statusTone = "text-red-300 border-red-500/40 bg-red-500/10";
+  }
 
   return (
     <div className="flex h-full w-full flex-1 flex-col overflow-hidden">
@@ -126,6 +142,12 @@ function CellLayout() {
                 {cell.description}
               </p>
             ) : null}
+            <div
+              className={`inline-flex w-fit items-center gap-2 border px-3 py-1 text-[11px] uppercase tracking-[0.2em] ${statusTone}`}
+            >
+              <span className="h-1.5 w-1.5 animate-pulse bg-current" />
+              <span>{statusMessage}</span>
+            </div>
           </div>
         </section>
 

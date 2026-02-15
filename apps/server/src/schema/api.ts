@@ -124,6 +124,50 @@ export const CellActivityEventListResponseSchema = t.Object({
   nextCursor: t.Union([t.String(), t.Null()]),
 });
 
+const CellTimingWorkflowSchema = t.Union([
+  t.Literal("create"),
+  t.Literal("delete"),
+]);
+
+const CellTimingStatusSchema = t.Union([t.Literal("ok"), t.Literal("error")]);
+
+export const CellTimingStepSchema = t.Object({
+  id: t.String(),
+  cellId: t.String(),
+  cellName: t.Union([t.String(), t.Null()]),
+  workspaceId: t.Union([t.String(), t.Null()]),
+  templateId: t.Union([t.String(), t.Null()]),
+  runId: t.String(),
+  workflow: CellTimingWorkflowSchema,
+  step: t.String(),
+  status: CellTimingStatusSchema,
+  durationMs: t.Number(),
+  attempt: t.Union([t.Number(), t.Null()]),
+  error: t.Union([t.String(), t.Null()]),
+  metadata: t.Any(),
+  createdAt: t.String(),
+});
+
+export const CellTimingRunSchema = t.Object({
+  runId: t.String(),
+  cellId: t.String(),
+  cellName: t.Union([t.String(), t.Null()]),
+  workspaceId: t.Union([t.String(), t.Null()]),
+  templateId: t.Union([t.String(), t.Null()]),
+  workflow: CellTimingWorkflowSchema,
+  status: CellTimingStatusSchema,
+  startedAt: t.String(),
+  finishedAt: t.String(),
+  totalDurationMs: t.Number(),
+  stepCount: t.Number(),
+  attempt: t.Union([t.Number(), t.Null()]),
+});
+
+export const CellTimingListResponseSchema = t.Object({
+  steps: t.Array(CellTimingStepSchema),
+  runs: t.Array(CellTimingRunSchema),
+});
+
 const DiffStatusSchema = t.Union([
   t.Literal("modified"),
   t.Literal("added"),

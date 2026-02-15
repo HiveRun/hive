@@ -52,6 +52,7 @@ export type TemplatesResponse = {
 export const templateQueries = {
   all: (workspaceId: string) => ({
     queryKey: ["templates", workspaceId] as const,
+    staleTime: 60_000,
     queryFn: async (): Promise<TemplatesResponse> => {
       const { data, error } = await rpc.api.templates.get({
         query: { workspaceId },

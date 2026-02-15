@@ -4,12 +4,23 @@ import { createCellsRoutes } from "../../routes/cells";
 import { cellActivityEvents } from "../../schema/activity-events";
 import { cells } from "../../schema/cells";
 import { cellServices } from "../../schema/services";
+import { cellTimingEvents } from "../../schema/timing-events";
 import { setupTestDb, testDb } from "../test-db";
 
 const TEST_WORKSPACE_ID = "test-workspace";
 const TEST_CELL_ID = "test-cell-id";
 const TEST_SERVICE_ID = "service-1";
 const HTTP_OK = 200;
+const TIMING_CREATE_STEP_OFFSET_MS = 2000;
+const TIMING_CREATE_TOTAL_OFFSET_MS = 1800;
+const TIMING_DELETE_STEP_OFFSET_MS = 1000;
+const TIMING_DELETE_TOTAL_OFFSET_MS = 900;
+const TIMING_CREATE_STEP_DURATION_MS = 1250;
+const TIMING_CREATE_TOTAL_DURATION_MS = 1800;
+const TIMING_DELETE_STEP_DURATION_MS = 30;
+const TIMING_DELETE_TOTAL_DURATION_MS = 55;
+const EXPECTED_DELETE_TIMING_STEP_COUNT = 2;
+const EXPECTED_TIMING_RUN_COUNT = 1;
 
 function createMinimalDependencies(): any {
   const workspaceRecord = {
@@ -131,6 +142,7 @@ describe("Cell activity events", () => {
   });
 
   beforeEach(async () => {
+    await testDb.delete(cellTimingEvents);
     await testDb.delete(cellActivityEvents);
     await testDb.delete(cellServices);
     await testDb.delete(cells);
@@ -263,6 +275,204 @@ describe("Cell activity events", () => {
     expect(
       payload.events.some((event) => event.type === "setup.logs.read")
     ).toBe(true);
+  });
+
+  it("returns grouped timing steps for creation and deletion", async () => {
+    await seedCellAndService();
+
+    const createRunId = "create-run-1";
+    const deleteRunId = "delete-run-1";
+    const now = Date.now();
+
+    await testDb.insert(cellTimingEvents).values([
+      {
+        id: "timing-create-step",
+        cellId: TEST_CELL_ID,
+        cellName: "Test Cell",
+        workspaceId: TEST_WORKSPACE_ID,
+        templateId: "template",
+        workflow: "create",
+        runId: createRunId,
+        step: "ensure_services",
+        status: "ok",
+        durationMs: TIMING_CREATE_STEP_DURATION_MS,
+        attempt: 1,
+        error: null,
+        metadata: {
+          workflow: "create",
+          runId: createRunId,
+          step: "ensure_services",
+          status: "ok",
+          durationMs: TIMING_CREATE_STEP_DURATION_MS,
+          attempt: 1,
+        },
+        createdAt: new Date(now - TIMING_CREATE_STEP_OFFSET_MS),
+      },
+      {
+        id: "timing-create-total",
+        cellId: TEST_CELL_ID,
+        cellName: "Test Cell",
+        workspaceId: TEST_WORKSPACE_ID,
+        templateId: "template",
+        workflow: "create",
+        runId: createRunId,
+        step: "total",
+        status: "ok",
+        durationMs: TIMING_CREATE_TOTAL_DURATION_MS,
+        attempt: 1,
+        error: null,
+        metadata: {
+          workflow: "create",
+          runId: createRunId,
+          step: "total",
+          status: "ok",
+          durationMs: TIMING_CREATE_TOTAL_DURATION_MS,
+          attempt: 1,
+        },
+        createdAt: new Date(now - TIMING_CREATE_TOTAL_OFFSET_MS),
+      },
+      {
+        id: "timing-delete-step",
+        cellId: TEST_CELL_ID,
+        cellName: "Test Cell",
+        workspaceId: TEST_WORKSPACE_ID,
+        templateId: "template",
+        workflow: "delete",
+        runId: deleteRunId,
+        step: "stop_services",
+        status: "error",
+        durationMs: TIMING_DELETE_STEP_DURATION_MS,
+        attempt: null,
+        error: "mock failure",
+        metadata: {
+          workflow: "delete",
+          runId: deleteRunId,
+          step: "stop_services",
+          status: "error",
+          durationMs: TIMING_DELETE_STEP_DURATION_MS,
+          error: "mock failure",
+        },
+        createdAt: new Date(now - TIMING_DELETE_STEP_OFFSET_MS),
+      },
+      {
+        id: "timing-delete-total",
+        cellId: TEST_CELL_ID,
+        cellName: "Test Cell",
+        workspaceId: TEST_WORKSPACE_ID,
+        templateId: "template",
+        workflow: "delete",
+        runId: deleteRunId,
+        step: "total",
+        status: "error",
+        durationMs: TIMING_DELETE_TOTAL_DURATION_MS,
+        attempt: null,
+        error: "mock failure",
+        metadata: {
+          workflow: "delete",
+          runId: deleteRunId,
+          step: "total",
+          status: "error",
+          durationMs: TIMING_DELETE_TOTAL_DURATION_MS,
+          error: "mock failure",
+        },
+        createdAt: new Date(now - TIMING_DELETE_TOTAL_OFFSET_MS),
+      },
+    ]);
+
+    const routes = createCellsRoutes(createMinimalDependencies());
+    const app = new Elysia().use(routes);
+
+    const response = await app.handle(
+      new Request(
+        `http://localhost/api/cells/${TEST_CELL_ID}/timings?workflow=delete&runId=${deleteRunId}`
+      )
+    );
+    expect(response.status).toBe(HTTP_OK);
+
+    const payload = (await response.json()) as {
+      steps: Array<{
+        workflow: string;
+        runId: string;
+        step: string;
+        status: string;
+      }>;
+      runs: Array<{
+        runId: string;
+        workflow: string;
+        status: string;
+        totalDurationMs: number;
+      }>;
+    };
+
+    expect(payload.steps).toHaveLength(EXPECTED_DELETE_TIMING_STEP_COUNT);
+    expect(payload.steps.every((step) => step.workflow === "delete")).toBe(
+      true
+    );
+    expect(payload.steps.every((step) => step.runId === deleteRunId)).toBe(
+      true
+    );
+    expect(payload.runs).toHaveLength(EXPECTED_TIMING_RUN_COUNT);
+    expect(payload.runs[0]?.runId).toBe(deleteRunId);
+    expect(payload.runs[0]?.workflow).toBe("delete");
+    expect(payload.runs[0]?.status).toBe("error");
+    expect(payload.runs[0]?.totalDurationMs).toBe(
+      TIMING_DELETE_TOTAL_DURATION_MS
+    );
+  });
+
+  it("keeps deletion timings queryable globally after cell removal", async () => {
+    await seedCellAndService();
+
+    const routes = createCellsRoutes(createMinimalDependencies());
+    const app = new Elysia().use(routes);
+
+    const deleteResponse = await app.handle(
+      new Request(`http://localhost/api/cells/${TEST_CELL_ID}`, {
+        method: "DELETE",
+      })
+    );
+    expect(deleteResponse.status).toBe(HTTP_OK);
+
+    const timingsResponse = await app.handle(
+      new Request(
+        `http://localhost/api/cells/${TEST_CELL_ID}/timings?workflow=delete`
+      )
+    );
+    expect(timingsResponse.status).toBe(HTTP_OK);
+
+    const payload = (await timingsResponse.json()) as {
+      steps: Array<{ step: string; workflow: string }>;
+      runs: Array<{ workflow: string }>;
+    };
+
+    expect(payload.steps.some((step) => step.step === "total")).toBe(true);
+    expect(payload.steps.every((step) => step.workflow === "delete")).toBe(
+      true
+    );
+    expect(payload.runs.every((run) => run.workflow === "delete")).toBe(true);
+
+    const globalResponse = await app.handle(
+      new Request(
+        `http://localhost/api/cells/timings/global?workflow=delete&cellId=${TEST_CELL_ID}`
+      )
+    );
+    expect(globalResponse.status).toBe(HTTP_OK);
+
+    const globalPayload = (await globalResponse.json()) as {
+      steps: Array<{ cellId: string; workflow: string; step: string }>;
+      runs: Array<{ cellId: string; workflow: string }>;
+    };
+
+    expect(globalPayload.steps.length).toBeGreaterThan(0);
+    expect(
+      globalPayload.steps.every((step) => step.cellId === TEST_CELL_ID)
+    ).toBe(true);
+    expect(
+      globalPayload.steps.every((step) => step.workflow === "delete")
+    ).toBe(true);
+    expect(globalPayload.runs.every((run) => run.cellId === TEST_CELL_ID)).toBe(
+      true
+    );
   });
 
   it("paginates activity events with cursors", async () => {

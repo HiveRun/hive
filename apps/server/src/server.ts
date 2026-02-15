@@ -38,6 +38,68 @@ const DEFAULT_HOSTNAME = "localhost";
 const PORT = Number(process.env.PORT ?? DEFAULT_SERVER_PORT);
 const HOSTNAME = process.env.HOST ?? process.env.HOSTNAME ?? DEFAULT_HOSTNAME;
 
+const SILENCE_TERMINAL_TRAFFIC_LOGS =
+  process.env.HIVE_LOG_TERMINAL_TRAFFIC !== "1";
+const SILENCE_POLLING_TRAFFIC_LOGS =
+  process.env.HIVE_LOG_POLLING_TRAFFIC !== "1";
+const SILENCE_OPTIONS_REQUEST_LOGS =
+  process.env.HIVE_LOG_OPTIONS_REQUESTS !== "1";
+
+const TERMINAL_TRAFFIC_PATH_PATTERNS = [
+  /^\/api\/cells\/[^/]+\/chat\/terminal\/(stream|input|resize)$/,
+  /^\/api\/cells\/[^/]+\/terminal\/(stream|input|resize)$/,
+  /^\/api\/cells\/[^/]+\/setup\/terminal\/(input|resize)$/,
+  /^\/api\/cells\/[^/]+\/services\/[^/]+\/terminal\/(input|resize)$/,
+];
+
+const POLLING_TRAFFIC_PATH_PATTERNS = [
+  /^\/api\/agents\/sessions\/byCell\/[^/]+$/,
+  /^\/api\/agents\/sessions\/[^/]+\/events$/,
+  /^\/api\/cells\/workspace\/[^/]+\/stream$/,
+];
+
+function readPathname(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
+  }
+}
+
+function shouldIgnoreAutoRequestLog(ctx: {
+  request: Request;
+  isError?: boolean;
+}): boolean {
+  if (!SILENCE_TERMINAL_TRAFFIC_LOGS) {
+    return false;
+  }
+
+  if (ctx.isError) {
+    return false;
+  }
+
+  if (SILENCE_OPTIONS_REQUEST_LOGS && ctx.request.method === "OPTIONS") {
+    return true;
+  }
+
+  const pathname = readPathname(ctx.request.url);
+  if (
+    SILENCE_TERMINAL_TRAFFIC_LOGS &&
+    TERMINAL_TRAFFIC_PATH_PATTERNS.some((pattern) => pattern.test(pathname))
+  ) {
+    return true;
+  }
+
+  if (
+    SILENCE_POLLING_TRAFFIC_LOGS &&
+    POLLING_TRAFFIC_PATH_PATTERNS.some((pattern) => pattern.test(pathname))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 const runtimeExecutable = basename(process.execPath).toLowerCase();
 const isBunRuntime = runtimeExecutable.startsWith("bun");
 const isCompiledRuntime = !isBunRuntime;
@@ -133,6 +195,9 @@ const createApp = () =>
     .use(
       logger({
         level: process.env.LOG_LEVEL || "info",
+        autoLogging: {
+          ignore: shouldIgnoreAutoRequestLog,
+        },
       })
     )
 
