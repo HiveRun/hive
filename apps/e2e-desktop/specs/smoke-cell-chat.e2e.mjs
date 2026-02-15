@@ -9,6 +9,8 @@ if (typeof describe !== "function" || typeof it !== "function") {
 
 const SESSION_TIMEOUT_MS = 120_000;
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
+const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
+const CHAT_ROUTE_TIMEOUT_MS = 180_000;
 const PROMPT_ACCEPT_TIMEOUT_MS = 20_000;
 const SEND_API_TIMEOUT_MS = 8000;
 const SEND_ATTEMPTS = 3;
@@ -33,6 +35,15 @@ describe("desktop cell chat smoke", () => {
     });
 
     await browser.url(`/cells/${cellId}/chat`);
+    await waitForProvisioningOrChatRoute({
+      cellId,
+      timeoutMs: INITIAL_ROUTE_TIMEOUT_MS,
+    });
+    await waitForChatRoute({
+      cellId,
+      timeoutMs: CHAT_ROUTE_TIMEOUT_MS,
+    });
+
     await ensureTerminalReady({
       context: "before prompt send",
       timeoutMs: TERMINAL_READY_TIMEOUT_MS,
@@ -371,4 +382,57 @@ async function wait(ms) {
   await new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+async function waitForProvisioningOrChatRoute(options) {
+  let resolvedRoute = null;
+
+  await waitForCondition({
+    timeoutMs: options.timeoutMs,
+    errorMessage: `Cell ${options.cellId} did not reach chat/provisioning route`,
+    check: async () => {
+      const url = await browser.getUrl();
+      resolvedRoute = resolveCellSubroute(url, options.cellId);
+      return resolvedRoute !== null;
+    },
+  });
+
+  if (!resolvedRoute) {
+    throw new Error(
+      `Failed to resolve initial route for cell ${options.cellId}`
+    );
+  }
+
+  return resolvedRoute;
+}
+
+async function waitForChatRoute(options) {
+  await waitForCondition({
+    timeoutMs: options.timeoutMs,
+    errorMessage: `Cell ${options.cellId} did not reach chat route`,
+    check: async () => {
+      const url = await browser.getUrl();
+      return readPathname(url) === `/cells/${options.cellId}/chat`;
+    },
+  });
+}
+
+function resolveCellSubroute(url, cellId) {
+  const pathname = readPathname(url);
+  if (pathname === `/cells/${cellId}/chat`) {
+    return "chat";
+  }
+  if (pathname === `/cells/${cellId}/provisioning`) {
+    return "provisioning";
+  }
+
+  return null;
+}
+
+function readPathname(url) {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
+  }
 }
