@@ -43,7 +43,13 @@ export const Route = createFileRoute("/cells/$cellId")({
     const workspaceLabel =
       workspaces.workspaces.find((entry) => entry.id === cell.workspaceId)
         ?.label ?? undefined;
-    await queryClient.ensureQueryData(templateQueries.all(cell.workspaceId));
+
+    queryClient
+      .prefetchQuery(templateQueries.all(cell.workspaceId))
+      .catch(() => {
+        // non-blocking prefetch; template routes/components handle fetch errors
+      });
+
     return { workspaceId: cell.workspaceId, workspaceLabel };
   },
   component: CellLayout,

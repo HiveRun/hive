@@ -331,7 +331,7 @@ function WorkspaceTreeContent({
   const workspacesQuery = useQuery(workspaceQueries.list());
   const workspaces = workspacesQuery.data?.workspaces ?? [];
   const workspacesLoading =
-    workspacesQuery.isPending || workspacesQuery.isRefetching;
+    workspacesQuery.isPending && workspacesQuery.data === undefined;
 
   if (collapsed) {
     return null;
@@ -396,7 +396,7 @@ function WorkspaceSection({
     enabled: isExpanded,
   });
   const cells = cellsQuery.data ?? [];
-  const cellsLoading = cellsQuery.isPending || cellsQuery.isRefetching;
+  const cellsLoading = cellsQuery.isPending && cellsQuery.data === undefined;
 
   const hasProvisioningCells = cells.some((cell) =>
     PROVISIONING_STATUSES.includes(cell.status)
