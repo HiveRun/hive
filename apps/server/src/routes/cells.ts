@@ -612,6 +612,8 @@ const ChatThemeModeQuerySchema = t.Object({
 
 const PROVISIONING_INTERRUPTED_MESSAGE =
   "Provisioning interrupted. Fix the workspace and rerun setup.";
+const PROVISIONING_CANCELLED_MESSAGE =
+  "Provisioning cancelled because the cell no longer exists.";
 
 const LOGGER_CONFIG = {
   level: process.env.LOG_LEVEL || "info",
@@ -800,6 +802,10 @@ async function ensureChatTerminalSessionForCell(
   };
 }
 
+function isCellReadyForChat(cell: typeof cells.$inferSelect): boolean {
+  return cell.status === "ready";
+}
+
 type ErrorPayload = {
   message: string;
   details?: string;
@@ -865,38 +871,57 @@ export function createCellsRoutes(
         }
 
         try {
+          const [provisioningState] = await deps.db
+            .insert(cellProvisioningStates)
+            .values({
+              cellId: cell.id,
+              modelIdOverride: null,
+              providerIdOverride: null,
+              startedAt: null,
+              finishedAt: null,
+              attemptCount: 0,
+            })
+            .onConflictDoNothing({ target: cellProvisioningStates.cellId })
+            .returning();
+
+          const existingProvisioningState =
+            provisioningState ??
+            (await deps.db.query.cellProvisioningStates.findFirst({
+              where: eq(cellProvisioningStates.cellId, cell.id),
+            })) ??
+            null;
+
           await deps.db
             .update(cells)
-            .set({ status: "pending", lastSetupError: null })
+            .set({ status: "spawning", lastSetupError: null })
             .where(eq(cells.id, cell.id));
 
           emitCellStatusUpdate({
             workspaceId: cell.workspaceId,
             cellId: cell.id,
-            status: "pending",
+            status: "spawning",
             lastSetupError: null,
           });
 
-          await deps.ensureServicesForCell({
+          const context = await createExistingProvisionContext({
             cell: {
               ...cell,
-              status: "pending",
+              status: "spawning",
               lastSetupError: null,
             },
+            provisioningState: existingProvisioningState,
+            body: resolveProvisioningParams(cell, existingProvisioningState),
             template,
+            database: deps.db,
+            ensureSession: deps.ensureAgentSession,
+            sendAgentMessage: deps.sendAgentMessage,
+            ensureServices: deps.ensureServicesForCell,
+            stopCellServices: deps.stopServicesForCell,
+            workspaceContext,
+            log: backgroundProvisioningLogger,
           });
 
-          await deps.db
-            .update(cells)
-            .set({ status: "ready", lastSetupError: null })
-            .where(eq(cells.id, cell.id));
-
-          emitCellStatusUpdate({
-            workspaceId: cell.workspaceId,
-            cellId: cell.id,
-            status: "ready",
-            lastSetupError: null,
-          });
+          startProvisioningWorkflow(context);
         } catch (error) {
           const payload = buildCellCreationErrorPayload(error);
           const lastSetupError = deriveSetupErrorDetails(payload);
@@ -1820,6 +1845,14 @@ export function createCellsRoutes(
         let chatTerminal: ChatTerminalDependencies;
         const themeMode = normalizeOpencodeThemeMode(query.themeMode);
         try {
+          if (!isCellReadyForChat(cell)) {
+            set.status = HTTP_STATUS.CONFLICT;
+            return {
+              message:
+                "Chat terminal is unavailable until provisioning completes",
+            } satisfies { message: string };
+          }
+
           const prepared = await ensureChatTerminalSessionForCell(
             deps,
             cell,
@@ -1904,6 +1937,14 @@ export function createCellsRoutes(
         }
 
         try {
+          if (!isCellReadyForChat(cell)) {
+            set.status = HTTP_STATUS.CONFLICT;
+            return {
+              message:
+                "Chat terminal is unavailable until provisioning completes",
+            } satisfies { message: string };
+          }
+
           const themeMode = normalizeOpencodeThemeMode(query.themeMode);
           const { chatTerminal } = await ensureChatTerminalSessionForCell(
             deps,
@@ -1950,6 +1991,14 @@ export function createCellsRoutes(
         }
 
         try {
+          if (!isCellReadyForChat(cell)) {
+            set.status = HTTP_STATUS.CONFLICT;
+            return {
+              message:
+                "Chat terminal is unavailable until provisioning completes",
+            } satisfies { message: string };
+          }
+
           const themeMode = normalizeOpencodeThemeMode(query.themeMode);
           const { session, chatTerminal } =
             await ensureChatTerminalSessionForCell(deps, cell, themeMode);
@@ -2003,6 +2052,14 @@ export function createCellsRoutes(
         }
 
         try {
+          if (!isCellReadyForChat(cell)) {
+            set.status = HTTP_STATUS.CONFLICT;
+            return {
+              message:
+                "Chat terminal is unavailable until provisioning completes",
+            } satisfies { message: string };
+          }
+
           const chatTerminal = getChatTerminalDependencies(deps);
           chatTerminal.closeChatTerminalSession(cell.id);
           const themeMode = normalizeOpencodeThemeMode(query.themeMode);
@@ -2683,18 +2740,33 @@ export function createCellsRoutes(
           const deletedIds: string[] = [];
 
           for (const cell of cellsToDelete) {
-            await deleteCellWithTiming({
-              database,
-              cell,
-              closeSession,
-              closeTerminalSession,
-              closeChatTerminalSession,
-              clearSetupTerminal,
-              stopCellServices: stopCellServicesFn,
-              getWorktreeService: fetchManager,
-              log,
-            });
-            deletedIds.push(cell.id);
+            try {
+              await deleteCellWithTiming({
+                database,
+                cell,
+                closeSession,
+                closeTerminalSession,
+                closeChatTerminalSession,
+                clearSetupTerminal,
+                stopCellServices: stopCellServicesFn,
+                getWorktreeService: fetchManager,
+                log,
+              });
+              deletedIds.push(cell.id);
+            } catch (error) {
+              log.error(
+                {
+                  error,
+                  cellId: cell.id,
+                },
+                "Failed to delete cell during bulk delete"
+              );
+            }
+          }
+
+          if (deletedIds.length === 0) {
+            set.status = HTTP_STATUS.INTERNAL_ERROR;
+            return { message: "Failed to delete cells" };
           }
 
           return { deletedIds };
@@ -3274,6 +3346,8 @@ async function runCreateWorktreePhase(args: {
   const { context, runPhase, attempt, database, template, body } = args;
   const { state } = context;
 
+  await assertCellStillExists(context, "create_worktree");
+
   if (state.worktreeCreated && state.workspacePath && state.baseCommit) {
     return;
   }
@@ -3334,6 +3408,8 @@ async function finalizeCellProvisioning(
     phase: ProvisionPhase,
     action: () => Promise<T>
   ): Promise<T> => {
+    await assertCellStillExists(context, phase);
+
     const startedAt = Date.now();
     let phaseStatus: CellTimingStatus = "ok";
     let phaseError: string | null = null;
@@ -3502,6 +3578,17 @@ async function handleDeferredProvisionFailure(
   context: ProvisionContext,
   error: unknown
 ): Promise<void> {
+  if (!(await doesCellExist(context.database, context.state.cellId))) {
+    await cleanupProvisionResources(context, { preserveRecord: true });
+    context.log.info?.(
+      {
+        cellId: context.state.cellId,
+      },
+      PROVISIONING_CANCELLED_MESSAGE
+    );
+    return;
+  }
+
   const payload = buildCellCreationErrorPayload(error);
   const lastSetupError = deriveSetupErrorDetails(payload);
 
@@ -3563,23 +3650,21 @@ async function recoverCellCreationFailure(
   const payload = buildCellCreationErrorPayload(error);
   const preserveResources = shouldPreserveCellWorkspace(error);
 
-  if (context.state.recordCreated) {
-    await insertCellTimingEvent({
-      database: context.database,
-      log: context.log,
-      cellId: context.state.cellId,
-      cellName: context.state.createdCell?.name ?? context.body.name,
-      workflow: "create",
-      runId: context.state.timingRunId,
-      step: "create_request_failure",
-      status: "error",
-      durationMs: 0,
-      error: payload.message,
-      attempt: context.state.provisioningState?.attemptCount ?? null,
-      templateId: context.template.id,
-      workspaceId: context.workspace.id,
-    });
-  }
+  await insertCellTimingEvent({
+    database: context.database,
+    log: context.log,
+    cellId: context.state.cellId,
+    cellName: context.state.createdCell?.name ?? context.body.name,
+    workflow: "create",
+    runId: context.state.timingRunId,
+    step: "create_request_failure",
+    status: "error",
+    durationMs: 0,
+    error: payload.message,
+    attempt: context.state.provisioningState?.attemptCount ?? null,
+    templateId: context.template.id,
+    workspaceId: context.workspace.id,
+  });
 
   if (
     preserveResources &&
@@ -3644,6 +3729,29 @@ async function cleanupProvisionResources(
   if (!options.preserveRecord) {
     await deleteCellRecordIfCreated(context);
   }
+}
+
+async function doesCellExist(
+  database: DatabaseClient,
+  cellId: string
+): Promise<boolean> {
+  const record = await database
+    .select({ id: cells.id })
+    .from(cells)
+    .where(eq(cells.id, cellId))
+    .limit(1);
+  return record.length > 0;
+}
+
+async function assertCellStillExists(
+  context: ProvisionContext,
+  phase: ProvisionPhase
+): Promise<void> {
+  if (await doesCellExist(context.database, context.state.cellId)) {
+    return;
+  }
+
+  throw new Error(`${PROVISIONING_CANCELLED_MESSAGE} (phase: ${phase})`);
 }
 
 async function stopServicesIfStarted(context: ProvisionContext) {

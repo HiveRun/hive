@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { createServer } from "node:net";
 import { constants as osConstants } from "node:os";
-import { resolve } from "node:path";
+import { resolve as resolvePath } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { type IExitEvent, spawn as spawnPty } from "bun-pty";
@@ -711,13 +711,24 @@ export function createServiceSupervisor(
           },
         });
 
+        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+        const timeoutPromise = new Promise<{ type: "timeout" }>(
+          (resolveTimeout) => {
+            timeoutHandle = setTimeout(() => {
+              resolveTimeout({ type: "timeout" });
+            }, timeoutMs);
+          }
+        );
         const exitResult = await Promise.race([
           proc.exited.then((code) => ({
             type: "exit" as const,
             exitCode: code,
           })),
-          delay(timeoutMs).then(() => ({ type: "timeout" as const })),
+          timeoutPromise,
         ]);
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+        }
 
         if (exitResult.type === "timeout") {
           const durationMs = Date.now() - commandStartedAt;
@@ -1456,7 +1467,7 @@ function resolveServiceCwd(workspacePath: string, cwd?: string): string {
     return cwd;
   }
 
-  return resolve(workspacePath, cwd);
+  return resolvePath(workspacePath, cwd);
 }
 
 function sanitizeServiceName(name: string): string {
@@ -1475,7 +1486,7 @@ function buildBaseEnv({
     throw new Error("Cell workspace path missing");
   }
 
-  const hiveHome = resolve(workspacePath, ".hive", "home");
+  const hiveHome = resolvePath(workspacePath, ".hive", "home");
   mkdirSync(hiveHome, { recursive: true });
 
   return {

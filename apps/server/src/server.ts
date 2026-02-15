@@ -70,10 +70,6 @@ function shouldIgnoreAutoRequestLog(ctx: {
   request: Request;
   isError?: boolean;
 }): boolean {
-  if (!SILENCE_TERMINAL_TRAFFIC_LOGS) {
-    return false;
-  }
-
   if (ctx.isError) {
     return false;
   }

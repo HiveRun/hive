@@ -504,6 +504,13 @@ export function createWorktreeManager(
     };
   }
 
+  function hasDynamicIgnorePatterns(ignorePatterns: string[]): boolean {
+    return ignorePatterns.some((pattern) => {
+      const normalized = normalizePattern(pattern);
+      return Boolean(normalized) && GLOB_MAGIC_PATTERN.test(normalized);
+    });
+  }
+
   function parseIgnoreMatcherConfig(ignorePatterns: string[]): {
     prefixPatterns: string[];
     anyDepthTokens: string[];
@@ -619,7 +626,7 @@ export function createWorktreeManager(
         absolute: false,
         ignore: ignorePatterns,
         dot: true,
-        onlyFiles: true,
+        onlyFiles: false,
       });
 
       return files.map((file: string) => file.split(sep).join(POSIX_SEPARATOR));
@@ -735,8 +742,12 @@ export function createWorktreeManager(
     }
 
     const mainRepoPath = getMainRepoPath();
-    const { staticRoots, filePatterns } =
-      partitionIncludePatterns(includePatterns);
+    const partitioned = partitionIncludePatterns(includePatterns);
+    const useStaticRootCopy = !hasDynamicIgnorePatterns(ignorePatterns);
+    const staticRoots = useStaticRootCopy ? partitioned.staticRoots : [];
+    const filePatterns = useStaticRootCopy
+      ? [...partitioned.filePatterns]
+      : [...includePatterns];
     const shouldIgnore = createIgnoreMatcher(ignorePatterns);
     const copiedRoots: string[] = [];
     const failedPaths: string[] = [];
@@ -761,6 +772,7 @@ export function createWorktreeManager(
         incrementCopyStrategyCounts(strategy, copyCounters);
       } else {
         failedPaths.push(`${root}/**`);
+        filePatterns.push(`${root}/**`);
       }
     }
 
