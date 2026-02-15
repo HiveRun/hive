@@ -1,28 +1,42 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Loader2 } from "lucide-react";
+import { useEffect } from "react";
 import { CellTerminal } from "@/components/cell-terminal";
 import { useTheme } from "@/components/theme-provider";
 import { cellQueries } from "@/queries/cells";
 
+const ignorePromiseRejection = (_error: unknown) => null;
+
 export const Route = createFileRoute("/cells/$cellId/chat")({
-  loader: async ({ params, context: { queryClient } }) => {
-    const cell = await queryClient.ensureQueryData(
-      cellQueries.detail(params.cellId)
-    );
-    if (cell.status !== "ready") {
-      throw redirect({
-        to: "/cells/$cellId/provisioning",
-        params,
-        replace: true,
-      });
-    }
+  loader: ({ context: { queryClient }, params }) => {
+    queryClient
+      .prefetchQuery(cellQueries.detail(params.cellId))
+      .catch(ignorePromiseRejection);
+    return null;
   },
   component: CellChat,
 });
 
 function CellChat() {
   const { cellId } = Route.useParams();
+  const navigate = useNavigate({ from: "/cells/$cellId/chat" });
   const cellQuery = useQuery(cellQueries.detail(cellId));
+
+  useEffect(() => {
+    if (!cellQuery.data || cellQuery.data.status === "ready") {
+      return;
+    }
+
+    navigate({
+      to: "/cells/$cellId/provisioning",
+      params: { cellId },
+      replace: true,
+    }).catch(() => {
+      // navigation failures are surfaced by the router
+    });
+  }, [cellId, cellQuery.data, navigate]);
+
   const { theme } = useTheme();
   const themeMode =
     theme === "light" ||
@@ -33,6 +47,36 @@ function CellChat() {
       : "dark";
 
   const startupStatusMessage = "Starting OpenCode session";
+
+  if (cellQuery.isPending || !cellQuery.data) {
+    return (
+      <div className="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
+        <div className="flex h-full min-h-0 w-full items-center justify-center p-6">
+          <div className="flex flex-col items-center gap-3 border-2 border-border/70 bg-muted/20 px-5 py-4">
+            <Loader2 className="size-5 animate-spin text-primary" />
+            <p className="text-[11px] text-muted-foreground uppercase tracking-[0.2em]">
+              Loading chat status
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (cellQuery.data.status !== "ready") {
+    return (
+      <div className="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
+        <div className="flex h-full min-h-0 w-full items-center justify-center p-6">
+          <div className="flex flex-col items-center gap-3 border-2 border-border/70 bg-muted/20 px-5 py-4">
+            <Loader2 className="size-5 animate-spin text-primary" />
+            <p className="text-[11px] text-muted-foreground uppercase tracking-[0.2em]">
+              Redirecting to provisioning
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <CellTerminal

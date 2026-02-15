@@ -1,10 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import {
-  createFileRoute,
-  Link,
-  redirect,
-  useNavigate,
-} from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { useEffect, useMemo } from "react";
 import { toast } from "sonner";
@@ -18,17 +13,16 @@ const PROVISIONING_POLL_MS = 1500;
 const ignorePromiseRejection = (_error: unknown) => null;
 
 export const Route = createFileRoute("/cells/$cellId/provisioning")({
-  loader: async ({ params, context: { queryClient } }) => {
-    const cell = await queryClient.ensureQueryData(
-      cellQueries.detail(params.cellId)
-    );
-    if (cell.status === "ready") {
-      throw redirect({
-        to: "/cells/$cellId/chat",
-        params,
-        replace: true,
-      });
-    }
+  loader: ({ context: { queryClient }, params }) => {
+    queryClient
+      .prefetchQuery(cellQueries.detail(params.cellId))
+      .catch(ignorePromiseRejection);
+    queryClient
+      .prefetchQuery(
+        cellQueries.timings(params.cellId, { workflow: "create", limit: 300 })
+      )
+      .catch(ignorePromiseRejection);
+    return null;
   },
   component: CellProvisioningRoute,
 });

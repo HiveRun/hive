@@ -17,18 +17,19 @@ type CellSummary = Awaited<
 >[number];
 
 export const Route = createFileRoute("/")({
-  loader: async ({ context: { queryClient } }) => {
-    const workspaceData = await queryClient.ensureQueryData(
-      workspaceQueries.list()
-    );
-    await Promise.all(
-      workspaceData.workspaces.map(async (workspace) => {
-        await Promise.all([
-          queryClient.ensureQueryData(cellQueries.all(workspace.id)),
-          queryClient.ensureQueryData(templateQueries.all(workspace.id)),
-        ]);
+  loader: ({ context: { queryClient } }) => {
+    queryClient
+      .fetchQuery(workspaceQueries.list())
+      .then((workspaceData) => {
+        for (const workspace of workspaceData.workspaces) {
+          queryClient.prefetchQuery(cellQueries.all(workspace.id));
+          queryClient.prefetchQuery(templateQueries.all(workspace.id));
+        }
       })
-    );
+      .catch(() => {
+        // non-blocking prefetch; overview component handles fetch errors
+      });
+
     return null;
   },
   component: HiveOverview,

@@ -8,14 +8,11 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 
-import Loader from "./loader";
-
 type MainLayoutProps = {
   children: ReactNode;
-  isLoading?: boolean;
 };
 
-export function MainLayout({ children, isLoading = false }: MainLayoutProps) {
+export function MainLayout({ children }: MainLayoutProps) {
   return (
     <SidebarProvider className="relative h-full bg-background text-foreground transition-colors">
       <MainSidebar />
@@ -43,11 +40,6 @@ export function MainLayout({ children, isLoading = false }: MainLayoutProps) {
           />
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
             {children}
-            {isLoading ? (
-              <div className="absolute inset-0 grid place-items-center bg-background/85 backdrop-blur-sm">
-                <Loader />
-              </div>
-            ) : null}
           </div>
         </div>
       </SidebarInset>

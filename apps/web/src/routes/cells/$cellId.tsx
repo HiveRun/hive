@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createFileRoute,
   Link,
@@ -6,7 +6,8 @@ import {
   redirect,
   useRouterState,
 } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { Loader2 } from "lucide-react";
+import { useEffect, useMemo } from "react";
 import { ProvisioningChecklistPanel } from "@/components/provisioning-checklist-panel";
 import { Button } from "@/components/ui/button";
 import { buildProvisioningChecklist } from "@/lib/provisioning-checklist";
@@ -17,15 +18,15 @@ import { workspaceQueries } from "@/queries/workspaces";
 const PROVISIONING_POLL_MS = 1500;
 
 export const Route = createFileRoute("/cells/$cellId")({
-  beforeLoad: async ({ params, location, context: { queryClient } }) => {
+  beforeLoad: ({ params, location, context: { queryClient } }) => {
     if (location.pathname === `/cells/${params.cellId}`) {
-      const cell = await queryClient.ensureQueryData(
-        cellQueries.detail(params.cellId)
+      const cell = queryClient.getQueryData<{ status?: string }>(
+        cellQueries.detail(params.cellId).queryKey
       );
 
       throw redirect({
         to:
-          cell.status === "ready"
+          cell?.status === "ready"
             ? "/cells/$cellId/chat"
             : "/cells/$cellId/provisioning",
         params,
@@ -33,37 +34,41 @@ export const Route = createFileRoute("/cells/$cellId")({
       });
     }
   },
-  loader: async ({ params, context: { queryClient } }) => {
-    const cell = await queryClient.ensureQueryData(
-      cellQueries.detail(params.cellId)
-    );
-    const workspaces = await queryClient.ensureQueryData(
-      workspaceQueries.list()
-    );
-    const workspaceLabel =
-      workspaces.workspaces.find((entry) => entry.id === cell.workspaceId)
-        ?.label ?? undefined;
+  component: CellLayout,
+});
+
+function CellLayout() {
+  const { cellId } = Route.useParams();
+  const queryClient = useQueryClient();
+  const cellQuery = useQuery(cellQueries.detail(cellId));
+  const workspaceQuery = useQuery(workspaceQueries.list());
+  const routerState = useRouterState();
+  const activeRouteId = routerState.matches.at(-1)?.routeId;
+  const isProvisioningRoute = activeRouteId === "/cells/$cellId/provisioning";
+
+  const cell = cellQuery.data;
+  const workspaceLabel = useMemo(() => {
+    if (!cell?.workspaceId) {
+      return;
+    }
+
+    return workspaceQuery.data?.workspaces.find(
+      (entry) => entry.id === cell.workspaceId
+    )?.label;
+  }, [cell?.workspaceId, workspaceQuery.data?.workspaces]);
+
+  useEffect(() => {
+    if (!cell?.workspaceId) {
+      return;
+    }
 
     queryClient
       .prefetchQuery(templateQueries.all(cell.workspaceId))
       .catch(() => {
         // non-blocking prefetch; template routes/components handle fetch errors
       });
+  }, [cell?.workspaceId, queryClient]);
 
-    return { workspaceId: cell.workspaceId, workspaceLabel };
-  },
-  component: CellLayout,
-});
-
-function CellLayout() {
-  const { cellId } = Route.useParams();
-  const { workspaceLabel } = Route.useLoaderData();
-  const cellQuery = useQuery(cellQueries.detail(cellId));
-  const routerState = useRouterState();
-  const activeRouteId = routerState.matches.at(-1)?.routeId;
-  const isProvisioningRoute = activeRouteId === "/cells/$cellId/provisioning";
-
-  const cell = cellQuery.data;
   const shouldPollProvisioningTimings =
     cell?.status === "spawning" || cell?.status === "pending";
   const shouldShowProvisioningTimeline =
@@ -137,6 +142,31 @@ function CellLayout() {
       to: "/cells/$cellId/chat",
     },
   ];
+
+  if (cellQuery.isPending) {
+    return (
+      <div className="flex h-full w-full flex-1 overflow-hidden">
+        <div className="flex min-h-0 flex-1 items-center justify-center border-2 border-border bg-card p-6 text-muted-foreground text-sm">
+          <Loader2 className="mr-2 size-4 animate-spin" />
+          Loading cell status...
+        </div>
+      </div>
+    );
+  }
+
+  if (cellQuery.error) {
+    const message =
+      cellQuery.error instanceof Error
+        ? cellQuery.error.message
+        : "Unable to load cell.";
+    return (
+      <div className="flex h-full w-full flex-1 overflow-hidden">
+        <div className="flex min-h-0 flex-1 items-center justify-center border-2 border-border bg-card p-6 text-muted-foreground text-sm">
+          {message}
+        </div>
+      </div>
+    );
+  }
 
   if (!cell) {
     return (

@@ -72,9 +72,18 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
 
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const workspacesQuery = useQuery(workspaceQueries.list());
+  const workspaces = workspacesQuery.data?.workspaces ?? [];
+  const workspacesLoading =
+    workspacesQuery.isPending && workspacesQuery.data === undefined;
+
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
     () => new Set()
   );
+  const [hasHydratedExpandedWorkspaces, setHasHydratedExpandedWorkspaces] =
+    useState(false);
+  const [shouldApplyDefaultExpansion, setShouldApplyDefaultExpansion] =
+    useState(false);
   const [pendingCellDelete, setPendingCellDelete] =
     useState<PendingCellDelete | null>(null);
   const [deletingCellIds, setDeletingCellIds] = useState<Set<string>>(
@@ -106,14 +115,39 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
     if (typeof window === "undefined") {
       return;
     }
+
     const savedIds = storage.get<string[]>(EXPANDED_WORKSPACES_STORAGE_KEY);
-    if (!Array.isArray(savedIds)) {
+
+    if (Array.isArray(savedIds)) {
+      setExpandedWorkspaceIds(
+        () => new Set(savedIds.filter((entry) => typeof entry === "string"))
+      );
+      setShouldApplyDefaultExpansion(false);
+      setHasHydratedExpandedWorkspaces(true);
       return;
     }
-    setExpandedWorkspaceIds(
-      () => new Set(savedIds.filter((entry) => typeof entry === "string"))
-    );
+
+    setShouldApplyDefaultExpansion(true);
+    setHasHydratedExpandedWorkspaces(true);
   }, []);
+
+  useEffect(() => {
+    if (
+      !(hasHydratedExpandedWorkspaces && shouldApplyDefaultExpansion) ||
+      workspaces.length === 0
+    ) {
+      return;
+    }
+
+    setExpandedWorkspaceIds((prev) => {
+      const next = new Set(prev);
+      for (const workspace of workspaces) {
+        next.add(workspace.id);
+      }
+      return next;
+    });
+    setShouldApplyDefaultExpansion(false);
+  }, [hasHydratedExpandedWorkspaces, shouldApplyDefaultExpansion, workspaces]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -302,6 +336,8 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
           setPendingCellDelete(cell)
         }
         onToggleWorkspace={toggleWorkspace}
+        workspaces={workspaces}
+        workspacesLoading={workspacesLoading}
       />
     </SidebarMenu>
   );
@@ -313,6 +349,8 @@ type WorkspaceTreeContentProps = {
   collapsed: boolean;
   deletingCellIds: Set<string>;
   expandedWorkspaceIds: Set<string>;
+  workspaces: Array<{ id: string; label: string; path: string }>;
+  workspacesLoading: boolean;
   onRequestCreateCell: (workspaceId: string) => void;
   onRequestDeleteCell: (cell: PendingCellDelete) => void;
   onToggleWorkspace: (workspaceId: string) => void;
@@ -327,12 +365,9 @@ function WorkspaceTreeContent({
   onRequestCreateCell,
   onRequestDeleteCell,
   onToggleWorkspace,
+  workspaces,
+  workspacesLoading,
 }: WorkspaceTreeContentProps) {
-  const workspacesQuery = useQuery(workspaceQueries.list());
-  const workspaces = workspacesQuery.data?.workspaces ?? [];
-  const workspacesLoading =
-    workspacesQuery.isPending && workspacesQuery.data === undefined;
-
   if (collapsed) {
     return null;
   }

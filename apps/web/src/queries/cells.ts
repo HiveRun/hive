@@ -18,7 +18,11 @@ export const cellQueries = {
   detail: (id: string) => ({
     queryKey: ["cells", id] as const,
     queryFn: async () => {
-      const { data, error } = await rpc.api.cells({ id }).get();
+      const { data, error } = await rpc.api.cells({ id }).get({
+        query: {
+          includeSetupLog: false,
+        },
+      });
       if (error) {
         throw new Error(formatRpcError(error, "Cell not found"));
       }

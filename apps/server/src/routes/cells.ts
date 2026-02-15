@@ -1037,7 +1037,7 @@ export function createCellsRoutes(
     )
     .get(
       "/:id",
-      async ({ params, set, request }) => {
+      async ({ params, query, set, request }) => {
         const deps = await resolveDeps();
         const { db: database } = deps;
         const result = await database
@@ -1069,12 +1069,18 @@ export function createCellsRoutes(
           });
         }
 
-        const extras = buildSetupLogPayload(cell.id, deps);
+        const includeSetupLog = query.includeSetupLog ?? true;
+        const extras = includeSetupLog
+          ? buildSetupLogPayload(cell.id, deps)
+          : {};
         return { ...cellToResponse(cell), ...extras };
       },
       {
         params: t.Object({
           id: t.String(),
+        }),
+        query: t.Object({
+          includeSetupLog: t.Optional(t.Boolean()),
         }),
         response: {
           200: CellResponseSchema,
