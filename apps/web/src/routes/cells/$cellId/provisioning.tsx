@@ -91,6 +91,10 @@ function CellProvisioningRoute() {
   }, [cellId, cellQuery.data?.status, navigate]);
 
   const cell = cellQuery.data;
+  const loadErrorMessage =
+    cellQuery.error instanceof Error
+      ? cellQuery.error.message
+      : "Failed to load provisioning status";
   const isError = cell?.status === "error";
   const statusMessage = resolveProvisioningStatusMessage(cell?.status);
 
@@ -100,6 +104,40 @@ function CellProvisioningRoute() {
       cell?.status !== "ready" &&
       cell?.status !== undefined,
   });
+
+  if (cellQuery.isError) {
+    return (
+      <div className="flex h-full min-h-0 flex-1 overflow-auto rounded-sm border-2 border-border bg-card p-4 lg:p-6">
+        <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
+          <div className="flex w-full flex-col gap-3 border-2 border-destructive/60 bg-destructive/10 p-5">
+            <div className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="size-4" />
+              <p className="font-medium text-[11px] uppercase tracking-[0.2em]">
+                Unable to load cell
+              </p>
+            </div>
+            <p className="text-foreground text-sm leading-relaxed">
+              {loadErrorMessage}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={() => cellQuery.refetch()}
+                type="button"
+                variant="secondary"
+              >
+                Retry load
+              </Button>
+              <Link to="/">
+                <Button type="button" variant="outline">
+                  Back to workspaces
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (cellQuery.isLoading || !cell) {
     return (

@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import { useEffect } from "react";
 import { CellTerminal } from "@/components/cell-terminal";
 import { useTheme } from "@/components/theme-provider";
+import { Button } from "@/components/ui/button";
 import { cellQueries } from "@/queries/cells";
 
 const ignorePromiseRejection = (_error: unknown) => null;
@@ -47,6 +48,47 @@ function CellChat() {
       : "dark";
 
   const startupStatusMessage = "Starting OpenCode session";
+
+  if (cellQuery.isError) {
+    const loadErrorMessage =
+      cellQuery.error instanceof Error
+        ? cellQuery.error.message
+        : "Failed to load chat status";
+
+    return (
+      <div className="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
+        <div className="flex h-full min-h-0 w-full items-center justify-center p-6">
+          <div className="flex w-full max-w-xl flex-col gap-3 border-2 border-destructive/60 bg-destructive/10 p-5">
+            <div className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="size-4" />
+              <p className="font-medium text-[11px] uppercase tracking-[0.2em]">
+                Unable to load chat
+              </p>
+            </div>
+            <p className="text-foreground text-sm leading-relaxed">
+              {loadErrorMessage}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => cellQuery.refetch()}
+                type="button"
+                variant="secondary"
+              >
+                Retry load
+              </Button>
+              <Button
+                onClick={() => navigate({ to: "/" })}
+                type="button"
+                variant="outline"
+              >
+                Back to workspaces
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (cellQuery.isPending || !cellQuery.data) {
     return (
