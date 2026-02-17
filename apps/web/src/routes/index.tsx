@@ -48,7 +48,6 @@ function HiveOverview() {
       return {
         queryKey: config.queryKey,
         queryFn: config.queryFn,
-        staleTime: 10_000,
       };
     }),
   });

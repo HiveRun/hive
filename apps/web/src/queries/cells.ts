@@ -4,6 +4,7 @@ import { formatRpcError, formatRpcResponseError } from "@/lib/rpc-error";
 export const cellQueries = {
   all: (workspaceId: string) => ({
     queryKey: ["cells", workspaceId] as const,
+    staleTime: 0,
     queryFn: async () => {
       const { data, error } = await rpc.api.cells.get({
         query: { workspaceId },
@@ -17,6 +18,7 @@ export const cellQueries = {
 
   detail: (id: string) => ({
     queryKey: ["cells", id] as const,
+    staleTime: 0,
     queryFn: async () => {
       const { data, error } = await rpc.api.cells({ id }).get({
         query: {
