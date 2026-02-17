@@ -8,6 +8,7 @@ import { createCellsRoutes, resumeSpawningCells } from "../../routes/cells";
 
 import { cellProvisioningStates } from "../../schema/cell-provisioning";
 import { cells } from "../../schema/cells";
+import { cellTimingEvents } from "../../schema/timing-events";
 import type { ServiceSupervisorError } from "../../services/supervisor";
 import {
   CommandExecutionError,
@@ -52,6 +53,24 @@ async function waitForCellStatus(cellId: string, status: string) {
   return latestRow;
 }
 
+async function waitForTimingStep(cellId: string, step: string) {
+  let found: typeof cellTimingEvents.$inferSelect | undefined;
+  await waitForCondition(async () => {
+    const rows = await testDb
+      .select()
+      .from(cellTimingEvents)
+      .where(eq(cellTimingEvents.cellId, cellId));
+    found = rows.find((row) => row.step === step);
+    return Boolean(found);
+  });
+
+  if (!found) {
+    throw new Error(`Timing step ${step} not found for ${cellId}`);
+  }
+
+  return found;
+}
+
 const hiveConfig: HiveConfig = {
   opencode: {
     defaultProvider: "opencode",
@@ -71,11 +90,28 @@ const hiveConfig: HiveConfig = {
 
 type SendAgentMessageFn = (sessionId: string, content: string) => Promise<void>;
 type EnsureServicesForCellFn = (args: unknown) => Promise<void>;
+type CreateWorktreeFn = (
+  cellId: string,
+  options?: {
+    templateId?: string;
+    force?: boolean;
+    onTimingEvent?: (event: {
+      step: string;
+      durationMs: number;
+      metadata?: Record<string, unknown>;
+    }) => void;
+  }
+) => Promise<{
+  path: string;
+  branch: string;
+  baseCommit: string;
+}>;
 
 type DependencyFactoryOptions = {
   setupError?: TemplateSetupError;
   sendAgentMessage?: SendAgentMessageFn;
   ensureServicesForCell?: EnsureServicesForCellFn;
+  createWorktree?: CreateWorktreeFn;
   onEnsureAgentSession?: (
     cellId: string,
     sessionId: string,
@@ -97,11 +133,19 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
   const loadWorkspaceConfig = () =>
     Promise.resolve(options.hiveConfigOverride ?? hiveConfig);
 
-  const buildWorktree = () =>
+  const buildWorktree = (
+    cellId: string,
+    createOptions?: Parameters<CreateWorktreeFn>[1]
+  ) =>
     Promise.resolve({
       path: workspacePath,
       branch: "cell-branch",
       baseCommit: "abc123",
+    }).then((defaultWorktree) => {
+      if (options.createWorktree) {
+        return options.createWorktree(cellId, createOptions);
+      }
+      return defaultWorktree;
     });
 
   const removeWorktreeCall = () =>
@@ -118,10 +162,16 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
       workspace: workspaceRecord,
       loadConfig: loadWorkspaceConfig,
       createWorktreeManager: async () => ({
-        createWorktree: (_cellId: string) => buildWorktree(),
+        createWorktree: (
+          cellId: string,
+          createOptions?: Parameters<CreateWorktreeFn>[1]
+        ) => buildWorktree(cellId, createOptions),
         removeWorktree: (_cellId: string) => removeWorktreeCall(),
       }),
-      createWorktree: (_cellId: string) => buildWorktree(),
+      createWorktree: (
+        cellId: string,
+        createOptions?: Parameters<CreateWorktreeFn>[1]
+      ) => buildWorktree(cellId, createOptions),
       removeWorktree: (_cellId: string) => removeWorktreeCall(),
     })) as any,
 
@@ -385,6 +435,78 @@ describe("POST /api/cells", () => {
 
     await waitForCellStatus(payload.id, "ready");
     expect(sendAgentMessage).not.toHaveBeenCalled();
+  });
+
+  it("persists create_worktree timing sub-steps while provisioning is still running", async () => {
+    let releaseWorktree = () => {
+      // replaced when deferred worktree promise is created
+    };
+
+    const createWorktree: CreateWorktreeFn = async (_cellId, createOptions) => {
+      createOptions?.onTimingEvent?.({
+        step: "include_copy_glob_match_start",
+        durationMs: 0,
+      });
+
+      await new Promise<void>((resolve) => {
+        releaseWorktree = resolve;
+      });
+
+      createOptions?.onTimingEvent?.({
+        step: "include_copy_glob_match",
+        durationMs: 15,
+      });
+
+      return {
+        path: workspacePath,
+        branch: "cell-branch",
+        baseCommit: "abc123",
+      };
+    };
+
+    const routes = createCellsRoutes(createDependencies({ createWorktree }));
+    const app = new Elysia().use(routes);
+
+    const response = await app.handle(
+      new Request("http://localhost/api/cells", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Streaming Worktree Timing",
+          templateId,
+          workspaceId: "test-workspace",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(CREATED_STATUS);
+    const payload = (await response.json()) as { id: string; status: string };
+    expect(payload.status).toBe("spawning");
+
+    await waitForTimingStep(
+      payload.id,
+      "create_worktree:include_copy_glob_match_start"
+    );
+
+    const timingRowsBeforeRelease = await testDb
+      .select()
+      .from(cellTimingEvents)
+      .where(eq(cellTimingEvents.cellId, payload.id));
+    expect(
+      timingRowsBeforeRelease.some(
+        (row) => row.step === "create_worktree:include_copy_glob_match"
+      )
+    ).toBe(false);
+
+    releaseWorktree();
+
+    await waitForTimingStep(
+      payload.id,
+      "create_worktree:include_copy_glob_match"
+    );
+    await waitForCellStatus(payload.id, "ready");
   });
 });
 

@@ -718,7 +718,8 @@ export function createWorktreeManager(
   async function copyIncludedFiles(
     worktreePath: string,
     includePatterns: string[],
-    ignorePatterns: string[]
+    ignorePatterns: string[],
+    onTimingEvent?: (event: WorktreeCreateTimingEvent) => void
   ): Promise<{
     copiedPathCount: number;
     copiedRootCount: number;
@@ -780,18 +781,56 @@ export function createWorktreeManager(
     }
 
     const globMatchStartedAt = Date.now();
+    onTimingEvent?.({
+      step: "include_copy_glob_match_start",
+      durationMs: 0,
+      metadata: {
+        includePatternCount: includePatterns.length,
+      },
+    });
     const includedPaths = await getIncludedPaths(
       mainRepoPath,
       filePatterns,
       ignorePatterns
     );
     const globMatchDurationMs = Date.now() - globMatchStartedAt;
+    onTimingEvent?.({
+      step: "include_copy_glob_match_complete",
+      durationMs: globMatchDurationMs,
+      metadata: {
+        includePatternCount: includePatterns.length,
+        matchedPathCount: includedPaths.length,
+      },
+    });
     const pendingPaths = includedPaths.filter(
       (relativePath) => !isUnderCopiedRoot(relativePath, copiedRoots)
     );
 
     const ensuredDirs = new Set<string>();
     let nextIndex = 0;
+
+    const fileCopyStartedAt = Date.now();
+    onTimingEvent?.({
+      step: "include_copy_files_start",
+      durationMs: 0,
+      metadata: {
+        pendingPathCount: pendingPaths.length,
+      },
+    });
+    const emitFileCopyProgress = () => {
+      if (pendingPaths.length === 0) {
+        return;
+      }
+
+      onTimingEvent?.({
+        step: "include_copy_files_progress",
+        durationMs: Date.now() - fileCopyStartedAt,
+        metadata: {
+          copiedFileCount,
+          pendingPathCount: pendingPaths.length,
+        },
+      });
+    };
 
     const worker = async () => {
       while (nextIndex < pendingPaths.length) {
@@ -816,6 +855,7 @@ export function createWorktreeManager(
 
         copiedFileCount += 1;
         incrementCopyStrategyCounts(strategy, copyCounters);
+        emitFileCopyProgress();
       }
     };
 
@@ -823,9 +863,16 @@ export function createWorktreeManager(
       1,
       Math.min(COPY_CONCURRENCY, pendingPaths.length)
     );
-    const fileCopyStartedAt = Date.now();
     await Promise.all(Array.from({ length: workerCount }, () => worker()));
     const fileCopyDurationMs = Date.now() - fileCopyStartedAt;
+    onTimingEvent?.({
+      step: "include_copy_files_complete",
+      durationMs: fileCopyDurationMs,
+      metadata: {
+        copiedFileCount,
+        pendingPathCount: pendingPaths.length,
+      },
+    });
 
     logCopyFailures(failedPaths);
 
@@ -1048,7 +1095,8 @@ export function createWorktreeManager(
         const includeCopySummary = await copyIncludedFiles(
           worktreePath,
           includePatterns,
-          ignorePatterns
+          ignorePatterns,
+          emitTiming
         );
         const includeCopyDurationMs = Date.now() - includeCopyStartedAt;
         emitTiming({

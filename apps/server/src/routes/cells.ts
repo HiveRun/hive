@@ -3145,12 +3145,8 @@ type CellCreationRecordResult = {
   timing: CellCreationRecordTiming;
 };
 
-type CellWorktreeTiming = {
-  worktreeStepEvents: Array<
-    WorktreeCreateTimingEvent & {
-      capturedAt: Date;
-    }
-  >;
+type CapturedWorktreeCreateTimingEvent = WorktreeCreateTimingEvent & {
+  capturedAt: Date;
 };
 
 type ProvisionPhase =
@@ -3318,17 +3314,13 @@ async function createCellRecord(
 }
 
 async function ensureCellWorktree(
-  context: ProvisionContext
-): Promise<CellWorktreeTiming> {
+  context: ProvisionContext,
+  onTimingEvent?: (event: CapturedWorktreeCreateTimingEvent) => void
+): Promise<void> {
   const { body, database, worktreeService, state } = context;
-  const worktreeStepEvents: Array<
-    WorktreeCreateTimingEvent & {
-      capturedAt: Date;
-    }
-  > = [];
 
   if (state.worktreeCreated && state.workspacePath && state.baseCommit) {
-    return { worktreeStepEvents };
+    return;
   }
 
   let worktree: { path: string; branch: string; baseCommit: string };
@@ -3337,7 +3329,7 @@ async function ensureCellWorktree(
       templateId: body.templateId,
       force: true,
       onTimingEvent: (event) => {
-        worktreeStepEvents.push({
+        onTimingEvent?.({
           ...event,
           capturedAt: new Date(),
         });
@@ -3381,9 +3373,7 @@ async function ensureCellWorktree(
     };
   }
 
-  return {
-    worktreeStepEvents,
-  };
+  return;
 }
 
 function startProvisioningWorkflow(context: ProvisionContext) {
@@ -3458,18 +3448,13 @@ async function runCreateWorktreePhase(args: {
     return;
   }
 
-  const worktreeTimingEvents: Array<
-    WorktreeCreateTimingEvent & { capturedAt: Date }
-  > = [];
+  const worktreeTimingWrites: Promise<void>[] = [];
 
-  try {
-    await runPhase("create_worktree", async () => {
-      const timing = await ensureCellWorktree(context);
-      worktreeTimingEvents.push(...timing.worktreeStepEvents);
-    });
-  } finally {
-    for (const event of worktreeTimingEvents) {
-      await insertCellTimingEvent({
+  const persistWorktreeTimingEvent = (
+    event: CapturedWorktreeCreateTimingEvent
+  ) => {
+    worktreeTimingWrites.push(
+      insertCellTimingEvent({
         database,
         log: context.log,
         cellId: state.cellId,
@@ -3484,7 +3469,23 @@ async function runCreateWorktreePhase(args: {
         workspaceId: context.workspace.id,
         extraMetadata: event.metadata,
         createdAt: event.capturedAt,
-      });
+      })
+    );
+  };
+
+  try {
+    await runPhase("create_worktree", async () => {
+      await ensureCellWorktree(context, persistWorktreeTimingEvent);
+    });
+  } finally {
+    const settledWrites = await Promise.allSettled(worktreeTimingWrites);
+    for (const write of settledWrites) {
+      if (write.status === "rejected") {
+        context.log.warn(
+          { error: write.reason, cellId: state.cellId },
+          "Failed to persist create_worktree timing sub-step"
+        );
+      }
     }
   }
 }
