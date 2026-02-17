@@ -56,9 +56,9 @@ export function buildProvisioningChecklist(args: {
   cellStatus: string | undefined;
   steps: ProvisioningTimingStep[];
 }): ProvisioningChecklist {
-  const sortedSteps = [...args.steps].sort(
+  const latestFirstSteps = [...args.steps].sort(
     (left, right) =>
-      toTimingTimestamp(left.createdAt) - toTimingTimestamp(right.createdAt)
+      toTimingTimestamp(right.createdAt) - toTimingTimestamp(left.createdAt)
   );
 
   const exactStepByName = new Map<string, ProvisioningTimingStep>();
@@ -67,19 +67,20 @@ export function buildProvisioningChecklist(args: {
     ProvisioningTimingStep
   >();
 
-  for (const step of sortedSteps) {
-    exactStepByName.set(step.step, step);
+  for (const step of latestFirstSteps) {
+    if (!exactStepByName.has(step.step)) {
+      exactStepByName.set(step.step, step);
+    }
+
     const normalizedKey = normalizeChecklistStepKey(step.step);
-    if (normalizedKey) {
+    if (normalizedKey && !latestStepByKey.has(normalizedKey)) {
       latestStepByKey.set(normalizedKey, step);
     }
   }
 
-  const latestActionStep = [...sortedSteps]
-    .reverse()
-    .find(
-      (step) => step.step !== "total" && step.step !== "create_request_received"
-    );
+  const latestActionStep = latestFirstSteps.find(
+    (step) => step.step !== "total" && step.step !== "create_request_received"
+  );
 
   const currentKey = latestActionStep
     ? normalizeChecklistStepKey(latestActionStep.step)
@@ -159,6 +160,10 @@ function getChecklistDetail(args: {
   latestForKey: ProvisioningTimingStep | undefined;
 }): string | null {
   const { key, state, latestActionStep, latestForKey } = args;
+
+  if (state === "done") {
+    return null;
+  }
 
   if (state === "pending") {
     return null;
