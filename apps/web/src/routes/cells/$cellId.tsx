@@ -18,11 +18,18 @@ import { workspaceQueries } from "@/queries/workspaces";
 const PROVISIONING_POLL_MS = 1500;
 
 export const Route = createFileRoute("/cells/$cellId")({
-  beforeLoad: ({ params, location, context: { queryClient } }) => {
+  beforeLoad: async ({ params, location, context: { queryClient } }) => {
     if (location.pathname === `/cells/${params.cellId}`) {
-      const cell = queryClient.getQueryData<{ status?: string }>(
-        cellQueries.detail(params.cellId).queryKey
-      );
+      const cell = await queryClient
+        .fetchQuery({
+          ...cellQueries.detail(params.cellId),
+          retry: false,
+        })
+        .catch(() =>
+          queryClient.getQueryData<{ status?: string }>(
+            cellQueries.detail(params.cellId).queryKey
+          )
+        );
 
       throw redirect({
         to:

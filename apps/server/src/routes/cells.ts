@@ -1935,6 +1935,7 @@ export function createCellsRoutes(
         response: {
           200: t.Any(),
           404: t.Object({ message: t.String() }),
+          409: t.Object({ message: t.String() }),
           500: t.Object({ message: t.String() }),
         },
       }
@@ -1989,6 +1990,7 @@ export function createCellsRoutes(
         response: {
           200: CellTerminalActionResponseSchema,
           404: t.Object({ message: t.String() }),
+          409: t.Object({ message: t.String() }),
           500: t.Object({ message: t.String() }),
         },
       }
@@ -2050,6 +2052,7 @@ export function createCellsRoutes(
             session: CellTerminalSessionSchema,
           }),
           404: t.Object({ message: t.String() }),
+          409: t.Object({ message: t.String() }),
           500: t.Object({ message: t.String() }),
         },
       }
@@ -2104,6 +2107,7 @@ export function createCellsRoutes(
         response: {
           200: CellTerminalSessionSchema,
           404: t.Object({ message: t.String() }),
+          409: t.Object({ message: t.String() }),
           500: t.Object({ message: t.String() }),
         },
       }
