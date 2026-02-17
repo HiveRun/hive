@@ -31,7 +31,6 @@ const INCLUDE_PREVIEW_IGNORED_DIRECTORIES = [
   "node_modules",
   ".hive",
   ".turbo",
-  "vendor",
 ];
 const LEADING_DOT_SLASH_REGEX = /^\.\/+/;
 const LEADING_GLOB_PREFIX_REGEX = /^\*\*\//;
