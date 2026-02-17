@@ -268,6 +268,7 @@ function StatusBadge({ status }: { status: CellStatus }) {
     pending: "bg-muted text-muted-foreground",
     spawning: "bg-secondary/20 text-secondary-foreground",
     error: "bg-destructive/10 text-destructive",
+    deleting: "bg-destructive/20 text-destructive",
   };
   return (
     <span

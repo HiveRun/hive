@@ -57,6 +57,16 @@ type PendingCellDelete = {
   workspaceId: string;
 };
 
+type DeleteCellVariables = {
+  id: string;
+  workspaceId: string;
+};
+
+type DeleteCellMutationContext = {
+  previousCells?: Cell[];
+  previousCell?: Cell;
+};
+
 const EXPANDED_WORKSPACES_STORAGE_KEY = "hive.sidebar.expanded-workspaces";
 
 const AGENT_STATUS_POLL_WORKING_MS = 2000;
@@ -194,19 +204,52 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
   };
 
   const deleteCell = useMutation({
-    mutationFn: async ({ id }: { id: string; workspaceId: string }) =>
+    mutationFn: async ({ id }: DeleteCellVariables) =>
       cellMutations.delete.mutationFn(id),
-    onMutate: (variables: { id: string; workspaceId: string }) => {
+    onMutate: (variables: DeleteCellVariables): DeleteCellMutationContext => {
+      queryClient
+        .cancelQueries({
+          queryKey: cellQueries.all(variables.workspaceId).queryKey,
+        })
+        .catch(() => {
+          // handled by follow-up refetch paths
+        });
+
+      const previousCells = queryClient.getQueryData<Cell[]>(
+        cellQueries.all(variables.workspaceId).queryKey
+      );
+      const previousCell = queryClient.getQueryData<Cell>(
+        cellQueries.detail(variables.id).queryKey
+      );
+
+      queryClient.setQueryData<Cell[]>(
+        cellQueries.all(variables.workspaceId).queryKey,
+        (currentCells) =>
+          currentCells?.filter((cell) => cell.id !== variables.id) ??
+          currentCells
+      );
+
+      queryClient.removeQueries({
+        queryKey: cellQueries.detail(variables.id).queryKey,
+      });
+      queryClient
+        .invalidateQueries({
+          queryKey: cellQueries.all(variables.workspaceId).queryKey,
+          refetchType: "none",
+        })
+        .catch(() => {
+          // handled by follow-up refetch paths
+        });
+
       setDeletingCellIds((prev) => {
         const next = new Set(prev);
         next.add(variables.id);
         return next;
       });
+
+      return { previousCells, previousCell };
     },
-    onSuccess: async (
-      _result: unknown,
-      variables: { id: string; workspaceId: string }
-    ) => {
+    onSuccess: async (_result: unknown, variables: DeleteCellVariables) => {
       const deletedCellId = variables.id;
       const workspaceId = variables.workspaceId;
       await queryClient.invalidateQueries({
@@ -224,7 +267,25 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
 
       toast.success("Cell deleted");
     },
-    onError: (error: unknown) => {
+    onError: (
+      error: unknown,
+      variables: DeleteCellVariables,
+      context: DeleteCellMutationContext | undefined
+    ) => {
+      if (context?.previousCells) {
+        queryClient.setQueryData(
+          cellQueries.all(variables.workspaceId).queryKey,
+          context.previousCells
+        );
+      }
+
+      if (context?.previousCell) {
+        queryClient.setQueryData(
+          cellQueries.detail(variables.id).queryKey,
+          context.previousCell
+        );
+      }
+
       const message =
         error instanceof Error ? error.message : "Failed to delete cell";
       toast.error(message);
@@ -232,7 +293,7 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
     onSettled: (
       _result: unknown,
       _error: unknown,
-      variables: { id: string; workspaceId: string }
+      variables: DeleteCellVariables
     ) => {
       setDeletingCellIds((prev) => {
         if (!prev.has(variables.id)) {
@@ -756,6 +817,12 @@ function getCellStatusIcon({
 
   if (cellStatus === "spawning") {
     return <Wrench className={cn(iconClass, "text-amber-400")} />;
+  }
+
+  if (cellStatus === "deleting") {
+    return (
+      <Loader2 className={cn(iconClass, "animate-spin text-destructive")} />
+    );
   }
 
   if (agentStatus === "awaiting_input") {

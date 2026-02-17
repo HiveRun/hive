@@ -67,6 +67,10 @@ type CellListProps = {
   workspaceId: string;
 };
 
+type BulkDeleteMutationContext = {
+  previousCells?: Cell[];
+};
+
 export function CellList({ workspaceId }: CellListProps) {
   const [selectedCellIds, setSelectedCellIds] = useState<Set<string>>(
     () => new Set()
@@ -172,6 +176,44 @@ export function CellList({ workspaceId }: CellListProps) {
 
   const bulkDeleteMutation = useMutation({
     ...cellMutations.deleteMany,
+    onMutate: (ids: string[]): BulkDeleteMutationContext => {
+      queryClient
+        .cancelQueries({
+          queryKey: cellQueries.all(workspaceId).queryKey,
+        })
+        .catch(() => {
+          // handled by follow-up refetch paths
+        });
+
+      const previousCells = queryClient.getQueryData<Cell[]>(
+        cellQueries.all(workspaceId).queryKey
+      );
+      const deletedIds = new Set(ids);
+
+      queryClient.setQueryData<Cell[]>(
+        cellQueries.all(workspaceId).queryKey,
+        (currentCells) =>
+          currentCells?.filter((cell) => !deletedIds.has(cell.id)) ??
+          currentCells
+      );
+
+      for (const id of ids) {
+        queryClient.removeQueries({
+          queryKey: cellQueries.detail(id).queryKey,
+        });
+      }
+
+      queryClient
+        .invalidateQueries({
+          queryKey: cellQueries.all(workspaceId).queryKey,
+          refetchType: "none",
+        })
+        .catch(() => {
+          // handled by follow-up refetch paths
+        });
+
+      return { previousCells };
+    },
     onSuccess: (data: { deletedIds: string[] }) => {
       const count = data.deletedIds.length;
       const label = count === 1 ? "cell" : "cells";
@@ -179,7 +221,18 @@ export function CellList({ workspaceId }: CellListProps) {
       queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
       setSelectedCellIds(new Set());
     },
-    onError: (unknownError) => {
+    onError: (
+      unknownError,
+      _variables,
+      context: BulkDeleteMutationContext | undefined
+    ) => {
+      if (context?.previousCells) {
+        queryClient.setQueryData(
+          cellQueries.all(workspaceId).queryKey,
+          context.previousCells
+        );
+      }
+
       const message =
         unknownError instanceof Error
           ? unknownError.message
@@ -733,6 +786,22 @@ function CellStatusNotice({
           </p>
           <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
             Setup tasks running in background
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === "deleting") {
+    return (
+      <div className="flex items-center gap-3 rounded-md border border-destructive/40 bg-destructive/10 p-3">
+        <Loader2 className="h-4 w-4 animate-spin text-destructive" />
+        <div className="space-y-1">
+          <p className="font-semibold text-[11px] text-destructive uppercase tracking-[0.3em]">
+            Deleting cell
+          </p>
+          <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+            Cleanup tasks running in background
           </p>
         </div>
       </div>

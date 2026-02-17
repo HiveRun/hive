@@ -4,7 +4,7 @@ import { createConnection } from "node:net";
 import { join } from "node:path";
 
 import { logger } from "@bogeychan/elysia-logger";
-import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, ne, or, sql } from "drizzle-orm";
 import { Elysia, type Static, sse, t } from "elysia";
 import { getSharedOpencodeServerBaseUrl } from "../agents/opencode-server";
 import type { AgentRuntimeService } from "../agents/service";
@@ -978,7 +978,12 @@ export function createCellsRoutes(
           const allCells = await database
             .select()
             .from(cells)
-            .where(eq(cells.workspaceId, workspaceContext.workspace.id));
+            .where(
+              and(
+                eq(cells.workspaceId, workspaceContext.workspace.id),
+                ne(cells.status, "deleting")
+              )
+            );
           return { cells: allCells.map(cellToResponse) };
         } catch (error) {
           set.status = HTTP_STATUS.BAD_REQUEST;
@@ -1024,7 +1029,12 @@ export function createCellsRoutes(
             const initialCells = await database
               .select()
               .from(cells)
-              .where(eq(cells.workspaceId, workspaceId));
+              .where(
+                and(
+                  eq(cells.workspaceId, workspaceId),
+                  ne(cells.status, "deleting")
+                )
+              );
 
             for (const cell of initialCells) {
               yield sse({ event: "cell", data: cellToResponse(cell) });
@@ -1080,6 +1090,11 @@ export function createCellsRoutes(
         if (!cell) {
           set.status = HTTP_STATUS.INTERNAL_ERROR;
           return { message: "Failed to load cell" };
+        }
+
+        if (cell.status === "deleting") {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" };
         }
 
         const audit = readHiveAuditHeaders(request);
@@ -2741,7 +2756,7 @@ export function createCellsRoutes(
 
           for (const cell of cellsToDelete) {
             try {
-              await deleteCellWithTiming({
+              await deleteCellWithLifecycle({
                 database,
                 cell,
                 closeSession,
@@ -2825,7 +2840,7 @@ export function createCellsRoutes(
             await workspaceManager.createWorktreeManager()
           );
 
-          await deleteCellWithTiming({
+          await deleteCellWithLifecycle({
             database,
             cell,
             closeSession,
@@ -4090,6 +4105,48 @@ async function updateCellProvisioningStatus(
   return finishedAt;
 }
 
+async function markCellDeletionStarted(args: {
+  database: DatabaseClient;
+  cellId: string;
+  workspaceId: string;
+}) {
+  await args.database
+    .update(cells)
+    .set({ status: "deleting" })
+    .where(eq(cells.id, args.cellId));
+
+  emitCellStatusUpdate({
+    workspaceId: args.workspaceId,
+    cellId: args.cellId,
+    status: "deleting",
+    lastSetupError: undefined,
+  });
+}
+
+async function restoreCellStatusAfterDeleteFailure(args: {
+  database: DatabaseClient;
+  cellId: string;
+  workspaceId: string;
+  previousStatus: CellStatus;
+}) {
+  const existing = await loadCellById(args.database, args.cellId);
+  if (!existing) {
+    return;
+  }
+
+  await args.database
+    .update(cells)
+    .set({ status: args.previousStatus })
+    .where(eq(cells.id, args.cellId));
+
+  emitCellStatusUpdate({
+    workspaceId: args.workspaceId,
+    cellId: args.cellId,
+    status: args.previousStatus,
+    lastSetupError: existing.lastSetupError ?? undefined,
+  });
+}
+
 const buildTemplateSetupErrorPayload = (
   error: unknown
 ): ErrorPayload | null => {
@@ -4192,7 +4249,7 @@ function buildCellCreationErrorPayload(error: unknown): ErrorPayload {
 
 type CellDeleteRecord = Pick<
   typeof cells.$inferSelect,
-  "id" | "name" | "templateId" | "workspaceId" | "workspacePath"
+  "id" | "name" | "templateId" | "workspaceId" | "workspacePath" | "status"
 >;
 
 const DELETE_CLOSE_AGENT_SESSION_TIMEOUT_MS = 15_000;
@@ -4389,6 +4446,35 @@ async function deleteCellWithTiming(args: {
       templateId: args.cell.templateId,
       workspaceId: args.cell.workspaceId,
     });
+
+    throw error;
+  }
+}
+
+async function deleteCellWithLifecycle(
+  args: Parameters<typeof deleteCellWithTiming>[0]
+): Promise<void> {
+  const previousStatus = args.cell.status as CellStatus;
+
+  if (previousStatus !== "deleting") {
+    await markCellDeletionStarted({
+      database: args.database,
+      cellId: args.cell.id,
+      workspaceId: args.cell.workspaceId,
+    });
+  }
+
+  try {
+    await deleteCellWithTiming(args);
+  } catch (error) {
+    if (previousStatus !== "deleting") {
+      await restoreCellStatusAfterDeleteFailure({
+        database: args.database,
+        cellId: args.cell.id,
+        workspaceId: args.cell.workspaceId,
+        previousStatus,
+      });
+    }
 
     throw error;
   }

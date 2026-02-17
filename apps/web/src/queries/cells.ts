@@ -350,7 +350,12 @@ const normalizeCell = <T extends { status: string }>(
 });
 
 // Export inferred types for use in components
-export type CellStatus = "spawning" | "pending" | "ready" | "error";
+export type CellStatus =
+  | "spawning"
+  | "pending"
+  | "ready"
+  | "error"
+  | "deleting";
 
 export type Cell = Awaited<
   ReturnType<ReturnType<typeof cellQueries.detail>["queryFn"]>
