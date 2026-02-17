@@ -643,23 +643,25 @@ export function createWorktreeManager(
   }): Promise<string[]> {
     const script =
       "import { glob } from 'tinyglobby';" +
-      "const [, , cwd, patternsJson, ignoreJson] = process.argv;" +
+      "const cwd = process.env.HIVE_GLOB_CWD;" +
+      "const patternsJson = process.env.HIVE_GLOB_PATTERNS_JSON;" +
+      "const ignoreJson = process.env.HIVE_GLOB_IGNORE_JSON;" +
+      "if (!cwd || !patternsJson || !ignoreJson) { throw new Error('Missing glob subprocess input'); }" +
       "const patterns = JSON.parse(patternsJson);" +
       "const ignore = JSON.parse(ignoreJson);" +
       "const files = await glob(patterns, { cwd, absolute: false, ignore, dot: true, onlyFiles: false });" +
       "process.stdout.write(JSON.stringify(files));";
 
     const child = Bun.spawn({
-      cmd: [
-        process.execPath,
-        "-e",
-        script,
-        args.cwd,
-        JSON.stringify(args.patterns),
-        JSON.stringify(args.ignore),
-      ],
+      cmd: [process.execPath, "-e", script],
       stdout: "pipe",
       stderr: "pipe",
+      env: {
+        ...process.env,
+        HIVE_GLOB_CWD: args.cwd,
+        HIVE_GLOB_PATTERNS_JSON: JSON.stringify(args.patterns),
+        HIVE_GLOB_IGNORE_JSON: JSON.stringify(args.ignore),
+      },
     });
 
     const stdoutPromise = new Response(child.stdout).text();
