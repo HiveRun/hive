@@ -93,16 +93,17 @@ export function CellForm({
   const templates = templatesData?.templates;
   const defaults = templatesData?.defaults;
   const agentDefaults = templatesData?.agentDefaults;
+  const defaultTemplateId = defaults?.templateId ?? templates?.[0]?.id ?? "";
 
   const defaultValues = useMemo(
     () => ({
       name: "",
       description: "",
-      templateId: defaults?.templateId ?? "",
+      templateId: defaultTemplateId,
       modelId: undefined,
       providerId: undefined,
     }),
-    [defaults?.templateId]
+    [defaultTemplateId]
   );
 
   const [activeTemplateId, setActiveTemplateId] = useState(

@@ -16,19 +16,46 @@ import { templateQueries } from "@/queries/templates";
 import { workspaceQueries } from "@/queries/workspaces";
 
 const PROVISIONING_POLL_MS = 1500;
+const CELL_ROUTE_REDIRECT_FETCH_TIMEOUT_MS = 1200;
+
+async function fetchCellForRouteRedirect(args: {
+  queryClient: ReturnType<typeof useQueryClient>;
+  cellId: string;
+}): Promise<{ status?: string } | undefined> {
+  const { queryClient, cellId } = args;
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      queryClient.fetchQuery({
+        ...cellQueries.detail(cellId),
+        retry: false,
+      }),
+      new Promise<undefined>((resolve) => {
+        timeoutId = setTimeout(() => {
+          resolve(undefined);
+        }, CELL_ROUTE_REDIRECT_FETCH_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    return;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
 
 export const Route = createFileRoute("/cells/$cellId")({
   beforeLoad: async ({ params, location, context: { queryClient } }) => {
     if (location.pathname === `/cells/${params.cellId}`) {
-      const cell = await queryClient
-        .fetchQuery({
-          ...cellQueries.detail(params.cellId),
-          retry: false,
-        })
-        .catch(() =>
-          queryClient.getQueryData<{ status?: string }>(
-            cellQueries.detail(params.cellId).queryKey
-          )
+      const cell =
+        (await fetchCellForRouteRedirect({
+          queryClient,
+          cellId: params.cellId,
+        })) ??
+        queryClient.getQueryData<{ status?: string }>(
+          cellQueries.detail(params.cellId).queryKey
         );
 
       throw redirect({
