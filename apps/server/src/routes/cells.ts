@@ -615,6 +615,8 @@ const PROVISIONING_INTERRUPTED_MESSAGE =
 const PROVISIONING_CANCELLED_MESSAGE =
   "Provisioning cancelled because the cell no longer exists.";
 
+const activeProvisioningWorkflows = new Set<string>();
+
 const LOGGER_CONFIG = {
   level: process.env.LOG_LEVEL || "info",
   autoLogging: false,
@@ -921,7 +923,13 @@ export function createCellsRoutes(
             log: backgroundProvisioningLogger,
           });
 
-          startProvisioningWorkflow(context);
+          const started = startProvisioningWorkflow(context);
+          if (!started) {
+            set.status = HTTP_STATUS.CONFLICT;
+            return {
+              message: "Provisioning retry already in progress",
+            } satisfies ErrorPayload;
+          }
         } catch (error) {
           const payload = buildCellCreationErrorPayload(error);
           const lastSetupError = deriveSetupErrorDetails(payload);
@@ -964,6 +972,7 @@ export function createCellsRoutes(
           200: CellResponseSchema,
           400: ErrorResponseSchema,
           404: ErrorResponseSchema,
+          409: ErrorResponseSchema,
           500: ErrorResponseSchema,
         },
       }
@@ -3315,6 +3324,16 @@ async function ensureCellWorktree(
 }
 
 function startProvisioningWorkflow(context: ProvisionContext) {
+  const cellId = context.state.cellId;
+  if (activeProvisioningWorkflows.has(cellId)) {
+    context.log.info?.(
+      { cellId },
+      "Skipped provisioning workflow start because another attempt is active"
+    );
+    return false;
+  }
+
+  activeProvisioningWorkflows.add(cellId);
   beginProvisioningAttempt(context)
     .then(() => finalizeCellProvisioning(context))
     .catch((error) => {
@@ -3326,7 +3345,12 @@ function startProvisioningWorkflow(context: ProvisionContext) {
           "Failed to handle provisioning failure"
         );
       });
+    })
+    .finally(() => {
+      activeProvisioningWorkflows.delete(cellId);
     });
+
+  return true;
 }
 
 async function beginProvisioningAttempt(

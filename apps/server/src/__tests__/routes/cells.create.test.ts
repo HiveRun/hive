@@ -17,7 +17,9 @@ import { setupTestDb, testDb } from "../test-db";
 
 const templateId = "failing-template";
 const workspacePath = "/tmp/mock-worktree";
+const OK_STATUS = 200;
 const CREATED_STATUS = 201;
+const CONFLICT_STATUS = 409;
 const WAIT_TIMEOUT_MS = 500;
 const WAIT_INTERVAL_MS = 10;
 
@@ -68,10 +70,12 @@ const hiveConfig: HiveConfig = {
 };
 
 type SendAgentMessageFn = (sessionId: string, content: string) => Promise<void>;
+type EnsureServicesForCellFn = (args: unknown) => Promise<void>;
 
 type DependencyFactoryOptions = {
   setupError?: TemplateSetupError;
   sendAgentMessage?: SendAgentMessageFn;
+  ensureServicesForCell?: EnsureServicesForCellFn;
   onEnsureAgentSession?: (
     cellId: string,
     sessionId: string,
@@ -141,6 +145,9 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
       }),
     closeAgentSession: async (_cellId: string) => Promise.resolve(),
     ensureServicesForCell: (_args: any) => {
+      if (options.ensureServicesForCell) {
+        return options.ensureServicesForCell(_args);
+      }
       if (options.setupError) {
         throw {
           _tag: "ServiceSupervisorError",
@@ -378,6 +385,78 @@ describe("POST /api/cells", () => {
 
     await waitForCellStatus(payload.id, "ready");
     expect(sendAgentMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/cells/:id/setup/retry", () => {
+  beforeEach(async () => {
+    await testDb.delete(cells);
+  });
+
+  it("returns 409 when a retry is already in progress", async () => {
+    let releaseEnsureServices = () => {
+      // replaced below once the deferred promise is created
+    };
+    const ensureServicesForCell = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        releaseEnsureServices = resolve;
+      });
+    });
+
+    const routes = createCellsRoutes(
+      createDependencies({ ensureServicesForCell })
+    );
+    const app = new Elysia().use(routes);
+    const cellId = "retry-lock-cell";
+
+    await testDb.insert(cells).values({
+      id: cellId,
+      name: "Retry Lock Cell",
+      description: "Retry lock",
+      templateId,
+      workspaceId: "test-workspace",
+      workspacePath,
+      workspaceRootPath: "/tmp/test-workspace-root",
+      branchName: "cell-branch",
+      baseCommit: "abc123",
+      opencodeSessionId: null,
+      createdAt: new Date(),
+      status: "error",
+      lastSetupError: "Setup failed",
+    });
+
+    await testDb.insert(cellProvisioningStates).values({
+      cellId,
+      modelIdOverride: null,
+      providerIdOverride: null,
+      attemptCount: 0,
+      startedAt: null,
+      finishedAt: null,
+    });
+
+    const firstRetryPromise = app.handle(
+      new Request(`http://localhost/api/cells/${cellId}/setup/retry`, {
+        method: "POST",
+      })
+    );
+
+    await waitForCondition(() => ensureServicesForCell.mock.calls.length === 1);
+
+    const secondRetryResponse = await app.handle(
+      new Request(`http://localhost/api/cells/${cellId}/setup/retry`, {
+        method: "POST",
+      })
+    );
+    expect(secondRetryResponse.status).toBe(CONFLICT_STATUS);
+    expect((await secondRetryResponse.json()) as { message: string }).toEqual({
+      message: "Provisioning retry already in progress",
+    });
+
+    releaseEnsureServices();
+
+    const firstRetryResponse = await firstRetryPromise;
+    expect(firstRetryResponse.status).toBe(OK_STATUS);
+    await waitForCellStatus(cellId, "ready");
   });
 });
 
