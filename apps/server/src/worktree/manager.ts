@@ -3,7 +3,6 @@ import { execSync } from "node:child_process";
 import { existsSync, constants as fsConstants } from "node:fs";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
-import { glob } from "tinyglobby";
 import {
   generateHiveToolConfig,
   HIVE_TOOL_SOURCE,
@@ -624,19 +623,67 @@ export function createWorktreeManager(
     });
 
     try {
-      const files = await glob(expandedPatterns, {
+      const files = await listPathsWithGlobSubprocess({
         cwd: mainRepoPath,
-        absolute: false,
+        patterns: expandedPatterns,
         ignore: ignorePatterns,
-        dot: true,
-        onlyFiles: false,
       });
 
-      return files.map((file: string) => file.split(sep).join(POSIX_SEPARATOR));
+      return files.map((file) => file.split(sep).join(POSIX_SEPARATOR));
     } catch (error: unknown) {
       logWarn("Failed to match include patterns", error);
       return [];
     }
+  }
+
+  async function listPathsWithGlobSubprocess(args: {
+    cwd: string;
+    patterns: string[];
+    ignore: string[];
+  }): Promise<string[]> {
+    const script =
+      "import { glob } from 'tinyglobby';" +
+      "const [, , cwd, patternsJson, ignoreJson] = process.argv;" +
+      "const patterns = JSON.parse(patternsJson);" +
+      "const ignore = JSON.parse(ignoreJson);" +
+      "const files = await glob(patterns, { cwd, absolute: false, ignore, dot: true, onlyFiles: false });" +
+      "process.stdout.write(JSON.stringify(files));";
+
+    const child = Bun.spawn({
+      cmd: [
+        process.execPath,
+        "-e",
+        script,
+        args.cwd,
+        JSON.stringify(args.patterns),
+        JSON.stringify(args.ignore),
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdoutPromise = new Response(child.stdout).text();
+    const stderrPromise = new Response(child.stderr).text();
+    const exitCode = await child.exited;
+    const stdout = await stdoutPromise;
+    const stderr = await stderrPromise;
+
+    if (exitCode !== 0) {
+      throw new Error(
+        `Glob subprocess failed with exit code ${exitCode}${stderr ? `: ${stderr.trim()}` : ""}`
+      );
+    }
+
+    if (!stdout.trim()) {
+      return [];
+    }
+
+    const parsed = JSON.parse(stdout) as unknown;
+    if (!Array.isArray(parsed)) {
+      throw new Error("Glob subprocess returned invalid payload");
+    }
+
+    return parsed.filter((entry): entry is string => typeof entry === "string");
   }
 
   async function copyIncludedRoot(
