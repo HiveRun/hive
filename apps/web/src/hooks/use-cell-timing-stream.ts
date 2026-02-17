@@ -53,15 +53,21 @@ export function useCellTimingStream(
       refreshTimings();
     };
 
+    const snapshotListener = () => {
+      refreshTimings();
+    };
+
     const errorListener = () => {
       // Keep the stream open so EventSource can auto-reconnect.
     };
 
     source.addEventListener("timing", timingListener);
+    source.addEventListener("snapshot", snapshotListener);
     source.addEventListener("error", errorListener);
 
     return () => {
       source.removeEventListener("timing", timingListener);
+      source.removeEventListener("snapshot", snapshotListener);
       source.removeEventListener("error", errorListener);
       source.close();
     };
