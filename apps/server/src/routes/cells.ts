@@ -60,8 +60,11 @@ import {
 } from "../services/diff-route-helpers";
 import {
   type CellStatusEvent,
+  type CellTimingEvent,
   emitCellStatusUpdate,
+  emitCellTimingUpdate,
   subscribeToCellStatusEvents,
+  subscribeToCellTimingEvents,
   subscribeToServiceEvents,
 } from "../services/events";
 import type {
@@ -548,6 +551,7 @@ async function insertCellTimingEvent(args: {
   };
 
   try {
+    const createdAt = args.createdAt ?? new Date();
     await args.database.insert(cellTimingEvents).values({
       id: crypto.randomUUID(),
       cellId: args.cellId,
@@ -562,7 +566,16 @@ async function insertCellTimingEvent(args: {
       attempt: args.attempt ?? null,
       error: args.error ?? null,
       metadata,
-      createdAt: args.createdAt ?? new Date(),
+      createdAt,
+    });
+
+    emitCellTimingUpdate({
+      cellId: args.cellId,
+      workflow: args.workflow,
+      runId: args.runId,
+      step: args.step,
+      status: args.status,
+      createdAt: createdAt.toISOString(),
     });
   } catch (error) {
     args.log.warn(
@@ -1414,6 +1427,58 @@ export function createCellsRoutes(
         }),
         response: {
           200: CellTimingListResponseSchema,
+          404: t.Object({ message: t.String() }),
+        },
+      }
+    )
+    .get(
+      "/:id/timings/stream",
+      async ({ params, query, request, set }) => {
+        const { db: database } = await resolveDeps();
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+
+        const workflow = normalizeTimingWorkflow(query.workflow);
+        const { iterator, cleanup } = createAsyncEventIterator<CellTimingEvent>(
+          (listener) => subscribeToCellTimingEvents(params.id, listener),
+          request.signal
+        );
+
+        async function* stream() {
+          try {
+            yield sse({ event: "ready", data: { timestamp: Date.now() } });
+            yield sse({ event: "snapshot", data: { timestamp: Date.now() } });
+
+            for await (const event of iterator) {
+              if (workflow && event.workflow !== workflow) {
+                continue;
+              }
+
+              yield sse({ event: "timing", data: event });
+            }
+          } finally {
+            cleanup();
+          }
+        }
+
+        return stream();
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        query: t.Object({
+          workflow: t.Optional(
+            t.Union([
+              t.Literal("create"),
+              t.Literal("delete"),
+              t.Literal("all"),
+            ])
+          ),
+        }),
+        response: {
+          200: t.Any(),
           404: t.Object({ message: t.String() }),
         },
       }

@@ -150,6 +150,7 @@ describe("cells route reachability", () => {
     ["GET", `/api/cells/${TEST_CELL_ID}/services`, "Get cell services"],
     ["GET", `/api/cells/${TEST_CELL_ID}/activity`, "Get cell activity"],
     ["GET", `/api/cells/${TEST_CELL_ID}/timings`, "Get cell timings"],
+    ["GET", `/api/cells/${TEST_CELL_ID}/timings/stream`, "Stream cell timings"],
     [
       "GET",
       `/api/cells/${TEST_CELL_ID}/terminal/stream`,

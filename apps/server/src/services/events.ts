@@ -1,5 +1,9 @@
 import { EventEmitter } from "node:events";
 import type { CellStatus } from "../schema/cells";
+import type {
+  CellTimingStatus,
+  CellTimingWorkflow,
+} from "../schema/timing-events";
 
 export type ServiceUpdateEvent = {
   cellId: string;
@@ -11,6 +15,15 @@ export type CellStatusEvent = {
   cellId: string;
   status: CellStatus;
   lastSetupError?: string | null;
+};
+
+export type CellTimingEvent = {
+  cellId: string;
+  workflow: CellTimingWorkflow;
+  runId: string;
+  step: string;
+  status: CellTimingStatus;
+  createdAt: string;
 };
 
 const emitter = new EventEmitter();
@@ -39,6 +52,21 @@ export function subscribeToCellStatusEvents(
   listener: (event: CellStatusEvent) => void
 ): () => void {
   const channel = `workspace:${workspaceId}`;
+  emitter.on(channel, listener);
+  return () => {
+    emitter.off(channel, listener);
+  };
+}
+
+export function emitCellTimingUpdate(event: CellTimingEvent): void {
+  emitter.emit(`timings:${event.cellId}`, event);
+}
+
+export function subscribeToCellTimingEvents(
+  cellId: string,
+  listener: (event: CellTimingEvent) => void
+): () => void {
+  const channel = `timings:${cellId}`;
   emitter.on(channel, listener);
   return () => {
     emitter.off(channel, listener);

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ProvisioningChecklistPanel } from "@/components/provisioning-checklist-panel";
 import { Button } from "@/components/ui/button";
 import { useCellStatusStream } from "@/hooks/use-cell-status-stream";
+import { useCellTimingStream } from "@/hooks/use-cell-timing-stream";
 import { buildProvisioningChecklist } from "@/lib/provisioning-checklist";
 import { cellMutations, cellQueries } from "@/queries/cells";
 
@@ -45,7 +46,6 @@ function CellProvisioningRoute() {
   const timingsQuery = useQuery({
     ...cellQueries.timings(cellId, { workflow: "create", limit: 300 }),
     enabled: Boolean(cellQuery.data),
-    refetchInterval: shouldPollTimeline ? PROVISIONING_POLL_MS : false,
   });
   const activeRunId = timingsQuery.data?.runs[0]?.runId;
   const activeRunSteps = useMemo(() => {
@@ -103,6 +103,11 @@ function CellProvisioningRoute() {
       Boolean(cell?.workspaceId) &&
       cell?.status !== "ready" &&
       cell?.status !== undefined,
+  });
+
+  useCellTimingStream(cellId, {
+    enabled: shouldPollTimeline,
+    workflow: "create",
   });
 
   if (cellQuery.isError) {
