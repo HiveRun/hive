@@ -1324,11 +1324,10 @@ export function createCellsRoutes(
 
         const steps = rows
           .map((row) => parseTimingStep(row))
-          .filter((step): step is CellTimingStepRecord => Boolean(step))
-          .slice(0, limit);
+          .filter((step): step is CellTimingStepRecord => Boolean(step));
 
         return {
-          steps,
+          steps: steps.slice(0, limit),
           runs: buildTimingRuns(steps),
         } satisfies CellTimingListResponse;
       },
@@ -1380,8 +1379,7 @@ export function createCellsRoutes(
 
         const steps = rows
           .map((row) => parseTimingStep(row))
-          .filter((step): step is CellTimingStepRecord => Boolean(step))
-          .slice(0, limit);
+          .filter((step): step is CellTimingStepRecord => Boolean(step));
 
         if (!cell && steps.length === 0) {
           set.status = HTTP_STATUS.NOT_FOUND;
@@ -1391,7 +1389,7 @@ export function createCellsRoutes(
         }
 
         return {
-          steps,
+          steps: steps.slice(0, limit),
           runs: buildTimingRuns(steps),
         } satisfies CellTimingListResponse;
       },
@@ -3957,10 +3955,7 @@ const resumeSingleCell = async (
   }
 };
 
-const resumePendingCells = async (
-  overrides: Partial<CellRouteDependencies> = {}
-) => {
-  const deps = await resolveCellRouteDependencies(overrides);
+const resumePendingCells = async (deps: CellRouteDependencies) => {
   const pendingCells = await deps.db
     .select({
       cell: cells,
@@ -3978,10 +3973,66 @@ const resumePendingCells = async (
   }
 };
 
+const resumeDeletingCells = async (deps: CellRouteDependencies) => {
+  const deletingCells = await deps.db
+    .select({
+      id: cells.id,
+      name: cells.name,
+      templateId: cells.templateId,
+      workspacePath: cells.workspacePath,
+      workspaceId: cells.workspaceId,
+      status: cells.status,
+    })
+    .from(cells)
+    .where(eq(cells.status, "deleting"));
+
+  if (deletingCells.length === 0) {
+    return;
+  }
+
+  const managerCache = new Map<string, AsyncWorktreeManager>();
+  const fetchManager = async (workspaceId: string) => {
+    const cached = managerCache.get(workspaceId);
+    if (cached) {
+      return cached;
+    }
+
+    const workspaceContext = await resolveWorkspaceContextFromDeps(
+      deps.resolveWorkspaceContext,
+      workspaceId
+    );
+    const manager = toAsyncWorktreeManager(
+      await workspaceContext.createWorktreeManager()
+    );
+    managerCache.set(workspaceId, manager);
+    return manager;
+  };
+
+  for (const cell of deletingCells) {
+    try {
+      await deleteCellWithLifecycle({
+        database: deps.db,
+        cell,
+        closeSession: deps.closeAgentSession,
+        closeTerminalSession: deps.closeTerminalSession,
+        closeChatTerminalSession: deps.closeChatTerminalSession,
+        clearSetupTerminal: deps.clearSetupTerminal,
+        stopCellServices: deps.stopServicesForCell,
+        getWorktreeService: fetchManager,
+        log: backgroundProvisioningLogger,
+      });
+    } catch {
+      // best-effort startup recovery: failed deletes restore cells to error status
+    }
+  }
+};
+
 export async function resumeSpawningCells(
   overrides: Partial<CellRouteDependencies> = {}
 ): Promise<void> {
-  await resumePendingCells(overrides);
+  const deps = await resolveCellRouteDependencies(overrides);
+  await resumePendingCells(deps);
+  await resumeDeletingCells(deps);
 }
 
 const isServiceSupervisorError = (
@@ -4495,14 +4546,14 @@ async function deleteCellWithLifecycle(
   try {
     await deleteCellWithTiming(args);
   } catch (error) {
-    if (previousStatus !== "deleting") {
-      await restoreCellStatusAfterDeleteFailure({
-        database: args.database,
-        cellId: args.cell.id,
-        workspaceId: args.cell.workspaceId,
-        previousStatus,
-      });
-    }
+    const restoreStatus =
+      previousStatus === "deleting" ? "error" : previousStatus;
+    await restoreCellStatusAfterDeleteFailure({
+      database: args.database,
+      cellId: args.cell.id,
+      workspaceId: args.cell.workspaceId,
+      previousStatus: restoreStatus,
+    });
 
     throw error;
   }

@@ -22,6 +22,7 @@ const TIMING_DELETE_STEP_DURATION_MS = 30;
 const TIMING_DELETE_TOTAL_DURATION_MS = 55;
 const EXPECTED_DELETE_TIMING_STEP_COUNT = 2;
 const EXPECTED_TIMING_RUN_COUNT = 1;
+const LIMITED_TIMING_QUERY_LIMIT = 1;
 
 type MinimalDependencyOverrides = {
   closeAgentSession?: (...args: unknown[]) => Promise<void>;
@@ -429,6 +430,32 @@ describe("Cell activity events", () => {
     expect(payload.runs[0]?.workflow).toBe("delete");
     expect(payload.runs[0]?.status).toBe("error");
     expect(payload.runs[0]?.totalDurationMs).toBe(
+      TIMING_DELETE_TOTAL_DURATION_MS
+    );
+
+    const limitedGlobalResponse = await app.handle(
+      new Request(
+        `http://localhost/api/cells/timings/global?workflow=delete&cellId=${TEST_CELL_ID}&limit=${LIMITED_TIMING_QUERY_LIMIT}`
+      )
+    );
+    expect(limitedGlobalResponse.status).toBe(HTTP_OK);
+
+    const limitedGlobalPayload = (await limitedGlobalResponse.json()) as {
+      steps: Array<{ step: string }>;
+      runs: Array<{
+        runId: string;
+        workflow: string;
+        status: string;
+        totalDurationMs: number;
+      }>;
+    };
+
+    expect(limitedGlobalPayload.steps).toHaveLength(LIMITED_TIMING_QUERY_LIMIT);
+    expect(limitedGlobalPayload.runs).toHaveLength(EXPECTED_TIMING_RUN_COUNT);
+    expect(limitedGlobalPayload.runs[0]?.runId).toBe(deleteRunId);
+    expect(limitedGlobalPayload.runs[0]?.workflow).toBe("delete");
+    expect(limitedGlobalPayload.runs[0]?.status).toBe("error");
+    expect(limitedGlobalPayload.runs[0]?.totalDurationMs).toBe(
       TIMING_DELETE_TOTAL_DURATION_MS
     );
   });

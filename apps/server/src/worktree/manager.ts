@@ -507,6 +507,9 @@ export function createWorktreeManager(
   function hasDynamicIgnorePatterns(ignorePatterns: string[]): boolean {
     return ignorePatterns.some((pattern) => {
       const normalized = normalizePattern(pattern);
+      if (!normalized || isDotGitIgnorePattern(normalized)) {
+        return false;
+      }
       return Boolean(normalized) && GLOB_MAGIC_PATTERN.test(normalized);
     });
   }

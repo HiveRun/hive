@@ -463,6 +463,7 @@ describe("POST /api/cells/:id/setup/retry", () => {
 describe("resumeSpawningCells", () => {
   beforeEach(async () => {
     await testDb.delete(cells);
+    removeWorktreeCalls = 0;
   });
 
   it("retries provisioning for stranded cells", async () => {
@@ -544,5 +545,36 @@ describe("resumeSpawningCells", () => {
     expect(errored.lastSetupError).toContain(
       "Template removed-template no longer exists"
     );
+  });
+
+  it("resumes deleting cells left behind by interrupted shutdowns", async () => {
+    const dependencies = createDependencies();
+    const cellId = "stuck-deleting-cell";
+
+    await testDb.insert(cells).values({
+      id: cellId,
+      name: "Deleting Cell",
+      description: "Interrupted deletion",
+      templateId,
+      workspaceId: "test-workspace",
+      workspacePath,
+      workspaceRootPath: "/tmp/test-workspace-root",
+      branchName: "cell-branch",
+      baseCommit: "abc123",
+      opencodeSessionId: null,
+      createdAt: new Date(),
+      status: "deleting",
+      lastSetupError: null,
+    });
+
+    await resumeSpawningCells(dependencies);
+
+    const remaining = await testDb
+      .select({ id: cells.id })
+      .from(cells)
+      .where(eq(cells.id, cellId));
+
+    expect(remaining).toHaveLength(0);
+    expect(removeWorktreeCalls).toBe(1);
   });
 });
