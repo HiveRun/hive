@@ -4458,31 +4458,38 @@ function runDeleteStepWithTimeout<T>(args: {
   action: () => Promise<T> | T;
 }): Promise<T> {
   return new Promise((resolve, reject) => {
+    let completed = false;
     const actionPromise = Promise.resolve().then(args.action);
     const timeoutError = new Error(
       `Delete step '${args.step}' timed out after ${args.timeoutMs}ms`
     );
 
-    let timedOut = false;
     const timer = setTimeout(() => {
-      timedOut = true;
+      if (completed) {
+        return;
+      }
+
+      completed = true;
+      reject(timeoutError);
     }, args.timeoutMs);
 
     actionPromise.then(
       (result) => {
-        clearTimeout(timer);
-        if (timedOut) {
-          reject(timeoutError);
+        if (completed) {
           return;
         }
+
+        completed = true;
+        clearTimeout(timer);
         resolve(result);
       },
       (error) => {
-        clearTimeout(timer);
-        if (timedOut) {
-          reject(timeoutError);
+        if (completed) {
           return;
         }
+
+        completed = true;
+        clearTimeout(timer);
         reject(error);
       }
     );

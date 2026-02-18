@@ -38,9 +38,25 @@ export function useCellStatusStream(
             if (!currentCells) {
               return currentCells;
             }
-            return currentCells.map((cell) =>
-              cell.id === cellData.id ? { ...cell, ...cellData } : cell
+
+            const existingIndex = currentCells.findIndex(
+              (cell) => cell.id === cellData.id
             );
+            if (existingIndex === -1) {
+              return [...currentCells, cellData];
+            }
+
+            const nextCells = [...currentCells];
+            const existingCell = nextCells[existingIndex];
+            if (!existingCell) {
+              return currentCells;
+            }
+
+            nextCells[existingIndex] = {
+              ...existingCell,
+              ...cellData,
+            };
+            return nextCells;
           }
         );
         queryClient.setQueryData<Cell>(["cells", cellData.id], (currentCell) =>
