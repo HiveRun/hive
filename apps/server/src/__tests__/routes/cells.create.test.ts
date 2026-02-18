@@ -658,6 +658,32 @@ describe("POST /api/cells/:id/setup/retry", () => {
     );
   });
 
+  it("returns 409 when the cell is being deleted", async () => {
+    const app = createTestApp();
+    const cellId = "retry-deleting-cell";
+
+    await insertCellRow({
+      id: cellId,
+      name: "Retry Deleting Cell",
+      status: "deleting",
+      lastSetupError: "cleanup in progress",
+    });
+
+    const retryResponse = await postSetupRetry(app, cellId);
+    expect(retryResponse.status).toBe(CONFLICT_STATUS);
+    expect((await retryResponse.json()) as { message: string }).toEqual({
+      message: "Cell is being deleted",
+    });
+
+    const [persisted] = await testDb
+      .select({ status: cells.status, lastSetupError: cells.lastSetupError })
+      .from(cells)
+      .where(eq(cells.id, cellId));
+
+    expect(persisted?.status).toBe("deleting");
+    expect(persisted?.lastSetupError).toBe("cleanup in progress");
+  });
+
   it("returns 409 when a retry is already in progress", async () => {
     let releaseEnsureServices = () => {
       // replaced below once the deferred promise is created

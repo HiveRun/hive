@@ -743,11 +743,16 @@ export function createCellsRoutes(
       "/:id/setup/retry",
       async ({ params, set, request }) => {
         const deps = await resolveDeps();
-        const cell = await loadCellById(deps.db, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
+        const resolvedCell = resolveSetupRetryCell(
+          await loadCellById(deps.db, params.id)
+        );
+        if (!resolvedCell.ok) {
+          set.status = resolvedCell.status;
+          return { message: resolvedCell.message } satisfies {
+            message: string;
+          };
         }
+        const cell = resolvedCell.cell;
 
         const audit = readHiveAuditHeaders(request);
         await insertCellActivityEvent({
@@ -4206,6 +4211,30 @@ async function loadCellById(
     .limit(1);
 
   return cell ?? null;
+}
+
+function resolveSetupRetryCell(
+  cell: typeof cells.$inferSelect | null
+):
+  | { ok: true; cell: typeof cells.$inferSelect }
+  | { ok: false; status: number; message: string } {
+  if (!cell) {
+    return {
+      ok: false,
+      status: HTTP_STATUS.NOT_FOUND,
+      message: "Cell not found",
+    };
+  }
+
+  if (cell.status === "deleting") {
+    return {
+      ok: false,
+      status: HTTP_STATUS.CONFLICT,
+      message: "Cell is being deleted",
+    };
+  }
+
+  return { ok: true, cell };
 }
 
 function shouldEmitCellRemovalEvent(

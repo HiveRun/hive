@@ -22,7 +22,11 @@ export function parseDiffRequest(
   cell: Cell,
   query: Static<typeof DiffQuerySchema>
 ): DiffRequestParseResult {
-  if (cell.status === "spawning" || cell.status === "pending") {
+  if (
+    cell.status === "spawning" ||
+    cell.status === "pending" ||
+    cell.status === "deleting"
+  ) {
     return {
       ok: false,
       status: 409,
