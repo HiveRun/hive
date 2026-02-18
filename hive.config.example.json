@@ -12,6 +12,7 @@
       "id": "basic",
       "label": "Basic Template",
       "type": "manual",
+      "includePatterns": ["./.env*"],
       "ignorePatterns": [
         "node_modules/**",
         ".hive/**",
