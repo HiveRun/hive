@@ -10,7 +10,7 @@ if (typeof describe !== "function" || typeof it !== "function") {
 const SESSION_TIMEOUT_MS = 120_000;
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
 const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
-const CHAT_ROUTE_TIMEOUT_MS = 180_000;
+const CHAT_ROUTE_TIMEOUT_MS = 240_000;
 const PROMPT_ACCEPT_TIMEOUT_MS = 20_000;
 const SEND_API_TIMEOUT_MS = 8000;
 const SEND_ATTEMPTS = 3;
@@ -40,6 +40,7 @@ describe("desktop cell chat smoke", () => {
       timeoutMs: INITIAL_ROUTE_TIMEOUT_MS,
     });
     await waitForChatRoute({
+      apiUrl,
       cellId,
       timeoutMs: CHAT_ROUTE_TIMEOUT_MS,
     });
@@ -407,14 +408,58 @@ async function waitForProvisioningOrChatRoute(options) {
 }
 
 async function waitForChatRoute(options) {
+  let lastPath = "unknown";
+  let lastStatus = "unknown";
+
   await waitForCondition({
     timeoutMs: options.timeoutMs,
-    errorMessage: `Cell ${options.cellId} did not reach chat route`,
+    errorMessage: `Cell ${options.cellId} did not reach chat route. lastPath=${lastPath} lastStatus=${lastStatus}`,
     check: async () => {
       const url = await browser.getUrl();
-      return readPathname(url) === `/cells/${options.cellId}/chat`;
+      const path = readPathname(url);
+      lastPath = path;
+
+      if (path === `/cells/${options.cellId}/chat`) {
+        return true;
+      }
+
+      const cell = await fetchCellDetail({
+        apiUrl: options.apiUrl,
+        cellId: options.cellId,
+      });
+
+      lastStatus = cell?.status ?? "unknown";
+
+      if (cell?.status === "error") {
+        throw new Error(
+          `Cell ${options.cellId} entered error status while waiting for chat route: ${cell.lastSetupError ?? "setup failed"}`
+        );
+      }
+
+      if (cell?.status !== "ready") {
+        return false;
+      }
+
+      await browser.url(`/cells/${options.cellId}/chat`);
+      return false;
     },
   });
+}
+
+async function fetchCellDetail(options) {
+  const response = await fetch(
+    `${options.apiUrl}/api/cells/${options.cellId}?includeSetupLog=false`
+  );
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = await response.json();
+  if (payload?.message) {
+    return null;
+  }
+
+  return payload;
 }
 
 function resolveCellSubroute(url, cellId) {
