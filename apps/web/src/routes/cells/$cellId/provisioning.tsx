@@ -44,6 +44,7 @@ function CellProvisioningRoute() {
         ? PROVISIONING_POLL_MS
         : false;
     },
+    refetchIntervalInBackground: true,
   });
   const shouldStreamTimeline = shouldStreamProvisioningTimeline({
     hasCell: Boolean(cellQuery.data),
