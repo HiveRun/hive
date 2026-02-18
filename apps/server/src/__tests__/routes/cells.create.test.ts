@@ -627,6 +627,37 @@ describe("POST /api/cells/:id/setup/retry", () => {
     expect(sendAgentMessage).not.toHaveBeenCalled();
   });
 
+  it("sends the initial prompt on retry when no prior session exists", async () => {
+    const sendAgentMessage = vi
+      .fn<SendAgentMessageFn>()
+      .mockResolvedValue(undefined);
+    const app = createTestApp({ sendAgentMessage });
+    const cellId = "retry-no-session-cell";
+
+    await insertCellRow({
+      id: cellId,
+      name: "Retry No Session",
+      description: "Send this after retry",
+      opencodeSessionId: null,
+      status: "error",
+      lastSetupError: "setup failed",
+    });
+
+    await insertProvisioningStateRow(cellId, {
+      attemptCount: 1,
+    });
+
+    const retryResponse = await postSetupRetry(app, cellId);
+    expect(retryResponse.status).toBe(OK_STATUS);
+
+    await waitForCellStatus(cellId, "ready");
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+    expect(sendAgentMessage).toHaveBeenCalledWith(
+      `session-${cellId}`,
+      "Send this after retry"
+    );
+  });
+
   it("returns 409 when a retry is already in progress", async () => {
     let releaseEnsureServices = () => {
       // replaced below once the deferred promise is created

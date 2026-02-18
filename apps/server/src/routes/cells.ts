@@ -3424,6 +3424,7 @@ async function finalizeCellProvisioning(
     ...(body.modelId ? { modelId: body.modelId } : {}),
     ...(body.providerId ? { providerId: body.providerId } : {}),
   };
+  const existingSessionId = state.createdCell?.opencodeSessionId ?? null;
   const session = await runPhase("ensure_agent_session", async () =>
     ensureSession(
       state.cellId,
@@ -3442,7 +3443,7 @@ async function finalizeCellProvisioning(
   const shouldSendInitialPrompt = shouldSendInitialPromptForAttempt({
     attempt,
     initialPrompt,
-    existingSessionId: state.createdCell?.opencodeSessionId ?? null,
+    existingSessionId,
   });
   if (shouldSendInitialPrompt && initialPrompt) {
     await runPhase("send_initial_prompt", async () =>
