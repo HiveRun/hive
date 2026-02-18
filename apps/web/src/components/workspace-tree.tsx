@@ -16,7 +16,7 @@ import {
   Trash2,
   Wrench,
 } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { CellCreationSheet } from "@/components/cell-creation-sheet";
 import {
@@ -41,6 +41,7 @@ import { cn } from "@/lib/utils";
 import { agentQueries } from "@/queries/agents";
 import type { Cell, CellStatus } from "@/queries/cells";
 import { cellMutations, cellQueries } from "@/queries/cells";
+import { templateQueries } from "@/queries/templates";
 import { workspaceQueries } from "@/queries/workspaces";
 
 const PROVISIONING_STATUSES: CellStatus[] = ["spawning", "pending"];
@@ -55,11 +56,22 @@ type PendingCellDelete = {
   workspaceId: string;
 };
 
+type DeleteCellVariables = {
+  id: string;
+  workspaceId: string;
+};
+
+type DeleteCellMutationContext = {
+  previousCells?: Cell[];
+  previousCell?: Cell;
+};
+
 const EXPANDED_WORKSPACES_STORAGE_KEY = "hive.sidebar.expanded-workspaces";
 
 const AGENT_STATUS_POLL_WORKING_MS = 2000;
-const AGENT_STATUS_POLL_AWAITING_INPUT_MS = 5000;
-const AGENT_STATUS_POLL_IDLE_MS = 12_000;
+const AGENT_STATUS_POLL_AWAITING_INPUT_MS = 30_000;
+const AGENT_STATUS_POLL_IDLE_MS = 120_000;
+const TEMPLATE_PREFETCH_STALE_MS = 60_000;
 
 export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
   const routerState = useRouterState({
@@ -69,12 +81,23 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
 
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const workspacesQuery = useQuery(workspaceQueries.list());
+  const workspaces = workspacesQuery.data?.workspaces ?? [];
+  const workspacesLoading =
+    workspacesQuery.isPending && workspacesQuery.data === undefined;
+
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
     () => new Set()
   );
-  const confirmDeleteRef = useRef(false);
+  const [hasHydratedExpandedWorkspaces, setHasHydratedExpandedWorkspaces] =
+    useState(false);
+  const [shouldApplyDefaultExpansion, setShouldApplyDefaultExpansion] =
+    useState(false);
   const [pendingCellDelete, setPendingCellDelete] =
     useState<PendingCellDelete | null>(null);
+  const [deletingCellIds, setDeletingCellIds] = useState<Set<string>>(
+    () => new Set()
+  );
 
   const [pendingCellCreateWorkspaceId, setPendingCellCreateWorkspaceId] =
     useState<string | null>(null);
@@ -101,24 +124,57 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
     if (typeof window === "undefined") {
       return;
     }
+
     const savedIds = storage.get<string[]>(EXPANDED_WORKSPACES_STORAGE_KEY);
-    if (!Array.isArray(savedIds)) {
+
+    if (Array.isArray(savedIds) && savedIds.length > 0) {
+      setExpandedWorkspaceIds(
+        () => new Set(savedIds.filter((entry) => typeof entry === "string"))
+      );
+      setShouldApplyDefaultExpansion(false);
+      setHasHydratedExpandedWorkspaces(true);
       return;
     }
-    setExpandedWorkspaceIds(
-      () => new Set(savedIds.filter((entry) => typeof entry === "string"))
-    );
+
+    setShouldApplyDefaultExpansion(true);
+    setHasHydratedExpandedWorkspaces(true);
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (
+      !(hasHydratedExpandedWorkspaces && shouldApplyDefaultExpansion) ||
+      workspaces.length === 0
+    ) {
+      return;
+    }
+
+    setExpandedWorkspaceIds((prev) => {
+      const next = new Set(prev);
+      for (const workspace of workspaces) {
+        next.add(workspace.id);
+      }
+      return next;
+    });
+    setShouldApplyDefaultExpansion(false);
+  }, [hasHydratedExpandedWorkspaces, shouldApplyDefaultExpansion, workspaces]);
+
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      !hasHydratedExpandedWorkspaces ||
+      shouldApplyDefaultExpansion
+    ) {
       return;
     }
     storage.set(
       EXPANDED_WORKSPACES_STORAGE_KEY,
       Array.from(expandedWorkspaceIds)
     );
-  }, [expandedWorkspaceIds]);
+  }, [
+    expandedWorkspaceIds,
+    hasHydratedExpandedWorkspaces,
+    shouldApplyDefaultExpansion,
+  ]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -147,12 +203,52 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
   };
 
   const deleteCell = useMutation({
-    mutationFn: async ({ id }: { id: string; workspaceId: string }) =>
+    mutationFn: async ({ id }: DeleteCellVariables) =>
       cellMutations.delete.mutationFn(id),
-    onSuccess: async (
-      _result: unknown,
-      variables: { id: string; workspaceId: string }
-    ) => {
+    onMutate: (variables: DeleteCellVariables): DeleteCellMutationContext => {
+      queryClient
+        .cancelQueries({
+          queryKey: cellQueries.all(variables.workspaceId).queryKey,
+        })
+        .catch(() => {
+          // handled by follow-up refetch paths
+        });
+
+      const previousCells = queryClient.getQueryData<Cell[]>(
+        cellQueries.all(variables.workspaceId).queryKey
+      );
+      const previousCell = queryClient.getQueryData<Cell>(
+        cellQueries.detail(variables.id).queryKey
+      );
+
+      queryClient.setQueryData<Cell[]>(
+        cellQueries.all(variables.workspaceId).queryKey,
+        (currentCells) =>
+          currentCells?.filter((cell) => cell.id !== variables.id) ??
+          currentCells
+      );
+
+      queryClient.removeQueries({
+        queryKey: cellQueries.detail(variables.id).queryKey,
+      });
+      queryClient
+        .invalidateQueries({
+          queryKey: cellQueries.all(variables.workspaceId).queryKey,
+          refetchType: "none",
+        })
+        .catch(() => {
+          // handled by follow-up refetch paths
+        });
+
+      setDeletingCellIds((prev) => {
+        const next = new Set(prev);
+        next.add(variables.id);
+        return next;
+      });
+
+      return { previousCells, previousCell };
+    },
+    onSuccess: async (_result: unknown, variables: DeleteCellVariables) => {
       const deletedCellId = variables.id;
       const workspaceId = variables.workspaceId;
       await queryClient.invalidateQueries({
@@ -170,14 +266,42 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
 
       toast.success("Cell deleted");
     },
-    onError: (error: unknown) => {
+    onError: (
+      error: unknown,
+      variables: DeleteCellVariables,
+      context: DeleteCellMutationContext | undefined
+    ) => {
+      if (context?.previousCells) {
+        queryClient.setQueryData(
+          cellQueries.all(variables.workspaceId).queryKey,
+          context.previousCells
+        );
+      }
+
+      if (context?.previousCell) {
+        queryClient.setQueryData(
+          cellQueries.detail(variables.id).queryKey,
+          context.previousCell
+        );
+      }
+
       const message =
         error instanceof Error ? error.message : "Failed to delete cell";
       toast.error(message);
     },
-    onSettled: () => {
-      confirmDeleteRef.current = false;
-      setPendingCellDelete(null);
+    onSettled: (
+      _result: unknown,
+      _error: unknown,
+      variables: DeleteCellVariables
+    ) => {
+      setDeletingCellIds((prev) => {
+        if (!prev.has(variables.id)) {
+          return prev;
+        }
+        const next = new Set(prev);
+        next.delete(variables.id);
+        return next;
+      });
     },
   });
 
@@ -197,7 +321,7 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
 
       <AlertDialog
         onOpenChange={(open) => {
-          if (!(open || deleteCell.isPending || confirmDeleteRef.current)) {
+          if (!open) {
             setPendingCellDelete(null);
           }
         }}
@@ -216,24 +340,26 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteCell.isPending}>
-              Cancel
-            </AlertDialogCancel>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={!pendingCellDelete || deleteCell.isPending}
+              disabled={!pendingCellDelete}
               onClick={() => {
                 if (!pendingCellDelete) {
                   return;
                 }
-                confirmDeleteRef.current = true;
+
+                const cellToDelete = pendingCellDelete;
+                setPendingCellDelete(null);
+                toast.info(`Deleting ${cellToDelete.name}...`);
+
                 deleteCell.mutate({
-                  id: pendingCellDelete.id,
-                  workspaceId: pendingCellDelete.workspaceId,
+                  id: cellToDelete.id,
+                  workspaceId: cellToDelete.workspaceId,
                 });
               }}
             >
-              {deleteCell.isPending ? "Deleting..." : "Delete"}
+              Delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -242,25 +368,40 @@ export function WorkspaceTree({ collapsed: _collapsed }: WorkspaceTreeProps) {
       <WorkspaceTreeContent
         activeWorkspaceId={activeWorkspaceId}
         collapsed={_collapsed}
+        deletingCellIds={deletingCellIds}
         expandedWorkspaceIds={expandedWorkspaceIds}
         location={location}
-        onRequestCreateCell={(workspaceId) =>
-          setPendingCellCreateWorkspaceId(workspaceId)
-        }
+        onRequestCreateCell={(workspaceId) => {
+          queryClient
+            .prefetchQuery({
+              ...templateQueries.all(workspaceId),
+              staleTime: TEMPLATE_PREFETCH_STALE_MS,
+            })
+            .catch(() => {
+              // no-op prefetch failure; CellForm handles fetch errors
+            });
+
+          setPendingCellCreateWorkspaceId(workspaceId);
+        }}
         onRequestDeleteCell={(cell: PendingCellDelete) =>
           setPendingCellDelete(cell)
         }
         onToggleWorkspace={toggleWorkspace}
+        workspaces={workspaces}
+        workspacesLoading={workspacesLoading}
       />
     </SidebarMenu>
   );
 }
 
 type WorkspaceTreeContentProps = {
-  location: { pathname: string; search: Record<string, string> };
+  location: { pathname: string };
   activeWorkspaceId?: string;
   collapsed: boolean;
+  deletingCellIds: Set<string>;
   expandedWorkspaceIds: Set<string>;
+  workspaces: Array<{ id: string; label: string; path: string }>;
+  workspacesLoading: boolean;
   onRequestCreateCell: (workspaceId: string) => void;
   onRequestDeleteCell: (cell: PendingCellDelete) => void;
   onToggleWorkspace: (workspaceId: string) => void;
@@ -270,16 +411,14 @@ function WorkspaceTreeContent({
   location,
   activeWorkspaceId,
   collapsed,
+  deletingCellIds,
   expandedWorkspaceIds,
   onRequestCreateCell,
   onRequestDeleteCell,
   onToggleWorkspace,
+  workspaces,
+  workspacesLoading,
 }: WorkspaceTreeContentProps) {
-  const workspacesQuery = useQuery(workspaceQueries.list());
-  const workspaces = workspacesQuery.data?.workspaces ?? [];
-  const workspacesLoading =
-    workspacesQuery.isPending || workspacesQuery.isRefetching;
-
   if (collapsed) {
     return null;
   }
@@ -302,6 +441,7 @@ function WorkspaceTreeContent({
   return workspaces.map((workspace) => (
     <WorkspaceSection
       activeWorkspaceId={activeWorkspaceId}
+      deletingCellIds={deletingCellIds}
       expandedWorkspaceIds={expandedWorkspaceIds}
       key={workspace.id}
       location={location}
@@ -316,7 +456,8 @@ function WorkspaceTreeContent({
 type WorkspaceSectionProps = {
   workspace: { id: string; label: string; path: string };
   activeWorkspaceId?: string;
-  location: { pathname: string; search: Record<string, string> };
+  deletingCellIds: Set<string>;
+  location: { pathname: string };
   expandedWorkspaceIds: Set<string>;
   onRequestCreateCell: (workspaceId: string) => void;
   onRequestDeleteCell: (cell: PendingCellDelete) => void;
@@ -326,6 +467,7 @@ type WorkspaceSectionProps = {
 function WorkspaceSection({
   workspace,
   activeWorkspaceId,
+  deletingCellIds,
   location,
   expandedWorkspaceIds,
   onRequestCreateCell,
@@ -340,7 +482,7 @@ function WorkspaceSection({
     enabled: isExpanded,
   });
   const cells = cellsQuery.data ?? [];
-  const cellsLoading = cellsQuery.isPending || cellsQuery.isRefetching;
+  const cellsLoading = cellsQuery.isPending && cellsQuery.data === undefined;
 
   const hasProvisioningCells = cells.some((cell) =>
     PROVISIONING_STATUSES.includes(cell.status)
@@ -385,6 +527,7 @@ function WorkspaceSection({
   const cellsContent = renderWorkspaceCells({
     cells,
     cellsLoading,
+    deletingCellIds,
     isExpanded,
     location,
     agentStatusByCellId,
@@ -446,6 +589,7 @@ function WorkspaceSection({
 function renderWorkspaceCells({
   cells,
   cellsLoading,
+  deletingCellIds,
   isExpanded,
   location,
   agentStatusByCellId,
@@ -454,8 +598,9 @@ function renderWorkspaceCells({
 }: {
   cells: Pick<Cell, "id" | "name" | "status">[];
   cellsLoading: boolean;
+  deletingCellIds: Set<string>;
   isExpanded: boolean;
-  location: { pathname: string; search: Record<string, string> };
+  location: { pathname: string };
   agentStatusByCellId: Map<string, string | undefined>;
   onRequestDeleteCell: (cell: PendingCellDelete) => void;
   workspaceId: string;
@@ -485,74 +630,140 @@ function renderWorkspaceCells({
     );
   }
 
-  return cells.map((cell) => {
-    const cellPath = `/cells/${cell.id}`;
-    const isCellActive = location.pathname.startsWith(cellPath);
+  return cells.map((cell) =>
+    renderWorkspaceCellItem({
+      cell,
+      deletingCellIds,
+      location,
+      agentStatusByCellId,
+      workspaceId,
+      onRequestDeleteCell,
+    })
+  );
+}
 
-    const agentStatus =
-      cell.status === "ready" ? agentStatusByCellId.get(cell.id) : undefined;
-    const statusIcon = getCellStatusIcon({
-      agentStatus,
-      cellStatus: cell.status,
-      isActive: isCellActive,
-    });
-    const agentDotClass = agentStatus
-      ? getAgentStatusDotClass(agentStatus)
-      : "bg-border/60";
+function renderWorkspaceCellItem({
+  cell,
+  deletingCellIds,
+  location,
+  agentStatusByCellId,
+  workspaceId,
+  onRequestDeleteCell,
+}: {
+  cell: Pick<Cell, "id" | "name" | "status">;
+  deletingCellIds: Set<string>;
+  location: { pathname: string };
+  agentStatusByCellId: Map<string, string | undefined>;
+  workspaceId: string;
+  onRequestDeleteCell: (cell: PendingCellDelete) => void;
+}) {
+  const cellPath = `/cells/${cell.id}`;
+  const isCellActive = location.pathname.startsWith(cellPath);
+  const isDeleting = deletingCellIds.has(cell.id);
 
+  const agentStatus =
+    cell.status === "ready" ? agentStatusByCellId.get(cell.id) : undefined;
+  const statusIcon = getSidebarCellStatusIcon({
+    isDeleting,
+    isCellActive,
+    cellStatus: cell.status,
+    agentStatus,
+  });
+  const agentDotClass = agentStatus
+    ? getAgentStatusDotClass(agentStatus)
+    : "bg-border/60";
+
+  return (
+    <SidebarMenuItem key={cell.id}>
+      <SidebarMenuButton
+        asChild
+        className={cn(
+          "relative box-border w-full rounded-none border-2 border-transparent bg-transparent py-1.5 pr-16 pl-8 text-left text-muted-foreground text-xs tracking-normal transition-none",
+          "hover:bg-primary/5 hover:text-foreground",
+          isDeleting &&
+            "border-destructive/40 bg-destructive/5 text-foreground",
+          isCellActive &&
+            "bg-primary/10 text-foreground shadow-[inset_3px_0_0_0_hsl(var(--primary))]"
+        )}
+      >
+        <Link
+          aria-label={cell.name}
+          className="flex min-w-0 items-center gap-2"
+          data-testid="workspace-cell-link"
+          search={{ workspaceId }}
+          to={cellPath}
+        >
+          {statusIcon}
+          <span className="truncate">{cell.name}</span>
+          {isDeleting ? (
+            <span className="ml-1 text-[10px] text-destructive uppercase tracking-[0.22em]">
+              deleting
+            </span>
+          ) : null}
+          {cell.status === "ready" && !isDeleting ? (
+            <span
+              className={cn(
+                "ml-1 inline-flex h-2 w-2 shrink-0 rounded-full",
+                agentDotClass
+              )}
+              title={
+                agentStatus ? `Agent ${agentStatus}` : "Agent status unknown"
+              }
+            />
+          ) : null}
+        </Link>
+      </SidebarMenuButton>
+
+      <SidebarMenuAction
+        aria-label={`Delete ${cell.name}`}
+        className="rounded-sm text-destructive/70 opacity-70 transition-none hover:bg-destructive/10 hover:text-destructive hover:opacity-100"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (isDeleting) {
+            return;
+          }
+          onRequestDeleteCell({
+            id: cell.id,
+            name: cell.name,
+            workspaceId,
+          });
+        }}
+        type="button"
+      >
+        <Trash2 className="size-4" />
+        <span className="sr-only">Delete</span>
+      </SidebarMenuAction>
+    </SidebarMenuItem>
+  );
+}
+
+function getSidebarCellStatusIcon({
+  isDeleting,
+  isCellActive,
+  cellStatus,
+  agentStatus,
+}: {
+  isDeleting: boolean;
+  isCellActive: boolean;
+  cellStatus: CellStatus;
+  agentStatus?: string;
+}) {
+  if (isDeleting) {
     return (
-      <SidebarMenuItem key={cell.id}>
-        <SidebarMenuButton
-          asChild
-          className={cn(
-            "relative box-border w-full rounded-none border-2 border-transparent bg-transparent py-1.5 pr-10 pl-8 text-left text-muted-foreground text-xs tracking-normal transition-none",
-            "hover:bg-primary/5 hover:text-foreground",
-            isCellActive &&
-              "bg-primary/10 text-foreground shadow-[inset_3px_0_0_0_hsl(var(--primary))]"
-          )}
-        >
-          <Link
-            aria-label={cell.name}
-            className="flex min-w-0 items-center gap-2"
-            data-testid="workspace-cell-link"
-            search={{ workspaceId }}
-            to={cellPath}
-          >
-            {statusIcon}
-            <span className="truncate">{cell.name}</span>
-            {cell.status === "ready" ? (
-              <span
-                className={cn(
-                  "ml-1 inline-flex h-2 w-2 shrink-0 rounded-full",
-                  agentDotClass
-                )}
-                title={
-                  agentStatus ? `Agent ${agentStatus}` : "Agent status unknown"
-                }
-              />
-            ) : null}
-          </Link>
-        </SidebarMenuButton>
-
-        <SidebarMenuAction
-          aria-label={`Delete ${cell.name}`}
-          className="rounded-sm text-destructive/70 opacity-70 transition-none hover:bg-destructive/10 hover:text-destructive hover:opacity-100"
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onRequestDeleteCell({
-              id: cell.id,
-              name: cell.name,
-              workspaceId,
-            });
-          }}
-          type="button"
-        >
-          <Trash2 className="size-4" />
-          <span className="sr-only">Delete</span>
-        </SidebarMenuAction>
-      </SidebarMenuItem>
+      <Loader2
+        className={cn(
+          "size-4 shrink-0 animate-spin text-destructive/80",
+          isCellActive && "text-destructive"
+        )}
+      />
     );
+  }
+
+  return getCellStatusIcon({
+    agentStatus,
+    cellStatus,
+    isActive: isCellActive,
   });
 }
 
@@ -588,6 +799,12 @@ function getCellStatusIcon({
 
   if (cellStatus === "spawning") {
     return <Wrench className={cn(iconClass, "text-amber-400")} />;
+  }
+
+  if (cellStatus === "deleting") {
+    return (
+      <Loader2 className={cn(iconClass, "animate-spin text-destructive")} />
+    );
   }
 
   if (agentStatus === "awaiting_input") {

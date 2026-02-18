@@ -17,18 +17,19 @@ type CellSummary = Awaited<
 >[number];
 
 export const Route = createFileRoute("/")({
-  loader: async ({ context: { queryClient } }) => {
-    const workspaceData = await queryClient.ensureQueryData(
-      workspaceQueries.list()
-    );
-    await Promise.all(
-      workspaceData.workspaces.map(async (workspace) => {
-        await Promise.all([
-          queryClient.ensureQueryData(cellQueries.all(workspace.id)),
-          queryClient.ensureQueryData(templateQueries.all(workspace.id)),
-        ]);
+  loader: ({ context: { queryClient } }) => {
+    queryClient
+      .fetchQuery(workspaceQueries.list())
+      .then((workspaceData) => {
+        for (const workspace of workspaceData.workspaces) {
+          queryClient.prefetchQuery(cellQueries.all(workspace.id));
+          queryClient.prefetchQuery(templateQueries.all(workspace.id));
+        }
       })
-    );
+      .catch(() => {
+        // non-blocking prefetch; overview component handles fetch errors
+      });
+
     return null;
   },
   component: HiveOverview,
@@ -47,7 +48,6 @@ function HiveOverview() {
       return {
         queryKey: config.queryKey,
         queryFn: config.queryFn,
-        staleTime: 10_000,
       };
     }),
   });
@@ -267,6 +267,7 @@ function StatusBadge({ status }: { status: CellStatus }) {
     pending: "bg-muted text-muted-foreground",
     spawning: "bg-secondary/20 text-secondary-foreground",
     error: "bg-destructive/10 text-destructive",
+    deleting: "bg-destructive/20 text-destructive",
   };
   return (
     <span

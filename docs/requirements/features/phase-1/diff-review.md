@@ -84,7 +84,7 @@ Provide a comprehensive diff review experience within Hive so users can review a
 ## Investigation Notes (2025-11-15)
 
 ### Diff Engines
-- **Precision Diff Viewer**: vendor/opencode uses `@pierre/precision-diffs` (`vendor/opencode/packages/ui/src/components/diff.tsx`) to render side-by-side or unified views with syntax highlighting and inline annotations. We'll wrap the same component in React with a thin hook that instantiates `new FileDiff` inside `useEffect`. Feed it `{ name, contents }` pairs sourced from git to get GitHub-grade visuals with staged line numbers.
+- **Precision Diff Viewer**: OpenCode uses `@pierre/precision-diffs` (`https://github.com/sst/opencode/blob/main/packages/ui/src/components/diff.tsx`) to render side-by-side or unified views with syntax highlighting and inline annotations. We'll wrap the same component in React with a thin hook that instantiates `new FileDiff` inside `useEffect`. Feed it `{ name, contents }` pairs sourced from git to get GitHub-grade visuals with staged line numbers.
 - **Baseline Git Data**: keep emitting unified patches from `git diff` / `git diff --cached` so we can stage hunks, compute stats, and fall back when semantic engines fail. These patches also power comment context and future integrations.
 
 ### Backend Plan

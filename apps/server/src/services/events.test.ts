@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   type CellStatusEvent,
+  type CellTimingEvent,
   emitCellStatusUpdate,
+  emitCellTimingUpdate,
   emitServiceUpdate,
   type ServiceUpdateEvent,
   subscribeToCellStatusEvents,
+  subscribeToCellTimingEvents,
   subscribeToServiceEvents,
 } from "./events";
 
@@ -141,5 +144,64 @@ describe("cell status events", () => {
 
     unsubscribe1();
     unsubscribe2();
+  });
+});
+
+describe("cell timing events", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("subscriber receives emitted events for matching cell", () => {
+    const handler = vi.fn();
+    const unsubscribe = subscribeToCellTimingEvents("cell-1", handler);
+
+    const event: CellTimingEvent = {
+      cellId: "cell-1",
+      workflow: "create",
+      runId: "run-1",
+      step: "create_worktree",
+      status: "ok",
+      createdAt: new Date().toISOString(),
+    };
+    emitCellTimingUpdate(event);
+
+    expect(handler).toHaveBeenCalledWith(event);
+    unsubscribe();
+  });
+
+  test("subscriber does not receive events for other cells", () => {
+    const handler = vi.fn();
+    const unsubscribe = subscribeToCellTimingEvents("cell-1", handler);
+
+    emitCellTimingUpdate({
+      cellId: "cell-2",
+      workflow: "create",
+      runId: "run-1",
+      step: "create_worktree",
+      status: "ok",
+      createdAt: new Date().toISOString(),
+    });
+
+    expect(handler).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
+  test("unsubscribe stops receiving events", () => {
+    const handler = vi.fn();
+    const unsubscribe = subscribeToCellTimingEvents("cell-1", handler);
+
+    unsubscribe();
+
+    emitCellTimingUpdate({
+      cellId: "cell-1",
+      workflow: "create",
+      runId: "run-1",
+      step: "mark_ready",
+      status: "ok",
+      createdAt: new Date().toISOString(),
+    });
+
+    expect(handler).not.toHaveBeenCalled();
   });
 });

@@ -1,10 +1,9 @@
 import { expect, type Page } from "@playwright/test";
 import { selectors } from "./selectors";
 
-const CELL_CHAT_URL_PATTERN = /\/cells\/[^/]+\/chat/;
-const CELL_ID_PATTERN = /\/cells\/([^/]+)\/chat/;
+const CELL_PATH_PATTERN = /^\/cells\/([^/]+)(?:\/.*)?$/;
 const CELL_CHAT_PATH_PATTERN = /^\/cells\/([^/]+)\/chat$/;
-const CELL_ANY_PATH_PATTERN = /^\/cells\/([^/]+)/;
+const CELL_PROVISIONING_PATH_PATTERN = /^\/cells\/([^/]+)\/provisioning$/;
 const POLL_INTERVAL_MS = 500;
 const TERMINAL_RECOVERY_WAIT_MS = 750;
 const MAX_TERMINAL_RESTARTS = 2;
@@ -13,6 +12,8 @@ const CELL_FORM_VISIBLE_TIMEOUT_MS = 30_000;
 const FORM_VISIBILITY_PROBE_TIMEOUT_MS = 1000;
 const DEFAULT_CELL_STATUS_TIMEOUT_MS = 120_000;
 const DEFAULT_SERVICE_STATUS_TIMEOUT_MS = 90_000;
+const DEFAULT_ROUTE_TIMEOUT_MS = 180_000;
+const INITIAL_CHAT_ROUTE_TIMEOUT_MS = 45_000;
 
 type CellRecord = {
   id: string;
@@ -68,11 +69,12 @@ export async function waitForCondition(options: {
 }
 
 export function parseCellIdFromUrl(url: string): string {
-  const match = url.match(CELL_ID_PATTERN);
-  if (!match?.[1]) {
+  const pathname = readPathname(url);
+  const cellId = extractCellIdFromPath(pathname);
+  if (!cellId) {
     throw new Error(`Failed to parse cell ID from URL: ${url}`);
   }
-  return match[1];
+  return cellId;
 }
 
 export async function createCell(options: {
@@ -84,7 +86,7 @@ export async function createCell(options: {
 }): Promise<string> {
   const timeoutMs = options.timeoutMs ?? CELL_CREATION_TIMEOUT_MS;
   const previousCellId = extractCellIdFromPath(
-    new URL(options.page.url()).pathname
+    readPathname(options.page.url())
   );
 
   try {
@@ -100,19 +102,21 @@ export async function createCell(options: {
     });
     await options.page.locator(selectors.cellSubmitButton).click();
 
-    if (previousCellId) {
-      await options.page.waitForURL(
-        (url) => {
-          const currentCellId = extractCellIdFromPath(url.pathname);
-          return currentCellId !== null && currentCellId !== previousCellId;
-        },
-        { timeout: timeoutMs }
-      );
-    } else {
-      await expect(options.page).toHaveURL(CELL_CHAT_URL_PATTERN, {
-        timeout: timeoutMs,
-      });
-    }
+    await options.page.waitForURL(
+      (url) => {
+        const currentCellId = extractCellIdFromPath(url.pathname);
+        if (!currentCellId) {
+          return false;
+        }
+
+        if (!previousCellId) {
+          return true;
+        }
+
+        return currentCellId !== previousCellId;
+      },
+      { timeout: timeoutMs }
+    );
 
     return parseCellIdFromUrl(options.page.url());
   } catch (error) {
@@ -128,14 +132,84 @@ export async function createCell(options: {
       templateLabel: options.templateLabel,
     });
 
-    await options.page.goto(`/cells/${cellId}/chat`);
+    await options.page.goto(`/cells/${cellId}`);
+    await options.page.waitForURL(
+      (url) => extractCellIdFromPath(url.pathname) === cellId,
+      { timeout: timeoutMs }
+    );
     return cellId;
   }
 }
 
 function extractCellIdFromPath(pathname: string): string | null {
-  const match = pathname.match(CELL_CHAT_PATH_PATTERN);
+  const match = pathname.match(CELL_PATH_PATTERN);
   return match?.[1] ?? null;
+}
+
+function readPathname(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
+  }
+}
+
+function resolveCellSubroute(pathname: string, cellId: string) {
+  const chatMatch = pathname.match(CELL_CHAT_PATH_PATTERN);
+  if (chatMatch?.[1] === cellId) {
+    return "chat" as const;
+  }
+
+  const provisioningMatch = pathname.match(CELL_PROVISIONING_PATH_PATTERN);
+  if (provisioningMatch?.[1] === cellId) {
+    return "provisioning" as const;
+  }
+
+  return null;
+}
+
+export async function waitForProvisioningOrChatRoute(options: {
+  page: Page;
+  cellId: string;
+  timeoutMs?: number;
+}): Promise<"chat" | "provisioning"> {
+  const timeoutMs = options.timeoutMs ?? INITIAL_CHAT_ROUTE_TIMEOUT_MS;
+  let resolvedRoute: "chat" | "provisioning" | null = null;
+
+  await waitForCondition({
+    timeoutMs,
+    errorMessage: `Cell ${options.cellId} did not reach chat/provisioning route`,
+    check: () => {
+      const pathname = readPathname(options.page.url());
+      resolvedRoute = resolveCellSubroute(pathname, options.cellId);
+      return Promise.resolve(resolvedRoute !== null);
+    },
+  });
+
+  if (!resolvedRoute) {
+    throw new Error(
+      `Failed to resolve route for cell ${options.cellId} after wait`
+    );
+  }
+
+  return resolvedRoute;
+}
+
+export async function waitForChatRoute(options: {
+  page: Page;
+  cellId: string;
+  timeoutMs?: number;
+}): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_ROUTE_TIMEOUT_MS;
+
+  await waitForCondition({
+    timeoutMs,
+    errorMessage: `Cell ${options.cellId} did not reach chat route`,
+    check: () =>
+      Promise.resolve(
+        readPathname(options.page.url()) === `/cells/${options.cellId}/chat`
+      ),
+  });
 }
 
 export async function createCellViaApi(options: {
@@ -514,7 +588,7 @@ export async function sendCellTerminalCommand(
   command: string
 ): Promise<void> {
   const apiUrl = process.env.HIVE_E2E_API_URL;
-  const cellId = extractCellIdFromAnyCellPath(new URL(page.url()).pathname);
+  const cellId = extractCellIdFromPath(readPathname(page.url()));
 
   if (apiUrl && cellId) {
     const response = await fetch(
@@ -534,11 +608,6 @@ export async function sendCellTerminalCommand(
   }
 
   await sendTerminalCommand(page, command);
-}
-
-function extractCellIdFromAnyCellPath(pathname: string): string | null {
-  const match = pathname.match(CELL_ANY_PATH_PATTERN);
-  return match?.[1] ?? null;
 }
 
 async function maybeRecoverRouteError(page: Page): Promise<void> {

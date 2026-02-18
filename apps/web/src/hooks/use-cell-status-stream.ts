@@ -38,28 +38,83 @@ export function useCellStatusStream(
             if (!currentCells) {
               return currentCells;
             }
-            return currentCells.map((cell) =>
-              cell.id === cellData.id ? { ...cell, ...cellData } : cell
+
+            const existingIndex = currentCells.findIndex(
+              (cell) => cell.id === cellData.id
             );
+            if (existingIndex === -1) {
+              return [...currentCells, cellData];
+            }
+
+            const nextCells = [...currentCells];
+            const existingCell = nextCells[existingIndex];
+            if (!existingCell) {
+              return currentCells;
+            }
+
+            nextCells[existingIndex] = {
+              ...existingCell,
+              ...cellData,
+            };
+            return nextCells;
           }
+        );
+        queryClient.setQueryData<Cell>(["cells", cellData.id], (currentCell) =>
+          currentCell ? { ...currentCell, ...cellData } : cellData
         );
       } catch {
         /* ignore malformed events */
       }
     };
 
-    const errorListener = () => {
-      if (isActive) {
-        source.close();
+    const cellRemovedListener = (event: MessageEvent<string>) => {
+      if (!isActive) {
+        return;
+      }
+
+      try {
+        const payload = JSON.parse(event.data) as { id?: string };
+        if (!payload.id) {
+          return;
+        }
+
+        queryClient.setQueryData<Cell[]>(
+          ["cells", workspaceId],
+          (currentCells) => {
+            if (!currentCells) {
+              return currentCells;
+            }
+
+            return currentCells.filter((cell) => cell.id !== payload.id);
+          }
+        );
+        queryClient.removeQueries({
+          queryKey: ["cells", payload.id],
+          exact: true,
+        });
+      } catch {
+        /* ignore malformed events */
       }
     };
 
+    const errorListener = () => {
+      // Keep the stream open so EventSource can auto-reconnect.
+    };
+
     source.addEventListener("cell", cellListener as EventListener);
+    source.addEventListener(
+      "cell_removed",
+      cellRemovedListener as EventListener
+    );
     source.addEventListener("error", errorListener);
 
     return () => {
       isActive = false;
       source.removeEventListener("cell", cellListener as EventListener);
+      source.removeEventListener(
+        "cell_removed",
+        cellRemovedListener as EventListener
+      );
       source.removeEventListener("error", errorListener);
       source.close();
     };

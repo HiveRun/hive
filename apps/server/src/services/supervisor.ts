@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { createServer } from "node:net";
 import { constants as osConstants } from "node:os";
-import { resolve } from "node:path";
+import { resolve as resolvePath } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { type IExitEvent, spawn as spawnPty } from "bun-pty";
@@ -36,11 +36,26 @@ const serviceStartLocks = new Map<string, Promise<void>>();
 
 const STOP_TIMEOUT_MS = 2000;
 const FORCE_KILL_DELAY_MS = 250;
+const DEFAULT_TEMPLATE_SETUP_COMMAND_TIMEOUT_MS = 300_000;
 const DEFAULT_SHELL = process.env.SHELL || "/bin/bash";
 const TERMINAL_NAME = "xterm-256color";
 const DEFAULT_TERMINAL_COLS = 120;
 const DEFAULT_TERMINAL_ROWS = 36;
 const SIGNAL_CODES = osConstants?.signals ?? {};
+
+function resolveTemplateSetupCommandTimeoutMs(): number {
+  const raw = process.env.HIVE_TEMPLATE_SETUP_COMMAND_TIMEOUT_MS;
+  if (!raw) {
+    return DEFAULT_TEMPLATE_SETUP_COMMAND_TIMEOUT_MS;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_TEMPLATE_SETUP_COMMAND_TIMEOUT_MS;
+  }
+
+  return parsed;
+}
 
 function runWithCellLock(cellId: string, action: () => Promise<void>) {
   const current = cellServiceLocks.get(cellId) ?? Promise.resolve();
@@ -222,9 +237,21 @@ export type RunCommand = (
   }
 ) => Promise<void>;
 
+export type EnsureCellServicesTimingEvent = {
+  step: string;
+  status: "ok" | "error";
+  durationMs: number;
+  error?: string;
+  metadata?: Record<string, unknown>;
+};
+
 export type ServiceSupervisor = {
   bootstrap(): Promise<void>;
-  ensureCellServices(args: { cell: Cell; template?: Template }): Promise<void>;
+  ensureCellServices(args: {
+    cell: Cell;
+    template?: Template;
+    onTimingEvent?: (event: EnsureCellServicesTimingEvent) => void;
+  }): Promise<void>;
   startCellService(serviceId: string): Promise<void>;
   startCellServices(cellId: string): Promise<void>;
   stopCellService(
@@ -504,9 +531,11 @@ export function createServiceSupervisor(
   function ensureCellServices({
     cell,
     template,
+    onTimingEvent,
   }: {
     cell: Cell;
     template?: Template;
+    onTimingEvent?: (event: EnsureCellServicesTimingEvent) => void;
   }): Promise<void> {
     return runWithCellLock(cell.id, async () => {
       const resolvedTemplate =
@@ -521,7 +550,12 @@ export function createServiceSupervisor(
       }
 
       const templateEnv = resolvedTemplate.env ?? {};
-      await runTemplateSetupCommands(cell, resolvedTemplate, templateEnv);
+      await runTemplateSetupCommands(
+        cell,
+        resolvedTemplate,
+        templateEnv,
+        onTimingEvent
+      );
 
       if (!resolvedTemplate.services) {
         return;
@@ -535,7 +569,13 @@ export function createServiceSupervisor(
       const portMap = await buildPortMap(prepared.map((entry) => entry.row));
 
       for (const { row, definition } of prepared) {
-        await startOrFail(row, definition, templateEnv, portMap);
+        await startOrFail({
+          row,
+          definition,
+          templateEnv,
+          portMap,
+          onTimingEvent,
+        });
       }
     });
   }
@@ -563,19 +603,49 @@ export function createServiceSupervisor(
     return prepared;
   }
 
-  async function startOrFail(
-    row: ServiceRow,
-    definition: ProcessService,
-    templateEnv: Record<string, string>,
-    portMap: Map<string, number>
-  ) {
+  async function startOrFail(args: {
+    row: ServiceRow;
+    definition: ProcessService;
+    templateEnv: Record<string, string>;
+    portMap: Map<string, number>;
+    onTimingEvent?: (event: EnsureCellServicesTimingEvent) => void;
+  }) {
+    const { row, definition, templateEnv, portMap, onTimingEvent } = args;
+    const startedAt = Date.now();
     try {
       await startService(row, definition, templateEnv, portMap);
+      const durationMs = Date.now() - startedAt;
+      logger.info("Service startup completed", {
+        serviceId: row.service.id,
+        serviceName: row.service.name,
+        cellId: row.cell.id,
+        durationMs,
+      });
+      onTimingEvent?.({
+        step: `service_start:${row.service.name}`,
+        status: "ok",
+        durationMs,
+        metadata: {
+          serviceId: row.service.id,
+          serviceName: row.service.name,
+        },
+      });
     } catch (error) {
+      const durationMs = Date.now() - startedAt;
       logger.error("Failed to start service", {
         serviceId: row.service.id,
         cellId: row.cell.id,
         error: error instanceof Error ? error.message : String(error),
+      });
+      onTimingEvent?.({
+        step: `service_start:${row.service.name}`,
+        status: "error",
+        durationMs,
+        error: error instanceof Error ? error.message : String(error),
+        metadata: {
+          serviceId: row.service.id,
+          serviceName: row.service.name,
+        },
       });
       throw error;
     }
@@ -585,7 +655,8 @@ export function createServiceSupervisor(
   async function runTemplateSetupCommands(
     cell: Cell,
     template: Template,
-    templateEnv: Record<string, string>
+    templateEnv: Record<string, string>,
+    onTimingEvent?: (event: EnsureCellServicesTimingEvent) => void
   ): Promise<void> {
     if (!template.setup?.length) {
       return;
@@ -615,8 +686,13 @@ export function createServiceSupervisor(
       })`
     );
 
+    const timeoutMs = resolveTemplateSetupCommandTimeoutMs();
+    const setupStartedAt = Date.now();
+    let setupFinished = false;
+
     try {
       for (const command of template.setup) {
+        const commandStartedAt = Date.now();
         terminalRuntime.appendSetupLine(cell.id, `[setup] Running: ${command}`);
         const proc = spawnProcess({
           command,
@@ -635,8 +711,70 @@ export function createServiceSupervisor(
           },
         });
 
-        const exitCode = await proc.exited;
+        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+        const timeoutPromise = new Promise<{ type: "timeout" }>(
+          (resolveTimeout) => {
+            timeoutHandle = setTimeout(() => {
+              resolveTimeout({ type: "timeout" });
+            }, timeoutMs);
+          }
+        );
+        const exitResult = await Promise.race([
+          proc.exited.then((code) => ({
+            type: "exit" as const,
+            exitCode: code,
+          })),
+          timeoutPromise,
+        ]);
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+        }
+
+        if (exitResult.type === "timeout") {
+          const durationMs = Date.now() - commandStartedAt;
+          proc.kill("SIGTERM");
+          const exitedAfterTerm = await Promise.race([
+            proc.exited.then(() => true),
+            delay(STOP_TIMEOUT_MS).then(() => false),
+          ]);
+          if (!exitedAfterTerm) {
+            proc.kill("SIGKILL");
+          }
+
+          terminalRuntime.appendSetupLine(
+            cell.id,
+            `[setup] Timed out: ${command} after ${timeoutMs}ms`
+          );
+          terminalRuntime.markSetupExit({
+            cellId: cell.id,
+            exitCode: 124,
+            signal: null,
+          });
+          onTimingEvent?.({
+            step: `template_setup:${command}`,
+            status: "error",
+            durationMs,
+            error: `Template setup command timed out after ${timeoutMs}ms`,
+            metadata: {
+              command,
+              timeoutMs,
+              templateId: template.id,
+            },
+          });
+          throw new TemplateSetupError({
+            command,
+            templateId: template.id,
+            workspacePath: cell.workspacePath,
+            cause: new Error(
+              `Template setup command timed out after ${timeoutMs}ms`
+            ),
+            exitCode: 124,
+          });
+        }
+
+        const exitCode = exitResult.exitCode;
         if (exitCode !== 0) {
+          const durationMs = Date.now() - commandStartedAt;
           terminalRuntime.appendSetupLine(
             cell.id,
             `[setup] Failed: ${command} (exit ${exitCode})`
@@ -645,6 +783,17 @@ export function createServiceSupervisor(
             cellId: cell.id,
             exitCode,
             signal: null,
+          });
+          onTimingEvent?.({
+            step: `template_setup:${command}`,
+            status: "error",
+            durationMs,
+            error: `Template setup command failed with exit code ${exitCode}`,
+            metadata: {
+              command,
+              exitCode,
+              templateId: template.id,
+            },
           });
           throw new TemplateSetupError({
             command,
@@ -658,6 +807,22 @@ export function createServiceSupervisor(
           cell.id,
           `[setup] Completed: ${command}`
         );
+        const durationMs = Date.now() - commandStartedAt;
+        logger.info("Template setup command completed", {
+          cellId: cell.id,
+          templateId: template.id,
+          command,
+          durationMs,
+        });
+        onTimingEvent?.({
+          step: `template_setup:${command}`,
+          status: "ok",
+          durationMs,
+          metadata: {
+            command,
+            templateId: template.id,
+          },
+        });
       }
 
       terminalRuntime.appendSetupLine(
@@ -669,7 +834,38 @@ export function createServiceSupervisor(
         exitCode: 0,
         signal: null,
       });
+      logger.info("Template setup completed", {
+        cellId: cell.id,
+        templateId: template.id,
+        durationMs: Date.now() - setupStartedAt,
+        timeoutMs,
+      });
+      setupFinished = true;
+      onTimingEvent?.({
+        step: "template_setup_total",
+        status: "ok",
+        durationMs: Date.now() - setupStartedAt,
+        metadata: {
+          templateId: template.id,
+          timeoutMs,
+          commandCount: template.setup.length,
+        },
+      });
     } catch (error) {
+      if (!setupFinished) {
+        onTimingEvent?.({
+          step: "template_setup_total",
+          status: "error",
+          durationMs: Date.now() - setupStartedAt,
+          error: error instanceof Error ? error.message : String(error),
+          metadata: {
+            templateId: template.id,
+            timeoutMs,
+            commandCount: template.setup.length,
+          },
+        });
+      }
+
       if (error instanceof TemplateSetupError) {
         throw error;
       }
@@ -1015,6 +1211,7 @@ export function createServiceSupervisor(
     }
 
     for (const setupCommand of definition.setup) {
+      const startedAt = Date.now();
       terminalRuntime.appendServiceOutput(
         row.service.id,
         `[service:${row.service.name}] setup: ${setupCommand}\n`
@@ -1024,6 +1221,13 @@ export function createServiceSupervisor(
         env,
         onData: (chunk) =>
           terminalRuntime.appendServiceOutput(row.service.id, chunk),
+      });
+      logger.info("Service setup command completed", {
+        serviceId: row.service.id,
+        serviceName: row.service.name,
+        cellId: row.cell.id,
+        command: setupCommand,
+        durationMs: Date.now() - startedAt,
       });
     }
   }
@@ -1263,7 +1467,7 @@ function resolveServiceCwd(workspacePath: string, cwd?: string): string {
     return cwd;
   }
 
-  return resolve(workspacePath, cwd);
+  return resolvePath(workspacePath, cwd);
 }
 
 function sanitizeServiceName(name: string): string {
@@ -1282,7 +1486,7 @@ function buildBaseEnv({
     throw new Error("Cell workspace path missing");
   }
 
-  const hiveHome = resolve(workspacePath, ".hive", "home");
+  const hiveHome = resolvePath(workspacePath, ".hive", "home");
   mkdirSync(hiveHome, { recursive: true });
 
   return {
@@ -1389,6 +1593,7 @@ export type ServiceSupervisorService = {
   readonly ensureCellServices: (args: {
     cell: Cell;
     template?: Template;
+    onTimingEvent?: (event: EnsureCellServicesTimingEvent) => void;
   }) => Promise<void>;
   readonly startCellService: (serviceId: string) => Promise<void>;
   readonly startCellServices: (cellId: string) => Promise<void>;

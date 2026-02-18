@@ -12,8 +12,21 @@
       "id": "basic",
       "label": "Basic Template",
       "type": "manual",
-      "includePatterns": [".env*"],
-      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"],
+      "includePatterns": ["./.env*"],
+      "ignorePatterns": [
+        "node_modules/**",
+        ".hive/**",
+        ".turbo/**",
+        "tmp/**",
+        "temp/**",
+        ".cache/**",
+        "coverage/**",
+        "dist/**",
+        "build/**",
+        "dist-electron/**",
+        "apps/server/server/**",
+        "src-tauri/target/**"
+      ],
       "agent": {
         "providerId": "zen",
         "modelId": "big-pickle"

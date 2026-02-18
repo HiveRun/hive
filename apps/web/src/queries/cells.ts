@@ -4,6 +4,7 @@ import { formatRpcError, formatRpcResponseError } from "@/lib/rpc-error";
 export const cellQueries = {
   all: (workspaceId: string) => ({
     queryKey: ["cells", workspaceId] as const,
+    staleTime: 0,
     queryFn: async () => {
       const { data, error } = await rpc.api.cells.get({
         query: { workspaceId },
@@ -17,8 +18,13 @@ export const cellQueries = {
 
   detail: (id: string) => ({
     queryKey: ["cells", id] as const,
+    staleTime: 0,
     queryFn: async () => {
-      const { data, error } = await rpc.api.cells({ id }).get();
+      const { data, error } = await rpc.api.cells({ id }).get({
+        query: {
+          includeSetupLog: false,
+        },
+      });
       if (error) {
         throw new Error(formatRpcError(error, "Cell not found"));
       }
@@ -88,6 +94,96 @@ export const cellQueries = {
       }
 
       return data;
+    },
+  }),
+
+  timings: (
+    id: string,
+    options: {
+      limit?: number;
+      workflow?: "all" | "create" | "delete";
+      runId?: string;
+    } = {}
+  ) => ({
+    queryKey: [
+      "cells",
+      id,
+      "timings",
+      options.limit ?? null,
+      options.workflow ?? "all",
+      options.runId ?? null,
+    ] as const,
+    queryFn: async (): Promise<CellTimingResponse> => {
+      const query: Record<string, string | number> = {};
+      if (typeof options.limit === "number") {
+        query.limit = options.limit;
+      }
+      if (options.workflow) {
+        query.workflow = options.workflow;
+      }
+      if (options.runId) {
+        query.runId = options.runId;
+      }
+
+      const { data, error } = await rpc.api.cells({ id }).timings.get({
+        query,
+      });
+      if (error) {
+        throw new Error(formatRpcError(error, "Failed to load timings"));
+      }
+      if ("message" in data) {
+        throw new Error(formatRpcResponseError(data, "Failed to load timings"));
+      }
+
+      return data as CellTimingResponse;
+    },
+  }),
+
+  timingsGlobal: (
+    options: {
+      limit?: number;
+      workflow?: "all" | "create" | "delete";
+      runId?: string;
+      workspaceId?: string;
+      cellId?: string;
+    } = {}
+  ) => ({
+    queryKey: [
+      "cells",
+      "timings",
+      "global",
+      options.limit ?? null,
+      options.workflow ?? "all",
+      options.runId ?? null,
+      options.workspaceId ?? null,
+      options.cellId ?? null,
+    ] as const,
+    queryFn: async (): Promise<CellTimingResponse> => {
+      const query: Record<string, string | number> = {};
+      if (typeof options.limit === "number") {
+        query.limit = options.limit;
+      }
+      if (options.workflow) {
+        query.workflow = options.workflow;
+      }
+      if (options.runId) {
+        query.runId = options.runId;
+      }
+      if (options.workspaceId) {
+        query.workspaceId = options.workspaceId;
+      }
+      if (options.cellId) {
+        query.cellId = options.cellId;
+      }
+
+      const { data, error } = await rpc.api.cells.timings.global.get({
+        query,
+      });
+      if (error) {
+        throw new Error(formatRpcError(error, "Failed to load timings"));
+      }
+
+      return data as CellTimingResponse;
     },
   }),
 };
@@ -256,7 +352,12 @@ const normalizeCell = <T extends { status: string }>(
 });
 
 // Export inferred types for use in components
-export type CellStatus = "spawning" | "pending" | "ready" | "error";
+export type CellStatus =
+  | "spawning"
+  | "pending"
+  | "ready"
+  | "error"
+  | "deleting";
 
 export type Cell = Awaited<
   ReturnType<ReturnType<typeof cellQueries.detail>["queryFn"]>
@@ -279,6 +380,46 @@ export type CellActivityEventListResponse = Awaited<
 >;
 
 export type CellActivityEvent = CellActivityEventListResponse["events"][number];
+
+export type CellTimingStatus = "ok" | "error";
+export type CellTimingWorkflow = "create" | "delete";
+
+export type CellTimingStep = {
+  id: string;
+  cellId: string;
+  cellName: string | null;
+  workspaceId: string | null;
+  templateId: string | null;
+  runId: string;
+  workflow: CellTimingWorkflow;
+  step: string;
+  status: CellTimingStatus;
+  durationMs: number;
+  attempt: number | null;
+  error: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type CellTimingRun = {
+  runId: string;
+  cellId: string;
+  cellName: string | null;
+  workspaceId: string | null;
+  templateId: string | null;
+  workflow: CellTimingWorkflow;
+  status: CellTimingStatus;
+  startedAt: string;
+  finishedAt: string;
+  totalDurationMs: number;
+  stepCount: number;
+  attempt: number | null;
+};
+
+export type CellTimingResponse = {
+  steps: CellTimingStep[];
+  runs: CellTimingRun[];
+};
 
 export type DiffMode = "workspace" | "branch";
 

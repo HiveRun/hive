@@ -8,6 +8,8 @@ import { findConfigPath, PREFERRED_CONFIG_FILENAME } from "../config/files";
 const REGISTRY_FILE_NAME = "workspaces.json";
 const HIVE_HOME_ENV = "HIVE_HOME";
 const REGISTRY_VERSION = 1;
+const LOG_WORKSPACE_REGISTRY_DEBUG =
+  process.env.HIVE_DEBUG_WORKSPACE_REGISTRY === "1";
 
 export type WorkspaceRecord = {
   id: string;
@@ -244,11 +246,13 @@ export async function getWorkspaceRegistry(): Promise<WorkspaceRegistry> {
     });
   }
 
-  // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
-  console.debug("registry:get", {
-    workspaceCount: workspaces.length,
-    activeWorkspaceId,
-  });
+  if (LOG_WORKSPACE_REGISTRY_DEBUG) {
+    // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
+    console.debug("registry:get", {
+      workspaceCount: workspaces.length,
+      activeWorkspaceId,
+    });
+  }
 
   return {
     workspaces,

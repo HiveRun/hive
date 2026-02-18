@@ -8,6 +8,7 @@ import { createCellsRoutes, resumeSpawningCells } from "../../routes/cells";
 
 import { cellProvisioningStates } from "../../schema/cell-provisioning";
 import { cells } from "../../schema/cells";
+import { cellTimingEvents } from "../../schema/timing-events";
 import type { ServiceSupervisorError } from "../../services/supervisor";
 import {
   CommandExecutionError,
@@ -17,9 +18,16 @@ import { setupTestDb, testDb } from "../test-db";
 
 const templateId = "failing-template";
 const workspacePath = "/tmp/mock-worktree";
+const OK_STATUS = 200;
 const CREATED_STATUS = 201;
+const CONFLICT_STATUS = 409;
 const WAIT_TIMEOUT_MS = 500;
 const WAIT_INTERVAL_MS = 10;
+const CELLS_API_URL = "http://localhost/api/cells";
+
+const JSON_HEADERS = {
+  "Content-Type": "application/json",
+};
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -50,6 +58,91 @@ async function waitForCellStatus(cellId: string, status: string) {
   return latestRow;
 }
 
+async function waitForTimingStep(cellId: string, step: string) {
+  let found: typeof cellTimingEvents.$inferSelect | undefined;
+  await waitForCondition(async () => {
+    const rows = await testDb
+      .select()
+      .from(cellTimingEvents)
+      .where(eq(cellTimingEvents.cellId, cellId));
+    found = rows.find((row) => row.step === step);
+    return Boolean(found);
+  });
+
+  if (!found) {
+    throw new Error(`Timing step ${step} not found for ${cellId}`);
+  }
+
+  return found;
+}
+
+function makeJsonPostRequest(url: string, body: Record<string, unknown>) {
+  return new Request(url, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+function postCreateCell(
+  app: Elysia,
+  body: Record<string, unknown>
+): Promise<Response> {
+  return app.handle(makeJsonPostRequest(CELLS_API_URL, body));
+}
+
+function postSetupRetry(app: Elysia, cellId: string): Promise<Response> {
+  return app.handle(
+    new Request(`${CELLS_API_URL}/${cellId}/setup/retry`, {
+      method: "POST",
+    })
+  );
+}
+
+function deleteCellById(app: Elysia, cellId: string): Promise<Response> {
+  return app.handle(
+    new Request(`${CELLS_API_URL}/${cellId}`, {
+      method: "DELETE",
+    })
+  );
+}
+
+async function insertCellRow(
+  values: Partial<typeof cells.$inferInsert> & {
+    id: string;
+    name: string;
+  }
+) {
+  await testDb.insert(cells).values({
+    templateId,
+    workspaceId: "test-workspace",
+    workspacePath,
+    workspaceRootPath: "/tmp/test-workspace-root",
+    branchName: "cell-branch",
+    baseCommit: "abc123",
+    opencodeSessionId: null,
+    createdAt: new Date(),
+    status: "ready",
+    lastSetupError: null,
+    ...values,
+  });
+}
+
+async function insertProvisioningStateRow(
+  cellId: string,
+  values: Partial<typeof cellProvisioningStates.$inferInsert> = {}
+) {
+  await testDb.insert(cellProvisioningStates).values({
+    cellId,
+    modelIdOverride: null,
+    providerIdOverride: null,
+    attemptCount: 0,
+    startedAt: null,
+    finishedAt: null,
+    ...values,
+  });
+}
+
 const hiveConfig: HiveConfig = {
   opencode: {
     defaultProvider: "opencode",
@@ -68,10 +161,29 @@ const hiveConfig: HiveConfig = {
 };
 
 type SendAgentMessageFn = (sessionId: string, content: string) => Promise<void>;
+type EnsureServicesForCellFn = (args: unknown) => Promise<void>;
+type CreateWorktreeFn = (
+  cellId: string,
+  options?: {
+    templateId?: string;
+    force?: boolean;
+    onTimingEvent?: (event: {
+      step: string;
+      durationMs: number;
+      metadata?: Record<string, unknown>;
+    }) => void;
+  }
+) => Promise<{
+  path: string;
+  branch: string;
+  baseCommit: string;
+}>;
 
 type DependencyFactoryOptions = {
   setupError?: TemplateSetupError;
   sendAgentMessage?: SendAgentMessageFn;
+  ensureServicesForCell?: EnsureServicesForCellFn;
+  createWorktree?: CreateWorktreeFn;
   onEnsureAgentSession?: (
     cellId: string,
     sessionId: string,
@@ -93,11 +205,19 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
   const loadWorkspaceConfig = () =>
     Promise.resolve(options.hiveConfigOverride ?? hiveConfig);
 
-  const buildWorktree = () =>
+  const buildWorktree = (
+    cellId: string,
+    createOptions?: Parameters<CreateWorktreeFn>[1]
+  ) =>
     Promise.resolve({
       path: workspacePath,
       branch: "cell-branch",
       baseCommit: "abc123",
+    }).then((defaultWorktree) => {
+      if (options.createWorktree) {
+        return options.createWorktree(cellId, createOptions);
+      }
+      return defaultWorktree;
     });
 
   const removeWorktreeCall = () =>
@@ -114,10 +234,16 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
       workspace: workspaceRecord,
       loadConfig: loadWorkspaceConfig,
       createWorktreeManager: async () => ({
-        createWorktree: (_cellId: string) => buildWorktree(),
+        createWorktree: (
+          cellId: string,
+          createOptions?: Parameters<CreateWorktreeFn>[1]
+        ) => buildWorktree(cellId, createOptions),
         removeWorktree: (_cellId: string) => removeWorktreeCall(),
       }),
-      createWorktree: (_cellId: string) => buildWorktree(),
+      createWorktree: (
+        cellId: string,
+        createOptions?: Parameters<CreateWorktreeFn>[1]
+      ) => buildWorktree(cellId, createOptions),
       removeWorktree: (_cellId: string) => removeWorktreeCall(),
     })) as any,
 
@@ -141,6 +267,9 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
       }),
     closeAgentSession: async (_cellId: string) => Promise.resolve(),
     ensureServicesForCell: (_args: any) => {
+      if (options.ensureServicesForCell) {
+        return options.ensureServicesForCell(_args);
+      }
       if (options.setupError) {
         throw {
           _tag: "ServiceSupervisorError",
@@ -192,6 +321,34 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
   };
 }
 
+function createTestApp(options: DependencyFactoryOptions = {}) {
+  return new Elysia().use(createCellsRoutes(createDependencies(options)));
+}
+
+async function createCellAndExpectSpawning(args: {
+  app: Elysia;
+  body: Record<string, unknown>;
+}) {
+  const response = await postCreateCell(args.app, args.body);
+
+  if (response.status !== CREATED_STATUS) {
+    throw new Error(
+      `Expected status ${CREATED_STATUS}, got ${response.status}`
+    );
+  }
+
+  const payload = (await response.json()) as {
+    id: string;
+    status: string;
+    lastSetupError?: string;
+  };
+  if (payload.status !== "spawning") {
+    throw new Error(`Expected status spawning, got ${payload.status}`);
+  }
+
+  return payload;
+}
+
 describe("POST /api/cells", () => {
   beforeAll(async () => {
     await setupTestDb();
@@ -216,31 +373,17 @@ describe("POST /api/cells", () => {
       cause,
     });
 
-    const routes = createCellsRoutes(createDependencies({ setupError }));
-    const app = new Elysia().use(routes);
+    const app = createTestApp({ setupError });
 
-    const response = await app.handle(
-      new Request("http://localhost/api/cells", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: "Broken Cell",
-          templateId,
-          workspaceId: "test-workspace",
-        }),
-      })
-    );
+    const payload = await createCellAndExpectSpawning({
+      app,
+      body: {
+        name: "Broken Cell",
+        templateId,
+        workspaceId: "test-workspace",
+      },
+    });
 
-    expect(response.status).toBe(CREATED_STATUS);
-    const payload = (await response.json()) as {
-      id: string;
-      status: string;
-      lastSetupError?: string;
-    };
-
-    expect(payload.status).toBe("spawning");
     expect(payload.lastSetupError).toBeUndefined();
 
     expect(removeWorktreeCalls).toBe(0);
@@ -262,34 +405,22 @@ describe("POST /api/cells", () => {
       .mockResolvedValue(undefined);
     let capturedSessionId: string | null = null;
 
-    const routes = createCellsRoutes(
-      createDependencies({
-        sendAgentMessage,
-        onEnsureAgentSession: (_cellId, sessionId) => {
-          capturedSessionId = sessionId;
-        },
-      })
-    );
-    const app = new Elysia().use(routes);
+    const app = createTestApp({
+      sendAgentMessage,
+      onEnsureAgentSession: (_cellId, sessionId) => {
+        capturedSessionId = sessionId;
+      },
+    });
 
-    const response = await app.handle(
-      new Request("http://localhost/api/cells", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: "Autostart Cell",
-          templateId,
-          workspaceId: "test-workspace",
-          description: "  Fix the failing specs in apps/web  ",
-        }),
-      })
-    );
-
-    expect(response.status).toBe(CREATED_STATUS);
-    const payload = (await response.json()) as { id: string; status: string };
-    expect(payload.status).toBe("spawning");
+    const payload = await createCellAndExpectSpawning({
+      app,
+      body: {
+        name: "Autostart Cell",
+        templateId,
+        workspaceId: "test-workspace",
+        description: "  Fix the failing specs in apps/web  ",
+      },
+    });
 
     await waitForCellStatus(payload.id, "ready");
     await waitForCondition(() => Boolean(capturedSessionId));
@@ -307,34 +438,22 @@ describe("POST /api/cells", () => {
       | { modelId?: string; providerId?: string }
       | undefined;
 
-    const routes = createCellsRoutes(
-      createDependencies({
-        onEnsureAgentSession: (_cellId, _sessionId, overrides) => {
-          capturedOverrides = overrides;
-        },
-      })
-    );
-    const app = new Elysia().use(routes);
+    const app = createTestApp({
+      onEnsureAgentSession: (_cellId, _sessionId, overrides) => {
+        capturedOverrides = overrides;
+      },
+    });
 
-    const response = await app.handle(
-      new Request("http://localhost/api/cells", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: "Model Override",
-          templateId,
-          workspaceId: "test-workspace",
-          modelId: "custom-model",
-          providerId: "zen",
-        }),
-      })
-    );
-
-    expect(response.status).toBe(CREATED_STATUS);
-    const payload = (await response.json()) as { id: string; status: string };
-    expect(payload.status).toBe("spawning");
+    const payload = await createCellAndExpectSpawning({
+      app,
+      body: {
+        name: "Model Override",
+        templateId,
+        workspaceId: "test-workspace",
+        modelId: "custom-model",
+        providerId: "zen",
+      },
+    });
 
     await waitForCellStatus(payload.id, "ready");
     await waitForCondition(() => Boolean(capturedOverrides));
@@ -350,40 +469,266 @@ describe("POST /api/cells", () => {
       .fn<SendAgentMessageFn>()
       .mockResolvedValue(undefined);
 
-    const routes = createCellsRoutes(
-      createDependencies({
-        sendAgentMessage,
-      })
-    );
-    const app = new Elysia().use(routes);
+    const app = createTestApp({ sendAgentMessage });
 
-    const response = await app.handle(
-      new Request("http://localhost/api/cells", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: "Blank Description",
-          templateId,
-          workspaceId: "test-workspace",
-          description: "   ",
-        }),
-      })
-    );
-
-    expect(response.status).toBe(CREATED_STATUS);
-    const payload = (await response.json()) as { id: string; status: string };
-    expect(payload.status).toBe("spawning");
+    const payload = await createCellAndExpectSpawning({
+      app,
+      body: {
+        name: "Blank Description",
+        templateId,
+        workspaceId: "test-workspace",
+        description: "   ",
+      },
+    });
 
     await waitForCellStatus(payload.id, "ready");
     expect(sendAgentMessage).not.toHaveBeenCalled();
+  });
+
+  it("persists create_worktree timing sub-steps while provisioning is still running", async () => {
+    let releaseWorktree = () => {
+      // replaced when deferred worktree promise is created
+    };
+
+    const createWorktree: CreateWorktreeFn = async (_cellId, createOptions) => {
+      createOptions?.onTimingEvent?.({
+        step: "include_copy_glob_match_start",
+        durationMs: 0,
+      });
+
+      await new Promise<void>((resolve) => {
+        releaseWorktree = resolve;
+      });
+
+      createOptions?.onTimingEvent?.({
+        step: "include_copy_glob_match",
+        durationMs: 15,
+      });
+
+      return {
+        path: workspacePath,
+        branch: "cell-branch",
+        baseCommit: "abc123",
+      };
+    };
+
+    const app = createTestApp({ createWorktree });
+
+    const payload = await createCellAndExpectSpawning({
+      app,
+      body: {
+        name: "Streaming Worktree Timing",
+        templateId,
+        workspaceId: "test-workspace",
+      },
+    });
+
+    await waitForTimingStep(
+      payload.id,
+      "create_worktree:include_copy_glob_match_start"
+    );
+
+    const timingRowsBeforeRelease = await testDb
+      .select()
+      .from(cellTimingEvents)
+      .where(eq(cellTimingEvents.cellId, payload.id));
+    expect(
+      timingRowsBeforeRelease.some(
+        (row) => row.step === "create_worktree:include_copy_glob_match"
+      )
+    ).toBe(false);
+
+    releaseWorktree();
+
+    await waitForTimingStep(
+      payload.id,
+      "create_worktree:include_copy_glob_match"
+    );
+    await waitForCellStatus(payload.id, "ready");
+  });
+
+  it("cancels provisioning when the cell enters deleting state", async () => {
+    let releaseWorktree = () => {
+      // replaced below once deferred promise is created
+    };
+    const createWorktree: CreateWorktreeFn = async () => {
+      await new Promise<void>((resolve) => {
+        releaseWorktree = resolve;
+      });
+
+      return {
+        path: workspacePath,
+        branch: "cell-branch",
+        baseCommit: "abc123",
+      };
+    };
+    const ensureServicesForCell = vi.fn(async () => Promise.resolve());
+
+    const app = createTestApp({
+      createWorktree,
+      ensureServicesForCell,
+    });
+
+    const payload = await createCellAndExpectSpawning({
+      app,
+      body: {
+        name: "Cancel During Delete",
+        templateId,
+        workspaceId: "test-workspace",
+      },
+    });
+
+    const deleteResponse = await deleteCellById(app, payload.id);
+    expect(deleteResponse.status).toBe(OK_STATUS);
+
+    releaseWorktree();
+
+    await waitForCondition(async () => {
+      const rows = await testDb
+        .select({ id: cells.id })
+        .from(cells)
+        .where(eq(cells.id, payload.id));
+      return rows.length === 0;
+    });
+
+    expect(ensureServicesForCell).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/cells/:id/setup/retry", () => {
+  beforeEach(async () => {
+    await testDb.delete(cells);
+  });
+
+  it("does not resend the initial prompt when retrying an existing session", async () => {
+    const sendAgentMessage = vi
+      .fn<SendAgentMessageFn>()
+      .mockResolvedValue(undefined);
+    const app = createTestApp({ sendAgentMessage });
+    const cellId = "retry-existing-session-cell";
+
+    await insertCellRow({
+      id: cellId,
+      name: "Retry Existing Session",
+      description: "Repeat-safe prompt",
+      opencodeSessionId: "session-retry-existing-session-cell",
+      status: "error",
+      lastSetupError: "setup failed",
+    });
+
+    await insertProvisioningStateRow(cellId, {
+      attemptCount: 1,
+    });
+
+    const retryResponse = await postSetupRetry(app, cellId);
+    expect(retryResponse.status).toBe(OK_STATUS);
+
+    await waitForCellStatus(cellId, "ready");
+    expect(sendAgentMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends the initial prompt on retry when no prior session exists", async () => {
+    const sendAgentMessage = vi
+      .fn<SendAgentMessageFn>()
+      .mockResolvedValue(undefined);
+    const app = createTestApp({ sendAgentMessage });
+    const cellId = "retry-no-session-cell";
+
+    await insertCellRow({
+      id: cellId,
+      name: "Retry No Session",
+      description: "Send this after retry",
+      opencodeSessionId: null,
+      status: "error",
+      lastSetupError: "setup failed",
+    });
+
+    await insertProvisioningStateRow(cellId, {
+      attemptCount: 1,
+    });
+
+    const retryResponse = await postSetupRetry(app, cellId);
+    expect(retryResponse.status).toBe(OK_STATUS);
+
+    await waitForCellStatus(cellId, "ready");
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+    expect(sendAgentMessage).toHaveBeenCalledWith(
+      `session-${cellId}`,
+      "Send this after retry"
+    );
+  });
+
+  it("returns 409 when the cell is being deleted", async () => {
+    const app = createTestApp();
+    const cellId = "retry-deleting-cell";
+
+    await insertCellRow({
+      id: cellId,
+      name: "Retry Deleting Cell",
+      status: "deleting",
+      lastSetupError: "cleanup in progress",
+    });
+
+    const retryResponse = await postSetupRetry(app, cellId);
+    expect(retryResponse.status).toBe(CONFLICT_STATUS);
+    expect((await retryResponse.json()) as { message: string }).toEqual({
+      message: "Cell is being deleted",
+    });
+
+    const [persisted] = await testDb
+      .select({ status: cells.status, lastSetupError: cells.lastSetupError })
+      .from(cells)
+      .where(eq(cells.id, cellId));
+
+    expect(persisted?.status).toBe("deleting");
+    expect(persisted?.lastSetupError).toBe("cleanup in progress");
+  });
+
+  it("returns 409 when a retry is already in progress", async () => {
+    let releaseEnsureServices = () => {
+      // replaced below once the deferred promise is created
+    };
+    const ensureServicesForCell = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        releaseEnsureServices = resolve;
+      });
+    });
+
+    const app = createTestApp({ ensureServicesForCell });
+    const cellId = "retry-lock-cell";
+
+    await insertCellRow({
+      id: cellId,
+      name: "Retry Lock Cell",
+      description: "Retry lock",
+      status: "error",
+      lastSetupError: "Setup failed",
+    });
+
+    await insertProvisioningStateRow(cellId);
+
+    const firstRetryPromise = postSetupRetry(app, cellId);
+
+    await waitForCondition(() => ensureServicesForCell.mock.calls.length === 1);
+
+    const secondRetryResponse = await postSetupRetry(app, cellId);
+    expect(secondRetryResponse.status).toBe(CONFLICT_STATUS);
+    expect((await secondRetryResponse.json()) as { message: string }).toEqual({
+      message: "Provisioning retry already in progress",
+    });
+
+    releaseEnsureServices();
+
+    const firstRetryResponse = await firstRetryPromise;
+    expect(firstRetryResponse.status).toBe(OK_STATUS);
+    await waitForCellStatus(cellId, "ready");
   });
 });
 
 describe("resumeSpawningCells", () => {
   beforeEach(async () => {
     await testDb.delete(cells);
+    removeWorktreeCalls = 0;
   });
 
   it("retries provisioning for stranded cells", async () => {
@@ -391,30 +736,15 @@ describe("resumeSpawningCells", () => {
     const cellId = "resume-cell";
     const createdAt = new Date();
 
-    await testDb.insert(cells).values({
+    await insertCellRow({
       id: cellId,
       name: "Resume Cell",
       description: "Resume description",
-      templateId,
-      workspaceId: "test-workspace",
-      workspacePath,
-      workspaceRootPath: "/tmp/test-workspace-root",
-      branchName: "cell-branch",
-      baseCommit: "abc123",
-      opencodeSessionId: null,
       createdAt,
       status: "spawning",
-      lastSetupError: null,
     });
 
-    await testDb.insert(cellProvisioningStates).values({
-      cellId,
-      modelIdOverride: null,
-      providerIdOverride: null,
-      attemptCount: 0,
-      startedAt: null,
-      finishedAt: null,
-    });
+    await insertProvisioningStateRow(cellId);
 
     await resumeSpawningCells(dependencies);
 
@@ -437,25 +767,14 @@ describe("resumeSpawningCells", () => {
     };
 
     const cellId = "missing-template-cell";
-    await testDb.insert(cells).values({
+    await insertCellRow({
       id: cellId,
       name: "Missing Template",
       templateId: "removed-template",
-      workspaceId: "test-workspace",
-      workspacePath,
-      workspaceRootPath: "/tmp/test-workspace-root",
-      createdAt: new Date(),
       status: "spawning",
     });
 
-    await testDb.insert(cellProvisioningStates).values({
-      cellId,
-      modelIdOverride: null,
-      providerIdOverride: null,
-      attemptCount: 0,
-      startedAt: null,
-      finishedAt: null,
-    });
+    await insertProvisioningStateRow(cellId);
 
     await resumeSpawningCells(
       createDependencies({ hiveConfigOverride: missingTemplateConfig })
@@ -465,5 +784,27 @@ describe("resumeSpawningCells", () => {
     expect(errored.lastSetupError).toContain(
       "Template removed-template no longer exists"
     );
+  });
+
+  it("resumes deleting cells left behind by interrupted shutdowns", async () => {
+    const dependencies = createDependencies();
+    const cellId = "stuck-deleting-cell";
+
+    await insertCellRow({
+      id: cellId,
+      name: "Deleting Cell",
+      description: "Interrupted deletion",
+      status: "deleting",
+    });
+
+    await resumeSpawningCells(dependencies);
+
+    const remaining = await testDb
+      .select({ id: cells.id })
+      .from(cells)
+      .where(eq(cells.id, cellId));
+
+    expect(remaining).toHaveLength(0);
+    expect(removeWorktreeCalls).toBe(1);
   });
 });

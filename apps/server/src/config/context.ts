@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
 import type { WorkspaceRegistryError } from "../workspaces/registry";
 import { getWorkspaceRegistry } from "../workspaces/registry";
@@ -6,7 +7,13 @@ import { loadConfig } from "./loader";
 import type { HiveConfig } from "./schema";
 
 const FALLBACK_DIRECTORY = "hive";
-const configCache = new Map<string, Promise<HiveConfig>>();
+type ConfigCacheEntry = {
+  mtimeMs: number | null;
+  promise: Promise<HiveConfig>;
+};
+
+const configCache = new Map<string, ConfigCacheEntry>();
+const CONFIG_FILENAME = "hive.config.json";
 
 export function resolveWorkspaceRoot(): string {
   const baseRoot = resolveBaseWorkspaceRoot();
@@ -45,12 +52,35 @@ function hasConfig(directory: string): boolean {
   return hasConfigFile(directory);
 }
 
-function loadHiveConfigCached(workspaceRoot?: string): Promise<HiveConfig> {
-  const normalizedRoot = resolvePath(workspaceRoot ?? resolveWorkspaceRoot());
-  if (!configCache.has(normalizedRoot)) {
-    configCache.set(normalizedRoot, loadConfig(normalizedRoot));
+async function readConfigMtimeMs(
+  workspaceRoot: string
+): Promise<number | null> {
+  try {
+    const configPath = resolvePath(workspaceRoot, CONFIG_FILENAME);
+    const stats = await stat(configPath);
+    return stats.mtimeMs;
+  } catch {
+    return null;
   }
-  return configCache.get(normalizedRoot) as Promise<HiveConfig>;
+}
+
+async function loadHiveConfigCached(
+  workspaceRoot?: string
+): Promise<HiveConfig> {
+  const normalizedRoot = resolvePath(workspaceRoot ?? resolveWorkspaceRoot());
+  const mtimeMs = await readConfigMtimeMs(normalizedRoot);
+  const cachedEntry = configCache.get(normalizedRoot);
+
+  if (!(cachedEntry && cachedEntry.mtimeMs === mtimeMs)) {
+    const nextEntry: ConfigCacheEntry = {
+      mtimeMs,
+      promise: loadConfig(normalizedRoot),
+    };
+    configCache.set(normalizedRoot, nextEntry);
+    return nextEntry.promise;
+  }
+
+  return cachedEntry.promise;
 }
 
 export function clearHiveConfigCache(workspaceRoot?: string): void {

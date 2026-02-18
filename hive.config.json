@@ -28,9 +28,25 @@
           "readyTimeoutMs": 5000
         }
       },
+      "env": {
+        "DATABASE_URL": "local.db"
+      },
       "setup": ["bun setup"],
-      "includePatterns": [".env*", "vendor/**"],
-      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
+      "includePatterns": ["./.env*", "./apps/server/.env*", "./apps/web/.env*"],
+      "ignorePatterns": [
+        "node_modules/**",
+        ".hive/**",
+        ".turbo/**",
+        "tmp/**",
+        "temp/**",
+        ".cache/**",
+        "coverage/**",
+        "dist/**",
+        "build/**",
+        "dist-electron/**",
+        "apps/server/server/**",
+        "src-tauri/target/**"
+      ]
     },
     "web-api": {
       "id": "web-api",
@@ -47,15 +63,41 @@
           "readyTimeoutMs": 5000
         }
       },
-      "includePatterns": [".env*", "*.db", "vendor/**"],
-      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
+      "includePatterns": ["./.env*", "./api/.env*"],
+      "ignorePatterns": [
+        "node_modules/**",
+        ".hive/**",
+        ".turbo/**",
+        "tmp/**",
+        "temp/**",
+        ".cache/**",
+        "coverage/**",
+        "dist/**",
+        "build/**",
+        "dist-electron/**",
+        "apps/server/server/**",
+        "src-tauri/target/**"
+      ]
     },
     "basic": {
       "id": "basic",
       "label": "Basic Template",
       "type": "manual",
-      "includePatterns": [".env*", "vendor/**"],
-      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
+      "includePatterns": ["./.env*"],
+      "ignorePatterns": [
+        "node_modules/**",
+        ".hive/**",
+        ".turbo/**",
+        "tmp/**",
+        "temp/**",
+        ".cache/**",
+        "coverage/**",
+        "dist/**",
+        "build/**",
+        "dist-electron/**",
+        "apps/server/server/**",
+        "src-tauri/target/**"
+      ]
     },
     "provider-only": {
       "id": "provider-only",
@@ -64,15 +106,41 @@
       "agent": {
         "providerId": "opencode"
       },
-      "includePatterns": [".env*", "vendor/**"],
-      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
+      "includePatterns": ["./.env*"],
+      "ignorePatterns": [
+        "node_modules/**",
+        ".hive/**",
+        ".turbo/**",
+        "tmp/**",
+        "temp/**",
+        ".cache/**",
+        "coverage/**",
+        "dist/**",
+        "build/**",
+        "dist-electron/**",
+        "apps/server/server/**",
+        "src-tauri/target/**"
+      ]
     },
     "agentless": {
       "id": "agentless",
       "label": "No Agent Overrides",
       "type": "manual",
-      "includePatterns": [".env*", "vendor/**"],
-      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
+      "includePatterns": ["./.env*"],
+      "ignorePatterns": [
+        "node_modules/**",
+        ".hive/**",
+        ".turbo/**",
+        "tmp/**",
+        "temp/**",
+        ".cache/**",
+        "coverage/**",
+        "dist/**",
+        "build/**",
+        "dist-electron/**",
+        "apps/server/server/**",
+        "src-tauri/target/**"
+      ]
     }
   },
   "defaults": {

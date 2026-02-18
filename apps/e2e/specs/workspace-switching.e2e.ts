@@ -6,9 +6,11 @@ import {
   fetchWorkspaceCells,
   fetchWorkspaces,
   waitForCondition,
+  waitForProvisioningOrChatRoute,
 } from "../src/test-helpers";
 
 const CELL_TEMPLATE_LABEL = "E2E Template";
+const ROUTE_TIMEOUT_MS = 45_000;
 
 test.describe("workspace switching", () => {
   test("registers a second workspace and keeps cells isolated", async ({
@@ -111,7 +113,12 @@ test.describe("workspace switching", () => {
     await expect(secondaryCellLink).toBeVisible();
 
     await secondaryCellLink.click();
-    await expect(page).toHaveURL(new RegExp(`/cells/${secondaryCellId}/chat`));
+    const routedTo = await waitForProvisioningOrChatRoute({
+      page,
+      cellId: secondaryCellId,
+      timeoutMs: ROUTE_TIMEOUT_MS,
+    });
+    expect(["chat", "provisioning"]).toContain(routedTo);
   });
 });
 

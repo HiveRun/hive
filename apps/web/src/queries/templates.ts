@@ -15,6 +15,8 @@ export type TemplateService = {
 };
 
 export type TemplateConfig = {
+  includePatterns?: string[];
+  ignorePatterns?: string[];
   services?: Record<string, TemplateService>;
   env?: Record<string, string>;
   setup?: string[];
@@ -52,6 +54,7 @@ export type TemplatesResponse = {
 export const templateQueries = {
   all: (workspaceId: string) => ({
     queryKey: ["templates", workspaceId] as const,
+    staleTime: 60_000,
     queryFn: async (): Promise<TemplatesResponse> => {
       const { data, error } = await rpc.api.templates.get({
         query: { workspaceId },

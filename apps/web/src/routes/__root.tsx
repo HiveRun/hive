@@ -1,10 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
-import {
-  createRootRouteWithContext,
-  Outlet,
-  useRouterState,
-} from "@tanstack/react-router";
+import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { MainLayout } from "@/components/main-layout";
 import { Toaster } from "@/components/ui/sonner";
@@ -28,10 +24,9 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
 });
 
 function RootComponent() {
-  const isFetching = useRouterState({ select: (s) => s.isLoading });
   return (
     <>
-      <MainLayout isLoading={isFetching}>
+      <MainLayout>
         <Outlet />
       </MainLayout>
       <Toaster richColors />

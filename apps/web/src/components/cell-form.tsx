@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type { CreateCellInput } from "@/lib/rpc";
-import { cellMutations } from "@/queries/cells";
+import { cellMutations, cellQueries } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
 
 type CellFormValues = CreateCellInput;
@@ -93,16 +93,17 @@ export function CellForm({
   const templates = templatesData?.templates;
   const defaults = templatesData?.defaults;
   const agentDefaults = templatesData?.agentDefaults;
+  const defaultTemplateId = defaults?.templateId ?? templates?.[0]?.id ?? "";
 
   const defaultValues = useMemo(
     () => ({
       name: "",
       description: "",
-      templateId: defaults?.templateId ?? "",
+      templateId: defaultTemplateId,
       modelId: undefined,
       providerId: undefined,
     }),
-    [defaults?.templateId]
+    [defaultTemplateId]
   );
 
   const [activeTemplateId, setActiveTemplateId] = useState(
@@ -155,6 +156,29 @@ export function CellForm({
       } else {
         toast.success("Cell created successfully");
       }
+
+      queryClient.setQueryData(cellQueries.detail(cell.id).queryKey, cell);
+      queryClient.setQueryData(
+        cellQueries.all(workspaceId).queryKey,
+        (
+          existing:
+            | Array<{ id: string; name: string; status: string }>
+            | undefined
+        ) => {
+          if (!existing) {
+            return [cell];
+          }
+
+          const alreadyPresent = existing.some((entry) => entry.id === cell.id);
+          if (alreadyPresent) {
+            return existing.map((entry) =>
+              entry.id === cell.id ? { ...entry, ...cell } : entry
+            );
+          }
+
+          return [cell, ...existing];
+        }
+      );
 
       queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
       onCreated?.({

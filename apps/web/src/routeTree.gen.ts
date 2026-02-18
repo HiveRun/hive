@@ -9,17 +9,31 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as TimingsRouteImport } from './routes/timings'
+import { Route as GlobalTimingsRouteImport } from './routes/global-timings'
 import { Route as CellsRouteImport } from './routes/cells'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as CellsNewRouteImport } from './routes/cells/new'
 import { Route as CellsCellIdRouteImport } from './routes/cells/$cellId'
 import { Route as CellsCellIdViewerRouteImport } from './routes/cells/$cellId/viewer'
+import { Route as CellsCellIdTimingsRouteImport } from './routes/cells/$cellId/timings'
 import { Route as CellsCellIdTerminalRouteImport } from './routes/cells/$cellId/terminal'
 import { Route as CellsCellIdSetupRouteImport } from './routes/cells/$cellId/setup'
 import { Route as CellsCellIdServicesRouteImport } from './routes/cells/$cellId/services'
+import { Route as CellsCellIdProvisioningRouteImport } from './routes/cells/$cellId/provisioning'
 import { Route as CellsCellIdDiffRouteImport } from './routes/cells/$cellId/diff'
 import { Route as CellsCellIdChatRouteImport } from './routes/cells/$cellId/chat'
 
+const TimingsRoute = TimingsRouteImport.update({
+  id: '/timings',
+  path: '/timings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GlobalTimingsRoute = GlobalTimingsRouteImport.update({
+  id: '/global-timings',
+  path: '/global-timings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CellsRoute = CellsRouteImport.update({
   id: '/cells',
   path: '/cells',
@@ -45,6 +59,11 @@ const CellsCellIdViewerRoute = CellsCellIdViewerRouteImport.update({
   path: '/viewer',
   getParentRoute: () => CellsCellIdRoute,
 } as any)
+const CellsCellIdTimingsRoute = CellsCellIdTimingsRouteImport.update({
+  id: '/timings',
+  path: '/timings',
+  getParentRoute: () => CellsCellIdRoute,
+} as any)
 const CellsCellIdTerminalRoute = CellsCellIdTerminalRouteImport.update({
   id: '/terminal',
   path: '/terminal',
@@ -58,6 +77,11 @@ const CellsCellIdSetupRoute = CellsCellIdSetupRouteImport.update({
 const CellsCellIdServicesRoute = CellsCellIdServicesRouteImport.update({
   id: '/services',
   path: '/services',
+  getParentRoute: () => CellsCellIdRoute,
+} as any)
+const CellsCellIdProvisioningRoute = CellsCellIdProvisioningRouteImport.update({
+  id: '/provisioning',
+  path: '/provisioning',
   getParentRoute: () => CellsCellIdRoute,
 } as any)
 const CellsCellIdDiffRoute = CellsCellIdDiffRouteImport.update({
@@ -74,38 +98,50 @@ const CellsCellIdChatRoute = CellsCellIdChatRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/cells': typeof CellsRouteWithChildren
+  '/global-timings': typeof GlobalTimingsRoute
+  '/timings': typeof TimingsRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
   '/cells/new': typeof CellsNewRoute
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
+  '/cells/$cellId/provisioning': typeof CellsCellIdProvisioningRoute
   '/cells/$cellId/services': typeof CellsCellIdServicesRoute
   '/cells/$cellId/setup': typeof CellsCellIdSetupRoute
   '/cells/$cellId/terminal': typeof CellsCellIdTerminalRoute
+  '/cells/$cellId/timings': typeof CellsCellIdTimingsRoute
   '/cells/$cellId/viewer': typeof CellsCellIdViewerRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/cells': typeof CellsRouteWithChildren
+  '/global-timings': typeof GlobalTimingsRoute
+  '/timings': typeof TimingsRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
   '/cells/new': typeof CellsNewRoute
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
+  '/cells/$cellId/provisioning': typeof CellsCellIdProvisioningRoute
   '/cells/$cellId/services': typeof CellsCellIdServicesRoute
   '/cells/$cellId/setup': typeof CellsCellIdSetupRoute
   '/cells/$cellId/terminal': typeof CellsCellIdTerminalRoute
+  '/cells/$cellId/timings': typeof CellsCellIdTimingsRoute
   '/cells/$cellId/viewer': typeof CellsCellIdViewerRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/cells': typeof CellsRouteWithChildren
+  '/global-timings': typeof GlobalTimingsRoute
+  '/timings': typeof TimingsRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
   '/cells/new': typeof CellsNewRoute
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
   '/cells/$cellId/diff': typeof CellsCellIdDiffRoute
+  '/cells/$cellId/provisioning': typeof CellsCellIdProvisioningRoute
   '/cells/$cellId/services': typeof CellsCellIdServicesRoute
   '/cells/$cellId/setup': typeof CellsCellIdSetupRoute
   '/cells/$cellId/terminal': typeof CellsCellIdTerminalRoute
+  '/cells/$cellId/timings': typeof CellsCellIdTimingsRoute
   '/cells/$cellId/viewer': typeof CellsCellIdViewerRoute
 }
 export interface FileRouteTypes {
@@ -113,47 +149,75 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/cells'
+    | '/global-timings'
+    | '/timings'
     | '/cells/$cellId'
     | '/cells/new'
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
+    | '/cells/$cellId/provisioning'
     | '/cells/$cellId/services'
     | '/cells/$cellId/setup'
     | '/cells/$cellId/terminal'
+    | '/cells/$cellId/timings'
     | '/cells/$cellId/viewer'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/cells'
+    | '/global-timings'
+    | '/timings'
     | '/cells/$cellId'
     | '/cells/new'
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
+    | '/cells/$cellId/provisioning'
     | '/cells/$cellId/services'
     | '/cells/$cellId/setup'
     | '/cells/$cellId/terminal'
+    | '/cells/$cellId/timings'
     | '/cells/$cellId/viewer'
   id:
     | '__root__'
     | '/'
     | '/cells'
+    | '/global-timings'
+    | '/timings'
     | '/cells/$cellId'
     | '/cells/new'
     | '/cells/$cellId/chat'
     | '/cells/$cellId/diff'
+    | '/cells/$cellId/provisioning'
     | '/cells/$cellId/services'
     | '/cells/$cellId/setup'
     | '/cells/$cellId/terminal'
+    | '/cells/$cellId/timings'
     | '/cells/$cellId/viewer'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CellsRoute: typeof CellsRouteWithChildren
+  GlobalTimingsRoute: typeof GlobalTimingsRoute
+  TimingsRoute: typeof TimingsRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/timings': {
+      id: '/timings'
+      path: '/timings'
+      fullPath: '/timings'
+      preLoaderRoute: typeof TimingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/global-timings': {
+      id: '/global-timings'
+      path: '/global-timings'
+      fullPath: '/global-timings'
+      preLoaderRoute: typeof GlobalTimingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/cells': {
       id: '/cells'
       path: '/cells'
@@ -189,6 +253,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CellsCellIdViewerRouteImport
       parentRoute: typeof CellsCellIdRoute
     }
+    '/cells/$cellId/timings': {
+      id: '/cells/$cellId/timings'
+      path: '/timings'
+      fullPath: '/cells/$cellId/timings'
+      preLoaderRoute: typeof CellsCellIdTimingsRouteImport
+      parentRoute: typeof CellsCellIdRoute
+    }
     '/cells/$cellId/terminal': {
       id: '/cells/$cellId/terminal'
       path: '/terminal'
@@ -208,6 +279,13 @@ declare module '@tanstack/react-router' {
       path: '/services'
       fullPath: '/cells/$cellId/services'
       preLoaderRoute: typeof CellsCellIdServicesRouteImport
+      parentRoute: typeof CellsCellIdRoute
+    }
+    '/cells/$cellId/provisioning': {
+      id: '/cells/$cellId/provisioning'
+      path: '/provisioning'
+      fullPath: '/cells/$cellId/provisioning'
+      preLoaderRoute: typeof CellsCellIdProvisioningRouteImport
       parentRoute: typeof CellsCellIdRoute
     }
     '/cells/$cellId/diff': {
@@ -230,18 +308,22 @@ declare module '@tanstack/react-router' {
 interface CellsCellIdRouteChildren {
   CellsCellIdChatRoute: typeof CellsCellIdChatRoute
   CellsCellIdDiffRoute: typeof CellsCellIdDiffRoute
+  CellsCellIdProvisioningRoute: typeof CellsCellIdProvisioningRoute
   CellsCellIdServicesRoute: typeof CellsCellIdServicesRoute
   CellsCellIdSetupRoute: typeof CellsCellIdSetupRoute
   CellsCellIdTerminalRoute: typeof CellsCellIdTerminalRoute
+  CellsCellIdTimingsRoute: typeof CellsCellIdTimingsRoute
   CellsCellIdViewerRoute: typeof CellsCellIdViewerRoute
 }
 
 const CellsCellIdRouteChildren: CellsCellIdRouteChildren = {
   CellsCellIdChatRoute: CellsCellIdChatRoute,
   CellsCellIdDiffRoute: CellsCellIdDiffRoute,
+  CellsCellIdProvisioningRoute: CellsCellIdProvisioningRoute,
   CellsCellIdServicesRoute: CellsCellIdServicesRoute,
   CellsCellIdSetupRoute: CellsCellIdSetupRoute,
   CellsCellIdTerminalRoute: CellsCellIdTerminalRoute,
+  CellsCellIdTimingsRoute: CellsCellIdTimingsRoute,
   CellsCellIdViewerRoute: CellsCellIdViewerRoute,
 }
 
@@ -264,6 +346,8 @@ const CellsRouteWithChildren = CellsRoute._addFileChildren(CellsRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CellsRoute: CellsRouteWithChildren,
+  GlobalTimingsRoute: GlobalTimingsRoute,
+  TimingsRoute: TimingsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

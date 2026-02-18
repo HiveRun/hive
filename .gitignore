@@ -56,7 +56,6 @@ coverage
 .cache
 tmp
 temp
-vendor/
 local.db
 *.db
 

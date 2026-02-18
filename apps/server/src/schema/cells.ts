@@ -5,6 +5,7 @@ export const cellStatusValues = [
   "pending",
   "ready",
   "error",
+  "deleting",
 ] as const;
 export type CellStatus = (typeof cellStatusValues)[number];
 

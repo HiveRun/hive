@@ -1,6 +1,19 @@
 import type { HiveConfig } from "../../apps/server/src/config/schema";
 
-const defaultIgnorePatterns = ["node_modules/**", ".hive/**", ".turbo/**"];
+const defaultIgnorePatterns = [
+  "node_modules/**",
+  ".hive/**",
+  ".turbo/**",
+  "tmp/**",
+  "temp/**",
+  ".cache/**",
+  "coverage/**",
+  "dist/**",
+  "build/**",
+  "dist-electron/**",
+  "apps/server/server/**",
+  "src-tauri/target/**",
+];
 
 export const hiveConfigDefaults: HiveConfig = {
   promptSources: ["docs/prompts/**/*.md"],
@@ -12,8 +25,11 @@ export const hiveConfigDefaults: HiveConfig = {
       id: "hive-dev",
       label: "Hive Development Environment",
       type: "manual",
-      includePatterns: [".env*", "vendor/**"],
+      includePatterns: ["./.env*", "./apps/server/.env*", "./apps/web/.env*"],
       ignorePatterns: defaultIgnorePatterns,
+      env: {
+        DATABASE_URL: "local.db",
+      },
       setup: ["bun setup"],
       services: {
         web: {
@@ -43,7 +59,7 @@ export const hiveConfigDefaults: HiveConfig = {
       id: "web-api",
       label: "Web API Server",
       type: "manual",
-      includePatterns: [".env*", "*.db", "vendor/**"],
+      includePatterns: ["./.env*", "./api/.env*"],
       ignorePatterns: defaultIgnorePatterns,
       services: {
         api: {
@@ -61,14 +77,14 @@ export const hiveConfigDefaults: HiveConfig = {
       id: "basic",
       label: "Basic Template",
       type: "manual",
-      includePatterns: [".env*", "vendor/**"],
+      includePatterns: ["./.env*"],
       ignorePatterns: defaultIgnorePatterns,
     },
     "provider-only": {
       id: "provider-only",
       label: "Provider Only Agent",
       type: "manual",
-      includePatterns: [".env*", "vendor/**"],
+      includePatterns: ["./.env*"],
       ignorePatterns: defaultIgnorePatterns,
       agent: {
         providerId: "opencode",
@@ -78,7 +94,7 @@ export const hiveConfigDefaults: HiveConfig = {
       id: "agentless",
       label: "No Agent Overrides",
       type: "manual",
-      includePatterns: [".env*", "vendor/**"],
+      includePatterns: ["./.env*"],
       ignorePatterns: defaultIgnorePatterns,
     },
   },

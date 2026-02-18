@@ -4,10 +4,12 @@ import {
   createCell,
   ensureTerminalReady,
   sendTerminalCommand,
+  waitForChatRoute,
   waitForCondition,
 } from "../src/test-helpers";
 
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
+const CHAT_ROUTE_TIMEOUT_MS = 180_000;
 const CONNECTION_TRANSITION_TIMEOUT_MS = 30_000;
 const POST_RESTART_INPUT_TIMEOUT_MS = 30_000;
 const PID_PATTERN = /pid\s+(\d+)/i;
@@ -22,6 +24,11 @@ test.describe("chat terminal recovery", () => {
     });
 
     await page.goto(`/cells/${cellId}/chat`);
+    await waitForChatRoute({
+      page,
+      cellId,
+      timeoutMs: CHAT_ROUTE_TIMEOUT_MS,
+    });
     await ensureTerminalReady(page, {
       context: "chat terminal initial load",
       timeoutMs: TERMINAL_READY_TIMEOUT_MS,

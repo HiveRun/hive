@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
 import { createConnection } from "node:net";
+import { join } from "node:path";
 
 import { logger } from "@bogeychan/elysia-logger";
-import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { Elysia, type Static, sse, t } from "elysia";
 import { getSharedOpencodeServerBaseUrl } from "../agents/opencode-server";
 import type { AgentRuntimeService } from "../agents/service";
@@ -14,7 +14,6 @@ import {
   type DatabaseService as DatabaseServiceType,
 } from "../db";
 import {
-  ACTIVITY_EVENT_TYPES,
   type ActivityEventType,
   cellActivityEvents,
 } from "../schema/activity-events";
@@ -29,6 +28,7 @@ import {
   CellTerminalInputSchema,
   CellTerminalResizeSchema,
   CellTerminalSessionSchema,
+  CellTimingListResponseSchema,
   CreateCellSchema,
   DeleteCellsSchema,
   DiffQuerySchema,
@@ -41,7 +41,33 @@ import {
 } from "../schema/cell-provisioning";
 import { type CellStatus, cells, type NewCell } from "../schema/cells";
 import { cellServices } from "../schema/services";
+import {
+  type CellTimingStatus,
+  type CellTimingWorkflow,
+  cellTimingEvents,
+} from "../schema/timing-events";
 import { createAsyncEventIterator } from "../services/async-iterator";
+import {
+  DEFAULT_ACTIVITY_LIMIT,
+  fetchCellActivityPage,
+  MAX_ACTIVITY_LIMIT,
+  normalizeActivityLimit,
+  normalizeActivityTypes,
+  parseActivityCursor,
+} from "../services/cell-activity";
+import {
+  deleteCellWithLifecycle,
+  removeCellWorkspace,
+} from "../services/cell-delete-lifecycle";
+import {
+  buildTimingRuns,
+  type CellTimingStepRecord,
+  DEFAULT_TIMING_LIMIT,
+  MAX_TIMING_LIMIT,
+  normalizeTimingLimit,
+  normalizeTimingWorkflow,
+  parseTimingStep,
+} from "../services/cell-timing";
 import type {
   ChatTerminalEvent,
   ChatTerminalSession,
@@ -53,8 +79,11 @@ import {
 } from "../services/diff-route-helpers";
 import {
   type CellStatusEvent,
+  type CellTimingEvent,
   emitCellStatusUpdate,
+  emitCellTimingUpdate,
   subscribeToCellStatusEvents,
+  subscribeToCellTimingEvents,
   subscribeToServiceEvents,
 } from "../services/events";
 import type {
@@ -62,6 +91,7 @@ import type {
   ServiceTerminalSession,
 } from "../services/service-terminal";
 import type {
+  EnsureCellServicesTimingEvent,
   ServiceSupervisorError,
   ServiceSupervisorService as ServiceSupervisorServiceType,
 } from "../services/supervisor";
@@ -82,11 +112,12 @@ import {
 } from "../workspaces/context";
 
 import { createWorkspaceContextPlugin } from "../workspaces/plugin";
-import type { WorkspaceRecord } from "../workspaces/registry";
+import { resolveCellsRoot, type WorkspaceRecord } from "../workspaces/registry";
 import {
   type AsyncWorktreeManager,
   describeWorktreeError,
   toAsyncWorktreeManager,
+  type WorktreeCreateTimingEvent,
   type WorktreeManagerError,
 } from "../worktree/manager";
 
@@ -101,6 +132,29 @@ const resolveWorkspaceContextFromDeps = async (
   workspaceId?: string
 ): Promise<WorkspaceRuntimeContext> =>
   await Promise.resolve(resolver(workspaceId));
+
+const createWorktreeManagerFetcher = (
+  resolver: WorkspaceContextResolverLike
+) => {
+  const managerCache = new Map<string, AsyncWorktreeManager>();
+
+  return async (workspaceId: string): Promise<AsyncWorktreeManager> => {
+    const cached = managerCache.get(workspaceId);
+    if (cached) {
+      return cached;
+    }
+
+    const workspaceContext = await resolveWorkspaceContextFromDeps(
+      resolver,
+      workspaceId
+    );
+    const manager = toAsyncWorktreeManager(
+      await workspaceContext.createWorktreeManager()
+    );
+    managerCache.set(workspaceId, manager);
+    return manager;
+  };
+};
 
 export type CellRouteDependencies = {
   db: DatabaseClient;
@@ -132,6 +186,7 @@ export type CellRouteDependencies = {
     opencodeServerUrl: string;
     opencodeThemeMode?: OpencodeThemeMode;
   }) => ChatTerminalSession;
+  getChatTerminalSession?: (cellId: string) => ChatTerminalSession | null;
   readChatTerminalOutput?: (cellId: string) => string;
   subscribeToChatTerminal?: (
     cellId: string,
@@ -223,6 +278,7 @@ const buildDefaultCellDependencies = (): CellRouteDependencies => {
     resizeTerminal: terminal.resize,
     closeTerminalSession: terminal.closeSession,
     ensureChatTerminalSession: chatTerminal.ensureSession,
+    getChatTerminalSession: chatTerminal.getSession,
     readChatTerminalOutput: chatTerminal.readOutput,
     subscribeToChatTerminal: chatTerminal.subscribe,
     writeChatTerminalInput: chatTerminal.write,
@@ -274,48 +330,7 @@ type CellResponse = Static<typeof CellResponseSchema>;
 type CellActivityEventListResponse = Static<
   typeof CellActivityEventListResponseSchema
 >;
-
-const DEFAULT_ACTIVITY_LIMIT = 50;
-const MAX_ACTIVITY_LIMIT = 200;
-
-function encodeActivityCursor(createdAt: Date, id: string): string {
-  return `${createdAt.getTime()}:${id}`;
-}
-
-function parseActivityCursor(cursor: string): { createdAt: Date; id: string } {
-  const separatorIndex = cursor.indexOf(":");
-  if (separatorIndex <= 0) {
-    throw new Error("Invalid cursor");
-  }
-
-  const millis = Number(cursor.slice(0, separatorIndex));
-  const id = cursor.slice(separatorIndex + 1);
-  if (!(Number.isFinite(millis) && id.length)) {
-    throw new Error("Invalid cursor");
-  }
-
-  return { createdAt: new Date(millis), id };
-}
-
-function normalizeActivityLimit(limit?: number): number {
-  const fallback = DEFAULT_ACTIVITY_LIMIT;
-  if (typeof limit !== "number" || !Number.isFinite(limit)) {
-    return fallback;
-  }
-  return Math.min(Math.max(Math.trunc(limit), 1), MAX_ACTIVITY_LIMIT);
-}
-
-function normalizeActivityTypes(types?: string): ActivityEventType[] | null {
-  if (!types) {
-    return null;
-  }
-  const allowed = new Set<string>(ACTIVITY_EVENT_TYPES);
-  const filtered = types
-    .split(",")
-    .map((value) => value.trim())
-    .filter((value) => allowed.has(value));
-  return filtered.length ? (filtered as ActivityEventType[]) : null;
-}
+type CellTimingListResponse = Static<typeof CellTimingListResponseSchema>;
 
 function readHiveAuditHeaders(request: Request): {
   source: string | null;
@@ -352,6 +367,117 @@ async function insertCellActivityEvent(args: {
   });
 }
 
+async function insertCellTimingEvent(args: {
+  database: DatabaseClient;
+  log: LoggerLike;
+  cellId: string;
+  cellName?: string | null;
+  workflow: CellTimingWorkflow;
+  runId: string;
+  step: string;
+  status: CellTimingStatus;
+  durationMs: number;
+  attempt?: number | null;
+  error?: string | null;
+  templateId?: string | null;
+  workspaceId?: string | null;
+  extraMetadata?: Record<string, unknown>;
+  createdAt?: Date;
+}) {
+  const metadata: Record<string, unknown> = {
+    workflow: args.workflow,
+    runId: args.runId,
+    step: args.step,
+    status: args.status,
+    durationMs: Math.max(0, Math.round(args.durationMs)),
+    ...(args.attempt != null ? { attempt: args.attempt } : {}),
+    ...(args.error ? { error: args.error } : {}),
+    ...(args.templateId ? { templateId: args.templateId } : {}),
+    ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
+    ...(args.extraMetadata ?? {}),
+  };
+
+  try {
+    const createdAt = args.createdAt ?? new Date();
+    await args.database.insert(cellTimingEvents).values({
+      id: crypto.randomUUID(),
+      cellId: args.cellId,
+      cellName: args.cellName ?? null,
+      workspaceId: args.workspaceId ?? null,
+      templateId: args.templateId ?? null,
+      workflow: args.workflow,
+      runId: args.runId,
+      step: args.step,
+      status: args.status,
+      durationMs: Math.max(0, Math.round(args.durationMs)),
+      attempt: args.attempt ?? null,
+      error: args.error ?? null,
+      metadata,
+      createdAt,
+    });
+
+    emitCellTimingUpdate({
+      cellId: args.cellId,
+      workflow: args.workflow,
+      runId: args.runId,
+      step: args.step,
+      status: args.status,
+      createdAt: createdAt.toISOString(),
+    });
+  } catch (error) {
+    args.log.warn(
+      {
+        error,
+        cellId: args.cellId,
+        workflow: args.workflow,
+        runId: args.runId,
+        step: args.step,
+      },
+      "Failed to persist cell timing event"
+    );
+  }
+}
+
+async function fetchTimingSteps(args: {
+  database: DatabaseClient;
+  cellId?: string;
+  workflow?: CellTimingWorkflow | null;
+  runId?: string;
+  workspaceId?: string;
+}): Promise<CellTimingStepRecord[]> {
+  const rows = await args.database
+    .select()
+    .from(cellTimingEvents)
+    .where(
+      and(
+        args.cellId ? eq(cellTimingEvents.cellId, args.cellId) : undefined,
+        args.workflow
+          ? eq(cellTimingEvents.workflow, args.workflow)
+          : undefined,
+        args.runId ? eq(cellTimingEvents.runId, args.runId) : undefined,
+        args.workspaceId
+          ? eq(cellTimingEvents.workspaceId, args.workspaceId)
+          : undefined
+      )
+    )
+    .orderBy(desc(cellTimingEvents.createdAt), desc(cellTimingEvents.id))
+    .limit(MAX_TIMING_LIMIT);
+
+  return rows
+    .map((row) => parseTimingStep(row))
+    .filter((step): step is CellTimingStepRecord => Boolean(step));
+}
+
+function toTimingListResponse(
+  steps: CellTimingStepRecord[],
+  limit: number
+): CellTimingListResponse {
+  return {
+    steps: steps.slice(0, limit),
+    runs: buildTimingRuns(steps),
+  } satisfies CellTimingListResponse;
+}
+
 type ServiceRow = {
   service: typeof cellServices.$inferSelect;
   cell: typeof cells.$inferSelect;
@@ -386,6 +512,10 @@ const ChatThemeModeQuerySchema = t.Object({
 
 const PROVISIONING_INTERRUPTED_MESSAGE =
   "Provisioning interrupted. Fix the workspace and rerun setup.";
+const PROVISIONING_CANCELLED_MESSAGE =
+  "Provisioning cancelled because the cell no longer exists.";
+
+const activeProvisioningWorkflows = new Set<string>();
 
 const LOGGER_CONFIG = {
   level: process.env.LOG_LEVEL || "info",
@@ -492,6 +622,7 @@ type ChatTerminalDependencies = {
   ensureChatTerminalSession: NonNullable<
     CellRouteDependencies["ensureChatTerminalSession"]
   >;
+  getChatTerminalSession: (cellId: string) => ChatTerminalSession | null;
   readChatTerminalOutput: NonNullable<
     CellRouteDependencies["readChatTerminalOutput"]
   >;
@@ -525,6 +656,7 @@ function getChatTerminalDependencies(
 
   return {
     ensureChatTerminalSession: deps.ensureChatTerminalSession,
+    getChatTerminalSession: deps.getChatTerminalSession ?? (() => null),
     readChatTerminalOutput: deps.readChatTerminalOutput,
     subscribeToChatTerminal: deps.subscribeToChatTerminal,
     writeChatTerminalInput: deps.writeChatTerminalInput,
@@ -548,8 +680,16 @@ async function ensureChatTerminalSessionForCell(
     throw new Error("Shared OpenCode server is not running");
   }
 
-  const agentSession = await deps.ensureAgentSession(cell.id);
   const chatTerminal = getChatTerminalDependencies(deps);
+  const existingSession = chatTerminal.getChatTerminalSession(cell.id);
+  if (existingSession?.status === "running") {
+    return {
+      session: existingSession,
+      chatTerminal,
+    };
+  }
+
+  const agentSession = await deps.ensureAgentSession(cell.id);
   const session = chatTerminal.ensureChatTerminalSession({
     cellId: cell.id,
     workspacePath: cell.workspacePath,
@@ -562,6 +702,10 @@ async function ensureChatTerminalSessionForCell(
     session,
     chatTerminal,
   };
+}
+
+function isCellReadyForChat(cell: typeof cells.$inferSelect): boolean {
+  return cell.status === "ready";
 }
 
 type ErrorPayload = {
@@ -593,17 +737,22 @@ export function createCellsRoutes(
   });
 
   return new Elysia({ prefix: "/api/cells" })
-    .use(logger(LOGGER_CONFIG))
+    .use(logger({ ...LOGGER_CONFIG }))
     .use(workspaceContextPlugin)
     .post(
       "/:id/setup/retry",
       async ({ params, set, request }) => {
         const deps = await resolveDeps();
-        const cell = await loadCellById(deps.db, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
+        const resolvedCell = resolveSetupRetryCell(
+          await loadCellById(deps.db, params.id)
+        );
+        if (!resolvedCell.ok) {
+          set.status = resolvedCell.status;
+          return { message: resolvedCell.message } satisfies {
+            message: string;
+          };
         }
+        const cell = resolvedCell.cell;
 
         const audit = readHiveAuditHeaders(request);
         await insertCellActivityEvent({
@@ -629,38 +778,63 @@ export function createCellsRoutes(
         }
 
         try {
+          const [provisioningState] = await deps.db
+            .insert(cellProvisioningStates)
+            .values({
+              cellId: cell.id,
+              modelIdOverride: null,
+              providerIdOverride: null,
+              startedAt: null,
+              finishedAt: null,
+              attemptCount: 0,
+            })
+            .onConflictDoNothing({ target: cellProvisioningStates.cellId })
+            .returning();
+
+          const existingProvisioningState =
+            provisioningState ??
+            (await deps.db.query.cellProvisioningStates.findFirst({
+              where: eq(cellProvisioningStates.cellId, cell.id),
+            })) ??
+            null;
+
           await deps.db
             .update(cells)
-            .set({ status: "pending", lastSetupError: null })
+            .set({ status: "spawning", lastSetupError: null })
             .where(eq(cells.id, cell.id));
 
           emitCellStatusUpdate({
             workspaceId: cell.workspaceId,
             cellId: cell.id,
-            status: "pending",
+            status: "spawning",
             lastSetupError: null,
           });
 
-          await deps.ensureServicesForCell({
+          const context = await createExistingProvisionContext({
             cell: {
               ...cell,
-              status: "pending",
+              status: "spawning",
               lastSetupError: null,
             },
+            provisioningState: existingProvisioningState,
+            body: resolveProvisioningParams(cell, existingProvisioningState),
             template,
+            database: deps.db,
+            ensureSession: deps.ensureAgentSession,
+            sendAgentMessage: deps.sendAgentMessage,
+            ensureServices: deps.ensureServicesForCell,
+            stopCellServices: deps.stopServicesForCell,
+            workspaceContext,
+            log: backgroundProvisioningLogger,
           });
 
-          await deps.db
-            .update(cells)
-            .set({ status: "ready", lastSetupError: null })
-            .where(eq(cells.id, cell.id));
-
-          emitCellStatusUpdate({
-            workspaceId: cell.workspaceId,
-            cellId: cell.id,
-            status: "ready",
-            lastSetupError: null,
-          });
+          const started = startProvisioningWorkflow(context);
+          if (!started) {
+            set.status = HTTP_STATUS.CONFLICT;
+            return {
+              message: "Provisioning retry already in progress",
+            } satisfies ErrorPayload;
+          }
         } catch (error) {
           const payload = buildCellCreationErrorPayload(error);
           const lastSetupError = deriveSetupErrorDetails(payload);
@@ -703,6 +877,7 @@ export function createCellsRoutes(
           200: CellResponseSchema,
           400: ErrorResponseSchema,
           404: ErrorResponseSchema,
+          409: ErrorResponseSchema,
           500: ErrorResponseSchema,
         },
       }
@@ -717,7 +892,12 @@ export function createCellsRoutes(
           const allCells = await database
             .select()
             .from(cells)
-            .where(eq(cells.workspaceId, workspaceContext.workspace.id));
+            .where(
+              and(
+                eq(cells.workspaceId, workspaceContext.workspace.id),
+                ne(cells.status, "deleting")
+              )
+            );
           return { cells: allCells.map(cellToResponse) };
         } catch (error) {
           set.status = HTTP_STATUS.BAD_REQUEST;
@@ -763,7 +943,12 @@ export function createCellsRoutes(
             const initialCells = await database
               .select()
               .from(cells)
-              .where(eq(cells.workspaceId, workspaceId));
+              .where(
+                and(
+                  eq(cells.workspaceId, workspaceId),
+                  ne(cells.status, "deleting")
+                )
+              );
 
             for (const cell of initialCells) {
               yield sse({ event: "cell", data: cellToResponse(cell) });
@@ -772,17 +957,16 @@ export function createCellsRoutes(
             yield sse({ event: "snapshot", data: { timestamp: Date.now() } });
 
             for await (const event of iterator) {
-              try {
-                const cell = await loadCellById(database, event.cellId);
-                if (cell) {
-                  yield sse({ event: "cell", data: cellToResponse(cell) });
-                }
-              } catch (error) {
-                log.error(
-                  { error, cellId: event.cellId },
-                  "Failed to stream cell update"
-                );
+              const streamEvent = await resolveWorkspaceCellStreamEvent({
+                database,
+                event,
+                log,
+              });
+              if (!streamEvent) {
+                continue;
               }
+
+              yield sse(streamEvent);
             }
           } finally {
             cleanup();
@@ -801,7 +985,7 @@ export function createCellsRoutes(
     )
     .get(
       "/:id",
-      async ({ params, set, request }) => {
+      async ({ params, query, set, request }) => {
         const deps = await resolveDeps();
         const { db: database } = deps;
         const result = await database
@@ -821,6 +1005,11 @@ export function createCellsRoutes(
           return { message: "Failed to load cell" };
         }
 
+        if (cell.status === "deleting") {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" };
+        }
+
         const audit = readHiveAuditHeaders(request);
         if (audit.auditEvent === "setup.logs.read") {
           await insertCellActivityEvent({
@@ -833,12 +1022,18 @@ export function createCellsRoutes(
           });
         }
 
-        const extras = buildSetupLogPayload(cell.id, deps);
+        const includeSetupLog = query.includeSetupLog ?? true;
+        const extras = includeSetupLog
+          ? buildSetupLogPayload(cell.id, deps)
+          : {};
         return { ...cellToResponse(cell), ...extras };
       },
       {
         params: t.Object({
           id: t.String(),
+        }),
+        query: t.Object({
+          includeSetupLog: t.Optional(t.Boolean()),
         }),
         response: {
           200: CellResponseSchema,
@@ -929,55 +1124,15 @@ export function createCellsRoutes(
           }
         }
 
-        const whereClause = and(
-          eq(cellActivityEvents.cellId, params.id),
-          types ? inArray(cellActivityEvents.type, types) : undefined,
-          cursor
-            ? or(
-                lt(cellActivityEvents.createdAt, cursor.createdAt),
-                and(
-                  eq(cellActivityEvents.createdAt, cursor.createdAt),
-                  lt(cellActivityEvents.id, cursor.id)
-                )
-              )
-            : undefined
-        );
+        const page = await fetchCellActivityPage({
+          database,
+          cellId: params.id,
+          limit,
+          types,
+          cursor,
+        });
 
-        const rows = await database
-          .select()
-          .from(cellActivityEvents)
-          .where(whereClause)
-          .orderBy(
-            desc(cellActivityEvents.createdAt),
-            desc(cellActivityEvents.id)
-          )
-          .limit(limit + 1);
-
-        const hasMore = rows.length > limit;
-        const slice = hasMore ? rows.slice(0, limit) : rows;
-        const nextCursor = hasMore
-          ? (() => {
-              const last = slice.at(-1);
-              if (!last) {
-                return null;
-              }
-              return encodeActivityCursor(last.createdAt, last.id);
-            })()
-          : null;
-
-        return {
-          events: slice.map((event) => ({
-            id: event.id,
-            cellId: event.cellId,
-            serviceId: event.serviceId ?? null,
-            type: event.type,
-            source: event.source ?? null,
-            toolName: event.toolName ?? null,
-            metadata: event.metadata,
-            createdAt: event.createdAt.toISOString(),
-          })),
-          nextCursor,
-        } satisfies CellActivityEventListResponse;
+        return page satisfies CellActivityEventListResponse;
       },
       {
         params: t.Object({ id: t.String() }),
@@ -1001,6 +1156,150 @@ export function createCellsRoutes(
         response: {
           200: CellActivityEventListResponseSchema,
           400: t.Object({ message: t.String() }),
+          404: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .get(
+      "/timings/global",
+      async ({ query }) => {
+        const { db: database } = await resolveDeps();
+        const workflow = normalizeTimingWorkflow(query.workflow);
+        const limit = normalizeTimingLimit(query.limit);
+
+        const steps = await fetchTimingSteps({
+          database,
+          workflow,
+          runId: query.runId,
+          workspaceId: query.workspaceId,
+          cellId: query.cellId,
+        });
+
+        return toTimingListResponse(steps, limit);
+      },
+      {
+        query: t.Object({
+          limit: t.Optional(
+            t.Number({
+              minimum: 1,
+              maximum: MAX_TIMING_LIMIT,
+              default: DEFAULT_TIMING_LIMIT,
+            })
+          ),
+          workflow: t.Optional(
+            t.Union([
+              t.Literal("create"),
+              t.Literal("delete"),
+              t.Literal("all"),
+            ])
+          ),
+          runId: t.Optional(t.String()),
+          workspaceId: t.Optional(t.String()),
+          cellId: t.Optional(t.String()),
+        }),
+        response: {
+          200: CellTimingListResponseSchema,
+        },
+      }
+    )
+    .get(
+      "/:id/timings",
+      async ({ params, query, set }) => {
+        const { db: database } = await resolveDeps();
+        const cell = await loadCellById(database, params.id);
+        const workflow = normalizeTimingWorkflow(query.workflow);
+        const limit = normalizeTimingLimit(query.limit);
+
+        const steps = await fetchTimingSteps({
+          database,
+          cellId: params.id,
+          workflow,
+          runId: query.runId,
+        });
+
+        if (!cell && steps.length === 0) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return {
+            message: "Cell not found",
+          } satisfies { message: string };
+        }
+
+        return toTimingListResponse(steps, limit);
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        query: t.Object({
+          limit: t.Optional(
+            t.Number({
+              minimum: 1,
+              maximum: MAX_TIMING_LIMIT,
+              default: DEFAULT_TIMING_LIMIT,
+            })
+          ),
+          workflow: t.Optional(
+            t.Union([
+              t.Literal("create"),
+              t.Literal("delete"),
+              t.Literal("all"),
+            ])
+          ),
+          runId: t.Optional(t.String()),
+        }),
+        response: {
+          200: CellTimingListResponseSchema,
+          404: t.Object({ message: t.String() }),
+        },
+      }
+    )
+    .get(
+      "/:id/timings/stream",
+      async ({ params, query, request, set }) => {
+        const { db: database } = await resolveDeps();
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return { message: "Cell not found" } satisfies { message: string };
+        }
+
+        const workflow = normalizeTimingWorkflow(query.workflow);
+        const { iterator, cleanup } = createAsyncEventIterator<CellTimingEvent>(
+          (listener) => subscribeToCellTimingEvents(params.id, listener),
+          request.signal
+        );
+
+        async function* stream() {
+          try {
+            yield sse({ event: "ready", data: { timestamp: Date.now() } });
+            yield sse({ event: "snapshot", data: { timestamp: Date.now() } });
+
+            for await (const event of iterator) {
+              if (workflow && event.workflow !== workflow) {
+                continue;
+              }
+
+              yield sse({ event: "timing", data: event });
+            }
+          } finally {
+            cleanup();
+          }
+        }
+
+        return stream();
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        query: t.Object({
+          workflow: t.Optional(
+            t.Union([
+              t.Literal("create"),
+              t.Literal("delete"),
+              t.Literal("all"),
+            ])
+          ),
+        }),
+        response: {
+          200: t.Any(),
           404: t.Object({ message: t.String() }),
         },
       }
@@ -1454,6 +1753,14 @@ export function createCellsRoutes(
         let chatTerminal: ChatTerminalDependencies;
         const themeMode = normalizeOpencodeThemeMode(query.themeMode);
         try {
+          if (!isCellReadyForChat(cell)) {
+            set.status = HTTP_STATUS.CONFLICT;
+            return {
+              message:
+                "Chat terminal is unavailable until provisioning completes",
+            } satisfies { message: string };
+          }
+
           const prepared = await ensureChatTerminalSessionForCell(
             deps,
             cell,
@@ -1521,6 +1828,7 @@ export function createCellsRoutes(
         response: {
           200: t.Any(),
           404: t.Object({ message: t.String() }),
+          409: t.Object({ message: t.String() }),
           500: t.Object({ message: t.String() }),
         },
       }
@@ -1538,6 +1846,14 @@ export function createCellsRoutes(
         }
 
         try {
+          if (!isCellReadyForChat(cell)) {
+            set.status = HTTP_STATUS.CONFLICT;
+            return {
+              message:
+                "Chat terminal is unavailable until provisioning completes",
+            } satisfies { message: string };
+          }
+
           const themeMode = normalizeOpencodeThemeMode(query.themeMode);
           const { chatTerminal } = await ensureChatTerminalSessionForCell(
             deps,
@@ -1567,6 +1883,7 @@ export function createCellsRoutes(
         response: {
           200: CellTerminalActionResponseSchema,
           404: t.Object({ message: t.String() }),
+          409: t.Object({ message: t.String() }),
           500: t.Object({ message: t.String() }),
         },
       }
@@ -1584,6 +1901,14 @@ export function createCellsRoutes(
         }
 
         try {
+          if (!isCellReadyForChat(cell)) {
+            set.status = HTTP_STATUS.CONFLICT;
+            return {
+              message:
+                "Chat terminal is unavailable until provisioning completes",
+            } satisfies { message: string };
+          }
+
           const themeMode = normalizeOpencodeThemeMode(query.themeMode);
           const { session, chatTerminal } =
             await ensureChatTerminalSessionForCell(deps, cell, themeMode);
@@ -1620,6 +1945,7 @@ export function createCellsRoutes(
             session: CellTerminalSessionSchema,
           }),
           404: t.Object({ message: t.String() }),
+          409: t.Object({ message: t.String() }),
           500: t.Object({ message: t.String() }),
         },
       }
@@ -1637,6 +1963,14 @@ export function createCellsRoutes(
         }
 
         try {
+          if (!isCellReadyForChat(cell)) {
+            set.status = HTTP_STATUS.CONFLICT;
+            return {
+              message:
+                "Chat terminal is unavailable until provisioning completes",
+            } satisfies { message: string };
+          }
+
           const chatTerminal = getChatTerminalDependencies(deps);
           chatTerminal.closeChatTerminalSession(cell.id);
           const themeMode = normalizeOpencodeThemeMode(query.themeMode);
@@ -1666,6 +2000,7 @@ export function createCellsRoutes(
         response: {
           200: CellTerminalSessionSchema,
           404: t.Object({ message: t.String() }),
+          409: t.Object({ message: t.String() }),
           500: t.Object({ message: t.String() }),
         },
       }
@@ -2000,6 +2335,7 @@ export function createCellsRoutes(
         response: {
           200: CellDiffResponseSchema,
           400: t.Object({ message: t.String() }),
+          409: t.Object({ message: t.String() }),
           404: t.Object({ message: t.String() }),
         },
       }
@@ -2283,6 +2619,8 @@ export function createCellsRoutes(
           const cellsToDelete = await database
             .select({
               id: cells.id,
+              name: cells.name,
+              templateId: cells.templateId,
               workspacePath: cells.workspacePath,
               workspaceId: cells.workspaceId,
               status: cells.status,
@@ -2295,48 +2633,43 @@ export function createCellsRoutes(
             return { message: "No cells found for provided ids" };
           }
 
-          const managerCache = new Map<string, AsyncWorktreeManager>();
-          const fetchManager = async (workspaceId: string) => {
-            const cached = managerCache.get(workspaceId);
-            if (cached) {
-              return cached;
-            }
-            const context = await resolveWorkspaceContextFromDeps(
-              resolveWorkspaceCtx,
-              workspaceId
-            );
-            const manager = toAsyncWorktreeManager(
-              await context.createWorktreeManager()
-            );
-            managerCache.set(workspaceId, manager);
-            return manager;
-          };
+          const fetchManager =
+            createWorktreeManagerFetcher(resolveWorkspaceCtx);
+
+          const deletedIds: string[] = [];
 
           for (const cell of cellsToDelete) {
-            await closeSession(cell.id);
-            closeTerminalSession(cell.id);
-            closeChatTerminalSession?.(cell.id);
-            clearSetupTerminal(cell.id);
             try {
-              await stopCellServicesFn(cell.id, {
-                releasePorts: true,
+              await deleteCellWithLifecycle({
+                database,
+                cell,
+                closeSession,
+                closeTerminalSession,
+                closeChatTerminalSession,
+                clearSetupTerminal,
+                stopCellServices: stopCellServicesFn,
+                getWorktreeService: fetchManager,
+                log,
+                recordTimingEvent: insertCellTimingEvent,
               });
+              deletedIds.push(cell.id);
             } catch (error) {
-              log.warn(
-                { error, cellId: cell.id },
-                "Failed to stop services before cell removal"
+              log.error(
+                {
+                  error,
+                  cellId: cell.id,
+                },
+                "Failed to delete cell during bulk delete"
               );
             }
-
-            const worktreeService = await fetchManager(cell.workspaceId);
-            await removeCellWorkspace(worktreeService, cell, log);
           }
 
-          const idsToDelete = cellsToDelete.map((cell) => cell.id);
+          if (deletedIds.length === 0) {
+            set.status = HTTP_STATUS.INTERNAL_ERROR;
+            return { message: "Failed to delete cells" };
+          }
 
-          await database.delete(cells).where(inArray(cells.id, idsToDelete));
-
-          return { deletedIds: idsToDelete };
+          return { deletedIds };
         } catch (error) {
           if (error instanceof Error) {
             log.error(error, "Failed to delete cells");
@@ -2384,19 +2717,6 @@ export function createCellsRoutes(
             return { message: "Cell not found" };
           }
 
-          await closeSession(params.id);
-          closeTerminalSession(params.id);
-          closeChatTerminalSession?.(params.id);
-          clearSetupTerminal(params.id);
-          try {
-            await stopCellServicesFn(params.id, { releasePorts: true });
-          } catch (error) {
-            log.warn(
-              { error, cellId: params.id },
-              "Failed to stop services before cell removal"
-            );
-          }
-
           const workspaceManager = await resolveWorkspaceContextFromDeps(
             resolveWorkspaceCtx,
             cell.workspaceId
@@ -2404,9 +2724,19 @@ export function createCellsRoutes(
           const worktreeService = toAsyncWorktreeManager(
             await workspaceManager.createWorktreeManager()
           );
-          await removeCellWorkspace(worktreeService, cell, log);
 
-          await database.delete(cells).where(eq(cells.id, params.id));
+          await deleteCellWithLifecycle({
+            database,
+            cell,
+            closeSession,
+            closeTerminalSession,
+            closeChatTerminalSession,
+            clearSetupTerminal,
+            stopCellServices: stopCellServicesFn,
+            getWorktreeService: async () => worktreeService,
+            log,
+            recordTimingEvent: insertCellTimingEvent,
+          });
 
           return { message: "Cell deleted successfully" };
         } catch (error) {
@@ -2495,8 +2825,84 @@ async function handleCellCreationRequest(
     log,
   });
 
+  const createRequestStartedAt = new Date();
+  await insertCellTimingEvent({
+    database,
+    log,
+    cellId: context.state.cellId,
+    cellName: body.name,
+    workflow: "create",
+    runId: context.state.timingRunId,
+    step: "create_request_received",
+    status: "ok",
+    durationMs: 0,
+    templateId: body.templateId,
+    workspaceId: workspaceContext.workspace.id,
+    createdAt: createRequestStartedAt,
+  });
+
   try {
-    const cell = await createCellRecord(context);
+    const createRecord = await createCellRecord(context);
+    const { cell, timing } = createRecord;
+    const createRecordDurationMs = timing.totalDurationMs;
+    context.log.info?.(
+      {
+        cellId: context.state.cellId,
+        templateId: body.templateId,
+        workspaceId: workspaceContext.workspace.id,
+        phase: "create_cell_record",
+        durationMs: createRecordDurationMs,
+      },
+      "Cell creation phase completed"
+    );
+
+    const creationSteps: Array<{
+      step: string;
+      durationMs: number;
+      createdAt: Date;
+      metadata?: Record<string, unknown>;
+    }> = [
+      {
+        step: "insert_cell_record",
+        durationMs: timing.insertCellRecordDurationMs,
+        createdAt: timing.insertCellRecordCompletedAt,
+      },
+      {
+        step: "insert_provisioning_state",
+        durationMs: timing.insertProvisioningStateDurationMs,
+        createdAt: timing.insertProvisioningStateCompletedAt,
+      },
+      {
+        step: "create_cell_record",
+        durationMs: createRecordDurationMs,
+        createdAt: timing.totalCompletedAt,
+        metadata: {
+          phaseDurations: {
+            insert_cell_record: timing.insertCellRecordDurationMs,
+            insert_provisioning_state: timing.insertProvisioningStateDurationMs,
+          },
+        },
+      },
+    ];
+
+    for (const step of creationSteps) {
+      await insertCellTimingEvent({
+        database,
+        log,
+        cellId: context.state.cellId,
+        cellName: body.name,
+        workflow: "create",
+        runId: context.state.timingRunId,
+        step: step.step,
+        status: "ok",
+        durationMs: step.durationMs,
+        templateId: body.templateId,
+        workspaceId: workspaceContext.workspace.id,
+        extraMetadata: step.metadata,
+        createdAt: step.createdAt,
+      });
+    }
+
     startProvisioningWorkflow(context);
     return {
       status: HTTP_STATUS.CREATED,
@@ -2526,12 +2932,44 @@ type CellProvisionState = {
   worktreeCreated: boolean;
   recordCreated: boolean;
   servicesStarted: boolean;
+  timingRunId: string;
+  provisioningStartedAtMs: number | null;
   workspacePath: string | null;
   branchName: string | null;
   baseCommit: string | null;
   createdCell: typeof cells.$inferSelect | null;
   provisioningState: CellProvisioningState | null;
 };
+
+type CellCreationRecordTiming = {
+  insertCellRecordDurationMs: number;
+  insertCellRecordCompletedAt: Date;
+  insertProvisioningStateDurationMs: number;
+  insertProvisioningStateCompletedAt: Date;
+  totalDurationMs: number;
+  totalCompletedAt: Date;
+};
+
+type CellCreationRecordResult = {
+  cell: typeof cells.$inferSelect;
+  timing: CellCreationRecordTiming;
+};
+
+type CapturedWorktreeCreateTimingEvent = WorktreeCreateTimingEvent & {
+  capturedAt: Date;
+};
+
+type ProvisionPhase =
+  | "create_worktree"
+  | "ensure_services"
+  | "ensure_agent_session"
+  | "send_initial_prompt"
+  | "mark_ready";
+
+type RunProvisionPhase = <T>(
+  phase: ProvisionPhase,
+  action: () => Promise<T>
+) => Promise<T>;
 
 function createProvisionContext(args: {
   body: Static<typeof CreateCellSchema>;
@@ -2552,6 +2990,8 @@ function createProvisionContext(args: {
       worktreeCreated: false,
       recordCreated: false,
       servicesStarted: false,
+      timingRunId: randomUUID(),
+      provisioningStartedAtMs: null,
       workspacePath: null,
       branchName: null,
       baseCommit: null,
@@ -2591,9 +3031,11 @@ async function createExistingProvisionContext(args: {
     log: args.log,
     state: {
       cellId: args.cell.id,
-      worktreeCreated: true,
+      worktreeCreated: Boolean(args.cell.baseCommit && args.cell.workspacePath),
       recordCreated: true,
       servicesStarted: false,
+      timingRunId: randomUUID(),
+      provisioningStartedAtMs: null,
       workspacePath: args.cell.workspacePath,
       branchName: args.cell.branchName,
       baseCommit: args.cell.baseCommit,
@@ -2605,13 +3047,103 @@ async function createExistingProvisionContext(args: {
 
 async function createCellRecord(
   context: ProvisionContext
-): Promise<typeof cells.$inferSelect> {
-  const { body, database, worktreeService, workspace, state } = context;
+): Promise<CellCreationRecordResult> {
+  const { body, database, workspace, state } = context;
+
+  const createRecordStartedAt = Date.now();
+  let insertCellRecordDurationMs = 0;
+  let insertCellRecordCompletedAt = new Date(createRecordStartedAt);
+  let insertProvisioningStateDurationMs = 0;
+  let insertProvisioningStateCompletedAt = new Date(createRecordStartedAt);
+
+  const expectedWorkspacePath = join(resolveCellsRoot(), state.cellId);
+  const branchName = `cell-${state.cellId}`;
+
+  state.workspacePath = expectedWorkspacePath;
+  state.branchName = branchName;
+  state.baseCommit = null;
+
+  const timestamp = new Date();
+  const newCell: NewCell = {
+    id: state.cellId,
+    name: body.name,
+    description: body.description ?? null,
+    templateId: body.templateId,
+    workspacePath: expectedWorkspacePath,
+    workspaceId: workspace.id,
+    workspaceRootPath: workspace.path,
+    branchName,
+    baseCommit: null,
+    opencodeSessionId: null,
+    createdAt: timestamp,
+    status: "spawning",
+    lastSetupError: null,
+  };
+
+  const insertCellStartedAt = Date.now();
+  const [created] = await database.insert(cells).values(newCell).returning();
+  insertCellRecordDurationMs = Date.now() - insertCellStartedAt;
+  insertCellRecordCompletedAt = new Date();
+
+  if (!created) {
+    throw new Error("Failed to create cell record");
+  }
+
+  state.recordCreated = true;
+  state.createdCell = created;
+
+  const insertProvisioningStartedAt = Date.now();
+  const [provisioningState] = await database
+    .insert(cellProvisioningStates)
+    .values({
+      cellId: state.cellId,
+      modelIdOverride: body.modelId ?? null,
+      providerIdOverride: body.providerId ?? null,
+      startedAt: null,
+      finishedAt: null,
+      attemptCount: 0,
+    })
+    .returning();
+  insertProvisioningStateDurationMs = Date.now() - insertProvisioningStartedAt;
+  insertProvisioningStateCompletedAt = new Date();
+
+  state.provisioningState = provisioningState ?? null;
+
+  const totalCompletedAt = new Date();
+  return {
+    cell: created,
+    timing: {
+      insertCellRecordDurationMs,
+      insertCellRecordCompletedAt,
+      insertProvisioningStateDurationMs,
+      insertProvisioningStateCompletedAt,
+      totalDurationMs: totalCompletedAt.getTime() - createRecordStartedAt,
+      totalCompletedAt,
+    },
+  };
+}
+
+async function ensureCellWorktree(
+  context: ProvisionContext,
+  onTimingEvent?: (event: CapturedWorktreeCreateTimingEvent) => void
+): Promise<void> {
+  const { body, database, worktreeService, state } = context;
+
+  if (state.worktreeCreated && state.workspacePath && state.baseCommit) {
+    return;
+  }
 
   let worktree: { path: string; branch: string; baseCommit: string };
   try {
     worktree = await worktreeService.createWorktree(state.cellId, {
       templateId: body.templateId,
+      force: true,
+      onTimingEvent: (event) => {
+        onTimingEvent?.({
+          ...event,
+          capturedAt: new Date(),
+        });
+      },
     });
   } catch (error) {
     const details =
@@ -2627,55 +3159,44 @@ async function createCellRecord(
     );
     throw error;
   }
+
   state.worktreeCreated = true;
   state.workspacePath = worktree.path;
   state.branchName = worktree.branch;
   state.baseCommit = worktree.baseCommit;
 
-  const timestamp = new Date();
-  const newCell: NewCell = {
-    id: state.cellId,
-    name: body.name,
-    description: body.description ?? null,
-    templateId: body.templateId,
-    workspacePath: worktree.path,
-    workspaceId: workspace.id,
-    workspaceRootPath: workspace.path,
-    branchName: worktree.branch,
-    baseCommit: worktree.baseCommit,
-    opencodeSessionId: null,
-    createdAt: timestamp,
-    status: "spawning",
-    lastSetupError: null,
-  };
+  await database
+    .update(cells)
+    .set({
+      workspacePath: worktree.path,
+      branchName: worktree.branch,
+      baseCommit: worktree.baseCommit,
+    })
+    .where(eq(cells.id, state.cellId));
 
-  const [created] = await database.insert(cells).values(newCell).returning();
-
-  if (!created) {
-    throw new Error("Failed to create cell record");
+  if (state.createdCell) {
+    state.createdCell = {
+      ...state.createdCell,
+      workspacePath: worktree.path,
+      branchName: worktree.branch,
+      baseCommit: worktree.baseCommit,
+    };
   }
 
-  state.recordCreated = true;
-  state.createdCell = created;
-
-  const [provisioningState] = await database
-    .insert(cellProvisioningStates)
-    .values({
-      cellId: state.cellId,
-      modelIdOverride: body.modelId ?? null,
-      providerIdOverride: body.providerId ?? null,
-      startedAt: null,
-      finishedAt: null,
-      attemptCount: 0,
-    })
-    .returning();
-
-  state.provisioningState = provisioningState ?? null;
-
-  return created;
+  return;
 }
 
 function startProvisioningWorkflow(context: ProvisionContext) {
+  const cellId = context.state.cellId;
+  if (activeProvisioningWorkflows.has(cellId)) {
+    context.log.info?.(
+      { cellId },
+      "Skipped provisioning workflow start because another attempt is active"
+    );
+    return false;
+  }
+
+  activeProvisioningWorkflows.add(cellId);
   beginProvisioningAttempt(context)
     .then(() => finalizeCellProvisioning(context))
     .catch((error) => {
@@ -2687,7 +3208,12 @@ function startProvisioningWorkflow(context: ProvisionContext) {
           "Failed to handle provisioning failure"
         );
       });
+    })
+    .finally(() => {
+      activeProvisioningWorkflows.delete(cellId);
     });
+
+  return true;
 }
 
 async function beginProvisioningAttempt(
@@ -2715,6 +3241,65 @@ async function beginProvisioningAttempt(
   };
 }
 
+async function runCreateWorktreePhase(args: {
+  context: ProvisionContext;
+  runPhase: RunProvisionPhase;
+  attempt: number | null;
+  database: DatabaseClient;
+  template: Template;
+  body: Static<typeof CreateCellSchema>;
+}) {
+  const { context, runPhase, attempt, database, template, body } = args;
+  const { state } = context;
+
+  await assertCellStillExists(context, "create_worktree");
+
+  if (state.worktreeCreated && state.workspacePath && state.baseCommit) {
+    return;
+  }
+
+  const worktreeTimingWrites: Promise<void>[] = [];
+
+  const persistWorktreeTimingEvent = (
+    event: CapturedWorktreeCreateTimingEvent
+  ) => {
+    worktreeTimingWrites.push(
+      insertCellTimingEvent({
+        database,
+        log: context.log,
+        cellId: state.cellId,
+        cellName: state.createdCell?.name ?? body.name,
+        workflow: "create",
+        runId: state.timingRunId,
+        step: `create_worktree:${event.step}`,
+        status: "ok",
+        durationMs: event.durationMs,
+        attempt,
+        templateId: template.id,
+        workspaceId: context.workspace.id,
+        extraMetadata: event.metadata,
+        createdAt: event.capturedAt,
+      })
+    );
+  };
+
+  try {
+    await runPhase("create_worktree", async () => {
+      await ensureCellWorktree(context, persistWorktreeTimingEvent);
+    });
+  } finally {
+    const settledWrites = await Promise.allSettled(worktreeTimingWrites);
+    for (const write of settledWrites) {
+      if (write.status === "rejected") {
+        context.log.warn(
+          { error: write.reason, cellId: state.cellId },
+          "Failed to persist create_worktree timing sub-step"
+        );
+      }
+    }
+  }
+}
+
 async function finalizeCellProvisioning(
   context: ProvisionContext
 ): Promise<void> {
@@ -2732,10 +3317,111 @@ async function finalizeCellProvisioning(
     throw new Error("Cell record missing during provisioning");
   }
 
-  await ensureServices({
-    cell: state.createdCell,
+  const attempt = state.provisioningState?.attemptCount ?? null;
+  const provisioningStartedAt = Date.now();
+  state.provisioningStartedAtMs = provisioningStartedAt;
+  const phaseDurations: Record<string, number> = {};
+  const runPhase: RunProvisionPhase = async <T>(
+    phase: ProvisionPhase,
+    action: () => Promise<T>
+  ): Promise<T> => {
+    await assertCellStillExists(context, phase);
+
+    const startedAt = Date.now();
+    let phaseStatus: CellTimingStatus = "ok";
+    let phaseError: string | null = null;
+    try {
+      return await action();
+    } catch (error) {
+      phaseStatus = "error";
+      phaseError = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      const durationMs = Date.now() - startedAt;
+      phaseDurations[phase] = durationMs;
+
+      await insertCellTimingEvent({
+        database,
+        log: context.log,
+        cellId: state.cellId,
+        cellName: state.createdCell?.name ?? body.name,
+        workflow: "create",
+        runId: state.timingRunId,
+        step: phase,
+        status: phaseStatus,
+        durationMs,
+        attempt,
+        error: phaseError,
+        templateId: template.id,
+        workspaceId: context.workspace.id,
+      });
+
+      context.log.info?.(
+        {
+          cellId: state.cellId,
+          templateId: template.id,
+          attempt,
+          phase,
+          durationMs,
+        },
+        "Cell provisioning phase completed"
+      );
+    }
+  };
+
+  await runCreateWorktreePhase({
+    context,
+    runPhase,
+    attempt,
+    database,
     template,
+    body,
   });
+
+  if (!state.createdCell) {
+    throw new Error("Cell record missing after worktree provisioning");
+  }
+  const createdCell: NonNullable<CellProvisionState["createdCell"]> =
+    state.createdCell;
+
+  const ensureServicesTimingEvents: Array<
+    EnsureCellServicesTimingEvent & { capturedAt: Date }
+  > = [];
+
+  try {
+    await runPhase("ensure_services", async () =>
+      ensureServices({
+        cell: createdCell,
+        template,
+        onTimingEvent: (event) => {
+          ensureServicesTimingEvents.push({
+            ...event,
+            capturedAt: new Date(),
+          });
+        },
+      })
+    );
+  } finally {
+    for (const event of ensureServicesTimingEvents) {
+      await insertCellTimingEvent({
+        database,
+        log: context.log,
+        cellId: state.cellId,
+        cellName: state.createdCell?.name ?? body.name,
+        workflow: "create",
+        runId: state.timingRunId,
+        step: `ensure_services:${event.step}`,
+        status: event.status,
+        durationMs: event.durationMs,
+        attempt,
+        error: event.error ?? null,
+        templateId: template.id,
+        workspaceId: context.workspace.id,
+        extraMetadata: event.metadata,
+        createdAt: event.capturedAt,
+      });
+    }
+  }
 
   state.servicesStarted = true;
 
@@ -2743,20 +3429,35 @@ async function finalizeCellProvisioning(
     ...(body.modelId ? { modelId: body.modelId } : {}),
     ...(body.providerId ? { providerId: body.providerId } : {}),
   };
-  const session = await ensureSession(
-    state.cellId,
-    Object.keys(sessionOptions).length ? sessionOptions : undefined
+  const existingSessionId = state.createdCell?.opencodeSessionId ?? null;
+  const session = await runPhase("ensure_agent_session", async () =>
+    ensureSession(
+      state.cellId,
+      Object.keys(sessionOptions).length ? sessionOptions : undefined
+    )
   );
 
-  const initialPrompt = body.description?.trim();
-  if (initialPrompt) {
-    await dispatchAgentMessage(session.id, initialPrompt);
+  if (state.createdCell) {
+    state.createdCell = {
+      ...state.createdCell,
+      opencodeSessionId: session.id,
+    };
   }
 
-  const finishedAt = await updateCellProvisioningStatus(
-    database,
-    state.cellId,
-    "ready"
+  const initialPrompt = body.description?.trim();
+  const shouldSendInitialPrompt = shouldSendInitialPromptForAttempt({
+    attempt,
+    initialPrompt,
+    existingSessionId,
+  });
+  if (shouldSendInitialPrompt && initialPrompt) {
+    await runPhase("send_initial_prompt", async () =>
+      dispatchAgentMessage(session.id, initialPrompt)
+    );
+  }
+
+  const finishedAt = await runPhase("mark_ready", async () =>
+    updateCellProvisioningStatus(database, state.cellId, "ready")
   );
 
   state.createdCell = {
@@ -2771,12 +3472,58 @@ async function finalizeCellProvisioning(
       finishedAt,
     };
   }
+
+  context.log.info?.(
+    {
+      cellId: state.cellId,
+      templateId: template.id,
+      attempt,
+      totalDurationMs: Date.now() - provisioningStartedAt,
+      phaseDurations,
+    },
+    "Cell provisioning completed"
+  );
+
+  await insertCellTimingEvent({
+    database,
+    log: context.log,
+    cellId: state.cellId,
+    cellName: state.createdCell?.name ?? body.name,
+    workflow: "create",
+    runId: state.timingRunId,
+    step: "total",
+    status: "ok",
+    durationMs: Date.now() - provisioningStartedAt,
+    attempt,
+    templateId: template.id,
+    workspaceId: context.workspace.id,
+    extraMetadata: {
+      phaseDurations,
+    },
+  });
+  state.provisioningStartedAtMs = null;
 }
 
 async function handleDeferredProvisionFailure(
   context: ProvisionContext,
   error: unknown
 ): Promise<void> {
+  const cancellationReason = await resolveProvisioningCancellationReason(
+    context.database,
+    context.state.cellId
+  );
+  if (cancellationReason) {
+    await cleanupProvisionResources(context, { preserveRecord: true });
+    context.log.info?.(
+      {
+        cellId: context.state.cellId,
+        reason: cancellationReason,
+      },
+      PROVISIONING_CANCELLED_MESSAGE
+    );
+    return;
+  }
+
   const payload = buildCellCreationErrorPayload(error);
   const lastSetupError = deriveSetupErrorDetails(payload);
 
@@ -2804,6 +3551,26 @@ async function handleDeferredProvisionFailure(
     };
   }
 
+  if (context.state.provisioningStartedAtMs != null) {
+    const totalDurationMs = Date.now() - context.state.provisioningStartedAtMs;
+    await insertCellTimingEvent({
+      database: context.database,
+      log: context.log,
+      cellId: context.state.cellId,
+      cellName: context.state.createdCell?.name ?? context.body.name,
+      workflow: "create",
+      runId: context.state.timingRunId,
+      step: "total",
+      status: "error",
+      durationMs: totalDurationMs,
+      attempt: context.state.provisioningState?.attemptCount ?? null,
+      error: lastSetupError,
+      templateId: context.template.id,
+      workspaceId: context.workspace.id,
+    });
+    context.state.provisioningStartedAtMs = null;
+  }
+
   if (error instanceof Error) {
     context.log.error(error, "Cell provisioning failed after response");
   } else {
@@ -2817,6 +3584,22 @@ async function recoverCellCreationFailure(
 ): Promise<CellCreationResult> {
   const payload = buildCellCreationErrorPayload(error);
   const preserveResources = shouldPreserveCellWorkspace(error);
+
+  await insertCellTimingEvent({
+    database: context.database,
+    log: context.log,
+    cellId: context.state.cellId,
+    cellName: context.state.createdCell?.name ?? context.body.name,
+    workflow: "create",
+    runId: context.state.timingRunId,
+    step: "create_request_failure",
+    status: "error",
+    durationMs: 0,
+    error: payload.message,
+    attempt: context.state.provisioningState?.attemptCount ?? null,
+    templateId: context.template.id,
+    workspaceId: context.workspace.id,
+  });
 
   if (
     preserveResources &&
@@ -2881,6 +3664,45 @@ async function cleanupProvisionResources(
   if (!options.preserveRecord) {
     await deleteCellRecordIfCreated(context);
   }
+}
+
+async function resolveProvisioningCancellationReason(
+  database: DatabaseClient,
+  cellId: string
+): Promise<"missing" | "deleting" | null> {
+  const record = await database
+    .select({ id: cells.id, status: cells.status })
+    .from(cells)
+    .where(eq(cells.id, cellId))
+    .limit(1);
+  const [current] = record;
+
+  if (!current) {
+    return "missing";
+  }
+
+  if (current.status === "deleting") {
+    return "deleting";
+  }
+
+  return null;
+}
+
+async function assertCellStillExists(
+  context: ProvisionContext,
+  phase: ProvisionPhase
+): Promise<void> {
+  const cancellationReason = await resolveProvisioningCancellationReason(
+    context.database,
+    context.state.cellId
+  );
+  if (!cancellationReason) {
+    return;
+  }
+
+  throw new Error(
+    `${PROVISIONING_CANCELLED_MESSAGE} (phase: ${phase}, reason: ${cancellationReason})`
+  );
 }
 
 async function stopServicesIfStarted(context: ProvisionContext) {
@@ -2959,17 +3781,32 @@ function resolveProvisioningParams(
   };
 }
 
-type CellWorkspaceRecord = Pick<
-  typeof cells.$inferSelect,
-  "id" | "workspacePath"
->;
+function shouldSendInitialPromptForAttempt(args: {
+  attempt: number | null;
+  initialPrompt?: string;
+  existingSessionId: string | null;
+}): boolean {
+  if (!args.initialPrompt) {
+    return false;
+  }
+
+  if (args.attempt === 1) {
+    return true;
+  }
+
+  return !args.existingSessionId;
+}
 
 type LoggerLike = {
+  info?: (obj: Record<string, unknown>, message?: string) => void;
   warn: (obj: Record<string, unknown>, message?: string) => void;
   error: (obj: Record<string, unknown> | Error, message?: string) => void;
 };
 
 const backgroundProvisioningLogger: LoggerLike = {
+  info: () => {
+    /* noop */
+  },
   warn: () => {
     /* noop */
   },
@@ -3039,10 +3876,7 @@ const resumeSingleCell = async (
   }
 };
 
-const resumePendingCells = async (
-  overrides: Partial<CellRouteDependencies> = {}
-) => {
-  const deps = await resolveCellRouteDependencies(overrides);
+const resumePendingCells = async (deps: CellRouteDependencies) => {
   const pendingCells = await deps.db
     .select({
       cell: cells,
@@ -3060,10 +3894,53 @@ const resumePendingCells = async (
   }
 };
 
+const resumeDeletingCells = async (deps: CellRouteDependencies) => {
+  const deletingCells = await deps.db
+    .select({
+      id: cells.id,
+      name: cells.name,
+      templateId: cells.templateId,
+      workspacePath: cells.workspacePath,
+      workspaceId: cells.workspaceId,
+      status: cells.status,
+    })
+    .from(cells)
+    .where(eq(cells.status, "deleting"));
+
+  if (deletingCells.length === 0) {
+    return;
+  }
+
+  const fetchManager = createWorktreeManagerFetcher(
+    deps.resolveWorkspaceContext
+  );
+
+  for (const cell of deletingCells) {
+    try {
+      await deleteCellWithLifecycle({
+        database: deps.db,
+        cell,
+        closeSession: deps.closeAgentSession,
+        closeTerminalSession: deps.closeTerminalSession,
+        closeChatTerminalSession: deps.closeChatTerminalSession,
+        clearSetupTerminal: deps.clearSetupTerminal,
+        stopCellServices: deps.stopServicesForCell,
+        getWorktreeService: fetchManager,
+        log: backgroundProvisioningLogger,
+        recordTimingEvent: insertCellTimingEvent,
+      });
+    } catch {
+      // best-effort startup recovery: failed deletes restore cells to error status
+    }
+  }
+};
+
 export async function resumeSpawningCells(
   overrides: Partial<CellRouteDependencies> = {}
 ): Promise<void> {
-  await resumePendingCells(overrides);
+  const deps = await resolveCellRouteDependencies(overrides);
+  await resumePendingCells(deps);
+  await resumeDeletingCells(deps);
 }
 
 const isServiceSupervisorError = (
@@ -3249,6 +4126,12 @@ const buildTemplateSetupErrorPayload = (
     details.push(`exit code ${exitCode}`);
   }
 
+  const causeMessage =
+    error.cause instanceof Error ? error.cause.message.trim() : "";
+  if (causeMessage.length > 0) {
+    details.push(`Reason: ${causeMessage}`);
+  }
+
   const stack = formatStackTrace(error);
   const causeStack = formatStackTrace(
     error.cause instanceof Error ? error.cause : undefined
@@ -3317,43 +4200,6 @@ function formatStackTrace(error?: Error): string | undefined {
   return error.stack ?? error.message;
 }
 
-async function removeCellWorkspace(
-  worktreeService: AsyncWorktreeManager,
-  cell: CellWorkspaceRecord,
-  log: LoggerLike
-) {
-  try {
-    await worktreeService.removeWorktree(cell.id);
-    return;
-  } catch (error) {
-    const worktreeError = error as WorktreeManagerError;
-    log.warn(
-      {
-        error: describeWorktreeError(worktreeError),
-        cellId: cell.id,
-      },
-      "Failed to remove git worktree, attempting filesystem cleanup"
-    );
-  }
-
-  if (!cell.workspacePath) {
-    return;
-  }
-
-  try {
-    await fs.rm(cell.workspacePath, { recursive: true, force: true });
-  } catch (filesystemError) {
-    log.warn(
-      {
-        error: filesystemError,
-        cellId: cell.id,
-        workspacePath: cell.workspacePath,
-      },
-      "Failed to remove cell workspace directory"
-    );
-  }
-}
-
 async function loadCellById(
   database: DatabaseClient,
   cellId: string
@@ -3365,6 +4211,75 @@ async function loadCellById(
     .limit(1);
 
   return cell ?? null;
+}
+
+function resolveSetupRetryCell(
+  cell: typeof cells.$inferSelect | null
+):
+  | { ok: true; cell: typeof cells.$inferSelect }
+  | { ok: false; status: number; message: string } {
+  if (!cell) {
+    return {
+      ok: false,
+      status: HTTP_STATUS.NOT_FOUND,
+      message: "Cell not found",
+    };
+  }
+
+  if (cell.status === "deleting") {
+    return {
+      ok: false,
+      status: HTTP_STATUS.CONFLICT,
+      message: "Cell is being deleted",
+    };
+  }
+
+  return { ok: true, cell };
+}
+
+function shouldEmitCellRemovalEvent(
+  cell: typeof cells.$inferSelect | null
+): boolean {
+  if (!cell) {
+    return true;
+  }
+
+  return cell.status === "deleting";
+}
+
+async function resolveWorkspaceCellStreamEvent(args: {
+  database: DatabaseClient;
+  event: CellStatusEvent;
+  log: LoggerLike;
+}): Promise<
+  | { event: "cell"; data: ReturnType<typeof cellToResponse> }
+  | { event: "cell_removed"; data: { id: string } }
+  | null
+> {
+  try {
+    const cell = await loadCellById(args.database, args.event.cellId);
+    if (shouldEmitCellRemovalEvent(cell)) {
+      return {
+        event: "cell_removed",
+        data: { id: args.event.cellId },
+      };
+    }
+
+    if (!cell) {
+      return null;
+    }
+
+    return {
+      event: "cell",
+      data: cellToResponse(cell),
+    };
+  } catch (error) {
+    args.log.error(
+      { error, cellId: args.event.cellId },
+      "Failed to stream cell update"
+    );
+    return null;
+  }
 }
 
 function fetchServiceRows(

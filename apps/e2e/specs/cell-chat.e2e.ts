@@ -1,6 +1,10 @@
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import { selectors } from "../src/selectors";
-import { createCellViaApi } from "../src/test-helpers";
+import {
+  createCellViaApi,
+  waitForChatRoute,
+  waitForProvisioningOrChatRoute,
+} from "../src/test-helpers";
 
 type AgentSession = {
   id: string;
@@ -26,7 +30,8 @@ type AgentMessageListResponse = {
   messages: AgentMessage[];
 };
 
-const CHAT_ROUTE_TIMEOUT_MS = 30_000;
+const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
+const CHAT_ROUTE_TIMEOUT_MS = 180_000;
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
 const TERMINAL_INPUT_READY_TIMEOUT_MS = 30_000;
 const SESSION_UPDATE_TIMEOUT_MS = 120_000;
@@ -38,10 +43,10 @@ const SEND_API_TIMEOUT_MS = 8000;
 const POST_RESPONSE_VIDEO_SETTLE_MS = 500;
 const POLL_INTERVAL_MS = 500;
 const TERMINAL_RECOVERY_WAIT_MS = 750;
-const CELL_CHAT_URL_PATTERN = /\/cells\/[^/]+\/chat/;
 const CELL_TEMPLATE_LABEL = "E2E Template";
 const EXPECTED_MODEL_ID = "big-pickle";
 const EXPECTED_MODEL_PROVIDER_ID = "opencode";
+const PROVISIONING_TIMELINE_TEXT = /Provisioning timeline/i;
 
 test.describe("cell chat flow", () => {
   test("creates a cell and sends a chat message", async ({
@@ -61,8 +66,19 @@ test.describe("cell chat flow", () => {
 
     await page.goto(`/cells/${cellId}/chat`);
 
-    await expect(page).toHaveURL(CELL_CHAT_URL_PATTERN, {
-      timeout: CHAT_ROUTE_TIMEOUT_MS,
+    const initialRoute = await waitForProvisioningOrChatRoute({
+      page,
+      cellId,
+      timeoutMs: INITIAL_ROUTE_TIMEOUT_MS,
+    });
+    if (initialRoute === "provisioning") {
+      await expect(page.getByText(PROVISIONING_TIMELINE_TEXT)).toBeVisible();
+    }
+
+    await waitForChatRoute({
+      page,
+      cellId,
+      timeoutMs: CHAT_ROUTE_TIMEOUT_MS,
     });
 
     await ensureTerminalReady(page, {

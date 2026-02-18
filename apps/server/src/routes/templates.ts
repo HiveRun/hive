@@ -22,6 +22,7 @@ const HTTP_STATUS = {
 
 type TemplateListResponse = Static<typeof TemplateListResponseSchema>;
 type TemplateResponse = Static<typeof TemplateResponseSchema>;
+type AgentDefaults = TemplateListResponse["agentDefaults"];
 
 const POSIX_SEPARATOR = "/";
 const INCLUDE_DIRECTORY_PREVIEW_LIMIT = 50;
@@ -30,11 +31,27 @@ const INCLUDE_PREVIEW_IGNORED_DIRECTORIES = [
   "node_modules",
   ".hive",
   ".turbo",
-  "vendor",
 ];
 const LEADING_DOT_SLASH_REGEX = /^\.\/+/;
 const LEADING_GLOB_PREFIX_REGEX = /^\*\*\//;
 const TRAILING_SEPARATOR_REGEX = /\/+$/;
+const WORKSPACE_CONFIG_CACHE_TTL_MS = 60_000;
+const OPENCODE_DEFAULTS_CACHE_TTL_MS = 60_000;
+const HIVE_CONFIG_FILENAME = "hive.config.json";
+
+const workspaceConfigCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    mtimeMs: number | null;
+    value: Awaited<ReturnType<typeof loadConfig>>;
+  }
+>();
+
+const opencodeDefaultsCache = new Map<
+  string,
+  { expiresAt: number; value?: AgentDefaults }
+>();
 
 const logTemplatesWarning = (message: string) => {
   if (process.env.NODE_ENV === "test") {
@@ -210,6 +227,40 @@ const resolveWorkspace = async (
   return workspace;
 };
 
+const shouldUseRouteCaches = () => process.env.NODE_ENV !== "test";
+
+const readWorkspaceConfigMtimeMs = async (
+  workspacePath: string
+): Promise<number | null> => {
+  try {
+    const stats = await stat(join(workspacePath, HIVE_CONFIG_FILENAME));
+    return stats.mtimeMs;
+  } catch {
+    return null;
+  }
+};
+
+const loadCachedWorkspaceConfig = async (workspacePath: string) => {
+  if (!shouldUseRouteCaches()) {
+    return await loadConfig(workspacePath);
+  }
+
+  const now = Date.now();
+  const mtimeMs = await readWorkspaceConfigMtimeMs(workspacePath);
+  const cached = workspaceConfigCache.get(workspacePath);
+  if (cached && cached.expiresAt > now && cached.mtimeMs === mtimeMs) {
+    return cached.value;
+  }
+
+  const value = await loadConfig(workspacePath);
+  workspaceConfigCache.set(workspacePath, {
+    value,
+    expiresAt: now + WORKSPACE_CONFIG_CACHE_TTL_MS,
+    mtimeMs,
+  });
+  return value;
+};
+
 const workspaceConfig = async (workspaceId?: string) => {
   let workspace: WorkspaceRecord;
   try {
@@ -230,7 +281,7 @@ const workspaceConfig = async (workspaceId?: string) => {
   }
 
   try {
-    const config = await loadConfig(workspace.path);
+    const config = await loadCachedWorkspaceConfig(workspace.path);
     return {
       config,
       workspacePath: workspace.path,
@@ -256,6 +307,29 @@ const loadOpencodeForWorkspace = async (workspacePath: string) => {
   }
 };
 
+const loadCachedOpencodeDefaults = async (
+  workspacePath: string
+): Promise<AgentDefaults | undefined> => {
+  if (!shouldUseRouteCaches()) {
+    const opencodeConfig = await loadOpencodeForWorkspace(workspacePath);
+    return opencodeConfig.defaultModel;
+  }
+
+  const now = Date.now();
+  const cached = opencodeDefaultsCache.get(workspacePath);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const opencodeConfig = await loadOpencodeForWorkspace(workspacePath);
+  const value = opencodeConfig.defaultModel;
+  opencodeDefaultsCache.set(workspacePath, {
+    value,
+    expiresAt: now + OPENCODE_DEFAULTS_CACHE_TTL_MS,
+  });
+  return value;
+};
+
 const listTemplates = async (
   workspaceId?: string
 ): Promise<TemplateListResponse> => {
@@ -265,14 +339,12 @@ const listTemplates = async (
     templateToResponse(id, template)
   );
 
-  const opencodeConfig = await loadOpencodeForWorkspace(workspacePath);
+  const agentDefaults = await loadCachedOpencodeDefaults(workspacePath);
 
   return {
     templates,
     ...(config.defaults ? { defaults: config.defaults } : {}),
-    ...(opencodeConfig.defaultModel
-      ? { agentDefaults: opencodeConfig.defaultModel }
-      : {}),
+    ...(agentDefaults ? { agentDefaults } : {}),
   } satisfies TemplateListResponse;
 };
 
