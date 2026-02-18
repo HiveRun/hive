@@ -415,14 +415,6 @@ async function waitForChatRoute(options) {
     timeoutMs: options.timeoutMs,
     errorMessage: `Cell ${options.cellId} did not reach chat route. lastPath=${lastPath} lastStatus=${lastStatus}`,
     check: async () => {
-      const url = await browser.getUrl();
-      const path = readPathname(url);
-      lastPath = path;
-
-      if (path === `/cells/${options.cellId}/chat`) {
-        return true;
-      }
-
       const cell = await fetchCellDetail({
         apiUrl: options.apiUrl,
         cellId: options.cellId,
@@ -434,6 +426,17 @@ async function waitForChatRoute(options) {
         throw new Error(
           `Cell ${options.cellId} entered error status while waiting for chat route: ${cell.lastSetupError ?? "setup failed"}`
         );
+      }
+
+      const url = await browser.getUrl();
+      const path = readPathname(url);
+      lastPath = path;
+
+      if (
+        path === `/cells/${options.cellId}/chat` &&
+        cell?.status === "ready"
+      ) {
+        return true;
       }
 
       if (cell?.status !== "ready") {
