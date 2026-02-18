@@ -15,6 +15,8 @@ export type TemplateService = {
 };
 
 export type TemplateConfig = {
+  includePatterns?: string[];
+  ignorePatterns?: string[];
   services?: Record<string, TemplateService>;
   env?: Record<string, string>;
   setup?: string[];

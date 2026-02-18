@@ -70,7 +70,10 @@ function CellSetupPanel() {
     command,
     order: index + 1,
   }));
+  const includePatterns = template?.configJson.includePatterns ?? [];
   const includeDirectories = template?.includeDirectories ?? [];
+  const includeTargets =
+    includePatterns.length > 0 ? includePatterns : includeDirectories;
   const templateError =
     templateQuery.error instanceof Error
       ? templateQuery.error.message
@@ -109,7 +112,7 @@ function CellSetupPanel() {
         <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[1fr_1.4fr]">
           <TemplateCommandsPanel
             errorMessage={templateError}
-            includeDirectories={includeDirectories}
+            includeTargets={includeTargets}
             isLoading={templateQuery.isLoading}
             setupCommands={setupCommandItems}
           />
@@ -314,14 +317,14 @@ function describeActivityEvent(event: CellActivityEvent): string {
 
 type TemplateCommandsPanelProps = {
   errorMessage?: string;
-  includeDirectories: string[];
+  includeTargets: string[];
   isLoading: boolean;
   setupCommands: Array<{ id: string; command: string; order: number }>;
 };
 
 function TemplateCommandsPanel({
   errorMessage,
-  includeDirectories,
+  includeTargets,
   isLoading,
   setupCommands,
 }: TemplateCommandsPanelProps) {
@@ -374,11 +377,11 @@ function TemplateCommandsPanel({
       ) : null}
       <div className="mt-auto space-y-2">
         <h4 className="font-semibold text-foreground text-xs uppercase tracking-[0.3em]">
-          Included directories
+          Included paths
         </h4>
-        {includeDirectories.length > 0 ? (
+        {includeTargets.length > 0 ? (
           <div className="flex flex-wrap gap-2">
-            {includeDirectories.map((dir) => (
+            {includeTargets.map((dir) => (
               <span
                 className="rounded-sm border border-border/60 bg-background/60 px-2 py-1 text-[11px] text-foreground uppercase tracking-[0.3em]"
                 key={dir}
