@@ -28,6 +28,9 @@
           "readyTimeoutMs": 5000
         }
       },
+      "env": {
+        "DATABASE_URL": "local.db"
+      },
       "setup": ["bun setup"],
       "ignorePatterns": [
         "node_modules/**",

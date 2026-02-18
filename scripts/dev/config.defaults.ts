@@ -26,6 +26,9 @@ export const hiveConfigDefaults: HiveConfig = {
       label: "Hive Development Environment",
       type: "manual",
       ignorePatterns: defaultIgnorePatterns,
+      env: {
+        DATABASE_URL: "local.db",
+      },
       setup: ["bun setup"],
       services: {
         web: {
