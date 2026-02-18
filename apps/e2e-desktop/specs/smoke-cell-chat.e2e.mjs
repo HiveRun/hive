@@ -18,6 +18,9 @@ const MAX_TERMINAL_RESTARTS = 2;
 const POLL_INTERVAL_MS = 500;
 const TERMINAL_RECOVERY_WAIT_MS = 750;
 const CHAT_ERROR_SUMMARY_LINES = 6;
+const TERMINAL_MISSING_RELOAD_THRESHOLD = 20;
+const MAX_TERMINAL_PAGE_RELOADS = 2;
+const TERMINAL_PAGE_RELOAD_WAIT_MS = 1500;
 
 const terminalSelectors = {
   connectionBadge: "[data-testid='terminal-connection']",
@@ -268,13 +271,16 @@ async function focusTerminalInput() {
 
 async function ensureTerminalReady(options) {
   let restartCount = 0;
+  let pageReloadCount = 0;
+  let missingBadgeChecks = 0;
   let lastPath = "unknown";
   let lastStatus = "unknown";
   let lastState = "unknown";
 
   await waitForCondition({
     timeoutMs: options.timeoutMs,
-    errorMessage: `Terminal not ready during ${options.context}. lastPath=${lastPath} lastStatus=${lastStatus} lastState=${lastState} restarts=${String(restartCount)}`,
+    errorMessage: () =>
+      `Terminal not ready during ${options.context}. lastPath=${lastPath} lastStatus=${lastStatus} lastState=${lastState} restarts=${String(restartCount)} reloads=${String(pageReloadCount)}`,
     check: async () => {
       const routeState = await ensureChatRouteActive({
         apiUrl: options.apiUrl,
@@ -295,9 +301,31 @@ async function ensureTerminalReady(options) {
       });
       lastState = evaluation.state;
       restartCount = evaluation.restartCount;
+
+      if (evaluation.state === "missing" && routeState.readyForTerminal) {
+        missingBadgeChecks += 1;
+        if (
+          missingBadgeChecks >= TERMINAL_MISSING_RELOAD_THRESHOLD &&
+          pageReloadCount < MAX_TERMINAL_PAGE_RELOADS
+        ) {
+          await forceReloadPage();
+          pageReloadCount += 1;
+          missingBadgeChecks = 0;
+        }
+      } else {
+        missingBadgeChecks = 0;
+      }
+
       return evaluation.ready;
     },
   });
+}
+
+async function forceReloadPage() {
+  await browser.execute(() => {
+    window.location.reload();
+  });
+  await wait(TERMINAL_PAGE_RELOAD_WAIT_MS);
 }
 
 async function evaluateTerminalReadiness(options) {
@@ -426,7 +454,12 @@ async function waitForCondition(options) {
     await wait(intervalMs);
   }
 
-  throw new Error(options.errorMessage);
+  const resolvedErrorMessage =
+    typeof options.errorMessage === "function"
+      ? options.errorMessage()
+      : options.errorMessage;
+
+  throw new Error(resolvedErrorMessage);
 }
 
 async function wait(ms) {
@@ -549,7 +582,7 @@ async function ensureChatRouteActive(options) {
 }
 
 async function assertNoChatLoadError() {
-  const loadErrorText = await browser.execute(() => {
+  const loadErrorText = await browser.execute((lineLimit) => {
     const bodyText = document.body?.innerText ?? "";
     if (!bodyText.includes("Unable to load chat")) {
       return null;
@@ -559,9 +592,9 @@ async function assertNoChatLoadError() {
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean)
-      .slice(0, CHAT_ERROR_SUMMARY_LINES)
+      .slice(0, lineLimit)
       .join(" | ");
-  });
+  }, CHAT_ERROR_SUMMARY_LINES);
 
   if (loadErrorText) {
     throw new Error(`Chat UI reported load failure: ${loadErrorText}`);
