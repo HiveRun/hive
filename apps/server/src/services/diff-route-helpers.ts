@@ -22,6 +22,22 @@ export function parseDiffRequest(
   cell: Cell,
   query: Static<typeof DiffQuerySchema>
 ): DiffRequestParseResult {
+  if (cell.status === "spawning" || cell.status === "pending") {
+    return {
+      ok: false,
+      status: 409,
+      message: "Cell workspace is not ready yet",
+    };
+  }
+
+  if (!cell.workspacePath.trim()) {
+    return {
+      ok: false,
+      status: 409,
+      message: "Cell workspace path is not available yet",
+    };
+  }
+
   const mode = (query.mode ?? "workspace") as DiffMode;
   if (mode === "branch" && !cell.baseCommit) {
     return {

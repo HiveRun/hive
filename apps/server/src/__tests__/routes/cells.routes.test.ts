@@ -107,6 +107,18 @@ async function isRouteNotFound(response: Response): Promise<boolean> {
   return text === "NOT_FOUND";
 }
 
+const textDecoder = new TextDecoder();
+
+async function readSseChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>
+): Promise<string> {
+  const chunk = await reader.read();
+  if (!chunk.value) {
+    return "";
+  }
+  return textDecoder.decode(Buffer.from(chunk.value));
+}
+
 describe("cells route reachability", () => {
   let app: any;
 
@@ -268,5 +280,55 @@ describe("cells route reachability", () => {
     // Should get SSE response, not a "Cell not found" from /:id handler
     expect(response.status).toBe(HTTP_OK);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
+  });
+
+  it("emits cell_removed when streamed cell is deleted", async () => {
+    await testDb.insert(cells).values({
+      id: TEST_CELL_ID,
+      name: "Streaming Cell",
+      description: "stream",
+      templateId: "template-basic",
+      workspacePath: "/tmp/test-workspace-root/.cells/test-cell-id",
+      workspaceId: TEST_WORKSPACE_ID,
+      workspaceRootPath: "/tmp/test-workspace-root",
+      branchName: "cell-test-cell-id",
+      baseCommit: "abc123",
+      opencodeSessionId: null,
+      createdAt: new Date(),
+      status: "ready",
+      lastSetupError: null,
+    });
+
+    const streamResponse = await app.handle(
+      new Request(
+        `http://localhost/api/cells/workspace/${TEST_WORKSPACE_ID}/stream`
+      )
+    );
+
+    expect(streamResponse.status).toBe(HTTP_OK);
+    const reader = streamResponse.body?.getReader();
+    expect(reader).toBeDefined();
+    if (!reader) {
+      return;
+    }
+
+    await readSseChunk(reader); // ready
+    const initialCell = await readSseChunk(reader);
+    expect(initialCell).toContain("event: cell");
+    expect(initialCell).toContain(TEST_CELL_ID);
+    await readSseChunk(reader); // snapshot
+
+    const deleteResponse = await app.handle(
+      new Request(`http://localhost/api/cells/${TEST_CELL_ID}`, {
+        method: "DELETE",
+      })
+    );
+    expect(deleteResponse.status).toBe(HTTP_OK);
+
+    const removalEvent = await readSseChunk(reader);
+    expect(removalEvent).toContain("event: cell_removed");
+    expect(removalEvent).toContain(TEST_CELL_ID);
+
+    await reader.cancel();
   });
 });

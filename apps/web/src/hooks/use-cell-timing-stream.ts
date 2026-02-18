@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { getApiBase } from "@/lib/api-base";
 
 const API_BASE = getApiBase();
+const TIMING_INVALIDATION_DEBOUNCE_MS = 350;
 
 type CellTimingStreamOptions = {
   enabled?: boolean;
@@ -49,12 +50,42 @@ export function useCellTimingStream(
       });
     };
 
-    const timingListener = () => {
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let refreshPending = false;
+
+    const queueRefresh = () => {
+      refreshPending = true;
+      if (refreshTimer) {
+        return;
+      }
+
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        if (!refreshPending) {
+          return;
+        }
+
+        refreshPending = false;
+        refreshTimings();
+      }, TIMING_INVALIDATION_DEBOUNCE_MS);
+    };
+
+    const flushRefreshNow = () => {
+      refreshPending = false;
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+        refreshTimer = null;
+      }
+
       refreshTimings();
     };
 
+    const timingListener = () => {
+      queueRefresh();
+    };
+
     const snapshotListener = () => {
-      refreshTimings();
+      flushRefreshNow();
     };
 
     const errorListener = () => {
@@ -69,6 +100,9 @@ export function useCellTimingStream(
       source.removeEventListener("timing", timingListener);
       source.removeEventListener("snapshot", snapshotListener);
       source.removeEventListener("error", errorListener);
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+      }
       source.close();
     };
   }, [cellId, enabled, queryClient, workflow]);

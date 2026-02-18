@@ -37,11 +37,13 @@ const LEADING_GLOB_PREFIX_REGEX = /^\*\*\//;
 const TRAILING_SEPARATOR_REGEX = /\/+$/;
 const WORKSPACE_CONFIG_CACHE_TTL_MS = 60_000;
 const OPENCODE_DEFAULTS_CACHE_TTL_MS = 60_000;
+const HIVE_CONFIG_FILENAME = "hive.config.json";
 
 const workspaceConfigCache = new Map<
   string,
   {
     expiresAt: number;
+    mtimeMs: number | null;
     value: Awaited<ReturnType<typeof loadConfig>>;
   }
 >();
@@ -227,14 +229,26 @@ const resolveWorkspace = async (
 
 const shouldUseRouteCaches = () => process.env.NODE_ENV !== "test";
 
+const readWorkspaceConfigMtimeMs = async (
+  workspacePath: string
+): Promise<number | null> => {
+  try {
+    const stats = await stat(join(workspacePath, HIVE_CONFIG_FILENAME));
+    return stats.mtimeMs;
+  } catch {
+    return null;
+  }
+};
+
 const loadCachedWorkspaceConfig = async (workspacePath: string) => {
   if (!shouldUseRouteCaches()) {
     return await loadConfig(workspacePath);
   }
 
   const now = Date.now();
+  const mtimeMs = await readWorkspaceConfigMtimeMs(workspacePath);
   const cached = workspaceConfigCache.get(workspacePath);
-  if (cached && cached.expiresAt > now) {
+  if (cached && cached.expiresAt > now && cached.mtimeMs === mtimeMs) {
     return cached.value;
   }
 
@@ -242,6 +256,7 @@ const loadCachedWorkspaceConfig = async (workspacePath: string) => {
   workspaceConfigCache.set(workspacePath, {
     value,
     expiresAt: now + WORKSPACE_CONFIG_CACHE_TTL_MS,
+    mtimeMs,
   });
   return value;
 };

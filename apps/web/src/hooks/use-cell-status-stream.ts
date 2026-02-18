@@ -51,16 +51,54 @@ export function useCellStatusStream(
       }
     };
 
+    const cellRemovedListener = (event: MessageEvent<string>) => {
+      if (!isActive) {
+        return;
+      }
+
+      try {
+        const payload = JSON.parse(event.data) as { id?: string };
+        if (!payload.id) {
+          return;
+        }
+
+        queryClient.setQueryData<Cell[]>(
+          ["cells", workspaceId],
+          (currentCells) => {
+            if (!currentCells) {
+              return currentCells;
+            }
+
+            return currentCells.filter((cell) => cell.id !== payload.id);
+          }
+        );
+        queryClient.removeQueries({
+          queryKey: ["cells", payload.id],
+          exact: true,
+        });
+      } catch {
+        /* ignore malformed events */
+      }
+    };
+
     const errorListener = () => {
       // Keep the stream open so EventSource can auto-reconnect.
     };
 
     source.addEventListener("cell", cellListener as EventListener);
+    source.addEventListener(
+      "cell_removed",
+      cellRemovedListener as EventListener
+    );
     source.addEventListener("error", errorListener);
 
     return () => {
       isActive = false;
       source.removeEventListener("cell", cellListener as EventListener);
+      source.removeEventListener(
+        "cell_removed",
+        cellRemovedListener as EventListener
+      );
       source.removeEventListener("error", errorListener);
       source.close();
     };

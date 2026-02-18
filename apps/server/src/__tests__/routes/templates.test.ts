@@ -1,3 +1,6 @@
+import type { Stats } from "node:fs";
+// biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
+import * as FsPromises from "node:fs/promises";
 import { Elysia } from "elysia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 // biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
@@ -42,6 +45,7 @@ const workspaceRecord: WorkspaceRegistry.WorkspaceRecord = {
 let getWorkspaceRegistrySpy: any;
 let loadConfigSpy: any;
 let loadOpencodeConfigSpy: any;
+let statSpy: any;
 
 const createApp = () => new Elysia().use(templatesRoutes);
 
@@ -59,6 +63,10 @@ describe("templatesRoutes", () => {
     loadConfigSpy = vi
       .spyOn(Loader, "loadConfig")
       .mockResolvedValue(baseHiveConfig);
+
+    statSpy = vi
+      .spyOn(FsPromises, "stat")
+      .mockResolvedValue({ mtimeMs: 1000 } as Stats);
 
     loadOpencodeConfigSpy = vi
       .spyOn(OpencodeConfig, "loadOpencodeConfig")
@@ -163,5 +171,60 @@ describe("templatesRoutes", () => {
     expect(response.status).toBe(HTTP_BAD_REQUEST);
     const payload = (await response.json()) as { message: string };
     expect(payload.message).toContain("OpenCode");
+  });
+
+  it("refreshes cached template config when hive config mtime changes", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+
+    const updatedConfig: HiveConfig = {
+      ...baseHiveConfig,
+      templates: {
+        ...baseHiveConfig.templates,
+        "template-updated": {
+          id: "template-updated",
+          label: "Updated",
+          type: "manual",
+        },
+      },
+      defaults: {
+        templateId: "template-updated",
+      },
+    };
+
+    loadConfigSpy
+      .mockResolvedValueOnce(baseHiveConfig)
+      .mockResolvedValueOnce(updatedConfig);
+    statSpy
+      .mockResolvedValueOnce({ mtimeMs: 1000 } as Stats)
+      .mockResolvedValueOnce({ mtimeMs: 2000 } as Stats);
+
+    try {
+      const app = createApp();
+      const url = "http://localhost/api/templates?workspaceId=workspace-basic";
+
+      const first = await app.handle(new Request(url));
+      expect(first.status).toBe(HTTP_OK);
+      const firstPayload = (await first.json()) as {
+        defaults: { templateId?: string };
+      };
+      expect(firstPayload.defaults.templateId).toBe("template-basic");
+
+      const second = await app.handle(new Request(url));
+      expect(second.status).toBe(HTTP_OK);
+      const secondPayload = (await second.json()) as {
+        defaults: { templateId?: string };
+        templates: Array<{ id: string }>;
+      };
+      expect(secondPayload.defaults.templateId).toBe("template-updated");
+      expect(
+        secondPayload.templates.some(
+          (template) => template.id === "template-updated"
+        )
+      ).toBe(true);
+      expect(loadConfigSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv;
+    }
   });
 });

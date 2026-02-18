@@ -3,6 +3,7 @@ import { execSync } from "node:child_process";
 import { existsSync, constants as fsConstants } from "node:fs";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
+import { glob } from "tinyglobby";
 import {
   generateHiveToolConfig,
   HIVE_TOOL_SOURCE,
@@ -54,6 +55,8 @@ const ALWAYS_IGNORED_INCLUDE_PATTERNS = [
 ];
 const COPY_FAILURE_LOG_SAMPLE_SIZE = 3;
 const COPY_CONCURRENCY = 32;
+const INCLUDE_COPY_PROGRESS_EMIT_INTERVAL_MS = 500;
+const INCLUDE_COPY_PROGRESS_EMIT_EVERY_FILES = 25;
 const GLOB_MAGIC_PATTERN = /[*?{}[\]!]/;
 const LEADING_DOT_SLASH_PATTERN = /^\.\//;
 const TRAILING_SLASHES_PATTERN = /\/+$/;
@@ -652,8 +655,14 @@ export function createWorktreeManager(
       "const files = await glob(patterns, { cwd, absolute: false, ignore, dot: true, onlyFiles: false });" +
       "process.stdout.write(JSON.stringify(files));";
 
+    const bunExecutable = process.env.HIVE_BUN_BIN ?? Bun.which("bun");
+
+    if (!bunExecutable) {
+      return await listPathsWithGlobInProcess(args);
+    }
+
     const child = Bun.spawn({
-      cmd: [process.execPath, "-e", script],
+      cmd: [bunExecutable, "-e", script],
       stdout: "pipe",
       stderr: "pipe",
       env: {
@@ -671,9 +680,11 @@ export function createWorktreeManager(
     const stderr = await stderrPromise;
 
     if (exitCode !== 0) {
-      throw new Error(
-        `Glob subprocess failed with exit code ${exitCode}${stderr ? `: ${stderr.trim()}` : ""}`
+      logWarn(
+        "Glob subprocess failed, falling back to in-process matching",
+        stderr.trim() || `exit code ${exitCode}`
       );
+      return await listPathsWithGlobInProcess(args);
     }
 
     if (!stdout.trim()) {
@@ -686,6 +697,20 @@ export function createWorktreeManager(
     }
 
     return parsed.filter((entry): entry is string => typeof entry === "string");
+  }
+
+  async function listPathsWithGlobInProcess(args: {
+    cwd: string;
+    patterns: string[];
+    ignore: string[];
+  }): Promise<string[]> {
+    return await glob(args.patterns, {
+      cwd: args.cwd,
+      absolute: false,
+      ignore: args.ignore,
+      dot: true,
+      onlyFiles: false,
+    });
   }
 
   async function copyIncludedRoot(
@@ -857,6 +882,8 @@ export function createWorktreeManager(
 
     const ensuredDirs = new Set<string>();
     let nextIndex = 0;
+    let lastProgressCopiedFileCount = 0;
+    let lastProgressEventElapsedMs = 0;
 
     const fileCopyStartedAt = Date.now();
     onTimingEvent?.({
@@ -871,9 +898,26 @@ export function createWorktreeManager(
         return;
       }
 
+      const elapsedMs = Date.now() - fileCopyStartedAt;
+      const copiedSinceLastEvent =
+        copiedFileCount - lastProgressCopiedFileCount;
+      const shouldEmitByCount =
+        copiedSinceLastEvent >= INCLUDE_COPY_PROGRESS_EMIT_EVERY_FILES;
+      const shouldEmitByTime =
+        elapsedMs - lastProgressEventElapsedMs >=
+        INCLUDE_COPY_PROGRESS_EMIT_INTERVAL_MS;
+      const isComplete = copiedFileCount === pendingPaths.length;
+
+      if (!(shouldEmitByCount || shouldEmitByTime || isComplete)) {
+        return;
+      }
+
+      lastProgressCopiedFileCount = copiedFileCount;
+      lastProgressEventElapsedMs = elapsedMs;
+
       onTimingEvent?.({
         step: "include_copy_files_progress",
-        durationMs: Date.now() - fileCopyStartedAt,
+        durationMs: elapsedMs,
         metadata: {
           copiedFileCount,
           pendingPathCount: pendingPaths.length,

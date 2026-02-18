@@ -40,9 +40,8 @@ function CellProvisioningRoute() {
         : false;
     },
   });
-  const shouldPollTimeline =
-    cellQuery.data?.status === "spawning" ||
-    cellQuery.data?.status === "pending";
+  const shouldStreamTimeline =
+    Boolean(cellQuery.data) && cellQuery.data?.status !== "ready";
   const timingsQuery = useQuery({
     ...cellQueries.timings(cellId, { workflow: "create", limit: 300 }),
     enabled: Boolean(cellQuery.data),
@@ -106,7 +105,7 @@ function CellProvisioningRoute() {
   });
 
   useCellTimingStream(cellId, {
-    enabled: shouldPollTimeline,
+    enabled: shouldStreamTimeline,
     workflow: "create",
   });
 

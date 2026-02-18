@@ -508,11 +508,121 @@ describe("POST /api/cells", () => {
     );
     await waitForCellStatus(payload.id, "ready");
   });
+
+  it("cancels provisioning when the cell enters deleting state", async () => {
+    let releaseWorktree = () => {
+      // replaced below once deferred promise is created
+    };
+    const createWorktree: CreateWorktreeFn = async () => {
+      await new Promise<void>((resolve) => {
+        releaseWorktree = resolve;
+      });
+
+      return {
+        path: workspacePath,
+        branch: "cell-branch",
+        baseCommit: "abc123",
+      };
+    };
+    const ensureServicesForCell = vi.fn(async () => Promise.resolve());
+
+    const routes = createCellsRoutes(
+      createDependencies({
+        createWorktree,
+        ensureServicesForCell,
+      })
+    );
+    const app = new Elysia().use(routes);
+
+    const createResponse = await app.handle(
+      new Request("http://localhost/api/cells", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Cancel During Delete",
+          templateId,
+          workspaceId: "test-workspace",
+        }),
+      })
+    );
+
+    expect(createResponse.status).toBe(CREATED_STATUS);
+    const payload = (await createResponse.json()) as { id: string };
+
+    const deleteResponse = await app.handle(
+      new Request(`http://localhost/api/cells/${payload.id}`, {
+        method: "DELETE",
+      })
+    );
+    expect(deleteResponse.status).toBe(OK_STATUS);
+
+    releaseWorktree();
+
+    await waitForCondition(async () => {
+      const rows = await testDb
+        .select({ id: cells.id })
+        .from(cells)
+        .where(eq(cells.id, payload.id));
+      return rows.length === 0;
+    });
+
+    expect(ensureServicesForCell).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /api/cells/:id/setup/retry", () => {
   beforeEach(async () => {
     await testDb.delete(cells);
+  });
+
+  it("does not resend the initial prompt when retrying an existing session", async () => {
+    const sendAgentMessage = vi
+      .fn<SendAgentMessageFn>()
+      .mockResolvedValue(undefined);
+    const routes = createCellsRoutes(
+      createDependencies({
+        sendAgentMessage,
+      })
+    );
+    const app = new Elysia().use(routes);
+    const cellId = "retry-existing-session-cell";
+
+    await testDb.insert(cells).values({
+      id: cellId,
+      name: "Retry Existing Session",
+      description: "Repeat-safe prompt",
+      templateId,
+      workspaceId: "test-workspace",
+      workspacePath,
+      workspaceRootPath: "/tmp/test-workspace-root",
+      branchName: "cell-branch",
+      baseCommit: "abc123",
+      opencodeSessionId: "session-retry-existing-session-cell",
+      createdAt: new Date(),
+      status: "error",
+      lastSetupError: "setup failed",
+    });
+
+    await testDb.insert(cellProvisioningStates).values({
+      cellId,
+      modelIdOverride: null,
+      providerIdOverride: null,
+      attemptCount: 1,
+      startedAt: null,
+      finishedAt: null,
+    });
+
+    const retryResponse = await app.handle(
+      new Request(`http://localhost/api/cells/${cellId}/setup/retry`, {
+        method: "POST",
+      })
+    );
+    expect(retryResponse.status).toBe(OK_STATUS);
+
+    await waitForCellStatus(cellId, "ready");
+    expect(sendAgentMessage).not.toHaveBeenCalled();
   });
 
   it("returns 409 when a retry is already in progress", async () => {

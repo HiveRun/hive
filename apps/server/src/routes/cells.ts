@@ -1065,17 +1065,16 @@ export function createCellsRoutes(
             yield sse({ event: "snapshot", data: { timestamp: Date.now() } });
 
             for await (const event of iterator) {
-              try {
-                const cell = await loadCellById(database, event.cellId);
-                if (cell) {
-                  yield sse({ event: "cell", data: cellToResponse(cell) });
-                }
-              } catch (error) {
-                log.error(
-                  { error, cellId: event.cellId },
-                  "Failed to stream cell update"
-                );
+              const streamEvent = await resolveWorkspaceCellStreamEvent({
+                database,
+                event,
+                log,
+              });
+              if (!streamEvent) {
+                continue;
               }
+
+              yield sse(streamEvent);
             }
           } finally {
             cleanup();
@@ -2514,6 +2513,7 @@ export function createCellsRoutes(
         response: {
           200: CellDiffResponseSchema,
           400: t.Object({ message: t.String() }),
+          409: t.Object({ message: t.String() }),
           404: t.Object({ message: t.String() }),
         },
       }
@@ -3626,8 +3626,20 @@ async function finalizeCellProvisioning(
     )
   );
 
+  if (state.createdCell) {
+    state.createdCell = {
+      ...state.createdCell,
+      opencodeSessionId: session.id,
+    };
+  }
+
   const initialPrompt = body.description?.trim();
-  if (initialPrompt) {
+  const shouldSendInitialPrompt = shouldSendInitialPromptForAttempt({
+    attempt,
+    initialPrompt,
+    existingSessionId: state.createdCell?.opencodeSessionId ?? null,
+  });
+  if (shouldSendInitialPrompt && initialPrompt) {
     await runPhase("send_initial_prompt", async () =>
       dispatchAgentMessage(session.id, initialPrompt)
     );
@@ -3685,11 +3697,16 @@ async function handleDeferredProvisionFailure(
   context: ProvisionContext,
   error: unknown
 ): Promise<void> {
-  if (!(await doesCellExist(context.database, context.state.cellId))) {
+  const cancellationReason = await resolveProvisioningCancellationReason(
+    context.database,
+    context.state.cellId
+  );
+  if (cancellationReason) {
     await cleanupProvisionResources(context, { preserveRecord: true });
     context.log.info?.(
       {
         cellId: context.state.cellId,
+        reason: cancellationReason,
       },
       PROVISIONING_CANCELLED_MESSAGE
     );
@@ -3838,27 +3855,43 @@ async function cleanupProvisionResources(
   }
 }
 
-async function doesCellExist(
+async function resolveProvisioningCancellationReason(
   database: DatabaseClient,
   cellId: string
-): Promise<boolean> {
+): Promise<"missing" | "deleting" | null> {
   const record = await database
-    .select({ id: cells.id })
+    .select({ id: cells.id, status: cells.status })
     .from(cells)
     .where(eq(cells.id, cellId))
     .limit(1);
-  return record.length > 0;
+  const [current] = record;
+
+  if (!current) {
+    return "missing";
+  }
+
+  if (current.status === "deleting") {
+    return "deleting";
+  }
+
+  return null;
 }
 
 async function assertCellStillExists(
   context: ProvisionContext,
   phase: ProvisionPhase
 ): Promise<void> {
-  if (await doesCellExist(context.database, context.state.cellId)) {
+  const cancellationReason = await resolveProvisioningCancellationReason(
+    context.database,
+    context.state.cellId
+  );
+  if (!cancellationReason) {
     return;
   }
 
-  throw new Error(`${PROVISIONING_CANCELLED_MESSAGE} (phase: ${phase})`);
+  throw new Error(
+    `${PROVISIONING_CANCELLED_MESSAGE} (phase: ${phase}, reason: ${cancellationReason})`
+  );
 }
 
 async function stopServicesIfStarted(context: ProvisionContext) {
@@ -3941,6 +3974,22 @@ type CellWorkspaceRecord = Pick<
   typeof cells.$inferSelect,
   "id" | "workspacePath"
 >;
+
+function shouldSendInitialPromptForAttempt(args: {
+  attempt: number | null;
+  initialPrompt?: string;
+  existingSessionId: string | null;
+}): boolean {
+  if (!args.initialPrompt) {
+    return false;
+  }
+
+  if (args.attempt === 1) {
+    return true;
+  }
+
+  return !args.existingSessionId;
+}
 
 type LoggerLike = {
   info?: (obj: Record<string, unknown>, message?: string) => void;
@@ -4409,42 +4458,34 @@ function runDeleteStepWithTimeout<T>(args: {
   action: () => Promise<T> | T;
 }): Promise<T> {
   return new Promise((resolve, reject) => {
-    let completed = false;
-    const timer = setTimeout(() => {
-      if (completed) {
-        return;
-      }
+    const actionPromise = Promise.resolve().then(args.action);
+    const timeoutError = new Error(
+      `Delete step '${args.step}' timed out after ${args.timeoutMs}ms`
+    );
 
-      completed = true;
-      reject(
-        new Error(
-          `Delete step '${args.step}' timed out after ${args.timeoutMs}ms`
-        )
-      );
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
     }, args.timeoutMs);
 
-    Promise.resolve()
-      .then(args.action)
-      .then(
-        (result) => {
-          if (completed) {
-            return;
-          }
-
-          completed = true;
-          clearTimeout(timer);
-          resolve(result);
-        },
-        (error) => {
-          if (completed) {
-            return;
-          }
-
-          completed = true;
-          clearTimeout(timer);
-          reject(error);
+    actionPromise.then(
+      (result) => {
+        clearTimeout(timer);
+        if (timedOut) {
+          reject(timeoutError);
+          return;
         }
-      );
+        resolve(result);
+      },
+      (error) => {
+        clearTimeout(timer);
+        if (timedOut) {
+          reject(timeoutError);
+          return;
+        }
+        reject(error);
+      }
+    );
   });
 }
 
@@ -4681,6 +4722,51 @@ async function loadCellById(
     .limit(1);
 
   return cell ?? null;
+}
+
+function shouldEmitCellRemovalEvent(
+  cell: typeof cells.$inferSelect | null
+): boolean {
+  if (!cell) {
+    return true;
+  }
+
+  return cell.status === "deleting";
+}
+
+async function resolveWorkspaceCellStreamEvent(args: {
+  database: DatabaseClient;
+  event: CellStatusEvent;
+  log: LoggerLike;
+}): Promise<
+  | { event: "cell"; data: ReturnType<typeof cellToResponse> }
+  | { event: "cell_removed"; data: { id: string } }
+  | null
+> {
+  try {
+    const cell = await loadCellById(args.database, args.event.cellId);
+    if (shouldEmitCellRemovalEvent(cell)) {
+      return {
+        event: "cell_removed",
+        data: { id: args.event.cellId },
+      };
+    }
+
+    if (!cell) {
+      return null;
+    }
+
+    return {
+      event: "cell",
+      data: cellToResponse(cell),
+    };
+  } catch (error) {
+    args.log.error(
+      { error, cellId: args.event.cellId },
+      "Failed to stream cell update"
+    );
+    return null;
+  }
 }
 
 function fetchServiceRows(
