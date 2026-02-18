@@ -30,7 +30,20 @@
       },
       "setup": ["bun setup"],
       "includePatterns": [".env*"],
-      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
+      "ignorePatterns": [
+        "node_modules/**",
+        ".hive/**",
+        ".turbo/**",
+        "tmp/**",
+        "temp/**",
+        ".cache/**",
+        "coverage/**",
+        "dist/**",
+        "build/**",
+        "dist-electron/**",
+        "apps/server/server/**",
+        "src-tauri/target/**"
+      ]
     },
     "web-api": {
       "id": "web-api",
@@ -48,14 +61,40 @@
         }
       },
       "includePatterns": [".env*", "*.db"],
-      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
+      "ignorePatterns": [
+        "node_modules/**",
+        ".hive/**",
+        ".turbo/**",
+        "tmp/**",
+        "temp/**",
+        ".cache/**",
+        "coverage/**",
+        "dist/**",
+        "build/**",
+        "dist-electron/**",
+        "apps/server/server/**",
+        "src-tauri/target/**"
+      ]
     },
     "basic": {
       "id": "basic",
       "label": "Basic Template",
       "type": "manual",
       "includePatterns": [".env*"],
-      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
+      "ignorePatterns": [
+        "node_modules/**",
+        ".hive/**",
+        ".turbo/**",
+        "tmp/**",
+        "temp/**",
+        ".cache/**",
+        "coverage/**",
+        "dist/**",
+        "build/**",
+        "dist-electron/**",
+        "apps/server/server/**",
+        "src-tauri/target/**"
+      ]
     },
     "provider-only": {
       "id": "provider-only",
@@ -65,14 +104,40 @@
         "providerId": "opencode"
       },
       "includePatterns": [".env*"],
-      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
+      "ignorePatterns": [
+        "node_modules/**",
+        ".hive/**",
+        ".turbo/**",
+        "tmp/**",
+        "temp/**",
+        ".cache/**",
+        "coverage/**",
+        "dist/**",
+        "build/**",
+        "dist-electron/**",
+        "apps/server/server/**",
+        "src-tauri/target/**"
+      ]
     },
     "agentless": {
       "id": "agentless",
       "label": "No Agent Overrides",
       "type": "manual",
       "includePatterns": [".env*"],
-      "ignorePatterns": ["node_modules/**", ".hive/**", ".turbo/**"]
+      "ignorePatterns": [
+        "node_modules/**",
+        ".hive/**",
+        ".turbo/**",
+        "tmp/**",
+        "temp/**",
+        ".cache/**",
+        "coverage/**",
+        "dist/**",
+        "build/**",
+        "dist-electron/**",
+        "apps/server/server/**",
+        "src-tauri/target/**"
+      ]
     }
   },
   "defaults": {

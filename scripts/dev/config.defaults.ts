@@ -1,6 +1,19 @@
 import type { HiveConfig } from "../../apps/server/src/config/schema";
 
-const defaultIgnorePatterns = ["node_modules/**", ".hive/**", ".turbo/**"];
+const defaultIgnorePatterns = [
+  "node_modules/**",
+  ".hive/**",
+  ".turbo/**",
+  "tmp/**",
+  "temp/**",
+  ".cache/**",
+  "coverage/**",
+  "dist/**",
+  "build/**",
+  "dist-electron/**",
+  "apps/server/server/**",
+  "src-tauri/target/**",
+];
 
 export const hiveConfigDefaults: HiveConfig = {
   promptSources: ["docs/prompts/**/*.md"],
