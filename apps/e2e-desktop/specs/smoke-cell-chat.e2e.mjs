@@ -17,6 +17,7 @@ const SEND_ATTEMPTS = 3;
 const MAX_TERMINAL_RESTARTS = 2;
 const POLL_INTERVAL_MS = 500;
 const TERMINAL_RECOVERY_WAIT_MS = 750;
+const CHAT_ERROR_SUMMARY_LINES = 6;
 
 const terminalSelectors = {
   connectionBadge: "[data-testid='terminal-connection']",
@@ -46,6 +47,8 @@ describe("desktop cell chat smoke", () => {
     });
 
     await ensureTerminalReady({
+      apiUrl,
+      cellId,
       context: "before prompt send",
       timeoutMs: TERMINAL_READY_TIMEOUT_MS,
     });
@@ -58,6 +61,8 @@ describe("desktop cell chat smoke", () => {
     });
 
     await ensureTerminalReady({
+      apiUrl,
+      cellId,
       context: "after prompt send",
       timeoutMs: TERMINAL_READY_TIMEOUT_MS,
     });
@@ -130,6 +135,8 @@ async function sendPromptWithRetries(options) {
 
   for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt += 1) {
     await ensureTerminalReady({
+      apiUrl: options.apiUrl,
+      cellId: options.cellId,
       context: `send attempt ${String(attempt)}`,
       timeoutMs: TERMINAL_READY_TIMEOUT_MS,
     });
@@ -261,46 +268,89 @@ async function focusTerminalInput() {
 
 async function ensureTerminalReady(options) {
   let restartCount = 0;
+  let lastPath = "unknown";
+  let lastStatus = "unknown";
   let lastState = "unknown";
 
   await waitForCondition({
     timeoutMs: options.timeoutMs,
-    errorMessage: `Terminal not ready during ${options.context}. lastState=${lastState} restarts=${String(restartCount)}`,
+    errorMessage: `Terminal not ready during ${options.context}. lastPath=${lastPath} lastStatus=${lastStatus} lastState=${lastState} restarts=${String(restartCount)}`,
     check: async () => {
-      const connectionBadge = await $(terminalSelectors.connectionBadge);
-      if (!(await connectionBadge.isExisting())) {
+      const routeState = await ensureChatRouteActive({
+        apiUrl: options.apiUrl,
+        cellId: options.cellId,
+      });
+      lastPath = routeState.path;
+      lastStatus = routeState.status;
+
+      if (!routeState.readyForTerminal) {
         return false;
       }
 
-      const state = await connectionBadge.getAttribute("data-connection-state");
-      lastState = state ?? "unknown";
+      await assertNoChatLoadError();
 
-      if (state === "online") {
-        const terminalRoot = await $(terminalSelectors.terminalRoot);
-        if (!(await terminalRoot.isExisting())) {
-          return false;
-        }
-
-        const inputSurface = await $(terminalSelectors.inputSurface);
-        return await inputSurface.isDisplayed();
-      }
-
-      if (state === "exited" || state === "disconnected") {
-        if (restartCount >= MAX_TERMINAL_RESTARTS) {
-          throw new Error(
-            `Terminal stayed ${state} during ${options.context} after ${String(MAX_TERMINAL_RESTARTS)} restarts`
-          );
-        }
-
-        const restartButton = await $(terminalSelectors.restartButton);
-        await restartButton.click();
-        restartCount += 1;
-        await wait(TERMINAL_RECOVERY_WAIT_MS);
-      }
-
-      return false;
+      const evaluation = await evaluateTerminalReadiness({
+        context: options.context,
+        restartCount,
+      });
+      lastState = evaluation.state;
+      restartCount = evaluation.restartCount;
+      return evaluation.ready;
     },
   });
+}
+
+async function evaluateTerminalReadiness(options) {
+  let restartCount = options.restartCount;
+
+  const connectionBadge = await $(terminalSelectors.connectionBadge);
+  if (!(await connectionBadge.isExisting())) {
+    return {
+      ready: false,
+      restartCount,
+      state: "missing",
+    };
+  }
+
+  const state = await connectionBadge.getAttribute("data-connection-state");
+  const normalizedState = state ?? "unknown";
+
+  if (normalizedState === "online") {
+    const terminalRoot = await $(terminalSelectors.terminalRoot);
+    if (!(await terminalRoot.isExisting())) {
+      return {
+        ready: false,
+        restartCount,
+        state: normalizedState,
+      };
+    }
+
+    const inputSurface = await $(terminalSelectors.inputSurface);
+    return {
+      ready: await inputSurface.isDisplayed(),
+      restartCount,
+      state: normalizedState,
+    };
+  }
+
+  if (normalizedState === "exited" || normalizedState === "disconnected") {
+    if (restartCount >= MAX_TERMINAL_RESTARTS) {
+      throw new Error(
+        `Terminal stayed ${normalizedState} during ${options.context} after ${String(MAX_TERMINAL_RESTARTS)} restarts`
+      );
+    }
+
+    const restartButton = await $(terminalSelectors.restartButton);
+    await restartButton.click();
+    restartCount += 1;
+    await wait(TERMINAL_RECOVERY_WAIT_MS);
+  }
+
+  return {
+    ready: false,
+    restartCount,
+    state: normalizedState,
+  };
 }
 
 async function waitForSession(apiUrl, cellId) {
@@ -463,6 +513,59 @@ async function fetchCellDetail(options) {
   }
 
   return payload;
+}
+
+async function ensureChatRouteActive(options) {
+  const cell = await fetchCellDetail({
+    apiUrl: options.apiUrl,
+    cellId: options.cellId,
+  });
+  const status = cell?.status ?? "unknown";
+
+  if (status === "error") {
+    throw new Error(
+      `Cell ${options.cellId} entered error status while waiting for terminal readiness: ${cell?.lastSetupError ?? "setup failed"}`
+    );
+  }
+
+  const url = await browser.getUrl();
+  const path = readPathname(url);
+  const chatPath = `/cells/${options.cellId}/chat`;
+
+  if (path !== chatPath) {
+    await browser.url(chatPath);
+    return {
+      path,
+      readyForTerminal: false,
+      status,
+    };
+  }
+
+  return {
+    path,
+    readyForTerminal: status === "ready",
+    status,
+  };
+}
+
+async function assertNoChatLoadError() {
+  const loadErrorText = await browser.execute(() => {
+    const bodyText = document.body?.innerText ?? "";
+    if (!bodyText.includes("Unable to load chat")) {
+      return null;
+    }
+
+    return bodyText
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, CHAT_ERROR_SUMMARY_LINES)
+      .join(" | ");
+  });
+
+  if (loadErrorText) {
+    throw new Error(`Chat UI reported load failure: ${loadErrorText}`);
+  }
 }
 
 function resolveCellSubroute(url, cellId) {
