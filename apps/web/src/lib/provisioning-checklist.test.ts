@@ -72,4 +72,37 @@ describe("buildProvisioningChecklist", () => {
     expect(checklist.currentStepLabel).toBe("Run setup and start services");
     expect(checklist.hasError).toBe(true);
   });
+
+  it.each([
+    {
+      step: "insert_cell_record",
+      expectedLabel: "Create cell record",
+    },
+    {
+      step: "create_worktree:git_add",
+      expectedLabel: "Create workspace",
+    },
+    {
+      step: "ensure_services:start_services",
+      expectedLabel: "Run setup and start services",
+    },
+    {
+      step: "send_initial_prompt",
+      expectedLabel: "Prepare agent session",
+    },
+  ])("maps '$step' to checklist phase", ({ step, expectedLabel }) => {
+    const checklist = buildProvisioningChecklist({
+      cellStatus: "spawning",
+      steps: [
+        {
+          step,
+          status: "error",
+          durationMs: 10,
+          createdAt: BASE_TIME,
+        },
+      ],
+    });
+
+    expect(checklist.currentStepLabel).toBe(expectedLabel);
+  });
 });

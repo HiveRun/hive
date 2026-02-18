@@ -49,6 +49,37 @@ const CHECKLIST_STEPS: Array<{
   { key: "mark_ready", label: "Finalize startup" },
 ];
 
+const CHECKLIST_STEP_EXACT_MATCHES: Array<{
+  key: ProvisioningChecklistStepKey;
+  matches: readonly string[];
+}> = [
+  {
+    key: "create_cell_record",
+    matches: [
+      "create_cell_record",
+      "insert_cell_record",
+      "insert_provisioning_state",
+      "create_request_received",
+    ],
+  },
+  {
+    key: "ensure_agent_session",
+    matches: ["ensure_agent_session", "send_initial_prompt"],
+  },
+  {
+    key: "mark_ready",
+    matches: ["mark_ready"],
+  },
+];
+
+const CHECKLIST_STEP_PREFIX_MATCHES: Array<{
+  key: ProvisioningChecklistStepKey;
+  prefix: string;
+}> = [
+  { key: "create_worktree", prefix: "create_worktree" },
+  { key: "ensure_services", prefix: "ensure_services" },
+];
+
 const MULTI_SPACE_RE = /\s+/g;
 const LEADING_COLONS_RE = /^:+/;
 
@@ -201,26 +232,18 @@ export function toTimingTimestamp(value: unknown): number {
 function normalizeChecklistStepKey(
   step: string
 ): ProvisioningChecklistStepKey | null {
-  if (
-    step === "create_cell_record" ||
-    step === "insert_cell_record" ||
-    step === "insert_provisioning_state" ||
-    step === "create_request_received"
-  ) {
-    return "create_cell_record";
+  for (const matcher of CHECKLIST_STEP_EXACT_MATCHES) {
+    if (matcher.matches.includes(step)) {
+      return matcher.key;
+    }
   }
-  if (step.startsWith("create_worktree")) {
-    return "create_worktree";
+
+  for (const matcher of CHECKLIST_STEP_PREFIX_MATCHES) {
+    if (step.startsWith(matcher.prefix)) {
+      return matcher.key;
+    }
   }
-  if (step.startsWith("ensure_services")) {
-    return "ensure_services";
-  }
-  if (step === "ensure_agent_session" || step === "send_initial_prompt") {
-    return "ensure_agent_session";
-  }
-  if (step === "mark_ready") {
-    return "mark_ready";
-  }
+
   return null;
 }
 

@@ -8,6 +8,11 @@ import { Button } from "@/components/ui/button";
 import { useCellStatusStream } from "@/hooks/use-cell-status-stream";
 import { useCellTimingStream } from "@/hooks/use-cell-timing-stream";
 import { buildProvisioningChecklist } from "@/lib/provisioning-checklist";
+import {
+  resolveProvisioningStatusMessage,
+  shouldPollProvisioningStatus,
+  shouldStreamProvisioningTimeline,
+} from "@/lib/provisioning-route-state";
 import { cellMutations, cellQueries } from "@/queries/cells";
 
 const PROVISIONING_POLL_MS = 1500;
@@ -35,13 +40,15 @@ function CellProvisioningRoute() {
     ...cellQueries.detail(cellId),
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return status === "spawning" || status === "pending"
+      return shouldPollProvisioningStatus(status)
         ? PROVISIONING_POLL_MS
         : false;
     },
   });
-  const shouldStreamTimeline =
-    Boolean(cellQuery.data) && cellQuery.data?.status !== "ready";
+  const shouldStreamTimeline = shouldStreamProvisioningTimeline({
+    hasCell: Boolean(cellQuery.data),
+    status: cellQuery.data?.status,
+  });
   const timingsQuery = useQuery({
     ...cellQueries.timings(cellId, { workflow: "create", limit: 300 }),
     enabled: Boolean(cellQuery.data),
@@ -211,18 +218,4 @@ function CellProvisioningRoute() {
       </div>
     </div>
   );
-}
-
-function resolveProvisioningStatusMessage(status: string | undefined): string {
-  if (status === "error") {
-    return "Provisioning failed";
-  }
-  if (status === "pending") {
-    return "Preparing agent session";
-  }
-  if (status === "spawning") {
-    return "Provisioning workspace and services";
-  }
-
-  return "Waiting for provisioning status update";
 }
