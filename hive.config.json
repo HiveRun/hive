@@ -29,7 +29,6 @@
         }
       },
       "setup": ["bun setup"],
-      "includePatterns": [".env*"],
       "ignorePatterns": [
         "node_modules/**",
         ".hive/**",
@@ -60,7 +59,6 @@
           "readyTimeoutMs": 5000
         }
       },
-      "includePatterns": [".env*", "*.db"],
       "ignorePatterns": [
         "node_modules/**",
         ".hive/**",
@@ -80,7 +78,6 @@
       "id": "basic",
       "label": "Basic Template",
       "type": "manual",
-      "includePatterns": [".env*"],
       "ignorePatterns": [
         "node_modules/**",
         ".hive/**",
@@ -103,7 +100,6 @@
       "agent": {
         "providerId": "opencode"
       },
-      "includePatterns": [".env*"],
       "ignorePatterns": [
         "node_modules/**",
         ".hive/**",
@@ -123,7 +119,6 @@
       "id": "agentless",
       "label": "No Agent Overrides",
       "type": "manual",
-      "includePatterns": [".env*"],
       "ignorePatterns": [
         "node_modules/**",
         ".hive/**",
