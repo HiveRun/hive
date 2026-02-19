@@ -584,12 +584,17 @@ export function CellTerminal({
     };
 
     const initializeTerminal = async () => {
-      const [{ Terminal }, { FitAddon }, { SerializeAddon }] =
-        await Promise.all([
-          import("@xterm/xterm"),
-          import("@xterm/addon-fit"),
-          import("@xterm/addon-serialize"),
-        ]);
+      const [
+        { Terminal },
+        { FitAddon },
+        { SerializeAddon },
+        { WebLinksAddon },
+      ] = await Promise.all([
+        import("@xterm/xterm"),
+        import("@xterm/addon-fit"),
+        import("@xterm/addon-serialize"),
+        import("@xterm/addon-web-links"),
+      ]);
 
       if (disposed || !containerRef.current) {
         return;
@@ -614,9 +619,16 @@ export function CellTerminal({
 
       const fitAddon = new FitAddon();
       const serializeAddon = new SerializeAddon();
+      const webLinksAddon = new WebLinksAddon(
+        (event: MouseEvent, uri: string) => {
+          event.preventDefault();
+          window.open(uri, "_blank", "noopener,noreferrer");
+        }
+      );
 
       terminal.loadAddon(fitAddon);
       terminal.loadAddon(serializeAddon);
+      terminal.loadAddon(webLinksAddon);
       terminal.open(containerRef.current);
       fitAddon.fit();
       terminal.focus();
