@@ -244,6 +244,7 @@ jobs:
     name: Desktop WebDriver Smoke Suite
     runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: quality
+    if: github.event_name != 'pull_request'
     timeout-minutes: 60
     steps:
       - name: Checkout repository

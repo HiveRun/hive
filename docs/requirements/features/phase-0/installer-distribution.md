@@ -47,6 +47,7 @@ Hive must be installable with a single `curl | bash` command that downloads a co
 - [x] Align desktop installer gate trigger cadence with E2E (run on merge queue/main/manual, skip PR event).
 - [x] Add merge-queue desktop WebDriver smoke coverage (`apps/e2e-desktop`) so Tauri runtime behavior is validated beyond packaging checks.
 - [x] Stabilize desktop chat smoke readiness checks so the WDIO suite reliably detects terminal-online state before sending prompts.
+- [x] Move desktop WebDriver smoke runs to merge queue/main/manual (skip PR event) so primary PR CI stays fast while desktop runtime parity remains protected pre-merge.
 
 ## Testing Strategy
 
