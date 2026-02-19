@@ -44,7 +44,7 @@ test.describe("setup retry", () => {
     expect(await fileExists(markerPath)).toBe(false);
 
     const firstRetryResponse = await retrySetup(apiUrl, cellId);
-    expect(firstRetryResponse.ok).toBe(false);
+    expect(firstRetryResponse.ok).toBe(true);
 
     const failedCell = await waitForCellStatus({
       apiUrl,

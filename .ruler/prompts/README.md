@@ -263,8 +263,8 @@ Notes:
 - CI runs on Blacksmith-hosted GitHub Actions runners (`blacksmith-2vcpu-ubuntu-2404` for lint/check jobs and `blacksmith-4vcpu-ubuntu-2404` for E2E runtime).
 - Workflow triggers on pull requests, merge queue (`merge_group`), pushes to `main`, and manual dispatch.
 - `Workflow Lint` runs `actionlint`; `Quality Checks` runs `bun run check:commit`.
-- `E2E Runtime Suite` runs `bun run test:e2e` on merge queue (`merge_group`), `main` pushes, and manual dispatch (skipped on regular `pull_request` commits), caches Playwright/OpenCode artifacts, and uploads reports from `apps/e2e/reports/latest`.
-- `Desktop WebDriver Smoke Suite` runs `bun run test:e2e:desktop` on merge queue (`merge_group`), `main` pushes, and manual dispatch (skipped on `pull_request` commits), installs `tauri-driver`, executes under `xvfb-run`, and uploads reports from `apps/e2e-desktop/reports/latest`.
+- `E2E Runtime Suite` runs `bun run test:e2e` on pull requests, merge queue (`merge_group`), `main` pushes, and manual dispatch, caches Playwright/OpenCode artifacts, and uploads reports from `apps/e2e/reports/latest`.
+- `Desktop WebDriver Smoke Suite` runs `bun run test:e2e:desktop` on pull requests, merge queue (`merge_group`), `main` pushes, and manual dispatch, installs `tauri-driver`, executes under `xvfb-run`, and uploads reports from `apps/e2e-desktop/reports/latest`.
 - `Security Audit` runs a strict `bun audit --audit-level high` job in non-blocking mode for visibility while dependency remediation is in progress.
 - Ensure the Blacksmith GitHub App is installed for your organization before relying on this workflow.
 
