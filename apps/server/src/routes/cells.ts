@@ -185,6 +185,7 @@ export type CellRouteDependencies = {
     opencodeSessionId: string;
     opencodeServerUrl: string;
     opencodeThemeMode?: OpencodeThemeMode;
+    preferredModel?: { providerId: string; modelId: string };
   }) => ChatTerminalSession;
   getChatTerminalSession?: (cellId: string) => ChatTerminalSession | null;
   readChatTerminalOutput?: (cellId: string) => string;
@@ -690,12 +691,22 @@ async function ensureChatTerminalSessionForCell(
   }
 
   const agentSession = await deps.ensureAgentSession(cell.id);
+  const preferredProviderId =
+    agentSession.modelProviderId ?? agentSession.provider;
+  const preferredModel =
+    agentSession.modelId && preferredProviderId
+      ? {
+          modelId: agentSession.modelId,
+          providerId: preferredProviderId,
+        }
+      : undefined;
   const session = chatTerminal.ensureChatTerminalSession({
     cellId: cell.id,
     workspacePath: cell.workspacePath,
     opencodeSessionId: agentSession.id,
     opencodeServerUrl: serverUrl,
     opencodeThemeMode: themeMode,
+    preferredModel,
   });
 
   return {

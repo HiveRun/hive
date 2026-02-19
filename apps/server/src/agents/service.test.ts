@@ -1,4 +1,5 @@
 import type { OpencodeClient, Event as OpencodeEvent } from "@opencode-ai/sdk";
+import { eq } from "drizzle-orm";
 
 import {
   afterEach,
@@ -12,6 +13,7 @@ import {
 } from "vitest";
 import { setupTestDb, testDb } from "../__tests__/test-db";
 import type { HiveConfig } from "../config/schema";
+import { cellProvisioningStates } from "../schema/cell-provisioning";
 import { cells } from "../schema/cells";
 // biome-ignore lint/performance/noNamespaceImport: tests need namespace import for spies
 import * as OpencodeConfig from "./opencode-config";
@@ -104,6 +106,7 @@ describe("agent model selection", () => {
     });
 
     await closeAllAgentSessions();
+    await testDb.delete(cellProvisioningStates);
     await testDb.delete(cells);
     sessionMessagesMock.mockReset();
     sessionMessagesMock.mockResolvedValue({ data: [] });
@@ -306,7 +309,233 @@ describe("agent model selection", () => {
     expect(session.modelId).toBe("template-default");
   });
 
-  it("drops invalid explicit models and selects a valid fallback", async () => {
+  it("accepts explicit model override when it matches provider model id", async () => {
+    clientStub.config.providers.mockResolvedValue({
+      data: {
+        providers: [
+          {
+            id: "opencode",
+            models: {
+              "gpt-5.3-codex": { id: "opencode/gpt-5.3-codex" },
+              "template-default": { id: "template-default" },
+            },
+          },
+        ],
+        default: { opencode: "template-default" },
+      },
+    });
+
+    const session = await ensureAgentSession(cellId, {
+      modelId: "opencode/gpt-5.3-codex",
+      providerId: "opencode",
+    });
+
+    expect(session.provider).toBe("opencode");
+    expect(session.modelId).toBe("gpt-5.3-codex");
+    expect(clientStub.session.prompt).toHaveBeenCalledWith({
+      path: { id: session.id },
+      query: { directory: "/tmp/model-test" },
+      body: {
+        noReply: true,
+        model: {
+          providerID: "opencode",
+          modelID: "gpt-5.3-codex",
+        },
+        parts: [],
+      },
+    });
+  });
+
+  it("keeps runtime startup available when model seeding returns rpc errors", async () => {
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation((..._args) => null);
+
+    clientStub.session.prompt.mockResolvedValueOnce({
+      error: { message: "seed unavailable" },
+    });
+
+    clientStub.config.providers.mockResolvedValue({
+      data: {
+        providers: [
+          {
+            id: "opencode",
+            models: {
+              "gpt-5.3-codex": { id: "opencode/gpt-5.3-codex" },
+              "template-default": { id: "template-default" },
+            },
+          },
+        ],
+        default: { opencode: "template-default" },
+      },
+    });
+
+    const session = await ensureAgentSession(cellId, {
+      modelId: "opencode/gpt-5.3-codex",
+      providerId: "opencode",
+    });
+
+    expect(session.provider).toBe("opencode");
+    expect(session.modelId).toBe("gpt-5.3-codex");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[agent] Failed to seed session model preference",
+      expect.objectContaining({
+        cellId,
+        sessionId: session.id,
+        providerId: "opencode",
+        modelId: "gpt-5.3-codex",
+        message: "seed unavailable",
+      })
+    );
+  });
+
+  it("keeps runtime startup available when model seeding throws", async () => {
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation((..._args) => null);
+
+    clientStub.session.prompt.mockRejectedValueOnce(new Error("socket closed"));
+
+    clientStub.config.providers.mockResolvedValue({
+      data: {
+        providers: [
+          {
+            id: "opencode",
+            models: {
+              "gpt-5.3-codex": { id: "opencode/gpt-5.3-codex" },
+              "template-default": { id: "template-default" },
+            },
+          },
+        ],
+        default: { opencode: "template-default" },
+      },
+    });
+
+    const session = await ensureAgentSession(cellId, {
+      modelId: "opencode/gpt-5.3-codex",
+      providerId: "opencode",
+    });
+
+    expect(session.provider).toBe("opencode");
+    expect(session.modelId).toBe("gpt-5.3-codex");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[agent] Failed to seed session model preference",
+      expect.objectContaining({
+        cellId,
+        sessionId: session.id,
+        providerId: "opencode",
+        modelId: "gpt-5.3-codex",
+        message: "socket closed",
+      })
+    );
+  });
+
+  it("skips stale provisioning overrides for restorable sessions", async () => {
+    await testDb
+      .update(cells)
+      .set({ opencodeSessionId: "session-runtime" })
+      .where(eq(cells.id, cellId));
+
+    await testDb.insert(cellProvisioningStates).values({
+      cellId,
+      modelIdOverride: "opencode/stale-model",
+      providerIdOverride: "opencode",
+    });
+
+    sessionMessagesMock.mockRejectedValueOnce(
+      new Error("messages unavailable")
+    );
+
+    clientStub.config.providers.mockResolvedValue({
+      data: {
+        providers: [
+          {
+            id: "opencode",
+            models: {
+              "template-default": { id: "template-default" },
+            },
+          },
+        ],
+        default: { opencode: "template-default" },
+      },
+    });
+
+    const session = await ensureAgentSession(cellId);
+
+    expect(session.provider).toBe("opencode");
+    expect(session.modelId).toBe("template-default");
+    expect(clientStub.session.create).not.toHaveBeenCalled();
+    expect(clientStub.session.prompt).not.toHaveBeenCalled();
+  });
+
+  it("reuses persisted provisioning model overrides before first message", async () => {
+    await testDb.insert(cellProvisioningStates).values({
+      cellId,
+      modelIdOverride: "opencode/gpt-5.3-codex",
+      providerIdOverride: "opencode",
+    });
+
+    clientStub.config.providers.mockResolvedValue({
+      data: {
+        providers: [
+          {
+            id: "opencode",
+            models: {
+              "gpt-5.3-codex": { id: "opencode/gpt-5.3-codex" },
+              "template-default": { id: "template-default" },
+            },
+          },
+        ],
+        default: { opencode: "template-default" },
+      },
+    });
+
+    const session = await ensureAgentSession(cellId);
+
+    expect(session.provider).toBe("opencode");
+    expect(session.modelId).toBe("gpt-5.3-codex");
+    expect(clientStub.session.prompt).toHaveBeenCalledWith({
+      path: { id: session.id },
+      query: { directory: "/tmp/model-test" },
+      body: {
+        noReply: true,
+        model: {
+          providerID: "opencode",
+          modelID: "gpt-5.3-codex",
+        },
+        parts: [],
+      },
+    });
+  });
+
+  it("throws clear errors for invalid persisted model overrides", async () => {
+    await testDb.insert(cellProvisioningStates).values({
+      cellId,
+      modelIdOverride: "gpt-5.2-xhigh",
+      providerIdOverride: "opencode",
+    });
+
+    const availableModel = "minimax-m2.1";
+    clientStub.config.providers.mockResolvedValue({
+      data: {
+        providers: [
+          {
+            id: "opencode",
+            models: {
+              [availableModel]: { id: availableModel },
+            },
+          },
+        ],
+        default: { opencode: availableModel },
+      },
+    });
+
+    await expect(ensureAgentSession(cellId)).rejects.toThrow(
+      `Selected model override is invalid: model "gpt-5.2-xhigh" is unavailable for provider "opencode". Available models: ${availableModel}. Refresh the model catalog and try again.`
+    );
+  });
+
+  it("throws clear errors for invalid explicit model overrides", async () => {
     const baseTemplate = mockHiveConfig.templates["template-basic"];
     if (!baseTemplate) {
       throw new Error("Test template missing");
@@ -348,13 +577,14 @@ describe("agent model selection", () => {
       },
     });
 
-    const session = await ensureAgentSession(cellId, {
-      modelId: "gpt-5.2-xhigh",
-      providerId: "opencode",
-    });
-
-    expect(session.provider).toBe("opencode");
-    expect(session.modelId).toBe(defaultFallbackModel);
+    await expect(
+      ensureAgentSession(cellId, {
+        modelId: "gpt-5.2-xhigh",
+        providerId: "opencode",
+      })
+    ).rejects.toThrow(
+      `Selected model override is invalid: model "gpt-5.2-xhigh" is unavailable for provider "opencode". Available models: ${defaultFallbackModel}. Refresh the model catalog and try again.`
+    );
   });
 
   it("tracks compaction events and exposes stats", async () => {

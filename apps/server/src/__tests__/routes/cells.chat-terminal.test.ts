@@ -48,6 +48,7 @@ function createChatTerminalHarness() {
       workspacePath: string;
       opencodeSessionId: string;
       opencodeServerUrl: string;
+      preferredModel?: { providerId: string; modelId: string };
     }) => {
       sequence += 1;
       session = {
@@ -106,6 +107,14 @@ function createDependencies(
   const ensureAgentSession = vi.fn(async () => ({
     id: AGENT_SESSION_ID,
     cellId: TEST_CELL_ID,
+    templateId: "template",
+    provider: "opencode",
+    status: "awaiting_input",
+    workspacePath: "/tmp/mock-worktree",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    modelId: "big-pickle",
+    modelProviderId: "opencode",
   }));
 
   return {
@@ -238,6 +247,10 @@ describe("Cell chat terminal routes", () => {
       opencodeSessionId: AGENT_SESSION_ID,
       opencodeServerUrl: SERVER_URL,
       opencodeThemeMode: "light",
+      preferredModel: {
+        providerId: "opencode",
+        modelId: "big-pickle",
+      },
     });
 
     const reader = response.body?.getReader();
@@ -359,6 +372,10 @@ describe("Cell chat terminal routes", () => {
       opencodeSessionId: AGENT_SESSION_ID,
       opencodeServerUrl: SERVER_URL,
       opencodeThemeMode: "dark",
+      preferredModel: {
+        providerId: "opencode",
+        modelId: "big-pickle",
+      },
     });
   });
 });

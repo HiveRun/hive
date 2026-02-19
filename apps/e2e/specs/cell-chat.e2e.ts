@@ -86,6 +86,13 @@ test.describe("cell chat flow", () => {
       timeoutMs: TERMINAL_READY_TIMEOUT_MS,
     });
 
+    await assertSessionModelSelection({
+      apiUrl,
+      cellId,
+      expectedModelId: EXPECTED_MODEL_ID,
+      expectedProviderId: EXPECTED_MODEL_PROVIDER_ID,
+    });
+
     const prompt = `E2E token ${Date.now()}`;
 
     await sendPromptWithRetries({
@@ -509,6 +516,59 @@ async function focusTerminalInput(page: Page): Promise<void> {
   });
 }
 
+type TerminalProbe = {
+  state: string;
+  exitCode: string;
+  errorMessage: string;
+};
+
+function resolvePathname(rawUrl: string): string {
+  try {
+    return new URL(rawUrl).pathname;
+  } catch {
+    return rawUrl;
+  }
+}
+
+async function probeTerminalState(page: Page): Promise<TerminalProbe> {
+  const badge = page.locator(selectors.terminalConnectionBadge).first();
+  const terminalRoot = page.locator(selectors.terminalRoot).first();
+  const [badgeCount, terminalRootCount] = await Promise.all([
+    badge.count(),
+    terminalRoot.count(),
+  ]);
+
+  if (badgeCount === 0 || terminalRootCount === 0) {
+    return {
+      state: "missing-terminal-shell",
+      exitCode: "",
+      errorMessage: "",
+    };
+  }
+
+  try {
+    const [state, exitCode, exitSignal] = await Promise.all([
+      badge.getAttribute("data-connection-state", { timeout: 1000 }),
+      badge.getAttribute("data-exit-code", { timeout: 1000 }),
+      terminalRoot.getAttribute("data-terminal-error-message", {
+        timeout: 1000,
+      }),
+    ]);
+
+    return {
+      state: state ?? "unknown",
+      exitCode: exitCode ?? "",
+      errorMessage: exitSignal ?? "",
+    };
+  } catch {
+    return {
+      state: "terminal-shell-transitioning",
+      exitCode: "",
+      errorMessage: "",
+    };
+  }
+}
+
 async function ensureTerminalReady(
   page: Page,
   options: {
@@ -520,29 +580,24 @@ async function ensureTerminalReady(
   let lastState = "unknown";
   let lastExitCode = "";
   let lastErrorMessage = "";
+  let lastPath = "";
 
   await waitForCondition({
     check: async () => {
-      const badge = page.locator(selectors.terminalConnectionBadge);
-      const terminalRoot = page.locator(selectors.terminalRoot);
-      const [state, exitCode, exitSignal] = await Promise.all([
-        badge.getAttribute("data-connection-state"),
-        badge.getAttribute("data-exit-code"),
-        terminalRoot.getAttribute("data-terminal-error-message"),
-      ]);
+      lastPath = resolvePathname(page.url());
+      const probe = await probeTerminalState(page);
+      lastState = probe.state;
+      lastExitCode = probe.exitCode;
+      lastErrorMessage = probe.errorMessage;
 
-      lastState = state ?? "unknown";
-      lastExitCode = exitCode ?? "";
-      lastErrorMessage = exitSignal ?? "";
-
-      if (state === "online") {
+      if (lastState === "online") {
         return page.locator(selectors.terminalInputTextarea).isVisible();
       }
 
-      if (state === "exited" || state === "disconnected") {
+      if (lastState === "exited" || lastState === "disconnected") {
         if (restartCount >= MAX_TERMINAL_RESTARTS) {
           throw new Error(
-            `Terminal remained ${state} during ${options.context}. exitCode=${lastExitCode || "n/a"} error=${lastErrorMessage || "n/a"}`
+            `Terminal remained ${lastState} during ${options.context}. path=${lastPath || "n/a"} exitCode=${lastExitCode || "n/a"} error=${lastErrorMessage || "n/a"}`
           );
         }
 
@@ -553,7 +608,7 @@ async function ensureTerminalReady(
 
       return false;
     },
-    errorMessage: `Terminal not ready during ${options.context}. Last state=${lastState} exitCode=${lastExitCode || "n/a"} error=${lastErrorMessage || "n/a"} restarts=${String(restartCount)}`,
+    errorMessage: `Terminal not ready during ${options.context}. path=${lastPath || "n/a"} lastState=${lastState} exitCode=${lastExitCode || "n/a"} error=${lastErrorMessage || "n/a"} restarts=${String(restartCount)}`,
     timeoutMs: options.timeoutMs,
   });
 }

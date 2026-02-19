@@ -464,6 +464,31 @@ describe("POST /api/cells", () => {
     });
   });
 
+  it("surfaces model override failures with explicit provisioning errors", async () => {
+    const overrideErrorMessage =
+      'Selected model override is invalid: model "gpt-5.2-xhigh" is unavailable for provider "opencode".';
+
+    const app = createTestApp({
+      onEnsureAgentSession: () => {
+        throw new Error(overrideErrorMessage);
+      },
+    });
+
+    const payload = await createCellAndExpectSpawning({
+      app,
+      body: {
+        name: "Invalid Model Override",
+        templateId,
+        workspaceId: "test-workspace",
+        modelId: "gpt-5.2-xhigh",
+        providerId: "opencode",
+      },
+    });
+
+    const erroredRow = await waitForCellStatus(payload.id, "error");
+    expect(erroredRow.lastSetupError).toContain(overrideErrorMessage);
+  });
+
   it("skips sending the initial prompt when description is blank", async () => {
     const sendAgentMessage = vi
       .fn<SendAgentMessageFn>()
