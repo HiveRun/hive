@@ -172,4 +172,5 @@ This comprehensive provisioning system will be implemented in **Phase 1A** after
 - [x] Extend runtime E2E model assertions to validate selected model capture before the first user prompt, covering description-less session initialization paths end-to-end (2026-02-19)
 - [x] Add server-level `/api/agents/sessions/byCell/:cellId` regression coverage to ensure selected model metadata is visible before any first user prompt for description-less cells (2026-02-19)
 - [x] Make no-reply model seeding best-effort (warn instead of throw) so runtime startup still succeeds when `session.prompt` returns RPC errors or throws during initial model persistence (2026-02-19)
+- [x] Restrict no-reply model seeding to newly created OpenCode sessions so transient message-history load failures on reused sessions cannot overwrite later user model selections (2026-02-19)
 - [x] Harden desktop chat terminal checks against persistent no-terminal renders by adding bounded page reload recovery and live timeout diagnostics (dynamic last path/status/state), so CI failures surface actionable context and can recover from stuck chat hydration states (2026-02-18)

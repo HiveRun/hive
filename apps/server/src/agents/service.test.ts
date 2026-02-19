@@ -1,4 +1,5 @@
 import type { OpencodeClient, Event as OpencodeEvent } from "@opencode-ai/sdk";
+import { eq } from "drizzle-orm";
 
 import {
   afterEach,
@@ -427,6 +428,45 @@ describe("agent model selection", () => {
         message: "socket closed",
       })
     );
+  });
+
+  it("does not reseed model when reusing existing sessions", async () => {
+    await testDb
+      .update(cells)
+      .set({ opencodeSessionId: "session-runtime" })
+      .where(eq(cells.id, cellId));
+
+    await testDb.insert(cellProvisioningStates).values({
+      cellId,
+      modelIdOverride: "opencode/gpt-5.3-codex",
+      providerIdOverride: "opencode",
+    });
+
+    sessionMessagesMock.mockRejectedValueOnce(
+      new Error("messages unavailable")
+    );
+
+    clientStub.config.providers.mockResolvedValue({
+      data: {
+        providers: [
+          {
+            id: "opencode",
+            models: {
+              "gpt-5.3-codex": { id: "opencode/gpt-5.3-codex" },
+              "template-default": { id: "template-default" },
+            },
+          },
+        ],
+        default: { opencode: "template-default" },
+      },
+    });
+
+    const session = await ensureAgentSession(cellId);
+
+    expect(session.provider).toBe("opencode");
+    expect(session.modelId).toBe("gpt-5.3-codex");
+    expect(clientStub.session.create).not.toHaveBeenCalled();
+    expect(clientStub.session.prompt).not.toHaveBeenCalled();
   });
 
   it("reuses persisted provisioning model overrides before first message", async () => {

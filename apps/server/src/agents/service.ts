@@ -1276,7 +1276,7 @@ async function ensureRuntimeForCell(
 
   await ensureProviderCredentials(requestedProviderId);
 
-  const runtime = await startOpencodeRuntime({
+  const { runtime, created: createdSession } = await startOpencodeRuntime({
     cell,
     providerId: requestedProviderId,
     modelId: requestedModelId,
@@ -1291,7 +1291,7 @@ async function ensureRuntimeForCell(
     runtime.modelId = restoredModel.modelId;
   }
 
-  if (!restoredModel && selectionOptions?.modelId) {
+  if (createdSession && !restoredModel && selectionOptions?.modelId) {
     await seedSessionModelPreference(runtime);
   }
 
@@ -1386,7 +1386,7 @@ async function startOpencodeRuntime({
   modelId,
   force,
   deps,
-}: StartRuntimeArgs): Promise<RuntimeHandle> {
+}: StartRuntimeArgs): Promise<{ runtime: RuntimeHandle; created: boolean }> {
   const client = await deps.acquireOpencodeClient();
   const directoryQuery: DirectoryQuery = { directory: cell.workspacePath };
   const { session, created } = await resolveOpencodeSession({
@@ -1490,7 +1490,7 @@ async function startOpencodeRuntime({
     abortController,
   });
 
-  return runtime;
+  return { runtime, created };
 }
 
 type ResolveSessionArgs = {
