@@ -345,6 +345,90 @@ describe("agent model selection", () => {
     });
   });
 
+  it("keeps runtime startup available when model seeding returns rpc errors", async () => {
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation((..._args) => null);
+
+    clientStub.session.prompt.mockResolvedValueOnce({
+      error: { message: "seed unavailable" },
+    });
+
+    clientStub.config.providers.mockResolvedValue({
+      data: {
+        providers: [
+          {
+            id: "opencode",
+            models: {
+              "gpt-5.3-codex": { id: "opencode/gpt-5.3-codex" },
+              "template-default": { id: "template-default" },
+            },
+          },
+        ],
+        default: { opencode: "template-default" },
+      },
+    });
+
+    const session = await ensureAgentSession(cellId, {
+      modelId: "opencode/gpt-5.3-codex",
+      providerId: "opencode",
+    });
+
+    expect(session.provider).toBe("opencode");
+    expect(session.modelId).toBe("gpt-5.3-codex");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[agent] Failed to seed session model preference",
+      expect.objectContaining({
+        cellId,
+        sessionId: session.id,
+        providerId: "opencode",
+        modelId: "gpt-5.3-codex",
+        message: "seed unavailable",
+      })
+    );
+  });
+
+  it("keeps runtime startup available when model seeding throws", async () => {
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation((..._args) => null);
+
+    clientStub.session.prompt.mockRejectedValueOnce(new Error("socket closed"));
+
+    clientStub.config.providers.mockResolvedValue({
+      data: {
+        providers: [
+          {
+            id: "opencode",
+            models: {
+              "gpt-5.3-codex": { id: "opencode/gpt-5.3-codex" },
+              "template-default": { id: "template-default" },
+            },
+          },
+        ],
+        default: { opencode: "template-default" },
+      },
+    });
+
+    const session = await ensureAgentSession(cellId, {
+      modelId: "opencode/gpt-5.3-codex",
+      providerId: "opencode",
+    });
+
+    expect(session.provider).toBe("opencode");
+    expect(session.modelId).toBe("gpt-5.3-codex");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[agent] Failed to seed session model preference",
+      expect.objectContaining({
+        cellId,
+        sessionId: session.id,
+        providerId: "opencode",
+        modelId: "gpt-5.3-codex",
+        message: "socket closed",
+      })
+    );
+  });
+
   it("reuses persisted provisioning model overrides before first message", async () => {
     await testDb.insert(cellProvisioningStates).values({
       cellId,

@@ -1626,23 +1626,48 @@ async function seedSessionModelPreference(
     return;
   }
 
-  const response = await runtime.client.session.prompt({
-    path: { id: runtime.session.id },
-    query: runtime.directoryQuery,
-    body: {
-      noReply: true,
-      model: {
-        providerID: runtime.providerId,
-        modelID: runtime.modelId,
+  try {
+    const response = await runtime.client.session.prompt({
+      path: { id: runtime.session.id },
+      query: runtime.directoryQuery,
+      body: {
+        noReply: true,
+        model: {
+          providerID: runtime.providerId,
+          modelID: runtime.modelId,
+        },
+        parts: [],
       },
-      parts: [],
-    },
-  });
+    });
 
-  if (response.error) {
-    throw new Error(
-      getRpcErrorMessage(response.error, "Failed to persist session model")
+    if (!response.error) {
+      return;
+    }
+
+    const message = getRpcErrorMessage(
+      response.error,
+      "Failed to persist session model"
     );
+
+    // biome-ignore lint/suspicious/noConsole: startup warning for non-fatal model seeding errors
+    console.warn("[agent] Failed to seed session model preference", {
+      cellId: runtime.cell.id,
+      sessionId: runtime.session.id,
+      providerId: runtime.providerId,
+      modelId: runtime.modelId,
+      message,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    // biome-ignore lint/suspicious/noConsole: startup warning for non-fatal model seeding errors
+    console.warn("[agent] Failed to seed session model preference", {
+      cellId: runtime.cell.id,
+      sessionId: runtime.session.id,
+      providerId: runtime.providerId,
+      modelId: runtime.modelId,
+      message,
+    });
   }
 }
 
