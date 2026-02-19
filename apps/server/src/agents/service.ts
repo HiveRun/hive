@@ -505,6 +505,74 @@ async function loadProvisioningModelOverride(args: {
   };
 }
 
+async function shouldApplyProvisioningModelOverride(args: {
+  cell: Cell;
+  force: boolean;
+  acquireOpencodeClient: AgentRuntimeDependencies["acquireOpencodeClient"];
+}): Promise<boolean> {
+  if (args.force || !args.cell.opencodeSessionId) {
+    return true;
+  }
+
+  try {
+    const client = await args.acquireOpencodeClient();
+    const directoryQuery: DirectoryQuery = {
+      directory: args.cell.workspacePath,
+    };
+    const existingSession = await getRemoteSession(
+      client,
+      directoryQuery,
+      args.cell.opencodeSessionId
+    );
+
+    return existingSession === null;
+  } catch {
+    return false;
+  }
+}
+
+function resolveExplicitModelSelection(options?: {
+  modelId?: string;
+  providerId?: string;
+}): ModelSelectionCandidate | undefined {
+  if (!(options?.modelId || options?.providerId)) {
+    return;
+  }
+
+  return {
+    ...(options?.modelId ? { modelId: options.modelId } : {}),
+    ...(options?.providerId ? { providerId: options.providerId } : {}),
+  };
+}
+
+async function resolveRuntimeModelSelectionOptions(args: {
+  cell: Cell;
+  cellId: string;
+  options?: { force?: boolean; modelId?: string; providerId?: string };
+  deps: AgentRuntimeDependencies;
+}): Promise<ModelSelectionCandidate | undefined> {
+  const explicitModelSelection = resolveExplicitModelSelection(args.options);
+  if (explicitModelSelection) {
+    return explicitModelSelection;
+  }
+
+  const shouldApplyPersistedModelOverride =
+    await shouldApplyProvisioningModelOverride({
+      cell: args.cell,
+      force: args.options?.force ?? false,
+      acquireOpencodeClient: args.deps.acquireOpencodeClient,
+    });
+
+  if (!shouldApplyPersistedModelOverride) {
+    return;
+  }
+
+  return loadProvisioningModelOverride({
+    runtimeDb: args.deps.db,
+    cellId: args.cellId,
+  });
+}
+
 type ProviderCatalogInfo = {
   providers: ProviderEntry[];
   defaults: Record<string, string>;
@@ -1247,19 +1315,12 @@ async function ensureRuntimeForCell(
     await fetchProviderCatalogForWorkspace(workspaceRootPath);
   const { providers, defaults } = buildProviderCatalogInfo(providerCatalog);
 
-  const explicitModelSelection =
-    options?.modelId || options?.providerId
-      ? {
-          ...(options?.modelId ? { modelId: options.modelId } : {}),
-          ...(options?.providerId ? { providerId: options.providerId } : {}),
-        }
-      : undefined;
-
-  const persistedModelOverride = explicitModelSelection
-    ? undefined
-    : await loadProvisioningModelOverride({ runtimeDb: deps.db, cellId });
-
-  const selectionOptions = explicitModelSelection ?? persistedModelOverride;
+  const selectionOptions = await resolveRuntimeModelSelectionOptions({
+    cell,
+    cellId,
+    options,
+    deps,
+  });
 
   const selection = resolveModelSelection({
     options: selectionOptions,

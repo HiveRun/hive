@@ -430,7 +430,7 @@ describe("agent model selection", () => {
     );
   });
 
-  it("does not reseed model when reusing existing sessions", async () => {
+  it("skips stale provisioning overrides for restorable sessions", async () => {
     await testDb
       .update(cells)
       .set({ opencodeSessionId: "session-runtime" })
@@ -438,7 +438,7 @@ describe("agent model selection", () => {
 
     await testDb.insert(cellProvisioningStates).values({
       cellId,
-      modelIdOverride: "opencode/gpt-5.3-codex",
+      modelIdOverride: "opencode/stale-model",
       providerIdOverride: "opencode",
     });
 
@@ -452,7 +452,6 @@ describe("agent model selection", () => {
           {
             id: "opencode",
             models: {
-              "gpt-5.3-codex": { id: "opencode/gpt-5.3-codex" },
               "template-default": { id: "template-default" },
             },
           },
@@ -464,7 +463,7 @@ describe("agent model selection", () => {
     const session = await ensureAgentSession(cellId);
 
     expect(session.provider).toBe("opencode");
-    expect(session.modelId).toBe("gpt-5.3-codex");
+    expect(session.modelId).toBe("template-default");
     expect(clientStub.session.create).not.toHaveBeenCalled();
     expect(clientStub.session.prompt).not.toHaveBeenCalled();
   });
