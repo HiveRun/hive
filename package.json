@@ -40,7 +40,7 @@
     "check:staged": "lint-staged --allow-empty",
     "check:secrets": "./scripts/check-secrets.sh",
     "check:audit": "bun audit --audit-level high || echo '⚠️  Security audit found issues (see above)'",
-    "ruler:apply": "cp README.md .ruler/prompts/README.md && cp docs/requirements/design.md .ruler/prompts/design.md && bunx @intellectronica/ruler@latest apply --local-only && biome check --write --no-errors-on-unmatched --files-ignore-unknown=true",
+    "ruler:apply": "cp README.md .ruler/prompts/README.md && bunx @intellectronica/ruler@latest apply --local-only && biome check --write --no-errors-on-unmatched --files-ignore-unknown=true",
     "dev": "bun run dev:turbo",
     "dev:turbo": "turbo run dev --filter=web... --filter=@hive/server...",
     "build": "turbo build",

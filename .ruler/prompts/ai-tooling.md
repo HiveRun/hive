@@ -6,14 +6,10 @@
 - When adding new workflows, prefer short, action-focused bullets so the generated handbook stays compact (~20 lines).
 - Use the published `@opencode-ai/sdk` package for runtime integrations.
 - Project documentation is distributed across several key locations:
-  - `docs/` Obsidian vault - Requirements, implementation plans, project context
+  - `CONCEPTS.md` - High-level concepts (cells, templates, services, etc.)
   - `.ruler/prompts/` - AI agent guidance and coding standards  
   - `README.md` - Project overview and getting started
-  When you need context, prioritize these markdown sources over external knowledge bases and update them when your work changes the project plan.
-- Feature development progress is tracked in `docs/requirements/features/` using Tasks format. Always update the corresponding feature file's task status when starting/completing work so progress is visible to all agents.
-  - **Status updates**: `[ ]` → `[/]` when starting work, `[/]` → `[x]` when completed, `[ ]` → `[-]` if blocked
-  - **Phase ordering provides natural priority**: Phase 0 → Phase 1 → Phase 2 → Phase 3 → Phase 4
-  - **Always check feature file first** for requirements, integration points, and testing strategy before starting work
+  When you need context, prioritize these markdown sources over external knowledge bases.
 - Before pushing, run `bun run check:push` (lint, types, unit tests, build).
 - Run `bun run test:e2e` when modifying cell lifecycle, terminal handling, service orchestration, or workspace management.
 - For `apps/e2e` changes, prefer deterministic checks (session/message metadata + UI confirmation) instead of fixed sleeps.

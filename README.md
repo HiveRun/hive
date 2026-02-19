@@ -2,10 +2,6 @@
 
 Monorepo project with React + TanStack Start frontend and Elysia backend.
 
-## Documentation Workflow
-
-All planning and requirements live under `docs/` as plain Markdown so any editor (VS Code + Foam, Obsidian, or the web UI we build later) can read and update them. Capture new requirements in `docs/requirements/`, tasks in `docs/tasks/`, tag each with a `theme-*` label for grouping, and link everything back to Hive references as needed. Keep the task order manually in those lists—whatever note sits at the top is what we tackle next.
-
 ## Installation
 
 ### One-line install
