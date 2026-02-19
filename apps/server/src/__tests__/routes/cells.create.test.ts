@@ -23,6 +23,7 @@ const CREATED_STATUS = 201;
 const CONFLICT_STATUS = 409;
 const WAIT_TIMEOUT_MS = 500;
 const WAIT_INTERVAL_MS = 10;
+const DETACHED_PROMPT_READY_TIMEOUT_MS = 2000;
 const CELLS_API_URL = "http://localhost/api/cells";
 
 const JSON_HEADERS = {
@@ -45,13 +46,17 @@ async function waitForCondition(
   throw new Error("Condition not met within timeout");
 }
 
-async function waitForCellStatus(cellId: string, status: string) {
+async function waitForCellStatus(
+  cellId: string,
+  status: string,
+  timeoutMs = WAIT_TIMEOUT_MS
+) {
   let latestRow: typeof cells.$inferSelect | undefined;
   await waitForCondition(async () => {
     const rows = await testDb.select().from(cells);
     latestRow = rows.find((row) => row.id === cellId);
     return latestRow?.status === status;
-  });
+  }, timeoutMs);
   if (!latestRow) {
     throw new Error(`Cell ${cellId} not found`);
   }
@@ -431,6 +436,42 @@ describe("POST /api/cells", () => {
       capturedSessionId,
       "Fix the failing specs in apps/web"
     );
+  });
+
+  it("continues provisioning when the initial prompt is slow", async () => {
+    let releasePrompt = () => {
+      // replaced once deferred prompt is created
+    };
+    const sendAgentMessage = vi.fn<SendAgentMessageFn>().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releasePrompt = resolve;
+        })
+    );
+
+    const app = createTestApp({ sendAgentMessage });
+
+    const payload = await createCellAndExpectSpawning({
+      app,
+      body: {
+        name: "Slow Prompt Dispatch",
+        templateId,
+        workspaceId: "test-workspace",
+        description: "Investigate startup reliability",
+      },
+    });
+
+    await waitForCellStatus(
+      payload.id,
+      "ready",
+      DETACHED_PROMPT_READY_TIMEOUT_MS
+    );
+    const markReadyStep = await waitForTimingStep(payload.id, "mark_ready");
+
+    expect(markReadyStep.status).toBe("ok");
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+
+    releasePrompt();
   });
 
   it("passes selected model overrides to agent provisioning", async () => {

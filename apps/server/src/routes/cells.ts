@@ -504,6 +504,7 @@ const LOG_LINE_SPLIT_RE = /\r?\n/;
 const PORT_CHECK_TIMEOUT_MS = 500;
 const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
 const MAX_PROVISIONING_ATTEMPTS = 3;
+const INITIAL_PROMPT_BACKGROUND_WARN_TIMEOUT_MS = 3000;
 const DEFAULT_SERVICE_HOST = process.env.SERVICE_HOST ?? "localhost";
 const DEFAULT_SERVICE_PROTOCOL = process.env.SERVICE_PROTOCOL ?? "http";
 type OpencodeThemeMode = "dark" | "light";
@@ -3462,9 +3463,17 @@ async function finalizeCellProvisioning(
     existingSessionId,
   });
   if (shouldSendInitialPrompt && initialPrompt) {
-    await runPhase("send_initial_prompt", async () =>
-      dispatchAgentMessage(session.id, initialPrompt)
-    );
+    await runPhase("send_initial_prompt", () => {
+      dispatchInitialPromptInBackground({
+        sendAgentMessage: dispatchAgentMessage,
+        sessionId: session.id,
+        content: initialPrompt,
+        timeoutMs: INITIAL_PROMPT_BACKGROUND_WARN_TIMEOUT_MS,
+        cellId: state.cellId,
+        log: context.log,
+      });
+      return Promise.resolve();
+    });
   }
 
   const finishedAt = await runPhase("mark_ready", async () =>
@@ -3806,6 +3815,53 @@ function shouldSendInitialPromptForAttempt(args: {
   }
 
   return !args.existingSessionId;
+}
+
+function dispatchInitialPromptInBackground(args: {
+  sendAgentMessage: CellRouteDependencies["sendAgentMessage"];
+  sessionId: string;
+  content: string;
+  timeoutMs: number;
+  cellId: string;
+  log: LoggerLike;
+}): void {
+  const promptStartedAt = Date.now();
+  const promptDispatch = args.sendAgentMessage(args.sessionId, args.content);
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+    args.log.warn(
+      {
+        cellId: args.cellId,
+        sessionId: args.sessionId,
+        timeoutMs: args.timeoutMs,
+        elapsedMs: Date.now() - promptStartedAt,
+      },
+      "Initial prompt is still running after startup finalized"
+    );
+  }, args.timeoutMs);
+
+  promptDispatch.then(
+    () => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+    },
+    (error) => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+
+      args.log.warn(
+        {
+          cellId: args.cellId,
+          sessionId: args.sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        "Initial prompt failed after startup finalized"
+      );
+    }
+  );
 }
 
 type LoggerLike = {
