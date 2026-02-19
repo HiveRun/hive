@@ -13,6 +13,7 @@ import { eq, inArray } from "drizzle-orm";
 import { loadHiveConfig } from "../config/context";
 import type { HiveConfig, Template } from "../config/schema";
 import { db } from "../db";
+import { cellProvisioningStates } from "../schema/cell-provisioning";
 import { type Cell, cells } from "../schema/cells";
 import { type CellService, cellServices } from "../schema/services";
 import { publishAgentEvent } from "./events";
@@ -479,6 +480,31 @@ type ModelSelectionCandidate = {
   modelId?: string;
 };
 
+async function loadProvisioningModelOverride(args: {
+  runtimeDb: AgentRuntimeDependencies["db"];
+  cellId: string;
+}): Promise<ModelSelectionCandidate | undefined> {
+  const [provisioningState] = await args.runtimeDb
+    .select({
+      modelId: cellProvisioningStates.modelIdOverride,
+      providerId: cellProvisioningStates.providerIdOverride,
+    })
+    .from(cellProvisioningStates)
+    .where(eq(cellProvisioningStates.cellId, args.cellId))
+    .limit(1);
+
+  if (!provisioningState?.modelId) {
+    return;
+  }
+
+  return {
+    modelId: provisioningState.modelId,
+    ...(provisioningState.providerId
+      ? { providerId: provisioningState.providerId }
+      : {}),
+  };
+}
+
 type ProviderCatalogInfo = {
   providers: ProviderEntry[];
   defaults: Record<string, string>;
@@ -550,6 +576,83 @@ function findProviderById(
   return providers.find((provider) => provider.id === providerId);
 }
 
+function formatListPreview(items: string[], limit = 10): string {
+  if (items.length <= limit) {
+    return items.join(", ");
+  }
+
+  const preview = items.slice(0, limit).join(", ");
+  return `${preview}, ... (+${items.length - limit} more)`;
+}
+
+function listProviderModelIdentifiers(provider: ProviderEntry): string[] {
+  const models = provider.models;
+  if (!models) {
+    return [];
+  }
+
+  const unique = new Set<string>();
+  for (const [modelKey, model] of Object.entries(models)) {
+    unique.add(modelKey);
+    if (model.id) {
+      unique.add(model.id);
+    }
+  }
+
+  return Array.from(unique).sort((a, b) => a.localeCompare(b));
+}
+
+function buildInvalidModelOverrideMessage(args: {
+  modelId: string;
+  providerId?: string;
+  providers: ProviderEntry[];
+}): string {
+  const { modelId, providerId, providers } = args;
+
+  if (providerId) {
+    const provider = findProviderById(providers, providerId);
+    if (!provider) {
+      const providerIds = providers.map((entry) => entry.id).sort();
+      const availableProviders = providerIds.length
+        ? formatListPreview(providerIds)
+        : "none";
+      return `Selected model override is invalid: provider "${providerId}" was not found. Available providers: ${availableProviders}. Refresh the model catalog and try again.`;
+    }
+
+    const availableModels = listProviderModelIdentifiers(provider);
+    const availableModelSummary = availableModels.length
+      ? formatListPreview(availableModels)
+      : "none";
+    return `Selected model override is invalid: model "${modelId}" is unavailable for provider "${providerId}". Available models: ${availableModelSummary}. Refresh the model catalog and try again.`;
+  }
+
+  const providerIds = providers.map((entry) => entry.id).sort();
+  const providerSummary = providerIds.length
+    ? formatListPreview(providerIds)
+    : "none";
+  return `Selected model override is invalid: model "${modelId}" was not found in the provider catalog. Available providers: ${providerSummary}.`;
+}
+
+function resolveProviderModelMatch(
+  provider: ProviderEntry,
+  candidateModelId: string
+): string | undefined {
+  const models = provider.models;
+  if (!models) {
+    return;
+  }
+
+  if (models[candidateModelId]) {
+    return candidateModelId;
+  }
+
+  const match = Object.entries(models).find(
+    ([, model]) => model.id === candidateModelId
+  );
+
+  return match?.[0];
+}
+
 function getFirstModelId(
   models: Record<string, ProviderModel> | undefined
 ): string | undefined {
@@ -579,15 +682,25 @@ function resolveCandidateModel({
 
   if (candidate.providerId) {
     const provider = findProviderById(providers, candidate.providerId);
-    if (provider?.models?.[candidate.modelId]) {
-      return { providerId: provider.id, modelId: candidate.modelId };
+    if (provider) {
+      const resolvedModelId = resolveProviderModelMatch(
+        provider,
+        candidate.modelId
+      );
+      if (resolvedModelId) {
+        return { providerId: provider.id, modelId: resolvedModelId };
+      }
     }
     return null;
   }
 
   for (const provider of providers) {
-    if (provider.models?.[candidate.modelId]) {
-      return { providerId: provider.id, modelId: candidate.modelId };
+    const resolvedModelId = resolveProviderModelMatch(
+      provider,
+      candidate.modelId
+    );
+    if (resolvedModelId) {
+      return { providerId: provider.id, modelId: resolvedModelId };
     }
   }
 
@@ -656,6 +769,16 @@ function resolveModelSelection({
     providers,
   });
 
+  if (options?.modelId && !overrideModel) {
+    throw new Error(
+      buildInvalidModelOverrideMessage({
+        modelId: options.modelId,
+        providerId: options.providerId,
+        providers,
+      })
+    );
+  }
+
   const agentModel = resolveCandidateModel({
     candidate: {
       providerId: agentConfig?.providerId,
@@ -691,10 +814,7 @@ function resolveModelSelection({
 
   const resolvedModel =
     overrideModel ?? agentModel ?? workspaceFallback ?? providerFallback;
-  const effectiveOptions =
-    options?.modelId && !overrideModel
-      ? { ...options, modelId: undefined, providerId: undefined }
-      : options;
+  const effectiveOptions = options;
   const effectiveAgentConfig =
     agentConfig?.modelId && !agentModel ? undefined : agentConfig;
 
@@ -1127,8 +1247,22 @@ async function ensureRuntimeForCell(
     await fetchProviderCatalogForWorkspace(workspaceRootPath);
   const { providers, defaults } = buildProviderCatalogInfo(providerCatalog);
 
+  const explicitModelSelection =
+    options?.modelId || options?.providerId
+      ? {
+          ...(options?.modelId ? { modelId: options.modelId } : {}),
+          ...(options?.providerId ? { providerId: options.providerId } : {}),
+        }
+      : undefined;
+
+  const persistedModelOverride = explicitModelSelection
+    ? undefined
+    : await loadProvisioningModelOverride({ runtimeDb: deps.db, cellId });
+
+  const selectionOptions = explicitModelSelection ?? persistedModelOverride;
+
   const selection = resolveModelSelection({
-    options,
+    options: selectionOptions,
     agentConfig,
     defaultOpencodeModel,
     configDefaultProvider,
@@ -1150,13 +1284,15 @@ async function ensureRuntimeForCell(
     deps,
   });
 
-  if (!options?.modelId) {
-    const restoredModel = await resolveSessionModelPreference(runtime);
-    if (restoredModel) {
-      await ensureProviderCredentials(restoredModel.providerId);
-      runtime.providerId = restoredModel.providerId;
-      runtime.modelId = restoredModel.modelId;
-    }
+  const restoredModel = await resolveSessionModelPreference(runtime);
+  if (restoredModel && !options?.modelId) {
+    await ensureProviderCredentials(restoredModel.providerId);
+    runtime.providerId = restoredModel.providerId;
+    runtime.modelId = restoredModel.modelId;
+  }
+
+  if (!restoredModel && selectionOptions?.modelId) {
+    await seedSessionModelPreference(runtime);
   }
 
   cellSessionMap.set(cell.id, runtime.session.id);
@@ -1480,6 +1616,33 @@ async function resolveSessionModelPreference(
     return null;
   } catch {
     return null;
+  }
+}
+
+async function seedSessionModelPreference(
+  runtime: RuntimeHandle
+): Promise<void> {
+  if (!(runtime.providerId && runtime.modelId)) {
+    return;
+  }
+
+  const response = await runtime.client.session.prompt({
+    path: { id: runtime.session.id },
+    query: runtime.directoryQuery,
+    body: {
+      noReply: true,
+      model: {
+        providerID: runtime.providerId,
+        modelID: runtime.modelId,
+      },
+      parts: [],
+    },
+  });
+
+  if (response.error) {
+    throw new Error(
+      getRpcErrorMessage(response.error, "Failed to persist session model")
+    );
   }
 }
 

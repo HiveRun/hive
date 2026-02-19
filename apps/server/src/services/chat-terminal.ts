@@ -14,6 +14,11 @@ const INSTALL_HINT = "curl -fsSL https://opencode.ai/install | bash";
 const HIVE_THEME_NAME = "hive-resonant";
 const DEFAULT_THEME_MODE = "dark";
 
+type ChatTerminalModelPreference = {
+  providerId: string;
+  modelId: string;
+};
+
 const HIVE_THEME_CONTENT = `${JSON.stringify(
   {
     $schema: "https://opencode.ai/theme.json",
@@ -132,9 +137,24 @@ function parseJsonRecord(content: string | undefined): Record<string, unknown> {
   return {};
 }
 
+function toOpencodeModelValue(
+  preference: ChatTerminalModelPreference | undefined
+): string | undefined {
+  if (!preference) {
+    return;
+  }
+
+  if (preference.modelId.includes("/")) {
+    return preference.modelId;
+  }
+
+  return `${preference.providerId}/${preference.modelId}`;
+}
+
 function createOpencodeThemeEnv(
   workspacePath: string,
-  themeMode: "dark" | "light"
+  themeMode: "dark" | "light",
+  preferredModel?: ChatTerminalModelPreference
 ): Record<string, string> {
   const configRoot = join(workspacePath, ".opencode");
   const themeDir = join(configRoot, "themes");
@@ -174,8 +194,10 @@ function createOpencodeThemeEnv(
   }
 
   const inlineConfig = parseInlineConfig(process.env.OPENCODE_CONFIG_CONTENT);
+  const model = toOpencodeModelValue(preferredModel);
   const mergedInlineConfig = {
     ...inlineConfig,
+    ...(model ? { model } : {}),
     theme: HIVE_THEME_NAME,
   };
 
@@ -221,6 +243,7 @@ type ChatTerminalRecord = {
   opencodeSessionId: string;
   opencodeServerUrl: string;
   opencodeThemeMode: "dark" | "light";
+  preferredModel?: string;
 };
 
 export type ChatTerminalService = {
@@ -230,6 +253,7 @@ export type ChatTerminalService = {
     opencodeSessionId: string;
     opencodeServerUrl: string;
     opencodeThemeMode?: "dark" | "light";
+    preferredModel?: ChatTerminalModelPreference;
   }): ChatTerminalSession;
   getSession(cellId: string): ChatTerminalSession | null;
   readOutput(cellId: string): string;
@@ -316,7 +340,9 @@ const createChatTerminalService = (): ChatTerminalService => {
     opencodeSessionId,
     opencodeServerUrl,
     opencodeThemeMode = DEFAULT_THEME_MODE,
+    preferredModel,
   }) => {
+    const preferredModelValue = toOpencodeModelValue(preferredModel);
     const existing = sessions.get(cellId);
     if (
       existing &&
@@ -324,7 +350,8 @@ const createChatTerminalService = (): ChatTerminalService => {
       existing.cwd === workspacePath &&
       existing.opencodeSessionId === opencodeSessionId &&
       existing.opencodeServerUrl === opencodeServerUrl &&
-      existing.opencodeThemeMode === opencodeThemeMode
+      existing.opencodeThemeMode === opencodeThemeMode &&
+      existing.preferredModel === preferredModelValue
     ) {
       return toSession(existing);
     }
@@ -338,7 +365,8 @@ const createChatTerminalService = (): ChatTerminalService => {
     try {
       opencodeThemeEnv = createOpencodeThemeEnv(
         workspacePath,
-        opencodeThemeMode
+        opencodeThemeMode,
+        preferredModel
       );
     } catch {
       // proceed without custom Hive theme if runtime cannot write config artifacts
@@ -387,6 +415,7 @@ const createChatTerminalService = (): ChatTerminalService => {
       opencodeSessionId,
       opencodeServerUrl,
       opencodeThemeMode,
+      preferredModel: preferredModelValue,
     };
 
     pty.onData((chunk: string) => {
