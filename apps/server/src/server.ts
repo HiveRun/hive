@@ -125,6 +125,14 @@ const allowedCorsOriginSet = new Set(allowedCorsOrigins);
 const isLocalOrigin = (origin: string) =>
   origin.startsWith("http://localhost:") ||
   origin.startsWith("http://127.0.0.1:");
+const isElectronDesktopOrigin = (request: Request, origin: string) => {
+  if (origin !== "null") {
+    return false;
+  }
+
+  const userAgent = request.headers.get("user-agent") ?? "";
+  return userAgent.includes("Electron/");
+};
 const resolveCorsOrigin = (request: Request) => {
   const origin = request.headers.get("origin");
   if (!origin) {
@@ -134,6 +142,9 @@ const resolveCorsOrigin = (request: Request) => {
     return true;
   }
   if (isLocalOrigin(origin)) {
+    return true;
+  }
+  if (isElectronDesktopOrigin(request, origin)) {
     return true;
   }
   return false;
