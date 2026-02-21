@@ -23,6 +23,7 @@ const releaseDir = join(releaseBaseDir, releaseName);
 const desktopBinaryName = "hive-desktop";
 const desktopElectronRoot = join(repoRoot, "apps", "desktop-electron");
 const desktopElectronOutputDir = join(desktopElectronRoot, "out");
+const desktopElectronPublicDir = join(desktopElectronRoot, "public");
 const WINDOWS_SETUP_EXE_PATTERN = /setup.*\.exe$/i;
 
 const run = async (
@@ -65,6 +66,19 @@ const buildFrontend = () =>
       VITE_APP_BASE: "./",
     },
   });
+
+const syncDesktopRendererAssets = async () => {
+  const frontendDist = join(repoRoot, "apps", "web", "dist");
+  if (!existsSync(frontendDist)) {
+    throw new Error(
+      "Frontend dist directory missing. Run the web build first."
+    );
+  }
+
+  await rm(desktopElectronPublicDir, { recursive: true, force: true });
+  await cp(frontendDist, desktopElectronPublicDir, { recursive: true });
+};
+
 const buildCli = () =>
   run(["bun", "run", "compile"], {
     cwd: join(repoRoot, "packages", "cli"),
@@ -206,6 +220,7 @@ const main = async () => {
   await ensureDir(releaseDir);
 
   await buildFrontend();
+  await syncDesktopRendererAssets();
   await buildCli();
   await buildDesktopElectron();
 

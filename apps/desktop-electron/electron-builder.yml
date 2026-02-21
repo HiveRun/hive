@@ -3,6 +3,7 @@ productName: Hive Desktop
 icon: resources/icon.png
 files:
   - dist/**
+  - public/**
 extraMetadata:
   main: dist/main.js
 linux:
