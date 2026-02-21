@@ -62,6 +62,7 @@ const mockHiveConfig: HiveConfig = {
 };
 
 import {
+  closeAgentSession,
   closeAllAgentSessions,
   ensureAgentSession,
   fetchCompactionStats,
@@ -624,12 +625,20 @@ describe("agent model selection", () => {
   it("deletes remote opencode session when runtime stops", async () => {
     const session = await ensureAgentSession(cellId);
 
-    await closeAllAgentSessions();
+    await closeAllAgentSessions({ deleteRemote: true });
 
     expect(clientStub.session.delete).toHaveBeenCalledWith({
       path: { id: session.id },
       query: { directory: "/tmp/model-test" },
     });
+  });
+
+  it("keeps remote opencode session when shutdown preserves sessions", async () => {
+    await ensureAgentSession(cellId);
+
+    await closeAllAgentSessions({ deleteRemote: false });
+
+    expect(clientStub.session.delete).not.toHaveBeenCalled();
   });
 
   it("ignores missing session errors during runtime shutdown", async () => {
@@ -639,8 +648,24 @@ describe("agent model selection", () => {
 
     await ensureAgentSession(cellId);
 
-    await expect(closeAllAgentSessions()).resolves.toBeUndefined();
+    await expect(
+      closeAllAgentSessions({ deleteRemote: true })
+    ).resolves.toBeUndefined();
     expect(clientStub.session.delete).toHaveBeenCalled();
+  });
+
+  it("deletes persisted sessions after shutdown when runtime map is empty", async () => {
+    const session = await ensureAgentSession(cellId);
+
+    await closeAllAgentSessions({ deleteRemote: false });
+    clientStub.session.delete.mockClear();
+
+    await closeAgentSession(cellId);
+
+    expect(clientStub.session.delete).toHaveBeenCalledWith({
+      path: { id: session.id },
+      query: { directory: "/tmp/model-test" },
+    });
   });
 });
 
