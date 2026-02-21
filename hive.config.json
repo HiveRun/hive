@@ -31,7 +31,7 @@
       "env": {
         "DATABASE_URL": "local.db"
       },
-      "setup": ["bun setup"],
+      "setup": ["HIVE_SKIP_DESKTOP_E2E_SETUP=1 bun setup"],
       "includePatterns": ["./.env*", "./apps/server/.env*", "./apps/web/.env*"],
       "ignorePatterns": [
         "node_modules/**",

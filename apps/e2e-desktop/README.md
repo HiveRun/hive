@@ -23,15 +23,17 @@ sudo apt-get update
 sudo apt-get install -y \
   xvfb \
   libnss3 \
-  libatk-bridge2.0-0 \
+  libatk-bridge2.0-0t64 \
   libdrm2 \
   libxkbcommon0 \
   libxcomposite1 \
   libxdamage1 \
   libxrandr2 \
   libgbm1 \
-  libasound2
+  libasound2t64
 ```
+
+If your distro does not provide the `*t64` names, use `libatk-bridge2.0-0` and `libasound2`.
 
 Tip: on Linux, the setup script automatically attempts to install missing packages via `sudo apt-get`.
 
