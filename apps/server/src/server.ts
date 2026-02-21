@@ -232,7 +232,7 @@ const shutdown = async (): Promise<void> => {
       }\n`
     );
   }
-  await closeAllAgentSessions();
+  await closeAllAgentSessions({ deleteRemote: false });
   await stopSharedOpencodeServer();
   cleanupPidFile();
 };

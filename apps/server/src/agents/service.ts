@@ -276,7 +276,11 @@ type RuntimeHandle = {
   pendingInterrupt: boolean;
   compaction: RuntimeCompactionState;
   sendMessage: (content: string) => Promise<void>;
-  stop: () => Promise<void>;
+  stop: (options?: StopRuntimeOptions) => Promise<void>;
+};
+
+type StopRuntimeOptions = {
+  deleteRemote?: boolean;
 };
 
 export type ProviderModel = {
@@ -992,13 +996,16 @@ export async function interruptAgentSession(sessionId: string): Promise<void> {
   setRuntimeStatus(runtime, "awaiting_input");
 }
 
-export async function stopAgentSession(sessionId: string): Promise<void> {
+export async function stopAgentSession(
+  sessionId: string,
+  options: StopRuntimeOptions = { deleteRemote: false }
+): Promise<void> {
   const runtime = runtimeRegistry.get(sessionId);
   if (!runtime) {
     return;
   }
 
-  await runtime.stop();
+  await runtime.stop(options);
   runtimeRegistry.delete(sessionId);
   cellSessionMap.delete(runtime.cell.id);
 }
@@ -1009,14 +1016,16 @@ export async function closeAgentSession(cellId: string): Promise<void> {
     return;
   }
 
-  await stopAgentSession(sessionId);
+  await stopAgentSession(sessionId, { deleteRemote: true });
 }
 
-export async function closeAllAgentSessions(): Promise<void> {
+export async function closeAllAgentSessions(
+  options: StopRuntimeOptions = { deleteRemote: false }
+): Promise<void> {
   const sessionIds = Array.from(runtimeRegistry.keys());
 
   for (const sessionId of sessionIds) {
-    await stopAgentSession(sessionId);
+    await stopAgentSession(sessionId, options);
   }
 }
 
@@ -1146,9 +1155,14 @@ export type AgentRuntimeService = {
     content: string
   ) => Promise<void>;
   readonly interruptAgentSession: (sessionId: string) => Promise<void>;
-  readonly stopAgentSession: (sessionId: string) => Promise<void>;
+  readonly stopAgentSession: (
+    sessionId: string,
+    options?: StopRuntimeOptions
+  ) => Promise<void>;
   readonly closeAgentSession: (cellId: string) => Promise<void>;
-  readonly closeAllAgentSessions: () => Promise<void>;
+  readonly closeAllAgentSessions: (
+    options?: StopRuntimeOptions
+  ) => Promise<void>;
   readonly respondAgentPermission: (
     sessionId: string,
     permissionId: string,
@@ -1176,10 +1190,11 @@ const makeAgentRuntimeService = (): AgentRuntimeService => ({
     wrapAgentRuntime(sendAgentMessage)(sessionId, content),
   interruptAgentSession: (sessionId) =>
     wrapAgentRuntime(interruptAgentSession)(sessionId),
-  stopAgentSession: (sessionId) =>
-    wrapAgentRuntime(stopAgentSession)(sessionId),
+  stopAgentSession: (sessionId, options) =>
+    wrapAgentRuntime(stopAgentSession)(sessionId, options),
   closeAgentSession: (cellId) => wrapAgentRuntime(closeAgentSession)(cellId),
-  closeAllAgentSessions: () => wrapAgentRuntime(closeAllAgentSessions)(),
+  closeAllAgentSessions: (options) =>
+    wrapAgentRuntime(closeAllAgentSessions)(options),
   respondAgentPermission: (sessionId, permissionId, response) =>
     wrapAgentRuntime(respondAgentPermission)(sessionId, permissionId, response),
   fetchProviderCatalogForWorkspace: (workspaceRootPath) =>
@@ -1518,24 +1533,26 @@ async function startOpencodeRuntime({
 
       runtime.pendingInterrupt = false;
     },
-    async stop() {
+    async stop(options = { deleteRemote: false }) {
       abortController.abort();
-      const response = await client.session
-        .delete({
-          path: { id: session.id },
-          query: directoryQuery,
-        })
-        .catch((error: unknown) => ({ error }));
+      if (options.deleteRemote === true) {
+        const response = await client.session
+          .delete({
+            path: { id: session.id },
+            query: directoryQuery,
+          })
+          .catch((error: unknown) => ({ error }));
 
-      if (response.error) {
-        const message = getRpcErrorMessage(
-          response.error,
-          "Failed to delete OpenCode session during runtime shutdown"
-        );
-        if (!isSessionMissingError(message)) {
-          process.stderr.write(
-            `[agent] Failed to delete OpenCode session ${session.id}: ${message}\n`
+        if (response.error) {
+          const message = getRpcErrorMessage(
+            response.error,
+            "Failed to delete OpenCode session during runtime shutdown"
           );
+          if (!isSessionMissingError(message)) {
+            process.stderr.write(
+              `[agent] Failed to delete OpenCode session ${session.id}: ${message}\n`
+            );
+          }
         }
       }
       setRuntimeStatus(runtime, "completed");
