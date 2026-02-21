@@ -1012,11 +1012,24 @@ export async function stopAgentSession(
 
 export async function closeAgentSession(cellId: string): Promise<void> {
   const sessionId = cellSessionMap.get(cellId);
-  if (!sessionId) {
+  if (sessionId) {
+    const hadRuntime = runtimeRegistry.has(sessionId);
+    await stopAgentSession(sessionId, { deleteRemote: true });
+    if (hadRuntime) {
+      return;
+    }
+  }
+
+  const cell = await getCellById(cellId);
+  if (!cell?.opencodeSessionId) {
     return;
   }
 
-  await stopAgentSession(sessionId, { deleteRemote: true });
+  await deleteRemoteOpencodeSession({
+    sessionId: cell.opencodeSessionId,
+    directoryQuery: { directory: cell.workspacePath },
+  });
+  cellSessionMap.delete(cellId);
 }
 
 export async function closeAllAgentSessions(
@@ -1536,24 +1549,11 @@ async function startOpencodeRuntime({
     async stop(options = { deleteRemote: false }) {
       abortController.abort();
       if (options.deleteRemote === true) {
-        const response = await client.session
-          .delete({
-            path: { id: session.id },
-            query: directoryQuery,
-          })
-          .catch((error: unknown) => ({ error }));
-
-        if (response.error) {
-          const message = getRpcErrorMessage(
-            response.error,
-            "Failed to delete OpenCode session during runtime shutdown"
-          );
-          if (!isSessionMissingError(message)) {
-            process.stderr.write(
-              `[agent] Failed to delete OpenCode session ${session.id}: ${message}\n`
-            );
-          }
-        }
+        await deleteRemoteOpencodeSession({
+          sessionId: session.id,
+          directoryQuery,
+          client,
+        });
       }
       setRuntimeStatus(runtime, "completed");
     },
@@ -2104,6 +2104,38 @@ function isSessionMissingError(message: string): boolean {
   const normalized = message.toLowerCase();
   return (
     normalized.includes("not found") || normalized.includes("unknown session")
+  );
+}
+
+async function deleteRemoteOpencodeSession(args: {
+  sessionId: string;
+  directoryQuery: DirectoryQuery;
+  client?: OpencodeClient;
+}): Promise<void> {
+  const client =
+    args.client ??
+    (await getAgentRuntimeDependencies().acquireOpencodeClient());
+  const response = await client.session
+    .delete({
+      path: { id: args.sessionId },
+      query: args.directoryQuery,
+    })
+    .catch((error: unknown) => ({ error }));
+
+  if (!response.error) {
+    return;
+  }
+
+  const message = getRpcErrorMessage(
+    response.error,
+    "Failed to delete OpenCode session during runtime shutdown"
+  );
+  if (isSessionMissingError(message)) {
+    return;
+  }
+
+  process.stderr.write(
+    `[agent] Failed to delete OpenCode session ${args.sessionId}: ${message}\n`
   );
 }
 

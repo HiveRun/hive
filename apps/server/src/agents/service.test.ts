@@ -62,6 +62,7 @@ const mockHiveConfig: HiveConfig = {
 };
 
 import {
+  closeAgentSession,
   closeAllAgentSessions,
   ensureAgentSession,
   fetchCompactionStats,
@@ -651,6 +652,20 @@ describe("agent model selection", () => {
       closeAllAgentSessions({ deleteRemote: true })
     ).resolves.toBeUndefined();
     expect(clientStub.session.delete).toHaveBeenCalled();
+  });
+
+  it("deletes persisted sessions after shutdown when runtime map is empty", async () => {
+    const session = await ensureAgentSession(cellId);
+
+    await closeAllAgentSessions({ deleteRemote: false });
+    clientStub.session.delete.mockClear();
+
+    await closeAgentSession(cellId);
+
+    expect(clientStub.session.delete).toHaveBeenCalledWith({
+      path: { id: session.id },
+      query: { directory: "/tmp/model-test" },
+    });
   });
 });
 
