@@ -7,6 +7,22 @@ const DEFAULT_WINDOW_WIDTH = 1400;
 const DEFAULT_WINDOW_HEIGHT = 900;
 const moduleDir = import.meta.dirname;
 
+const resolveWindowIcon = () => {
+  const configuredPath = process.env.HIVE_DESKTOP_ICON_PATH;
+  if (configuredPath && existsSync(configuredPath)) {
+    return configuredPath;
+  }
+
+  const candidates = [
+    join(process.cwd(), "apps", "desktop-electron", "resources", "icon.png"),
+    join(process.cwd(), "resources", "icon.png"),
+    join(moduleDir, "..", "resources", "icon.png"),
+    join(process.resourcesPath, "icon.png"),
+  ];
+
+  return candidates.find((entry) => existsSync(entry));
+};
+
 const resolveRendererEntry = () => {
   const configuredPath = process.env.HIVE_DESKTOP_RENDERER_PATH;
   if (configuredPath && existsSync(configuredPath)) {
@@ -30,6 +46,7 @@ const createMainWindow = async () => {
   const window = new BrowserWindow({
     width: DEFAULT_WINDOW_WIDTH,
     height: DEFAULT_WINDOW_HEIGHT,
+    icon: resolveWindowIcon(),
     webPreferences: {
       preload: join(moduleDir, "preload.js"),
       contextIsolation: true,
