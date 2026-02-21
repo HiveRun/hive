@@ -1,0 +1,18 @@
+appId: com.hive.desktop
+productName: Hive Desktop
+files:
+  - dist/**
+extraMetadata:
+  main: dist/main.js
+linux:
+  target:
+    - AppImage
+  executableName: hive-desktop
+mac:
+  target:
+    - zip
+win:
+  target:
+    - nsis
+directories:
+  output: out

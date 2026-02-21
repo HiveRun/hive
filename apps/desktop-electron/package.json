@@ -1,0 +1,17 @@
+{
+  "name": "@hive/desktop-electron",
+  "private": true,
+  "version": "0.1.0",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsdown src/main.ts src/preload.ts --format cjs --out-dir dist --external electron",
+    "start": "bun run build && electron dist/main.js",
+    "package": "bun run build && electron-builder --config electron-builder.yml --publish never"
+  },
+  "devDependencies": {
+    "electron": "^37.2.3",
+    "electron-builder": "^26.0.12",
+    "tsdown": "catalog:",
+    "typescript": "catalog:"
+  }
+}

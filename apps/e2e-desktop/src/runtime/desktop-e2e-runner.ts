@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createWriteStream, existsSync } from "node:fs";
+import { createWriteStream } from "node:fs";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { dirname, join, resolve as resolvePath } from "node:path";
@@ -8,16 +8,13 @@ import { fileURLToPath } from "node:url";
 const KEEP_ARTIFACTS = process.env.HIVE_E2E_KEEP_ARTIFACTS === "1";
 const CLEANUP_TIMEOUT_MS = 15_000;
 const STARTUP_TIMEOUT_MS = 180_000;
-const TAURI_BUILD_TIMEOUT_MS = 900_000;
+const BUILD_TIMEOUT_MS = 900_000;
 const SERVER_START_ATTEMPTS = 3;
 const SERVER_RETRY_DELAY_MS = 1000;
 const HTTP_POLL_INTERVAL_MS = 500;
 const SIGTERM_EXIT_CODE = 143;
 const API_READY_PATH = "/health";
-const WDIO_CONFIG_PATH = "wdio.conf.mjs";
-const TAURI_DRIVER_HOST = "127.0.0.1";
-const DEFAULT_DRIVER_PORT = 4444;
-const DEFAULT_NATIVE_DRIVER_PORT = 4445;
+const PLAYWRIGHT_CONFIG_PATH = "playwright.config.ts";
 
 type ManagedProcess = {
   name: string;
@@ -28,7 +25,6 @@ type ManagedProcess = {
 };
 
 type RuntimeContext = {
-  runId: string;
   runRoot: string;
   workspaceRoot: string;
   hiveHome: string;
@@ -56,30 +52,23 @@ const e2eRoot = join(moduleDir, "..", "..");
 const stableArtifactsDir = join(e2eRoot, "reports", "latest");
 const repoRoot = join(e2eRoot, "..", "..");
 const serverRoot = join(repoRoot, "apps", "server");
-const useSharedHiveHome = process.env.HIVE_E2E_SHARED_HOME === "1";
-const sharedHiveHomePath = join(
+const desktopRoot = join(repoRoot, "apps", "desktop-electron");
+const desktopMainEntry = join(desktopRoot, "dist", "main.js");
+const desktopRendererEntry = join(
   repoRoot,
-  "tmp",
-  "e2e-shared",
-  "hive-home-desktop"
+  "apps",
+  "web",
+  "dist",
+  "index.html"
 );
 
 async function run() {
   const args = parseArgs(process.argv.slice(2));
-  const context = await createRuntimeContext({
-    hiveHomePath: useSharedHiveHome ? sharedHiveHomePath : undefined,
-    repoRoot,
-  });
+  const context = await createRuntimeContext({ repoRoot });
   const managedProcesses: ManagedProcess[] = [];
   let runSucceeded = false;
 
   try {
-    if (useSharedHiveHome) {
-      process.stdout.write(
-        `Using shared desktop E2E HIVE_HOME: ${context.hiveHome}\n`
-      );
-    }
-
     await createFixtureWorkspace(context.workspaceRoot);
 
     const server = await startServerWithRetries({
@@ -88,74 +77,45 @@ async function run() {
     });
     managedProcesses.push(server);
 
-    process.stdout.write("Building debug Tauri desktop binary...\n");
-    await runCommand(
-      "bun",
-      ["run", "build:tauri", "--", "--debug", "--no-bundle"],
-      {
-        cwd: repoRoot,
-        env: {
-          ...process.env,
-          VITE_API_URL: context.apiUrl,
-        },
-        label: "Build debug Tauri desktop binary",
-        timeoutMs: TAURI_BUILD_TIMEOUT_MS,
-      }
-    );
-
-    const desktopBinaryPath = resolveDesktopBinaryPath();
-    process.stdout.write(`Using desktop binary: ${desktopBinaryPath}\n`);
-
-    const driverPort = Number(
-      process.env.HIVE_E2E_DRIVER_PORT ?? String(DEFAULT_DRIVER_PORT)
-    );
-    const nativeDriverPort = Number(
-      process.env.HIVE_E2E_NATIVE_DRIVER_PORT ??
-        String(DEFAULT_NATIVE_DRIVER_PORT)
-    );
-
-    const tauriDriver = startManagedProcess({
-      command: "tauri-driver",
-      args: [
-        "--port",
-        String(driverPort),
-        "--native-port",
-        String(nativeDriverPort),
-      ],
-      cwd: repoRoot,
-      env: process.env,
-      logsDir: context.logsDir,
-      name: "tauri-driver",
+    process.stdout.write("Building desktop renderer assets...\n");
+    await runCommand("bun", ["run", "build"], {
+      cwd: join(repoRoot, "apps", "web"),
+      label: "Build web app for desktop",
+      env: {
+        ...process.env,
+        VITE_API_URL: context.apiUrl,
+        VITE_APP_BASE: "./",
+      },
+      timeoutMs: BUILD_TIMEOUT_MS,
     });
-    managedProcesses.push(tauriDriver);
 
-    await waitForHttpOk(
-      `http://${TAURI_DRIVER_HOST}:${String(driverPort)}/status`,
-      {
-        timeoutMs: STARTUP_TIMEOUT_MS,
-      }
-    );
+    process.stdout.write("Building Electron desktop runtime...\n");
+    await runCommand("bun", ["run", "build"], {
+      cwd: desktopRoot,
+      label: "Build desktop electron runtime",
+      timeoutMs: BUILD_TIMEOUT_MS,
+    });
 
-    const wdioArgs = [
-      "wdio",
-      "run",
-      WDIO_CONFIG_PATH,
-      ...(args.spec ? ["--spec", args.spec] : []),
+    const playwrightArgs = [
+      "playwright",
+      "test",
+      "--config",
+      PLAYWRIGHT_CONFIG_PATH,
+      ...(args.spec ? [args.spec] : []),
     ];
 
-    await runCommand("bunx", wdioArgs, {
+    await runCommand("bunx", playwrightArgs, {
       cwd: e2eRoot,
       env: {
         ...process.env,
         HIVE_E2E_API_URL: context.apiUrl,
         HIVE_E2E_ARTIFACTS_DIR: context.artifactsDir,
-        HIVE_E2E_DRIVER_HOST: TAURI_DRIVER_HOST,
-        HIVE_E2E_DRIVER_PORT: String(driverPort),
-        HIVE_E2E_DESKTOP_BINARY: desktopBinaryPath,
         HIVE_E2E_WORKSPACE_PATH: context.workspaceRoot,
         HIVE_E2E_HIVE_HOME: context.hiveHome,
+        HIVE_E2E_DESKTOP_MAIN_ENTRY: desktopMainEntry,
+        HIVE_E2E_DESKTOP_RENDERER_ENTRY: desktopRendererEntry,
       },
-      label: "Desktop WDIO suite",
+      label: "Desktop Playwright suite",
     });
 
     runSucceeded = true;
@@ -179,17 +139,16 @@ async function run() {
 }
 
 async function createRuntimeContext(options: {
-  hiveHomePath?: string;
   repoRoot: string;
 }): Promise<RuntimeContext> {
   const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`;
   const runRoot = join(options.repoRoot, "tmp", "e2e-desktop-runs", runId);
   const workspaceRoot = join(runRoot, "workspace");
-  const hiveHome = options.hiveHomePath ?? join(runRoot, "hive-home");
+  const hiveHome = join(runRoot, "hive-home");
   const dbPath = join(runRoot, "e2e-desktop.db");
   const logsDir = join(runRoot, "logs");
   const artifactsDir = join(runRoot, "artifacts");
-  const apiPort = await resolveApiPort();
+  const apiPort = await findAvailablePort();
   const apiUrl = `http://127.0.0.1:${apiPort}`;
 
   await Promise.all([
@@ -200,7 +159,6 @@ async function createRuntimeContext(options: {
   ]);
 
   return {
-    runId,
     runRoot,
     workspaceRoot,
     hiveHome,
@@ -212,15 +170,6 @@ async function createRuntimeContext(options: {
   };
 }
 
-async function resolveApiPort(): Promise<number> {
-  const configuredPort = Number(process.env.HIVE_E2E_API_PORT ?? "");
-  if (Number.isFinite(configuredPort) && configuredPort > 0) {
-    return configuredPort;
-  }
-
-  return await findAvailablePort();
-}
-
 async function findAvailablePort(): Promise<number> {
   return await new Promise((resolvePort, reject) => {
     const server = createServer();
@@ -229,9 +178,9 @@ async function findAvailablePort(): Promise<number> {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
       if (!(address && typeof address === "object" && address.port)) {
-        server.close(() => {
-          reject(new Error("Failed to resolve an available port"));
-        });
+        server.close(() =>
+          reject(new Error("Failed to resolve available port"))
+        );
         return;
       }
 
@@ -276,7 +225,7 @@ async function startServerWithRetries(options: {
         HIVE_OPENCODE_START_TIMEOUT_MS: "120000",
         HOST: "127.0.0.1",
         PORT: String(options.context.apiPort),
-        CORS_ORIGIN: "tauri://localhost",
+        CORS_ORIGIN: "null",
       },
       logsDir: options.logsDir,
       name: "server",
@@ -309,46 +258,6 @@ async function startServerWithRetries(options: {
   throw (
     lastError ?? new Error("Server failed to start and no error was captured")
   );
-}
-
-function resolveDesktopBinaryPath(): string {
-  let candidates: string[];
-
-  if (process.platform === "darwin") {
-    candidates = [
-      join(repoRoot, "src-tauri", "target", "debug", "hive-desktop"),
-      join(
-        repoRoot,
-        "src-tauri",
-        "target",
-        "debug",
-        "bundle",
-        "macos",
-        "Hive Desktop.app",
-        "Contents",
-        "MacOS",
-        "Hive Desktop"
-      ),
-    ];
-  } else if (process.platform === "win32") {
-    candidates = [
-      join(repoRoot, "src-tauri", "target", "debug", "hive-desktop.exe"),
-    ];
-  } else {
-    candidates = [
-      join(repoRoot, "src-tauri", "target", "debug", "hive-desktop"),
-      join(repoRoot, "src-tauri", "target", "debug", "hive-desktop.bin"),
-    ];
-  }
-
-  const resolved = candidates.find((candidate) => existsSync(candidate));
-  if (!resolved) {
-    throw new Error(
-      `Unable to locate debug desktop binary. Checked: ${candidates.join(", ")}`
-    );
-  }
-
-  return resolved;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {

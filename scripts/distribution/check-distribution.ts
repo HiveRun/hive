@@ -50,8 +50,13 @@ const run = (cmd: string[], env?: Record<string, string>) => {
 const ensureDesktopArtifact = (releaseDir: string) => {
   const candidates =
     platform === "darwin"
-      ? ["Hive Desktop.app", "hive-desktop"]
-      : ["hive-desktop.AppImage", "hive-desktop"];
+      ? ["Hive Desktop.app", "hive-desktop", "hive-electron"]
+      : [
+          "hive-desktop.AppImage",
+          "hive-desktop",
+          "hive-electron.AppImage",
+          "hive-electron",
+        ];
 
   const found = candidates.some((candidate) =>
     existsSync(join(releaseDir, candidate))

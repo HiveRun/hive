@@ -312,8 +312,8 @@ const openDefaultBrowser = (url: string) => {
   }
 };
 
-const getTauriExecutableCandidates = () => {
-  const override = process.env.HIVE_TAURI_BINARY;
+const getDesktopExecutableCandidates = () => {
+  const override = process.env.HIVE_ELECTRON_BINARY;
   const candidates: string[] = [];
   if (override) {
     candidates.push(override);
@@ -323,19 +323,19 @@ const getTauriExecutableCandidates = () => {
     candidates.push(join(binaryDirectory, "Hive Desktop.app"));
     candidates.push(join(binaryDirectory, "hive-desktop"));
     candidates.push(join(binaryDirectory, "Hive.app"));
-    candidates.push(join(binaryDirectory, "hive-tauri"));
+    candidates.push(join(binaryDirectory, "hive-electron"));
   } else if (process.platform === "win32") {
     candidates.push(join(binaryDirectory, "hive-desktop.exe"));
     candidates.push(join(binaryDirectory, "Hive Desktop.exe"));
-    candidates.push(join(binaryDirectory, "hive-tauri.exe"));
+    candidates.push(join(binaryDirectory, "hive-electron.exe"));
     candidates.push(join(binaryDirectory, "Hive.exe"));
   } else {
     candidates.push(join(binaryDirectory, "hive-desktop.AppImage"));
     candidates.push(join(binaryDirectory, "hive-desktop"));
     candidates.push(join(binaryDirectory, "hive-desktop.bin"));
-    candidates.push(join(binaryDirectory, "hive-tauri.AppImage"));
-    candidates.push(join(binaryDirectory, "hive-tauri"));
-    candidates.push(join(binaryDirectory, "hive-tauri.bin"));
+    candidates.push(join(binaryDirectory, "hive-electron.AppImage"));
+    candidates.push(join(binaryDirectory, "hive-electron"));
+    candidates.push(join(binaryDirectory, "hive-electron.bin"));
   }
 
   return candidates;
@@ -347,8 +347,8 @@ const resolveMacAppExecutable = (appPath: string) => {
   return existsSync(executable) ? executable : null;
 };
 
-const launchTauriApplication = () => {
-  const target = getTauriExecutableCandidates().find(
+const launchDesktopApplication = () => {
+  const target = getDesktopExecutableCandidates().find(
     (candidate) => candidate && existsSync(candidate)
   );
 
@@ -356,7 +356,7 @@ const launchTauriApplication = () => {
     return {
       ok: false,
       message:
-        "Unable to locate the Hive Desktop binary. Set HIVE_TAURI_BINARY to the desktop executable.",
+        "Unable to locate the Hive Desktop binary. Set HIVE_ELECTRON_BINARY to the desktop executable.",
     } as const;
   }
 
@@ -385,7 +385,19 @@ const launchTauriApplication = () => {
       }
     }
 
-    const child = spawn(command, args, options);
+    const rendererPath = join(binaryDirectory, "public", "index.html");
+    const env =
+      existsSync(rendererPath) && !process.env.HIVE_DESKTOP_RENDERER_PATH
+        ? {
+            ...process.env,
+            HIVE_DESKTOP_RENDERER_PATH: rendererPath,
+          }
+        : process.env;
+
+    const child = spawn(command, args, {
+      ...options,
+      env,
+    });
     child.unref();
     return { ok: true, path: target, pid: child.pid ?? null } as const;
   } catch (error) {
@@ -400,7 +412,7 @@ const launchTauriApplication = () => {
 };
 
 const resolveDesktopProcessTargets = () => {
-  const candidates = getTauriExecutableCandidates();
+  const candidates = getDesktopExecutableCandidates();
   const appNames = new Set<string>();
   const processNames = new Set<string>();
   const appExtension = ".app";
@@ -834,7 +846,7 @@ const desktopCommand = async () => {
     return 1;
   }
 
-  const result = launchTauriApplication();
+  const result = launchDesktopApplication();
   if (!result.ok) {
     if (result.message) {
       logError(`Failed to launch Hive desktop: ${result.message}`);
@@ -1001,7 +1013,7 @@ class DesktopCommand extends Command {
     category: "Clients",
     description: "Launch the Hive desktop application.",
     details:
-      "Starts the daemon if needed and opens the packaged desktop UI. Set HIVE_TAURI_BINARY to override the desktop executable path.",
+      "Starts the daemon if needed and opens the packaged desktop UI. Set HIVE_ELECTRON_BINARY to override the desktop executable path.",
     examples: [["Open desktop UI", "hive desktop"]],
   });
 

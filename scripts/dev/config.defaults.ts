@@ -12,7 +12,6 @@ const defaultIgnorePatterns = [
   "build/**",
   "dist-electron/**",
   "apps/server/server/**",
-  "src-tauri/target/**",
 ];
 
 export const hiveConfigDefaults: HiveConfig = {

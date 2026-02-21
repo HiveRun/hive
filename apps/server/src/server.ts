@@ -111,7 +111,7 @@ export const DEFAULT_WEB_PORT =
 const DEFAULT_CORS_ORIGINS = [
   `http://localhost:${DEFAULT_WEB_PORT}`,
   `http://127.0.0.1:${DEFAULT_WEB_PORT}`,
-  "tauri://localhost",
+  "null",
 ];
 export const DEFAULT_WEB_URL = `http://localhost:${DEFAULT_WEB_PORT}`;
 //
@@ -124,6 +124,7 @@ const allowedCorsOrigins =
   resolvedCorsOrigins.length > 0 ? resolvedCorsOrigins : DEFAULT_CORS_ORIGINS;
 const allowedCorsOriginSet = new Set(allowedCorsOrigins);
 const isLocalOrigin = (origin: string) =>
+  origin === "null" ||
   origin.startsWith("http://localhost:") ||
   origin.startsWith("http://127.0.0.1:");
 const resolveCorsOrigin = (request: Request) => {

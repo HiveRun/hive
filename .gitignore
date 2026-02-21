@@ -7,7 +7,6 @@ node_modules
 dist
 build
 dist-electron
-src-tauri/target
 apps/server/server
 *.tsbuildinfo
 **/.hive/

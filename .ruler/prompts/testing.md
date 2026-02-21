@@ -32,8 +32,8 @@ bun run test:e2e:spec specs/cell-chat.e2e.ts
 - Use `HIVE_E2E_WORKSPACE_MODE=clone` for dev-parity debugging without mutating your real workspace.
 - If pre-push fails on the known flaky backend spec (`apps/server/src/__tests__/routes/cells.create.test.ts`), run `bun -C apps/server run test -- src/__tests__/routes/cells.create.test.ts -t "returns detailed payload when template setup fails"` once, then rerun `bun run check:push`.
 
-### Desktop Smoke E2E (WebDriver + Tauri)
-Desktop runtime parity checks live under `apps/e2e-desktop` and run WebDriver (`tauri-driver`) against a debug Tauri binary.
+### Desktop Smoke E2E (Playwright + Electron)
+Desktop runtime parity checks live under `apps/e2e-desktop` and run Playwright against a debug Electron runtime.
 
 ```bash
 # one-time local setup (best-effort desktop prep included)
@@ -43,13 +43,13 @@ bun setup
 bun run setup:desktop-e2e
 
 bun run test:e2e:desktop
-bun run test:e2e:desktop:spec specs/smoke-launch.e2e.mjs
+bun run test:e2e:desktop:spec specs/smoke-launch.spec.ts
 ```
 
 - The runner provisions an isolated workspace/db under `tmp/e2e-desktop-runs/` and copies reports to `apps/e2e-desktop/reports/latest`.
 - CI runs desktop smoke tests on merge queue/main/manual (non-PR) and executes them under `xvfb-run` on Linux.
 - Keep this suite focused on desktop-only risk (window/webview boot, notification bridge, desktop shell integration); keep broad behavior coverage in Playwright.
-- Linux local runs need the same WebKit/GTK/Xvfb dependencies as CI; use the commands in `apps/e2e-desktop/README.md`.
+- Linux local runs need Electron runtime dependencies and `xvfb`; use the commands in `apps/e2e-desktop/README.md`.
 
 ### UI Testing (Playwright - Visual Snapshots Only)
 All UI testing is done through **visual snapshot testing**. No component unit tests - UI correctness is validated entirely through snapshot comparisons across multiple viewports and themes.
