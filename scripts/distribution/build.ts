@@ -23,6 +23,7 @@ const releaseDir = join(releaseBaseDir, releaseName);
 const desktopBinaryName = "hive-desktop";
 const desktopElectronRoot = join(repoRoot, "apps", "desktop-electron");
 const desktopElectronOutputDir = join(desktopElectronRoot, "out");
+const WINDOWS_SETUP_EXE_PATTERN = /setup.*\.exe$/i;
 
 const run = async (
   cmd: string[],
@@ -94,22 +95,53 @@ const makeExecutable = async (filePath: string) => {
   await chmod(filePath, EXECUTABLE_PERMISSIONS);
 };
 
-const copyLinuxElectronArtifacts = async (destination: string) => {
-  const entries = existsSync(desktopElectronOutputDir)
-    ? await readdir(desktopElectronOutputDir)
-    : [];
+const findDesktopArtifactPath = async (
+  predicate: (name: string, path: string, isDirectory: boolean) => boolean
+) => {
+  if (!existsSync(desktopElectronOutputDir)) {
+    return null;
+  }
 
-  const appImage = entries.find((entry) => entry.endsWith(".AppImage"));
+  const directoriesToScan = [desktopElectronOutputDir];
+  while (directoriesToScan.length > 0) {
+    const currentDirectory = directoriesToScan.shift();
+    if (!currentDirectory) {
+      continue;
+    }
+
+    const entries = await readdir(currentDirectory, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = join(currentDirectory, entry.name);
+      const isDirectory = entry.isDirectory();
+      if (predicate(entry.name, entryPath, isDirectory)) {
+        return entryPath;
+      }
+
+      if (isDirectory) {
+        directoriesToScan.push(entryPath);
+      }
+    }
+  }
+
+  return null;
+};
+
+const copyLinuxElectronArtifacts = async (destination: string) => {
+  const appImage = await findDesktopArtifactPath(
+    (name, _path, isDirectory) =>
+      !isDirectory && name.toLowerCase().endsWith(".appimage")
+  );
   if (appImage) {
-    const source = join(desktopElectronOutputDir, appImage);
     const targetPath = join(destination, `${desktopBinaryName}.AppImage`);
-    await copyFile(source, targetPath);
+    await copyFile(appImage, targetPath);
     await makeExecutable(targetPath);
   }
 
-  const unpackedDir = entries.find((entry) => entry.endsWith("linux-unpacked"));
+  const unpackedDir = await findDesktopArtifactPath(
+    (name, _path, isDirectory) => isDirectory && name.endsWith("linux-unpacked")
+  );
   if (unpackedDir) {
-    const source = join(desktopElectronOutputDir, unpackedDir, "hive-desktop");
+    const source = join(unpackedDir, "hive-desktop");
     if (existsSync(source)) {
       const targetPath = join(destination, desktopBinaryName);
       await copyFile(source, targetPath);
@@ -119,47 +151,37 @@ const copyLinuxElectronArtifacts = async (destination: string) => {
 };
 
 const copyMacElectronArtifacts = async (destination: string) => {
-  const entries = existsSync(desktopElectronOutputDir)
-    ? await readdir(desktopElectronOutputDir)
-    : [];
-
-  const appDir = entries.find((entry) => entry.endsWith(".app"));
+  const appDir = await findDesktopArtifactPath(
+    (name, _path, isDirectory) => isDirectory && name.endsWith(".app")
+  );
   if (appDir) {
-    const source = join(desktopElectronOutputDir, appDir);
-    const targetPath = join(destination, appDir);
+    const targetPath = join(destination, basename(appDir));
     await rm(targetPath, { recursive: true, force: true });
-    await cp(source, targetPath, { recursive: true });
+    await cp(appDir, targetPath, { recursive: true });
   }
 
-  const zipFile = entries.find((entry) => entry.endsWith(".zip"));
+  const zipFile = await findDesktopArtifactPath(
+    (name, _path, isDirectory) => !isDirectory && name.endsWith(".zip")
+  );
   if (zipFile) {
-    await copyFile(
-      join(desktopElectronOutputDir, zipFile),
-      join(destination, zipFile)
-    );
+    await copyFile(zipFile, join(destination, basename(zipFile)));
   }
 };
 
 const copyWindowsElectronArtifacts = async (destination: string) => {
-  const entries = existsSync(desktopElectronOutputDir)
-    ? await readdir(desktopElectronOutputDir)
-    : [];
-
-  const setupExe = entries.find((entry) => entry.endsWith("Setup.exe"));
+  const setupExe = await findDesktopArtifactPath(
+    (name, _path, isDirectory) =>
+      !isDirectory && WINDOWS_SETUP_EXE_PATTERN.test(name)
+  );
   if (setupExe) {
-    await copyFile(
-      join(desktopElectronOutputDir, setupExe),
-      join(destination, setupExe)
-    );
+    await copyFile(setupExe, join(destination, basename(setupExe)));
   }
 
-  const unpackedDir = entries.find((entry) => entry.endsWith("win-unpacked"));
+  const unpackedDir = await findDesktopArtifactPath(
+    (name, _path, isDirectory) => isDirectory && name.endsWith("win-unpacked")
+  );
   if (unpackedDir) {
-    const source = join(
-      desktopElectronOutputDir,
-      unpackedDir,
-      "hive-desktop.exe"
-    );
+    const source = join(unpackedDir, "hive-desktop.exe");
     if (existsSync(source)) {
       await copyFile(source, join(destination, `${desktopBinaryName}.exe`));
     }

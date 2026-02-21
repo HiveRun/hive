@@ -13,9 +13,13 @@ const resolveRendererEntry = () => {
     return configuredPath;
   }
 
+  const appPath = app.getAppPath();
+
   const candidates = [
     join(process.cwd(), "apps", "web", "dist", "index.html"),
     join(process.cwd(), "public", "index.html"),
+    join(appPath, "..", "web", "dist", "index.html"),
+    join(moduleDir, "..", "..", "web", "dist", "index.html"),
     join(process.resourcesPath, "public", "index.html"),
   ];
 
