@@ -13,6 +13,8 @@ import {
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { resolveReleaseVersion } from "../release/release-version";
+
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const releaseBaseDir = join(repoRoot, "dist", "install");
 const platform = process.platform;
@@ -87,12 +89,6 @@ const buildDesktopElectron = () =>
   run(["bun", "run", "package"], {
     cwd: desktopElectronRoot,
   });
-
-const readRootPackage = async () => {
-  const packageJsonPath = join(repoRoot, "package.json");
-  const packageContents = await Bun.file(packageJsonPath).text();
-  return JSON.parse(packageContents) as { version?: string };
-};
 
 const computeSha256 = async (filePath: string) => {
   const hasher = new Bun.CryptoHasher("sha256");
@@ -250,14 +246,22 @@ const main = async () => {
   await buildCli();
   await buildDesktopElectron();
 
-  const cliBinaryPath = join(repoRoot, "packages", "cli", "hive");
-  if (!existsSync(cliBinaryPath)) {
+  const cliBinaryCandidates = [
+    join(repoRoot, "packages", "cli", "hive"),
+    join(repoRoot, "packages", "cli", "hive.exe"),
+  ];
+  const cliBinaryPath = cliBinaryCandidates.find((candidate) =>
+    existsSync(candidate)
+  );
+
+  if (!cliBinaryPath) {
     throw new Error("Compiled CLI binary not found. Did the build succeed?");
   }
 
-  const binaryDestination = join(releaseDir, "hive");
+  const releaseBinaryName = platform === "win32" ? "hive.exe" : "hive";
+  const binaryDestination = join(releaseDir, releaseBinaryName);
   await copyFile(cliBinaryPath, binaryDestination);
-  await chmod(binaryDestination, EXECUTABLE_PERMISSIONS);
+  await makeExecutable(binaryDestination);
 
   const frontendDist = join(repoRoot, "apps", "web", "dist");
   if (!existsSync(frontendDist)) {
@@ -288,7 +292,10 @@ const main = async () => {
 
   await copyDesktopBundle(releaseDir);
 
-  const pkg = await readRootPackage();
+  const releaseVersion = await resolveReleaseVersion({
+    envVersion: Bun.env.HIVE_VERSION,
+    fallbackVersion: "0.0.0-dev",
+  });
   const commitSha = (() => {
     try {
       return runCapture(["git", "rev-parse", "--short", "HEAD"]);
@@ -299,12 +306,12 @@ const main = async () => {
 
   const manifest = {
     name: "hive",
-    version: Bun.env.HIVE_VERSION ?? pkg.version ?? "0.0.0-dev",
+    version: releaseVersion.version,
     platform,
     arch,
     commit: commitSha,
     builtAt: new Date().toISOString(),
-    binary: "hive",
+    binary: releaseBinaryName,
     assetsDir: "public",
   } satisfies Record<string, string>;
 
@@ -318,7 +325,9 @@ const main = async () => {
 
   await run(["tar", "-czf", tarballPath, "-C", releaseBaseDir, releaseName]);
 
-  await rm(cliBinaryPath, { force: true });
+  await Promise.all(
+    cliBinaryCandidates.map((candidate) => rm(candidate, { force: true }))
+  );
 
   const sha256 = await computeSha256(tarballPath);
   await writeFile(

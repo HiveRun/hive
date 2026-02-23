@@ -97,6 +97,19 @@ bun run local:install
 
 This command runs `bun run build:installer` under the hood, then installs from the freshly built tarball using `HIVE_INSTALL_URL=file://...`.
 
+### Versioning and releases
+
+Hive uses a release-dispatch workflow: trigger `Release` in GitHub Actions, choose a bump (`patch`/`minor`/`major`) or set an explicit version, and the pipeline bumps manifests, commits to `main`, tags `v*`, and publishes artifacts.
+
+Manual fallback commands (rare):
+
+```bash
+bun run release:prepare --bump patch
+bun run check:release-version
+bun run release:tag
+git push origin HEAD --follow-tags
+```
+
 ## Getting Started
 
 ### With Mise (Recommended)
@@ -262,6 +275,8 @@ Notes:
 - `Workflow Lint` runs `actionlint`; `Quality Checks` runs `bun run check:commit`.
 - `E2E Runtime Suite` runs `bun run test:e2e` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), caches Playwright/OpenCode artifacts, and uploads reports from `apps/e2e/reports/latest`.
 - `Desktop Electron Smoke Suite` runs `bun run test:e2e:desktop` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), executes under `xvfb-run`, and uploads reports from `apps/e2e-desktop/reports/latest`.
+- `Release` is a manual-dispatch workflow that bumps version + commits + tags in one run.
+- `Release Publish` builds installer artifacts on `v*` tags and publishes GitHub Releases.
 - `Security Audit` runs a strict `bun audit --audit-level high` job in non-blocking mode for visibility while dependency remediation is in progress.
 - Ensure the Blacksmith GitHub App is installed for your organization before relying on this workflow.
 
@@ -278,6 +293,14 @@ Notes:
 
 ### Building
 - `bun build`: Build all applications
+- `bun run build:installer`: Build release tarball + checksum for current platform
+- `bun run local:install`: Build installer artifacts and install from local tarball
+
+### Releases
+- `bun run release:prepare --bump <patch|minor|major>`: Update release manifests to the next version
+- `bun run release:prepare --version <X.Y.Z>`: Set an explicit release version
+- `bun run release:tag`: Manually create an annotated `v<version>` git tag (fallback/override)
+- `bun run check:release-version`: Validate release manifest/tag version consistency
 
 ### Testing
 - `bun test`: Run unit tests in watch mode
