@@ -47,12 +47,23 @@ const readManifestVersion = async (
   };
 };
 
-const readManifestVersionCandidates = async () => {
+export const readReleaseManifestVersions = async () => {
+  const versions: ReleaseVersionSource[] = [];
+
   for (const manifestPath of manifestCandidates) {
     const versionSource = await readManifestVersion(manifestPath);
     if (versionSource) {
-      return versionSource;
+      versions.push(versionSource);
     }
+  }
+
+  return versions;
+};
+
+const readManifestVersionCandidates = async () => {
+  const versions = await readReleaseManifestVersions();
+  if (versions.length > 0) {
+    return versions[0];
   }
 
   return null;

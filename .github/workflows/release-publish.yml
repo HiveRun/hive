@@ -4,6 +4,16 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (vX.Y.Z)"
+        required: true
+        type: string
+
+concurrency:
+  group: release-publish-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -63,10 +73,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Validate release tag and manifest version
+        run: bun run scripts/release/check-release-version.ts --tag ${{ inputs.tag || github.ref_name }}
+
       - name: Build installer assets
         run: bun run build:installer
         env:
-          HIVE_VERSION: ${{ github.ref_name }}
+          HIVE_VERSION: ${{ inputs.tag || github.ref_name }}
 
       - name: Upload release asset bundle
         uses: actions/upload-artifact@v4
@@ -90,6 +103,6 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
           generate_release_notes: true
           files: dist/install/*.tar.gz*
