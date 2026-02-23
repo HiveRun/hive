@@ -73,6 +73,15 @@ export const resolveReleaseVersion = async (options?: {
   envVersion?: string;
   fallbackVersion?: string;
 }): Promise<ReleaseVersionSource> => {
+  if (options?.envVersion !== undefined && options.envVersion !== "") {
+    const normalizedEnvVersion = normalizeVersion(options.envVersion);
+    if (!normalizedEnvVersion) {
+      throw new Error(
+        `HIVE_VERSION is not valid semver: ${options.envVersion}`
+      );
+    }
+  }
+
   const envVersion = normalizeVersion(options?.envVersion);
   if (envVersion) {
     if (!isValidSemver(envVersion)) {
