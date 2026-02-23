@@ -97,6 +97,22 @@ bun run local:install
 
 This command runs `bun run build:installer` under the hood, then installs from the freshly built tarball using `HIVE_INSTALL_URL=file://...`.
 
+### Versioning and releases
+
+Hive uses Changesets for version PRs and Git tags for published releases.
+
+```bash
+# 1) add a changeset in your feature branch
+bun run changeset
+
+# 2) after merge to main, a "chore: version packages" PR is opened automatically
+#    merge that PR, then cut and push the tag
+bun run release:tag
+git push origin --follow-tags
+```
+
+Pushing a `v*` tag triggers the `Release Publish` workflow, which builds installer archives across supported runners and publishes the tarballs + checksums to GitHub Releases.
+
 ## Getting Started
 
 ### With Mise (Recommended)
@@ -262,6 +278,8 @@ Notes:
 - `Workflow Lint` runs `actionlint`; `Quality Checks` runs `bun run check:commit`.
 - `E2E Runtime Suite` runs `bun run test:e2e` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), caches Playwright/OpenCode artifacts, and uploads reports from `apps/e2e/reports/latest`.
 - `Desktop Electron Smoke Suite` runs `bun run test:e2e:desktop` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), executes under `xvfb-run`, and uploads reports from `apps/e2e-desktop/reports/latest`.
+- `Release Version PR` opens/updates a Changesets-driven version PR on `main`.
+- `Release Publish` builds installer artifacts on `v*` tags and publishes GitHub Releases.
 - `Security Audit` runs a strict `bun audit --audit-level high` job in non-blocking mode for visibility while dependency remediation is in progress.
 - Ensure the Blacksmith GitHub App is installed for your organization before relying on this workflow.
 
@@ -278,6 +296,13 @@ Notes:
 
 ### Building
 - `bun build`: Build all applications
+- `bun run build:installer`: Build release tarball + checksum for current platform
+- `bun run local:install`: Build installer artifacts and install from local tarball
+
+### Releases
+- `bun run changeset`: Create a Changesets entry for versioning
+- `bun run version-packages`: Apply version bumps from pending changesets
+- `bun run release:tag`: Create an annotated `v<version>` git tag from root package version
 
 ### Testing
 - `bun test`: Run unit tests in watch mode

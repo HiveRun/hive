@@ -25,6 +25,12 @@ const desktopElectronRoot = join(repoRoot, "apps", "desktop-electron");
 const desktopElectronOutputDir = join(desktopElectronRoot, "out");
 const desktopElectronPublicDir = join(desktopElectronRoot, "public");
 const WINDOWS_SETUP_EXE_PATTERN = /setup.*\.exe$/i;
+const normalizeVersion = (value: string | undefined) => {
+  if (!value) {
+    return;
+  }
+  return value.startsWith("v") ? value.slice(1) : value;
+};
 
 const run = async (
   cmd: string[],
@@ -250,14 +256,22 @@ const main = async () => {
   await buildCli();
   await buildDesktopElectron();
 
-  const cliBinaryPath = join(repoRoot, "packages", "cli", "hive");
-  if (!existsSync(cliBinaryPath)) {
+  const cliBinaryCandidates = [
+    join(repoRoot, "packages", "cli", "hive"),
+    join(repoRoot, "packages", "cli", "hive.exe"),
+  ];
+  const cliBinaryPath = cliBinaryCandidates.find((candidate) =>
+    existsSync(candidate)
+  );
+
+  if (!cliBinaryPath) {
     throw new Error("Compiled CLI binary not found. Did the build succeed?");
   }
 
-  const binaryDestination = join(releaseDir, "hive");
+  const releaseBinaryName = platform === "win32" ? "hive.exe" : "hive";
+  const binaryDestination = join(releaseDir, releaseBinaryName);
   await copyFile(cliBinaryPath, binaryDestination);
-  await chmod(binaryDestination, EXECUTABLE_PERMISSIONS);
+  await makeExecutable(binaryDestination);
 
   const frontendDist = join(repoRoot, "apps", "web", "dist");
   if (!existsSync(frontendDist)) {
@@ -299,12 +313,15 @@ const main = async () => {
 
   const manifest = {
     name: "hive",
-    version: Bun.env.HIVE_VERSION ?? pkg.version ?? "0.0.0-dev",
+    version:
+      normalizeVersion(Bun.env.HIVE_VERSION) ??
+      normalizeVersion(pkg.version) ??
+      "0.0.0-dev",
     platform,
     arch,
     commit: commitSha,
     builtAt: new Date().toISOString(),
-    binary: "hive",
+    binary: releaseBinaryName,
     assetsDir: "public",
   } satisfies Record<string, string>;
 
@@ -318,7 +335,9 @@ const main = async () => {
 
   await run(["tar", "-czf", tarballPath, "-C", releaseBaseDir, releaseName]);
 
-  await rm(cliBinaryPath, { force: true });
+  await Promise.all(
+    cliBinaryCandidates.map((candidate) => rm(candidate, { force: true }))
+  );
 
   const sha256 = await computeSha256(tarballPath);
   await writeFile(
