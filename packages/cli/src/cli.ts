@@ -35,6 +35,7 @@ import {
   type WaitForServerReadyConfig,
   waitForServerReady,
 } from "./runtime-utils";
+import { uninstallHive } from "./uninstall";
 
 const rawArgv = process.argv.slice(2);
 if (process.env.HIVE_DEBUG_ARGS === "1") {
@@ -771,6 +772,19 @@ const runUpgrade = async () => {
   });
 };
 
+const uninstallCommand = (confirm: boolean) =>
+  uninstallHive({
+    confirm,
+    hiveHome: resolveHiveHomePath(),
+    hiveBinDir: process.env.HIVE_BIN_DIR,
+    stopRuntime: () => stopBackgroundProcess({ silent: true }),
+    closeDesktop: closeDesktopApplication,
+    logInfo,
+    logSuccess,
+    logWarning,
+    logError,
+  });
+
 const runtimeExecutable = basename(process.execPath).toLowerCase();
 const isBunRuntime = runtimeExecutable.startsWith("bun");
 const isCompiledRuntime = !isBunRuntime;
@@ -1037,6 +1051,28 @@ class UpgradeCommand extends Command {
   }
 }
 
+class UninstallCommand extends Command {
+  static override paths = [["uninstall"]];
+  static override usage = Command.Usage({
+    category: "Runtime",
+    description: "Remove the local Hive installation.",
+    details:
+      "Stops running Hive processes and removes HIVE_HOME (defaults to ~/.hive). Pass --yes to confirm the removal.",
+    examples: [["Uninstall Hive", "hive uninstall --yes"]],
+  });
+
+  confirm = Option.Boolean("--yes", {
+    description: "Confirm removal of your Hive installation",
+  });
+
+  override execute() {
+    return runCommand(
+      () => uninstallCommand(Boolean(this.confirm)),
+      "uninstall"
+    );
+  }
+}
+
 class InfoCommand extends Command {
   static override paths = [["info"]];
   static override usage = Command.Usage({
@@ -1117,6 +1153,7 @@ cli.register(LogsCommand);
 cli.register(WebCommand);
 cli.register(DesktopCommand);
 cli.register(UpgradeCommand);
+cli.register(UninstallCommand);
 cli.register(InfoCommand);
 cli.register(CompletionsCommand);
 cli.register(CompletionsInstallCommand);

@@ -51,6 +51,10 @@ Environment variables:
   ```bash
   hive upgrade
   ```
+- Uninstall Hive and remove the local runtime data (`~/.hive` by default):
+  ```bash
+  hive uninstall --yes
+  ```
 - Inspect your current install (release path, log locations, pid status):
   ```bash
   hive info
