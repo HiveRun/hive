@@ -2,6 +2,8 @@
   "name": "@hive/desktop-electron",
   "private": true,
   "version": "0.1.0",
+  "description": "Hive desktop runtime shell powered by Electron.",
+  "author": "HiveRun",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsdown src/main.ts src/preload.ts --format cjs --out-dir dist --external electron",

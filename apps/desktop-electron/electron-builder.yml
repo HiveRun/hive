@@ -8,6 +8,7 @@ extraMetadata:
   main: dist/main.js
 linux:
   icon: resources/icon.png
+  category: Development
   target:
     - AppImage
   executableName: hive-desktop

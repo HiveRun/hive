@@ -8,6 +8,8 @@ dist
 build
 dist-electron
 apps/server/server
+apps/desktop-electron/out/
+apps/desktop-electron/public/
 *.tsbuildinfo
 **/.hive/
 
