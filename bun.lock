@@ -44,6 +44,7 @@
       "name": "@hive/e2e-desktop",
       "devDependencies": {
         "@playwright/test": "^1.55.1",
+        "electron": "^37.2.3",
         "typescript": "catalog:",
       },
     },

@@ -13,6 +13,8 @@ import {
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { resolveReleaseVersion } from "../release/release-version";
+
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const releaseBaseDir = join(repoRoot, "dist", "install");
 const platform = process.platform;
@@ -25,12 +27,6 @@ const desktopElectronRoot = join(repoRoot, "apps", "desktop-electron");
 const desktopElectronOutputDir = join(desktopElectronRoot, "out");
 const desktopElectronPublicDir = join(desktopElectronRoot, "public");
 const WINDOWS_SETUP_EXE_PATTERN = /setup.*\.exe$/i;
-const normalizeVersion = (value: string | undefined) => {
-  if (!value) {
-    return;
-  }
-  return value.startsWith("v") ? value.slice(1) : value;
-};
 
 const run = async (
   cmd: string[],
@@ -93,12 +89,6 @@ const buildDesktopElectron = () =>
   run(["bun", "run", "package"], {
     cwd: desktopElectronRoot,
   });
-
-const readRootPackage = async () => {
-  const packageJsonPath = join(repoRoot, "package.json");
-  const packageContents = await Bun.file(packageJsonPath).text();
-  return JSON.parse(packageContents) as { version?: string };
-};
 
 const computeSha256 = async (filePath: string) => {
   const hasher = new Bun.CryptoHasher("sha256");
@@ -302,7 +292,10 @@ const main = async () => {
 
   await copyDesktopBundle(releaseDir);
 
-  const pkg = await readRootPackage();
+  const releaseVersion = await resolveReleaseVersion({
+    envVersion: Bun.env.HIVE_VERSION,
+    fallbackVersion: "0.0.0-dev",
+  });
   const commitSha = (() => {
     try {
       return runCapture(["git", "rev-parse", "--short", "HEAD"]);
@@ -313,10 +306,7 @@ const main = async () => {
 
   const manifest = {
     name: "hive",
-    version:
-      normalizeVersion(Bun.env.HIVE_VERSION) ??
-      normalizeVersion(pkg.version) ??
-      "0.0.0-dev",
+    version: releaseVersion.version,
     platform,
     arch,
     commit: commitSha,

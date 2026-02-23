@@ -85,3 +85,4 @@ docs/.obsidian/appearance.json
 
 # WDIO generated reports/videos
 apps/e2e/reports/
+apps/e2e-desktop/reports/

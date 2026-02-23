@@ -1,10 +1,6 @@
 #!/usr/bin/env bun
 
-import { fileURLToPath } from "node:url";
-
-const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
-const SEMVER_PATTERN =
-  /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+import { repoRoot, resolveReleaseVersion } from "./release-version";
 
 const runCapture = (cmd: string[]) => {
   const result = Bun.spawnSync({ cmd, cwd: repoRoot });
@@ -30,21 +26,19 @@ const run = (cmd: string[]) => {
   }
 };
 
-const isValidSemver = (version: string) => SEMVER_PATTERN.test(version);
-
 const main = async () => {
-  const packageJsonPath = new URL("../../package.json", import.meta.url);
-  const packageJsonRaw = await Bun.file(packageJsonPath).text();
-  const packageJson = JSON.parse(packageJsonRaw) as { version?: string };
-
-  const version = packageJson.version;
-  if (!(version && isValidSemver(version))) {
-    throw new Error(
-      `Root package.json version is missing or invalid: ${version ?? "<missing>"}`
+  const args = new Set(process.argv.slice(2));
+  if (args.has("--help") || args.has("-h")) {
+    console.log("Usage: bun run release:tag");
+    console.log(
+      "Creates an annotated release tag from the versioned desktop manifest."
     );
+    return;
   }
 
-  const tagName = `v${version}`;
+  const versionSource = await resolveReleaseVersion();
+
+  const tagName = `v${versionSource.version}`;
   const existingTag = runCapture(["git", "tag", "--list", tagName]);
   if (existingTag) {
     throw new Error(`Tag ${tagName} already exists.`);
@@ -60,6 +54,7 @@ const main = async () => {
   run(["git", "tag", "-a", tagName, "-m", `Release ${tagName}`]);
 
   console.log(`Created ${tagName}.`);
+  console.log(`Version source: ${versionSource.source}`);
   console.log(`Push with: git push origin ${tagName}`);
 };
 
