@@ -195,8 +195,34 @@ const copyWindowsElectronArtifacts = async (destination: string) => {
     (name, _path, isDirectory) => isDirectory && name.endsWith("win-unpacked")
   );
   if (unpackedDir) {
-    const source = join(unpackedDir, "hive-desktop.exe");
-    if (existsSync(source)) {
+    const preferredExecutableNames = [
+      `${desktopBinaryName}.exe`,
+      "Hive Desktop.exe",
+      "hive.exe",
+    ];
+    const preferredSource = preferredExecutableNames
+      .map((name) => join(unpackedDir, name))
+      .find((entry) => existsSync(entry));
+
+    let source = preferredSource;
+    if (!source) {
+      const entries = await readdir(unpackedDir, { withFileTypes: true });
+      const fallback = entries.find((entry) => {
+        if (!entry.isFile()) {
+          return false;
+        }
+        const lowered = entry.name.toLowerCase();
+        if (!lowered.endsWith(".exe")) {
+          return false;
+        }
+        return !lowered.startsWith("unins");
+      });
+      if (fallback) {
+        source = join(unpackedDir, fallback.name);
+      }
+    }
+
+    if (source && existsSync(source)) {
       await copyFile(source, join(destination, `${desktopBinaryName}.exe`));
     }
   }
