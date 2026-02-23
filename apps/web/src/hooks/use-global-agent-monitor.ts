@@ -169,7 +169,7 @@ function dispatchAwaitingInputNotification(
   const { cell, isWindowFocused } = options;
   const label = cell.name || cell.id;
   const message = `${label} agent needs your response`;
-  const shouldUseDesktop = hasTauriBridge() && !isWindowFocused;
+  const shouldUseDesktop = hasDesktopBridge() && !isWindowFocused;
 
   playNotificationSound();
 
@@ -178,24 +178,21 @@ function dispatchAwaitingInputNotification(
   };
 
   if (shouldUseDesktop) {
-    import("@tauri-apps/plugin-notification")
-      .then(async ({ isPermissionGranted, requestPermission }) => {
-        let granted = await isPermissionGranted();
-        if (!granted) {
-          const permission = await requestPermission();
-          granted = permission === "granted";
-        }
+    const desktop = globalThis.window?.hiveDesktop;
+    if (!desktop) {
+      showToast();
+      return;
+    }
 
-        if (granted) {
-          const notification = new window.Notification("Agent Awaiting Input", {
-            body: message,
-          });
-          notification.onclick = () => {
-            window.focus();
-          };
+    desktop
+      .notify({
+        title: "Agent Awaiting Input",
+        body: message,
+      })
+      .then((result: { delivered: boolean }) => {
+        if (result.delivered) {
           return;
         }
-
         showToast();
       })
       .catch(() => {
@@ -232,15 +229,10 @@ function playNotificationSound() {
   }
 }
 
-function hasTauriBridge() {
+function hasDesktopBridge() {
   if (typeof window === "undefined") {
     return false;
   }
 
-  const candidate = window as Window & {
-    __TAURI__?: unknown;
-    __TAURI_IPC__?: unknown;
-  };
-
-  return Boolean(candidate.__TAURI__ ?? candidate.__TAURI_IPC__);
+  return typeof window.hiveDesktop?.notify === "function";
 }

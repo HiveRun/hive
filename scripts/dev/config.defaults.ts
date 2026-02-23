@@ -12,7 +12,6 @@ const defaultIgnorePatterns = [
   "build/**",
   "dist-electron/**",
   "apps/server/server/**",
-  "src-tauri/target/**",
 ];
 
 export const hiveConfigDefaults: HiveConfig = {
@@ -30,7 +29,7 @@ export const hiveConfigDefaults: HiveConfig = {
       env: {
         DATABASE_URL: "local.db",
       },
-      setup: ["bun setup"],
+      setup: ["HIVE_SKIP_DESKTOP_E2E_SETUP=1 bun setup"],
       services: {
         web: {
           type: "process",

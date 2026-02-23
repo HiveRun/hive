@@ -59,7 +59,7 @@ Environment variables:
   ```bash
   hive web
   ```
-- Launch the desktop (Tauri) app. Set `HIVE_TAURI_BINARY` if the CLI
+- Launch the desktop (Electron) app. Set `HIVE_ELECTRON_BINARY` if the CLI
   can’t auto-detect the packaged executable on your system.
   ```bash
   hive desktop
@@ -190,20 +190,18 @@ Notes:
 - Playwright artifacts are copied to `apps/e2e/reports/latest/` (including per-test videos and `playwright-report`).
 - Set `HIVE_E2E_KEEP_ARTIFACTS=1` to also keep raw run logs/artifacts under `tmp/e2e-runs/`.
 
-### Desktop Smoke Testing (WebDriver + Tauri)
-Desktop-only runtime checks run via WebDriver (`tauri-driver`) against a debug Tauri binary.
+### Desktop Smoke Testing (Playwright + Electron)
+Desktop-only runtime checks run via Playwright against a debug Electron runtime.
 
 Setup (local):
 
 ```bash
-# One-time setup (includes best-effort desktop WebDriver prep)
+# One-time setup (includes best-effort desktop Electron prep)
 bun setup
 
 # Optional: rerun desktop setup only
 bun run setup:desktop-e2e
 
-# Ensure Cargo binaries are on PATH for this shell
-export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
 Linux-only system dependencies (required for local desktop smoke on Linux):
@@ -211,23 +209,26 @@ Linux-only system dependencies (required for local desktop smoke on Linux):
 ```bash
 sudo apt-get update
 sudo apt-get install -y \
-  libwebkit2gtk-4.1-dev \
-  libgtk-3-dev \
-  libayatana-appindicator3-dev \
-  librsvg2-dev \
-  libxdo-dev \
-  libssl-dev \
-  patchelf \
-  webkit2gtk-driver \
-  xvfb
+  xvfb \
+  libnss3 \
+  libatk-bridge2.0-0t64 \
+  libdrm2 \
+  libxkbcommon0 \
+  libxcomposite1 \
+  libxdamage1 \
+  libxrandr2 \
+  libgbm1 \
+  libasound2t64
 ```
+
+If your distro does not provide the `*t64` names, use `libatk-bridge2.0-0` and `libasound2`.
 
 ```bash
 # Run desktop smoke suite (Linux/macOS local prerequisites required)
 bun run test:e2e:desktop
 
 # Run a single desktop smoke spec
-bun run test:e2e:desktop:spec specs/smoke-launch.e2e.mjs
+bun run test:e2e:desktop:spec specs/smoke-launch.spec.ts
 
 # Linux headless local run (optional)
 xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" bun run test:e2e:desktop
@@ -235,11 +236,11 @@ xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" bun run test:e2
 
 Notes:
 - The desktop harness creates a dedicated temp workspace and SQLite database per run.
-- The runner compiles a debug desktop binary via `bun run build:tauri -- --debug --no-bundle` and points the bundled web UI at the ephemeral API URL.
+- The runner compiles web assets and Electron runtime, then launches the app against an ephemeral API URL.
 - Desktop artifacts are copied to `apps/e2e-desktop/reports/latest/`.
 - Use `HIVE_E2E_KEEP_ARTIFACTS=1` to keep raw logs/artifacts under `tmp/e2e-desktop-runs/`.
-- `bun setup` performs desktop WebDriver prep on a best-effort basis; if Cargo is missing it prints follow-up steps instead of failing setup.
-- On Linux, setup automatically attempts to install missing desktop packages via `sudo apt-get` and prints manual commands if installation fails.
+- `bun setup` performs desktop Electron prep on a best-effort basis and keeps failures non-blocking.
+- On Linux, setup automatically attempts to install missing Electron runtime packages via `sudo apt-get` and prints manual commands if installation fails.
 - If you need deeper setup/troubleshooting notes, see `apps/e2e-desktop/README.md`.
 
 ### Git Hooks & Validation
@@ -260,7 +261,7 @@ Notes:
 - Workflow triggers on pull requests, merge queue (`merge_group`), pushes to `main`, and manual dispatch.
 - `Workflow Lint` runs `actionlint`; `Quality Checks` runs `bun run check:commit`.
 - `E2E Runtime Suite` runs `bun run test:e2e` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), caches Playwright/OpenCode artifacts, and uploads reports from `apps/e2e/reports/latest`.
-- `Desktop WebDriver Smoke Suite` runs `bun run test:e2e:desktop` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), installs `tauri-driver`, executes under `xvfb-run`, and uploads reports from `apps/e2e-desktop/reports/latest`.
+- `Desktop Electron Smoke Suite` runs `bun run test:e2e:desktop` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), executes under `xvfb-run`, and uploads reports from `apps/e2e-desktop/reports/latest`.
 - `Security Audit` runs a strict `bun audit --audit-level high` job in non-blocking mode for visibility while dependency remediation is in progress.
 - Ensure the Blacksmith GitHub App is installed for your organization before relying on this workflow.
 
@@ -268,7 +269,7 @@ Notes:
 
 ### Setup
 - `bun setup`: One-time setup (install dependencies, best-effort desktop E2E prep, push database schema)
-- `bun run setup:desktop-e2e`: Prepare desktop WebDriver local prerequisites (`tauri-driver` + Linux dependency checks/auto-install)
+- `bun run setup:desktop-e2e`: Prepare desktop Electron local prerequisites (Linux dependency checks/auto-install)
 
 ### Development
 - `bun dev`: Start all applications in development mode
@@ -286,7 +287,7 @@ Notes:
 - `bun test:e2e:report`: Open the latest Playwright HTML report
 - `bun test:e2e:report:open`: Alias for opening the Playwright report
 - `bun test:e2e:report:serve`: Serve/open the Playwright report directly
-- `bun test:e2e:desktop`: Run Tauri desktop WebDriver smoke suite
+- `bun test:e2e:desktop`: Run Electron desktop smoke suite
 - `bun test:e2e:desktop:spec`: Run one desktop smoke spec by path
 
 ### Quality Checks
@@ -356,6 +357,6 @@ This command:
 
 ### Ripgrep Overrides for Agents
 
-OpenCode's search shell respects `.gitignore` by default, which hides dependencies and build outputs that agents often need to inspect. We keep a project-level `.ignore` file in the repo root with negated patterns for `node_modules`, build directories (`dist`, `build`, `dist-electron`, `apps/server/server`, `src-tauri/target`), cached artifacts (`.turbo`, `.cache`, `tmp`, `temp`), and coverage data. Ripgrep automatically merges these overrides, so agents can still search through those trees without humans having to toggle settings.
+OpenCode's search shell respects `.gitignore` by default, which hides dependencies and build outputs that agents often need to inspect. We keep a project-level `.ignore` file in the repo root with negated patterns for `node_modules`, build directories (`dist`, `build`, `dist-electron`, `apps/server/server`), cached artifacts (`.turbo`, `.cache`, `tmp`, `temp`), and coverage data. Ripgrep automatically merges these overrides, so agents can still search through those trees without humans having to toggle settings.
 
 If you add new tooling that writes important gitignored files, extend `.ignore` with another `!` pattern so the content remains discoverable to opencode agents.

@@ -1,10 +1,10 @@
-# Desktop WebDriver E2E
+# Desktop Electron E2E
 
-This package runs desktop smoke tests against a real Tauri binary using WebDriver (`tauri-driver`) + WebdriverIO.
+This package runs desktop smoke tests against a real Electron app using Playwright.
 
 ## Local Setup
 
-1. Run one-time workspace setup (includes best-effort desktop WebDriver prep):
+1. Run one-time workspace setup (includes best-effort desktop Electron prep):
 
 ```bash
 bun setup
@@ -16,35 +16,24 @@ If you only want to rerun desktop setup, use:
 bun run setup:desktop-e2e
 ```
 
-2. Install Rust and Cargo if needed (see top-level setup docs).
-
-3. If setup skipped driver installation (for example when Cargo was missing), install `tauri-driver` manually:
-
-```bash
-cargo install tauri-driver --locked
-```
-
-4. Ensure Cargo binaries are available in your shell:
-
-```bash
-export PATH="$HOME/.cargo/bin:$PATH"
-```
-
-5. Linux only: install desktop/webkit dependencies:
+2. Linux only: install desktop runtime dependencies:
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y \
-  libwebkit2gtk-4.1-dev \
-  libgtk-3-dev \
-  libayatana-appindicator3-dev \
-  librsvg2-dev \
-  libxdo-dev \
-  libssl-dev \
-  patchelf \
-  webkit2gtk-driver \
-  xvfb
+  xvfb \
+  libnss3 \
+  libatk-bridge2.0-0t64 \
+  libdrm2 \
+  libxkbcommon0 \
+  libxcomposite1 \
+  libxdamage1 \
+  libxrandr2 \
+  libgbm1 \
+  libasound2t64
 ```
+
+If your distro does not provide the `*t64` names, use `libatk-bridge2.0-0` and `libasound2`.
 
 Tip: on Linux, the setup script automatically attempts to install missing packages via `sudo apt-get`.
 
@@ -57,7 +46,7 @@ From repo root:
 bun run test:e2e:desktop
 
 # Single spec
-bun run test:e2e:desktop:spec specs/smoke-launch.e2e.mjs
+bun run test:e2e:desktop:spec specs/smoke-launch.spec.ts
 ```
 
 Linux headless run:
@@ -79,6 +68,5 @@ HIVE_E2E_KEEP_ARTIFACTS=1 bun run test:e2e:desktop
 
 ## Troubleshooting
 
-- `tauri-driver: command not found`: install via `cargo install tauri-driver --locked` and ensure `~/.cargo/bin` is on `PATH`.
-- WebKit/GTK build failures on Linux: install all apt dependencies listed above.
+- Electron launch failures on Linux: install all apt dependencies listed above.
 - No display available in Linux CI/headless shells: run under `xvfb-run`.

@@ -31,7 +31,7 @@
       "env": {
         "DATABASE_URL": "local.db"
       },
-      "setup": ["bun setup"],
+      "setup": ["HIVE_SKIP_DESKTOP_E2E_SETUP=1 bun setup"],
       "includePatterns": ["./.env*", "./apps/server/.env*", "./apps/web/.env*"],
       "ignorePatterns": [
         "node_modules/**",
@@ -44,8 +44,7 @@
         "dist/**",
         "build/**",
         "dist-electron/**",
-        "apps/server/server/**",
-        "src-tauri/target/**"
+        "apps/server/server/**"
       ]
     },
     "web-api": {
@@ -75,8 +74,7 @@
         "dist/**",
         "build/**",
         "dist-electron/**",
-        "apps/server/server/**",
-        "src-tauri/target/**"
+        "apps/server/server/**"
       ]
     },
     "basic": {
@@ -95,8 +93,7 @@
         "dist/**",
         "build/**",
         "dist-electron/**",
-        "apps/server/server/**",
-        "src-tauri/target/**"
+        "apps/server/server/**"
       ]
     },
     "provider-only": {
@@ -118,8 +115,7 @@
         "dist/**",
         "build/**",
         "dist-electron/**",
-        "apps/server/server/**",
-        "src-tauri/target/**"
+        "apps/server/server/**"
       ]
     },
     "agentless": {
@@ -138,8 +134,7 @@
         "dist/**",
         "build/**",
         "dist-electron/**",
-        "apps/server/server/**",
-        "src-tauri/target/**"
+        "apps/server/server/**"
       ]
     }
   },

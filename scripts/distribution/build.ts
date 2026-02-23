@@ -21,13 +21,19 @@ const releaseName = `hive-${platform}-${arch}`;
 const releaseDir = join(releaseBaseDir, releaseName);
 
 const desktopBinaryName = "hive-desktop";
-const desktopAppBundleName = "Hive Desktop.app";
-const legacyDesktopAppBundleName = "Hive.app";
+const desktopElectronRoot = join(repoRoot, "apps", "desktop-electron");
+const desktopElectronOutputDir = join(desktopElectronRoot, "out");
+const desktopElectronPublicDir = join(desktopElectronRoot, "public");
+const WINDOWS_SETUP_EXE_PATTERN = /setup.*\.exe$/i;
 
-const run = async (cmd: string[], cwd = repoRoot) => {
+const run = async (
+  cmd: string[],
+  options?: { cwd?: string; env?: NodeJS.ProcessEnv }
+) => {
   const process = Bun.spawn({
     cmd,
-    cwd,
+    cwd: options?.cwd ?? repoRoot,
+    env: options?.env,
     stdout: "inherit",
     stderr: "inherit",
   });
@@ -53,10 +59,34 @@ const ensureDir = async (path: string) => {
 };
 
 const buildFrontend = () =>
-  run(["bun", "run", "build"], join(repoRoot, "apps", "web"));
+  run(["bun", "run", "build"], {
+    cwd: join(repoRoot, "apps", "web"),
+    env: {
+      ...process.env,
+      VITE_APP_BASE: "./",
+    },
+  });
+
+const syncDesktopRendererAssets = async () => {
+  const frontendDist = join(repoRoot, "apps", "web", "dist");
+  if (!existsSync(frontendDist)) {
+    throw new Error(
+      "Frontend dist directory missing. Run the web build first."
+    );
+  }
+
+  await rm(desktopElectronPublicDir, { recursive: true, force: true });
+  await cp(frontendDist, desktopElectronPublicDir, { recursive: true });
+};
+
 const buildCli = () =>
-  run(["bun", "run", "compile"], join(repoRoot, "packages", "cli"));
-const buildTauri = () => run(["bun", "run", "build:tauri"], repoRoot);
+  run(["bun", "run", "compile"], {
+    cwd: join(repoRoot, "packages", "cli"),
+  });
+const buildDesktopElectron = () =>
+  run(["bun", "run", "package"], {
+    cwd: desktopElectronRoot,
+  });
 
 const readRootPackage = async () => {
   const packageJsonPath = join(repoRoot, "package.json");
@@ -71,11 +101,6 @@ const computeSha256 = async (filePath: string) => {
 };
 
 const EXECUTABLE_PERMISSIONS = 0o755;
-const tauriTargetDir = join(repoRoot, "src-tauri", "target", "release");
-
-// Force Cargo to write build artifacts inside this repository so Tauri plugins
-// don't inherit stale paths from a global CARGO_TARGET_DIR.
-process.env.CARGO_TARGET_DIR = join(repoRoot, "src-tauri", "target");
 
 const makeExecutable = async (filePath: string) => {
   if (process.platform === "win32") {
@@ -84,119 +109,146 @@ const makeExecutable = async (filePath: string) => {
   await chmod(filePath, EXECUTABLE_PERMISSIONS);
 };
 
-const copyLinuxTauriArtifacts = async (destination: string) => {
-  let copied = false;
-  const appImageDir = join(tauriTargetDir, "bundle", "appimage");
-  if (existsSync(appImageDir)) {
-    const entries = await readdir(appImageDir);
-    const appImage = entries.find((entry) =>
-      entry.toLowerCase().endsWith(".appimage")
-    );
-    if (appImage) {
-      const source = join(appImageDir, appImage);
-      const targetPath = join(destination, `${desktopBinaryName}.AppImage`);
+const findDesktopArtifactPath = async (
+  predicate: (name: string, path: string, isDirectory: boolean) => boolean
+) => {
+  if (!existsSync(desktopElectronOutputDir)) {
+    return null;
+  }
+
+  const directoriesToScan = [desktopElectronOutputDir];
+  while (directoriesToScan.length > 0) {
+    const currentDirectory = directoriesToScan.shift();
+    if (!currentDirectory) {
+      continue;
+    }
+
+    const entries = await readdir(currentDirectory, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = join(currentDirectory, entry.name);
+      const isDirectory = entry.isDirectory();
+      if (predicate(entry.name, entryPath, isDirectory)) {
+        return entryPath;
+      }
+
+      if (isDirectory) {
+        directoriesToScan.push(entryPath);
+      }
+    }
+  }
+
+  return null;
+};
+
+const copyLinuxElectronArtifacts = async (destination: string) => {
+  const appImage = await findDesktopArtifactPath(
+    (name, _path, isDirectory) =>
+      !isDirectory && name.toLowerCase().endsWith(".appimage")
+  );
+  if (appImage) {
+    const targetPath = join(destination, `${desktopBinaryName}.AppImage`);
+    await copyFile(appImage, targetPath);
+    await makeExecutable(targetPath);
+  }
+
+  const unpackedDir = await findDesktopArtifactPath(
+    (name, _path, isDirectory) => isDirectory && name.endsWith("linux-unpacked")
+  );
+  if (unpackedDir) {
+    const source = join(unpackedDir, "hive-desktop");
+    if (existsSync(source)) {
+      const targetPath = join(destination, desktopBinaryName);
       await copyFile(source, targetPath);
       await makeExecutable(targetPath);
-      copied = true;
     }
-  }
-
-  const rawBinary = join(tauriTargetDir, desktopBinaryName);
-  if (existsSync(rawBinary)) {
-    const binaryDestination = join(destination, desktopBinaryName);
-    await copyFile(rawBinary, binaryDestination);
-    await makeExecutable(binaryDestination);
-    copied = true;
-  }
-
-  if (!copied) {
-    console.warn(
-      "Skipping desktop bundle copy (no Linux Tauri artifacts were found)."
-    );
   }
 };
 
-const copyMacTauriArtifacts = async (destination: string) => {
-  const macBundleDir = join(tauriTargetDir, "bundle", "macos");
-  if (existsSync(macBundleDir)) {
-    const entries = await readdir(macBundleDir);
-    const appFolder = entries.find((entry) => entry.endsWith(".app"));
-    if (appFolder) {
-      const source = join(macBundleDir, appFolder);
-      const targetPath = join(destination, appFolder);
-      await rm(targetPath, { recursive: true, force: true });
-      await cp(source, targetPath, { recursive: true });
-      return;
-    }
-  }
-
-  const fallbackCandidates = [
-    { source: desktopAppBundleName, target: desktopAppBundleName },
-    { source: legacyDesktopAppBundleName, target: desktopAppBundleName },
-  ];
-  for (const bundle of fallbackCandidates) {
-    const fallback = join(tauriTargetDir, bundle.source);
-    if (existsSync(fallback)) {
-      const targetPath = join(destination, bundle.target);
-      await rm(targetPath, { recursive: true, force: true });
-      await cp(fallback, targetPath, { recursive: true });
-      return;
-    }
-  }
-
-  console.warn(
-    "Skipping desktop bundle copy (no macOS .app bundle was generated)."
+const copyMacElectronArtifacts = async (destination: string) => {
+  const appDir = await findDesktopArtifactPath(
+    (name, _path, isDirectory) => isDirectory && name.endsWith(".app")
   );
-};
-
-const copyWindowsTauriArtifacts = async (destination: string) => {
-  let copied = false;
-  const executableCandidates = [
-    join(tauriTargetDir, `${desktopBinaryName}.exe`),
-    join(tauriTargetDir, "hive.exe"),
-  ];
-  const executable = executableCandidates.find((entry) => existsSync(entry));
-  if (executable) {
-    const targetPath = join(destination, `${desktopBinaryName}.exe`);
-    await copyFile(executable, targetPath);
-    copied = true;
+  if (appDir) {
+    const targetPath = join(destination, basename(appDir));
+    await rm(targetPath, { recursive: true, force: true });
+    await cp(appDir, targetPath, { recursive: true });
   }
 
-  const nsisDir = join(tauriTargetDir, "bundle", "nsis");
-  if (existsSync(nsisDir)) {
-    const entries = await readdir(nsisDir);
-    const installer = entries.find((file) =>
-      file.toLowerCase().endsWith(".exe")
-    );
-    if (installer) {
-      await copyFile(join(nsisDir, installer), join(destination, installer));
-      copied = true;
+  const zipFile = await findDesktopArtifactPath(
+    (name, _path, isDirectory) => !isDirectory && name.endsWith(".zip")
+  );
+  if (zipFile) {
+    await copyFile(zipFile, join(destination, basename(zipFile)));
+  }
+};
+
+const copyWindowsElectronArtifacts = async (destination: string) => {
+  const setupExe = await findDesktopArtifactPath(
+    (name, _path, isDirectory) =>
+      !isDirectory && WINDOWS_SETUP_EXE_PATTERN.test(name)
+  );
+  if (setupExe) {
+    await copyFile(setupExe, join(destination, basename(setupExe)));
+  }
+
+  const unpackedDir = await findDesktopArtifactPath(
+    (name, _path, isDirectory) => isDirectory && name.endsWith("win-unpacked")
+  );
+  if (unpackedDir) {
+    const preferredExecutableNames = [
+      `${desktopBinaryName}.exe`,
+      "Hive Desktop.exe",
+      "hive.exe",
+    ];
+    const preferredSource = preferredExecutableNames
+      .map((name) => join(unpackedDir, name))
+      .find((entry) => existsSync(entry));
+
+    let source = preferredSource;
+    if (!source) {
+      const entries = await readdir(unpackedDir, { withFileTypes: true });
+      const fallback = entries.find((entry) => {
+        if (!entry.isFile()) {
+          return false;
+        }
+        const lowered = entry.name.toLowerCase();
+        if (!lowered.endsWith(".exe")) {
+          return false;
+        }
+        return !lowered.startsWith("unins");
+      });
+      if (fallback) {
+        source = join(unpackedDir, fallback.name);
+      }
+    }
+
+    if (source && existsSync(source)) {
+      await copyFile(source, join(destination, `${desktopBinaryName}.exe`));
     }
   }
-
-  if (!copied) {
-    console.warn(
-      "Skipping desktop bundle copy (no Windows Tauri artifacts were found)."
-    );
-  }
 };
 
-const copyTauriBundle = async (destination: string) => {
+const copyDesktopBundle = async (destination: string) => {
   if (platform === "darwin") {
-    await copyMacTauriArtifacts(destination);
-  } else if (platform === "win32") {
-    await copyWindowsTauriArtifacts(destination);
-  } else {
-    await copyLinuxTauriArtifacts(destination);
+    await copyMacElectronArtifacts(destination);
+    return;
   }
+
+  if (platform === "win32") {
+    await copyWindowsElectronArtifacts(destination);
+    return;
+  }
+
+  await copyLinuxElectronArtifacts(destination);
 };
 
 const main = async () => {
   await ensureDir(releaseDir);
 
   await buildFrontend();
+  await syncDesktopRendererAssets();
   await buildCli();
-  await buildTauri();
+  await buildDesktopElectron();
 
   const cliBinaryPath = join(repoRoot, "packages", "cli", "hive");
   if (!existsSync(cliBinaryPath)) {
@@ -234,7 +286,7 @@ const main = async () => {
     recursive: true,
   });
 
-  await copyTauriBundle(releaseDir);
+  await copyDesktopBundle(releaseDir);
 
   const pkg = await readRootPackage();
   const commitSha = (() => {

@@ -24,8 +24,7 @@
         "dist/**",
         "build/**",
         "dist-electron/**",
-        "apps/server/server/**",
-        "src-tauri/target/**"
+        "apps/server/server/**"
       ],
       "agent": {
         "providerId": "zen",

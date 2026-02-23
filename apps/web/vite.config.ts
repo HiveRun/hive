@@ -17,6 +17,7 @@ const fallbackApiServerPort =
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const requiredApiUrl = env.VITE_API_URL?.trim();
+  const buildBase = env.VITE_APP_BASE?.trim() || "/";
 
   if (!requiredApiUrl || requiredApiUrl === "undefined") {
     throw new Error(
@@ -25,6 +26,7 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
+    base: buildBase,
     plugins: [
       tsconfigPaths({
         root: "./",

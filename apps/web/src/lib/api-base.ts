@@ -2,14 +2,14 @@ const DEFAULT_API_BASE = "http://localhost:3000";
 
 export const resolveApiBase = () => {
   const envUrl = import.meta.env.VITE_API_URL?.trim();
-  const isTauri =
-    typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  const isDesktopRuntime =
+    typeof window !== "undefined" && "hiveDesktop" in window;
 
   if (envUrl && envUrl !== "undefined") {
     return envUrl;
   }
 
-  if (isTauri) {
+  if (isDesktopRuntime) {
     return DEFAULT_API_BASE;
   }
 
