@@ -26,7 +26,7 @@ export type UninstallHiveOptions = {
 
 type UninstallHiveRuntimeOptions = Pick<
   UninstallHiveOptions,
-  "stopRuntime" | "logError" | "logInfo"
+  "stopRuntime" | "logInfo" | "logWarning"
 >;
 
 type UninstallHiveFileOptions = Pick<
@@ -44,10 +44,6 @@ const pathLivesInDirectory = (targetPath: string, baseDirectory: string) => {
 };
 
 const shouldRemoveHiveBinary = (binaryPath: string, hiveHome: string) => {
-  if (!existsSync(binaryPath)) {
-    return false;
-  }
-
   try {
     const stats = lstatSync(binaryPath);
     if (stats.isSymbolicLink()) {
@@ -65,13 +61,15 @@ const shouldRemoveHiveBinary = (binaryPath: string, hiveHome: string) => {
 
 const ensureRuntimeStopped = ({
   stopRuntime,
-  logError,
   logInfo,
+  logWarning,
 }: UninstallHiveRuntimeOptions) => {
   const stopResult = stopRuntime();
   if (stopResult === "failed") {
-    logError("Unable to stop the running instance. Aborting uninstall.");
-    return false;
+    logWarning(
+      "Unable to confirm daemon shutdown. Continuing uninstall and removing local files."
+    );
+    return true;
   }
   if (stopResult === "stopped") {
     logInfo("Stopped running instance.");
@@ -151,7 +149,7 @@ export const uninstallHive = ({
     return 1;
   }
 
-  if (!ensureRuntimeStopped({ stopRuntime, logError, logInfo })) {
+  if (!ensureRuntimeStopped({ stopRuntime, logInfo, logWarning })) {
     return 1;
   }
 

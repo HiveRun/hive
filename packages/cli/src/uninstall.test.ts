@@ -1,6 +1,7 @@
 /// <reference types="vitest" />
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -15,6 +16,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { uninstallHive } from "./uninstall";
 
 const createLogger = () => vi.fn<(message: string) => void>();
+
+const pathExists = (path: string) => {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 describe("uninstallHive", () => {
   const tempRoots: string[] = [];
@@ -58,7 +68,7 @@ describe("uninstallHive", () => {
     expect(stopRuntime).toHaveBeenCalledTimes(1);
     expect(closeDesktop).toHaveBeenCalledTimes(1);
     expect(existsSync(hiveHome)).toBe(false);
-    expect(existsSync(join(binDir, "hive"))).toBe(false);
+    expect(pathExists(join(binDir, "hive"))).toBe(false);
   });
 
   it("requires --yes confirmation", () => {
@@ -89,6 +99,37 @@ describe("uninstallHive", () => {
     expect(existsSync(hiveHome)).toBe(true);
     expect(logError).toHaveBeenCalledWith(
       "Uninstall aborted. Re-run with --yes to remove your Hive installation."
+    );
+  });
+
+  it("continues uninstall when daemon stop check fails", () => {
+    const root = mkdtempSync(join(tmpdir(), "hive-uninstall-"));
+    tempRoots.push(root);
+
+    const hiveHome = join(root, ".hive");
+    mkdirSync(hiveHome, { recursive: true });
+    writeFileSync(join(hiveHome, "hive.env"), "test");
+
+    const stopRuntime = vi.fn(() => "failed" as const);
+    const closeDesktop = vi.fn();
+    const logWarning = createLogger();
+
+    const exitCode = uninstallHive({
+      confirm: true,
+      hiveHome,
+      stopRuntime,
+      closeDesktop,
+      logInfo: createLogger(),
+      logSuccess: createLogger(),
+      logWarning,
+      logError: createLogger(),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(closeDesktop).toHaveBeenCalledTimes(1);
+    expect(existsSync(hiveHome)).toBe(false);
+    expect(logWarning).toHaveBeenCalledWith(
+      "Unable to confirm daemon shutdown. Continuing uninstall and removing local files."
     );
   });
 });
