@@ -15,6 +15,7 @@ type BumpType = "major" | "minor" | "patch";
 
 const SEMVER_PATTERN =
   /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const SEMVER_CORE_TRIPLET_PATTERN = /^(\d+)\.(\d+)\.(\d+)/;
 
 const parseArgs = () => {
   const args = process.argv.slice(2);
@@ -41,11 +42,12 @@ const assertSemver = (value: string, source: string) => {
 };
 
 const parseSemverTriplet = (value: string) => {
-  const [core] = value.split("-");
-  if (!core) {
+  const match = SEMVER_CORE_TRIPLET_PATTERN.exec(value);
+  if (!match) {
     throw new Error(`Invalid semver core: ${value}`);
   }
-  const [major, minor, patch] = core.split(".");
+
+  const [, major, minor, patch] = match;
   return {
     major: Number(major),
     minor: Number(minor),
