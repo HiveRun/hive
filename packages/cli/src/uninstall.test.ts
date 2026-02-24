@@ -209,11 +209,14 @@ describe("uninstallHive", () => {
     );
     expect(existsSync(zshCompletionPath)).toBe(false);
     expect(existsSync(fishCompletionPath)).toBe(false);
-    expect(logWarning).toHaveBeenCalledWith(
-      "Your current shell may still cache Hive completions or PATH. Open a new shell session to fully clear them."
-    );
+    expect(logWarning).not.toHaveBeenCalled();
     expect(logInfo).toHaveBeenCalledWith(
-      "To clear this shell immediately, run: unfunction _hive 2>/dev/null; compdef -d hive 2>/dev/null; hash -r"
+      [
+        "Shell cleanup:",
+        "  - removed PATH entries from 2 shell file(s)",
+        "  - removed 2 completion script(s)",
+        "  - refresh this shell now: unfunction _hive 2>/dev/null; compdef -d hive 2>/dev/null; hash -r",
+      ].join("\n")
     );
   });
 });

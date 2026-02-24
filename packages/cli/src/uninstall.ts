@@ -51,6 +51,12 @@ type ShellIntegrationOptions = Pick<
   | "shellPath"
 >;
 
+type ShellCleanupReport = {
+  removedPathEntries: number;
+  removedCompletions: number;
+  refreshCommand: string | null;
+};
+
 const NEWLINE_PATTERN = /\r?\n/;
 
 const pathLivesInDirectory = (targetPath: string, baseDirectory: string) => {
@@ -119,9 +125,6 @@ const removeHiveHomeDirectory = ({
   }
 
   logSuccess(`Hive uninstalled from ${hiveHome}.`);
-  logInfo(
-    "If you previously added Hive to PATH manually, remove stale entries from your shell profile."
-  );
   return 0;
 };
 
@@ -267,10 +270,8 @@ const getShellRefreshCommand = (shellPath: string | undefined) => {
 };
 
 const cleanupShellIntegrations = (
-  options: ShellIntegrationOptions,
-  logInfo: Logger,
-  logWarning: Logger
-) => {
+  options: ShellIntegrationOptions
+): ShellCleanupReport => {
   const config = getShellIntegrationConfig(options);
 
   const pathLine = `export PATH=${config.binDir}:$PATH`;
@@ -295,12 +296,6 @@ const cleanupShellIntegrations = (
     if (removedExport || removedFish) {
       removedPathEntries += 1;
     }
-  }
-
-  if (removedPathEntries > 0) {
-    logInfo(
-      `Removed Hive PATH entries from ${removedPathEntries} shell file(s).`
-    );
   }
 
   const zshCompletionPaths = [
@@ -329,23 +324,25 @@ const cleanupShellIntegrations = (
     }
   }
 
-  if (removedCompletions > 0) {
-    logInfo(`Removed ${removedCompletions} Hive completion script(s).`);
+  return {
+    removedPathEntries,
+    removedCompletions,
+    refreshCommand: getShellRefreshCommand(config.shellPath),
+  };
+};
+
+const formatShellCleanupMessage = (report: ShellCleanupReport) => {
+  if (report.removedPathEntries === 0 && report.removedCompletions === 0) {
+    return null;
   }
 
-  if (removedPathEntries > 0 || removedCompletions > 0) {
-    logWarning(
-      "Your current shell may still cache Hive completions or PATH. Open a new shell session to fully clear them."
-    );
-
-    const refreshCommand = getShellRefreshCommand(config.shellPath);
-    if (refreshCommand) {
-      logInfo(`To clear this shell immediately, run: ${refreshCommand}`);
-      return;
-    }
-
-    logInfo("To clear this shell immediately, run: exec $SHELL -l");
-  }
+  const refreshCommand = report.refreshCommand ?? "exec $SHELL -l";
+  return [
+    "Shell cleanup:",
+    `  - removed PATH entries from ${report.removedPathEntries} shell file(s)`,
+    `  - removed ${report.removedCompletions} completion script(s)`,
+    `  - refresh this shell now: ${refreshCommand}`,
+  ].join("\n");
 };
 
 export const uninstallHive = ({
@@ -377,10 +374,33 @@ export const uninstallHive = ({
   closeDesktop();
 
   removeManagedBinary(hiveBinDir, hiveHome, logWarning);
-  cleanupShellIntegrations(
-    { hiveHome, hiveBinDir, homeDir, xdgConfigHome, zshCustom, shellPath },
+  const shellCleanupReport = cleanupShellIntegrations({
+    hiveHome,
+    hiveBinDir,
+    homeDir,
+    xdgConfigHome,
+    zshCustom,
+    shellPath,
+  });
+
+  const uninstallExitCode = removeHiveHomeDirectory({
+    hiveHome,
+    logError,
     logInfo,
-    logWarning
+    logSuccess,
+  });
+
+  if (uninstallExitCode !== 0) {
+    return uninstallExitCode;
+  }
+
+  const shellCleanupMessage = formatShellCleanupMessage(shellCleanupReport);
+  if (shellCleanupMessage) {
+    logInfo(shellCleanupMessage);
+  }
+
+  logInfo(
+    "If you previously added Hive to PATH manually, remove stale entries from your shell profile."
   );
-  return removeHiveHomeDirectory({ hiveHome, logError, logInfo, logSuccess });
+  return 0;
 };
