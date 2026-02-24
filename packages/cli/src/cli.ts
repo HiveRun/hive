@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { createInterface } from "node:readline/promises";
 
 import {
   binaryDirectory,
@@ -37,6 +38,7 @@ import {
   waitForServerReady,
 } from "./runtime-utils";
 import { uninstallHive } from "./uninstall";
+import { resolveUninstallConfirmation } from "./uninstall-confirmation";
 
 const rawArgv = process.argv.slice(2);
 if (process.env.HIVE_DEBUG_ARGS === "1") {
@@ -773,9 +775,30 @@ const runUpgrade = async () => {
   });
 };
 
-const uninstallCommand = (confirm: boolean) =>
-  uninstallHive({
-    confirm,
+const promptUninstallConfirmation = async () => {
+  const hiveHome = resolveHiveHomePath();
+  const prompt = `This will permanently remove Hive files at ${hiveHome}. Continue? [y/N] `;
+  const promptInterface = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  try {
+    return await promptInterface.question(prompt);
+  } finally {
+    promptInterface.close();
+  }
+};
+
+const uninstallCommand = async (confirm: boolean) => {
+  const confirmation = await resolveUninstallConfirmation({
+    confirmedByFlag: confirm,
+    isInteractive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+    askConfirmation: promptUninstallConfirmation,
+  });
+
+  return uninstallHive({
+    confirm: confirmation,
     hiveHome: resolveHiveHomePath(),
     hiveBinDir: process.env.HIVE_BIN_DIR,
     stopRuntime: () => stopBackgroundProcess({ silent: true }),
@@ -785,6 +808,7 @@ const uninstallCommand = (confirm: boolean) =>
     logWarning,
     logError,
   });
+};
 
 const runtimeExecutable = basename(process.execPath).toLowerCase();
 const isBunRuntime = runtimeExecutable.startsWith("bun");
@@ -1064,8 +1088,11 @@ class UninstallCommand extends Command {
     category: "Runtime",
     description: "Remove the local Hive installation.",
     details:
-      "Stops running Hive processes and removes HIVE_HOME (defaults to ~/.hive). Pass --yes to confirm the removal.",
-    examples: [["Uninstall Hive", "hive uninstall --yes"]],
+      "Stops running Hive processes and removes HIVE_HOME (defaults to ~/.hive). In interactive terminals, Hive will prompt for confirmation; use --yes to skip the prompt (required for non-interactive environments).",
+    examples: [
+      ["Uninstall Hive with prompt", "hive uninstall"],
+      ["Uninstall Hive without prompt", "hive uninstall --yes"],
+    ],
   });
 
   confirm = Option.Boolean("--yes", {
