@@ -38,7 +38,10 @@ import {
   waitForServerReady,
 } from "./runtime-utils";
 import { uninstallHive } from "./uninstall";
-import { resolveUninstallConfirmation } from "./uninstall-confirmation";
+import {
+  resolveUninstallConfirmation,
+  resolveUninstallDataRetention,
+} from "./uninstall-confirmation";
 
 const rawArgv = process.argv.slice(2);
 if (process.env.HIVE_DEBUG_ARGS === "1") {
@@ -775,9 +778,7 @@ const runUpgrade = async () => {
   });
 };
 
-const promptUninstallConfirmation = async () => {
-  const hiveHome = resolveHiveHomePath();
-  const prompt = `This will permanently remove Hive files at ${hiveHome}. Continue? [y/N] `;
+const askPrompt = async (prompt: string) => {
   const promptInterface = createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -790,15 +791,37 @@ const promptUninstallConfirmation = async () => {
   }
 };
 
-const uninstallCommand = async (confirm: boolean) => {
+const promptUninstallConfirmation = () => {
+  const hiveHome = resolveHiveHomePath();
+  return askPrompt(
+    `This will permanently remove Hive files at ${hiveHome}. Continue? [y/N] `
+  );
+};
+
+const promptUninstallDataRetention = () => {
+  const hiveHome = resolveHiveHomePath();
+  return askPrompt(
+    `Preserve Hive data in ${join(hiveHome, "state")} while removing the app? [y/N] `
+  );
+};
+
+const uninstallCommand = async (confirm: boolean, keepData: boolean) => {
+  const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   const confirmation = await resolveUninstallConfirmation({
     confirmedByFlag: confirm,
-    isInteractive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+    isInteractive,
     askConfirmation: promptUninstallConfirmation,
+  });
+
+  const preserveData = await resolveUninstallDataRetention({
+    keepDataByFlag: keepData,
+    shouldPrompt: confirmation && isInteractive && !confirm,
+    askConfirmation: promptUninstallDataRetention,
   });
 
   return uninstallHive({
     confirm: confirmation,
+    preserveData,
     hiveHome: resolveHiveHomePath(),
     hiveBinDir: process.env.HIVE_BIN_DIR,
     stopRuntime: () => stopBackgroundProcess({ silent: true }),
@@ -1088,10 +1111,11 @@ class UninstallCommand extends Command {
     category: "Runtime",
     description: "Remove the local Hive installation.",
     details:
-      "Stops running Hive processes and removes HIVE_HOME (defaults to ~/.hive). In interactive terminals, Hive will prompt for confirmation; use --yes to skip the prompt (required for non-interactive environments).",
+      "Stops running Hive processes and removes HIVE_HOME (defaults to ~/.hive). In interactive terminals, Hive prompts for confirmation and whether to preserve data. Use --yes for non-interactive environments, and --keep-data to remove only app binaries while retaining runtime data.",
     examples: [
       ["Uninstall Hive with prompt", "hive uninstall"],
       ["Uninstall Hive without prompt", "hive uninstall --yes"],
+      ["Uninstall app but keep data", "hive uninstall --yes --keep-data"],
     ],
   });
 
@@ -1099,9 +1123,13 @@ class UninstallCommand extends Command {
     description: "Confirm removal of your Hive installation",
   });
 
+  keepData = Option.Boolean("--keep-data", {
+    description: "Remove Hive app files but preserve state/log data",
+  });
+
   override execute() {
     return runCommand(
-      () => uninstallCommand(Boolean(this.confirm)),
+      () => uninstallCommand(Boolean(this.confirm), Boolean(this.keepData)),
       "uninstall"
     );
   }

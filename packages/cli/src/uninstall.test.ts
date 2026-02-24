@@ -134,6 +134,48 @@ describe("uninstallHive", () => {
     );
   });
 
+  it("can uninstall app files while preserving data", () => {
+    const root = mkdtempSync(join(tmpdir(), "hive-uninstall-"));
+    tempRoots.push(root);
+
+    const hiveHome = join(root, ".hive");
+    const releasesDir = join(hiveHome, "releases", "hive-linux-x64");
+    const stateDir = join(hiveHome, "state");
+
+    mkdirSync(releasesDir, { recursive: true });
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(join(releasesDir, "hive"), "binary");
+    writeFileSync(join(stateDir, "hive.db"), "sqlite");
+
+    const stopRuntime = vi.fn(() => "not_running" as const);
+    const closeDesktop = vi.fn();
+    const logInfo = createLogger();
+    const logSuccess = createLogger();
+
+    const exitCode = uninstallHive({
+      confirm: true,
+      preserveData: true,
+      hiveHome,
+      stopRuntime,
+      closeDesktop,
+      logInfo,
+      logSuccess,
+      logWarning: createLogger(),
+      logError: createLogger(),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(existsSync(hiveHome)).toBe(true);
+    expect(existsSync(join(hiveHome, "releases"))).toBe(false);
+    expect(existsSync(join(hiveHome, "state", "hive.db"))).toBe(true);
+    expect(logSuccess).toHaveBeenCalledWith(
+      `Hive application uninstalled from ${hiveHome}.`
+    );
+    expect(logInfo).toHaveBeenCalledWith(
+      `Preserved Hive data at ${join(hiveHome, "state")}.`
+    );
+  });
+
   it("removes managed shell path entries and completion scripts", () => {
     const root = mkdtempSync(join(tmpdir(), "hive-uninstall-"));
     tempRoots.push(root);

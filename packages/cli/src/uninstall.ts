@@ -17,6 +17,7 @@ type Logger = (message: string) => void;
 
 export type UninstallHiveOptions = {
   confirm: boolean;
+  preserveData?: boolean;
   hiveHome: string;
   hiveBinDir?: string;
   homeDir?: string;
@@ -38,7 +39,7 @@ type UninstallHiveRuntimeOptions = Pick<
 
 type UninstallHiveFileOptions = Pick<
   UninstallHiveOptions,
-  "hiveHome" | "logError" | "logInfo" | "logSuccess"
+  "hiveHome" | "preserveData" | "logError" | "logInfo" | "logSuccess"
 >;
 
 type ShellIntegrationOptions = Pick<
@@ -104,12 +105,40 @@ const ensureRuntimeStopped = ({
 
 const removeHiveHomeDirectory = ({
   hiveHome,
+  preserveData,
   logError,
   logInfo,
   logSuccess,
 }: UninstallHiveFileOptions) => {
   if (!existsSync(hiveHome)) {
     logInfo(`No installation directory found at ${hiveHome}.`);
+    return 0;
+  }
+
+  if (preserveData) {
+    const runtimeArtifacts = [
+      join(hiveHome, "current"),
+      join(hiveHome, "releases"),
+      join(hiveHome, "bin"),
+      join(hiveHome, "hive.pid"),
+      join(hiveHome, "install.sh"),
+    ];
+
+    try {
+      for (const artifactPath of runtimeArtifacts) {
+        rmSync(artifactPath, { recursive: true, force: true });
+      }
+    } catch (error) {
+      logError(
+        `Failed to remove application files from ${hiveHome}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return 1;
+    }
+
+    logSuccess(`Hive application uninstalled from ${hiveHome}.`);
+    logInfo(`Preserved Hive data at ${join(hiveHome, "state")}.`);
     return 0;
   }
 
@@ -347,6 +376,7 @@ const formatShellCleanupMessage = (report: ShellCleanupReport) => {
 
 export const uninstallHive = ({
   confirm,
+  preserveData = false,
   hiveHome,
   hiveBinDir,
   homeDir,
@@ -385,6 +415,7 @@ export const uninstallHive = ({
 
   const uninstallExitCode = removeHiveHomeDirectory({
     hiveHome,
+    preserveData,
     logError,
     logInfo,
     logSuccess,
