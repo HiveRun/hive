@@ -37,7 +37,7 @@ import {
   type WaitForServerReadyConfig,
   waitForServerReady,
 } from "./runtime-utils";
-import { uninstallHive } from "./uninstall";
+import { type StopRuntimeResult, uninstallHive } from "./uninstall";
 import {
   resolveUninstallConfirmation,
   resolveUninstallDataRetention,
@@ -147,6 +147,7 @@ const trimTrailingSlash = (value: string) =>
   value.endsWith("/") ? value.slice(0, -1) : value;
 
 const HEALTHCHECK_URL = `${trimTrailingSlash(DEFAULT_WEB_URL)}/health`;
+const DAEMON_PROBE_TIMEOUT_MS = 800;
 
 const readActivePid = (): number | null => {
   if (!existsSync(pidFilePath)) {
@@ -184,6 +185,23 @@ const isDaemonRunning = () => {
   }
   cleanupPidFile();
   return false;
+};
+
+const isDaemonResponsive = async () => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DAEMON_PROBE_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(HEALTHCHECK_URL, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
 };
 
 type LaunchResult = { pid: number | null; logFile: string };
@@ -583,7 +601,15 @@ const describePidStatus = () => {
   }
 };
 
-const stopBackgroundProcess = (options?: { silent?: boolean }) => {
+type StopBackgroundProcessResult =
+  | "failed"
+  | "not_running"
+  | "stale_pid"
+  | "stopped";
+
+const stopBackgroundProcess = (options?: {
+  silent?: boolean;
+}): StopBackgroundProcessResult => {
   const silent = options?.silent ?? false;
   const log = (message: string) => {
     if (!silent) {
@@ -619,6 +645,17 @@ const stopBackgroundProcess = (options?: { silent?: boolean }) => {
     process.kill(pid, "SIGTERM");
     logSuccess(`Stopped Hive (PID ${pid}).`);
   } catch (error) {
+    const errorCode =
+      error && typeof error === "object" && "code" in error
+        ? String((error as NodeJS.ErrnoException).code)
+        : null;
+
+    if (errorCode === "ESRCH") {
+      cleanupPidFile();
+      log(`Removed stale Hive PID file (${pid}).`);
+      return "stale_pid" as const;
+    }
+
     logError(
       `Failed to stop Hive (PID ${pid}): ${
         error instanceof Error ? error.message : String(error)
@@ -717,6 +754,10 @@ const runUpgrade = async () => {
 
   if (stopResult === "stopped") {
     logInfo("Stopped running instance.");
+  }
+
+  if (stopResult === "stale_pid") {
+    logInfo("Removed stale PID file before upgrade.");
   }
 
   const configuredCommand = process.env.HIVE_INSTALL_COMMAND;
@@ -819,12 +860,40 @@ const uninstallCommand = async (confirm: boolean, keepData: boolean) => {
     askConfirmation: promptUninstallDataRetention,
   });
 
+  const resolveStopResultForUninstall =
+    async (): Promise<StopRuntimeResult> => {
+      const stopResult = stopBackgroundProcess({ silent: true });
+      if (stopResult === "failed") {
+        return "failed";
+      }
+
+      if (stopResult === "stopped") {
+        return "stopped";
+      }
+
+      const daemonStillResponsive = await isDaemonResponsive();
+      if (daemonStillResponsive) {
+        logError(
+          "Detected a running Hive daemon without a managed PID file. Stop the foreground Hive process and retry uninstall."
+        );
+        return "failed";
+      }
+
+      if (stopResult === "stale_pid") {
+        logInfo("Removed stale PID file.");
+      }
+
+      return "not_running";
+    };
+
+  const stopResult = await resolveStopResultForUninstall();
+
   return uninstallHive({
     confirm: confirmation,
     preserveData,
     hiveHome: resolveHiveHomePath(),
     hiveBinDir: process.env.HIVE_BIN_DIR,
-    stopRuntime: () => stopBackgroundProcess({ silent: true }),
+    stopRuntime: () => stopResult,
     closeDesktop: closeDesktopApplication,
     logInfo,
     logSuccess,

@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -103,7 +103,7 @@ describe("uninstallHive", () => {
     );
   });
 
-  it("continues uninstall when daemon stop check fails", () => {
+  it("aborts uninstall when daemon stop check fails", () => {
     const root = mkdtempSync(join(tmpdir(), "hive-uninstall-"));
     tempRoots.push(root);
 
@@ -113,7 +113,7 @@ describe("uninstallHive", () => {
 
     const stopRuntime = vi.fn(() => "failed" as const);
     const closeDesktop = vi.fn();
-    const logWarning = createLogger();
+    const logError = createLogger();
 
     const exitCode = uninstallHive({
       confirm: true,
@@ -122,15 +122,15 @@ describe("uninstallHive", () => {
       closeDesktop,
       logInfo: createLogger(),
       logSuccess: createLogger(),
-      logWarning,
-      logError: createLogger(),
+      logWarning: createLogger(),
+      logError,
     });
 
-    expect(exitCode).toBe(0);
-    expect(closeDesktop).toHaveBeenCalledTimes(1);
-    expect(existsSync(hiveHome)).toBe(false);
-    expect(logWarning).toHaveBeenCalledWith(
-      "Unable to confirm daemon shutdown. Continuing uninstall and removing local files."
+    expect(exitCode).toBe(1);
+    expect(closeDesktop).not.toHaveBeenCalled();
+    expect(existsSync(hiveHome)).toBe(true);
+    expect(logError).toHaveBeenCalledWith(
+      "Unable to stop the running instance. Aborting uninstall."
     );
   });
 
@@ -260,5 +260,68 @@ describe("uninstallHive", () => {
         "  - refresh this shell now: unfunction _hive 2>/dev/null; compdef -d hive 2>/dev/null; hash -r",
       ].join("\n")
     );
+  });
+
+  it("discovers managed bin dir from PATH and removes ~/.config zsh completion", () => {
+    const root = mkdtempSync(join(tmpdir(), "hive-uninstall-"));
+    tempRoots.push(root);
+
+    const homeDir = join(root, "home");
+    const xdgConfigHome = join(homeDir, ".xdg-config");
+    const hiveHome = join(homeDir, ".hive");
+    const customBinDir = join(root, "custom-bin");
+
+    mkdirSync(join(hiveHome, "current"), { recursive: true });
+    writeFileSync(join(hiveHome, "current", "hive"), "binary");
+    mkdirSync(customBinDir, { recursive: true });
+    symlinkSync(join(hiveHome, "current", "hive"), join(customBinDir, "hive"));
+
+    const profilePath = join(homeDir, ".profile");
+    mkdirSync(homeDir, { recursive: true });
+    writeFileSync(profilePath, `# hive\nexport PATH=${customBinDir}:$PATH\n`);
+
+    const zshCompletionPath = join(
+      homeDir,
+      ".config",
+      "zsh",
+      "completions",
+      "_hive"
+    );
+    mkdirSync(join(homeDir, ".config", "zsh", "completions"), {
+      recursive: true,
+    });
+    writeFileSync(zshCompletionPath, "#compdef hive\n_hive() {}\n");
+
+    const stopRuntime = vi.fn(() => "not_running" as const);
+    const closeDesktop = vi.fn();
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = [customBinDir, originalPath ?? ""]
+      .filter((value) => value.length > 0)
+      .join(delimiter);
+
+    try {
+      const exitCode = uninstallHive({
+        confirm: true,
+        hiveHome,
+        homeDir,
+        xdgConfigHome,
+        stopRuntime,
+        closeDesktop,
+        logInfo: createLogger(),
+        logSuccess: createLogger(),
+        logWarning: createLogger(),
+        logError: createLogger(),
+      });
+
+      expect(exitCode).toBe(0);
+      expect(pathExists(join(customBinDir, "hive"))).toBe(false);
+      expect(readFileSync(profilePath, "utf8")).not.toContain(
+        `export PATH=${customBinDir}:$PATH`
+      );
+      expect(existsSync(zshCompletionPath)).toBe(false);
+    } finally {
+      process.env.PATH = originalPath;
+    }
   });
 });

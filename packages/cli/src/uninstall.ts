@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
 
 export type StopRuntimeResult = "failed" | "not_running" | "stopped";
 
@@ -34,7 +34,7 @@ export type UninstallHiveOptions = {
 
 type UninstallHiveRuntimeOptions = Pick<
   UninstallHiveOptions,
-  "stopRuntime" | "logInfo" | "logWarning"
+  "stopRuntime" | "logInfo" | "logError"
 >;
 
 type UninstallHiveFileOptions = Pick<
@@ -44,13 +44,10 @@ type UninstallHiveFileOptions = Pick<
 
 type ShellIntegrationOptions = Pick<
   UninstallHiveOptions,
-  | "hiveHome"
-  | "hiveBinDir"
-  | "homeDir"
-  | "xdgConfigHome"
-  | "zshCustom"
-  | "shellPath"
->;
+  "homeDir" | "xdgConfigHome" | "zshCustom" | "shellPath"
+> & {
+  managedBinDirs: string[];
+};
 
 type ShellCleanupReport = {
   removedPathEntries: number;
@@ -88,14 +85,12 @@ const shouldRemoveHiveBinary = (binaryPath: string, hiveHome: string) => {
 const ensureRuntimeStopped = ({
   stopRuntime,
   logInfo,
-  logWarning,
+  logError,
 }: UninstallHiveRuntimeOptions) => {
   const stopResult = stopRuntime();
   if (stopResult === "failed") {
-    logWarning(
-      "Unable to confirm daemon shutdown. Continuing uninstall and removing local files."
-    );
-    return true;
+    logError("Unable to stop the running instance. Aborting uninstall.");
+    return false;
   }
   if (stopResult === "stopped") {
     logInfo("Stopped running instance.");
@@ -157,28 +152,57 @@ const removeHiveHomeDirectory = ({
   return 0;
 };
 
-const removeManagedBinary = (
-  hiveBinDir: string | undefined,
+const pushUnique = (values: string[], value: string) => {
+  if (!values.includes(value)) {
+    values.push(value);
+  }
+};
+
+const collectManagedBinDirs = (
   hiveHome: string,
+  hiveBinDir: string | undefined
+) => {
+  const candidateBinDirs: string[] = [];
+  if (hiveBinDir) {
+    pushUnique(candidateBinDirs, hiveBinDir);
+  }
+  pushUnique(candidateBinDirs, join(hiveHome, "bin"));
+
+  const pathEntries = (process.env.PATH ?? "")
+    .split(delimiter)
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  for (const pathEntry of pathEntries) {
+    const hiveBinaryPath = join(pathEntry, "hive");
+    if (shouldRemoveHiveBinary(hiveBinaryPath, hiveHome)) {
+      pushUnique(candidateBinDirs, pathEntry);
+    }
+  }
+
+  return candidateBinDirs;
+};
+
+const removeManagedBinaries = (
+  hiveHome: string,
+  managedBinDirs: string[],
   logWarning: Logger
 ) => {
-  if (!hiveBinDir) {
-    return;
-  }
+  for (const managedBinDir of managedBinDirs) {
+    const binaryPath = join(managedBinDir, "hive");
+    if (!shouldRemoveHiveBinary(binaryPath, hiveHome)) {
+      continue;
+    }
 
-  const binaryPath = join(hiveBinDir, "hive");
-  if (!shouldRemoveHiveBinary(binaryPath, hiveHome)) {
-    return;
-  }
-
-  try {
-    unlinkSync(binaryPath);
-  } catch (error) {
-    logWarning(
-      `Unable to remove binary symlink ${binaryPath}: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
+    try {
+      unlinkSync(binaryPath);
+    } catch (error) {
+      logWarning(
+        `Unable to remove binary symlink ${binaryPath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
   }
 };
 
@@ -259,8 +283,7 @@ const removeManagedCompletionScript = (filePath: string) => {
 };
 
 const getShellIntegrationConfig = ({
-  hiveHome,
-  hiveBinDir,
+  managedBinDirs,
   homeDir,
   xdgConfigHome,
   zshCustom,
@@ -271,14 +294,13 @@ const getShellIntegrationConfig = ({
     xdgConfigHome ??
     process.env.XDG_CONFIG_HOME ??
     join(resolvedHome, ".config");
-  const resolvedBinDir = hiveBinDir ?? join(hiveHome, "bin");
   const resolvedZshCustom = zshCustom ?? process.env.ZSH_CUSTOM;
   const resolvedShellPath = shellPath ?? process.env.SHELL;
 
   return {
     home: resolvedHome,
     xdgConfig: resolvedXdgConfig,
-    binDir: resolvedBinDir,
+    managedBinDirs,
     zshCustom: resolvedZshCustom,
     shellPath: resolvedShellPath,
   };
@@ -303,8 +325,6 @@ const cleanupShellIntegrations = (
 ): ShellCleanupReport => {
   const config = getShellIntegrationConfig(options);
 
-  const pathLine = `export PATH=${config.binDir}:$PATH`;
-  const fishPathLine = `fish_add_path ${config.binDir}`;
   const shellPathFiles = [
     join(config.home, ".zshrc"),
     join(config.home, ".zshenv"),
@@ -313,6 +333,7 @@ const cleanupShellIntegrations = (
     join(config.home, ".bashrc"),
     join(config.home, ".bash_profile"),
     join(config.home, ".profile"),
+    "/etc/profile",
     join(config.xdgConfig, "bash", ".bashrc"),
     join(config.xdgConfig, "bash", ".bash_profile"),
     join(config.home, ".config", "fish", "config.fish"),
@@ -320,9 +341,22 @@ const cleanupShellIntegrations = (
 
   let removedPathEntries = 0;
   for (const filePath of shellPathFiles) {
-    const removedExport = removeLinesFromFile(filePath, pathLine);
-    const removedFish = removeLinesFromFile(filePath, fishPathLine);
-    if (removedExport || removedFish) {
+    let removedFromFile = false;
+    for (const managedBinDir of config.managedBinDirs) {
+      const removedExport = removeLinesFromFile(
+        filePath,
+        `export PATH=${managedBinDir}:$PATH`
+      );
+      const removedFish = removeLinesFromFile(
+        filePath,
+        `fish_add_path ${managedBinDir}`
+      );
+      if (removedExport || removedFish) {
+        removedFromFile = true;
+      }
+    }
+
+    if (removedFromFile) {
       removedPathEntries += 1;
     }
   }
@@ -330,8 +364,11 @@ const cleanupShellIntegrations = (
   const zshCompletionPaths = [
     config.zshCustom ? join(config.zshCustom, "completions", "_hive") : null,
     join(config.home, ".oh-my-zsh", "custom", "completions", "_hive"),
+    join(config.home, ".config", "zsh", "completions", "_hive"),
     join(config.xdgConfig, "zsh", "completions", "_hive"),
-  ].filter((value): value is string => Boolean(value));
+  ]
+    .filter((value): value is string => Boolean(value))
+    .filter((value, index, values) => values.indexOf(value) === index);
 
   const completionFiles = [
     join(
@@ -397,21 +434,13 @@ export const uninstallHive = ({
     return 1;
   }
 
-  if (!ensureRuntimeStopped({ stopRuntime, logInfo, logWarning })) {
+  if (!ensureRuntimeStopped({ stopRuntime, logInfo, logError })) {
     return 1;
   }
 
   closeDesktop();
 
-  removeManagedBinary(hiveBinDir, hiveHome, logWarning);
-  const shellCleanupReport = cleanupShellIntegrations({
-    hiveHome,
-    hiveBinDir,
-    homeDir,
-    xdgConfigHome,
-    zshCustom,
-    shellPath,
-  });
+  const managedBinDirs = collectManagedBinDirs(hiveHome, hiveBinDir);
 
   const uninstallExitCode = removeHiveHomeDirectory({
     hiveHome,
@@ -424,6 +453,15 @@ export const uninstallHive = ({
   if (uninstallExitCode !== 0) {
     return uninstallExitCode;
   }
+
+  removeManagedBinaries(hiveHome, managedBinDirs, logWarning);
+  const shellCleanupReport = cleanupShellIntegrations({
+    managedBinDirs,
+    homeDir,
+    xdgConfigHome,
+    zshCustom,
+    shellPath,
+  });
 
   const shellCleanupMessage = formatShellCleanupMessage(shellCleanupReport);
   if (shellCleanupMessage) {
