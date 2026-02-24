@@ -148,7 +148,6 @@ const trimTrailingSlash = (value: string) =>
   value.endsWith("/") ? value.slice(0, -1) : value;
 
 const HEALTHCHECK_URL = `${trimTrailingSlash(DEFAULT_WEB_URL)}/health`;
-const WORKSPACES_URL = `${trimTrailingSlash(DEFAULT_WEB_URL)}/api/workspaces`;
 const DAEMON_PROBE_TIMEOUT_MS = 800;
 
 const readActivePid = (): number | null => {
@@ -869,7 +868,6 @@ const uninstallCommand = async (confirm: boolean, keepData: boolean) => {
   const stopResult = await resolveUninstallStopResult({
     confirmed: confirmation,
     healthcheckUrl: HEALTHCHECK_URL,
-    workspacesUrl: WORKSPACES_URL,
     stopBackgroundProcess: () => stopBackgroundProcess({ silent: true }),
     probeJson,
     logInfo,

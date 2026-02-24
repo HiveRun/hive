@@ -10,7 +10,6 @@ export const FOREGROUND_DAEMON_ERROR =
 type ResolveUninstallStopResultOptions = {
   confirmed: boolean;
   healthcheckUrl: string;
-  workspacesUrl: string;
   stopBackgroundProcess: () => BackgroundStopResult;
   probeJson: (url: string) => Promise<unknown | null>;
   logInfo: Logger;
@@ -23,13 +22,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isHiveHealthResponse = (value: unknown) =>
   isRecord(value) && value.status === "ok";
 
-const isHiveWorkspacesResponse = (value: unknown) =>
-  isRecord(value) && Array.isArray(value.workspaces);
-
 export const resolveUninstallStopResult = async ({
   confirmed,
   healthcheckUrl,
-  workspacesUrl,
   stopBackgroundProcess,
   probeJson,
   logInfo,
@@ -49,15 +44,9 @@ export const resolveUninstallStopResult = async ({
   }
 
   const healthPayload = await probeJson(healthcheckUrl);
-  const isHiveHealth = isHiveHealthResponse(healthPayload);
-
-  if (isHiveHealth) {
-    const workspacesPayload = await probeJson(workspacesUrl);
-    const isHiveWorkspaces = isHiveWorkspacesResponse(workspacesPayload);
-    if (isHiveWorkspaces) {
-      logError(FOREGROUND_DAEMON_ERROR);
-      return "failed";
-    }
+  if (isHiveHealthResponse(healthPayload)) {
+    logError(FOREGROUND_DAEMON_ERROR);
+    return "failed";
   }
 
   if (stopResult === "stale_pid") {

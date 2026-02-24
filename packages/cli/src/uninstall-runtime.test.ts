@@ -11,7 +11,6 @@ const createLogger = () => vi.fn<(message: string) => void>();
 
 const baseOptions = () => ({
   healthcheckUrl: "http://localhost:3000/health",
-  workspacesUrl: "http://localhost:3000/api/workspaces",
   logInfo: createLogger(),
   logError: createLogger(),
 });
@@ -48,14 +47,9 @@ describe("resolveUninstallStopResult", () => {
     expect(probeJson).not.toHaveBeenCalled();
   });
 
-  it("returns failed only when both health and workspaces look like Hive", async () => {
+  it("returns failed when health response looks like Hive", async () => {
     const stopBackgroundProcess = vi.fn(() => "not_running" as const);
-    const probeJson = vi.fn((url: string) => {
-      if (url.endsWith("/health")) {
-        return Promise.resolve({ status: "ok" });
-      }
-      return Promise.resolve({ workspaces: [] });
-    });
+    const probeJson = vi.fn(async () => ({ status: "ok" }));
     const options = baseOptions();
 
     const result = await resolveUninstallStopResult({
@@ -69,14 +63,9 @@ describe("resolveUninstallStopResult", () => {
     expect(options.logError).toHaveBeenCalledWith(FOREGROUND_DAEMON_ERROR);
   });
 
-  it("does not fail when /health responds but workspaces shape is not Hive", async () => {
+  it("does not fail when /health response is not Hive-shaped", async () => {
     const stopBackgroundProcess = vi.fn(() => "not_running" as const);
-    const probeJson = vi.fn((url: string) => {
-      if (url.endsWith("/health")) {
-        return Promise.resolve({ status: "ok" });
-      }
-      return Promise.resolve({ ok: true });
-    });
+    const probeJson = vi.fn(async () => ({ ok: true }));
 
     const result = await resolveUninstallStopResult({
       confirmed: true,
