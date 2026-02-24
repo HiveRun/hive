@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { createInterface } from "node:readline/promises";
 
 import {
   binaryDirectory,
@@ -25,6 +26,7 @@ import { Builtins, Cli, Command, Option } from "clipanion";
 import pc from "picocolors";
 
 import {
+  buildCompletionCommandModel,
   COMPLETION_SHELLS,
   type CompletionShell,
   renderCompletionScript,
@@ -35,6 +37,12 @@ import {
   type WaitForServerReadyConfig,
   waitForServerReady,
 } from "./runtime-utils";
+import { uninstallHive } from "./uninstall";
+import {
+  resolveUninstallConfirmation,
+  resolveUninstallDataRetention,
+} from "./uninstall-confirmation";
+import { resolveUninstallStopResult } from "./uninstall-runtime";
 
 const rawArgv = process.argv.slice(2);
 if (process.env.HIVE_DEBUG_ARGS === "1") {
@@ -140,6 +148,9 @@ const trimTrailingSlash = (value: string) =>
   value.endsWith("/") ? value.slice(0, -1) : value;
 
 const HEALTHCHECK_URL = `${trimTrailingSlash(DEFAULT_WEB_URL)}/health`;
+const DAEMON_PROBE_TIMEOUT_MS = 800;
+const DAEMON_STOP_WAIT_TIMEOUT_MS = 10_000;
+const DAEMON_STOP_POLL_INTERVAL_MS = 100;
 
 const readActivePid = (): number | null => {
   if (!existsSync(pidFilePath)) {
@@ -177,6 +188,27 @@ const isDaemonRunning = () => {
   }
   cleanupPidFile();
   return false;
+};
+
+const probeJson = async (url: string) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DAEMON_PROBE_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return null;
+    }
+
+    return await response.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
 };
 
 type LaunchResult = { pid: number | null; logFile: string };
@@ -576,8 +608,98 @@ const describePidStatus = () => {
   }
 };
 
-const stopBackgroundProcess = (options?: { silent?: boolean }) => {
+type StopBackgroundProcessResult =
+  | "failed"
+  | "not_running"
+  | "stale_pid"
+  | "stopped";
+
+const sleep = (milliseconds: number) =>
+  new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+
+const getErrnoCode = (error: unknown) =>
+  error && typeof error === "object" && "code" in error
+    ? String((error as NodeJS.ErrnoException).code)
+    : null;
+
+const waitForProcessExit = async (
+  pid: number,
+  timeoutMs: number
+): Promise<boolean> => {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      const errorCode = getErrnoCode(error);
+
+      if (errorCode === "ESRCH") {
+        return true;
+      }
+
+      return false;
+    }
+
+    await sleep(DAEMON_STOP_POLL_INTERVAL_MS);
+  }
+
+  return false;
+};
+
+const readManagedPidForStop = (emitError: (message: string) => void) => {
+  let pidText: string;
+  try {
+    pidText = readFileSync(pidFilePath, "utf8").trim();
+  } catch (error) {
+    emitError(
+      `Unable to read pid file ${pidFilePath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return null;
+  }
+
+  const pid = Number(pidText);
+  if (!pid || Number.isNaN(pid)) {
+    emitError(`Pid file ${pidFilePath} contains invalid data.`);
+    cleanupPidFile();
+    return null;
+  }
+
+  return pid;
+};
+
+const sendStopSignal = (
+  pid: number,
+  emitInfo: (message: string) => void,
+  emitError: (message: string) => void
+): "failed" | "signaled" | "stale_pid" => {
+  try {
+    process.kill(pid, "SIGTERM");
+    return "signaled";
+  } catch (error) {
+    if (getErrnoCode(error) === "ESRCH") {
+      cleanupPidFile();
+      emitInfo(`Removed stale Hive PID file (${pid}).`);
+      return "stale_pid";
+    }
+
+    emitError(
+      `Failed to stop Hive (PID ${pid}): ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return "failed";
+  }
+};
+
+const stopBackgroundProcess = async (options?: {
+  silent?: boolean;
+  waitForExitMs?: number;
+}): Promise<StopBackgroundProcessResult> => {
   const silent = options?.silent ?? false;
+  const waitForExitMs = options?.waitForExitMs;
   const log = (message: string) => {
     if (!silent) {
       logInfo(message);
@@ -589,36 +711,29 @@ const stopBackgroundProcess = (options?: { silent?: boolean }) => {
     return "not_running" as const;
   }
 
-  let pidText: string;
-  try {
-    pidText = readFileSync(pidFilePath, "utf8").trim();
-  } catch (error) {
-    logError(
-      `Unable to read pid file ${pidFilePath}: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
+  const pid = readManagedPidForStop(logError);
+  if (!pid) {
     return "failed" as const;
   }
 
-  const pid = Number(pidText);
-  if (!pid || Number.isNaN(pid)) {
-    logError(`Pid file ${pidFilePath} contains invalid data.`);
-    cleanupPidFile();
+  const signalResult = sendStopSignal(pid, log, logError);
+  if (signalResult === "failed") {
     return "failed" as const;
   }
 
-  try {
-    process.kill(pid, "SIGTERM");
-    logSuccess(`Stopped Hive (PID ${pid}).`);
-  } catch (error) {
-    logError(
-      `Failed to stop Hive (PID ${pid}): ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-    return "failed" as const;
+  if (signalResult === "stale_pid") {
+    return "stale_pid" as const;
   }
+
+  if (waitForExitMs && waitForExitMs > 0) {
+    const exited = await waitForProcessExit(pid, waitForExitMs);
+    if (!exited) {
+      logError(`Timed out waiting for Hive (PID ${pid}) to exit.`);
+      return "failed" as const;
+    }
+  }
+
+  logSuccess(`Stopped Hive (PID ${pid}).`);
 
   cleanupPidFile();
   return "stopped" as const;
@@ -702,7 +817,10 @@ const streamLogs = () => {
 };
 
 const runUpgrade = async () => {
-  const stopResult = stopBackgroundProcess({ silent: true });
+  const stopResult = await stopBackgroundProcess({
+    silent: true,
+    waitForExitMs: DAEMON_STOP_WAIT_TIMEOUT_MS,
+  });
   if (stopResult === "failed") {
     logError("Unable to stop the running instance. Aborting upgrade.");
     return 1;
@@ -710,6 +828,10 @@ const runUpgrade = async () => {
 
   if (stopResult === "stopped") {
     logInfo("Stopped running instance.");
+  }
+
+  if (stopResult === "stale_pid") {
+    logInfo("Removed stale PID file before upgrade.");
   }
 
   const configuredCommand = process.env.HIVE_INSTALL_COMMAND;
@@ -771,6 +893,70 @@ const runUpgrade = async () => {
   });
 };
 
+const askPrompt = async (prompt: string) => {
+  const promptInterface = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  try {
+    return await promptInterface.question(prompt);
+  } finally {
+    promptInterface.close();
+  }
+};
+
+const promptUninstallConfirmation = () => {
+  const hiveHome = resolveHiveHomePath();
+  return askPrompt(
+    `This will permanently remove Hive files at ${hiveHome}. Continue? [y/N] `
+  );
+};
+
+const promptUninstallDataRetention = () => {
+  const hiveHome = resolveHiveHomePath();
+  return askPrompt(
+    `Preserve Hive data in ${join(hiveHome, "state")} while removing the app? [y/N] `
+  );
+};
+
+const uninstallCommand = async (confirm: boolean, keepData: boolean) => {
+  const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const confirmation = await resolveUninstallConfirmation({
+    confirmedByFlag: confirm,
+    isInteractive,
+    askConfirmation: promptUninstallConfirmation,
+  });
+
+  const preserveData = await resolveUninstallDataRetention({
+    keepDataByFlag: keepData,
+    shouldPrompt: confirmation && isInteractive && !confirm,
+    askConfirmation: promptUninstallDataRetention,
+  });
+
+  const stopResult = await resolveUninstallStopResult({
+    confirmed: confirmation,
+    healthcheckUrl: HEALTHCHECK_URL,
+    stopBackgroundProcess: () => stopBackgroundProcess({ silent: true }),
+    probeJson,
+    logInfo,
+    logError,
+  });
+
+  return uninstallHive({
+    confirm: confirmation,
+    preserveData,
+    hiveHome: resolveHiveHomePath(),
+    hiveBinDir: process.env.HIVE_BIN_DIR,
+    stopRuntime: () => stopResult,
+    closeDesktop: closeDesktopApplication,
+    logInfo,
+    logSuccess,
+    logWarning,
+    logError,
+  });
+};
+
 const runtimeExecutable = basename(process.execPath).toLowerCase();
 const isBunRuntime = runtimeExecutable.startsWith("bun");
 const isCompiledRuntime = !isBunRuntime;
@@ -818,8 +1004,10 @@ const bootstrap = async (options?: { forceForeground?: boolean }) => {
   });
 };
 
-const stopCommand = () => {
-  const result = stopBackgroundProcess();
+const stopCommand = async () => {
+  const result = await stopBackgroundProcess({
+    waitForExitMs: DAEMON_STOP_WAIT_TIMEOUT_MS,
+  });
   closeDesktopApplication();
   return result === "failed" ? 1 : 0;
 };
@@ -888,7 +1076,7 @@ const completionsCommand = (shell: string) => {
     return 1;
   }
 
-  const script = renderCompletionScript(normalized);
+  const script = renderCompletionScript(normalized, completionCommandModel);
   if (!script) {
     logError("Failed to render completion script.");
     return 1;
@@ -913,7 +1101,13 @@ const completionsInstallCommand = (
 
   const targetPath = destination ?? getDefaultCompletionInstallPath(normalized);
 
-  const result = installCompletionScript(normalized, targetPath);
+  const script = renderCompletionScript(normalized, completionCommandModel);
+  if (!script) {
+    logError("Failed to render completion script.");
+    return 1;
+  }
+
+  const result = installCompletionScript(script, targetPath);
   if (!result.ok) {
     logError(`Failed to install completions: ${result.message}`);
     return 1;
@@ -1037,6 +1231,36 @@ class UpgradeCommand extends Command {
   }
 }
 
+class UninstallCommand extends Command {
+  static override paths = [["uninstall"]];
+  static override usage = Command.Usage({
+    category: "Runtime",
+    description: "Remove the local Hive installation.",
+    details:
+      "Stops running Hive processes and removes HIVE_HOME (defaults to ~/.hive). In interactive terminals, Hive prompts for confirmation and whether to preserve data. Use --yes for non-interactive environments, and --keep-data to remove only app binaries while retaining runtime data.",
+    examples: [
+      ["Uninstall Hive with prompt", "hive uninstall"],
+      ["Uninstall Hive without prompt", "hive uninstall --yes"],
+      ["Uninstall app but keep data", "hive uninstall --yes --keep-data"],
+    ],
+  });
+
+  confirm = Option.Boolean("--yes", {
+    description: "Confirm removal of your Hive installation",
+  });
+
+  keepData = Option.Boolean("--keep-data", {
+    description: "Remove Hive app files but preserve state/log data",
+  });
+
+  override execute() {
+    return runCommand(
+      () => uninstallCommand(Boolean(this.confirm), Boolean(this.keepData)),
+      "uninstall"
+    );
+  }
+}
+
 class InfoCommand extends Command {
   static override paths = [["info"]];
   static override usage = Command.Usage({
@@ -1105,23 +1329,34 @@ class CompletionsInstallCommand extends Command {
   }
 }
 
+const registeredCommandClasses = [
+  StartCommand,
+  StopCommand,
+  LogsCommand,
+  WebCommand,
+  DesktopCommand,
+  UpgradeCommand,
+  UninstallCommand,
+  InfoCommand,
+  CompletionsCommand,
+  CompletionsInstallCommand,
+  Builtins.HelpCommand,
+  Builtins.VersionCommand,
+];
+
+const completionCommandModel = buildCompletionCommandModel(
+  registeredCommandClasses.flatMap((commandClass) => commandClass.paths ?? [])
+);
+
 const cli = new Cli({
   binaryLabel: "Hive CLI",
   binaryName: "hive",
   binaryVersion: CLI_VERSION,
 });
 
-cli.register(StartCommand);
-cli.register(StopCommand);
-cli.register(LogsCommand);
-cli.register(WebCommand);
-cli.register(DesktopCommand);
-cli.register(UpgradeCommand);
-cli.register(InfoCommand);
-cli.register(CompletionsCommand);
-cli.register(CompletionsInstallCommand);
-cli.register(Builtins.HelpCommand);
-cli.register(Builtins.VersionCommand);
+for (const commandClass of registeredCommandClasses) {
+  cli.register(commandClass);
+}
 
 const runCli = async () => {
   try {

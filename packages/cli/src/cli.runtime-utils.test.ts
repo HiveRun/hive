@@ -42,7 +42,7 @@ describe("installCompletionScript", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "hive-cli-"));
     const targetPath = join(tempDir, "_hive_test");
 
-    const result = installCompletionScript("zsh", targetPath);
+    const result = installCompletionScript("test-script", targetPath);
 
     const content = readFileSync(targetPath, "utf8");
     expect(result.ok).toBe(true);

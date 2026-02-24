@@ -51,6 +51,11 @@ Environment variables:
   ```bash
   hive upgrade
   ```
+- Uninstall Hive (`~/.hive` by default). Hive removes managed completion files and PATH entries it previously added. In interactive terminals Hive prompts for confirmation and offers to preserve data; use `--yes` for non-interactive scripts, plus `--keep-data` to remove app binaries while keeping data:
+  ```bash
+  hive uninstall
+  hive uninstall --yes --keep-data
+  ```
 - Inspect your current install (release path, log locations, pid status):
   ```bash
   hive info
