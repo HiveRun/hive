@@ -4,6 +4,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -130,6 +131,84 @@ describe("uninstallHive", () => {
     expect(existsSync(hiveHome)).toBe(false);
     expect(logWarning).toHaveBeenCalledWith(
       "Unable to confirm daemon shutdown. Continuing uninstall and removing local files."
+    );
+  });
+
+  it("removes managed shell path entries and completion scripts", () => {
+    const root = mkdtempSync(join(tmpdir(), "hive-uninstall-"));
+    tempRoots.push(root);
+
+    const homeDir = join(root, "home");
+    const xdgConfigHome = join(homeDir, ".config");
+    const zshCustom = join(homeDir, ".zsh-custom");
+
+    const hiveHome = join(homeDir, ".hive");
+    const binDir = join(hiveHome, "bin");
+
+    mkdirSync(hiveHome, { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+
+    const zshrcPath = join(homeDir, ".zshrc");
+    mkdirSync(homeDir, { recursive: true });
+    writeFileSync(
+      zshrcPath,
+      [
+        "export PATH=/usr/local/bin:$PATH",
+        "# hive",
+        `export PATH=${binDir}:$PATH`,
+      ].join("\n")
+    );
+
+    const fishConfigPath = join(homeDir, ".config", "fish", "config.fish");
+    mkdirSync(join(homeDir, ".config", "fish"), { recursive: true });
+    writeFileSync(fishConfigPath, `# hive\nfish_add_path ${binDir}\n`);
+
+    const zshCompletionPath = join(zshCustom, "completions", "_hive");
+    mkdirSync(join(zshCustom, "completions"), { recursive: true });
+    writeFileSync(zshCompletionPath, "#compdef hive\n_hive() {}\n");
+
+    const fishCompletionPath = join(
+      homeDir,
+      ".config",
+      "fish",
+      "completions",
+      "hive.fish"
+    );
+    mkdirSync(join(homeDir, ".config", "fish", "completions"), {
+      recursive: true,
+    });
+    writeFileSync(fishCompletionPath, "# fish completion for hive\n");
+
+    const stopRuntime = vi.fn(() => "not_running" as const);
+    const closeDesktop = vi.fn();
+    const logWarning = createLogger();
+
+    const exitCode = uninstallHive({
+      confirm: true,
+      hiveHome,
+      hiveBinDir: binDir,
+      homeDir,
+      xdgConfigHome,
+      zshCustom,
+      stopRuntime,
+      closeDesktop,
+      logInfo: createLogger(),
+      logSuccess: createLogger(),
+      logWarning,
+      logError: createLogger(),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(readFileSync(zshrcPath, "utf8")).not.toContain(
+      `# hive\nexport PATH=${binDir}:$PATH`
+    );
+    expect(readFileSync(fishConfigPath, "utf8")).not.toContain(
+      `fish_add_path ${binDir}`
+    );
+    expect(existsSync(zshCompletionPath)).toBe(false);
+    expect(existsSync(fishCompletionPath)).toBe(false);
+    expect(logWarning).toHaveBeenCalledWith(
+      "Your current shell may still cache Hive completions or PATH. Open a new shell session to fully clear them."
     );
   });
 });
