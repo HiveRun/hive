@@ -149,6 +149,8 @@ const trimTrailingSlash = (value: string) =>
 
 const HEALTHCHECK_URL = `${trimTrailingSlash(DEFAULT_WEB_URL)}/health`;
 const DAEMON_PROBE_TIMEOUT_MS = 800;
+const DAEMON_STOP_WAIT_TIMEOUT_MS = 10_000;
+const DAEMON_STOP_POLL_INTERVAL_MS = 100;
 
 const readActivePid = (): number | null => {
   if (!existsSync(pidFilePath)) {
@@ -612,10 +614,92 @@ type StopBackgroundProcessResult =
   | "stale_pid"
   | "stopped";
 
-const stopBackgroundProcess = (options?: {
+const sleep = (milliseconds: number) =>
+  new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+
+const getErrnoCode = (error: unknown) =>
+  error && typeof error === "object" && "code" in error
+    ? String((error as NodeJS.ErrnoException).code)
+    : null;
+
+const waitForProcessExit = async (
+  pid: number,
+  timeoutMs: number
+): Promise<boolean> => {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      const errorCode = getErrnoCode(error);
+
+      if (errorCode === "ESRCH") {
+        return true;
+      }
+
+      return false;
+    }
+
+    await sleep(DAEMON_STOP_POLL_INTERVAL_MS);
+  }
+
+  return false;
+};
+
+const readManagedPidForStop = (emitError: (message: string) => void) => {
+  let pidText: string;
+  try {
+    pidText = readFileSync(pidFilePath, "utf8").trim();
+  } catch (error) {
+    emitError(
+      `Unable to read pid file ${pidFilePath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return null;
+  }
+
+  const pid = Number(pidText);
+  if (!pid || Number.isNaN(pid)) {
+    emitError(`Pid file ${pidFilePath} contains invalid data.`);
+    cleanupPidFile();
+    return null;
+  }
+
+  return pid;
+};
+
+const sendStopSignal = (
+  pid: number,
+  emitInfo: (message: string) => void,
+  emitError: (message: string) => void
+): "failed" | "signaled" | "stale_pid" => {
+  try {
+    process.kill(pid, "SIGTERM");
+    return "signaled";
+  } catch (error) {
+    if (getErrnoCode(error) === "ESRCH") {
+      cleanupPidFile();
+      emitInfo(`Removed stale Hive PID file (${pid}).`);
+      return "stale_pid";
+    }
+
+    emitError(
+      `Failed to stop Hive (PID ${pid}): ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return "failed";
+  }
+};
+
+const stopBackgroundProcess = async (options?: {
   silent?: boolean;
-}): StopBackgroundProcessResult => {
+  waitForExitMs?: number;
+}): Promise<StopBackgroundProcessResult> => {
   const silent = options?.silent ?? false;
+  const waitForExitMs = options?.waitForExitMs;
   const log = (message: string) => {
     if (!silent) {
       logInfo(message);
@@ -627,47 +711,29 @@ const stopBackgroundProcess = (options?: {
     return "not_running" as const;
   }
 
-  let pidText: string;
-  try {
-    pidText = readFileSync(pidFilePath, "utf8").trim();
-  } catch (error) {
-    logError(
-      `Unable to read pid file ${pidFilePath}: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
+  const pid = readManagedPidForStop(logError);
+  if (!pid) {
     return "failed" as const;
   }
 
-  const pid = Number(pidText);
-  if (!pid || Number.isNaN(pid)) {
-    logError(`Pid file ${pidFilePath} contains invalid data.`);
-    cleanupPidFile();
+  const signalResult = sendStopSignal(pid, log, logError);
+  if (signalResult === "failed") {
     return "failed" as const;
   }
 
-  try {
-    process.kill(pid, "SIGTERM");
-    logSuccess(`Stopped Hive (PID ${pid}).`);
-  } catch (error) {
-    const errorCode =
-      error && typeof error === "object" && "code" in error
-        ? String((error as NodeJS.ErrnoException).code)
-        : null;
+  if (signalResult === "stale_pid") {
+    return "stale_pid" as const;
+  }
 
-    if (errorCode === "ESRCH") {
-      cleanupPidFile();
-      log(`Removed stale Hive PID file (${pid}).`);
-      return "stale_pid" as const;
+  if (waitForExitMs && waitForExitMs > 0) {
+    const exited = await waitForProcessExit(pid, waitForExitMs);
+    if (!exited) {
+      logError(`Timed out waiting for Hive (PID ${pid}) to exit.`);
+      return "failed" as const;
     }
-
-    logError(
-      `Failed to stop Hive (PID ${pid}): ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-    return "failed" as const;
   }
+
+  logSuccess(`Stopped Hive (PID ${pid}).`);
 
   cleanupPidFile();
   return "stopped" as const;
@@ -751,7 +817,10 @@ const streamLogs = () => {
 };
 
 const runUpgrade = async () => {
-  const stopResult = stopBackgroundProcess({ silent: true });
+  const stopResult = await stopBackgroundProcess({
+    silent: true,
+    waitForExitMs: DAEMON_STOP_WAIT_TIMEOUT_MS,
+  });
   if (stopResult === "failed") {
     logError("Unable to stop the running instance. Aborting upgrade.");
     return 1;
@@ -935,8 +1004,10 @@ const bootstrap = async (options?: { forceForeground?: boolean }) => {
   });
 };
 
-const stopCommand = () => {
-  const result = stopBackgroundProcess();
+const stopCommand = async () => {
+  const result = await stopBackgroundProcess({
+    waitForExitMs: DAEMON_STOP_WAIT_TIMEOUT_MS,
+  });
   closeDesktopApplication();
   return result === "failed" ? 1 : 0;
 };

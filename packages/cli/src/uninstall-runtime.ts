@@ -10,7 +10,9 @@ export const FOREGROUND_DAEMON_ERROR =
 type ResolveUninstallStopResultOptions = {
   confirmed: boolean;
   healthcheckUrl: string;
-  stopBackgroundProcess: () => BackgroundStopResult;
+  stopBackgroundProcess: () =>
+    | BackgroundStopResult
+    | Promise<BackgroundStopResult>;
   probeJson: (url: string) => Promise<unknown | null>;
   logInfo: Logger;
   logError: Logger;
@@ -34,7 +36,7 @@ export const resolveUninstallStopResult = async ({
     return "not_running";
   }
 
-  const stopResult = stopBackgroundProcess();
+  const stopResult = await stopBackgroundProcess();
   if (stopResult === "failed") {
     return "failed";
   }
