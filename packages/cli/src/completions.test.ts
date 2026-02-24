@@ -2,13 +2,27 @@
 
 import { describe, expect, it } from "vitest";
 
-import { COMPLETION_SHELLS, renderCompletionScript } from "./completions";
+import {
+  buildCompletionCommandModel,
+  COMPLETION_SHELLS,
+  renderCompletionScript,
+} from "./completions";
 
 describe("renderCompletionScript", () => {
-  it("includes uninstall command completions for each shell", () => {
+  it("uses discovered command paths for each shell", () => {
+    const commandModel = buildCompletionCommandModel([
+      [],
+      ["stop"],
+      ["uninstall"],
+      ["future-command"],
+      ["completions"],
+      ["completions", "install"],
+    ]);
+
     for (const shell of COMPLETION_SHELLS) {
-      const script = renderCompletionScript(shell);
+      const script = renderCompletionScript(shell, commandModel);
       expect(script).toContain("uninstall");
+      expect(script).toContain("future-command");
     }
   });
 });

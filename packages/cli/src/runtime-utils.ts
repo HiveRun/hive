@@ -1,8 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import { type CompletionShell, renderCompletionScript } from "./completions";
-
 export type WaitForServerReadyConfig = {
   url: string;
   timeoutMs?: number;
@@ -42,15 +40,7 @@ export const waitForServerReady = async ({
 export const ensureTrailingNewline = (script: string) =>
   script.endsWith("\n") ? script : `${script}\n`;
 
-export const installCompletionScript = (
-  shell: CompletionShell,
-  targetPath: string
-) => {
-  const script = renderCompletionScript(shell);
-  if (!script) {
-    return { ok: false, message: `Unsupported shell "${shell}".` } as const;
-  }
-
+export const installCompletionScript = (script: string, targetPath: string) => {
   const resolvedPath = resolve(targetPath);
   try {
     mkdirSync(dirname(resolvedPath), { recursive: true });

@@ -1,43 +1,85 @@
-const PRIMARY_SUBCOMMANDS = [
-  "logs",
-  "stop",
-  "upgrade",
-  "uninstall",
-  "info",
-  "web",
-  "desktop",
-  "help",
-  "completions",
-] as const;
-const COMPLETION_SUBCOMMANDS = ["install"] as const;
-const HELP_TARGETS = [
-  "logs",
-  "stop",
-  "upgrade",
-  "uninstall",
-  "info",
-  "web",
-  "desktop",
-  "completions",
-] as const;
 export const COMPLETION_SHELLS = ["bash", "zsh", "fish"] as const;
 export type CompletionShell = (typeof COMPLETION_SHELLS)[number];
 
-const PRIMARY_SUBCOMMANDS_TEXT = PRIMARY_SUBCOMMANDS.join(" ");
-const HELP_TARGETS_TEXT = HELP_TARGETS.join(" ");
-const COMPLETION_SUBCOMMANDS_TEXT = COMPLETION_SUBCOMMANDS.join(" ");
-const COMPLETION_SHELL_TEXT = COMPLETION_SHELLS.join(" ");
-const QUOTED_PRIMARY_SUBCOMMANDS = PRIMARY_SUBCOMMANDS.map(
-  (cmd) => `"${cmd}"`
-).join(" ");
-const QUOTED_HELP_TARGETS = HELP_TARGETS.map((cmd) => `"${cmd}"`).join(" ");
-const QUOTED_COMPLETION_SUBCOMMANDS = COMPLETION_SUBCOMMANDS.map(
-  (cmd) => `"${cmd}"`
-).join(" ");
-const QUOTED_SHELLS = COMPLETION_SHELLS.map((shell) => `"${shell}"`).join(" ");
+type CompletionCommandModel = {
+  primarySubcommands: string[];
+  helpTargets: string[];
+  completionSubcommands: string[];
+};
 
-const COMPLETION_SCRIPTS: Record<(typeof COMPLETION_SHELLS)[number], string> = {
-  bash: `# bash completion for hive
+const isLiteralCommandToken = (token: string) =>
+  token.length > 0 && !token.startsWith("-");
+
+const pushUnique = (values: string[], value: string) => {
+  if (!values.includes(value)) {
+    values.push(value);
+  }
+};
+
+export const buildCompletionCommandModel = (
+  commandPaths: readonly (readonly string[])[]
+): CompletionCommandModel => {
+  const primarySubcommands: string[] = [];
+  const completionSubcommands: string[] = [];
+
+  for (const commandPath of commandPaths) {
+    const [firstToken, secondToken] = commandPath;
+    if (!(firstToken && isLiteralCommandToken(firstToken))) {
+      continue;
+    }
+
+    pushUnique(primarySubcommands, firstToken);
+
+    if (firstToken !== "completions") {
+      continue;
+    }
+
+    if (!(secondToken && isLiteralCommandToken(secondToken))) {
+      continue;
+    }
+
+    pushUnique(completionSubcommands, secondToken);
+  }
+
+  pushUnique(primarySubcommands, "help");
+
+  return {
+    primarySubcommands,
+    helpTargets: primarySubcommands.filter((command) => command !== "help"),
+    completionSubcommands,
+  };
+};
+
+export const renderCompletionScript = (
+  shell: string,
+  commandModel: CompletionCommandModel
+) => {
+  const normalized = shell.toLowerCase() as CompletionShell;
+  if (!COMPLETION_SHELLS.includes(normalized)) {
+    return null;
+  }
+
+  const primarySubcommandsText = commandModel.primarySubcommands.join(" ");
+  const helpTargetsText = commandModel.helpTargets.join(" ");
+  const completionSubcommandsText =
+    commandModel.completionSubcommands.join(" ");
+  const completionShellText = COMPLETION_SHELLS.join(" ");
+
+  const quotedPrimarySubcommands = commandModel.primarySubcommands
+    .map((cmd) => `"${cmd}"`)
+    .join(" ");
+  const quotedHelpTargets = commandModel.helpTargets
+    .map((cmd) => `"${cmd}"`)
+    .join(" ");
+  const quotedCompletionSubcommands = commandModel.completionSubcommands
+    .map((cmd) => `"${cmd}"`)
+    .join(" ");
+  const quotedShells = COMPLETION_SHELLS.map(
+    (supportedShell) => `"${supportedShell}"`
+  ).join(" ");
+
+  if (normalized === "bash") {
+    return `# bash completion for hive
 _hive_completions() {
   local cur prev
   COMPREPLY=()
@@ -48,38 +90,40 @@ _hive_completions() {
     return 0
   fi
   if [[ \${COMP_CWORD} == 1 ]]; then
-    COMPREPLY=( $(compgen -W "${PRIMARY_SUBCOMMANDS_TEXT}" -- "$cur") )
+    COMPREPLY=( $(compgen -W "${primarySubcommandsText}" -- "$cur") )
     return 0
   fi
   if [[ \${COMP_WORDS[1]} == "help" ]]; then
-    COMPREPLY=( $(compgen -W "${HELP_TARGETS_TEXT}" -- "$cur") )
+    COMPREPLY=( $(compgen -W "${helpTargetsText}" -- "$cur") )
     return 0
   fi
   if [[ \${COMP_WORDS[1]} == "completions" ]]; then
     if [[ \${COMP_CWORD} == 2 ]]; then
-      COMPREPLY=( $(compgen -W "install" -- "$cur") )
+      COMPREPLY=( $(compgen -W "${completionSubcommandsText}" -- "$cur") )
       return 0
     fi
     if [[ \${COMP_WORDS[2]} == "install" ]]; then
-      COMPREPLY=( $(compgen -W "${COMPLETION_SHELL_TEXT}" -- "$cur") )
+      COMPREPLY=( $(compgen -W "${completionShellText}" -- "$cur") )
       return 0
     fi
     return 0
   fi
 }
 complete -F _hive_completions hive
-`,
+`;
+  }
 
-  zsh: `#compdef hive
+  if (normalized === "zsh") {
+    return `#compdef hive
 _hive() {
   local -a primary_commands
-  primary_commands=(${QUOTED_PRIMARY_SUBCOMMANDS})
+  primary_commands=(${quotedPrimarySubcommands})
   local -a help_targets
-  help_targets=(${QUOTED_HELP_TARGETS})
+  help_targets=(${quotedHelpTargets})
   local -a completion_subcommands
-  completion_subcommands=(${QUOTED_COMPLETION_SUBCOMMANDS})
+  completion_subcommands=(${quotedCompletionSubcommands})
   local -a shells
-  shells=(${QUOTED_SHELLS})
+  shells=(${quotedShells})
 
   if (( CURRENT == 2 )); then
     compadd -a primary_commands
@@ -108,20 +152,16 @@ _hive() {
   _values 'option' '--foreground' '--help' '-h'
 }
 compdef _hive hive
-`,
+`;
+  }
 
-  fish: `# fish completion for hive
+  return `# fish completion for hive
 complete -c hive -f
-complete -c hive -n '__fish_use_subcommand' -a '${PRIMARY_SUBCOMMANDS_TEXT}'
-complete -c hive -n '__fish_seen_subcommand_from help' -a '${HELP_TARGETS_TEXT}'
-complete -c hive -n '__fish_seen_subcommand_from completions; and not __fish_seen_subcommand_from install' -a '${COMPLETION_SUBCOMMANDS_TEXT}'
-complete -c hive -n '__fish_seen_subcommand_from completions; and __fish_seen_subcommand_from install' -a '${COMPLETION_SHELL_TEXT}'
+complete -c hive -n '__fish_use_subcommand' -a '${primarySubcommandsText}'
+complete -c hive -n '__fish_seen_subcommand_from help' -a '${helpTargetsText}'
+complete -c hive -n '__fish_seen_subcommand_from completions; and not __fish_seen_subcommand_from install' -a '${completionSubcommandsText}'
+complete -c hive -n '__fish_seen_subcommand_from completions; and __fish_seen_subcommand_from install' -a '${completionShellText}'
 complete -c hive -l foreground -d 'Run in the foreground instead of background mode'
 complete -c hive -s h -l help -d 'Show help output'
-`,
-};
-
-export const renderCompletionScript = (shell: string) => {
-  const normalized = shell.toLowerCase() as (typeof COMPLETION_SHELLS)[number];
-  return COMPLETION_SCRIPTS[normalized] ?? null;
+`;
 };

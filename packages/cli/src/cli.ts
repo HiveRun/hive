@@ -25,6 +25,7 @@ import { Builtins, Cli, Command, Option } from "clipanion";
 import pc from "picocolors";
 
 import {
+  buildCompletionCommandModel,
   COMPLETION_SHELLS,
   type CompletionShell,
   renderCompletionScript,
@@ -902,7 +903,7 @@ const completionsCommand = (shell: string) => {
     return 1;
   }
 
-  const script = renderCompletionScript(normalized);
+  const script = renderCompletionScript(normalized, completionCommandModel);
   if (!script) {
     logError("Failed to render completion script.");
     return 1;
@@ -927,7 +928,13 @@ const completionsInstallCommand = (
 
   const targetPath = destination ?? getDefaultCompletionInstallPath(normalized);
 
-  const result = installCompletionScript(normalized, targetPath);
+  const script = renderCompletionScript(normalized, completionCommandModel);
+  if (!script) {
+    logError("Failed to render completion script.");
+    return 1;
+  }
+
+  const result = installCompletionScript(script, targetPath);
   if (!result.ok) {
     logError(`Failed to install completions: ${result.message}`);
     return 1;
@@ -1141,24 +1148,34 @@ class CompletionsInstallCommand extends Command {
   }
 }
 
+const registeredCommandClasses = [
+  StartCommand,
+  StopCommand,
+  LogsCommand,
+  WebCommand,
+  DesktopCommand,
+  UpgradeCommand,
+  UninstallCommand,
+  InfoCommand,
+  CompletionsCommand,
+  CompletionsInstallCommand,
+  Builtins.HelpCommand,
+  Builtins.VersionCommand,
+];
+
+const completionCommandModel = buildCompletionCommandModel(
+  registeredCommandClasses.flatMap((commandClass) => commandClass.paths ?? [])
+);
+
 const cli = new Cli({
   binaryLabel: "Hive CLI",
   binaryName: "hive",
   binaryVersion: CLI_VERSION,
 });
 
-cli.register(StartCommand);
-cli.register(StopCommand);
-cli.register(LogsCommand);
-cli.register(WebCommand);
-cli.register(DesktopCommand);
-cli.register(UpgradeCommand);
-cli.register(UninstallCommand);
-cli.register(InfoCommand);
-cli.register(CompletionsCommand);
-cli.register(CompletionsInstallCommand);
-cli.register(Builtins.HelpCommand);
-cli.register(Builtins.VersionCommand);
+for (const commandClass of registeredCommandClasses) {
+  cli.register(commandClass);
+}
 
 const runCli = async () => {
   try {
