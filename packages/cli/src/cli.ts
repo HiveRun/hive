@@ -37,11 +37,12 @@ import {
   type WaitForServerReadyConfig,
   waitForServerReady,
 } from "./runtime-utils";
-import { type StopRuntimeResult, uninstallHive } from "./uninstall";
+import { uninstallHive } from "./uninstall";
 import {
   resolveUninstallConfirmation,
   resolveUninstallDataRetention,
 } from "./uninstall-confirmation";
+import { resolveUninstallStopResult } from "./uninstall-runtime";
 
 const rawArgv = process.argv.slice(2);
 if (process.env.HIVE_DEBUG_ARGS === "1") {
@@ -207,25 +208,6 @@ const probeJson = async (url: string) => {
   } finally {
     clearTimeout(timeout);
   }
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === "object";
-
-const isHiveHealthResponse = (value: unknown) =>
-  isRecord(value) && value.status === "ok";
-
-const isHiveWorkspacesResponse = (value: unknown) =>
-  isRecord(value) && Array.isArray(value.workspaces);
-
-const isDaemonResponsive = async () => {
-  const healthPayload = await probeJson(HEALTHCHECK_URL);
-  if (!isHiveHealthResponse(healthPayload)) {
-    return false;
-  }
-
-  const workspacesPayload = await probeJson(WORKSPACES_URL);
-  return isHiveWorkspacesResponse(workspacesPayload);
 };
 
 type LaunchResult = { pid: number | null; logFile: string };
@@ -878,53 +860,21 @@ const uninstallCommand = async (confirm: boolean, keepData: boolean) => {
     askConfirmation: promptUninstallConfirmation,
   });
 
-  if (!confirmation) {
-    return uninstallHive({
-      confirm: false,
-      hiveHome: resolveHiveHomePath(),
-      hiveBinDir: process.env.HIVE_BIN_DIR,
-      stopRuntime: () => "not_running",
-      closeDesktop: closeDesktopApplication,
-      logInfo,
-      logSuccess,
-      logWarning,
-      logError,
-    });
-  }
-
   const preserveData = await resolveUninstallDataRetention({
     keepDataByFlag: keepData,
     shouldPrompt: confirmation && isInteractive && !confirm,
     askConfirmation: promptUninstallDataRetention,
   });
 
-  const resolveStopResultForUninstall =
-    async (): Promise<StopRuntimeResult> => {
-      const stopResult = stopBackgroundProcess({ silent: true });
-      if (stopResult === "failed") {
-        return "failed";
-      }
-
-      if (stopResult === "stopped") {
-        return "stopped";
-      }
-
-      const daemonStillResponsive = await isDaemonResponsive();
-      if (daemonStillResponsive) {
-        logError(
-          "Detected a running Hive daemon without a managed PID file. Stop the foreground Hive process and retry uninstall."
-        );
-        return "failed";
-      }
-
-      if (stopResult === "stale_pid") {
-        logInfo("Removed stale PID file.");
-      }
-
-      return "not_running";
-    };
-
-  const stopResult = await resolveStopResultForUninstall();
+  const stopResult = await resolveUninstallStopResult({
+    confirmed: confirmation,
+    healthcheckUrl: HEALTHCHECK_URL,
+    workspacesUrl: WORKSPACES_URL,
+    stopBackgroundProcess: () => stopBackgroundProcess({ silent: true }),
+    probeJson,
+    logInfo,
+    logError,
+  });
 
   return uninstallHive({
     confirm: confirmation,
