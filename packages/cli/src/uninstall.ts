@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 
 export type StopRuntimeResult = "failed" | "not_running" | "stopped";
 
@@ -22,6 +22,7 @@ export type UninstallHiveOptions = {
   homeDir?: string;
   xdgConfigHome?: string;
   zshCustom?: string;
+  shellPath?: string;
   stopRuntime: () => StopRuntimeResult;
   closeDesktop: () => void;
   logInfo: Logger;
@@ -42,7 +43,12 @@ type UninstallHiveFileOptions = Pick<
 
 type ShellIntegrationOptions = Pick<
   UninstallHiveOptions,
-  "hiveHome" | "hiveBinDir" | "homeDir" | "xdgConfigHome" | "zshCustom"
+  | "hiveHome"
+  | "hiveBinDir"
+  | "homeDir"
+  | "xdgConfigHome"
+  | "zshCustom"
+  | "shellPath"
 >;
 
 const NEWLINE_PATTERN = /\r?\n/;
@@ -226,6 +232,7 @@ const getShellIntegrationConfig = ({
   homeDir,
   xdgConfigHome,
   zshCustom,
+  shellPath,
 }: ShellIntegrationOptions) => {
   const resolvedHome = homeDir ?? homedir();
   const resolvedXdgConfig =
@@ -234,13 +241,29 @@ const getShellIntegrationConfig = ({
     join(resolvedHome, ".config");
   const resolvedBinDir = hiveBinDir ?? join(hiveHome, "bin");
   const resolvedZshCustom = zshCustom ?? process.env.ZSH_CUSTOM;
+  const resolvedShellPath = shellPath ?? process.env.SHELL;
 
   return {
     home: resolvedHome,
     xdgConfig: resolvedXdgConfig,
     binDir: resolvedBinDir,
     zshCustom: resolvedZshCustom,
+    shellPath: resolvedShellPath,
   };
+};
+
+const getShellRefreshCommand = (shellPath: string | undefined) => {
+  const shellName = basename(shellPath ?? "").toLowerCase();
+  if (shellName === "zsh") {
+    return "unfunction _hive 2>/dev/null; compdef -d hive 2>/dev/null; hash -r";
+  }
+  if (shellName === "bash") {
+    return "complete -r hive 2>/dev/null; hash -r";
+  }
+  if (shellName === "fish") {
+    return "complete -c hive -e; functions -e _hive 2>/dev/null";
+  }
+  return null;
 };
 
 const cleanupShellIntegrations = (
@@ -314,6 +337,14 @@ const cleanupShellIntegrations = (
     logWarning(
       "Your current shell may still cache Hive completions or PATH. Open a new shell session to fully clear them."
     );
+
+    const refreshCommand = getShellRefreshCommand(config.shellPath);
+    if (refreshCommand) {
+      logInfo(`To clear this shell immediately, run: ${refreshCommand}`);
+      return;
+    }
+
+    logInfo("To clear this shell immediately, run: exec $SHELL -l");
   }
 };
 
@@ -324,6 +355,7 @@ export const uninstallHive = ({
   homeDir,
   xdgConfigHome,
   zshCustom,
+  shellPath,
   stopRuntime,
   closeDesktop,
   logInfo,
@@ -346,7 +378,7 @@ export const uninstallHive = ({
 
   removeManagedBinary(hiveBinDir, hiveHome, logWarning);
   cleanupShellIntegrations(
-    { hiveHome, hiveBinDir, homeDir, xdgConfigHome, zshCustom },
+    { hiveHome, hiveBinDir, homeDir, xdgConfigHome, zshCustom, shellPath },
     logInfo,
     logWarning
   );

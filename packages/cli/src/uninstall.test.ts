@@ -181,6 +181,7 @@ describe("uninstallHive", () => {
 
     const stopRuntime = vi.fn(() => "not_running" as const);
     const closeDesktop = vi.fn();
+    const logInfo = createLogger();
     const logWarning = createLogger();
 
     const exitCode = uninstallHive({
@@ -190,9 +191,10 @@ describe("uninstallHive", () => {
       homeDir,
       xdgConfigHome,
       zshCustom,
+      shellPath: "/bin/zsh",
       stopRuntime,
       closeDesktop,
-      logInfo: createLogger(),
+      logInfo,
       logSuccess: createLogger(),
       logWarning,
       logError: createLogger(),
@@ -209,6 +211,9 @@ describe("uninstallHive", () => {
     expect(existsSync(fishCompletionPath)).toBe(false);
     expect(logWarning).toHaveBeenCalledWith(
       "Your current shell may still cache Hive completions or PATH. Open a new shell session to fully clear them."
+    );
+    expect(logInfo).toHaveBeenCalledWith(
+      "To clear this shell immediately, run: unfunction _hive 2>/dev/null; compdef -d hive 2>/dev/null; hash -r"
     );
   });
 });
