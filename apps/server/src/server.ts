@@ -21,6 +21,7 @@ import {
 import { resolveWorkspaceRoot } from "./config/context";
 import { DatabaseService } from "./db";
 import { agentsRoutes } from "./routes/agents";
+import { cellOpencodeRoutes } from "./routes/cell-opencode";
 import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
 import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
@@ -50,6 +51,7 @@ const TERMINAL_TRAFFIC_PATH_PATTERNS = [
   /^\/api\/cells\/[^/]+\/terminal\/(stream|input|resize)$/,
   /^\/api\/cells\/[^/]+\/setup\/terminal\/(input|resize)$/,
   /^\/api\/cells\/[^/]+\/services\/[^/]+\/terminal\/(input|resize)$/,
+  /^\/api\/cells\/[^/]+\/opencode\/proxy(?:\/.*)?$/,
 ];
 
 const POLLING_TRAFFIC_PATH_PATTERNS = [
@@ -222,6 +224,7 @@ const createApp = () =>
     .use(templatesRoutes)
     .use(workspacesRoutes)
     .use(cellsRoutes)
+    .use(cellOpencodeRoutes)
     .use(agentsRoutes);
 
 export type App = ReturnType<typeof createApp>;
