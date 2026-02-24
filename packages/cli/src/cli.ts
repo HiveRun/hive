@@ -147,6 +147,7 @@ const trimTrailingSlash = (value: string) =>
   value.endsWith("/") ? value.slice(0, -1) : value;
 
 const HEALTHCHECK_URL = `${trimTrailingSlash(DEFAULT_WEB_URL)}/health`;
+const WORKSPACES_URL = `${trimTrailingSlash(DEFAULT_WEB_URL)}/api/workspaces`;
 const DAEMON_PROBE_TIMEOUT_MS = 800;
 
 const readActivePid = (): number | null => {
@@ -187,21 +188,44 @@ const isDaemonRunning = () => {
   return false;
 };
 
-const isDaemonResponsive = async () => {
+const probeJson = async (url: string) => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DAEMON_PROBE_TIMEOUT_MS);
 
   try {
-    const response = await fetch(HEALTHCHECK_URL, {
+    const response = await fetch(url, {
       method: "GET",
       signal: controller.signal,
     });
-    return response.ok;
+    if (!response.ok) {
+      return null;
+    }
+
+    return await response.json();
   } catch {
-    return false;
+    return null;
   } finally {
     clearTimeout(timeout);
   }
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object";
+
+const isHiveHealthResponse = (value: unknown) =>
+  isRecord(value) && value.status === "ok";
+
+const isHiveWorkspacesResponse = (value: unknown) =>
+  isRecord(value) && Array.isArray(value.workspaces);
+
+const isDaemonResponsive = async () => {
+  const healthPayload = await probeJson(HEALTHCHECK_URL);
+  if (!isHiveHealthResponse(healthPayload)) {
+    return false;
+  }
+
+  const workspacesPayload = await probeJson(WORKSPACES_URL);
+  return isHiveWorkspacesResponse(workspacesPayload);
 };
 
 type LaunchResult = { pid: number | null; logFile: string };
@@ -853,6 +877,20 @@ const uninstallCommand = async (confirm: boolean, keepData: boolean) => {
     isInteractive,
     askConfirmation: promptUninstallConfirmation,
   });
+
+  if (!confirmation) {
+    return uninstallHive({
+      confirm: false,
+      hiveHome: resolveHiveHomePath(),
+      hiveBinDir: process.env.HIVE_BIN_DIR,
+      stopRuntime: () => "not_running",
+      closeDesktop: closeDesktopApplication,
+      logInfo,
+      logSuccess,
+      logWarning,
+      logError,
+    });
+  }
 
   const preserveData = await resolveUninstallDataRetention({
     keepDataByFlag: keepData,
