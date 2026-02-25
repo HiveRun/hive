@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { type IExitEvent, type IPty, spawn } from "bun-pty";
 import {
-  allowsEmbeddedChatControlAppExit,
+  allowsEmbeddedChatControlInput,
   mergeHiveEmbeddedBrowserSafeKeybinds,
   normalizeOpencodeKeybinds,
 } from "../opencode/browser-safe-keybinds";
@@ -155,9 +155,13 @@ function readWorkspaceKeybinds(workspacePath: string): Record<string, string> {
       continue;
     }
 
-    const rawConfig = readFileSync(configPath, "utf8");
-    const parsedConfig = parseJsonRecord(rawConfig);
-    return normalizeOpencodeKeybinds(parsedConfig.keybinds);
+    try {
+      const rawConfig = readFileSync(configPath, "utf8");
+      const parsedConfig = parseJsonRecord(rawConfig);
+      return normalizeOpencodeKeybinds(parsedConfig.keybinds);
+    } catch {
+      // ignore unreadable workspace config candidates and continue
+    }
   }
 
   return {};
@@ -177,79 +181,94 @@ function toOpencodeModelValue(
   return `${preference.providerId}/${preference.modelId}`;
 }
 
-const isEmbeddedControlAppExitInput = (data: string): boolean =>
+const isEmbeddedControlInput = (data: string): boolean =>
   data === ASCII_END_OF_TEXT || data === ASCII_END_OF_TRANSMISSION;
 
-type OpencodeThemeEnvConfig = {
-  env: Record<string, string>;
-  allowEmbeddedControlAppExit: boolean;
+type MergedInlineOpencodeConfig = {
+  config: Record<string, unknown>;
+  allowEmbeddedControlInput: boolean;
 };
+
+function createMergedInlineOpencodeConfig(
+  workspacePath: string,
+  preferredModel?: ChatTerminalModelPreference
+): MergedInlineOpencodeConfig {
+  const inlineConfig = parseInlineConfig(process.env.OPENCODE_CONFIG_CONTENT);
+  const workspaceKeybinds = readWorkspaceKeybinds(workspacePath);
+  const inlineKeybinds = normalizeOpencodeKeybinds(inlineConfig.keybinds);
+  const model = toOpencodeModelValue(preferredModel);
+  const keybinds = mergeHiveEmbeddedBrowserSafeKeybinds(
+    workspaceKeybinds,
+    inlineKeybinds
+  );
+  const config = {
+    ...inlineConfig,
+    ...(model ? { model } : {}),
+    keybinds,
+    theme: HIVE_THEME_NAME,
+  };
+
+  return {
+    config,
+    allowEmbeddedControlInput: allowsEmbeddedChatControlInput(keybinds),
+  };
+}
 
 function createOpencodeThemeEnv(
   workspacePath: string,
   themeMode: "dark" | "light",
-  preferredModel?: ChatTerminalModelPreference
-): OpencodeThemeEnvConfig {
+  mergedInlineConfig: Record<string, unknown>
+): Record<string, string> {
   const configRoot = join(workspacePath, ".opencode");
   const themeDir = join(configRoot, "themes");
   const themePath = join(themeDir, `${HIVE_THEME_NAME}.json`);
   const stateHome = join(configRoot, "state");
   const stateDir = join(stateHome, "opencode");
   const kvPath = join(stateDir, "kv.json");
-
-  mkdirSync(themeDir, { recursive: true });
-  mkdirSync(stateDir, { recursive: true });
-
-  const existingTheme = existsSync(themePath)
-    ? readFileSync(themePath, "utf8")
-    : null;
-  if (existingTheme !== HIVE_THEME_CONTENT) {
-    writeFileSync(themePath, HIVE_THEME_CONTENT, "utf8");
-  }
-
-  const existingKv = existsSync(kvPath)
-    ? readFileSync(kvPath, "utf8")
-    : undefined;
-  const kvRecord = parseJsonRecord(existingKv);
-  if (kvRecord.theme !== HIVE_THEME_NAME || kvRecord.theme_mode !== themeMode) {
-    writeFileSync(
-      kvPath,
-      JSON.stringify(
-        {
-          ...kvRecord,
-          theme: HIVE_THEME_NAME,
-          theme_mode: themeMode,
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-  }
-
-  const inlineConfig = parseInlineConfig(process.env.OPENCODE_CONFIG_CONTENT);
-  const workspaceKeybinds = readWorkspaceKeybinds(workspacePath);
-  const inlineKeybinds = normalizeOpencodeKeybinds(inlineConfig.keybinds);
-  const model = toOpencodeModelValue(preferredModel);
-  const mergedInlineConfig = {
-    ...inlineConfig,
-    ...(model ? { model } : {}),
-    keybinds: mergeHiveEmbeddedBrowserSafeKeybinds(
-      workspaceKeybinds,
-      inlineKeybinds
-    ),
-    theme: HIVE_THEME_NAME,
+  const env: Record<string, string> = {
+    OPENCODE_CONFIG_CONTENT: JSON.stringify(mergedInlineConfig),
   };
 
-  return {
-    allowEmbeddedControlAppExit: allowsEmbeddedChatControlAppExit(
-      mergedInlineConfig.keybinds
-    ),
-    env: {
-      XDG_STATE_HOME: stateHome,
-      OPENCODE_CONFIG_CONTENT: JSON.stringify(mergedInlineConfig),
-    },
-  };
+  try {
+    mkdirSync(themeDir, { recursive: true });
+    mkdirSync(stateDir, { recursive: true });
+
+    const existingTheme = existsSync(themePath)
+      ? readFileSync(themePath, "utf8")
+      : null;
+    if (existingTheme !== HIVE_THEME_CONTENT) {
+      writeFileSync(themePath, HIVE_THEME_CONTENT, "utf8");
+    }
+
+    const existingKv = existsSync(kvPath)
+      ? readFileSync(kvPath, "utf8")
+      : undefined;
+    const kvRecord = parseJsonRecord(existingKv);
+    if (
+      kvRecord.theme !== HIVE_THEME_NAME ||
+      kvRecord.theme_mode !== themeMode
+    ) {
+      writeFileSync(
+        kvPath,
+        JSON.stringify(
+          {
+            ...kvRecord,
+            theme: HIVE_THEME_NAME,
+            theme_mode: themeMode,
+          },
+          null,
+          2
+        ),
+        "utf8"
+      );
+    }
+
+    env.XDG_STATE_HOME = stateHome;
+  } catch {
+    // proceed without custom Hive theme artifacts
+  }
+
+  return env;
 }
 
 export type ChatTerminalStatus = "running" | "exited";
@@ -289,7 +308,7 @@ type ChatTerminalRecord = {
   opencodeServerUrl: string;
   opencodeThemeMode: "dark" | "light";
   preferredModel?: string;
-  allowEmbeddedControlAppExit: boolean;
+  allowEmbeddedControlInput: boolean;
 };
 
 export type ChatTerminalService = {
@@ -407,20 +426,17 @@ const createChatTerminalService = (): ChatTerminalService => {
     }
 
     const opencodeBinary = resolveOpencodeBinary();
-    let opencodeThemeEnv: Record<string, string> = {};
-    let allowEmbeddedControlAppExit = false;
-    try {
-      const opencodeThemeConfig = createOpencodeThemeEnv(
-        workspacePath,
-        opencodeThemeMode,
-        preferredModel
-      );
-      opencodeThemeEnv = opencodeThemeConfig.env;
-      allowEmbeddedControlAppExit =
-        opencodeThemeConfig.allowEmbeddedControlAppExit;
-    } catch {
-      // proceed without custom Hive theme if runtime cannot write config artifacts
-    }
+    const mergedInlineConfig = createMergedInlineOpencodeConfig(
+      workspacePath,
+      preferredModel
+    );
+    const opencodeThemeEnv = createOpencodeThemeEnv(
+      workspacePath,
+      opencodeThemeMode,
+      mergedInlineConfig.config
+    );
+    const allowEmbeddedControlInput =
+      mergedInlineConfig.allowEmbeddedControlInput;
 
     let pty: IPty;
     try {
@@ -466,7 +482,7 @@ const createChatTerminalService = (): ChatTerminalService => {
       opencodeServerUrl,
       opencodeThemeMode,
       preferredModel: preferredModelValue,
-      allowEmbeddedControlAppExit,
+      allowEmbeddedControlInput,
     };
 
     pty.onData((chunk: string) => {
@@ -514,10 +530,7 @@ const createChatTerminalService = (): ChatTerminalService => {
         throw new Error("Chat terminal session is not running");
       }
 
-      if (
-        !record.allowEmbeddedControlAppExit &&
-        isEmbeddedControlAppExitInput(data)
-      ) {
+      if (!record.allowEmbeddedControlInput && isEmbeddedControlInput(data)) {
         return;
       }
 

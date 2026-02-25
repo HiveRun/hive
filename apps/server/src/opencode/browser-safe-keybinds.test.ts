@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  allowsEmbeddedChatControlAppExit,
+  allowsEmbeddedChatControlInput,
   HIVE_BROWSER_SAFE_KEYBINDS,
   HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS,
   mergeHiveBrowserSafeKeybinds,
@@ -124,11 +124,11 @@ describe("mergeHiveBrowserSafeKeybinds", () => {
   });
 });
 
-describe("allowsEmbeddedChatControlAppExit", () => {
+describe("allowsEmbeddedChatControlInput", () => {
   it("disallows control app-exit combos by default in embedded terminals", () => {
     const merged = mergeHiveEmbeddedBrowserSafeKeybinds();
 
-    expect(allowsEmbeddedChatControlAppExit(merged)).toBe(false);
+    expect(allowsEmbeddedChatControlInput(merged)).toBe(false);
   });
 
   it("allows explicit ctrl+c overrides", () => {
@@ -136,7 +136,7 @@ describe("allowsEmbeddedChatControlAppExit", () => {
       app_exit: "ctrl+c",
     });
 
-    expect(allowsEmbeddedChatControlAppExit(merged)).toBe(true);
+    expect(allowsEmbeddedChatControlInput(merged)).toBe(true);
   });
 
   it("allows explicit ctrl+d overrides", () => {
@@ -144,7 +144,16 @@ describe("allowsEmbeddedChatControlAppExit", () => {
       app_exit: "ctrl+d",
     });
 
-    expect(allowsEmbeddedChatControlAppExit(merged)).toBe(true);
+    expect(allowsEmbeddedChatControlInput(merged)).toBe(true);
+  });
+
+  it("allows ctrl+c and ctrl+d bindings for non-exit actions", () => {
+    const merged = mergeHiveEmbeddedBrowserSafeKeybinds({
+      command_list: "ctrl+c",
+      display_thinking: "ctrl+d",
+    });
+
+    expect(allowsEmbeddedChatControlInput(merged)).toBe(true);
   });
 
   it("respects disabling app exit with none", () => {
@@ -152,6 +161,6 @@ describe("allowsEmbeddedChatControlAppExit", () => {
       app_exit: "none",
     });
 
-    expect(allowsEmbeddedChatControlAppExit(merged)).toBe(false);
+    expect(allowsEmbeddedChatControlInput(merged)).toBe(false);
   });
 });
