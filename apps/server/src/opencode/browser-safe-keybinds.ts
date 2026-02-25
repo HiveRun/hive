@@ -1,4 +1,16 @@
-export const HIVE_BROWSER_SAFE_KEYBINDS: Record<string, string> = {
+import type { ServerOptions } from "@opencode-ai/sdk/v2";
+
+type OpencodeKeybindsConfig = NonNullable<
+  NonNullable<ServerOptions["config"]>["keybinds"]
+>;
+type HiveBrowserSafeKeybindsConfig = Partial<
+  OpencodeKeybindsConfig & {
+    // Present in https://opencode.ai/config.json, not yet in @opencode-ai/sdk v2 types.
+    display_thinking?: string;
+  }
+>;
+
+const HIVE_BROWSER_SAFE_KEYBINDS_SOURCE = {
   app_exit: "ctrl+c,ctrl+d,<leader>q",
   command_list: "<leader>p",
   display_thinking: "<leader>i",
@@ -24,12 +36,18 @@ export const HIVE_BROWSER_SAFE_KEYBINDS: Record<string, string> = {
   stash_delete: "<leader>d",
   theme_list: "<leader>j",
   variant_cycle: "<leader>t",
-};
+} satisfies HiveBrowserSafeKeybindsConfig;
 
-export const HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS: Record<string, string> = {
-  ...HIVE_BROWSER_SAFE_KEYBINDS,
+export const HIVE_BROWSER_SAFE_KEYBINDS: Record<string, string> =
+  HIVE_BROWSER_SAFE_KEYBINDS_SOURCE;
+
+const HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS_SOURCE = {
+  ...HIVE_BROWSER_SAFE_KEYBINDS_SOURCE,
   app_exit: "<leader>q",
-};
+} satisfies HiveBrowserSafeKeybindsConfig;
+
+export const HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS: Record<string, string> =
+  HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS_SOURCE;
 
 const splitKeybindCombos = (value: string): string[] =>
   value
