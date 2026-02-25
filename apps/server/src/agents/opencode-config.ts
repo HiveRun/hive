@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { ServerOptions } from "@opencode-ai/sdk";
+import { mergeHiveBrowserSafeKeybinds } from "../opencode/browser-safe-keybinds";
 
 const WORKSPACE_CONFIG_CANDIDATES = [
   "@opencode.json",
@@ -51,8 +52,21 @@ function withHiveTheme(config: OpencodeServerConfig): OpencodeServerConfig {
   };
 }
 
+function withHiveBrowserSafeKeybinds(
+  config: OpencodeServerConfig
+): OpencodeServerConfig {
+  const keybinds = (config as { keybinds?: unknown }).keybinds;
+
+  return {
+    ...config,
+    keybinds: mergeHiveBrowserSafeKeybinds(keybinds),
+  };
+}
+
 function withHiveDefaults(config: OpencodeServerConfig): OpencodeServerConfig {
-  return withHiveTheme(withHiveInstructions(config));
+  return withHiveTheme(
+    withHiveInstructions(withHiveBrowserSafeKeybinds(config))
+  );
 }
 
 export async function loadOpencodeConfig(

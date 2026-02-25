@@ -3,6 +3,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { type IExitEvent, type IPty, spawn } from "bun-pty";
+import {
+  mergeHiveEmbeddedBrowserSafeKeybinds,
+  normalizeOpencodeKeybinds,
+} from "../opencode/browser-safe-keybinds";
 
 const DEFAULT_TERMINAL_COLS = 120;
 const DEFAULT_TERMINAL_ROWS = 36;
@@ -13,6 +17,10 @@ const TERMINAL_NAME = "xterm-256color";
 const INSTALL_HINT = "curl -fsSL https://opencode.ai/install | bash";
 const HIVE_THEME_NAME = "hive-resonant";
 const DEFAULT_THEME_MODE = "dark";
+const WORKSPACE_CONFIG_CANDIDATES = [
+  "@opencode.json",
+  "opencode.json",
+] as const;
 
 type ChatTerminalModelPreference = {
   providerId: string;
@@ -137,6 +145,21 @@ function parseJsonRecord(content: string | undefined): Record<string, unknown> {
   return {};
 }
 
+function readWorkspaceKeybinds(workspacePath: string): Record<string, string> {
+  for (const candidate of WORKSPACE_CONFIG_CANDIDATES) {
+    const configPath = join(workspacePath, candidate);
+    if (!existsSync(configPath)) {
+      continue;
+    }
+
+    const rawConfig = readFileSync(configPath, "utf8");
+    const parsedConfig = parseJsonRecord(rawConfig);
+    return normalizeOpencodeKeybinds(parsedConfig.keybinds);
+  }
+
+  return {};
+}
+
 function toOpencodeModelValue(
   preference: ChatTerminalModelPreference | undefined
 ): string | undefined {
@@ -194,10 +217,16 @@ function createOpencodeThemeEnv(
   }
 
   const inlineConfig = parseInlineConfig(process.env.OPENCODE_CONFIG_CONTENT);
+  const workspaceKeybinds = readWorkspaceKeybinds(workspacePath);
+  const inlineKeybinds = normalizeOpencodeKeybinds(inlineConfig.keybinds);
   const model = toOpencodeModelValue(preferredModel);
   const mergedInlineConfig = {
     ...inlineConfig,
     ...(model ? { model } : {}),
+    keybinds: mergeHiveEmbeddedBrowserSafeKeybinds(
+      workspaceKeybinds,
+      inlineKeybinds
+    ),
     theme: HIVE_THEME_NAME,
   };
 

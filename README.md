@@ -82,8 +82,43 @@ Environment variables:
   ```bash
   PORT=4100 hive
   ```
+- Embedded chat sessions inherit OpenCode config from workspace `@opencode.json` / `opencode.json`.
 - The SQLite database defaults to `~/.hive/state/hive.db`; set `DATABASE_URL` if you need a different location.
 - High-frequency transport/polling request logs are muted by default to keep runtime logs readable. Re-enable per category with `HIVE_LOG_TERMINAL_TRAFFIC=1`, `HIVE_LOG_POLLING_TRAFFIC=1`, or `HIVE_LOG_OPTIONS_REQUESTS=1`.
+
+#### OpenCode keybinds in Hive
+
+Hive applies browser-safe aliases for conflict-prone shortcuts in embedded chat terminals (web + desktop runtimes):
+
+- Leader defaults to `Ctrl+X` unless overridden in OpenCode config.
+- `display_thinking`: `leader + i`
+- `variant_cycle`: `leader + t`
+- `theme_list`: `leader + j`
+- `command_list`: `leader + p`
+- `app_exit` (embedded chat terminals): `leader + q`
+
+Embedded chat terminals intentionally avoid `Ctrl+C` / `Ctrl+D` as app-exit shortcuts to reduce accidental session exits while you are typing in the browser/Electron UI.
+
+Keybind merge behavior:
+
+- Hive starts with browser-safe aliases for conflict-prone actions.
+- Workspace/inline custom keybinds are preserved and Hive appends the browser-safe alias for the same action.
+- Setting a keybind to `none` keeps it disabled (Hive does not append aliases in that case).
+- External `opencode attach` sessions keep OpenCode's default exit combos (`Ctrl+C`, `Ctrl+D`, `leader + q`) unless you override them.
+
+Example:
+
+```json
+{
+  "keybinds": {
+    "variant_cycle": "ctrl+t"
+  }
+}
+```
+
+In Hive embedded terminals this resolves to `ctrl+t,<leader>t` so browser-safe fallback remains available.
+
+After changing keybind config, restart the chat terminal session (or restart Hive) to pick up updates.
 
 Open the printed UI link (default [http://localhost:3000](http://localhost:3000)) after the log shows “Service supervisor initialized.”
 
