@@ -3,12 +3,7 @@ import type { ServerOptions } from "@opencode-ai/sdk/v2";
 type OpencodeKeybindsConfig = NonNullable<
   NonNullable<ServerOptions["config"]>["keybinds"]
 >;
-type HiveBrowserSafeKeybindsConfig = Partial<
-  OpencodeKeybindsConfig & {
-    // Present in https://opencode.ai/config.json, not yet in @opencode-ai/sdk v2 types.
-    display_thinking?: string;
-  }
->;
+type HiveBrowserSafeKeybindsConfig = Partial<OpencodeKeybindsConfig>;
 
 const HIVE_BROWSER_SAFE_KEYBINDS_SOURCE = {
   app_exit: "ctrl+c,ctrl+d,<leader>q",
