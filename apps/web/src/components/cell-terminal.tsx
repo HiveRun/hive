@@ -40,8 +40,6 @@ const ASCII_NULL_CODE = 0x00;
 const ASCII_ESCAPE_CODE = 0x1b;
 const ASCII_BELL_CODE = 0x07;
 const ASCII_BACKSPACE_CODE = 0x08;
-const ASCII_END_OF_TEXT = "\u0003";
-const ASCII_END_OF_TRANSMISSION = "\u0004";
 const ASCII_VERTICAL_TAB_CODE = 0x0b;
 const ASCII_SUBSTITUTE_CODE = 0x1a;
 const ASCII_FILE_SEPARATOR_CODE = 0x1c;
@@ -99,17 +97,6 @@ const TERMINAL_THEME_LIGHT = {
   brightCyan: "#A8863B",
   white: "#F1E7D5",
   brightWhite: "#FBF7EE",
-};
-
-const shouldBlockEmbeddedChatControlInput = (
-  endpointBase: string,
-  input: string
-): boolean => {
-  if (endpointBase !== "chat/terminal") {
-    return false;
-  }
-
-  return input === ASCII_END_OF_TEXT || input === ASCII_END_OF_TRANSMISSION;
 };
 
 const appendOutput = (current: string, chunk: string): string => {
@@ -652,10 +639,6 @@ export function CellTerminal({
       setIsTerminalInitialized(true);
 
       terminal.onData((data) => {
-        if (shouldBlockEmbeddedChatControlInput(endpointBase, data)) {
-          return;
-        }
-
         sendInput(data);
       });
 
@@ -720,7 +703,6 @@ export function CellTerminal({
     updateStartupReadiness,
     wheelScrollBehavior,
     recordOutputActivity,
-    endpointBase,
   ]);
 
   const connectionLabelMap: Record<ConnectionState, string> = {

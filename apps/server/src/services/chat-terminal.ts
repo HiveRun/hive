@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { type IExitEvent, type IPty, spawn } from "bun-pty";
 import {
+  allowsEmbeddedChatControlAppExit,
   mergeHiveEmbeddedBrowserSafeKeybinds,
   normalizeOpencodeKeybinds,
 } from "../opencode/browser-safe-keybinds";
@@ -17,6 +18,8 @@ const TERMINAL_NAME = "xterm-256color";
 const INSTALL_HINT = "curl -fsSL https://opencode.ai/install | bash";
 const HIVE_THEME_NAME = "hive-resonant";
 const DEFAULT_THEME_MODE = "dark";
+const ASCII_END_OF_TEXT = "\u0003";
+const ASCII_END_OF_TRANSMISSION = "\u0004";
 const WORKSPACE_CONFIG_CANDIDATES = [
   "@opencode.json",
   "opencode.json",
@@ -174,11 +177,19 @@ function toOpencodeModelValue(
   return `${preference.providerId}/${preference.modelId}`;
 }
 
+const isEmbeddedControlAppExitInput = (data: string): boolean =>
+  data === ASCII_END_OF_TEXT || data === ASCII_END_OF_TRANSMISSION;
+
+type OpencodeThemeEnvConfig = {
+  env: Record<string, string>;
+  allowEmbeddedControlAppExit: boolean;
+};
+
 function createOpencodeThemeEnv(
   workspacePath: string,
   themeMode: "dark" | "light",
   preferredModel?: ChatTerminalModelPreference
-): Record<string, string> {
+): OpencodeThemeEnvConfig {
   const configRoot = join(workspacePath, ".opencode");
   const themeDir = join(configRoot, "themes");
   const themePath = join(themeDir, `${HIVE_THEME_NAME}.json`);
@@ -231,8 +242,13 @@ function createOpencodeThemeEnv(
   };
 
   return {
-    XDG_STATE_HOME: stateHome,
-    OPENCODE_CONFIG_CONTENT: JSON.stringify(mergedInlineConfig),
+    allowEmbeddedControlAppExit: allowsEmbeddedChatControlAppExit(
+      mergedInlineConfig.keybinds
+    ),
+    env: {
+      XDG_STATE_HOME: stateHome,
+      OPENCODE_CONFIG_CONTENT: JSON.stringify(mergedInlineConfig),
+    },
   };
 }
 
@@ -273,6 +289,7 @@ type ChatTerminalRecord = {
   opencodeServerUrl: string;
   opencodeThemeMode: "dark" | "light";
   preferredModel?: string;
+  allowEmbeddedControlAppExit: boolean;
 };
 
 export type ChatTerminalService = {
@@ -391,12 +408,16 @@ const createChatTerminalService = (): ChatTerminalService => {
 
     const opencodeBinary = resolveOpencodeBinary();
     let opencodeThemeEnv: Record<string, string> = {};
+    let allowEmbeddedControlAppExit = false;
     try {
-      opencodeThemeEnv = createOpencodeThemeEnv(
+      const opencodeThemeConfig = createOpencodeThemeEnv(
         workspacePath,
         opencodeThemeMode,
         preferredModel
       );
+      opencodeThemeEnv = opencodeThemeConfig.env;
+      allowEmbeddedControlAppExit =
+        opencodeThemeConfig.allowEmbeddedControlAppExit;
     } catch {
       // proceed without custom Hive theme if runtime cannot write config artifacts
     }
@@ -445,6 +466,7 @@ const createChatTerminalService = (): ChatTerminalService => {
       opencodeServerUrl,
       opencodeThemeMode,
       preferredModel: preferredModelValue,
+      allowEmbeddedControlAppExit,
     };
 
     pty.onData((chunk: string) => {
@@ -491,6 +513,14 @@ const createChatTerminalService = (): ChatTerminalService => {
       if (!record || record.status !== "running") {
         throw new Error("Chat terminal session is not running");
       }
+
+      if (
+        !record.allowEmbeddedControlAppExit &&
+        isEmbeddedControlAppExitInput(data)
+      ) {
+        return;
+      }
+
       record.pty.write(data);
     },
     resize(cellId, cols, rows) {

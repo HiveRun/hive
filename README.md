@@ -97,13 +97,14 @@ Hive applies browser-safe aliases for conflict-prone shortcuts in embedded chat 
 - `command_list`: `leader + p`
 - `app_exit` (embedded chat terminals): `leader + q`
 
-Embedded chat terminals intentionally avoid `Ctrl+C` / `Ctrl+D` as app-exit shortcuts to reduce accidental session exits while you are typing in the browser/Electron UI.
+Embedded chat terminals intentionally avoid `Ctrl+C` / `Ctrl+D` as app-exit shortcuts by default to reduce accidental session exits while you are typing in the browser/Electron UI.
 
 Keybind merge behavior:
 
 - Hive starts with browser-safe aliases for conflict-prone actions.
 - Workspace/inline custom keybinds are preserved and Hive appends the browser-safe alias for the same action.
 - Setting a keybind to `none` keeps it disabled (Hive does not append aliases in that case).
+- Explicit `app_exit` overrides to `ctrl+c` and/or `ctrl+d` are honored in embedded chat terminals.
 - External `opencode attach` sessions keep OpenCode's default exit combos (`Ctrl+C`, `Ctrl+D`, `leader + q`) unless you override them.
 
 Example:

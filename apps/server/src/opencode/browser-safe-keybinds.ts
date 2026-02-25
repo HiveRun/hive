@@ -4,6 +4,9 @@ type OpencodeKeybindsConfig = NonNullable<
   NonNullable<ServerOptions["config"]>["keybinds"]
 >;
 type HiveBrowserSafeKeybindsConfig = Partial<OpencodeKeybindsConfig>;
+const APP_EXIT_KEYBIND = "app_exit";
+const CTRL_C_KEYBIND = "ctrl+c";
+const CTRL_D_KEYBIND = "ctrl+d";
 
 const HIVE_BROWSER_SAFE_KEYBINDS_SOURCE = {
   app_exit: "ctrl+c,ctrl+d,<leader>q",
@@ -127,4 +130,19 @@ function mergeBrowserSafeKeybinds(
   }
 
   return merged;
+}
+
+export function allowsEmbeddedChatControlAppExit(keybinds: unknown): boolean {
+  const normalizedKeybinds = normalizeOpencodeKeybinds(keybinds);
+  const appExitKeybind = normalizedKeybinds[APP_EXIT_KEYBIND];
+  if (!appExitKeybind) {
+    return false;
+  }
+
+  return splitKeybindCombos(appExitKeybind).some((combo) => {
+    const normalizedCombo = combo.toLowerCase();
+    return (
+      normalizedCombo === CTRL_C_KEYBIND || normalizedCombo === CTRL_D_KEYBIND
+    );
+  });
 }
