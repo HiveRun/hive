@@ -4,11 +4,14 @@ type OpencodeKeybindsConfig = NonNullable<
   NonNullable<ServerOptions["config"]>["keybinds"]
 >;
 type HiveBrowserSafeKeybindsConfig = Partial<OpencodeKeybindsConfig>;
+const DEFAULT_LEADER_KEYBIND = "ctrl+x";
 const CTRL_C_KEYBIND = "ctrl+c";
 const CTRL_D_KEYBIND = "ctrl+d";
 const EMBEDDED_CONTROL_KEYBINDS = new Set([CTRL_C_KEYBIND, CTRL_D_KEYBIND]);
+const SOURCE_OVERRIDE_ONLY_KEYBINDS = new Set(["leader"]);
 
 const HIVE_BROWSER_SAFE_KEYBINDS_SOURCE = {
+  leader: DEFAULT_LEADER_KEYBIND,
   app_exit: "ctrl+c,ctrl+d,<leader>q",
   command_list: "<leader>p",
   display_thinking: "<leader>i",
@@ -123,9 +126,12 @@ function mergeBrowserSafeKeybinds(
     const normalizedSource = normalizeOpencodeKeybinds(source);
     for (const [key, value] of Object.entries(normalizedSource)) {
       const browserSafeAliases = baseKeybinds[key];
-      merged[key] = browserSafeAliases
-        ? mergeKeybindCombos(value, browserSafeAliases)
-        : value;
+      if (browserSafeAliases && !SOURCE_OVERRIDE_ONLY_KEYBINDS.has(key)) {
+        merged[key] = mergeKeybindCombos(value, browserSafeAliases);
+        continue;
+      }
+
+      merged[key] = value;
     }
   }
 

@@ -61,6 +61,7 @@ describe("mergeHiveBrowserSafeKeybinds", () => {
   it("starts with Hive browser-safe defaults", () => {
     const merged = mergeHiveBrowserSafeKeybinds();
 
+    expect(merged.leader).toBe("ctrl+x");
     expect(merged.app_exit).toBe("ctrl+c,ctrl+d,<leader>q");
     expect(merged.variant_cycle).toBe("<leader>t");
     expect(merged.theme_list).toBe("<leader>j");
@@ -112,7 +113,16 @@ describe("mergeHiveBrowserSafeKeybinds", () => {
     expect(HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS.app_exit).toBe("<leader>q");
 
     const merged = mergeHiveEmbeddedBrowserSafeKeybinds();
+    expect(merged.leader).toBe("ctrl+x");
     expect(merged.app_exit).toBe("<leader>q");
+  });
+
+  it("keeps explicit leader overrides unchanged", () => {
+    const merged = mergeHiveBrowserSafeKeybinds({
+      leader: "ctrl+g",
+    });
+
+    expect(merged.leader).toBe("ctrl+g");
   });
 
   it("preserves explicit custom app exit in embedded terminals", () => {

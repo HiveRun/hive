@@ -58,6 +58,7 @@ describe("loadOpencodeConfig", () => {
     const loaded = await loadOpencodeConfig(workspace);
     const loadedConfig = loaded.config as Record<string, unknown>;
 
+    expect(readKeybind(loadedConfig, "leader")).toBe("ctrl+x");
     expect(readKeybind(loadedConfig, "app_exit")).toBe(
       "ctrl+c,ctrl+d,<leader>q"
     );
@@ -80,6 +81,7 @@ describe("loadOpencodeConfig", () => {
     const workspace = await createWorkspace();
     await writeWorkspaceOpencodeConfig(workspace, {
       keybinds: {
+        leader: "ctrl+g",
         command_list: "ctrl+space",
       },
     });
@@ -90,6 +92,7 @@ describe("loadOpencodeConfig", () => {
     expect(readKeybind(loadedConfig, "command_list")).toBe(
       "ctrl+space,<leader>p"
     );
+    expect(readKeybind(loadedConfig, "leader")).toBe("ctrl+g");
     expect(readKeybind(loadedConfig, "variant_cycle")).toBe("<leader>t");
     expect(readKeybind(loadedConfig, "display_thinking")).toBe("<leader>i");
   });
