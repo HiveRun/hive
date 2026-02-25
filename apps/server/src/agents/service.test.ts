@@ -127,6 +127,7 @@ describe("agent model selection", () => {
 
   afterEach(() => {
     resetAgentRuntimeDependencies();
+    vi.restoreAllMocks();
   });
 
   it("hydrates runtime model from the last user message", async () => {

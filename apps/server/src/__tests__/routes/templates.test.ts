@@ -2,7 +2,7 @@ import type { Stats } from "node:fs";
 // biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
 import * as FsPromises from "node:fs/promises";
 import { Elysia } from "elysia";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
 import * as OpencodeConfig from "../../agents/opencode-config";
 // biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
@@ -71,6 +71,10 @@ describe("templatesRoutes", () => {
     loadOpencodeConfigSpy = vi
       .spyOn(OpencodeConfig, "loadOpencodeConfig")
       .mockResolvedValue({ config: {}, source: "workspace" });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("returns the templates list for a workspace", async () => {
