@@ -359,11 +359,14 @@ const resumeAgentSessions = async (): Promise<void> => {
   }
 };
 
-const bootstrapServer = async (workspaceRoot: string): Promise<void> => {
+const bootstrapServerCore = async (workspaceRoot: string): Promise<void> => {
   await runMigrations();
   await registerWorkspace(workspaceRoot);
   await startOpencodeServer(workspaceRoot);
   await bootstrapSupervisor();
+};
+
+const runStartupRecoveryTasks = async (): Promise<void> => {
   await resumeProvisioning();
   await startAllServices();
   await resumeAgentSessions();
@@ -377,7 +380,7 @@ export const startServer = async () => {
   const workspaceRoot = resolveWorkspaceRoot();
 
   try {
-    await bootstrapServer(workspaceRoot);
+    await bootstrapServerCore(workspaceRoot);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(
@@ -411,6 +414,14 @@ export const startServer = async () => {
   process.stderr.write(
     `API listening on http://${boundHostname}:${boundPort}\n`
   );
+
+  runStartupRecoveryTasks().catch((error) => {
+    process.stderr.write(
+      `Startup recovery tasks failed: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`
+    );
+  });
 
   return app;
 };

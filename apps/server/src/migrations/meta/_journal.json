@@ -43,6 +43,13 @@
       "when": 1779000000000,
       "tag": "0005_global_timing_events",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1780000000000,
+      "tag": "0006_plan_mode_start",
+      "breakpoints": true
     }
   ]
 }

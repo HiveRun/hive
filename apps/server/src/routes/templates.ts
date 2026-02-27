@@ -23,6 +23,7 @@ const HTTP_STATUS = {
 type TemplateListResponse = Static<typeof TemplateListResponseSchema>;
 type TemplateResponse = Static<typeof TemplateResponseSchema>;
 type AgentDefaults = TemplateListResponse["agentDefaults"];
+type StartMode = "plan" | "build";
 
 const POSIX_SEPARATOR = "/";
 const INCLUDE_DIRECTORY_PREVIEW_LIMIT = 50;
@@ -52,6 +53,15 @@ const opencodeDefaultsCache = new Map<
   string,
   { expiresAt: number; value?: AgentDefaults }
 >();
+const opencodeStartModeCache = new Map<
+  string,
+  { expiresAt: number; value?: StartMode }
+>();
+
+const normalizeStartMode = (
+  value: string | undefined
+): StartMode | undefined =>
+  value === "plan" || value === "build" ? value : undefined;
 
 const logTemplatesWarning = (message: string) => {
   if (process.env.NODE_ENV === "test") {
@@ -330,6 +340,39 @@ const loadCachedOpencodeDefaults = async (
   return value;
 };
 
+const loadCachedOpencodeStartMode = async (
+  workspacePath: string
+): Promise<StartMode | undefined> => {
+  if (!shouldUseRouteCaches()) {
+    const opencodeConfig = await loadOpencodeForWorkspace(workspacePath);
+    const defaultAgent = (opencodeConfig.config as { default_agent?: unknown })
+      .default_agent;
+    return typeof defaultAgent === "string"
+      ? normalizeStartMode(defaultAgent)
+      : undefined;
+  }
+
+  const now = Date.now();
+  const cached = opencodeStartModeCache.get(workspacePath);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const opencodeConfig = await loadOpencodeForWorkspace(workspacePath);
+  const defaultAgent = (opencodeConfig.config as { default_agent?: unknown })
+    .default_agent;
+  const value =
+    typeof defaultAgent === "string"
+      ? normalizeStartMode(defaultAgent)
+      : undefined;
+  opencodeStartModeCache.set(workspacePath, {
+    value,
+    expiresAt: now + OPENCODE_DEFAULTS_CACHE_TTL_MS,
+  });
+
+  return value;
+};
+
 const listTemplates = async (
   workspaceId?: string
 ): Promise<TemplateListResponse> => {
@@ -340,10 +383,20 @@ const listTemplates = async (
   );
 
   const agentDefaults = await loadCachedOpencodeDefaults(workspacePath);
+  const mergedStartMode = await loadCachedOpencodeStartMode(workspacePath);
+  const defaultStartMode =
+    config.defaults?.startMode ??
+    config.opencode?.defaultMode ??
+    mergedStartMode ??
+    "plan";
+  const defaults = {
+    ...(config.defaults ?? {}),
+    startMode: defaultStartMode,
+  };
 
   return {
     templates,
-    ...(config.defaults ? { defaults: config.defaults } : {}),
+    defaults,
     ...(agentDefaults ? { agentDefaults } : {}),
   } satisfies TemplateListResponse;
 };

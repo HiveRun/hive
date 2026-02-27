@@ -123,6 +123,10 @@ const opencodeConfigSchema = z
       .string()
       .optional()
       .describe("Fallback model identifier used when templates omit one"),
+    defaultMode: z
+      .enum(["plan", "build"])
+      .optional()
+      .describe("Default OpenCode agent mode when creating new cells"),
   })
   .describe("Global OpenCode configuration shared across templates");
 
@@ -132,6 +136,10 @@ export const defaultsSchema = z
       .string()
       .optional()
       .describe("Default template to use when creating cells"),
+    startMode: z
+      .enum(["plan", "build"])
+      .optional()
+      .describe("Default OpenCode agent mode for new cells"),
   })
   .describe("Default values for cell creation");
 

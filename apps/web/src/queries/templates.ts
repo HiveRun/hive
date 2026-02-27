@@ -38,6 +38,7 @@ export type Template = {
 
 export type Defaults = {
   templateId?: string;
+  startMode?: "plan" | "build";
 };
 
 export type AgentDefaults = {

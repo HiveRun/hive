@@ -476,7 +476,7 @@ describe("POST /api/cells", () => {
 
   it("passes selected model overrides to agent provisioning", async () => {
     let capturedOverrides:
-      | { modelId?: string; providerId?: string }
+      | { modelId?: string; providerId?: string; startMode?: "plan" | "build" }
       | undefined;
 
     const app = createTestApp({
@@ -502,6 +502,7 @@ describe("POST /api/cells", () => {
     expect(capturedOverrides).toEqual({
       modelId: "custom-model",
       providerId: "zen",
+      startMode: "plan",
     });
   });
 

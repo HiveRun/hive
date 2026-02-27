@@ -330,6 +330,7 @@ describe("agent model selection", () => {
     const session = await ensureAgentSession(cellId, {
       modelId: "opencode/gpt-5.3-codex",
       providerId: "opencode",
+      startMode: "build",
     });
 
     expect(session.provider).toBe("opencode");
@@ -375,6 +376,7 @@ describe("agent model selection", () => {
     const session = await ensureAgentSession(cellId, {
       modelId: "opencode/gpt-5.3-codex",
       providerId: "opencode",
+      startMode: "build",
     });
 
     expect(session.provider).toBe("opencode");
@@ -416,6 +418,7 @@ describe("agent model selection", () => {
     const session = await ensureAgentSession(cellId, {
       modelId: "opencode/gpt-5.3-codex",
       providerId: "opencode",
+      startMode: "build",
     });
 
     expect(session.provider).toBe("opencode");
@@ -619,6 +622,63 @@ describe("agent model selection", () => {
     expect(
       published.some(
         (event) => (event as { type?: string }).type === "session.compaction"
+      )
+    ).toBe(true);
+  });
+
+  it("tracks mode transitions from plan to build", async () => {
+    const modeEvent = {
+      type: "message.updated",
+      properties: {
+        info: {
+          sessionID: "session-runtime",
+          role: "assistant",
+          mode: "build",
+        },
+      },
+    } as unknown as OpencodeEvent;
+
+    const published: unknown[] = [];
+    const clientStubWithEvents = buildClientStub();
+    let releaseBuildEvent: (() => void) | undefined;
+    const emitBuildEvent = new Promise<void>((resolve) => {
+      releaseBuildEvent = resolve;
+    });
+    clientStubWithEvents.event.subscribe = vi.fn(async () => ({
+      stream: (async function* () {
+        await emitBuildEvent;
+        yield modeEvent;
+      })(),
+    }));
+
+    acquireOpencodeClientMock = vi.fn(
+      async () => clientStubWithEvents as unknown as OpencodeClient
+    );
+
+    setAgentRuntimeDependencies({
+      acquireOpencodeClient: acquireOpencodeClientMock,
+      publishAgentEvent: (sessionId, event) => {
+        if (sessionId === "session-runtime") {
+          published.push(event);
+        }
+      },
+    });
+
+    const initial = await ensureAgentSession(cellId, { startMode: "plan" });
+    expect(initial.startMode).toBe("plan");
+    expect(initial.currentMode).toBe("plan");
+
+    releaseBuildEvent?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const updated = await ensureAgentSession(cellId);
+    expect(updated.startMode).toBe("plan");
+    expect(updated.currentMode).toBe("build");
+    expect(
+      published.some(
+        (event) =>
+          (event as { type?: string; currentMode?: string }).type === "mode" &&
+          (event as { currentMode?: string }).currentMode === "build"
       )
     ).toBe(true);
   });

@@ -22,6 +22,7 @@ import { acquireSharedOpencodeClient } from "./opencode-server";
 import type {
   AgentMessageRecord,
   AgentMessageState,
+  AgentMode,
   AgentSessionRecord,
   AgentSessionStatus,
 } from "./types";
@@ -275,8 +276,18 @@ type RuntimeHandle = {
   status: AgentSessionStatus;
   pendingInterrupt: boolean;
   compaction: RuntimeCompactionState;
+  startMode: AgentMode;
+  currentMode: AgentMode;
+  modeUpdatedAt: string;
   sendMessage: (content: string) => Promise<void>;
   stop: (options?: StopRuntimeOptions) => Promise<void>;
+};
+
+type EnsureAgentSessionOptions = {
+  force?: boolean;
+  modelId?: string;
+  providerId?: string;
+  startMode?: AgentMode;
 };
 
 type StopRuntimeOptions = {
@@ -484,6 +495,13 @@ type ModelSelectionCandidate = {
   modelId?: string;
 };
 
+function normalizeAgentMode(value: string | undefined): AgentMode | undefined {
+  if (value === "plan" || value === "build") {
+    return value;
+  }
+  return;
+}
+
 async function loadProvisioningModelOverride(args: {
   runtimeDb: AgentRuntimeDependencies["db"];
   cellId: string;
@@ -507,6 +525,43 @@ async function loadProvisioningModelOverride(args: {
       ? { providerId: provisioningState.providerId }
       : {}),
   };
+}
+
+async function loadProvisioningStartMode(args: {
+  runtimeDb: AgentRuntimeDependencies["db"];
+  cellId: string;
+}): Promise<AgentMode | undefined> {
+  const [provisioningState] = await args.runtimeDb
+    .select({
+      startMode: cellProvisioningStates.startMode,
+    })
+    .from(cellProvisioningStates)
+    .where(eq(cellProvisioningStates.cellId, args.cellId))
+    .limit(1);
+
+  return normalizeAgentMode(provisioningState?.startMode ?? undefined);
+}
+
+function resolveConfigDefaultMode(args: {
+  hiveConfig: HiveConfig;
+  mergedOpencodeConfig: Awaited<ReturnType<typeof loadOpencodeConfig>>;
+}): AgentMode {
+  const explicit = normalizeAgentMode(args.hiveConfig.opencode?.defaultMode);
+  if (explicit) {
+    return explicit;
+  }
+
+  const mergedConfig = args.mergedOpencodeConfig.config as {
+    default_agent?: unknown;
+  };
+  if (typeof mergedConfig.default_agent === "string") {
+    const fromAgent = normalizeAgentMode(mergedConfig.default_agent);
+    if (fromAgent) {
+      return fromAgent;
+    }
+  }
+
+  return "plan";
 }
 
 async function shouldApplyProvisioningModelOverride(args: {
@@ -552,7 +607,7 @@ function resolveExplicitModelSelection(options?: {
 async function resolveRuntimeModelSelectionOptions(args: {
   cell: Cell;
   cellId: string;
-  options?: { force?: boolean; modelId?: string; providerId?: string };
+  options?: EnsureAgentSessionOptions;
   deps: AgentRuntimeDependencies;
 }): Promise<ModelSelectionCandidate | undefined> {
   const explicitModelSelection = resolveExplicitModelSelection(args.options);
@@ -914,7 +969,7 @@ function resolveModelSelection({
 
 export async function ensureAgentSession(
   cellId: string,
-  options?: { force?: boolean; modelId?: string; providerId?: string }
+  options?: EnsureAgentSessionOptions
 ): Promise<AgentSessionRecord> {
   const runtime = await ensureRuntimeForCell(cellId, options);
   return toSessionRecord(runtime);
@@ -925,6 +980,7 @@ export async function fetchAgentSession(
 ): Promise<AgentSessionRecord | null> {
   try {
     const runtime = await ensureRuntimeForSession(sessionId);
+    await synchronizeRuntimeMode(runtime);
     return toSessionRecord(runtime);
   } catch {
     return null;
@@ -938,6 +994,7 @@ export async function fetchAgentSessionForCell(
     const runtime = await ensureRuntimeForCell(cellId, {
       force: false,
     });
+    await synchronizeRuntimeMode(runtime);
     return toSessionRecord(runtime);
   } catch {
     return null;
@@ -1145,7 +1202,7 @@ const wrapAgentRuntime =
 export type AgentRuntimeService = {
   readonly ensureAgentSession: (
     cellId: string,
-    options?: { force?: boolean; modelId?: string; providerId?: string }
+    options?: EnsureAgentSessionOptions
   ) => Promise<AgentSessionRecord>;
   readonly fetchAgentSession: (
     sessionId: string
@@ -1319,7 +1376,7 @@ async function hydrateInstructionsForCell(
 
 async function ensureRuntimeForCell(
   cellId: string,
-  options?: { force?: boolean; modelId?: string; providerId?: string }
+  options?: EnsureAgentSessionOptions
 ): Promise<RuntimeHandle> {
   const deps = getAgentRuntimeDependencies();
   const activeRuntime = getExistingRuntimeForCell(cellId, options);
@@ -1338,6 +1395,10 @@ async function ensureRuntimeForCell(
   const defaultOpencodeModel = mergedConfig.defaultModel;
   const configDefaultProvider = hiveConfig.opencode?.defaultProvider;
   const configDefaultModel = hiveConfig.opencode?.defaultModel;
+  const configDefaultMode = resolveConfigDefaultMode({
+    hiveConfig,
+    mergedOpencodeConfig: mergedConfig,
+  });
 
   const providerCatalog =
     await fetchProviderCatalogForWorkspace(workspaceRootPath);
@@ -1349,6 +1410,13 @@ async function ensureRuntimeForCell(
     options,
     deps,
   });
+
+  const persistedStartMode = await loadProvisioningStartMode({
+    runtimeDb: deps.db,
+    cellId,
+  });
+  const startMode =
+    options?.startMode ?? persistedStartMode ?? configDefaultMode;
 
   const selection = resolveModelSelection({
     options: selectionOptions,
@@ -1369,6 +1437,7 @@ async function ensureRuntimeForCell(
     cell,
     providerId: requestedProviderId,
     modelId: requestedModelId,
+    startMode,
     force: options?.force ?? false,
     deps,
   });
@@ -1378,6 +1447,11 @@ async function ensureRuntimeForCell(
     await ensureProviderCredentials(restoredModel.providerId);
     runtime.providerId = restoredModel.providerId;
     runtime.modelId = restoredModel.modelId;
+  }
+
+  const restoredMode = await resolveSessionModePreference(runtime);
+  if (restoredMode) {
+    setRuntimeMode(runtime, restoredMode);
   }
 
   if (createdSession && !restoredModel && selectionOptions?.modelId) {
@@ -1465,14 +1539,46 @@ type StartRuntimeArgs = {
   cell: Cell;
   providerId?: string;
   modelId?: string;
+  startMode: AgentMode;
   force: boolean;
   deps: AgentRuntimeDependencies;
 };
+
+async function primeSessionAgentMode(args: {
+  client: OpencodeClient;
+  sessionId: string;
+  directoryQuery: DirectoryQuery;
+  startMode: AgentMode;
+}): Promise<void> {
+  if (args.startMode !== "plan") {
+    return;
+  }
+
+  try {
+    await args.client.session.prompt({
+      path: { id: args.sessionId },
+      query: args.directoryQuery,
+      body: {
+        agent: "plan",
+        noReply: true,
+        parts: [
+          {
+            type: "text",
+            text: "",
+          },
+        ],
+      },
+    });
+  } catch {
+    // Continue even if OpenCode rejects agent priming.
+  }
+}
 
 async function startOpencodeRuntime({
   cell,
   providerId,
   modelId,
+  startMode,
   force,
   deps,
 }: StartRuntimeArgs): Promise<{ runtime: RuntimeHandle; created: boolean }> {
@@ -1484,6 +1590,15 @@ async function startOpencodeRuntime({
     directoryQuery,
     force,
   });
+
+  if (created) {
+    await primeSessionAgentMode({
+      client,
+      sessionId: session.id,
+      directoryQuery,
+      startMode,
+    });
+  }
 
   if (created || cell.opencodeSessionId !== session.id) {
     const { db: runtimeDb } = getAgentRuntimeDependencies();
@@ -1507,6 +1622,9 @@ async function startOpencodeRuntime({
     status: "awaiting_input",
     pendingInterrupt: false,
     compaction: { count: 0, lastCompactionAt: null },
+    startMode,
+    currentMode: startMode,
+    modeUpdatedAt: new Date().toISOString(),
     async sendMessage(content) {
       setRuntimeStatus(runtime, "working");
 
@@ -1526,7 +1644,10 @@ async function startOpencodeRuntime({
       const response = await client.session.prompt({
         path: { id: session.id },
         query: directoryQuery,
-        body: promptBody,
+        body: {
+          ...promptBody,
+          agent: runtime.currentMode,
+        },
       });
 
       if (response.error) {
@@ -1652,6 +1773,7 @@ async function startEventStream({
         continue;
       }
 
+      updateRuntimeModeFromEvent(runtime, event);
       recordCompactionEvent(runtime, event);
       publish(runtime.session.id, event);
       updateRuntimeStatusFromEvent(runtime, event);
@@ -1695,6 +1817,49 @@ async function resolveSessionModelPreference(
   } catch {
     return null;
   }
+}
+
+async function resolveSessionModePreference(
+  runtime: RuntimeHandle
+): Promise<AgentMode | null> {
+  try {
+    const query = runtime.directoryQuery.directory
+      ? { directory: runtime.directoryQuery.directory, limit: 100 }
+      : { limit: 100 };
+    const response = await runtime.client.session.messages({
+      path: { id: runtime.session.id },
+      query,
+    });
+
+    if (response.error || !response.data) {
+      return null;
+    }
+
+    for (let index = response.data.length - 1; index >= 0; index -= 1) {
+      const entry = response.data[index];
+      if (!entry?.info || entry.info.role !== "assistant") {
+        continue;
+      }
+
+      const mode = normalizeAgentMode(entry.info.mode);
+      if (mode) {
+        return mode;
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function synchronizeRuntimeMode(runtime: RuntimeHandle): Promise<void> {
+  const resolvedMode = await resolveSessionModePreference(runtime);
+  if (!resolvedMode) {
+    return;
+  }
+
+  setRuntimeMode(runtime, resolvedMode);
 }
 
 async function seedSessionModelPreference(
@@ -1806,12 +1971,23 @@ function getEventSessionId(event: Event): string | null {
       return event.properties.sessionID ?? null;
     case "session.compacted":
     case "session.diff":
+    case "session.status":
     case "session.error":
     case "session.idle":
       return event.properties.sessionID ?? null;
     default:
-      return null;
+      return getFallbackEventSessionId(event);
   }
+}
+
+function getFallbackEventSessionId(event: Event): string | null {
+  const properties = (event as { properties?: unknown }).properties;
+  if (!properties || typeof properties !== "object") {
+    return null;
+  }
+
+  const sessionId = (properties as { sessionID?: unknown }).sessionID;
+  return typeof sessionId === "string" ? sessionId : null;
 }
 
 function updateRuntimeStatusFromEvent(
@@ -1849,6 +2025,34 @@ export function resolveRuntimeStatusFromEvent(
   }
 
   if (event.type === "session.idle") {
+    return { status: "awaiting_input" };
+  }
+
+  if (event.type === "session.status") {
+    if (event.properties.status.type === "idle") {
+      return { status: "awaiting_input" };
+    }
+    return { status: "working" };
+  }
+
+  const rawType = (event as { type: string }).type;
+  if (rawType === "permission.asked" || rawType === "permission.updated") {
+    return { status: "awaiting_input" };
+  }
+
+  if (rawType === "permission.replied") {
+    return { status: "working" };
+  }
+
+  if (rawType === "question.asked") {
+    return { status: "awaiting_input" };
+  }
+
+  if (rawType === "question.replied") {
+    return { status: "working" };
+  }
+
+  if (rawType === "question.rejected") {
     return { status: "awaiting_input" };
   }
 
@@ -1954,6 +2158,9 @@ function toSessionRecord(runtime: RuntimeHandle): AgentSessionRecord {
     createdAt: new Date(runtime.session.time.created).toISOString(),
     updatedAt: new Date(runtime.session.time.updated).toISOString(),
     ...modelFields,
+    startMode: runtime.startMode,
+    currentMode: runtime.currentMode,
+    modeUpdatedAt: runtime.modeUpdatedAt,
   };
 }
 
@@ -1969,6 +2176,47 @@ function setRuntimeStatus(
       : { type: "status" as const, status, error };
   const { publishAgentEvent: publish } = getAgentRuntimeDependencies();
   publish(runtime.session.id, statusEvent);
+}
+
+function resolveRuntimeModeFromEvent(event: Event): AgentMode | undefined {
+  if (event.type !== "message.updated") {
+    return;
+  }
+
+  const info = event.properties.info;
+  if (info.role !== "assistant") {
+    return;
+  }
+
+  return normalizeAgentMode(info.mode);
+}
+
+function setRuntimeMode(runtime: RuntimeHandle, mode: AgentMode): void {
+  if (runtime.currentMode === mode) {
+    return;
+  }
+
+  runtime.currentMode = mode;
+  runtime.modeUpdatedAt = new Date().toISOString();
+  const { publishAgentEvent: publish } = getAgentRuntimeDependencies();
+  publish(runtime.session.id, {
+    type: "mode",
+    startMode: runtime.startMode,
+    currentMode: runtime.currentMode,
+    modeUpdatedAt: runtime.modeUpdatedAt,
+  });
+}
+
+function updateRuntimeModeFromEvent(
+  runtime: RuntimeHandle,
+  event: Event
+): void {
+  const nextMode = resolveRuntimeModeFromEvent(event);
+  if (!nextMode) {
+    return;
+  }
+
+  setRuntimeMode(runtime, nextMode);
 }
 
 function resolveCompactionCount(event: Event, previousCount: number): number {
