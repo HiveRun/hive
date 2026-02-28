@@ -2,6 +2,8 @@ import { type Page, test } from "@playwright/test";
 import { selectors } from "../src/selectors";
 import {
   createCellViaApi,
+  ensureTerminalReady,
+  sendTerminalCommand,
   waitForChatRoute,
   waitForCondition,
   waitForProvisioningOrChatRoute,
@@ -27,9 +29,20 @@ type CellDetails = {
 const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
 const CHAT_ROUTE_TIMEOUT_MS = 180_000;
 const SESSION_MODE_TIMEOUT_MS = 120_000;
+const UI_MODE_SWITCH_TIMEOUT_MS = 12_000;
+const POST_QUESTION_MODE_SWITCH_TIMEOUT_MS = 30_000;
+const FINAL_MODE_SWITCH_TIMEOUT_MS = 35_000;
+const PLAN_EXIT_QUESTION_TIMEOUT_MS = 15_000;
+const TERMINAL_READY_TIMEOUT_MS = 120_000;
+const MODE_POLL_INTERVAL_MS = 500;
 const CELL_TEMPLATE_LABEL = "E2E Template";
 const OPENCODE_ATTACH_URL_PATTERN = /attach\s+"([^"]+)"/;
 const TERMINAL_MODE_STATUS_PATTERN = /\b(Plan|Build)\b[\s\S]{0,120}OpenCode/g;
+const BUILD_ACTIVITY_PATTERN = /\bBuild\b[\s\S]{0,25}big-pickle/i;
+const PLAN_EXIT_QUESTION_PATTERN =
+  /Would you like to switch to the build[\s\S]{0,80}start implementing\?/i;
+const BUILD_MODE_PROMPT_TEXT =
+  "Switch to build mode and acknowledge with a short response.";
 
 test.describe("plan mode @plan-mode", () => {
   test("@plan-mode defaults new cells to plan mode", async ({ page }) => {
@@ -146,19 +159,57 @@ test.describe("plan mode @plan-mode", () => {
       throw new Error("Cell is missing OpenCode session metadata");
     }
 
-    const opencodeServerUrl = parseOpencodeServerUrl(cell.opencodeCommand);
-    await sendBuildModePromptViaOpencode({
-      opencodeServerUrl,
-      sessionId: cell.opencodeSessionId,
-      workspacePath: cell.workspacePath,
+    await ensureTerminalReady(page, {
+      context: "plan-to-build transition prompt",
+      timeoutMs: TERMINAL_READY_TIMEOUT_MS,
     });
+
+    await sendTerminalCommand(page, BUILD_MODE_PROMPT_TEXT);
+
+    const opencodeServerUrl = parseOpencodeServerUrl(cell.opencodeCommand);
+    const switchedViaUi = await waitForSessionMode({
+      apiUrl,
+      cellId,
+      expectedStartMode: "plan",
+      expectedCurrentMode: "build",
+      timeoutMs: UI_MODE_SWITCH_TIMEOUT_MS,
+      failOnTimeout: false,
+    });
+
+    let switchedAfterQuestionReply = false;
+    if (!switchedViaUi) {
+      const repliedToQuestion = await submitPlanExitQuestionFromTerminal(page);
+
+      if (repliedToQuestion) {
+        switchedAfterQuestionReply = await waitForSessionMode({
+          apiUrl,
+          cellId,
+          expectedStartMode: "plan",
+          expectedCurrentMode: "build",
+          timeoutMs: POST_QUESTION_MODE_SWITCH_TIMEOUT_MS,
+          failOnTimeout: false,
+        });
+      }
+    }
+
+    if (!(switchedViaUi || switchedAfterQuestionReply)) {
+      await sendBuildModePromptViaOpencode({
+        opencodeServerUrl,
+        sessionId: cell.opencodeSessionId,
+        workspacePath: cell.workspacePath,
+      });
+
+      await submitPlanExitQuestionFromTerminal(page);
+    }
 
     await waitForSessionMode({
       apiUrl,
       cellId,
       expectedStartMode: "plan",
       expectedCurrentMode: "build",
+      timeoutMs: FINAL_MODE_SWITCH_TIMEOUT_MS,
     });
+    await waitForBuildActivity({ page });
   });
 });
 
@@ -167,18 +218,37 @@ async function waitForSessionMode(options: {
   cellId: string;
   expectedStartMode: "plan" | "build";
   expectedCurrentMode: "plan" | "build";
-}): Promise<void> {
+  timeoutMs?: number;
+  failOnTimeout?: boolean;
+}): Promise<boolean> {
+  const timeoutMs = options.timeoutMs ?? SESSION_MODE_TIMEOUT_MS;
+
+  const check = async () => {
+    const session = await fetchAgentSession(options.apiUrl, options.cellId);
+    return (
+      session?.startMode === options.expectedStartMode &&
+      session.currentMode === options.expectedCurrentMode
+    );
+  };
+
+  if (options.failOnTimeout === false) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      if (await check()) {
+        return true;
+      }
+      await wait(MODE_POLL_INTERVAL_MS);
+    }
+    return false;
+  }
+
   await waitForCondition({
-    timeoutMs: SESSION_MODE_TIMEOUT_MS,
+    timeoutMs,
     errorMessage: `Session mode mismatch for cell ${options.cellId}`,
-    check: async () => {
-      const session = await fetchAgentSession(options.apiUrl, options.cellId);
-      return (
-        session?.startMode === options.expectedStartMode &&
-        session.currentMode === options.expectedCurrentMode
-      );
-    },
+    check,
   });
+
+  return true;
 }
 
 async function fetchAgentSession(
@@ -235,7 +305,7 @@ async function sendBuildModePromptViaOpencode(options: {
         parts: [
           {
             type: "text",
-            text: "Switch to build mode and acknowledge with a short response.",
+            text: BUILD_MODE_PROMPT_TEXT,
           },
         ],
       }),
@@ -247,6 +317,26 @@ async function sendBuildModePromptViaOpencode(options: {
       `Failed to send build-mode prompt via OpenCode server (status ${response.status})`
     );
   }
+}
+
+async function submitPlanExitQuestionFromTerminal(
+  page: Page
+): Promise<boolean> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < PLAN_EXIT_QUESTION_TIMEOUT_MS) {
+    const content =
+      (await page.locator(selectors.terminalRoot).textContent()) ?? "";
+    if (PLAN_EXIT_QUESTION_PATTERN.test(content)) {
+      await page.locator(selectors.terminalInputSurface).click();
+      await page.keyboard.press("Enter");
+      return true;
+    }
+
+    await wait(MODE_POLL_INTERVAL_MS);
+  }
+
+  return false;
 }
 
 async function waitForTerminalMode(options: {
@@ -264,5 +354,24 @@ async function waitForTerminalMode(options: {
       const latest = matches.at(-1)?.[1];
       return latest === options.expectedMode;
     },
+  });
+}
+
+async function waitForBuildActivity(options: { page: Page }): Promise<void> {
+  await waitForCondition({
+    timeoutMs: FINAL_MODE_SWITCH_TIMEOUT_MS,
+    errorMessage: "Terminal did not show build activity",
+    check: async () => {
+      const content =
+        (await options.page.locator(selectors.terminalRoot).textContent()) ??
+        "";
+      return BUILD_ACTIVITY_PATTERN.test(content);
+    },
+  });
+}
+
+async function wait(ms: number): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms);
   });
 }
