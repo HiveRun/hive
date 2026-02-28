@@ -25,6 +25,11 @@
         "defaultModel": {
           "description": "Fallback model identifier used when templates omit one",
           "type": "string"
+        },
+        "defaultMode": {
+          "description": "Default OpenCode agent mode when creating new cells",
+          "type": "string",
+          "enum": ["plan", "build"]
         }
       },
       "additionalProperties": false
@@ -279,6 +284,11 @@
         "templateId": {
           "description": "Default template to use when creating cells",
           "type": "string"
+        },
+        "startMode": {
+          "description": "Default OpenCode agent mode for new cells",
+          "type": "string",
+          "enum": ["plan", "build"]
         }
       },
       "additionalProperties": false

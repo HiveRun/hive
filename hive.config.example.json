@@ -2,7 +2,8 @@
   "$schema": "./hive.config.schema.json",
   "opencode": {
     "defaultProvider": "zen",
-    "defaultModel": "big-pickle"
+    "defaultModel": "big-pickle",
+    "defaultMode": "plan"
   },
   "promptSources": [
     "https://raw.githubusercontent.com/HiveRun/hive/refs/heads/main/docs/prompts/**/*.md"

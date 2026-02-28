@@ -98,7 +98,10 @@ describe("templatesRoutes", () => {
     };
     expect(payload.templates).toHaveLength(1);
     expect(payload.templates[0]?.id).toBe("template-basic");
-    expect(payload.defaults).toEqual(baseHiveConfig.defaults);
+    expect(payload.defaults).toEqual({
+      ...baseHiveConfig.defaults,
+      startMode: "plan",
+    });
     expect(payload.agentDefaults).toEqual(agentDefaults);
     expect(getWorkspaceRegistrySpy).toHaveBeenCalled();
     expect(loadConfigSpy).toHaveBeenCalledWith(workspacePath);

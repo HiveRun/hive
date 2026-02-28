@@ -26,6 +26,9 @@ export const agentSessionStatuses = [
 
 export type AgentSessionStatus = (typeof agentSessionStatuses)[number];
 
+export const agentModes = ["plan", "build"] as const;
+export type AgentMode = (typeof agentModes)[number];
+
 /**
  * Message roles - subset of what OpenCode supports, focused on our use cases.
  */
@@ -57,6 +60,9 @@ export type AgentSessionRecord = {
   completedAt?: string;
   modelId?: string;
   modelProviderId?: string;
+  startMode?: AgentMode;
+  currentMode?: AgentMode;
+  modeUpdatedAt?: string;
 };
 
 /**
@@ -92,5 +98,11 @@ export type AgentCompactionStats = {
 export type AgentStreamEvent =
   | { type: "history"; messages: AgentMessageRecord[] }
   | { type: "status"; status: AgentSessionStatus; error?: string }
+  | {
+      type: "mode";
+      startMode: AgentMode;
+      currentMode: AgentMode;
+      modeUpdatedAt?: string;
+    }
   | { type: "session.compaction"; properties: AgentCompactionStats }
   | OpencodeEvent;

@@ -46,6 +46,7 @@ const cellSchema = z.object({
   templateId: z.string().min(1, "Template is required"),
   modelId: z.string().optional(),
   providerId: z.string().optional(),
+  startMode: z.enum(["plan", "build"]),
 });
 
 const validateName = (value: string) => {
@@ -94,6 +95,7 @@ export function CellForm({
   const defaults = templatesData?.defaults;
   const agentDefaults = templatesData?.agentDefaults;
   const defaultTemplateId = defaults?.templateId ?? templates?.[0]?.id ?? "";
+  const defaultStartMode = defaults?.startMode ?? "plan";
 
   const defaultValues = useMemo(
     () => ({
@@ -102,8 +104,9 @@ export function CellForm({
       templateId: defaultTemplateId,
       modelId: undefined,
       providerId: undefined,
+      startMode: defaultStartMode,
     }),
-    [defaultTemplateId]
+    [defaultStartMode, defaultTemplateId]
   );
 
   const [activeTemplateId, setActiveTemplateId] = useState(
@@ -395,6 +398,33 @@ export function CellForm({
               Sets the provider/model used when the cell's agent session starts.
             </p>
           </div>
+
+          <form.Field name="startMode">
+            {(field) => (
+              <div className="space-y-2">
+                <Label htmlFor={field.name}>Start mode</Label>
+                <Select
+                  disabled={mutation.isPending}
+                  onValueChange={(value) =>
+                    field.handleChange(value as "plan" | "build")
+                  }
+                  value={field.state.value}
+                >
+                  <SelectTrigger id={field.name}>
+                    <SelectValue placeholder="Select start mode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="plan">Plan</SelectItem>
+                    <SelectItem value="build">Build</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-muted-foreground text-xs">
+                  Plan starts in read-only planning flow, then transitions to
+                  build when implementation begins.
+                </p>
+              </div>
+            )}
+          </form.Field>
 
           <div className="flex justify-end space-x-2">
             {onCancel && (
