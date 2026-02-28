@@ -349,6 +349,83 @@ describe("agent model selection", () => {
     });
   });
 
+  it("keeps explicit plan-mode model overrides when restored history reports another model", async () => {
+    sessionMessagesMock.mockResolvedValueOnce({
+      data: [
+        {
+          info: {
+            id: "msg-prime",
+            sessionID: "session-runtime",
+            role: "user",
+            time: {
+              created: Date.now(),
+              updated: Date.now(),
+            },
+            model: {
+              providerID: "opencode",
+              modelID: "gpt-5.3-codex",
+            },
+          },
+          parts: [],
+        },
+      ],
+    });
+
+    clientStub.config.providers.mockResolvedValue({
+      data: {
+        providers: [
+          {
+            id: "opencode",
+            models: {
+              "gpt-5.3-codex": { id: "opencode/gpt-5.3-codex" },
+              "glm-5": { id: "opencode/glm-5" },
+            },
+          },
+        ],
+        default: { opencode: "gpt-5.3-codex" },
+      },
+    });
+
+    const session = await ensureAgentSession(cellId, {
+      modelId: "opencode/glm-5",
+      providerId: "opencode",
+      startMode: "plan",
+    });
+
+    expect(session.provider).toBe("opencode");
+    expect(session.modelId).toBe("glm-5");
+    expect(clientStub.session.prompt).toHaveBeenNthCalledWith(1, {
+      path: { id: session.id },
+      query: { directory: "/tmp/model-test" },
+      body: {
+        agent: "plan",
+        noReply: true,
+        model: {
+          providerID: "opencode",
+          modelID: "glm-5",
+        },
+        parts: [
+          {
+            type: "text",
+            text: "",
+          },
+        ],
+      },
+    });
+    expect(clientStub.session.prompt).toHaveBeenNthCalledWith(2, {
+      path: { id: session.id },
+      query: { directory: "/tmp/model-test" },
+      body: {
+        noReply: true,
+        model: {
+          providerID: "opencode",
+          modelID: "glm-5",
+        },
+        parts: [],
+      },
+    });
+  });
+
   it("keeps runtime startup available when model seeding returns rpc errors", async () => {
     const warnSpy = vi
       .spyOn(console, "warn")

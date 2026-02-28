@@ -1454,7 +1454,14 @@ async function ensureRuntimeForCell(
     setRuntimeMode(runtime, restoredMode);
   }
 
-  if (createdSession && !restoredModel && selectionOptions?.modelId) {
+  if (
+    createdSession &&
+    shouldSeedModelPreference({
+      selectionOptions,
+      runtime,
+      restoredModel,
+    })
+  ) {
     await seedSessionModelPreference(runtime);
   }
 
@@ -1462,6 +1469,25 @@ async function ensureRuntimeForCell(
   runtimeRegistry.set(runtime.session.id, runtime);
 
   return runtime;
+}
+
+function shouldSeedModelPreference(args: {
+  selectionOptions: ModelSelectionCandidate | undefined;
+  runtime: RuntimeHandle;
+  restoredModel: { providerId: string; modelId: string } | null;
+}): boolean {
+  if (!(args.selectionOptions?.modelId && args.runtime.modelId)) {
+    return false;
+  }
+
+  if (!args.restoredModel) {
+    return true;
+  }
+
+  return !(
+    args.restoredModel.modelId === args.runtime.modelId &&
+    args.restoredModel.providerId === args.runtime.providerId
+  );
 }
 
 const isIdleValidationConfigMissingError = (error: unknown): boolean => {
@@ -1549,18 +1575,31 @@ async function primeSessionAgentMode(args: {
   sessionId: string;
   directoryQuery: DirectoryQuery;
   startMode: AgentMode;
+  providerId?: string;
+  modelId?: string;
 }): Promise<void> {
   if (args.startMode !== "plan") {
     return;
   }
 
   try {
+    const modelSelection =
+      args.providerId && args.modelId
+        ? {
+            model: {
+              providerID: args.providerId,
+              modelID: args.modelId,
+            },
+          }
+        : {};
+
     await args.client.session.prompt({
       path: { id: args.sessionId },
       query: args.directoryQuery,
       body: {
         agent: "plan",
         noReply: true,
+        ...modelSelection,
         parts: [
           {
             type: "text",
@@ -1597,6 +1636,8 @@ async function startOpencodeRuntime({
       sessionId: session.id,
       directoryQuery,
       startMode,
+      providerId,
+      modelId,
     });
   }
 

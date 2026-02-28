@@ -190,6 +190,10 @@ describe("agents by-cell model capture", () => {
       body: {
         agent: "plan",
         noReply: true,
+        model: {
+          providerID: "opencode",
+          modelID: "big-pickle",
+        },
         parts: [
           {
             type: "text",
