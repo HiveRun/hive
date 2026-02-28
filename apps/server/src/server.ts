@@ -317,15 +317,7 @@ const bootstrapSupervisor = async (): Promise<void> => {
 };
 
 const resumeProvisioning = async (): Promise<void> => {
-  try {
-    await resumeSpawningCells();
-  } catch (failure) {
-    process.stderr.write(
-      `Failed to resume cell provisioning: ${
-        failure instanceof Error ? failure.message : String(failure)
-      }\n`
-    );
-  }
+  await resumeSpawningCells();
 };
 
 const startAllServices = async (): Promise<void> => {
@@ -348,11 +340,22 @@ const startAllServices = async (): Promise<void> => {
 };
 
 const resumeAgentSessions = async (): Promise<void> => {
+  await resumeAgentSessionsOnStartup();
+};
+
+type StartupRecoveryTask = {
+  label: string;
+  run: () => Promise<void>;
+};
+
+const runStartupRecoveryTask = async (
+  task: StartupRecoveryTask
+): Promise<void> => {
   try {
-    await resumeAgentSessionsOnStartup();
+    await task.run();
   } catch (failure) {
     process.stderr.write(
-      `Failed to resume agent sessions: ${
+      `Failed to ${task.label}: ${
         failure instanceof Error ? failure.message : String(failure)
       }\n`
     );
@@ -367,9 +370,24 @@ const bootstrapServerCore = async (workspaceRoot: string): Promise<void> => {
 };
 
 const runStartupRecoveryTasks = async (): Promise<void> => {
-  await resumeProvisioning();
-  await startAllServices();
-  await resumeAgentSessions();
+  const tasks: StartupRecoveryTask[] = [
+    {
+      label: "resume cell provisioning",
+      run: resumeProvisioning,
+    },
+    {
+      label: "start services",
+      run: startAllServices,
+    },
+    {
+      label: "resume agent sessions",
+      run: resumeAgentSessions,
+    },
+  ];
+
+  for (const task of tasks) {
+    await runStartupRecoveryTask(task);
+  }
 };
 
 export const startServer = async () => {

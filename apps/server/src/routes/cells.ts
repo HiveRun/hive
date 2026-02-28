@@ -684,8 +684,14 @@ function normalizeStartMode(value: string | undefined): AgentMode | undefined {
 
 async function resolveDefaultStartMode(args: {
   workspaceRootPath: string;
+  defaultsStartMode: string | undefined;
   configDefaultMode: string | undefined;
 }): Promise<AgentMode> {
+  const defaultsStartMode = normalizeStartMode(args.defaultsStartMode);
+  if (defaultsStartMode) {
+    return defaultsStartMode;
+  }
+
   const explicitDefault = normalizeStartMode(args.configDefaultMode);
   if (explicitDefault) {
     return explicitDefault;
@@ -2855,6 +2861,7 @@ async function handleCellCreationRequest(
   const hiveConfig = await workspaceContext.loadConfig();
   const defaultStartMode = await resolveDefaultStartMode({
     workspaceRootPath: workspaceContext.workspace.path,
+    defaultsStartMode: hiveConfig.defaults?.startMode,
     configDefaultMode: hiveConfig.opencode?.defaultMode,
   });
   const body: Static<typeof CreateCellSchema> = {

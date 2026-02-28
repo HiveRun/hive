@@ -192,7 +192,11 @@ type DependencyFactoryOptions = {
   onEnsureAgentSession?: (
     cellId: string,
     sessionId: string,
-    overrides?: { modelId?: string; providerId?: string }
+    overrides?: {
+      modelId?: string;
+      providerId?: string;
+      startMode?: "plan" | "build";
+    }
   ) => void;
   hiveConfigOverride?: HiveConfig;
 };
@@ -254,7 +258,11 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
 
     ensureAgentSession: (
       cellId: string,
-      overrides?: { modelId?: string; providerId?: string }
+      overrides?: {
+        modelId?: string;
+        providerId?: string;
+        startMode?: "plan" | "build";
+      }
     ) =>
       Promise.resolve().then(() => {
         const session: AgentSessionRecord = {
@@ -503,6 +511,45 @@ describe("POST /api/cells", () => {
       modelId: "custom-model",
       providerId: "zen",
       startMode: "plan",
+    });
+  });
+
+  it("applies defaults.startMode when create request omits start mode", async () => {
+    let capturedOverrides:
+      | { modelId?: string; providerId?: string; startMode?: "plan" | "build" }
+      | undefined;
+
+    const app = createTestApp({
+      hiveConfigOverride: {
+        ...hiveConfig,
+        opencode: {
+          ...hiveConfig.opencode,
+          defaultMode: undefined,
+        },
+        defaults: {
+          ...hiveConfig.defaults,
+          startMode: "build",
+        },
+      },
+      onEnsureAgentSession: (_cellId, _sessionId, overrides) => {
+        capturedOverrides = overrides;
+      },
+    });
+
+    const payload = await createCellAndExpectSpawning({
+      app,
+      body: {
+        name: "Defaults Start Mode",
+        templateId,
+        workspaceId: "test-workspace",
+      },
+    });
+
+    await waitForCellStatus(payload.id, "ready");
+    await waitForCondition(() => Boolean(capturedOverrides));
+
+    expect(capturedOverrides).toEqual({
+      startMode: "build",
     });
   });
 
