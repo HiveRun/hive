@@ -65,6 +65,7 @@ import {
   closeAgentSession,
   closeAllAgentSessions,
   ensureAgentSession,
+  fetchAgentSessionForCell,
   fetchCompactionStats,
   resetAgentRuntimeDependencies,
   sendAgentMessage,
@@ -758,6 +759,16 @@ describe("agent model selection", () => {
           (event as { currentMode?: string }).currentMode === "build"
       )
     ).toBe(true);
+  });
+
+  it("does not resync mode from message history on cell session fetch", async () => {
+    await ensureAgentSession(cellId, { startMode: "plan" });
+    const callsBeforeFetch = sessionMessagesMock.mock.calls.length;
+
+    const session = await fetchAgentSessionForCell(cellId);
+
+    expect(session).not.toBeNull();
+    expect(sessionMessagesMock).toHaveBeenCalledTimes(callsBeforeFetch);
   });
 
   it("deletes remote opencode session when runtime stops", async () => {
