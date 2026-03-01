@@ -12,6 +12,11 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { getApiBase } from "@/lib/api-base";
+import {
+  parseTerminalSocketMessage,
+  sendTerminalSocketMessage,
+  toWebSocketUrl,
+} from "@/lib/terminal-websocket";
 
 type ConnectionState =
   | "connecting"
@@ -43,6 +48,7 @@ type ReadyPayload = {
 const API_BASE = getApiBase();
 const OUTPUT_BUFFER_LIMIT = 250_000;
 const RESIZE_DEBOUNCE_MS = 120;
+const SOCKET_RECONNECT_DELAY_MS = 800;
 const TERMINAL_FONT_FAMILY =
   '"JetBrainsMono Nerd Font", "MesloLGS NF", "CaskaydiaMono Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font Mono", "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Noto Color Emoji", monospace';
 
@@ -57,7 +63,7 @@ const appendOutput = (current: string, chunk: string): string => {
 export function PtyStreamTerminal({
   title,
   streamPath,
-  resizePath,
+  resizePath: _resizePath,
   inputPath,
   allowInput = false,
   emptyMessage = "No output yet.",
@@ -75,40 +81,59 @@ export function PtyStreamTerminal({
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<{ fit: () => void } | null>(null);
   const serializeAddonRef = useRef<{ serialize: () => string } | null>(null);
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const inputListenerRef = useRef<{ dispose: () => void } | null>(null);
   const outputRef = useRef<string>("");
   const resizeTimeoutRef = useRef<number | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [session, setSession] = useState<RuntimeTerminalSession | null>(null);
   const [setupDisplayState, setSetupDisplayState] =
     useState<SetupDisplayState>("unknown");
 
-  const sendResize = useCallback(
-    async (cols: number, rows: number) => {
-      const response = await fetch(`${API_BASE}${resizePath}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ cols, rows }),
-      });
+  const buildSocketEndpoint = useCallback(() => {
+    const wsPath = streamPath.endsWith("/stream")
+      ? `${streamPath.slice(0, -"/stream".length)}/ws`
+      : streamPath;
+    return toWebSocketUrl(`${API_BASE}${wsPath}`);
+  }, [streamPath]);
 
-      if (!response.ok) {
-        throw new Error(`Resize failed with ${response.status}`);
+  const sendSocketMessage = useCallback(
+    (message: { type: string; [key: string]: unknown }) => {
+      const sent = sendTerminalSocketMessage(socketRef.current, message);
+      if (sent) {
+        return true;
       }
 
-      const payload = (await response.json()) as {
-        session?: RuntimeTerminalSession;
-      };
-
-      if (payload.session) {
-        setSession(payload.session);
-      }
+      setConnection((current) =>
+        current === "exited" ? "exited" : "disconnected"
+      );
+      setErrorMessage("Terminal socket disconnected. Reconnecting…");
+      return false;
     },
-    [resizePath]
+    []
+  );
+
+  const sendResize = useCallback(
+    (cols: number, rows: number) => {
+      const sent = sendSocketMessage({ type: "resize", cols, rows });
+      if (!sent) {
+        throw new Error("Terminal socket unavailable");
+      }
+
+      setSession((current) =>
+        current
+          ? {
+              ...current,
+              cols,
+              rows,
+            }
+          : current
+      );
+    },
+    [sendSocketMessage]
   );
 
   const scheduleResizeSync = useCallback(() => {
@@ -126,31 +151,23 @@ export function PtyStreamTerminal({
       if (!activeTerminal) {
         return;
       }
-      sendResize(activeTerminal.cols, activeTerminal.rows).catch(() => {
+      try {
+        sendResize(activeTerminal.cols, activeTerminal.rows);
+      } catch {
         // ignore transient resize failures while reconnecting
-      });
+      }
     }, RESIZE_DEBOUNCE_MS);
   }, [sendResize]);
 
   const sendInput = useCallback(
-    async (data: string) => {
+    (data: string) => {
       if (!(allowInput && inputPath)) {
         return;
       }
 
-      const response = await fetch(`${API_BASE}${inputPath}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ data }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Input failed with ${response.status}`);
-      }
+      sendSocketMessage({ type: "input", data });
     },
-    [allowInput, inputPath]
+    [allowInput, inputPath, sendSocketMessage]
   );
 
   const copyTerminalOutput = useCallback(async () => {
@@ -178,28 +195,35 @@ export function PtyStreamTerminal({
     setSetupDisplayState("unknown");
 
     const connectStream = () => {
-      const source = new EventSource(`${API_BASE}${streamPath}`);
-      eventSourceRef.current = source;
+      const socket = new WebSocket(buildSocketEndpoint());
+      socketRef.current = socket;
 
-      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: ready payload supports both direct and wrapped session formats.
-      source.addEventListener("ready", (event) => {
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: websocket messages preserve setup + terminal session state transitions.
+      socket.onmessage = (event) => {
         if (disposed) {
           return;
         }
-        const payload = JSON.parse((event as MessageEvent<string>).data) as
-          | ReadyPayload
-          | RuntimeTerminalSession;
 
-        if ("sessionId" in payload) {
-          const readySession = payload as RuntimeTerminalSession;
-          setSession(readySession);
-          setConnection(readySession.status === "exited" ? "exited" : "online");
-          if (mode === "setup") {
-            setSetupDisplayState(
-              readySession.status === "exited" ? "completed" : "active"
-            );
-          }
-        } else {
+        const message = parseTerminalSocketMessage(event);
+        if (!message) {
+          return;
+        }
+
+        if (message.type === "ready") {
+          const payload = {
+            session:
+              (message.session as RuntimeTerminalSession | null | undefined) ??
+              null,
+            setupState:
+              typeof message.setupState === "string"
+                ? (message.setupState as SetupTerminalState)
+                : undefined,
+            lastSetupError:
+              typeof message.lastSetupError === "string"
+                ? message.lastSetupError
+                : null,
+          } satisfies ReadyPayload;
+
           const readySession = payload.session;
           setSession(readySession);
 
@@ -224,105 +248,103 @@ export function PtyStreamTerminal({
           setConnection(nextState);
 
           if (mode === "setup") {
-            setSetupDisplayState(payload.setupState ?? "unknown");
+            if (payload.setupState) {
+              setSetupDisplayState(payload.setupState);
+            } else if (readySession?.status === "running") {
+              setSetupDisplayState("active");
+            }
           }
 
-          setErrorMessage(
-            payload.setupState === "failed" && payload.lastSetupError
-              ? payload.lastSetupError
-              : null
-          );
-        }
-
-        if ("sessionId" in payload || payload.setupState !== "failed") {
-          setErrorMessage(null);
-        }
-        scheduleResizeSync();
-      });
-
-      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: snapshot replay reconciles reconnect state and incremental chunks.
-      source.addEventListener("snapshot", (event) => {
-        if (disposed) {
-          return;
-        }
-        const terminal = terminalRef.current;
-        if (!terminal) {
+          if (payload.setupState === "failed" && payload.lastSetupError) {
+            setErrorMessage(payload.lastSetupError);
+          } else if (payload.setupState) {
+            setErrorMessage(null);
+          }
+          scheduleResizeSync();
           return;
         }
 
-        const payload = JSON.parse((event as MessageEvent<string>).data) as {
-          output: string;
-        };
-        const snapshot = payload.output ?? "";
-
-        if (snapshot.startsWith(outputRef.current)) {
-          const delta = snapshot.slice(outputRef.current.length);
-          if (delta.length > 0) {
-            terminal.write(delta);
+        if (message.type === "snapshot") {
+          const terminal = terminalRef.current;
+          if (!terminal) {
+            return;
           }
-        } else {
-          terminal.write("\x1bc");
+
+          const snapshot =
+            typeof message.output === "string" ? message.output : "";
+
+          if (snapshot.startsWith(outputRef.current)) {
+            const delta = snapshot.slice(outputRef.current.length);
+            if (delta.length > 0) {
+              terminal.write(delta);
+            }
+          } else {
+            terminal.write("\x1bc");
+            if (snapshot.length > 0) {
+              terminal.write(snapshot);
+            }
+          }
+
+          outputRef.current = snapshot;
           if (snapshot.length > 0) {
-            terminal.write(snapshot);
+            setConnection((current) =>
+              current === "exited" ? "exited" : "online"
+            );
           }
+          return;
         }
 
-        outputRef.current = snapshot;
-        if (snapshot.length > 0) {
+        if (message.type === "data") {
+          const terminal = terminalRef.current;
+          if (!terminal) {
+            return;
+          }
+
+          const chunk = typeof message.chunk === "string" ? message.chunk : "";
+          if (chunk.length === 0) {
+            return;
+          }
+
+          terminal.write(chunk);
+          outputRef.current = appendOutput(outputRef.current, chunk);
           setConnection((current) =>
             current === "exited" ? "exited" : "online"
           );
-        }
-      });
-
-      source.addEventListener("data", (event) => {
-        if (disposed) {
-          return;
-        }
-        const terminal = terminalRef.current;
-        if (!terminal) {
           return;
         }
 
-        const payload = JSON.parse((event as MessageEvent<string>).data) as {
-          chunk: string;
-        };
-        const chunk = payload.chunk ?? "";
-        if (chunk.length === 0) {
+        if (message.type === "exit") {
+          const exitCode =
+            typeof message.exitCode === "number" ? message.exitCode : 0;
+          setConnection("exited");
+          if (mode === "setup") {
+            setSetupDisplayState(exitCode === 0 ? "completed" : "failed");
+          }
+          setSession((current) =>
+            current
+              ? {
+                  ...current,
+                  status: "exited",
+                  exitCode,
+                }
+              : current
+          );
           return;
         }
 
-        terminal.write(chunk);
-        outputRef.current = appendOutput(outputRef.current, chunk);
-        setConnection((current) =>
-          current === "exited" ? "exited" : "online"
-        );
-      });
-
-      source.addEventListener("exit", (event) => {
-        if (disposed) {
-          return;
+        if (message.type === "error") {
+          const description =
+            typeof message.message === "string"
+              ? message.message
+              : "Terminal socket error";
+          setConnection((current) =>
+            current === "exited" ? "exited" : "disconnected"
+          );
+          setErrorMessage(description);
         }
-        const payload = JSON.parse((event as MessageEvent<string>).data) as {
-          exitCode: number;
-          signal: number | string | null;
-        };
-        setConnection("exited");
-        if (mode === "setup") {
-          setSetupDisplayState(payload.exitCode === 0 ? "completed" : "failed");
-        }
-        setSession((current) =>
-          current
-            ? {
-                ...current,
-                status: "exited",
-                exitCode: payload.exitCode,
-              }
-            : current
-        );
-      });
+      };
 
-      source.onerror = () => {
+      socket.onclose = () => {
         if (disposed) {
           return;
         }
@@ -330,7 +352,24 @@ export function PtyStreamTerminal({
         setConnection((current) =>
           current === "exited" ? "exited" : "disconnected"
         );
-        setErrorMessage("Terminal stream disconnected. Reconnecting…");
+        setErrorMessage("Terminal socket disconnected. Reconnecting…");
+
+        if (reconnectTimeoutRef.current !== null) {
+          return;
+        }
+
+        reconnectTimeoutRef.current = window.setTimeout(() => {
+          reconnectTimeoutRef.current = null;
+          if (disposed) {
+            return;
+          }
+
+          connectStream();
+        }, SOCKET_RECONNECT_DELAY_MS);
+      };
+
+      socket.onerror = () => {
+        socket.close();
       };
     };
 
@@ -397,9 +436,7 @@ export function PtyStreamTerminal({
       inputListenerRef.current =
         allowInput && inputPath
           ? terminal.onData((data) => {
-              sendInput(data).catch(() => {
-                // ignore transient input failures while reconnecting
-              });
+              sendInput(data);
             })
           : null;
 
@@ -426,11 +463,15 @@ export function PtyStreamTerminal({
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);
       }
+      if (reconnectTimeoutRef.current !== null) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
       window.removeEventListener("resize", scheduleResizeSync);
       resizeObserverRef.current?.disconnect();
       resizeObserverRef.current = null;
-      eventSourceRef.current?.close();
-      eventSourceRef.current = null;
+      socketRef.current?.close();
+      socketRef.current = null;
       inputListenerRef.current?.dispose();
       inputListenerRef.current = null;
       terminalRef.current?.dispose();
@@ -438,7 +479,14 @@ export function PtyStreamTerminal({
       fitAddonRef.current = null;
       serializeAddonRef.current = null;
     };
-  }, [allowInput, inputPath, mode, scheduleResizeSync, sendInput, streamPath]);
+  }, [
+    allowInput,
+    buildSocketEndpoint,
+    inputPath,
+    mode,
+    scheduleResizeSync,
+    sendInput,
+  ]);
 
   const connectionLabelMap: Record<ConnectionState, string> = {
     online: "Connected",

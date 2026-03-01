@@ -46,10 +46,10 @@ const SILENCE_OPTIONS_REQUEST_LOGS =
   process.env.HIVE_LOG_OPTIONS_REQUESTS !== "1";
 
 const TERMINAL_TRAFFIC_PATH_PATTERNS = [
-  /^\/api\/cells\/[^/]+\/chat\/terminal\/(stream|input|resize)$/,
-  /^\/api\/cells\/[^/]+\/terminal\/(stream|input|resize)$/,
-  /^\/api\/cells\/[^/]+\/setup\/terminal\/(input|resize)$/,
-  /^\/api\/cells\/[^/]+\/services\/[^/]+\/terminal\/(input|resize)$/,
+  /^\/api\/cells\/[^/]+\/chat\/terminal\/(stream|ws|input|resize)$/,
+  /^\/api\/cells\/[^/]+\/terminal\/(stream|ws|input|resize)$/,
+  /^\/api\/cells\/[^/]+\/setup\/terminal\/(stream|ws|input|resize)$/,
+  /^\/api\/cells\/[^/]+\/services\/[^/]+\/terminal\/(stream|ws|input|resize)$/,
 ];
 
 const POLLING_TRAFFIC_PATH_PATTERNS = [
