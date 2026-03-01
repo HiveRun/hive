@@ -37,7 +37,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Install Playwright Chromium
-        run: bun --filter web exec playwright install --with-deps chromium
+        run: bun run --cwd apps/web install:browsers
 
       - name: Run Storybook visual snapshot checks
         run: bun run --cwd apps/web visual:test
