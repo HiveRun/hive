@@ -878,6 +878,39 @@ type TerminalRouteSocket = {
   close: () => void;
 };
 
+type SetupTerminalWsState = {
+  kind: "setup";
+  deps: CellRouteDependencies;
+  cellId: string;
+};
+
+type ServiceTerminalWsState = {
+  kind: "service";
+  deps: CellRouteDependencies;
+  serviceId: string;
+};
+
+type CellTerminalWsState = {
+  kind: "cell";
+  deps: CellRouteDependencies;
+  cellId: string;
+  workspacePath: string;
+};
+
+type ChatTerminalWsState = {
+  kind: "chat";
+  deps: CellRouteDependencies;
+  cell: typeof cells.$inferSelect;
+  themeMode: OpencodeThemeMode;
+  chatTerminal: ChatTerminalDependencies;
+};
+
+type TerminalWsState =
+  | SetupTerminalWsState
+  | ServiceTerminalWsState
+  | CellTerminalWsState
+  | ChatTerminalWsState;
+
 const sendWsError = (ws: TerminalRouteSocket, message: string) => {
   ws.send({ type: "error", message });
 };
@@ -947,14 +980,9 @@ const handleServiceTerminalWsResize = (args: {
 const handleCellTerminalWsInput = (args: {
   deps: CellRouteDependencies;
   cellId: string;
-  workspacePath: string;
   data: string;
 }) => {
-  const { deps, cellId, workspacePath, data } = args;
-  deps.ensureTerminalSession({
-    cellId,
-    workspacePath,
-  });
+  const { deps, cellId, data } = args;
   deps.writeTerminalInput(cellId, data);
 };
 
@@ -1011,6 +1039,7 @@ export function createCellsRoutes(
   });
 
   const wsCleanupById = new Map<string, () => void>();
+  const wsStateById = new Map<string, TerminalWsState>();
 
   const registerWsCleanup = (socketId: string, cleanup: () => void) => {
     const existing = wsCleanupById.get(socketId);
@@ -1018,10 +1047,27 @@ export function createCellsRoutes(
     wsCleanupById.set(socketId, cleanup);
   };
 
+  const setWsState = (socketId: string, state: TerminalWsState) => {
+    wsStateById.set(socketId, state);
+  };
+
+  const getWsState = <Kind extends TerminalWsState["kind"]>(
+    socketId: string,
+    kind: Kind
+  ): Extract<TerminalWsState, { kind: Kind }> | null => {
+    const state = wsStateById.get(socketId);
+    if (!state || state.kind !== kind) {
+      return null;
+    }
+
+    return state as Extract<TerminalWsState, { kind: Kind }>;
+  };
+
   const runWsCleanup = (socketId: string) => {
     const cleanup = wsCleanupById.get(socketId);
     cleanup?.();
     wsCleanupById.delete(socketId);
+    wsStateById.delete(socketId);
   };
 
   return new Elysia({ prefix: "/api/cells" })
@@ -1790,6 +1836,11 @@ export function createCellsRoutes(
         });
 
         registerWsCleanup(ws.id, unsubscribe);
+        setWsState(ws.id, {
+          kind: "setup",
+          deps,
+          cellId: cell.id,
+        });
 
         ws.send({
           type: "ready",
@@ -1802,40 +1853,41 @@ export function createCellsRoutes(
           ws.send({ type: "snapshot", output: initialOutput });
         }
       },
-      async message(ws, rawMessage) {
+      message(ws, rawMessage) {
         const message = parseTerminalWsMessage(rawMessage);
         if (!message) {
           ws.send({ type: "error", message: "Invalid websocket message" });
           return;
         }
 
-        try {
-          const deps = await resolveDeps();
-          const { db: database } = deps;
-          const cell = await loadCellById(database, ws.data.params.id);
-          if (!cell) {
-            ws.send({ type: "error", message: "Cell not found" });
-            ws.close();
-            return;
-          }
+        const state = getWsState(ws.id, "setup");
+        if (!state) {
+          ws.send({
+            type: "error",
+            message: "Terminal websocket session is unavailable",
+          });
+          ws.close();
+          return;
+        }
 
+        try {
           switch (message.type) {
             case "ping":
               ws.send({ type: "pong" });
               return;
             case "input":
               handleSetupTerminalWsInput({
-                deps,
+                deps: state.deps,
                 ws,
-                cellId: cell.id,
+                cellId: state.cellId,
                 data: message.data,
               });
               return;
             case "resize":
               handleSetupTerminalWsResize({
-                deps,
+                deps: state.deps,
                 ws,
-                cellId: cell.id,
+                cellId: state.cellId,
                 cols: message.cols,
                 rows: message.rows,
               });
@@ -2057,50 +2109,52 @@ export function createCellsRoutes(
         );
 
         registerWsCleanup(ws.id, unsubscribe);
+        setWsState(ws.id, {
+          kind: "service",
+          deps,
+          serviceId: row.service.id,
+        });
 
         ws.send({ type: "ready", session });
         if (initialOutput.length > 0) {
           ws.send({ type: "snapshot", output: initialOutput });
         }
       },
-      async message(ws, rawMessage) {
+      message(ws, rawMessage) {
         const message = parseTerminalWsMessage(rawMessage);
         if (!message) {
           ws.send({ type: "error", message: "Invalid websocket message" });
           return;
         }
 
-        try {
-          const deps = await resolveDeps();
-          const { db: database } = deps;
-          const row = await fetchServiceRow(
-            database,
-            ws.data.params.id,
-            ws.data.params.serviceId
-          );
-          if (!row) {
-            ws.send({ type: "error", message: "Service not found" });
-            ws.close();
-            return;
-          }
+        const state = getWsState(ws.id, "service");
+        if (!state) {
+          ws.send({
+            type: "error",
+            message: "Terminal websocket session is unavailable",
+          });
+          ws.close();
+          return;
+        }
 
+        try {
           switch (message.type) {
             case "ping":
               ws.send({ type: "pong" });
               return;
             case "input":
               handleServiceTerminalWsInput({
-                deps,
+                deps: state.deps,
                 ws,
-                serviceId: row.service.id,
+                serviceId: state.serviceId,
                 data: message.data,
               });
               return;
             case "resize":
               handleServiceTerminalWsResize({
-                deps,
+                deps: state.deps,
                 ws,
-                serviceId: row.service.id,
+                serviceId: state.serviceId,
                 cols: message.cols,
                 rows: message.rows,
               });
@@ -2379,6 +2433,13 @@ export function createCellsRoutes(
         );
 
         registerWsCleanup(ws.id, unsubscribe);
+        setWsState(ws.id, {
+          kind: "chat",
+          deps,
+          cell,
+          themeMode,
+          chatTerminal: prepared.chatTerminal,
+        });
 
         ws.send({ type: "ready", session: prepared.session });
         if (initialOutput.length > 0) {
@@ -2392,69 +2453,63 @@ export function createCellsRoutes(
           return;
         }
 
+        const state = getWsState(ws.id, "chat");
+        if (!state) {
+          ws.send({
+            type: "error",
+            message: "Terminal websocket session is unavailable",
+          });
+          ws.close();
+          return;
+        }
+
         try {
-          const deps = await resolveDeps();
-          const { db: database } = deps;
-          const cell = await loadCellById(database, ws.data.params.id);
-          if (!cell) {
-            ws.send({ type: "error", message: "Cell not found" });
-            ws.close();
-            return;
-          }
-
-          if (!isCellReadyForChat(cell)) {
-            ws.send({
-              type: "error",
-              message:
-                "Chat terminal is unavailable until provisioning completes",
-            });
-            return;
-          }
-
-          const themeMode = normalizeOpencodeThemeMode(
-            ws.data.query?.themeMode
-          );
-          const prepared = await ensureChatTerminalSessionForCell(
-            deps,
-            cell,
-            themeMode
-          );
-
           switch (message.type) {
             case "ping":
               ws.send({ type: "pong" });
               return;
             case "input":
-              prepared.chatTerminal.writeChatTerminalInput(
-                cell.id,
+              state.chatTerminal.writeChatTerminalInput(
+                state.cell.id,
                 message.data
               );
               return;
-            case "resize":
-              prepared.chatTerminal.resizeChatTerminal(
-                cell.id,
+            case "resize": {
+              state.chatTerminal.resizeChatTerminal(
+                state.cell.id,
                 message.cols,
                 message.rows
               );
+              const resizedSession = state.chatTerminal.getChatTerminalSession(
+                state.cell.id
+              );
+              if (!resizedSession) {
+                ws.send({
+                  type: "error",
+                  message: "Chat terminal session not available",
+                });
+                return;
+              }
               ws.send({
                 type: "ready",
-                session: {
-                  ...prepared.session,
-                  cols: message.cols,
-                  rows: message.rows,
-                },
+                session: resizedSession,
               });
               return;
+            }
             case "restart": {
-              prepared.chatTerminal.closeChatTerminalSession(cell.id);
+              state.chatTerminal.closeChatTerminalSession(state.cell.id);
               const restarted = await ensureChatTerminalSessionForCell(
-                deps,
-                cell,
-                themeMode
+                state.deps,
+                state.cell,
+                state.themeMode
               );
               const output = restarted.chatTerminal.readChatTerminalOutput(
-                cell.id
+                state.cell.id
               );
+              setWsState(ws.id, {
+                ...state,
+                chatTerminal: restarted.chatTerminal,
+              });
               ws.send({ type: "ready", session: restarted.session });
               ws.send({ type: "snapshot", output });
               return;
@@ -2761,58 +2816,64 @@ export function createCellsRoutes(
         });
 
         registerWsCleanup(ws.id, unsubscribe);
+        setWsState(ws.id, {
+          kind: "cell",
+          deps,
+          cellId: cell.id,
+          workspacePath: cell.workspacePath,
+        });
 
         ws.send({ type: "ready", session });
         if (initialOutput.length > 0) {
           ws.send({ type: "snapshot", output: initialOutput });
         }
       },
-      async message(ws, rawMessage) {
+      message(ws, rawMessage) {
         const message = parseTerminalWsMessage(rawMessage);
         if (!message) {
           ws.send({ type: "error", message: "Invalid websocket message" });
           return;
         }
 
-        try {
-          const deps = await resolveDeps();
-          const { db: database } = deps;
-          const cell = await loadCellById(database, ws.data.params.id);
-          if (!cell) {
-            ws.send({ type: "error", message: "Cell not found" });
-            ws.close();
-            return;
-          }
+        const state = getWsState(ws.id, "cell");
+        if (!state) {
+          ws.send({
+            type: "error",
+            message: "Terminal websocket session is unavailable",
+          });
+          ws.close();
+          return;
+        }
 
+        try {
           switch (message.type) {
             case "ping":
               ws.send({ type: "pong" });
               return;
             case "input":
               handleCellTerminalWsInput({
-                deps,
-                cellId: cell.id,
-                workspacePath: cell.workspacePath,
+                deps: state.deps,
+                cellId: state.cellId,
                 data: message.data,
               });
               return;
             case "resize":
               handleCellTerminalWsResize({
-                deps,
+                deps: state.deps,
                 ws,
-                cellId: cell.id,
-                workspacePath: cell.workspacePath,
+                cellId: state.cellId,
+                workspacePath: state.workspacePath,
                 cols: message.cols,
                 rows: message.rows,
               });
               return;
             case "restart": {
-              deps.closeTerminalSession(cell.id);
-              const session = deps.ensureTerminalSession({
-                cellId: cell.id,
-                workspacePath: cell.workspacePath,
+              state.deps.closeTerminalSession(state.cellId);
+              const session = state.deps.ensureTerminalSession({
+                cellId: state.cellId,
+                workspacePath: state.workspacePath,
               });
-              const output = deps.readTerminalOutput(cell.id);
+              const output = state.deps.readTerminalOutput(state.cellId);
               ws.send({ type: "ready", session });
               ws.send({ type: "snapshot", output });
               return;

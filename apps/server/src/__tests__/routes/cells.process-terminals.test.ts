@@ -20,6 +20,7 @@ const SERVICE_RESIZE_COLS = 132;
 const SERVICE_RESIZE_ROWS = 44;
 const SETUP_INPUT = "echo setup\n";
 const SERVICE_INPUT = "echo service\n";
+const NORMAL_WS_CLOSE_CODE = 1000;
 
 const createTerminalHarness = () => {
   const setupListeners = new Set<(event: ServiceTerminalEvent) => void>();
@@ -254,6 +255,60 @@ const decodeChunk = (value: unknown): string => {
   return "";
 };
 
+const getWebSocketHooks = (app: unknown, path: string) => {
+  const routes = (app as { router: { history: unknown[] } }).router.history;
+  const route = routes.find(
+    (entry) =>
+      (entry as { method?: string }).method === "WS" &&
+      (entry as { path?: string }).path === path
+  ) as
+    | {
+        hooks?: {
+          websocket?: {
+            open?: (ws: unknown) => unknown;
+            message?: (ws: unknown, message: unknown) => unknown;
+            close?: (ws: unknown, code: number, reason: string) => unknown;
+          };
+        };
+      }
+    | undefined;
+
+  if (!route?.hooks?.websocket) {
+    throw new Error(`Websocket route not found for ${path}`);
+  }
+
+  return route.hooks.websocket;
+};
+
+const createMockWebSocket = (args: {
+  id: string;
+  params: { id: string; serviceId?: string };
+}) => {
+  const messages: Record<string, unknown>[] = [];
+  let closed = false;
+
+  const socket = {
+    id: args.id,
+    data: {
+      params: args.params,
+    },
+    send(payload: unknown) {
+      if (payload && typeof payload === "object") {
+        messages.push(payload as Record<string, unknown>);
+      }
+    },
+    close() {
+      closed = true;
+    },
+  };
+
+  return {
+    socket,
+    messages,
+    isClosed: () => closed,
+  };
+};
+
 describe("service/setup terminal routes", () => {
   beforeAll(async () => {
     await setupTestDb();
@@ -432,5 +487,84 @@ describe("service/setup terminal routes", () => {
 
     expect(response.status).toBe(HTTP_OK);
     expect(harness.getServiceInputs()).toEqual([SERVICE_INPUT]);
+  });
+
+  it("handles setup terminal websocket messages", async () => {
+    await seedData();
+    const harness = createTerminalHarness();
+    const app = new Elysia().use(
+      createCellsRoutes(createDependencies(harness))
+    );
+    const hooks = getWebSocketHooks(app, "/api/cells/:id/setup/terminal/ws");
+    const ws = createMockWebSocket({
+      id: "setup-terminal-ws-1",
+      params: { id: TEST_CELL_ID },
+    });
+
+    await hooks.open?.(ws.socket);
+    expect(ws.messages.some((entry) => entry.type === "ready")).toBeTruthy();
+
+    hooks.message?.(
+      ws.socket,
+      JSON.stringify({ type: "input", data: SETUP_INPUT })
+    );
+    expect(harness.getSetupInputs()).toEqual([SETUP_INPUT]);
+
+    hooks.message?.(
+      ws.socket,
+      JSON.stringify({
+        type: "resize",
+        cols: SETUP_RESIZE_COLS,
+        rows: SETUP_RESIZE_ROWS,
+      })
+    );
+    expect(ws.messages.some((entry) => entry.type === "ready")).toBeTruthy();
+
+    hooks.message?.(ws.socket, JSON.stringify({ type: "ping" }));
+    expect(ws.messages.some((entry) => entry.type === "pong")).toBeTruthy();
+
+    hooks.close?.(ws.socket, NORMAL_WS_CLOSE_CODE, "closed");
+    expect(ws.isClosed()).toBeFalsy();
+  });
+
+  it("handles service terminal websocket messages", async () => {
+    await seedData();
+    const harness = createTerminalHarness();
+    const app = new Elysia().use(
+      createCellsRoutes(createDependencies(harness))
+    );
+    const hooks = getWebSocketHooks(
+      app,
+      "/api/cells/:id/services/:serviceId/terminal/ws"
+    );
+    const ws = createMockWebSocket({
+      id: "service-terminal-ws-1",
+      params: { id: TEST_CELL_ID, serviceId: TEST_SERVICE_ID },
+    });
+
+    await hooks.open?.(ws.socket);
+    expect(ws.messages.some((entry) => entry.type === "ready")).toBeTruthy();
+
+    hooks.message?.(
+      ws.socket,
+      JSON.stringify({ type: "input", data: SERVICE_INPUT })
+    );
+    expect(harness.getServiceInputs()).toEqual([SERVICE_INPUT]);
+
+    hooks.message?.(
+      ws.socket,
+      JSON.stringify({
+        type: "resize",
+        cols: SERVICE_RESIZE_COLS,
+        rows: SERVICE_RESIZE_ROWS,
+      })
+    );
+    expect(ws.messages.some((entry) => entry.type === "ready")).toBeTruthy();
+
+    hooks.message?.(ws.socket, JSON.stringify({ type: "ping" }));
+    expect(ws.messages.some((entry) => entry.type === "pong")).toBeTruthy();
+
+    hooks.close?.(ws.socket, NORMAL_WS_CLOSE_CODE, "closed");
+    expect(ws.isClosed()).toBeFalsy();
   });
 });

@@ -23,6 +23,7 @@ const RESIZED_COLS = 132;
 const RESIZED_ROWS = 42;
 const SERVER_URL = "http://127.0.0.1:4096";
 const AGENT_SESSION_ID = "agent-session-1";
+const NORMAL_WS_CLOSE_CODE = 1000;
 
 function createChatTerminalHarness() {
   const listeners = new Set<(event: ChatTerminalEvent) => void>();
@@ -211,6 +212,63 @@ async function seedCell() {
   });
 }
 
+const getWebSocketHooks = (app: unknown, path: string) => {
+  const routes = (app as unknown as { router: { history: unknown[] } }).router
+    .history;
+  const route = routes.find(
+    (entry) =>
+      (entry as { method?: string }).method === "WS" &&
+      (entry as { path?: string }).path === path
+  ) as
+    | {
+        hooks?: {
+          websocket?: {
+            open?: (ws: unknown) => unknown;
+            message?: (ws: unknown, message: unknown) => unknown;
+            close?: (ws: unknown, code: number, reason: string) => unknown;
+          };
+        };
+      }
+    | undefined;
+
+  if (!route?.hooks?.websocket) {
+    throw new Error(`Websocket route not found for ${path}`);
+  }
+
+  return route.hooks.websocket;
+};
+
+const createMockWebSocket = (args: {
+  id: string;
+  params: { id: string };
+  query?: { themeMode?: string };
+}) => {
+  const messages: Record<string, unknown>[] = [];
+  let closed = false;
+
+  const socket = {
+    id: args.id,
+    data: {
+      params: args.params,
+      ...(args.query ? { query: args.query } : {}),
+    },
+    send(payload: unknown) {
+      if (payload && typeof payload === "object") {
+        messages.push(payload as Record<string, unknown>);
+      }
+    },
+    close() {
+      closed = true;
+    },
+  };
+
+  return {
+    socket,
+    messages,
+    isClosed: () => closed,
+  };
+};
+
 describe("Cell chat terminal routes", () => {
   beforeAll(async () => {
     await setupTestDb();
@@ -377,5 +435,60 @@ describe("Cell chat terminal routes", () => {
         modelId: "big-pickle",
       },
     });
+  });
+
+  it("handles websocket input, resize, restart, and cached session context", async () => {
+    await seedCell();
+    const harness = createChatTerminalHarness();
+    const deps = createDependencies(harness);
+    const app = new Elysia().use(createCellsRoutes(deps));
+    const hooks = getWebSocketHooks(app, "/api/cells/:id/chat/terminal/ws");
+    const ws = createMockWebSocket({
+      id: "chat-ws-1",
+      params: { id: TEST_CELL_ID },
+      query: { themeMode: "light" },
+    });
+
+    await hooks.open?.(ws.socket);
+    expect(harness.ensureSession).toHaveBeenCalled();
+    expect(ws.messages.some((entry) => entry.type === "ready")).toBeTruthy();
+
+    await hooks.message?.(
+      ws.socket,
+      JSON.stringify({ type: "input", data: "ws hello\n" })
+    );
+    expect(harness.write).toHaveBeenCalledWith(TEST_CELL_ID, "ws hello\n");
+
+    await hooks.message?.(
+      ws.socket,
+      JSON.stringify({
+        type: "resize",
+        cols: RESIZED_COLS,
+        rows: RESIZED_ROWS,
+      })
+    );
+    expect(harness.resize).toHaveBeenCalledWith(
+      TEST_CELL_ID,
+      RESIZED_COLS,
+      RESIZED_ROWS
+    );
+
+    await testDb.delete(cells);
+    await hooks.message?.(
+      ws.socket,
+      JSON.stringify({ type: "input", data: "cached\n" })
+    );
+    expect(harness.write).toHaveBeenCalledWith(TEST_CELL_ID, "cached\n");
+
+    await hooks.message?.(ws.socket, JSON.stringify({ type: "restart" }));
+    expect(harness.closeSession).toHaveBeenCalledWith(TEST_CELL_ID);
+    expect(
+      ws.messages.some(
+        (entry) => entry.type === "snapshot" && typeof entry.output === "string"
+      )
+    ).toBeTruthy();
+
+    hooks.close?.(ws.socket, NORMAL_WS_CLOSE_CODE, "closed");
+    expect(ws.isClosed()).toBeFalsy();
   });
 });

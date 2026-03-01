@@ -43,6 +43,8 @@ const STARTUP_VISIBLE_BUFFER_LIMIT = 8192;
 const STARTUP_FALLBACK_VISIBLE_LENGTH = 48;
 const STARTUP_FALLBACK_READY_DELAY_MS = 2500;
 const SOCKET_RECONNECT_DELAY_MS = 800;
+const INPUT_BATCH_WINDOW_MS = 16;
+const INPUT_BATCH_FLUSH_SIZE = 1024;
 const ASCII_NULL_CODE = 0x00;
 const ASCII_ESCAPE_CODE = 0x1b;
 const ASCII_BELL_CODE = 0x07;
@@ -190,6 +192,12 @@ const appendVisibleBuffer = (current: string, chunk: string): string => {
   return next.slice(next.length - STARTUP_VISIBLE_BUFFER_LIMIT);
 };
 
+const isImmediateInputChunk = (data: string, bufferedLength: number) =>
+  data === "\r" ||
+  data === "\u0003" ||
+  data === "\u0004" ||
+  bufferedLength >= INPUT_BATCH_FLUSH_SIZE;
+
 function createWheelBridge(
   target: HTMLElement,
   wheelScrollBehavior: "terminal" | "line-keys",
@@ -267,6 +275,8 @@ export function CellTerminal({
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const outputRef = useRef<string>("");
   const visibleOutputRef = useRef<string>("");
+  const inputBufferRef = useRef<string>("");
+  const inputFlushTimeoutRef = useRef<number | null>(null);
   const resizeTimeoutRef = useRef<number | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -356,15 +366,50 @@ export function CellTerminal({
     [sendSocketMessage]
   );
 
+  const flushQueuedInput = useCallback(() => {
+    if (
+      typeof window !== "undefined" &&
+      inputFlushTimeoutRef.current !== null
+    ) {
+      window.clearTimeout(inputFlushTimeoutRef.current);
+      inputFlushTimeoutRef.current = null;
+    }
+
+    const queued = inputBufferRef.current;
+    if (queued.length === 0) {
+      return;
+    }
+
+    inputBufferRef.current = "";
+    sendSocketMessage({ type: "input", data: queued });
+  }, [sendSocketMessage]);
+
   const sendInput = useCallback(
     (data: string) => {
       if (data.length === 0) {
         return;
       }
 
-      sendSocketMessage({ type: "input", data });
+      inputBufferRef.current += data;
+      if (isImmediateInputChunk(data, inputBufferRef.current.length)) {
+        flushQueuedInput();
+        return;
+      }
+
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      if (inputFlushTimeoutRef.current !== null) {
+        return;
+      }
+
+      inputFlushTimeoutRef.current = window.setTimeout(() => {
+        inputFlushTimeoutRef.current = null;
+        flushQueuedInput();
+      }, INPUT_BATCH_WINDOW_MS);
     },
-    [sendSocketMessage]
+    [flushQueuedInput]
   );
 
   const scheduleResizeSync = useCallback(() => {
@@ -422,6 +467,7 @@ export function CellTerminal({
   }, [connectCommand]);
 
   const restartTerminal = useCallback(() => {
+    flushQueuedInput();
     setIsRestarting(true);
     setConnection("connecting");
     setSession(null);
@@ -447,7 +493,12 @@ export function CellTerminal({
 
     toast.success("Terminal restarted");
     setIsRestarting(false);
-  }, [scheduleResizeSync, sendSocketMessage, startupReadiness]);
+  }, [
+    flushQueuedInput,
+    scheduleResizeSync,
+    sendSocketMessage,
+    startupReadiness,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -710,6 +761,11 @@ export function CellTerminal({
     return () => {
       disposed = true;
       cleanupTerminalInteractions?.();
+      if (inputFlushTimeoutRef.current !== null) {
+        window.clearTimeout(inputFlushTimeoutRef.current);
+        inputFlushTimeoutRef.current = null;
+      }
+      inputBufferRef.current = "";
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);
       }

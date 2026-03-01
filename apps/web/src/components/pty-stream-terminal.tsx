@@ -49,6 +49,8 @@ const API_BASE = getApiBase();
 const OUTPUT_BUFFER_LIMIT = 250_000;
 const RESIZE_DEBOUNCE_MS = 120;
 const SOCKET_RECONNECT_DELAY_MS = 800;
+const INPUT_BATCH_WINDOW_MS = 16;
+const INPUT_BATCH_FLUSH_SIZE = 1024;
 const TERMINAL_FONT_FAMILY =
   '"JetBrainsMono Nerd Font", "MesloLGS NF", "CaskaydiaMono Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font Mono", "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Noto Color Emoji", monospace';
 
@@ -59,6 +61,12 @@ const appendOutput = (current: string, chunk: string): string => {
   }
   return next.slice(next.length - OUTPUT_BUFFER_LIMIT);
 };
+
+const isImmediateInputChunk = (data: string, bufferedLength: number) =>
+  data === "\r" ||
+  data === "\u0003" ||
+  data === "\u0004" ||
+  bufferedLength >= INPUT_BATCH_FLUSH_SIZE;
 
 export function PtyStreamTerminal({
   title,
@@ -85,6 +93,8 @@ export function PtyStreamTerminal({
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const inputListenerRef = useRef<{ dispose: () => void } | null>(null);
   const outputRef = useRef<string>("");
+  const inputBufferRef = useRef<string>("");
+  const inputFlushTimeoutRef = useRef<number | null>(null);
   const resizeTimeoutRef = useRef<number | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -136,6 +146,24 @@ export function PtyStreamTerminal({
     [sendSocketMessage]
   );
 
+  const flushQueuedInput = useCallback(() => {
+    if (
+      typeof window !== "undefined" &&
+      inputFlushTimeoutRef.current !== null
+    ) {
+      window.clearTimeout(inputFlushTimeoutRef.current);
+      inputFlushTimeoutRef.current = null;
+    }
+
+    const queued = inputBufferRef.current;
+    if (queued.length === 0) {
+      return;
+    }
+
+    inputBufferRef.current = "";
+    sendSocketMessage({ type: "input", data: queued });
+  }, [sendSocketMessage]);
+
   const scheduleResizeSync = useCallback(() => {
     const terminal = terminalRef.current;
     if (!terminal || typeof window === "undefined") {
@@ -165,9 +193,26 @@ export function PtyStreamTerminal({
         return;
       }
 
-      sendSocketMessage({ type: "input", data });
+      inputBufferRef.current += data;
+      if (isImmediateInputChunk(data, inputBufferRef.current.length)) {
+        flushQueuedInput();
+        return;
+      }
+
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      if (inputFlushTimeoutRef.current !== null) {
+        return;
+      }
+
+      inputFlushTimeoutRef.current = window.setTimeout(() => {
+        inputFlushTimeoutRef.current = null;
+        flushQueuedInput();
+      }, INPUT_BATCH_WINDOW_MS);
     },
-    [allowInput, inputPath, sendSocketMessage]
+    [allowInput, flushQueuedInput, inputPath]
   );
 
   const copyTerminalOutput = useCallback(async () => {
@@ -460,6 +505,11 @@ export function PtyStreamTerminal({
 
     return () => {
       disposed = true;
+      if (inputFlushTimeoutRef.current !== null) {
+        window.clearTimeout(inputFlushTimeoutRef.current);
+        inputFlushTimeoutRef.current = null;
+      }
+      inputBufferRef.current = "";
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);
       }
