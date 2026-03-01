@@ -700,9 +700,17 @@ export function CellTerminal({
             setIsRestarting(false);
             toast.error(description);
           }
-          setConnection((current) =>
-            current === "exited" ? "exited" : "disconnected"
-          );
+          setConnection((current) => {
+            if (current === "exited") {
+              return "exited";
+            }
+
+            if (current === "connecting") {
+              return "online";
+            }
+
+            return current;
+          });
           setErrorMessage(description);
           socketCloseErrorRef.current = description;
         }

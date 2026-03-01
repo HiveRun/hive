@@ -453,9 +453,17 @@ export function PtyStreamTerminal({
             typeof message.message === "string"
               ? message.message
               : "Terminal socket error";
-          setConnection((current) =>
-            current === "exited" ? "exited" : "disconnected"
-          );
+          setConnection((current) => {
+            if (current === "exited") {
+              return "exited";
+            }
+
+            if (current === "connecting") {
+              return "online";
+            }
+
+            return current;
+          });
           setErrorMessage(description);
         }
       };
