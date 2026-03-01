@@ -95,6 +95,7 @@ export function PtyStreamTerminal({
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const inputListenerRef = useRef<{ dispose: () => void } | null>(null);
   const outputRef = useRef<string>("");
+  const sessionRef = useRef<RuntimeTerminalSession | null>(null);
   const inputBufferRef = useRef<string>("");
   const inputFlushTimeoutRef = useRef<number | null>(null);
   const inputBatchWindowMsRef = useRef(INPUT_BATCH_BASE_WINDOW_MS);
@@ -137,15 +138,17 @@ export function PtyStreamTerminal({
         throw new Error("Terminal socket unavailable");
       }
 
-      setSession((current) =>
-        current
+      setSession((current) => {
+        const next = current
           ? {
               ...current,
               cols,
               rows,
             }
-          : current
-      );
+          : current;
+        sessionRef.current = next;
+        return next;
+      });
     },
     [sendSocketMessage]
   );
@@ -229,6 +232,11 @@ export function PtyStreamTerminal({
       if (!activeTerminal) {
         return;
       }
+
+      if (sessionRef.current?.status !== "running") {
+        return;
+      }
+
       try {
         sendResize(activeTerminal.cols, activeTerminal.rows);
       } catch {
@@ -297,6 +305,7 @@ export function PtyStreamTerminal({
 
     let disposed = false;
     outputRef.current = "";
+    sessionRef.current = null;
     setSession(null);
     setConnection("connecting");
     setErrorMessage(null);
@@ -334,6 +343,7 @@ export function PtyStreamTerminal({
 
           const readySession = payload.session;
           setSession(readySession);
+          sessionRef.current = readySession;
 
           let nextState: ConnectionState;
           if (payload.setupState === "active") {
@@ -436,15 +446,17 @@ export function PtyStreamTerminal({
           if (mode === "setup") {
             setSetupDisplayState(exitCode === 0 ? "completed" : "failed");
           }
-          setSession((current) =>
-            current
+          setSession((current) => {
+            const next: RuntimeTerminalSession | null = current
               ? {
                   ...current,
                   status: "exited",
                   exitCode,
                 }
-              : current
-          );
+              : current;
+            sessionRef.current = next;
+            return next;
+          });
           return;
         }
 
@@ -453,6 +465,9 @@ export function PtyStreamTerminal({
             typeof message.message === "string"
               ? message.message
               : "Terminal socket error";
+          if (description.toLowerCase().includes("terminal is not running")) {
+            return;
+          }
           setConnection((current) => {
             if (current === "exited") {
               return "exited";
@@ -591,6 +606,7 @@ export function PtyStreamTerminal({
       inputBufferRef.current = "";
       inputBatchChunkCountRef.current = 0;
       inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
+      sessionRef.current = null;
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);
       }
