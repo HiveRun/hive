@@ -26,6 +26,19 @@ type CellDetails = {
   opencodeCommand: string | null;
 };
 
+type QuestionOption = {
+  label?: string;
+  description?: string;
+};
+
+type PendingQuestion = {
+  id?: string;
+  sessionID?: string;
+  questions?: Array<{
+    options?: QuestionOption[];
+  }>;
+};
+
 const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
 const CHAT_ROUTE_TIMEOUT_MS = 180_000;
 const SESSION_MODE_TIMEOUT_MS = 120_000;
@@ -35,12 +48,16 @@ const FINAL_MODE_SWITCH_TIMEOUT_MS = 35_000;
 const PLAN_EXIT_QUESTION_TIMEOUT_MS = 15_000;
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
 const MODE_POLL_INTERVAL_MS = 500;
+const QUESTION_API_NOT_FOUND_STATUS = 404;
 const CELL_TEMPLATE_LABEL = "E2E Template";
 const OPENCODE_ATTACH_URL_PATTERN = /attach\s+"([^"]+)"/;
 const TERMINAL_MODE_STATUS_PATTERN = /\b(Plan|Build)\b[\s\S]{0,120}OpenCode/g;
 const BUILD_ACTIVITY_PATTERN = /\bBuild\b[\s\S]{0,25}big-pickle/i;
 const PLAN_EXIT_QUESTION_PATTERN =
   /Would you like to switch to the build[\s\S]{0,80}start implementing\?/i;
+const BUILD_IMPLEMENT_OPTION_PATTERN = /build\/implement/i;
+const QUESTION_PROMPT_HINT_PATTERN = /↑↓\s*select[\s\S]{0,40}enter\s*submit/i;
+const YES_LABEL_PATTERN = /^yes$/i;
 const BUILD_MODE_PROMPT_TEXT =
   "Switch to build mode and acknowledge with a short response.";
 
@@ -178,7 +195,11 @@ test.describe("plan mode @plan-mode", () => {
 
     let switchedAfterQuestionReply = false;
     if (!switchedViaUi) {
-      const repliedToQuestion = await submitPlanExitQuestionFromTerminal(page);
+      const repliedToQuestion = await handleBuildTransitionQuestion({
+        page,
+        opencodeServerUrl,
+        sessionId: cell.opencodeSessionId,
+      });
 
       if (repliedToQuestion) {
         switchedAfterQuestionReply = await waitForSessionMode({
@@ -199,7 +220,11 @@ test.describe("plan mode @plan-mode", () => {
         workspacePath: cell.workspacePath,
       });
 
-      await submitPlanExitQuestionFromTerminal(page);
+      await handleBuildTransitionQuestion({
+        page,
+        opencodeServerUrl,
+        sessionId: cell.opencodeSessionId,
+      });
     }
 
     await waitForSessionMode({
@@ -319,17 +344,33 @@ async function sendBuildModePromptViaOpencode(options: {
   }
 }
 
-async function submitPlanExitQuestionFromTerminal(
-  page: Page
-): Promise<boolean> {
+async function handleBuildTransitionQuestion(options: {
+  page: Page;
+  opencodeServerUrl: string;
+  sessionId: string;
+}): Promise<boolean> {
+  if (await submitQuestionViaOpencodeApi(options)) {
+    return true;
+  }
+
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < PLAN_EXIT_QUESTION_TIMEOUT_MS) {
     const content =
-      (await page.locator(selectors.terminalRoot).textContent()) ?? "";
+      (await options.page.locator(selectors.terminalRoot).textContent()) ?? "";
     if (PLAN_EXIT_QUESTION_PATTERN.test(content)) {
-      await page.locator(selectors.terminalInputSurface).click();
-      await page.keyboard.press("Enter");
+      await options.page.locator(selectors.terminalInputSurface).click();
+      await options.page.keyboard.press("Enter");
+      return true;
+    }
+
+    if (
+      QUESTION_PROMPT_HINT_PATTERN.test(content) &&
+      BUILD_IMPLEMENT_OPTION_PATTERN.test(content)
+    ) {
+      await options.page.locator(selectors.terminalInputSurface).click();
+      await options.page.keyboard.press("ArrowDown");
+      await options.page.keyboard.press("Enter");
       return true;
     }
 
@@ -337,6 +378,89 @@ async function submitPlanExitQuestionFromTerminal(
   }
 
   return false;
+}
+
+async function submitQuestionViaOpencodeApi(options: {
+  opencodeServerUrl: string;
+  sessionId: string;
+}): Promise<boolean> {
+  try {
+    const listResponse = await fetch(`${options.opencodeServerUrl}/question`);
+    if (listResponse.status === QUESTION_API_NOT_FOUND_STATUS) {
+      return false;
+    }
+    if (!listResponse.ok) {
+      return false;
+    }
+
+    const payload = (await listResponse.json()) as unknown;
+    if (!Array.isArray(payload)) {
+      return false;
+    }
+
+    const question = payload.find((candidate) => {
+      if (!candidate || typeof candidate !== "object") {
+        return false;
+      }
+
+      const sessionID = (candidate as PendingQuestion).sessionID;
+      return typeof sessionID === "string" && sessionID === options.sessionId;
+    }) as PendingQuestion | undefined;
+
+    if (!question || typeof question.id !== "string") {
+      return false;
+    }
+
+    const answers = buildQuestionAnswers(question);
+    const replyResponse = await fetch(
+      `${options.opencodeServerUrl}/question/${question.id}/reply`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ answers }),
+      }
+    );
+
+    return replyResponse.ok;
+  } catch {
+    return false;
+  }
+}
+
+function buildQuestionAnswers(question: PendingQuestion): string[][] {
+  const prompts = Array.isArray(question.questions) ? question.questions : [];
+  if (prompts.length === 0) {
+    return [["Yes"]];
+  }
+
+  return prompts.map((prompt) => {
+    const options = Array.isArray(prompt.options) ? prompt.options : [];
+    const labels = options
+      .map((option) => {
+        if (!option || typeof option !== "object") {
+          return "";
+        }
+
+        return typeof option.label === "string" ? option.label : "";
+      })
+      .filter((label) => label.length > 0);
+
+    const buildLabel = labels.find((label) =>
+      BUILD_IMPLEMENT_OPTION_PATTERN.test(label)
+    );
+    if (buildLabel) {
+      return [buildLabel];
+    }
+
+    const yesLabel = labels.find((label) => YES_LABEL_PATTERN.test(label));
+    if (yesLabel) {
+      return [yesLabel];
+    }
+
+    return [labels[0] ?? "Yes"];
+  });
 }
 
 async function waitForTerminalMode(options: {
