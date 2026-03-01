@@ -305,7 +305,15 @@ export function PtyStreamTerminal({
           } else if (payload.setupState) {
             setErrorMessage(null);
           }
-          scheduleResizeSync();
+          const activeTerminal = terminalRef.current;
+          if (
+            activeTerminal &&
+            readySession &&
+            (readySession.cols !== activeTerminal.cols ||
+              readySession.rows !== activeTerminal.rows)
+          ) {
+            scheduleResizeSync();
+          }
           return;
         }
 

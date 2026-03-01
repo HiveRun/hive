@@ -543,7 +543,14 @@ export function CellTerminal({
             setIsRestarting(false);
             toast.success("Terminal restarted");
           }
-          scheduleResizeSync();
+          const activeTerminal = terminalRef.current;
+          if (
+            activeTerminal &&
+            (payload.cols !== activeTerminal.cols ||
+              payload.rows !== activeTerminal.rows)
+          ) {
+            scheduleResizeSync();
+          }
           return;
         }
 
