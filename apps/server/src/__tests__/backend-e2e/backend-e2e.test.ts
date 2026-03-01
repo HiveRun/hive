@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { createOpencodeClient } from "@opencode-ai/sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -21,6 +22,7 @@ import {
   waitForSessionByCell,
 } from "./utils/http";
 import { connectSse } from "./utils/sse";
+import { waitForCondition } from "./utils/wait";
 
 const KEEP_ARTIFACTS = process.env.HIVE_BACKEND_E2E_KEEP_ARTIFACTS === "1";
 const SSE_WAIT_TIMEOUT_MS = 120_000;
@@ -30,6 +32,8 @@ const TEST_TIMEOUT_MS = 240_000;
 const SDK_SMOKE_TIMEOUT_MS = 300_000;
 const ASSISTANT_WAIT_TIMEOUT_MS = 120_000;
 const OPENCODE_ATTACH_URL_RE = /opencode\s+attach\s+"([^"]+)"/;
+const OPENCODE_SHARED_URL_LOG_RE =
+  /\[opencode\] Shared server listening at (http:\/\/127\.0\.0\.1:\d+)/;
 
 type ManagedServer = Awaited<ReturnType<typeof startBackendE2eServer>>;
 
@@ -266,7 +270,10 @@ describe("backend e2e suite", () => {
             timeoutMs: SSE_WAIT_TIMEOUT_MS,
           });
 
-          const baseUrl = resolveOpencodeBaseUrl(readyCell.opencodeCommand);
+          const baseUrl = await resolveOpencodeBaseUrl({
+            opencodeCommand: readyCell.opencodeCommand,
+            serverStdoutPath: server.stdoutPath,
+          });
           const client = createOpencodeClient({ baseUrl });
           const promptResponse = await client.session.prompt({
             path: { id: session.id },
@@ -364,19 +371,40 @@ describe("backend e2e suite", () => {
   );
 });
 
-function resolveOpencodeBaseUrl(opencodeCommand: string | null): string {
+async function resolveOpencodeBaseUrl(args: {
+  opencodeCommand: string | null;
+  serverStdoutPath: string;
+}): Promise<string> {
+  const { opencodeCommand, serverStdoutPath } = args;
+
   if (!opencodeCommand) {
     throw new Error("Cell opencodeCommand is missing");
   }
 
   const attachMatch = opencodeCommand.match(OPENCODE_ATTACH_URL_RE);
-  if (!attachMatch?.[1]) {
+  if (attachMatch?.[1]) {
+    return attachMatch[1];
+  }
+
+  let sharedUrl: string | null = null;
+  await waitForCondition(
+    "shared opencode server url in logs",
+    async () => {
+      const logs = await readFile(serverStdoutPath, "utf8");
+      const match = logs.match(OPENCODE_SHARED_URL_LOG_RE);
+      sharedUrl = match?.[1] ?? null;
+      return sharedUrl !== null;
+    },
+    { timeoutMs: 10_000, intervalMs: 200 }
+  );
+
+  if (!sharedUrl) {
     throw new Error(
-      `Unable to parse OpenCode base URL from '${opencodeCommand}'`
+      `Unable to resolve OpenCode base URL from command '${opencodeCommand}'`
     );
   }
 
-  return attachMatch[1];
+  return sharedUrl;
 }
 
 function isStatusEvent(
