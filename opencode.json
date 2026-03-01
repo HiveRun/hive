@@ -8,5 +8,8 @@
       "enabled": true,
       "command": ["bunx", "mcp-remote", "https://mcp.linear.app/mcp"]
     }
+  },
+  "skills": {
+    "urls": ["https://skills.sh/vercel-labs/agent-browser/agent-browser"]
   }
 }
