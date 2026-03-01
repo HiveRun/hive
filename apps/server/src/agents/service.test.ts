@@ -65,6 +65,7 @@ import {
   closeAgentSession,
   closeAllAgentSessions,
   ensureAgentSession,
+  fetchAgentSessionForCell,
   fetchCompactionStats,
   resetAgentRuntimeDependencies,
   sendAgentMessage,
@@ -330,6 +331,7 @@ describe("agent model selection", () => {
     const session = await ensureAgentSession(cellId, {
       modelId: "opencode/gpt-5.3-codex",
       providerId: "opencode",
+      startMode: "build",
     });
 
     expect(session.provider).toBe("opencode");
@@ -342,6 +344,83 @@ describe("agent model selection", () => {
         model: {
           providerID: "opencode",
           modelID: "gpt-5.3-codex",
+        },
+        parts: [],
+      },
+    });
+  });
+
+  it("keeps explicit plan-mode model overrides when restored history reports another model", async () => {
+    sessionMessagesMock.mockResolvedValueOnce({
+      data: [
+        {
+          info: {
+            id: "msg-prime",
+            sessionID: "session-runtime",
+            role: "user",
+            time: {
+              created: Date.now(),
+              updated: Date.now(),
+            },
+            model: {
+              providerID: "opencode",
+              modelID: "gpt-5.3-codex",
+            },
+          },
+          parts: [],
+        },
+      ],
+    });
+
+    clientStub.config.providers.mockResolvedValue({
+      data: {
+        providers: [
+          {
+            id: "opencode",
+            models: {
+              "gpt-5.3-codex": { id: "opencode/gpt-5.3-codex" },
+              "glm-5": { id: "opencode/glm-5" },
+            },
+          },
+        ],
+        default: { opencode: "gpt-5.3-codex" },
+      },
+    });
+
+    const session = await ensureAgentSession(cellId, {
+      modelId: "opencode/glm-5",
+      providerId: "opencode",
+      startMode: "plan",
+    });
+
+    expect(session.provider).toBe("opencode");
+    expect(session.modelId).toBe("glm-5");
+    expect(clientStub.session.prompt).toHaveBeenNthCalledWith(1, {
+      path: { id: session.id },
+      query: { directory: "/tmp/model-test" },
+      body: {
+        agent: "plan",
+        noReply: true,
+        model: {
+          providerID: "opencode",
+          modelID: "glm-5",
+        },
+        parts: [
+          {
+            type: "text",
+            text: "",
+          },
+        ],
+      },
+    });
+    expect(clientStub.session.prompt).toHaveBeenNthCalledWith(2, {
+      path: { id: session.id },
+      query: { directory: "/tmp/model-test" },
+      body: {
+        noReply: true,
+        model: {
+          providerID: "opencode",
+          modelID: "glm-5",
         },
         parts: [],
       },
@@ -375,6 +454,7 @@ describe("agent model selection", () => {
     const session = await ensureAgentSession(cellId, {
       modelId: "opencode/gpt-5.3-codex",
       providerId: "opencode",
+      startMode: "build",
     });
 
     expect(session.provider).toBe("opencode");
@@ -416,6 +496,7 @@ describe("agent model selection", () => {
     const session = await ensureAgentSession(cellId, {
       modelId: "opencode/gpt-5.3-codex",
       providerId: "opencode",
+      startMode: "build",
     });
 
     expect(session.provider).toBe("opencode");
@@ -621,6 +702,73 @@ describe("agent model selection", () => {
         (event) => (event as { type?: string }).type === "session.compaction"
       )
     ).toBe(true);
+  });
+
+  it("tracks mode transitions from plan to build", async () => {
+    const modeEvent = {
+      type: "message.updated",
+      properties: {
+        info: {
+          sessionID: "session-runtime",
+          role: "assistant",
+          mode: "build",
+        },
+      },
+    } as unknown as OpencodeEvent;
+
+    const published: unknown[] = [];
+    const clientStubWithEvents = buildClientStub();
+    let releaseBuildEvent: (() => void) | undefined;
+    const emitBuildEvent = new Promise<void>((resolve) => {
+      releaseBuildEvent = resolve;
+    });
+    clientStubWithEvents.event.subscribe = vi.fn(async () => ({
+      stream: (async function* () {
+        await emitBuildEvent;
+        yield modeEvent;
+      })(),
+    }));
+
+    acquireOpencodeClientMock = vi.fn(
+      async () => clientStubWithEvents as unknown as OpencodeClient
+    );
+
+    setAgentRuntimeDependencies({
+      acquireOpencodeClient: acquireOpencodeClientMock,
+      publishAgentEvent: (sessionId, event) => {
+        if (sessionId === "session-runtime") {
+          published.push(event);
+        }
+      },
+    });
+
+    const initial = await ensureAgentSession(cellId, { startMode: "plan" });
+    expect(initial.startMode).toBe("plan");
+    expect(initial.currentMode).toBe("plan");
+
+    releaseBuildEvent?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const updated = await ensureAgentSession(cellId);
+    expect(updated.startMode).toBe("plan");
+    expect(updated.currentMode).toBe("build");
+    expect(
+      published.some(
+        (event) =>
+          (event as { type?: string; currentMode?: string }).type === "mode" &&
+          (event as { currentMode?: string }).currentMode === "build"
+      )
+    ).toBe(true);
+  });
+
+  it("does not resync mode from message history on cell session fetch", async () => {
+    await ensureAgentSession(cellId, { startMode: "plan" });
+    const callsBeforeFetch = sessionMessagesMock.mock.calls.length;
+
+    const session = await fetchAgentSessionForCell(cellId);
+
+    expect(session).not.toBeNull();
+    expect(sessionMessagesMock).toHaveBeenCalledTimes(callsBeforeFetch);
   });
 
   it("deletes remote opencode session when runtime stops", async () => {

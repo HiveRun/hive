@@ -12,6 +12,9 @@ export type AgentSession = {
   completedAt?: string;
   modelId?: string;
   modelProviderId?: string;
+  startMode?: "plan" | "build";
+  currentMode?: "plan" | "build";
+  modeUpdatedAt?: string;
 };
 
 export const agentQueries = {

@@ -36,6 +36,7 @@ const TERMINAL_SCROLLBACK_LINES = 10_000;
 const KEY_SCROLLED_TERMINAL_SCROLLBACK_LINES = 0;
 const STARTUP_VISIBLE_BUFFER_LIMIT = 8192;
 const STARTUP_FALLBACK_VISIBLE_LENGTH = 48;
+const STARTUP_FALLBACK_READY_DELAY_MS = 2500;
 const ASCII_NULL_CODE = 0x00;
 const ASCII_ESCAPE_CODE = 0x1b;
 const ASCII_BELL_CODE = 0x07;
@@ -754,6 +755,29 @@ export function CellTerminal({
     isStartupReady &&
     connection === "online" &&
     session?.status === "running";
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (
+      startupReadiness !== "terminal-content" ||
+      isStartupReady ||
+      connection !== "online"
+    ) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setIsStartupReady(true);
+    }, STARTUP_FALLBACK_READY_DELAY_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [connection, isStartupReady, startupReadiness]);
+
   let footer: ReactNode = null;
   if (errorMessage) {
     footer = (

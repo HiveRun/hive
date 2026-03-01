@@ -8,6 +8,7 @@ export const cellProvisioningStates = sqliteTable("cell_provisioning_state", {
     .references(() => cells.id, { onDelete: "cascade" }),
   modelIdOverride: text("model_id_override"),
   providerIdOverride: text("provider_id_override"),
+  startMode: text("start_mode"),
   startedAt: integer("started_at", { mode: "timestamp" }),
   finishedAt: integer("finished_at", { mode: "timestamp" }),
   attemptCount: integer("attempt_count").notNull().default(0),

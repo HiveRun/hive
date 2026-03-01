@@ -46,6 +46,8 @@ async function createSharedServer(
 
   logProviderCatalog(config.config);
 
+  process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE = "1";
+
   const server = await createOpencodeServer({
     hostname: "127.0.0.1",
     port: 0,

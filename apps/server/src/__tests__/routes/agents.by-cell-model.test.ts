@@ -183,8 +183,26 @@ describe("agents by-cell model capture", () => {
     expect(payload.session).not.toBeNull();
     expect(payload.session?.modelId).toBe("big-pickle");
     expect(payload.session?.modelProviderId).toBe("opencode");
-    expect(promptSpy).toHaveBeenCalledTimes(1);
-    expect(promptSpy).toHaveBeenCalledWith({
+    expect(promptSpy).toHaveBeenCalledTimes(2);
+    expect(promptSpy).toHaveBeenNthCalledWith(1, {
+      path: { id: "session-by-cell-model" },
+      query: { directory: workspacePath },
+      body: {
+        agent: "plan",
+        noReply: true,
+        model: {
+          providerID: "opencode",
+          modelID: "big-pickle",
+        },
+        parts: [
+          {
+            type: "text",
+            text: "",
+          },
+        ],
+      },
+    });
+    expect(promptSpy).toHaveBeenNthCalledWith(2, {
       path: { id: "session-by-cell-model" },
       query: { directory: workspacePath },
       body: {

@@ -217,6 +217,7 @@ export async function createCellViaApi(options: {
   name: string;
   workspaceId?: string;
   templateLabel?: string;
+  startMode?: "plan" | "build";
 }): Promise<string> {
   const workspaceId = await resolveWorkspaceId(options);
   const templateId = await resolveTemplateId(options);
@@ -229,6 +230,7 @@ export async function createCellViaApi(options: {
       name: options.name,
       templateId,
       workspaceId,
+      ...(options.startMode ? { startMode: options.startMode } : {}),
     }),
   });
 

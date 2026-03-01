@@ -296,19 +296,16 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
 
       async function* stream() {
         yield sse({ event: "status", data: { status: session.status } });
+        const initialModeEvent = formatInitialModeSseEvent(session);
+        if (initialModeEvent) {
+          yield initialModeEvent;
+        }
 
         for await (const event of iterator) {
-          if (event.type !== "status") {
-            continue;
+          const nextEvent = formatAgentStreamSseEvent(event);
+          if (nextEvent) {
+            yield nextEvent;
           }
-
-          yield sse({
-            event: "status",
-            data: {
-              status: event.status,
-              ...(event.error ? { error: event.error } : {}),
-            },
-          });
         }
       }
 
@@ -388,6 +385,105 @@ function normalizeProviderDefaults(value: unknown): Record<string, string> {
   return defaults;
 }
 
+function formatInitialModeSseEvent(session: AgentSessionRecord) {
+  if (!(session.startMode && session.currentMode)) {
+    return null;
+  }
+
+  return sse({
+    event: "mode",
+    data: {
+      startMode: session.startMode,
+      currentMode: session.currentMode,
+      ...(session.modeUpdatedAt
+        ? { modeUpdatedAt: session.modeUpdatedAt }
+        : {}),
+    },
+  });
+}
+
+function formatInputRequiredSseEvent(event: AgentStreamEvent) {
+  const rawType = (event as { type: string }).type;
+
+  if (rawType === "permission.asked" || rawType === "permission.updated") {
+    const properties = (
+      event as {
+        properties?: {
+          sessionID?: string;
+          id?: string;
+          permission?: string;
+        };
+      }
+    ).properties;
+    return sse({
+      event: "input_required",
+      data: {
+        sessionId: properties?.sessionID ?? "",
+        permissionId: properties?.id ?? "",
+        title: properties?.permission ?? "Input required",
+        kind: "permission",
+      },
+    });
+  }
+
+  if (rawType === "question.asked") {
+    const properties = (
+      event as {
+        properties?: {
+          id?: string;
+          sessionID?: string;
+          questions?: Array<{ question?: string }>;
+        };
+      }
+    ).properties;
+    const firstQuestion = properties?.questions?.[0]?.question;
+    return sse({
+      event: "input_required",
+      data: {
+        sessionId: properties?.sessionID ?? "",
+        permissionId: properties?.id ?? "",
+        title:
+          typeof firstQuestion === "string" && firstQuestion.length > 0
+            ? firstQuestion
+            : "Input required",
+        kind: "question",
+      },
+    });
+  }
+
+  return null;
+}
+
+function formatAgentStreamSseEvent(event: AgentStreamEvent) {
+  if (event.type === "status") {
+    return sse({
+      event: "status",
+      data: {
+        status: event.status,
+        ...(event.error ? { error: event.error } : {}),
+      },
+    });
+  }
+
+  if (event.type === "mode") {
+    return sse({
+      event: "mode",
+      data: {
+        startMode: event.startMode,
+        currentMode: event.currentMode,
+        ...(event.modeUpdatedAt ? { modeUpdatedAt: event.modeUpdatedAt } : {}),
+      },
+    });
+  }
+
+  const inputRequiredEvent = formatInputRequiredSseEvent(event);
+  if (inputRequiredEvent) {
+    return inputRequiredEvent;
+  }
+
+  return null;
+}
+
 function formatSession(session: AgentSessionRecord) {
   return {
     id: session.id,
@@ -403,6 +499,9 @@ function formatSession(session: AgentSessionRecord) {
     ...(session.modelProviderId
       ? { modelProviderId: session.modelProviderId }
       : {}),
+    ...(session.startMode ? { startMode: session.startMode } : {}),
+    ...(session.currentMode ? { currentMode: session.currentMode } : {}),
+    ...(session.modeUpdatedAt ? { modeUpdatedAt: session.modeUpdatedAt } : {}),
   };
 }
 

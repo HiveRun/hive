@@ -19,9 +19,64 @@ describe("resolveRuntimeStatusFromEvent", () => {
     const event: Event = {
       type: "session.idle",
       properties: { sessionID: "ses_test" },
-    } as Event;
+    } as unknown as Event;
     expect(resolveRuntimeStatusFromEvent(event)).toEqual({
       status: "awaiting_input",
+    });
+  });
+
+  it("returns awaiting_input for session status idle updates", () => {
+    const event: Event = {
+      type: "session.status",
+      properties: { sessionID: "ses_test", status: { type: "idle" } },
+    } as unknown as Event;
+
+    expect(resolveRuntimeStatusFromEvent(event)).toEqual({
+      status: "awaiting_input",
+    });
+  });
+
+  it("returns working for session status busy updates", () => {
+    const event: Event = {
+      type: "session.status",
+      properties: { sessionID: "ses_test", status: { type: "busy" } },
+    } as unknown as Event;
+
+    expect(resolveRuntimeStatusFromEvent(event)).toEqual({
+      status: "working",
+    });
+  });
+
+  it("returns awaiting_input for permission prompts", () => {
+    const event: Event = {
+      type: "permission.asked",
+      properties: {
+        id: "perm_test",
+        sessionID: "ses_test",
+        permission: "plan_exit",
+        patterns: ["plan_exit"],
+        metadata: {},
+        always: [],
+      },
+    } as unknown as Event;
+
+    expect(resolveRuntimeStatusFromEvent(event)).toEqual({
+      status: "awaiting_input",
+    });
+  });
+
+  it("returns working for permission replies", () => {
+    const event: Event = {
+      type: "permission.replied",
+      properties: {
+        sessionID: "ses_test",
+        permissionID: "perm_test",
+        response: "once",
+      },
+    } as unknown as Event;
+
+    expect(resolveRuntimeStatusFromEvent(event)).toEqual({
+      status: "working",
     });
   });
 
@@ -32,7 +87,7 @@ describe("resolveRuntimeStatusFromEvent", () => {
         sessionID: "ses_test",
         error: { data: { message: "boom" } },
       },
-    } as Event;
+    } as unknown as Event;
 
     expect(resolveRuntimeStatusFromEvent(event)).toEqual({
       status: "error",

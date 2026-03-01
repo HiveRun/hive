@@ -15,6 +15,9 @@ const defaultIgnorePatterns = [
 ];
 
 export const hiveConfigDefaults: HiveConfig = {
+  opencode: {
+    defaultMode: "plan",
+  },
   promptSources: ["docs/prompts/**/*.md"],
   defaults: {
     templateId: "hive-dev",

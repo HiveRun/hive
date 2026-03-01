@@ -66,6 +66,8 @@ type DeleteCellMutationContext = {
   previousCell?: Cell;
 };
 
+type AgentRuntimeMode = "plan" | "build";
+
 const EXPANDED_WORKSPACES_STORAGE_KEY = "hive.sidebar.expanded-workspaces";
 
 const AGENT_STATUS_POLL_WORKING_MS = 2000;
@@ -520,8 +522,11 @@ function WorkspaceSection({
   });
 
   const agentStatusByCellId = new Map<string, string | undefined>();
+  const agentModeByCellId = new Map<string, AgentRuntimeMode | undefined>();
   readyCells.forEach((cell, index) => {
-    agentStatusByCellId.set(cell.id, agentSessionQueries[index]?.data?.status);
+    const session = agentSessionQueries[index]?.data;
+    agentStatusByCellId.set(cell.id, session?.status);
+    agentModeByCellId.set(cell.id, session?.currentMode ?? session?.startMode);
   });
 
   const cellsContent = renderWorkspaceCells({
@@ -530,6 +535,7 @@ function WorkspaceSection({
     deletingCellIds,
     isExpanded,
     location,
+    agentModeByCellId,
     agentStatusByCellId,
     onRequestDeleteCell,
     workspaceId: workspace.id,
@@ -592,6 +598,7 @@ function renderWorkspaceCells({
   deletingCellIds,
   isExpanded,
   location,
+  agentModeByCellId,
   agentStatusByCellId,
   onRequestDeleteCell,
   workspaceId,
@@ -601,6 +608,7 @@ function renderWorkspaceCells({
   deletingCellIds: Set<string>;
   isExpanded: boolean;
   location: { pathname: string };
+  agentModeByCellId: Map<string, AgentRuntimeMode | undefined>;
   agentStatusByCellId: Map<string, string | undefined>;
   onRequestDeleteCell: (cell: PendingCellDelete) => void;
   workspaceId: string;
@@ -635,6 +643,7 @@ function renderWorkspaceCells({
       cell,
       deletingCellIds,
       location,
+      agentModeByCellId,
       agentStatusByCellId,
       workspaceId,
       onRequestDeleteCell,
@@ -646,6 +655,7 @@ function renderWorkspaceCellItem({
   cell,
   deletingCellIds,
   location,
+  agentModeByCellId,
   agentStatusByCellId,
   workspaceId,
   onRequestDeleteCell,
@@ -653,6 +663,7 @@ function renderWorkspaceCellItem({
   cell: Pick<Cell, "id" | "name" | "status">;
   deletingCellIds: Set<string>;
   location: { pathname: string };
+  agentModeByCellId: Map<string, AgentRuntimeMode | undefined>;
   agentStatusByCellId: Map<string, string | undefined>;
   workspaceId: string;
   onRequestDeleteCell: (cell: PendingCellDelete) => void;
@@ -663,6 +674,8 @@ function renderWorkspaceCellItem({
 
   const agentStatus =
     cell.status === "ready" ? agentStatusByCellId.get(cell.id) : undefined;
+  const agentMode =
+    cell.status === "ready" ? agentModeByCellId.get(cell.id) : undefined;
   const statusIcon = getSidebarCellStatusIcon({
     isDeleting,
     isCellActive,
@@ -698,6 +711,18 @@ function renderWorkspaceCellItem({
           {isDeleting ? (
             <span className="ml-1 text-[10px] text-destructive uppercase tracking-[0.22em]">
               deleting
+            </span>
+          ) : null}
+          {cell.status === "ready" && !isDeleting && agentMode ? (
+            <span
+              className={cn(
+                "ml-1 inline-flex h-4 shrink-0 items-center border px-1 font-semibold text-[9px] uppercase tracking-[0.18em]",
+                getCellModeBadgeClass(agentMode)
+              )}
+              data-testid="workspace-cell-mode-badge"
+              title={`Agent mode ${agentMode}`}
+            >
+              {agentMode}
             </span>
           ) : null}
           {cell.status === "ready" && !isDeleting ? (
@@ -839,4 +864,12 @@ function getAgentStatusDotClass(status: string): string {
     default:
       return "bg-border/60";
   }
+}
+
+function getCellModeBadgeClass(mode: AgentRuntimeMode): string {
+  if (mode === "build") {
+    return "border-[#FFC857]/50 bg-[#FFC857]/10 text-[#FFC857]";
+  }
+
+  return "border-[#7C5BFF]/45 bg-[#7C5BFF]/10 text-[#7C5BFF]";
 }

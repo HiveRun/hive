@@ -125,7 +125,64 @@ export function useGlobalAgentMonitor() {
           }
         };
 
+        const handleMode = (event: MessageEvent<string>) => {
+          try {
+            const payload = JSON.parse(event.data) as {
+              startMode: "plan" | "build";
+              currentMode: "plan" | "build";
+              modeUpdatedAt?: string;
+            };
+
+            queryClient.setQueryData(
+              sessionQuery.queryKey,
+              (previous: AgentSession | null) => {
+                if (!previous) {
+                  return previous;
+                }
+
+                return {
+                  ...previous,
+                  startMode: payload.startMode,
+                  currentMode: payload.currentMode,
+                  ...(payload.modeUpdatedAt
+                    ? { modeUpdatedAt: payload.modeUpdatedAt }
+                    : {}),
+                };
+              }
+            );
+          } catch {
+            // ignore malformed events
+          }
+        };
+
+        const handleInputRequired = (_event: MessageEvent<string>) => {
+          queryClient.setQueryData(
+            sessionQuery.queryKey,
+            (previous: AgentSession | null) => {
+              if (!previous) {
+                return previous;
+              }
+
+              return {
+                ...previous,
+                status: "awaiting_input",
+              };
+            }
+          );
+
+          const previousStatus = lastStatuses.current.get(session.id);
+          lastStatuses.current.set(session.id, "awaiting_input");
+          if (previousStatus !== "awaiting_input") {
+            dispatchAwaitingInputNotification({
+              cell,
+              isWindowFocused: windowFocusedRef.current,
+            });
+          }
+        };
+
         eventSource.addEventListener("status", handleStatus);
+        eventSource.addEventListener("mode", handleMode);
+        eventSource.addEventListener("input_required", handleInputRequired);
         eventSource.onerror = () => {
           eventSource.close();
           sessionStreams.current.delete(cell.id);

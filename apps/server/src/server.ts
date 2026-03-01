@@ -317,15 +317,7 @@ const bootstrapSupervisor = async (): Promise<void> => {
 };
 
 const resumeProvisioning = async (): Promise<void> => {
-  try {
-    await resumeSpawningCells();
-  } catch (failure) {
-    process.stderr.write(
-      `Failed to resume cell provisioning: ${
-        failure instanceof Error ? failure.message : String(failure)
-      }\n`
-    );
-  }
+  await resumeSpawningCells();
 };
 
 const startAllServices = async (): Promise<void> => {
@@ -348,25 +340,54 @@ const startAllServices = async (): Promise<void> => {
 };
 
 const resumeAgentSessions = async (): Promise<void> => {
+  await resumeAgentSessionsOnStartup();
+};
+
+type StartupRecoveryTask = {
+  label: string;
+  run: () => Promise<void>;
+};
+
+const runStartupRecoveryTask = async (
+  task: StartupRecoveryTask
+): Promise<void> => {
   try {
-    await resumeAgentSessionsOnStartup();
+    await task.run();
   } catch (failure) {
     process.stderr.write(
-      `Failed to resume agent sessions: ${
+      `Failed to ${task.label}: ${
         failure instanceof Error ? failure.message : String(failure)
       }\n`
     );
   }
 };
 
-const bootstrapServer = async (workspaceRoot: string): Promise<void> => {
+const bootstrapServerCore = async (workspaceRoot: string): Promise<void> => {
   await runMigrations();
   await registerWorkspace(workspaceRoot);
   await startOpencodeServer(workspaceRoot);
   await bootstrapSupervisor();
-  await resumeProvisioning();
-  await startAllServices();
-  await resumeAgentSessions();
+};
+
+const runStartupRecoveryTasks = async (): Promise<void> => {
+  const tasks: StartupRecoveryTask[] = [
+    {
+      label: "resume cell provisioning",
+      run: resumeProvisioning,
+    },
+    {
+      label: "start services",
+      run: startAllServices,
+    },
+    {
+      label: "resume agent sessions",
+      run: resumeAgentSessions,
+    },
+  ];
+
+  for (const task of tasks) {
+    await runStartupRecoveryTask(task);
+  }
 };
 
 export const startServer = async () => {
@@ -377,7 +398,7 @@ export const startServer = async () => {
   const workspaceRoot = resolveWorkspaceRoot();
 
   try {
-    await bootstrapServer(workspaceRoot);
+    await bootstrapServerCore(workspaceRoot);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(
@@ -411,6 +432,14 @@ export const startServer = async () => {
   process.stderr.write(
     `API listening on http://${boundHostname}:${boundPort}\n`
   );
+
+  runStartupRecoveryTasks().catch((error) => {
+    process.stderr.write(
+      `Startup recovery tasks failed: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`
+    );
+  });
 
   return app;
 };

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { type IExitEvent, type IPty, spawn } from "bun-pty";
+import type { AgentMode } from "../agents/types";
 import {
   allowsEmbeddedChatControlInput,
   mergeHiveEmbeddedBrowserSafeKeybinds,
@@ -20,6 +21,7 @@ const HIVE_THEME_NAME = "hive-resonant";
 const DEFAULT_THEME_MODE = "dark";
 const ASCII_END_OF_TEXT = "\u0003";
 const ASCII_END_OF_TRANSMISSION = "\u0004";
+const PLAN_MODE_SWITCH_RETRY_MS = 2000;
 const WORKSPACE_CONFIG_CANDIDATES = [
   "@opencode.json",
   "opencode.json",
@@ -189,9 +191,15 @@ type MergedInlineOpencodeConfig = {
   allowEmbeddedControlInput: boolean;
 };
 
+const normalizeStartMode = (
+  value: string | undefined
+): AgentMode | undefined =>
+  value === "plan" || value === "build" ? value : undefined;
+
 function createMergedInlineOpencodeConfig(
   workspacePath: string,
-  preferredModel?: ChatTerminalModelPreference
+  preferredModel?: ChatTerminalModelPreference,
+  startMode?: AgentMode
 ): MergedInlineOpencodeConfig {
   const inlineConfig = parseInlineConfig(process.env.OPENCODE_CONFIG_CONTENT);
   const workspaceKeybinds = readWorkspaceKeybinds(workspacePath);
@@ -204,6 +212,7 @@ function createMergedInlineOpencodeConfig(
   const config = {
     ...inlineConfig,
     ...(model ? { model } : {}),
+    ...(startMode ? { default_agent: startMode } : {}),
     keybinds,
     theme: HIVE_THEME_NAME,
   };
@@ -227,6 +236,7 @@ function createOpencodeThemeEnv(
   const kvPath = join(stateDir, "kv.json");
   const env: Record<string, string> = {
     OPENCODE_CONFIG_CONTENT: JSON.stringify(mergedInlineConfig),
+    OPENCODE_EXPERIMENTAL_PLAN_MODE: "1",
   };
 
   try {
@@ -308,6 +318,7 @@ type ChatTerminalRecord = {
   opencodeServerUrl: string;
   opencodeThemeMode: "dark" | "light";
   preferredModel?: string;
+  startMode?: AgentMode;
   allowEmbeddedControlInput: boolean;
 };
 
@@ -319,6 +330,7 @@ export type ChatTerminalService = {
     opencodeServerUrl: string;
     opencodeThemeMode?: "dark" | "light";
     preferredModel?: ChatTerminalModelPreference;
+    startMode?: AgentMode;
   }): ChatTerminalSession;
   getSession(cellId: string): ChatTerminalSession | null;
   readOutput(cellId: string): string;
@@ -367,6 +379,67 @@ const normalizeSignal = (
 ): number | string | null =>
   typeof signal === "number" || typeof signal === "string" ? signal : null;
 
+const TERMINAL_MODE_STATUS_PATTERN = /\b(Plan|Build)\b[\s\S]{0,120}OpenCode/g;
+
+function extractTerminalMode(buffer: string): AgentMode | undefined {
+  const matches = [...buffer.matchAll(TERMINAL_MODE_STATUS_PATTERN)];
+  const latest = matches.at(-1)?.[1];
+  if (latest === "Plan") {
+    return "plan";
+  }
+  if (latest === "Build") {
+    return "build";
+  }
+  return;
+}
+
+function schedulePlanModeSwitch(record: ChatTerminalRecord): void {
+  if (record.startMode !== "plan") {
+    return;
+  }
+
+  const pollIntervalMs = 300;
+  const timeoutMs = 12_000;
+  let tabSentAt: number | null = null;
+  const startedAt = Date.now();
+
+  const attemptSwitch = () => {
+    if (record.status !== "running") {
+      return;
+    }
+
+    const mode = extractTerminalMode(record.buffer);
+    if (mode === "plan") {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - startedAt >= timeoutMs) {
+      return;
+    }
+
+    if (mode === "build" && tabSentAt === null) {
+      record.pty.write("\t");
+      tabSentAt = now;
+    }
+
+    if (
+      mode === "build" &&
+      tabSentAt !== null &&
+      now - tabSentAt >= PLAN_MODE_SWITCH_RETRY_MS
+    ) {
+      record.pty.write("\t");
+      tabSentAt = now;
+    }
+
+    setTimeout(() => {
+      attemptSwitch();
+    }, pollIntervalMs);
+  };
+
+  setTimeout(attemptSwitch, pollIntervalMs);
+}
+
 const createChannel = (cellId: string): string => `chat:${cellId}`;
 
 const resolveOpencodeBinary = (): string => {
@@ -406,8 +479,10 @@ const createChatTerminalService = (): ChatTerminalService => {
     opencodeServerUrl,
     opencodeThemeMode = DEFAULT_THEME_MODE,
     preferredModel,
+    startMode,
   }) => {
     const preferredModelValue = toOpencodeModelValue(preferredModel);
+    const normalizedStartMode = normalizeStartMode(startMode);
     const existing = sessions.get(cellId);
     if (
       existing &&
@@ -416,7 +491,8 @@ const createChatTerminalService = (): ChatTerminalService => {
       existing.opencodeSessionId === opencodeSessionId &&
       existing.opencodeServerUrl === opencodeServerUrl &&
       existing.opencodeThemeMode === opencodeThemeMode &&
-      existing.preferredModel === preferredModelValue
+      existing.preferredModel === preferredModelValue &&
+      existing.startMode === normalizedStartMode
     ) {
       return toSession(existing);
     }
@@ -428,7 +504,8 @@ const createChatTerminalService = (): ChatTerminalService => {
     const opencodeBinary = resolveOpencodeBinary();
     const mergedInlineConfig = createMergedInlineOpencodeConfig(
       workspacePath,
-      preferredModel
+      preferredModel,
+      normalizedStartMode
     );
     const opencodeThemeEnv = createOpencodeThemeEnv(
       workspacePath,
@@ -482,6 +559,7 @@ const createChatTerminalService = (): ChatTerminalService => {
       opencodeServerUrl,
       opencodeThemeMode,
       preferredModel: preferredModelValue,
+      startMode: normalizedStartMode,
       allowEmbeddedControlInput,
     };
 
@@ -504,6 +582,7 @@ const createChatTerminalService = (): ChatTerminalService => {
     });
 
     sessions.set(cellId, record);
+    schedulePlanModeSwitch(record);
 
     return toSession(record);
   };

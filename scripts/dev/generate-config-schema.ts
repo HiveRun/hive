@@ -14,6 +14,7 @@ const descriptionMap: Record<string, string> = {
     "Default provider identifier when templates omit one",
   "opencode/defaultModel":
     "Fallback model identifier used when templates omit one",
+  "opencode/defaultMode": "Default OpenCode agent mode when creating new cells",
   promptSources:
     "Glob patterns pointing to prompt fragments used when assembling agent briefs",
   templates: "Available cell templates",
@@ -50,6 +51,7 @@ const descriptionMap: Record<string, string> = {
     "Glob patterns to skip when copying included files into worktrees",
   defaults: "Default values for cell creation",
   "defaults/templateId": "Default template to use when creating cells",
+  "defaults/startMode": "Default OpenCode agent mode for new cells",
 };
 
 type JsonSchemaNode = Record<string, unknown>;

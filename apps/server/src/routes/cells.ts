@@ -5,9 +5,11 @@ import { join } from "node:path";
 import { logger } from "@bogeychan/elysia-logger";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { Elysia, type Static, sse, t } from "elysia";
+import { loadOpencodeConfig } from "../agents/opencode-config";
 import { getSharedOpencodeServerBaseUrl } from "../agents/opencode-server";
 import type { AgentRuntimeService } from "../agents/service";
 import { agentRuntimeService } from "../agents/service";
+import type { AgentMode } from "../agents/types";
 import type { Template } from "../config/schema";
 import {
   DatabaseService,
@@ -186,6 +188,7 @@ export type CellRouteDependencies = {
     opencodeServerUrl: string;
     opencodeThemeMode?: OpencodeThemeMode;
     preferredModel?: { providerId: string; modelId: string };
+    startMode?: AgentMode;
   }) => ChatTerminalSession;
   getChatTerminalSession?: (cellId: string) => ChatTerminalSession | null;
   readChatTerminalOutput?: (cellId: string) => string;
@@ -671,6 +674,46 @@ function normalizeOpencodeThemeMode(value?: string): OpencodeThemeMode {
   return value === "light" ? "light" : "dark";
 }
 
+function normalizeStartMode(value: string | undefined): AgentMode | undefined {
+  if (value === "plan" || value === "build") {
+    return value;
+  }
+
+  return;
+}
+
+async function resolveDefaultStartMode(args: {
+  workspaceRootPath: string;
+  defaultsStartMode: string | undefined;
+  configDefaultMode: string | undefined;
+}): Promise<AgentMode> {
+  const defaultsStartMode = normalizeStartMode(args.defaultsStartMode);
+  if (defaultsStartMode) {
+    return defaultsStartMode;
+  }
+
+  const explicitDefault = normalizeStartMode(args.configDefaultMode);
+  if (explicitDefault) {
+    return explicitDefault;
+  }
+
+  try {
+    const mergedConfig = await loadOpencodeConfig(args.workspaceRootPath);
+    const candidate = (mergedConfig.config as { default_agent?: unknown })
+      .default_agent;
+    if (typeof candidate === "string") {
+      const normalized = normalizeStartMode(candidate);
+      if (normalized) {
+        return normalized;
+      }
+    }
+  } catch {
+    // Ignore OpenCode config loading issues and use default fallback.
+  }
+
+  return "plan";
+}
+
 async function ensureChatTerminalSessionForCell(
   deps: CellRouteDependencies,
   cell: typeof cells.$inferSelect,
@@ -694,6 +737,7 @@ async function ensureChatTerminalSessionForCell(
   const agentSession = await deps.ensureAgentSession(cell.id);
   const preferredProviderId =
     agentSession.modelProviderId ?? agentSession.provider;
+  const startMode = agentSession.currentMode ?? agentSession.startMode;
   const preferredModel =
     agentSession.modelId && preferredProviderId
       ? {
@@ -708,6 +752,7 @@ async function ensureChatTerminalSessionForCell(
     opencodeServerUrl: serverUrl,
     opencodeThemeMode: themeMode,
     preferredModel,
+    ...(startMode ? { startMode } : {}),
   });
 
   return {
@@ -796,6 +841,7 @@ export function createCellsRoutes(
               cellId: cell.id,
               modelIdOverride: null,
               providerIdOverride: null,
+              startMode: "build",
               startedAt: null,
               finishedAt: null,
               attemptCount: 0,
@@ -2802,7 +2848,7 @@ async function handleCellCreationRequest(
   args: CellCreationArgs
 ): Promise<CellCreationResult> {
   const {
-    body,
+    body: rawBody,
     database,
     ensureSession,
     sendAgentMessage: dispatchAgentMessage,
@@ -2813,6 +2859,16 @@ async function handleCellCreationRequest(
   } = args;
 
   const hiveConfig = await workspaceContext.loadConfig();
+  const defaultStartMode = await resolveDefaultStartMode({
+    workspaceRootPath: workspaceContext.workspace.path,
+    defaultsStartMode: hiveConfig.defaults?.startMode,
+    configDefaultMode: hiveConfig.opencode?.defaultMode,
+  });
+  const body: Static<typeof CreateCellSchema> = {
+    ...rawBody,
+    startMode: normalizeStartMode(rawBody.startMode) ?? defaultStartMode,
+  };
+
   const template = hiveConfig.templates[body.templateId];
   if (!template) {
     return {
@@ -3111,6 +3167,7 @@ async function createCellRecord(
       cellId: state.cellId,
       modelIdOverride: body.modelId ?? null,
       providerIdOverride: body.providerId ?? null,
+      startMode: body.startMode ?? "plan",
       startedAt: null,
       finishedAt: null,
       attemptCount: 0,
@@ -3437,10 +3494,7 @@ async function finalizeCellProvisioning(
 
   state.servicesStarted = true;
 
-  const sessionOptions = {
-    ...(body.modelId ? { modelId: body.modelId } : {}),
-    ...(body.providerId ? { providerId: body.providerId } : {}),
-  };
+  const sessionOptions = buildAgentSessionOptions(body);
   const existingSessionId = state.createdCell?.opencodeSessionId ?? null;
   const session = await runPhase("ensure_agent_session", async () =>
     ensureSession(
@@ -3798,6 +3852,9 @@ function resolveProvisioningParams(
     ...(provisioningState?.providerIdOverride != null
       ? { providerId: provisioningState.providerIdOverride }
       : {}),
+    ...(provisioningState?.startMode != null
+      ? { startMode: normalizeStartMode(provisioningState.startMode) }
+      : {}),
   };
 }
 
@@ -3815,6 +3872,14 @@ function shouldSendInitialPromptForAttempt(args: {
   }
 
   return !args.existingSessionId;
+}
+
+function buildAgentSessionOptions(body: Static<typeof CreateCellSchema>) {
+  return {
+    ...(body.modelId ? { modelId: body.modelId } : {}),
+    ...(body.providerId ? { providerId: body.providerId } : {}),
+    ...(body.startMode ? { startMode: body.startMode } : {}),
+  };
 }
 
 function dispatchInitialPromptInBackground(args: {

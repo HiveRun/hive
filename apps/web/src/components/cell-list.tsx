@@ -864,6 +864,11 @@ function AgentStatusIndicator({
         )}
       />
       <span className={badge}>Agent {formatStatus(session.status)}</span>
+      {session.currentMode && (
+        <span className="border border-border/60 bg-muted/20 px-1.5 py-0.5 text-[10px] text-muted-foreground tracking-[0.25em]">
+          {session.currentMode}
+        </span>
+      )}
     </div>
   );
 }

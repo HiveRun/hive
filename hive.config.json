@@ -1,5 +1,8 @@
 {
   "$schema": "./hive.config.schema.json",
+  "opencode": {
+    "defaultMode": "plan"
+  },
   "promptSources": ["docs/prompts/**/*.md"],
   "templates": {
     "hive-dev": {
