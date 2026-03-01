@@ -96,6 +96,7 @@ export function PtyStreamTerminal({
   const inputListenerRef = useRef<{ dispose: () => void } | null>(null);
   const outputRef = useRef<string>("");
   const sessionRef = useRef<RuntimeTerminalSession | null>(null);
+  const socketCloseErrorRef = useRef<string | null>(null);
   const inputBufferRef = useRef<string>("");
   const inputFlushTimeoutRef = useRef<number | null>(null);
   const inputBatchWindowMsRef = useRef(INPUT_BATCH_BASE_WINDOW_MS);
@@ -306,6 +307,7 @@ export function PtyStreamTerminal({
     let disposed = false;
     outputRef.current = "";
     sessionRef.current = null;
+    socketCloseErrorRef.current = null;
     setSession(null);
     setConnection("connecting");
     setErrorMessage(null);
@@ -314,6 +316,7 @@ export function PtyStreamTerminal({
     const connectStream = () => {
       const socket = new WebSocket(buildSocketEndpoint());
       socketRef.current = socket;
+      socketCloseErrorRef.current = null;
 
       // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: websocket messages preserve setup + terminal session state transitions.
       socket.onmessage = (event) => {
@@ -344,6 +347,7 @@ export function PtyStreamTerminal({
           const readySession = payload.session;
           setSession(readySession);
           sessionRef.current = readySession;
+          socketCloseErrorRef.current = null;
 
           let nextState: ConnectionState;
           if (payload.setupState === "active") {
@@ -480,6 +484,7 @@ export function PtyStreamTerminal({
             return current;
           });
           setErrorMessage(description);
+          socketCloseErrorRef.current = description;
         }
       };
 
@@ -488,10 +493,15 @@ export function PtyStreamTerminal({
           return;
         }
 
+        const closeErrorMessage = socketCloseErrorRef.current;
+        socketCloseErrorRef.current = null;
+
         setConnection((current) =>
           current === "exited" ? "exited" : "disconnected"
         );
-        setErrorMessage("Terminal socket disconnected. Reconnecting…");
+        setErrorMessage(
+          closeErrorMessage ?? "Terminal socket disconnected. Reconnecting…"
+        );
 
         if (reconnectTimeoutRef.current !== null) {
           return;
@@ -607,6 +617,7 @@ export function PtyStreamTerminal({
       inputBatchChunkCountRef.current = 0;
       inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
       sessionRef.current = null;
+      socketCloseErrorRef.current = null;
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);
       }
