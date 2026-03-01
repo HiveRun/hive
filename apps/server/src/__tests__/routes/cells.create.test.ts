@@ -20,10 +20,12 @@ const templateId = "failing-template";
 const workspacePath = "/tmp/mock-worktree";
 const OK_STATUS = 200;
 const CREATED_STATUS = 201;
+const BAD_REQUEST_STATUS = 400;
 const CONFLICT_STATUS = 409;
 const WAIT_TIMEOUT_MS = 500;
 const WAIT_INTERVAL_MS = 10;
 const DETACHED_PROMPT_READY_TIMEOUT_MS = 2000;
+const TEST_PR_NUMBER = 123;
 const CELLS_API_URL = "http://localhost/api/cells";
 
 const JSON_HEADERS = {
@@ -172,6 +174,10 @@ type CreateWorktreeFn = (
   options?: {
     templateId?: string;
     force?: boolean;
+    startPoint?:
+      | { mode: "head" }
+      | { mode: "branch"; value: string }
+      | { mode: "pr"; value: string };
     onTimingEvent?: (event: {
       step: string;
       durationMs: number;
@@ -511,6 +517,89 @@ describe("POST /api/cells", () => {
       modelId: "custom-model",
       providerId: "zen",
       startMode: "plan",
+    });
+  });
+
+  it("passes branch spawn source to worktree creation", async () => {
+    let capturedWorktreeOptions: Parameters<CreateWorktreeFn>[1] | undefined;
+
+    const app = createTestApp({
+      createWorktree: (_cellId, createOptions) => {
+        capturedWorktreeOptions = createOptions;
+        return Promise.resolve({
+          path: workspacePath,
+          branch: "cell-branch",
+          baseCommit: "abc123",
+        });
+      },
+    });
+
+    const payload = await createCellAndExpectSpawning({
+      app,
+      body: {
+        name: "Spawn From Branch",
+        templateId,
+        workspaceId: "test-workspace",
+        spawnFromMode: "branch",
+        spawnFromValue: "feature/my-work",
+      },
+    });
+
+    await waitForCellStatus(payload.id, "ready");
+    await waitForCondition(() => Boolean(capturedWorktreeOptions));
+    expect(capturedWorktreeOptions?.startPoint).toEqual({
+      mode: "branch",
+      value: "feature/my-work",
+    });
+  });
+
+  it("passes GitHub PR spawn source to worktree creation", async () => {
+    let capturedWorktreeOptions: Parameters<CreateWorktreeFn>[1] | undefined;
+
+    const app = createTestApp({
+      createWorktree: (_cellId, createOptions) => {
+        capturedWorktreeOptions = createOptions;
+        return Promise.resolve({
+          path: workspacePath,
+          branch: "cell-branch",
+          baseCommit: "abc123",
+        });
+      },
+    });
+
+    const payload = await createCellAndExpectSpawning({
+      app,
+      body: {
+        name: "Spawn From PR",
+        templateId,
+        workspaceId: "test-workspace",
+        spawnFromMode: "pr",
+        spawnFromValue: `https://github.com/acme/repo/pull/${TEST_PR_NUMBER}`,
+      },
+    });
+
+    await waitForCellStatus(payload.id, "ready");
+    await waitForCondition(() => Boolean(capturedWorktreeOptions));
+    expect(capturedWorktreeOptions?.startPoint).toEqual({
+      mode: "pr",
+      value: `https://github.com/acme/repo/pull/${TEST_PR_NUMBER}`,
+    });
+  });
+
+  it("returns 400 when branch spawn source is missing value", async () => {
+    const app = createTestApp();
+
+    const response = await postCreateCell(app, {
+      name: "Missing Branch Value",
+      templateId,
+      workspaceId: "test-workspace",
+      spawnFromMode: "branch",
+      spawnFromValue: "   ",
+    });
+
+    expect(response.status).toBe(BAD_REQUEST_STATUS);
+    expect((await response.json()) as { message: string }).toEqual({
+      message: "Branch name is required when spawning from branch",
     });
   });
 
