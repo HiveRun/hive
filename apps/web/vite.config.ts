@@ -16,10 +16,21 @@ const fallbackApiServerPort =
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const requiredApiUrl = env.VITE_API_URL?.trim();
+  const runningInStorybook =
+    mode === "storybook" ||
+    process.env.STORYBOOK === "true" ||
+    process.env.npm_lifecycle_event?.includes("storybook") === true;
+  const requiredApiUrl =
+    env.VITE_API_URL?.trim() ||
+    (runningInStorybook
+      ? `http://localhost:${fallbackApiServerPort}`
+      : undefined);
   const buildBase = env.VITE_APP_BASE?.trim() || "/";
 
-  if (!requiredApiUrl || requiredApiUrl === "undefined") {
+  if (
+    (!requiredApiUrl || requiredApiUrl === "undefined") &&
+    !runningInStorybook
+  ) {
     throw new Error(
       "VITE_API_URL is required. Set it before running dev/build (e.g. http://localhost:3000)."
     );

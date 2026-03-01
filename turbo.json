@@ -68,6 +68,21 @@
       "cache": false,
       "persistent": true
     },
+    "storybook": {
+      "cache": false,
+      "persistent": true
+    },
+    "build-storybook": {
+      "dependsOn": ["^build-storybook"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "**/.storybook/**",
+        "**/vite.config.*",
+        "package.json",
+        "**/package.json"
+      ],
+      "outputs": ["storybook-static/**"]
+    },
     "db:push": {
       "cache": false,
       "persistent": true
