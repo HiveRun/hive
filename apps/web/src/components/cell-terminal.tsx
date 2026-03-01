@@ -12,6 +12,12 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { getApiBase } from "@/lib/api-base";
+import { isMouseMovementInputChunk } from "@/lib/terminal-input";
+import {
+  parseTerminalSocketMessage,
+  sendTerminalSocketMessage,
+  toWebSocketUrl,
+} from "@/lib/terminal-websocket";
 
 type ConnectionState = "connecting" | "online" | "disconnected" | "exited";
 
@@ -37,6 +43,13 @@ const KEY_SCROLLED_TERMINAL_SCROLLBACK_LINES = 0;
 const STARTUP_VISIBLE_BUFFER_LIMIT = 8192;
 const STARTUP_FALLBACK_VISIBLE_LENGTH = 48;
 const STARTUP_FALLBACK_READY_DELAY_MS = 2500;
+const SOCKET_RECONNECT_DELAY_MS = 800;
+const INPUT_BATCH_BASE_WINDOW_MS = 16;
+const INPUT_BATCH_MAX_WINDOW_MS = 24;
+const INPUT_BATCH_WINDOW_STEP_MS = 8;
+const INPUT_BATCH_HIGH_CHUNK_THRESHOLD = 6;
+const INPUT_BATCH_FLUSH_SIZE = 1024;
+const INPUT_BATCH_HIGH_CHUNK_MIN_BUFFER = 256;
 const ASCII_NULL_CODE = 0x00;
 const ASCII_ESCAPE_CODE = 0x1b;
 const ASCII_BELL_CODE = 0x07;
@@ -184,6 +197,9 @@ const appendVisibleBuffer = (current: string, chunk: string): string => {
   return next.slice(next.length - STARTUP_VISIBLE_BUFFER_LIMIT);
 };
 
+const shouldFlushMouseBatch = (bufferedLength: number) =>
+  bufferedLength >= INPUT_BATCH_FLUSH_SIZE;
+
 function createWheelBridge(
   target: HTMLElement,
   wheelScrollBehavior: "terminal" | "line-keys",
@@ -257,11 +273,18 @@ export function CellTerminal({
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<{ fit: () => void } | null>(null);
   const serializeAddonRef = useRef<{ serialize: () => string } | null>(null);
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const outputRef = useRef<string>("");
   const visibleOutputRef = useRef<string>("");
+  const inputBufferRef = useRef<string>("");
+  const inputFlushTimeoutRef = useRef<number | null>(null);
+  const inputBatchWindowMsRef = useRef(INPUT_BATCH_BASE_WINDOW_MS);
+  const inputBatchChunkCountRef = useRef(0);
+  const restartPendingRef = useRef(false);
+  const socketCloseErrorRef = useRef<string | null>(null);
   const resizeTimeoutRef = useRef<number | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [session, setSession] = useState<TerminalSession | null>(null);
@@ -308,30 +331,110 @@ export function CellTerminal({
     [terminalApiBase, themeMode]
   );
 
-  const sendResize = useCallback(
-    async (cols: number, rows: number) => {
-      const response = await fetch(buildTerminalEndpoint("resize"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ cols, rows }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Resize failed with ${response.status}`);
-      }
-
-      const payload = (await response.json()) as {
-        session?: TerminalSession;
-      };
-
-      if (payload.session) {
-        setSession(payload.session);
-      }
-    },
+  const buildTerminalSocketEndpoint = useCallback(
+    () => toWebSocketUrl(buildTerminalEndpoint("ws")),
     [buildTerminalEndpoint]
   );
+
+  const sendSocketMessage = useCallback(
+    (message: { type: string; [key: string]: unknown }) => {
+      const sent = sendTerminalSocketMessage(socketRef.current, message);
+      if (sent) {
+        return true;
+      }
+
+      setConnection((current) =>
+        current === "exited" ? "exited" : "disconnected"
+      );
+      setErrorMessage("Terminal socket disconnected. Reconnecting…");
+      return false;
+    },
+    []
+  );
+
+  const sendResize = useCallback(
+    (cols: number, rows: number) => {
+      const sent = sendSocketMessage({ type: "resize", cols, rows });
+      if (!sent) {
+        throw new Error("Terminal socket unavailable");
+      }
+
+      setSession((current) =>
+        current
+          ? {
+              ...current,
+              cols,
+              rows,
+            }
+          : current
+      );
+    },
+    [sendSocketMessage]
+  );
+
+  const updateBatchWindow = useCallback(
+    (chunkCount: number, queuedLength: number, forceImmediate: boolean) => {
+      if (forceImmediate) {
+        inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
+        return;
+      }
+
+      if (
+        chunkCount >= INPUT_BATCH_HIGH_CHUNK_THRESHOLD &&
+        queuedLength >= INPUT_BATCH_HIGH_CHUNK_MIN_BUFFER
+      ) {
+        inputBatchWindowMsRef.current = Math.min(
+          INPUT_BATCH_MAX_WINDOW_MS,
+          inputBatchWindowMsRef.current + INPUT_BATCH_WINDOW_STEP_MS
+        );
+        return;
+      }
+
+      inputBatchWindowMsRef.current = Math.max(
+        INPUT_BATCH_BASE_WINDOW_MS,
+        inputBatchWindowMsRef.current - INPUT_BATCH_WINDOW_STEP_MS
+      );
+    },
+    []
+  );
+
+  const flushQueuedInput = useCallback(
+    (forceImmediate = false) => {
+      if (
+        typeof window !== "undefined" &&
+        inputFlushTimeoutRef.current !== null
+      ) {
+        window.clearTimeout(inputFlushTimeoutRef.current);
+        inputFlushTimeoutRef.current = null;
+      }
+
+      const queued = inputBufferRef.current;
+      if (queued.length === 0) {
+        return;
+      }
+
+      const chunkCount = inputBatchChunkCountRef.current;
+      inputBufferRef.current = "";
+      inputBatchChunkCountRef.current = 0;
+      updateBatchWindow(chunkCount, queued.length, forceImmediate);
+      sendSocketMessage({ type: "input", data: queued });
+    },
+    [sendSocketMessage, updateBatchWindow]
+  );
+
+  const discardQueuedMouseInput = useCallback(() => {
+    if (
+      typeof window !== "undefined" &&
+      inputFlushTimeoutRef.current !== null
+    ) {
+      window.clearTimeout(inputFlushTimeoutRef.current);
+      inputFlushTimeoutRef.current = null;
+    }
+
+    inputBufferRef.current = "";
+    inputBatchChunkCountRef.current = 0;
+    inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
+  }, []);
 
   const sendInput = useCallback(
     (data: string) => {
@@ -339,19 +442,33 @@ export function CellTerminal({
         return;
       }
 
-      fetch(buildTerminalEndpoint("input"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ data }),
-      }).catch(() => {
-        setConnection((current) =>
-          current === "exited" ? "exited" : "disconnected"
-        );
-      });
+      if (!isMouseMovementInputChunk(data)) {
+        discardQueuedMouseInput();
+        sendSocketMessage({ type: "input", data });
+        return;
+      }
+
+      inputBufferRef.current += data;
+      inputBatchChunkCountRef.current += 1;
+      if (shouldFlushMouseBatch(inputBufferRef.current.length)) {
+        flushQueuedInput(true);
+        return;
+      }
+
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      if (inputFlushTimeoutRef.current !== null) {
+        return;
+      }
+
+      inputFlushTimeoutRef.current = window.setTimeout(() => {
+        inputFlushTimeoutRef.current = null;
+        flushQueuedInput();
+      }, inputBatchWindowMsRef.current);
     },
-    [buildTerminalEndpoint]
+    [discardQueuedMouseInput, flushQueuedInput, sendSocketMessage]
   );
 
   const scheduleResizeSync = useCallback(() => {
@@ -369,9 +486,11 @@ export function CellTerminal({
       if (!activeTerminal) {
         return;
       }
-      sendResize(activeTerminal.cols, activeTerminal.rows).catch(() => {
+      try {
+        sendResize(activeTerminal.cols, activeTerminal.rows);
+      } catch {
         // ignore transient resize failures while reconnecting
-      });
+      }
     }, RESIZE_DEBOUNCE_MS);
   }, [sendResize]);
 
@@ -406,42 +525,31 @@ export function CellTerminal({
     }
   }, [connectCommand]);
 
-  const restartTerminal = useCallback(async () => {
+  const restartTerminal = useCallback(() => {
+    flushQueuedInput();
+    const sent = sendSocketMessage({ type: "restart" });
+    if (!sent) {
+      setConnection("disconnected");
+      toast.error("Failed to restart terminal");
+      return;
+    }
+
+    restartPendingRef.current = true;
     setIsRestarting(true);
     setConnection("connecting");
     setSession(null);
     setErrorMessage(null);
+    socketCloseErrorRef.current = null;
     visibleOutputRef.current = "";
     setTerminalVisibleOutputLength(0);
     setIsStartupReady(startupReadiness === "session");
-    try {
-      const response = await fetch(buildTerminalEndpoint("restart"), {
-        method: "POST",
-      });
-      if (!response.ok) {
-        throw new Error(`Restart failed with ${response.status}`);
-      }
-
-      const payload = (await response.json()) as TerminalSession;
-      setSession(payload);
-      setConnection("online");
-      setErrorMessage(null);
-
-      const terminal = terminalRef.current;
-      if (terminal) {
-        terminal.write("\x1bc");
-      }
-      fitAddonRef.current?.fit();
-      scheduleResizeSync();
-      outputRef.current = "";
-      toast.success("Terminal restarted");
-    } catch {
-      setConnection("disconnected");
-      toast.error("Failed to restart terminal");
-    } finally {
-      setIsRestarting(false);
+    const terminal = terminalRef.current;
+    if (terminal) {
+      terminal.write("\x1bc");
     }
-  }, [buildTerminalEndpoint, scheduleResizeSync, startupReadiness]);
+    fitAddonRef.current?.fit();
+    outputRef.current = "";
+  }, [flushQueuedInput, sendSocketMessage, startupReadiness]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -462,125 +570,188 @@ export function CellTerminal({
     setIsStartupReady(startupReadiness === "session");
 
     const connectStream = () => {
-      const source = new EventSource(buildTerminalEndpoint("stream"));
-      eventSourceRef.current = source;
+      const socket = new WebSocket(buildTerminalSocketEndpoint());
+      socketRef.current = socket;
+      socketCloseErrorRef.current = null;
 
-      source.addEventListener("ready", (event) => {
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: message handling needs full event-state matrix for terminal sync.
+      socket.onmessage = (event) => {
         if (disposed) {
           return;
         }
-        const payload = JSON.parse(
-          (event as MessageEvent<string>).data
-        ) as TerminalSession;
-        setSession(payload);
-        setConnection(payload.status === "exited" ? "exited" : "online");
-        setErrorMessage(null);
-        if (startupReadiness === "session") {
-          setIsStartupReady(true);
-        }
-        scheduleResizeSync();
-      });
 
-      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: snapshot replay reconciles reconnect state.
-      source.addEventListener("snapshot", (event) => {
-        if (disposed) {
-          return;
-        }
-        const terminal = terminalRef.current;
-        if (!terminal) {
+        const message = parseTerminalSocketMessage(event);
+        if (!message) {
           return;
         }
 
-        const payload = JSON.parse((event as MessageEvent<string>).data) as {
-          output: string;
-        };
-        const snapshot = payload.output ?? "";
-        const previousOutput = outputRef.current;
-
-        if (snapshot.startsWith(outputRef.current)) {
-          const delta = snapshot.slice(outputRef.current.length);
-          if (delta.length > 0) {
-            terminal.write(delta);
+        if (message.type === "ready") {
+          const payload = (message.session ?? null) as TerminalSession | null;
+          if (!payload) {
+            return;
           }
-        } else {
-          terminal.write("\x1bc");
-          if (snapshot.length > 0) {
-            terminal.write(snapshot);
+          setSession(payload);
+          setConnection(payload.status === "exited" ? "exited" : "online");
+          setErrorMessage(null);
+          socketCloseErrorRef.current = null;
+          if (startupReadiness === "session") {
+            setIsStartupReady(true);
           }
+          if (restartPendingRef.current) {
+            restartPendingRef.current = false;
+            setIsRestarting(false);
+            toast.success("Terminal restarted");
+          }
+          const activeTerminal = terminalRef.current;
+          if (
+            activeTerminal &&
+            (payload.cols !== activeTerminal.cols ||
+              payload.rows !== activeTerminal.rows)
+          ) {
+            scheduleResizeSync();
+          }
+          return;
         }
 
-        outputRef.current = snapshot;
-        if (snapshot !== previousOutput) {
-          recordOutputActivity(snapshot);
-        }
-        visibleOutputRef.current = extractVisibleText(snapshot).slice(
-          -STARTUP_VISIBLE_BUFFER_LIMIT
-        );
-        setTerminalVisibleOutputLength(visibleOutputRef.current.length);
-        updateStartupReadiness(visibleOutputRef.current);
-        scheduleResizeSync();
-      });
+        if (message.type === "snapshot") {
+          const terminal = terminalRef.current;
+          if (!terminal) {
+            return;
+          }
 
-      source.addEventListener("data", (event) => {
+          const snapshot =
+            typeof message.output === "string" ? message.output : "";
+          const previousOutput = outputRef.current;
+
+          if (snapshot.startsWith(outputRef.current)) {
+            const delta = snapshot.slice(outputRef.current.length);
+            if (delta.length > 0) {
+              terminal.write(delta);
+            }
+          } else {
+            terminal.write("\x1bc");
+            if (snapshot.length > 0) {
+              terminal.write(snapshot);
+            }
+          }
+
+          outputRef.current = snapshot;
+          if (snapshot !== previousOutput) {
+            recordOutputActivity(snapshot);
+          }
+          visibleOutputRef.current = extractVisibleText(snapshot).slice(
+            -STARTUP_VISIBLE_BUFFER_LIMIT
+          );
+          setTerminalVisibleOutputLength(visibleOutputRef.current.length);
+          updateStartupReadiness(visibleOutputRef.current);
+          scheduleResizeSync();
+          return;
+        }
+
+        if (message.type === "data") {
+          const terminal = terminalRef.current;
+          if (!terminal) {
+            return;
+          }
+
+          const chunk = typeof message.chunk === "string" ? message.chunk : "";
+          if (chunk.length === 0) {
+            return;
+          }
+
+          terminal.write(chunk);
+          outputRef.current = appendOutput(outputRef.current, chunk);
+          visibleOutputRef.current = appendVisibleBuffer(
+            visibleOutputRef.current,
+            chunk
+          );
+          setTerminalVisibleOutputLength(visibleOutputRef.current.length);
+          updateStartupReadiness(visibleOutputRef.current);
+          recordOutputActivity(outputRef.current);
+          setConnection((current) =>
+            current === "exited" ? "exited" : "online"
+          );
+          return;
+        }
+
+        if (message.type === "exit") {
+          const exitCode =
+            typeof message.exitCode === "number" ? message.exitCode : 0;
+          setConnection("exited");
+          setSession((current) =>
+            current
+              ? {
+                  ...current,
+                  status: "exited",
+                  exitCode,
+                }
+              : current
+          );
+          return;
+        }
+
+        if (message.type === "error") {
+          const description =
+            typeof message.message === "string"
+              ? message.message
+              : "Terminal socket error";
+          if (restartPendingRef.current) {
+            restartPendingRef.current = false;
+            setIsRestarting(false);
+            toast.error(description);
+          }
+          setConnection((current) => {
+            if (current === "exited") {
+              return "exited";
+            }
+
+            if (current === "connecting") {
+              return "online";
+            }
+
+            return current;
+          });
+          setErrorMessage(description);
+          socketCloseErrorRef.current = description;
+        }
+      };
+
+      socket.onclose = () => {
         if (disposed) {
           return;
         }
-        const terminal = terminalRef.current;
-        if (!terminal) {
-          return;
-        }
 
-        const payload = JSON.parse((event as MessageEvent<string>).data) as {
-          chunk: string;
-        };
-        const chunk = payload.chunk ?? "";
-        if (chunk.length === 0) {
-          return;
-        }
+        const closeErrorMessage = socketCloseErrorRef.current;
+        socketCloseErrorRef.current = null;
 
-        terminal.write(chunk);
-        outputRef.current = appendOutput(outputRef.current, chunk);
-        visibleOutputRef.current = appendVisibleBuffer(
-          visibleOutputRef.current,
-          chunk
-        );
-        setTerminalVisibleOutputLength(visibleOutputRef.current.length);
-        updateStartupReadiness(visibleOutputRef.current);
-        recordOutputActivity(outputRef.current);
-        setConnection((current) =>
-          current === "exited" ? "exited" : "online"
-        );
-      });
-
-      source.addEventListener("exit", (event) => {
-        if (disposed) {
-          return;
-        }
-        const payload = JSON.parse((event as MessageEvent<string>).data) as {
-          exitCode: number;
-          signal: number | string | null;
-        };
-        setConnection("exited");
-        setSession((current) =>
-          current
-            ? {
-                ...current,
-                status: "exited",
-                exitCode: payload.exitCode,
-              }
-            : current
-        );
-      });
-
-      source.onerror = () => {
-        if (disposed) {
-          return;
+        if (restartPendingRef.current) {
+          restartPendingRef.current = false;
+          setIsRestarting(false);
+          toast.error("Terminal restart interrupted");
         }
 
         setConnection((current) =>
           current === "exited" ? "exited" : "disconnected"
         );
-        setErrorMessage("Terminal stream disconnected. Reconnecting…");
+        setErrorMessage(
+          closeErrorMessage ?? "Terminal socket disconnected. Reconnecting…"
+        );
+
+        if (reconnectTimeoutRef.current !== null) {
+          return;
+        }
+
+        reconnectTimeoutRef.current = window.setTimeout(() => {
+          reconnectTimeoutRef.current = null;
+          if (disposed) {
+            return;
+          }
+          connectStream();
+        }, SOCKET_RECONNECT_DELAY_MS);
+      };
+
+      socket.onerror = () => {
+        socket.close();
       };
     };
 
@@ -680,14 +851,27 @@ export function CellTerminal({
     return () => {
       disposed = true;
       cleanupTerminalInteractions?.();
+      if (inputFlushTimeoutRef.current !== null) {
+        window.clearTimeout(inputFlushTimeoutRef.current);
+        inputFlushTimeoutRef.current = null;
+      }
+      inputBufferRef.current = "";
+      inputBatchChunkCountRef.current = 0;
+      inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
+      restartPendingRef.current = false;
+      socketCloseErrorRef.current = null;
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);
+      }
+      if (reconnectTimeoutRef.current !== null) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
       }
       window.removeEventListener("resize", scheduleResizeSync);
       resizeObserverRef.current?.disconnect();
       resizeObserverRef.current = null;
-      eventSourceRef.current?.close();
-      eventSourceRef.current = null;
+      socketRef.current?.close();
+      socketRef.current = null;
       terminalRef.current?.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
@@ -695,7 +879,7 @@ export function CellTerminal({
       setIsTerminalInitialized(false);
     };
   }, [
-    buildTerminalEndpoint,
+    buildTerminalSocketEndpoint,
     scheduleResizeSync,
     sendInput,
     themeMode,

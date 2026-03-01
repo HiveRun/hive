@@ -506,6 +506,10 @@ const LOG_TAIL_API_MAX_LINES = 2000;
 const LOG_LINE_SPLIT_RE = /\r?\n/;
 const PORT_CHECK_TIMEOUT_MS = 500;
 const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
+const TERMINAL_RESIZE_MIN_COLS = 20;
+const TERMINAL_RESIZE_MAX_COLS = 500;
+const TERMINAL_RESIZE_MIN_ROWS = 5;
+const TERMINAL_RESIZE_MAX_ROWS = 200;
 const MAX_PROVISIONING_ATTEMPTS = 3;
 const INITIAL_PROMPT_BACKGROUND_WARN_TIMEOUT_MS = 3000;
 const DEFAULT_SERVICE_HOST = process.env.SERVICE_HOST ?? "localhost";
@@ -514,6 +518,34 @@ type OpencodeThemeMode = "dark" | "light";
 const ChatThemeModeQuerySchema = t.Object({
   themeMode: t.Optional(t.Union([t.Literal("dark"), t.Literal("light")])),
 });
+const TerminalWsInputMessageSchema = t.Object({
+  type: t.Literal("input"),
+  data: t.String({ minLength: 1 }),
+});
+const TerminalWsResizeMessageSchema = t.Object({
+  type: t.Literal("resize"),
+  cols: t.Number({
+    minimum: TERMINAL_RESIZE_MIN_COLS,
+    maximum: TERMINAL_RESIZE_MAX_COLS,
+  }),
+  rows: t.Number({
+    minimum: TERMINAL_RESIZE_MIN_ROWS,
+    maximum: TERMINAL_RESIZE_MAX_ROWS,
+  }),
+});
+const TerminalWsRestartMessageSchema = t.Object({
+  type: t.Literal("restart"),
+});
+const TerminalWsPingMessageSchema = t.Object({
+  type: t.Literal("ping"),
+});
+const TerminalWsMessageSchema = t.Union([
+  TerminalWsInputMessageSchema,
+  TerminalWsResizeMessageSchema,
+  TerminalWsRestartMessageSchema,
+  TerminalWsPingMessageSchema,
+]);
+type TerminalWsMessage = Static<typeof TerminalWsMessageSchema>;
 
 const PROVISIONING_INTERRUPTED_MESSAGE =
   "Provisioning interrupted. Fix the workspace and rerun setup.";
@@ -674,6 +706,97 @@ function normalizeOpencodeThemeMode(value?: string): OpencodeThemeMode {
   return value === "light" ? "light" : "dark";
 }
 
+const decoder = new TextDecoder();
+
+const parseTerminalWsPayload = (raw: unknown): unknown | null => {
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      return null;
+    }
+  }
+
+  if (raw instanceof Uint8Array) {
+    try {
+      return JSON.parse(decoder.decode(raw)) as unknown;
+    } catch {
+      return null;
+    }
+  }
+
+  if (raw instanceof ArrayBuffer) {
+    try {
+      return JSON.parse(decoder.decode(new Uint8Array(raw))) as unknown;
+    } catch {
+      return null;
+    }
+  }
+
+  return raw;
+};
+
+const toBoundedInteger = (
+  value: unknown,
+  min: number,
+  max: number
+): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const next = Math.floor(value);
+  if (next < min || next > max) {
+    return null;
+  }
+
+  return next;
+};
+
+const parseTerminalWsMessage = (raw: unknown): TerminalWsMessage | null => {
+  const payload = parseTerminalWsPayload(raw);
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const candidate = payload as {
+    type?: unknown;
+    data?: unknown;
+    cols?: unknown;
+    rows?: unknown;
+  };
+
+  if (candidate.type === "input") {
+    return typeof candidate.data === "string" && candidate.data.length > 0
+      ? { type: "input", data: candidate.data }
+      : null;
+  }
+
+  if (candidate.type === "resize") {
+    const cols = toBoundedInteger(
+      candidate.cols,
+      TERMINAL_RESIZE_MIN_COLS,
+      TERMINAL_RESIZE_MAX_COLS
+    );
+    const rows = toBoundedInteger(
+      candidate.rows,
+      TERMINAL_RESIZE_MIN_ROWS,
+      TERMINAL_RESIZE_MAX_ROWS
+    );
+    if (!(cols && rows)) {
+      return null;
+    }
+
+    return { type: "resize", cols, rows };
+  }
+
+  if (candidate.type === "restart" || candidate.type === "ping") {
+    return { type: candidate.type };
+  }
+
+  return null;
+};
+
 function normalizeStartMode(value: string | undefined): AgentMode | undefined {
   if (value === "plan" || value === "build") {
     return value;
@@ -765,6 +888,155 @@ function isCellReadyForChat(cell: typeof cells.$inferSelect): boolean {
   return cell.status === "ready";
 }
 
+type TerminalRouteSocketContext = {
+  params: {
+    id: string;
+    serviceId?: string;
+  };
+  query?: {
+    themeMode?: string;
+  };
+};
+
+type TerminalRouteSocket = {
+  id: string;
+  data: TerminalRouteSocketContext;
+  send: (message: unknown) => unknown;
+  close: () => void;
+};
+
+type SetupTerminalWsState = {
+  kind: "setup";
+  deps: CellRouteDependencies;
+  cellId: string;
+};
+
+type ServiceTerminalWsState = {
+  kind: "service";
+  deps: CellRouteDependencies;
+  serviceId: string;
+};
+
+type CellTerminalWsState = {
+  kind: "cell";
+  deps: CellRouteDependencies;
+  cellId: string;
+  workspacePath: string;
+};
+
+type ChatTerminalWsState = {
+  kind: "chat";
+  deps: CellRouteDependencies;
+  cell: typeof cells.$inferSelect;
+  themeMode: OpencodeThemeMode;
+  chatTerminal: ChatTerminalDependencies;
+};
+
+type TerminalWsState =
+  | SetupTerminalWsState
+  | ServiceTerminalWsState
+  | CellTerminalWsState
+  | ChatTerminalWsState;
+
+const sendWsError = (ws: TerminalRouteSocket, message: string) => {
+  ws.send({ type: "error", message });
+};
+
+const handleSetupTerminalWsInput = (args: {
+  deps: CellRouteDependencies;
+  ws: TerminalRouteSocket;
+  cellId: string;
+  data: string;
+}) => {
+  const { deps, ws, cellId, data } = args;
+  const session = deps.getSetupTerminalSession(cellId);
+  if (!session || session.status !== "running") {
+    sendWsError(ws, "Setup terminal session not available");
+    return;
+  }
+
+  deps.writeSetupTerminalInput(cellId, data);
+};
+
+const handleSetupTerminalWsResize = (args: {
+  deps: CellRouteDependencies;
+  ws: TerminalRouteSocket;
+  cellId: string;
+  cols: number;
+  rows: number;
+}) => {
+  const { deps, ws, cellId, cols, rows } = args;
+  deps.resizeSetupTerminal(cellId, cols, rows);
+  const session = deps.getSetupTerminalSession(cellId);
+  if (session) {
+    ws.send({ type: "ready", session });
+  }
+};
+
+const handleServiceTerminalWsInput = (args: {
+  deps: CellRouteDependencies;
+  ws: TerminalRouteSocket;
+  serviceId: string;
+  data: string;
+}) => {
+  const { deps, ws, serviceId, data } = args;
+  const session = deps.getServiceTerminalSession(serviceId);
+  if (!session || session.status !== "running") {
+    sendWsError(ws, "Service terminal session not available");
+    return;
+  }
+
+  deps.writeServiceTerminalInput(serviceId, data);
+};
+
+const handleServiceTerminalWsResize = (args: {
+  deps: CellRouteDependencies;
+  ws: TerminalRouteSocket;
+  serviceId: string;
+  cols: number;
+  rows: number;
+}) => {
+  const { deps, ws, serviceId, cols, rows } = args;
+  deps.resizeServiceTerminal(serviceId, cols, rows);
+  const session = deps.getServiceTerminalSession(serviceId);
+  if (session) {
+    ws.send({ type: "ready", session });
+  }
+};
+
+const handleCellTerminalWsInput = (args: {
+  deps: CellRouteDependencies;
+  cellId: string;
+  data: string;
+}) => {
+  const { deps, cellId, data } = args;
+  deps.writeTerminalInput(cellId, data);
+};
+
+const handleCellTerminalWsResize = (args: {
+  deps: CellRouteDependencies;
+  ws: TerminalRouteSocket;
+  cellId: string;
+  workspacePath: string;
+  cols: number;
+  rows: number;
+}) => {
+  const { deps, ws, cellId, workspacePath, cols, rows } = args;
+  const session = deps.ensureTerminalSession({
+    cellId,
+    workspacePath,
+  });
+  deps.resizeTerminal(cellId, cols, rows);
+  ws.send({
+    type: "ready",
+    session: {
+      ...session,
+      cols,
+      rows,
+    },
+  });
+};
+
 type ErrorPayload = {
   message: string;
   details?: string;
@@ -792,6 +1064,38 @@ export function createCellsRoutes(
       );
     },
   });
+
+  const wsCleanupById = new Map<string, () => void>();
+  const wsStateById = new Map<string, TerminalWsState>();
+
+  const registerWsCleanup = (socketId: string, cleanup: () => void) => {
+    const existing = wsCleanupById.get(socketId);
+    existing?.();
+    wsCleanupById.set(socketId, cleanup);
+  };
+
+  const setWsState = (socketId: string, state: TerminalWsState) => {
+    wsStateById.set(socketId, state);
+  };
+
+  const getWsState = <Kind extends TerminalWsState["kind"]>(
+    socketId: string,
+    kind: Kind
+  ): Extract<TerminalWsState, { kind: Kind }> | null => {
+    const state = wsStateById.get(socketId);
+    if (!state || state.kind !== kind) {
+      return null;
+    }
+
+    return state as Extract<TerminalWsState, { kind: Kind }>;
+  };
+
+  const runWsCleanup = (socketId: string) => {
+    const cleanup = wsCleanupById.get(socketId);
+    cleanup?.();
+    wsCleanupById.delete(socketId);
+    wsStateById.delete(socketId);
+  };
 
   return new Elysia({ prefix: "/api/cells" })
     .use(logger({ ...LOGGER_CONFIG }))
@@ -1529,6 +1833,113 @@ export function createCellsRoutes(
       }
     )
 
+    .ws("/:id/setup/terminal/ws", {
+      params: t.Object({ id: t.String() }),
+      body: t.Any(),
+      async open(ws) {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const cell = await loadCellById(database, ws.data.params.id);
+        if (!cell) {
+          ws.send({ type: "error", message: "Cell not found" });
+          ws.close();
+          return;
+        }
+
+        const session = deps.getSetupTerminalSession(cell.id);
+        const setupState = deriveSetupTerminalState(cell, session);
+        const initialOutput = deps.readSetupTerminalOutput(cell.id);
+        const unsubscribe = deps.subscribeToSetupTerminal(cell.id, (event) => {
+          if (event.type === "data") {
+            ws.send({ type: "data", chunk: event.chunk });
+            return;
+          }
+
+          ws.send({
+            type: "exit",
+            exitCode: event.exitCode,
+            signal: event.signal,
+          });
+        });
+
+        registerWsCleanup(ws.id, unsubscribe);
+        setWsState(ws.id, {
+          kind: "setup",
+          deps,
+          cellId: cell.id,
+        });
+
+        ws.send({
+          type: "ready",
+          session,
+          setupState,
+          lastSetupError: cell.lastSetupError,
+        });
+
+        if (initialOutput.length > 0) {
+          ws.send({ type: "snapshot", output: initialOutput });
+        }
+      },
+      message(ws, rawMessage) {
+        const message = parseTerminalWsMessage(rawMessage);
+        if (!message) {
+          ws.send({ type: "error", message: "Invalid websocket message" });
+          return;
+        }
+
+        const state = getWsState(ws.id, "setup");
+        if (!state) {
+          ws.send({
+            type: "error",
+            message: "Terminal websocket session is unavailable",
+          });
+          ws.close();
+          return;
+        }
+
+        try {
+          switch (message.type) {
+            case "ping":
+              ws.send({ type: "pong" });
+              return;
+            case "input":
+              handleSetupTerminalWsInput({
+                deps: state.deps,
+                ws,
+                cellId: state.cellId,
+                data: message.data,
+              });
+              return;
+            case "resize":
+              handleSetupTerminalWsResize({
+                deps: state.deps,
+                ws,
+                cellId: state.cellId,
+                cols: message.cols,
+                rows: message.rows,
+              });
+              return;
+            case "restart":
+              ws.send({ type: "error", message: "Restart is unsupported" });
+              return;
+            default:
+              ws.send({ type: "error", message: "Unsupported message" });
+          }
+        } catch (error) {
+          ws.send({
+            type: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to process terminal websocket message",
+          });
+        }
+      },
+      close(ws) {
+        runWsCleanup(ws.id);
+      },
+    })
+
     .post(
       "/:id/setup/terminal/resize",
       async ({ params, body, set, log }) => {
@@ -1688,6 +2099,113 @@ export function createCellsRoutes(
         },
       }
     )
+
+    .ws("/:id/services/:serviceId/terminal/ws", {
+      params: t.Object({ id: t.String(), serviceId: t.String() }),
+      body: t.Any(),
+      async open(ws) {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const row = await fetchServiceRow(
+          database,
+          ws.data.params.id,
+          ws.data.params.serviceId
+        );
+        if (!row) {
+          ws.send({ type: "error", message: "Service not found" });
+          ws.close();
+          return;
+        }
+
+        const session = deps.getServiceTerminalSession(row.service.id);
+        const initialOutput = deps.readServiceTerminalOutput(row.service.id);
+        const unsubscribe = deps.subscribeToServiceTerminal(
+          row.service.id,
+          (event) => {
+            if (event.type === "data") {
+              ws.send({ type: "data", chunk: event.chunk });
+              return;
+            }
+
+            ws.send({
+              type: "exit",
+              exitCode: event.exitCode,
+              signal: event.signal,
+            });
+          }
+        );
+
+        registerWsCleanup(ws.id, unsubscribe);
+        setWsState(ws.id, {
+          kind: "service",
+          deps,
+          serviceId: row.service.id,
+        });
+
+        ws.send({ type: "ready", session });
+        if (initialOutput.length > 0) {
+          ws.send({ type: "snapshot", output: initialOutput });
+        }
+      },
+      message(ws, rawMessage) {
+        const message = parseTerminalWsMessage(rawMessage);
+        if (!message) {
+          ws.send({ type: "error", message: "Invalid websocket message" });
+          return;
+        }
+
+        const state = getWsState(ws.id, "service");
+        if (!state) {
+          ws.send({
+            type: "error",
+            message: "Terminal websocket session is unavailable",
+          });
+          ws.close();
+          return;
+        }
+
+        try {
+          switch (message.type) {
+            case "ping":
+              ws.send({ type: "pong" });
+              return;
+            case "input":
+              handleServiceTerminalWsInput({
+                deps: state.deps,
+                ws,
+                serviceId: state.serviceId,
+                data: message.data,
+              });
+              return;
+            case "resize":
+              handleServiceTerminalWsResize({
+                deps: state.deps,
+                ws,
+                serviceId: state.serviceId,
+                cols: message.cols,
+                rows: message.rows,
+              });
+              return;
+            case "restart":
+              ws.send({ type: "error", message: "Restart is unsupported" });
+              return;
+            default:
+              ws.send({ type: "error", message: "Unsupported message" });
+          }
+        } catch (error) {
+          ws.send({
+            type: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to process terminal websocket message",
+          });
+        }
+      },
+      close(ws) {
+        runWsCleanup(ws.id);
+      },
+    })
 
     .post(
       "/:id/services/:serviceId/terminal/input",
@@ -1891,6 +2409,171 @@ export function createCellsRoutes(
         },
       }
     )
+
+    .ws("/:id/chat/terminal/ws", {
+      params: t.Object({ id: t.String() }),
+      query: ChatThemeModeQuerySchema,
+      body: t.Any(),
+      async open(ws) {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const cell = await loadCellById(database, ws.data.params.id);
+        if (!cell) {
+          ws.send({ type: "error", message: "Cell not found" });
+          ws.close();
+          return;
+        }
+
+        if (!isCellReadyForChat(cell)) {
+          ws.send({
+            type: "error",
+            message:
+              "Chat terminal is unavailable until provisioning completes",
+          });
+          ws.close();
+          return;
+        }
+
+        const themeMode = normalizeOpencodeThemeMode(ws.data.query?.themeMode);
+        let prepared: Awaited<
+          ReturnType<typeof ensureChatTerminalSessionForCell>
+        >;
+        try {
+          prepared = await ensureChatTerminalSessionForCell(
+            deps,
+            cell,
+            themeMode
+          );
+        } catch (error) {
+          ws.send({
+            type: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to initialize chat terminal",
+          });
+          ws.close();
+          return;
+        }
+
+        const initialOutput = prepared.chatTerminal.readChatTerminalOutput(
+          cell.id
+        );
+        const unsubscribe = prepared.chatTerminal.subscribeToChatTerminal(
+          cell.id,
+          (event) => {
+            if (event.type === "data") {
+              ws.send({ type: "data", chunk: event.chunk });
+              return;
+            }
+
+            ws.send({
+              type: "exit",
+              exitCode: event.exitCode,
+              signal: event.signal,
+            });
+          }
+        );
+
+        registerWsCleanup(ws.id, unsubscribe);
+        setWsState(ws.id, {
+          kind: "chat",
+          deps,
+          cell,
+          themeMode,
+          chatTerminal: prepared.chatTerminal,
+        });
+
+        ws.send({ type: "ready", session: prepared.session });
+        if (initialOutput.length > 0) {
+          ws.send({ type: "snapshot", output: initialOutput });
+        }
+      },
+      async message(ws, rawMessage) {
+        const message = parseTerminalWsMessage(rawMessage);
+        if (!message) {
+          ws.send({ type: "error", message: "Invalid websocket message" });
+          return;
+        }
+
+        const state = getWsState(ws.id, "chat");
+        if (!state) {
+          ws.send({
+            type: "error",
+            message: "Terminal websocket session is unavailable",
+          });
+          ws.close();
+          return;
+        }
+
+        try {
+          switch (message.type) {
+            case "ping":
+              ws.send({ type: "pong" });
+              return;
+            case "input":
+              state.chatTerminal.writeChatTerminalInput(
+                state.cell.id,
+                message.data
+              );
+              return;
+            case "resize": {
+              state.chatTerminal.resizeChatTerminal(
+                state.cell.id,
+                message.cols,
+                message.rows
+              );
+              const resizedSession = state.chatTerminal.getChatTerminalSession(
+                state.cell.id
+              );
+              if (!resizedSession) {
+                ws.send({
+                  type: "error",
+                  message: "Chat terminal session not available",
+                });
+                return;
+              }
+              ws.send({
+                type: "ready",
+                session: resizedSession,
+              });
+              return;
+            }
+            case "restart": {
+              state.chatTerminal.closeChatTerminalSession(state.cell.id);
+              const restarted = await ensureChatTerminalSessionForCell(
+                state.deps,
+                state.cell,
+                state.themeMode
+              );
+              const output = restarted.chatTerminal.readChatTerminalOutput(
+                state.cell.id
+              );
+              setWsState(ws.id, {
+                ...state,
+                chatTerminal: restarted.chatTerminal,
+              });
+              ws.send({ type: "ready", session: restarted.session });
+              ws.send({ type: "snapshot", output });
+              return;
+            }
+            default:
+              ws.send({ type: "error", message: "Unsupported message" });
+          }
+        } catch (error) {
+          ws.send({
+            type: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to process terminal websocket message",
+          });
+        }
+      },
+      close(ws) {
+        runWsCleanup(ws.id);
+      },
+    })
 
     .post(
       "/:id/chat/terminal/input",
@@ -2143,6 +2826,132 @@ export function createCellsRoutes(
         },
       }
     )
+
+    .ws("/:id/terminal/ws", {
+      params: t.Object({ id: t.String() }),
+      body: t.Any(),
+      async open(ws) {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const cell = await loadCellById(database, ws.data.params.id);
+        if (!cell) {
+          ws.send({ type: "error", message: "Cell not found" });
+          ws.close();
+          return;
+        }
+
+        let session: CellTerminalSession;
+        try {
+          session = deps.ensureTerminalSession({
+            cellId: cell.id,
+            workspacePath: cell.workspacePath,
+          });
+        } catch (error) {
+          ws.send({
+            type: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to initialize terminal session",
+          });
+          ws.close();
+          return;
+        }
+
+        const initialOutput = deps.readTerminalOutput(cell.id);
+        const unsubscribe = deps.subscribeToTerminal(cell.id, (event) => {
+          if (event.type === "data") {
+            ws.send({ type: "data", chunk: event.chunk });
+            return;
+          }
+
+          ws.send({
+            type: "exit",
+            exitCode: event.exitCode,
+            signal: event.signal,
+          });
+        });
+
+        registerWsCleanup(ws.id, unsubscribe);
+        setWsState(ws.id, {
+          kind: "cell",
+          deps,
+          cellId: cell.id,
+          workspacePath: cell.workspacePath,
+        });
+
+        ws.send({ type: "ready", session });
+        if (initialOutput.length > 0) {
+          ws.send({ type: "snapshot", output: initialOutput });
+        }
+      },
+      message(ws, rawMessage) {
+        const message = parseTerminalWsMessage(rawMessage);
+        if (!message) {
+          ws.send({ type: "error", message: "Invalid websocket message" });
+          return;
+        }
+
+        const state = getWsState(ws.id, "cell");
+        if (!state) {
+          ws.send({
+            type: "error",
+            message: "Terminal websocket session is unavailable",
+          });
+          ws.close();
+          return;
+        }
+
+        try {
+          switch (message.type) {
+            case "ping":
+              ws.send({ type: "pong" });
+              return;
+            case "input":
+              handleCellTerminalWsInput({
+                deps: state.deps,
+                cellId: state.cellId,
+                data: message.data,
+              });
+              return;
+            case "resize":
+              handleCellTerminalWsResize({
+                deps: state.deps,
+                ws,
+                cellId: state.cellId,
+                workspacePath: state.workspacePath,
+                cols: message.cols,
+                rows: message.rows,
+              });
+              return;
+            case "restart": {
+              state.deps.closeTerminalSession(state.cellId);
+              const session = state.deps.ensureTerminalSession({
+                cellId: state.cellId,
+                workspacePath: state.workspacePath,
+              });
+              const output = state.deps.readTerminalOutput(state.cellId);
+              ws.send({ type: "ready", session });
+              ws.send({ type: "snapshot", output });
+              return;
+            }
+            default:
+              ws.send({ type: "error", message: "Unsupported message" });
+          }
+        } catch (error) {
+          ws.send({
+            type: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to process terminal websocket message",
+          });
+        }
+      },
+      close(ws) {
+        runWsCleanup(ws.id);
+      },
+    })
 
     .post(
       "/:id/terminal/input",
