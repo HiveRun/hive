@@ -12,6 +12,7 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { getApiBase } from "@/lib/api-base";
+import { isMouseMovementInputChunk } from "@/lib/terminal-input";
 import {
   parseTerminalSocketMessage,
   sendTerminalSocketMessage,
@@ -44,7 +45,7 @@ const STARTUP_FALLBACK_VISIBLE_LENGTH = 48;
 const STARTUP_FALLBACK_READY_DELAY_MS = 2500;
 const SOCKET_RECONNECT_DELAY_MS = 800;
 const INPUT_BATCH_BASE_WINDOW_MS = 16;
-const INPUT_BATCH_MAX_WINDOW_MS = 48;
+const INPUT_BATCH_MAX_WINDOW_MS = 24;
 const INPUT_BATCH_WINDOW_STEP_MS = 8;
 const INPUT_BATCH_HIGH_CHUNK_THRESHOLD = 6;
 const INPUT_BATCH_FLUSH_SIZE = 1024;
@@ -196,10 +197,7 @@ const appendVisibleBuffer = (current: string, chunk: string): string => {
   return next.slice(next.length - STARTUP_VISIBLE_BUFFER_LIMIT);
 };
 
-const isImmediateInputChunk = (data: string, bufferedLength: number) =>
-  data === "\r" ||
-  data === "\u0003" ||
-  data === "\u0004" ||
+const shouldFlushMouseBatch = (bufferedLength: number) =>
   bufferedLength >= INPUT_BATCH_FLUSH_SIZE;
 
 function createWheelBridge(
@@ -429,9 +427,15 @@ export function CellTerminal({
         return;
       }
 
+      if (!isMouseMovementInputChunk(data)) {
+        flushQueuedInput(true);
+        sendSocketMessage({ type: "input", data });
+        return;
+      }
+
       inputBufferRef.current += data;
       inputBatchChunkCountRef.current += 1;
-      if (isImmediateInputChunk(data, inputBufferRef.current.length)) {
+      if (shouldFlushMouseBatch(inputBufferRef.current.length)) {
         flushQueuedInput(true);
         return;
       }
@@ -449,7 +453,7 @@ export function CellTerminal({
         flushQueuedInput();
       }, inputBatchWindowMsRef.current);
     },
-    [flushQueuedInput]
+    [flushQueuedInput, sendSocketMessage]
   );
 
   const scheduleResizeSync = useCallback(() => {
