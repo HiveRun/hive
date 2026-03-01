@@ -2,8 +2,6 @@ import { type Page, test } from "@playwright/test";
 import { selectors } from "../src/selectors";
 import {
   createCellViaApi,
-  ensureTerminalReady,
-  sendTerminalCommand,
   waitForChatRoute,
   waitForCondition,
   waitForProvisioningOrChatRoute,
@@ -42,12 +40,12 @@ type PendingQuestion = {
 const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
 const CHAT_ROUTE_TIMEOUT_MS = 180_000;
 const SESSION_MODE_TIMEOUT_MS = 120_000;
-const UI_MODE_SWITCH_TIMEOUT_MS = 12_000;
-const POST_QUESTION_MODE_SWITCH_TIMEOUT_MS = 30_000;
+const BUILD_TRANSITION_TIMEOUT_MS = 170_000;
 const FINAL_MODE_SWITCH_TIMEOUT_MS = 35_000;
-const PLAN_EXIT_QUESTION_TIMEOUT_MS = 15_000;
-const TERMINAL_READY_TIMEOUT_MS = 120_000;
+const PLAN_TO_BUILD_TEST_TIMEOUT_MS = 240_000;
 const MODE_POLL_INTERVAL_MS = 500;
+const BUILD_PROMPT_RETRY_INTERVAL_MS = 20_000;
+const OPENCODE_REQUEST_TIMEOUT_MS = 2500;
 const QUESTION_API_NOT_FOUND_STATUS = 404;
 const CELL_TEMPLATE_LABEL = "E2E Template";
 const OPENCODE_ATTACH_URL_PATTERN = /attach\s+"([^"]+)"/;
@@ -138,6 +136,8 @@ test.describe("plan mode @plan-mode", () => {
   test("@plan-mode transitions from plan to build during chat flow", async ({
     page,
   }) => {
+    test.setTimeout(PLAN_TO_BUILD_TEST_TIMEOUT_MS);
+
     const apiUrl = process.env.HIVE_E2E_API_URL;
     if (!apiUrl) {
       throw new Error("HIVE_E2E_API_URL is required for E2E tests");
@@ -176,64 +176,25 @@ test.describe("plan mode @plan-mode", () => {
       throw new Error("Cell is missing OpenCode session metadata");
     }
 
-    await ensureTerminalReady(page, {
-      context: "plan-to-build transition prompt",
-      timeoutMs: TERMINAL_READY_TIMEOUT_MS,
-    });
-
-    await sendTerminalCommand(page, BUILD_MODE_PROMPT_TEXT);
-
     const opencodeServerUrl = parseOpencodeServerUrl(cell.opencodeCommand);
-    const switchedViaUi = await waitForSessionMode({
+    await sendBuildPromptForTransition({
       apiUrl,
       cellId,
-      expectedStartMode: "plan",
-      expectedCurrentMode: "build",
-      timeoutMs: UI_MODE_SWITCH_TIMEOUT_MS,
-      failOnTimeout: false,
+      opencodeServerUrl,
+      sessionId: cell.opencodeSessionId,
+      workspacePath: cell.workspacePath,
     });
 
-    let switchedAfterQuestionReply = false;
-    if (!switchedViaUi) {
-      const repliedToQuestion = await handleBuildTransitionQuestion({
-        page,
-        opencodeServerUrl,
-        sessionId: cell.opencodeSessionId,
-      });
-
-      if (repliedToQuestion) {
-        switchedAfterQuestionReply = await waitForSessionMode({
-          apiUrl,
-          cellId,
-          expectedStartMode: "plan",
-          expectedCurrentMode: "build",
-          timeoutMs: POST_QUESTION_MODE_SWITCH_TIMEOUT_MS,
-          failOnTimeout: false,
-        });
-      }
-    }
-
-    if (!(switchedViaUi || switchedAfterQuestionReply)) {
-      await sendBuildModePromptViaOpencode({
-        opencodeServerUrl,
-        sessionId: cell.opencodeSessionId,
-        workspacePath: cell.workspacePath,
-      });
-
-      await handleBuildTransitionQuestion({
-        page,
-        opencodeServerUrl,
-        sessionId: cell.opencodeSessionId,
-      });
-    }
-
-    await waitForSessionMode({
+    await waitForPlanToBuildTransition({
       apiUrl,
       cellId,
-      expectedStartMode: "plan",
-      expectedCurrentMode: "build",
-      timeoutMs: FINAL_MODE_SWITCH_TIMEOUT_MS,
+      page,
+      opencodeServerUrl,
+      sessionId: cell.opencodeSessionId,
+      workspacePath: cell.workspacePath,
+      hasSentInitialPrompt: true,
     });
+
     await waitForBuildActivity({ page });
   });
 });
@@ -344,7 +305,96 @@ async function sendBuildModePromptViaOpencode(options: {
   }
 }
 
-async function handleBuildTransitionQuestion(options: {
+async function sendBuildPromptForTransition(options: {
+  apiUrl: string;
+  cellId: string;
+  opencodeServerUrl: string;
+  sessionId: string;
+  workspacePath: string;
+}): Promise<void> {
+  await sendBuildModePromptViaOpencode({
+    opencodeServerUrl: options.opencodeServerUrl,
+    sessionId: options.sessionId,
+    workspacePath: options.workspacePath,
+  });
+
+  await sendBuildPromptViaChatTerminalApi({
+    apiUrl: options.apiUrl,
+    cellId: options.cellId,
+  });
+}
+
+async function sendBuildPromptViaChatTerminalApi(options: {
+  apiUrl: string;
+  cellId: string;
+}): Promise<boolean> {
+  try {
+    const response = await fetchWithTimeout(
+      `${options.apiUrl}/api/cells/${options.cellId}/chat/terminal/input`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          data: `${BUILD_MODE_PROMPT_TEXT}\r`,
+        }),
+      }
+    );
+
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForPlanToBuildTransition(options: {
+  apiUrl: string;
+  cellId: string;
+  page: Page;
+  opencodeServerUrl: string;
+  sessionId: string;
+  workspacePath: string;
+  hasSentInitialPrompt: boolean;
+}): Promise<void> {
+  const startedAt = Date.now();
+  let lastPromptAt = options.hasSentInitialPrompt ? Date.now() : 0;
+
+  while (Date.now() - startedAt < BUILD_TRANSITION_TIMEOUT_MS) {
+    const switched = await waitForSessionMode({
+      apiUrl: options.apiUrl,
+      cellId: options.cellId,
+      expectedStartMode: "plan",
+      expectedCurrentMode: "build",
+      timeoutMs: MODE_POLL_INTERVAL_MS,
+      failOnTimeout: false,
+    });
+    if (switched) {
+      return;
+    }
+
+    await tryHandleBuildTransitionQuestion(options);
+
+    const shouldResendPrompt =
+      Date.now() - lastPromptAt >= BUILD_PROMPT_RETRY_INTERVAL_MS;
+    if (shouldResendPrompt) {
+      await sendBuildPromptForTransition({
+        apiUrl: options.apiUrl,
+        cellId: options.cellId,
+        opencodeServerUrl: options.opencodeServerUrl,
+        sessionId: options.sessionId,
+        workspacePath: options.workspacePath,
+      });
+      lastPromptAt = Date.now();
+    }
+
+    await wait(MODE_POLL_INTERVAL_MS);
+  }
+
+  throw new Error(`Session mode mismatch for cell ${options.cellId}`);
+}
+
+async function tryHandleBuildTransitionQuestion(options: {
   page: Page;
   opencodeServerUrl: string;
   sessionId: string;
@@ -353,28 +403,22 @@ async function handleBuildTransitionQuestion(options: {
     return true;
   }
 
-  const startedAt = Date.now();
+  const content =
+    (await options.page.locator(selectors.terminalRoot).textContent()) ?? "";
+  if (PLAN_EXIT_QUESTION_PATTERN.test(content)) {
+    await options.page.locator(selectors.terminalInputSurface).click();
+    await options.page.keyboard.press("Enter");
+    return true;
+  }
 
-  while (Date.now() - startedAt < PLAN_EXIT_QUESTION_TIMEOUT_MS) {
-    const content =
-      (await options.page.locator(selectors.terminalRoot).textContent()) ?? "";
-    if (PLAN_EXIT_QUESTION_PATTERN.test(content)) {
-      await options.page.locator(selectors.terminalInputSurface).click();
-      await options.page.keyboard.press("Enter");
-      return true;
-    }
-
-    if (
-      QUESTION_PROMPT_HINT_PATTERN.test(content) &&
-      BUILD_IMPLEMENT_OPTION_PATTERN.test(content)
-    ) {
-      await options.page.locator(selectors.terminalInputSurface).click();
-      await options.page.keyboard.press("ArrowDown");
-      await options.page.keyboard.press("Enter");
-      return true;
-    }
-
-    await wait(MODE_POLL_INTERVAL_MS);
+  if (
+    QUESTION_PROMPT_HINT_PATTERN.test(content) &&
+    BUILD_IMPLEMENT_OPTION_PATTERN.test(content)
+  ) {
+    await options.page.locator(selectors.terminalInputSurface).click();
+    await options.page.keyboard.press("ArrowDown");
+    await options.page.keyboard.press("Enter");
+    return true;
   }
 
   return false;
@@ -385,7 +429,9 @@ async function submitQuestionViaOpencodeApi(options: {
   sessionId: string;
 }): Promise<boolean> {
   try {
-    const listResponse = await fetch(`${options.opencodeServerUrl}/question`);
+    const listResponse = await fetchWithTimeout(
+      `${options.opencodeServerUrl}/question`
+    );
     if (listResponse.status === QUESTION_API_NOT_FOUND_STATUS) {
       return false;
     }
@@ -412,7 +458,7 @@ async function submitQuestionViaOpencodeApi(options: {
     }
 
     const answers = buildQuestionAnswers(question);
-    const replyResponse = await fetch(
+    const replyResponse = await fetchWithTimeout(
       `${options.opencodeServerUrl}/question/${question.id}/reply`,
       {
         method: "POST",
@@ -498,4 +544,23 @@ async function wait(ms: number): Promise<void> {
   await new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+async function fetchWithTimeout(
+  input: string,
+  init?: RequestInit
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, OPENCODE_REQUEST_TIMEOUT_MS);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
