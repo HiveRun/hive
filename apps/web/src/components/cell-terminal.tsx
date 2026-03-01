@@ -43,8 +43,12 @@ const STARTUP_VISIBLE_BUFFER_LIMIT = 8192;
 const STARTUP_FALLBACK_VISIBLE_LENGTH = 48;
 const STARTUP_FALLBACK_READY_DELAY_MS = 2500;
 const SOCKET_RECONNECT_DELAY_MS = 800;
-const INPUT_BATCH_WINDOW_MS = 16;
+const INPUT_BATCH_BASE_WINDOW_MS = 16;
+const INPUT_BATCH_MAX_WINDOW_MS = 48;
+const INPUT_BATCH_WINDOW_STEP_MS = 8;
+const INPUT_BATCH_HIGH_CHUNK_THRESHOLD = 6;
 const INPUT_BATCH_FLUSH_SIZE = 1024;
+const INPUT_BATCH_HIGH_CHUNK_MIN_BUFFER = 256;
 const ASCII_NULL_CODE = 0x00;
 const ASCII_ESCAPE_CODE = 0x1b;
 const ASCII_BELL_CODE = 0x07;
@@ -277,6 +281,8 @@ export function CellTerminal({
   const visibleOutputRef = useRef<string>("");
   const inputBufferRef = useRef<string>("");
   const inputFlushTimeoutRef = useRef<number | null>(null);
+  const inputBatchWindowMsRef = useRef(INPUT_BATCH_BASE_WINDOW_MS);
+  const inputBatchChunkCountRef = useRef(0);
   const restartPendingRef = useRef(false);
   const resizeTimeoutRef = useRef<number | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -367,23 +373,55 @@ export function CellTerminal({
     [sendSocketMessage]
   );
 
-  const flushQueuedInput = useCallback(() => {
-    if (
-      typeof window !== "undefined" &&
-      inputFlushTimeoutRef.current !== null
-    ) {
-      window.clearTimeout(inputFlushTimeoutRef.current);
-      inputFlushTimeoutRef.current = null;
-    }
+  const updateBatchWindow = useCallback(
+    (chunkCount: number, queuedLength: number, forceImmediate: boolean) => {
+      if (forceImmediate) {
+        inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
+        return;
+      }
 
-    const queued = inputBufferRef.current;
-    if (queued.length === 0) {
-      return;
-    }
+      if (
+        chunkCount >= INPUT_BATCH_HIGH_CHUNK_THRESHOLD &&
+        queuedLength >= INPUT_BATCH_HIGH_CHUNK_MIN_BUFFER
+      ) {
+        inputBatchWindowMsRef.current = Math.min(
+          INPUT_BATCH_MAX_WINDOW_MS,
+          inputBatchWindowMsRef.current + INPUT_BATCH_WINDOW_STEP_MS
+        );
+        return;
+      }
 
-    inputBufferRef.current = "";
-    sendSocketMessage({ type: "input", data: queued });
-  }, [sendSocketMessage]);
+      inputBatchWindowMsRef.current = Math.max(
+        INPUT_BATCH_BASE_WINDOW_MS,
+        inputBatchWindowMsRef.current - INPUT_BATCH_WINDOW_STEP_MS
+      );
+    },
+    []
+  );
+
+  const flushQueuedInput = useCallback(
+    (forceImmediate = false) => {
+      if (
+        typeof window !== "undefined" &&
+        inputFlushTimeoutRef.current !== null
+      ) {
+        window.clearTimeout(inputFlushTimeoutRef.current);
+        inputFlushTimeoutRef.current = null;
+      }
+
+      const queued = inputBufferRef.current;
+      if (queued.length === 0) {
+        return;
+      }
+
+      const chunkCount = inputBatchChunkCountRef.current;
+      inputBufferRef.current = "";
+      inputBatchChunkCountRef.current = 0;
+      updateBatchWindow(chunkCount, queued.length, forceImmediate);
+      sendSocketMessage({ type: "input", data: queued });
+    },
+    [sendSocketMessage, updateBatchWindow]
+  );
 
   const sendInput = useCallback(
     (data: string) => {
@@ -392,8 +430,9 @@ export function CellTerminal({
       }
 
       inputBufferRef.current += data;
+      inputBatchChunkCountRef.current += 1;
       if (isImmediateInputChunk(data, inputBufferRef.current.length)) {
-        flushQueuedInput();
+        flushQueuedInput(true);
         return;
       }
 
@@ -408,7 +447,7 @@ export function CellTerminal({
       inputFlushTimeoutRef.current = window.setTimeout(() => {
         inputFlushTimeoutRef.current = null;
         flushQueuedInput();
-      }, INPUT_BATCH_WINDOW_MS);
+      }, inputBatchWindowMsRef.current);
     },
     [flushQueuedInput]
   );
@@ -783,6 +822,8 @@ export function CellTerminal({
         inputFlushTimeoutRef.current = null;
       }
       inputBufferRef.current = "";
+      inputBatchChunkCountRef.current = 0;
+      inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
       restartPendingRef.current = false;
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);

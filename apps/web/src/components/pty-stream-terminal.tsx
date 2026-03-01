@@ -49,8 +49,12 @@ const API_BASE = getApiBase();
 const OUTPUT_BUFFER_LIMIT = 250_000;
 const RESIZE_DEBOUNCE_MS = 120;
 const SOCKET_RECONNECT_DELAY_MS = 800;
-const INPUT_BATCH_WINDOW_MS = 16;
+const INPUT_BATCH_BASE_WINDOW_MS = 16;
+const INPUT_BATCH_MAX_WINDOW_MS = 48;
+const INPUT_BATCH_WINDOW_STEP_MS = 8;
+const INPUT_BATCH_HIGH_CHUNK_THRESHOLD = 6;
 const INPUT_BATCH_FLUSH_SIZE = 1024;
+const INPUT_BATCH_HIGH_CHUNK_MIN_BUFFER = 256;
 const TERMINAL_FONT_FAMILY =
   '"JetBrainsMono Nerd Font", "MesloLGS NF", "CaskaydiaMono Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font Mono", "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Noto Color Emoji", monospace';
 
@@ -95,6 +99,8 @@ export function PtyStreamTerminal({
   const outputRef = useRef<string>("");
   const inputBufferRef = useRef<string>("");
   const inputFlushTimeoutRef = useRef<number | null>(null);
+  const inputBatchWindowMsRef = useRef(INPUT_BATCH_BASE_WINDOW_MS);
+  const inputBatchChunkCountRef = useRef(0);
   const resizeTimeoutRef = useRef<number | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -146,23 +152,55 @@ export function PtyStreamTerminal({
     [sendSocketMessage]
   );
 
-  const flushQueuedInput = useCallback(() => {
-    if (
-      typeof window !== "undefined" &&
-      inputFlushTimeoutRef.current !== null
-    ) {
-      window.clearTimeout(inputFlushTimeoutRef.current);
-      inputFlushTimeoutRef.current = null;
-    }
+  const updateBatchWindow = useCallback(
+    (chunkCount: number, queuedLength: number, forceImmediate: boolean) => {
+      if (forceImmediate) {
+        inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
+        return;
+      }
 
-    const queued = inputBufferRef.current;
-    if (queued.length === 0) {
-      return;
-    }
+      if (
+        chunkCount >= INPUT_BATCH_HIGH_CHUNK_THRESHOLD &&
+        queuedLength >= INPUT_BATCH_HIGH_CHUNK_MIN_BUFFER
+      ) {
+        inputBatchWindowMsRef.current = Math.min(
+          INPUT_BATCH_MAX_WINDOW_MS,
+          inputBatchWindowMsRef.current + INPUT_BATCH_WINDOW_STEP_MS
+        );
+        return;
+      }
 
-    inputBufferRef.current = "";
-    sendSocketMessage({ type: "input", data: queued });
-  }, [sendSocketMessage]);
+      inputBatchWindowMsRef.current = Math.max(
+        INPUT_BATCH_BASE_WINDOW_MS,
+        inputBatchWindowMsRef.current - INPUT_BATCH_WINDOW_STEP_MS
+      );
+    },
+    []
+  );
+
+  const flushQueuedInput = useCallback(
+    (forceImmediate = false) => {
+      if (
+        typeof window !== "undefined" &&
+        inputFlushTimeoutRef.current !== null
+      ) {
+        window.clearTimeout(inputFlushTimeoutRef.current);
+        inputFlushTimeoutRef.current = null;
+      }
+
+      const queued = inputBufferRef.current;
+      if (queued.length === 0) {
+        return;
+      }
+
+      const chunkCount = inputBatchChunkCountRef.current;
+      inputBufferRef.current = "";
+      inputBatchChunkCountRef.current = 0;
+      updateBatchWindow(chunkCount, queued.length, forceImmediate);
+      sendSocketMessage({ type: "input", data: queued });
+    },
+    [sendSocketMessage, updateBatchWindow]
+  );
 
   const scheduleResizeSync = useCallback(() => {
     const terminal = terminalRef.current;
@@ -194,8 +232,9 @@ export function PtyStreamTerminal({
       }
 
       inputBufferRef.current += data;
+      inputBatchChunkCountRef.current += 1;
       if (isImmediateInputChunk(data, inputBufferRef.current.length)) {
-        flushQueuedInput();
+        flushQueuedInput(true);
         return;
       }
 
@@ -210,7 +249,7 @@ export function PtyStreamTerminal({
       inputFlushTimeoutRef.current = window.setTimeout(() => {
         inputFlushTimeoutRef.current = null;
         flushQueuedInput();
-      }, INPUT_BATCH_WINDOW_MS);
+      }, inputBatchWindowMsRef.current);
     },
     [allowInput, flushQueuedInput, inputPath]
   );
@@ -518,6 +557,8 @@ export function PtyStreamTerminal({
         inputFlushTimeoutRef.current = null;
       }
       inputBufferRef.current = "";
+      inputBatchChunkCountRef.current = 0;
+      inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);
       }
