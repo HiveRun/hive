@@ -51,6 +51,11 @@ Environment variables:
   ```bash
   hive upgrade
   ```
+- Uninstall Hive (`~/.hive` by default). Hive removes managed completion files and PATH entries it previously added. In interactive terminals Hive prompts for confirmation and offers to preserve data; use `--yes` for non-interactive scripts, plus `--keep-data` to remove app binaries while keeping data:
+  ```bash
+  hive uninstall
+  hive uninstall --yes --keep-data
+  ```
 - Inspect your current install (release path, log locations, pid status):
   ```bash
   hive info
@@ -77,10 +82,69 @@ Environment variables:
   ```bash
   PORT=4100 hive
   ```
+- Embedded chat sessions inherit OpenCode config from workspace `@opencode.json` / `opencode.json`.
 - The SQLite database defaults to `~/.hive/state/hive.db`; set `DATABASE_URL` if you need a different location.
 - High-frequency transport/polling request logs are muted by default to keep runtime logs readable. Re-enable per category with `HIVE_LOG_TERMINAL_TRAFFIC=1`, `HIVE_LOG_POLLING_TRAFFIC=1`, or `HIVE_LOG_OPTIONS_REQUESTS=1`.
 
+#### OpenCode keybinds in Hive
+
+Hive applies browser-safe aliases for conflict-prone shortcuts in embedded chat terminals (web + desktop runtimes):
+
+- Leader defaults to `Ctrl+X` unless overridden in OpenCode config.
+- `display_thinking`: `leader + i`
+- `variant_cycle`: `leader + t`
+- `theme_list`: `leader + j`
+- `command_list`: `leader + p`
+- `app_exit` (embedded chat terminals): `leader + q`
+
+Embedded chat terminals intentionally avoid `Ctrl+C` / `Ctrl+D` as app-exit shortcuts by default to reduce accidental session exits while you are typing in the browser/Electron UI.
+
+Keybind merge behavior:
+
+- Hive starts with browser-safe aliases for conflict-prone actions.
+- Workspace/inline custom keybinds are preserved and Hive appends the browser-safe alias for the same action.
+- Setting a keybind to `none` keeps it disabled (Hive does not append aliases in that case).
+- Explicit keybind overrides that use `ctrl+c` and/or `ctrl+d` are honored in embedded chat terminals.
+- External `opencode attach` sessions keep OpenCode's default exit combos (`Ctrl+C`, `Ctrl+D`, `leader + q`) unless you override them.
+
+Example:
+
+```json
+{
+  "keybinds": {
+    "variant_cycle": "ctrl+t"
+  }
+}
+```
+
+In Hive embedded terminals this resolves to `ctrl+t,<leader>t` so browser-safe fallback remains available.
+
+After changing keybind config, restart the chat terminal session (or restart Hive) to pick up updates.
+
 Open the printed UI link (default [http://localhost:3000](http://localhost:3000)) after the log shows “Service supervisor initialized.”
+
+### agent-browser artifacts and verification guidance
+
+This repo includes `agent-browser.json` so browser profile and download state stays under `tmp/agent-browser/` instead of runtime temp directories.
+
+Convenience commands:
+
+```bash
+bun run ab:shot           # Save screenshot to tmp/agent-browser/screenshots/latest.png
+bun run ab:latest         # Print latest screenshot path
+bun run ab:view           # Open latest screenshot
+bun run ab:record:start   # Start video recording to tmp/agent-browser/videos/latest.webm
+bun run ab:record:stop    # Stop current recording
+bun run ab:latest:video   # Print latest video path
+bun run ab:view:video     # Open latest video
+```
+
+E2E verification defaults for user-facing changes:
+
+- Use `agent-browser` for browser validation where applicable.
+- Run headless by default.
+- Use headed mode only when human participation is required (manual login, 2FA, CAPTCHA, or explicit live verification).
+- Include verification evidence in your response (key outcomes and/or screenshots).
 
 ### Building a release locally
 
