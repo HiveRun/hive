@@ -79,6 +79,7 @@ docs/.obsidian/appearance.json
 
 # Track OpenCode config in repo
 !opencode.json
+!AGENTS.md
 
 # OpenCode local planning artifacts
 .opencode/plans/
