@@ -421,6 +421,20 @@ export function CellTerminal({
     [sendSocketMessage, updateBatchWindow]
   );
 
+  const discardQueuedMouseInput = useCallback(() => {
+    if (
+      typeof window !== "undefined" &&
+      inputFlushTimeoutRef.current !== null
+    ) {
+      window.clearTimeout(inputFlushTimeoutRef.current);
+      inputFlushTimeoutRef.current = null;
+    }
+
+    inputBufferRef.current = "";
+    inputBatchChunkCountRef.current = 0;
+    inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
+  }, []);
+
   const sendInput = useCallback(
     (data: string) => {
       if (data.length === 0) {
@@ -428,7 +442,7 @@ export function CellTerminal({
       }
 
       if (!isMouseMovementInputChunk(data)) {
-        flushQueuedInput(true);
+        discardQueuedMouseInput();
         sendSocketMessage({ type: "input", data });
         return;
       }
@@ -453,7 +467,7 @@ export function CellTerminal({
         flushQueuedInput();
       }, inputBatchWindowMsRef.current);
     },
-    [flushQueuedInput, sendSocketMessage]
+    [discardQueuedMouseInput, flushQueuedInput, sendSocketMessage]
   );
 
   const scheduleResizeSync = useCallback(() => {

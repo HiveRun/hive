@@ -200,6 +200,20 @@ export function PtyStreamTerminal({
     [sendSocketMessage, updateBatchWindow]
   );
 
+  const discardQueuedMouseInput = useCallback(() => {
+    if (
+      typeof window !== "undefined" &&
+      inputFlushTimeoutRef.current !== null
+    ) {
+      window.clearTimeout(inputFlushTimeoutRef.current);
+      inputFlushTimeoutRef.current = null;
+    }
+
+    inputBufferRef.current = "";
+    inputBatchChunkCountRef.current = 0;
+    inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
+  }, []);
+
   const scheduleResizeSync = useCallback(() => {
     const terminal = terminalRef.current;
     if (!terminal || typeof window === "undefined") {
@@ -230,7 +244,7 @@ export function PtyStreamTerminal({
       }
 
       if (!isMouseMovementInputChunk(data)) {
-        flushQueuedInput(true);
+        discardQueuedMouseInput();
         sendSocketMessage({ type: "input", data });
         return;
       }
@@ -255,7 +269,13 @@ export function PtyStreamTerminal({
         flushQueuedInput();
       }, inputBatchWindowMsRef.current);
     },
-    [allowInput, flushQueuedInput, inputPath, sendSocketMessage]
+    [
+      allowInput,
+      discardQueuedMouseInput,
+      flushQueuedInput,
+      inputPath,
+      sendSocketMessage,
+    ]
   );
 
   const copyTerminalOutput = useCallback(async () => {
