@@ -123,6 +123,29 @@ After changing keybind config, restart the chat terminal session (or restart Hiv
 
 Open the printed UI link (default [http://localhost:3000](http://localhost:3000)) after the log shows “Service supervisor initialized.”
 
+### agent-browser artifacts and verification guidance
+
+This repo includes `agent-browser.json` so browser profile and download state stays under `tmp/agent-browser/` instead of runtime temp directories.
+
+Convenience commands:
+
+```bash
+bun run ab:shot           # Save screenshot to tmp/agent-browser/screenshots/latest.png
+bun run ab:latest         # Print latest screenshot path
+bun run ab:view           # Open latest screenshot
+bun run ab:record:start   # Start video recording to tmp/agent-browser/videos/latest.webm
+bun run ab:record:stop    # Stop current recording
+bun run ab:latest:video   # Print latest video path
+bun run ab:view:video     # Open latest video
+```
+
+E2E verification defaults for user-facing changes:
+
+- Use `agent-browser` for browser validation where applicable.
+- Run headless by default.
+- Use headed mode only when human participation is required (manual login, 2FA, CAPTCHA, or explicit live verification).
+- Include verification evidence in your response (key outcomes and/or screenshots).
+
 ### Building a release locally
 
 ```bash
