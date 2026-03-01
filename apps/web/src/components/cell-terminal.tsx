@@ -282,6 +282,7 @@ export function CellTerminal({
   const inputBatchWindowMsRef = useRef(INPUT_BATCH_BASE_WINDOW_MS);
   const inputBatchChunkCountRef = useRef(0);
   const restartPendingRef = useRef(false);
+  const socketCloseErrorRef = useRef<string | null>(null);
   const resizeTimeoutRef = useRef<number | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -526,11 +527,19 @@ export function CellTerminal({
 
   const restartTerminal = useCallback(() => {
     flushQueuedInput();
+    const sent = sendSocketMessage({ type: "restart" });
+    if (!sent) {
+      setConnection("disconnected");
+      toast.error("Failed to restart terminal");
+      return;
+    }
+
     restartPendingRef.current = true;
     setIsRestarting(true);
     setConnection("connecting");
     setSession(null);
     setErrorMessage(null);
+    socketCloseErrorRef.current = null;
     visibleOutputRef.current = "";
     setTerminalVisibleOutputLength(0);
     setIsStartupReady(startupReadiness === "session");
@@ -540,15 +549,6 @@ export function CellTerminal({
     }
     fitAddonRef.current?.fit();
     outputRef.current = "";
-
-    const sent = sendSocketMessage({ type: "restart" });
-    if (!sent) {
-      restartPendingRef.current = false;
-      setConnection("disconnected");
-      toast.error("Failed to restart terminal");
-      setIsRestarting(false);
-      return;
-    }
   }, [flushQueuedInput, sendSocketMessage, startupReadiness]);
 
   useEffect(() => {
@@ -572,6 +572,7 @@ export function CellTerminal({
     const connectStream = () => {
       const socket = new WebSocket(buildTerminalSocketEndpoint());
       socketRef.current = socket;
+      socketCloseErrorRef.current = null;
 
       // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: message handling needs full event-state matrix for terminal sync.
       socket.onmessage = (event) => {
@@ -592,6 +593,7 @@ export function CellTerminal({
           setSession(payload);
           setConnection(payload.status === "exited" ? "exited" : "online");
           setErrorMessage(null);
+          socketCloseErrorRef.current = null;
           if (startupReadiness === "session") {
             setIsStartupReady(true);
           }
@@ -702,6 +704,7 @@ export function CellTerminal({
             current === "exited" ? "exited" : "disconnected"
           );
           setErrorMessage(description);
+          socketCloseErrorRef.current = description;
         }
       };
 
@@ -709,6 +712,9 @@ export function CellTerminal({
         if (disposed) {
           return;
         }
+
+        const closeErrorMessage = socketCloseErrorRef.current;
+        socketCloseErrorRef.current = null;
 
         if (restartPendingRef.current) {
           restartPendingRef.current = false;
@@ -719,7 +725,9 @@ export function CellTerminal({
         setConnection((current) =>
           current === "exited" ? "exited" : "disconnected"
         );
-        setErrorMessage("Terminal socket disconnected. Reconnecting…");
+        setErrorMessage(
+          closeErrorMessage ?? "Terminal socket disconnected. Reconnecting…"
+        );
 
         if (reconnectTimeoutRef.current !== null) {
           return;
@@ -843,6 +851,7 @@ export function CellTerminal({
       inputBatchChunkCountRef.current = 0;
       inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
       restartPendingRef.current = false;
+      socketCloseErrorRef.current = null;
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);
       }

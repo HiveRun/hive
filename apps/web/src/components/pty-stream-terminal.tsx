@@ -365,7 +365,7 @@ export function PtyStreamTerminal({
 
           if (payload.setupState === "failed" && payload.lastSetupError) {
             setErrorMessage(payload.lastSetupError);
-          } else if (payload.setupState) {
+          } else {
             setErrorMessage(null);
           }
           const activeTerminal = terminalRef.current;

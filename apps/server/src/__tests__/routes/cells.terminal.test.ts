@@ -426,4 +426,31 @@ describe("Cell terminal routes", () => {
     hooks.close?.(ws.socket, NORMAL_WS_CLOSE_CODE, "closed");
     expect(ws.isClosed()).toBeFalsy();
   });
+
+  it("surfaces websocket startup errors when terminal init fails", async () => {
+    await seedCell();
+    const harness = createTerminalHarness();
+    harness.ensureSession.mockImplementationOnce(() => {
+      throw new Error("Terminal bootstrap failed");
+    });
+    const app = new Elysia().use(
+      createCellsRoutes(createDependencies(harness))
+    );
+    const hooks = getWebSocketHooks(app, "/api/cells/:id/terminal/ws");
+    const ws = createMockWebSocket({
+      id: "cell-terminal-ws-fail-1",
+      params: { id: TEST_CELL_ID },
+    });
+
+    await hooks.open?.(ws.socket);
+
+    expect(
+      ws.messages.some(
+        (entry) =>
+          entry.type === "error" &&
+          entry.message === "Terminal bootstrap failed"
+      )
+    ).toBeTruthy();
+    expect(ws.isClosed()).toBeTruthy();
+  });
 });

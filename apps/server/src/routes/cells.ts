@@ -2840,10 +2840,24 @@ export function createCellsRoutes(
           return;
         }
 
-        const session = deps.ensureTerminalSession({
-          cellId: cell.id,
-          workspacePath: cell.workspacePath,
-        });
+        let session: CellTerminalSession;
+        try {
+          session = deps.ensureTerminalSession({
+            cellId: cell.id,
+            workspacePath: cell.workspacePath,
+          });
+        } catch (error) {
+          ws.send({
+            type: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to initialize terminal session",
+          });
+          ws.close();
+          return;
+        }
+
         const initialOutput = deps.readTerminalOutput(cell.id);
         const unsubscribe = deps.subscribeToTerminal(cell.id, (event) => {
           if (event.type === "data") {
