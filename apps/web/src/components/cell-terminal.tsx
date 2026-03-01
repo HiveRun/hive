@@ -277,6 +277,7 @@ export function CellTerminal({
   const visibleOutputRef = useRef<string>("");
   const inputBufferRef = useRef<string>("");
   const inputFlushTimeoutRef = useRef<number | null>(null);
+  const restartPendingRef = useRef(false);
   const resizeTimeoutRef = useRef<number | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -468,6 +469,7 @@ export function CellTerminal({
 
   const restartTerminal = useCallback(() => {
     flushQueuedInput();
+    restartPendingRef.current = true;
     setIsRestarting(true);
     setConnection("connecting");
     setSession(null);
@@ -480,25 +482,17 @@ export function CellTerminal({
       terminal.write("\x1bc");
     }
     fitAddonRef.current?.fit();
-    scheduleResizeSync();
     outputRef.current = "";
 
     const sent = sendSocketMessage({ type: "restart" });
     if (!sent) {
+      restartPendingRef.current = false;
       setConnection("disconnected");
       toast.error("Failed to restart terminal");
       setIsRestarting(false);
       return;
     }
-
-    toast.success("Terminal restarted");
-    setIsRestarting(false);
-  }, [
-    flushQueuedInput,
-    scheduleResizeSync,
-    sendSocketMessage,
-    startupReadiness,
-  ]);
+  }, [flushQueuedInput, sendSocketMessage, startupReadiness]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -543,6 +537,11 @@ export function CellTerminal({
           setErrorMessage(null);
           if (startupReadiness === "session") {
             setIsStartupReady(true);
+          }
+          if (restartPendingRef.current) {
+            restartPendingRef.current = false;
+            setIsRestarting(false);
+            toast.success("Terminal restarted");
           }
           scheduleResizeSync();
           return;
@@ -630,6 +629,11 @@ export function CellTerminal({
             typeof message.message === "string"
               ? message.message
               : "Terminal socket error";
+          if (restartPendingRef.current) {
+            restartPendingRef.current = false;
+            setIsRestarting(false);
+            toast.error(description);
+          }
           setConnection((current) =>
             current === "exited" ? "exited" : "disconnected"
           );
@@ -640,6 +644,12 @@ export function CellTerminal({
       socket.onclose = () => {
         if (disposed) {
           return;
+        }
+
+        if (restartPendingRef.current) {
+          restartPendingRef.current = false;
+          setIsRestarting(false);
+          toast.error("Terminal restart interrupted");
         }
 
         setConnection((current) =>
@@ -766,6 +776,7 @@ export function CellTerminal({
         inputFlushTimeoutRef.current = null;
       }
       inputBufferRef.current = "";
+      restartPendingRef.current = false;
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);
       }

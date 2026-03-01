@@ -395,6 +395,19 @@ describe("Cell terminal routes", () => {
       RESIZED_ROWS
     );
 
+    await hooks.message?.(
+      ws.socket,
+      JSON.stringify({ type: "resize", cols: 5000, rows: 2000 })
+    );
+    expect(harness.resize).toHaveBeenCalledTimes(1);
+    expect(
+      ws.messages.some(
+        (entry) =>
+          entry.type === "error" &&
+          entry.message === "Invalid websocket message"
+      )
+    ).toBeTruthy();
+
     await testDb.delete(cells);
     await hooks.message?.(
       ws.socket,

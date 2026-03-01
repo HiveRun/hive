@@ -491,4 +491,31 @@ describe("Cell chat terminal routes", () => {
     hooks.close?.(ws.socket, NORMAL_WS_CLOSE_CODE, "closed");
     expect(ws.isClosed()).toBeFalsy();
   });
+
+  it("surfaces websocket startup errors when chat terminal init fails", async () => {
+    await seedCell();
+    const harness = createChatTerminalHarness();
+    harness.ensureSession.mockImplementationOnce(() => {
+      throw new Error("Chat terminal bootstrap failed");
+    });
+    const deps = createDependencies(harness);
+    const app = new Elysia().use(createCellsRoutes(deps));
+    const hooks = getWebSocketHooks(app, "/api/cells/:id/chat/terminal/ws");
+    const ws = createMockWebSocket({
+      id: "chat-ws-fail-1",
+      params: { id: TEST_CELL_ID },
+      query: { themeMode: "light" },
+    });
+
+    await hooks.open?.(ws.socket);
+
+    expect(
+      ws.messages.some(
+        (entry) =>
+          entry.type === "error" &&
+          entry.message === "Chat terminal bootstrap failed"
+      )
+    ).toBeTruthy();
+    expect(ws.isClosed()).toBeTruthy();
+  });
 });

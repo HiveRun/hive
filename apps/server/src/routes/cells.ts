@@ -506,6 +506,10 @@ const LOG_TAIL_API_MAX_LINES = 2000;
 const LOG_LINE_SPLIT_RE = /\r?\n/;
 const PORT_CHECK_TIMEOUT_MS = 500;
 const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
+const TERMINAL_RESIZE_MIN_COLS = 20;
+const TERMINAL_RESIZE_MAX_COLS = 500;
+const TERMINAL_RESIZE_MIN_ROWS = 5;
+const TERMINAL_RESIZE_MAX_ROWS = 200;
 const MAX_PROVISIONING_ATTEMPTS = 3;
 const INITIAL_PROMPT_BACKGROUND_WARN_TIMEOUT_MS = 3000;
 const DEFAULT_SERVICE_HOST = process.env.SERVICE_HOST ?? "localhost";
@@ -520,8 +524,14 @@ const TerminalWsInputMessageSchema = t.Object({
 });
 const TerminalWsResizeMessageSchema = t.Object({
   type: t.Literal("resize"),
-  cols: t.Number({ minimum: 1 }),
-  rows: t.Number({ minimum: 1 }),
+  cols: t.Number({
+    minimum: TERMINAL_RESIZE_MIN_COLS,
+    maximum: TERMINAL_RESIZE_MAX_COLS,
+  }),
+  rows: t.Number({
+    minimum: TERMINAL_RESIZE_MIN_ROWS,
+    maximum: TERMINAL_RESIZE_MAX_ROWS,
+  }),
 });
 const TerminalWsRestartMessageSchema = t.Object({
   type: t.Literal("restart"),
@@ -726,12 +736,21 @@ const parseTerminalWsPayload = (raw: unknown): unknown | null => {
   return raw;
 };
 
-const toPositiveInteger = (value: unknown): number | null => {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 1) {
+const toBoundedInteger = (
+  value: unknown,
+  min: number,
+  max: number
+): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     return null;
   }
 
-  return Math.floor(value);
+  const next = Math.floor(value);
+  if (next < min || next > max) {
+    return null;
+  }
+
+  return next;
 };
 
 const parseTerminalWsMessage = (raw: unknown): TerminalWsMessage | null => {
@@ -754,8 +773,16 @@ const parseTerminalWsMessage = (raw: unknown): TerminalWsMessage | null => {
   }
 
   if (candidate.type === "resize") {
-    const cols = toPositiveInteger(candidate.cols);
-    const rows = toPositiveInteger(candidate.rows);
+    const cols = toBoundedInteger(
+      candidate.cols,
+      TERMINAL_RESIZE_MIN_COLS,
+      TERMINAL_RESIZE_MAX_COLS
+    );
+    const rows = toBoundedInteger(
+      candidate.rows,
+      TERMINAL_RESIZE_MIN_ROWS,
+      TERMINAL_RESIZE_MAX_ROWS
+    );
     if (!(cols && rows)) {
       return null;
     }
@@ -2408,11 +2435,27 @@ export function createCellsRoutes(
         }
 
         const themeMode = normalizeOpencodeThemeMode(ws.data.query?.themeMode);
-        const prepared = await ensureChatTerminalSessionForCell(
-          deps,
-          cell,
-          themeMode
-        );
+        let prepared: Awaited<
+          ReturnType<typeof ensureChatTerminalSessionForCell>
+        >;
+        try {
+          prepared = await ensureChatTerminalSessionForCell(
+            deps,
+            cell,
+            themeMode
+          );
+        } catch (error) {
+          ws.send({
+            type: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to initialize chat terminal",
+          });
+          ws.close();
+          return;
+        }
+
         const initialOutput = prepared.chatTerminal.readChatTerminalOutput(
           cell.id
         );
