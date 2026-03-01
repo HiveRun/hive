@@ -37,6 +37,29 @@ export const cellQueries = {
     },
   }),
 
+  opencodeBootstrap: (id: string) => ({
+    queryKey: ["cells", id, "opencode", "bootstrap"] as const,
+    staleTime: 0,
+    queryFn: async () => {
+      const { data, error } = await rpc.api
+        .cells({ id })
+        .opencode.bootstrap.get();
+      if (error) {
+        throw new Error(
+          formatRpcError(error, "Failed to initialize OpenCode web mode")
+        );
+      }
+
+      if ("message" in data) {
+        throw new Error(
+          formatRpcResponseError(data, "Failed to initialize OpenCode web mode")
+        );
+      }
+
+      return data;
+    },
+  }),
+
   services: (id: string) => ({
     queryKey: ["cells", id, "services"] as const,
     queryFn: async () => {

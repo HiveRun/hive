@@ -92,6 +92,12 @@ export const CellTerminalActionResponseSchema = t.Object({
   ok: t.Boolean(),
 });
 
+export const CellOpencodeBootstrapResponseSchema = t.Object({
+  proxyBasePath: t.String(),
+  sessionId: t.String(),
+  appPath: t.String(),
+});
+
 export const RuntimeTerminalSessionSchema = t.Object({
   sessionId: t.String(),
   pid: t.Number(),
