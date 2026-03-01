@@ -2,6 +2,15 @@
   "$schema": "https://opencode.ai/config.json",
   "instructions": ["AGENTS.md"],
   "autoupdate": true,
+  "skills": {
+    "urls": [
+      "https://skills.sh/vercel-labs/agent-browser/agent-browser",
+      "https://skills.sh/vercel-labs/skills/find-skills",
+      "https://skills.sh/anthropics/skills/frontend-design",
+      "https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices",
+      "https://skills.sh/vercel-labs/agent-skills/web-design-guidelines"
+    ]
+  },
   "mcp": {
     "linear": {
       "type": "local",

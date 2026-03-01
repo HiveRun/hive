@@ -1,0 +1,6 @@
+{
+  "headed": false,
+  "profile": "./tmp/agent-browser/profile",
+  "sessionName": "hive",
+  "downloadPath": "./tmp/agent-browser/downloads"
+}
