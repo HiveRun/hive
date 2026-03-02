@@ -239,6 +239,8 @@ export function CellForm({
     defaultValues,
     onSubmit: ({ value }) => {
       const formValues = value as CellFormValues;
+      const { spawnFromValue: _ignoredSpawnFromValue, ...baseFormValues } =
+        formValues;
       const spawnFromMode = formValues.spawnFromMode ?? "head";
       const spawnFromValue = formValues.spawnFromValue?.trim();
       if (spawnFromMode !== "head" && !spawnFromValue) {
@@ -251,7 +253,7 @@ export function CellForm({
       }
 
       mutation.mutate({
-        ...formValues,
+        ...baseFormValues,
         workspaceId,
         modelId: selectedModel?.id ?? formValues.modelId,
         providerId: selectedModel?.providerId ?? formValues.providerId,
