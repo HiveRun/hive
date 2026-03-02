@@ -64,6 +64,8 @@ const RECURSIVE_GLOB_SUFFIX = "/**";
 const RECURSIVE_GLOB_SUFFIX_LENGTH = RECURSIVE_GLOB_SUFFIX.length;
 const DOT_GIT_SEGMENT = ".git";
 const GLOBSTAR_PREFIX = "**/";
+const PR_NUMBER_PATTERN = /^\d+$/;
+const GITHUB_PR_URL_PATTERN = /github\.com\/.+\/pull\/(\d+)/i;
 const COPYFILE_REFLINK_FORCE_MODE = fsConstants.COPYFILE_FICLONE_FORCE;
 const REFLINK_UNSUPPORTED_ERROR_CODES = new Set([
   "ENOTSUP",
@@ -87,8 +89,14 @@ export type WorktreeInfo = {
 export type WorktreeCreateOptions = {
   force?: boolean;
   templateId?: string;
+  startPoint?: WorktreeStartPoint;
   onTimingEvent?: (event: WorktreeCreateTimingEvent) => void;
 };
+
+export type WorktreeStartPoint =
+  | { mode: "head" }
+  | { mode: "branch"; value: string }
+  | { mode: "pr"; value: string };
 
 export type WorktreeCreateTimingEvent = {
   step: string;
@@ -1041,6 +1049,168 @@ export function createWorktreeManager(
     return git("rev-parse", "--abbrev-ref", "HEAD");
   }
 
+  function parsePullRequestNumber(value: string): string | null {
+    const trimmed = value.trim();
+    if (PR_NUMBER_PATTERN.test(trimmed)) {
+      return trimmed;
+    }
+
+    const githubMatch = trimmed.match(GITHUB_PR_URL_PATTERN);
+    if (githubMatch?.[1]) {
+      return githubMatch[1];
+    }
+
+    return null;
+  }
+
+  function branchExists(ref: string): boolean {
+    try {
+      git("show-ref", "--verify", ref);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function resolveHeadStartPoint(): {
+    mode: WorktreeStartPoint["mode"];
+    commitish: string;
+    resolvedFrom: string;
+  } {
+    const branch = getCurrentBranch();
+    return {
+      mode: "head",
+      commitish: branch,
+      resolvedFrom: branch,
+    };
+  }
+
+  function resolveBranchStartPoint(value: string): {
+    mode: WorktreeStartPoint["mode"];
+    commitish: string;
+    resolvedFrom: string;
+  } {
+    const branch = value.trim();
+    if (!branch) {
+      throw toWorktreeError(
+        {
+          message: "Branch name is required when spawning from branch",
+          kind: "validation",
+          context: { mode: "branch" },
+        },
+        undefined
+      );
+    }
+
+    const localRef = `refs/heads/${branch}`;
+    if (branchExists(localRef)) {
+      return {
+        mode: "branch",
+        commitish: branch,
+        resolvedFrom: localRef,
+      };
+    }
+
+    const remoteRef = `refs/remotes/origin/${branch}`;
+    if (!branchExists(remoteRef)) {
+      try {
+        git("fetch", "origin", branch);
+      } catch {
+        throw toWorktreeError(
+          {
+            message: `Unable to resolve branch '${branch}'`,
+            kind: "validation",
+            context: { branch },
+          },
+          undefined
+        );
+      }
+    }
+
+    if (!branchExists(remoteRef)) {
+      throw toWorktreeError(
+        {
+          message: `Branch '${branch}' not found locally or on origin`,
+          kind: "validation",
+          context: { branch },
+        },
+        undefined
+      );
+    }
+
+    return {
+      mode: "branch",
+      commitish: `origin/${branch}`,
+      resolvedFrom: remoteRef,
+    };
+  }
+
+  function resolvePrStartPoint(value: string): {
+    mode: WorktreeStartPoint["mode"];
+    commitish: string;
+    resolvedFrom: string;
+  } {
+    const prNumber = parsePullRequestNumber(value);
+    if (!prNumber) {
+      throw toWorktreeError(
+        {
+          message: `Invalid GitHub PR reference '${value}'`,
+          kind: "validation",
+          context: { mode: "pr", value },
+        },
+        undefined
+      );
+    }
+
+    const remotePullRef = `refs/pull/${prNumber}/head`;
+    const localPullRef = `refs/remotes/origin/pr/${prNumber}`;
+    try {
+      git("fetch", "origin", `${remotePullRef}:${localPullRef}`);
+    } catch {
+      throw toWorktreeError(
+        {
+          message: `Unable to fetch GitHub PR #${prNumber} from origin`,
+          kind: "validation",
+          context: { prNumber },
+        },
+        undefined
+      );
+    }
+
+    if (!branchExists(localPullRef)) {
+      throw toWorktreeError(
+        {
+          message: `GitHub PR #${prNumber} could not be resolved`,
+          kind: "validation",
+          context: { prNumber },
+        },
+        undefined
+      );
+    }
+
+    return {
+      mode: "pr",
+      commitish: localPullRef,
+      resolvedFrom: remotePullRef,
+    };
+  }
+
+  function resolveStartPoint(startPoint?: WorktreeStartPoint): {
+    mode: WorktreeStartPoint["mode"];
+    commitish: string;
+    resolvedFrom: string;
+  } {
+    if (!startPoint || startPoint.mode === "head") {
+      return resolveHeadStartPoint();
+    }
+
+    if (startPoint.mode === "branch") {
+      return resolveBranchStartPoint(startPoint.value);
+    }
+
+    return resolvePrStartPoint(startPoint.value);
+  }
+
   const handleExistingWorktree = async (
     worktreePath: string,
     force: boolean
@@ -1082,15 +1252,17 @@ export function createWorktreeManager(
     }
   };
 
-  function ensureBranchExists(branchName: string): string {
-    try {
-      git("show-ref", "--verify", `refs/heads/${branchName}`);
-      return branchName;
-    } catch {
-      const currentBranch = getCurrentBranch();
-      git("branch", branchName, currentBranch);
+  function ensureBranchAtStartPoint(
+    branchName: string,
+    startPoint: string
+  ): string {
+    if (branchExists(`refs/heads/${branchName}`)) {
+      git("branch", "-f", branchName, startPoint);
       return branchName;
     }
+
+    git("branch", branchName, startPoint);
+    return branchName;
   }
 
   function parseWorktreeSection(section: string): {
@@ -1164,12 +1336,38 @@ export function createWorktreeManager(
 
       await handleExistingWorktree(worktreePath, options.force ?? false);
 
-      const branch = ensureBranchExists(`cell-${cellId}`);
+      const branchName = `cell-${cellId}`;
 
       try {
         const emitTiming = (event: WorktreeCreateTimingEvent) => {
           options.onTimingEvent?.(event);
         };
+
+        const resolveStartPointStartedAt = Date.now();
+        const startPoint = resolveStartPoint(options.startPoint);
+        emitTiming({
+          step: "resolve_start_point",
+          durationMs: Date.now() - resolveStartPointStartedAt,
+          metadata: {
+            mode: startPoint.mode,
+            source: startPoint.resolvedFrom,
+          },
+        });
+
+        const branchPrepareStartedAt = Date.now();
+        const branch = ensureBranchAtStartPoint(
+          branchName,
+          startPoint.commitish
+        );
+        emitTiming({
+          step: "prepare_cell_branch",
+          durationMs: Date.now() - branchPrepareStartedAt,
+          metadata: {
+            branch,
+            mode: startPoint.mode,
+            source: startPoint.resolvedFrom,
+          },
+        });
 
         const worktreeAddStartedAt = Date.now();
         git("worktree", "add", worktreePath, branch);
@@ -1282,6 +1480,7 @@ export function createWorktreeManager(
               cellId,
               worktreePath,
               templateId: options.templateId,
+              startPoint: options.startPoint,
             },
           },
           cause

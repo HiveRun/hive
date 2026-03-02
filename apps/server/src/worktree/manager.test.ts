@@ -91,6 +91,50 @@ describe("createWorktreeManager include copy", () => {
     const copiedEnv = await readFile(join(location.path, ".env"), "utf8");
     expect(copiedEnv).toContain("API_KEY=secret");
   });
+
+  it("creates the isolated cell branch from a selected source branch", async () => {
+    const baseBranch = runGitRead(workspacePath, [
+      "rev-parse",
+      "--abbrev-ref",
+      "HEAD",
+    ]);
+
+    runGit(workspacePath, ["checkout", "-b", "feature/start-point"]);
+    await writeFile(join(workspacePath, "feature.txt"), "feature\n", "utf8");
+    runGit(workspacePath, ["add", "feature.txt"]);
+    runGit(workspacePath, ["commit", "-m", "feature commit"]);
+    const featureCommit = runGitRead(workspacePath, ["rev-parse", "HEAD"]);
+
+    runGit(workspacePath, ["checkout", baseBranch]);
+
+    const manager = createWorktreeManager(workspacePath);
+    const location = await manager.createWorktree("cell-start-point", {
+      force: true,
+      startPoint: {
+        mode: "branch",
+        value: "feature/start-point",
+      },
+    });
+
+    expect(location.baseCommit).toBe(featureCommit);
+    expect(runGitRead(location.path, ["rev-parse", "HEAD"])).toBe(
+      featureCommit
+    );
+  });
+
+  it("rejects invalid GitHub PR references", async () => {
+    const manager = createWorktreeManager(workspacePath);
+
+    await expect(
+      manager.createWorktree("cell-invalid-pr", {
+        force: true,
+        startPoint: {
+          mode: "pr",
+          value: "not-a-pr",
+        },
+      })
+    ).rejects.toThrow("Invalid GitHub PR reference");
+  });
 });
 
 function runGit(cwd: string, args: string[]) {
@@ -107,4 +151,22 @@ function runGit(cwd: string, args: string[]) {
       `git ${args.join(" ")} failed with code ${child.exitCode}${stderr ? `: ${stderr}` : ""}`
     );
   }
+}
+
+function runGitRead(cwd: string, args: string[]): string {
+  const child = Bun.spawnSync({
+    cmd: ["git", ...args],
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  if (child.exitCode !== 0) {
+    const stderr = child.stderr.toString().trim();
+    throw new Error(
+      `git ${args.join(" ")} failed with code ${child.exitCode}${stderr ? `: ${stderr}` : ""}`
+    );
+  }
+
+  return child.stdout.toString().trim();
 }

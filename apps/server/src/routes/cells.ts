@@ -121,6 +121,7 @@ import {
   toAsyncWorktreeManager,
   type WorktreeCreateTimingEvent,
   type WorktreeManagerError,
+  type WorktreeStartPoint,
 } from "../worktree/manager";
 
 type DatabaseClient = DatabaseServiceType["db"];
@@ -803,6 +804,53 @@ function normalizeStartMode(value: string | undefined): AgentMode | undefined {
   }
 
   return;
+}
+
+function normalizeSpawnFromMode(
+  value: string | undefined
+): "head" | "branch" | "pr" | undefined {
+  if (value === "head" || value === "branch" || value === "pr") {
+    return value;
+  }
+
+  return;
+}
+
+function normalizeSpawnFromValue(
+  value: string | undefined
+): string | undefined {
+  if (typeof value !== "string") {
+    return;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return;
+  }
+
+  return trimmed;
+}
+
+function resolveWorktreeStartPoint(body: {
+  spawnFromMode?: string;
+  spawnFromValue?: string;
+}): WorktreeStartPoint {
+  const mode = normalizeSpawnFromMode(body.spawnFromMode) ?? "head";
+  const value = normalizeSpawnFromValue(body.spawnFromValue);
+
+  if (mode === "head") {
+    return { mode };
+  }
+
+  if (!value) {
+    throw new Error(
+      mode === "branch"
+        ? "Branch name is required when spawning from branch"
+        : "GitHub PR reference is required when spawning from PR"
+    );
+  }
+
+  return { mode, value };
 }
 
 async function resolveDefaultStartMode(args: {
@@ -3673,9 +3721,13 @@ async function handleCellCreationRequest(
     defaultsStartMode: hiveConfig.defaults?.startMode,
     configDefaultMode: hiveConfig.opencode?.defaultMode,
   });
+  const worktreeStartPoint = resolveWorktreeStartPoint(rawBody);
   const body: Static<typeof CreateCellSchema> = {
     ...rawBody,
     startMode: normalizeStartMode(rawBody.startMode) ?? defaultStartMode,
+    spawnFromMode: worktreeStartPoint.mode,
+    spawnFromValue:
+      "value" in worktreeStartPoint ? worktreeStartPoint.value : undefined,
   };
 
   const template = hiveConfig.templates[body.templateId];
@@ -4016,6 +4068,7 @@ async function ensureCellWorktree(
     worktree = await worktreeService.createWorktree(state.cellId, {
       templateId: body.templateId,
       force: true,
+      startPoint: resolveWorktreeStartPoint(body),
       onTimingEvent: (event) => {
         onTimingEvent?.({
           ...event,

@@ -30,6 +30,7 @@ import { cellMutations, cellQueries } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
 
 type CellFormValues = CreateCellInput;
+type SpawnFromMode = "head" | "branch" | "pr";
 
 const NAME_MAX_LENGTH = 255;
 const DESCRIPTION_MAX_LENGTH = 1000;
@@ -47,6 +48,8 @@ const cellSchema = z.object({
   modelId: z.string().optional(),
   providerId: z.string().optional(),
   startMode: z.enum(["plan", "build"]),
+  spawnFromMode: z.enum(["head", "branch", "pr"]),
+  spawnFromValue: z.string().optional(),
 });
 
 const validateName = (value: string) => {
@@ -68,6 +71,30 @@ const validateTemplateId = (value: string) => {
   if (!result.success) {
     return result.error.issues[0]?.message ?? "Template is required";
   }
+};
+
+const getSpawnSourceLabel = (mode: SpawnFromMode) => {
+  if (mode === "branch") {
+    return "Branch name";
+  }
+
+  if (mode === "pr") {
+    return "GitHub PR";
+  }
+
+  return "Spawn source";
+};
+
+const getSpawnSourcePlaceholder = (mode: SpawnFromMode) => {
+  if (mode === "branch") {
+    return "feature/my-branch";
+  }
+
+  if (mode === "pr") {
+    return "123 or https://github.com/org/repo/pull/123";
+  }
+
+  return "";
 };
 
 type CellFormProps = {
@@ -105,6 +132,8 @@ export function CellForm({
       modelId: undefined,
       providerId: undefined,
       startMode: defaultStartMode,
+      spawnFromMode: "head" as SpawnFromMode,
+      spawnFromValue: "",
     }),
     [defaultStartMode, defaultTemplateId]
   );
@@ -210,11 +239,28 @@ export function CellForm({
     defaultValues,
     onSubmit: ({ value }) => {
       const formValues = value as CellFormValues;
+      const { spawnFromValue: _ignoredSpawnFromValue, ...baseFormValues } =
+        formValues;
+      const spawnFromMode = formValues.spawnFromMode ?? "head";
+      const spawnFromValue = formValues.spawnFromValue?.trim();
+      if (spawnFromMode !== "head" && !spawnFromValue) {
+        toast.error(
+          spawnFromMode === "branch"
+            ? "Branch name is required"
+            : "GitHub PR reference is required"
+        );
+        return;
+      }
+
       mutation.mutate({
-        ...formValues,
+        ...baseFormValues,
         workspaceId,
         modelId: selectedModel?.id ?? formValues.modelId,
         providerId: selectedModel?.providerId ?? formValues.providerId,
+        spawnFromMode,
+        ...(spawnFromMode !== "head" && spawnFromValue
+          ? { spawnFromValue }
+          : {}),
       });
     },
   });
@@ -425,6 +471,70 @@ export function CellForm({
               </div>
             )}
           </form.Field>
+
+          <form.Field name="spawnFromMode">
+            {(field) => {
+              const mode = field.state.value;
+              return (
+                <div className="space-y-2">
+                  <Label htmlFor={field.name}>Spawn from</Label>
+                  <div data-testid="cell-spawn-mode-select">
+                    <Select
+                      disabled={mutation.isPending}
+                      onValueChange={(value) => {
+                        const nextMode = value as SpawnFromMode;
+                        field.handleChange(nextMode);
+                        if (nextMode === "head") {
+                          form.setFieldValue("spawnFromValue", "");
+                        }
+                      }}
+                      value={mode}
+                    >
+                      <SelectTrigger id={field.name}>
+                        <SelectValue placeholder="Select spawn source" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="head">Workspace HEAD</SelectItem>
+                        <SelectItem value="branch">Branch</SelectItem>
+                        <SelectItem value="pr">GitHub PR</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              );
+            }}
+          </form.Field>
+
+          <form.Subscribe selector={(state) => state.values.spawnFromMode}>
+            {(spawnFromMode) =>
+              spawnFromMode === "head" ? null : (
+                <form.Field name="spawnFromValue">
+                  {(field) => (
+                    <div className="space-y-2">
+                      <Label htmlFor={field.name}>
+                        {getSpawnSourceLabel(spawnFromMode)}
+                      </Label>
+                      <Input
+                        data-testid="cell-spawn-source-input"
+                        disabled={mutation.isPending}
+                        id={field.name}
+                        onChange={(event) =>
+                          field.handleChange(event.target.value)
+                        }
+                        placeholder={getSpawnSourcePlaceholder(spawnFromMode)}
+                        value={field.state.value ?? ""}
+                      />
+                      <p className="text-muted-foreground text-xs">
+                        {spawnFromMode === "branch"
+                          ? "Hive will branch from this ref, then create an isolated cell branch."
+                          : "Enter a PR number or a full GitHub pull request URL."}
+                      </p>
+                    </div>
+                  )}
+                </form.Field>
+              )
+            }
+          </form.Subscribe>
 
           <div className="flex justify-end space-x-2">
             {onCancel && (

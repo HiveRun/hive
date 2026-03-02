@@ -239,6 +239,14 @@ export const CreateCellSchema = t.Object({
     })
   ),
   startMode: t.Optional(t.Union([t.Literal("plan"), t.Literal("build")])),
+  spawnFromMode: t.Optional(
+    t.Union([t.Literal("head"), t.Literal("branch"), t.Literal("pr")])
+  ),
+  spawnFromValue: t.Optional(
+    t.String({
+      minLength: 1,
+    })
+  ),
   workspaceId: t.String({
     minLength: 1,
   }),
