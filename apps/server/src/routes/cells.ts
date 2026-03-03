@@ -5616,8 +5616,11 @@ async function buildCellResourceSummary(args: {
 
   const setupSession = deps.getSetupTerminalSession(cell.id);
   if (setupSession) {
-    const processAlive =
-      setupSession.status === "running" || isProcessAlive(setupSession.pid);
+    const hasValidPid =
+      Number.isInteger(setupSession.pid) && setupSession.pid > 0;
+    const processAlive = hasValidPid
+      ? setupSession.status === "running" || isProcessAlive(setupSession.pid)
+      : false;
     trackedProcesses.push({
       kind: "setup",
       id: setupSession.sessionId,

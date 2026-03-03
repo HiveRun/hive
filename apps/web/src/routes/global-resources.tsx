@@ -374,7 +374,9 @@ function OverviewCards({
     peakRam: number;
   };
 }) {
-  const topCpu = rows[0];
+  const topCpu = [...rows].sort(
+    (left, right) => right.cpuStats.current - left.cpuStats.current
+  )[0];
   const topRam = [...rows].sort(
     (left, right) => right.ramStats.current - left.ramStats.current
   )[0];
