@@ -283,7 +283,6 @@ const DiffStatusSchema = t.Union([
 export const DiffModeSchema = t.Union([
   t.Literal("workspace"),
   t.Literal("branch"),
-  t.Literal("filesystem"),
 ]);
 
 export const DiffSummaryModeSchema = t.Union([
