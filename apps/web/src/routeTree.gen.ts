@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TimingsRouteImport } from './routes/timings'
 import { Route as GlobalTimingsRouteImport } from './routes/global-timings'
+import { Route as GlobalResourcesRouteImport } from './routes/global-resources'
 import { Route as CellsRouteImport } from './routes/cells'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as CellsNewRouteImport } from './routes/cells/new'
@@ -32,6 +33,11 @@ const TimingsRoute = TimingsRouteImport.update({
 const GlobalTimingsRoute = GlobalTimingsRouteImport.update({
   id: '/global-timings',
   path: '/global-timings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GlobalResourcesRoute = GlobalResourcesRouteImport.update({
+  id: '/global-resources',
+  path: '/global-resources',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CellsRoute = CellsRouteImport.update({
@@ -98,6 +104,7 @@ const CellsCellIdChatRoute = CellsCellIdChatRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/cells': typeof CellsRouteWithChildren
+  '/global-resources': typeof GlobalResourcesRoute
   '/global-timings': typeof GlobalTimingsRoute
   '/timings': typeof TimingsRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
@@ -114,6 +121,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/cells': typeof CellsRouteWithChildren
+  '/global-resources': typeof GlobalResourcesRoute
   '/global-timings': typeof GlobalTimingsRoute
   '/timings': typeof TimingsRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
@@ -131,6 +139,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/cells': typeof CellsRouteWithChildren
+  '/global-resources': typeof GlobalResourcesRoute
   '/global-timings': typeof GlobalTimingsRoute
   '/timings': typeof TimingsRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
@@ -149,6 +158,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/cells'
+    | '/global-resources'
     | '/global-timings'
     | '/timings'
     | '/cells/$cellId'
@@ -165,6 +175,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/cells'
+    | '/global-resources'
     | '/global-timings'
     | '/timings'
     | '/cells/$cellId'
@@ -181,6 +192,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/cells'
+    | '/global-resources'
     | '/global-timings'
     | '/timings'
     | '/cells/$cellId'
@@ -198,6 +210,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CellsRoute: typeof CellsRouteWithChildren
+  GlobalResourcesRoute: typeof GlobalResourcesRoute
   GlobalTimingsRoute: typeof GlobalTimingsRoute
   TimingsRoute: typeof TimingsRoute
 }
@@ -216,6 +229,13 @@ declare module '@tanstack/react-router' {
       path: '/global-timings'
       fullPath: '/global-timings'
       preLoaderRoute: typeof GlobalTimingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/global-resources': {
+      id: '/global-resources'
+      path: '/global-resources'
+      fullPath: '/global-resources'
+      preLoaderRoute: typeof GlobalResourcesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/cells': {
@@ -346,6 +366,7 @@ const CellsRouteWithChildren = CellsRoute._addFileChildren(CellsRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CellsRoute: CellsRouteWithChildren,
+  GlobalResourcesRoute: GlobalResourcesRoute,
   GlobalTimingsRoute: GlobalTimingsRoute,
   TimingsRoute: TimingsRoute,
 }

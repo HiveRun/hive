@@ -12,6 +12,10 @@ import {
 import { type TemplatesResponse, templateQueries } from "@/queries/templates";
 import { workspaceQueries } from "@/queries/workspaces";
 
+const BYTES_PER_UNIT = 1024;
+const ZERO_DECIMALS = 0;
+const ONE_DECIMAL = 1;
+
 type CellSummary = Awaited<
   ReturnType<ReturnType<typeof cellQueries.all>["queryFn"]>
 >[number];
@@ -85,7 +89,7 @@ function HiveOverview() {
 
   const serviceQueries = useQueries({
     queries: allCells.map((cell) => {
-      const config = cellQueries.services(cell.id);
+      const config = cellQueries.services(cell.id, { includeResources: true });
       return {
         queryKey: config.queryKey,
         queryFn: config.queryFn,
@@ -324,6 +328,18 @@ function ServicesSummary({
     );
   }
 
+  const totalRssBytes = services.reduce(
+    (total, service) => total + (service.rssBytes ?? 0),
+    0
+  );
+  const maxCpuPercent = services.reduce(
+    (max, service) =>
+      typeof service.cpuPercent === "number" && service.cpuPercent > max
+        ? service.cpuPercent
+        : max,
+    0
+  );
+
   return (
     <div className="flex flex-col gap-1">
       {services.map((service) => (
@@ -344,8 +360,33 @@ function ServicesSummary({
           </div>
         </div>
       ))}
+      <p className="font-mono text-[11px] text-muted-foreground">
+        Live snapshot: RSS {formatBytes(totalRssBytes)} · Peak CPU{" "}
+        {formatCpuPercent(maxCpuPercent)}
+      </p>
     </div>
   );
+}
+
+function formatCpuPercent(value: number): string {
+  return `${value.toFixed(1)}%`;
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value < 0) {
+    return "Unavailable";
+  }
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = value;
+  let unitIndex = 0;
+
+  while (size >= BYTES_PER_UNIT && unitIndex < units.length - 1) {
+    size /= BYTES_PER_UNIT;
+    unitIndex += 1;
+  }
+
+  return `${size.toFixed(unitIndex === 0 ? ZERO_DECIMALS : ONE_DECIMAL)} ${units[unitIndex]}`;
 }
 
 function ServiceStatusPill({ status }: { status: string }) {

@@ -28,6 +28,9 @@ type ServiceRecord = {
   status: string;
   pid?: number;
   port?: number;
+  cpuPercent?: number | null;
+  rssBytes?: number | null;
+  resourceUnavailableReason?: string;
 };
 
 type ActivityRecord = {
@@ -391,9 +394,17 @@ export async function fetchCell(
 
 export async function fetchServices(
   apiUrl: string,
-  cellId: string
+  cellId: string,
+  options: { includeResources?: boolean } = {}
 ): Promise<ServiceRecord[]> {
-  const response = await fetch(`${apiUrl}/api/cells/${cellId}/services`);
+  const params = new URLSearchParams();
+  if (options.includeResources) {
+    params.set("includeResources", "true");
+  }
+  const query = params.toString();
+  const response = await fetch(
+    `${apiUrl}/api/cells/${cellId}/services${query ? `?${query}` : ""}`
+  );
   if (!response.ok) {
     throw new Error(
       `Failed to fetch services for ${cellId}: ${response.status}`
@@ -505,6 +516,7 @@ export async function waitForServiceStatuses(options: {
   predicate: (services: ServiceRecord[]) => boolean;
   timeoutMs?: number;
   errorMessage: string;
+  includeResources?: boolean;
 }): Promise<ServiceRecord[]> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_SERVICE_STATUS_TIMEOUT_MS;
   let latest: ServiceRecord[] = [];
@@ -514,7 +526,9 @@ export async function waitForServiceStatuses(options: {
       timeoutMs,
       errorMessage: options.errorMessage,
       check: async () => {
-        latest = await fetchServices(options.apiUrl, options.cellId);
+        latest = await fetchServices(options.apiUrl, options.cellId, {
+          includeResources: options.includeResources,
+        });
         return options.predicate(latest);
       },
     });

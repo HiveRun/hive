@@ -50,6 +50,27 @@
       "when": 1780000000000,
       "tag": "0006_plan_mode_start",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1781000000000,
+      "tag": "0007_cell_resource_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1782000000000,
+      "tag": "0008_resource_history_processes",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1783000000000,
+      "tag": "0009_resource_rollups",
+      "breakpoints": true
     }
   ]
 }

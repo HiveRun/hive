@@ -21,6 +21,10 @@ import {
   cellQueries,
 } from "@/queries/cells";
 
+const BYTES_PER_UNIT = 1024;
+const ZERO_DECIMALS = 0;
+const ONE_DECIMAL = 1;
+
 export const Route = createFileRoute("/cells/$cellId/services")({
   component: CellServices,
 });
@@ -34,6 +38,7 @@ function CellServices() {
     error: streamError,
   } = useServiceStream(cellId, {
     enabled: true,
+    includeResources: true,
   });
 
   const startServiceMutation = useMutation({
@@ -466,6 +471,20 @@ function ServiceCard({
               </p>
             </>
           ) : null}
+
+          <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+            CPU
+          </p>
+          <p className="break-all font-mono text-[11px] text-foreground">
+            {formatCpuPercent(service.cpuPercent)}
+          </p>
+
+          <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+            Memory (RSS)
+          </p>
+          <p className="break-all font-mono text-[11px] text-foreground">
+            {formatBytes(service.rssBytes)}
+          </p>
         </div>
       </div>
       {isErrorState ? null : (
@@ -485,6 +504,30 @@ function ServiceCard({
       />
     </div>
   );
+}
+
+function formatCpuPercent(value: number | null | undefined): string {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "Unavailable";
+  }
+  return `${value.toFixed(1)}%`;
+}
+
+function formatBytes(value: number | null | undefined): string {
+  if (typeof value !== "number" || Number.isNaN(value) || value < 0) {
+    return "Unavailable";
+  }
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = value;
+  let unitIndex = 0;
+
+  while (size >= BYTES_PER_UNIT && unitIndex < units.length - 1) {
+    size /= BYTES_PER_UNIT;
+    unitIndex += 1;
+  }
+
+  return `${size.toFixed(unitIndex === 0 ? ZERO_DECIMALS : ONE_DECIMAL)} ${units[unitIndex]}`;
 }
 
 function ServiceActions({

@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Clock3, Home, Minus, Plus } from "lucide-react";
+import { Clock3, Gauge, Home, Minus, Plus } from "lucide-react";
 import type { ComponentProps } from "react";
 import { useState } from "react";
 import { ModeToggle } from "@/components/mode-toggle";
@@ -171,6 +171,23 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
                   <Link aria-label="Global timings" to="/global-timings">
                     <Clock3 className="size-4" />
                     <span>Global Timings</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  className={cn(
+                    "relative box-border w-full rounded-none border-2 border-transparent bg-transparent py-1.5 pr-4 pl-3 text-left text-muted-foreground text-xs tracking-normal transition-none",
+                    "hover:bg-primary/5 hover:text-foreground",
+                    pathname.startsWith("/global-resources") &&
+                      "bg-primary/10 text-foreground shadow-[inset_3px_0_0_0_hsl(var(--primary))]"
+                  )}
+                  tooltip="Global resources"
+                >
+                  <Link aria-label="Global resources" to="/global-resources">
+                    <Gauge className="size-4" />
+                    <span>Global Resources</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

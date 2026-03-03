@@ -6,6 +6,9 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createCellsRoutes } from "../../routes/cells";
 import { cells } from "../../schema/cells";
 import { cellServices } from "../../schema/services";
+import type { ChatTerminalSession } from "../../services/chat-terminal";
+import type { ProcessResourceSnapshot } from "../../services/resource-snapshot";
+import type { ServiceTerminalSession } from "../../services/service-terminal";
 import { setupTestDb, testDb } from "../test-db";
 
 const TEST_WORKSPACE_ID = "test-workspace-services";
@@ -16,6 +19,10 @@ const HTTP_OK = 200;
 const SMALL_OUTPUT_LINES = 50;
 const LARGE_OUTPUT_LINES = 320;
 const EXPECTED_FIRST_TAILED_LINE = 121;
+const EXPECTED_CPU_PERCENT = 12.3;
+const EXPECTED_RSS_BYTES = 34_560_000;
+const EXPECTED_OPENCODE_CPU_PERCENT = 9.5;
+const EXPECTED_OPENCODE_RSS_BYTES = 12_000_000;
 
 const getFirstService = <T>(services: T[]): T => {
   const first = services[0];
@@ -28,6 +35,9 @@ const getFirstService = <T>(services: T[]): T => {
 function createRuntimeHarness() {
   const serviceOutputs = new Map<string, string>();
   const setupOutputByCell = new Map<string, string>();
+  const resourcesByPid = new Map<number, ProcessResourceSnapshot>();
+  const chatSessionsByCell = new Map<string, ChatTerminalSession>();
+  const setupSessionsByCell = new Map<string, ServiceTerminalSession>();
 
   return {
     setServiceOutput(serviceId: string, output: string) {
@@ -41,6 +51,31 @@ function createRuntimeHarness() {
     },
     readSetupOutput(cellId: string) {
       return setupOutputByCell.get(cellId) ?? "";
+    },
+    setResourceSnapshot(pid: number, snapshot: ProcessResourceSnapshot) {
+      resourcesByPid.set(pid, snapshot);
+    },
+    sampleServiceResources(pids: number[]) {
+      const snapshots = new Map<number, ProcessResourceSnapshot>();
+      for (const pid of pids) {
+        const snapshot = resourcesByPid.get(pid);
+        if (snapshot) {
+          snapshots.set(pid, snapshot);
+        }
+      }
+      return snapshots;
+    },
+    setChatSession(cellId: string, session: ChatTerminalSession) {
+      chatSessionsByCell.set(cellId, session);
+    },
+    getChatSession(cellId: string) {
+      return chatSessionsByCell.get(cellId) ?? null;
+    },
+    setSetupSession(cellId: string, session: ServiceTerminalSession) {
+      setupSessionsByCell.set(cellId, session);
+    },
+    getSetupSession(cellId: string) {
+      return setupSessionsByCell.get(cellId) ?? null;
     },
   };
 }
@@ -108,13 +143,17 @@ function createMinimalDependencies(
     writeServiceTerminalInput: () => 0,
     resizeServiceTerminal: () => 0,
     clearServiceTerminal: () => 0,
-    getSetupTerminalSession: () => null,
+    getSetupTerminalSession: (cellId: string) =>
+      harness.getSetupSession(cellId),
     readSetupTerminalOutput: (cellId: string) =>
       harness.readSetupOutput(cellId),
     subscribeToSetupTerminal: () => () => 0,
     writeSetupTerminalInput: () => 0,
     resizeSetupTerminal: () => 0,
     clearSetupTerminal: () => 0,
+    getChatTerminalSession: (cellId: string) => harness.getChatSession(cellId),
+    sampleServiceResources: (pids: number[]) =>
+      Promise.resolve(harness.sampleServiceResources(pids)),
   };
 }
 
@@ -333,5 +372,203 @@ describe("GET /api/cells/:id/services payload", () => {
     expect(service.portReachable).toBe(true);
 
     await listener.close();
+  });
+
+  it("returns resource snapshots when includeResources=true", async () => {
+    const livePid = process.pid;
+    await insertCellAndServiceRecords("metrics", {
+      status: "running",
+      pid: livePid,
+    });
+    harness.setResourceSnapshot(livePid, {
+      cpuPercent: EXPECTED_CPU_PERCENT,
+      rssBytes: EXPECTED_RSS_BYTES,
+      resourceSampledAt: new Date().toISOString(),
+    });
+
+    const response = await app.handle(
+      new Request(
+        `http://localhost/api/cells/${TEST_CELL_ID}/services?includeResources=true`
+      )
+    );
+
+    expect(response.status).toBe(HTTP_OK);
+    const body = (await response.json()) as {
+      services: Array<{
+        cpuPercent?: number | null;
+        rssBytes?: number | null;
+        resourceSampledAt?: string;
+      }>;
+    };
+
+    const service = getFirstService(body.services);
+    expect(service.cpuPercent).toBe(EXPECTED_CPU_PERCENT);
+    expect(service.rssBytes).toBe(EXPECTED_RSS_BYTES);
+    expect(service.resourceSampledAt).toBeDefined();
+  });
+
+  it("omits resource fields when includeResources=false", async () => {
+    await insertCellAndServiceRecords("metrics-disabled", {
+      status: "running",
+      pid: process.pid,
+    });
+
+    const response = await app.handle(
+      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
+    );
+
+    expect(response.status).toBe(HTTP_OK);
+    const body = (await response.json()) as {
+      services: Array<{ cpuPercent?: number | null; rssBytes?: number | null }>;
+    };
+
+    const service = getFirstService(body.services);
+    expect(service.cpuPercent).toBeUndefined();
+    expect(service.rssBytes).toBeUndefined();
+  });
+
+  it("returns process_not_alive when service pid is stale", async () => {
+    await insertCellAndServiceRecords("stale-process", {
+      status: "running",
+      pid: 999_999,
+    });
+
+    const response = await app.handle(
+      new Request(
+        `http://localhost/api/cells/${TEST_CELL_ID}/services?includeResources=true`
+      )
+    );
+
+    expect(response.status).toBe(HTTP_OK);
+    const body = (await response.json()) as {
+      services: Array<{
+        cpuPercent?: number | null;
+        rssBytes?: number | null;
+        resourceUnavailableReason?: string;
+      }>;
+    };
+
+    const service = getFirstService(body.services);
+    expect(service.cpuPercent).toBeNull();
+    expect(service.rssBytes).toBeNull();
+    expect(service.resourceUnavailableReason).toBe("process_not_alive");
+  });
+
+  it("returns aggregated resources including opencode session", async () => {
+    await insertCellAndServiceRecords("service-for-aggregate", {
+      status: "running",
+      pid: 999_999,
+    });
+
+    harness.setChatSession(TEST_CELL_ID, {
+      sessionId: "chat-session",
+      cellId: TEST_CELL_ID,
+      pid: process.pid,
+      cwd: "/tmp/test-workspace-services-root",
+      cols: 120,
+      rows: 36,
+      status: "running",
+      exitCode: null,
+      startedAt: new Date().toISOString(),
+    });
+
+    harness.setResourceSnapshot(process.pid, {
+      cpuPercent: EXPECTED_OPENCODE_CPU_PERCENT,
+      rssBytes: EXPECTED_OPENCODE_RSS_BYTES,
+      resourceSampledAt: new Date().toISOString(),
+    });
+
+    const response = await app.handle(
+      new Request(
+        `http://localhost/api/cells/${TEST_CELL_ID}/resources?includeHistory=true&includeAverages=true&includeRollups=true&historyLimit=10&rollupLimit=10`
+      )
+    );
+
+    expect(response.status).toBe(HTTP_OK);
+    const body = (await response.json()) as {
+      tracked: {
+        services: number;
+        opencode: number;
+      };
+      activeProcessCount: number;
+      activeCpuPercent: number;
+      activeRssBytes: number;
+      processes: Array<{ kind: string }>;
+      history?: Array<{
+        sampledAt: string;
+        activeCpuPercent: number;
+        processes: Array<{ kind: string }>;
+      }>;
+      historyAverages?: Array<{
+        window: string;
+        sampleCount: number;
+      }>;
+      rollups?: Array<{
+        bucketStartAt: string;
+        sampleCount: number;
+        averageActiveCpuPercent: number;
+      }>;
+    };
+
+    expect(body.tracked.services).toBe(1);
+    expect(body.tracked.opencode).toBe(1);
+    expect(body.activeProcessCount).toBe(1);
+    expect(body.activeCpuPercent).toBe(EXPECTED_OPENCODE_CPU_PERCENT);
+    expect(body.activeRssBytes).toBe(EXPECTED_OPENCODE_RSS_BYTES);
+    expect(body.processes.some((process) => process.kind === "opencode")).toBe(
+      true
+    );
+    expect((body.history ?? []).length).toBeGreaterThan(0);
+    expect(body.history?.some((point) => point.processes.length > 0)).toBe(
+      true
+    );
+    expect((body.historyAverages ?? []).length).toBeGreaterThan(0);
+    expect(body.historyAverages?.[0]?.sampleCount).toBeGreaterThan(0);
+    expect((body.rollups ?? []).length).toBeGreaterThan(0);
+    expect(body.rollups?.[0]?.sampleCount).toBeGreaterThan(0);
+    expect(body.rollups?.[0]?.averageActiveCpuPercent).toBeGreaterThan(0);
+  });
+
+  it("does not treat setup session with pid 0 as active", async () => {
+    await insertCellAndServiceRecords("setup-pid-missing", {
+      status: "running",
+      pid: 999_999,
+    });
+
+    harness.setSetupSession(TEST_CELL_ID, {
+      sessionId: "setup-session",
+      pid: 0,
+      cwd: "/tmp/test-workspace-services-root",
+      cols: 120,
+      rows: 36,
+      status: "running",
+      exitCode: null,
+      startedAt: new Date().toISOString(),
+    });
+
+    const response = await app.handle(
+      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/resources`)
+    );
+
+    expect(response.status).toBe(HTTP_OK);
+    const body = (await response.json()) as {
+      activeProcessCount: number;
+      processes: Array<{
+        kind: string;
+        processAlive: boolean;
+        active: boolean;
+        resourceUnavailableReason?: string;
+      }>;
+    };
+
+    expect(body.activeProcessCount).toBe(0);
+    const setupProcess = body.processes.find(
+      (process) => process.kind === "setup"
+    );
+    expect(setupProcess).toMatchObject({
+      processAlive: false,
+      active: false,
+      resourceUnavailableReason: "pid_missing",
+    });
   });
 });

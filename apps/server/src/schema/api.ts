@@ -43,6 +43,17 @@ export const CellServiceSchema = t.Object({
   hasMoreLogs: t.Boolean(),
   processAlive: t.Optional(t.Boolean()),
   portReachable: t.Optional(t.Boolean()),
+  cpuPercent: t.Optional(t.Union([t.Number(), t.Null()])),
+  rssBytes: t.Optional(t.Union([t.Number(), t.Null()])),
+  resourceSampledAt: t.Optional(t.String()),
+  resourceUnavailableReason: t.Optional(
+    t.Union([
+      t.Literal("pid_missing"),
+      t.Literal("process_not_alive"),
+      t.Literal("sample_failed"),
+      t.Literal("unsupported_platform"),
+    ])
+  ),
 });
 
 export const ServiceLogQuerySchema = t.Object({
@@ -61,10 +72,105 @@ export const ServiceLogQuerySchema = t.Object({
       description: "Number of lines to skip from the end (for pagination)",
     })
   ),
+  includeResources: t.Optional(
+    t.Boolean({
+      default: false,
+      description:
+        "Include live CPU and memory snapshots for running service processes",
+    })
+  ),
 });
 
 export const CellServiceListResponseSchema = t.Object({
   services: t.Array(CellServiceSchema),
+});
+
+export const CellResourceProcessSchema = t.Object({
+  kind: t.Union([
+    t.Literal("service"),
+    t.Literal("opencode"),
+    t.Literal("terminal"),
+    t.Literal("setup"),
+  ]),
+  serviceType: t.Optional(t.String()),
+  id: t.String(),
+  name: t.String(),
+  status: t.String(),
+  pid: t.Union([t.Number(), t.Null()]),
+  processAlive: t.Boolean(),
+  active: t.Boolean(),
+  cpuPercent: t.Union([t.Number(), t.Null()]),
+  rssBytes: t.Union([t.Number(), t.Null()]),
+  resourceSampledAt: t.String(),
+  resourceUnavailableReason: t.Optional(
+    t.Union([
+      t.Literal("pid_missing"),
+      t.Literal("process_not_alive"),
+      t.Literal("sample_failed"),
+      t.Literal("unsupported_platform"),
+    ])
+  ),
+});
+
+export const CellResourceSummaryResponseSchema = t.Object({
+  cellId: t.String(),
+  sampledAt: t.String(),
+  processCount: t.Number(),
+  activeProcessCount: t.Number(),
+  tracked: t.Object({
+    services: t.Number(),
+    opencode: t.Number(),
+    terminal: t.Number(),
+    setup: t.Number(),
+  }),
+  totalCpuPercent: t.Number(),
+  totalRssBytes: t.Number(),
+  activeCpuPercent: t.Number(),
+  activeRssBytes: t.Number(),
+  processes: t.Array(CellResourceProcessSchema),
+  history: t.Optional(
+    t.Array(
+      t.Object({
+        sampledAt: t.String(),
+        processCount: t.Number(),
+        activeProcessCount: t.Number(),
+        totalCpuPercent: t.Number(),
+        totalRssBytes: t.Number(),
+        activeCpuPercent: t.Number(),
+        activeRssBytes: t.Number(),
+        processes: t.Array(CellResourceProcessSchema),
+      })
+    )
+  ),
+  historyAverages: t.Optional(
+    t.Array(
+      t.Object({
+        window: t.Union([
+          t.Literal("1m"),
+          t.Literal("5m"),
+          t.Literal("15m"),
+          t.Literal("1h"),
+        ]),
+        sampleCount: t.Number(),
+        averageActiveCpuPercent: t.Number(),
+        averageActiveRssBytes: t.Number(),
+        peakActiveCpuPercent: t.Number(),
+        peakActiveRssBytes: t.Number(),
+      })
+    )
+  ),
+  rollups: t.Optional(
+    t.Array(
+      t.Object({
+        bucketStartAt: t.String(),
+        sampleCount: t.Number(),
+        averageActiveCpuPercent: t.Number(),
+        averageActiveRssBytes: t.Number(),
+        peakActiveCpuPercent: t.Number(),
+        peakActiveRssBytes: t.Number(),
+      })
+    )
+  ),
 });
 
 export const CellTerminalSessionSchema = t.Object({

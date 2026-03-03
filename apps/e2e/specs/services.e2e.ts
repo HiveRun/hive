@@ -42,6 +42,19 @@ test.describe("service controls", () => {
         services.some((service) => service.status.toLowerCase() === "running"),
     });
 
+    await waitForServiceStatuses({
+      apiUrl,
+      cellId,
+      includeResources: true,
+      errorMessage: "Resource snapshots did not appear for running services",
+      predicate: (services) =>
+        services.some(
+          (service) =>
+            typeof service.cpuPercent === "number" ||
+            typeof service.rssBytes === "number"
+        ),
+    });
+
     const targetService = runningServices[0];
     if (!targetService) {
       throw new Error("No service available to run single-service assertions");
@@ -73,9 +86,10 @@ test.describe("service controls", () => {
     });
 
     await page.getByRole("button", { name: STOP_BUTTON_LABEL }).click();
-    await waitForServiceStatuses({
+    const stoppedServices = await waitForServiceStatuses({
       apiUrl,
       cellId,
+      includeResources: true,
       errorMessage: `Service ${targetService.name} did not stop`,
       predicate: (services) =>
         services.some(
@@ -84,6 +98,10 @@ test.describe("service controls", () => {
             service.status.toLowerCase() === "stopped"
         ),
     });
+    const stoppedTarget = stoppedServices.find(
+      (service) => service.id === targetService.id
+    );
+    expect(stoppedTarget?.resourceUnavailableReason).toBeDefined();
 
     await page.getByRole("button", { name: START_BUTTON_LABEL }).click();
     await waitForServiceStatuses({
