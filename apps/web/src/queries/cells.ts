@@ -478,7 +478,7 @@ export type CellTimingResponse = {
   runs: CellTimingRun[];
 };
 
-export type DiffMode = "workspace" | "branch" | "filesystem";
+export type DiffMode = "workspace" | "branch";
 
 export type DiffFileSummary = {
   path: string;

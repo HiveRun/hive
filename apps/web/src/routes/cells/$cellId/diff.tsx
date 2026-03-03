@@ -26,7 +26,7 @@ import {
 } from "@/queries/cells";
 
 const diffSearchSchema = z.object({
-  mode: z.enum(["workspace", "branch", "filesystem"]).optional(),
+  mode: z.enum(["workspace", "branch"]).optional(),
   file: z.string().optional(),
 });
 
@@ -43,10 +43,6 @@ const DIFF_MODE_META: Record<
   branch: {
     button: "From origin",
     description: "All changes since cell base",
-  },
-  filesystem: {
-    button: "Filesystem",
-    description: "Workspace source baseline vs current files",
   },
 };
 
@@ -347,13 +343,6 @@ function DiffHeader({
           variant={mode === "branch" ? "secondary" : "outline"}
         >
           {DIFF_MODE_META.branch.button}
-        </Button>
-        <Button
-          onClick={() => onModeChange("filesystem")}
-          size="sm"
-          variant={mode === "filesystem" ? "secondary" : "outline"}
-        >
-          {DIFF_MODE_META.filesystem.button}
         </Button>
         <Button onClick={onRefresh} size="sm" variant="outline">
           Refresh
