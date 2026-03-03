@@ -5462,7 +5462,7 @@ function sampleServiceResources(
   return sampleResourcesByPid(
     deps,
     rows
-      .map((row) => row.service.pid)
+      .map((row) => deriveTrackedServiceProcess(deps, row).pid)
       .filter((pid): pid is number => Number.isInteger(pid) && (pid ?? 0) > 0)
   );
 }
