@@ -1,6 +1,12 @@
 # hive
 
-Monorepo project with React + TanStack Start frontend and Elysia backend.
+Monorepo project with a React + TanStack Start frontend and a backend currently migrating from TypeScript/Elysia to Elixir/Ash.
+
+## Migration Status
+
+- Active plan: `docs/migrations/elixir-hard-cutover.md`
+- Backend work is transitioning to an Elixir hard cutover while preserving local-first runtime behavior.
+- If documentation appears to conflict, use the migration plan and `.ruler/prompts/*.md` as the source of truth.
 
 ## Installation
 
@@ -38,7 +44,7 @@ Environment variables:
   hive
   ```
   - Compiled releases fork to the background, print the browser URL, log path, and PID file, and immediately return control of your terminal. Releases serve the UI on the API port (`PORT`, defaults to `3000`).
-  - The first launch automatically runs the bundled Drizzle migrations; no extra init step is required.
+  - The first launch automatically runs bundled migrations; no extra init step is required.
 - Follow logs:
   ```bash
   hive logs
@@ -215,9 +221,10 @@ bun dev
 hive/
 ├── apps/
 │   ├── web/         # Frontend application (React + TanStack Start)
-│   └── server/      # Backend API (Elysia)
+│   ├── server/      # Legacy TypeScript backend (Elysia)
+│   └── server-elixir/ # In-progress Elixir backend (hard cutover target)
 ├── packages/
-│   ├── api/         # API layer / business logic
+│   ├── cli/         # Packaged Hive CLI runtime
 ```
 
 ## Testing
@@ -235,7 +242,9 @@ bun test
 bun test:run
 ```
 
-**Test location:** `apps/server/src/**/*.test.ts`
+**Test location (legacy backend):** `apps/server/src/**/*.test.ts`
+
+Elixir backend tests run with `mix test` from `apps/server-elixir` as that app is introduced.
 
 ### UI Testing
 True end-to-end browser testing runs with Playwright (Chromium only for now).

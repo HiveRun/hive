@@ -4,8 +4,11 @@
 
 This project uses a **hybrid testing philosophy**:
 
-### Backend Unit Tests (Vitest)
-API and business logic tested with Vitest.
+### Backend Tests (Migration Period)
+
+Backend coverage spans two runtimes while hard cutover is in progress.
+
+Legacy TypeScript backend (`apps/server`) uses Vitest:
 
 **Test location:** `apps/server/src/**/*.test.ts`
 
@@ -15,6 +18,13 @@ bun -C apps/server run test:run    # CI mode
 ```
 
 Example targeted run: `bun -C apps/server run test -- src/db.test.ts -t "creates user"`.
+
+Target Elixir backend (`apps/server-elixir`) uses ExUnit:
+
+```bash
+cd apps/server-elixir
+mix test
+```
 
 ### True E2E (Playwright runtime flow)
 The opt-in true end-to-end flow lives under `apps/e2e` and validates cell creation + agent chat against a real Hive runtime.
@@ -33,7 +43,6 @@ bun run test:e2e:spec specs/cell-chat.e2e.ts
 - For user-facing browser changes, verify with `agent-browser` when practical.
 - Use headless mode by default; only use headed mode for manual login/2FA/CAPTCHA or explicit live walkthrough requests.
 - Include verification evidence in your final response (key observed behavior and/or captured artifacts).
-- If pre-push fails on the known flaky backend spec (`apps/server/src/__tests__/routes/cells.create.test.ts`), run `bun -C apps/server run test -- src/__tests__/routes/cells.create.test.ts -t "returns detailed payload when template setup fails"` once, then rerun `bun run check:push`.
 
 ### Desktop Smoke E2E (Playwright + Electron)
 Desktop runtime parity checks live under `apps/e2e-desktop` and run Playwright against a debug Electron runtime.
@@ -72,7 +81,7 @@ bun -C apps/web run test:e2e:update-snapshots                 # Update snapshots
 
 > These Playwright specs are **visual regression tests**, not full E2E flows. They run the real browser shell but stub backend responses with deterministic fixtures so pixel diffs stay meaningful.
 >
-> - Shared fixture builders live under `apps/web/e2e/utils/` and use seeded Faker plus the Eden/TanStack query types (which mirror the Elysia TypeBox schemas). When the API contract changes, fix the builder once and re-run snapshots.
+> - Shared fixture builders live under `apps/web/e2e/utils/` and use seeded Faker plus typed query contracts from the current API client layer. When the API contract changes, fix the builder once and re-run snapshots.
 > - Any route interception must go through those helpers; avoid per-spec JSON blobs.
 > - If/when we need “true” E2E coverage, add a separate suite that seeds the database instead of intercepting HTTP.
 

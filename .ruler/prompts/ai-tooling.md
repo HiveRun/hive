@@ -7,6 +7,7 @@
 - Use the published `@opencode-ai/sdk` package for runtime integrations.
 - Project documentation is distributed across several key locations:
   - `CONCEPTS.md` - High-level concepts (cells, templates, services, etc.)
+  - `docs/migrations/elixir-hard-cutover.md` - Active backend migration plan and execution status
   - `.ruler/prompts/` - AI agent guidance and coding standards  
   - `README.md` - Project overview and getting started
   When you need context, prioritize these markdown sources over external knowledge bases.
