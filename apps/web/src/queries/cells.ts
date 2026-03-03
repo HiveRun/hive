@@ -37,10 +37,19 @@ export const cellQueries = {
     },
   }),
 
-  services: (id: string) => ({
-    queryKey: ["cells", id, "services"] as const,
+  services: (id: string, options: { includeResources?: boolean } = {}) => ({
+    queryKey: [
+      "cells",
+      id,
+      "services",
+      options.includeResources ?? false,
+    ] as const,
     queryFn: async () => {
-      const { data, error } = await rpc.api.cells({ id }).services.get();
+      const { data, error } = await rpc.api.cells({ id }).services.get({
+        query: {
+          includeResources: options.includeResources,
+        },
+      });
       if (error) {
         throw new Error(formatRpcError(error, "Failed to load services"));
       }
@@ -50,6 +59,36 @@ export const cellQueries = {
       }
 
       return data.services;
+    },
+  }),
+
+  resources: (
+    id: string,
+    options: { includeHistory?: boolean; historyLimit?: number } = {}
+  ) => ({
+    queryKey: [
+      "cells",
+      id,
+      "resources",
+      options.includeHistory ?? false,
+      options.historyLimit ?? null,
+    ] as const,
+    queryFn: async () => {
+      const { data, error } = await rpc.api.cells({ id }).resources.get({
+        query: {
+          includeHistory: options.includeHistory,
+          historyLimit: options.historyLimit,
+        },
+      });
+      if (error) {
+        throw new Error(formatRpcError(error, "Failed to load resources"));
+      }
+
+      if ("message" in data) {
+        throw new Error(formatRpcResponseError(data, "Cell not found"));
+      }
+
+      return data;
     },
   }),
 
@@ -375,6 +414,12 @@ export type CellServiceSummary = Awaited<
   ReturnType<ReturnType<typeof cellQueries.services>["queryFn"]>
 >[number];
 
+export type CellResourceSummary = Awaited<
+  ReturnType<ReturnType<typeof cellQueries.resources>["queryFn"]>
+>;
+
+export type CellResourceProcess = CellResourceSummary["processes"][number];
+
 export type CellActivityEventListResponse = Awaited<
   ReturnType<ReturnType<typeof cellQueries.activity>["queryFn"]>
 >;
@@ -421,7 +466,7 @@ export type CellTimingResponse = {
   runs: CellTimingRun[];
 };
 
-export type DiffMode = "workspace" | "branch";
+export type DiffMode = "workspace" | "branch" | "filesystem";
 
 export type DiffFileSummary = {
   path: string;

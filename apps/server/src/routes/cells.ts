@@ -23,6 +23,7 @@ import {
   CellActivityEventListResponseSchema,
   CellDiffResponseSchema,
   CellListResponseSchema,
+  CellResourceSummaryResponseSchema,
   CellResponseSchema,
   CellServiceListResponseSchema,
   CellServiceSchema,
@@ -42,6 +43,10 @@ import {
   cellProvisioningStates,
 } from "../schema/cell-provisioning";
 import { type CellStatus, cells, type NewCell } from "../schema/cells";
+import {
+  cellResourceHistory,
+  type StoredResourceProcess,
+} from "../schema/resource-history";
 import { cellServices } from "../schema/services";
 import {
   type CellTimingStatus,
@@ -88,6 +93,10 @@ import {
   subscribeToCellTimingEvents,
   subscribeToServiceEvents,
 } from "../services/events";
+import {
+  createResourceSnapshotService,
+  type ProcessResourceSnapshot,
+} from "../services/resource-snapshot";
 import type {
   ServiceTerminalEvent,
   ServiceTerminalSession,
@@ -174,6 +183,7 @@ export type CellRouteDependencies = {
     cellId: string;
     workspacePath: string;
   }) => CellTerminalSession;
+  getTerminalSession?: (cellId: string) => CellTerminalSession | null;
   readTerminalOutput: (cellId: string) => string;
   subscribeToTerminal: (
     cellId: string,
@@ -224,6 +234,9 @@ export type CellRouteDependencies = {
   writeSetupTerminalInput: (cellId: string, data: string) => void;
   resizeSetupTerminal: (cellId: string, cols: number, rows: number) => void;
   clearSetupTerminal: (cellId: string) => void;
+  sampleServiceResources: (
+    pids: number[]
+  ) => Promise<Map<number, ProcessResourceSnapshot>>;
 };
 
 const dependencyKeys: Array<keyof CellRouteDependencies> = [
@@ -255,6 +268,7 @@ const dependencyKeys: Array<keyof CellRouteDependencies> = [
   "writeSetupTerminalInput",
   "resizeSetupTerminal",
   "clearSetupTerminal",
+  "sampleServiceResources",
 ];
 
 const buildDefaultCellDependencies = (): CellRouteDependencies => {
@@ -263,6 +277,7 @@ const buildDefaultCellDependencies = (): CellRouteDependencies => {
   const supervisor = ServiceSupervisorService;
   const terminal = cellTerminalService;
   const chatTerminal = chatTerminalService;
+  const resourceSnapshot = createResourceSnapshotService();
 
   return {
     db: database,
@@ -277,6 +292,7 @@ const buildDefaultCellDependencies = (): CellRouteDependencies => {
     stopServiceById: supervisor.stopCellService,
     stopServicesForCell: supervisor.stopCellServices,
     ensureTerminalSession: terminal.ensureSession,
+    getTerminalSession: terminal.getSession,
     readTerminalOutput: terminal.readOutput,
     subscribeToTerminal: terminal.subscribe,
     writeTerminalInput: terminal.write,
@@ -301,6 +317,7 @@ const buildDefaultCellDependencies = (): CellRouteDependencies => {
     writeSetupTerminalInput: supervisor.writeSetupTerminalInput,
     resizeSetupTerminal: supervisor.resizeSetupTerminal,
     clearSetupTerminal: supervisor.clearSetupTerminal,
+    sampleServiceResources: resourceSnapshot.samplePids,
   } satisfies CellRouteDependencies;
 };
 
@@ -329,6 +346,9 @@ const resolveCellRouteDependencies = (() => {
 })();
 
 type CellServiceListResponse = Static<typeof CellServiceListResponseSchema>;
+type CellResourceSummaryResponse = Static<
+  typeof CellResourceSummaryResponseSchema
+>;
 type CellDiffResponse = Static<typeof CellDiffResponseSchema>;
 type CellServiceResponse = Static<typeof CellServiceSchema>;
 type CellResponse = Static<typeof CellResponseSchema>;
@@ -507,6 +527,9 @@ const LOG_TAIL_API_MAX_LINES = 2000;
 const LOG_LINE_SPLIT_RE = /\r?\n/;
 const PORT_CHECK_TIMEOUT_MS = 500;
 const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
+const SERVICES_RESOURCE_REFRESH_INTERVAL_MS = 5000;
+const CELL_RESOURCE_HISTORY_DEFAULT_LIMIT = 60;
+const CELL_RESOURCE_HISTORY_MAX_LIMIT = 360;
 const TERMINAL_RESIZE_MIN_COLS = 20;
 const TERMINAL_RESIZE_MAX_COLS = 500;
 const TERMINAL_RESIZE_MIN_ROWS = 5;
@@ -1468,10 +1491,20 @@ export function createCellsRoutes(
           lines: query.logLines,
           offset: query.logOffset,
         };
+        const includeResources = query.includeResources ?? false;
 
         const rows = await fetchServiceRows(database, params.id);
+        const resourcesByPid = includeResources
+          ? await sampleServiceResources(deps, rows)
+          : new Map<number, ProcessResourceSnapshot>();
         const services = await Promise.all(
-          rows.map((row) => serializeService(deps, database, row, logOptions))
+          rows.map((row) =>
+            serializeService(deps, database, row, {
+              logOptions,
+              includeResources,
+              resourcesByPid,
+            })
+          )
         );
 
         const audit = readHiveAuditHeaders(request);
@@ -1502,6 +1535,55 @@ export function createCellsRoutes(
         response: {
           200: CellServiceListResponseSchema,
           400: t.Object({ message: t.String() }),
+          404: t.Object({ message: t.String() }),
+        },
+      }
+    )
+
+    .get(
+      "/:id/resources",
+      async ({ params, query, set }) => {
+        const deps = await resolveDeps();
+        const { db: database } = deps;
+        const cell = await loadCellById(database, params.id);
+        if (!cell) {
+          set.status = HTTP_STATUS.NOT_FOUND;
+          return {
+            message: "Cell not found",
+          } satisfies { message: string };
+        }
+
+        const summary = await buildCellResourceSummary({
+          deps,
+          database,
+          cell,
+        });
+        await persistCellResourceHistoryPoint(database, summary);
+
+        const includeHistory = query.includeHistory ?? false;
+        const historyLimit = normalizeHistoryLimit(query.historyLimit);
+        const history = includeHistory
+          ? await listCellResourceHistory(database, cell.id, historyLimit)
+          : undefined;
+
+        return {
+          ...summary,
+          ...(history ? { history } : {}),
+        } satisfies CellResourceSummaryResponse;
+      },
+      {
+        params: t.Object({ id: t.String() }),
+        query: t.Object({
+          includeHistory: t.Optional(t.Boolean()),
+          historyLimit: t.Optional(
+            t.Number({
+              minimum: 1,
+              maximum: CELL_RESOURCE_HISTORY_MAX_LIMIT,
+            })
+          ),
+        }),
+        response: {
+          200: CellResourceSummaryResponseSchema,
           404: t.Object({ message: t.String() }),
         },
       }
@@ -1716,9 +1798,10 @@ export function createCellsRoutes(
     )
     .get(
       "/:id/services/stream",
-      async ({ params, set, log }) => {
+      async ({ params, query, set, log }) => {
         const deps = await resolveDeps();
         const { db: database } = deps;
+        const includeResources = query.includeResources ?? false;
         const cell = await loadCellById(database, params.id);
         if (!cell) {
           set.status = HTTP_STATUS.NOT_FOUND;
@@ -1745,7 +1828,13 @@ export function createCellsRoutes(
                 if (!row) {
                   return;
                 }
-                const payload = await serializeService(deps, database, row);
+                const resourcesByPid = includeResources
+                  ? await sampleServiceResources(deps, [row])
+                  : new Map<number, ProcessResourceSnapshot>();
+                const payload = await serializeService(deps, database, row, {
+                  includeResources,
+                  resourcesByPid,
+                });
                 sendEvent("service", JSON.stringify(payload));
               } catch (error) {
                 log.error(
@@ -1770,8 +1859,14 @@ export function createCellsRoutes(
             const pushAllSnapshots = async () => {
               try {
                 const rows = await fetchServiceRows(database, params.id);
+                const resourcesByPid = includeResources
+                  ? await sampleServiceResources(deps, rows)
+                  : new Map<number, ProcessResourceSnapshot>();
                 for (const row of rows) {
-                  const payload = await serializeService(deps, database, row);
+                  const payload = await serializeService(deps, database, row, {
+                    includeResources,
+                    resourcesByPid,
+                  });
                   sendEvent("service", JSON.stringify(payload));
                 }
                 sendEvent(
@@ -1787,9 +1882,20 @@ export function createCellsRoutes(
               /* errors already logged inside pushAllSnapshots */
             });
 
+            const resourcesInterval = includeResources
+              ? setInterval(() => {
+                  pushAllSnapshots().catch(() => {
+                    /* errors already logged inside pushAllSnapshots */
+                  });
+                }, SERVICES_RESOURCE_REFRESH_INTERVAL_MS)
+              : null;
+
             cleanup = () => {
               unsubscribe();
               clearInterval(heartbeat);
+              if (resourcesInterval) {
+                clearInterval(resourcesInterval);
+              }
             };
           },
           cancel() {
@@ -1807,6 +1913,9 @@ export function createCellsRoutes(
       },
       {
         params: t.Object({ id: t.String() }),
+        query: t.Object({
+          includeResources: t.Optional(t.Boolean()),
+        }),
       }
     )
 
@@ -5302,18 +5411,374 @@ async function fetchServiceRow(
   return row ?? null;
 }
 
+function sampleServiceResources(
+  deps: CellRouteDependencies,
+  rows: ServiceRow[]
+): Promise<Map<number, ProcessResourceSnapshot>> {
+  return sampleResourcesByPid(
+    deps,
+    rows
+      .map((row) => row.service.pid)
+      .filter((pid): pid is number => Number.isInteger(pid) && (pid ?? 0) > 0)
+  );
+}
+
+function sampleResourcesByPid(
+  deps: CellRouteDependencies,
+  pids: number[]
+): Promise<Map<number, ProcessResourceSnapshot>> {
+  const deduplicated = Array.from(
+    new Set(
+      pids.filter((pid): pid is number => Number.isInteger(pid) && pid > 0)
+    )
+  );
+
+  if (deduplicated.length === 0) {
+    return Promise.resolve(new Map<number, ProcessResourceSnapshot>());
+  }
+
+  return deps.sampleServiceResources(deduplicated);
+}
+
+type ResourceProcessKind = "service" | "opencode" | "terminal" | "setup";
+
+type ResourceTrackedProcess = {
+  kind: ResourceProcessKind;
+  serviceType?: string;
+  id: string;
+  name: string;
+  status: string;
+  pid: number | null;
+  processAlive: boolean;
+  active: boolean;
+};
+
+const isServiceRuntimeActive = (status: string): boolean =>
+  status === "running" || status === "starting" || status === "needs_resume";
+
+function deriveTrackedServiceProcess(
+  deps: CellRouteDependencies,
+  row: ServiceRow
+): ResourceTrackedProcess {
+  const runtimeSession = deps.getServiceTerminalSession(row.service.id);
+  const processAlive =
+    runtimeSession?.status === "running" || isProcessAlive(row.service.pid);
+
+  let status = row.service.status;
+  if (row.service.status === "running" && !processAlive) {
+    status = "error";
+  } else if (row.service.status === "error" && processAlive) {
+    status = "running";
+  }
+
+  let pid: number | null = null;
+  if (runtimeSession?.status === "running") {
+    pid = runtimeSession.pid;
+  } else if (processAlive) {
+    pid = row.service.pid ?? null;
+  }
+
+  return {
+    kind: "service",
+    serviceType: row.service.type,
+    id: row.service.id,
+    name: row.service.name,
+    status,
+    pid,
+    processAlive,
+    active: processAlive && isServiceRuntimeActive(status),
+  };
+}
+
+function resolveProcessResourceSnapshot(args: {
+  trackedProcess: ResourceTrackedProcess;
+  resourcesByPid: Map<number, ProcessResourceSnapshot>;
+  sampledAt: string;
+}): ProcessResourceSnapshot {
+  const { trackedProcess, resourcesByPid, sampledAt } = args;
+
+  if (!trackedProcess.pid) {
+    return {
+      cpuPercent: null,
+      rssBytes: null,
+      resourceSampledAt: sampledAt,
+      resourceUnavailableReason: "pid_missing",
+    };
+  }
+
+  if (!trackedProcess.processAlive) {
+    return {
+      cpuPercent: null,
+      rssBytes: null,
+      resourceSampledAt: sampledAt,
+      resourceUnavailableReason: "process_not_alive",
+    };
+  }
+
+  return (
+    resourcesByPid.get(trackedProcess.pid) ?? {
+      cpuPercent: null,
+      rssBytes: null,
+      resourceSampledAt: sampledAt,
+      resourceUnavailableReason: "sample_failed",
+    }
+  );
+}
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: keeps per-cell process aggregation in one place.
+async function buildCellResourceSummary(args: {
+  deps: CellRouteDependencies;
+  database: DatabaseClient;
+  cell: typeof cells.$inferSelect;
+}): Promise<CellResourceSummaryResponse> {
+  const { deps, database, cell } = args;
+  const sampledAt = new Date().toISOString();
+  const serviceRows = await fetchServiceRows(database, cell.id);
+  const trackedProcesses: ResourceTrackedProcess[] = serviceRows.map((row) =>
+    deriveTrackedServiceProcess(deps, row)
+  );
+
+  const chatSession = deps.getChatTerminalSession?.(cell.id) ?? null;
+  if (chatSession || cell.opencodeSessionId) {
+    const processAlive = chatSession
+      ? chatSession.status === "running" || isProcessAlive(chatSession.pid)
+      : false;
+    trackedProcesses.push({
+      kind: "opencode",
+      id: cell.opencodeSessionId ?? `opencode:${cell.id}`,
+      name: "OpenCode",
+      status: chatSession?.status ?? "idle",
+      pid: chatSession?.pid ?? null,
+      processAlive,
+      active: processAlive && chatSession?.status === "running",
+    });
+  }
+
+  const terminalSession = deps.getTerminalSession?.(cell.id) ?? null;
+  if (terminalSession) {
+    const processAlive =
+      terminalSession.status === "running" ||
+      isProcessAlive(terminalSession.pid);
+    trackedProcesses.push({
+      kind: "terminal",
+      id: terminalSession.sessionId,
+      name: "Workspace Terminal",
+      status: terminalSession.status,
+      pid: terminalSession.pid,
+      processAlive,
+      active: processAlive && terminalSession.status === "running",
+    });
+  }
+
+  const setupSession = deps.getSetupTerminalSession(cell.id);
+  if (setupSession) {
+    const processAlive =
+      setupSession.status === "running" || isProcessAlive(setupSession.pid);
+    trackedProcesses.push({
+      kind: "setup",
+      id: setupSession.sessionId,
+      name: "Setup",
+      status: setupSession.status,
+      pid: setupSession.pid,
+      processAlive,
+      active: processAlive && setupSession.status === "running",
+    });
+  }
+
+  const resourcesByPid = await sampleResourcesByPid(
+    deps,
+    trackedProcesses
+      .map((process) => process.pid)
+      .filter((pid): pid is number => typeof pid === "number")
+  );
+
+  const processes = trackedProcesses.map((trackedProcess) => {
+    const snapshot = resolveProcessResourceSnapshot({
+      trackedProcess,
+      resourcesByPid,
+      sampledAt,
+    });
+
+    return {
+      kind: trackedProcess.kind,
+      ...(trackedProcess.serviceType
+        ? { serviceType: trackedProcess.serviceType }
+        : {}),
+      id: trackedProcess.id,
+      name: trackedProcess.name,
+      status: trackedProcess.status,
+      pid: trackedProcess.pid,
+      processAlive: trackedProcess.processAlive,
+      active: trackedProcess.active,
+      cpuPercent: snapshot.cpuPercent,
+      rssBytes: snapshot.rssBytes,
+      resourceSampledAt: snapshot.resourceSampledAt,
+      ...(snapshot.resourceUnavailableReason
+        ? { resourceUnavailableReason: snapshot.resourceUnavailableReason }
+        : {}),
+    };
+  });
+
+  const totalCpuPercent = processes.reduce(
+    (total, process) => total + (process.cpuPercent ?? 0),
+    0
+  );
+  const totalRssBytes = processes.reduce(
+    (total, process) => total + (process.rssBytes ?? 0),
+    0
+  );
+  const activeCpuPercent = processes.reduce(
+    (total, process) =>
+      total + (process.active ? (process.cpuPercent ?? 0) : 0),
+    0
+  );
+  const activeRssBytes = processes.reduce(
+    (total, process) => total + (process.active ? (process.rssBytes ?? 0) : 0),
+    0
+  );
+
+  return {
+    cellId: cell.id,
+    sampledAt,
+    processCount: processes.length,
+    activeProcessCount: processes.filter((process) => process.active).length,
+    tracked: {
+      services: processes.filter((process) => process.kind === "service")
+        .length,
+      opencode: processes.filter((process) => process.kind === "opencode")
+        .length,
+      terminal: processes.filter((process) => process.kind === "terminal")
+        .length,
+      setup: processes.filter((process) => process.kind === "setup").length,
+    },
+    totalCpuPercent,
+    totalRssBytes,
+    activeCpuPercent,
+    activeRssBytes,
+    processes,
+  };
+}
+
+function normalizeHistoryLimit(limit?: number): number {
+  if (typeof limit !== "number" || !Number.isFinite(limit)) {
+    return CELL_RESOURCE_HISTORY_DEFAULT_LIMIT;
+  }
+
+  return Math.min(
+    Math.max(Math.floor(limit), 1),
+    CELL_RESOURCE_HISTORY_MAX_LIMIT
+  );
+}
+
+const CELL_RESOURCE_HISTORY_RETENTION_POINTS = 720;
+
+type CellResourceHistoryResponsePoint = NonNullable<
+  CellResourceSummaryResponse["history"]
+>[number];
+
+async function persistCellResourceHistoryPoint(
+  database: DatabaseClient,
+  summary: CellResourceSummaryResponse
+): Promise<void> {
+  const sampledAt = new Date(summary.sampledAt);
+  const createdAt = new Date();
+
+  await database.insert(cellResourceHistory).values({
+    id: randomUUID(),
+    cellId: summary.cellId,
+    sampledAt,
+    processCount: summary.processCount,
+    activeProcessCount: summary.activeProcessCount,
+    totalCpuPercent: summary.totalCpuPercent,
+    totalRssBytes: summary.totalRssBytes,
+    activeCpuPercent: summary.activeCpuPercent,
+    activeRssBytes: summary.activeRssBytes,
+    processes: summary.processes,
+    createdAt,
+  });
+
+  const recentRows = await database
+    .select({ id: cellResourceHistory.id })
+    .from(cellResourceHistory)
+    .where(eq(cellResourceHistory.cellId, summary.cellId))
+    .orderBy(desc(cellResourceHistory.sampledAt))
+    .limit(CELL_RESOURCE_HISTORY_RETENTION_POINTS + 1);
+
+  if (recentRows.length <= CELL_RESOURCE_HISTORY_RETENTION_POINTS) {
+    return;
+  }
+
+  const staleIds = recentRows
+    .slice(CELL_RESOURCE_HISTORY_RETENTION_POINTS)
+    .map((row) => row.id);
+  if (staleIds.length === 0) {
+    return;
+  }
+
+  await database
+    .delete(cellResourceHistory)
+    .where(inArray(cellResourceHistory.id, staleIds));
+}
+
+async function listCellResourceHistory(
+  database: DatabaseClient,
+  cellId: string,
+  limit: number
+): Promise<CellResourceHistoryResponsePoint[]> {
+  const rows = await database
+    .select({
+      sampledAt: cellResourceHistory.sampledAt,
+      processCount: cellResourceHistory.processCount,
+      activeProcessCount: cellResourceHistory.activeProcessCount,
+      totalCpuPercent: cellResourceHistory.totalCpuPercent,
+      totalRssBytes: cellResourceHistory.totalRssBytes,
+      activeCpuPercent: cellResourceHistory.activeCpuPercent,
+      activeRssBytes: cellResourceHistory.activeRssBytes,
+      processes: cellResourceHistory.processes,
+    })
+    .from(cellResourceHistory)
+    .where(eq(cellResourceHistory.cellId, cellId))
+    .orderBy(desc(cellResourceHistory.sampledAt))
+    .limit(limit);
+
+  return rows.reverse().map((row) => {
+    const sampledAt =
+      row.sampledAt instanceof Date
+        ? row.sampledAt.toISOString()
+        : new Date(row.sampledAt).toISOString();
+
+    return {
+      sampledAt,
+      processCount: row.processCount,
+      activeProcessCount: row.activeProcessCount,
+      totalCpuPercent: row.totalCpuPercent,
+      totalRssBytes: row.totalRssBytes,
+      activeCpuPercent: row.activeCpuPercent,
+      activeRssBytes: row.activeRssBytes,
+      processes: (row.processes ?? []) as StoredResourceProcess[],
+    };
+  });
+}
+
+type SerializeServiceOptions = {
+  logOptions?: LogTailOptions;
+  includeResources?: boolean;
+  resourcesByPid?: Map<number, ProcessResourceSnapshot>;
+};
+
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: normalizes persisted service state against runtime process state.
 async function serializeService(
   deps: CellRouteDependencies,
   database: DatabaseClient,
   row: ServiceRow,
-  logOptions?: LogTailOptions
+  options?: SerializeServiceOptions
 ) {
+  const includeResources = options?.includeResources ?? false;
   const { service } = row;
   const output = deps.readServiceTerminalOutput(service.id);
   const logResult = readOutputTail(
     output.length > 0 ? output : null,
-    logOptions
+    options?.logOptions
   );
   const runtimeSession = deps.getServiceTerminalSession(service.id);
   const processAlive =
@@ -5342,6 +5807,42 @@ async function serializeService(
   } else if (processAlive) {
     derivedPid = service.pid;
   }
+
+  const resourceSnapshot = includeResources
+    ? (() => {
+        const resourceSampledAt = new Date().toISOString();
+        if (!derivedPid) {
+          return {
+            cpuPercent: null,
+            rssBytes: null,
+            resourceSampledAt,
+            resourceUnavailableReason:
+              typeof service.pid === "number" && !processAlive
+                ? "process_not_alive"
+                : "pid_missing",
+          } satisfies ProcessResourceSnapshot;
+        }
+
+        if (!processAlive) {
+          return {
+            cpuPercent: null,
+            rssBytes: null,
+            resourceSampledAt,
+            resourceUnavailableReason: "process_not_alive",
+          } satisfies ProcessResourceSnapshot;
+        }
+
+        return (
+          options?.resourcesByPid?.get(derivedPid) ?? {
+            cpuPercent: null,
+            rssBytes: null,
+            resourceSampledAt,
+            resourceUnavailableReason: "sample_failed",
+          }
+        );
+      })()
+    : null;
+
   const shouldPersist =
     derivedStatus !== service.status ||
     derivedLastKnownError !== service.lastKnownError ||
@@ -5378,6 +5879,19 @@ async function serializeService(
     hasMoreLogs: logResult.hasMore,
     processAlive,
     ...(portReachable !== undefined ? { portReachable } : {}),
+    ...(resourceSnapshot
+      ? {
+          cpuPercent: resourceSnapshot.cpuPercent,
+          rssBytes: resourceSnapshot.rssBytes,
+          resourceSampledAt: resourceSnapshot.resourceSampledAt,
+          ...(resourceSnapshot.resourceUnavailableReason
+            ? {
+                resourceUnavailableReason:
+                  resourceSnapshot.resourceUnavailableReason,
+              }
+            : {}),
+        }
+      : {}),
   };
 }
 

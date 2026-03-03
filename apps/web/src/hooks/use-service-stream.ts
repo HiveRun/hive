@@ -6,9 +6,9 @@ const API_BASE = getApiBase();
 
 export function useServiceStream(
   cellId: string,
-  options: { enabled?: boolean } = {}
+  options: { enabled?: boolean; includeResources?: boolean } = {}
 ) {
-  const { enabled = true } = options;
+  const { enabled = true, includeResources = false } = options;
   const [services, setServices] = useState<CellServiceSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
@@ -30,8 +30,13 @@ export function useServiceStream(
     setIsLoading(true);
     setError(undefined);
 
+    const params = new URLSearchParams();
+    if (includeResources) {
+      params.set("includeResources", "true");
+    }
+    const query = params.toString();
     const source = new EventSource(
-      `${API_BASE}/api/cells/${cellId}/services/stream`
+      `${API_BASE}/api/cells/${cellId}/services/stream${query ? `?${query}` : ""}`
     );
 
     const upsertService = (service: CellServiceSummary) => {
@@ -97,7 +102,7 @@ export function useServiceStream(
       source.removeEventListener("error", errorListener);
       source.close();
     };
-  }, [cellId, enabled]);
+  }, [cellId, enabled, includeResources]);
 
   return { services, isLoading, error };
 }
