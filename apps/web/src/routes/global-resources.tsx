@@ -182,7 +182,8 @@ function GlobalResourcesRoute() {
   const rows = useMemo(() => {
     const baseRows = cells.map((cell, index) => ({
       ...cell,
-      summary: resourceQueries[index]?.data,
+      summary:
+        cell.status === "ready" ? resourceQueries[index]?.data : undefined,
     }));
     const enriched = baseRows.map(toEnrichedResourceRow);
     return enriched.sort(

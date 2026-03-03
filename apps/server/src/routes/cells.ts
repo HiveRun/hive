@@ -1922,15 +1922,22 @@ export function createCellsRoutes(
               }
             };
 
-            pushAllSnapshots().catch(() => {
-              /* errors already logged inside pushAllSnapshots */
-            });
+            let pushAllSnapshotsInFlight: Promise<void> | null = null;
+            const pushAllSnapshotsWithGuard = () => {
+              if (pushAllSnapshotsInFlight) {
+                return;
+              }
+
+              pushAllSnapshotsInFlight = pushAllSnapshots().finally(() => {
+                pushAllSnapshotsInFlight = null;
+              });
+            };
+
+            pushAllSnapshotsWithGuard();
 
             const resourcesInterval = includeResources
               ? setInterval(() => {
-                  pushAllSnapshots().catch(() => {
-                    /* errors already logged inside pushAllSnapshots */
-                  });
+                  pushAllSnapshotsWithGuard();
                 }, SERVICES_RESOURCE_REFRESH_INTERVAL_MS)
               : null;
 
