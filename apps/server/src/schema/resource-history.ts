@@ -1,4 +1,10 @@
-import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  index,
+  integer,
+  real,
+  sqliteTable,
+  text,
+} from "drizzle-orm/sqlite-core";
 import { cells } from "./cells";
 
 export type StoredResourceProcess = {
@@ -38,5 +44,31 @@ export const cellResourceHistory = sqliteTable("cell_resource_history", {
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 });
 
+export const cellResourceRollups = sqliteTable(
+  "cell_resource_rollups",
+  {
+    id: text("id").primaryKey(),
+    cellId: text("cell_id")
+      .notNull()
+      .references(() => cells.id, { onDelete: "cascade" }),
+    bucketStartAt: integer("bucket_start_at", { mode: "timestamp" }).notNull(),
+    sampleCount: integer("sample_count").notNull(),
+    sumActiveCpuPercent: real("sum_active_cpu_percent").notNull(),
+    sumActiveRssBytes: integer("sum_active_rss_bytes").notNull(),
+    peakActiveCpuPercent: real("peak_active_cpu_percent").notNull(),
+    peakActiveRssBytes: integer("peak_active_rss_bytes").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => ({
+    cellBucketIdx: index("cell_resource_rollups_cell_bucket_idx").on(
+      table.cellId,
+      table.bucketStartAt
+    ),
+  })
+);
+
 export type CellResourceHistory = typeof cellResourceHistory.$inferSelect;
 export type NewCellResourceHistory = typeof cellResourceHistory.$inferInsert;
+export type CellResourceRollup = typeof cellResourceRollups.$inferSelect;
+export type NewCellResourceRollup = typeof cellResourceRollups.$inferInsert;

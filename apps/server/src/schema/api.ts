@@ -142,6 +142,35 @@ export const CellResourceSummaryResponseSchema = t.Object({
       })
     )
   ),
+  historyAverages: t.Optional(
+    t.Array(
+      t.Object({
+        window: t.Union([
+          t.Literal("1m"),
+          t.Literal("5m"),
+          t.Literal("15m"),
+          t.Literal("1h"),
+        ]),
+        sampleCount: t.Number(),
+        averageActiveCpuPercent: t.Number(),
+        averageActiveRssBytes: t.Number(),
+        peakActiveCpuPercent: t.Number(),
+        peakActiveRssBytes: t.Number(),
+      })
+    )
+  ),
+  rollups: t.Optional(
+    t.Array(
+      t.Object({
+        bucketStartAt: t.String(),
+        sampleCount: t.Number(),
+        averageActiveCpuPercent: t.Number(),
+        averageActiveRssBytes: t.Number(),
+        peakActiveCpuPercent: t.Number(),
+        peakActiveRssBytes: t.Number(),
+      })
+    )
+  ),
 });
 
 export const CellTerminalSessionSchema = t.Object({

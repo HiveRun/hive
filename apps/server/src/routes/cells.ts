@@ -3,7 +3,7 @@ import { createConnection } from "node:net";
 import { join } from "node:path";
 
 import { logger } from "@bogeychan/elysia-logger";
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import { Elysia, type Static, sse, t } from "elysia";
 import { loadOpencodeConfig } from "../agents/opencode-config";
 import { getSharedOpencodeServerBaseUrl } from "../agents/opencode-server";
@@ -45,6 +45,7 @@ import {
 import { type CellStatus, cells, type NewCell } from "../schema/cells";
 import {
   cellResourceHistory,
+  cellResourceRollups,
   type StoredResourceProcess,
 } from "../schema/resource-history";
 import { cellServices } from "../schema/services";
@@ -528,8 +529,31 @@ const LOG_LINE_SPLIT_RE = /\r?\n/;
 const PORT_CHECK_TIMEOUT_MS = 500;
 const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
 const SERVICES_RESOURCE_REFRESH_INTERVAL_MS = 5000;
+const MINUTE_MS = 60_000;
 const CELL_RESOURCE_HISTORY_DEFAULT_LIMIT = 60;
 const CELL_RESOURCE_HISTORY_MAX_LIMIT = 360;
+const CELL_RESOURCE_HISTORY_RETENTION_POINTS = 17_280;
+const CELL_RESOURCE_CAPTURE_INTERVAL_MS = 15_000;
+const CELL_RESOURCE_ROLLUP_BUCKET_MS = MINUTE_MS;
+const CELL_RESOURCE_ROLLUP_DEFAULT_LIMIT = 180;
+const CELL_RESOURCE_ROLLUP_MAX_LIMIT = 1440;
+const HOURS_PER_DAY = 24;
+const MINUTES_PER_HOUR = 60;
+const CELL_RESOURCE_ROLLUP_RETENTION_DAYS = 30;
+const CELL_RESOURCE_ROLLUP_RETENTION_MINUTES =
+  CELL_RESOURCE_ROLLUP_RETENTION_DAYS * HOURS_PER_DAY * MINUTES_PER_HOUR;
+const CELL_RESOURCE_ROLLUP_RETENTION_MS =
+  CELL_RESOURCE_ROLLUP_RETENTION_MINUTES * MINUTE_MS;
+const CELL_RESOURCE_AVERAGE_WINDOWS = [
+  { window: "1m", durationMs: MINUTE_MS },
+  // biome-ignore lint/style/noMagicNumbers: resource-average windows are fixed product defaults.
+  { window: "5m", durationMs: 5 * MINUTE_MS },
+  // biome-ignore lint/style/noMagicNumbers: resource-average windows are fixed product defaults.
+  { window: "15m", durationMs: 15 * MINUTE_MS },
+  { window: "1h", durationMs: 60 * MINUTE_MS },
+] as const;
+const CELL_RESOURCE_AVERAGE_MAX_WINDOW_MS =
+  CELL_RESOURCE_AVERAGE_WINDOWS.at(-1)?.durationMs ?? 0;
 const TERMINAL_RESIZE_MIN_COLS = 20;
 const TERMINAL_RESIZE_MAX_COLS = 500;
 const TERMINAL_RESIZE_MIN_ROWS = 5;
@@ -1542,6 +1566,7 @@ export function createCellsRoutes(
 
     .get(
       "/:id/resources",
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: resources endpoint intentionally composes optional payload sections.
       async ({ params, query, set }) => {
         const deps = await resolveDeps();
         const { db: database } = deps;
@@ -1561,24 +1586,43 @@ export function createCellsRoutes(
         await persistCellResourceHistoryPoint(database, summary);
 
         const includeHistory = query.includeHistory ?? false;
+        const includeAverages = query.includeAverages ?? false;
+        const includeRollups = query.includeRollups ?? false;
         const historyLimit = normalizeHistoryLimit(query.historyLimit);
+        const rollupLimit = normalizeRollupLimit(query.rollupLimit);
         const history = includeHistory
           ? await listCellResourceHistory(database, cell.id, historyLimit)
+          : undefined;
+        const historyAverages = includeAverages
+          ? await listCellResourceHistoryAverages(database, cell.id)
+          : undefined;
+        const rollups = includeRollups
+          ? await listCellResourceRollups(database, cell.id, rollupLimit)
           : undefined;
 
         return {
           ...summary,
           ...(history ? { history } : {}),
+          ...(historyAverages ? { historyAverages } : {}),
+          ...(rollups ? { rollups } : {}),
         } satisfies CellResourceSummaryResponse;
       },
       {
         params: t.Object({ id: t.String() }),
         query: t.Object({
           includeHistory: t.Optional(t.Boolean()),
+          includeAverages: t.Optional(t.Boolean()),
+          includeRollups: t.Optional(t.Boolean()),
           historyLimit: t.Optional(
             t.Number({
               minimum: 1,
               maximum: CELL_RESOURCE_HISTORY_MAX_LIMIT,
+            })
+          ),
+          rollupLimit: t.Optional(
+            t.Number({
+              minimum: 1,
+              maximum: CELL_RESOURCE_ROLLUP_MAX_LIMIT,
             })
           ),
         }),
@@ -5670,18 +5714,65 @@ function normalizeHistoryLimit(limit?: number): number {
   );
 }
 
-const CELL_RESOURCE_HISTORY_RETENTION_POINTS = 720;
+function normalizeRollupLimit(limit?: number): number {
+  if (typeof limit !== "number" || !Number.isFinite(limit)) {
+    return CELL_RESOURCE_ROLLUP_DEFAULT_LIMIT;
+  }
+
+  return Math.min(
+    Math.max(Math.floor(limit), 1),
+    CELL_RESOURCE_ROLLUP_MAX_LIMIT
+  );
+}
 
 type CellResourceHistoryResponsePoint = NonNullable<
   CellResourceSummaryResponse["history"]
 >[number];
+type CellResourceHistoryAveragePoint = NonNullable<
+  CellResourceSummaryResponse["historyAverages"]
+>[number];
+type CellResourceRollupResponsePoint = NonNullable<
+  CellResourceSummaryResponse["rollups"]
+>[number];
+
+const resourceHistoryLastCapturedAtByCellId = new Map<string, number>();
+
+function shouldPersistResourceHistoryPoint(
+  cellId: string,
+  sampledAtMs: number
+): boolean {
+  const lastCapturedAt = resourceHistoryLastCapturedAtByCellId.get(cellId);
+  if (
+    typeof lastCapturedAt === "number" &&
+    sampledAtMs - lastCapturedAt < CELL_RESOURCE_CAPTURE_INTERVAL_MS
+  ) {
+    return false;
+  }
+
+  resourceHistoryLastCapturedAtByCellId.set(cellId, sampledAtMs);
+  return true;
+}
 
 async function persistCellResourceHistoryPoint(
   database: DatabaseClient,
   summary: CellResourceSummaryResponse
 ): Promise<void> {
   const sampledAt = new Date(summary.sampledAt);
+  const sampledAtMs = sampledAt.getTime();
+  if (!Number.isFinite(sampledAtMs)) {
+    return;
+  }
+
+  if (!shouldPersistResourceHistoryPoint(summary.cellId, sampledAtMs)) {
+    return;
+  }
+
   const createdAt = new Date();
+  const rollupBucketStartAt = new Date(
+    Math.floor(sampledAtMs / CELL_RESOURCE_ROLLUP_BUCKET_MS) *
+      CELL_RESOURCE_ROLLUP_BUCKET_MS
+  );
+  const rollupId = `${summary.cellId}:${rollupBucketStartAt.toISOString()}`;
 
   await database.insert(cellResourceHistory).values({
     id: randomUUID(),
@@ -5696,6 +5787,32 @@ async function persistCellResourceHistoryPoint(
     processes: summary.processes,
     createdAt,
   });
+
+  await database
+    .insert(cellResourceRollups)
+    .values({
+      id: rollupId,
+      cellId: summary.cellId,
+      bucketStartAt: rollupBucketStartAt,
+      sampleCount: 1,
+      sumActiveCpuPercent: summary.activeCpuPercent,
+      sumActiveRssBytes: summary.activeRssBytes,
+      peakActiveCpuPercent: summary.activeCpuPercent,
+      peakActiveRssBytes: summary.activeRssBytes,
+      createdAt,
+      updatedAt: createdAt,
+    })
+    .onConflictDoUpdate({
+      target: cellResourceRollups.id,
+      set: {
+        sampleCount: sql`${cellResourceRollups.sampleCount} + 1`,
+        sumActiveCpuPercent: sql`${cellResourceRollups.sumActiveCpuPercent} + ${summary.activeCpuPercent}`,
+        sumActiveRssBytes: sql`${cellResourceRollups.sumActiveRssBytes} + ${summary.activeRssBytes}`,
+        peakActiveCpuPercent: sql`max(${cellResourceRollups.peakActiveCpuPercent}, ${summary.activeCpuPercent})`,
+        peakActiveRssBytes: sql`max(${cellResourceRollups.peakActiveRssBytes}, ${summary.activeRssBytes})`,
+        updatedAt: createdAt,
+      },
+    });
 
   const recentRows = await database
     .select({ id: cellResourceHistory.id })
@@ -5718,6 +5835,18 @@ async function persistCellResourceHistoryPoint(
   await database
     .delete(cellResourceHistory)
     .where(inArray(cellResourceHistory.id, staleIds));
+
+  const rollupRetentionCutoff = new Date(
+    sampledAtMs - CELL_RESOURCE_ROLLUP_RETENTION_MS
+  );
+  await database
+    .delete(cellResourceRollups)
+    .where(
+      and(
+        eq(cellResourceRollups.cellId, summary.cellId),
+        lt(cellResourceRollups.bucketStartAt, rollupRetentionCutoff)
+      )
+    );
 }
 
 async function listCellResourceHistory(
@@ -5756,6 +5885,112 @@ async function listCellResourceHistory(
       activeCpuPercent: row.activeCpuPercent,
       activeRssBytes: row.activeRssBytes,
       processes: (row.processes ?? []) as StoredResourceProcess[],
+    };
+  });
+}
+
+async function listCellResourceRollups(
+  database: DatabaseClient,
+  cellId: string,
+  limit: number
+): Promise<CellResourceRollupResponsePoint[]> {
+  const rows = await database
+    .select({
+      bucketStartAt: cellResourceRollups.bucketStartAt,
+      sampleCount: cellResourceRollups.sampleCount,
+      sumActiveCpuPercent: cellResourceRollups.sumActiveCpuPercent,
+      sumActiveRssBytes: cellResourceRollups.sumActiveRssBytes,
+      peakActiveCpuPercent: cellResourceRollups.peakActiveCpuPercent,
+      peakActiveRssBytes: cellResourceRollups.peakActiveRssBytes,
+    })
+    .from(cellResourceRollups)
+    .where(eq(cellResourceRollups.cellId, cellId))
+    .orderBy(desc(cellResourceRollups.bucketStartAt))
+    .limit(limit);
+
+  return rows.reverse().map((row) => {
+    const bucketStartAt =
+      row.bucketStartAt instanceof Date
+        ? row.bucketStartAt.toISOString()
+        : new Date(row.bucketStartAt).toISOString();
+    const sampleCount = Math.max(row.sampleCount, 1);
+
+    return {
+      bucketStartAt,
+      sampleCount: row.sampleCount,
+      averageActiveCpuPercent: row.sumActiveCpuPercent / sampleCount,
+      averageActiveRssBytes: row.sumActiveRssBytes / sampleCount,
+      peakActiveCpuPercent: row.peakActiveCpuPercent,
+      peakActiveRssBytes: row.peakActiveRssBytes,
+    };
+  });
+}
+
+const toSampleTimestampMs = (value: Date | number): number =>
+  value instanceof Date ? value.getTime() : new Date(value).getTime();
+
+async function listCellResourceHistoryAverages(
+  database: DatabaseClient,
+  cellId: string
+): Promise<CellResourceHistoryAveragePoint[]> {
+  const nowMs = Date.now();
+  const earliestSample = new Date(nowMs - CELL_RESOURCE_AVERAGE_MAX_WINDOW_MS);
+  const rows = await database
+    .select({
+      sampledAt: cellResourceHistory.sampledAt,
+      activeCpuPercent: cellResourceHistory.activeCpuPercent,
+      activeRssBytes: cellResourceHistory.activeRssBytes,
+    })
+    .from(cellResourceHistory)
+    .where(
+      and(
+        eq(cellResourceHistory.cellId, cellId),
+        gte(cellResourceHistory.sampledAt, earliestSample)
+      )
+    )
+    .orderBy(desc(cellResourceHistory.sampledAt));
+
+  return CELL_RESOURCE_AVERAGE_WINDOWS.map((window) => {
+    const cutoff = nowMs - window.durationMs;
+    const samples = rows.filter(
+      (row) => toSampleTimestampMs(row.sampledAt) >= cutoff
+    );
+
+    if (samples.length === 0) {
+      return {
+        window: window.window,
+        sampleCount: 0,
+        averageActiveCpuPercent: 0,
+        averageActiveRssBytes: 0,
+        peakActiveCpuPercent: 0,
+        peakActiveRssBytes: 0,
+      };
+    }
+
+    const totalActiveCpuPercent = samples.reduce(
+      (total, sample) => total + sample.activeCpuPercent,
+      0
+    );
+    const totalActiveRssBytes = samples.reduce(
+      (total, sample) => total + sample.activeRssBytes,
+      0
+    );
+    const peakActiveCpuPercent = samples.reduce(
+      (peak, sample) => Math.max(peak, sample.activeCpuPercent),
+      0
+    );
+    const peakActiveRssBytes = samples.reduce(
+      (peak, sample) => Math.max(peak, sample.activeRssBytes),
+      0
+    );
+
+    return {
+      window: window.window,
+      sampleCount: samples.length,
+      averageActiveCpuPercent: totalActiveCpuPercent / samples.length,
+      averageActiveRssBytes: totalActiveRssBytes / samples.length,
+      peakActiveCpuPercent,
+      peakActiveRssBytes,
     };
   });
 }

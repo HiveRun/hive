@@ -64,20 +64,32 @@ export const cellQueries = {
 
   resources: (
     id: string,
-    options: { includeHistory?: boolean; historyLimit?: number } = {}
+    options: {
+      includeHistory?: boolean;
+      includeAverages?: boolean;
+      includeRollups?: boolean;
+      historyLimit?: number;
+      rollupLimit?: number;
+    } = {}
   ) => ({
     queryKey: [
       "cells",
       id,
       "resources",
       options.includeHistory ?? false,
+      options.includeAverages ?? false,
+      options.includeRollups ?? false,
       options.historyLimit ?? null,
+      options.rollupLimit ?? null,
     ] as const,
     queryFn: async () => {
       const { data, error } = await rpc.api.cells({ id }).resources.get({
         query: {
           includeHistory: options.includeHistory,
+          includeAverages: options.includeAverages,
+          includeRollups: options.includeRollups,
           historyLimit: options.historyLimit,
+          rollupLimit: options.rollupLimit,
         },
       });
       if (error) {

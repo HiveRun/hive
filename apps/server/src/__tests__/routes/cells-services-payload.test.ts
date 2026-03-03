@@ -471,7 +471,7 @@ describe("GET /api/cells/:id/services payload", () => {
 
     const response = await app.handle(
       new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/resources?includeHistory=true&historyLimit=10`
+        `http://localhost/api/cells/${TEST_CELL_ID}/resources?includeHistory=true&includeAverages=true&includeRollups=true&historyLimit=10&rollupLimit=10`
       )
     );
 
@@ -490,6 +490,15 @@ describe("GET /api/cells/:id/services payload", () => {
         activeCpuPercent: number;
         processes: Array<{ kind: string }>;
       }>;
+      historyAverages?: Array<{
+        window: string;
+        sampleCount: number;
+      }>;
+      rollups?: Array<{
+        bucketStartAt: string;
+        sampleCount: number;
+        averageActiveCpuPercent: number;
+      }>;
     };
 
     expect(body.tracked.services).toBe(1);
@@ -504,5 +513,10 @@ describe("GET /api/cells/:id/services payload", () => {
     expect(body.history?.some((point) => point.processes.length > 0)).toBe(
       true
     );
+    expect((body.historyAverages ?? []).length).toBeGreaterThan(0);
+    expect(body.historyAverages?.[0]?.sampleCount).toBeGreaterThan(0);
+    expect((body.rollups ?? []).length).toBeGreaterThan(0);
+    expect(body.rollups?.[0]?.sampleCount).toBeGreaterThan(0);
+    expect(body.rollups?.[0]?.averageActiveCpuPercent).toBeGreaterThan(0);
   });
 });
