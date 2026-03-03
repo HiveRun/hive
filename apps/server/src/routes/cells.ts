@@ -5821,20 +5821,15 @@ async function persistCellResourceHistoryPoint(
     .orderBy(desc(cellResourceHistory.sampledAt))
     .limit(CELL_RESOURCE_HISTORY_RETENTION_POINTS + 1);
 
-  if (recentRows.length <= CELL_RESOURCE_HISTORY_RETENTION_POINTS) {
-    return;
-  }
-
   const staleIds = recentRows
     .slice(CELL_RESOURCE_HISTORY_RETENTION_POINTS)
     .map((row) => row.id);
-  if (staleIds.length === 0) {
-    return;
-  }
 
-  await database
-    .delete(cellResourceHistory)
-    .where(inArray(cellResourceHistory.id, staleIds));
+  if (staleIds.length > 0) {
+    await database
+      .delete(cellResourceHistory)
+      .where(inArray(cellResourceHistory.id, staleIds));
+  }
 
   const rollupRetentionCutoff = new Date(
     sampledAtMs - CELL_RESOURCE_ROLLUP_RETENTION_MS

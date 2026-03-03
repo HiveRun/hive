@@ -231,6 +231,17 @@ export function createResourceSnapshotService(
     });
   };
 
+  const pruneExpiredCacheEntries = (currentTime: number) => {
+    for (const [pid, cached] of cache.entries()) {
+      if (cached.expiresAt > currentTime) {
+        continue;
+      }
+
+      cache.delete(pid);
+      cpuCountersByPid.delete(pid);
+    }
+  };
+
   const readCachedSnapshots = (
     pids: number[],
     result: Map<number, ProcessResourceSnapshot>
@@ -309,8 +320,11 @@ export function createResourceSnapshotService(
   const samplePids = async (
     pids: number[]
   ): Promise<Map<number, ProcessResourceSnapshot>> => {
-    const sampledAtIso = new Date(now()).toISOString();
+    const currentTime = now();
+    const sampledAtIso = new Date(currentTime).toISOString();
     const result = new Map<number, ProcessResourceSnapshot>();
+
+    pruneExpiredCacheEntries(currentTime);
 
     const normalizedPids = normalizePids(pids);
 
