@@ -1,0 +1,9 @@
+{
+  "name": "@hive/server-elixir",
+  "private": true,
+  "scripts": {
+    "dev": "mise x -C . -- iex -S mix phx.server",
+    "test:run": "mise x -C . -- mix test",
+    "check": "mise x -C . -- mix format --check-formatted && mise x -C . -- mix test"
+  }
+}

@@ -17,12 +17,11 @@ defmodule HiveServerElixirWeb.Router do
   end
 
   scope "/", HiveServerElixirWeb do
-    pipe_through :browser
+    pipe_through :api
 
-    get "/", PageController, :home
+    get "/health", HealthController, :show
     post "/rpc/run", AshTypescriptRpcController, :run
     post "/rpc/validate", AshTypescriptRpcController, :validate
-    get "/ash-typescript", PageController, :index
   end
 
   # Other scopes may use custom stacks.

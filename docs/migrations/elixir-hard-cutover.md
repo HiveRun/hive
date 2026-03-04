@@ -2,8 +2,8 @@
 
 ## Execution Snapshot
 
-- Current Step: Step 1 - Scaffold Elixir backend (`apps/server-elixir`) (in progress).
-- Next Action: integrate generated `apps/hive_server_elixir` into monorepo scripts and trim unneeded default Phoenix web scaffolding.
+- Current Step: Step 2 - OpenCode contract + client generation (next).
+- Next Action: pin OpenCode OpenAPI spec at `apps/hive_server_elixir/priv/opencode/openapi.json` and scaffold repeatable client generation task.
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -46,7 +46,7 @@
 
 ## Step Plan
 
-### Step 1: Scaffold Elixir Backend (`apps/server-elixir`)
+### Step 1: Scaffold Elixir Backend (`apps/hive_server_elixir`)
 
 - Build Phoenix API-only app with Ash, AshSqlite, Reactor, and Oban Lite.
 - Add Bun and Turbo wrapper scripts from root for dev/build/test.
@@ -54,6 +54,12 @@
   - Local server boots with `/health`.
   - SQLite file is created in local Hive state path.
   - Migrations run successfully.
+
+### Step 1 Verification Evidence
+
+- 2026-03-04 - `PORT=4311 DATABASE_PATH=/home/aureatus/dev/projects/hive/.hive/state/hive_server_elixir_dev.db mise x -C apps/hive_server_elixir -- mix ecto.migrate` completed and applied Oban migration.
+- 2026-03-04 - SQLite file confirmed at `.hive/state/hive_server_elixir_dev.db` after migration.
+- 2026-03-04 - `GET http://127.0.0.1:4311/health` returned `{"status":"ok"}` while server was running via `mix phx.server`.
 
 ### Step 2: OpenCode Contract + Client Generation
 
@@ -160,3 +166,7 @@
 - 2026-03-03 - DB reset strategy approved.
 - 2026-03-03 - Scaffold generated at `apps/hive_server_elixir` with approved dependency baseline.
 - 2026-03-04 - Root setup/dev/test/check scripts now invoke Elixir scaffold commands.
+- 2026-03-04 - Added isolated dev port allocation (`scripts/dev/dev-ports.ts`) and wired combined web+elixir startup script.
+- 2026-03-04 - Added Elixir `/health` endpoint and moved Ash TypeScript RPC endpoints onto the API pipeline.
+- 2026-03-04 - Dev startup script now provisions `.hive/state` and passes `DATABASE_PATH` so Elixir dev DB lives under local Hive state.
+- 2026-03-04 - Verified Step 1 done criteria end-to-end (`/health`, local sqlite path under `.hive/state`, and successful migrations).

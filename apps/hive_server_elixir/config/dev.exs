@@ -3,7 +3,8 @@ config :ash, policies: [show_policy_breakdowns?: true]
 
 # Configure your database
 config :hive_server_elixir, HiveServerElixir.Repo,
-  database: Path.expand("../hive_server_elixir_dev.db", __DIR__),
+  database:
+    System.get_env("DATABASE_PATH") || Path.expand("../hive_server_elixir_dev.db", __DIR__),
   pool_size: 5,
   stacktrace: true,
   show_sensitive_data_on_connection_error: true
@@ -22,10 +23,7 @@ config :hive_server_elixir, HiveServerElixirWeb.Endpoint,
   code_reloader: true,
   debug_errors: true,
   secret_key_base: "dev-secret-key-base-1234-5678-90ab-cdef-1234-5678-90ab-cdef-1234-5678",
-  watchers: [
-    esbuild: {Esbuild, :install_and_run, [:hive_server_elixir, ~w(--sourcemap=inline --watch)]},
-    tailwind: {Tailwind, :install_and_run, [:hive_server_elixir, ~w(--watch)]}
-  ]
+  watchers: []
 
 # ## SSL Support
 #
