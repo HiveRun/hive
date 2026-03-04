@@ -18,7 +18,8 @@
       "!**/.alchemy",
       "!**/.svelte-kit",
       "!**/wrangler.jsonc",
-      "!**/.source"
+      "!**/.source",
+      "!apps/hive_server_elixir/assets"
     ]
   },
   "javascript": {
@@ -63,6 +64,15 @@
             "noExcessiveCognitiveComplexity": "off"
           }
         }
+      }
+    },
+    {
+      "includes": ["apps/hive_server_elixir/assets/**"],
+      "linter": {
+        "enabled": false
+      },
+      "formatter": {
+        "enabled": false
       }
     }
   ]

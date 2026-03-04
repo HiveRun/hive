@@ -2,9 +2,16 @@
 
 ## Execution Snapshot
 
-- Current Step: Step 1 - Scaffold Elixir backend (`apps/server-elixir`).
-- Next Action: create `apps/server-elixir` with Phoenix API, Ash, AshSqlite, Reactor, and Oban Lite.
+- Current Step: Step 1 - Scaffold Elixir backend (`apps/server-elixir`) (in progress).
+- Next Action: integrate generated `apps/hive_server_elixir` into monorepo scripts and trim unneeded default Phoenix web scaffolding.
 - Blockers: none.
+
+## Step 1 Scaffold Baseline (Approved)
+
+- Project name: `hive_server_elixir` (temporary migration app name while `apps/server` remains legacy TS).
+- Include: `ash`, `ash_phoenix`, `ash_sqlite`, `ash_typescript`, `ash_oban`, `oban_web`, `ash_state_machine`, `ash_ai`, `usage_rules`, `tidewave`.
+- Do not include for now: `ash_json_api`, full event sourcing extension, LiveView/Inertia auth/admin/UI scaffolds.
+- Keep frontend contract generation through `ash_typescript`; avoid backend JSON:API surface area unless a concrete requirement appears.
 
 ## Status
 
@@ -151,3 +158,4 @@
 
 - 2026-03-03 - Initial migration plan created.
 - 2026-03-03 - DB reset strategy approved.
+- 2026-03-03 - Scaffold generated at `apps/hive_server_elixir` with approved dependency baseline.
