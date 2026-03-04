@@ -16,7 +16,7 @@ config :hive_server_elixir, HiveServerElixir.Repo,
 # you can enable the server option below.
 config :hive_server_elixir, HiveServerElixirWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],
-  secret_key_base: "test-secret-key-base",
+  secret_key_base: "test-secret-key-base-1234-5678-90ab-cdef-1234-5678-90ab-cdef-1234-5678",
   server: false
 
 # In test we don't send emails

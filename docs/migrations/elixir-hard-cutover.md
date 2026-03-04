@@ -159,3 +159,4 @@
 - 2026-03-03 - Initial migration plan created.
 - 2026-03-03 - DB reset strategy approved.
 - 2026-03-03 - Scaffold generated at `apps/hive_server_elixir` with approved dependency baseline.
+- 2026-03-04 - Root setup/dev/test/check scripts now invoke Elixir scaffold commands.
