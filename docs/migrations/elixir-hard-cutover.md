@@ -3,7 +3,7 @@
 ## Execution Snapshot
 
 - Current Step: Step 5 - Realtime + terminal transport (in progress).
-- Next Action: extend SSE/WS parity beyond workspace cell stream (cell timings + terminal transport semantics).
+- Next Action: implement terminal transport parity (`ready/snapshot/data/exit/error`) after completing timing stream SSE coverage.
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -177,6 +177,13 @@
 - 2026-03-05 - Added dedicated workspace stream PubSub broadcaster for cell status/removal events:
   - `apps/hive_server_elixir/lib/hive_server_elixir/cells/events.ex`
 - 2026-03-05 - Added high-level stream + event coverage:
+  - `apps/hive_server_elixir/test/hive_server_elixir/cells/events_test.exs`
+  - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
+- 2026-03-05 - Added cell timing SSE stream parity (`/api/cells/:id/timings/stream`) with `ready`/`timing`/`snapshot` framing:
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`
+- 2026-03-05 - Extended event broadcaster with timing channels and validated timing stream snapshots at:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/events.ex`
   - `apps/hive_server_elixir/test/hive_server_elixir/cells/events_test.exs`
   - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
 

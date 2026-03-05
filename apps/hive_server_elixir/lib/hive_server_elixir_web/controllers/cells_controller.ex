@@ -117,6 +117,45 @@ defmodule HiveServerElixirWeb.CellsController do
     end
   end
 
+  def timing_stream(conn, %{"id" => cell_id} = params) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         :ok <- Events.subscribe_cell_timing(cell_id) do
+      stream_conn =
+        conn
+        |> put_resp_content_type("text/event-stream")
+        |> put_resp_header("cache-control", "no-cache")
+        |> put_resp_header("connection", "keep-alive")
+        |> send_chunked(200)
+
+      with {:ok, stream_conn} <-
+             send_sse(stream_conn, "ready", %{timestamp: System.system_time(:millisecond)}),
+           {:ok, stream_conn} <- send_timing_snapshot(stream_conn, cell_id),
+           {:ok, stream_conn} <-
+             send_sse(stream_conn, "snapshot", %{timestamp: System.system_time(:millisecond)}) do
+        idle_timeout_ms = parse_idle_timeout_ms(Map.get(params, "idleTimeoutMs"), 30_000)
+
+        if Map.get(params, "initialOnly") in ["true", "1"] do
+          stream_conn
+        else
+          stream_timing_events(stream_conn, cell_id, idle_timeout_ms)
+        end
+      else
+        {:error, _reason} -> stream_conn
+      end
+    else
+      {:error, reason} ->
+        if contains_error?(reason, NotFound) do
+          conn
+          |> put_status(:not_found)
+          |> json(%{error: %{code: "not_found", message: "Cell not found"}})
+        else
+          conn
+          |> put_status(:unprocessable_entity)
+          |> json(%{error: %{code: "stream_failed", message: inspect(reason)}})
+        end
+    end
+  end
+
   def resources(conn, %{"id" => id}) do
     case Ash.get(Cell, id, domain: Cells) do
       {:ok, %Cell{} = cell} ->
@@ -374,6 +413,44 @@ defmodule HiveServerElixirWeb.CellsController do
         case send_sse(conn, "cell_removed", %{id: cell_id}) do
           {:ok, next_conn} -> stream_workspace_events(next_conn, workspace_id, idle_timeout_ms)
           {:error, _reason} -> conn
+        end
+    after
+      idle_timeout_ms ->
+        conn
+    end
+  end
+
+  defp send_timing_snapshot(conn, cell_id) do
+    Timing
+    |> Ash.Query.filter(expr(cell_id == ^cell_id))
+    |> Ash.Query.sort(inserted_at: :asc)
+    |> Ash.read(domain: Cells)
+    |> case do
+      {:ok, timings} ->
+        Enum.reduce_while(timings, {:ok, conn}, fn timing, {:ok, stream_conn} ->
+          case send_sse(stream_conn, "timing", serialize_timing(timing)) do
+            {:ok, next_conn} -> {:cont, {:ok, next_conn}}
+            {:error, reason} -> {:halt, {:error, reason}}
+          end
+        end)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp stream_timing_events(conn, cell_id, idle_timeout_ms) do
+    receive do
+      {:cell_timing, %{cell_id: ^cell_id, timing_id: timing_id}} ->
+        case Ash.get(Timing, timing_id, domain: Cells) do
+          {:ok, timing} ->
+            case send_sse(conn, "timing", serialize_timing(timing)) do
+              {:ok, next_conn} -> stream_timing_events(next_conn, cell_id, idle_timeout_ms)
+              {:error, _reason} -> conn
+            end
+
+          {:error, _reason} ->
+            stream_timing_events(conn, cell_id, idle_timeout_ms)
         end
     after
       idle_timeout_ms ->
