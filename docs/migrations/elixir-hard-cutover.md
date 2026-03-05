@@ -3,7 +3,7 @@
 ## Execution Snapshot
 
 - Current Step: Step 5 - Realtime + terminal transport (in progress).
-- Next Action: add service lifecycle control endpoints (start/stop/restart) and project runtime status/pid back into `cell_services` snapshots.
+- Next Action: align remaining service parity fields (`recentLogs`, `portReachable`, and activity metadata headers) with TypeScript runtime responses.
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -232,6 +232,17 @@
   - Added cleanup integration for cell teardown in:
     - `apps/hive_server_elixir/lib/hive_server_elixir/cells/terminal_events.ex`
   - Added high-level runtime verification coverage in:
+    - `apps/hive_server_elixir/test/hive_server_elixir/cells/service_runtime_test.exs`
+- 2026-03-05 - Added service lifecycle control endpoints and persisted runtime status/pid projection:
+  - Added service control API routes (`start`, `stop`, `restart`, and cell-wide `services/restart`) in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+  - Added runtime-backed service start/stop/restart handling with Ash status/pid updates in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir/cells/service_runtime.ex`
+  - Exposed service `pid`/`port` in serialized resource snapshots in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+  - Added API-level and runtime coverage for service lifecycle controls in:
+    - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
     - `apps/hive_server_elixir/test/hive_server_elixir/cells/service_runtime_test.exs`
 
 ### Step 6: Frontend Contract Migration (React)

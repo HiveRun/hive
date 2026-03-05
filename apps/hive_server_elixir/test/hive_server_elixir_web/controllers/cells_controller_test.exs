@@ -12,6 +12,7 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
   alias HiveServerElixir.Cells.Lifecycle
   alias HiveServerElixir.Cells.Provisioning
   alias HiveServerElixir.Cells.Service
+  alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.Timing
   alias HiveServerElixir.Cells.Workspace
   alias HiveServerElixir.Opencode.TestOperations
@@ -164,7 +165,7 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
                  cell_id: cell.id,
                  name: "api",
                  type: "process",
-                 command: "printf 'service boot\\n'",
+                 command: "sleep 5",
                  cwd: "/tmp",
                  env: %{},
                  definition: %{},
@@ -172,6 +173,10 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
                },
                domain: Cells
              )
+
+    on_exit(fn ->
+      :ok = ServiceRuntime.stop_cell_services(cell.id)
+    end)
 
     conn =
       get(
@@ -195,6 +200,160 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
       })
 
     assert %{"error" => %{"code" => "not_found"}} = json_response(conn, 404)
+  end
+
+  test "POST /api/cells/:id/services/:service_id/start starts service runtime and returns pid", %{
+    conn: conn
+  } do
+    workspace = workspace!("service-start")
+    cell = cell!(workspace.id, "service start cell", "ready")
+
+    assert {:ok, service} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "api",
+                 type: "process",
+                 command: "sleep 5",
+                 cwd: "/tmp",
+                 env: %{},
+                 definition: %{},
+                 status: "pending"
+               },
+               domain: Cells
+             )
+
+    on_exit(fn ->
+      :ok = ServiceRuntime.stop_cell_services(cell.id)
+    end)
+
+    conn = post(conn, ~p"/api/cells/#{cell.id}/services/#{service.id}/start", %{})
+
+    assert %{"id" => returned_id, "status" => "running", "pid" => pid} = json_response(conn, 200)
+    assert returned_id == service.id
+    assert is_integer(pid)
+  end
+
+  test "POST /api/cells/:id/services/:service_id/stop clears runtime pid", %{conn: conn} do
+    workspace = workspace!("service-stop")
+    cell = cell!(workspace.id, "service stop cell", "ready")
+
+    assert {:ok, service} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "api",
+                 type: "process",
+                 command: "sleep 5",
+                 cwd: "/tmp",
+                 env: %{},
+                 definition: %{},
+                 status: "pending"
+               },
+               domain: Cells
+             )
+
+    on_exit(fn ->
+      :ok = ServiceRuntime.stop_cell_services(cell.id)
+    end)
+
+    _started = post(conn, ~p"/api/cells/#{cell.id}/services/#{service.id}/start", %{})
+    conn = post(conn, ~p"/api/cells/#{cell.id}/services/#{service.id}/stop", %{})
+
+    assert %{"id" => returned_id, "status" => "stopped", "pid" => nil} = json_response(conn, 200)
+    assert returned_id == service.id
+  end
+
+  test "POST /api/cells/:id/services/restart returns refreshed services", %{conn: conn} do
+    workspace = workspace!("services-restart")
+    cell = cell!(workspace.id, "service restart cell", "ready")
+
+    assert {:ok, service_a} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "api",
+                 type: "process",
+                 command: "sleep 5",
+                 cwd: "/tmp",
+                 env: %{},
+                 definition: %{},
+                 status: "pending"
+               },
+               domain: Cells
+             )
+
+    assert {:ok, service_b} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "worker",
+                 type: "process",
+                 command: "sleep 5",
+                 cwd: "/tmp",
+                 env: %{},
+                 definition: %{},
+                 status: "pending"
+               },
+               domain: Cells
+             )
+
+    on_exit(fn ->
+      :ok = ServiceRuntime.stop_cell_services(cell.id)
+    end)
+
+    conn = post(conn, ~p"/api/cells/#{cell.id}/services/restart", %{})
+
+    assert %{"services" => services} = json_response(conn, 200)
+    assert length(services) == 2
+
+    assert Enum.any?(services, fn service ->
+             service["id"] == service_a.id and service["status"] == "running" and
+               is_integer(service["pid"])
+           end)
+
+    assert Enum.any?(services, fn service ->
+             service["id"] == service_b.id and service["status"] == "running" and
+               is_integer(service["pid"])
+           end)
+  end
+
+  test "POST /api/cells/:id/services/:service_id/restart refreshes a single service", %{
+    conn: conn
+  } do
+    workspace = workspace!("service-restart")
+    cell = cell!(workspace.id, "service restart single", "ready")
+
+    assert {:ok, service} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "api",
+                 type: "process",
+                 command: "sleep 5",
+                 cwd: "/tmp",
+                 env: %{},
+                 definition: %{},
+                 status: "pending"
+               },
+               domain: Cells
+             )
+
+    on_exit(fn ->
+      :ok = ServiceRuntime.stop_cell_services(cell.id)
+    end)
+
+    _started = post(conn, ~p"/api/cells/#{cell.id}/services/#{service.id}/start", %{})
+    conn = post(conn, ~p"/api/cells/#{cell.id}/services/#{service.id}/restart", %{})
+
+    assert %{"id" => returned_id, "status" => "running", "pid" => pid} = json_response(conn, 200)
+    assert returned_id == service.id
+    assert is_integer(pid)
   end
 
   test "POST /api/cells/:id/chat/terminal/restart rotates terminal session", %{conn: conn} do

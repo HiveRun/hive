@@ -3,6 +3,7 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
 
   use GenServer
 
+  alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.TerminalRuntime
@@ -20,7 +21,22 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
 
   @spec ensure_service_running(Service.t()) :: :ok | {:error, term()}
   def ensure_service_running(%Service{} = service) do
-    GenServer.call(__MODULE__, {:ensure_service_running, service})
+    GenServer.call(__MODULE__, {:start_service, service})
+  end
+
+  @spec start_service(Service.t()) :: :ok | {:error, term()}
+  def start_service(%Service{} = service) do
+    GenServer.call(__MODULE__, {:start_service, service})
+  end
+
+  @spec stop_service(Service.t()) :: :ok | {:error, term()}
+  def stop_service(%Service{} = service) do
+    GenServer.call(__MODULE__, {:stop_service, service})
+  end
+
+  @spec restart_service(Service.t()) :: :ok | {:error, term()}
+  def restart_service(%Service{} = service) do
+    GenServer.call(__MODULE__, {:restart_service, service})
   end
 
   @spec write_input(String.t(), String.t()) :: :ok | {:error, :not_running}
@@ -39,36 +55,40 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
   end
 
   @impl true
-  def handle_call({:ensure_service_running, %Service{} = service}, _from, state) do
-    case Map.fetch(state.services, service.id) do
-      {:ok, _running} ->
-        {:reply, :ok, state}
+  def handle_call({:start_service, %Service{} = service}, _from, state) do
+    case start_service_internal(state, service) do
+      {:ok, next_state} -> {:reply, :ok, next_state}
+      {:error, reason, next_state} -> {:reply, {:error, reason}, next_state}
+    end
+  end
 
-      :error ->
-        case start_service_port(service) do
-          {:ok, port} ->
-            _ = TerminalRuntime.ensure_service_session(service.cell_id, service.id)
+  def handle_call({:stop_service, %Service{} = service}, _from, state) do
+    case stop_service_internal(state, service) do
+      {:ok, next_state} -> {:reply, :ok, next_state}
+      {:error, reason, next_state} -> {:reply, {:error, reason}, next_state}
+    end
+  end
 
-            next_state =
-              state
-              |> put_service(service, port)
-
-            {:reply, :ok, next_state}
-
-          {:error, reason} ->
-            :ok =
-              Events.publish_service_terminal_error(service.cell_id, service.id, inspect(reason))
-
-            {:reply, {:error, reason}, state}
-        end
+  def handle_call({:restart_service, %Service{} = service}, _from, state) do
+    with {:ok, stopped_state} <- stop_service_internal(state, service),
+         {:ok, started_state} <- start_service_internal(stopped_state, service) do
+      {:reply, :ok, started_state}
+    else
+      {:error, reason, next_state} ->
+        {:reply, {:error, reason}, next_state}
     end
   end
 
   def handle_call({:write_input, service_id, chunk}, _from, state) do
     case Map.get(state.services, service_id) do
       %{port: port} ->
-        true = Port.command(port, chunk)
-        {:reply, :ok, state}
+        result = Port.command(port, chunk)
+
+        if result == true do
+          {:reply, :ok, state}
+        else
+          {:reply, {:error, :not_running}, state}
+        end
 
       nil ->
         {:reply, {:error, :not_running}, state}
@@ -81,7 +101,20 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
       |> Enum.filter(fn {_service_id, entry} -> entry.cell_id == cell_id end)
       |> Enum.map(fn {service_id, _entry} -> service_id end)
 
-    next_state = Enum.reduce(service_ids, state, &stop_service(&1, &2))
+    next_state =
+      Enum.reduce(service_ids, state, fn service_id, acc ->
+        case Map.get(acc.services, service_id) do
+          nil ->
+            acc
+
+          %{service: service} ->
+            case stop_service_internal(acc, service) do
+              {:ok, updated} -> updated
+              {:error, _reason, updated} -> updated
+            end
+        end
+      end)
+
     {:reply, :ok, next_state}
   end
 
@@ -101,6 +134,18 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
   def handle_info({port, {:exit_status, status}}, state) when is_port(port) do
     case pop_service_by_port(state, port) do
       {{:ok, service_id, entry}, next_state} ->
+        _ =
+          persist_service_state(entry.service, %{status: exit_status_to_state(status), pid: nil})
+
+        if status != 0 do
+          _ =
+            persist_service_state(entry.service, %{
+              last_known_error: "Service exited with code #{status}"
+            })
+        else
+          _ = persist_service_state(entry.service, %{last_known_error: nil})
+        end
+
         :ok = Events.publish_service_terminal_exit(entry.cell_id, service_id, status, nil)
         {:noreply, next_state}
 
@@ -156,6 +201,86 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
     %{state | services: services, ports: ports}
   end
 
+  defp start_service_internal(state, %Service{} = service) do
+    case Map.fetch(state.services, service.id) do
+      {:ok, _running} ->
+        {:ok, state}
+
+      :error ->
+        case start_service_port(service) do
+          {:ok, port} ->
+            os_pid =
+              case Port.info(port, :os_pid) do
+                {:os_pid, pid} when is_integer(pid) -> pid
+                _other -> nil
+              end
+
+            case persist_service_state(service, %{
+                   status: "running",
+                   pid: os_pid,
+                   last_known_error: nil
+                 }) do
+              {:ok, persisted_service} ->
+                _ = TerminalRuntime.ensure_service_session(service.cell_id, service.id)
+                {:ok, put_service(state, persisted_service, port)}
+
+              {:error, reason} ->
+                _ = safe_port_close(port)
+
+                :ok =
+                  Events.publish_service_terminal_error(
+                    service.cell_id,
+                    service.id,
+                    inspect(reason)
+                  )
+
+                {:error, reason, state}
+            end
+
+          {:error, reason} ->
+            _ =
+              persist_service_state(service, %{
+                status: "error",
+                pid: nil,
+                last_known_error: inspect(reason)
+              })
+
+            :ok =
+              Events.publish_service_terminal_error(service.cell_id, service.id, inspect(reason))
+
+            {:error, reason, state}
+        end
+    end
+  end
+
+  defp stop_service_internal(state, %Service{} = service) do
+    case Map.pop(state.services, service.id) do
+      {nil, _services} ->
+        case persist_service_state(service, %{status: "stopped", pid: nil, last_known_error: nil}) do
+          {:ok, _updated} -> {:ok, state}
+          {:error, reason} -> {:error, reason, state}
+        end
+
+      {%{port: port} = entry, services} ->
+        _ = safe_port_close(port)
+
+        next_state = %{state | services: services, ports: Map.delete(state.ports, port)}
+
+        case persist_service_state(entry.service, %{
+               status: "stopped",
+               pid: nil,
+               last_known_error: nil
+             }) do
+          {:ok, _updated} ->
+            :ok = Events.publish_service_terminal_exit(entry.cell_id, service.id, 0, nil)
+            {:ok, next_state}
+
+          {:error, reason} ->
+            {:error, reason, next_state}
+        end
+    end
+  end
+
   defp publish_service_data(state, port, chunk) do
     case Map.get(state.ports, port) do
       nil ->
@@ -166,18 +291,6 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
         :ok = TerminalRuntime.append_service_output(cell_id, service_id, chunk)
         :ok = Events.publish_service_terminal_data(cell_id, service_id, chunk)
         state
-    end
-  end
-
-  defp stop_service(service_id, state) do
-    case Map.pop(state.services, service_id) do
-      {nil, _services} ->
-        state
-
-      {%{port: port}, services} ->
-        _ = safe_port_close(port)
-        ports = Map.delete(state.ports, port)
-        %{state | services: services, ports: ports}
     end
   end
 
@@ -203,4 +316,11 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
     _error ->
       :ok
   end
+
+  defp persist_service_state(%Service{} = service, attrs) when is_map(attrs) do
+    Ash.update(service, attrs, domain: Cells)
+  end
+
+  defp exit_status_to_state(0), do: "stopped"
+  defp exit_status_to_state(_status), do: "error"
 end

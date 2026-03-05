@@ -45,6 +45,11 @@ defmodule HiveServerElixirWeb.Router do
       :service_terminal_resize
     )
 
+    post("/api/cells/:id/services/:service_id/start", CellsController, :service_start)
+    post("/api/cells/:id/services/:service_id/stop", CellsController, :service_stop)
+    post("/api/cells/:id/services/restart", CellsController, :services_restart)
+    post("/api/cells/:id/services/:service_id/restart", CellsController, :service_restart)
+
     get("/api/cells/:id/chat/terminal/stream", CellsController, :chat_terminal_stream)
     post("/api/cells/:id/chat/terminal/input", CellsController, :chat_terminal_input)
     post("/api/cells/:id/chat/terminal/resize", CellsController, :chat_terminal_resize)

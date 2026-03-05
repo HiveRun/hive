@@ -5,6 +5,7 @@ defmodule HiveServerElixirWeb.TerminalChannelTest do
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.Service
+  alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.Workspace
   alias HiveServerElixirWeb.TerminalChannel
   alias HiveServerElixirWeb.TerminalSocket
@@ -42,7 +43,7 @@ defmodule HiveServerElixirWeb.TerminalChannelTest do
                  cell_id: cell.id,
                  name: "api",
                  type: "process",
-                 command: "printf 'service boot\\n'",
+                 command: "sleep 5",
                  cwd: "/tmp",
                  env: %{},
                  definition: %{},
@@ -50,6 +51,10 @@ defmodule HiveServerElixirWeb.TerminalChannelTest do
                },
                domain: Cells
              )
+
+    on_exit(fn ->
+      :ok = ServiceRuntime.stop_cell_services(cell.id)
+    end)
 
     {:ok, _reply, _socket} =
       subscribe_and_join(

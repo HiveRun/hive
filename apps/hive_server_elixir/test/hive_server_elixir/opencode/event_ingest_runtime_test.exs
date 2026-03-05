@@ -51,12 +51,16 @@ defmodule HiveServerElixir.Opencode.EventIngestRuntimeTest do
                end
              )
 
-    assert_receive {:fetched, "session.idle"}
-    assert_receive {:persisted, {:ok, _entry}}
-    assert_receive {:projected, "session.idle"}
-    assert_receive {:fetched, "session.status"}
-    assert_receive {:persisted, {:ok, _entry}}
-    assert_receive {:projected, "session.status"}
+    on_exit(fn ->
+      _ = EventIngestRuntime.stop_stream(context)
+    end)
+
+    assert_receive {:fetched, "session.idle"}, 1_000
+    assert_receive {:persisted, {:ok, _entry}}, 1_000
+    assert_receive {:projected, "session.idle"}, 1_000
+    assert_receive {:fetched, "session.status"}, 1_000
+    assert_receive {:persisted, {:ok, _entry}}, 1_000
+    assert_receive {:projected, "session.status"}, 1_000
 
     assert :ok = EventIngestRuntime.stop_stream(context)
 

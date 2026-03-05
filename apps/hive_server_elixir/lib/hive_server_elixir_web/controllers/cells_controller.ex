@@ -444,6 +444,87 @@ defmodule HiveServerElixirWeb.CellsController do
     end
   end
 
+  def service_start(conn, %{"id" => cell_id, "service_id" => service_id}) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         {:ok, service} <- get_service_for_cell(cell_id, service_id),
+         :ok <- ensure_runtime_start(service),
+         {:ok, updated_service} <- Ash.get(Service, service.id, domain: Cells) do
+      _ = record_service_activity(cell_id, service_id, "service.start", %{})
+      json(conn, serialize_service(updated_service))
+    else
+      {:error, :service_runtime_unavailable} ->
+        conn
+        |> put_status(:unprocessable_entity)
+        |> json(%{error: %{code: "service_unavailable", message: "Service runtime unavailable"}})
+
+      {:error, error} ->
+        render_cell_error(conn, error)
+    end
+  end
+
+  def service_stop(conn, %{"id" => cell_id, "service_id" => service_id}) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         {:ok, service} <- get_service_for_cell(cell_id, service_id),
+         :ok <- ensure_runtime_stop(service),
+         {:ok, updated_service} <- Ash.get(Service, service.id, domain: Cells) do
+      _ = record_service_activity(cell_id, service_id, "service.stop", %{})
+      json(conn, serialize_service(updated_service))
+    else
+      {:error, :service_runtime_unavailable} ->
+        conn
+        |> put_status(:unprocessable_entity)
+        |> json(%{error: %{code: "service_unavailable", message: "Service runtime unavailable"}})
+
+      {:error, error} ->
+        render_cell_error(conn, error)
+    end
+  end
+
+  def service_restart(conn, %{"id" => cell_id, "service_id" => service_id}) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         {:ok, service} <- get_service_for_cell(cell_id, service_id),
+         :ok <- ensure_runtime_restart(service),
+         {:ok, updated_service} <- Ash.get(Service, service.id, domain: Cells) do
+      _ =
+        record_service_activity(cell_id, service_id, "service.restart", %{
+          serviceName: service.name
+        })
+
+      json(conn, serialize_service(updated_service))
+    else
+      {:error, :service_runtime_unavailable} ->
+        conn
+        |> put_status(:unprocessable_entity)
+        |> json(%{error: %{code: "service_unavailable", message: "Service runtime unavailable"}})
+
+      {:error, error} ->
+        render_cell_error(conn, error)
+    end
+  end
+
+  def services_restart(conn, %{"id" => cell_id}) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         :ok <- restart_all_services(cell_id) do
+      _ = record_service_activity(cell_id, nil, "services.restart", %{})
+
+      services =
+        Service
+        |> Ash.Query.filter(expr(cell_id == ^cell_id))
+        |> Ash.Query.sort(inserted_at: :asc)
+        |> Ash.read!(domain: Cells)
+
+      json(conn, %{services: Enum.map(services, &serialize_service/1)})
+    else
+      {:error, :service_runtime_unavailable} ->
+        conn
+        |> put_status(:unprocessable_entity)
+        |> json(%{error: %{code: "service_unavailable", message: "Service runtime unavailable"}})
+
+      {:error, error} ->
+        render_cell_error(conn, error)
+    end
+  end
+
   def resources(conn, %{"id" => id}) do
     case Ash.get(Cell, id, domain: Cells) do
       {:ok, %Cell{} = cell} ->
@@ -491,6 +572,8 @@ defmodule HiveServerElixirWeb.CellsController do
       cellId: service.cell_id,
       name: service.name,
       status: service.status,
+      pid: service.pid,
+      port: service.port,
       lastKnownError: service.last_known_error,
       insertedAt: maybe_to_iso8601(service.inserted_at),
       updatedAt: maybe_to_iso8601(service.updated_at)
@@ -877,6 +960,61 @@ defmodule HiveServerElixirWeb.CellsController do
       {:error, _reason} -> {:error, :service_runtime_unavailable}
     end
   end
+
+  defp ensure_runtime_start(%Service{} = service) do
+    case ServiceRuntime.start_service(service) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :service_runtime_unavailable}
+    end
+  end
+
+  defp ensure_runtime_stop(%Service{} = service) do
+    case ServiceRuntime.stop_service(service) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :service_runtime_unavailable}
+    end
+  end
+
+  defp ensure_runtime_restart(%Service{} = service) do
+    case ServiceRuntime.restart_service(service) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :service_runtime_unavailable}
+    end
+  end
+
+  defp restart_all_services(cell_id) do
+    services =
+      Service
+      |> Ash.Query.filter(expr(cell_id == ^cell_id))
+      |> Ash.Query.sort(inserted_at: :asc)
+      |> Ash.read!(domain: Cells)
+
+    Enum.reduce_while(services, :ok, fn service, :ok ->
+      case ensure_runtime_restart(service) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp record_service_activity(cell_id, service_id, type, metadata) do
+    attrs =
+      %{
+        cell_id: cell_id,
+        type: type,
+        source: "api",
+        metadata: metadata || %{}
+      }
+      |> maybe_put_service_id(service_id)
+
+    case Ash.create(Activity, attrs, domain: Cells) do
+      {:ok, _activity} -> :ok
+      {:error, _error} -> :ok
+    end
+  end
+
+  defp maybe_put_service_id(attrs, nil), do: attrs
+  defp maybe_put_service_id(attrs, service_id), do: Map.put(attrs, :service_id, service_id)
 
   defp setup_state_for(%Cell{status: "ready"}), do: "completed"
   defp setup_state_for(%Cell{status: "error"}), do: "error"
