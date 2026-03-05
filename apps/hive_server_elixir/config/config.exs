@@ -112,6 +112,17 @@ config :tailwind,
     cd: Path.expand("..", __DIR__)
   ]
 
+config :oapi_generator,
+  opencode: [
+    output: [
+      base_module: HiveServerElixir.Opencode.Generated,
+      default_client: HiveServerElixir.Opencode.Client,
+      location: "lib/hive_server_elixir/opencode/generated",
+      operation_subdirectory: "operations",
+      schema_subdirectory: "schemas"
+    ]
+  ]
+
 # Configure Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",

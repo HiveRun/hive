@@ -2,8 +2,8 @@
 
 ## Execution Snapshot
 
-- Current Step: Step 2 - OpenCode contract + client generation (next).
-- Next Action: pin OpenCode OpenAPI spec at `apps/hive_server_elixir/priv/opencode/openapi.json` and scaffold repeatable client generation task.
+- Current Step: Step 3 - Persist-all event ingest pipeline (next).
+- Next Action: add append-only `agent_event_log` schema + migration and wire event envelope persistence from OpenCode stream ingest.
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -69,6 +69,21 @@
 - Done means:
   - One sync call and one stream call work via adapter.
   - Client generation is reproducible in CI.
+
+### Step 2 Verification Evidence
+
+- 2026-03-04 - Pinned OpenCode OpenAPI spec at `apps/hive_server_elixir/priv/opencode/openapi.json` via `mix opencode.sync_spec`.
+- 2026-03-04 - Added deterministic generation aliases in `apps/hive_server_elixir/mix.exs`:
+  - `mix opencode.gen.client` (generate from pinned local spec)
+  - `mix opencode.refresh` (fetch latest spec + regenerate)
+- 2026-03-04 - Generated Elixir client modules with `oapi_generator` under `apps/hive_server_elixir/lib/hive_server_elixir/opencode/generated/`.
+- 2026-03-04 - Added thin adapter and transport at:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/opencode/client.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/opencode/adapter.ex`
+- 2026-03-04 - Verified one sync and one stream endpoint path through adapter with tests:
+  - `apps/hive_server_elixir/test/hive_server_elixir/opencode/client_integration_test.exs`
+  - `apps/hive_server_elixir/test/hive_server_elixir/opencode/adapter_test.exs`
+  - `apps/hive_server_elixir/test/mix/tasks/opencode_sync_spec_test.exs`
 
 ### Step 3: Persist-All Event Ingest Pipeline
 
@@ -170,3 +185,4 @@
 - 2026-03-04 - Added Elixir `/health` endpoint and moved Ash TypeScript RPC endpoints onto the API pipeline.
 - 2026-03-04 - Dev startup script now provisions `.hive/state` and passes `DATABASE_PATH` so Elixir dev DB lives under local Hive state.
 - 2026-03-04 - Verified Step 1 done criteria end-to-end (`/health`, local sqlite path under `.hive/state`, and successful migrations).
+- 2026-03-04 - Completed Step 2 scaffolding: pinned OpenCode OpenAPI spec, generated Elixir client modules, added adapter/transport, and added coverage for sync + stream call paths.
