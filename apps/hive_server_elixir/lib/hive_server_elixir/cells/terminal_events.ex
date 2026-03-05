@@ -2,6 +2,7 @@ defmodule HiveServerElixir.Cells.TerminalEvents do
   @moduledoc false
 
   alias HiveServerElixir.Cells.Events
+  alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.TerminalRuntime
 
   @spec on_cell_started(map) :: :ok
@@ -53,6 +54,7 @@ defmodule HiveServerElixir.Cells.TerminalEvents do
         :ok
 
       cell_id ->
+        :ok = ServiceRuntime.stop_cell_services(cell_id)
         _ = Events.publish_setup_terminal_exit(cell_id, 0, nil)
         _ = Events.publish_chat_terminal_exit(cell_id, 0, nil)
         TerminalRuntime.clear_cell(cell_id)

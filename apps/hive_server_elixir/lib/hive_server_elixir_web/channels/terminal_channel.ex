@@ -7,6 +7,7 @@ defmodule HiveServerElixirWeb.TerminalChannel do
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Events
+  alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.TerminalRuntime
 
@@ -37,7 +38,8 @@ defmodule HiveServerElixirWeb.TerminalChannel do
 
   def join("service_terminal:" <> key, _payload, socket) do
     with {:ok, cell_id, service_id} <- parse_service_key(key),
-         {:ok, _service} <- get_service_for_cell(cell_id, service_id),
+         {:ok, service} <- get_service_for_cell(cell_id, service_id),
+         :ok <- ensure_service_runtime(service),
          :ok <- Events.subscribe_service_terminal(cell_id, service_id) do
       session = TerminalRuntime.ensure_service_session(cell_id, service_id)
       output = TerminalRuntime.read_service_output(cell_id, service_id)
@@ -54,6 +56,7 @@ defmodule HiveServerElixirWeb.TerminalChannel do
     else
       {:error, :invalid_topic} -> {:error, %{reason: "Invalid service terminal topic"}}
       {:error, :service_not_found} -> {:error, %{reason: "Service not found"}}
+      {:error, :service_runtime_unavailable} -> {:error, %{reason: "Service runtime unavailable"}}
       {:error, reason} -> {:error, %{reason: error_message(reason, "Service not found")}}
     end
   end
@@ -96,19 +99,13 @@ defmodule HiveServerElixirWeb.TerminalChannel do
         :ok = Events.publish_setup_terminal_data(socket.assigns.cell_id, chunk)
 
       :service ->
-        :ok =
-          TerminalRuntime.write_service_input(
-            socket.assigns.cell_id,
-            socket.assigns.service_id,
-            chunk
-          )
+        case ServiceRuntime.write_input(socket.assigns.service_id, chunk) do
+          :ok ->
+            :ok
 
-        :ok =
-          Events.publish_service_terminal_data(
-            socket.assigns.cell_id,
-            socket.assigns.service_id,
-            chunk
-          )
+          {:error, :not_running} ->
+            push(socket, "terminal_event", %{type: "error", message: "Service is not running"})
+        end
 
       :chat ->
         :ok = TerminalRuntime.write_chat_input(socket.assigns.cell_id, chunk)
@@ -288,6 +285,13 @@ defmodule HiveServerElixirWeb.TerminalChannel do
       {:ok, %Service{cell_id: ^cell_id} = service} -> {:ok, service}
       {:ok, _service} -> {:error, :service_not_found}
       {:error, error} -> {:error, error}
+    end
+  end
+
+  defp ensure_service_runtime(%Service{} = service) do
+    case ServiceRuntime.ensure_service_running(service) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :service_runtime_unavailable}
     end
   end
 

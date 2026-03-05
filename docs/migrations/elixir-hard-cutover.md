@@ -3,7 +3,7 @@
 ## Execution Snapshot
 
 - Current Step: Step 5 - Realtime + terminal transport (in progress).
-- Next Action: connect service terminal streams to real service process supervisors (replace in-memory service terminal runtime state).
+- Next Action: add service lifecycle control endpoints (start/stop/restart) and project runtime status/pid back into `cell_services` snapshots.
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -222,6 +222,17 @@
   - Added channel-level terminal event coverage in:
     - `apps/hive_server_elixir/test/support/channel_case.ex`
     - `apps/hive_server_elixir/test/hive_server_elixir_web/channels/terminal_channel_test.exs`
+- 2026-03-05 - Replaced service terminal in-memory placeholder flow with supervised process runtime execution:
+  - Added service process runtime supervisor that spawns commands and emits service terminal `data`/`exit` events in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir/cells/service_runtime.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir/application.ex`
+  - Wired SSE + websocket service terminal paths to ensure/write through runtime-backed service processes in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/channels/terminal_channel.ex`
+  - Added cleanup integration for cell teardown in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir/cells/terminal_events.ex`
+  - Added high-level runtime verification coverage in:
+    - `apps/hive_server_elixir/test/hive_server_elixir/cells/service_runtime_test.exs`
 
 ### Step 6: Frontend Contract Migration (React)
 

@@ -164,8 +164,8 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
                  cell_id: cell.id,
                  name: "api",
                  type: "process",
-                 command: "bun run dev",
-                 cwd: "/tmp/worktree",
+                 command: "printf 'service boot\\n'",
+                 cwd: "/tmp",
                  env: %{},
                  definition: %{},
                  status: "running"

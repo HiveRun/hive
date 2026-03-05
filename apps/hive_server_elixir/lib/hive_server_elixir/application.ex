@@ -29,6 +29,7 @@ defmodule HiveServerElixir.Application do
       },
       {Phoenix.PubSub, name: HiveServerElixir.PubSub},
       {HiveServerElixir.Cells.TerminalRuntime, name: HiveServerElixir.Cells.TerminalRuntime},
+      {HiveServerElixir.Cells.ServiceRuntime, name: HiveServerElixir.Cells.ServiceRuntime},
       HiveServerElixirWeb.Endpoint
     ]
 

@@ -13,6 +13,7 @@ defmodule HiveServerElixirWeb.CellsController do
   alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.Provisioning
   alias HiveServerElixir.Cells.Service
+  alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.TerminalRuntime
   alias HiveServerElixir.Cells.Timing
   alias HiveServerElixir.Cells.Workspace
@@ -244,7 +245,8 @@ defmodule HiveServerElixirWeb.CellsController do
 
   def service_terminal_stream(conn, %{"id" => cell_id, "service_id" => service_id} = params) do
     with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
-         {:ok, _service} <- get_service_for_cell(cell_id, service_id),
+         {:ok, service} <- get_service_for_cell(cell_id, service_id),
+         :ok <- ensure_service_runtime(service),
          :ok <- Events.subscribe_service_terminal(cell_id, service_id) do
       session = TerminalRuntime.ensure_service_session(cell_id, service_id)
       output = TerminalRuntime.read_service_output(cell_id, service_id)
@@ -269,6 +271,11 @@ defmodule HiveServerElixirWeb.CellsController do
         {:error, _reason} -> stream_conn
       end
     else
+      {:error, :service_runtime_unavailable} ->
+        conn
+        |> put_status(:unprocessable_entity)
+        |> json(%{error: %{code: "stream_failed", message: "Service runtime unavailable"}})
+
       {:error, reason} ->
         if contains_error?(reason, NotFound) do
           conn
@@ -294,15 +301,22 @@ defmodule HiveServerElixirWeb.CellsController do
   end
 
   def service_terminal_input(conn, %{"id" => cell_id, "service_id" => service_id} = params) do
-    with {:ok, _service} <- get_service_for_cell(cell_id, service_id),
+    with {:ok, service} <- get_service_for_cell(cell_id, service_id),
+         :ok <- ensure_service_runtime(service),
          {:ok, chunk} <- parse_input(params) do
-      _session = TerminalRuntime.ensure_service_session(cell_id, service_id)
-      :ok = TerminalRuntime.write_service_input(cell_id, service_id, chunk)
-      :ok = Events.publish_service_terminal_data(cell_id, service_id, chunk)
+      :ok = ServiceRuntime.write_input(service_id, chunk)
       json(conn, %{ok: true})
     else
-      {:error, :invalid_input} -> bad_request(conn, "data must be a string")
-      {:error, error} -> render_cell_error(conn, error)
+      {:error, :service_runtime_unavailable} ->
+        conn
+        |> put_status(:unprocessable_entity)
+        |> json(%{error: %{code: "service_unavailable", message: "Service runtime unavailable"}})
+
+      {:error, :invalid_input} ->
+        bad_request(conn, "data must be a string")
+
+      {:error, error} ->
+        render_cell_error(conn, error)
     end
   end
 
@@ -854,6 +868,13 @@ defmodule HiveServerElixirWeb.CellsController do
       {:ok, %Service{cell_id: ^cell_id} = service} -> {:ok, service}
       {:ok, _service} -> {:error, :service_not_found}
       {:error, error} -> {:error, error}
+    end
+  end
+
+  defp ensure_service_runtime(%Service{} = service) do
+    case ServiceRuntime.ensure_service_running(service) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :service_runtime_unavailable}
     end
   end
 
