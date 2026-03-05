@@ -156,6 +156,48 @@ defmodule HiveServerElixirWeb.CellsController do
     end
   end
 
+  def setup_terminal_stream(conn, %{"id" => cell_id} = params) do
+    with {:ok, cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         :ok <- Events.subscribe_setup_terminal(cell_id) do
+      stream_conn =
+        conn
+        |> put_resp_content_type("text/event-stream")
+        |> put_resp_header("cache-control", "no-cache")
+        |> put_resp_header("connection", "keep-alive")
+        |> send_chunked(200)
+
+      ready_payload = %{
+        session: nil,
+        setupState: setup_state_for(cell),
+        lastSetupError: nil
+      }
+
+      with {:ok, stream_conn} <- send_sse(stream_conn, "ready", ready_payload),
+           {:ok, stream_conn} <- send_sse(stream_conn, "snapshot", %{output: []}) do
+        idle_timeout_ms = parse_idle_timeout_ms(Map.get(params, "idleTimeoutMs"), 30_000)
+
+        if Map.get(params, "initialOnly") in ["true", "1"] do
+          stream_conn
+        else
+          stream_setup_terminal_events(stream_conn, cell_id, idle_timeout_ms)
+        end
+      else
+        {:error, _reason} -> stream_conn
+      end
+    else
+      {:error, reason} ->
+        if contains_error?(reason, NotFound) do
+          conn
+          |> put_status(:not_found)
+          |> json(%{error: %{code: "not_found", message: "Cell not found"}})
+        else
+          conn
+          |> put_status(:unprocessable_entity)
+          |> json(%{error: %{code: "stream_failed", message: inspect(reason)}})
+        end
+    end
+  end
+
   def resources(conn, %{"id" => id}) do
     case Ash.get(Cell, id, domain: Cells) do
       {:ok, %Cell{} = cell} ->
@@ -457,6 +499,29 @@ defmodule HiveServerElixirWeb.CellsController do
         conn
     end
   end
+
+  defp stream_setup_terminal_events(conn, cell_id, idle_timeout_ms) do
+    receive do
+      {:setup_terminal_data, %{cell_id: ^cell_id, chunk: chunk}} ->
+        case send_sse(conn, "data", %{chunk: chunk}) do
+          {:ok, next_conn} -> stream_setup_terminal_events(next_conn, cell_id, idle_timeout_ms)
+          {:error, _reason} -> conn
+        end
+
+      {:setup_terminal_exit, %{cell_id: ^cell_id, exit_code: exit_code, signal: signal}} ->
+        case send_sse(conn, "exit", %{exitCode: exit_code, signal: signal}) do
+          {:ok, next_conn} -> stream_setup_terminal_events(next_conn, cell_id, idle_timeout_ms)
+          {:error, _reason} -> conn
+        end
+    after
+      idle_timeout_ms ->
+        conn
+    end
+  end
+
+  defp setup_state_for(%Cell{status: "ready"}), do: "completed"
+  defp setup_state_for(%Cell{status: "error"}), do: "error"
+  defp setup_state_for(_cell), do: "running"
 
   defp send_sse(conn, event, data) do
     encoded = Jason.encode!(data)

@@ -3,7 +3,7 @@
 ## Execution Snapshot
 
 - Current Step: Step 5 - Realtime + terminal transport (in progress).
-- Next Action: implement terminal transport parity (`ready/snapshot/data/exit/error`) after completing timing stream SSE coverage.
+- Next Action: extend terminal transport parity beyond setup stream (`chat` + `service` terminal transports and input/resize/restart endpoints).
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -183,6 +183,13 @@
   - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
   - `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`
 - 2026-03-05 - Extended event broadcaster with timing channels and validated timing stream snapshots at:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/events.ex`
+  - `apps/hive_server_elixir/test/hive_server_elixir/cells/events_test.exs`
+  - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
+- 2026-03-05 - Added setup terminal SSE stream parity starter with `ready`/`snapshot` baseline and PubSub-backed `data`/`exit` events:
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`
+- 2026-03-05 - Added setup terminal event broadcaster coverage and API-level stream checks at:
   - `apps/hive_server_elixir/lib/hive_server_elixir/cells/events.ex`
   - `apps/hive_server_elixir/test/hive_server_elixir/cells/events_test.exs`
   - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`

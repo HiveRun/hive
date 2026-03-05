@@ -113,6 +113,25 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
     assert %{"error" => %{"code" => "not_found"}} = json_response(conn, 404)
   end
 
+  test "GET /api/cells/:id/setup/terminal/stream emits ready and snapshot semantics", %{
+    conn: conn
+  } do
+    workspace = workspace!("setup-terminal-stream")
+    cell = cell!(workspace.id, "setup terminal cell", "provisioning")
+
+    conn = get(conn, ~p"/api/cells/#{cell.id}/setup/terminal/stream?initialOnly=true")
+
+    assert conn.status == 200
+    assert conn.resp_body =~ "event: ready"
+    assert conn.resp_body =~ "event: snapshot"
+  end
+
+  test "GET /api/cells/:id/setup/terminal/stream returns 404 for missing cells", %{conn: conn} do
+    conn = get(conn, ~p"/api/cells/#{UUID.generate()}/setup/terminal/stream?initialOnly=true")
+
+    assert %{"error" => %{"code" => "not_found"}} = json_response(conn, 404)
+  end
+
   test "POST /api/cells returns 422 for unknown workspace", %{conn: conn} do
     conn =
       post(conn, ~p"/api/cells", %{

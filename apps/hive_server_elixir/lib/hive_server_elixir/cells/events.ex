@@ -42,9 +42,37 @@ defmodule HiveServerElixir.Cells.Events do
     Phoenix.PubSub.subscribe(@pubsub, timing_topic(cell_id))
   end
 
+  @spec publish_setup_terminal_data(String.t(), String.t()) :: :ok
+  def publish_setup_terminal_data(cell_id, chunk) when is_binary(cell_id) and is_binary(chunk) do
+    Phoenix.PubSub.broadcast(
+      @pubsub,
+      setup_terminal_topic(cell_id),
+      {:setup_terminal_data, %{cell_id: cell_id, chunk: chunk}}
+    )
+  end
+
+  @spec publish_setup_terminal_exit(String.t(), integer() | nil, String.t() | nil) :: :ok
+  def publish_setup_terminal_exit(cell_id, exit_code, signal \\ nil)
+      when is_binary(cell_id) and (is_integer(exit_code) or is_nil(exit_code)) and
+             (is_binary(signal) or is_nil(signal)) do
+    Phoenix.PubSub.broadcast(
+      @pubsub,
+      setup_terminal_topic(cell_id),
+      {:setup_terminal_exit, %{cell_id: cell_id, exit_code: exit_code, signal: signal}}
+    )
+  end
+
+  @spec subscribe_setup_terminal(String.t()) :: :ok | {:error, term()}
+  def subscribe_setup_terminal(cell_id) when is_binary(cell_id) do
+    Phoenix.PubSub.subscribe(@pubsub, setup_terminal_topic(cell_id))
+  end
+
   @spec workspace_topic(String.t()) :: String.t()
   def workspace_topic(workspace_id), do: "workspace:" <> workspace_id
 
   @spec timing_topic(String.t()) :: String.t()
   def timing_topic(cell_id), do: "timings:" <> cell_id
+
+  @spec setup_terminal_topic(String.t()) :: String.t()
+  def setup_terminal_topic(cell_id), do: "setup_terminal:" <> cell_id
 end

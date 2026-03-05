@@ -23,6 +23,7 @@ defmodule HiveServerElixirWeb.Router do
     post("/api/cells", CellsController, :create)
     get("/api/cells/workspace/:workspace_id/stream", CellsController, :workspace_stream)
     get("/api/cells/:id/timings/stream", CellsController, :timing_stream)
+    get("/api/cells/:id/setup/terminal/stream", CellsController, :setup_terminal_stream)
     get("/api/cells/:id/resources", CellsController, :resources)
     post("/api/cells/:id/setup/retry", CellsController, :retry)
     post("/api/cells/:id/setup/resume", CellsController, :resume)

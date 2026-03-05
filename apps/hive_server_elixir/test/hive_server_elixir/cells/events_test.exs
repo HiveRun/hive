@@ -26,4 +26,17 @@ defmodule HiveServerElixir.Cells.EventsTest do
 
     assert_receive {:cell_timing, %{cell_id: ^cell_id, timing_id: ^timing_id}}
   end
+
+  test "publishes setup terminal data and exit events" do
+    cell_id = Ash.UUID.generate()
+
+    assert :ok = Events.subscribe_setup_terminal(cell_id)
+    assert :ok = Events.publish_setup_terminal_data(cell_id, "hello")
+
+    assert_receive {:setup_terminal_data, %{cell_id: ^cell_id, chunk: "hello"}}
+
+    assert :ok = Events.publish_setup_terminal_exit(cell_id, 0, nil)
+
+    assert_receive {:setup_terminal_exit, %{cell_id: ^cell_id, exit_code: 0, signal: nil}}
+  end
 end
