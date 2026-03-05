@@ -48,5 +48,25 @@ defmodule HiveServerElixir.Cells.Cell do
       public? true
       attribute_writable? true
     end
+
+    has_one :provisioning_state, HiveServerElixir.Cells.Provisioning do
+      destination_attribute :cell_id
+    end
+
+    has_one :agent_session, HiveServerElixir.Cells.AgentSession do
+      destination_attribute :cell_id
+    end
+
+    has_many :services, HiveServerElixir.Cells.Service do
+      destination_attribute :cell_id
+    end
+
+    has_many :activity_events, HiveServerElixir.Cells.Activity do
+      destination_attribute :cell_id
+    end
+
+    has_many :timing_events, HiveServerElixir.Cells.Timing do
+      destination_attribute :cell_id
+    end
   end
 end

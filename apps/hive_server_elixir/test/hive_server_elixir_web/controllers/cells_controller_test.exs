@@ -6,8 +6,13 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
 
   alias Ecto.UUID
   alias HiveServerElixir.Cells
+  alias HiveServerElixir.Cells.Activity
+  alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Lifecycle
+  alias HiveServerElixir.Cells.Provisioning
+  alias HiveServerElixir.Cells.Service
+  alias HiveServerElixir.Cells.Timing
   alias HiveServerElixir.Cells.Workspace
   alias HiveServerElixir.Opencode.TestOperations
 
@@ -93,6 +98,116 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
     assert deleted_id == cell.id
     assert [] = Registry.lookup(@registry, {workspace.id, cell.id})
     assert [] = list_cells_by_id(cell.id)
+  end
+
+  test "GET /api/cells/:id/resources returns modeled resource snapshot", %{conn: conn} do
+    workspace = workspace!("resources")
+    cell = cell!(workspace.id, "resource cell", "ready")
+
+    assert {:ok, _provisioning} =
+             Ash.create(
+               Provisioning,
+               %{cell_id: cell.id, attempt_count: 1, start_mode: "build"},
+               domain: Cells
+             )
+
+    assert {:ok, service} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "api",
+                 type: "process",
+                 command: "bun run dev",
+                 cwd: "/tmp/worktree",
+                 env: %{"PORT" => "3000"},
+                 definition: %{"name" => "api"},
+                 status: "running"
+               },
+               domain: Cells
+             )
+
+    assert {:ok, _session} =
+             Ash.create(
+               AgentSession,
+               %{cell_id: cell.id, session_id: "session-resources", current_mode: "build"},
+               domain: Cells
+             )
+
+    assert {:ok, _activity} =
+             Ash.create(
+               Activity,
+               %{
+                 cell_id: cell.id,
+                 service_id: service.id,
+                 type: "service.start",
+                 metadata: %{"source" => "test"}
+               },
+               domain: Cells
+             )
+
+    assert {:ok, _timing} =
+             Ash.create(
+               Timing,
+               %{
+                 cell_id: cell.id,
+                 workflow: "create",
+                 run_id: "run-resources",
+                 step: "ensure_services",
+                 status: "ok",
+                 duration_ms: 10,
+                 metadata: %{"attempt" => 1}
+               },
+               domain: Cells
+             )
+
+    conn = get(conn, ~p"/api/cells/#{cell.id}/resources")
+
+    assert %{
+             "resources" => %{
+               "provisioning" => %{"attemptCount" => 1},
+               "services" => [%{"id" => service_id, "status" => "running"}],
+               "agentSession" => %{"sessionId" => "session-resources"},
+               "latestActivity" => %{"type" => "service.start"},
+               "latestTiming" => %{"workflow" => "create"}
+             },
+             "failures" => []
+           } = json_response(conn, 200)
+
+    assert service_id == service.id
+  end
+
+  test "GET /api/cells/:id/resources surfaces resource failure states", %{conn: conn} do
+    workspace = workspace!("resource-failure")
+    cell = cell!(workspace.id, "resource failure", "error")
+
+    assert {:ok, service} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "api",
+                 type: "process",
+                 command: "bun run dev",
+                 cwd: "/tmp/worktree",
+                 env: %{},
+                 definition: %{},
+                 status: "error",
+                 last_known_error: "Service crashed"
+               },
+               domain: Cells
+             )
+
+    conn = get(conn, ~p"/api/cells/#{cell.id}/resources")
+
+    assert %{"failures" => failures} = json_response(conn, 200)
+
+    assert Enum.any?(failures, &(&1["code"] == "provisioning_missing"))
+    assert Enum.any?(failures, &(&1["code"] == "agent_session_missing"))
+
+    assert Enum.any?(failures, fn failure ->
+             failure["code"] == "service_error" and failure["serviceId"] == service.id
+           end)
   end
 
   defp workspace!(suffix) do

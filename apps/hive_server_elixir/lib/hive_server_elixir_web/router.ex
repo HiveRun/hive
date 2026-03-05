@@ -21,6 +21,7 @@ defmodule HiveServerElixirWeb.Router do
 
     get("/health", HealthController, :show)
     post("/api/cells", CellsController, :create)
+    get("/api/cells/:id/resources", CellsController, :resources)
     post("/api/cells/:id/setup/retry", CellsController, :retry)
     post("/api/cells/:id/setup/resume", CellsController, :resume)
     delete("/api/cells/:id", CellsController, :delete)

@@ -147,6 +147,19 @@
   - `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`
   - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
 - 2026-03-05 - Added API-level failure-state coverage (invalid id, missing resource, lifecycle failure payloads, and delete cleanup) at `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`.
+- 2026-03-05 - Modeled remaining Step 4 Ash resources (`provisioning`, `service`, `agent session`, `activity`, `timing`) and added persistence tables:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/provisioning.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/service.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/agent_session.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/activity.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/timing.ex`
+  - `apps/hive_server_elixir/priv/repo/migrations/20260305213000_create_cell_lifecycle_resources.exs`
+- 2026-03-05 - Added `/api/cells/:id/resources` failure-state contract exposing modeled resource snapshots and derived lifecycle issues at:
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`
+- 2026-03-05 - Added high-level coverage for modeled resources and API failure-state snapshots at:
+  - `apps/hive_server_elixir/test/hive_server_elixir/cells/resources_test.exs`
+  - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
 
 ### Step 5: Realtime + Terminal Transport
 

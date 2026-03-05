@@ -13,6 +13,11 @@ defmodule HiveServerElixir.Cells do
   resources do
     resource HiveServerElixir.Cells.Workspace
     resource HiveServerElixir.Cells.Cell
+    resource HiveServerElixir.Cells.Provisioning
+    resource HiveServerElixir.Cells.Service
+    resource HiveServerElixir.Cells.AgentSession
+    resource HiveServerElixir.Cells.Activity
+    resource HiveServerElixir.Cells.Timing
   end
 
   @spec create_cell(map) :: {:ok, HiveServerElixir.Cells.Cell.t()} | {:error, term()}
