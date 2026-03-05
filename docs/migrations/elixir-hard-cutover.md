@@ -2,8 +2,8 @@
 
 ## Execution Snapshot
 
-- Current Step: Step 3 - Persist-all event ingest pipeline (in progress).
-- Next Action: connect new lifecycle hooks into upcoming Reactor cell create/retry/resume/delete flows as those resources land.
+- Current Step: Step 4 - Ash resources + Reactor flows (in progress).
+- Next Action: define initial Ash cell/workspace resources and call lifecycle ingest hooks from Reactor create/retry/resume/delete orchestration.
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -122,6 +122,12 @@
   - Key lifecycle flows execute and recover correctly.
   - Flow failures emit meaningful domain error states.
 
+### Step 4 Verification Evidence (In Progress)
+
+- 2026-03-05 - Added first Reactor orchestration scaffold with compensation for ingest startup at `apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/ensure_ingest_running.ex`.
+- 2026-03-05 - Added Reactor step module with undo rollback to stop ingest workers at `apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/steps/start_ingest_step.ex`.
+- 2026-03-05 - Added higher-level Reactor workflow tests validating success path and compensation rollback at `apps/hive_server_elixir/test/hive_server_elixir/cells/reactors/ensure_ingest_running_test.exs`.
+
 ### Step 5: Realtime + Terminal Transport
 
 - Implement SSE/WS streams used by frontend.
@@ -209,3 +215,4 @@
 - 2026-03-05 - Began Step 3 persistence: added append-only event log migration + Ash domain/resource + ordered timeline query coverage.
 - 2026-03-05 - Added OpenCode ingest persistence hooks in adapter and introduced continuous ingest runtime/worker with tests.
 - 2026-03-05 - Added cell lifecycle ingest hooks (`on_cell_create/retry/resume/delete`) and tests ahead of Reactor flow integration.
+- 2026-03-05 - Added higher-level lifecycle ingest integration tests and started Step 4 with a Reactor scaffold + compensation rollback tests.
