@@ -761,13 +761,41 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
     assert length(global_runs) == 1
   end
 
-  test "GET /api/cells/:id/diff returns contract-compatible empty payload", %{conn: conn} do
-    workspace = workspace!("diff")
+  test "GET /api/cells/:id/diff returns git-backed summary and details", %{conn: conn} do
+    repo_path = git_fixture_repo!("diff-summary")
+    workspace = workspace_with_path!(repo_path, "diff")
     cell = cell!(workspace.id, "diff cell", "ready")
 
     conn = get(conn, ~p"/api/cells/#{cell.id}/diff?mode=workspace")
 
-    assert %{"mode" => "workspace", "files" => []} = json_response(conn, 200)
+    assert %{"mode" => "workspace", "files" => files} = json_response(conn, 200)
+    assert [%{"path" => "notes.txt", "status" => "modified"}] = files
+
+    conn = get(conn, ~p"/api/cells/#{cell.id}/diff?mode=workspace&files=notes.txt&summary=none")
+
+    assert %{"mode" => "workspace", "details" => [detail]} = json_response(conn, 200)
+    assert detail["path"] == "notes.txt"
+    assert detail["beforeContent"] =~ "initial"
+    assert detail["afterContent"] =~ "updated"
+    assert detail["patch"] =~ "notes.txt"
+  end
+
+  test "GET /api/cells/:id/diff returns 409 while cell workspace is not ready", %{conn: conn} do
+    workspace = workspace!("diff-pending")
+    cell = cell!(workspace.id, "diff pending", "pending")
+
+    conn = get(conn, ~p"/api/cells/#{cell.id}/diff?mode=workspace")
+
+    assert %{"message" => "Cell workspace is not ready yet"} = json_response(conn, 409)
+  end
+
+  test "GET /api/cells/:id/diff returns 400 for branch mode without base commit", %{conn: conn} do
+    workspace = workspace!("diff-branch")
+    cell = cell!(workspace.id, "diff branch", "ready")
+
+    conn = get(conn, ~p"/api/cells/#{cell.id}/diff?mode=branch")
+
+    assert %{"message" => "Cell is missing base commit metadata"} = json_response(conn, 400)
   end
 
   test "GET /api/cells/:id/resources returns modeled resource snapshot", %{conn: conn} do
@@ -889,6 +917,46 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
              )
 
     workspace
+  end
+
+  defp workspace_with_path!(path, suffix) do
+    assert {:ok, workspace} =
+             Ash.create(
+               Workspace,
+               %{path: path, label: "Workspace #{suffix}"},
+               domain: Cells
+             )
+
+    workspace
+  end
+
+  defp git_fixture_repo!(suffix) do
+    repo_path =
+      Path.join(System.tmp_dir!(), "hive-diff-#{suffix}-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(repo_path)
+
+    on_exit(fn ->
+      File.rm_rf!(repo_path)
+    end)
+
+    run_git!(repo_path, ["init"])
+    run_git!(repo_path, ["config", "user.name", "Hive Test"])
+    run_git!(repo_path, ["config", "user.email", "hive-test@example.com"])
+
+    file_path = Path.join(repo_path, "notes.txt")
+    File.write!(file_path, "initial\n")
+    run_git!(repo_path, ["add", "notes.txt"])
+    run_git!(repo_path, ["commit", "-m", "initial"])
+
+    File.write!(file_path, "updated\n")
+
+    repo_path
+  end
+
+  defp run_git!(repo_path, args) do
+    {output, 0} = System.cmd("git", args, cd: repo_path, stderr_to_stdout: true)
+    output
   end
 
   defp cell!(workspace_id, description, status) do

@@ -10,6 +10,7 @@ defmodule HiveServerElixirWeb.CellsController do
   alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
+  alias HiveServerElixir.Cells.Diff
   alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.Provisioning
   alias HiveServerElixir.Cells.Service
@@ -806,21 +807,18 @@ defmodule HiveServerElixirWeb.CellsController do
   end
 
   def diff(conn, %{"id" => id} = params) do
-    with {:ok, _cell} <- Ash.get(Cell, id, domain: Cells) do
-      mode = parse_diff_mode(Map.get(params, "mode"))
-      summary = parse_diff_summary_mode(Map.get(params, "summary"))
+    case Ash.get(Cell, id, domain: Cells) do
+      {:ok, cell} ->
+        case Diff.build_payload(cell, params) do
+          {:ok, payload} ->
+            json(conn, payload)
 
-      payload =
-        %{
-          mode: mode,
-          baseCommit: nil,
-          headCommit: nil,
-          files: []
-        }
-        |> maybe_put_diff_details(summary)
+          {:error, {status, message}} ->
+            conn
+            |> put_status(status)
+            |> json(%{message: message})
+        end
 
-      json(conn, payload)
-    else
       {:error, error} ->
         render_cell_error(conn, error)
     end
@@ -1303,15 +1301,6 @@ defmodule HiveServerElixirWeb.CellsController do
     end)
     |> Enum.sort_by(& &1.finishedAt, {:desc, String})
   end
-
-  defp parse_diff_mode("branch"), do: "branch"
-  defp parse_diff_mode(_value), do: "workspace"
-
-  defp parse_diff_summary_mode("none"), do: "none"
-  defp parse_diff_summary_mode(_value), do: "full"
-
-  defp maybe_put_diff_details(payload, "none"), do: payload
-  defp maybe_put_diff_details(payload, _summary), do: Map.put(payload, :details, [])
 
   defp failure_states(cell, resources) do
     []

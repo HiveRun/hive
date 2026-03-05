@@ -296,6 +296,10 @@
   - `apps/hive_server_elixir/priv/repo/migrations/20260305230000_add_cell_contract_fields.exs`
 - 2026-03-05 - Added high-level API coverage for the new list/detail/activity/timings/diff/bulk-delete contracts in:
   - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
+- 2026-03-05 - Replaced the placeholder diff payload with git-backed diff parity (workspace/branch validation, summary files, optional detail payloads with before/after content and patch text) in:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/diff.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+  - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
 
 ### Step 7: CLI, E2E, Desktop Runtime Cutover
 
@@ -372,3 +376,4 @@
 - 2026-03-05 - Exposed Reactor-backed cell lifecycle flows via Phoenix API endpoints and added API-level failure-state assertions.
 - 2026-03-05 - Added Elixir service stream + bulk service lifecycle parity endpoints to unblock Step 6 frontend contract migration work.
 - 2026-03-05 - Added core Elixir cell query contracts (list/detail/activity/timings/diff/bulk-delete) and expanded cell payload fields for Step 6 frontend migration readiness.
+- 2026-03-05 - Added git-backed Elixir `/api/cells/:id/diff` parity behavior (status gating, branch validation, summary/details payloads) with high-level controller coverage.
