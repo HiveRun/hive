@@ -16,6 +16,7 @@
 
 - Stack: Phoenix API, Ash, AshSqlite, Reactor, Oban Lite.
 - Model state transitions and business actions in Ash resources/actions.
+- Treat Ash as the application data API: call `Ash.*` and resource actions from domain modules instead of direct `Repo`/`Ecto.Query`.
 - Put multi-step workflows (create/retry/delete/resume) in Reactor with compensation paths.
 - Persist OpenCode event ingestion in append-only logs first, then project into query models.
 
@@ -30,5 +31,6 @@
 
 - Keep local-first runtime constraints front and center (single required Hive daemon, SQLite default).
 - Avoid introducing new Elysia/Eden-specific abstractions that increase migration surface area.
+- Restrict direct Ecto usage to infrastructure concerns (migrations, repo setup, sandbox/test plumbing, low-level adapters where Ash cannot express the behavior).
 - When contracts change, update frontend query factories and migration docs in the same change.
 - Record major backend decisions in the migration doc change log so the cutover trail stays explicit.

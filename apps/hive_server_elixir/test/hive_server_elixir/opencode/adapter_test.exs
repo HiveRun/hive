@@ -52,6 +52,53 @@ defmodule HiveServerElixir.Opencode.AdapterTest do
              )
   end
 
+  test "next_global_event persists payload when context is provided" do
+    payload = %{"directory" => "/tmp/project", "payload" => %{"type" => "session.idle"}}
+
+    persist_context = %{
+      workspace_id: "workspace-1",
+      cell_id: "cell-1",
+      session_id: "session-1",
+      seq: 1
+    }
+
+    persist_global_event = fn event, context ->
+      send(self(), {:persisted_event, event, context})
+      {:ok, %{}}
+    end
+
+    assert {:ok, ^payload} =
+             Adapter.next_global_event(
+               operations_module: TestOperations,
+               global_event: fn _opts -> {:ok, payload} end,
+               persist_context: persist_context,
+               persist_global_event: persist_global_event
+             )
+
+    assert_receive {:persisted_event, ^payload, ^persist_context}
+  end
+
+  test "next_global_event normalizes persistence errors" do
+    payload = %{"directory" => "/tmp/project", "payload" => %{"type" => "session.idle"}}
+
+    assert {:error, error} =
+             Adapter.next_global_event(
+               operations_module: TestOperations,
+               global_event: fn _opts -> {:ok, payload} end,
+               persist_context: %{
+                 workspace_id: "workspace-1",
+                 cell_id: "cell-1",
+                 session_id: "session-1",
+                 seq: 1
+               },
+               persist_global_event: fn _event, _context -> {:error, :db_unavailable} end
+             )
+
+    assert error.type == :persistence_error
+    assert error.status == nil
+    assert error.details == :db_unavailable
+  end
+
   test "next_global_event normalizes unknown errors" do
     assert {:error, error} =
              Adapter.next_global_event(

@@ -2,8 +2,8 @@
 
 ## Execution Snapshot
 
-- Current Step: Step 3 - Persist-all event ingest pipeline (next).
-- Next Action: add append-only `agent_event_log` schema + migration and wire event envelope persistence from OpenCode stream ingest.
+- Current Step: Step 3 - Persist-all event ingest pipeline (in progress).
+- Next Action: connect new lifecycle hooks into upcoming Reactor cell create/retry/resume/delete flows as those resources land.
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -93,6 +93,25 @@
 - Done means:
   - Events persist in order.
   - Session timeline query returns stable ordered output.
+
+### Step 3 Verification Evidence (In Progress)
+
+- 2026-03-05 - Added append-only `agent_event_log` migration with indexes and unique `(session_id, seq)` guard at `apps/hive_server_elixir/priv/repo/migrations/20260304201500_create_agent_event_log.exs`.
+- 2026-03-05 - Replaced direct Ecto write/query helpers with Ash-backed persistence:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/opencode.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/opencode/agent_event.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/opencode/agent_event_log.ex`
+- 2026-03-05 - Added persistence ordering/uniqueness coverage in `apps/hive_server_elixir/test/hive_server_elixir/opencode/agent_event_log_test.exs`.
+- 2026-03-05 - Added stream ingest entrypoint at `apps/hive_server_elixir/lib/hive_server_elixir/opencode/event_ingest.ex` that pulls one OpenCode global event and persists it through the adapter.
+- 2026-03-05 - Added deterministic per-session sequence assignment and session-id extraction fallback in `apps/hive_server_elixir/lib/hive_server_elixir/opencode/agent_event_log.ex`.
+- 2026-03-05 - Added ingest flow coverage in `apps/hive_server_elixir/test/hive_server_elixir/opencode/event_ingest_test.exs` and verified `mix test` passes in `apps/hive_server_elixir`.
+- 2026-03-05 - Added continuous ingest runtime + worker under app supervision:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/opencode/event_ingest_runtime.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/opencode/event_ingest_worker.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/application.ex`
+- 2026-03-05 - Added runtime coverage for start/duplicate/stop semantics and continuous persistence at `apps/hive_server_elixir/test/hive_server_elixir/opencode/event_ingest_runtime_test.exs`.
+- 2026-03-05 - Added lifecycle entrypoints for create/retry/resume/delete ingest control at `apps/hive_server_elixir/lib/hive_server_elixir/cells/lifecycle.ex`.
+- 2026-03-05 - Added lifecycle hook coverage for start/restart/idempotent stop semantics at `apps/hive_server_elixir/test/hive_server_elixir/cells/lifecycle_test.exs`.
 
 ### Step 4: Ash Resources + Reactor Flows
 
@@ -186,3 +205,6 @@
 - 2026-03-04 - Dev startup script now provisions `.hive/state` and passes `DATABASE_PATH` so Elixir dev DB lives under local Hive state.
 - 2026-03-04 - Verified Step 1 done criteria end-to-end (`/health`, local sqlite path under `.hive/state`, and successful migrations).
 - 2026-03-04 - Completed Step 2 scaffolding: pinned OpenCode OpenAPI spec, generated Elixir client modules, added adapter/transport, and added coverage for sync + stream call paths.
+- 2026-03-05 - Began Step 3 persistence: added append-only event log migration + Ash domain/resource + ordered timeline query coverage.
+- 2026-03-05 - Added OpenCode ingest persistence hooks in adapter and introduced continuous ingest runtime/worker with tests.
+- 2026-03-05 - Added cell lifecycle ingest hooks (`on_cell_create/retry/resume/delete`) and tests ahead of Reactor flow integration.

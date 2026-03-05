@@ -10,6 +10,9 @@ defmodule HiveServerElixir.Application do
     children = [
       HiveServerElixirWeb.Telemetry,
       HiveServerElixir.Repo,
+      {Registry, keys: :unique, name: HiveServerElixir.Opencode.EventIngestRegistry},
+      {DynamicSupervisor,
+       strategy: :one_for_one, name: HiveServerElixir.Opencode.EventIngestSupervisor},
       {Ecto.Migrator,
        repos: Application.fetch_env!(:hive_server_elixir, :ecto_repos), skip: skip_migrations?()},
       {Oban,
