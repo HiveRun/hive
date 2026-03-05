@@ -61,17 +61,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
              })
 
     assert :ok = Lifecycle.on_cell_delete(context)
-
-    case Registry.lookup(@registry, {workspace.id, cell.id}) do
-      [] ->
-        :ok
-
-      [{pid, _value}] ->
-        ref = Process.monitor(pid)
-        assert_receive {:DOWN, ^ref, :process, ^pid, _reason}
-    end
-
-    assert [] = Registry.lookup(@registry, {workspace.id, cell.id})
+    assert_registry_stopped(workspace.id, cell.id)
   end
 
   test "delete_cell compensates by restoring ingest when downstream fails" do
@@ -121,5 +111,17 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
       success_delay_ms: 30_000,
       error_delay_ms: 30_000
     ]
+  end
+
+  defp assert_registry_stopped(workspace_id, cell_id) do
+    case Registry.lookup(@registry, {workspace_id, cell_id}) do
+      [] ->
+        :ok
+
+      [{pid, _value}] ->
+        ref = Process.monitor(pid)
+        assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
+        assert_registry_stopped(workspace_id, cell_id)
+    end
   end
 end
