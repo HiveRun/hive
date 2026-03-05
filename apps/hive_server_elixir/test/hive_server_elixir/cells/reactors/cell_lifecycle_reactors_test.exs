@@ -59,6 +59,15 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
                fail_after_ingest: true
              })
 
+    case Registry.lookup(@registry, {workspace.id, cell.id}) do
+      [] ->
+        :ok
+
+      [{pid, _value}] ->
+        ref = Process.monitor(pid)
+        assert_receive {:DOWN, ^ref, :process, ^pid, _reason}
+    end
+
     assert [] = Registry.lookup(@registry, {workspace.id, cell.id})
   end
 
