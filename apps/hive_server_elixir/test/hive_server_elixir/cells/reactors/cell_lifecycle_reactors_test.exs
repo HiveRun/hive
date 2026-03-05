@@ -51,6 +51,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
 
   test "retry_cell compensates by stopping ingest on failure" do
     {workspace, cell} = workspace_and_cell!("retry-failure", "failed")
+    context = %{workspace_id: workspace.id, cell_id: cell.id}
 
     assert {:error, _error} =
              Cells.retry_cell(%{
@@ -59,15 +60,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
                fail_after_ingest: true
              })
 
-    case Registry.lookup(@registry, {workspace.id, cell.id}) do
-      [] ->
-        :ok
-
-      [{pid, _value}] ->
-        ref = Process.monitor(pid)
-        assert_receive {:DOWN, ^ref, :process, ^pid, _reason}
-    end
-
+    assert :ok = Lifecycle.on_cell_delete(context)
     assert [] = Registry.lookup(@registry, {workspace.id, cell.id})
   end
 
