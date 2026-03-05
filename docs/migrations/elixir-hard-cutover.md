@@ -2,8 +2,8 @@
 
 ## Execution Snapshot
 
-- Current Step: Step 5 - Realtime + terminal transport (in progress).
-- Next Action: align remaining service parity fields (`recentLogs`, `portReachable`, and activity metadata headers) with TypeScript runtime responses.
+- Current Step: Step 6 - Frontend contract migration (in progress).
+- Next Action: migrate web query factories/stream hooks to consume Elixir service payloads directly (`/api/cells/:id/services`, service lifecycle routes, SSE/WS terminal routes).
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -169,7 +169,7 @@
   - Terminal and stream hooks work unchanged at behavior level.
   - Reconnect paths remain stable.
 
-### Step 5 Verification Evidence (In Progress)
+### Step 5 Verification Evidence (Completed)
 
 - 2026-03-05 - Added workspace cell SSE stream endpoint with `ready`/`cell`/`snapshot` framing and PubSub-driven `cell_removed` updates:
   - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
@@ -244,6 +244,16 @@
   - Added API-level and runtime coverage for service lifecycle controls in:
     - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
     - `apps/hive_server_elixir/test/hive_server_elixir/cells/service_runtime_test.exs`
+- 2026-03-05 - Completed service payload parity slice for runtime-backed service APIs:
+  - Added `/api/cells/:id/services` with TS-compatible fields (`recentLogs`, `totalLogLines`, `hasMoreLogs`, `processAlive`, `portReachable`, `url`) in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+  - Added runtime status introspection and safer persistence handling in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir/cells/service_runtime.ex`
+  - Added audit-header propagation (`x-hive-source`, `x-hive-tool`, `x-hive-audit-event`, `x-hive-service-name`) to service lifecycle activity events in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+  - Added high-level API coverage for service list payloads and audit metadata parity in:
+    - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
 
 ### Step 6: Frontend Contract Migration (React)
 

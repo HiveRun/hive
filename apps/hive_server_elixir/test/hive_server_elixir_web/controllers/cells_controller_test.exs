@@ -13,6 +13,7 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
   alias HiveServerElixir.Cells.Provisioning
   alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.ServiceRuntime
+  alias HiveServerElixir.Cells.TerminalRuntime
   alias HiveServerElixir.Cells.Timing
   alias HiveServerElixir.Cells.Workspace
   alias HiveServerElixir.Opencode.TestOperations
@@ -262,8 +263,11 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
     _started = post(conn, ~p"/api/cells/#{cell.id}/services/#{service.id}/start", %{})
     conn = post(conn, ~p"/api/cells/#{cell.id}/services/#{service.id}/stop", %{})
 
-    assert %{"id" => returned_id, "status" => "stopped", "pid" => nil} = json_response(conn, 200)
+    response = json_response(conn, 200)
+
+    assert %{"id" => returned_id, "status" => "stopped"} = response
     assert returned_id == service.id
+    refute Map.has_key?(response, "pid")
   end
 
   test "POST /api/cells/:id/services/restart returns refreshed services", %{conn: conn} do
@@ -354,6 +358,121 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
     assert %{"id" => returned_id, "status" => "running", "pid" => pid} = json_response(conn, 200)
     assert returned_id == service.id
     assert is_integer(pid)
+  end
+
+  test "GET /api/cells/:id/services returns service runtime parity fields", %{conn: conn} do
+    workspace = workspace!("services-index")
+    cell = cell!(workspace.id, "service index", "ready")
+
+    assert {:ok, service} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "api",
+                 type: "process",
+                 command: "sleep 5",
+                 cwd: "/tmp",
+                 env: %{"NODE_ENV" => "test"},
+                 definition: %{},
+                 status: "pending"
+               },
+               domain: Cells
+             )
+
+    on_exit(fn ->
+      :ok = ServiceRuntime.stop_cell_services(cell.id)
+    end)
+
+    _started = post(conn, ~p"/api/cells/#{cell.id}/services/#{service.id}/start", %{})
+    conn = get(conn, ~p"/api/cells/#{cell.id}/services")
+
+    assert %{"services" => [service_payload]} = json_response(conn, 200)
+    assert service_payload["id"] == service.id
+    assert service_payload["name"] == "api"
+    assert service_payload["type"] == "process"
+    assert service_payload["command"] == "sleep 5"
+    assert service_payload["cwd"] == "/tmp"
+    assert service_payload["env"] == %{"NODE_ENV" => "test"}
+    assert service_payload["status"] == "running"
+    assert service_payload["processAlive"] == true
+    assert service_payload["logPath"] == nil
+    assert service_payload["recentLogs"] == nil
+    assert service_payload["totalLogLines"] == nil
+    assert service_payload["hasMoreLogs"] == false
+    assert is_integer(service_payload["pid"])
+  end
+
+  test "GET /api/cells/:id/services supports log tail query params", %{conn: conn} do
+    workspace = workspace!("services-tail")
+    cell = cell!(workspace.id, "service tail", "ready")
+
+    assert {:ok, service} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "api",
+                 type: "process",
+                 command: "sleep 5",
+                 cwd: "/tmp",
+                 env: %{},
+                 definition: %{},
+                 status: "pending"
+               },
+               domain: Cells
+             )
+
+    :ok = TerminalRuntime.append_service_output(cell.id, service.id, "line-1\nline-2\nline-3")
+
+    conn = get(conn, ~p"/api/cells/#{cell.id}/services?logLines=2&logOffset=0")
+
+    assert %{"services" => [service_payload]} = json_response(conn, 200)
+    assert service_payload["recentLogs"] == "line-2\nline-3"
+    assert service_payload["totalLogLines"] == 3
+    assert service_payload["hasMoreLogs"] == true
+  end
+
+  test "service lifecycle endpoints persist audit header metadata", %{conn: conn} do
+    workspace = workspace!("service-audit-headers")
+    cell = cell!(workspace.id, "service audit", "ready")
+
+    assert {:ok, service} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "api",
+                 type: "process",
+                 command: "sleep 5",
+                 cwd: "/tmp",
+                 env: %{},
+                 definition: %{},
+                 status: "pending"
+               },
+               domain: Cells
+             )
+
+    on_exit(fn ->
+      :ok = ServiceRuntime.stop_cell_services(cell.id)
+    end)
+
+    conn =
+      conn
+      |> put_req_header("x-hive-source", "opencode")
+      |> put_req_header("x-hive-tool", "hive-services")
+      |> put_req_header("x-hive-audit-event", "manual_start")
+      |> put_req_header("x-hive-service-name", "api")
+
+    _started = post(conn, ~p"/api/cells/#{cell.id}/services/#{service.id}/start", %{})
+    conn = get(build_conn(), ~p"/api/cells/#{cell.id}/resources")
+
+    assert %{"resources" => %{"latestActivity" => latest_activity}} = json_response(conn, 200)
+    assert latest_activity["type"] == "service.start"
+    assert latest_activity["source"] == "opencode"
+    assert latest_activity["toolName"] == "hive-services"
+    assert latest_activity["metadata"]["auditEvent"] == "manual_start"
+    assert latest_activity["metadata"]["serviceName"] == "api"
   end
 
   test "POST /api/cells/:id/chat/terminal/restart rotates terminal session", %{conn: conn} do

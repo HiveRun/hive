@@ -49,6 +49,11 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
     GenServer.call(__MODULE__, {:stop_cell_services, cell_id})
   end
 
+  @spec runtime_status(String.t()) :: %{status: String.t(), pid: integer() | nil} | nil
+  def runtime_status(service_id) when is_binary(service_id) do
+    GenServer.call(__MODULE__, {:runtime_status, service_id})
+  end
+
   @impl true
   def init(:ok) do
     {:ok, %{services: %{}, ports: %{}}}
@@ -118,6 +123,25 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
     {:reply, :ok, next_state}
   end
 
+  def handle_call({:runtime_status, service_id}, _from, state) do
+    runtime =
+      case Map.get(state.services, service_id) do
+        %{port: port} when is_port(port) ->
+          pid =
+            case Port.info(port, :os_pid) do
+              {:os_pid, os_pid} when is_integer(os_pid) -> os_pid
+              _other -> nil
+            end
+
+          %{status: "running", pid: pid}
+
+        _other ->
+          nil
+      end
+
+    {:reply, runtime, state}
+  end
+
   @impl true
   def handle_info({port, {:data, {:eol, line}}}, state) when is_port(port) do
     {:noreply, publish_service_data(state, port, line <> "\n")}
@@ -135,15 +159,18 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
     case pop_service_by_port(state, port) do
       {{:ok, service_id, entry}, next_state} ->
         _ =
-          persist_service_state(entry.service, %{status: exit_status_to_state(status), pid: nil})
+          safe_persist_service_state(entry.service, %{
+            status: exit_status_to_state(status),
+            pid: nil
+          })
 
         if status != 0 do
           _ =
-            persist_service_state(entry.service, %{
+            safe_persist_service_state(entry.service, %{
               last_known_error: "Service exited with code #{status}"
             })
         else
-          _ = persist_service_state(entry.service, %{last_known_error: nil})
+          _ = safe_persist_service_state(entry.service, %{last_known_error: nil})
         end
 
         :ok = Events.publish_service_terminal_exit(entry.cell_id, service_id, status, nil)
@@ -215,7 +242,7 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
                 _other -> nil
               end
 
-            case persist_service_state(service, %{
+            case safe_persist_service_state(service, %{
                    status: "running",
                    pid: os_pid,
                    last_known_error: nil
@@ -239,7 +266,7 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
 
           {:error, reason} ->
             _ =
-              persist_service_state(service, %{
+              safe_persist_service_state(service, %{
                 status: "error",
                 pid: nil,
                 last_known_error: inspect(reason)
@@ -256,7 +283,11 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
   defp stop_service_internal(state, %Service{} = service) do
     case Map.pop(state.services, service.id) do
       {nil, _services} ->
-        case persist_service_state(service, %{status: "stopped", pid: nil, last_known_error: nil}) do
+        case safe_persist_service_state(service, %{
+               status: "stopped",
+               pid: nil,
+               last_known_error: nil
+             }) do
           {:ok, _updated} -> {:ok, state}
           {:error, reason} -> {:error, reason, state}
         end
@@ -266,7 +297,7 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
 
         next_state = %{state | services: services, ports: Map.delete(state.ports, port)}
 
-        case persist_service_state(entry.service, %{
+        case safe_persist_service_state(entry.service, %{
                status: "stopped",
                pid: nil,
                last_known_error: nil
@@ -319,6 +350,13 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
 
   defp persist_service_state(%Service{} = service, attrs) when is_map(attrs) do
     Ash.update(service, attrs, domain: Cells)
+  end
+
+  defp safe_persist_service_state(%Service{} = service, attrs) when is_map(attrs) do
+    persist_service_state(service, attrs)
+  rescue
+    _error ->
+      {:error, :persist_failed}
   end
 
   defp exit_status_to_state(0), do: "stopped"

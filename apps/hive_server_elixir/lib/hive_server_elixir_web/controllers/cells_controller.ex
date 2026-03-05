@@ -444,13 +444,31 @@ defmodule HiveServerElixirWeb.CellsController do
     end
   end
 
+  def services(conn, %{"id" => cell_id} = params) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells) do
+      services =
+        Service
+        |> Ash.Query.filter(expr(cell_id == ^cell_id))
+        |> Ash.Query.sort(inserted_at: :asc)
+        |> Ash.read!(domain: Cells)
+
+      payload = Enum.map(services, &serialize_service_payload(&1, params))
+      json(conn, %{services: payload})
+    else
+      {:error, error} ->
+        render_cell_error(conn, error)
+    end
+  end
+
   def service_start(conn, %{"id" => cell_id, "service_id" => service_id}) do
+    audit = read_audit_headers(conn)
+
     with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
          {:ok, service} <- get_service_for_cell(cell_id, service_id),
          :ok <- ensure_runtime_start(service),
          {:ok, updated_service} <- Ash.get(Service, service.id, domain: Cells) do
-      _ = record_service_activity(cell_id, service_id, "service.start", %{})
-      json(conn, serialize_service(updated_service))
+      _ = record_service_activity(cell_id, service_id, "service.start", audit, %{})
+      json(conn, serialize_service_payload(updated_service, %{}))
     else
       {:error, :service_runtime_unavailable} ->
         conn
@@ -463,12 +481,14 @@ defmodule HiveServerElixirWeb.CellsController do
   end
 
   def service_stop(conn, %{"id" => cell_id, "service_id" => service_id}) do
+    audit = read_audit_headers(conn)
+
     with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
          {:ok, service} <- get_service_for_cell(cell_id, service_id),
          :ok <- ensure_runtime_stop(service),
          {:ok, updated_service} <- Ash.get(Service, service.id, domain: Cells) do
-      _ = record_service_activity(cell_id, service_id, "service.stop", %{})
-      json(conn, serialize_service(updated_service))
+      _ = record_service_activity(cell_id, service_id, "service.stop", audit, %{})
+      json(conn, serialize_service_payload(updated_service, %{}))
     else
       {:error, :service_runtime_unavailable} ->
         conn
@@ -481,16 +501,18 @@ defmodule HiveServerElixirWeb.CellsController do
   end
 
   def service_restart(conn, %{"id" => cell_id, "service_id" => service_id}) do
+    audit = read_audit_headers(conn)
+
     with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
          {:ok, service} <- get_service_for_cell(cell_id, service_id),
          :ok <- ensure_runtime_restart(service),
          {:ok, updated_service} <- Ash.get(Service, service.id, domain: Cells) do
       _ =
-        record_service_activity(cell_id, service_id, "service.restart", %{
+        record_service_activity(cell_id, service_id, "service.restart", audit, %{
           serviceName: service.name
         })
 
-      json(conn, serialize_service(updated_service))
+      json(conn, serialize_service_payload(updated_service, %{}))
     else
       {:error, :service_runtime_unavailable} ->
         conn
@@ -503,9 +525,11 @@ defmodule HiveServerElixirWeb.CellsController do
   end
 
   def services_restart(conn, %{"id" => cell_id}) do
+    audit = read_audit_headers(conn)
+
     with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
          :ok <- restart_all_services(cell_id) do
-      _ = record_service_activity(cell_id, nil, "services.restart", %{})
+      _ = record_service_activity(cell_id, nil, "services.restart", audit, %{})
 
       services =
         Service
@@ -513,7 +537,7 @@ defmodule HiveServerElixirWeb.CellsController do
         |> Ash.Query.sort(inserted_at: :asc)
         |> Ash.read!(domain: Cells)
 
-      json(conn, %{services: Enum.map(services, &serialize_service/1)})
+      json(conn, %{services: Enum.map(services, &serialize_service_payload(&1, %{}))})
     else
       {:error, :service_runtime_unavailable} ->
         conn
@@ -571,13 +595,73 @@ defmodule HiveServerElixirWeb.CellsController do
       id: service.id,
       cellId: service.cell_id,
       name: service.name,
+      type: service.type,
       status: service.status,
       pid: service.pid,
       port: service.port,
+      command: service.command,
+      cwd: service.cwd,
+      env: service.env,
       lastKnownError: service.last_known_error,
       insertedAt: maybe_to_iso8601(service.inserted_at),
       updatedAt: maybe_to_iso8601(service.updated_at)
     }
+  end
+
+  defp serialize_service_payload(%Service{} = service, params) do
+    log_options = parse_log_options(params)
+    {recent_logs, total_log_lines, has_more_logs} = service_log_tail(service, log_options)
+
+    runtime_status = ServiceRuntime.runtime_status(service.id)
+
+    process_alive =
+      case runtime_status do
+        %{status: "running"} -> true
+        _other -> os_pid_alive?(service.pid)
+      end
+
+    {derived_status, derived_last_known_error} =
+      derive_service_state(service.status, service.last_known_error, process_alive)
+
+    derived_pid =
+      case runtime_status do
+        %{status: "running", pid: pid} when is_integer(pid) -> pid
+        _other when process_alive -> service.pid
+        _other -> nil
+      end
+
+    service =
+      maybe_persist_derived_service(
+        service,
+        derived_status,
+        derived_last_known_error,
+        derived_pid
+      )
+
+    url = build_service_url(service.port)
+    port_reachable = if is_integer(service.port), do: port_reachable?(service.port), else: nil
+
+    %{
+      id: service.id,
+      name: service.name,
+      type: service.type,
+      status: derived_status,
+      command: service.command,
+      cwd: service.cwd,
+      logPath: nil,
+      lastKnownError: derived_last_known_error,
+      env: service.env,
+      updatedAt: maybe_to_iso8601(service.updated_at),
+      recentLogs: recent_logs,
+      totalLogLines: total_log_lines,
+      hasMoreLogs: has_more_logs,
+      processAlive: process_alive,
+      portReachable: port_reachable,
+      url: url,
+      pid: derived_pid,
+      port: service.port
+    }
+    |> drop_nil_values()
   end
 
   defp serialize_provisioning(nil), do: nil
@@ -946,12 +1030,133 @@ defmodule HiveServerElixirWeb.CellsController do
 
   defp parse_positive_integer(_value), do: nil
 
+  defp parse_log_options(params) do
+    lines = parse_log_lines(Map.get(params, "logLines"))
+    offset = parse_log_offset(Map.get(params, "logOffset"))
+    %{lines: lines, offset: offset}
+  end
+
+  defp parse_log_lines(value) when is_integer(value), do: clamp(value, 1, 2_000)
+
+  defp parse_log_lines(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, ""} -> clamp(parsed, 1, 2_000)
+      _result -> 200
+    end
+  end
+
+  defp parse_log_lines(_value), do: 200
+
+  defp parse_log_offset(value) when is_integer(value), do: max(value, 0)
+
+  defp parse_log_offset(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, ""} -> max(parsed, 0)
+      _result -> 0
+    end
+  end
+
+  defp parse_log_offset(_value), do: 0
+
+  defp clamp(value, min, _max) when value < min, do: min
+  defp clamp(value, _min, max) when value > max, do: max
+  defp clamp(value, _min, _max), do: value
+
   defp get_service_for_cell(cell_id, service_id) do
     case Ash.get(Service, service_id, domain: Cells) do
       {:ok, %Service{cell_id: ^cell_id} = service} -> {:ok, service}
       {:ok, _service} -> {:error, :service_not_found}
       {:error, error} -> {:error, error}
     end
+  end
+
+  defp service_log_tail(%Service{} = service, %{lines: lines, offset: offset}) do
+    chunks = TerminalRuntime.read_service_output(service.cell_id, service.id)
+
+    if chunks == [] do
+      {nil, nil, false}
+    else
+      output = Enum.join(chunks, "")
+      normalized = String.replace(output, "\r\n", "\n") |> String.replace("\r", "\n")
+      all_lines = String.split(normalized, "\n")
+      total_lines = length(all_lines)
+
+      end_index = max(total_lines - offset, 0)
+      start_index = max(end_index - lines, 0)
+      selected = Enum.slice(all_lines, start_index, end_index - start_index)
+      content = selected |> Enum.join("\n") |> String.trim_trailing()
+
+      {if(content == "", do: nil, else: content), total_lines, start_index > 0}
+    end
+  end
+
+  defp derive_service_state("running", last_known_error, false) do
+    {"error", last_known_error || "Process exited unexpectedly"}
+  end
+
+  defp derive_service_state("error", _last_known_error, true) do
+    {"running", nil}
+  end
+
+  defp derive_service_state(status, last_known_error, _alive) do
+    {status, last_known_error}
+  end
+
+  defp maybe_persist_derived_service(%Service{} = service, status, last_known_error, pid) do
+    should_persist =
+      status != service.status ||
+        last_known_error != service.last_known_error ||
+        pid != service.pid
+
+    if should_persist do
+      case Ash.update(service, %{status: status, last_known_error: last_known_error, pid: pid},
+             domain: Cells
+           ) do
+        {:ok, updated} ->
+          updated
+
+        {:error, _error} ->
+          %{service | status: status, last_known_error: last_known_error, pid: pid}
+      end
+    else
+      service
+    end
+  end
+
+  defp os_pid_alive?(pid) when is_integer(pid) and pid > 0 do
+    case System.cmd("kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true) do
+      {_output, 0} -> true
+      {_output, _status} -> false
+    end
+  rescue
+    _error ->
+      false
+  end
+
+  defp os_pid_alive?(_pid), do: false
+
+  defp port_reachable?(port) when is_integer(port) and port > 0 do
+    case :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false], 150) do
+      {:ok, socket} ->
+        :gen_tcp.close(socket)
+        true
+
+      {:error, _reason} ->
+        false
+    end
+  end
+
+  defp port_reachable?(_port), do: false
+
+  defp build_service_url(port) when is_integer(port) and port > 0,
+    do: "http://localhost:" <> Integer.to_string(port)
+
+  defp build_service_url(_port), do: nil
+
+  defp drop_nil_values(map) when is_map(map) do
+    map
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
   end
 
   defp ensure_service_runtime(%Service{} = service) do
@@ -997,13 +1202,14 @@ defmodule HiveServerElixirWeb.CellsController do
     end)
   end
 
-  defp record_service_activity(cell_id, service_id, type, metadata) do
+  defp record_service_activity(cell_id, service_id, type, audit, metadata) do
     attrs =
       %{
         cell_id: cell_id,
         type: type,
-        source: "api",
-        metadata: metadata || %{}
+        source: audit.source,
+        tool_name: audit.tool_name,
+        metadata: merge_audit_metadata(audit, metadata || %{})
       }
       |> maybe_put_service_id(service_id)
 
@@ -1015,6 +1221,31 @@ defmodule HiveServerElixirWeb.CellsController do
 
   defp maybe_put_service_id(attrs, nil), do: attrs
   defp maybe_put_service_id(attrs, service_id), do: Map.put(attrs, :service_id, service_id)
+
+  defp read_audit_headers(conn) do
+    %{
+      source: request_header(conn, "x-hive-source"),
+      tool_name: request_header(conn, "x-hive-tool"),
+      audit_event: request_header(conn, "x-hive-audit-event"),
+      service_name: request_header(conn, "x-hive-service-name")
+    }
+  end
+
+  defp request_header(conn, header) do
+    case Plug.Conn.get_req_header(conn, header) do
+      [value | _rest] -> value
+      [] -> nil
+    end
+  end
+
+  defp merge_audit_metadata(audit, metadata) when is_map(metadata) do
+    metadata
+    |> maybe_put_metadata("auditEvent", audit.audit_event)
+    |> maybe_put_metadata("serviceName", audit.service_name)
+  end
+
+  defp maybe_put_metadata(metadata, _key, nil), do: metadata
+  defp maybe_put_metadata(metadata, key, value), do: Map.put(metadata, key, value)
 
   defp setup_state_for(%Cell{status: "ready"}), do: "completed"
   defp setup_state_for(%Cell{status: "error"}), do: "error"

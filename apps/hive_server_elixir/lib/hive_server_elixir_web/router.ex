@@ -26,6 +26,7 @@ defmodule HiveServerElixirWeb.Router do
     get("/api/cells/:id/setup/terminal/stream", CellsController, :setup_terminal_stream)
     post("/api/cells/:id/setup/terminal/input", CellsController, :setup_terminal_input)
     post("/api/cells/:id/setup/terminal/resize", CellsController, :setup_terminal_resize)
+    get("/api/cells/:id/services", CellsController, :services)
 
     get(
       "/api/cells/:id/services/:service_id/terminal/stream",
