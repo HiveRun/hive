@@ -67,6 +67,91 @@ defmodule HiveServerElixir.Cells.Events do
     Phoenix.PubSub.subscribe(@pubsub, setup_terminal_topic(cell_id))
   end
 
+  @spec publish_setup_terminal_error(String.t(), String.t()) :: :ok
+  def publish_setup_terminal_error(cell_id, message)
+      when is_binary(cell_id) and is_binary(message) do
+    Phoenix.PubSub.broadcast(
+      @pubsub,
+      setup_terminal_topic(cell_id),
+      {:setup_terminal_error, %{cell_id: cell_id, message: message}}
+    )
+  end
+
+  @spec publish_service_terminal_data(String.t(), String.t(), String.t()) :: :ok
+  def publish_service_terminal_data(cell_id, service_id, chunk)
+      when is_binary(cell_id) and is_binary(service_id) and is_binary(chunk) do
+    Phoenix.PubSub.broadcast(
+      @pubsub,
+      service_terminal_topic(cell_id, service_id),
+      {:service_terminal_data, %{cell_id: cell_id, service_id: service_id, chunk: chunk}}
+    )
+  end
+
+  @spec publish_service_terminal_exit(String.t(), String.t(), integer() | nil, String.t() | nil) ::
+          :ok
+  def publish_service_terminal_exit(cell_id, service_id, exit_code, signal \\ nil)
+      when is_binary(cell_id) and is_binary(service_id) and
+             (is_integer(exit_code) or is_nil(exit_code)) and
+             (is_binary(signal) or is_nil(signal)) do
+    Phoenix.PubSub.broadcast(
+      @pubsub,
+      service_terminal_topic(cell_id, service_id),
+      {:service_terminal_exit,
+       %{cell_id: cell_id, service_id: service_id, exit_code: exit_code, signal: signal}}
+    )
+  end
+
+  @spec publish_service_terminal_error(String.t(), String.t(), String.t()) :: :ok
+  def publish_service_terminal_error(cell_id, service_id, message)
+      when is_binary(cell_id) and is_binary(service_id) and is_binary(message) do
+    Phoenix.PubSub.broadcast(
+      @pubsub,
+      service_terminal_topic(cell_id, service_id),
+      {:service_terminal_error, %{cell_id: cell_id, service_id: service_id, message: message}}
+    )
+  end
+
+  @spec subscribe_service_terminal(String.t(), String.t()) :: :ok | {:error, term()}
+  def subscribe_service_terminal(cell_id, service_id)
+      when is_binary(cell_id) and is_binary(service_id) do
+    Phoenix.PubSub.subscribe(@pubsub, service_terminal_topic(cell_id, service_id))
+  end
+
+  @spec publish_chat_terminal_data(String.t(), String.t()) :: :ok
+  def publish_chat_terminal_data(cell_id, chunk) when is_binary(cell_id) and is_binary(chunk) do
+    Phoenix.PubSub.broadcast(
+      @pubsub,
+      chat_terminal_topic(cell_id),
+      {:chat_terminal_data, %{cell_id: cell_id, chunk: chunk}}
+    )
+  end
+
+  @spec publish_chat_terminal_exit(String.t(), integer() | nil, String.t() | nil) :: :ok
+  def publish_chat_terminal_exit(cell_id, exit_code, signal \\ nil)
+      when is_binary(cell_id) and (is_integer(exit_code) or is_nil(exit_code)) and
+             (is_binary(signal) or is_nil(signal)) do
+    Phoenix.PubSub.broadcast(
+      @pubsub,
+      chat_terminal_topic(cell_id),
+      {:chat_terminal_exit, %{cell_id: cell_id, exit_code: exit_code, signal: signal}}
+    )
+  end
+
+  @spec publish_chat_terminal_error(String.t(), String.t()) :: :ok
+  def publish_chat_terminal_error(cell_id, message)
+      when is_binary(cell_id) and is_binary(message) do
+    Phoenix.PubSub.broadcast(
+      @pubsub,
+      chat_terminal_topic(cell_id),
+      {:chat_terminal_error, %{cell_id: cell_id, message: message}}
+    )
+  end
+
+  @spec subscribe_chat_terminal(String.t()) :: :ok | {:error, term()}
+  def subscribe_chat_terminal(cell_id) when is_binary(cell_id) do
+    Phoenix.PubSub.subscribe(@pubsub, chat_terminal_topic(cell_id))
+  end
+
   @spec workspace_topic(String.t()) :: String.t()
   def workspace_topic(workspace_id), do: "workspace:" <> workspace_id
 
@@ -75,4 +160,11 @@ defmodule HiveServerElixir.Cells.Events do
 
   @spec setup_terminal_topic(String.t()) :: String.t()
   def setup_terminal_topic(cell_id), do: "setup_terminal:" <> cell_id
+
+  @spec service_terminal_topic(String.t(), String.t()) :: String.t()
+  def service_terminal_topic(cell_id, service_id),
+    do: "service_terminal:" <> cell_id <> ":" <> service_id
+
+  @spec chat_terminal_topic(String.t()) :: String.t()
+  def chat_terminal_topic(cell_id), do: "chat_terminal:" <> cell_id
 end

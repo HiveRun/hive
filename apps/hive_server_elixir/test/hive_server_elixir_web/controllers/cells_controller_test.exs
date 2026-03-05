@@ -132,6 +132,98 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
     assert %{"error" => %{"code" => "not_found"}} = json_response(conn, 404)
   end
 
+  test "POST /api/cells/:id/setup/terminal/input returns ok for valid data", %{conn: conn} do
+    workspace = workspace!("setup-terminal-input")
+    cell = cell!(workspace.id, "setup terminal cell", "provisioning")
+
+    conn = post(conn, ~p"/api/cells/#{cell.id}/setup/terminal/input", %{"data" => "echo hi"})
+
+    assert %{"ok" => true} = json_response(conn, 200)
+  end
+
+  test "POST /api/cells/:id/setup/terminal/resize returns resized session", %{conn: conn} do
+    workspace = workspace!("setup-terminal-resize")
+    cell = cell!(workspace.id, "setup terminal cell", "provisioning")
+
+    conn =
+      post(conn, ~p"/api/cells/#{cell.id}/setup/terminal/resize", %{"cols" => 100, "rows" => 30})
+
+    assert %{"ok" => true, "session" => %{"cols" => 100, "rows" => 30}} = json_response(conn, 200)
+  end
+
+  test "GET /api/cells/:id/services/:service_id/terminal/stream emits ready and snapshot", %{
+    conn: conn
+  } do
+    workspace = workspace!("service-terminal-stream")
+    cell = cell!(workspace.id, "service terminal cell", "ready")
+
+    assert {:ok, service} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "api",
+                 type: "process",
+                 command: "bun run dev",
+                 cwd: "/tmp/worktree",
+                 env: %{},
+                 definition: %{},
+                 status: "running"
+               },
+               domain: Cells
+             )
+
+    conn =
+      get(
+        conn,
+        ~p"/api/cells/#{cell.id}/services/#{service.id}/terminal/stream?initialOnly=true"
+      )
+
+    assert conn.status == 200
+    assert conn.resp_body =~ "event: ready"
+    assert conn.resp_body =~ "event: snapshot"
+  end
+
+  test "POST /api/cells/:id/services/:service_id/terminal/input returns 404 for unknown service",
+       %{conn: conn} do
+    workspace = workspace!("service-terminal-input-missing")
+    cell = cell!(workspace.id, "service terminal cell", "ready")
+
+    conn =
+      post(conn, ~p"/api/cells/#{cell.id}/services/#{UUID.generate()}/terminal/input", %{
+        "data" => "hello"
+      })
+
+    assert %{"error" => %{"code" => "not_found"}} = json_response(conn, 404)
+  end
+
+  test "POST /api/cells/:id/chat/terminal/restart rotates terminal session", %{conn: conn} do
+    workspace = workspace!("chat-terminal-restart")
+    cell = cell!(workspace.id, "chat terminal cell", "ready")
+
+    conn = get(conn, ~p"/api/cells/#{cell.id}/chat/terminal/stream?initialOnly=true")
+    assert conn.status == 200
+
+    first_session_id = ready_session_id(conn.resp_body)
+    assert is_binary(first_session_id)
+
+    conn = post(conn, ~p"/api/cells/#{cell.id}/chat/terminal/restart", %{})
+
+    assert %{"sessionId" => second_session_id} = json_response(conn, 200)
+    assert second_session_id != first_session_id
+  end
+
+  test "POST /api/cells/:id/chat/terminal/input returns conflict while provisioning", %{
+    conn: conn
+  } do
+    workspace = workspace!("chat-terminal-conflict")
+    cell = cell!(workspace.id, "chat terminal cell", "provisioning")
+
+    conn = post(conn, ~p"/api/cells/#{cell.id}/chat/terminal/input", %{"data" => "hello"})
+
+    assert %{"error" => %{"code" => "chat_unavailable"}} = json_response(conn, 409)
+  end
+
   test "POST /api/cells returns 422 for unknown workspace", %{conn: conn} do
     conn =
       post(conn, ~p"/api/cells", %{
@@ -323,5 +415,22 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
       success_delay_ms: 30_000,
       error_delay_ms: 30_000
     ]
+  end
+
+  defp ready_session_id(resp_body) do
+    ready_event =
+      resp_body
+      |> String.split("\n\n")
+      |> Enum.find(&String.contains?(&1, "event: ready"))
+
+    [data_line] =
+      ready_event
+      |> String.split("\n")
+      |> Enum.filter(&String.starts_with?(&1, "data: "))
+
+    data_line
+    |> String.replace_prefix("data: ", "")
+    |> Jason.decode!()
+    |> Map.fetch!("sessionId")
   end
 end

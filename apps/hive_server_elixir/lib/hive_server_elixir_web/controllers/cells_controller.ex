@@ -13,6 +13,7 @@ defmodule HiveServerElixirWeb.CellsController do
   alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.Provisioning
   alias HiveServerElixir.Cells.Service
+  alias HiveServerElixir.Cells.TerminalRuntime
   alias HiveServerElixir.Cells.Timing
   alias HiveServerElixir.Cells.Workspace
 
@@ -104,6 +105,11 @@ defmodule HiveServerElixirWeb.CellsController do
         {:error, _reason} -> stream_conn
       end
     else
+      {:error, :service_not_found} ->
+        conn
+        |> put_status(:not_found)
+        |> json(%{error: %{code: "not_found", message: "Service not found"}})
+
       {:error, reason} ->
         if contains_error?(reason, NotFound) do
           conn
@@ -166,14 +172,12 @@ defmodule HiveServerElixirWeb.CellsController do
         |> put_resp_header("connection", "keep-alive")
         |> send_chunked(200)
 
-      ready_payload = %{
-        session: nil,
-        setupState: setup_state_for(cell),
-        lastSetupError: nil
-      }
+      session = TerminalRuntime.ensure_setup_session(cell_id)
+      ready_payload = %{session: session, setupState: setup_state_for(cell), lastSetupError: nil}
+      output = TerminalRuntime.read_setup_output(cell_id)
 
       with {:ok, stream_conn} <- send_sse(stream_conn, "ready", ready_payload),
-           {:ok, stream_conn} <- send_sse(stream_conn, "snapshot", %{output: []}) do
+           {:ok, stream_conn} <- send_sse(stream_conn, "snapshot", %{output: output}) do
         idle_timeout_ms = parse_idle_timeout_ms(Map.get(params, "idleTimeoutMs"), 30_000)
 
         if Map.get(params, "initialOnly") in ["true", "1"] do
@@ -195,6 +199,234 @@ defmodule HiveServerElixirWeb.CellsController do
           |> put_status(:unprocessable_entity)
           |> json(%{error: %{code: "stream_failed", message: inspect(reason)}})
         end
+    end
+  end
+
+  def setup_terminal_resize(conn, %{"id" => cell_id} = params) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         {:ok, cols, rows} <- parse_resize_params(params) do
+      session = TerminalRuntime.resize_setup_session(cell_id, cols, rows)
+      json(conn, %{ok: true, session: session})
+    else
+      {:error, :service_not_found} ->
+        conn
+        |> put_status(:not_found)
+        |> json(%{error: %{code: "not_found", message: "Service not found"}})
+
+      {:error, :invalid_resize} ->
+        bad_request(conn, "cols and rows must be positive integers")
+
+      {:error, error} ->
+        render_cell_error(conn, error)
+    end
+  end
+
+  def setup_terminal_input(conn, %{"id" => cell_id} = params) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         {:ok, chunk} <- parse_input(params) do
+      _session = TerminalRuntime.ensure_setup_session(cell_id)
+      :ok = TerminalRuntime.write_setup_input(cell_id, chunk)
+      :ok = Events.publish_setup_terminal_data(cell_id, chunk)
+      json(conn, %{ok: true})
+    else
+      {:error, :service_not_found} ->
+        conn
+        |> put_status(:not_found)
+        |> json(%{error: %{code: "not_found", message: "Service not found"}})
+
+      {:error, :invalid_input} ->
+        bad_request(conn, "data must be a string")
+
+      {:error, error} ->
+        render_cell_error(conn, error)
+    end
+  end
+
+  def service_terminal_stream(conn, %{"id" => cell_id, "service_id" => service_id} = params) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         {:ok, _service} <- get_service_for_cell(cell_id, service_id),
+         :ok <- Events.subscribe_service_terminal(cell_id, service_id) do
+      session = TerminalRuntime.ensure_service_session(cell_id, service_id)
+      output = TerminalRuntime.read_service_output(cell_id, service_id)
+
+      stream_conn =
+        conn
+        |> put_resp_content_type("text/event-stream")
+        |> put_resp_header("cache-control", "no-cache")
+        |> put_resp_header("connection", "keep-alive")
+        |> send_chunked(200)
+
+      with {:ok, stream_conn} <- send_sse(stream_conn, "ready", %{session: session}),
+           {:ok, stream_conn} <- send_sse(stream_conn, "snapshot", %{output: output}) do
+        idle_timeout_ms = parse_idle_timeout_ms(Map.get(params, "idleTimeoutMs"), 30_000)
+
+        if Map.get(params, "initialOnly") in ["true", "1"] do
+          stream_conn
+        else
+          stream_service_terminal_events(stream_conn, cell_id, service_id, idle_timeout_ms)
+        end
+      else
+        {:error, _reason} -> stream_conn
+      end
+    else
+      {:error, reason} ->
+        if contains_error?(reason, NotFound) do
+          conn
+          |> put_status(:not_found)
+          |> json(%{error: %{code: "not_found", message: "Service not found"}})
+        else
+          conn
+          |> put_status(:unprocessable_entity)
+          |> json(%{error: %{code: "stream_failed", message: inspect(reason)}})
+        end
+    end
+  end
+
+  def service_terminal_resize(conn, %{"id" => cell_id, "service_id" => service_id} = params) do
+    with {:ok, _service} <- get_service_for_cell(cell_id, service_id),
+         {:ok, cols, rows} <- parse_resize_params(params) do
+      session = TerminalRuntime.resize_service_session(cell_id, service_id, cols, rows)
+      json(conn, %{ok: true, session: session})
+    else
+      {:error, :invalid_resize} -> bad_request(conn, "cols and rows must be positive integers")
+      {:error, error} -> render_cell_error(conn, error)
+    end
+  end
+
+  def service_terminal_input(conn, %{"id" => cell_id, "service_id" => service_id} = params) do
+    with {:ok, _service} <- get_service_for_cell(cell_id, service_id),
+         {:ok, chunk} <- parse_input(params) do
+      _session = TerminalRuntime.ensure_service_session(cell_id, service_id)
+      :ok = TerminalRuntime.write_service_input(cell_id, service_id, chunk)
+      :ok = Events.publish_service_terminal_data(cell_id, service_id, chunk)
+      json(conn, %{ok: true})
+    else
+      {:error, :invalid_input} -> bad_request(conn, "data must be a string")
+      {:error, error} -> render_cell_error(conn, error)
+    end
+  end
+
+  def chat_terminal_stream(conn, %{"id" => cell_id} = params) do
+    with {:ok, cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         :ok <- validate_chat_available(cell),
+         :ok <- Events.subscribe_chat_terminal(cell_id) do
+      session = TerminalRuntime.ensure_chat_session(cell_id)
+      output = TerminalRuntime.read_chat_output(cell_id)
+
+      stream_conn =
+        conn
+        |> put_resp_content_type("text/event-stream")
+        |> put_resp_header("cache-control", "no-cache")
+        |> put_resp_header("connection", "keep-alive")
+        |> send_chunked(200)
+
+      with {:ok, stream_conn} <- send_sse(stream_conn, "ready", session),
+           {:ok, stream_conn} <- send_sse(stream_conn, "snapshot", %{output: output}) do
+        idle_timeout_ms = parse_idle_timeout_ms(Map.get(params, "idleTimeoutMs"), 30_000)
+
+        if Map.get(params, "initialOnly") in ["true", "1"] do
+          stream_conn
+        else
+          stream_chat_terminal_events(stream_conn, cell_id, idle_timeout_ms)
+        end
+      else
+        {:error, _reason} -> stream_conn
+      end
+    else
+      {:error, :chat_unavailable} ->
+        conn
+        |> put_status(:conflict)
+        |> json(%{
+          error: %{
+            code: "chat_unavailable",
+            message: "Chat terminal is unavailable until provisioning completes"
+          }
+        })
+
+      {:error, reason} ->
+        if contains_error?(reason, NotFound) do
+          conn
+          |> put_status(:not_found)
+          |> json(%{error: %{code: "not_found", message: "Cell not found"}})
+        else
+          conn
+          |> put_status(:unprocessable_entity)
+          |> json(%{error: %{code: "stream_failed", message: inspect(reason)}})
+        end
+    end
+  end
+
+  def chat_terminal_resize(conn, %{"id" => cell_id} = params) do
+    with {:ok, cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         :ok <- validate_chat_available(cell),
+         {:ok, cols, rows} <- parse_resize_params(params) do
+      session = TerminalRuntime.resize_chat_session(cell_id, cols, rows)
+      json(conn, %{ok: true, session: session})
+    else
+      {:error, :chat_unavailable} ->
+        conn
+        |> put_status(:conflict)
+        |> json(%{
+          error: %{
+            code: "chat_unavailable",
+            message: "Chat terminal is unavailable until provisioning completes"
+          }
+        })
+
+      {:error, :invalid_resize} ->
+        bad_request(conn, "cols and rows must be positive integers")
+
+      {:error, error} ->
+        render_cell_error(conn, error)
+    end
+  end
+
+  def chat_terminal_input(conn, %{"id" => cell_id} = params) do
+    with {:ok, cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         :ok <- validate_chat_available(cell),
+         {:ok, chunk} <- parse_input(params) do
+      _session = TerminalRuntime.ensure_chat_session(cell_id)
+      :ok = TerminalRuntime.write_chat_input(cell_id, chunk)
+      :ok = Events.publish_chat_terminal_data(cell_id, chunk)
+      json(conn, %{ok: true})
+    else
+      {:error, :chat_unavailable} ->
+        conn
+        |> put_status(:conflict)
+        |> json(%{
+          error: %{
+            code: "chat_unavailable",
+            message: "Chat terminal is unavailable until provisioning completes"
+          }
+        })
+
+      {:error, :invalid_input} ->
+        bad_request(conn, "data must be a string")
+
+      {:error, error} ->
+        render_cell_error(conn, error)
+    end
+  end
+
+  def chat_terminal_restart(conn, %{"id" => cell_id}) do
+    with {:ok, cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         :ok <- validate_chat_available(cell) do
+      session = TerminalRuntime.restart_chat_session(cell_id)
+      :ok = Events.publish_chat_terminal_exit(cell_id, 0, nil)
+      json(conn, session)
+    else
+      {:error, :chat_unavailable} ->
+        conn
+        |> put_status(:conflict)
+        |> json(%{
+          error: %{
+            code: "chat_unavailable",
+            message: "Chat terminal is unavailable until provisioning completes"
+          }
+        })
+
+      {:error, error} ->
+        render_cell_error(conn, error)
     end
   end
 
@@ -513,9 +745,115 @@ defmodule HiveServerElixirWeb.CellsController do
           {:ok, next_conn} -> stream_setup_terminal_events(next_conn, cell_id, idle_timeout_ms)
           {:error, _reason} -> conn
         end
+
+      {:setup_terminal_error, %{cell_id: ^cell_id, message: message}} ->
+        case send_sse(conn, "error", %{message: message}) do
+          {:ok, next_conn} -> stream_setup_terminal_events(next_conn, cell_id, idle_timeout_ms)
+          {:error, _reason} -> conn
+        end
     after
       idle_timeout_ms ->
         conn
+    end
+  end
+
+  defp stream_service_terminal_events(conn, cell_id, service_id, idle_timeout_ms) do
+    receive do
+      {:service_terminal_data, %{cell_id: ^cell_id, service_id: ^service_id, chunk: chunk}} ->
+        case send_sse(conn, "data", %{chunk: chunk}) do
+          {:ok, next_conn} ->
+            stream_service_terminal_events(next_conn, cell_id, service_id, idle_timeout_ms)
+
+          {:error, _reason} ->
+            conn
+        end
+
+      {:service_terminal_exit,
+       %{cell_id: ^cell_id, service_id: ^service_id, exit_code: exit_code, signal: signal}} ->
+        case send_sse(conn, "exit", %{exitCode: exit_code, signal: signal}) do
+          {:ok, next_conn} ->
+            stream_service_terminal_events(next_conn, cell_id, service_id, idle_timeout_ms)
+
+          {:error, _reason} ->
+            conn
+        end
+
+      {:service_terminal_error, %{cell_id: ^cell_id, service_id: ^service_id, message: message}} ->
+        case send_sse(conn, "error", %{message: message}) do
+          {:ok, next_conn} ->
+            stream_service_terminal_events(next_conn, cell_id, service_id, idle_timeout_ms)
+
+          {:error, _reason} ->
+            conn
+        end
+    after
+      idle_timeout_ms ->
+        conn
+    end
+  end
+
+  defp stream_chat_terminal_events(conn, cell_id, idle_timeout_ms) do
+    receive do
+      {:chat_terminal_data, %{cell_id: ^cell_id, chunk: chunk}} ->
+        case send_sse(conn, "data", %{chunk: chunk}) do
+          {:ok, next_conn} -> stream_chat_terminal_events(next_conn, cell_id, idle_timeout_ms)
+          {:error, _reason} -> conn
+        end
+
+      {:chat_terminal_exit, %{cell_id: ^cell_id, exit_code: exit_code, signal: signal}} ->
+        case send_sse(conn, "exit", %{exitCode: exit_code, signal: signal}) do
+          {:ok, next_conn} -> stream_chat_terminal_events(next_conn, cell_id, idle_timeout_ms)
+          {:error, _reason} -> conn
+        end
+
+      {:chat_terminal_error, %{cell_id: ^cell_id, message: message}} ->
+        case send_sse(conn, "error", %{message: message}) do
+          {:ok, next_conn} -> stream_chat_terminal_events(next_conn, cell_id, idle_timeout_ms)
+          {:error, _reason} -> conn
+        end
+    after
+      idle_timeout_ms ->
+        conn
+    end
+  end
+
+  defp validate_chat_available(%Cell{status: "ready"}), do: :ok
+  defp validate_chat_available(_cell), do: {:error, :chat_unavailable}
+
+  defp parse_input(params) do
+    case read_param(params, "data") do
+      value when is_binary(value) -> {:ok, value}
+      _value -> {:error, :invalid_input}
+    end
+  end
+
+  defp parse_resize_params(params) do
+    cols = parse_positive_integer(read_param(params, "cols"))
+    rows = parse_positive_integer(read_param(params, "rows"))
+
+    if is_integer(cols) and is_integer(rows) do
+      {:ok, cols, rows}
+    else
+      {:error, :invalid_resize}
+    end
+  end
+
+  defp parse_positive_integer(value) when is_integer(value) and value > 0, do: value
+
+  defp parse_positive_integer(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, ""} when parsed > 0 -> parsed
+      _result -> nil
+    end
+  end
+
+  defp parse_positive_integer(_value), do: nil
+
+  defp get_service_for_cell(cell_id, service_id) do
+    case Ash.get(Service, service_id, domain: Cells) do
+      {:ok, %Service{cell_id: ^cell_id} = service} -> {:ok, service}
+      {:ok, _service} -> {:error, :service_not_found}
+      {:error, error} -> {:error, error}
     end
   end
 

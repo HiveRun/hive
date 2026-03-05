@@ -24,6 +24,31 @@ defmodule HiveServerElixirWeb.Router do
     get("/api/cells/workspace/:workspace_id/stream", CellsController, :workspace_stream)
     get("/api/cells/:id/timings/stream", CellsController, :timing_stream)
     get("/api/cells/:id/setup/terminal/stream", CellsController, :setup_terminal_stream)
+    post("/api/cells/:id/setup/terminal/input", CellsController, :setup_terminal_input)
+    post("/api/cells/:id/setup/terminal/resize", CellsController, :setup_terminal_resize)
+
+    get(
+      "/api/cells/:id/services/:service_id/terminal/stream",
+      CellsController,
+      :service_terminal_stream
+    )
+
+    post(
+      "/api/cells/:id/services/:service_id/terminal/input",
+      CellsController,
+      :service_terminal_input
+    )
+
+    post(
+      "/api/cells/:id/services/:service_id/terminal/resize",
+      CellsController,
+      :service_terminal_resize
+    )
+
+    get("/api/cells/:id/chat/terminal/stream", CellsController, :chat_terminal_stream)
+    post("/api/cells/:id/chat/terminal/input", CellsController, :chat_terminal_input)
+    post("/api/cells/:id/chat/terminal/resize", CellsController, :chat_terminal_resize)
+    post("/api/cells/:id/chat/terminal/restart", CellsController, :chat_terminal_restart)
     get("/api/cells/:id/resources", CellsController, :resources)
     post("/api/cells/:id/setup/retry", CellsController, :retry)
     post("/api/cells/:id/setup/resume", CellsController, :resume)

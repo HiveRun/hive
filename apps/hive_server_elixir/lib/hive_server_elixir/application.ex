@@ -28,6 +28,7 @@ defmodule HiveServerElixir.Application do
         query: Application.get_env(:hive_server_elixir, :dns_cluster_query) || :ignore
       },
       {Phoenix.PubSub, name: HiveServerElixir.PubSub},
+      {HiveServerElixir.Cells.TerminalRuntime, name: HiveServerElixir.Cells.TerminalRuntime},
       HiveServerElixirWeb.Endpoint
     ]
 

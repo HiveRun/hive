@@ -3,7 +3,7 @@
 ## Execution Snapshot
 
 - Current Step: Step 5 - Realtime + terminal transport (in progress).
-- Next Action: extend terminal transport parity beyond setup stream (`chat` + `service` terminal transports and input/resize/restart endpoints).
+- Next Action: wire terminal runtime events from real lifecycle/service supervisors into new setup/service/chat transport endpoints.
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -190,6 +190,16 @@
   - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
   - `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`
 - 2026-03-05 - Added setup terminal event broadcaster coverage and API-level stream checks at:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/events.ex`
+  - `apps/hive_server_elixir/test/hive_server_elixir/cells/events_test.exs`
+  - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
+- 2026-03-05 - Extended terminal transport parity with setup/service/chat terminal routes:
+  - Added service stream/input/resize and chat stream/input/resize/restart routes in `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`.
+  - Added controller handlers with SSE framing (`ready`/`snapshot`/`data`/`exit`/`error`) and request validation in `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`.
+- 2026-03-05 - Added supervised in-memory terminal runtime to back high-level transport behavior:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/terminal_runtime.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/application.ex`
+- 2026-03-05 - Extended terminal event broadcaster channels and coverage for setup/service/chat data/exit/error events:
   - `apps/hive_server_elixir/lib/hive_server_elixir/cells/events.ex`
   - `apps/hive_server_elixir/test/hive_server_elixir/cells/events_test.exs`
   - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
