@@ -17,6 +17,7 @@ defmodule HiveServerElixirWeb.CellsController do
   alias HiveServerElixir.Cells.TerminalRuntime
   alias HiveServerElixir.Cells.Timing
   alias HiveServerElixir.Cells.Workspace
+  @service_stream_heartbeat_ms 15_000
 
   def create(conn, params) do
     workspace_id = read_param(params, "workspaceId", "workspace_id")
@@ -460,6 +461,43 @@ defmodule HiveServerElixirWeb.CellsController do
     end
   end
 
+  def services_stream(conn, %{"id" => cell_id} = params) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         :ok <- Events.subscribe_cell_services(cell_id) do
+      stream_conn =
+        conn
+        |> put_resp_content_type("text/event-stream")
+        |> put_resp_header("cache-control", "no-cache")
+        |> put_resp_header("connection", "keep-alive")
+        |> send_chunked(200)
+
+      with {:ok, stream_conn} <-
+             send_sse(stream_conn, "ready", %{timestamp: System.system_time(:millisecond)}),
+           {:ok, stream_conn} <- send_services_snapshot(stream_conn, cell_id, params),
+           {:ok, stream_conn} <-
+             send_sse(stream_conn, "snapshot", %{timestamp: System.system_time(:millisecond)}) do
+        if Map.get(params, "initialOnly") in ["true", "1"] do
+          stream_conn
+        else
+          stream_service_events(stream_conn, cell_id, params)
+        end
+      else
+        {:error, _reason} -> stream_conn
+      end
+    else
+      {:error, reason} ->
+        if contains_error?(reason, NotFound) do
+          conn
+          |> put_status(:not_found)
+          |> json(%{error: %{code: "not_found", message: "Cell not found"}})
+        else
+          conn
+          |> put_status(:unprocessable_entity)
+          |> json(%{error: %{code: "stream_failed", message: inspect(reason)}})
+        end
+    end
+  end
+
   def service_start(conn, %{"id" => cell_id, "service_id" => service_id}) do
     audit = read_audit_headers(conn)
 
@@ -531,6 +569,48 @@ defmodule HiveServerElixirWeb.CellsController do
          :ok <- restart_all_services(cell_id) do
       _ = record_service_activity(cell_id, nil, "services.restart", audit, %{})
 
+      services =
+        Service
+        |> Ash.Query.filter(expr(cell_id == ^cell_id))
+        |> Ash.Query.sort(inserted_at: :asc)
+        |> Ash.read!(domain: Cells)
+
+      json(conn, %{services: Enum.map(services, &serialize_service_payload(&1, %{}))})
+    else
+      {:error, :service_runtime_unavailable} ->
+        conn
+        |> put_status(:unprocessable_entity)
+        |> json(%{error: %{code: "service_unavailable", message: "Service runtime unavailable"}})
+
+      {:error, error} ->
+        render_cell_error(conn, error)
+    end
+  end
+
+  def services_start(conn, %{"id" => cell_id}) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         :ok <- start_all_services(cell_id) do
+      services =
+        Service
+        |> Ash.Query.filter(expr(cell_id == ^cell_id))
+        |> Ash.Query.sort(inserted_at: :asc)
+        |> Ash.read!(domain: Cells)
+
+      json(conn, %{services: Enum.map(services, &serialize_service_payload(&1, %{}))})
+    else
+      {:error, :service_runtime_unavailable} ->
+        conn
+        |> put_status(:unprocessable_entity)
+        |> json(%{error: %{code: "service_unavailable", message: "Service runtime unavailable"}})
+
+      {:error, error} ->
+        render_cell_error(conn, error)
+    end
+  end
+
+  def services_stop(conn, %{"id" => cell_id}) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         :ok <- stop_all_services(cell_id) do
       services =
         Service
         |> Ash.Query.filter(expr(cell_id == ^cell_id))
@@ -998,6 +1078,47 @@ defmodule HiveServerElixirWeb.CellsController do
     end
   end
 
+  defp send_services_snapshot(conn, cell_id, params) do
+    Service
+    |> Ash.Query.filter(expr(cell_id == ^cell_id))
+    |> Ash.Query.sort(inserted_at: :asc)
+    |> Ash.read(domain: Cells)
+    |> case do
+      {:ok, services} ->
+        Enum.reduce_while(services, {:ok, conn}, fn service, {:ok, stream_conn} ->
+          case send_sse(stream_conn, "service", serialize_service_payload(service, params)) do
+            {:ok, next_conn} -> {:cont, {:ok, next_conn}}
+            {:error, reason} -> {:halt, {:error, reason}}
+          end
+        end)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp stream_service_events(conn, cell_id, params) do
+    receive do
+      {:service_update, %{cell_id: ^cell_id, service_id: service_id}} ->
+        case Ash.get(Service, service_id, domain: Cells) do
+          {:ok, service} ->
+            case send_sse(conn, "service", serialize_service_payload(service, params)) do
+              {:ok, next_conn} -> stream_service_events(next_conn, cell_id, params)
+              {:error, _reason} -> conn
+            end
+
+          {:error, _reason} ->
+            stream_service_events(conn, cell_id, params)
+        end
+    after
+      @service_stream_heartbeat_ms ->
+        case send_sse(conn, "heartbeat", %{timestamp: System.system_time(:millisecond)}) do
+          {:ok, next_conn} -> stream_service_events(next_conn, cell_id, params)
+          {:error, _reason} -> conn
+        end
+    end
+  end
+
   defp validate_chat_available(%Cell{status: "ready"}), do: :ok
   defp validate_chat_available(_cell), do: {:error, :chat_unavailable}
 
@@ -1196,6 +1317,36 @@ defmodule HiveServerElixirWeb.CellsController do
 
     Enum.reduce_while(services, :ok, fn service, :ok ->
       case ensure_runtime_restart(service) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp start_all_services(cell_id) do
+    services =
+      Service
+      |> Ash.Query.filter(expr(cell_id == ^cell_id))
+      |> Ash.Query.sort(inserted_at: :asc)
+      |> Ash.read!(domain: Cells)
+
+    Enum.reduce_while(services, :ok, fn service, :ok ->
+      case ensure_runtime_start(service) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp stop_all_services(cell_id) do
+    services =
+      Service
+      |> Ash.Query.filter(expr(cell_id == ^cell_id))
+      |> Ash.Query.sort(inserted_at: :asc)
+      |> Ash.read!(domain: Cells)
+
+    Enum.reduce_while(services, :ok, fn service, :ok ->
+      case ensure_runtime_stop(service) do
         :ok -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, reason}}
       end

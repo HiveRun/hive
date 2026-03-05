@@ -173,6 +173,7 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
           _ = safe_persist_service_state(entry.service, %{last_known_error: nil})
         end
 
+        :ok = Events.publish_service_update(entry.cell_id, service_id)
         :ok = Events.publish_service_terminal_exit(entry.cell_id, service_id, status, nil)
         {:noreply, next_state}
 
@@ -249,10 +250,12 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
                  }) do
               {:ok, persisted_service} ->
                 _ = TerminalRuntime.ensure_service_session(service.cell_id, service.id)
+                :ok = Events.publish_service_update(service.cell_id, service.id)
                 {:ok, put_service(state, persisted_service, port)}
 
               {:error, reason} ->
                 _ = safe_port_close(port)
+                :ok = Events.publish_service_update(service.cell_id, service.id)
 
                 :ok =
                   Events.publish_service_terminal_error(
@@ -272,6 +275,8 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
                 last_known_error: inspect(reason)
               })
 
+            :ok = Events.publish_service_update(service.cell_id, service.id)
+
             :ok =
               Events.publish_service_terminal_error(service.cell_id, service.id, inspect(reason))
 
@@ -288,8 +293,12 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
                pid: nil,
                last_known_error: nil
              }) do
-          {:ok, _updated} -> {:ok, state}
-          {:error, reason} -> {:error, reason, state}
+          {:ok, _updated} ->
+            :ok = Events.publish_service_update(service.cell_id, service.id)
+            {:ok, state}
+
+          {:error, reason} ->
+            {:error, reason, state}
         end
 
       {%{port: port} = entry, services} ->
@@ -303,6 +312,7 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
                last_known_error: nil
              }) do
           {:ok, _updated} ->
+            :ok = Events.publish_service_update(entry.cell_id, service.id)
             :ok = Events.publish_service_terminal_exit(entry.cell_id, service.id, 0, nil)
             {:ok, next_state}
 

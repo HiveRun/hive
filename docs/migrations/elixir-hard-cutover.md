@@ -3,7 +3,7 @@
 ## Execution Snapshot
 
 - Current Step: Step 6 - Frontend contract migration (in progress).
-- Next Action: migrate web query factories/stream hooks to consume Elixir service payloads directly (`/api/cells/:id/services`, service lifecycle routes, SSE/WS terminal routes).
+- Next Action: migrate web query factories to Elixir-owned cell list/detail/activity/timing/diff contracts now that service stream + bulk lifecycle parity routes are available.
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -254,6 +254,19 @@
     - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
   - Added high-level API coverage for service list payloads and audit metadata parity in:
     - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
+- 2026-03-05 - Added service stream and bulk lifecycle route parity used by existing React hooks/mutations:
+  - Added service SSE stream endpoint (`/api/cells/:id/services/stream`) with `ready`/`service`/`snapshot` framing plus heartbeat updates in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+  - Added cell-wide service start/stop endpoints (`/api/cells/:id/services/start`, `/api/cells/:id/services/stop`) in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+  - Added PubSub-backed service update channel and runtime broadcasts so service stream payloads refresh on lifecycle transitions in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir/cells/events.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir/cells/service_runtime.ex`
+  - Added high-level verification for service stream framing, bulk start/stop routes, and service update events in:
+    - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
+    - `apps/hive_server_elixir/test/hive_server_elixir/cells/events_test.exs`
 
 ### Step 6: Frontend Contract Migration (React)
 
@@ -337,3 +350,4 @@
 - 2026-03-05 - Added higher-level lifecycle ingest integration tests and started Step 4 with a Reactor scaffold + compensation rollback tests.
 - 2026-03-05 - Added Reactor-backed cell lifecycle variants (create/retry/resume/delete), wired domain entrypoints, and expanded high-level compensation tests.
 - 2026-03-05 - Exposed Reactor-backed cell lifecycle flows via Phoenix API endpoints and added API-level failure-state assertions.
+- 2026-03-05 - Added Elixir service stream + bulk service lifecycle parity endpoints to unblock Step 6 frontend contract migration work.

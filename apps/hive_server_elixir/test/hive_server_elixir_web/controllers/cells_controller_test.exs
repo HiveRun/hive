@@ -403,6 +403,34 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
     assert is_integer(service_payload["pid"])
   end
 
+  test "GET /api/cells/:id/services/stream emits ready, services, and snapshot", %{conn: conn} do
+    workspace = workspace!("services-stream")
+    cell = cell!(workspace.id, "service stream", "ready")
+
+    assert {:ok, _service} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "api",
+                 type: "process",
+                 command: "sleep 5",
+                 cwd: "/tmp",
+                 env: %{},
+                 definition: %{},
+                 status: "pending"
+               },
+               domain: Cells
+             )
+
+    conn = get(conn, ~p"/api/cells/#{cell.id}/services/stream?initialOnly=true")
+
+    assert conn.status == 200
+    assert conn.resp_body =~ "event: ready"
+    assert conn.resp_body =~ "event: service"
+    assert conn.resp_body =~ "event: snapshot"
+  end
+
   test "GET /api/cells/:id/services supports log tail query params", %{conn: conn} do
     workspace = workspace!("services-tail")
     cell = cell!(workspace.id, "service tail", "ready")
@@ -431,6 +459,101 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
     assert service_payload["recentLogs"] == "line-2\nline-3"
     assert service_payload["totalLogLines"] == 3
     assert service_payload["hasMoreLogs"] == true
+  end
+
+  test "POST /api/cells/:id/services/start starts all services", %{conn: conn} do
+    workspace = workspace!("services-start-all")
+    cell = cell!(workspace.id, "service start all", "ready")
+
+    assert {:ok, _service_a} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "api",
+                 type: "process",
+                 command: "sleep 5",
+                 cwd: "/tmp",
+                 env: %{},
+                 definition: %{},
+                 status: "pending"
+               },
+               domain: Cells
+             )
+
+    assert {:ok, _service_b} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "worker",
+                 type: "process",
+                 command: "sleep 5",
+                 cwd: "/tmp",
+                 env: %{},
+                 definition: %{},
+                 status: "pending"
+               },
+               domain: Cells
+             )
+
+    on_exit(fn ->
+      :ok = ServiceRuntime.stop_cell_services(cell.id)
+    end)
+
+    conn = post(conn, ~p"/api/cells/#{cell.id}/services/start", %{})
+    assert %{"services" => services} = json_response(conn, 200)
+    assert length(services) == 2
+    assert Enum.all?(services, fn service -> service["status"] == "running" end)
+  end
+
+  test "POST /api/cells/:id/services/stop stops all services", %{conn: conn} do
+    workspace = workspace!("services-stop-all")
+    cell = cell!(workspace.id, "service stop all", "ready")
+
+    assert {:ok, service_a} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "api",
+                 type: "process",
+                 command: "sleep 5",
+                 cwd: "/tmp",
+                 env: %{},
+                 definition: %{},
+                 status: "pending"
+               },
+               domain: Cells
+             )
+
+    assert {:ok, service_b} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "worker",
+                 type: "process",
+                 command: "sleep 5",
+                 cwd: "/tmp",
+                 env: %{},
+                 definition: %{},
+                 status: "pending"
+               },
+               domain: Cells
+             )
+
+    on_exit(fn ->
+      :ok = ServiceRuntime.stop_cell_services(cell.id)
+    end)
+
+    _started_api = post(conn, ~p"/api/cells/#{cell.id}/services/#{service_a.id}/start", %{})
+    _started_worker = post(conn, ~p"/api/cells/#{cell.id}/services/#{service_b.id}/start", %{})
+
+    conn = post(conn, ~p"/api/cells/#{cell.id}/services/stop", %{})
+    assert %{"services" => services} = json_response(conn, 200)
+    assert length(services) == 2
+    assert Enum.all?(services, fn service -> service["status"] == "stopped" end)
   end
 
   test "service lifecycle endpoints persist audit header metadata", %{conn: conn} do

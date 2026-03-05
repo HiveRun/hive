@@ -117,6 +117,21 @@ defmodule HiveServerElixir.Cells.Events do
     Phoenix.PubSub.subscribe(@pubsub, service_terminal_topic(cell_id, service_id))
   end
 
+  @spec publish_service_update(String.t(), String.t()) :: :ok
+  def publish_service_update(cell_id, service_id)
+      when is_binary(cell_id) and is_binary(service_id) do
+    Phoenix.PubSub.broadcast(
+      @pubsub,
+      services_topic(cell_id),
+      {:service_update, %{cell_id: cell_id, service_id: service_id}}
+    )
+  end
+
+  @spec subscribe_cell_services(String.t()) :: :ok | {:error, term()}
+  def subscribe_cell_services(cell_id) when is_binary(cell_id) do
+    Phoenix.PubSub.subscribe(@pubsub, services_topic(cell_id))
+  end
+
   @spec publish_chat_terminal_data(String.t(), String.t()) :: :ok
   def publish_chat_terminal_data(cell_id, chunk) when is_binary(cell_id) and is_binary(chunk) do
     Phoenix.PubSub.broadcast(
@@ -167,4 +182,7 @@ defmodule HiveServerElixir.Cells.Events do
 
   @spec chat_terminal_topic(String.t()) :: String.t()
   def chat_terminal_topic(cell_id), do: "chat_terminal:" <> cell_id
+
+  @spec services_topic(String.t()) :: String.t()
+  def services_topic(cell_id), do: "services:" <> cell_id
 end

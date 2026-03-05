@@ -65,6 +65,16 @@ defmodule HiveServerElixir.Cells.EventsTest do
                     %{cell_id: ^cell_id, service_id: ^service_id, message: "svc-boom"}}
   end
 
+  test "publishes service update events" do
+    cell_id = Ash.UUID.generate()
+    service_id = Ash.UUID.generate()
+
+    assert :ok = Events.subscribe_cell_services(cell_id)
+    assert :ok = Events.publish_service_update(cell_id, service_id)
+
+    assert_receive {:service_update, %{cell_id: ^cell_id, service_id: ^service_id}}
+  end
+
   test "publishes chat terminal events" do
     cell_id = Ash.UUID.generate()
 

@@ -27,6 +27,7 @@ defmodule HiveServerElixirWeb.Router do
     post("/api/cells/:id/setup/terminal/input", CellsController, :setup_terminal_input)
     post("/api/cells/:id/setup/terminal/resize", CellsController, :setup_terminal_resize)
     get("/api/cells/:id/services", CellsController, :services)
+    get("/api/cells/:id/services/stream", CellsController, :services_stream)
 
     get(
       "/api/cells/:id/services/:service_id/terminal/stream",
@@ -48,6 +49,8 @@ defmodule HiveServerElixirWeb.Router do
 
     post("/api/cells/:id/services/:service_id/start", CellsController, :service_start)
     post("/api/cells/:id/services/:service_id/stop", CellsController, :service_stop)
+    post("/api/cells/:id/services/start", CellsController, :services_start)
+    post("/api/cells/:id/services/stop", CellsController, :services_stop)
     post("/api/cells/:id/services/restart", CellsController, :services_restart)
     post("/api/cells/:id/services/:service_id/restart", CellsController, :service_restart)
 
