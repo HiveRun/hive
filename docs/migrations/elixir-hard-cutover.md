@@ -2,8 +2,8 @@
 
 ## Execution Snapshot
 
-- Current Step: Step 4 - Ash resources + Reactor flows (in progress).
-- Next Action: model remaining Step 4 Ash resources (`provisioning`, `service`, `agent session`, `activity`, `timing`) and expose their failure states through API contracts.
+- Current Step: Step 5 - Realtime + terminal transport (in progress).
+- Next Action: extend SSE/WS parity beyond workspace cell stream (cell timings + terminal transport semantics).
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -168,6 +168,17 @@
 - Done means:
   - Terminal and stream hooks work unchanged at behavior level.
   - Reconnect paths remain stable.
+
+### Step 5 Verification Evidence (In Progress)
+
+- 2026-03-05 - Added workspace cell SSE stream endpoint with `ready`/`cell`/`snapshot` framing and PubSub-driven `cell_removed` updates:
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`
+- 2026-03-05 - Added dedicated workspace stream PubSub broadcaster for cell status/removal events:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/events.ex`
+- 2026-03-05 - Added high-level stream + event coverage:
+  - `apps/hive_server_elixir/test/hive_server_elixir/cells/events_test.exs`
+  - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
 
 ### Step 6: Frontend Contract Migration (React)
 

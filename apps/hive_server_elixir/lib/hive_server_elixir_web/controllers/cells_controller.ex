@@ -10,9 +10,11 @@ defmodule HiveServerElixirWeb.CellsController do
   alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
+  alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.Provisioning
   alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.Timing
+  alias HiveServerElixir.Cells.Workspace
 
   def create(conn, params) do
     workspace_id = read_param(params, "workspaceId", "workspace_id")
@@ -26,7 +28,8 @@ defmodule HiveServerElixirWeb.CellsController do
              description: description,
              runtime_opts: runtime_opts(),
              fail_after_ingest: false
-           }) do
+           }),
+         :ok <- Events.publish_cell_status(cell.workspace_id, cell.id) do
       conn
       |> put_status(:created)
       |> json(%{cell: serialize_cell(cell)})
@@ -44,22 +47,73 @@ defmodule HiveServerElixirWeb.CellsController do
 
   def retry(conn, %{"id" => id}) do
     case Cells.retry_cell(%{cell_id: id, runtime_opts: runtime_opts(), fail_after_ingest: false}) do
-      {:ok, cell} -> json(conn, %{cell: serialize_cell(cell)})
-      {:error, error} -> render_cell_error(conn, error)
+      {:ok, cell} ->
+        :ok = Events.publish_cell_status(cell.workspace_id, cell.id)
+        json(conn, %{cell: serialize_cell(cell)})
+
+      {:error, error} ->
+        render_cell_error(conn, error)
     end
   end
 
   def resume(conn, %{"id" => id}) do
     case Cells.resume_cell(%{cell_id: id, runtime_opts: runtime_opts(), fail_after_ingest: false}) do
-      {:ok, cell} -> json(conn, %{cell: serialize_cell(cell)})
-      {:error, error} -> render_cell_error(conn, error)
+      {:ok, cell} ->
+        :ok = Events.publish_cell_status(cell.workspace_id, cell.id)
+        json(conn, %{cell: serialize_cell(cell)})
+
+      {:error, error} ->
+        render_cell_error(conn, error)
     end
   end
 
   def delete(conn, %{"id" => id}) do
     case Cells.delete_cell(%{cell_id: id, runtime_opts: runtime_opts(), fail_after_stop: false}) do
-      {:ok, %Cell{} = cell} -> json(conn, %{cell: serialize_cell(cell)})
-      {:error, error} -> render_cell_error(conn, error)
+      {:ok, %Cell{} = cell} ->
+        :ok = Events.publish_cell_removed(cell.workspace_id, cell.id)
+        json(conn, %{cell: serialize_cell(cell)})
+
+      {:error, error} ->
+        render_cell_error(conn, error)
+    end
+  end
+
+  def workspace_stream(conn, %{"workspace_id" => workspace_id} = params) do
+    with {:ok, _workspace} <- Ash.get(Workspace, workspace_id, domain: Cells),
+         :ok <- Events.subscribe_workspace(workspace_id) do
+      stream_conn =
+        conn
+        |> put_resp_content_type("text/event-stream")
+        |> put_resp_header("cache-control", "no-cache")
+        |> put_resp_header("connection", "keep-alive")
+        |> send_chunked(200)
+
+      with {:ok, stream_conn} <-
+             send_sse(stream_conn, "ready", %{timestamp: System.system_time(:millisecond)}),
+           {:ok, stream_conn} <- send_workspace_snapshot(stream_conn, workspace_id),
+           {:ok, stream_conn} <-
+             send_sse(stream_conn, "snapshot", %{timestamp: System.system_time(:millisecond)}) do
+        idle_timeout_ms = parse_idle_timeout_ms(Map.get(params, "idleTimeoutMs"), 30_000)
+
+        if Map.get(params, "initialOnly") in ["true", "1"] do
+          stream_conn
+        else
+          stream_workspace_events(stream_conn, workspace_id, idle_timeout_ms)
+        end
+      else
+        {:error, _reason} -> stream_conn
+      end
+    else
+      {:error, reason} ->
+        if contains_error?(reason, NotFound) do
+          conn
+          |> put_status(:not_found)
+          |> json(%{error: %{code: "workspace_not_found", message: "Workspace not found"}})
+        else
+          conn
+          |> put_status(:unprocessable_entity)
+          |> json(%{error: %{code: "stream_failed", message: inspect(reason)}})
+        end
     end
   end
 
@@ -270,6 +324,84 @@ defmodule HiveServerElixirWeb.CellsController do
 
   defp maybe_to_iso8601(nil), do: nil
   defp maybe_to_iso8601(datetime), do: DateTime.to_iso8601(datetime)
+
+  defp send_workspace_snapshot(conn, workspace_id) do
+    Cell
+    |> Ash.Query.filter(expr(workspace_id == ^workspace_id))
+    |> Ash.Query.sort(inserted_at: :asc)
+    |> Ash.read(domain: Cells)
+    |> case do
+      {:ok, cells} ->
+        Enum.reduce_while(cells, {:ok, conn}, fn cell, {:ok, stream_conn} ->
+          case send_sse(stream_conn, "cell", serialize_cell(cell)) do
+            {:ok, next_conn} -> {:cont, {:ok, next_conn}}
+            {:error, reason} -> {:halt, {:error, reason}}
+          end
+        end)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp stream_workspace_events(conn, workspace_id, idle_timeout_ms) do
+    receive do
+      {:cell_status, %{workspace_id: ^workspace_id, cell_id: cell_id}} ->
+        case Ash.get(Cell, cell_id, domain: Cells) do
+          {:ok, cell} ->
+            case send_sse(conn, "cell", serialize_cell(cell)) do
+              {:ok, next_conn} ->
+                stream_workspace_events(next_conn, workspace_id, idle_timeout_ms)
+
+              {:error, _reason} ->
+                conn
+            end
+
+          {:error, %NotFound{}} ->
+            case send_sse(conn, "cell_removed", %{id: cell_id}) do
+              {:ok, next_conn} ->
+                stream_workspace_events(next_conn, workspace_id, idle_timeout_ms)
+
+              {:error, _reason} ->
+                conn
+            end
+
+          {:error, _reason} ->
+            stream_workspace_events(conn, workspace_id, idle_timeout_ms)
+        end
+
+      {:cell_removed, %{workspace_id: ^workspace_id, cell_id: cell_id}} ->
+        case send_sse(conn, "cell_removed", %{id: cell_id}) do
+          {:ok, next_conn} -> stream_workspace_events(next_conn, workspace_id, idle_timeout_ms)
+          {:error, _reason} -> conn
+        end
+    after
+      idle_timeout_ms ->
+        conn
+    end
+  end
+
+  defp send_sse(conn, event, data) do
+    encoded = Jason.encode!(data)
+
+    conn
+    |> chunk("event: #{event}\ndata: #{encoded}\n\n")
+    |> case do
+      {:ok, next_conn} -> {:ok, next_conn}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp parse_idle_timeout_ms(nil, default), do: default
+
+  defp parse_idle_timeout_ms(value, default) when is_binary(value) do
+    case Integer.parse(value) do
+      {timeout, ""} when timeout >= 0 -> timeout
+      _ -> default
+    end
+  end
+
+  defp parse_idle_timeout_ms(_value, default), do: default
 
   defp read_param(params, key, fallback_key \\ nil) do
     Map.get(params, key) || if(fallback_key, do: Map.get(params, fallback_key), else: nil)
