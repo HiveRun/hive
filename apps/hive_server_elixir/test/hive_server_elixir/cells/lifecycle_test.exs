@@ -1,7 +1,8 @@
 defmodule HiveServerElixir.Cells.LifecycleTest do
-  use ExUnit.Case, async: false
+  use HiveServerElixir.DataCase, async: false
 
   alias HiveServerElixir.Cells.Lifecycle
+  alias HiveServerElixir.Opencode.AgentEventLog
   alias HiveServerElixir.Opencode.TestOperations
 
   @registry HiveServerElixir.Opencode.EventIngestRegistry
@@ -54,14 +55,93 @@ defmodule HiveServerElixir.Cells.LifecycleTest do
     assert :ok = Lifecycle.on_cell_delete(context)
   end
 
-  defp runtime_opts do
+  test "lifecycle hooks ingest and persist events across create and retry" do
+    context = %{workspace_id: "workspace-flow", cell_id: "cell-flow"}
+
+    queue_pid =
+      start_supervised!(
+        {Agent, fn -> [event_payload("session.idle"), event_payload("session.status")] end}
+      )
+
+    adapter_opts = queue_adapter_opts(self(), queue_pid)
+
+    assert {:ok, _pid} =
+             Lifecycle.on_cell_create(
+               context,
+               runtime_opts(adapter_opts,
+                 success_delay_ms: 30_000,
+                 error_delay_ms: 30_000
+               )
+             )
+
+    assert_receive {:persisted, {:ok, first}}
+    assert first.session_id == "session-lifecycle"
+    assert first.seq == 1
+    assert first.event_type == "session.idle"
+
+    assert {:ok, _pid} =
+             Lifecycle.on_cell_retry(
+               context,
+               runtime_opts(adapter_opts,
+                 success_delay_ms: 30_000,
+                 error_delay_ms: 30_000
+               )
+             )
+
+    assert_receive {:persisted, {:ok, second}}
+    assert second.session_id == "session-lifecycle"
+    assert second.seq == 2
+    assert second.event_type == "session.status"
+
+    assert [stored_first, stored_second] =
+             AgentEventLog.list_session_timeline("session-lifecycle")
+
+    assert stored_first.seq == 1
+    assert stored_second.seq == 2
+
+    assert :ok = Lifecycle.on_cell_delete(context)
+  end
+
+  defp runtime_opts(adapter_opts \\ nil, overrides \\ []) do
+    adapter_opts =
+      adapter_opts ||
+        [
+          operations_module: TestOperations,
+          global_event: fn _opts -> {:error, %{type: :transport, reason: :unreachable}} end
+        ]
+
     [
-      adapter_opts: [
-        operations_module: TestOperations,
-        global_event: fn _opts -> {:error, %{type: :transport, reason: :unreachable}} end
-      ],
+      adapter_opts: adapter_opts,
       success_delay_ms: 0,
       error_delay_ms: 30_000
     ]
+    |> Keyword.merge(overrides)
+  end
+
+  defp queue_adapter_opts(test_pid, queue_pid) do
+    [
+      operations_module: TestOperations,
+      global_event: fn _opts ->
+        Agent.get_and_update(queue_pid, fn
+          [next | rest] -> {{:ok, next}, rest}
+          [] -> {{:error, %{type: :transport, reason: :empty_queue}}, []}
+        end)
+      end,
+      persist_global_event: fn event, persist_context ->
+        result = AgentEventLog.append_global_event(event, persist_context)
+        send(test_pid, {:persisted, result})
+        result
+      end
+    ]
+  end
+
+  defp event_payload(type) do
+    %{
+      "directory" => "/tmp/project",
+      "payload" => %{
+        "type" => type,
+        "properties" => %{"sessionID" => "session-lifecycle"}
+      }
+    }
   end
 end

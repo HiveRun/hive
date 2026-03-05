@@ -112,6 +112,7 @@
 - 2026-03-05 - Added runtime coverage for start/duplicate/stop semantics and continuous persistence at `apps/hive_server_elixir/test/hive_server_elixir/opencode/event_ingest_runtime_test.exs`.
 - 2026-03-05 - Added lifecycle entrypoints for create/retry/resume/delete ingest control at `apps/hive_server_elixir/lib/hive_server_elixir/cells/lifecycle.ex`.
 - 2026-03-05 - Added lifecycle hook coverage for start/restart/idempotent stop semantics at `apps/hive_server_elixir/test/hive_server_elixir/cells/lifecycle_test.exs`.
+- 2026-03-05 - Added higher-level lifecycle integration coverage that verifies real event persistence across create -> retry restarts in `apps/hive_server_elixir/test/hive_server_elixir/cells/lifecycle_test.exs`.
 
 ### Step 4: Ash Resources + Reactor Flows
 
