@@ -3,7 +3,7 @@
 ## Execution Snapshot
 
 - Current Step: Step 5 - Realtime + terminal transport (in progress).
-- Next Action: extend this runtime-backed parity from SSE to websocket endpoints and connect service terminal streams to real service process supervisors.
+- Next Action: connect service terminal streams to real service process supervisors (replace in-memory service terminal runtime state).
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -214,6 +214,14 @@
 - 2026-03-05 - Added high-level verification for terminal lifecycle + projection behavior:
   - `apps/hive_server_elixir/test/hive_server_elixir/cells/terminal_events_test.exs`
   - `apps/hive_server_elixir/test/hive_server_elixir/opencode/event_ingest_runtime_test.exs`
+- 2026-03-05 - Added websocket terminal parity starter using Phoenix sockets/channels:
+  - Added socket endpoint and channel wiring in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/endpoint.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/terminal_socket.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/channels/terminal_channel.ex`
+  - Added channel-level terminal event coverage in:
+    - `apps/hive_server_elixir/test/support/channel_case.ex`
+    - `apps/hive_server_elixir/test/hive_server_elixir_web/channels/terminal_channel_test.exs`
 
 ### Step 6: Frontend Contract Migration (React)
 
