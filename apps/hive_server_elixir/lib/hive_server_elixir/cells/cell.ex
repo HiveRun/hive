@@ -15,27 +15,110 @@ defmodule HiveServerElixir.Cells.Cell do
 
     create :create do
       primary? true
-      accept [:workspace_id, :description, :status]
+
+      accept [
+        :workspace_id,
+        :name,
+        :description,
+        :template_id,
+        :workspace_root_path,
+        :workspace_path,
+        :opencode_session_id,
+        :resume_agent_session_on_startup,
+        :status,
+        :last_setup_error,
+        :branch_name,
+        :base_commit
+      ]
+
+      change fn changeset, _context ->
+        changeset
+        |> ensure_default_attribute(:workspace_root_path, ".")
+        |> ensure_default_attribute(:workspace_path, ".")
+      end
     end
 
     update :update do
       primary? true
-      accept [:description, :status]
+
+      accept [
+        :name,
+        :description,
+        :template_id,
+        :workspace_root_path,
+        :workspace_path,
+        :opencode_session_id,
+        :resume_agent_session_on_startup,
+        :status,
+        :last_setup_error,
+        :branch_name,
+        :base_commit
+      ]
     end
   end
 
   attributes do
     uuid_primary_key :id
 
+    attribute :name, :string do
+      allow_nil? false
+      public? true
+      default "Cell"
+    end
+
     attribute :description, :string do
       allow_nil? true
       public? true
+    end
+
+    attribute :template_id, :string do
+      allow_nil? false
+      public? true
+      default "default-template"
+    end
+
+    attribute :workspace_root_path, :string do
+      allow_nil? false
+      public? true
+      default "."
+    end
+
+    attribute :workspace_path, :string do
+      allow_nil? false
+      public? true
+      default "."
+    end
+
+    attribute :opencode_session_id, :string do
+      allow_nil? true
+      public? true
+    end
+
+    attribute :resume_agent_session_on_startup, :boolean do
+      allow_nil? false
+      public? true
+      default false
     end
 
     attribute :status, :string do
       allow_nil? false
       public? true
       default "provisioning"
+    end
+
+    attribute :last_setup_error, :string do
+      allow_nil? true
+      public? true
+    end
+
+    attribute :branch_name, :string do
+      allow_nil? true
+      public? true
+    end
+
+    attribute :base_commit, :string do
+      allow_nil? true
+      public? true
     end
 
     create_timestamp :inserted_at
@@ -67,6 +150,13 @@ defmodule HiveServerElixir.Cells.Cell do
 
     has_many :timing_events, HiveServerElixir.Cells.Timing do
       destination_attribute :cell_id
+    end
+  end
+
+  defp ensure_default_attribute(changeset, attribute, default_value) do
+    case Ash.Changeset.get_attribute(changeset, attribute) do
+      nil -> Ash.Changeset.force_change_attribute(changeset, attribute, default_value)
+      _value -> changeset
     end
   end
 end

@@ -11,20 +11,45 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
   alias HiveServerElixir.Cells.Reactors.Steps.StartIngestStep
 
   input(:workspace_id)
+  input(:name)
   input(:description)
+  input(:template_id)
+  input(:workspace_root_path)
+  input(:workspace_path)
   input(:runtime_opts)
   input(:fail_after_ingest)
 
   step :create_cell do
     argument(:workspace_id, input(:workspace_id))
+    argument(:name, input(:name))
     argument(:description, input(:description))
+    argument(:template_id, input(:template_id))
+    argument(:workspace_root_path, input(:workspace_root_path))
+    argument(:workspace_path, input(:workspace_path))
 
-    run(fn %{workspace_id: workspace_id, description: description}, _context ->
-      Ash.create(
-        Cell,
-        %{workspace_id: workspace_id, description: description, status: "provisioning"},
-        domain: Cells
-      )
+    run(fn
+      %{
+        workspace_id: workspace_id,
+        name: name,
+        description: description,
+        template_id: template_id,
+        workspace_root_path: workspace_root_path,
+        workspace_path: workspace_path
+      },
+      _context ->
+        Ash.create(
+          Cell,
+          %{
+            workspace_id: workspace_id,
+            name: name,
+            description: description,
+            template_id: template_id,
+            workspace_root_path: workspace_root_path,
+            workspace_path: workspace_path,
+            status: "provisioning"
+          },
+          domain: Cells
+        )
     end)
   end
 

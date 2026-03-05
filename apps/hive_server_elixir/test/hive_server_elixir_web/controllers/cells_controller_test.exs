@@ -44,7 +44,7 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
         "description" => "API create"
       })
 
-    assert %{"cell" => cell_payload} = json_response(conn, 201)
+    cell_payload = json_response(conn, 201)
     assert cell_payload["workspaceId"] == workspace.id
     assert cell_payload["status"] == "ready"
     assert is_binary(cell_payload["id"])
@@ -56,6 +56,34 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
           cell_id: cell_payload["id"]
         })
     end)
+  end
+
+  test "GET /api/cells lists non-deleting cells for a workspace", %{conn: conn} do
+    workspace = workspace!("index")
+    ready_cell = cell!(workspace.id, "index ready", "ready")
+    _deleting_cell = cell!(workspace.id, "index deleting", "deleting")
+
+    conn = get(conn, ~p"/api/cells?workspaceId=#{workspace.id}")
+
+    assert %{"cells" => cells} = json_response(conn, 200)
+    assert length(cells) == 1
+    assert hd(cells)["id"] == ready_cell.id
+    assert hd(cells)["name"] == "Cell"
+  end
+
+  test "GET /api/cells/:id returns cell detail payload", %{conn: conn} do
+    workspace = workspace!("show")
+    cell = cell!(workspace.id, "show detail", "ready")
+
+    conn = get(conn, ~p"/api/cells/#{cell.id}?includeSetupLog=false")
+
+    assert payload = json_response(conn, 200)
+    assert payload["id"] == cell.id
+    assert payload["workspaceId"] == workspace.id
+    assert payload["status"] == "ready"
+    assert payload["name"] == "Cell"
+    assert payload["templateId"] == "default-template"
+    assert payload["workspacePath"] == workspace.path
   end
 
   test "GET /api/cells/workspace/:id/stream emits ready, cell snapshot, and snapshot marker", %{
@@ -625,15 +653,15 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
     assert %{"error" => %{"code" => "chat_unavailable"}} = json_response(conn, 409)
   end
 
-  test "POST /api/cells returns 422 for unknown workspace", %{conn: conn} do
+  test "POST /api/cells returns 404 for unknown workspace", %{conn: conn} do
     conn =
       post(conn, ~p"/api/cells", %{
         "workspaceId" => UUID.generate(),
         "description" => "missing workspace"
       })
 
-    assert %{"error" => %{"code" => "lifecycle_failed", "message" => message}} =
-             json_response(conn, 422)
+    assert %{"error" => %{"code" => "not_found", "message" => message}} =
+             json_response(conn, 404)
 
     assert is_binary(message)
   end
@@ -663,10 +691,83 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
 
     conn = delete(conn, ~p"/api/cells/#{cell.id}")
 
-    assert %{"cell" => %{"id" => deleted_id}} = json_response(conn, 200)
-    assert deleted_id == cell.id
+    assert %{"message" => "Cell deleted successfully"} = json_response(conn, 200)
     assert [] = Registry.lookup(@registry, {workspace.id, cell.id})
     assert [] = list_cells_by_id(cell.id)
+  end
+
+  test "DELETE /api/cells returns deletedIds for bulk deletion", %{conn: conn} do
+    workspace = workspace!("delete-many")
+    cell_a = cell!(workspace.id, "delete many a", "ready")
+    cell_b = cell!(workspace.id, "delete many b", "ready")
+
+    conn = delete(conn, ~p"/api/cells", %{"ids" => [cell_a.id, cell_b.id]})
+
+    assert %{"deletedIds" => deleted_ids} = json_response(conn, 200)
+    assert Enum.sort(deleted_ids) == Enum.sort([cell_a.id, cell_b.id])
+  end
+
+  test "GET /api/cells/:id/activity returns paginated events", %{conn: conn} do
+    workspace = workspace!("activity")
+    cell = cell!(workspace.id, "activity cell", "ready")
+
+    assert {:ok, _first} =
+             Ash.create(Activity, %{cell_id: cell.id, type: "service.start", metadata: %{}},
+               domain: Cells
+             )
+
+    assert {:ok, _second} =
+             Ash.create(Activity, %{cell_id: cell.id, type: "service.stop", metadata: %{}},
+               domain: Cells
+             )
+
+    conn = get(conn, ~p"/api/cells/#{cell.id}/activity?limit=1")
+
+    assert %{"events" => events, "nextCursor" => next_cursor} = json_response(conn, 200)
+    assert length(events) == 1
+    assert is_binary(next_cursor)
+  end
+
+  test "GET /api/cells/:id/timings and /timings/global return run summaries", %{conn: conn} do
+    workspace = workspace!("timings")
+    cell = cell!(workspace.id, "timing cell", "ready")
+
+    assert {:ok, _timing} =
+             Ash.create(
+               Timing,
+               %{
+                 cell_id: cell.id,
+                 cell_name: "timing cell",
+                 workspace_id: workspace.id,
+                 template_id: "default-template",
+                 workflow: "create",
+                 run_id: "run-1",
+                 step: "ensure_services",
+                 status: "ok",
+                 duration_ms: 10,
+                 metadata: %{}
+               },
+               domain: Cells
+             )
+
+    conn = get(conn, ~p"/api/cells/#{cell.id}/timings")
+    assert %{"steps" => steps, "runs" => runs} = json_response(conn, 200)
+    assert length(steps) == 1
+    assert length(runs) == 1
+
+    conn = get(conn, ~p"/api/cells/timings/global?cellId=#{cell.id}")
+    assert %{"steps" => global_steps, "runs" => global_runs} = json_response(conn, 200)
+    assert length(global_steps) == 1
+    assert length(global_runs) == 1
+  end
+
+  test "GET /api/cells/:id/diff returns contract-compatible empty payload", %{conn: conn} do
+    workspace = workspace!("diff")
+    cell = cell!(workspace.id, "diff cell", "ready")
+
+    conn = get(conn, ~p"/api/cells/#{cell.id}/diff?mode=workspace")
+
+    assert %{"mode" => "workspace", "files" => []} = json_response(conn, 200)
   end
 
   test "GET /api/cells/:id/resources returns modeled resource snapshot", %{conn: conn} do
@@ -791,10 +892,21 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
   end
 
   defp cell!(workspace_id, description, status) do
+    workspace =
+      Workspace
+      |> Ash.Query.filter(expr(id == ^workspace_id))
+      |> Ash.read_one!(domain: Cells)
+
     assert {:ok, cell} =
              Ash.create(
                Cell,
-               %{workspace_id: workspace_id, description: description, status: status},
+               %{
+                 workspace_id: workspace_id,
+                 description: description,
+                 status: status,
+                 workspace_root_path: workspace.path,
+                 workspace_path: workspace.path
+               },
                domain: Cells
              )
 

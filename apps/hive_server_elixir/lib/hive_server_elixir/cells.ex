@@ -22,7 +22,14 @@ defmodule HiveServerElixir.Cells do
 
   @spec create_cell(map) :: {:ok, HiveServerElixir.Cells.Cell.t()} | {:error, term()}
   def create_cell(input) when is_map(input) do
-    Reactor.run(CreateCell, input)
+    prepared_input =
+      input
+      |> Map.put_new(:name, "Cell")
+      |> Map.put_new(:template_id, "default-template")
+      |> Map.put_new(:workspace_root_path, ".")
+      |> Map.put_new(:workspace_path, ".")
+
+    Reactor.run(CreateCell, prepared_input)
   end
 
   @spec retry_cell(map) :: {:ok, HiveServerElixir.Cells.Cell.t()} | {:error, term()}

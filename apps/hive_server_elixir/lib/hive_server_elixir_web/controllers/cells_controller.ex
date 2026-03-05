@@ -19,23 +19,75 @@ defmodule HiveServerElixirWeb.CellsController do
   alias HiveServerElixir.Cells.Workspace
   @service_stream_heartbeat_ms 15_000
 
+  def index(conn, params) do
+    workspace_id = read_param(params, "workspaceId", "workspace_id")
+
+    query =
+      Cell
+      |> Ash.Query.filter(expr(status != "deleting"))
+      |> maybe_filter_workspace(workspace_id)
+      |> Ash.Query.sort(inserted_at: :asc)
+
+    cells = Ash.read!(query, domain: Cells)
+    workspaces = preload_workspaces(cells)
+
+    payload =
+      Enum.map(cells, fn cell ->
+        serialize_cell(cell, %{
+          workspace: Map.get(workspaces, cell.workspace_id),
+          include_setup_log: false
+        })
+      end)
+
+    json(conn, %{cells: payload})
+  end
+
+  def show(conn, %{"id" => id} = params) do
+    include_setup_log = parse_boolean_param(Map.get(params, "includeSetupLog"), true)
+
+    case Ash.get(Cell, id, domain: Cells) do
+      {:ok, %Cell{status: "deleting"}} ->
+        conn
+        |> put_status(:not_found)
+        |> json(%{message: "Cell not found"})
+
+      {:ok, %Cell{} = cell} ->
+        workspace = fetch_workspace(cell.workspace_id)
+
+        json(
+          conn,
+          serialize_cell(cell, %{workspace: workspace, include_setup_log: include_setup_log})
+        )
+
+      {:error, error} ->
+        render_cell_error(conn, error)
+    end
+  end
+
   def create(conn, params) do
     workspace_id = read_param(params, "workspaceId", "workspace_id")
     description = read_param(params, "description")
+    name = normalize_cell_name(read_param(params, "name"), description)
+    template_id = normalize_template_id(read_param(params, "templateId", "template_id"))
 
     with :ok <- validate_workspace_id(workspace_id),
          :ok <- validate_description(description),
+         {:ok, workspace} <- Ash.get(Workspace, workspace_id, domain: Cells),
          {:ok, cell} <-
            Cells.create_cell(%{
              workspace_id: workspace_id,
+             name: name,
              description: description,
+             template_id: template_id,
+             workspace_root_path: workspace.path,
+             workspace_path: workspace.path,
              runtime_opts: runtime_opts(),
              fail_after_ingest: false
            }),
          :ok <- Events.publish_cell_status(cell.workspace_id, cell.id) do
       conn
       |> put_status(:created)
-      |> json(%{cell: serialize_cell(cell)})
+      |> json(serialize_cell(cell, %{workspace: workspace, include_setup_log: false}))
     else
       {:error, :invalid_workspace_id} ->
         bad_request(conn, "workspaceId is required")
@@ -52,7 +104,8 @@ defmodule HiveServerElixirWeb.CellsController do
     case Cells.retry_cell(%{cell_id: id, runtime_opts: runtime_opts(), fail_after_ingest: false}) do
       {:ok, cell} ->
         :ok = Events.publish_cell_status(cell.workspace_id, cell.id)
-        json(conn, %{cell: serialize_cell(cell)})
+        workspace = fetch_workspace(cell.workspace_id)
+        json(conn, serialize_cell(cell, %{workspace: workspace, include_setup_log: false}))
 
       {:error, error} ->
         render_cell_error(conn, error)
@@ -63,7 +116,8 @@ defmodule HiveServerElixirWeb.CellsController do
     case Cells.resume_cell(%{cell_id: id, runtime_opts: runtime_opts(), fail_after_ingest: false}) do
       {:ok, cell} ->
         :ok = Events.publish_cell_status(cell.workspace_id, cell.id)
-        json(conn, %{cell: serialize_cell(cell)})
+        workspace = fetch_workspace(cell.workspace_id)
+        json(conn, serialize_cell(cell, %{workspace: workspace, include_setup_log: false}))
 
       {:error, error} ->
         render_cell_error(conn, error)
@@ -74,10 +128,46 @@ defmodule HiveServerElixirWeb.CellsController do
     case Cells.delete_cell(%{cell_id: id, runtime_opts: runtime_opts(), fail_after_stop: false}) do
       {:ok, %Cell{} = cell} ->
         :ok = Events.publish_cell_removed(cell.workspace_id, cell.id)
-        json(conn, %{cell: serialize_cell(cell)})
+        json(conn, %{message: "Cell deleted successfully"})
 
       {:error, error} ->
         render_cell_error(conn, error)
+    end
+  end
+
+  def delete_many(conn, params) do
+    ids = Map.get(params, "ids")
+
+    if is_list(ids) do
+      deleted_ids =
+        ids
+        |> Enum.filter(&is_binary/1)
+        |> Enum.uniq()
+        |> Enum.reduce([], fn id, acc ->
+          case Cells.delete_cell(%{
+                 cell_id: id,
+                 runtime_opts: runtime_opts(),
+                 fail_after_stop: false
+               }) do
+            {:ok, %Cell{} = cell} ->
+              :ok = Events.publish_cell_removed(cell.workspace_id, cell.id)
+              [id | acc]
+
+            {:error, _error} ->
+              acc
+          end
+        end)
+        |> Enum.reverse()
+
+      if deleted_ids == [] do
+        conn
+        |> put_status(:not_found)
+        |> json(%{message: "No cells found for provided ids"})
+      else
+        json(conn, %{deletedIds: deleted_ids})
+      end
+    else
+      bad_request(conn, "ids must be a non-empty array")
     end
   end
 
@@ -629,13 +719,121 @@ defmodule HiveServerElixirWeb.CellsController do
     end
   end
 
+  def activity(conn, %{"id" => cell_id} = params) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells) do
+      limit = parse_activity_limit(Map.get(params, "limit"))
+      types = parse_activity_types(Map.get(params, "types"))
+      cursor = parse_activity_cursor(Map.get(params, "cursor"))
+
+      query =
+        Activity
+        |> Ash.Query.filter(expr(cell_id == ^cell_id))
+        |> maybe_filter_activity_types(types)
+        |> maybe_filter_activity_cursor(cursor)
+        |> Ash.Query.sort(inserted_at: :desc, id: :desc)
+        |> Ash.Query.limit(limit + 1)
+
+      events = Ash.read!(query, domain: Cells)
+
+      {page, next_cursor} =
+        if length(events) > limit do
+          sliced = Enum.take(events, limit)
+
+          cursor_value =
+            case List.last(sliced) do
+              nil -> nil
+              event -> encode_activity_cursor(event.inserted_at, event.id)
+            end
+
+          {sliced, cursor_value}
+        else
+          {events, nil}
+        end
+
+      json(conn, %{events: Enum.map(page, &serialize_activity/1), nextCursor: next_cursor})
+    else
+      {:error, error} ->
+        render_cell_error(conn, error)
+    end
+  end
+
+  def timings_global(conn, params) do
+    limit = parse_timing_limit(Map.get(params, "limit"))
+    workflow = parse_timing_workflow(Map.get(params, "workflow"))
+    run_id = Map.get(params, "runId")
+    workspace_id = Map.get(params, "workspaceId")
+    cell_id = Map.get(params, "cellId")
+
+    timings =
+      Timing
+      |> maybe_filter_timing_cell_id(cell_id)
+      |> maybe_filter_timing_workflow(workflow)
+      |> maybe_filter_timing_run_id(run_id)
+      |> maybe_filter_timing_workspace_id(workspace_id)
+      |> Ash.Query.sort(inserted_at: :desc, id: :desc)
+      |> Ash.Query.limit(1_000)
+      |> Ash.read!(domain: Cells)
+
+    payload_steps = timings |> Enum.take(limit) |> Enum.map(&serialize_timing/1)
+    payload_runs = build_timing_runs(timings)
+
+    json(conn, %{steps: payload_steps, runs: payload_runs})
+  end
+
+  def timings(conn, %{"id" => cell_id} = params) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells) do
+      limit = parse_timing_limit(Map.get(params, "limit"))
+      workflow = parse_timing_workflow(Map.get(params, "workflow"))
+      run_id = Map.get(params, "runId")
+
+      timings =
+        Timing
+        |> Ash.Query.filter(expr(cell_id == ^cell_id))
+        |> maybe_filter_timing_workflow(workflow)
+        |> maybe_filter_timing_run_id(run_id)
+        |> Ash.Query.sort(inserted_at: :desc, id: :desc)
+        |> Ash.Query.limit(1_000)
+        |> Ash.read!(domain: Cells)
+
+      payload_steps = timings |> Enum.take(limit) |> Enum.map(&serialize_timing/1)
+      payload_runs = build_timing_runs(timings)
+
+      json(conn, %{steps: payload_steps, runs: payload_runs})
+    else
+      {:error, error} ->
+        render_cell_error(conn, error)
+    end
+  end
+
+  def diff(conn, %{"id" => id} = params) do
+    with {:ok, _cell} <- Ash.get(Cell, id, domain: Cells) do
+      mode = parse_diff_mode(Map.get(params, "mode"))
+      summary = parse_diff_summary_mode(Map.get(params, "summary"))
+
+      payload =
+        %{
+          mode: mode,
+          baseCommit: nil,
+          headCommit: nil,
+          files: []
+        }
+        |> maybe_put_diff_details(summary)
+
+      json(conn, payload)
+    else
+      {:error, error} ->
+        render_cell_error(conn, error)
+    end
+  end
+
   def resources(conn, %{"id" => id}) do
     case Ash.get(Cell, id, domain: Cells) do
       {:ok, %Cell{} = cell} ->
         resources = resource_snapshot(cell.id)
+        workspace = fetch_workspace(cell.workspace_id)
 
         json(conn, %{
-          cell: serialize_cell(cell),
+          cell: serialize_cell(cell, %{workspace: workspace, include_setup_log: false}),
           resources: resources,
           failures: failure_states(cell, resources)
         })
@@ -659,15 +857,111 @@ defmodule HiveServerElixirWeb.CellsController do
   defp validate_description(description) when is_binary(description), do: :ok
   defp validate_description(_), do: {:error, :invalid_description}
 
-  defp serialize_cell(%Cell{} = cell) do
+  defp normalize_cell_name(name, _description) when is_binary(name) and byte_size(name) > 0,
+    do: name
+
+  defp normalize_cell_name(_name, description)
+       when is_binary(description) and byte_size(description) > 0,
+       do: description
+
+  defp normalize_cell_name(_name, _description), do: "Cell"
+
+  defp normalize_template_id(template_id)
+       when is_binary(template_id) and byte_size(template_id) > 0,
+       do: template_id
+
+  defp normalize_template_id(_template_id), do: "default-template"
+
+  defp fetch_workspace(workspace_id) when is_binary(workspace_id) do
+    case Ash.get(Workspace, workspace_id, domain: Cells) do
+      {:ok, workspace} -> workspace
+      {:error, _error} -> nil
+    end
+  end
+
+  defp fetch_workspace(_workspace_id), do: nil
+
+  defp preload_workspaces(cells) when is_list(cells) do
+    cells
+    |> Enum.map(& &1.workspace_id)
+    |> Enum.uniq()
+    |> Enum.reduce(%{}, fn workspace_id, acc ->
+      case fetch_workspace(workspace_id) do
+        nil -> acc
+        workspace -> Map.put(acc, workspace_id, workspace)
+      end
+    end)
+  end
+
+  defp parse_boolean_param(value, _default) when is_boolean(value), do: value
+  defp parse_boolean_param("true", _default), do: true
+  defp parse_boolean_param("1", _default), do: true
+  defp parse_boolean_param("false", _default), do: false
+  defp parse_boolean_param("0", _default), do: false
+  defp parse_boolean_param(_value, default), do: default
+
+  defp normalize_cell_status("provisioning"), do: "pending"
+  defp normalize_cell_status(status), do: status
+
+  defp serialize_cell(%Cell{} = cell, opts) do
+    workspace = Map.get(opts, :workspace)
+    include_setup_log = Map.get(opts, :include_setup_log, false)
+    workspace_path = if workspace && is_binary(workspace.path), do: workspace.path, else: ""
+    setup_payload = maybe_setup_log_payload(cell.id, include_setup_log)
+
     %{
       id: cell.id,
+      name: cell.name,
       workspaceId: cell.workspace_id,
       description: cell.description,
-      status: cell.status,
-      insertedAt: maybe_to_iso8601(cell.inserted_at),
+      templateId: cell.template_id,
+      workspaceRootPath: present_or_fallback(cell.workspace_root_path, workspace_path),
+      workspacePath: present_or_fallback(cell.workspace_path, workspace_path),
+      opencodeSessionId: cell.opencode_session_id,
+      opencodeCommand: build_opencode_command(cell.workspace_path, cell.opencode_session_id),
+      createdAt: maybe_to_iso8601(cell.inserted_at),
+      status: normalize_cell_status(cell.status),
+      lastSetupError: cell.last_setup_error,
+      branchName: cell.branch_name,
+      baseCommit: cell.base_commit,
       updatedAt: maybe_to_iso8601(cell.updated_at)
     }
+    |> Map.merge(setup_payload)
+    |> maybe_drop_nil("lastSetupError")
+    |> maybe_drop_nil("branchName")
+    |> maybe_drop_nil("baseCommit")
+  end
+
+  defp maybe_setup_log_payload(_cell_id, false), do: %{}
+
+  defp maybe_setup_log_payload(cell_id, true) do
+    output = TerminalRuntime.read_setup_output(cell_id)
+    setup_log = output |> Enum.join("") |> String.trim()
+
+    %{
+      setupLog: if(setup_log == "", do: nil, else: setup_log),
+      setupLogPath: nil
+    }
+  end
+
+  defp present_or_fallback(value, _fallback) when is_binary(value) and byte_size(value) > 0,
+    do: value
+
+  defp present_or_fallback(_value, fallback), do: fallback
+
+  defp build_opencode_command(workspace_path, session_id)
+       when is_binary(workspace_path) and workspace_path != "" and is_binary(session_id) and
+              session_id != "" do
+    "opencode \"" <> workspace_path <> "\" --session \"" <> session_id <> "\""
+  end
+
+  defp build_opencode_command(_workspace_path, _session_id), do: nil
+
+  defp maybe_drop_nil(map, key) do
+    case Map.get(map, key) do
+      nil -> Map.delete(map, key)
+      _value -> map
+    end
   end
 
   defp serialize_service(%Service{} = service) do
@@ -786,7 +1080,7 @@ defmodule HiveServerElixirWeb.CellsController do
       source: activity.source,
       toolName: activity.tool_name,
       metadata: activity.metadata,
-      insertedAt: maybe_to_iso8601(activity.inserted_at)
+      createdAt: maybe_to_iso8601(activity.inserted_at)
     }
   end
 
@@ -796,13 +1090,18 @@ defmodule HiveServerElixirWeb.CellsController do
     %{
       id: timing.id,
       cellId: timing.cell_id,
-      workflow: timing.workflow,
-      status: timing.status,
-      step: timing.step,
+      cellName: timing.cell_name,
+      workspaceId: timing.workspace_id,
+      templateId: timing.template_id,
       runId: timing.run_id,
+      workflow: timing.workflow,
+      step: timing.step,
+      status: timing.status,
+      attempt: timing.attempt,
       error: timing.error,
+      metadata: timing.metadata,
       durationMs: timing.duration_ms,
-      insertedAt: maybe_to_iso8601(timing.inserted_at)
+      createdAt: maybe_to_iso8601(timing.inserted_at)
     }
   end
 
@@ -856,6 +1155,164 @@ defmodule HiveServerElixirWeb.CellsController do
     end
   end
 
+  defp maybe_filter_workspace(query, workspace_id)
+       when is_binary(workspace_id) and byte_size(workspace_id) > 0 do
+    Ash.Query.filter(query, expr(workspace_id == ^workspace_id))
+  end
+
+  defp maybe_filter_workspace(query, _workspace_id), do: query
+
+  defp parse_activity_limit(value) when is_integer(value), do: clamp(value, 1, 200)
+
+  defp parse_activity_limit(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, ""} -> clamp(parsed, 1, 200)
+      _result -> 50
+    end
+  end
+
+  defp parse_activity_limit(_value), do: 50
+
+  defp parse_activity_types(value) when is_binary(value) do
+    types =
+      value
+      |> String.split(",")
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    if types == [], do: nil, else: types
+  end
+
+  defp parse_activity_types(_value), do: nil
+
+  defp parse_activity_cursor(nil), do: nil
+
+  defp parse_activity_cursor(value) when is_binary(value) do
+    case String.split(value, ":", parts: 2) do
+      [millis, id] when id != "" ->
+        with {parsed_millis, ""} <- Integer.parse(millis),
+             {:ok, datetime} <- DateTime.from_unix(parsed_millis, :millisecond) do
+          %{created_at: datetime, id: id}
+        else
+          _error -> nil
+        end
+
+      _other ->
+        nil
+    end
+  end
+
+  defp parse_activity_cursor(_value), do: nil
+
+  defp encode_activity_cursor(nil, _id), do: nil
+
+  defp encode_activity_cursor(datetime, id) do
+    Integer.to_string(DateTime.to_unix(datetime, :millisecond)) <> ":" <> id
+  end
+
+  defp maybe_filter_activity_types(query, nil), do: query
+  defp maybe_filter_activity_types(query, []), do: query
+
+  defp maybe_filter_activity_types(query, types) when is_list(types) do
+    Ash.Query.filter(query, expr(type in ^types))
+  end
+
+  defp maybe_filter_activity_cursor(query, nil), do: query
+
+  defp maybe_filter_activity_cursor(query, %{created_at: created_at, id: id}) do
+    Ash.Query.filter(
+      query,
+      expr(inserted_at < ^created_at or (inserted_at == ^created_at and id < ^id))
+    )
+  end
+
+  defp parse_timing_limit(value) when is_integer(value), do: clamp(value, 1, 1_000)
+
+  defp parse_timing_limit(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, ""} -> clamp(parsed, 1, 1_000)
+      _result -> 200
+    end
+  end
+
+  defp parse_timing_limit(_value), do: 200
+
+  defp parse_timing_workflow("create"), do: "create"
+  defp parse_timing_workflow("delete"), do: "delete"
+  defp parse_timing_workflow(_value), do: nil
+
+  defp maybe_filter_timing_workflow(query, nil), do: query
+
+  defp maybe_filter_timing_workflow(query, workflow) do
+    Ash.Query.filter(query, expr(workflow == ^workflow))
+  end
+
+  defp maybe_filter_timing_run_id(query, run_id)
+       when is_binary(run_id) and byte_size(run_id) > 0 do
+    Ash.Query.filter(query, expr(run_id == ^run_id))
+  end
+
+  defp maybe_filter_timing_run_id(query, _run_id), do: query
+
+  defp maybe_filter_timing_workspace_id(query, workspace_id)
+       when is_binary(workspace_id) and byte_size(workspace_id) > 0 do
+    Ash.Query.filter(query, expr(workspace_id == ^workspace_id))
+  end
+
+  defp maybe_filter_timing_workspace_id(query, _workspace_id), do: query
+
+  defp maybe_filter_timing_cell_id(query, cell_id)
+       when is_binary(cell_id) and byte_size(cell_id) > 0 do
+    Ash.Query.filter(query, expr(cell_id == ^cell_id))
+  end
+
+  defp maybe_filter_timing_cell_id(query, _cell_id), do: query
+
+  defp build_timing_runs(timings) when is_list(timings) do
+    timings
+    |> Enum.group_by(& &1.run_id)
+    |> Enum.map(fn {run_id, run_steps} ->
+      ordered = Enum.sort_by(run_steps, & &1.inserted_at, {:asc, DateTime})
+      first = List.first(ordered)
+      last = List.last(ordered)
+      total_step = Enum.find(ordered, &(&1.step == "total"))
+
+      total_duration_ms =
+        case total_step do
+          nil -> Enum.reduce(ordered, 0, fn step, acc -> acc + (step.duration_ms || 0) end)
+          step -> step.duration_ms || 0
+        end
+
+      status = if Enum.any?(ordered, &(&1.status == "error")), do: "error", else: "ok"
+      attempt = ordered |> Enum.find_value(fn step -> step.attempt end)
+
+      %{
+        runId: run_id,
+        cellId: first && first.cell_id,
+        cellName: first && first.cell_name,
+        workspaceId: first && first.workspace_id,
+        templateId: first && first.template_id,
+        workflow: first && first.workflow,
+        status: status,
+        startedAt: first && maybe_to_iso8601(first.inserted_at),
+        finishedAt: last && maybe_to_iso8601(last.inserted_at),
+        totalDurationMs: total_duration_ms,
+        stepCount: length(ordered),
+        attempt: attempt
+      }
+    end)
+    |> Enum.sort_by(& &1.finishedAt, {:desc, String})
+  end
+
+  defp parse_diff_mode("branch"), do: "branch"
+  defp parse_diff_mode(_value), do: "workspace"
+
+  defp parse_diff_summary_mode("none"), do: "none"
+  defp parse_diff_summary_mode(_value), do: "full"
+
+  defp maybe_put_diff_details(payload, "none"), do: payload
+  defp maybe_put_diff_details(payload, _summary), do: Map.put(payload, :details, [])
+
   defp failure_states(cell, resources) do
     []
     |> maybe_add_failure(cell.status == "error" and is_nil(resources.provisioning), %{
@@ -906,8 +1363,12 @@ defmodule HiveServerElixirWeb.CellsController do
     |> Ash.read(domain: Cells)
     |> case do
       {:ok, cells} ->
+        workspaces = preload_workspaces(cells)
+
         Enum.reduce_while(cells, {:ok, conn}, fn cell, {:ok, stream_conn} ->
-          case send_sse(stream_conn, "cell", serialize_cell(cell)) do
+          payload = serialize_cell(cell, %{workspace: Map.get(workspaces, cell.workspace_id)})
+
+          case send_sse(stream_conn, "cell", payload) do
             {:ok, next_conn} -> {:cont, {:ok, next_conn}}
             {:error, reason} -> {:halt, {:error, reason}}
           end
@@ -923,7 +1384,9 @@ defmodule HiveServerElixirWeb.CellsController do
       {:cell_status, %{workspace_id: ^workspace_id, cell_id: cell_id}} ->
         case Ash.get(Cell, cell_id, domain: Cells) do
           {:ok, cell} ->
-            case send_sse(conn, "cell", serialize_cell(cell)) do
+            workspace = fetch_workspace(cell.workspace_id)
+
+            case send_sse(conn, "cell", serialize_cell(cell, %{workspace: workspace})) do
               {:ok, next_conn} ->
                 stream_workspace_events(next_conn, workspace_id, idle_timeout_ms)
 

@@ -3,7 +3,7 @@
 ## Execution Snapshot
 
 - Current Step: Step 6 - Frontend contract migration (in progress).
-- Next Action: migrate web query factories to Elixir-owned cell list/detail/activity/timing/diff contracts now that service stream + bulk lifecycle parity routes are available.
+- Next Action: switch web query factories/hooks to the new Elixir cell contracts (`/api/cells`, `/api/cells/:id`, `/api/cells/:id/activity`, `/api/cells/:id/timings`, `/api/cells/timings/global`, `/api/cells/:id/diff`) and remove Eden-only assumptions.
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -277,6 +277,26 @@
   - Web app runs fully against Elixir backend.
   - No frontend imports from `@hive/server`.
 
+### Step 6 Verification Evidence (In Progress)
+
+- 2026-03-05 - Added core cell query contract routes used by existing React query factories:
+  - `GET /api/cells` (workspace-scoped list)
+  - `GET /api/cells/:id` (detail + optional setup log)
+  - `GET /api/cells/:id/activity` (cursor/limit/types pagination)
+  - `GET /api/cells/:id/timings` and `GET /api/cells/timings/global` (step/run summaries)
+  - `GET /api/cells/:id/diff` (contract-compatible diff payload scaffold)
+  - `DELETE /api/cells` (bulk deletion response with `deletedIds`)
+  - Routes and handlers in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+- 2026-03-05 - Expanded cell API serialization contract parity for list/detail payloads (`name`, `templateId`, workspace paths, opencode fields, lifecycle metadata) in:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/cell.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/create_cell.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells.ex`
+  - `apps/hive_server_elixir/priv/repo/migrations/20260305230000_add_cell_contract_fields.exs`
+- 2026-03-05 - Added high-level API coverage for the new list/detail/activity/timings/diff/bulk-delete contracts in:
+  - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
+
 ### Step 7: CLI, E2E, Desktop Runtime Cutover
 
 - Update CLI runtime start/stop to launch Elixir backend.
@@ -351,3 +371,4 @@
 - 2026-03-05 - Added Reactor-backed cell lifecycle variants (create/retry/resume/delete), wired domain entrypoints, and expanded high-level compensation tests.
 - 2026-03-05 - Exposed Reactor-backed cell lifecycle flows via Phoenix API endpoints and added API-level failure-state assertions.
 - 2026-03-05 - Added Elixir service stream + bulk service lifecycle parity endpoints to unblock Step 6 frontend contract migration work.
+- 2026-03-05 - Added core Elixir cell query contracts (list/detail/activity/timings/diff/bulk-delete) and expanded cell payload fields for Step 6 frontend migration readiness.
