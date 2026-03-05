@@ -44,13 +44,19 @@ defmodule HiveServerElixir.Opencode.EventIngestRuntimeTest do
                context,
                adapter_opts: adapter_opts,
                success_delay_ms: 0,
-               error_delay_ms: 30_000
+               error_delay_ms: 30_000,
+               project_global_event: fn _context, event ->
+                 send(test_pid, {:projected, event["payload"]["type"]})
+                 :ok
+               end
              )
 
     assert_receive {:fetched, "session.idle"}
     assert_receive {:persisted, {:ok, _entry}}
+    assert_receive {:projected, "session.idle"}
     assert_receive {:fetched, "session.status"}
     assert_receive {:persisted, {:ok, _entry}}
+    assert_receive {:projected, "session.status"}
 
     assert :ok = EventIngestRuntime.stop_stream(context)
 

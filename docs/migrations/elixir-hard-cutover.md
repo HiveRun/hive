@@ -3,7 +3,7 @@
 ## Execution Snapshot
 
 - Current Step: Step 5 - Realtime + terminal transport (in progress).
-- Next Action: wire terminal runtime events from real lifecycle/service supervisors into new setup/service/chat transport endpoints.
+- Next Action: extend this runtime-backed parity from SSE to websocket endpoints and connect service terminal streams to real service process supervisors.
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -203,6 +203,17 @@
   - `apps/hive_server_elixir/lib/hive_server_elixir/cells/events.ex`
   - `apps/hive_server_elixir/test/hive_server_elixir/cells/events_test.exs`
   - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
+- 2026-03-05 - Wired setup terminal lifecycle events to runtime lifecycle hooks so create/retry/resume/delete paths now emit setup/chat stream state transitions:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/lifecycle.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/terminal_events.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/terminal_runtime.ex`
+- 2026-03-05 - Connected OpenCode ingest worker events to chat terminal stream projections (message deltas/updates, session errors, PTY exits):
+  - `apps/hive_server_elixir/lib/hive_server_elixir/opencode/event_ingest_runtime.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/opencode/event_ingest_worker.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/terminal_events.ex`
+- 2026-03-05 - Added high-level verification for terminal lifecycle + projection behavior:
+  - `apps/hive_server_elixir/test/hive_server_elixir/cells/terminal_events_test.exs`
+  - `apps/hive_server_elixir/test/hive_server_elixir/opencode/event_ingest_runtime_test.exs`
 
 ### Step 6: Frontend Contract Migration (React)
 

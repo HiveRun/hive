@@ -7,6 +7,7 @@ defmodule HiveServerElixir.Cells.Reactors.ResumeCell do
 
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
+  alias HiveServerElixir.Cells.TerminalEvents
   alias HiveServerElixir.Cells.Reactors.Steps.ResumeIngestStep
 
   input(:cell_id)
@@ -36,10 +37,17 @@ defmodule HiveServerElixir.Cells.Reactors.ResumeCell do
 
   step :after_ingest_check do
     argument(:_started, result(:restart_ingest))
+    argument(:cell, result(:load_cell))
     argument(:fail_after_ingest, input(:fail_after_ingest))
 
-    run(fn %{fail_after_ingest: fail_after_ingest}, _context ->
+    run(fn %{cell: cell, fail_after_ingest: fail_after_ingest}, _context ->
       if fail_after_ingest do
+        :ok =
+          TerminalEvents.on_cell_error(
+            %{workspace_id: cell.workspace_id, cell_id: cell.id},
+            "forced_failure_after_ingest"
+          )
+
         {:error, :forced_failure_after_ingest}
       else
         {:ok, :ok}
@@ -52,7 +60,19 @@ defmodule HiveServerElixir.Cells.Reactors.ResumeCell do
     argument(:_check, result(:after_ingest_check))
 
     run(fn %{cell: cell}, _context ->
-      Ash.update(cell, %{status: "ready"}, domain: Cells)
+      case Ash.update(cell, %{status: "ready"}, domain: Cells) do
+        {:ok, updated_cell} ->
+          :ok =
+            TerminalEvents.on_cell_ready(%{
+              workspace_id: updated_cell.workspace_id,
+              cell_id: updated_cell.id
+            })
+
+          {:ok, updated_cell}
+
+        {:error, error} ->
+          {:error, error}
+      end
     end)
   end
 

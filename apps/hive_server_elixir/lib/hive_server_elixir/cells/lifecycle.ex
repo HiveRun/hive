@@ -4,10 +4,19 @@ defmodule HiveServerElixir.Cells.Lifecycle do
   """
 
   alias HiveServerElixir.Opencode.EventIngestRuntime
+  alias HiveServerElixir.Cells.TerminalEvents
 
   @spec on_cell_create(map, keyword) :: DynamicSupervisor.on_start_child()
   def on_cell_create(context, opts \\ []) when is_map(context) do
-    EventIngestRuntime.start_stream(context, opts)
+    case EventIngestRuntime.start_stream(context, opts) do
+      {:ok, _pid} = result ->
+        :ok = TerminalEvents.on_cell_started(context)
+        result
+
+      {:error, reason} = error ->
+        :ok = TerminalEvents.on_cell_error(context, inspect(reason))
+        error
+    end
   end
 
   @spec on_cell_retry(map, keyword) :: DynamicSupervisor.on_start_child()
@@ -22,10 +31,14 @@ defmodule HiveServerElixir.Cells.Lifecycle do
 
   @spec on_cell_delete(map) :: :ok
   def on_cell_delete(context) when is_map(context) do
-    case EventIngestRuntime.stop_stream(context) do
-      :ok -> :ok
-      {:error, :not_found} -> :ok
-    end
+    result =
+      case EventIngestRuntime.stop_stream(context) do
+        :ok -> :ok
+        {:error, :not_found} -> :ok
+      end
+
+    :ok = TerminalEvents.on_cell_stopped(context)
+    result
   end
 
   defp restart_stream(context, opts) do

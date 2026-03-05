@@ -4,6 +4,7 @@ defmodule HiveServerElixir.Opencode.EventIngestRuntime do
   """
 
   alias HiveServerElixir.Opencode.EventIngestWorker
+  alias HiveServerElixir.Cells.TerminalEvents
 
   @registry HiveServerElixir.Opencode.EventIngestRegistry
   @supervisor HiveServerElixir.Opencode.EventIngestSupervisor
@@ -17,7 +18,9 @@ defmodule HiveServerElixir.Opencode.EventIngestRuntime do
       context: normalized_context,
       adapter_opts: Keyword.get(opts, :adapter_opts, []),
       success_delay_ms: Keyword.get(opts, :success_delay_ms, 0),
-      error_delay_ms: Keyword.get(opts, :error_delay_ms, 1_000)
+      error_delay_ms: Keyword.get(opts, :error_delay_ms, 1_000),
+      project_global_event:
+        Keyword.get(opts, :project_global_event, &TerminalEvents.project_opencode_event/2)
     ]
 
     DynamicSupervisor.start_child(@supervisor, {EventIngestWorker, worker_opts})

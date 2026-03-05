@@ -11,7 +11,8 @@ defmodule HiveServerElixir.Opencode.EventIngestWorker do
           context: map,
           adapter_opts: keyword,
           success_delay_ms: non_neg_integer,
-          error_delay_ms: non_neg_integer
+          error_delay_ms: non_neg_integer,
+          project_global_event: (map, map -> :ok)
         }
 
   @spec start_link(keyword) :: GenServer.on_start()
@@ -26,7 +27,9 @@ defmodule HiveServerElixir.Opencode.EventIngestWorker do
       context: Keyword.fetch!(opts, :context),
       adapter_opts: Keyword.get(opts, :adapter_opts, []),
       success_delay_ms: Keyword.get(opts, :success_delay_ms, 0),
-      error_delay_ms: Keyword.get(opts, :error_delay_ms, 1_000)
+      error_delay_ms: Keyword.get(opts, :error_delay_ms, 1_000),
+      project_global_event:
+        Keyword.get(opts, :project_global_event, fn _context, _event -> :ok end)
     }
 
     send(self(), :ingest)
@@ -37,7 +40,8 @@ defmodule HiveServerElixir.Opencode.EventIngestWorker do
   def handle_info(:ingest, state) do
     delay_ms =
       case EventIngest.ingest_next(state.context, state.adapter_opts) do
-        {:ok, _event} ->
+        {:ok, event} ->
+          safe_project_event(state.project_global_event, state.context, event)
           state.success_delay_ms
 
         {:error, error} ->
@@ -51,4 +55,12 @@ defmodule HiveServerElixir.Opencode.EventIngestWorker do
 
   defp schedule_ingest(0), do: send(self(), :ingest)
   defp schedule_ingest(delay_ms), do: Process.send_after(self(), :ingest, delay_ms)
+
+  defp safe_project_event(project_global_event, context, event)
+       when is_function(project_global_event, 2) do
+    project_global_event.(context, event)
+  rescue
+    error ->
+      Logger.warning("OpenCode event projection failed: #{Exception.message(error)}")
+  end
 end

@@ -55,15 +55,31 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
     GenServer.call(__MODULE__, {:write_setup_input, cell_id, chunk})
   end
 
+  @spec append_setup_output(String.t(), String.t()) :: :ok
+  def append_setup_output(cell_id, chunk) when is_binary(cell_id) and is_binary(chunk) do
+    GenServer.call(__MODULE__, {:append_setup_output, cell_id, chunk})
+  end
+
   @spec write_service_input(String.t(), String.t(), String.t()) :: :ok
   def write_service_input(cell_id, service_id, chunk)
       when is_binary(cell_id) and is_binary(service_id) and is_binary(chunk) do
     GenServer.call(__MODULE__, {:write_service_input, cell_id, service_id, chunk})
   end
 
+  @spec append_service_output(String.t(), String.t(), String.t()) :: :ok
+  def append_service_output(cell_id, service_id, chunk)
+      when is_binary(cell_id) and is_binary(service_id) and is_binary(chunk) do
+    GenServer.call(__MODULE__, {:append_service_output, cell_id, service_id, chunk})
+  end
+
   @spec write_chat_input(String.t(), String.t()) :: :ok
   def write_chat_input(cell_id, chunk) when is_binary(cell_id) and is_binary(chunk) do
     GenServer.call(__MODULE__, {:write_chat_input, cell_id, chunk})
+  end
+
+  @spec append_chat_output(String.t(), String.t()) :: :ok
+  def append_chat_output(cell_id, chunk) when is_binary(cell_id) and is_binary(chunk) do
+    GenServer.call(__MODULE__, {:append_chat_output, cell_id, chunk})
   end
 
   @spec resize_setup_session(String.t(), pos_integer(), pos_integer()) :: session()
@@ -88,6 +104,11 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
   @spec restart_chat_session(String.t()) :: session()
   def restart_chat_session(cell_id) when is_binary(cell_id) do
     GenServer.call(__MODULE__, {:restart_chat_session, cell_id})
+  end
+
+  @spec clear_cell(String.t()) :: :ok
+  def clear_cell(cell_id) when is_binary(cell_id) do
+    GenServer.call(__MODULE__, {:clear_cell, cell_id})
   end
 
   @impl true
@@ -127,11 +148,23 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
     {:reply, :ok, append_output(state, {:setup, cell_id}, chunk)}
   end
 
+  def handle_call({:append_setup_output, cell_id, chunk}, _from, state) do
+    {:reply, :ok, append_output(state, {:setup, cell_id}, chunk)}
+  end
+
   def handle_call({:write_service_input, cell_id, service_id, chunk}, _from, state) do
     {:reply, :ok, append_output(state, {:service, cell_id, service_id}, chunk)}
   end
 
+  def handle_call({:append_service_output, cell_id, service_id, chunk}, _from, state) do
+    {:reply, :ok, append_output(state, {:service, cell_id, service_id}, chunk)}
+  end
+
   def handle_call({:write_chat_input, cell_id, chunk}, _from, state) do
+    {:reply, :ok, append_output(state, {:chat, cell_id}, chunk)}
+  end
+
+  def handle_call({:append_chat_output, cell_id, chunk}, _from, state) do
     {:reply, :ok, append_output(state, {:chat, cell_id}, chunk)}
   end
 
@@ -163,6 +196,20 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
       |> put_output(key, [])
 
     {:reply, session, next_state}
+  end
+
+  def handle_call({:clear_cell, cell_id}, _from, state) do
+    sessions =
+      state.sessions
+      |> Enum.reject(fn {key, _session} -> key_matches_cell?(key, cell_id) end)
+      |> Map.new()
+
+    output =
+      state.output
+      |> Enum.reject(fn {key, _chunks} -> key_matches_cell?(key, cell_id) end)
+      |> Map.new()
+
+    {:reply, :ok, %{state | sessions: sessions, output: output}}
   end
 
   defp ensure_session(state, key, prefix, cols \\ @default_cols, rows \\ @default_rows) do
@@ -206,4 +253,12 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
       startedAt: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
     }
   end
+
+  defp key_matches_cell?({:setup, key_cell_id}, cell_id), do: key_cell_id == cell_id
+  defp key_matches_cell?({:chat, key_cell_id}, cell_id), do: key_cell_id == cell_id
+
+  defp key_matches_cell?({:service, key_cell_id, _service_id}, cell_id),
+    do: key_cell_id == cell_id
+
+  defp key_matches_cell?(_key, _cell_id), do: false
 end
