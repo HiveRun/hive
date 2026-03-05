@@ -3,7 +3,7 @@
 ## Execution Snapshot
 
 - Current Step: Step 4 - Ash resources + Reactor flows (in progress).
-- Next Action: define initial Ash cell/workspace resources and call lifecycle ingest hooks from Reactor create/retry/resume/delete orchestration.
+- Next Action: wire new Reactor-backed cell flows into Phoenix/Ash API surfaces and expand failure-state assertions for downstream consumers.
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -127,6 +127,22 @@
 - 2026-03-05 - Added first Reactor orchestration scaffold with compensation for ingest startup at `apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/ensure_ingest_running.ex`.
 - 2026-03-05 - Added Reactor step module with undo rollback to stop ingest workers at `apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/steps/start_ingest_step.ex`.
 - 2026-03-05 - Added higher-level Reactor workflow tests validating success path and compensation rollback at `apps/hive_server_elixir/test/hive_server_elixir/cells/reactors/ensure_ingest_running_test.exs`.
+- 2026-03-05 - Added initial Ash Cells domain/resources and migration:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/workspace.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/cell.ex`
+  - `apps/hive_server_elixir/priv/repo/migrations/20260305200000_create_workspaces_and_cells.exs`
+- 2026-03-05 - Added `CreateCell` Reactor flow that creates a cell record, starts ingest, and rolls back ingest on downstream failure at `apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/create_cell.ex`.
+- 2026-03-05 - Added high-level `CreateCell` Reactor integration tests (success + compensation rollback) at `apps/hive_server_elixir/test/hive_server_elixir/cells/reactors/create_cell_test.exs`.
+- 2026-03-05 - Wired Reactor flows into domain runtime entrypoints (`create_cell/retry_cell/resume_cell/delete_cell`) at `apps/hive_server_elixir/lib/hive_server_elixir/cells.ex`.
+- 2026-03-05 - Added `RetryCell`, `ResumeCell`, and `DeleteCell` Reactor flows with compensation-aware ingest step modules:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/retry_cell.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/resume_cell.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/delete_cell.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/steps/retry_ingest_step.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/steps/resume_ingest_step.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/steps/stop_ingest_step.ex`
+- 2026-03-05 - Added high-level lifecycle Reactor coverage for retry/resume/delete paths (including compensation rollback assertions) at `apps/hive_server_elixir/test/hive_server_elixir/cells/reactors/cell_lifecycle_reactors_test.exs`.
 
 ### Step 5: Realtime + Terminal Transport
 
@@ -216,3 +232,4 @@
 - 2026-03-05 - Added OpenCode ingest persistence hooks in adapter and introduced continuous ingest runtime/worker with tests.
 - 2026-03-05 - Added cell lifecycle ingest hooks (`on_cell_create/retry/resume/delete`) and tests ahead of Reactor flow integration.
 - 2026-03-05 - Added higher-level lifecycle ingest integration tests and started Step 4 with a Reactor scaffold + compensation rollback tests.
+- 2026-03-05 - Added Reactor-backed cell lifecycle variants (create/retry/resume/delete), wired domain entrypoints, and expanded high-level compensation tests.

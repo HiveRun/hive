@@ -69,7 +69,7 @@ config :spark,
 config :hive_server_elixir,
   ecto_repos: [HiveServerElixir.Repo],
   generators: [timestamp_type: :utc_datetime],
-  ash_domains: [HiveServerElixir.Opencode]
+  ash_domains: [HiveServerElixir.Opencode, HiveServerElixir.Cells]
 
 # Configure the endpoint
 config :hive_server_elixir, HiveServerElixirWeb.Endpoint,
