@@ -52,7 +52,11 @@ defmodule HiveServerElixir.Cells.Reactors.DeleteCell do
     argument(:_check, result(:after_stop_check))
 
     run(fn %{cell: cell}, _context ->
-      Ash.destroy(cell, domain: Cells)
+      case Ash.destroy(cell, domain: Cells) do
+        :ok -> {:ok, cell}
+        {:ok, destroyed_cell} -> {:ok, destroyed_cell}
+        {:error, reason} -> {:error, reason}
+      end
     end)
   end
 

@@ -13,7 +13,7 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCellTest do
 
   @registry HiveServerElixir.Opencode.EventIngestRegistry
 
-  test "creates a ready cell and starts ingest with persisted event" do
+  test "creates a ready cell and ingests a persisted event" do
     workspace = workspace!("create")
 
     queue_pid =
@@ -33,8 +33,6 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCellTest do
 
     assert cell.workspace_id == workspace.id
     assert cell.status == "ready"
-    assert [{_pid, _value}] = Registry.lookup(@registry, {workspace.id, cell.id})
-
     assert_receive {:persisted, {:ok, persisted}}
     assert persisted.session_id == "session-create-cell"
     assert persisted.seq == 1

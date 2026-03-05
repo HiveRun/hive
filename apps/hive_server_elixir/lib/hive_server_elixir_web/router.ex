@@ -4,24 +4,28 @@ defmodule HiveServerElixirWeb.Router do
   import Oban.Web.Router
 
   pipeline :browser do
-    plug :accepts, ["html"]
-    plug :fetch_session
-    plug :fetch_live_flash
-    plug :put_root_layout, html: {HiveServerElixirWeb.Layouts, :root}
-    plug :protect_from_forgery
-    plug :put_secure_browser_headers
+    plug(:accepts, ["html"])
+    plug(:fetch_session)
+    plug(:fetch_live_flash)
+    plug(:put_root_layout, html: {HiveServerElixirWeb.Layouts, :root})
+    plug(:protect_from_forgery)
+    plug(:put_secure_browser_headers)
   end
 
   pipeline :api do
-    plug :accepts, ["json"]
+    plug(:accepts, ["json"])
   end
 
   scope "/", HiveServerElixirWeb do
-    pipe_through :api
+    pipe_through(:api)
 
-    get "/health", HealthController, :show
-    post "/rpc/run", AshTypescriptRpcController, :run
-    post "/rpc/validate", AshTypescriptRpcController, :validate
+    get("/health", HealthController, :show)
+    post("/api/cells", CellsController, :create)
+    post("/api/cells/:id/setup/retry", CellsController, :retry)
+    post("/api/cells/:id/setup/resume", CellsController, :resume)
+    delete("/api/cells/:id", CellsController, :delete)
+    post("/rpc/run", AshTypescriptRpcController, :run)
+    post("/rpc/validate", AshTypescriptRpcController, :validate)
   end
 
   # Other scopes may use custom stacks.
@@ -39,14 +43,14 @@ defmodule HiveServerElixirWeb.Router do
     import Phoenix.LiveDashboard.Router
 
     scope "/dev" do
-      pipe_through :browser
+      pipe_through(:browser)
 
-      live_dashboard "/dashboard", metrics: HiveServerElixirWeb.Telemetry
-      forward "/mailbox", Plug.Swoosh.MailboxPreview
+      live_dashboard("/dashboard", metrics: HiveServerElixirWeb.Telemetry)
+      forward("/mailbox", Plug.Swoosh.MailboxPreview)
     end
 
     scope "/" do
-      pipe_through :browser
+      pipe_through(:browser)
 
       oban_dashboard("/oban")
     end

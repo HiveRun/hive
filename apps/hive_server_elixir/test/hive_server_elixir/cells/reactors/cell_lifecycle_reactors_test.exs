@@ -61,6 +61,16 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
              })
 
     assert :ok = Lifecycle.on_cell_delete(context)
+
+    case Registry.lookup(@registry, {workspace.id, cell.id}) do
+      [] ->
+        :ok
+
+      [{pid, _value}] ->
+        ref = Process.monitor(pid)
+        assert_receive {:DOWN, ^ref, :process, ^pid, _reason}
+    end
+
     assert [] = Registry.lookup(@registry, {workspace.id, cell.id})
   end
 

@@ -3,7 +3,7 @@
 ## Execution Snapshot
 
 - Current Step: Step 4 - Ash resources + Reactor flows (in progress).
-- Next Action: wire new Reactor-backed cell flows into Phoenix/Ash API surfaces and expand failure-state assertions for downstream consumers.
+- Next Action: model remaining Step 4 Ash resources (`provisioning`, `service`, `agent session`, `activity`, `timing`) and expose their failure states through API contracts.
 - Blockers: none.
 
 ## Step 1 Scaffold Baseline (Approved)
@@ -143,6 +143,10 @@
   - `apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/steps/resume_ingest_step.ex`
   - `apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/steps/stop_ingest_step.ex`
 - 2026-03-05 - Added high-level lifecycle Reactor coverage for retry/resume/delete paths (including compensation rollback assertions) at `apps/hive_server_elixir/test/hive_server_elixir/cells/reactors/cell_lifecycle_reactors_test.exs`.
+- 2026-03-05 - Wired Reactor-backed cell lifecycle flows into Phoenix API routes/controller:
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+- 2026-03-05 - Added API-level failure-state coverage (invalid id, missing resource, lifecycle failure payloads, and delete cleanup) at `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`.
 
 ### Step 5: Realtime + Terminal Transport
 
@@ -233,3 +237,4 @@
 - 2026-03-05 - Added cell lifecycle ingest hooks (`on_cell_create/retry/resume/delete`) and tests ahead of Reactor flow integration.
 - 2026-03-05 - Added higher-level lifecycle ingest integration tests and started Step 4 with a Reactor scaffold + compensation rollback tests.
 - 2026-03-05 - Added Reactor-backed cell lifecycle variants (create/retry/resume/delete), wired domain entrypoints, and expanded high-level compensation tests.
+- 2026-03-05 - Exposed Reactor-backed cell lifecycle flows via Phoenix API endpoints and added API-level failure-state assertions.
