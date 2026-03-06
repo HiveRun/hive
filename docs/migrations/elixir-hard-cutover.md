@@ -316,6 +316,28 @@
 - 2026-03-05 - Added template route parity (`/api/templates`, `/api/templates/:id`) with workspace resolution, `hive.config.json` loading, defaults/startMode shaping, and optional OpenCode agent defaults in:
   - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/templates_controller.ex`
   - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/templates_controller_test.exs`
+- 2026-03-06 - Added agent/model query route parity used by frontend session and model selectors:
+  - `GET /api/agents/models` (workspace-scoped provider catalog + defaults)
+  - `GET /api/agents/sessions/:id/models` (session-scoped provider catalog)
+  - `GET /api/agents/sessions/byCell/:cellId` (cell-scoped session payload)
+  - Routes, contract shaping, and workspace/session resolution in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir/agents.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/agents_controller.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`
+  - Added high-level API coverage (success + error payloads) in:
+    - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/agents_controller_test.exs`
+    - `apps/hive_server_elixir/test/support/opencode_test_client.ex`
+- 2026-03-06 - Expanded agent session route parity for monitor + E2E contracts:
+  - `GET /api/agents/sessions/:id/messages` (normalized message list)
+  - `GET /api/agents/sessions/:id/events` (SSE status/mode/input_required + heartbeat)
+  - Added session fallback behavior when `cell_agent_sessions` rows are missing by resolving session IDs from OpenCode event log / cell contract fields.
+  - Implementation in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir/agents.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/agents_controller.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`
+  - Added high-level API coverage in:
+    - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/agents_controller_test.exs`
+    - `apps/hive_server_elixir/test/support/opencode_test_client.ex`
 
 ### Step 7: CLI, E2E, Desktop Runtime Cutover
 
@@ -325,6 +347,9 @@
   - `bun run test:e2e` passes.
   - `bun run test:e2e:desktop` passes.
   - `hive` CLI daemon lifecycle works end-to-end.
+- Prep audit (2026-03-06): both E2E runners still boot the legacy TypeScript server process (`apps/server`) and need explicit cutover wiring to `apps/hive_server_elixir` runtime:
+  - `apps/e2e/src/runtime/e2e-runner.ts`
+  - `apps/e2e-desktop/src/runtime/desktop-e2e-runner.ts`
 
 ### Step 8: Packaging, Installer, CI
 
@@ -396,3 +421,5 @@
 - 2026-03-05 - Added Elixir resource summary contract payloads (`/api/cells/:id/resources`) with optional history/averages/rollups fields to unblock global resources UI parity.
 - 2026-03-05 - Added Elixir service payload resource keys for `includeResources=true` so service dashboards can consume resource metadata without frontend fallbacks.
 - 2026-03-05 - Added Elixir workspace + template API parity routes so frontend workspace management and template loading can run against the cutover backend without TS fallbacks.
+- 2026-03-06 - Added Elixir `/api/agents/models`, `/api/agents/sessions/:id/models`, and `/api/agents/sessions/byCell/:cellId` parity routes so frontend model/session queries can run against the cutover backend without TS fallbacks.
+- 2026-03-06 - Added Elixir `/api/agents/sessions/:id/messages` and `/api/agents/sessions/:id/events` parity routes, plus session-id fallback resolution from persisted OpenCode event logs when explicit agent-session rows are absent.

@@ -1,0 +1,704 @@
+defmodule HiveServerElixir.Agents do
+  @moduledoc false
+
+  import Ash.Expr
+  require Ash.Query
+
+  alias HiveServerElixir.Cells
+  alias HiveServerElixir.Cells.AgentSession
+  alias HiveServerElixir.Cells.Cell
+  alias HiveServerElixir.Cells.TerminalRuntime
+  alias HiveServerElixir.Opencode.AgentEvent
+  alias HiveServerElixir.Opencode.AgentEventLog
+  alias HiveServerElixir.Opencode.Generated.Operations
+  alias HiveServerElixir.Workspaces
+
+  @type provider_payload :: %{
+          models: [map()],
+          defaults: map(),
+          providers: [map()]
+        }
+
+  @spec provider_payload_for_workspace(String.t() | nil) ::
+          {:ok, provider_payload()} | {:error, {atom(), String.t()}}
+  def provider_payload_for_workspace(workspace_id) do
+    with {:ok, workspace} <- resolve_workspace(workspace_id),
+         {:ok, catalog} <- fetch_provider_catalog(workspace.path) do
+      {:ok, provider_payload_from_catalog(catalog)}
+    end
+  end
+
+  @spec provider_payload_for_session(String.t()) ::
+          {:ok, provider_payload()} | {:error, {atom(), String.t()}}
+  def provider_payload_for_session(session_id) when is_binary(session_id) do
+    with {:ok, context} <- resolve_session_context(session_id),
+         {:ok, catalog} <- fetch_provider_catalog(context.cell.workspace_path) do
+      {:ok, provider_payload_from_catalog(catalog)}
+    end
+  end
+
+  @spec session_payload_for_cell(String.t()) :: {:ok, map() | nil}
+  def session_payload_for_cell(cell_id) when is_binary(cell_id) do
+    with {:ok, %Cell{} = cell} <- get_cell(cell_id),
+         {:ok, payload} <- resolve_session_payload_for_cell(cell) do
+      {:ok, payload}
+    else
+      {:error, {:not_found, _message}} -> {:ok, nil}
+      {:error, :not_found} -> {:ok, nil}
+    end
+  end
+
+  @spec messages_payload_for_session(String.t()) ::
+          {:ok, %{messages: [map()]}} | {:error, {atom(), String.t()}}
+  def messages_payload_for_session(session_id) when is_binary(session_id) do
+    with {:ok, context} <- resolve_session_context(session_id),
+         {:ok, messages} <- fetch_session_messages(context) do
+      {:ok, %{messages: messages}}
+    end
+  end
+
+  @spec event_snapshot_for_session(String.t()) :: {:ok, map()} | {:error, {atom(), String.t()}}
+  def event_snapshot_for_session(session_id) when is_binary(session_id) do
+    with {:ok, context} <- resolve_session_context(session_id) do
+      {:ok, build_event_snapshot(context)}
+    end
+  end
+
+  @spec empty_provider_payload(String.t()) :: map()
+  def empty_provider_payload(message) when is_binary(message) do
+    %{models: [], defaults: %{}, providers: [], message: message}
+  end
+
+  defp resolve_workspace(workspace_id) do
+    case Workspaces.resolve(workspace_id) do
+      {:ok, workspace} ->
+        {:ok, workspace}
+
+      {:error, :workspace_not_found} ->
+        {:error, {:bad_request, "Workspace '#{workspace_id}' not found"}}
+
+      {:error, :workspace_required} ->
+        {:error,
+         {:bad_request, "No active workspace. Register and activate a workspace to continue."}}
+    end
+  end
+
+  defp maybe_get_session_by_session_id(session_id) do
+    session =
+      AgentSession
+      |> Ash.Query.filter(expr(session_id == ^session_id))
+      |> Ash.read_one!(domain: Cells)
+
+    case session do
+      %AgentSession{} = value -> value
+      nil -> nil
+    end
+  end
+
+  defp maybe_get_session_by_cell_id(cell_id) do
+    session =
+      AgentSession
+      |> Ash.Query.filter(expr(cell_id == ^cell_id))
+      |> Ash.read_one!(domain: Cells)
+
+    case session do
+      %AgentSession{} = value -> value
+      nil -> nil
+    end
+  end
+
+  defp resolve_session_context(session_id) do
+    with true <- is_binary(session_id) and byte_size(String.trim(session_id)) > 0 do
+      case maybe_get_session_by_session_id(session_id) do
+        %AgentSession{} = agent_session ->
+          with {:ok, cell} <- get_cell(agent_session.cell_id) do
+            {:ok, build_session_context(session_id, cell, agent_session)}
+          end
+
+        nil ->
+          resolve_session_context_from_event(session_id)
+      end
+    else
+      _value ->
+        {:error, {:not_found, "Agent session not found"}}
+    end
+  end
+
+  defp resolve_session_context_from_event(session_id) do
+    latest_event =
+      AgentEvent
+      |> Ash.Query.filter(expr(session_id == ^session_id))
+      |> Ash.Query.sort(inserted_at: :desc, seq: :desc)
+      |> Ash.read_one!(domain: HiveServerElixir.Opencode)
+
+    case latest_event do
+      %AgentEvent{} = event ->
+        with {:ok, cell} <- get_cell(event.cell_id) do
+          {:ok, build_session_context(session_id, cell, nil)}
+        end
+
+      nil ->
+        {:error, {:not_found, "Agent session not found"}}
+    end
+  end
+
+  defp build_session_context(session_id, cell, agent_session) do
+    %{
+      session_id: session_id,
+      cell: cell,
+      agent_session: agent_session,
+      timeline: AgentEventLog.list_session_timeline(session_id)
+    }
+  end
+
+  defp resolve_session_payload_for_cell(cell) do
+    agent_session = maybe_get_session_by_cell_id(cell.id)
+
+    session_id =
+      case agent_session do
+        %AgentSession{} = value -> value.session_id
+        nil -> resolve_fallback_session_id(cell)
+      end
+
+    if is_binary(session_id) and byte_size(String.trim(session_id)) > 0 do
+      context = build_session_context(session_id, cell, agent_session)
+      {:ok, serialize_agent_session(context)}
+    else
+      {:ok, nil}
+    end
+  end
+
+  defp resolve_fallback_session_id(cell) do
+    cond do
+      is_binary(cell.opencode_session_id) and byte_size(String.trim(cell.opencode_session_id)) > 0 ->
+        cell.opencode_session_id
+
+      true ->
+        latest_session_id_for_cell(cell.id)
+    end
+  end
+
+  defp latest_session_id_for_cell(cell_id) do
+    latest_event =
+      AgentEvent
+      |> Ash.Query.filter(expr(cell_id == ^cell_id and session_id != "global"))
+      |> Ash.Query.sort(inserted_at: :desc, seq: :desc)
+      |> Ash.read_one!(domain: HiveServerElixir.Opencode)
+
+    case latest_event do
+      %AgentEvent{session_id: session_id} when is_binary(session_id) -> session_id
+      _other -> nil
+    end
+  end
+
+  defp get_cell(cell_id) do
+    case Ash.get(Cell, cell_id, domain: Cells) do
+      {:ok, %Cell{} = cell} -> {:ok, cell}
+      {:error, _error} -> {:error, {:not_found, "Cell not found"}}
+    end
+  end
+
+  defp fetch_provider_catalog(workspace_path) do
+    opts = [directory: workspace_path, client: opencode_client()] ++ opencode_client_opts()
+
+    case Operations.config_providers(opts) do
+      {:ok, catalog} ->
+        {:ok, catalog}
+
+      {:error, %{status: status, body: body}} ->
+        {:error, {status_to_http_status(status), error_message(body)}}
+
+      :error ->
+        {:error, {:bad_request, "Failed to list models"}}
+    end
+  end
+
+  defp fetch_session_messages(context) do
+    opts =
+      [directory: context.cell.workspace_path, client: opencode_client()] ++
+        opencode_client_opts()
+
+    case Operations.session_messages(context.session_id, opts) do
+      {:ok, payload} when is_list(payload) ->
+        {:ok,
+         Enum.with_index(payload)
+         |> Enum.map(fn {entry, index} -> serialize_message(entry, context, index) end)}
+
+      {:error, %{status: 404}} ->
+        {:ok, fallback_messages_from_terminal(context)}
+
+      {:error, %{status: _status}} ->
+        {:ok, fallback_messages_from_terminal(context)}
+
+      :error ->
+        {:ok, fallback_messages_from_terminal(context)}
+    end
+  end
+
+  defp fallback_messages_from_terminal(context) do
+    output =
+      context.cell.id
+      |> TerminalRuntime.read_chat_output()
+      |> Enum.join("")
+      |> String.trim()
+
+    if output == "" do
+      []
+    else
+      timestamp = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+
+      [
+        %{
+          id: "fallback-user-#{context.cell.id}",
+          sessionId: context.session_id,
+          role: "user",
+          content: output,
+          state: "completed",
+          createdAt: timestamp,
+          parts: []
+        },
+        %{
+          id: "fallback-assistant-#{context.cell.id}",
+          sessionId: context.session_id,
+          role: "assistant",
+          content: output,
+          state: "completed",
+          createdAt: timestamp,
+          parts: []
+        }
+      ]
+    end
+  end
+
+  defp serialize_message(entry, context, index) do
+    info = read_key(entry, "info") || %{}
+    parts = normalize_parts(read_key(entry, "parts"))
+    role = normalize_role(read_key(info, "role"))
+    content = message_content(parts)
+    error = read_key(info, "error")
+
+    message = %{
+      id: read_key(info, "id") || "message-#{index + 1}",
+      sessionId: read_key(info, "sessionID") || context.session_id,
+      role: role,
+      content: content,
+      state: message_state(role, info, content),
+      createdAt: message_created_at(info),
+      parts: parts
+    }
+
+    message
+    |> maybe_put(:parentId, read_key(info, "parentID"))
+    |> maybe_put(:errorName, read_key(error, "name"))
+    |> maybe_put(:errorMessage, read_key(error, "message"))
+  end
+
+  defp normalize_parts(parts) when is_list(parts), do: parts
+  defp normalize_parts(_parts), do: []
+
+  defp normalize_role("assistant"), do: "assistant"
+  defp normalize_role("system"), do: "system"
+  defp normalize_role(_other), do: "user"
+
+  defp message_content(parts) do
+    text =
+      parts
+      |> Enum.flat_map(fn part ->
+        type = read_key(part, "type")
+        text = read_key(part, "text")
+
+        if type in ["text", "reasoning"] and is_binary(text) do
+          [text]
+        else
+          []
+        end
+      end)
+      |> Enum.join("")
+      |> String.trim()
+
+    if text == "", do: nil, else: text
+  end
+
+  defp message_state("user", _info, _content), do: "completed"
+
+  defp message_state(_role, info, content) do
+    cond do
+      is_map(read_key(info, "error")) -> "error"
+      is_number(read_key(read_key(info, "time") || %{}, "completed")) -> "completed"
+      is_binary(read_key(info, "finish")) -> "completed"
+      is_binary(content) and byte_size(content) > 0 -> "completed"
+      true -> "streaming"
+    end
+  end
+
+  defp message_created_at(info) do
+    time = read_key(info, "time") || %{}
+    created = read_key(time, "created")
+
+    case created do
+      value when is_integer(value) or is_float(value) -> unix_to_iso8601(value)
+      value when is_binary(value) -> value
+      _other -> DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+    end
+  end
+
+  defp build_event_snapshot(context) do
+    status = resolve_session_status(context)
+    {start_mode, current_mode, mode_updated_at} = resolve_session_modes(context)
+
+    %{
+      status: status,
+      startMode: start_mode,
+      currentMode: current_mode,
+      modeUpdatedAt: mode_updated_at
+    }
+  end
+
+  defp opencode_client do
+    Application.get_env(:hive_server_elixir, :opencode_client, HiveServerElixir.Opencode.Client)
+  end
+
+  defp opencode_client_opts do
+    case Application.get_env(:hive_server_elixir, :opencode_client_opts, []) do
+      opts when is_list(opts) -> opts
+      _value -> []
+    end
+  end
+
+  defp status_to_http_status(status) when status in [404], do: :not_found
+  defp status_to_http_status(_status), do: :bad_request
+
+  defp error_message(%{"message" => message}) when is_binary(message), do: message
+  defp error_message(%{message: message}) when is_binary(message), do: message
+  defp error_message(_body), do: "Failed to list models"
+
+  defp provider_payload_from_catalog(catalog) do
+    providers =
+      catalog
+      |> read_key("providers")
+      |> normalize_provider_entries()
+
+    defaults = catalog |> read_key("default") |> normalize_provider_defaults()
+
+    %{
+      models: flatten_provider_models(providers),
+      defaults: defaults,
+      providers: serialize_provider_metadata(providers)
+    }
+  end
+
+  defp normalize_provider_entries(value) when is_list(value) do
+    value
+    |> Enum.map(fn candidate ->
+      provider_id = read_key(candidate, "id")
+      provider_name = read_key(candidate, "name")
+      provider_models = read_key(candidate, "models")
+
+      if is_binary(provider_id) do
+        %{
+          id: provider_id,
+          name: if(is_binary(provider_name), do: provider_name, else: nil),
+          models: if(is_map(provider_models), do: provider_models, else: %{})
+        }
+      else
+        nil
+      end
+    end)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp normalize_provider_entries(_value), do: []
+
+  defp flatten_provider_models(providers) do
+    providers
+    |> Enum.flat_map(fn provider ->
+      provider.models
+      |> Enum.map(fn {model_key, model_value} ->
+        model_id = read_key(model_value, "id") || model_key
+        model_name = read_key(model_value, "name") || model_id
+
+        %{
+          id: to_string(model_id),
+          name: to_string(model_name),
+          provider: provider.id
+        }
+      end)
+    end)
+  end
+
+  defp normalize_provider_defaults(value) when is_map(value) do
+    value
+    |> Enum.reduce(%{}, fn {provider_id, model_id}, acc ->
+      if is_binary(model_id) do
+        Map.put(acc, to_string(provider_id), model_id)
+      else
+        acc
+      end
+    end)
+  end
+
+  defp normalize_provider_defaults(_value), do: %{}
+
+  defp serialize_provider_metadata(providers) do
+    Enum.map(providers, fn provider ->
+      if is_binary(provider.name) do
+        %{id: provider.id, name: provider.name}
+      else
+        %{id: provider.id}
+      end
+    end)
+  end
+
+  defp serialize_agent_session(context) do
+    status = resolve_session_status(context)
+    {start_mode, current_mode, mode_updated_at} = resolve_session_modes(context)
+
+    agent_session = context.agent_session
+
+    payload = %{
+      id: context.session_id,
+      cellId: context.cell.id,
+      templateId: context.cell.template_id,
+      status: status,
+      workspacePath: context.cell.workspace_path,
+      createdAt: session_created_at(agent_session, context.timeline),
+      updatedAt: session_updated_at(agent_session, context.cell, context.timeline)
+    }
+
+    payload
+    |> maybe_put(:provider, session_provider_id(agent_session, context.timeline))
+    |> maybe_put(:modelId, session_model_id(agent_session, context.timeline))
+    |> maybe_put(:modelProviderId, session_provider_id(agent_session, context.timeline))
+    |> maybe_put(:startMode, start_mode)
+    |> maybe_put(:currentMode, current_mode)
+    |> maybe_put(:modeUpdatedAt, mode_updated_at)
+  end
+
+  defp resolve_session_status(context) do
+    timeline_status =
+      context.timeline
+      |> Enum.reverse()
+      |> Enum.find_value(&event_status/1)
+
+    case timeline_status do
+      status when is_binary(status) -> status
+      _other -> status_from_cell(context.cell.status)
+    end
+  end
+
+  defp status_from_cell("error"), do: "error"
+  defp status_from_cell("ready"), do: "awaiting_input"
+  defp status_from_cell("deleting"), do: "completed"
+  defp status_from_cell(_status), do: "starting"
+
+  defp event_status(%AgentEvent{} = event) do
+    payload = event_payload(event)
+    event_type = read_key(payload, "type") || event.event_type
+    properties = read_key(payload, "properties") || %{}
+
+    cond do
+      event_type == "session.error" ->
+        "error"
+
+      event_type == "session.idle" ->
+        "awaiting_input"
+
+      event_type in ["permission.asked", "permission.updated", "question.asked"] ->
+        "awaiting_input"
+
+      event_type == "session.status" and is_binary(read_key(properties, "status")) ->
+        read_key(properties, "status")
+
+      event_type in [
+        "message.part.delta",
+        "message.part.updated",
+        "message.updated",
+        "session.updated"
+      ] ->
+        "working"
+
+      true ->
+        nil
+    end
+  end
+
+  defp resolve_session_modes(context) do
+    mode_events =
+      context.timeline
+      |> Enum.flat_map(fn event ->
+        mode = event_mode(event)
+
+        if mode in ["plan", "build"] do
+          [{mode, maybe_to_iso8601(event.inserted_at)}]
+        else
+          []
+        end
+      end)
+
+    timeline_start_mode =
+      mode_events
+      |> List.first()
+      |> case do
+        {mode, _time} -> mode
+        _other -> nil
+      end
+
+    timeline_current_mode =
+      mode_events
+      |> List.last()
+      |> case do
+        {mode, _time} -> mode
+        _other -> nil
+      end
+
+    timeline_mode_updated_at =
+      mode_events
+      |> List.last()
+      |> case do
+        {_mode, time} -> time
+        _other -> nil
+      end
+
+    agent_session = context.agent_session
+
+    start_mode =
+      agent_session_mode(agent_session, :start_mode) ||
+        timeline_start_mode ||
+        "plan"
+
+    current_mode =
+      agent_session_mode(agent_session, :current_mode) ||
+        timeline_current_mode ||
+        start_mode
+
+    mode_updated_at =
+      maybe_to_iso8601(agent_session && agent_session.updated_at) ||
+        timeline_mode_updated_at
+
+    {start_mode, current_mode, mode_updated_at}
+  end
+
+  defp event_mode(%AgentEvent{} = event) do
+    payload = event_payload(event)
+    properties = read_key(payload, "properties") || %{}
+
+    candidate =
+      read_key(properties, "agent") ||
+        read_key(properties, "currentMode") ||
+        read_key(properties, "startMode")
+
+    if candidate in ["plan", "build"], do: candidate, else: nil
+  end
+
+  defp event_payload(%AgentEvent{} = event) do
+    read_key(event.payload, "payload") || event.payload || %{}
+  end
+
+  defp agent_session_mode(%AgentSession{} = session, :start_mode),
+    do: normalize_mode(session.start_mode)
+
+  defp agent_session_mode(%AgentSession{} = session, :current_mode),
+    do: normalize_mode(session.current_mode)
+
+  defp agent_session_mode(_session, _field), do: nil
+
+  defp normalize_mode("plan"), do: "plan"
+  defp normalize_mode("build"), do: "build"
+  defp normalize_mode(_mode), do: nil
+
+  defp session_provider_id(%AgentSession{} = session, _timeline), do: session.model_provider_id
+
+  defp session_provider_id(nil, timeline) do
+    timeline
+    |> Enum.reverse()
+    |> Enum.find_value(fn event ->
+      payload = event_payload(event)
+      properties = read_key(payload, "properties") || %{}
+      model = read_key(properties, "model") || %{}
+
+      read_key(model, "providerID") ||
+        read_key(model, "providerId") ||
+        read_key(properties, "providerID") ||
+        read_key(properties, "providerId")
+    end)
+  end
+
+  defp session_model_id(%AgentSession{} = session, _timeline), do: session.model_id
+
+  defp session_model_id(nil, timeline) do
+    timeline
+    |> Enum.reverse()
+    |> Enum.find_value(fn event ->
+      payload = event_payload(event)
+      properties = read_key(payload, "properties") || %{}
+      model = read_key(properties, "model") || %{}
+
+      read_key(model, "modelID") ||
+        read_key(model, "modelId") ||
+        read_key(properties, "modelID") ||
+        read_key(properties, "modelId")
+    end)
+  end
+
+  defp session_created_at(%AgentSession{} = session, _timeline),
+    do: maybe_to_iso8601(session.inserted_at)
+
+  defp session_created_at(nil, [%AgentEvent{} = first | _rest]),
+    do: maybe_to_iso8601(first.inserted_at)
+
+  defp session_created_at(nil, []), do: DateTime.utc_now() |> DateTime.to_iso8601()
+
+  defp session_updated_at(%AgentSession{} = session, _cell, timeline) do
+    maybe_to_iso8601(session.updated_at) || session_updated_at(nil, nil, timeline)
+  end
+
+  defp session_updated_at(nil, %Cell{} = cell, [%AgentEvent{} = latest | _rest]),
+    do: maybe_to_iso8601(latest.inserted_at) || maybe_to_iso8601(cell.updated_at)
+
+  defp session_updated_at(nil, %Cell{} = cell, []), do: maybe_to_iso8601(cell.updated_at)
+  defp session_updated_at(nil, nil, []), do: DateTime.utc_now() |> DateTime.to_iso8601()
+
+  defp session_updated_at(nil, nil, [%AgentEvent{} = latest | _rest]),
+    do: maybe_to_iso8601(latest.inserted_at)
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, _key, ""), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp maybe_to_iso8601(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp maybe_to_iso8601(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
+  defp maybe_to_iso8601(value) when is_binary(value), do: value
+  defp maybe_to_iso8601(_value), do: nil
+
+  defp unix_to_iso8601(value) when is_integer(value) do
+    value
+    |> DateTime.from_unix(:millisecond)
+    |> case do
+      {:ok, datetime} -> DateTime.to_iso8601(datetime)
+      _other -> DateTime.utc_now() |> DateTime.to_iso8601()
+    end
+  end
+
+  defp unix_to_iso8601(value) when is_float(value), do: value |> round() |> unix_to_iso8601()
+
+  defp read_key(value, key) when is_map(value) and is_binary(key) do
+    case Map.fetch(value, key) do
+      {:ok, found} ->
+        found
+
+      :error ->
+        case maybe_existing_atom(key) do
+          atom when is_atom(atom) -> Map.get(value, atom)
+          _other -> nil
+        end
+    end
+  end
+
+  defp read_key(_value, _key), do: nil
+
+  defp maybe_existing_atom(key) do
+    String.to_existing_atom(key)
+  rescue
+    ArgumentError -> nil
+  end
+end

@@ -29,6 +29,12 @@ defmodule HiveServerElixirWeb.Router do
     get("/api/templates", TemplatesController, :index)
     get("/api/templates/:id", TemplatesController, :show)
 
+    get("/api/agents/models", AgentsController, :models)
+    get("/api/agents/sessions/:id/models", AgentsController, :session_models)
+    get("/api/agents/sessions/:id/messages", AgentsController, :session_messages)
+    get("/api/agents/sessions/:id/events", AgentsController, :session_events)
+    get("/api/agents/sessions/byCell/:cellId", AgentsController, :session_by_cell)
+
     get("/api/cells", CellsController, :index)
     post("/api/cells", CellsController, :create)
     delete("/api/cells", CellsController, :delete_many)
