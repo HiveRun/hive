@@ -20,6 +20,15 @@ defmodule HiveServerElixirWeb.Router do
     pipe_through(:api)
 
     get("/health", HealthController, :show)
+    get("/api/workspaces", WorkspacesController, :index)
+    get("/api/workspaces/browse", WorkspacesController, :browse)
+    post("/api/workspaces", WorkspacesController, :create)
+    post("/api/workspaces/:id/activate", WorkspacesController, :activate)
+    delete("/api/workspaces/:id", WorkspacesController, :delete)
+
+    get("/api/templates", TemplatesController, :index)
+    get("/api/templates/:id", TemplatesController, :show)
+
     get("/api/cells", CellsController, :index)
     post("/api/cells", CellsController, :create)
     delete("/api/cells", CellsController, :delete_many)

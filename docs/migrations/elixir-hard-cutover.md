@@ -309,6 +309,13 @@
 - 2026-03-05 - Added service resource payload parity for `includeResources=true` so service views receive resource contract keys (`cpuPercent`, `rssBytes`, `resourceSampledAt`, `resourceUnavailableReason`) in:
   - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
   - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
+- 2026-03-05 - Added workspace management route parity (`/api/workspaces`, `/api/workspaces/browse`, register/activate/delete) to satisfy frontend workspace query contracts in:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/workspaces.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/workspaces_controller.ex`
+  - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/workspaces_controller_test.exs`
+- 2026-03-05 - Added template route parity (`/api/templates`, `/api/templates/:id`) with workspace resolution, `hive.config.json` loading, defaults/startMode shaping, and optional OpenCode agent defaults in:
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/templates_controller.ex`
+  - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/templates_controller_test.exs`
 
 ### Step 7: CLI, E2E, Desktop Runtime Cutover
 
@@ -388,3 +395,4 @@
 - 2026-03-05 - Added git-backed Elixir `/api/cells/:id/diff` parity behavior (status gating, branch validation, summary/details payloads) with high-level controller coverage.
 - 2026-03-05 - Added Elixir resource summary contract payloads (`/api/cells/:id/resources`) with optional history/averages/rollups fields to unblock global resources UI parity.
 - 2026-03-05 - Added Elixir service payload resource keys for `includeResources=true` so service dashboards can consume resource metadata without frontend fallbacks.
+- 2026-03-05 - Added Elixir workspace + template API parity routes so frontend workspace management and template loading can run against the cutover backend without TS fallbacks.
