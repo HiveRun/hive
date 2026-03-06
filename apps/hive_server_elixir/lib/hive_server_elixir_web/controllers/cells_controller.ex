@@ -13,6 +13,7 @@ defmodule HiveServerElixirWeb.CellsController do
   alias HiveServerElixir.Cells.Diff
   alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.Provisioning
+  alias HiveServerElixir.Cells.ResourceSummary
   alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.TerminalRuntime
@@ -827,14 +828,30 @@ defmodule HiveServerElixirWeb.CellsController do
   def resources(conn, %{"id" => id}) do
     case Ash.get(Cell, id, domain: Cells) do
       {:ok, %Cell{} = cell} ->
-        resources = resource_snapshot(cell.id)
-        workspace = fetch_workspace(cell.workspace_id)
+        include_history = parse_boolean_param(read_param(conn.params, "includeHistory"), false)
+        include_averages = parse_boolean_param(read_param(conn.params, "includeAverages"), false)
+        include_rollups = parse_boolean_param(read_param(conn.params, "includeRollups"), false)
+        history_limit = parse_resource_limit(read_param(conn.params, "historyLimit"), 180)
+        rollup_limit = parse_resource_limit(read_param(conn.params, "rollupLimit"), 96)
 
-        json(conn, %{
-          cell: serialize_cell(cell, %{workspace: workspace, include_setup_log: false}),
-          resources: resources,
-          failures: failure_states(cell, resources)
-        })
+        summary =
+          ResourceSummary.build(cell, %{
+            include_history: include_history,
+            include_averages: include_averages,
+            include_rollups: include_rollups,
+            history_limit: history_limit,
+            rollup_limit: rollup_limit
+          })
+
+        resources = resource_snapshot(cell.id)
+
+        json(
+          conn,
+          Map.merge(summary, %{
+            resources: resources,
+            failures: failure_states(cell, resources)
+          })
+        )
 
       {:error, error} ->
         render_cell_error(conn, error)
@@ -1630,6 +1647,17 @@ defmodule HiveServerElixirWeb.CellsController do
   end
 
   defp parse_log_offset(_value), do: 0
+
+  defp parse_resource_limit(value, _default) when is_integer(value), do: clamp(value, 1, 10_000)
+
+  defp parse_resource_limit(value, default) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, ""} -> clamp(parsed, 1, 10_000)
+      _result -> default
+    end
+  end
+
+  defp parse_resource_limit(_value, default), do: default
 
   defp clamp(value, min, _max) when value < min, do: min
   defp clamp(value, _min, max) when value > max, do: max

@@ -875,6 +875,71 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
     assert service_id == service.id
   end
 
+  test "GET /api/cells/:id/resources returns contract-compatible summary payload", %{conn: conn} do
+    workspace = workspace!("resource-summary")
+    cell = cell!(workspace.id, "resource summary", "ready")
+
+    assert {:ok, service} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "api",
+                 type: "process",
+                 command: "bun run dev",
+                 cwd: "/tmp/worktree",
+                 env: %{},
+                 definition: %{},
+                 status: "running",
+                 pid: String.to_integer(System.pid())
+               },
+               domain: Cells
+             )
+
+    conn =
+      get(
+        conn,
+        ~p"/api/cells/#{cell.id}/resources?includeHistory=true&includeAverages=true&includeRollups=true"
+      )
+
+    assert %{
+             "cellId" => cell_id,
+             "sampledAt" => sampled_at,
+             "processCount" => process_count,
+             "activeProcessCount" => active_process_count,
+             "tracked" => tracked,
+             "totalCpuPercent" => _total_cpu_percent,
+             "totalRssBytes" => _total_rss_bytes,
+             "activeCpuPercent" => _active_cpu_percent,
+             "activeRssBytes" => _active_rss_bytes,
+             "processes" => [process],
+             "history" => history,
+             "historyAverages" => history_averages,
+             "rollups" => rollups
+           } = json_response(conn, 200)
+
+    assert cell_id == cell.id
+    assert is_binary(sampled_at)
+    assert process_count == 1
+    assert active_process_count == 1
+    assert tracked["services"] == 1
+    assert tracked["opencode"] == 0
+    assert tracked["terminal"] == 0
+    assert tracked["setup"] == 0
+
+    assert process["id"] == service.id
+    assert process["kind"] == "service"
+    assert process["serviceType"] == "process"
+    assert process["active"] == true
+    assert process["processAlive"] == true
+    assert process["cpuPercent"] == nil
+    assert process["rssBytes"] == nil
+
+    assert length(history) == 1
+    assert length(history_averages) == 4
+    assert length(rollups) == 1
+  end
+
   test "GET /api/cells/:id/resources surfaces resource failure states", %{conn: conn} do
     workspace = workspace!("resource-failure")
     cell = cell!(workspace.id, "resource failure", "error")

@@ -300,6 +300,12 @@
   - `apps/hive_server_elixir/lib/hive_server_elixir/cells/diff.ex`
   - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
   - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
+- 2026-03-05 - Expanded `/api/cells/:id/resources` toward TS contract parity so resource dashboards can consume Elixir responses without frontend changes:
+  - Added resource summary builder with contract fields (`cellId`, `sampledAt`, `processCount`, tracked counts, process list, optional history/averages/rollups) in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir/cells/resource_summary.ex`
+  - Wired resources controller response to include summary contract payload (while preserving current diagnostic `resources` + `failures` fields) and added high-level API coverage in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+    - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
 
 ### Step 7: CLI, E2E, Desktop Runtime Cutover
 
@@ -377,3 +383,4 @@
 - 2026-03-05 - Added Elixir service stream + bulk service lifecycle parity endpoints to unblock Step 6 frontend contract migration work.
 - 2026-03-05 - Added core Elixir cell query contracts (list/detail/activity/timings/diff/bulk-delete) and expanded cell payload fields for Step 6 frontend migration readiness.
 - 2026-03-05 - Added git-backed Elixir `/api/cells/:id/diff` parity behavior (status gating, branch validation, summary/details payloads) with high-level controller coverage.
+- 2026-03-05 - Added Elixir resource summary contract payloads (`/api/cells/:id/resources`) with optional history/averages/rollups fields to unblock global resources UI parity.
