@@ -20,6 +20,7 @@ defmodule HiveServerElixirWeb.CellsController do
   alias HiveServerElixir.Cells.Timing
   alias HiveServerElixir.Cells.Workspace
   @service_stream_heartbeat_ms 15_000
+  @preserve_nil_service_keys MapSet.new([:cpuPercent, :rssBytes])
 
   def index(conn, params) do
     workspace_id = read_param(params, "workspaceId", "workspace_id")
@@ -999,6 +1000,7 @@ defmodule HiveServerElixirWeb.CellsController do
 
   defp serialize_service_payload(%Service{} = service, params) do
     log_options = parse_log_options(params)
+    include_resources = Map.get(log_options, :include_resources, false)
     {recent_logs, total_log_lines, has_more_logs} = service_log_tail(service, log_options)
 
     runtime_status = ServiceRuntime.runtime_status(service.id)
@@ -1027,6 +1029,13 @@ defmodule HiveServerElixirWeb.CellsController do
         derived_pid
       )
 
+    resource_payload =
+      if include_resources do
+        build_service_resource_payload(derived_pid, process_alive)
+      else
+        %{}
+      end
+
     url = build_service_url(service.port)
     port_reachable = if is_integer(service.port), do: port_reachable?(service.port), else: nil
 
@@ -1050,6 +1059,7 @@ defmodule HiveServerElixirWeb.CellsController do
       pid: derived_pid,
       port: service.port
     }
+    |> Map.merge(resource_payload)
     |> drop_nil_values()
   end
 
@@ -1623,8 +1633,26 @@ defmodule HiveServerElixirWeb.CellsController do
   defp parse_log_options(params) do
     lines = parse_log_lines(Map.get(params, "logLines"))
     offset = parse_log_offset(Map.get(params, "logOffset"))
-    %{lines: lines, offset: offset}
+    include_resources = parse_boolean_param(Map.get(params, "includeResources"), false)
+    %{lines: lines, offset: offset, include_resources: include_resources}
   end
+
+  defp build_service_resource_payload(pid, process_alive) do
+    sampled_at = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+
+    %{
+      cpuPercent: nil,
+      rssBytes: nil,
+      resourceSampledAt: sampled_at,
+      resourceUnavailableReason: service_resource_unavailable_reason(pid, process_alive)
+    }
+  end
+
+  defp service_resource_unavailable_reason(pid, _process_alive) when not is_integer(pid),
+    do: "pid_missing"
+
+  defp service_resource_unavailable_reason(_pid, false), do: "process_not_alive"
+  defp service_resource_unavailable_reason(_pid, true), do: "sample_failed"
 
   defp parse_log_lines(value) when is_integer(value), do: clamp(value, 1, 2_000)
 
@@ -1756,7 +1784,9 @@ defmodule HiveServerElixirWeb.CellsController do
 
   defp drop_nil_values(map) when is_map(map) do
     map
-    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Enum.reject(fn {key, value} ->
+      is_nil(value) and not MapSet.member?(@preserve_nil_service_keys, key)
+    end)
     |> Map.new()
   end
 

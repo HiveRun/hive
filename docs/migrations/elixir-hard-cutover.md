@@ -306,6 +306,9 @@
   - Wired resources controller response to include summary contract payload (while preserving current diagnostic `resources` + `failures` fields) and added high-level API coverage in:
     - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
     - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
+- 2026-03-05 - Added service resource payload parity for `includeResources=true` so service views receive resource contract keys (`cpuPercent`, `rssBytes`, `resourceSampledAt`, `resourceUnavailableReason`) in:
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+  - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/cells_controller_test.exs`
 
 ### Step 7: CLI, E2E, Desktop Runtime Cutover
 
@@ -384,3 +387,4 @@
 - 2026-03-05 - Added core Elixir cell query contracts (list/detail/activity/timings/diff/bulk-delete) and expanded cell payload fields for Step 6 frontend migration readiness.
 - 2026-03-05 - Added git-backed Elixir `/api/cells/:id/diff` parity behavior (status gating, branch validation, summary/details payloads) with high-level controller coverage.
 - 2026-03-05 - Added Elixir resource summary contract payloads (`/api/cells/:id/resources`) with optional history/averages/rollups fields to unblock global resources UI parity.
+- 2026-03-05 - Added Elixir service payload resource keys for `includeResources=true` so service dashboards can consume resource metadata without frontend fallbacks.

@@ -431,6 +431,39 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
     assert is_integer(service_payload["pid"])
   end
 
+  test "GET /api/cells/:id/services includeResources adds resource keys", %{conn: conn} do
+    workspace = workspace!("services-resources")
+    cell = cell!(workspace.id, "service resources", "ready")
+
+    assert {:ok, service} =
+             Ash.create(
+               Service,
+               %{
+                 cell_id: cell.id,
+                 name: "api",
+                 type: "process",
+                 command: "sleep 5",
+                 cwd: "/tmp",
+                 env: %{"NODE_ENV" => "test"},
+                 definition: %{},
+                 status: "running",
+                 pid: String.to_integer(System.pid())
+               },
+               domain: Cells
+             )
+
+    conn = get(conn, ~p"/api/cells/#{cell.id}/services?includeResources=true")
+
+    assert %{"services" => [service_payload]} = json_response(conn, 200)
+    assert service_payload["id"] == service.id
+    assert Map.has_key?(service_payload, "cpuPercent")
+    assert Map.has_key?(service_payload, "rssBytes")
+    assert service_payload["cpuPercent"] == nil
+    assert service_payload["rssBytes"] == nil
+    assert is_binary(service_payload["resourceSampledAt"])
+    assert service_payload["resourceUnavailableReason"] == "sample_failed"
+  end
+
   test "GET /api/cells/:id/services/stream emits ready, services, and snapshot", %{conn: conn} do
     workspace = workspace!("services-stream")
     cell = cell!(workspace.id, "service stream", "ready")
