@@ -89,7 +89,7 @@ Environment variables:
   PORT=4100 hive
   ```
 - Embedded chat sessions inherit OpenCode config from workspace `@opencode.json` / `opencode.json`.
-- The SQLite database defaults to `~/.hive/state/hive.db`; set `DATABASE_URL` if you need a different location.
+- The SQLite database defaults to `~/.hive/state/hive.db`; set `DATABASE_PATH` if you need a different location.
 - High-frequency transport/polling request logs are muted by default to keep runtime logs readable. Re-enable per category with `HIVE_LOG_TERMINAL_TRAFFIC=1`, `HIVE_LOG_POLLING_TRAFFIC=1`, or `HIVE_LOG_OPTIONS_REQUESTS=1`.
 
 #### OpenCode keybinds in Hive
@@ -192,8 +192,7 @@ mise install
 bun setup
 
 
-# Set up local database (create .env with DATABASE_URL="local.db")
-# Then run development servers
+# `bun dev` auto-generates `.env.dev.local` and defaults the Elixir dev DB under `.hive/state`
 bun dev
 ```
 
@@ -203,8 +202,7 @@ bun dev
 # One-time setup (installs deps, prepares desktop E2E prereqs when possible, pushes DB schema)
 bun setup
 
-# Set up local database (create .env with DATABASE_URL="local.db")  
-# Then run development servers
+# `bun dev` auto-generates `.env.dev.local` and defaults the Elixir dev DB under `.hive/state`
 bun dev
 ```
 
@@ -220,9 +218,9 @@ bun dev
 ```
 hive/
 ├── apps/
-│   ├── web/         # Frontend application (React + TanStack Start)
-│   ├── server/      # Legacy TypeScript backend (Elysia)
-│   └── server-elixir/ # In-progress Elixir backend (hard cutover target)
+│   ├── web/               # Frontend application (React + TanStack Start)
+│   ├── server/            # Legacy TypeScript backend (Elysia)
+│   └── hive_server_elixir/ # Elixir backend (hard cutover target)
 ├── packages/
 │   ├── cli/         # Packaged Hive CLI runtime
 ```
@@ -244,7 +242,7 @@ bun test:run
 
 **Test location (legacy backend):** `apps/server/src/**/*.test.ts`
 
-Elixir backend tests run with `mix test` from `apps/server-elixir` as that app is introduced.
+Elixir backend tests run with `mix test` from `apps/hive_server_elixir`.
 
 ### UI Testing
 True end-to-end browser testing runs with Playwright (Chromium only for now).

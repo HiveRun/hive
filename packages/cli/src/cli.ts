@@ -124,7 +124,9 @@ const DEFAULT_WEB_URL =
   process.env.HIVE_WEB_URL ?? `http://localhost:${resolveDefaultPort()}`;
 
 const resolveDatabasePath = () =>
-  process.env.DATABASE_PATH ?? join(resolveHiveHomePath(), "state", "hive.db");
+  process.env.DATABASE_PATH ??
+  process.env.DATABASE_URL ??
+  join(resolveHiveHomePath(), "state", "hive.db");
 
 const resolveWebDistPath = () => {
   const candidates = [
@@ -238,7 +240,8 @@ const buildElixirEnv = () => ({
     resolvePackagedReleaseRoot() ?? process.env.HIVE_SERVER_RELEASE_ROOT,
   PORT: resolveDefaultPort(),
   PHX_HOST: process.env.PHX_HOST ?? "localhost",
-  CORS_ORIGIN: process.env.CORS_ORIGIN ?? DEFAULT_WEB_URL,
+  CORS_ORIGIN:
+    process.env.CORS_ORIGINS ?? process.env.CORS_ORIGIN ?? DEFAULT_WEB_URL,
 });
 
 const runElixirMigrations = () => {
@@ -261,6 +264,13 @@ const runElixirMigrations = () => {
 const startElixirServer = async () => {
   ensureParentDirectory(resolveDatabasePath());
   const packagedReleaseExecutable = resolvePackagedReleaseExecutable();
+
+  if (isCompiledRuntime && !packagedReleaseExecutable) {
+    throw new Error(
+      "Bundled Elixir release not found. Reinstall Hive or set HIVE_SERVER_RELEASE_ROOT."
+    );
+  }
+
   const child = packagedReleaseExecutable
     ? spawn(packagedReleaseExecutable, ["start"], {
         cwd: dirname(dirname(packagedReleaseExecutable)),

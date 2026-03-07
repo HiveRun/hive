@@ -220,9 +220,9 @@ bun dev
 ```
 hive/
 ├── apps/
-│   ├── web/         # Frontend application (React + TanStack Start)
-│   ├── server/      # Legacy TypeScript backend (Elysia)
-│   └── server-elixir/ # In-progress Elixir backend (hard cutover target)
+│   ├── web/               # Frontend application (React + TanStack Start)
+│   ├── server/            # Legacy TypeScript backend (Elysia)
+│   └── hive_server_elixir/ # Elixir backend (hard cutover target)
 ├── packages/
 │   ├── cli/         # Packaged Hive CLI runtime
 ```
@@ -244,7 +244,7 @@ bun test:run
 
 **Test location (legacy backend):** `apps/server/src/**/*.test.ts`
 
-Elixir backend tests run with `mix test` from `apps/server-elixir` as that app is introduced.
+Elixir backend tests run with `mix test` from `apps/hive_server_elixir`.
 
 ### UI Testing
 True end-to-end browser testing runs with Playwright (Chromium only for now).

@@ -19,10 +19,10 @@ bun -C apps/server run test:run    # CI mode
 
 Example targeted run: `bun -C apps/server run test -- src/db.test.ts -t "creates user"`.
 
-Target Elixir backend (`apps/server-elixir`) uses ExUnit:
+Target Elixir backend (`apps/hive_server_elixir`) uses ExUnit:
 
 ```bash
-cd apps/server-elixir
+cd apps/hive_server_elixir
 mix test
 ```
 

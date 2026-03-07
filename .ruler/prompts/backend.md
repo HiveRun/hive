@@ -3,7 +3,7 @@
 ## Migration Status
 
 - Hard cutover plan: `docs/migrations/elixir-hard-cutover.md`
-- During migration, treat `apps/server` as legacy and `apps/server-elixir` as the target backend.
+- During migration, treat `apps/server` as legacy and `apps/hive_server_elixir` as the target backend.
 - Prefer implementing net-new backend behavior in the Elixir path instead of expanding legacy Elysia code.
 
 ## Legacy Backend (`apps/server`)
@@ -12,7 +12,7 @@
 - Use this path for maintenance, bug fixes, and compatibility while migration is in progress.
 - If you must touch request validation there, keep existing TypeBox patterns consistent.
 
-## Target Backend (`apps/server-elixir`)
+## Target Backend (`apps/hive_server_elixir`)
 
 - Stack: Phoenix API, Ash, AshSqlite, Reactor, Oban Lite.
 - Model state transitions and business actions in Ash resources/actions.
@@ -24,8 +24,8 @@
 
 - Legacy backend dev: `bun run dev:server` or `bun -C apps/server run dev`
 - Legacy backend tests: `bun -C apps/server run test:run`
-- Elixir backend dev (once scaffolded): `mix phx.server` from `apps/server-elixir`
-- Elixir backend tests (once scaffolded): `mix test` from `apps/server-elixir`
+- Elixir backend dev: `mix phx.server` from `apps/hive_server_elixir`
+- Elixir backend tests: `mix test` from `apps/hive_server_elixir`
 
 ## Migration Rules
 
