@@ -7,15 +7,14 @@ defmodule HiveServerElixir.Workspaces do
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Workspace
 
-  @active_workspace_env_key :active_workspace_id
   @hive_config_filename "hive.config.json"
   @fallback_directory "hive"
 
   @spec list() :: [Workspace.t()]
   def list do
     Workspace
-    |> Ash.Query.sort(inserted_at: :desc)
     |> Ash.read!(domain: Cells)
+    |> sort_workspaces()
   end
 
   @spec bootstrap_current_workspace() :: :ok
@@ -85,42 +84,42 @@ defmodule HiveServerElixir.Workspaces do
 
   @spec active_workspace_id() :: String.t() | nil
   def active_workspace_id do
-    case Application.get_env(:hive_server_elixir, @active_workspace_env_key) do
-      workspace_id when is_binary(workspace_id) and byte_size(workspace_id) > 0 -> workspace_id
-      _value -> nil
+    case List.first(list()) do
+      %Workspace{id: workspace_id} -> workspace_id
+      _other -> nil
     end
   end
 
   @spec set_active_workspace_id(String.t() | nil) :: :ok
   def set_active_workspace_id(nil) do
-    Application.delete_env(:hive_server_elixir, @active_workspace_env_key)
+    Workspace
+    |> Ash.read!(domain: Cells)
+    |> Enum.each(fn workspace ->
+      _ = Ash.update(workspace, %{last_opened_at: nil}, domain: Cells)
+    end)
+
     :ok
   end
 
   def set_active_workspace_id(workspace_id)
       when is_binary(workspace_id) and byte_size(workspace_id) > 0 do
-    Application.put_env(:hive_server_elixir, @active_workspace_env_key, workspace_id)
-    :ok
+    with {:ok, %Workspace{} = workspace} <- get(workspace_id),
+         {:ok, _updated_workspace} <-
+           Ash.update(workspace, %{last_opened_at: DateTime.utc_now()}, domain: Cells) do
+      :ok
+    else
+      {:error, _error} -> :ok
+    end
   end
 
   @spec resolve_active_workspace_id([Workspace.t()]) :: String.t() | nil
   def resolve_active_workspace_id(workspaces) when is_list(workspaces) do
-    current = active_workspace_id()
+    case sort_workspaces(workspaces) do
+      [%Workspace{id: workspace_id} | _rest] ->
+        workspace_id
 
-    cond do
-      is_binary(current) and Enum.any?(workspaces, &(&1.id == current)) ->
-        current
-
-      true ->
-        case workspaces do
-          [%Workspace{id: workspace_id} | _rest] ->
-            :ok = set_active_workspace_id(workspace_id)
-            workspace_id
-
-          [] ->
-            :ok = set_active_workspace_id(nil)
-            nil
-        end
+      [] ->
+        nil
     end
   end
 
@@ -161,7 +160,7 @@ defmodule HiveServerElixir.Workspaces do
       label: label,
       path: workspace.path,
       addedAt: to_iso8601(workspace.inserted_at),
-      lastOpenedAt: nil
+      lastOpenedAt: to_iso8601(workspace.last_opened_at)
     }
   end
 
@@ -232,6 +231,23 @@ defmodule HiveServerElixir.Workspaces do
     end
   end
 
+  defp sort_workspaces(workspaces) when is_list(workspaces) do
+    Enum.sort_by(workspaces, &workspace_sort_key/1, :desc)
+  end
+
+  defp workspace_sort_key(%Workspace{} = workspace) do
+    last_opened_at = workspace.last_opened_at || workspace.inserted_at
+    inserted_at = workspace.inserted_at
+    {timestamp_sort_key(last_opened_at), timestamp_sort_key(inserted_at)}
+  end
+
+  defp timestamp_sort_key(%DateTime{} = value), do: DateTime.to_unix(value, :microsecond)
+
+  defp timestamp_sort_key(%NaiveDateTime{} = value),
+    do: DateTime.from_naive!(value, "Etc/UTC") |> DateTime.to_unix(:microsecond)
+
+  defp timestamp_sort_key(_value), do: 0
+
   defp has_config_file?(directory) when is_binary(directory) do
     File.exists?(Path.join(directory, @hive_config_filename))
   end
@@ -255,5 +271,6 @@ defmodule HiveServerElixir.Workspaces do
   defp to_iso8601(%DateTime{} = value), do: DateTime.to_iso8601(value)
   defp to_iso8601(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
   defp to_iso8601(value) when is_binary(value), do: value
-  defp to_iso8601(_value), do: DateTime.utc_now() |> DateTime.to_iso8601()
+  defp to_iso8601(nil), do: nil
+  defp to_iso8601(_value), do: nil
 end

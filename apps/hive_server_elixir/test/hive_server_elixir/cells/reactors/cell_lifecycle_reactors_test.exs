@@ -22,7 +22,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
                fail_after_ingest: false
              })
 
-    assert updated_cell.status == "ready"
+    assert updated_cell.status == :ready
     assert [{new_pid, _value}] = Registry.lookup(@registry, {workspace.id, cell.id})
     refute old_pid == new_pid
 
@@ -43,7 +43,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
                fail_after_ingest: false
              })
 
-    assert updated_cell.status == "ready"
+    assert updated_cell.status == :ready
     assert [{_pid, _value}] = Registry.lookup(@registry, {workspace.id, cell.id})
 
     assert :ok = Lifecycle.on_cell_delete(context)

@@ -37,7 +37,7 @@ defmodule HiveServerElixirWeb.WorkspacesControllerTest do
     assert workspace_payload["label"] == "List Workspace"
     assert workspace_payload["path"] == "/tmp/workspaces-list"
     assert is_binary(workspace_payload["addedAt"])
-    assert workspace_payload["lastOpenedAt"] == nil
+    assert is_binary(workspace_payload["lastOpenedAt"])
     assert active_workspace_id == workspace.id
   end
 
@@ -73,6 +73,7 @@ defmodule HiveServerElixirWeb.WorkspacesControllerTest do
     assert workspace["path"] == workspace_path
     assert workspace["label"] == Path.basename(workspace_path)
     assert workspace["id"] == Workspaces.active_workspace_id()
+    assert is_binary(workspace["lastOpenedAt"])
 
     persisted =
       Workspace
@@ -91,6 +92,7 @@ defmodule HiveServerElixirWeb.WorkspacesControllerTest do
     assert %{"workspace" => workspace} = json_response(conn, 200)
     assert workspace["id"] == second.id
     assert Workspaces.active_workspace_id() == second.id
+    assert is_binary(workspace["lastOpenedAt"])
   end
 
   test "DELETE /api/workspaces/:id removes workspace and clears active", %{conn: conn} do

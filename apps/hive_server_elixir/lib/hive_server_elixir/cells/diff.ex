@@ -2,6 +2,7 @@ defmodule HiveServerElixir.Cells.Diff do
   @moduledoc false
 
   alias HiveServerElixir.Cells.Cell
+  alias HiveServerElixir.Cells.CellStatus
 
   @workspace_ref "HEAD"
   @patch_context_arg "--unified=200"
@@ -16,17 +17,18 @@ defmodule HiveServerElixir.Cells.Diff do
     end
   end
 
-  defp validate_diff_ready(%Cell{status: status})
-       when status in ["spawning", "pending", "deleting"] do
-    {:error, {:conflict, "Cell workspace is not ready yet"}}
-  end
+  defp validate_diff_ready(%Cell{} = cell) do
+    cond do
+      CellStatus.diff_blocked?(cell.status) ->
+        {:error, {:conflict, "Cell workspace is not ready yet"}}
 
-  defp validate_diff_ready(%Cell{workspace_path: workspace_path})
-       when not is_binary(workspace_path) or workspace_path == "" do
-    {:error, {:conflict, "Cell workspace path is not available yet"}}
-  end
+      not is_binary(cell.workspace_path) or cell.workspace_path == "" ->
+        {:error, {:conflict, "Cell workspace path is not available yet"}}
 
-  defp validate_diff_ready(%Cell{}), do: :ok
+      true ->
+        :ok
+    end
+  end
 
   defp parse_request(%Cell{} = cell, params) do
     mode = parse_mode(Map.get(params, "mode"))

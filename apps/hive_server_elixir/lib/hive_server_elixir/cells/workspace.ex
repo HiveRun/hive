@@ -15,12 +15,12 @@ defmodule HiveServerElixir.Cells.Workspace do
 
     create :create do
       primary? true
-      accept [:path, :label]
+      accept [:path, :label, :last_opened_at]
     end
 
     update :update do
       primary? true
-      accept [:path, :label]
+      accept [:path, :label, :last_opened_at]
     end
   end
 
@@ -33,6 +33,11 @@ defmodule HiveServerElixir.Cells.Workspace do
     end
 
     attribute :label, :string do
+      allow_nil? true
+      public? true
+    end
+
+    attribute :last_opened_at, :utc_datetime_usec do
       allow_nil? true
       public? true
     end

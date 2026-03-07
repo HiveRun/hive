@@ -454,6 +454,15 @@ Step 7 done criteria are now satisfied locally:
   - Updated root scripts and generated config defaults to point at `apps/hive_server_elixir` for dev/database operations.
   - Left dormant `apps/server` source in place for now, but it is no longer part of the active runtime/dependency path.
 - 2026-03-07 - Updated README and Ruler prompt sources to describe Hive as an Elixir/Ash backend with Elixir-first runtime/testing commands.
+- 2026-03-07 - Hardened the Elixir runtime's local-only perimeter and cleaned up transport/controller contracts:
+  - Added shared loopback/origin checks in `apps/hive_server_elixir/lib/hive_server_elixir_web/local_access.ex` and enforced them for API + stream pipelines.
+  - Defaulted backend binding back to loopback unless `HIVE_ALLOW_REMOTE_ACCESS=1` is set, while keeping explicit `CORS_ORIGINS` / `CORS_ORIGIN` overrides available.
+  - Switched terminal socket origin handling to endpoint-configured checks and extracted shared terminal/cell serializers to reduce controller/channel drift.
+- 2026-03-07 - Tightened runtime persistence invariants needed for the hard cutover:
+  - Persisted active workspace selection via `workspaces.last_opened_at` so restarts keep the last-opened workspace active.
+  - Added bounded terminal output retention in `TerminalRuntime` to avoid unbounded append growth while preserving stream order for readers.
+  - Added session-scoped event sequence allocation storage so persisted OpenCode event logs keep stable ordering under concurrent writes.
+- 2026-03-07 - Tightened `Cell.status` handling by moving the resource to a dedicated Ash enum helper with compatibility coverage for legacy `paused` and `failed` states.
 
 ## Database Reset Strategy (Approved)
 
@@ -518,3 +527,4 @@ Step 7 done criteria are now satisfied locally:
 - 2026-03-07 - Added cell workspace snapshot creation under `HIVE_HOME/cells/:cell_id`, template-driven setup execution, template service materialization/startup, service SSE routing parity, and terminal-backed session message fallback; full Elixir-backed web E2E now passes.
 - 2026-03-07 - Migrated CLI runtime startup away from `@hive/server` so the compiled `hive` binary now runs Elixir directly (`mix ecto.migrate` + `mix phx.server`) and verified start/info/logs/stop lifecycle locally.
 - 2026-03-07 - Removed remaining active `@hive/server` and `apps/server` runtime/dependency references from config generation, frontend RPC typing, and root tooling scripts while preserving the dormant legacy tree for later deletion.
+- 2026-03-07 - Hardened the Elixir local-only runtime perimeter, persisted active workspace recency, bounded terminal output retention, made OpenCode event sequencing concurrency-safe, and tightened `Cell.status` invariants with passing backend coverage.

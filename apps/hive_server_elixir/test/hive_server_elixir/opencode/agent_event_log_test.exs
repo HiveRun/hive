@@ -70,6 +70,29 @@ defmodule HiveServerElixir.Opencode.AgentEventLogTest do
       assert entry.seq == 1
       assert entry.event_type == "server.connected"
     end
+
+    test "allocates unique ordered sequences under concurrent writes" do
+      global_event = %{
+        "payload" => %{"type" => "session.idle", "properties" => %{"sessionID" => "session-f"}}
+      }
+
+      context = %{workspace_id: "workspace-1", cell_id: "cell-1"}
+
+      seqs =
+        1..10
+        |> Task.async_stream(
+          fn _ ->
+            {:ok, entry} = AgentEventLog.append_global_event(global_event, context)
+            entry.seq
+          end,
+          ordered: false,
+          timeout: :infinity
+        )
+        |> Enum.map(fn {:ok, seq} -> seq end)
+        |> Enum.sort()
+
+      assert seqs == Enum.to_list(1..10)
+    end
   end
 
   defp event_attrs(overrides) do

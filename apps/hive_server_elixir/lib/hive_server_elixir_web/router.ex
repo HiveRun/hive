@@ -14,9 +14,11 @@ defmodule HiveServerElixirWeb.Router do
 
   pipeline :api do
     plug(:accepts, ["json", "event-stream"])
+    plug(HiveServerElixirWeb.Plugs.RequireLocalAccess)
   end
 
   pipeline :api_stream do
+    plug(HiveServerElixirWeb.Plugs.RequireLocalAccess)
   end
 
   scope "/", HiveServerElixirWeb do

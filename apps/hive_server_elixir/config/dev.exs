@@ -19,7 +19,7 @@ config :hive_server_elixir, HiveServerElixirWeb.Endpoint,
   # Binding to loopback ipv4 address prevents access from other machines.
   # Change to `ip: {0, 0, 0, 0}` to allow access from other machines.
   http: [ip: {127, 0, 0, 1}],
-  check_origin: false,
+  check_origin: {HiveServerElixirWeb.LocalAccess, :origin_allowed?, []},
   code_reloader: true,
   debug_errors: true,
   secret_key_base: "dev-secret-key-base-1234-5678-90ab-cdef-1234-5678-90ab-cdef-1234-5678",

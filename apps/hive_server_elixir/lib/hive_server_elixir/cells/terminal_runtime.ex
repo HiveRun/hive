@@ -13,6 +13,7 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
 
   @default_cols 120
   @default_rows 40
+  @max_output_chunks 1000
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, :ok, opts)
@@ -229,7 +230,9 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
   end
 
   defp read_output(state, key) do
-    Map.get(state.output, key, [])
+    state.output
+    |> Map.get(key, [])
+    |> Enum.reverse()
   end
 
   defp put_output(state, key, output) do
@@ -237,8 +240,8 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
   end
 
   defp append_output(state, key, chunk) do
-    output = read_output(state, key)
-    put_output(state, key, output ++ [chunk])
+    output = Map.get(state.output, key, [])
+    put_output(state, key, [chunk | output] |> Enum.take(@max_output_chunks))
   end
 
   defp new_session(prefix, opts) do

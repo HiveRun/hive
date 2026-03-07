@@ -10,6 +10,7 @@ defmodule HiveServerElixirWeb.CellsController do
   alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
+  alias HiveServerElixir.Cells.CellStatus
   alias HiveServerElixir.Cells.Diff
   alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.Provisioning
@@ -19,6 +20,8 @@ defmodule HiveServerElixirWeb.CellsController do
   alias HiveServerElixir.Cells.TerminalRuntime
   alias HiveServerElixir.Cells.Timing
   alias HiveServerElixir.Cells.Workspace
+  alias HiveServerElixirWeb.CellsSerializer
+  alias HiveServerElixirWeb.TerminalEvents
   @service_stream_heartbeat_ms 15_000
   @preserve_nil_service_keys MapSet.new([:cpuPercent, :rssBytes])
 
@@ -27,7 +30,7 @@ defmodule HiveServerElixirWeb.CellsController do
 
     query =
       Cell
-      |> Ash.Query.filter(expr(status != "deleting"))
+      |> Ash.Query.filter(expr(status != :deleting))
       |> maybe_filter_workspace(workspace_id)
       |> Ash.Query.sort(inserted_at: :asc)
 
@@ -49,18 +52,19 @@ defmodule HiveServerElixirWeb.CellsController do
     include_setup_log = parse_boolean_param(Map.get(params, "includeSetupLog"), true)
 
     case Ash.get(Cell, id, domain: Cells) do
-      {:ok, %Cell{status: "deleting"}} ->
-        conn
-        |> put_status(:not_found)
-        |> json(%{message: "Cell not found"})
-
       {:ok, %Cell{} = cell} ->
-        workspace = fetch_workspace(cell.workspace_id)
+        if CellStatus.deleting?(cell) do
+          conn
+          |> put_status(:not_found)
+          |> json(%{message: "Cell not found"})
+        else
+          workspace = fetch_workspace(cell.workspace_id)
 
-        json(
-          conn,
-          serialize_cell(cell, %{workspace: workspace, include_setup_log: include_setup_log})
-        )
+          json(
+            conn,
+            serialize_cell(cell, %{workspace: workspace, include_setup_log: include_setup_log})
+          )
+        end
 
       {:error, error} ->
         render_cell_error(conn, error)
@@ -272,12 +276,13 @@ defmodule HiveServerElixirWeb.CellsController do
         |> put_resp_header("connection", "keep-alive")
         |> send_chunked(200)
 
-      session = TerminalRuntime.ensure_setup_session(cell_id)
-      ready_payload = %{session: session, setupState: setup_state_for(cell), lastSetupError: nil}
-      output = TerminalRuntime.read_setup_output(cell_id)
+      session = TerminalEvents.ensure_session(:setup, cell_id, nil)
+      ready_payload = TerminalEvents.ready_payload(:setup, session, cell)
+      output = TerminalEvents.read_output(:setup, cell_id, nil)
 
       with {:ok, stream_conn} <- send_sse(stream_conn, "ready", ready_payload),
-           {:ok, stream_conn} <- send_sse(stream_conn, "snapshot", %{output: output}) do
+           {:ok, stream_conn} <-
+             send_sse(stream_conn, "snapshot", TerminalEvents.snapshot_payload(output)) do
         idle_timeout_ms = parse_idle_timeout_ms(Map.get(params, "idleTimeoutMs"), 30_000)
 
         if Map.get(params, "initialOnly") in ["true", "1"] do
@@ -347,8 +352,8 @@ defmodule HiveServerElixirWeb.CellsController do
          {:ok, service} <- get_service_for_cell(cell_id, service_id),
          :ok <- ensure_service_runtime(service),
          :ok <- Events.subscribe_service_terminal(cell_id, service_id) do
-      session = TerminalRuntime.ensure_service_session(cell_id, service_id)
-      output = TerminalRuntime.read_service_output(cell_id, service_id)
+      session = TerminalEvents.ensure_session(:service, cell_id, service_id)
+      output = TerminalEvents.read_output(:service, cell_id, service_id)
 
       stream_conn =
         conn
@@ -357,8 +362,10 @@ defmodule HiveServerElixirWeb.CellsController do
         |> put_resp_header("connection", "keep-alive")
         |> send_chunked(200)
 
-      with {:ok, stream_conn} <- send_sse(stream_conn, "ready", %{session: session}),
-           {:ok, stream_conn} <- send_sse(stream_conn, "snapshot", %{output: output}) do
+      with {:ok, stream_conn} <-
+             send_sse(stream_conn, "ready", TerminalEvents.ready_payload(:service, session, nil)),
+           {:ok, stream_conn} <-
+             send_sse(stream_conn, "snapshot", TerminalEvents.snapshot_payload(output)) do
         idle_timeout_ms = parse_idle_timeout_ms(Map.get(params, "idleTimeoutMs"), 30_000)
 
         if Map.get(params, "initialOnly") in ["true", "1"] do
@@ -423,8 +430,8 @@ defmodule HiveServerElixirWeb.CellsController do
     with {:ok, cell} <- Ash.get(Cell, cell_id, domain: Cells),
          :ok <- validate_chat_available(cell),
          :ok <- Events.subscribe_chat_terminal(cell_id) do
-      session = TerminalRuntime.ensure_chat_session(cell_id)
-      output = TerminalRuntime.read_chat_output(cell_id)
+      session = TerminalEvents.ensure_session(:chat, cell_id, nil)
+      output = TerminalEvents.read_output(:chat, cell_id, nil)
 
       stream_conn =
         conn
@@ -434,7 +441,8 @@ defmodule HiveServerElixirWeb.CellsController do
         |> send_chunked(200)
 
       with {:ok, stream_conn} <- send_sse(stream_conn, "ready", session),
-           {:ok, stream_conn} <- send_sse(stream_conn, "snapshot", %{output: output}) do
+           {:ok, stream_conn} <-
+             send_sse(stream_conn, "snapshot", TerminalEvents.snapshot_payload(output)) do
         idle_timeout_ms = parse_idle_timeout_ms(Map.get(params, "idleTimeoutMs"), 30_000)
 
         if Map.get(params, "initialOnly") in ["true", "1"] do
@@ -931,68 +939,11 @@ defmodule HiveServerElixirWeb.CellsController do
   defp parse_boolean_param("0", _default), do: false
   defp parse_boolean_param(_value, default), do: default
 
-  defp normalize_cell_status("provisioning"), do: "pending"
-  defp normalize_cell_status(status), do: status
-
   defp serialize_cell(%Cell{} = cell, opts) do
-    workspace = Map.get(opts, :workspace)
-    include_setup_log = Map.get(opts, :include_setup_log, false)
-    workspace_path = if workspace && is_binary(workspace.path), do: workspace.path, else: ""
-    setup_payload = maybe_setup_log_payload(cell.id, include_setup_log)
-
-    %{
-      id: cell.id,
-      name: cell.name,
-      workspaceId: cell.workspace_id,
-      description: cell.description,
-      templateId: cell.template_id,
-      workspaceRootPath: present_or_fallback(cell.workspace_root_path, workspace_path),
-      workspacePath: present_or_fallback(cell.workspace_path, workspace_path),
-      opencodeSessionId: cell.opencode_session_id,
-      opencodeCommand: build_opencode_command(cell.workspace_path, cell.opencode_session_id),
-      createdAt: maybe_to_iso8601(cell.inserted_at),
-      status: normalize_cell_status(cell.status),
-      lastSetupError: cell.last_setup_error,
-      branchName: cell.branch_name,
-      baseCommit: cell.base_commit,
-      updatedAt: maybe_to_iso8601(cell.updated_at)
-    }
-    |> Map.merge(setup_payload)
-    |> maybe_drop_nil("lastSetupError")
-    |> maybe_drop_nil("branchName")
-    |> maybe_drop_nil("baseCommit")
-  end
-
-  defp maybe_setup_log_payload(_cell_id, false), do: %{}
-
-  defp maybe_setup_log_payload(cell_id, true) do
-    output = TerminalRuntime.read_setup_output(cell_id)
-    setup_log = output |> Enum.join("") |> String.trim()
-
-    %{
-      setupLog: if(setup_log == "", do: nil, else: setup_log),
-      setupLogPath: nil
-    }
-  end
-
-  defp present_or_fallback(value, _fallback) when is_binary(value) and byte_size(value) > 0,
-    do: value
-
-  defp present_or_fallback(_value, fallback), do: fallback
-
-  defp build_opencode_command(workspace_path, session_id)
-       when is_binary(workspace_path) and workspace_path != "" and is_binary(session_id) and
-              session_id != "" do
-    "opencode \"" <> workspace_path <> "\" --session \"" <> session_id <> "\""
-  end
-
-  defp build_opencode_command(_workspace_path, _session_id), do: nil
-
-  defp maybe_drop_nil(map, key) do
-    case Map.get(map, key) do
-      nil -> Map.delete(map, key)
-      _value -> map
-    end
+    CellsSerializer.serialize_cell(cell,
+      workspace: Map.get(opts, :workspace),
+      include_setup_log: Map.get(opts, :include_setup_log, false)
+    )
   end
 
   defp serialize_service(%Service{} = service) do
@@ -1346,16 +1297,19 @@ defmodule HiveServerElixirWeb.CellsController do
 
   defp failure_states(cell, resources) do
     []
-    |> maybe_add_failure(cell.status == "error" and is_nil(resources.provisioning), %{
+    |> maybe_add_failure(CellStatus.error?(cell) and is_nil(resources.provisioning), %{
       code: "provisioning_missing",
       resource: "provisioning",
       message: "Cell is in error status without provisioning state"
     })
-    |> maybe_add_failure(cell.status in ["ready", "error"] and is_nil(resources.agentSession), %{
-      code: "agent_session_missing",
-      resource: "agent_session",
-      message: "Cell lifecycle is missing an agent session"
-    })
+    |> maybe_add_failure(
+      (CellStatus.ready?(cell) or CellStatus.error?(cell)) and is_nil(resources.agentSession),
+      %{
+        code: "agent_session_missing",
+        resource: "agent_session",
+        message: "Cell lifecycle is missing an agent session"
+      }
+    )
     |> maybe_add_service_failures(resources.services)
     |> maybe_add_failure(is_binary(agent_session_error(resources.agentSession)), %{
       code: "agent_session_error",
@@ -1490,19 +1444,19 @@ defmodule HiveServerElixirWeb.CellsController do
   defp stream_setup_terminal_events(conn, cell_id, idle_timeout_ms) do
     receive do
       {:setup_terminal_data, %{cell_id: ^cell_id, chunk: chunk}} ->
-        case send_sse(conn, "data", %{chunk: chunk}) do
+        case send_sse(conn, "data", TerminalEvents.data_payload(chunk)) do
           {:ok, next_conn} -> stream_setup_terminal_events(next_conn, cell_id, idle_timeout_ms)
           {:error, _reason} -> conn
         end
 
       {:setup_terminal_exit, %{cell_id: ^cell_id, exit_code: exit_code, signal: signal}} ->
-        case send_sse(conn, "exit", %{exitCode: exit_code, signal: signal}) do
+        case send_sse(conn, "exit", TerminalEvents.exit_payload(exit_code, signal)) do
           {:ok, next_conn} -> stream_setup_terminal_events(next_conn, cell_id, idle_timeout_ms)
           {:error, _reason} -> conn
         end
 
       {:setup_terminal_error, %{cell_id: ^cell_id, message: message}} ->
-        case send_sse(conn, "error", %{message: message}) do
+        case send_sse(conn, "error", TerminalEvents.error_payload(message)) do
           {:ok, next_conn} -> stream_setup_terminal_events(next_conn, cell_id, idle_timeout_ms)
           {:error, _reason} -> conn
         end
@@ -1515,7 +1469,7 @@ defmodule HiveServerElixirWeb.CellsController do
   defp stream_service_terminal_events(conn, cell_id, service_id, idle_timeout_ms) do
     receive do
       {:service_terminal_data, %{cell_id: ^cell_id, service_id: ^service_id, chunk: chunk}} ->
-        case send_sse(conn, "data", %{chunk: chunk}) do
+        case send_sse(conn, "data", TerminalEvents.data_payload(chunk)) do
           {:ok, next_conn} ->
             stream_service_terminal_events(next_conn, cell_id, service_id, idle_timeout_ms)
 
@@ -1525,7 +1479,7 @@ defmodule HiveServerElixirWeb.CellsController do
 
       {:service_terminal_exit,
        %{cell_id: ^cell_id, service_id: ^service_id, exit_code: exit_code, signal: signal}} ->
-        case send_sse(conn, "exit", %{exitCode: exit_code, signal: signal}) do
+        case send_sse(conn, "exit", TerminalEvents.exit_payload(exit_code, signal)) do
           {:ok, next_conn} ->
             stream_service_terminal_events(next_conn, cell_id, service_id, idle_timeout_ms)
 
@@ -1534,7 +1488,7 @@ defmodule HiveServerElixirWeb.CellsController do
         end
 
       {:service_terminal_error, %{cell_id: ^cell_id, service_id: ^service_id, message: message}} ->
-        case send_sse(conn, "error", %{message: message}) do
+        case send_sse(conn, "error", TerminalEvents.error_payload(message)) do
           {:ok, next_conn} ->
             stream_service_terminal_events(next_conn, cell_id, service_id, idle_timeout_ms)
 
@@ -1550,19 +1504,19 @@ defmodule HiveServerElixirWeb.CellsController do
   defp stream_chat_terminal_events(conn, cell_id, idle_timeout_ms) do
     receive do
       {:chat_terminal_data, %{cell_id: ^cell_id, chunk: chunk}} ->
-        case send_sse(conn, "data", %{chunk: chunk}) do
+        case send_sse(conn, "data", TerminalEvents.data_payload(chunk)) do
           {:ok, next_conn} -> stream_chat_terminal_events(next_conn, cell_id, idle_timeout_ms)
           {:error, _reason} -> conn
         end
 
       {:chat_terminal_exit, %{cell_id: ^cell_id, exit_code: exit_code, signal: signal}} ->
-        case send_sse(conn, "exit", %{exitCode: exit_code, signal: signal}) do
+        case send_sse(conn, "exit", TerminalEvents.exit_payload(exit_code, signal)) do
           {:ok, next_conn} -> stream_chat_terminal_events(next_conn, cell_id, idle_timeout_ms)
           {:error, _reason} -> conn
         end
 
       {:chat_terminal_error, %{cell_id: ^cell_id, message: message}} ->
-        case send_sse(conn, "error", %{message: message}) do
+        case send_sse(conn, "error", TerminalEvents.error_payload(message)) do
           {:ok, next_conn} -> stream_chat_terminal_events(next_conn, cell_id, idle_timeout_ms)
           {:error, _reason} -> conn
         end
@@ -1613,7 +1567,10 @@ defmodule HiveServerElixirWeb.CellsController do
     end
   end
 
-  defp validate_chat_available(%Cell{status: "ready"}), do: :ok
+  defp validate_chat_available(%Cell{} = cell) do
+    if CellStatus.ready?(cell), do: :ok, else: {:error, :chat_unavailable}
+  end
+
   defp validate_chat_available(_cell), do: {:error, :chat_unavailable}
 
   defp parse_input(params) do
@@ -1970,10 +1927,6 @@ defmodule HiveServerElixirWeb.CellsController do
 
   defp maybe_put_metadata(metadata, _key, nil), do: metadata
   defp maybe_put_metadata(metadata, key, value), do: Map.put(metadata, key, value)
-
-  defp setup_state_for(%Cell{status: "ready"}), do: "completed"
-  defp setup_state_for(%Cell{status: "error"}), do: "error"
-  defp setup_state_for(_cell), do: "running"
 
   defp send_sse(conn, event, data) do
     encoded = Jason.encode!(data)

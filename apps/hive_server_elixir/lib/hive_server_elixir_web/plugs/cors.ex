@@ -3,6 +3,8 @@ defmodule HiveServerElixirWeb.Plugs.Cors do
 
   import Plug.Conn
 
+  alias HiveServerElixirWeb.LocalAccess
+
   @default_allowed_headers [
     "authorization",
     "content-type",
@@ -41,23 +43,7 @@ defmodule HiveServerElixirWeb.Plugs.Cors do
   end
 
   defp allowed_origins do
-    case System.get_env("CORS_ORIGIN") do
-      nil ->
-        ["*"]
-
-      "" ->
-        ["*"]
-
-      value ->
-        value
-        |> String.split(",", trim: true)
-        |> Enum.map(&String.trim/1)
-        |> Enum.reject(&(&1 == ""))
-        |> case do
-          [] -> ["*"]
-          origins -> origins
-        end
-    end
+    LocalAccess.allowed_origins()
   end
 
   defp resolve_allow_origin(nil, ["*"]), do: "*"

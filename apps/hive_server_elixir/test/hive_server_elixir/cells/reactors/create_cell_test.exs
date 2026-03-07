@@ -32,7 +32,7 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCellTest do
     end)
 
     assert cell.workspace_id == workspace.id
-    assert cell.status == "ready"
+    assert cell.status == :ready
     assert_receive {:persisted, {:ok, persisted}}
     assert persisted.session_id == "session-create-cell"
     assert persisted.seq == 1
@@ -52,7 +52,7 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCellTest do
                fail_after_ingest: true
              })
 
-    assert [%{id: cell_id, status: "provisioning"}] =
+    assert [%{id: cell_id, status: :provisioning}] =
              list_cells_by_description(workspace.id, "Create cell reactor failure")
 
     assert [] = Registry.lookup(@registry, {workspace.id, cell_id})

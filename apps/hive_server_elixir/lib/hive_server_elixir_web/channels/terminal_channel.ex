@@ -6,10 +6,12 @@ defmodule HiveServerElixirWeb.TerminalChannel do
   alias Ash.Error.Query.NotFound
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
+  alias HiveServerElixir.Cells.CellStatus
   alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.TerminalRuntime
+  alias HiveServerElixirWeb.TerminalEvents
 
   @impl true
   def join("setup_terminal:" <> cell_id, _payload, socket) do
@@ -25,8 +27,7 @@ defmodule HiveServerElixirWeb.TerminalChannel do
 
       send(
         self(),
-        {:terminal_ready,
-         %{session: session, setupState: setup_state_for(cell), lastSetupError: nil}}
+        {:terminal_ready, TerminalEvents.ready_payload(:setup, session, cell)}
       )
 
       send(self(), {:terminal_snapshot, output})
@@ -50,7 +51,7 @@ defmodule HiveServerElixirWeb.TerminalChannel do
         |> assign(:cell_id, cell_id)
         |> assign(:service_id, service_id)
 
-      send(self(), {:terminal_ready, %{session: session}})
+      send(self(), {:terminal_ready, TerminalEvents.ready_payload(:service, session, nil)})
       send(self(), {:terminal_snapshot, output})
       {:ok, socket}
     else
@@ -73,7 +74,7 @@ defmodule HiveServerElixirWeb.TerminalChannel do
         |> assign(:terminal_kind, :chat)
         |> assign(:cell_id, cell_id)
 
-      send(self(), {:terminal_ready, %{session: session}})
+      send(self(), {:terminal_ready, TerminalEvents.ready_payload(:chat, session, nil)})
       send(self(), {:terminal_snapshot, output})
       {:ok, socket}
     else
@@ -153,7 +154,13 @@ defmodule HiveServerElixirWeb.TerminalChannel do
         %{assigns: %{terminal_kind: :chat}} = socket
       ) do
     session = TerminalRuntime.restart_chat_session(socket.assigns.cell_id)
-    push(socket, "terminal_event", %{type: "ready", session: session})
+
+    push(
+      socket,
+      "terminal_event",
+      Map.put(TerminalEvents.ready_payload(:chat, session, nil), :type, "ready")
+    )
+
     push(socket, "terminal_event", %{type: "snapshot", output: []})
     {:noreply, socket}
   end
@@ -175,7 +182,12 @@ defmodule HiveServerElixirWeb.TerminalChannel do
   end
 
   def handle_info({:terminal_snapshot, output}, socket) do
-    push(socket, "terminal_event", %{type: "snapshot", output: output})
+    push(
+      socket,
+      "terminal_event",
+      Map.put(TerminalEvents.snapshot_payload(output), :type, "snapshot")
+    )
+
     {:noreply, socket}
   end
 
@@ -183,7 +195,7 @@ defmodule HiveServerElixirWeb.TerminalChannel do
         {:setup_terminal_data, %{cell_id: cell_id, chunk: chunk}},
         %{assigns: %{terminal_kind: :setup, cell_id: cell_id}} = socket
       ) do
-    push(socket, "terminal_event", %{type: "data", chunk: chunk})
+    push(socket, "terminal_event", Map.put(TerminalEvents.data_payload(chunk), :type, "data"))
     {:noreply, socket}
   end
 
@@ -191,7 +203,12 @@ defmodule HiveServerElixirWeb.TerminalChannel do
         {:setup_terminal_exit, %{cell_id: cell_id, exit_code: exit_code, signal: signal}},
         %{assigns: %{terminal_kind: :setup, cell_id: cell_id}} = socket
       ) do
-    push(socket, "terminal_event", %{type: "exit", exitCode: exit_code, signal: signal})
+    push(
+      socket,
+      "terminal_event",
+      Map.put(TerminalEvents.exit_payload(exit_code, signal), :type, "exit")
+    )
+
     {:noreply, socket}
   end
 
@@ -199,7 +216,7 @@ defmodule HiveServerElixirWeb.TerminalChannel do
         {:setup_terminal_error, %{cell_id: cell_id, message: message}},
         %{assigns: %{terminal_kind: :setup, cell_id: cell_id}} = socket
       ) do
-    push(socket, "terminal_event", %{type: "error", message: message})
+    push(socket, "terminal_event", Map.put(TerminalEvents.error_payload(message), :type, "error"))
     {:noreply, socket}
   end
 
@@ -207,7 +224,7 @@ defmodule HiveServerElixirWeb.TerminalChannel do
         {:service_terminal_data, %{cell_id: cell_id, service_id: service_id, chunk: chunk}},
         %{assigns: %{terminal_kind: :service, cell_id: cell_id, service_id: service_id}} = socket
       ) do
-    push(socket, "terminal_event", %{type: "data", chunk: chunk})
+    push(socket, "terminal_event", Map.put(TerminalEvents.data_payload(chunk), :type, "data"))
     {:noreply, socket}
   end
 
@@ -216,7 +233,12 @@ defmodule HiveServerElixirWeb.TerminalChannel do
          %{cell_id: cell_id, service_id: service_id, exit_code: exit_code, signal: signal}},
         %{assigns: %{terminal_kind: :service, cell_id: cell_id, service_id: service_id}} = socket
       ) do
-    push(socket, "terminal_event", %{type: "exit", exitCode: exit_code, signal: signal})
+    push(
+      socket,
+      "terminal_event",
+      Map.put(TerminalEvents.exit_payload(exit_code, signal), :type, "exit")
+    )
+
     {:noreply, socket}
   end
 
@@ -224,7 +246,7 @@ defmodule HiveServerElixirWeb.TerminalChannel do
         {:service_terminal_error, %{cell_id: cell_id, service_id: service_id, message: message}},
         %{assigns: %{terminal_kind: :service, cell_id: cell_id, service_id: service_id}} = socket
       ) do
-    push(socket, "terminal_event", %{type: "error", message: message})
+    push(socket, "terminal_event", Map.put(TerminalEvents.error_payload(message), :type, "error"))
     {:noreply, socket}
   end
 
@@ -232,7 +254,7 @@ defmodule HiveServerElixirWeb.TerminalChannel do
         {:chat_terminal_data, %{cell_id: cell_id, chunk: chunk}},
         %{assigns: %{terminal_kind: :chat, cell_id: cell_id}} = socket
       ) do
-    push(socket, "terminal_event", %{type: "data", chunk: chunk})
+    push(socket, "terminal_event", Map.put(TerminalEvents.data_payload(chunk), :type, "data"))
     {:noreply, socket}
   end
 
@@ -240,7 +262,12 @@ defmodule HiveServerElixirWeb.TerminalChannel do
         {:chat_terminal_exit, %{cell_id: cell_id, exit_code: exit_code, signal: signal}},
         %{assigns: %{terminal_kind: :chat, cell_id: cell_id}} = socket
       ) do
-    push(socket, "terminal_event", %{type: "exit", exitCode: exit_code, signal: signal})
+    push(
+      socket,
+      "terminal_event",
+      Map.put(TerminalEvents.exit_payload(exit_code, signal), :type, "exit")
+    )
+
     {:noreply, socket}
   end
 
@@ -248,13 +275,16 @@ defmodule HiveServerElixirWeb.TerminalChannel do
         {:chat_terminal_error, %{cell_id: cell_id, message: message}},
         %{assigns: %{terminal_kind: :chat, cell_id: cell_id}} = socket
       ) do
-    push(socket, "terminal_event", %{type: "error", message: message})
+    push(socket, "terminal_event", Map.put(TerminalEvents.error_payload(message), :type, "error"))
     {:noreply, socket}
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
-  defp validate_chat_available(%Cell{status: "ready"}), do: :ok
+  defp validate_chat_available(%Cell{} = cell) do
+    if CellStatus.ready?(cell), do: :ok, else: {:error, :chat_unavailable}
+  end
+
   defp validate_chat_available(_cell), do: {:error, :chat_unavailable}
 
   defp parse_resize_params(cols, rows) do
@@ -303,10 +333,6 @@ defmodule HiveServerElixirWeb.TerminalChannel do
         {:error, :invalid_topic}
     end
   end
-
-  defp setup_state_for(%Cell{status: "ready"}), do: "completed"
-  defp setup_state_for(%Cell{status: "error"}), do: "error"
-  defp setup_state_for(_cell), do: "running"
 
   defp error_message(reason, fallback) do
     if contains_error?(reason, NotFound) do

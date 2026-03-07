@@ -10,6 +10,7 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
 
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
+  alias HiveServerElixir.Cells.CellStatus
   alias HiveServerElixir.Cells.Provisioning
   alias HiveServerElixir.Cells.Reactors.Steps.RetryIngestStep
   alias HiveServerElixir.Cells.TemplateRuntime
@@ -153,14 +154,19 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
     |> Ash.read_one!(domain: Cells)
   end
 
-  defp finalize_terminal_state(%Cell{status: "ready"} = cell) do
-    TerminalEvents.on_cell_ready(%{workspace_id: cell.workspace_id, cell_id: cell.id})
-  end
+  defp finalize_terminal_state(%Cell{} = cell) do
+    cond do
+      CellStatus.ready?(cell) ->
+        TerminalEvents.on_cell_ready(%{workspace_id: cell.workspace_id, cell_id: cell.id})
 
-  defp finalize_terminal_state(%Cell{status: "error", last_setup_error: message} = cell)
-       when is_binary(message) and message != "" do
-    TerminalEvents.on_cell_error(%{workspace_id: cell.workspace_id, cell_id: cell.id}, message)
-  end
+      CellStatus.error?(cell) and is_binary(cell.last_setup_error) and cell.last_setup_error != "" ->
+        TerminalEvents.on_cell_error(
+          %{workspace_id: cell.workspace_id, cell_id: cell.id},
+          cell.last_setup_error
+        )
 
-  defp finalize_terminal_state(%Cell{}), do: :ok
+      true ->
+        :ok
+    end
+  end
 end

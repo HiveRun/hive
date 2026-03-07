@@ -1,5 +1,7 @@
 import Config
 
+alias HiveServerElixirWeb.LocalAccess
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration
@@ -21,7 +23,8 @@ if System.get_env("PHX_SERVER") do
 end
 
 config :hive_server_elixir, HiveServerElixirWeb.Endpoint,
-  http: [port: String.to_integer(System.get_env("PORT", "4000"))]
+  http: [port: String.to_integer(System.get_env("PORT", "4000"))],
+  check_origin: {HiveServerElixirWeb.LocalAccess, :origin_allowed?, []}
 
 if config_env() == :prod do
   database_path =
@@ -54,11 +57,7 @@ if config_env() == :prod do
   config :hive_server_elixir, HiveServerElixirWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [
-      # Enable IPv6 and bind on all interfaces.
-      # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
-      # See the documentation on https://hexdocs.pm/bandit/Bandit.html#t:options/0
-      # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-      ip: {0, 0, 0, 0, 0, 0, 0, 0}
+      ip: LocalAccess.local_bind_ip()
     ],
     secret_key_base: secret_key_base
 

@@ -6,6 +6,7 @@ defmodule HiveServerElixir.Agents do
 
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.AgentSession
+  alias HiveServerElixir.Cells.CellStatus
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.TerminalRuntime
   alias HiveServerElixir.Opencode.AgentEvent
@@ -521,10 +522,14 @@ defmodule HiveServerElixir.Agents do
     end
   end
 
-  defp status_from_cell("error"), do: "error"
-  defp status_from_cell("ready"), do: "awaiting_input"
-  defp status_from_cell("deleting"), do: "completed"
-  defp status_from_cell(_status), do: "starting"
+  defp status_from_cell(status) do
+    cond do
+      CellStatus.error?(status) -> "error"
+      CellStatus.ready?(status) -> "awaiting_input"
+      CellStatus.deleting?(status) -> "completed"
+      true -> "starting"
+    end
+  end
 
   defp event_status(%AgentEvent{} = event) do
     payload = event_payload(event)

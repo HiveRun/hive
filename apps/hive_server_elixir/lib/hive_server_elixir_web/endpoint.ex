@@ -17,7 +17,7 @@ defmodule HiveServerElixirWeb.Endpoint do
   )
 
   socket("/api/cells/terminal/socket", HiveServerElixirWeb.TerminalSocket,
-    websocket: [check_origin: false],
+    websocket: true,
     longpoll: false
   )
 

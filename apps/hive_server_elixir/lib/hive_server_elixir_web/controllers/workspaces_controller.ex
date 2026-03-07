@@ -65,7 +65,14 @@ defmodule HiveServerElixirWeb.WorkspacesController do
     case Workspaces.get(id) do
       {:ok, %Workspace{} = workspace} ->
         :ok = Workspaces.set_active_workspace_id(workspace.id)
-        json(conn, %{workspace: Workspaces.serialize(workspace)})
+
+        refreshed_workspace =
+          case Workspaces.get(workspace.id) do
+            {:ok, latest_workspace} -> latest_workspace
+            {:error, _error} -> workspace
+          end
+
+        json(conn, %{workspace: Workspaces.serialize(refreshed_workspace)})
 
       {:error, _error} ->
         conn
@@ -101,16 +108,14 @@ defmodule HiveServerElixirWeb.WorkspacesController do
     case existing do
       %Workspace{} = workspace ->
         updated_workspace = maybe_update_workspace_label(workspace, label)
-        maybe_activate_workspace(updated_workspace, activate)
-        {:ok, updated_workspace}
+        {:ok, maybe_activate_workspace(updated_workspace, activate)}
 
       nil ->
         resolved_label = label || derive_label_from_path(workspace_path)
 
         case Ash.create(Workspace, %{path: workspace_path, label: resolved_label}, domain: Cells) do
           {:ok, created_workspace} ->
-            maybe_activate_workspace(created_workspace, activate)
-            {:ok, created_workspace}
+            {:ok, maybe_activate_workspace(created_workspace, activate)}
 
           {:error, error} ->
             {:error, "Failed to register workspace: #{inspect(error)}"}
@@ -136,6 +141,13 @@ defmodule HiveServerElixirWeb.WorkspacesController do
 
     if should_activate do
       :ok = Workspaces.set_active_workspace_id(workspace.id)
+
+      case Workspaces.get(workspace.id) do
+        {:ok, refreshed_workspace} -> refreshed_workspace
+        {:error, _error} -> workspace
+      end
+    else
+      workspace
     end
   end
 

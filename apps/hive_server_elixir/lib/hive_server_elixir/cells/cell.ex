@@ -1,6 +1,8 @@
 defmodule HiveServerElixir.Cells.Cell do
   @moduledoc false
 
+  alias HiveServerElixir.Cells.CellStatus
+
   use Ash.Resource,
     domain: HiveServerElixir.Cells,
     data_layer: AshSqlite.DataLayer
@@ -100,10 +102,10 @@ defmodule HiveServerElixir.Cells.Cell do
       default false
     end
 
-    attribute :status, :string do
+    attribute :status, CellStatus do
       allow_nil? false
       public? true
-      default "provisioning"
+      default :provisioning
     end
 
     attribute :last_setup_error, :string do
