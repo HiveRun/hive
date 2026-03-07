@@ -48,6 +48,9 @@
         "typescript": "catalog:",
       },
     },
+    "apps/hive_server_elixir": {
+      "name": "@hive/server-elixir",
+    },
     "apps/server": {
       "name": "@hive/server",
       "dependencies": {
@@ -151,7 +154,6 @@
     "packages/cli": {
       "name": "@hive/cli",
       "dependencies": {
-        "@hive/server": "workspace:*",
         "clipanion": "^3.2.1",
         "dotenv": "catalog:",
         "picocolors": "^1.0.0",
@@ -464,6 +466,8 @@
     "@hive/e2e-desktop": ["@hive/e2e-desktop@workspace:apps/e2e-desktop"],
 
     "@hive/server": ["@hive/server@workspace:apps/server"],
+
+    "@hive/server-elixir": ["@hive/server-elixir@workspace:apps/hive_server_elixir"],
 
     "@hookform/resolvers": ["@hookform/resolvers@5.2.2", "", { "dependencies": { "@standard-schema/utils": "^0.3.0" }, "peerDependencies": { "react-hook-form": "^7.55.0" } }, "sha512-A/IxlMLShx3KjV/HeTcTfaMxdwy690+L/ZADoeaTltLx+CVuzkeVIPuybK3jrRfw7YZnmdKsVVHAlEPIAEUNlA=="],
 
