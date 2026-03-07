@@ -10,6 +10,7 @@ defmodule HiveServerElixir.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
+      usage_rules: usage_rules(),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
       listeners: [Phoenix.CodeReloader],
       consolidate_protocols: Mix.env() != :dev
@@ -107,6 +108,30 @@ defmodule HiveServerElixir.MixProject do
       "opencode.refresh": ["opencode.sync_spec", "opencode.gen.client"],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"],
       "ash.setup": ["ash.setup", "run priv/repo/seeds.exs"]
+    ]
+  end
+
+  defp usage_rules do
+    [
+      skills: [
+        location: "../../.agents/skills",
+        build: [
+          "ash-framework": [
+            description:
+              "Use this when working with Ash Framework and its extensions. Always consult this when making domain, resource, action, or policy changes.",
+            usage_rules: [
+              :ash,
+              :ash_ai,
+              :ash_oban,
+              :ash_phoenix,
+              :ash_sqlite,
+              :ash_state_machine,
+              :ash_typescript
+            ]
+          ]
+        ],
+        deps: [~r/.*/]
+      ]
     ]
   end
 end

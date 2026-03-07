@@ -68,8 +68,6 @@ docs/.obsidian/hotkeys.json
 docs/.obsidian/appearance.json
 
 # START Ruler Generated Files
-/.gemini/
-/.qwen/
 /.openhands/microagents/repo.md
 /.openhands/microagents/repo.md.bak
 /AGENTS.md
@@ -85,6 +83,10 @@ docs/.obsidian/appearance.json
 
 # OpenCode local planning artifacts
 .opencode/plans/
+
+# Ruler-generated agent config outputs
+.gemini/
+.qwen/
 
 # WDIO generated reports/videos
 apps/e2e/reports/

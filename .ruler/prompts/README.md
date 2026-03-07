@@ -89,6 +89,11 @@ Environment variables:
   PORT=4100 hive
   ```
 - Embedded chat sessions inherit OpenCode config from workspace `@opencode.json` / `opencode.json`.
+- `opencode.json` also exposes Tidewave MCP servers for local runtime introspection:
+  - `tidewave_backend`: `http://localhost:{env:BACKEND_PORT}/tidewave/mcp`
+  - `tidewave_frontend`: `http://localhost:{env:FRONTEND_PORT}/tidewave/mcp`
+- This repo includes `mise.toml` to auto-load `.env.dev` / `.env.dev.local`, so entering the directory from a `mise activate` shell makes those Tidewave MCP endpoints resolve without manual sourcing.
+- OpenCode also defines repo-local `backend-expert` and `frontend-expert` agents plus a `/usage-rules-update` command for refreshing managed dependency skills.
 - The SQLite database defaults to `~/.hive/state/hive.db`; set `DATABASE_PATH` if you need a different location.
 - High-frequency transport/polling request logs are muted by default to keep runtime logs readable. Re-enable per category with `HIVE_LOG_TERMINAL_TRAFFIC=1`, `HIVE_LOG_POLLING_TRAFFIC=1`, or `HIVE_LOG_OPTIONS_REQUESTS=1`.
 

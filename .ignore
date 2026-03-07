@@ -16,3 +16,7 @@
 !**/tmp/**
 !**/temp/**
 !**/coverage/**
+
+# Ruler-generated agent configs
+!.gemini/**
+!.qwen/**
