@@ -203,7 +203,7 @@ defmodule HiveServerElixirWeb.WorkspacesController do
   defp normalize_browse_path(_path), do: default_browse_root()
 
   defp default_browse_root do
-    System.get_env("HIVE_BROWSE_ROOT") || System.user_home!() || "."
+    Workspaces.default_browse_root()
   end
 
   defp normalize_filter(nil), do: nil

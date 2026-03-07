@@ -8,6 +8,12 @@ defmodule HiveServerElixirWeb.TemplatesControllerTest do
   setup do
     previous_active_workspace_id = Workspaces.active_workspace_id()
 
+    Workspace
+    |> Ash.read!(domain: Cells)
+    |> Enum.each(&Ash.destroy!(&1, domain: Cells))
+
+    :ok = Workspaces.set_active_workspace_id(nil)
+
     on_exit(fn ->
       :ok = Workspaces.set_active_workspace_id(previous_active_workspace_id)
     end)

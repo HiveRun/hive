@@ -65,7 +65,7 @@
     "dev:native": "turbo -F native dev",
     "dev:web": "turbo -F web dev",
     "dev:server": "bun run dev:server-elixir",
-    "dev:server-elixir": "mise x -C apps/hive_server_elixir -- iex -S mix phx.server",
+    "dev:server-elixir": "bash -lc 'mise x -C apps/hive_server_elixir -- mix ecto.migrate && exec mise x -C apps/hive_server_elixir -- iex -S mix phx.server'",
     "setup:server-elixir": "mise x -C apps/hive_server_elixir -- mix setup",
     "test:server-elixir": "mise x -C apps/hive_server_elixir -- mix test",
     "check:server-elixir": "mise x -C apps/hive_server_elixir -- mix format --check-formatted && mise x -C apps/hive_server_elixir -- mix test",

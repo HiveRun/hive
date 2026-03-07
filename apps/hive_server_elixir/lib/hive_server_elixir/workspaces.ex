@@ -8,12 +8,67 @@ defmodule HiveServerElixir.Workspaces do
   alias HiveServerElixir.Cells.Workspace
 
   @active_workspace_env_key :active_workspace_id
+  @hive_config_filename "hive.config.json"
+  @fallback_directory "hive"
 
   @spec list() :: [Workspace.t()]
   def list do
     Workspace
     |> Ash.Query.sort(inserted_at: :desc)
     |> Ash.read!(domain: Cells)
+  end
+
+  @spec bootstrap_current_workspace() :: :ok
+  def bootstrap_current_workspace do
+    case resolve_startup_workspace_root() do
+      path when is_binary(path) ->
+        _ = ensure_registered(path, preserve_active_workspace: true)
+        :ok
+
+      _other ->
+        :ok
+    end
+  end
+
+  @spec ensure_registered(String.t(), keyword()) :: {:ok, Workspace.t()} | {:error, String.t()}
+  def ensure_registered(path, opts \\ [])
+
+  def ensure_registered(path, opts) when is_binary(path) do
+    workspace_path = Path.expand(path)
+    preserve_active_workspace = Keyword.get(opts, :preserve_active_workspace, false)
+    label = Keyword.get(opts, :label)
+
+    with :ok <- validate_workspace_directory(workspace_path) do
+      case find_by_path(workspace_path) do
+        %Workspace{} = workspace ->
+          maybe_activate_workspace(workspace, preserve_active_workspace)
+          {:ok, workspace}
+
+        nil ->
+          resolved_label = label || derive_label_from_path(workspace_path)
+
+          case Ash.create(Workspace, %{path: workspace_path, label: resolved_label},
+                 domain: Cells
+               ) do
+            {:ok, workspace} ->
+              maybe_activate_workspace(workspace, preserve_active_workspace)
+              {:ok, workspace}
+
+            {:error, error} ->
+              {:error, "Failed to register workspace: #{inspect(error)}"}
+          end
+      end
+    end
+  end
+
+  def ensure_registered(_path, _opts), do: {:error, "Workspace path is required"}
+
+  @spec default_browse_root() :: String.t()
+  def default_browse_root do
+    case System.get_env("HIVE_BROWSE_ROOT") do
+      value when is_binary(value) and value != "" -> Path.expand(value)
+      _other -> resolve_startup_workspace_root() || System.user_home!() || "."
+    end
   end
 
   @spec get(String.t()) :: {:ok, Workspace.t()} | {:error, term()}
@@ -108,6 +163,85 @@ defmodule HiveServerElixir.Workspaces do
       addedAt: to_iso8601(workspace.inserted_at),
       lastOpenedAt: nil
     }
+  end
+
+  @spec resolve_startup_workspace_root() :: String.t() | nil
+  def resolve_startup_workspace_root do
+    base_root = resolve_base_workspace_root()
+    candidate = find_config_root(base_root)
+
+    if has_config_file?(candidate) and File.dir?(candidate) and
+         not cell_workspace_path?(candidate) do
+      candidate
+    else
+      nil
+    end
+  end
+
+  defp resolve_base_workspace_root do
+    case System.get_env("HIVE_WORKSPACE_ROOT") do
+      value when is_binary(value) and value != "" ->
+        Path.expand(value)
+
+      _other ->
+        current_dir = File.cwd!()
+
+        case String.split(current_dir, "/apps/", parts: 2) do
+          [root, _rest] when root != "" -> root
+          _other -> current_dir
+        end
+    end
+  end
+
+  defp find_config_root(base_root) do
+    normalized_root = Path.expand(base_root)
+
+    cond do
+      has_config_file?(normalized_root) ->
+        normalized_root
+
+      has_config_file?(Path.join(normalized_root, @fallback_directory)) ->
+        Path.join(normalized_root, @fallback_directory)
+
+      true ->
+        normalized_root
+    end
+  end
+
+  defp validate_workspace_directory(path) do
+    cond do
+      not File.dir?(path) ->
+        {:error, "Workspace path does not exist: #{path}"}
+
+      cell_workspace_path?(path) ->
+        {:error, "Cell worktrees cannot be registered as workspaces"}
+
+      not has_config_file?(path) ->
+        {:error, "Hive config not found in #{path}. Add #{@hive_config_filename}."}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp maybe_activate_workspace(%Workspace{} = workspace, preserve_active_workspace) do
+    if active_workspace_id() == nil or not preserve_active_workspace do
+      set_active_workspace_id(workspace.id)
+    else
+      :ok
+    end
+  end
+
+  defp has_config_file?(directory) when is_binary(directory) do
+    File.exists?(Path.join(directory, @hive_config_filename))
+  end
+
+  defp cell_workspace_path?(path) when is_binary(path) do
+    hive_home = System.get_env("HIVE_HOME") || Path.join(System.user_home!(), ".hive")
+    cells_root = hive_home |> Path.join("cells") |> Path.expand()
+    normalized_path = Path.expand(path)
+
+    normalized_path == cells_root || String.starts_with?(normalized_path, cells_root <> "/")
   end
 
   defp derive_label_from_path(path) when is_binary(path) do

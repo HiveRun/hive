@@ -7,31 +7,35 @@ defmodule HiveServerElixir.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      HiveServerElixirWeb.Telemetry,
-      HiveServerElixir.Repo,
-      {Registry, keys: :unique, name: HiveServerElixir.Opencode.EventIngestRegistry},
-      {DynamicSupervisor,
-       strategy: :one_for_one, name: HiveServerElixir.Opencode.EventIngestSupervisor},
-      {Ecto.Migrator,
-       repos: Application.fetch_env!(:hive_server_elixir, :ecto_repos), skip: skip_migrations?()},
-      {Oban,
-       AshOban.config(
-         Application.fetch_env!(:hive_server_elixir, :ash_domains),
-         Application.fetch_env!(:hive_server_elixir, Oban)
-       )},
-      {
-        DNSCluster,
-        # Start a worker by calling: HiveServerElixir.Worker.start_link(arg)
-        # {HiveServerElixir.Worker, arg},
-        # Start to serve requests, typically the last entry
-        query: Application.get_env(:hive_server_elixir, :dns_cluster_query) || :ignore
-      },
-      {Phoenix.PubSub, name: HiveServerElixir.PubSub},
-      {HiveServerElixir.Cells.TerminalRuntime, name: HiveServerElixir.Cells.TerminalRuntime},
-      {HiveServerElixir.Cells.ServiceRuntime, name: HiveServerElixir.Cells.ServiceRuntime},
-      HiveServerElixirWeb.Endpoint
-    ]
+    children =
+      [
+        HiveServerElixirWeb.Telemetry,
+        HiveServerElixir.Repo,
+        {Registry, keys: :unique, name: HiveServerElixir.Opencode.EventIngestRegistry},
+        {DynamicSupervisor,
+         strategy: :one_for_one, name: HiveServerElixir.Opencode.EventIngestSupervisor},
+        {Ecto.Migrator,
+         repos: Application.fetch_env!(:hive_server_elixir, :ecto_repos), skip: skip_migrations?()},
+        {Oban,
+         AshOban.config(
+           Application.fetch_env!(:hive_server_elixir, :ash_domains),
+           Application.fetch_env!(:hive_server_elixir, Oban)
+         )}
+      ] ++
+        workspace_bootstrap_children() ++
+        [
+          {
+            DNSCluster,
+            # Start a worker by calling: HiveServerElixir.Worker.start_link(arg)
+            # {HiveServerElixir.Worker, arg},
+            # Start to serve requests, typically the last entry
+            query: Application.get_env(:hive_server_elixir, :dns_cluster_query) || :ignore
+          },
+          {Phoenix.PubSub, name: HiveServerElixir.PubSub},
+          {HiveServerElixir.Cells.TerminalRuntime, name: HiveServerElixir.Cells.TerminalRuntime},
+          {HiveServerElixir.Cells.ServiceRuntime, name: HiveServerElixir.Cells.ServiceRuntime},
+          HiveServerElixirWeb.Endpoint
+        ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
@@ -50,5 +54,13 @@ defmodule HiveServerElixir.Application do
   defp skip_migrations?() do
     # By default, sqlite migrations are run when using a release
     System.get_env("RELEASE_NAME") == nil
+  end
+
+  defp workspace_bootstrap_children do
+    if Application.get_env(:hive_server_elixir, :workspace_bootstrap, true) do
+      [{Task, fn -> HiveServerElixir.Workspaces.bootstrap_current_workspace() end}]
+    else
+      []
+    end
   end
 end

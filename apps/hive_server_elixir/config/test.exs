@@ -1,6 +1,7 @@
 import Config
 config :hive_server_elixir, Oban, testing: :manual
 config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true
+config :hive_server_elixir, :workspace_bootstrap, false
 
 # Configure your database
 #

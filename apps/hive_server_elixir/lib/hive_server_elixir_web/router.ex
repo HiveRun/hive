@@ -98,12 +98,6 @@ defmodule HiveServerElixirWeb.Router do
     get("/api/cells/:id/chat/terminal/stream", CellsController, :chat_terminal_stream)
   end
 
-  scope "/", HiveServerElixirWeb do
-    pipe_through(:browser)
-
-    get("/*path", WebAppController, :index)
-  end
-
   # Other scopes may use custom stacks.
   # scope "/api", HiveServerElixirWeb do
   #   pipe_through :api
@@ -130,5 +124,11 @@ defmodule HiveServerElixirWeb.Router do
 
       oban_dashboard("/oban")
     end
+  end
+
+  scope "/", HiveServerElixirWeb do
+    pipe_through(:browser)
+
+    get("/*path", WebAppController, :index)
   end
 end
