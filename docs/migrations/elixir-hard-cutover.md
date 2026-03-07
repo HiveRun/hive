@@ -2,9 +2,9 @@
 
 ## Execution Snapshot
 
-- Current Step: Step 8 - Packaging, Installer, CI (in progress).
-- Next Action: remove the remaining source-checkout fallback path from the CLI once release/CI coverage is stable across all supported platforms.
-- Blockers: release publishing still needs cross-platform confirmation for the new bundled Elixir release path, especially on macOS and Windows runners.
+- Current Step: Step 9 - Hard Cutover Cleanup (in progress).
+- Next Action: finish doc/prompt cleanup and final validation for the Elixir-only runtime path.
+- Blockers: none for local runtime cutover; follow-up release confirmation is still useful on macOS and Windows runners.
 
 ## Step 1 Scaffold Baseline (Approved)
 
@@ -277,7 +277,7 @@
   - Web app runs fully against Elixir backend.
   - No frontend imports from `@hive/server`.
 
-### Step 6 Verification Evidence (In Progress)
+### Step 6 Verification Evidence (Completed)
 
 - 2026-03-05 - Added core cell query contract routes used by existing React query factories:
   - `GET /api/cells` (workspace-scoped list)
@@ -448,6 +448,13 @@ Step 7 done criteria are now satisfied locally:
   - No runtime path to TS backend remains.
   - Repo docs and scripts match new architecture.
 
+- 2026-03-07 - Removed the remaining active TypeScript backend dependency paths from the current runtime/tooling surface:
+  - Moved shared Hive config schema/types out of `apps/server` into `packages/config/src/hive-config-schema.ts` so config generation no longer imports the legacy backend.
+  - Replaced the web app's `@hive/server` Eden dependency with a local fetch-backed `@/lib/rpc` wrapper targeting the Elixir API routes.
+  - Updated root scripts and generated config defaults to point at `apps/hive_server_elixir` for dev/database operations.
+  - Left dormant `apps/server` source in place for now, but it is no longer part of the active runtime/dependency path.
+- 2026-03-07 - Updated README and Ruler prompt sources to describe Hive as an Elixir/Ash backend with Elixir-first runtime/testing commands.
+
 ## Database Reset Strategy (Approved)
 
 - On first boot of new backend:
@@ -510,3 +517,4 @@ Step 7 done criteria are now satisfied locally:
 - 2026-03-07 - Added session model/provider fallback resolution from timeline and workspace OpenCode config so session contracts return stable model metadata during early-session lifecycle.
 - 2026-03-07 - Added cell workspace snapshot creation under `HIVE_HOME/cells/:cell_id`, template-driven setup execution, template service materialization/startup, service SSE routing parity, and terminal-backed session message fallback; full Elixir-backed web E2E now passes.
 - 2026-03-07 - Migrated CLI runtime startup away from `@hive/server` so the compiled `hive` binary now runs Elixir directly (`mix ecto.migrate` + `mix phx.server`) and verified start/info/logs/stop lifecycle locally.
+- 2026-03-07 - Removed remaining active `@hive/server` and `apps/server` runtime/dependency references from config generation, frontend RPC typing, and root tooling scripts while preserving the dormant legacy tree for later deletion.

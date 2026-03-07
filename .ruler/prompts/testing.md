@@ -4,27 +4,17 @@
 
 This project uses a **hybrid testing philosophy**:
 
-### Backend Tests (Migration Period)
+### Backend Tests
 
-Backend coverage spans two runtimes while hard cutover is in progress.
-
-Legacy TypeScript backend (`apps/server`) uses Vitest:
-
-**Test location:** `apps/server/src/**/*.test.ts`
-
-```bash
-bun -C apps/server run test        # Watch mode
-bun -C apps/server run test:run    # CI mode
-```
-
-Example targeted run: `bun -C apps/server run test -- src/db.test.ts -t "creates user"`.
-
-Target Elixir backend (`apps/hive_server_elixir`) uses ExUnit:
+The runtime backend lives in `apps/hive_server_elixir` and uses ExUnit:
 
 ```bash
 cd apps/hive_server_elixir
 mix test
 ```
+
+- Run `mix precommit` when backend work touches formatting, warnings, or API/runtime behavior.
+- TypeScript packages outside the backend runtime (web, CLI, helpers) still use Vitest/TSC through the root `bun test:run` and `bun run typecheck` flows.
 
 ### True E2E (Playwright runtime flow)
 The opt-in true end-to-end flow lives under `apps/e2e` and validates cell creation + agent chat against a real Hive runtime.

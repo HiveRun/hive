@@ -8,7 +8,7 @@
 !**/dist/**
 !**/build/**
 !**/dist-electron/**
-!apps/server/server/**
+!apps/hive_server_elixir/_build/**
 
 # Tool caches and test reports
 !**/.turbo/**

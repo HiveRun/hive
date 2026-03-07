@@ -37,9 +37,9 @@ Components are stored in `apps/web/src/components/ui/`
 
 ## Backend Communication
 
-The backend is in active migration (`docs/migrations/elixir-hard-cutover.md`).
+The runtime backend is Phoenix/Ash in `apps/hive_server_elixir`.
 
-During migration, keep frontend data access behind `@/lib/rpc` so transport/client changes do not leak into UI components.
+Keep frontend data access behind `@/lib/rpc` so transport/client changes do not leak into UI components.
 
 **Always import data client helpers from `@/lib/rpc`:**
 
@@ -47,7 +47,7 @@ During migration, keep frontend data access behind `@/lib/rpc` so transport/clie
 import { rpc } from "@/lib/rpc"
 ```
 
-`@/lib/rpc` may use Eden today and generated clients during cutover. Components should not import backend framework types directly.
+`@/lib/rpc` is the frontend's stable API wrapper. Components should not import backend framework types directly.
 
 ### Client Usage Pattern
 

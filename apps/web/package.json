@@ -17,8 +17,6 @@
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
-    "@elysiajs/eden": "^1.4.4",
-    "@hive/server": "workspace:*",
     "@hookform/resolvers": "^5.2.2",
     "@pierre/precision-diffs": "^0.5.1",
     "@radix-ui/react-alert-dialog": "^1.1.15",

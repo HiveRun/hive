@@ -1,11 +1,11 @@
 # hive
 
-Monorepo project with a React + TanStack Start frontend and a backend currently migrating from TypeScript/Elysia to Elixir/Ash.
+Monorepo project with a React + TanStack Start frontend and an Elixir/Ash backend.
 
 ## Migration Status
 
-- Active plan: `docs/migrations/elixir-hard-cutover.md`
-- Backend work is transitioning to an Elixir hard cutover while preserving local-first runtime behavior.
+- Active plan and change log: `docs/migrations/elixir-hard-cutover.md`
+- Hive now runs against the Elixir hard-cutover backend while preserving local-first runtime behavior.
 - If documentation appears to conflict, use the migration plan and `.ruler/prompts/*.md` as the source of truth.
 
 ## Installation
@@ -89,7 +89,7 @@ Environment variables:
   PORT=4100 hive
   ```
 - Embedded chat sessions inherit OpenCode config from workspace `@opencode.json` / `opencode.json`.
-- The SQLite database defaults to `~/.hive/state/hive.db`; set `DATABASE_URL` if you need a different location.
+- The SQLite database defaults to `~/.hive/state/hive.db`; set `DATABASE_PATH` if you need a different location.
 - High-frequency transport/polling request logs are muted by default to keep runtime logs readable. Re-enable per category with `HIVE_LOG_TERMINAL_TRAFFIC=1`, `HIVE_LOG_POLLING_TRAFFIC=1`, or `HIVE_LOG_OPTIONS_REQUESTS=1`.
 
 #### OpenCode keybinds in Hive
@@ -192,8 +192,7 @@ mise install
 bun setup
 
 
-# Set up local database (create .env with DATABASE_URL="local.db")
-# Then run development servers
+# `bun dev` auto-generates `.env.dev.local` and defaults the Elixir dev DB under `.hive/state`
 bun dev
 ```
 
@@ -203,8 +202,7 @@ bun dev
 # One-time setup (installs deps, prepares desktop E2E prereqs when possible, pushes DB schema)
 bun setup
 
-# Set up local database (create .env with DATABASE_URL="local.db")  
-# Then run development servers
+# `bun dev` auto-generates `.env.dev.local` and defaults the Elixir dev DB under `.hive/state`
 bun dev
 ```
 
@@ -220,9 +218,8 @@ bun dev
 ```
 hive/
 ├── apps/
-│   ├── web/               # Frontend application (React + TanStack Start)
-│   ├── server/            # Legacy TypeScript backend (Elysia)
-│   └── hive_server_elixir/ # Elixir backend (hard cutover target)
+│   ├── web/                # Frontend application (React + TanStack Start)
+│   └── hive_server_elixir/ # Active backend (Phoenix + Ash)
 ├── packages/
 │   ├── cli/         # Packaged Hive CLI runtime
 ```
@@ -231,20 +228,15 @@ hive/
 
 This project uses a **hybrid testing philosophy**:
 
-### Backend Unit Tests (Vitest)
-API and business logic tested with Vitest.
+### Backend Runtime Tests (ExUnit)
+API and business logic for the runtime backend are tested with ExUnit.
 
 ```bash
-# Run unit tests in watch mode
-bun test
-
-# Run unit tests once (CI mode)
-bun test:run
+cd apps/hive_server_elixir
+mix test
 ```
 
-**Test location (legacy backend):** `apps/server/src/**/*.test.ts`
-
-Elixir backend tests run with `mix test` from `apps/hive_server_elixir`.
+For the full repo check flow, use `bun test:run` and `bun run check:commit` from the root.
 
 ### UI Testing
 True end-to-end browser testing runs with Playwright (Chromium only for now).
@@ -453,6 +445,6 @@ This command:
 
 ### Ripgrep Overrides for Agents
 
-OpenCode's search shell respects `.gitignore` by default, which hides dependencies and build outputs that agents often need to inspect. We keep a project-level `.ignore` file in the repo root with negated patterns for `node_modules`, build directories (`dist`, `build`, `dist-electron`, `apps/server/server`), cached artifacts (`.turbo`, `.cache`, `tmp`, `temp`), and coverage data. Ripgrep automatically merges these overrides, so agents can still search through those trees without humans having to toggle settings.
+OpenCode's search shell respects `.gitignore` by default, which hides dependencies and build outputs that agents often need to inspect. We keep a project-level `.ignore` file in the repo root with negated patterns for `node_modules`, build directories (`dist`, `build`, `dist-electron`, `apps/hive_server_elixir/_build`), cached artifacts (`.turbo`, `.cache`, `tmp`, `temp`), and coverage data. Ripgrep automatically merges these overrides, so agents can still search through those trees without humans having to toggle settings.
 
 If you add new tooling that writes important gitignored files, extend `.ignore` with another `!` pattern so the content remains discoverable to opencode agents.

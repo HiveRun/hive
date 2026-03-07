@@ -25,7 +25,8 @@
         "dist/**",
         "build/**",
         "dist-electron/**",
-        "apps/server/server/**"
+        "apps/hive_server_elixir/_build/**",
+        "apps/hive_server_elixir/deps/**"
       ],
       "agent": {
         "providerId": "zen",
@@ -35,10 +36,10 @@
         "api": {
           "type": "process",
           "run": "bun run dev",
-          "cwd": "./apps/server",
+          "cwd": "./apps/hive_server_elixir",
           "env": {
             "NODE_ENV": "development",
-            "DATABASE_URL": "./dev.db"
+            "DATABASE_PATH": "./dev.db"
           },
           "readyTimeoutMs": 5000
         }
