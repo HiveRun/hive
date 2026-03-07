@@ -76,6 +76,7 @@
     "@types/react": "~19.1.10",
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^5.0.4",
+    "tidewave": "^0.6.0",
     "typescript": "catalog:",
     "vite": "^7.0.2",
     "vitest": "^4.0.3",

@@ -12,6 +12,16 @@
     ]
   },
   "mcp": {
+    "tidewave_backend": {
+      "type": "remote",
+      "enabled": true,
+      "url": "http://localhost:{env:BACKEND_PORT}/tidewave/mcp"
+    },
+    "tidewave_frontend": {
+      "type": "remote",
+      "enabled": true,
+      "url": "http://localhost:{env:FRONTEND_PORT}/tidewave/mcp"
+    },
     "linear": {
       "type": "local",
       "enabled": true,

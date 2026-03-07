@@ -1,6 +1,7 @@
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import viteReact from "@vitejs/plugin-react";
+import tidewave from "tidewave/vite-plugin";
 import { defineConfig, loadEnv } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 
@@ -38,6 +39,7 @@ export default defineConfig(({ mode }) => {
         routeFileIgnorePattern: ROUTE_FILE_IGNORE_PATTERN,
       }),
       viteReact(),
+      tidewave(),
     ],
     resolve: {
       alias: {
