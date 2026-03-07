@@ -591,7 +591,18 @@ async function ensureTerminalReady(
       lastErrorMessage = probe.errorMessage;
 
       if (lastState === "online") {
-        return page.locator(selectors.terminalInputTextarea).isVisible();
+        const [readySurfaceVisible, inputSurfaceVisible] = await Promise.all([
+          page
+            .locator(selectors.terminalReadySurface)
+            .isVisible()
+            .catch(() => false),
+          page
+            .locator(selectors.terminalInputSurface)
+            .isVisible()
+            .catch(() => false),
+        ]);
+
+        return readySurfaceVisible || inputSurfaceVisible;
       }
 
       if (lastState === "exited" || lastState === "disconnected") {

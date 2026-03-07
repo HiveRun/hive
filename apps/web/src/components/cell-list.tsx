@@ -679,7 +679,7 @@ function CellMetadataDialog({
                   <Button
                     aria-label="Copy workspace path"
                     className="h-6 w-6 p-0"
-                    onClick={() => handleCopy(selectedCell.workspacePath)}
+                    onClick={() => handleCopy(selectedCell.workspacePath ?? "")}
                     size="icon-sm"
                     type="button"
                     variant="ghost"

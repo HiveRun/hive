@@ -1,25 +1,137 @@
 import { type CreateCellInput, rpc } from "@/lib/rpc";
 import { formatRpcError, formatRpcResponseError } from "@/lib/rpc-error";
 
+export type CellStatus =
+  | "spawning"
+  | "pending"
+  | "ready"
+  | "error"
+  | "deleting";
+
+type CellRecord = {
+  id: string;
+  name: string;
+  description?: string | null;
+  status: CellStatus;
+  workspaceId: string;
+  workspacePath?: string | null;
+  workspaceRootPath?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  templateId: string;
+  opencodeSessionId?: string | null;
+  opencodeCommand?: string | null;
+  lastSetupError?: string;
+  currentMode?: "plan" | "build" | null;
+  startMode?: "plan" | "build" | null;
+  branchName?: string | null;
+  baseCommit?: string | null;
+  setupLog?: string | null;
+  setupLogPath?: string | null;
+};
+
+type CellListResponse = {
+  cells: CellRecord[];
+};
+
+type CellServiceRecord = {
+  id: string;
+  name: string;
+  status: string;
+  type?: string;
+  command?: string;
+  cwd?: string;
+  port?: number | null;
+  pid?: number | null;
+  cpuPercent?: number | null;
+  rssBytes?: number | null;
+  lastKnownError?: string | null;
+  url?: string;
+  portReachable?: boolean;
+};
+
+type CellServicesResponse = {
+  services: CellServiceRecord[];
+  message?: string;
+  details?: string;
+};
+
+type CellResourceProcessRecord = {
+  id: string;
+  name: string;
+  kind: string;
+  serviceType?: string | null;
+  active: boolean;
+  status?: string | null;
+  pid?: number | null;
+  cpuPercent?: number | null;
+  rssBytes?: number | null;
+};
+
+type CellResourceHistoryPoint = {
+  activeCpuPercent: number;
+  activeRssBytes: number;
+  processes: CellResourceProcessRecord[];
+};
+
+type CellResourceHistoryAverageRecord = {
+  window: string;
+  averageActiveCpuPercent: number;
+  averageActiveRssBytes: number;
+  peakActiveCpuPercent: number;
+  peakActiveRssBytes: number;
+  sampleCount: number;
+};
+
+type CellResourceSummaryRecord = {
+  sampledAt: string;
+  processCount: number;
+  activeProcessCount: number;
+  activeCpuPercent: number;
+  activeRssBytes: number;
+  processes: CellResourceProcessRecord[];
+  history?: CellResourceHistoryPoint[];
+  historyAverages?: CellResourceHistoryAverageRecord[];
+  message?: string;
+  details?: string;
+};
+
+type CellActivityEventRecord = {
+  id: string;
+  type: string;
+  createdAt: string;
+  title?: string | null;
+  description?: string | null;
+  toolName?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+type CellActivityResponse = {
+  events: CellActivityEventRecord[];
+  nextCursor?: string | null;
+  message?: string;
+  details?: string;
+};
+
 export const cellQueries = {
   all: (workspaceId: string) => ({
     queryKey: ["cells", workspaceId] as const,
     staleTime: 0,
-    queryFn: async () => {
+    queryFn: async (): Promise<CellRecord[]> => {
       const { data, error } = await rpc.api.cells.get({
         query: { workspaceId },
       });
       if (error) {
         throw new Error(formatRpcError(error, "Failed to fetch cells"));
       }
-      return data.cells.map(normalizeCell);
+      return (data as CellListResponse).cells.map(normalizeCell);
     },
   }),
 
   detail: (id: string) => ({
     queryKey: ["cells", id] as const,
     staleTime: 0,
-    queryFn: async () => {
+    queryFn: async (): Promise<CellRecord & { status: CellStatus }> => {
       const { data, error } = await rpc.api.cells({ id }).get({
         query: {
           includeSetupLog: false,
@@ -29,11 +141,16 @@ export const cellQueries = {
         throw new Error(formatRpcError(error, "Cell not found"));
       }
 
-      if ("message" in data) {
+      if (
+        data &&
+        typeof data === "object" &&
+        "message" in data &&
+        typeof data.message === "string"
+      ) {
         throw new Error(formatRpcResponseError(data, "Cell not found"));
       }
 
-      return normalizeCell(data);
+      return normalizeCell(stripNullCellFields(data as CellRecord));
     },
   }),
 
@@ -44,7 +161,7 @@ export const cellQueries = {
       "services",
       options.includeResources ?? false,
     ] as const,
-    queryFn: async () => {
+    queryFn: async (): Promise<CellServiceRecord[]> => {
       const { data, error } = await rpc.api.cells({ id }).services.get({
         query: {
           includeResources: options.includeResources,
@@ -54,11 +171,16 @@ export const cellQueries = {
         throw new Error(formatRpcError(error, "Failed to load services"));
       }
 
-      if ("message" in data) {
+      if (
+        data &&
+        typeof data === "object" &&
+        "message" in data &&
+        typeof data.message === "string"
+      ) {
         throw new Error(formatRpcResponseError(data, "Cell not found"));
       }
 
-      return data.services;
+      return (data as CellServicesResponse).services;
     },
   }),
 
@@ -82,7 +204,7 @@ export const cellQueries = {
       options.historyLimit ?? null,
       options.rollupLimit ?? null,
     ] as const,
-    queryFn: async () => {
+    queryFn: async (): Promise<CellResourceSummaryRecord> => {
       const { data, error } = await rpc.api.cells({ id }).resources.get({
         query: {
           includeHistory: options.includeHistory,
@@ -96,11 +218,16 @@ export const cellQueries = {
         throw new Error(formatRpcError(error, "Failed to load resources"));
       }
 
-      if ("message" in data) {
+      if (
+        data &&
+        typeof data === "object" &&
+        "message" in data &&
+        typeof data.message === "string"
+      ) {
         throw new Error(formatRpcResponseError(data, "Cell not found"));
       }
 
-      return data;
+      return data as CellResourceSummaryRecord;
     },
   }),
 
@@ -120,7 +247,7 @@ export const cellQueries = {
       options.cursor ?? null,
       options.types?.join(",") ?? null,
     ] as const,
-    queryFn: async () => {
+    queryFn: async (): Promise<CellActivityResponse> => {
       const query: Record<string, string | number> = {};
       if (typeof options.limit === "number") {
         query.limit = options.limit;
@@ -138,13 +265,18 @@ export const cellQueries = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to load activity"));
       }
-      if ("message" in data) {
+      if (
+        data &&
+        typeof data === "object" &&
+        "message" in data &&
+        typeof data.message === "string"
+      ) {
         throw new Error(
           formatRpcResponseError(data, "Failed to load activity")
         );
       }
 
-      return data;
+      return data as CellActivityResponse;
     },
   }),
 
@@ -182,7 +314,12 @@ export const cellQueries = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to load timings"));
       }
-      if ("message" in data) {
+      if (
+        data &&
+        typeof data === "object" &&
+        "message" in data &&
+        typeof data.message === "string"
+      ) {
         throw new Error(formatRpcResponseError(data, "Failed to load timings"));
       }
 
@@ -257,11 +394,16 @@ export const cellMutations = {
         throw new Error(formatRpcError(error, "Failed to create cell"));
       }
 
-      if ("message" in data) {
+      if (
+        data &&
+        typeof data === "object" &&
+        "message" in data &&
+        typeof data.message === "string"
+      ) {
         throw new Error(formatRpcResponseError(data, "Failed to create cell"));
       }
 
-      return normalizeCell(data);
+      return normalizeCell(stripNullCellFields(data as CellRecord));
     },
   },
 
@@ -282,11 +424,16 @@ export const cellMutations = {
         throw new Error(formatRpcError(error, "Failed to delete cells"));
       }
 
-      if ("message" in data) {
+      if (
+        data &&
+        typeof data === "object" &&
+        "message" in data &&
+        typeof data.message === "string"
+      ) {
         throw new Error(formatRpcResponseError(data, "Failed to delete cells"));
       }
 
-      return data;
+      return data as { deletedIds: string[] };
     },
   },
 
@@ -348,7 +495,7 @@ export const cellMutations = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to retry setup"));
       }
-      return normalizeCell(data);
+      return normalizeCell(stripNullCellFields(data as CellRecord));
     },
   },
 };
@@ -389,27 +536,26 @@ export const cellDiffQueries = {
           formatRpcError(error, `Failed to load diff for ${file}`)
         );
       }
-      const details = (data.details as DiffFileDetail[] | undefined) ?? [];
+      const details = ((data as CellDiffResponse).details ??
+        []) as DiffFileDetail[];
       return details.find((detail) => detail.path === file) ?? null;
     },
   }),
 };
 
-const normalizeCell = <T extends { status: string }>(
+const stripNullCellFields = (cell: CellRecord): CellRecord => ({
+  ...cell,
+  lastSetupError: cell.lastSetupError ?? undefined,
+});
+
+const normalizeCell = <T extends { status: CellStatus }>(
   cell: T
 ): T & { status: CellStatus } => ({
   ...cell,
-  status: cell.status as CellStatus,
+  status: cell.status,
 });
 
 // Export inferred types for use in components
-export type CellStatus =
-  | "spawning"
-  | "pending"
-  | "ready"
-  | "error"
-  | "deleting";
-
 export type Cell = Awaited<
   ReturnType<ReturnType<typeof cellQueries.detail>["queryFn"]>
 > & {

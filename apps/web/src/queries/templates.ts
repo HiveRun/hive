@@ -63,13 +63,14 @@ export const templateQueries = {
       if (error) {
         throw new Error("Failed to fetch templates");
       }
-      if (!(data && Array.isArray(data.templates))) {
+      const response = data as Partial<TemplatesResponse> | null;
+      if (!(response && Array.isArray(response.templates))) {
         throw new Error("Invalid templates response from server");
       }
       return {
-        templates: data.templates,
-        defaults: data.defaults,
-        agentDefaults: data.agentDefaults,
+        templates: response.templates,
+        defaults: response.defaults,
+        agentDefaults: response.agentDefaults,
       };
     },
   }),
@@ -83,7 +84,7 @@ export const templateQueries = {
       if (error) {
         throw new Error("Template not found");
       }
-      return data;
+      return data as Template;
     },
   }),
 };

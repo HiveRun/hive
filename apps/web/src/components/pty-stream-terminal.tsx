@@ -14,9 +14,10 @@ import { Button } from "@/components/ui/button";
 import { getApiBase } from "@/lib/api-base";
 import { isMouseMovementInputChunk } from "@/lib/terminal-input";
 import {
+  createTerminalSocket,
   parseTerminalSocketMessage,
   sendTerminalSocketMessage,
-  toWebSocketUrl,
+  type TerminalSocketLike,
 } from "@/lib/terminal-websocket";
 
 type ConnectionState =
@@ -91,7 +92,7 @@ export function PtyStreamTerminal({
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<{ fit: () => void } | null>(null);
   const serializeAddonRef = useRef<{ serialize: () => string } | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
+  const socketRef = useRef<TerminalSocketLike | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const inputListenerRef = useRef<{ dispose: () => void } | null>(null);
   const outputRef = useRef<string>("");
@@ -109,12 +110,7 @@ export function PtyStreamTerminal({
   const [setupDisplayState, setSetupDisplayState] =
     useState<SetupDisplayState>("unknown");
 
-  const buildSocketEndpoint = useCallback(() => {
-    const wsPath = streamPath.endsWith("/stream")
-      ? `${streamPath.slice(0, -"/stream".length)}/ws`
-      : streamPath;
-    return toWebSocketUrl(`${API_BASE}${wsPath}`);
-  }, [streamPath]);
+  const buildTerminalSocketPath = useCallback(() => streamPath, [streamPath]);
 
   const sendSocketMessage = useCallback(
     (message: { type: string; [key: string]: unknown }) => {
@@ -314,7 +310,10 @@ export function PtyStreamTerminal({
     setSetupDisplayState("unknown");
 
     const connectStream = () => {
-      const socket = new WebSocket(buildSocketEndpoint());
+      const socket = createTerminalSocket({
+        apiBase: API_BASE,
+        terminalPath: buildTerminalSocketPath(),
+      });
       socketRef.current = socket;
       socketCloseErrorRef.current = null;
 
@@ -639,7 +638,7 @@ export function PtyStreamTerminal({
     };
   }, [
     allowInput,
-    buildSocketEndpoint,
+    buildTerminalSocketPath,
     inputPath,
     mode,
     scheduleResizeSync,

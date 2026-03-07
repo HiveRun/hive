@@ -569,7 +569,18 @@ export async function ensureTerminalReady(
       lastExitCode = exitCode ?? "";
 
       if (state === "online") {
-        return page.locator(selectors.terminalInputTextarea).isVisible();
+        const [readySurfaceVisible, inputSurfaceVisible] = await Promise.all([
+          page
+            .locator(selectors.terminalReadySurface)
+            .isVisible()
+            .catch(() => false),
+          page
+            .locator(selectors.terminalInputSurface)
+            .isVisible()
+            .catch(() => false),
+        ]);
+
+        return readySurfaceVisible || inputSurfaceVisible;
       }
 
       if (state === "exited" || state === "disconnected") {

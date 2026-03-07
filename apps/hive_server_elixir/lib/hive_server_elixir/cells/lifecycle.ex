@@ -1,0 +1,48 @@
+defmodule HiveServerElixir.Cells.Lifecycle do
+  @moduledoc """
+  Lifecycle entrypoints for starting and stopping OpenCode event ingest per cell.
+  """
+
+  alias HiveServerElixir.Opencode.EventIngestRuntime
+  alias HiveServerElixir.Cells.TerminalEvents
+
+  @spec on_cell_create(map, keyword) :: DynamicSupervisor.on_start_child()
+  def on_cell_create(context, opts \\ []) when is_map(context) do
+    case EventIngestRuntime.start_stream(context, opts) do
+      {:ok, _pid} = result ->
+        :ok = TerminalEvents.on_cell_started(context)
+        result
+
+      {:error, reason} = error ->
+        :ok = TerminalEvents.on_cell_error(context, inspect(reason))
+        error
+    end
+  end
+
+  @spec on_cell_retry(map, keyword) :: DynamicSupervisor.on_start_child()
+  def on_cell_retry(context, opts \\ []) when is_map(context) do
+    restart_stream(context, opts)
+  end
+
+  @spec on_cell_resume(map, keyword) :: DynamicSupervisor.on_start_child()
+  def on_cell_resume(context, opts \\ []) when is_map(context) do
+    restart_stream(context, opts)
+  end
+
+  @spec on_cell_delete(map) :: :ok
+  def on_cell_delete(context) when is_map(context) do
+    result =
+      case EventIngestRuntime.stop_stream(context) do
+        :ok -> :ok
+        {:error, :not_found} -> :ok
+      end
+
+    :ok = TerminalEvents.on_cell_stopped(context)
+    result
+  end
+
+  defp restart_stream(context, opts) do
+    _ = EventIngestRuntime.stop_stream(context)
+    EventIngestRuntime.start_stream(context, opts)
+  end
+end

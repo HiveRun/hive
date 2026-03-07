@@ -31,7 +31,8 @@ export const agentQueries = {
         throw new Error("Failed to load agent session");
       }
 
-      return data.session as AgentSession | null;
+      const response = data as { session?: AgentSession | null } | null;
+      return response?.session ?? null;
     },
   }),
 };

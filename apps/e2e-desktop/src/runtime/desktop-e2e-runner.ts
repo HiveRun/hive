@@ -51,7 +51,7 @@ const moduleDir = dirname(modulePath);
 const e2eRoot = join(moduleDir, "..", "..");
 const stableArtifactsDir = join(e2eRoot, "reports", "latest");
 const repoRoot = join(e2eRoot, "..", "..");
-const serverRoot = join(repoRoot, "apps", "server");
+const serverElixirRoot = join(repoRoot, "apps", "hive_server_elixir");
 const desktopRoot = join(repoRoot, "apps", "desktop-electron");
 const desktopMainEntry = join(desktopRoot, "dist", "main.js");
 const desktopRendererEntry = join(
@@ -76,6 +76,12 @@ async function run() {
       logsDir: context.logsDir,
     });
     managedProcesses.push(server);
+
+    await registerWorkspace({
+      apiUrl: context.apiUrl,
+      path: context.workspaceRoot,
+      activate: true,
+    });
 
     process.stdout.write("Building desktop renderer assets...\n");
     await runCommand("bun", ["run", "build"], {
@@ -209,24 +215,36 @@ async function startServerWithRetries(options: {
   context: RuntimeContext;
   logsDir: string;
 }): Promise<ManagedProcess> {
+  const elixirEnv = {
+    ...process.env,
+    MIX_ENV: "prod",
+    PHX_SERVER: "true",
+    SECRET_KEY_BASE:
+      "hive-e2e-secret-key-base-dev-only-0001-0002-0003-0004-0005-0006-0007",
+    DATABASE_PATH: options.context.dbPath,
+    HIVE_HOME: options.context.hiveHome,
+    HIVE_WORKSPACE_ROOT: options.context.workspaceRoot,
+    HIVE_BROWSE_ROOT: options.context.runRoot,
+    HIVE_OPENCODE_START_TIMEOUT_MS: "120000",
+    HOST: "127.0.0.1",
+    PORT: String(options.context.apiPort),
+    CORS_ORIGIN: "null",
+  };
+
+  await runCommand("mise", ["x", "-C", ".", "--", "mix", "ecto.migrate"], {
+    cwd: serverElixirRoot,
+    env: elixirEnv,
+    label: "Migrate Elixir desktop E2E database",
+  });
+
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= SERVER_START_ATTEMPTS; attempt += 1) {
     const server = startManagedProcess({
-      command: "bun",
-      args: ["run", "src/index.ts"],
-      cwd: serverRoot,
-      env: {
-        ...process.env,
-        DATABASE_URL: `file:${options.context.dbPath}`,
-        HIVE_HOME: options.context.hiveHome,
-        HIVE_WORKSPACE_ROOT: options.context.workspaceRoot,
-        HIVE_BROWSE_ROOT: options.context.runRoot,
-        HIVE_OPENCODE_START_TIMEOUT_MS: "120000",
-        HOST: "127.0.0.1",
-        PORT: String(options.context.apiPort),
-        CORS_ORIGIN: "null",
-      },
+      command: "mise",
+      args: ["x", "-C", ".", "--", "mix", "phx.server"],
+      cwd: serverElixirRoot,
+      env: elixirEnv,
       logsDir: options.logsDir,
       name: "server",
     });
@@ -386,6 +404,32 @@ async function runCommand(
       );
     });
   });
+}
+
+async function registerWorkspace(options: {
+  apiUrl: string;
+  path: string;
+  activate: boolean;
+}): Promise<void> {
+  const response = await fetch(`${options.apiUrl}/api/workspaces`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      path: options.path,
+      activate: options.activate,
+    }),
+  });
+
+  if (response.ok) {
+    return;
+  }
+
+  const body = await response.text();
+  throw new Error(
+    `Failed to register workspace ${options.path} (status ${response.status}): ${body}`
+  );
 }
 
 function startManagedProcess(options: {

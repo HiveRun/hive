@@ -1,13 +1,16 @@
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import viteReact from "@vitejs/plugin-react";
+import tidewave from "tidewave/vite-plugin";
 import { defineConfig, loadEnv } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 
 const DEFAULT_DEV_SERVER_PORT = 3001;
 const DEFAULT_API_SERVER_PORT = "3000";
 const ROUTE_FILE_IGNORE_PATTERN = "\\.(test|spec)\\.(ts|tsx|js|jsx)$";
-const resolvedDevPort = Number(process.env.PORT ?? DEFAULT_DEV_SERVER_PORT);
+const resolvedDevPort = Number(
+  process.env.FRONTEND_PORT ?? process.env.PORT ?? DEFAULT_DEV_SERVER_PORT
+);
 const devServerPort = Number.isNaN(resolvedDevPort)
   ? DEFAULT_DEV_SERVER_PORT
   : resolvedDevPort;
@@ -36,6 +39,7 @@ export default defineConfig(({ mode }) => {
         routeFileIgnorePattern: ROUTE_FILE_IGNORE_PATTERN,
       }),
       viteReact(),
+      tidewave(),
     ],
     resolve: {
       alias: {

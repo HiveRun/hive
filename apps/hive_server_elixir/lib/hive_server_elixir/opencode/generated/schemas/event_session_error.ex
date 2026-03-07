@@ -1,0 +1,23 @@
+defmodule HiveServerElixir.Opencode.Generated.EventSessionError do
+  @moduledoc """
+  Provides struct and type for a EventSessionError
+  """
+
+  @type t :: %__MODULE__{
+          properties: HiveServerElixir.Opencode.Generated.EventSessionErrorProperties.t(),
+          type: String.t()
+        }
+
+  defstruct [:properties, :type]
+
+  @doc false
+  @spec __fields__(atom) :: keyword
+  def __fields__(type \\ :t)
+
+  def __fields__(:t) do
+    [
+      properties: {HiveServerElixir.Opencode.Generated.EventSessionErrorProperties, :t},
+      type: {:const, "session.error"}
+    ]
+  end
+end

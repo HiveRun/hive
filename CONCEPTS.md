@@ -140,8 +140,20 @@ Terminals stream output via WebSocket and persist history.
 
 ## Tech Stack
 
+### Current Runtime (Legacy Path)
+
 - **Backend**: Elysia (Bun) with Drizzle ORM
 - **Frontend**: React + TanStack Start
 - **Agent Runtime**: OpenCode SDK
-- **Database**: SQLite (local) / PostgreSQL (production)
-- **Communication**: Eden Treaty RPC, WebSockets
+- **Database**: SQLite
+- **Communication**: Eden Treaty RPC, SSE, WebSockets
+
+### Target Runtime (Hard Cutover In Progress)
+
+- **Backend**: Elixir (Phoenix API) + Ash
+- **Flow/Jobs**: Reactor + Oban Lite
+- **Frontend**: React + TanStack Start
+- **Database**: SQLite (`ash_sqlite`) for local-first runtime
+- **Communication**: generated typed API client, SSE, WebSockets
+
+For migration details and current execution status, see `docs/migrations/elixir-hard-cutover.md`.

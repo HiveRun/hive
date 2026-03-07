@@ -20,11 +20,11 @@ FOUND_SECRETS=false
 for pattern in "${PATTERNS[@]}"; do
     # Search in staged files only, excluding lockfiles and package integrity hashes
     if git diff --cached --name-only \
-        | grep -v -E "\.(lock|sum)$|package-lock\.json$|yarn\.lock$|bun\.lock$|routeTree\.gen\.ts$|skills-lock\.json$|^\.agents/skills/agent-browser/references/commands\.md$" \
+        | grep -v -E "\.(lock|sum)$|package-lock\.json$|yarn\.lock$|bun\.lock$|routeTree\.gen\.ts$|skills-lock\.json$|^\.agents/skills/agent-browser/references/commands\.md$|^apps/hive_server_elixir/lib/hive_server_elixir/opencode/generated/|^apps/hive_server_elixir/priv/opencode/openapi\.json$|^apps/hive_server_elixir/priv/resource_snapshots/" \
         | xargs grep -l -E -i "$pattern" 2>/dev/null; then
         echo "⚠️  Potential secret found matching pattern: $pattern"
         git diff --cached --name-only \
-            | grep -v -E "\.(lock|sum)$|package-lock\.json$|yarn\.lock$|bun\.lock$|routeTree\.gen\.ts$|skills-lock\.json$|^\.agents/skills/agent-browser/references/commands\.md$" \
+            | grep -v -E "\.(lock|sum)$|package-lock\.json$|yarn\.lock$|bun\.lock$|routeTree\.gen\.ts$|skills-lock\.json$|^\.agents/skills/agent-browser/references/commands\.md$|^apps/hive_server_elixir/lib/hive_server_elixir/opencode/generated/|^apps/hive_server_elixir/priv/opencode/openapi\.json$|^apps/hive_server_elixir/priv/resource_snapshots/" \
             | xargs grep -n -E -i "$pattern" 2>/dev/null
         FOUND_SECRETS=true
     fi
