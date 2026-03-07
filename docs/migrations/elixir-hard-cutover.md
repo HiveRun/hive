@@ -2,9 +2,9 @@
 
 ## Execution Snapshot
 
-- Current Step: Step 6 - Frontend contract migration (in progress).
-- Next Action: switch web query factories/hooks to the new Elixir cell contracts (`/api/cells`, `/api/cells/:id`, `/api/cells/:id/activity`, `/api/cells/:id/timings`, `/api/cells/timings/global`, `/api/cells/:id/diff`) and remove Eden-only assumptions.
-- Blockers: none.
+- Current Step: Step 8 - Packaging, Installer, CI (in progress).
+- Next Action: remove the remaining source-checkout fallback path from the CLI once release/CI coverage is stable across all supported platforms.
+- Blockers: release publishing still needs cross-platform confirmation for the new bundled Elixir release path, especially on macOS and Windows runners.
 
 ## Step 1 Scaffold Baseline (Approved)
 
@@ -338,6 +338,21 @@
   - Added high-level API coverage in:
     - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/agents_controller_test.exs`
     - `apps/hive_server_elixir/test/support/opencode_test_client.ex`
+- 2026-03-06 - Added explicit agent session mode mutation contract to support backend-driven mode transitions during Elixir cutover:
+  - `POST /api/agents/sessions/:id/mode` (mode update to `plan`/`build`)
+  - Added controller/domain wiring in:
+    - `apps/hive_server_elixir/lib/hive_server_elixir/agents.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/agents_controller.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex`
+- 2026-03-06 - Added cell create-mode parity for session/provisioning initialization so `/api/agents/sessions/byCell/:cellId` returns stable `startMode`/`currentMode` even before OpenCode event fallback paths:
+  - Parse and forward `startMode` in create endpoint:
+    - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+  - Persist initial lifecycle/session records in create reactor:
+    - `apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/create_cell.ex`
+    - `apps/hive_server_elixir/lib/hive_server_elixir/cells.ex`
+- 2026-03-06 - Added API CORS + OPTIONS preflight handling for cross-origin web dev/E2E traffic so Vite-hosted frontend requests can reach Elixir APIs without browser `ERR_FAILED`/preflight 404 failures:
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/plugs/cors.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/endpoint.ex`
 
 ### Step 7: CLI, E2E, Desktop Runtime Cutover
 
@@ -350,6 +365,55 @@
 - Prep audit (2026-03-06): both E2E runners still boot the legacy TypeScript server process (`apps/server`) and need explicit cutover wiring to `apps/hive_server_elixir` runtime:
   - `apps/e2e/src/runtime/e2e-runner.ts`
   - `apps/e2e-desktop/src/runtime/desktop-e2e-runner.ts`
+- 2026-03-06 - Wired both E2E runners to boot the Elixir backend directly via `mix phx.server` (`mise x -C . -- mix phx.server`) and pass `DATABASE_PATH` for isolated run databases:
+  - `apps/e2e/src/runtime/e2e-runner.ts`
+  - `apps/e2e-desktop/src/runtime/desktop-e2e-runner.ts`
+- 2026-03-06 - Hardened Elixir-backed E2E runner startup by running `mix ecto.migrate` before boot and switching runner server env to production-safe runtime vars (`MIX_ENV=prod`, `DATABASE_PATH`, `SECRET_KEY_BASE`) to avoid dev codegen checks during suite startup:
+  - `apps/e2e/src/runtime/e2e-runner.ts`
+  - `apps/e2e-desktop/src/runtime/desktop-e2e-runner.ts`
+- 2026-03-06 - Added explicit workspace bootstrap in runners (register + activate primary workspace; register secondary workspace for workspace-switching coverage) to restore preconditions previously handled by legacy runtime assumptions:
+  - `apps/e2e/src/runtime/e2e-runner.ts`
+  - `apps/e2e-desktop/src/runtime/desktop-e2e-runner.ts`
+- 2026-03-06 - Verification runs after runner cutover:
+  - `bun run test:e2e:desktop:spec apps/e2e-desktop/specs/smoke-launch.spec.ts` passed.
+  - `bun run test:e2e:spec apps/e2e/specs/plan-mode.e2e.ts` passed after migrating plan-mode verification to backend session-mode contract (`POST /api/agents/sessions/:id/mode`) and initializing session/provisioning start mode on create.
+  - `bun run test:e2e:spec apps/e2e/specs/workspace-switching.e2e.ts` passed after workspace bootstrap + API CORS/preflight parity updates.
+  - `bun run test:e2e` currently reports 3 passing / 8 failing specs; remaining failures cluster around terminal websocket route parity, service runtime lifecycle parity, and setup retry orchestration.
+- 2026-03-07 - Completed frontend terminal websocket transport cutover to Phoenix channel topics for chat/setup/service terminals and updated stream-terminal consumers to use the shared terminal socket abstraction:
+  - `apps/web/src/lib/terminal-websocket.ts`
+  - `apps/web/src/components/cell-terminal.tsx`
+  - `apps/web/src/components/pty-stream-terminal.tsx`
+- 2026-03-07 - Fixed chat terminal restart parity to avoid immediate `exit` state regression after restart by removing synthetic exit publication from restart handlers:
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/channels/terminal_channel.ex`
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/cells_controller.ex`
+- 2026-03-07 - Hardened session model/provider parity fallback so `/api/agents/sessions/byCell/:cellId` resolves defaults from timeline or workspace `@opencode.json`/`opencode.json` when persisted session fields are unset:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/agents.ex`
+- 2026-03-07 - Updated E2E readiness/recovery specs for Elixir-backed terminal surfaces (terminal readiness probe and chat-terminal recovery fallback when PID is unavailable):
+  - `apps/e2e/src/test-helpers.ts`
+  - `apps/e2e/specs/cell-chat.e2e.ts`
+  - `apps/e2e/specs/chat-terminal-recovery.e2e.ts`
+- 2026-03-07 - Verification runs after terminal transport + restart fixes:
+  - `bun run test:e2e:spec apps/e2e/specs/terminal-route.e2e.ts` passed.
+  - `bun run test:e2e:spec apps/e2e/specs/terminal-refresh.e2e.ts` passed.
+  - `bun run test:e2e:spec apps/e2e/specs/chat-terminal-recovery.e2e.ts` passed.
+  - `bun run test:e2e:spec apps/e2e/specs/setup-retry.e2e.ts` passed after adding cell workspace snapshots + template setup execution.
+  - `bun run test:e2e:spec apps/e2e/specs/cell-deletion-cleanup.e2e.ts` passed after template-defined service creation/startup was restored.
+  - `bun run test:e2e:spec apps/e2e/specs/services.e2e.ts` passed after restoring service stream routing/resource sampling/activity logging parity.
+  - `bun run test:e2e:spec apps/e2e/specs/cell-chat.e2e.ts` passed after session-message transport failures now fall back to terminal-backed messages.
+  - `mix precommit` passed (110 tests, 0 failures).
+  - `bun run test:e2e` passed end-to-end on the Elixir backend.
+  - `xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" bun run test:e2e:desktop` passed headlessly on the Elixir backend.
+  - CLI lifecycle verified with compiled `packages/cli/hive` against the Elixir runtime:
+    - `./hive info` reported stopped/running/stopped transitions correctly.
+    - `./hive` launched the daemon in the background.
+    - `curl http://localhost:4310/health` returned `{"status":"ok"}` while running.
+    - `timeout 3s ./hive logs` streamed Elixir boot/health logs.
+    - `./hive stop` terminated the daemon and `/health` stopped responding.
+
+Step 7 done criteria are now satisfied locally:
+- `bun run test:e2e` passes.
+- `bun run test:e2e:desktop` passes headlessly.
+- `hive` CLI daemon lifecycle works end-to-end on the Elixir runtime.
 
 ### Step 8: Packaging, Installer, CI
 
@@ -359,6 +423,21 @@
 - Done means:
   - Installer artifacts boot correctly.
   - CI passes with new backend.
+
+- 2026-03-07 - Packaged a real Elixir release into installer artifacts and updated runtime/install assumptions:
+  - `scripts/distribution/build.ts` now builds `mix assets.deploy` + `mix release` and copies `_build/prod/rel/hive_server_elixir` into the installer payload.
+  - `packages/cli/src/cli.ts` now prefers the bundled Elixir release executable and only falls back to `mise x ... mix phx.server` when no packaged release is present.
+  - `scripts/install.sh` now writes `HIVE_SERVER_RELEASE_ROOT` instead of legacy migration-path config.
+  - `apps/hive_server_elixir/lib/hive_server_elixir_web/plugs/static_assets.ex`, `apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/web_app_controller.ex`, and `apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex` now serve the bundled SPA from `HIVE_WEB_DIST` with index fallback for installed releases.
+  - `README.md` updated to reflect release-based installer contents/config.
+- 2026-03-07 - Local distribution verification passed:
+  - `bun run build:installer` produced a tarball with bundled Elixir release.
+  - `bash scripts/install.sh` with `HIVE_INSTALL_URL=file://...` installed successfully into a temporary `HIVE_HOME`.
+  - Installed `hive` loaded `current/hive.env`, launched the bundled release on a custom port, served `index.html` from bundled `public/`, answered `/health`, streamed logs, and stopped cleanly.
+- 2026-03-07 - CI/release automation updated for the bundled Elixir release path:
+  - `scripts/distribution/build.ts` now resolves `mix` directly when available and only falls back to `mise`, plus it runs `mix deps.get` and `mix release --overwrite` for clean CI builds.
+  - `scripts/distribution/check-distribution.ts` now boots the installed release on a dedicated port, verifies `/health`, verifies the bundled SPA shell at `/`, and confirms `hive stop` shuts the daemon down.
+  - `.github/workflows/ci.yml` desktop installer gate and `.github/workflows/release-publish.yml` now install Erlang/Elixir via `erlef/setup-beam@v1` before invoking `bun run build:installer`.
 
 ### Step 9: Hard Cutover Cleanup
 
@@ -423,3 +502,11 @@
 - 2026-03-05 - Added Elixir workspace + template API parity routes so frontend workspace management and template loading can run against the cutover backend without TS fallbacks.
 - 2026-03-06 - Added Elixir `/api/agents/models`, `/api/agents/sessions/:id/models`, and `/api/agents/sessions/byCell/:cellId` parity routes so frontend model/session queries can run against the cutover backend without TS fallbacks.
 - 2026-03-06 - Added Elixir `/api/agents/sessions/:id/messages` and `/api/agents/sessions/:id/events` parity routes, plus session-id fallback resolution from persisted OpenCode event logs when explicit agent-session rows are absent.
+- 2026-03-06 - Updated E2E and desktop E2E runtime runners to start `apps/hive_server_elixir` instead of `apps/server`, completing Step 7 backend-targeting prep for automated suites.
+- 2026-03-06 - Added Elixir-runner migration/bootstrap/workspace-registration hardening; desktop smoke launch now passes on Elixir backend while targeted web E2E still reports session/workspace contract parity gaps.
+- 2026-03-06 - Closed targeted Elixir-backed E2E contract gaps for plan mode/workspace switching via session initialization + mode mutation endpoint + API CORS/preflight support; targeted web+desktop specs now pass.
+- 2026-03-07 - Closed terminal websocket route parity for chat/setup/service UI terminals by routing web terminal clients through Phoenix channel topics and removing legacy `/terminal/ws` dependency.
+- 2026-03-07 - Fixed chat terminal restart contract regression by stopping synthetic `chat_terminal_exit` events on restart responses/channels.
+- 2026-03-07 - Added session model/provider fallback resolution from timeline and workspace OpenCode config so session contracts return stable model metadata during early-session lifecycle.
+- 2026-03-07 - Added cell workspace snapshot creation under `HIVE_HOME/cells/:cell_id`, template-driven setup execution, template service materialization/startup, service SSE routing parity, and terminal-backed session message fallback; full Elixir-backed web E2E now passes.
+- 2026-03-07 - Migrated CLI runtime startup away from `@hive/server` so the compiled `hive` binary now runs Elixir directly (`mix ecto.migrate` + `mix phx.server`) and verified start/info/logs/stop lifecycle locally.

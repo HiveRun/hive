@@ -8,6 +8,7 @@ defmodule HiveServerElixir.Cells.Reactors.DeleteCell do
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Reactors.Steps.StopIngestStep
+  alias HiveServerElixir.Cells.WorkspaceSnapshot
 
   input(:cell_id)
   input(:runtime_opts)
@@ -60,5 +61,14 @@ defmodule HiveServerElixir.Cells.Reactors.DeleteCell do
     end)
   end
 
-  return(:destroy_cell)
+  step :cleanup_workspace do
+    argument(:cell, result(:destroy_cell))
+
+    run(fn %{cell: cell}, _context ->
+      :ok = WorkspaceSnapshot.remove_cell_workspace(cell.workspace_path)
+      {:ok, cell}
+    end)
+  end
+
+  return(:cleanup_workspace)
 end

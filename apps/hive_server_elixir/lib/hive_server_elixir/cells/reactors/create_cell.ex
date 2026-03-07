@@ -5,15 +5,23 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
 
   use Reactor
 
+  import Ash.Expr
+  require Ash.Query
+
   alias HiveServerElixir.Cells
+  alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells.Cell
-  alias HiveServerElixir.Cells.TerminalEvents
+  alias HiveServerElixir.Cells.Provisioning
   alias HiveServerElixir.Cells.Reactors.Steps.StartIngestStep
+  alias HiveServerElixir.Cells.TemplateRuntime
+  alias HiveServerElixir.Cells.TerminalEvents
+  alias HiveServerElixir.Cells.WorkspaceSnapshot
 
   input(:workspace_id)
   input(:name)
   input(:description)
   input(:template_id)
+  input(:start_mode)
   input(:workspace_root_path)
   input(:workspace_path)
   input(:runtime_opts)
@@ -53,8 +61,58 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
     end)
   end
 
-  step :build_ingest_context do
+  step :prepare_workspace do
     argument(:cell, result(:create_cell))
+
+    run(fn %{cell: cell}, _context ->
+      maybe_prepare_workspace(cell)
+    end)
+  end
+
+  step :initialize_runtime_records do
+    argument(:cell, result(:prepare_workspace))
+    argument(:start_mode, input(:start_mode))
+
+    run(fn %{cell: cell, start_mode: start_mode}, _context ->
+      mode = normalize_start_mode(start_mode)
+      session_id = cell.opencode_session_id || Ash.UUID.generate()
+
+      with {:ok, updated_cell} <-
+             Ash.update(
+               cell,
+               %{opencode_session_id: session_id, resume_agent_session_on_startup: true},
+               domain: Cells
+             ),
+           {:ok, _provisioning} <-
+             Ash.create(
+               Provisioning,
+               %{
+                 cell_id: updated_cell.id,
+                 start_mode: mode,
+                 attempt_count: 1,
+                 started_at: DateTime.utc_now() |> DateTime.truncate(:second)
+               },
+               domain: Cells
+             ),
+           {:ok, _agent_session} <-
+             Ash.create(
+               AgentSession,
+               %{
+                 cell_id: updated_cell.id,
+                 session_id: session_id,
+                 start_mode: mode,
+                 current_mode: mode,
+                 resume_on_startup: true
+               },
+               domain: Cells
+             ) do
+        {:ok, updated_cell}
+      end
+    end)
+  end
+
+  step :build_ingest_context do
+    argument(:cell, result(:initialize_runtime_records))
 
     run(fn %{cell: cell}, _context ->
       {:ok, %{workspace_id: cell.workspace_id, cell_id: cell.id}}
@@ -68,7 +126,7 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
 
   step :after_ingest_check do
     argument(:_started, result(:start_ingest))
-    argument(:cell, result(:create_cell))
+    argument(:cell, result(:initialize_runtime_records))
     argument(:fail_after_ingest, input(:fail_after_ingest))
 
     run(fn %{cell: cell, fail_after_ingest: fail_after_ingest}, _context ->
@@ -86,26 +144,83 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
     end)
   end
 
-  step :mark_ready do
-    argument(:cell, result(:create_cell))
+  step :apply_template_runtime do
+    argument(:cell, result(:initialize_runtime_records))
     argument(:_check, result(:after_ingest_check))
 
     run(fn %{cell: cell}, _context ->
-      case Ash.update(cell, %{status: "ready"}, domain: Cells) do
-        {:ok, updated_cell} ->
-          :ok =
-            TerminalEvents.on_cell_ready(%{
-              workspace_id: updated_cell.workspace_id,
-              cell_id: updated_cell.id
-            })
+      TemplateRuntime.prepare_cell(cell)
+    end)
+  end
 
-          {:ok, updated_cell}
+  step :finalize_cell do
+    argument(:cell, result(:initialize_runtime_records))
+    argument(:template_runtime, result(:apply_template_runtime))
 
-        {:error, error} ->
-          {:error, error}
+    run(fn %{cell: cell, template_runtime: template_runtime}, _context ->
+      finished_at = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      with {:ok, updated_cell} <-
+             Ash.update(
+               cell,
+               %{
+                 status: template_runtime.status,
+                 last_setup_error: template_runtime.last_setup_error
+               },
+               domain: Cells
+             ),
+           :ok <- update_provisioning_state(updated_cell.id, %{finished_at: finished_at}) do
+        finalize_terminal_state(updated_cell)
+        {:ok, updated_cell}
       end
     end)
   end
 
-  return(:mark_ready)
+  return(:finalize_cell)
+
+  defp maybe_prepare_workspace(%Cell{} = cell) do
+    source_root = cell.workspace_root_path || cell.workspace_path
+
+    if is_binary(source_root) and File.dir?(source_root) do
+      with {:ok, workspace_path} <- WorkspaceSnapshot.ensure_cell_workspace(cell.id, source_root),
+           {:ok, updated_cell} <-
+             Ash.update(cell, %{workspace_path: workspace_path}, domain: Cells) do
+        {:ok, updated_cell}
+      end
+    else
+      {:ok, cell}
+    end
+  end
+
+  defp update_provisioning_state(cell_id, attrs) do
+    provisioning =
+      Provisioning
+      |> Ash.Query.filter(expr(cell_id == ^cell_id))
+      |> Ash.read_one!(domain: Cells)
+
+    case provisioning do
+      %Provisioning{} = record ->
+        case Ash.update(record, attrs, domain: Cells) do
+          {:ok, _updated} -> :ok
+          {:error, error} -> {:error, error}
+        end
+
+      nil ->
+        :ok
+    end
+  end
+
+  defp finalize_terminal_state(%Cell{status: "ready"} = cell) do
+    TerminalEvents.on_cell_ready(%{workspace_id: cell.workspace_id, cell_id: cell.id})
+  end
+
+  defp finalize_terminal_state(%Cell{status: "error", last_setup_error: message} = cell)
+       when is_binary(message) and message != "" do
+    TerminalEvents.on_cell_error(%{workspace_id: cell.workspace_id, cell_id: cell.id}, message)
+  end
+
+  defp finalize_terminal_state(%Cell{}), do: :ok
+
+  defp normalize_start_mode("build"), do: "build"
+  defp normalize_start_mode(_mode), do: "plan"
 end

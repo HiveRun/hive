@@ -13,7 +13,10 @@ defmodule HiveServerElixirWeb.Router do
   end
 
   pipeline :api do
-    plug(:accepts, ["json"])
+    plug(:accepts, ["json", "event-stream"])
+  end
+
+  pipeline :api_stream do
   end
 
   scope "/", HiveServerElixirWeb do
@@ -32,30 +35,20 @@ defmodule HiveServerElixirWeb.Router do
     get("/api/agents/models", AgentsController, :models)
     get("/api/agents/sessions/:id/models", AgentsController, :session_models)
     get("/api/agents/sessions/:id/messages", AgentsController, :session_messages)
-    get("/api/agents/sessions/:id/events", AgentsController, :session_events)
+    post("/api/agents/sessions/:id/mode", AgentsController, :update_session_mode)
     get("/api/agents/sessions/byCell/:cellId", AgentsController, :session_by_cell)
 
     get("/api/cells", CellsController, :index)
     post("/api/cells", CellsController, :create)
     delete("/api/cells", CellsController, :delete_many)
-    get("/api/cells/workspace/:workspace_id/stream", CellsController, :workspace_stream)
     get("/api/cells/timings/global", CellsController, :timings_global)
     get("/api/cells/:id", CellsController, :show)
     get("/api/cells/:id/activity", CellsController, :activity)
     get("/api/cells/:id/timings", CellsController, :timings)
-    get("/api/cells/:id/timings/stream", CellsController, :timing_stream)
     get("/api/cells/:id/diff", CellsController, :diff)
-    get("/api/cells/:id/setup/terminal/stream", CellsController, :setup_terminal_stream)
     post("/api/cells/:id/setup/terminal/input", CellsController, :setup_terminal_input)
     post("/api/cells/:id/setup/terminal/resize", CellsController, :setup_terminal_resize)
     get("/api/cells/:id/services", CellsController, :services)
-    get("/api/cells/:id/services/stream", CellsController, :services_stream)
-
-    get(
-      "/api/cells/:id/services/:service_id/terminal/stream",
-      CellsController,
-      :service_terminal_stream
-    )
 
     post(
       "/api/cells/:id/services/:service_id/terminal/input",
@@ -76,7 +69,6 @@ defmodule HiveServerElixirWeb.Router do
     post("/api/cells/:id/services/restart", CellsController, :services_restart)
     post("/api/cells/:id/services/:service_id/restart", CellsController, :service_restart)
 
-    get("/api/cells/:id/chat/terminal/stream", CellsController, :chat_terminal_stream)
     post("/api/cells/:id/chat/terminal/input", CellsController, :chat_terminal_input)
     post("/api/cells/:id/chat/terminal/resize", CellsController, :chat_terminal_resize)
     post("/api/cells/:id/chat/terminal/restart", CellsController, :chat_terminal_restart)
@@ -86,6 +78,30 @@ defmodule HiveServerElixirWeb.Router do
     delete("/api/cells/:id", CellsController, :delete)
     post("/rpc/run", AshTypescriptRpcController, :run)
     post("/rpc/validate", AshTypescriptRpcController, :validate)
+  end
+
+  scope "/", HiveServerElixirWeb do
+    pipe_through(:api_stream)
+
+    get("/api/agents/sessions/:id/events", AgentsController, :session_events)
+    get("/api/cells/workspace/:workspace_id/stream", CellsController, :workspace_stream)
+    get("/api/cells/:id/timings/stream", CellsController, :timing_stream)
+    get("/api/cells/:id/setup/terminal/stream", CellsController, :setup_terminal_stream)
+    get("/api/cells/:id/services/stream", CellsController, :services_stream)
+
+    get(
+      "/api/cells/:id/services/:service_id/terminal/stream",
+      CellsController,
+      :service_terminal_stream
+    )
+
+    get("/api/cells/:id/chat/terminal/stream", CellsController, :chat_terminal_stream)
+  end
+
+  scope "/", HiveServerElixirWeb do
+    pipe_through(:browser)
+
+    get("/*path", WebAppController, :index)
   end
 
   # Other scopes may use custom stacks.

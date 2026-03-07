@@ -16,7 +16,7 @@ Monorepo project with a React + TanStack Start frontend and a backend currently 
 curl -fsSL https://raw.githubusercontent.com/HiveRun/hive/main/scripts/install.sh | bash
 ```
 
-The installer downloads the latest published release for your platform, expands it into `~/.hive`, writes a local SQLite database path to `hive.env`, symlinks `hive` into `~/.hive/bin`, and updates your shell PATH so the CLI is immediately available. Run `hive` to start the bundled server + UI on the default ports.
+The installer downloads the latest published release for your platform, expands it into `~/.hive`, writes a local SQLite database path to `hive.env`, symlinks `hive` into `~/.hive/bin`, and updates your shell PATH so the CLI is immediately available. The release bundles the Hive CLI, production web assets, and an Elixir server release, so end users do not need Bun, Node, Erlang, or Elixir installed separately. Run `hive` to start the bundled server + UI on the default ports.
 
 During install, Hive also checks for the `opencode` CLI. If missing, it attempts to install OpenCode automatically via `https://opencode.ai/install` so cell chat sessions work out of the box.
 
@@ -25,7 +25,7 @@ Environment variables:
 - `HIVE_HOME`: override the install root (defaults to `~/.hive`).
 - `HIVE_BIN_DIR`: override the bin directory that `hive` is linked into (defaults to `~/.hive/bin`).
 - `HIVE_INSTALL_URL`: override the download URL (handy for testing locally built tarballs).
-- `HIVE_MIGRATIONS_DIR`: point the runtime at a custom migrations folder (defaults to the bundled `migrations/`).
+- `HIVE_SERVER_RELEASE_ROOT`: override the packaged Elixir release directory (defaults to the bundled `server/`).
 - `HIVE_LOG_DIR`: where background logs are written (defaults to `~/.hive/logs` for installed builds, or `<binary>/logs` when running from source).
 - `HIVE_PID_FILE`: override the pid file path (defaults to `~/.hive/hive.pid`).
 - `HIVE_INSTALL_COMMAND`: override the command executed by `hive upgrade` (defaults to the stored installer behavior).
@@ -159,7 +159,7 @@ bun run build:installer
 ls dist/install
 ```
 
-This script compiles the Bun server, copies the Vite build output, and packages everything into `dist/install/hive-<platform>-<arch>.tar.gz` plus a `.sha256` checksum. Upload that pair to a GitHub Release so the installer can fetch it. To smoke-test the installer against the locally built artifacts, run:
+This script compiles the `hive` CLI, builds the production web bundle, assembles a bundled Elixir release for `apps/hive_server_elixir`, and packages everything into `dist/install/hive-<platform>-<arch>.tar.gz` plus a `.sha256` checksum. Upload that pair to a GitHub Release so the installer can fetch it. To smoke-test the installer against the locally built artifacts, run:
 
 ```bash
 bun run local:install

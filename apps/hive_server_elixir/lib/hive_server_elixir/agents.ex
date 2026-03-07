@@ -13,6 +13,8 @@ defmodule HiveServerElixir.Agents do
   alias HiveServerElixir.Opencode.Generated.Operations
   alias HiveServerElixir.Workspaces
 
+  @opencode_config_filenames ["@opencode.json", "opencode.json"]
+
   @type provider_payload :: %{
           models: [map()],
           defaults: map(),
@@ -61,6 +63,27 @@ defmodule HiveServerElixir.Agents do
   def event_snapshot_for_session(session_id) when is_binary(session_id) do
     with {:ok, context} <- resolve_session_context(session_id) do
       {:ok, build_event_snapshot(context)}
+    end
+  end
+
+  @spec set_session_mode(String.t(), String.t()) ::
+          {:ok, %{session: map()}} | {:error, {atom(), String.t()}}
+  def set_session_mode(session_id, mode) when is_binary(session_id) and is_binary(mode) do
+    normalized_mode = normalize_mode(mode)
+
+    if normalized_mode in ["plan", "build"] do
+      with {:ok, context} <- resolve_session_context(session_id),
+           {:ok, %AgentSession{} = agent_session} <- resolve_persisted_session(context),
+           {:ok, updated_session} <-
+             Ash.update(agent_session, %{current_mode: normalized_mode}, domain: Cells) do
+        updated_context = %{context | agent_session: updated_session}
+        {:ok, %{session: serialize_agent_session(updated_context)}}
+      else
+        {:error, {_, _} = reason} -> {:error, reason}
+        {:error, _error} -> {:error, {:bad_request, "Failed to update session mode"}}
+      end
+    else
+      {:error, {:bad_request, "mode must be either 'plan' or 'build'"}}
     end
   end
 
@@ -208,6 +231,9 @@ defmodule HiveServerElixir.Agents do
       {:error, %{status: status, body: body}} ->
         {:error, {status_to_http_status(status), error_message(body)}}
 
+      {:error, _reason} ->
+        {:error, {:bad_request, "Failed to list models"}}
+
       :error ->
         {:error, {:bad_request, "Failed to list models"}}
     end
@@ -228,6 +254,9 @@ defmodule HiveServerElixir.Agents do
         {:ok, fallback_messages_from_terminal(context)}
 
       {:error, %{status: _status}} ->
+        {:ok, fallback_messages_from_terminal(context)}
+
+      {:error, _reason} ->
         {:ok, fallback_messages_from_terminal(context)}
 
       :error ->
@@ -455,6 +484,12 @@ defmodule HiveServerElixir.Agents do
 
     agent_session = context.agent_session
 
+    provider_id =
+      session_provider_id(agent_session, context.timeline, context.cell.workspace_path)
+
+    model_id =
+      session_model_id(agent_session, context.timeline, context.cell.workspace_path)
+
     payload = %{
       id: context.session_id,
       cellId: context.cell.id,
@@ -466,9 +501,9 @@ defmodule HiveServerElixir.Agents do
     }
 
     payload
-    |> maybe_put(:provider, session_provider_id(agent_session, context.timeline))
-    |> maybe_put(:modelId, session_model_id(agent_session, context.timeline))
-    |> maybe_put(:modelProviderId, session_provider_id(agent_session, context.timeline))
+    |> maybe_put(:provider, provider_id)
+    |> maybe_put(:modelId, model_id)
+    |> maybe_put(:modelProviderId, provider_id)
     |> maybe_put(:startMode, start_mode)
     |> maybe_put(:currentMode, current_mode)
     |> maybe_put(:modeUpdatedAt, mode_updated_at)
@@ -606,9 +641,23 @@ defmodule HiveServerElixir.Agents do
   defp normalize_mode("build"), do: "build"
   defp normalize_mode(_mode), do: nil
 
-  defp session_provider_id(%AgentSession{} = session, _timeline), do: session.model_provider_id
+  defp session_provider_id(%AgentSession{} = session, timeline, workspace_path) do
+    session.model_provider_id || session_provider_id(nil, timeline, workspace_path)
+  end
 
-  defp session_provider_id(nil, timeline) do
+  defp session_provider_id(nil, timeline, workspace_path) do
+    timeline_provider_id(timeline) || workspace_provider_id(workspace_path)
+  end
+
+  defp session_model_id(%AgentSession{} = session, timeline, workspace_path) do
+    session.model_id || session_model_id(nil, timeline, workspace_path)
+  end
+
+  defp session_model_id(nil, timeline, workspace_path) do
+    timeline_model_id(timeline) || workspace_model_id(workspace_path)
+  end
+
+  defp timeline_provider_id(timeline) do
     timeline
     |> Enum.reverse()
     |> Enum.find_value(fn event ->
@@ -623,9 +672,7 @@ defmodule HiveServerElixir.Agents do
     end)
   end
 
-  defp session_model_id(%AgentSession{} = session, _timeline), do: session.model_id
-
-  defp session_model_id(nil, timeline) do
+  defp timeline_model_id(timeline) do
     timeline
     |> Enum.reverse()
     |> Enum.find_value(fn event ->
@@ -638,6 +685,49 @@ defmodule HiveServerElixir.Agents do
         read_key(properties, "modelID") ||
         read_key(properties, "modelId")
     end)
+  end
+
+  defp workspace_provider_id(workspace_path) do
+    case load_workspace_model_defaults(workspace_path) do
+      {provider_id, _model_id} -> provider_id
+      _other -> nil
+    end
+  end
+
+  defp workspace_model_id(workspace_path) do
+    case load_workspace_model_defaults(workspace_path) do
+      {_provider_id, model_id} -> model_id
+      _other -> nil
+    end
+  end
+
+  defp load_workspace_model_defaults(workspace_path) when is_binary(workspace_path) do
+    @opencode_config_filenames
+    |> Enum.map(&Path.join(workspace_path, &1))
+    |> Enum.find_value(fn config_path ->
+      with {:ok, contents} <- File.read(config_path),
+           {:ok, decoded} <- Jason.decode(contents),
+           model when is_binary(model) <- Map.get(decoded, "model") do
+        parse_workspace_model(model)
+      else
+        _other -> nil
+      end
+    end)
+  end
+
+  defp load_workspace_model_defaults(_workspace_path), do: nil
+
+  defp parse_workspace_model(model) when is_binary(model) do
+    case model |> String.trim() |> String.split("/", parts: 2) do
+      [provider_id, model_id] when provider_id != "" and model_id != "" ->
+        {provider_id, model_id}
+
+      [model_id] when model_id != "" ->
+        {nil, model_id}
+
+      _other ->
+        nil
+    end
   end
 
   defp session_created_at(%AgentSession{} = session, _timeline),
@@ -701,4 +791,7 @@ defmodule HiveServerElixir.Agents do
   rescue
     ArgumentError -> nil
   end
+
+  defp resolve_persisted_session(%{agent_session: %AgentSession{} = session}), do: {:ok, session}
+  defp resolve_persisted_session(_context), do: {:error, {:not_found, "Agent session not found"}}
 end

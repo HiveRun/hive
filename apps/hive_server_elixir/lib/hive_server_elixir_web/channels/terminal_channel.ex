@@ -153,7 +153,6 @@ defmodule HiveServerElixirWeb.TerminalChannel do
         %{assigns: %{terminal_kind: :chat}} = socket
       ) do
     session = TerminalRuntime.restart_chat_session(socket.assigns.cell_id)
-    :ok = Events.publish_chat_terminal_exit(socket.assigns.cell_id, 0, nil)
     push(socket, "terminal_event", %{type: "ready", session: session})
     push(socket, "terminal_event", %{type: "snapshot", output: []})
     {:noreply, socket}

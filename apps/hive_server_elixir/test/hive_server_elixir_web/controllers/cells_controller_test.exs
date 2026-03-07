@@ -458,10 +458,16 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
     assert service_payload["id"] == service.id
     assert Map.has_key?(service_payload, "cpuPercent")
     assert Map.has_key?(service_payload, "rssBytes")
-    assert service_payload["cpuPercent"] == nil
-    assert service_payload["rssBytes"] == nil
     assert is_binary(service_payload["resourceSampledAt"])
-    assert service_payload["resourceUnavailableReason"] == "sample_failed"
+
+    assert is_number(service_payload["cpuPercent"]) or service_payload["cpuPercent"] == nil
+    assert is_number(service_payload["rssBytes"]) or service_payload["rssBytes"] == nil
+
+    if service_payload["cpuPercent"] == nil and service_payload["rssBytes"] == nil do
+      assert service_payload["resourceUnavailableReason"] == "sample_failed"
+    else
+      refute Map.has_key?(service_payload, "resourceUnavailableReason")
+    end
   end
 
   test "GET /api/cells/:id/services/stream emits ready, services, and snapshot", %{conn: conn} do

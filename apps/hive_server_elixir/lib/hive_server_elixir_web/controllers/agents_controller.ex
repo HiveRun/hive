@@ -48,6 +48,18 @@ defmodule HiveServerElixirWeb.AgentsController do
     end
   end
 
+  def update_session_mode(conn, %{"id" => session_id, "mode" => mode}) do
+    case Agents.set_session_mode(session_id, mode) do
+      {:ok, payload} ->
+        json(conn, payload)
+
+      {:error, {status, message}} ->
+        conn
+        |> put_status(status)
+        |> json(%{message: message})
+    end
+  end
+
   def session_events(conn, %{"id" => session_id} = params) do
     case Agents.event_snapshot_for_session(session_id) do
       {:ok, snapshot} ->

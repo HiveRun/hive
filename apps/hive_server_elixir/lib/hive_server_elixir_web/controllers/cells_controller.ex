@@ -72,6 +72,7 @@ defmodule HiveServerElixirWeb.CellsController do
     description = read_param(params, "description")
     name = normalize_cell_name(read_param(params, "name"), description)
     template_id = normalize_template_id(read_param(params, "templateId", "template_id"))
+    start_mode = normalize_start_mode(read_param(params, "startMode", "start_mode"))
 
     with :ok <- validate_workspace_id(workspace_id),
          :ok <- validate_description(description),
@@ -82,6 +83,7 @@ defmodule HiveServerElixirWeb.CellsController do
              name: name,
              description: description,
              template_id: template_id,
+             start_mode: start_mode,
              workspace_root_path: workspace.path,
              workspace_path: workspace.path,
              runtime_opts: runtime_opts(),
@@ -104,8 +106,11 @@ defmodule HiveServerElixirWeb.CellsController do
   end
 
   def retry(conn, %{"id" => id}) do
+    audit = read_audit_headers(conn)
+
     case Cells.retry_cell(%{cell_id: id, runtime_opts: runtime_opts(), fail_after_ingest: false}) do
       {:ok, cell} ->
+        _ = record_service_activity(cell.id, nil, "setup.retry", audit, %{})
         :ok = Events.publish_cell_status(cell.workspace_id, cell.id)
         workspace = fetch_workspace(cell.workspace_id)
         json(conn, serialize_cell(cell, %{workspace: workspace, include_setup_log: false}))
@@ -520,7 +525,6 @@ defmodule HiveServerElixirWeb.CellsController do
     with {:ok, cell} <- Ash.get(Cell, cell_id, domain: Cells),
          :ok <- validate_chat_available(cell) do
       session = TerminalRuntime.restart_chat_session(cell_id)
-      :ok = Events.publish_chat_terminal_exit(cell_id, 0, nil)
       json(conn, session)
     else
       {:error, :chat_unavailable} ->
@@ -681,8 +685,12 @@ defmodule HiveServerElixirWeb.CellsController do
   end
 
   def services_start(conn, %{"id" => cell_id}) do
+    audit = read_audit_headers(conn)
+
     with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
          :ok <- start_all_services(cell_id) do
+      _ = record_service_activity(cell_id, nil, "services.start", audit, %{})
+
       services =
         Service
         |> Ash.Query.filter(expr(cell_id == ^cell_id))
@@ -702,8 +710,12 @@ defmodule HiveServerElixirWeb.CellsController do
   end
 
   def services_stop(conn, %{"id" => cell_id}) do
+    audit = read_audit_headers(conn)
+
     with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
          :ok <- stop_all_services(cell_id) do
+      _ = record_service_activity(cell_id, nil, "services.stop", audit, %{})
+
       services =
         Service
         |> Ash.Query.filter(expr(cell_id == ^cell_id))
@@ -887,6 +899,9 @@ defmodule HiveServerElixirWeb.CellsController do
        do: template_id
 
   defp normalize_template_id(_template_id), do: "default-template"
+
+  defp normalize_start_mode("build"), do: "build"
+  defp normalize_start_mode(_mode), do: "plan"
 
   defp fetch_workspace(workspace_id) when is_binary(workspace_id) do
     case Ash.get(Workspace, workspace_id, domain: Cells) do
@@ -1640,13 +1655,61 @@ defmodule HiveServerElixirWeb.CellsController do
   defp build_service_resource_payload(pid, process_alive) do
     sampled_at = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
 
-    %{
-      cpuPercent: nil,
-      rssBytes: nil,
-      resourceSampledAt: sampled_at,
-      resourceUnavailableReason: service_resource_unavailable_reason(pid, process_alive)
-    }
+    sampled_metrics =
+      if is_integer(pid) and process_alive do
+        sample_process_resources(pid)
+      else
+        nil
+      end
+
+    case sampled_metrics do
+      %{cpu_percent: cpu_percent, rss_bytes: rss_bytes} ->
+        %{
+          cpuPercent: cpu_percent,
+          rssBytes: rss_bytes,
+          resourceSampledAt: sampled_at
+        }
+
+      _other ->
+        %{
+          cpuPercent: nil,
+          rssBytes: nil,
+          resourceSampledAt: sampled_at,
+          resourceUnavailableReason: service_resource_unavailable_reason(pid, process_alive)
+        }
+    end
   end
+
+  defp sample_process_resources(pid) when is_integer(pid) and pid > 0 do
+    case System.cmd("ps", ["-p", Integer.to_string(pid), "-o", "%cpu=,rss="],
+           stderr_to_stdout: true
+         ) do
+      {output, 0} -> parse_process_sample(output)
+      _other -> nil
+    end
+  end
+
+  defp sample_process_resources(_pid), do: nil
+
+  defp parse_process_sample(output) when is_binary(output) do
+    case output |> String.trim() |> String.split(~r/\s+/, trim: true) do
+      [cpu_raw, rss_raw | _rest] ->
+        with {cpu_percent, ""} <- Float.parse(cpu_raw),
+             {rss_kb, ""} <- Integer.parse(rss_raw) do
+          %{
+            cpu_percent: Float.round(cpu_percent, 3),
+            rss_bytes: max(rss_kb, 0) * 1024
+          }
+        else
+          _other -> nil
+        end
+
+      _other ->
+        nil
+    end
+  end
+
+  defp parse_process_sample(_output), do: nil
 
   defp service_resource_unavailable_reason(pid, _process_alive) when not is_integer(pid),
     do: "pid_missing"
