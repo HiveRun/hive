@@ -25,26 +25,17 @@ defmodule HiveServerElixirWeb.Router do
     pipe_through(:api)
 
     get("/health", HealthController, :show)
-    get("/api/workspaces/browse", WorkspacesController, :browse)
-    post("/api/workspaces", WorkspacesController, :create)
-    post("/api/workspaces/:id/activate", WorkspacesController, :activate)
-    delete("/api/workspaces/:id", WorkspacesController, :delete)
+    get("/api/workspaces/browse", WorkspaceBrowseController, :workspace_browse)
 
-    get("/api/templates", TemplatesController, :index)
-    get("/api/templates/:id", TemplatesController, :show)
+    get("/api/templates", TemplatesController, :list_templates)
+    get("/api/templates/:id", TemplatesController, :show_template)
 
-    get("/api/agents/models", AgentsController, :models)
-    get("/api/agents/sessions/:id/models", AgentsController, :session_models)
-    get("/api/agents/sessions/:id/messages", AgentsController, :session_messages)
-    post("/api/agents/sessions/:id/mode", AgentsController, :update_session_mode)
-    get("/api/agents/sessions/byCell/:cellId", AgentsController, :session_by_cell)
-
-    post("/api/cells", CellsController, :create)
-    delete("/api/cells", CellsController, :delete_many)
-    get("/api/cells/:id/diff", CellsController, :diff)
+    get("/api/agents/models", AgentReadController, :agent_models)
+    get("/api/agents/sessions/:id/models", AgentReadController, :agent_session_models)
+    get("/api/agents/sessions/:id/messages", AgentReadController, :agent_session_messages)
+    get("/api/cells/:id/diff", CellReadController, :cell_diff)
     post("/api/cells/:id/setup/terminal/input", CellsController, :setup_terminal_input)
     post("/api/cells/:id/setup/terminal/resize", CellsController, :setup_terminal_resize)
-    get("/api/cells/:id/services", CellsController, :services)
 
     post(
       "/api/cells/:id/services/:service_id/terminal/input",
@@ -58,20 +49,10 @@ defmodule HiveServerElixirWeb.Router do
       :service_terminal_resize
     )
 
-    post("/api/cells/:id/services/:service_id/start", CellsController, :service_start)
-    post("/api/cells/:id/services/:service_id/stop", CellsController, :service_stop)
-    post("/api/cells/:id/services/start", CellsController, :services_start)
-    post("/api/cells/:id/services/stop", CellsController, :services_stop)
-    post("/api/cells/:id/services/restart", CellsController, :services_restart)
-    post("/api/cells/:id/services/:service_id/restart", CellsController, :service_restart)
-
     post("/api/cells/:id/chat/terminal/input", CellsController, :chat_terminal_input)
     post("/api/cells/:id/chat/terminal/resize", CellsController, :chat_terminal_resize)
     post("/api/cells/:id/chat/terminal/restart", CellsController, :chat_terminal_restart)
-    get("/api/cells/:id/resources", CellsController, :resources)
-    post("/api/cells/:id/setup/retry", CellsController, :retry)
-    post("/api/cells/:id/setup/resume", CellsController, :resume)
-    delete("/api/cells/:id", CellsController, :delete)
+    get("/api/cells/:id/resources", CellReadController, :cell_resources)
     post("/rpc/run", AshTypescriptRpcController, :run)
     post("/rpc/validate", AshTypescriptRpcController, :validate)
   end

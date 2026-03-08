@@ -35,28 +35,19 @@ defmodule HiveServerElixir.Workspaces do
   def ensure_registered(path, opts) when is_binary(path) do
     workspace_path = Path.expand(path)
     preserve_active_workspace = Keyword.get(opts, :preserve_active_workspace, false)
-    label = Keyword.get(opts, :label)
+    label = normalize_label(Keyword.get(opts, :label))
 
-    with :ok <- validate_workspace_directory(workspace_path) do
-      case find_by_path(workspace_path) do
-        %Workspace{} = workspace ->
-          maybe_activate_workspace(workspace, preserve_active_workspace)
-          {:ok, workspace}
+    case Ash.create(
+           Workspace,
+           %{path: workspace_path, label: label, activate: not preserve_active_workspace},
+           action: :register,
+           domain: Cells
+         ) do
+      {:ok, workspace} ->
+        {:ok, workspace}
 
-        nil ->
-          resolved_label = label || derive_label_from_path(workspace_path)
-
-          case Ash.create(Workspace, %{path: workspace_path, label: resolved_label},
-                 domain: Cells
-               ) do
-            {:ok, workspace} ->
-              maybe_activate_workspace(workspace, preserve_active_workspace)
-              {:ok, workspace}
-
-            {:error, error} ->
-              {:error, "Failed to register workspace: #{inspect(error)}"}
-          end
-      end
+      {:error, error} ->
+        {:error, Ash.Error.to_error_class(error).message}
     end
   end
 
@@ -104,8 +95,7 @@ defmodule HiveServerElixir.Workspaces do
   def set_active_workspace_id(workspace_id)
       when is_binary(workspace_id) and byte_size(workspace_id) > 0 do
     with {:ok, %Workspace{} = workspace} <- get(workspace_id),
-         {:ok, _updated_workspace} <-
-           Ash.update(workspace, %{last_opened_at: DateTime.utc_now()}, domain: Cells) do
+         {:ok, _updated_workspace} <- Ash.update(workspace, %{}, action: :activate, domain: Cells) do
       :ok
     else
       {:error, _error} -> :ok
@@ -207,7 +197,8 @@ defmodule HiveServerElixir.Workspaces do
     end
   end
 
-  defp validate_workspace_directory(path) do
+  @spec validate_registration_path(String.t()) :: :ok | {:error, String.t()}
+  def validate_registration_path(path) do
     cond do
       not File.dir?(path) ->
         {:error, "Workspace path does not exist: #{path}"}
@@ -220,14 +211,6 @@ defmodule HiveServerElixir.Workspaces do
 
       true ->
         :ok
-    end
-  end
-
-  defp maybe_activate_workspace(%Workspace{} = workspace, preserve_active_workspace) do
-    if active_workspace_id() == nil or not preserve_active_workspace do
-      set_active_workspace_id(workspace.id)
-    else
-      :ok
     end
   end
 
@@ -260,13 +243,21 @@ defmodule HiveServerElixir.Workspaces do
     normalized_path == cells_root || String.starts_with?(normalized_path, cells_root <> "/")
   end
 
-  defp derive_label_from_path(path) when is_binary(path) do
+  @spec derive_label_from_path(String.t()) :: String.t()
+  def derive_label_from_path(path) when is_binary(path) do
     case Path.basename(path) do
       "." -> path
       "" -> path
       value -> value
     end
   end
+
+  defp normalize_label(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed == "", do: nil, else: trimmed
+  end
+
+  defp normalize_label(_value), do: nil
 
   defp to_iso8601(%DateTime{} = value), do: DateTime.to_iso8601(value)
   defp to_iso8601(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)

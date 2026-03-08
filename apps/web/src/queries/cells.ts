@@ -1,8 +1,13 @@
+import { fetchControllerJson } from "@/lib/controller-query";
 import type {
   ActivityAttributesOnlySchema,
   CellAttributesOnlySchema,
   TimingAttributesOnlySchema,
 } from "@/lib/generated/ash-rpc";
+import {
+  cellDiffPath,
+  cellResourcesPath,
+} from "@/lib/generated/controller-routes";
 import { type CreateCellInput, rpc } from "@/lib/rpc";
 import { formatRpcError, formatRpcResponseError } from "@/lib/rpc-error";
 
@@ -50,14 +55,14 @@ type CellServiceRecord = {
   cpuPercent?: number | null;
   rssBytes?: number | null;
   lastKnownError?: string | null;
+  recentLogs?: string | null;
+  totalLogLines?: number | null;
+  hasMoreLogs?: boolean;
+  processAlive?: boolean;
   url?: string;
   portReachable?: boolean;
-};
-
-type CellServicesResponse = {
-  services: CellServiceRecord[];
-  message?: string;
-  details?: string;
+  resourceSampledAt?: string | null;
+  resourceUnavailableReason?: string | null;
 };
 
 type CellResourceProcessRecord = {
@@ -308,16 +313,7 @@ export const cellQueries = {
         throw new Error(formatRpcError(error, "Failed to load services"));
       }
 
-      if (
-        data &&
-        typeof data === "object" &&
-        "message" in data &&
-        typeof data.message === "string"
-      ) {
-        throw new Error(formatRpcResponseError(data, "Cell not found"));
-      }
-
-      return (data as CellServicesResponse).services;
+      return data as CellServiceRecord[];
     },
   }),
 
@@ -341,31 +337,20 @@ export const cellQueries = {
       options.historyLimit ?? null,
       options.rollupLimit ?? null,
     ] as const,
-    queryFn: async (): Promise<CellResourceSummaryRecord> => {
-      const { data, error } = await rpc.api.cells({ id }).resources.get({
-        query: {
-          includeHistory: options.includeHistory,
-          includeAverages: options.includeAverages,
-          includeRollups: options.includeRollups,
-          historyLimit: options.historyLimit,
-          rollupLimit: options.rollupLimit,
-        },
-      });
-      if (error) {
-        throw new Error(formatRpcError(error, "Failed to load resources"));
-      }
-
-      if (
-        data &&
-        typeof data === "object" &&
-        "message" in data &&
-        typeof data.message === "string"
-      ) {
-        throw new Error(formatRpcResponseError(data, "Cell not found"));
-      }
-
-      return data as CellResourceSummaryRecord;
-    },
+    queryFn: async (): Promise<CellResourceSummaryRecord> =>
+      fetchControllerJson<CellResourceSummaryRecord>(
+        cellResourcesPath(
+          { id },
+          {
+            includeHistory: options.includeHistory,
+            includeAverages: options.includeAverages,
+            includeRollups: options.includeRollups,
+            historyLimit: options.historyLimit,
+            rollupLimit: options.rollupLimit,
+          }
+        ),
+        "Failed to load resources"
+      ),
   }),
 
   activity: (
@@ -552,16 +537,13 @@ export const cellMutations = {
         throw new Error(formatRpcError(error, "Failed to delete cells"));
       }
 
-      if (
-        data &&
-        typeof data === "object" &&
-        "message" in data &&
-        typeof data.message === "string"
-      ) {
-        throw new Error(formatRpcResponseError(data, "Failed to delete cells"));
+      const result = data as { deletedIds: string[]; failedIds?: string[] };
+
+      if (result.deletedIds.length === 0) {
+        throw new Error("No cells found for provided ids");
       }
 
-      return data as { deletedIds: string[] };
+      return result;
     },
   },
 
@@ -591,6 +573,19 @@ export const cellMutations = {
     },
   },
 
+  restartService: {
+    mutationFn: async ({ cellId, serviceId }: ServiceActionInput) => {
+      const { data, error } = await rpc.api
+        .cells({ id: cellId })
+        .services({ serviceId })
+        .restart.post();
+      if (error) {
+        throw new Error(formatRpcError(error, "Failed to restart service"));
+      }
+      return data;
+    },
+  },
+
   startAllServices: {
     mutationFn: async ({ cellId }: ServiceBulkActionInput) => {
       const { data, error } = await rpc.api
@@ -610,6 +605,18 @@ export const cellMutations = {
         .services.stop.post();
       if (error) {
         throw new Error(formatRpcError(error, "Failed to stop services"));
+      }
+      return data;
+    },
+  },
+
+  restartAllServices: {
+    mutationFn: async ({ cellId }: ServiceBulkActionInput) => {
+      const { data, error } = await rpc.api
+        .cells({ id: cellId })
+        .services.restart.post();
+      if (error) {
+        throw new Error(formatRpcError(error, "Failed to restart services"));
       }
       return data;
     },
@@ -635,37 +642,33 @@ export const cellDiffQueries = {
     options: { files?: string[] } = {}
   ) => ({
     queryKey: ["cell-diff", cellId, mode, "summary"] as const,
-    queryFn: async (): Promise<CellDiffResponse> => {
-      const query: Record<string, string> = { mode };
-      if (options.files?.length) {
-        query.files = options.files.join(",");
-      }
-      const { data, error } = await rpc.api
-        .cells({ id: cellId })
-        .diff.get({ query });
-      if (error) {
-        throw new Error(formatRpcError(error, "Failed to load cell diff"));
-      }
-      return data as CellDiffResponse;
-    },
+    queryFn: async (): Promise<CellDiffResponse> =>
+      fetchControllerJson<CellDiffResponse>(
+        cellDiffPath(
+          { id: cellId },
+          {
+            mode,
+            files: options.files?.length ? options.files.join(",") : undefined,
+          }
+        ),
+        "Failed to load cell diff"
+      ),
   }),
   detail: (cellId: string, mode: DiffMode, file: string) => ({
     queryKey: ["cell-diff", cellId, mode, "detail", file] as const,
     queryFn: async (): Promise<DiffFileDetail | null> => {
-      const { data, error } = await rpc.api.cells({ id: cellId }).diff.get({
-        query: {
-          mode,
-          files: file,
-          summary: "none",
-        },
-      });
-      if (error) {
-        throw new Error(
-          formatRpcError(error, `Failed to load diff for ${file}`)
-        );
-      }
-      const details = ((data as CellDiffResponse).details ??
-        []) as DiffFileDetail[];
+      const data = await fetchControllerJson<CellDiffResponse>(
+        cellDiffPath(
+          { id: cellId },
+          {
+            mode,
+            files: file,
+            summary: "none",
+          }
+        ),
+        `Failed to load diff for ${file}`
+      );
+      const details = (data.details ?? []) as DiffFileDetail[];
       return details.find((detail) => detail.path === file) ?? null;
     },
   }),

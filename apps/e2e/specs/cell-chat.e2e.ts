@@ -15,8 +15,10 @@ type AgentSession = {
   updatedAt: string;
 };
 
-type AgentSessionResponse = {
-  session: AgentSession | null;
+type RpcResult<T> = {
+  success: boolean;
+  data: T;
+  errors?: Array<{ message?: string; shortMessage?: string }>;
 };
 
 type AgentMessage = {
@@ -138,15 +140,43 @@ async function fetchAgentSession(
   apiUrl: string,
   cellId: string
 ): Promise<AgentSession | null> {
-  const response = await fetch(
-    `${apiUrl}/api/agents/sessions/byCell/${cellId}`
-  );
-  if (!response.ok) {
+  const payload = await rpcRun<Partial<AgentSession>>(apiUrl, {
+    action: "get_agent_session_by_cell",
+    input: { cellId },
+    fields: [
+      "id",
+      "modelId",
+      "modelProviderId",
+      "provider",
+      "status",
+      "updatedAt",
+    ],
+  });
+
+  if (!(payload.success && payload.data.id)) {
     return null;
   }
 
-  const payload = (await response.json()) as AgentSessionResponse;
-  return payload.session;
+  return payload.data as AgentSession;
+}
+
+async function rpcRun<T>(
+  apiUrl: string,
+  payload: Record<string, unknown>
+): Promise<RpcResult<T>> {
+  const response = await fetch(`${apiUrl}/rpc/run`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`RPC request failed with status ${response.status}`);
+  }
+
+  return (await response.json()) as RpcResult<T>;
 }
 
 async function sendPromptWithRetries(options: {

@@ -86,30 +86,6 @@ defmodule HiveServerElixirWeb.AgentsControllerTest do
     assert Enum.any?(providers, &(&1["id"] == "opencode"))
   end
 
-  test "GET /api/agents/sessions/byCell/:cellId returns serialized session payload", %{conn: conn} do
-    workspace = workspace!("session-by-cell")
-    cell = cell!(workspace)
-    agent_session = agent_session!(cell)
-
-    conn = get(conn, ~p"/api/agents/sessions/byCell/#{cell.id}")
-
-    assert %{"session" => session} = json_response(conn, 200)
-
-    assert session["id"] == agent_session.session_id
-    assert session["cellId"] == cell.id
-    assert session["templateId"] == cell.template_id
-    assert session["provider"] == "opencode"
-    assert session["status"] == "awaiting_input"
-    assert session["workspacePath"] == cell.workspace_path
-    assert session["modelId"] == "big-pickle"
-    assert session["modelProviderId"] == "opencode"
-    assert session["startMode"] == "plan"
-    assert session["currentMode"] == "build"
-    assert is_binary(session["createdAt"])
-    assert is_binary(session["updatedAt"])
-    assert is_binary(session["modeUpdatedAt"])
-  end
-
   test "GET /api/agents/sessions/:id/messages returns normalized session messages", %{conn: conn} do
     workspace = workspace!("session-messages")
     cell = cell!(workspace)
@@ -145,17 +121,6 @@ defmodule HiveServerElixirWeb.AgentsControllerTest do
     assert conn.resp_body =~ "event: mode"
     assert conn.resp_body =~ "\"startMode\":\"plan\""
     assert conn.resp_body =~ "\"currentMode\":\"build\""
-  end
-
-  test "GET /api/agents/sessions/byCell/:cellId returns null when no agent session exists", %{
-    conn: conn
-  } do
-    workspace = workspace!("session-by-cell-empty")
-    cell = cell!(workspace)
-
-    conn = get(conn, ~p"/api/agents/sessions/byCell/#{cell.id}")
-
-    assert %{"session" => nil} = json_response(conn, 200)
   end
 
   defp workspace!(suffix) do

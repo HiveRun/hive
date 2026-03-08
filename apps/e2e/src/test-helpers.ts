@@ -52,6 +52,15 @@ type TemplateRecord = {
   label: string;
 };
 
+type RpcErrorRecord = {
+  message?: string;
+  shortMessage?: string;
+};
+
+type RpcResult<T> =
+  | { success: true; data: T }
+  | { success: false; errors?: RpcErrorRecord[] };
+
 export async function waitForCondition(options: {
   check: () => Promise<boolean>;
   errorMessage: string;
@@ -224,32 +233,49 @@ export async function createCellViaApi(options: {
 }): Promise<string> {
   const workspaceId = await resolveWorkspaceId(options);
   const templateId = await resolveTemplateId(options);
-  const response = await fetch(`${options.apiUrl}/api/cells`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
+  const payload = await rpcRun<{ id?: string }>(options.apiUrl, {
+    action: "create_cell",
+    input: {
       name: options.name,
       templateId,
       workspaceId,
       ...(options.startMode ? { startMode: options.startMode } : {}),
-    }),
+    },
+    fields: ["id"],
   });
 
-  if (!response.ok) {
-    throw new Error(`Failed to create cell via API: ${response.status}`);
+  if (!payload.success) {
+    throw new Error(
+      payload.errors?.[0]?.shortMessage ??
+        payload.errors?.[0]?.message ??
+        "Failed to create cell via RPC"
+    );
   }
 
-  const payload = (await response.json()) as { id?: string; message?: string };
-  if (payload.message) {
-    throw new Error(payload.message);
-  }
-  if (!payload.id) {
+  if (!payload.data.id) {
     throw new Error("Cell API response missing id");
   }
 
-  return payload.id;
+  return payload.data.id;
+}
+
+async function rpcRun<T>(
+  apiUrl: string,
+  payload: Record<string, unknown>
+): Promise<RpcResult<T>> {
+  const response = await fetch(`${apiUrl}/rpc/run`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`RPC request failed with status ${response.status}`);
+  }
+
+  return (await response.json()) as RpcResult<T>;
 }
 
 async function resolveWorkspaceId(options: {
@@ -381,15 +407,25 @@ export async function fetchCell(
   apiUrl: string,
   cellId: string
 ): Promise<CellRecord> {
-  const response = await fetch(`${apiUrl}/api/cells/${cellId}`);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch cell ${cellId}: ${response.status}`);
+  const payload = await rpcRun<CellRecord | null>(apiUrl, {
+    action: "get_cell",
+    input: { id: cellId },
+    fields: ["id", "workspaceId", "status", "lastSetupError"],
+  });
+
+  if (!payload.success) {
+    throw new Error(
+      payload.errors?.[0]?.shortMessage ??
+        payload.errors?.[0]?.message ??
+        `Failed to fetch cell ${cellId}`
+    );
   }
-  const payload = (await response.json()) as CellRecord | { message: string };
-  if ("message" in payload) {
-    throw new Error(payload.message);
+
+  if (!payload.data) {
+    throw new Error(`Cell ${cellId} not found`);
   }
-  return payload;
+
+  return payload.data;
 }
 
 export async function fetchServices(
@@ -397,92 +433,100 @@ export async function fetchServices(
   cellId: string,
   options: { includeResources?: boolean } = {}
 ): Promise<ServiceRecord[]> {
-  const params = new URLSearchParams();
-  if (options.includeResources) {
-    params.set("includeResources", "true");
-  }
-  const query = params.toString();
-  const response = await fetch(
-    `${apiUrl}/api/cells/${cellId}/services${query ? `?${query}` : ""}`
-  );
-  if (!response.ok) {
+  const payload = await rpcRun<ServiceRecord[]>(apiUrl, {
+    action: "list_services",
+    input: {
+      cellId,
+      includeResources: options.includeResources ?? false,
+    },
+    fields: [
+      "id",
+      "name",
+      "status",
+      "pid",
+      "port",
+      "cpuPercent",
+      "rssBytes",
+      "resourceUnavailableReason",
+    ],
+  });
+
+  if (!payload.success) {
     throw new Error(
-      `Failed to fetch services for ${cellId}: ${response.status}`
+      payload.errors?.[0]?.shortMessage ??
+        payload.errors?.[0]?.message ??
+        `Failed to fetch services for ${cellId}`
     );
   }
 
-  const payload = (await response.json()) as
-    | { services: ServiceRecord[] }
-    | { message: string };
-  if ("message" in payload) {
-    throw new Error(payload.message);
-  }
-
-  return payload.services;
+  return payload.data;
 }
 
 export async function fetchActivity(
   apiUrl: string,
   cellId: string
 ): Promise<ActivityRecord[]> {
-  const response = await fetch(
-    `${apiUrl}/api/cells/${cellId}/activity?limit=200`
-  );
-  if (!response.ok) {
+  const payload = await rpcRun<ActivityRecord[]>(apiUrl, {
+    action: "list_cell_activity",
+    input: { cellId, limit: 200 },
+    fields: ["id", "type"],
+  });
+
+  if (!payload.success) {
     throw new Error(
-      `Failed to fetch activity for ${cellId}: ${response.status}`
+      payload.errors?.[0]?.shortMessage ??
+        payload.errors?.[0]?.message ??
+        `Failed to fetch activity for ${cellId}`
     );
   }
 
-  const payload = (await response.json()) as
-    | { events: ActivityRecord[] }
-    | { message: string };
-  if ("message" in payload) {
-    throw new Error(payload.message);
-  }
-
-  return payload.events;
+  return payload.data;
 }
 
 export async function fetchWorkspaces(
   apiUrl: string
 ): Promise<WorkspacesResponse> {
-  const response = await fetch(`${apiUrl}/api/workspaces`);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch workspaces: ${response.status}`);
+  const payload = await rpcRun<WorkspacesResponse["workspaces"][number][]>(
+    apiUrl,
+    {
+      action: "list_workspaces",
+      fields: ["id", "label", "path"],
+    }
+  );
+
+  if (!payload.success) {
+    throw new Error(
+      payload.errors?.[0]?.shortMessage ??
+        payload.errors?.[0]?.message ??
+        "Failed to fetch workspaces"
+    );
   }
 
-  const payload = (await response.json()) as
-    | WorkspacesResponse
-    | { message: string };
-  if ("message" in payload) {
-    throw new Error(payload.message);
-  }
-
-  return payload;
+  return {
+    workspaces: payload.data,
+    activeWorkspaceId: payload.data[0]?.id ?? null,
+  };
 }
 
 export async function fetchWorkspaceCells(
   apiUrl: string,
   workspaceId: string
 ): Promise<CellRecord[]> {
-  const response = await fetch(
-    `${apiUrl}/api/cells?workspaceId=${workspaceId}`
-  );
-  if (!response.ok) {
+  const payload = await rpcRun<CellRecord[]>(apiUrl, {
+    action: "list_cells",
+    input: { workspaceId },
+    fields: ["id", "workspaceId", "status", "lastSetupError"],
+  });
+
+  if (!payload.success) {
     throw new Error(
-      `Failed to fetch cells for workspace ${workspaceId}: ${response.status}`
+      payload.errors?.[0]?.shortMessage ??
+        payload.errors?.[0]?.message ??
+        `Failed to fetch cells for workspace ${workspaceId}`
     );
   }
 
-  const payload = (await response.json()) as
-    | { cells: CellRecord[] }
-    | { message: string };
-  if ("message" in payload) {
-    throw new Error(payload.message);
-  }
-
-  return payload.cells;
+  return payload.data;
 }
 
 export async function waitForCellStatus(options: {

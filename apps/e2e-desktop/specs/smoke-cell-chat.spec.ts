@@ -24,6 +24,12 @@ const MAX_TERMINAL_PAGE_RELOADS = 2;
 const TERMINAL_PAGE_RELOAD_WAIT_MS = 1500;
 const TERMINAL_INPUT_FOCUS_TIMEOUT_MS = 10_000;
 
+type RpcResult<T> = {
+  success: boolean;
+  data: T;
+  errors?: Array<{ message?: string; shortMessage?: string }>;
+};
+
 const TERMINAL_CONNECTION_BADGE_SELECTOR =
   "[data-testid='terminal-connection']";
 const TERMINAL_RESTART_BUTTON_SELECTOR =
@@ -474,16 +480,40 @@ async function waitForSession(apiUrl: string, cellId: string) {
 }
 
 async function fetchSession(apiUrl: string, cellId: string) {
-  const response = await fetch(
-    `${apiUrl}/api/agents/sessions/byCell/${cellId}`
-  );
-  if (!response.ok) {
+  const payload = await rpcRun<Partial<SessionSnapshot>>(apiUrl, {
+    action: "get_agent_session_by_cell",
+    input: { cellId },
+    fields: [
+      "id",
+      "modelId",
+      "modelProviderId",
+      "provider",
+      "status",
+      "updatedAt",
+    ],
+  });
+
+  if (!(payload.success && payload.data.id)) {
     return null;
   }
 
-  const payload = await response.json();
-  const session = payload?.session as SessionSnapshot | null;
-  return session ?? null;
+  return payload.data as SessionSnapshot;
+}
+
+async function rpcRun<T>(apiUrl: string, payload: Record<string, unknown>) {
+  const response = await fetch(`${apiUrl}/rpc/run`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`RPC request failed with status ${response.status}`);
+  }
+
+  return (await response.json()) as RpcResult<T>;
 }
 
 async function fetchSessionMessages(apiUrl: string, sessionId: string) {

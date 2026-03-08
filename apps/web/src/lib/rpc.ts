@@ -1,12 +1,29 @@
 import { getApiBase } from "@/lib/api-base";
 import {
   type AshRpcError,
+  activateWorkspace,
+  createCell,
+  deleteCell,
+  deleteManyCells,
+  deleteWorkspace,
+  getAgentSessionByCell,
   getCell,
   listCellActivity,
   listCells,
   listCellTimings,
   listGlobalCellTimings,
+  listServices,
   listWorkspaces,
+  registerWorkspace,
+  restartService,
+  restartServices,
+  resumeCellSetup,
+  retryCellSetup,
+  setAgentSessionMode,
+  startService,
+  startServices,
+  stopService,
+  stopServices,
 } from "@/lib/generated/ash-rpc";
 
 const API_URL = getApiBase();
@@ -34,6 +51,8 @@ const DEFAULT_ACTIVITY_LIMIT = 50;
 const MAX_ACTIVITY_LIMIT = 200;
 const DEFAULT_TIMING_LIMIT = 200;
 const MAX_TIMING_LIMIT = 1000;
+const DEFAULT_SERVICE_LOG_LINES = 200;
+const MAX_SERVICE_LOG_LINES = 2000;
 
 const workspaceFields: Parameters<typeof listWorkspaces>[0]["fields"] = [
   "id",
@@ -71,6 +90,34 @@ const activityFields: Parameters<typeof listCellActivity>[0]["fields"] = [
   "insertedAt",
 ];
 
+const cellMutationFields: Parameters<typeof createCell>[0]["fields"] = [
+  "id",
+  "name",
+  "workspaceId",
+  "description",
+  "templateId",
+  "workspaceRootPath",
+  "workspacePath",
+  "opencodeSessionId",
+  "opencodeCommand",
+  "createdAt",
+  "status",
+  "lastSetupError",
+  "branchName",
+  "baseCommit",
+  "updatedAt",
+];
+
+const deleteCellFields: Parameters<typeof deleteCell>[0]["fields"] = [
+  "deletedId",
+  "workspaceId",
+];
+
+const deleteManyCellFields: Parameters<typeof deleteManyCells>[0]["fields"] = [
+  "deletedIds",
+  "failedIds",
+];
+
 const timingFields: Parameters<typeof listCellTimings>[0]["fields"] = [
   "id",
   "cellId",
@@ -86,6 +133,49 @@ const timingFields: Parameters<typeof listCellTimings>[0]["fields"] = [
   "metadata",
   "durationMs",
   "insertedAt",
+];
+
+const serviceFields: Parameters<typeof listServices>[0]["fields"] = [
+  "id",
+  "name",
+  "type",
+  "status",
+  "command",
+  "cwd",
+  "logPath",
+  "lastKnownError",
+  "env",
+  "updatedAt",
+  "recentLogs",
+  "totalLogLines",
+  "hasMoreLogs",
+  "processAlive",
+  "portReachable",
+  "url",
+  "pid",
+  "port",
+  "cpuPercent",
+  "rssBytes",
+  "resourceSampledAt",
+  "resourceUnavailableReason",
+];
+
+const agentSessionFields: Parameters<
+  typeof getAgentSessionByCell
+>[0]["fields"] = [
+  "id",
+  "cellId",
+  "templateId",
+  "provider",
+  "status",
+  "workspacePath",
+  "createdAt",
+  "updatedAt",
+  "modelId",
+  "modelProviderId",
+  "startMode",
+  "currentMode",
+  "modeUpdatedAt",
 ];
 
 export type CreateCellInput = {
@@ -168,6 +258,25 @@ const parseNumberQuery = (
 
 const parseStringQuery = (value: QueryValue) =>
   typeof value === "string" && value !== "" ? value : undefined;
+
+const parseNonNegativeNumberQuery = (
+  value: QueryValue,
+  defaultValue: number
+) => {
+  let parsedValue = Number.NaN;
+
+  if (typeof value === "number") {
+    parsedValue = value;
+  } else if (typeof value === "string") {
+    parsedValue = Number(value);
+  }
+
+  if (!Number.isFinite(parsedValue)) {
+    return defaultValue;
+  }
+
+  return Math.max(parsedValue, 0);
+};
 
 const parseWorkflowQuery = (value: QueryValue) =>
   value === "create" || value === "delete" ? value : undefined;
@@ -291,30 +400,6 @@ const request = async <TResponse = unknown, TBody = unknown>(
 const get = <TResponse = unknown>(path: string, query?: QueryParams) =>
   request<TResponse>("GET", path, { query });
 
-const post = <TResponse = unknown, TBody = unknown>(
-  path: string,
-  body?: TBody
-) => request<TResponse, TBody>("POST", path, { body });
-
-const del = <TResponse = unknown, TBody = unknown>(
-  path: string,
-  bodyOrOptions?: TBody | { query?: QueryParams }
-) => {
-  if (
-    bodyOrOptions &&
-    typeof bodyOrOptions === "object" &&
-    "query" in bodyOrOptions
-  ) {
-    return request<TResponse>("DELETE", path, {
-      query: bodyOrOptions.query,
-    });
-  }
-
-  return request<TResponse, TBody>("DELETE", path, {
-    body: bodyOrOptions as TBody | undefined,
-  });
-};
-
 const cellRoutes = (id: string) => ({
   get: (options?: { query?: QueryParams }) =>
     options?.query?.includeSetupLog
@@ -337,33 +422,84 @@ const cellRoutes = (id: string) => ({
 
           return response;
         }),
-  delete: () => del(`/api/cells/${id}`),
+  delete: () =>
+    deleteCell({
+      input: { cellId: id },
+      fields: deleteCellFields,
+      customFetch: ashFetch,
+    }).then(fromAshResult),
   services: Object.assign(
     (serviceParams: { serviceId: string }) => ({
       start: {
         post: () =>
-          post(`/api/cells/${id}/services/${serviceParams.serviceId}/start`),
+          startService({
+            input: { serviceId: serviceParams.serviceId },
+            fields: serviceFields,
+            customFetch: ashFetch,
+          }).then(fromAshResult),
       },
       stop: {
         post: () =>
-          post(`/api/cells/${id}/services/${serviceParams.serviceId}/stop`),
+          stopService({
+            input: { serviceId: serviceParams.serviceId },
+            fields: serviceFields,
+            customFetch: ashFetch,
+          }).then(fromAshResult),
+      },
+      restart: {
+        post: () =>
+          restartService({
+            input: { serviceId: serviceParams.serviceId },
+            fields: serviceFields,
+            customFetch: ashFetch,
+          }).then(fromAshResult),
       },
     }),
     {
       get: (options?: { query?: QueryParams }) =>
-        get(`/api/cells/${id}/services`, options?.query),
+        listServices({
+          input: {
+            cellId: id,
+            includeResources: options?.query?.includeResources === true,
+            logLines: parseNumberQuery(
+              options?.query?.logLines,
+              DEFAULT_SERVICE_LOG_LINES,
+              MAX_SERVICE_LOG_LINES
+            ),
+            logOffset: parseNonNegativeNumberQuery(
+              options?.query?.logOffset,
+              0
+            ),
+          },
+          fields: serviceFields,
+          customFetch: ashFetch,
+        }).then(fromAshResult),
       start: {
-        post: () => post(`/api/cells/${id}/services/start`),
+        post: () =>
+          startServices({
+            input: { cellId: id },
+            fields: serviceFields,
+            customFetch: ashFetch,
+          }).then(fromAshResult),
       },
       stop: {
-        post: () => post(`/api/cells/${id}/services/stop`),
+        post: () =>
+          stopServices({
+            input: { cellId: id },
+            fields: serviceFields,
+            customFetch: ashFetch,
+          }).then(fromAshResult),
+      },
+      restart: {
+        post: () =>
+          restartServices({
+            input: { cellId: id },
+            fields: serviceFields,
+            customFetch: ashFetch,
+          }).then(fromAshResult),
       },
     }
   ),
-  resources: {
-    get: (options?: { query?: QueryParams }) =>
-      get(`/api/cells/${id}/resources`, options?.query),
-  },
   activity: {
     get: async (options?: { query?: QueryParams }) => {
       const safeLimit = parseNumberQuery(
@@ -406,32 +542,50 @@ const cellRoutes = (id: string) => ({
         runId: parseStringQuery(options?.query?.runId),
       }),
   },
-  diff: {
-    get: (options?: { query?: QueryParams }) =>
-      get(`/api/cells/${id}/diff`, options?.query),
-  },
   setup: {
     retry: {
-      post: () => post(`/api/cells/${id}/setup/retry`),
+      post: () =>
+        retryCellSetup({
+          input: { cellId: id },
+          fields: cellMutationFields,
+          customFetch: ashFetch,
+        }).then(fromAshResult),
+    },
+    resume: {
+      post: () =>
+        resumeCellSetup({
+          input: { cellId: id },
+          fields: cellMutationFields,
+          customFetch: ashFetch,
+        }).then(fromAshResult),
     },
   },
 });
 
 const workspaceRoutes = (id: string) => ({
   activate: {
-    post: () => post(`/api/workspaces/${id}/activate`),
+    post: () =>
+      activateWorkspace({
+        identity: id,
+        fields: workspaceFields,
+        customFetch: ashFetch,
+      }).then(fromAshResult),
   },
-  delete: () => del(`/api/workspaces/${id}`),
-});
-
-const templateRoutes = (id: string) => ({
-  get: (options?: { query?: QueryParams }) =>
-    get(`/api/templates/${id}`, options?.query),
+  delete: () =>
+    deleteWorkspace({
+      identity: id,
+      customFetch: ashFetch,
+    }).then(fromAshResult),
 });
 
 const sessionRoutes = (id: string) => ({
-  models: {
-    get: () => get(`/api/agents/sessions/${id}/models`),
+  mode: {
+    post: (body: { mode: "plan" | "build" }) =>
+      setAgentSessionMode({
+        input: { sessionId: id, mode: body.mode },
+        fields: agentSessionFields,
+        customFetch: ashFetch,
+      }).then(fromAshResult),
   },
 });
 
@@ -453,8 +607,24 @@ export const rpc = {
 
         return response;
       },
-      post: (body: CreateCellInput) => post("/api/cells", body),
-      delete: (body?: { ids: string[] }) => del("/api/cells", body),
+      post: (body: CreateCellInput) =>
+        createCell({
+          input: {
+            workspaceId: body.workspaceId,
+            ...(body.name ? { name: body.name } : {}),
+            ...(body.description ? { description: body.description } : {}),
+            ...(body.templateId ? { templateId: body.templateId } : {}),
+            ...(body.startMode ? { startMode: body.startMode } : {}),
+          },
+          fields: cellMutationFields,
+          customFetch: ashFetch,
+        }).then(fromAshResult),
+      delete: (body?: { ids: string[] }) =>
+        deleteManyCells({
+          input: { ids: body?.ids ?? [] },
+          fields: deleteManyCellFields,
+          customFetch: ashFetch,
+        }).then(fromAshResult),
       timings: {
         global: {
           get: (options?: { query?: QueryParams }) =>
@@ -473,26 +643,20 @@ export const rpc = {
       },
     }),
     agents: {
-      models: {
-        get: (options?: { query?: QueryParams }) =>
-          get("/api/agents/models", options?.query),
-      },
       sessions: Object.assign(
         (params: { id: string }) => sessionRoutes(params.id),
         {
           byCell: (params: { cellId: string }) => ({
-            get: () => get(`/api/agents/sessions/byCell/${params.cellId}`),
+            get: () =>
+              getAgentSessionByCell({
+                input: { cellId: params.cellId },
+                fields: agentSessionFields,
+                customFetch: ashFetch,
+              }).then(fromAshResult),
           }),
         }
       ),
     },
-    templates: Object.assign(
-      (params: { id: string }) => templateRoutes(params.id),
-      {
-        get: (options?: { query?: QueryParams }) =>
-          get("/api/templates", options?.query),
-      }
-    ),
     workspaces: Object.assign(
       (params: { id: string }) => workspaceRoutes(params.id),
       {
@@ -510,11 +674,11 @@ export const rpc = {
           return response;
         },
         post: (body: { path: string; label?: string; activate?: boolean }) =>
-          post("/api/workspaces", body),
-        browse: {
-          get: (options?: { query?: QueryParams }) =>
-            get("/api/workspaces/browse", options?.query),
-        },
+          registerWorkspace({
+            input: body,
+            fields: workspaceFields,
+            customFetch: ashFetch,
+          }).then(fromAshResult),
       }
     ),
     example: {

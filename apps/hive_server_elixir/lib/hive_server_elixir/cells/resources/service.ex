@@ -1,9 +1,19 @@
 defmodule HiveServerElixir.Cells.Service do
   @moduledoc false
 
+  alias HiveServerElixir.Cells
+  alias HiveServerElixir.Cells.ServicePayload
+
   use Ash.Resource,
+    extensions: [AshTypescript.Resource],
     domain: HiveServerElixir.Cells,
     data_layer: AshSqlite.DataLayer
+
+  @service_payload_fields ServicePayload.fields()
+
+  typescript do
+    type_name "Service"
+  end
 
   sqlite do
     table "cell_services"
@@ -12,6 +22,105 @@ defmodule HiveServerElixir.Cells.Service do
 
   actions do
     defaults [:read, :destroy]
+
+    action :start_service, :map do
+      constraints fields: @service_payload_fields
+
+      argument :service_id, :uuid do
+        allow_nil? false
+        public? true
+      end
+
+      argument :source, :string do
+        allow_nil? true
+        public? true
+      end
+
+      argument :tool_name, :string do
+        allow_nil? true
+        public? true
+      end
+
+      argument :audit_event, :string do
+        allow_nil? true
+        public? true
+      end
+
+      argument :service_name, :string do
+        allow_nil? true
+        public? true
+      end
+
+      run fn input, _context ->
+        Cells.start_service_rpc(input.arguments)
+      end
+    end
+
+    action :stop_service, :map do
+      constraints fields: @service_payload_fields
+
+      argument :service_id, :uuid do
+        allow_nil? false
+        public? true
+      end
+
+      argument :source, :string do
+        allow_nil? true
+        public? true
+      end
+
+      argument :tool_name, :string do
+        allow_nil? true
+        public? true
+      end
+
+      argument :audit_event, :string do
+        allow_nil? true
+        public? true
+      end
+
+      argument :service_name, :string do
+        allow_nil? true
+        public? true
+      end
+
+      run fn input, _context ->
+        Cells.stop_service_rpc(input.arguments)
+      end
+    end
+
+    action :restart_service, :map do
+      constraints fields: @service_payload_fields
+
+      argument :service_id, :uuid do
+        allow_nil? false
+        public? true
+      end
+
+      argument :source, :string do
+        allow_nil? true
+        public? true
+      end
+
+      argument :tool_name, :string do
+        allow_nil? true
+        public? true
+      end
+
+      argument :audit_event, :string do
+        allow_nil? true
+        public? true
+      end
+
+      argument :service_name, :string do
+        allow_nil? true
+        public? true
+      end
+
+      run fn input, _context ->
+        Cells.restart_service_rpc(input.arguments)
+      end
+    end
 
     create :create do
       primary? true

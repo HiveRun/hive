@@ -1,12 +1,41 @@
-defmodule HiveServerElixirWeb.TemplatesController do
-  use HiveServerElixirWeb, :controller
+defmodule HiveServerElixir.TemplatesTypedController do
+  use AshTypescript.TypedController
 
   alias HiveServerElixir.Workspaces
 
   @hive_config_filename "hive.config.json"
   @opencode_config_filenames ["@opencode.json", "opencode.json"]
 
-  def index(conn, params) do
+  typed_controller do
+    module_name(HiveServerElixirWeb.TemplatesController)
+
+    route :list_templates do
+      method(:get)
+      argument(:workspace_id, :string)
+
+      run(fn conn, params ->
+        case templates_payload(params, conn) do
+          {:ok, payload} -> Phoenix.Controller.json(conn, payload)
+          {:error, {status, message}} -> error_json(conn, status, message)
+        end
+      end)
+    end
+
+    route :show_template do
+      method(:get)
+      argument(:id, :string, allow_nil?: false)
+      argument(:workspace_id, :string)
+
+      run(fn conn, params ->
+        case template_payload(params, conn) do
+          {:ok, payload} -> Phoenix.Controller.json(conn, payload)
+          {:error, {status, message}} -> error_json(conn, status, message)
+        end
+      end)
+    end
+  end
+
+  defp templates_payload(params, conn) do
     workspace_id = resolve_workspace_id(params, conn)
 
     with {:ok, workspace} <- resolve_workspace(workspace_id),
@@ -20,32 +49,28 @@ defmodule HiveServerElixirWeb.TemplatesController do
         |> maybe_put_defaults(defaults)
         |> maybe_put_agent_defaults(agent_defaults)
 
-      json(conn, payload)
-    else
-      {:error, {status, message}} ->
-        conn
-        |> put_status(status)
-        |> json(%{message: message})
+      {:ok, payload}
     end
   end
 
-  def show(conn, %{"id" => template_id} = params) do
+  defp template_payload(%{id: template_id} = params, conn) do
     workspace_id = resolve_workspace_id(params, conn)
 
     with {:ok, workspace} <- resolve_workspace(workspace_id),
          {:ok, config} <- load_workspace_config(workspace.path),
          {:ok, template} <- fetch_template(config, template_id) do
-      json(conn, template)
-    else
-      {:error, {status, message}} ->
-        conn
-        |> put_status(status)
-        |> json(%{message: message})
+      {:ok, template}
     end
   end
 
+  defp error_json(conn, status, message) do
+    conn
+    |> Plug.Conn.put_status(status)
+    |> Phoenix.Controller.json(%{message: message})
+  end
+
   defp resolve_workspace_id(params, conn) do
-    query_workspace_id = Map.get(params, "workspaceId")
+    query_workspace_id = params[:workspace_id]
 
     if is_binary(query_workspace_id) and byte_size(String.trim(query_workspace_id)) > 0 do
       String.trim(query_workspace_id)

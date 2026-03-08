@@ -9,6 +9,14 @@ import Config
 
 config :ash_typescript,
   output_file: "../web/src/lib/generated/ash-rpc.ts",
+  typed_controllers: [
+    HiveServerElixir.WorkspaceBrowseTypedController,
+    HiveServerElixir.TemplatesTypedController,
+    HiveServerElixir.AgentsTypedController,
+    HiveServerElixir.CellReadTypedController
+  ],
+  router: HiveServerElixirWeb.Router,
+  routes_output_file: "../web/src/lib/generated/controller-routes.ts",
   run_endpoint: "/rpc/run",
   validate_endpoint: "/rpc/validate",
   input_field_formatter: :camel_case,

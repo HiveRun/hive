@@ -68,7 +68,7 @@ defmodule HiveServerElixir.Agents do
   end
 
   @spec set_session_mode(String.t(), String.t()) ::
-          {:ok, %{session: map()}} | {:error, {atom(), String.t()}}
+          {:ok, map()} | {:error, {atom(), String.t()}}
   def set_session_mode(session_id, mode) when is_binary(session_id) and is_binary(mode) do
     normalized_mode = normalize_mode(mode)
 
@@ -78,7 +78,7 @@ defmodule HiveServerElixir.Agents do
            {:ok, updated_session} <-
              Ash.update(agent_session, %{current_mode: normalized_mode}, domain: Cells) do
         updated_context = %{context | agent_session: updated_session}
-        {:ok, %{session: serialize_agent_session(updated_context)}}
+        {:ok, serialize_agent_session(updated_context)}
       else
         {:error, {_, _} = reason} -> {:error, reason}
         {:error, _error} -> {:error, {:bad_request, "Failed to update session mode"}}

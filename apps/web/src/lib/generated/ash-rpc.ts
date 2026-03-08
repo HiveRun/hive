@@ -21,6 +21,7 @@ export type ActivityResourceSchema = {
   cellId: UUID;
   serviceId: UUID | null;
   cell: { __type: "Relationship"; __resource: CellResourceSchema; };
+  service: { __type: "Relationship"; __resource: ServiceResourceSchema | null; };
 };
 
 
@@ -36,6 +37,39 @@ export type ActivityAttributesOnlySchema = {
   insertedAt: UtcDateTimeUsec;
   cellId: UUID;
   serviceId: UUID | null;
+};
+
+
+// AgentSession Schema
+export type AgentSessionResourceSchema = {
+  __type: "Resource";
+  __primitiveFields: "id" | "sessionId" | "modelId" | "modelProviderId" | "startMode" | "currentMode" | "resumeOnStartup" | "lastError" | "cellId";
+  id: UUID;
+  sessionId: string;
+  modelId: string | null;
+  modelProviderId: string | null;
+  startMode: string | null;
+  currentMode: string | null;
+  resumeOnStartup: boolean;
+  lastError: string | null;
+  cellId: UUID;
+  cell: { __type: "Relationship"; __resource: CellResourceSchema; };
+};
+
+
+
+export type AgentSessionAttributesOnlySchema = {
+  __type: "Resource";
+  __primitiveFields: "id" | "sessionId" | "modelId" | "modelProviderId" | "startMode" | "currentMode" | "resumeOnStartup" | "lastError" | "cellId";
+  id: UUID;
+  sessionId: string;
+  modelId: string | null;
+  modelProviderId: string | null;
+  startMode: string | null;
+  currentMode: string | null;
+  resumeOnStartup: boolean;
+  lastError: string | null;
+  cellId: UUID;
 };
 
 
@@ -81,6 +115,47 @@ export type CellAttributesOnlySchema = {
   insertedAt: UtcDateTimeUsec;
   updatedAt: UtcDateTimeUsec;
   workspaceId: UUID;
+};
+
+
+// Service Schema
+export type ServiceResourceSchema = {
+  __type: "Resource";
+  __primitiveFields: "id" | "name" | "type" | "command" | "cwd" | "env" | "status" | "port" | "pid" | "readyTimeoutMs" | "definition" | "lastKnownError" | "cellId";
+  id: UUID;
+  name: string;
+  type: string;
+  command: string;
+  cwd: string;
+  env: Record<string, any>;
+  status: string;
+  port: number | null;
+  pid: number | null;
+  readyTimeoutMs: number | null;
+  definition: Record<string, any>;
+  lastKnownError: string | null;
+  cellId: UUID;
+  cell: { __type: "Relationship"; __resource: CellResourceSchema; };
+};
+
+
+
+export type ServiceAttributesOnlySchema = {
+  __type: "Resource";
+  __primitiveFields: "id" | "name" | "type" | "command" | "cwd" | "env" | "status" | "port" | "pid" | "readyTimeoutMs" | "definition" | "lastKnownError" | "cellId";
+  id: UUID;
+  name: string;
+  type: string;
+  command: string;
+  cwd: string;
+  env: Record<string, any>;
+  status: string;
+  port: number | null;
+  pid: number | null;
+  readyTimeoutMs: number | null;
+  definition: Record<string, any>;
+  lastKnownError: string | null;
+  cellId: UUID;
 };
 
 
@@ -215,6 +290,70 @@ export type ActivityFilterInput = {
 
   cell?: CellFilterInput;
 
+  service?: ServiceFilterInput;
+
+};
+export type AgentSessionFilterInput = {
+  and?: Array<AgentSessionFilterInput>;
+  or?: Array<AgentSessionFilterInput>;
+  not?: Array<AgentSessionFilterInput>;
+
+  id?: {
+    eq?: UUID;
+    notEq?: UUID;
+    in?: Array<UUID>;
+  };
+
+  sessionId?: {
+    eq?: string;
+    notEq?: string;
+    in?: Array<string>;
+  };
+
+  modelId?: {
+    eq?: string;
+    notEq?: string;
+    in?: Array<string>;
+  };
+
+  modelProviderId?: {
+    eq?: string;
+    notEq?: string;
+    in?: Array<string>;
+  };
+
+  startMode?: {
+    eq?: string;
+    notEq?: string;
+    in?: Array<string>;
+  };
+
+  currentMode?: {
+    eq?: string;
+    notEq?: string;
+    in?: Array<string>;
+  };
+
+  resumeOnStartup?: {
+    eq?: boolean;
+    notEq?: boolean;
+  };
+
+  lastError?: {
+    eq?: string;
+    notEq?: string;
+    in?: Array<string>;
+  };
+
+  cellId?: {
+    eq?: UUID;
+    notEq?: UUID;
+    in?: Array<UUID>;
+  };
+
+
+  cell?: CellFilterInput;
+
 };
 export type CellFilterInput = {
   and?: Array<CellFilterInput>;
@@ -320,6 +459,105 @@ export type CellFilterInput = {
 
 
   workspace?: WorkspaceFilterInput;
+
+};
+export type ServiceFilterInput = {
+  and?: Array<ServiceFilterInput>;
+  or?: Array<ServiceFilterInput>;
+  not?: Array<ServiceFilterInput>;
+
+  id?: {
+    eq?: UUID;
+    notEq?: UUID;
+    in?: Array<UUID>;
+  };
+
+  name?: {
+    eq?: string;
+    notEq?: string;
+    in?: Array<string>;
+  };
+
+  type?: {
+    eq?: string;
+    notEq?: string;
+    in?: Array<string>;
+  };
+
+  command?: {
+    eq?: string;
+    notEq?: string;
+    in?: Array<string>;
+  };
+
+  cwd?: {
+    eq?: string;
+    notEq?: string;
+    in?: Array<string>;
+  };
+
+  env?: {
+    eq?: Record<string, any>;
+    notEq?: Record<string, any>;
+    in?: Array<Record<string, any>>;
+  };
+
+  status?: {
+    eq?: string;
+    notEq?: string;
+    in?: Array<string>;
+  };
+
+  port?: {
+    eq?: number;
+    notEq?: number;
+    greaterThan?: number;
+    greaterThanOrEqual?: number;
+    lessThan?: number;
+    lessThanOrEqual?: number;
+    in?: Array<number>;
+  };
+
+  pid?: {
+    eq?: number;
+    notEq?: number;
+    greaterThan?: number;
+    greaterThanOrEqual?: number;
+    lessThan?: number;
+    lessThanOrEqual?: number;
+    in?: Array<number>;
+  };
+
+  readyTimeoutMs?: {
+    eq?: number;
+    notEq?: number;
+    greaterThan?: number;
+    greaterThanOrEqual?: number;
+    lessThan?: number;
+    lessThanOrEqual?: number;
+    in?: Array<number>;
+  };
+
+  definition?: {
+    eq?: Record<string, any>;
+    notEq?: Record<string, any>;
+    in?: Array<Record<string, any>>;
+  };
+
+  lastKnownError?: {
+    eq?: string;
+    notEq?: string;
+    in?: Array<string>;
+  };
+
+  cellId?: {
+    eq?: UUID;
+    notEq?: UUID;
+    in?: Array<UUID>;
+  };
+
+
+  cell?: CellFilterInput;
 
 };
 export type TimingFilterInput = {
@@ -1184,6 +1422,371 @@ export async function validateListCellActivity(
 }
 
 
+export type GetAgentSessionByCellInput = {
+  cellId: UUID;
+};
+
+export type GetAgentSessionByCellFields = UnifiedFieldSelection<{id: string | null, cellId: UUID | null, templateId: string | null, provider: string | null, status: string | null, workspacePath: string | null, createdAt: string | null, updatedAt: string | null, modelId: string | null, modelProviderId: string | null, startMode: string | null, currentMode: string | null, modeUpdatedAt: string | null, __type: "TypedMap", __primitiveFields: "id" | "cellId" | "templateId" | "provider" | "status" | "workspacePath" | "createdAt" | "updatedAt" | "modelId" | "modelProviderId" | "startMode" | "currentMode" | "modeUpdatedAt"}>[];
+
+export type InferGetAgentSessionByCellResult<
+  Fields extends GetAgentSessionByCellFields | undefined,
+> = InferResult<{id: string | null, cellId: UUID | null, templateId: string | null, provider: string | null, status: string | null, workspacePath: string | null, createdAt: string | null, updatedAt: string | null, modelId: string | null, modelProviderId: string | null, startMode: string | null, currentMode: string | null, modeUpdatedAt: string | null, __type: "TypedMap", __primitiveFields: "id" | "cellId" | "templateId" | "provider" | "status" | "workspacePath" | "createdAt" | "updatedAt" | "modelId" | "modelProviderId" | "startMode" | "currentMode" | "modeUpdatedAt"}, Fields>;
+
+export type GetAgentSessionByCellResult<Fields extends GetAgentSessionByCellFields | undefined = undefined> = | { success: true; data: InferGetAgentSessionByCellResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on AgentSession
+ *
+ * @ashActionType :action
+ */
+export async function getAgentSessionByCell<Fields extends GetAgentSessionByCellFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: GetAgentSessionByCellInput;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<GetAgentSessionByCellResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "get_agent_session_by_cell",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<GetAgentSessionByCellResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on AgentSession
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateGetAgentSessionByCell(
+  config: {
+  tenant?: string;
+  input: GetAgentSessionByCellInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "get_agent_session_by_cell",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+export type SetAgentSessionModeInput = {
+  sessionId: string;
+  mode: string;
+};
+
+export type SetAgentSessionModeFields = UnifiedFieldSelection<{id: string | null, cellId: UUID | null, templateId: string | null, provider: string | null, status: string | null, workspacePath: string | null, createdAt: string | null, updatedAt: string | null, modelId: string | null, modelProviderId: string | null, startMode: string | null, currentMode: string | null, modeUpdatedAt: string | null, __type: "TypedMap", __primitiveFields: "id" | "cellId" | "templateId" | "provider" | "status" | "workspacePath" | "createdAt" | "updatedAt" | "modelId" | "modelProviderId" | "startMode" | "currentMode" | "modeUpdatedAt"}>[];
+
+export type InferSetAgentSessionModeResult<
+  Fields extends SetAgentSessionModeFields | undefined,
+> = InferResult<{id: string | null, cellId: UUID | null, templateId: string | null, provider: string | null, status: string | null, workspacePath: string | null, createdAt: string | null, updatedAt: string | null, modelId: string | null, modelProviderId: string | null, startMode: string | null, currentMode: string | null, modeUpdatedAt: string | null, __type: "TypedMap", __primitiveFields: "id" | "cellId" | "templateId" | "provider" | "status" | "workspacePath" | "createdAt" | "updatedAt" | "modelId" | "modelProviderId" | "startMode" | "currentMode" | "modeUpdatedAt"}, Fields>;
+
+export type SetAgentSessionModeResult<Fields extends SetAgentSessionModeFields | undefined = undefined> = | { success: true; data: InferSetAgentSessionModeResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on AgentSession
+ *
+ * @ashActionType :action
+ */
+export async function setAgentSessionMode<Fields extends SetAgentSessionModeFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: SetAgentSessionModeInput;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<SetAgentSessionModeResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "set_agent_session_mode",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<SetAgentSessionModeResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on AgentSession
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateSetAgentSessionMode(
+  config: {
+  tenant?: string;
+  input: SetAgentSessionModeInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "set_agent_session_mode",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+export type CreateCellInput = {
+  workspaceId: UUID;
+  name?: string;
+  description?: string;
+  templateId?: string;
+  startMode?: string;
+};
+
+export type CreateCellFields = UnifiedFieldSelection<{id: UUID, name: string, workspaceId: UUID, description: string | null, templateId: string, workspaceRootPath: string, workspacePath: string, opencodeSessionId: string | null, opencodeCommand: string | null, createdAt: string | null, status: string, lastSetupError: string | null, branchName: string | null, baseCommit: string | null, updatedAt: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "workspaceId" | "description" | "templateId" | "workspaceRootPath" | "workspacePath" | "opencodeSessionId" | "opencodeCommand" | "createdAt" | "status" | "lastSetupError" | "branchName" | "baseCommit" | "updatedAt"}>[];
+
+export type InferCreateCellResult<
+  Fields extends CreateCellFields | undefined,
+> = InferResult<{id: UUID, name: string, workspaceId: UUID, description: string | null, templateId: string, workspaceRootPath: string, workspacePath: string, opencodeSessionId: string | null, opencodeCommand: string | null, createdAt: string | null, status: string, lastSetupError: string | null, branchName: string | null, baseCommit: string | null, updatedAt: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "workspaceId" | "description" | "templateId" | "workspaceRootPath" | "workspacePath" | "opencodeSessionId" | "opencodeCommand" | "createdAt" | "status" | "lastSetupError" | "branchName" | "baseCommit" | "updatedAt"}, Fields>;
+
+export type CreateCellResult<Fields extends CreateCellFields | undefined = undefined> = | { success: true; data: InferCreateCellResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on Cell
+ *
+ * @ashActionType :action
+ */
+export async function createCell<Fields extends CreateCellFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: CreateCellInput;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<CreateCellResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "create_cell",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<CreateCellResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Cell
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateCreateCell(
+  config: {
+  tenant?: string;
+  input: CreateCellInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "create_cell",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+export type DeleteCellInput = {
+  cellId: UUID;
+};
+
+export type DeleteCellFields = UnifiedFieldSelection<{deletedId: UUID, workspaceId: UUID, __type: "TypedMap", __primitiveFields: "deletedId" | "workspaceId"}>[];
+
+export type InferDeleteCellResult<
+  Fields extends DeleteCellFields | undefined,
+> = InferResult<{deletedId: UUID, workspaceId: UUID, __type: "TypedMap", __primitiveFields: "deletedId" | "workspaceId"}, Fields>;
+
+export type DeleteCellResult<Fields extends DeleteCellFields | undefined = undefined> = | { success: true; data: InferDeleteCellResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on Cell
+ *
+ * @ashActionType :action
+ */
+export async function deleteCell<Fields extends DeleteCellFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: DeleteCellInput;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<DeleteCellResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "delete_cell",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<DeleteCellResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Cell
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateDeleteCell(
+  config: {
+  tenant?: string;
+  input: DeleteCellInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "delete_cell",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+export type DeleteManyCellsInput = {
+  ids: Array<UUID>;
+};
+
+export type DeleteManyCellsFields = UnifiedFieldSelection<{deletedIds: Array<UUID>, failedIds: Array<UUID>, __type: "TypedMap", __primitiveFields: "deletedIds" | "failedIds"}>[];
+
+export type InferDeleteManyCellsResult<
+  Fields extends DeleteManyCellsFields | undefined,
+> = InferResult<{deletedIds: Array<UUID>, failedIds: Array<UUID>, __type: "TypedMap", __primitiveFields: "deletedIds" | "failedIds"}, Fields>;
+
+export type DeleteManyCellsResult<Fields extends DeleteManyCellsFields | undefined = undefined> = | { success: true; data: InferDeleteManyCellsResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on Cell
+ *
+ * @ashActionType :action
+ */
+export async function deleteManyCells<Fields extends DeleteManyCellsFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: DeleteManyCellsInput;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<DeleteManyCellsResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "delete_many_cells",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<DeleteManyCellsResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Cell
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateDeleteManyCells(
+  config: {
+  tenant?: string;
+  input: DeleteManyCellsInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "delete_many_cells",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
 export type GetCellInput = {
   id: UUID;
 };
@@ -1319,6 +1922,685 @@ export async function validateListCells(
 ): Promise<ValidationResult> {
   const payload = {
     action: "list_cells",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+export type ListServicesInput = {
+  cellId: UUID;
+  includeResources?: boolean;
+  logLines?: number;
+  logOffset?: number;
+};
+
+export type ListServicesFields = UnifiedFieldSelection<{id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "type" | "status" | "command" | "cwd" | "logPath" | "lastKnownError" | "env" | "updatedAt" | "recentLogs" | "totalLogLines" | "hasMoreLogs" | "processAlive" | "portReachable" | "url" | "pid" | "port" | "cpuPercent" | "rssBytes" | "resourceSampledAt" | "resourceUnavailableReason"}>[];
+
+export type InferListServicesResult<
+  Fields extends ListServicesFields | undefined,
+> = Array<InferResult<{id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "type" | "status" | "command" | "cwd" | "logPath" | "lastKnownError" | "env" | "updatedAt" | "recentLogs" | "totalLogLines" | "hasMoreLogs" | "processAlive" | "portReachable" | "url" | "pid" | "port" | "cpuPercent" | "rssBytes" | "resourceSampledAt" | "resourceUnavailableReason"}, Fields>>;
+
+export type ListServicesResult<Fields extends ListServicesFields | undefined = undefined> = | { success: true; data: InferListServicesResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on Cell
+ *
+ * @ashActionType :action
+ */
+export async function listServices<Fields extends ListServicesFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: ListServicesInput;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ListServicesResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "list_services",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<ListServicesResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Cell
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateListServices(
+  config: {
+  tenant?: string;
+  input: ListServicesInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "list_services",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+export type RestartServicesInput = {
+  cellId: UUID;
+  source?: string;
+  toolName?: string;
+  auditEvent?: string;
+  serviceName?: string;
+};
+
+export type RestartServicesFields = UnifiedFieldSelection<{id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "type" | "status" | "command" | "cwd" | "logPath" | "lastKnownError" | "env" | "updatedAt" | "recentLogs" | "totalLogLines" | "hasMoreLogs" | "processAlive" | "portReachable" | "url" | "pid" | "port" | "cpuPercent" | "rssBytes" | "resourceSampledAt" | "resourceUnavailableReason"}>[];
+
+export type InferRestartServicesResult<
+  Fields extends RestartServicesFields | undefined,
+> = Array<InferResult<{id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "type" | "status" | "command" | "cwd" | "logPath" | "lastKnownError" | "env" | "updatedAt" | "recentLogs" | "totalLogLines" | "hasMoreLogs" | "processAlive" | "portReachable" | "url" | "pid" | "port" | "cpuPercent" | "rssBytes" | "resourceSampledAt" | "resourceUnavailableReason"}, Fields>>;
+
+export type RestartServicesResult<Fields extends RestartServicesFields | undefined = undefined> = | { success: true; data: InferRestartServicesResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on Cell
+ *
+ * @ashActionType :action
+ */
+export async function restartServices<Fields extends RestartServicesFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: RestartServicesInput;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<RestartServicesResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "restart_services",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<RestartServicesResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Cell
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateRestartServices(
+  config: {
+  tenant?: string;
+  input: RestartServicesInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "restart_services",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+export type ResumeCellSetupInput = {
+  cellId: UUID;
+};
+
+export type ResumeCellSetupFields = UnifiedFieldSelection<{id: UUID, name: string, workspaceId: UUID, description: string | null, templateId: string, workspaceRootPath: string, workspacePath: string, opencodeSessionId: string | null, opencodeCommand: string | null, createdAt: string | null, status: string, lastSetupError: string | null, branchName: string | null, baseCommit: string | null, updatedAt: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "workspaceId" | "description" | "templateId" | "workspaceRootPath" | "workspacePath" | "opencodeSessionId" | "opencodeCommand" | "createdAt" | "status" | "lastSetupError" | "branchName" | "baseCommit" | "updatedAt"}>[];
+
+export type InferResumeCellSetupResult<
+  Fields extends ResumeCellSetupFields | undefined,
+> = InferResult<{id: UUID, name: string, workspaceId: UUID, description: string | null, templateId: string, workspaceRootPath: string, workspacePath: string, opencodeSessionId: string | null, opencodeCommand: string | null, createdAt: string | null, status: string, lastSetupError: string | null, branchName: string | null, baseCommit: string | null, updatedAt: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "workspaceId" | "description" | "templateId" | "workspaceRootPath" | "workspacePath" | "opencodeSessionId" | "opencodeCommand" | "createdAt" | "status" | "lastSetupError" | "branchName" | "baseCommit" | "updatedAt"}, Fields>;
+
+export type ResumeCellSetupResult<Fields extends ResumeCellSetupFields | undefined = undefined> = | { success: true; data: InferResumeCellSetupResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on Cell
+ *
+ * @ashActionType :action
+ */
+export async function resumeCellSetup<Fields extends ResumeCellSetupFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: ResumeCellSetupInput;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ResumeCellSetupResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "resume_cell_setup",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<ResumeCellSetupResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Cell
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateResumeCellSetup(
+  config: {
+  tenant?: string;
+  input: ResumeCellSetupInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "resume_cell_setup",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+export type RetryCellSetupInput = {
+  cellId: UUID;
+  source?: string;
+  toolName?: string;
+  auditEvent?: string;
+  serviceName?: string;
+};
+
+export type RetryCellSetupFields = UnifiedFieldSelection<{id: UUID, name: string, workspaceId: UUID, description: string | null, templateId: string, workspaceRootPath: string, workspacePath: string, opencodeSessionId: string | null, opencodeCommand: string | null, createdAt: string | null, status: string, lastSetupError: string | null, branchName: string | null, baseCommit: string | null, updatedAt: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "workspaceId" | "description" | "templateId" | "workspaceRootPath" | "workspacePath" | "opencodeSessionId" | "opencodeCommand" | "createdAt" | "status" | "lastSetupError" | "branchName" | "baseCommit" | "updatedAt"}>[];
+
+export type InferRetryCellSetupResult<
+  Fields extends RetryCellSetupFields | undefined,
+> = InferResult<{id: UUID, name: string, workspaceId: UUID, description: string | null, templateId: string, workspaceRootPath: string, workspacePath: string, opencodeSessionId: string | null, opencodeCommand: string | null, createdAt: string | null, status: string, lastSetupError: string | null, branchName: string | null, baseCommit: string | null, updatedAt: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "workspaceId" | "description" | "templateId" | "workspaceRootPath" | "workspacePath" | "opencodeSessionId" | "opencodeCommand" | "createdAt" | "status" | "lastSetupError" | "branchName" | "baseCommit" | "updatedAt"}, Fields>;
+
+export type RetryCellSetupResult<Fields extends RetryCellSetupFields | undefined = undefined> = | { success: true; data: InferRetryCellSetupResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on Cell
+ *
+ * @ashActionType :action
+ */
+export async function retryCellSetup<Fields extends RetryCellSetupFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: RetryCellSetupInput;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<RetryCellSetupResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "retry_cell_setup",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<RetryCellSetupResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Cell
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateRetryCellSetup(
+  config: {
+  tenant?: string;
+  input: RetryCellSetupInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "retry_cell_setup",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+export type StartServicesInput = {
+  cellId: UUID;
+  source?: string;
+  toolName?: string;
+  auditEvent?: string;
+  serviceName?: string;
+};
+
+export type StartServicesFields = UnifiedFieldSelection<{id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "type" | "status" | "command" | "cwd" | "logPath" | "lastKnownError" | "env" | "updatedAt" | "recentLogs" | "totalLogLines" | "hasMoreLogs" | "processAlive" | "portReachable" | "url" | "pid" | "port" | "cpuPercent" | "rssBytes" | "resourceSampledAt" | "resourceUnavailableReason"}>[];
+
+export type InferStartServicesResult<
+  Fields extends StartServicesFields | undefined,
+> = Array<InferResult<{id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "type" | "status" | "command" | "cwd" | "logPath" | "lastKnownError" | "env" | "updatedAt" | "recentLogs" | "totalLogLines" | "hasMoreLogs" | "processAlive" | "portReachable" | "url" | "pid" | "port" | "cpuPercent" | "rssBytes" | "resourceSampledAt" | "resourceUnavailableReason"}, Fields>>;
+
+export type StartServicesResult<Fields extends StartServicesFields | undefined = undefined> = | { success: true; data: InferStartServicesResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on Cell
+ *
+ * @ashActionType :action
+ */
+export async function startServices<Fields extends StartServicesFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: StartServicesInput;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<StartServicesResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "start_services",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<StartServicesResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Cell
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateStartServices(
+  config: {
+  tenant?: string;
+  input: StartServicesInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "start_services",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+export type StopServicesInput = {
+  cellId: UUID;
+  source?: string;
+  toolName?: string;
+  auditEvent?: string;
+  serviceName?: string;
+};
+
+export type StopServicesFields = UnifiedFieldSelection<{id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "type" | "status" | "command" | "cwd" | "logPath" | "lastKnownError" | "env" | "updatedAt" | "recentLogs" | "totalLogLines" | "hasMoreLogs" | "processAlive" | "portReachable" | "url" | "pid" | "port" | "cpuPercent" | "rssBytes" | "resourceSampledAt" | "resourceUnavailableReason"}>[];
+
+export type InferStopServicesResult<
+  Fields extends StopServicesFields | undefined,
+> = Array<InferResult<{id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "type" | "status" | "command" | "cwd" | "logPath" | "lastKnownError" | "env" | "updatedAt" | "recentLogs" | "totalLogLines" | "hasMoreLogs" | "processAlive" | "portReachable" | "url" | "pid" | "port" | "cpuPercent" | "rssBytes" | "resourceSampledAt" | "resourceUnavailableReason"}, Fields>>;
+
+export type StopServicesResult<Fields extends StopServicesFields | undefined = undefined> = | { success: true; data: InferStopServicesResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on Cell
+ *
+ * @ashActionType :action
+ */
+export async function stopServices<Fields extends StopServicesFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: StopServicesInput;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<StopServicesResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "stop_services",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<StopServicesResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Cell
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateStopServices(
+  config: {
+  tenant?: string;
+  input: StopServicesInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "stop_services",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+export type RestartServiceInput = {
+  serviceId: UUID;
+  source?: string;
+  toolName?: string;
+  auditEvent?: string;
+  serviceName?: string;
+};
+
+export type RestartServiceFields = UnifiedFieldSelection<{id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "type" | "status" | "command" | "cwd" | "logPath" | "lastKnownError" | "env" | "updatedAt" | "recentLogs" | "totalLogLines" | "hasMoreLogs" | "processAlive" | "portReachable" | "url" | "pid" | "port" | "cpuPercent" | "rssBytes" | "resourceSampledAt" | "resourceUnavailableReason"}>[];
+
+export type InferRestartServiceResult<
+  Fields extends RestartServiceFields | undefined,
+> = InferResult<{id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "type" | "status" | "command" | "cwd" | "logPath" | "lastKnownError" | "env" | "updatedAt" | "recentLogs" | "totalLogLines" | "hasMoreLogs" | "processAlive" | "portReachable" | "url" | "pid" | "port" | "cpuPercent" | "rssBytes" | "resourceSampledAt" | "resourceUnavailableReason"}, Fields>;
+
+export type RestartServiceResult<Fields extends RestartServiceFields | undefined = undefined> = | { success: true; data: InferRestartServiceResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on Service
+ *
+ * @ashActionType :action
+ */
+export async function restartService<Fields extends RestartServiceFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: RestartServiceInput;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<RestartServiceResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "restart_service",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<RestartServiceResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Service
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateRestartService(
+  config: {
+  tenant?: string;
+  input: RestartServiceInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "restart_service",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+export type StartServiceInput = {
+  serviceId: UUID;
+  source?: string;
+  toolName?: string;
+  auditEvent?: string;
+  serviceName?: string;
+};
+
+export type StartServiceFields = UnifiedFieldSelection<{id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "type" | "status" | "command" | "cwd" | "logPath" | "lastKnownError" | "env" | "updatedAt" | "recentLogs" | "totalLogLines" | "hasMoreLogs" | "processAlive" | "portReachable" | "url" | "pid" | "port" | "cpuPercent" | "rssBytes" | "resourceSampledAt" | "resourceUnavailableReason"}>[];
+
+export type InferStartServiceResult<
+  Fields extends StartServiceFields | undefined,
+> = InferResult<{id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "type" | "status" | "command" | "cwd" | "logPath" | "lastKnownError" | "env" | "updatedAt" | "recentLogs" | "totalLogLines" | "hasMoreLogs" | "processAlive" | "portReachable" | "url" | "pid" | "port" | "cpuPercent" | "rssBytes" | "resourceSampledAt" | "resourceUnavailableReason"}, Fields>;
+
+export type StartServiceResult<Fields extends StartServiceFields | undefined = undefined> = | { success: true; data: InferStartServiceResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on Service
+ *
+ * @ashActionType :action
+ */
+export async function startService<Fields extends StartServiceFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: StartServiceInput;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<StartServiceResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "start_service",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<StartServiceResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Service
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateStartService(
+  config: {
+  tenant?: string;
+  input: StartServiceInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "start_service",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+export type StopServiceInput = {
+  serviceId: UUID;
+  source?: string;
+  toolName?: string;
+  auditEvent?: string;
+  serviceName?: string;
+};
+
+export type StopServiceFields = UnifiedFieldSelection<{id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "type" | "status" | "command" | "cwd" | "logPath" | "lastKnownError" | "env" | "updatedAt" | "recentLogs" | "totalLogLines" | "hasMoreLogs" | "processAlive" | "portReachable" | "url" | "pid" | "port" | "cpuPercent" | "rssBytes" | "resourceSampledAt" | "resourceUnavailableReason"}>[];
+
+export type InferStopServiceResult<
+  Fields extends StopServiceFields | undefined,
+> = InferResult<{id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "type" | "status" | "command" | "cwd" | "logPath" | "lastKnownError" | "env" | "updatedAt" | "recentLogs" | "totalLogLines" | "hasMoreLogs" | "processAlive" | "portReachable" | "url" | "pid" | "port" | "cpuPercent" | "rssBytes" | "resourceSampledAt" | "resourceUnavailableReason"}, Fields>;
+
+export type StopServiceResult<Fields extends StopServiceFields | undefined = undefined> = | { success: true; data: InferStopServiceResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on Service
+ *
+ * @ashActionType :action
+ */
+export async function stopService<Fields extends StopServiceFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: StopServiceInput;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<StopServiceResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "stop_service",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<StopServiceResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Service
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateStopService(
+  config: {
+  tenant?: string;
+  input: StopServiceInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "stop_service",
     ...(config.tenant !== undefined && { tenant: config.tenant }),
     input: config.input
   };
@@ -1487,6 +2769,135 @@ export async function validateListGlobalCellTimings(
 }
 
 
+export type ActivateWorkspaceFields = UnifiedFieldSelection<WorkspaceResourceSchema>[];
+
+export type InferActivateWorkspaceResult<
+  Fields extends ActivateWorkspaceFields | undefined,
+> = InferResult<WorkspaceResourceSchema, Fields>;
+
+export type ActivateWorkspaceResult<Fields extends ActivateWorkspaceFields | undefined = undefined> = | { success: true; data: InferActivateWorkspaceResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Update an existing Workspace
+ *
+ * @ashActionType :update
+ */
+export async function activateWorkspace<Fields extends ActivateWorkspaceFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  identity: UUID;
+  fields?: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ActivateWorkspaceResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "activate_workspace",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    identity: config.identity,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<ActivateWorkspaceResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Update an existing Workspace
+ *
+ * @ashActionType :update
+ * @validation true
+ */
+export async function validateActivateWorkspace(
+  config: {
+  tenant?: string;
+  identity: UUID | string;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "activate_workspace",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    identity: config.identity
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+
+export type DeleteWorkspaceResult = | { success: true; data: {}; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Delete a Workspace
+ *
+ * @ashActionType :destroy
+ */
+export async function deleteWorkspace(
+  config: {
+  tenant?: string;
+  identity: UUID;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<DeleteWorkspaceResult> {
+  const payload = {
+    action: "delete_workspace",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    identity: config.identity
+  };
+
+  return executeActionRpcRequest<DeleteWorkspaceResult>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Delete a Workspace
+ *
+ * @ashActionType :destroy
+ * @validation true
+ */
+export async function validateDeleteWorkspace(
+  config: {
+  tenant?: string;
+  identity: UUID | string;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "delete_workspace",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    identity: config.identity
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
 export type ListWorkspacesFields = UnifiedFieldSelection<WorkspaceResourceSchema>[];
 export type InferListWorkspacesResult<
   Fields extends ListWorkspacesFields,
@@ -1545,6 +2956,80 @@ export async function validateListWorkspaces(
   const payload = {
     action: "list_workspaces",
     ...(config.tenant !== undefined && { tenant: config.tenant })
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+export type RegisterWorkspaceInput = {
+  path: string;
+  label?: string;
+  activate?: boolean;
+};
+
+export type RegisterWorkspaceFields = UnifiedFieldSelection<WorkspaceResourceSchema>[];
+
+export type InferRegisterWorkspaceResult<
+  Fields extends RegisterWorkspaceFields | undefined,
+> = InferResult<WorkspaceResourceSchema, Fields>;
+
+export type RegisterWorkspaceResult<Fields extends RegisterWorkspaceFields | undefined = undefined> = | { success: true; data: InferRegisterWorkspaceResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Create a new Workspace
+ *
+ * @ashActionType :create
+ */
+export async function registerWorkspace<Fields extends RegisterWorkspaceFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: RegisterWorkspaceInput;
+  fields?: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<RegisterWorkspaceResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "register_workspace",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<RegisterWorkspaceResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Create a new Workspace
+ *
+ * @ashActionType :create
+ * @validation true
+ */
+export async function validateRegisterWorkspace(
+  config: {
+  tenant?: string;
+  input: RegisterWorkspaceInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "register_workspace",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
   };
 
   return executeValidationRpcRequest<ValidationResult>(

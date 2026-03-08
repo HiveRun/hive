@@ -5,61 +5,6 @@ defmodule HiveServerElixirWeb.AgentsController do
 
   @agent_events_heartbeat_ms 2_000
 
-  def models(conn, params) do
-    workspace_id = resolve_workspace_id(params, conn)
-
-    case Agents.provider_payload_for_workspace(workspace_id) do
-      {:ok, payload} ->
-        json(conn, payload)
-
-      {:error, {status, message}} ->
-        conn
-        |> put_status(status)
-        |> json(Agents.empty_provider_payload(message))
-    end
-  end
-
-  def session_models(conn, %{"id" => session_id}) do
-    case Agents.provider_payload_for_session(session_id) do
-      {:ok, payload} ->
-        json(conn, payload)
-
-      {:error, {status, message}} ->
-        conn
-        |> put_status(status)
-        |> json(Agents.empty_provider_payload(message))
-    end
-  end
-
-  def session_by_cell(conn, %{"cellId" => cell_id}) do
-    {:ok, session} = Agents.session_payload_for_cell(cell_id)
-    json(conn, %{session: session})
-  end
-
-  def session_messages(conn, %{"id" => session_id}) do
-    case Agents.messages_payload_for_session(session_id) do
-      {:ok, payload} ->
-        json(conn, payload)
-
-      {:error, {status, message}} ->
-        conn
-        |> put_status(status)
-        |> json(%{message: message})
-    end
-  end
-
-  def update_session_mode(conn, %{"id" => session_id, "mode" => mode}) do
-    case Agents.set_session_mode(session_id, mode) do
-      {:ok, payload} ->
-        json(conn, payload)
-
-      {:error, {status, message}} ->
-        conn
-        |> put_status(status)
-        |> json(%{message: message})
-    end
-  end
-
   def session_events(conn, %{"id" => session_id} = params) do
     case Agents.event_snapshot_for_session(session_id) do
       {:ok, snapshot} ->
@@ -86,23 +31,6 @@ defmodule HiveServerElixirWeb.AgentsController do
         conn
         |> put_status(status)
         |> json(%{message: message})
-    end
-  end
-
-  defp resolve_workspace_id(params, conn) do
-    query_workspace_id = Map.get(params, "workspaceId")
-
-    if is_binary(query_workspace_id) and byte_size(String.trim(query_workspace_id)) > 0 do
-      String.trim(query_workspace_id)
-    else
-      case Plug.Conn.get_req_header(conn, "x-workspace-id") do
-        [workspace_id | _rest] ->
-          trimmed_workspace_id = String.trim(workspace_id)
-          if byte_size(trimmed_workspace_id) > 0, do: trimmed_workspace_id, else: nil
-
-        _other ->
-          nil
-      end
     end
   end
 

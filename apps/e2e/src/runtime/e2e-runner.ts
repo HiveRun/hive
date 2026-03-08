@@ -20,6 +20,15 @@ const SECONDARY_WORKSPACE_NAME = "workspace-secondary";
 
 type WorkspaceMode = "fixture" | "clone";
 
+type RpcErrorRecord = {
+  message?: string;
+  shortMessage?: string;
+};
+
+type RpcResult<T> =
+  | { success: true; data: T }
+  | { success: false; errors?: RpcErrorRecord[] };
+
 const WORKSPACE_MODE_ENV = "HIVE_E2E_WORKSPACE_MODE";
 const WORKSPACE_SOURCE_ENV = "HIVE_E2E_WORKSPACE_SOURCE";
 const DEFAULT_WORKSPACE_MODE: WorkspaceMode = "fixture";
@@ -339,18 +348,42 @@ async function startServerWithRetries(options: {
     CORS_ORIGIN: options.context.webUrl,
   };
 
-  await runCommand("mise", ["x", "-C", ".", "--", "mix", "ecto.migrate"], {
-    cwd: serverElixirRoot,
-    env: elixirEnv,
-    label: "Migrate Elixir E2E database",
-  });
+  const runtimeEnvOverrideArgs = [
+    "env",
+    `PORT=${String(options.context.apiPort)}`,
+    `PHX_PORT=${String(options.context.apiPort)}`,
+    `BACKEND_PORT=${String(options.context.apiPort)}`,
+    `BACKEND_URL=${options.context.apiUrl}`,
+    `VITE_API_URL=${options.context.apiUrl}`,
+    `VITE_BACKEND_URL=${options.context.apiUrl}`,
+    `FRONTEND_PORT=${String(options.context.webPort)}`,
+    `FRONTEND_URL=${options.context.webUrl}`,
+  ];
+
+  await runCommand(
+    "mise",
+    ["x", "-C", ".", "--", ...runtimeEnvOverrideArgs, "mix", "ecto.migrate"],
+    {
+      cwd: serverElixirRoot,
+      env: elixirEnv,
+      label: "Migrate Elixir E2E database",
+    }
+  );
 
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= SERVER_START_ATTEMPTS; attempt += 1) {
     const server = startManagedProcess({
       command: "mise",
-      args: ["x", "-C", ".", "--", "mix", "phx.server"],
+      args: [
+        "x",
+        "-C",
+        ".",
+        "--",
+        ...runtimeEnvOverrideArgs,
+        "mix",
+        "phx.server",
+      ],
       cwd: serverElixirRoot,
       env: elixirEnv,
       logsDir: options.logsDir,
@@ -590,24 +623,36 @@ async function registerWorkspace(options: {
   path: string;
   activate: boolean;
 }): Promise<void> {
-  const response = await fetch(`${options.apiUrl}/api/workspaces`, {
+  const response = await fetch(`${options.apiUrl}/rpc/run`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      path: options.path,
-      activate: options.activate,
+      action: "register_workspace",
+      input: {
+        path: options.path,
+        activate: options.activate,
+      },
+      fields: ["id"],
     }),
   });
 
-  if (response.ok) {
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(
+      `Failed to register workspace ${options.path} (status ${response.status}): ${body}`
+    );
+  }
+
+  const payload = (await response.json()) as RpcResult<{ id: string }>;
+
+  if (payload.success) {
     return;
   }
 
-  const body = await response.text();
   throw new Error(
-    `Failed to register workspace ${options.path} (status ${response.status}): ${body}`
+    `Failed to register workspace ${options.path}: ${payload.errors?.[0]?.shortMessage ?? payload.errors?.[0]?.message ?? "unknown RPC error"}`
   );
 }
 

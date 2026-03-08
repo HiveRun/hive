@@ -12,8 +12,10 @@ type AgentSession = {
   currentMode?: "plan" | "build";
 };
 
-type AgentSessionResponse = {
-  session: AgentSession | null;
+type RpcResult<T> = {
+  success: boolean;
+  data: T;
+  errors?: Array<{ message?: string; shortMessage?: string }>;
 };
 
 const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
@@ -195,15 +197,17 @@ async function fetchAgentSession(
   apiUrl: string,
   cellId: string
 ): Promise<AgentSession | null> {
-  const response = await fetch(
-    `${apiUrl}/api/agents/sessions/byCell/${cellId}`
-  );
-  if (!response.ok) {
+  const payload = await rpcRun<Partial<AgentSession>>(apiUrl, {
+    action: "get_agent_session_by_cell",
+    input: { cellId },
+    fields: ["id", "startMode", "currentMode"],
+  });
+
+  if (!(payload.success && payload.data.id)) {
     return null;
   }
 
-  const payload = (await response.json()) as AgentSessionResponse;
-  return payload.session;
+  return payload.data as AgentSession;
 }
 
 async function waitForPlanToBuildTransition(options: {
@@ -229,22 +233,36 @@ async function updateSessionMode(options: {
   sessionId: string;
   mode: "plan" | "build";
 }): Promise<void> {
-  const response = await fetch(
-    `${options.apiUrl}/api/agents/sessions/${options.sessionId}/mode`,
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ mode: options.mode }),
-    }
-  );
+  const payload = await rpcRun<AgentSession>(options.apiUrl, {
+    action: "set_agent_session_mode",
+    input: { sessionId: options.sessionId, mode: options.mode },
+    fields: ["id", "startMode", "currentMode", "modeUpdatedAt"],
+  });
 
-  if (!response.ok) {
+  if (!payload.success) {
     throw new Error(
-      `Failed to switch session mode to ${options.mode} (status ${response.status})`
+      `Failed to switch session mode to ${options.mode}: ${payload.errors?.[0]?.shortMessage ?? payload.errors?.[0]?.message ?? "unknown error"}`
     );
   }
+}
+
+async function rpcRun<T>(
+  apiUrl: string,
+  payload: Record<string, unknown>
+): Promise<RpcResult<T>> {
+  const response = await fetch(`${apiUrl}/rpc/run`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`RPC request failed with status ${response.status}`);
+  }
+
+  return (await response.json()) as RpcResult<T>;
 }
 
 async function wait(ms: number): Promise<void> {

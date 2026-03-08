@@ -22,8 +22,10 @@ if System.get_env("PHX_SERVER") do
   config :hive_server_elixir, HiveServerElixirWeb.Endpoint, server: true
 end
 
+endpoint_port = String.to_integer(System.get_env("PORT", "4000"))
+
 config :hive_server_elixir, HiveServerElixirWeb.Endpoint,
-  http: [port: String.to_integer(System.get_env("PORT", "4000"))],
+  http: [port: endpoint_port],
   check_origin: {HiveServerElixirWeb.LocalAccess, :origin_allowed?, []}
 
 if config_env() == :prod do
@@ -57,7 +59,8 @@ if config_env() == :prod do
   config :hive_server_elixir, HiveServerElixirWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [
-      ip: LocalAccess.local_bind_ip()
+      ip: LocalAccess.local_bind_ip(),
+      port: endpoint_port
     ],
     secret_key_base: secret_key_base
 
