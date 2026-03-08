@@ -19,13 +19,13 @@ defmodule HiveServerElixirWeb.Plugs.RequireLocalAccessTest do
   end
 
   test "allows loopback requests" do
-    conn = conn(:get, "/api/workspaces") |> Map.put(:remote_ip, {127, 0, 0, 1})
+    conn = conn(:post, "/rpc/run") |> Map.put(:remote_ip, {127, 0, 0, 1})
 
     refute RequireLocalAccess.call(conn, []).halted
   end
 
   test "rejects non-local requests by default" do
-    conn = conn(:get, "/api/workspaces") |> Map.put(:remote_ip, {8, 8, 8, 8})
+    conn = conn(:post, "/rpc/run") |> Map.put(:remote_ip, {8, 8, 8, 8})
 
     conn = RequireLocalAccess.call(conn, [])
 

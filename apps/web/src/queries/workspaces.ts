@@ -1,3 +1,4 @@
+import type { WorkspaceAttributesOnlySchema } from "@/lib/generated/ash-rpc";
 import { rpc } from "@/lib/rpc";
 import { formatRpcError, formatRpcResponseError } from "@/lib/rpc-error";
 
@@ -13,6 +14,30 @@ export type WorkspaceListResponse = {
   workspaces: WorkspaceSummary[];
   activeWorkspaceId?: string | null;
 };
+
+function deriveWorkspaceLabel(path: string, label: string | null): string {
+  if (typeof label === "string" && label.trim() !== "") {
+    return label;
+  }
+
+  return path.split("/").filter(Boolean).at(-1) ?? path;
+}
+
+function normalizeWorkspace(
+  workspace: WorkspaceAttributesOnlySchema | WorkspaceSummary
+): WorkspaceSummary {
+  if ("addedAt" in workspace) {
+    return workspace;
+  }
+
+  return {
+    id: workspace.id,
+    label: deriveWorkspaceLabel(workspace.path, workspace.label),
+    path: workspace.path,
+    addedAt: workspace.insertedAt,
+    lastOpenedAt: workspace.lastOpenedAt,
+  };
+}
 
 export type WorkspaceBrowseEntry = {
   name: string;
@@ -64,28 +89,13 @@ export const workspaceQueries = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to load workspaces"));
       }
-      if (data && typeof data === "object" && "message" in data) {
-        throw new Error(
-          formatRpcResponseError(data, "Failed to load workspaces")
-        );
-      }
-
-      const { workspaces, activeWorkspaceId } = (data ?? {}) as {
-        workspaces?: unknown;
-        activeWorkspaceId?: unknown;
-      };
-
-      const normalizedWorkspaces = Array.isArray(workspaces)
-        ? (workspaces as WorkspaceSummary[])
+      const workspaces = Array.isArray(data)
+        ? (data as WorkspaceAttributesOnlySchema[]).map(normalizeWorkspace)
         : [];
-      const normalizedActiveId =
-        typeof activeWorkspaceId === "string" || activeWorkspaceId === null
-          ? activeWorkspaceId
-          : null;
 
       return {
-        workspaces: normalizedWorkspaces,
-        activeWorkspaceId: normalizedActiveId,
+        workspaces,
+        activeWorkspaceId: workspaces[0]?.id ?? null,
       } satisfies WorkspaceListResponse;
     },
   }),
@@ -124,7 +134,9 @@ export const workspaceMutations = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to register workspace"));
       }
-      return ensureWorkspaceResponse(data, "Failed to register workspace");
+      return normalizeWorkspace(
+        ensureWorkspaceResponse(data, "Failed to register workspace")
+      );
     },
   },
   activate: {
@@ -145,7 +157,9 @@ export const workspaceMutations = {
           formatRpcResponseError(data, "Failed to activate workspace")
         );
       }
-      return ensureWorkspaceResponse(data, "Failed to activate workspace");
+      return normalizeWorkspace(
+        ensureWorkspaceResponse(data, "Failed to activate workspace")
+      );
     },
   },
   remove: {

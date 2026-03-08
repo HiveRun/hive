@@ -25,7 +25,6 @@ defmodule HiveServerElixirWeb.Router do
     pipe_through(:api)
 
     get("/health", HealthController, :show)
-    get("/api/workspaces", WorkspacesController, :index)
     get("/api/workspaces/browse", WorkspacesController, :browse)
     post("/api/workspaces", WorkspacesController, :create)
     post("/api/workspaces/:id/activate", WorkspacesController, :activate)
@@ -40,13 +39,8 @@ defmodule HiveServerElixirWeb.Router do
     post("/api/agents/sessions/:id/mode", AgentsController, :update_session_mode)
     get("/api/agents/sessions/byCell/:cellId", AgentsController, :session_by_cell)
 
-    get("/api/cells", CellsController, :index)
     post("/api/cells", CellsController, :create)
     delete("/api/cells", CellsController, :delete_many)
-    get("/api/cells/timings/global", CellsController, :timings_global)
-    get("/api/cells/:id", CellsController, :show)
-    get("/api/cells/:id/activity", CellsController, :activity)
-    get("/api/cells/:id/timings", CellsController, :timings)
     get("/api/cells/:id/diff", CellsController, :diff)
     post("/api/cells/:id/setup/terminal/input", CellsController, :setup_terminal_input)
     post("/api/cells/:id/setup/terminal/resize", CellsController, :setup_terminal_resize)

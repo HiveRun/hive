@@ -54,6 +54,15 @@
       }
     },
     {
+      "includes": ["apps/web/src/lib/generated/**"],
+      "linter": {
+        "enabled": false
+      },
+      "formatter": {
+        "enabled": false
+      }
+    },
+    {
       "includes": ["**/routes/**/$*.tsx"],
       "linter": {
         "rules": {

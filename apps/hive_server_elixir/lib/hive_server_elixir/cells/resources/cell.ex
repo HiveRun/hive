@@ -4,8 +4,13 @@ defmodule HiveServerElixir.Cells.Cell do
   alias HiveServerElixir.Cells.CellStatus
 
   use Ash.Resource,
+    extensions: [AshTypescript.Resource],
     domain: HiveServerElixir.Cells,
     data_layer: AshSqlite.DataLayer
+
+  typescript do
+    type_name "Cell"
+  end
 
   sqlite do
     table "cells"
@@ -14,6 +19,29 @@ defmodule HiveServerElixir.Cells.Cell do
 
   actions do
     defaults [:read, :destroy]
+
+    read :ui_list do
+      argument :workspace_id, :uuid do
+        allow_nil? true
+        public? true
+      end
+
+      prepare build(sort: [inserted_at: :asc])
+
+      filter expr(
+               status != :deleting and
+                 (is_nil(^arg(:workspace_id)) or workspace_id == ^arg(:workspace_id))
+             )
+    end
+
+    read :ui_get do
+      argument :id, :uuid do
+        allow_nil? false
+        public? true
+      end
+
+      filter expr(id == ^arg(:id) and status != :deleting)
+    end
 
     create :create do
       primary? true
@@ -123,8 +151,8 @@ defmodule HiveServerElixir.Cells.Cell do
       public? true
     end
 
-    create_timestamp :inserted_at
-    update_timestamp :updated_at
+    create_timestamp :inserted_at, public?: true
+    update_timestamp :updated_at, public?: true
   end
 
   relationships do

@@ -7,16 +7,6 @@ defmodule HiveServerElixirWeb.WorkspacesController do
 
   @hive_config_filename "hive.config.json"
 
-  def index(conn, _params) do
-    workspaces = Workspaces.list()
-    active_workspace_id = Workspaces.resolve_active_workspace_id(workspaces)
-
-    json(conn, %{
-      workspaces: Enum.map(workspaces, &Workspaces.serialize/1),
-      activeWorkspaceId: active_workspace_id
-    })
-  end
-
   def browse(conn, params) do
     target_path = normalize_browse_path(Map.get(params, "path"))
     filter = normalize_filter(Map.get(params, "filter"))

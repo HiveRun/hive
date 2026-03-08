@@ -3,12 +3,32 @@ defmodule HiveServerElixir.Cells do
   Ash domain for workspace and cell lifecycle records.
   """
 
-  use Ash.Domain
+  use Ash.Domain, extensions: [AshTypescript.Rpc]
 
   alias HiveServerElixir.Cells.Reactors.CreateCell
   alias HiveServerElixir.Cells.Reactors.DeleteCell
   alias HiveServerElixir.Cells.Reactors.ResumeCell
   alias HiveServerElixir.Cells.Reactors.RetryCell
+
+  typescript_rpc do
+    resource HiveServerElixir.Cells.Workspace do
+      rpc_action :list_workspaces, :ui_list
+    end
+
+    resource HiveServerElixir.Cells.Cell do
+      rpc_action :list_cells, :ui_list
+      rpc_action :get_cell, :ui_get, get?: true, not_found_error?: false
+    end
+
+    resource HiveServerElixir.Cells.Activity do
+      rpc_action :list_cell_activity, :for_cell
+    end
+
+    resource HiveServerElixir.Cells.Timing do
+      rpc_action :list_cell_timings, :for_cell
+      rpc_action :list_global_cell_timings, :global
+    end
+  end
 
   resources do
     resource HiveServerElixir.Cells.Workspace

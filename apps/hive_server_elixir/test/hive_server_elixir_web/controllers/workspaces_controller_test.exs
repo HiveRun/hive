@@ -24,23 +24,6 @@ defmodule HiveServerElixirWeb.WorkspacesControllerTest do
     :ok
   end
 
-  test "GET /api/workspaces returns list with active workspace", %{conn: conn} do
-    workspace = workspace!("list", "/tmp/workspaces-list", "List Workspace")
-    :ok = Workspaces.set_active_workspace_id(workspace.id)
-
-    conn = get(conn, ~p"/api/workspaces")
-
-    assert %{"workspaces" => [workspace_payload], "activeWorkspaceId" => active_workspace_id} =
-             json_response(conn, 200)
-
-    assert workspace_payload["id"] == workspace.id
-    assert workspace_payload["label"] == "List Workspace"
-    assert workspace_payload["path"] == "/tmp/workspaces-list"
-    assert is_binary(workspace_payload["addedAt"])
-    assert is_binary(workspace_payload["lastOpenedAt"])
-    assert active_workspace_id == workspace.id
-  end
-
   test "GET /api/workspaces/browse lists directories and config flag", %{conn: conn} do
     root = tmp_dir!("browse-root")
     with_config = Path.join(root, "with-config")
@@ -106,8 +89,7 @@ defmodule HiveServerElixirWeb.WorkspacesControllerTest do
 
     assert Workspaces.active_workspace_id() == nil
 
-    conn = get(build_conn(), ~p"/api/workspaces")
-    assert %{"workspaces" => []} = json_response(conn, 200)
+    assert [] == Workspaces.list()
   end
 
   defp workspace!(_suffix, path, label) do

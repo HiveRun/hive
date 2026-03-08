@@ -1,3 +1,8 @@
+import type {
+  ActivityAttributesOnlySchema,
+  CellAttributesOnlySchema,
+  TimingAttributesOnlySchema,
+} from "@/lib/generated/ash-rpc";
 import { type CreateCellInput, rpc } from "@/lib/rpc";
 import { formatRpcError, formatRpcResponseError } from "@/lib/rpc-error";
 
@@ -7,6 +12,9 @@ export type CellStatus =
   | "ready"
   | "error"
   | "deleting";
+
+const DEFAULT_ACTIVITY_LIMIT = 50;
+const DEFAULT_TIMING_LIMIT = 200;
 
 type CellRecord = {
   id: string;
@@ -28,10 +36,6 @@ type CellRecord = {
   baseCommit?: string | null;
   setupLog?: string | null;
   setupLogPath?: string | null;
-};
-
-type CellListResponse = {
-  cells: CellRecord[];
 };
 
 type CellServiceRecord = {
@@ -113,6 +117,149 @@ type CellActivityResponse = {
   details?: string;
 };
 
+function buildOpencodeCommand(
+  workspacePath: string | null | undefined,
+  sessionId: string | null | undefined
+): string | null {
+  if (!(workspacePath && sessionId)) {
+    return null;
+  }
+
+  return `opencode "${workspacePath}" --session "${sessionId}"`;
+}
+
+function presentCellStatus(status: string): CellStatus {
+  return status === "provisioning" ? "pending" : (status as CellStatus);
+}
+
+function normalizeCell(
+  cell: CellAttributesOnlySchema | CellRecord
+): CellRecord {
+  if ("insertedAt" in cell) {
+    return {
+      id: cell.id,
+      name: cell.name,
+      description: cell.description,
+      status: presentCellStatus(cell.status),
+      workspaceId: cell.workspaceId,
+      workspacePath: cell.workspacePath,
+      workspaceRootPath: cell.workspaceRootPath,
+      createdAt: cell.insertedAt,
+      updatedAt: cell.updatedAt,
+      templateId: cell.templateId,
+      opencodeSessionId: cell.opencodeSessionId,
+      opencodeCommand: buildOpencodeCommand(
+        cell.workspacePath,
+        cell.opencodeSessionId
+      ),
+      lastSetupError: cell.lastSetupError ?? undefined,
+      branchName: cell.branchName ?? undefined,
+      baseCommit: cell.baseCommit ?? undefined,
+    };
+  }
+
+  return {
+    ...cell,
+    status: presentCellStatus(cell.status),
+    lastSetupError: cell.lastSetupError ?? undefined,
+  };
+}
+
+function buildActivityCursor(insertedAt: string, id: string): string | null {
+  const timestamp = Date.parse(insertedAt);
+  return Number.isNaN(timestamp) ? null : `${timestamp}:${id}`;
+}
+
+function toActivityResponse(
+  activities: ActivityAttributesOnlySchema[],
+  limit: number
+): CellActivityResponse {
+  const page = activities.slice(0, limit);
+  const lastEvent = page.at(-1);
+
+  return {
+    events: page.map((activity) => ({
+      id: activity.id,
+      type: activity.type,
+      createdAt: activity.insertedAt,
+      toolName: activity.toolName,
+      metadata: activity.metadata,
+    })),
+    nextCursor:
+      activities.length > limit && lastEvent
+        ? buildActivityCursor(lastEvent.insertedAt, lastEvent.id)
+        : null,
+  };
+}
+
+function toTimingStep(timing: TimingAttributesOnlySchema): CellTimingStep {
+  return {
+    id: timing.id,
+    cellId: timing.cellId ?? "",
+    cellName: timing.cellName,
+    workspaceId: timing.workspaceId,
+    templateId: timing.templateId,
+    runId: timing.runId,
+    workflow: timing.workflow as CellTimingWorkflow,
+    step: timing.step,
+    status: timing.status as CellTimingStatus,
+    durationMs: timing.durationMs,
+    attempt: timing.attempt,
+    error: timing.error,
+    metadata: timing.metadata,
+    createdAt: timing.insertedAt,
+  };
+}
+
+function toTimingRuns(timings: TimingAttributesOnlySchema[]): CellTimingRun[] {
+  return Array.from(
+    timings.reduce((runs, timing) => {
+      const entries = runs.get(timing.runId) ?? [];
+      entries.push(timing);
+      runs.set(timing.runId, entries);
+      return runs;
+    }, new Map<string, TimingAttributesOnlySchema[]>())
+  )
+    .map(([runId, runSteps]) => {
+      const ordered = [...runSteps].sort((left, right) =>
+        left.insertedAt.localeCompare(right.insertedAt)
+      );
+      const first = ordered[0];
+      const last = ordered.at(-1);
+      const totalStep = ordered.find((step) => step.step === "total");
+
+      return {
+        runId,
+        cellId: first?.cellId ?? "",
+        cellName: first?.cellName ?? null,
+        workspaceId: first?.workspaceId ?? null,
+        templateId: first?.templateId ?? null,
+        workflow: (first?.workflow ?? "create") as CellTimingWorkflow,
+        status: (ordered.some((step) => step.status === "error")
+          ? "error"
+          : "ok") as CellTimingStatus,
+        startedAt: first?.insertedAt ?? "",
+        finishedAt: last?.insertedAt ?? "",
+        totalDurationMs: totalStep
+          ? totalStep.durationMs
+          : ordered.reduce((sum, step) => sum + step.durationMs, 0),
+        stepCount: ordered.length,
+        attempt: ordered.find((step) => step.attempt != null)?.attempt ?? null,
+      };
+    })
+    .sort((left, right) => right.finishedAt.localeCompare(left.finishedAt));
+}
+
+function toTimingResponse(
+  timings: TimingAttributesOnlySchema[],
+  limit: number
+): CellTimingResponse {
+  return {
+    steps: timings.slice(0, limit).map(toTimingStep),
+    runs: toTimingRuns(timings),
+  };
+}
+
 export const cellQueries = {
   all: (workspaceId: string) => ({
     queryKey: ["cells", workspaceId] as const,
@@ -124,7 +271,10 @@ export const cellQueries = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to fetch cells"));
       }
-      return (data as CellListResponse).cells.map(normalizeCell);
+
+      return Array.isArray(data)
+        ? (data as CellAttributesOnlySchema[]).map(normalizeCell)
+        : [];
     },
   }),
 
@@ -132,25 +282,12 @@ export const cellQueries = {
     queryKey: ["cells", id] as const,
     staleTime: 0,
     queryFn: async (): Promise<CellRecord & { status: CellStatus }> => {
-      const { data, error } = await rpc.api.cells({ id }).get({
-        query: {
-          includeSetupLog: false,
-        },
-      });
+      const { data, error } = await rpc.api.cells({ id }).get();
       if (error) {
         throw new Error(formatRpcError(error, "Cell not found"));
       }
 
-      if (
-        data &&
-        typeof data === "object" &&
-        "message" in data &&
-        typeof data.message === "string"
-      ) {
-        throw new Error(formatRpcResponseError(data, "Cell not found"));
-      }
-
-      return normalizeCell(stripNullCellFields(data as CellRecord));
+      return normalizeCell(data as CellAttributesOnlySchema);
     },
   }),
 
@@ -265,18 +402,11 @@ export const cellQueries = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to load activity"));
       }
-      if (
-        data &&
-        typeof data === "object" &&
-        "message" in data &&
-        typeof data.message === "string"
-      ) {
-        throw new Error(
-          formatRpcResponseError(data, "Failed to load activity")
-        );
-      }
 
-      return data as CellActivityResponse;
+      return toActivityResponse(
+        Array.isArray(data) ? (data as ActivityAttributesOnlySchema[]) : [],
+        options.limit ?? DEFAULT_ACTIVITY_LIMIT
+      );
     },
   }),
 
@@ -314,16 +444,11 @@ export const cellQueries = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to load timings"));
       }
-      if (
-        data &&
-        typeof data === "object" &&
-        "message" in data &&
-        typeof data.message === "string"
-      ) {
-        throw new Error(formatRpcResponseError(data, "Failed to load timings"));
-      }
 
-      return data as CellTimingResponse;
+      return toTimingResponse(
+        Array.isArray(data) ? (data as TimingAttributesOnlySchema[]) : [],
+        options.limit ?? DEFAULT_TIMING_LIMIT
+      );
     },
   }),
 
@@ -371,7 +496,10 @@ export const cellQueries = {
         throw new Error(formatRpcError(error, "Failed to load timings"));
       }
 
-      return data as CellTimingResponse;
+      return toTimingResponse(
+        Array.isArray(data) ? (data as TimingAttributesOnlySchema[]) : [],
+        options.limit ?? DEFAULT_TIMING_LIMIT
+      );
     },
   }),
 };
@@ -403,7 +531,7 @@ export const cellMutations = {
         throw new Error(formatRpcResponseError(data, "Failed to create cell"));
       }
 
-      return normalizeCell(stripNullCellFields(data as CellRecord));
+      return normalizeCell(data as CellRecord);
     },
   },
 
@@ -495,7 +623,7 @@ export const cellMutations = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to retry setup"));
       }
-      return normalizeCell(stripNullCellFields(data as CellRecord));
+      return normalizeCell(data as CellRecord);
     },
   },
 };
@@ -542,18 +670,6 @@ export const cellDiffQueries = {
     },
   }),
 };
-
-const stripNullCellFields = (cell: CellRecord): CellRecord => ({
-  ...cell,
-  lastSetupError: cell.lastSetupError ?? undefined,
-});
-
-const normalizeCell = <T extends { status: CellStatus }>(
-  cell: T
-): T & { status: CellStatus } => ({
-  ...cell,
-  status: cell.status,
-});
 
 // Export inferred types for use in components
 export type Cell = Awaited<

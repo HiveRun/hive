@@ -2,8 +2,13 @@ defmodule HiveServerElixir.Cells.Workspace do
   @moduledoc false
 
   use Ash.Resource,
+    extensions: [AshTypescript.Resource],
     domain: HiveServerElixir.Cells,
     data_layer: AshSqlite.DataLayer
+
+  typescript do
+    type_name "Workspace"
+  end
 
   sqlite do
     table "workspaces"
@@ -12,6 +17,10 @@ defmodule HiveServerElixir.Cells.Workspace do
 
   actions do
     defaults [:read, :destroy]
+
+    read :ui_list do
+      prepare build(sort: [last_opened_at: :desc, inserted_at: :desc])
+    end
 
     create :create do
       primary? true
@@ -42,8 +51,8 @@ defmodule HiveServerElixir.Cells.Workspace do
       public? true
     end
 
-    create_timestamp :inserted_at
-    update_timestamp :updated_at
+    create_timestamp :inserted_at, public?: true
+    update_timestamp :updated_at, public?: true
   end
 
   relationships do

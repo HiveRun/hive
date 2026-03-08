@@ -58,34 +58,6 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
     end)
   end
 
-  test "GET /api/cells lists non-deleting cells for a workspace", %{conn: conn} do
-    workspace = workspace!("index")
-    ready_cell = cell!(workspace.id, "index ready", "ready")
-    _deleting_cell = cell!(workspace.id, "index deleting", "deleting")
-
-    conn = get(conn, ~p"/api/cells?workspaceId=#{workspace.id}")
-
-    assert %{"cells" => cells} = json_response(conn, 200)
-    assert length(cells) == 1
-    assert hd(cells)["id"] == ready_cell.id
-    assert hd(cells)["name"] == "Cell"
-  end
-
-  test "GET /api/cells/:id returns cell detail payload", %{conn: conn} do
-    workspace = workspace!("show")
-    cell = cell!(workspace.id, "show detail", "ready")
-
-    conn = get(conn, ~p"/api/cells/#{cell.id}?includeSetupLog=false")
-
-    assert payload = json_response(conn, 200)
-    assert payload["id"] == cell.id
-    assert payload["workspaceId"] == workspace.id
-    assert payload["status"] == "ready"
-    assert payload["name"] == "Cell"
-    assert payload["templateId"] == "default-template"
-    assert payload["workspacePath"] == workspace.path
-  end
-
   test "GET /api/cells/workspace/:id/stream emits ready, cell snapshot, and snapshot marker", %{
     conn: conn
   } do
@@ -744,60 +716,6 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
 
     assert %{"deletedIds" => deleted_ids} = json_response(conn, 200)
     assert Enum.sort(deleted_ids) == Enum.sort([cell_a.id, cell_b.id])
-  end
-
-  test "GET /api/cells/:id/activity returns paginated events", %{conn: conn} do
-    workspace = workspace!("activity")
-    cell = cell!(workspace.id, "activity cell", "ready")
-
-    assert {:ok, _first} =
-             Ash.create(Activity, %{cell_id: cell.id, type: "service.start", metadata: %{}},
-               domain: Cells
-             )
-
-    assert {:ok, _second} =
-             Ash.create(Activity, %{cell_id: cell.id, type: "service.stop", metadata: %{}},
-               domain: Cells
-             )
-
-    conn = get(conn, ~p"/api/cells/#{cell.id}/activity?limit=1")
-
-    assert %{"events" => events, "nextCursor" => next_cursor} = json_response(conn, 200)
-    assert length(events) == 1
-    assert is_binary(next_cursor)
-  end
-
-  test "GET /api/cells/:id/timings and /timings/global return run summaries", %{conn: conn} do
-    workspace = workspace!("timings")
-    cell = cell!(workspace.id, "timing cell", "ready")
-
-    assert {:ok, _timing} =
-             Ash.create(
-               Timing,
-               %{
-                 cell_id: cell.id,
-                 cell_name: "timing cell",
-                 workspace_id: workspace.id,
-                 template_id: "default-template",
-                 workflow: "create",
-                 run_id: "run-1",
-                 step: "ensure_services",
-                 status: "ok",
-                 duration_ms: 10,
-                 metadata: %{}
-               },
-               domain: Cells
-             )
-
-    conn = get(conn, ~p"/api/cells/#{cell.id}/timings")
-    assert %{"steps" => steps, "runs" => runs} = json_response(conn, 200)
-    assert length(steps) == 1
-    assert length(runs) == 1
-
-    conn = get(conn, ~p"/api/cells/timings/global?cellId=#{cell.id}")
-    assert %{"steps" => global_steps, "runs" => global_runs} = json_response(conn, 200)
-    assert length(global_steps) == 1
-    assert length(global_runs) == 1
   end
 
   test "GET /api/cells/:id/diff returns git-backed summary and details", %{conn: conn} do
