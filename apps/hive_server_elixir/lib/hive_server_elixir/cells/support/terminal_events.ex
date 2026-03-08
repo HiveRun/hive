@@ -2,6 +2,7 @@ defmodule HiveServerElixir.Cells.TerminalEvents do
   @moduledoc false
 
   alias HiveServerElixir.Cells.Events
+  alias HiveServerElixir.Cells.AgentSessionProjection
   alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.TerminalRuntime
 
@@ -69,6 +70,8 @@ defmodule HiveServerElixir.Cells.TerminalEvents do
         :ok
 
       cell_id ->
+        :ok = AgentSessionProjection.project_opencode_event(context, global_event)
+
         payload = map_value(global_event, "payload") || %{}
         event_type = map_value(payload, "type")
         properties = map_value(payload, "properties") || %{}

@@ -106,6 +106,13 @@ defmodule HiveServerElixir.Cells do
     Reactor.run(DeleteCell, input)
   end
 
+  @spec reconcile_service_runtime_inventory() :: {:ok, map()} | {:error, term()}
+  def reconcile_service_runtime_inventory do
+    Service
+    |> Ash.ActionInput.for_action(:reconcile_runtime_inventory, %{})
+    |> Ash.run_action(domain: __MODULE__)
+  end
+
   def create_cell_rpc(input) when is_map(input) do
     workspace_id = Map.fetch!(input, :workspace_id)
     description = Map.get(input, :description)

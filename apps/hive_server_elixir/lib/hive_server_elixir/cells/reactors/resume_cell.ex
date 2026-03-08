@@ -9,6 +9,7 @@ defmodule HiveServerElixir.Cells.Reactors.ResumeCell do
   require Ash.Query
 
   alias HiveServerElixir.Cells
+  alias HiveServerElixir.Cells.AgentSessionProjection
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Provisioning
   alias HiveServerElixir.Cells.TerminalEvents
@@ -32,7 +33,8 @@ defmodule HiveServerElixir.Cells.Reactors.ResumeCell do
     run(fn %{cell: cell}, _context ->
       with {:ok, updated_cell} <-
              Ash.update(cell, %{}, action: :begin_provisioning, domain: Cells),
-           :ok <- begin_provisioning_attempt(updated_cell.id) do
+           :ok <- begin_provisioning_attempt(updated_cell.id),
+           :ok <- AgentSessionProjection.ensure_resume_projection(updated_cell) do
         {:ok, updated_cell}
       end
     end)

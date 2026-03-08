@@ -470,6 +470,10 @@ Step 7 done criteria are now satisfied locally:
   - `Provisioning` attempt tracking now uses explicit begin/finish actions so attempt counters and timestamps are no longer assembled ad hoc inside the cell reactors.
 - 2026-03-08 - Followed up on service read-time self-healing by adding an explicit `Service.reconcile_runtime_state` Ash action and routing service snapshot/resource-summary reads through a shared reconciliation helper before serialization.
 - 2026-03-08 - Added a first-class `TerminalSession` Ash resource so setup/chat/service terminal metadata (kind, runtime session id, rows/cols, status) is persisted and typed through Ash even though websocket/SSE byte streaming remains a custom Phoenix transport concern.
+- 2026-03-08 - Added an AshOban-backed `Service.reconcile_runtime_inventory` scheduled action so runtime drift can be reconciled periodically through an explicit Ash action instead of only on demand during reads.
+- 2026-03-08 - Tightened `AgentSession` lifecycle writes around explicit Ash actions by replacing the broad primary update with `begin_session`, `set_mode`, `sync_runtime_details`, and `record_error`, and by routing mode changes through the new `set_mode` action so session mode semantics live in the resource boundary.
+- 2026-03-08 - Added explicit AgentSession projection hooks in ingest/runtime paths so OpenCode events and retry/resume flows now create/sync persisted session rows through `begin_session`, `sync_runtime_details`, `set_mode`, and `record_error` instead of leaving session detail/error state implicit in event timelines alone.
+- 2026-03-08 - Extracted AgentSession read-model derivation into a dedicated `Cells.AgentSessionRead` helper so session context lookup, timeline-derived status/mode/model projection, and cell/session fallback resolution no longer live inside the message-fetch adapter module.
 
 ## Database Reset Strategy (Approved)
 

@@ -6,6 +6,7 @@ defmodule HiveServerElixir.Agents do
   alias HiveServerElixir.Agents.ProviderCatalog
   alias HiveServerElixir.Agents.SessionView
   alias HiveServerElixir.Agents.Support.SessionViewBuilder
+  alias HiveServerElixir.Cells.AgentSessionRead
 
   resources do
     resource ProviderCatalog
@@ -38,10 +39,7 @@ defmodule HiveServerElixir.Agents do
 
   @spec session_payload_for_cell(String.t()) :: {:ok, map() | nil} | {:error, term()}
   def session_payload_for_cell(cell_id) when is_binary(cell_id) do
-    SessionView
-    |> Ash.ActionInput.for_action(:for_cell, %{cell_id: cell_id})
-    |> Ash.run_action(domain: __MODULE__)
-    |> normalize_result()
+    AgentSessionRead.payload_for_cell(cell_id)
   end
 
   @spec messages_payload_for_session(String.t()) ::
@@ -56,10 +54,7 @@ defmodule HiveServerElixir.Agents do
   @spec event_snapshot_for_session(String.t()) ::
           {:ok, map()} | {:error, {atom(), String.t()} | term()}
   def event_snapshot_for_session(session_id) when is_binary(session_id) do
-    SessionView
-    |> Ash.ActionInput.for_action(:event_snapshot_for_session, %{session_id: session_id})
-    |> Ash.run_action(domain: __MODULE__)
-    |> normalize_result()
+    AgentSessionRead.snapshot_for_session(session_id)
   end
 
   @spec set_session_mode(String.t(), String.t()) ::

@@ -2,11 +2,14 @@ defmodule HiveServerElixir.Cells.AgentSession do
   @moduledoc false
 
   alias HiveServerElixir.Agents
+  alias HiveServerElixir.Cells.AgentSessionRead
 
   use Ash.Resource,
     extensions: [AshTypescript.Resource],
     domain: HiveServerElixir.Cells,
     data_layer: AshSqlite.DataLayer
+
+  @allowed_modes ["plan", "build"]
 
   @session_payload_fields [
     id: [type: :string, allow_nil?: true],
@@ -36,7 +39,7 @@ defmodule HiveServerElixir.Cells.AgentSession do
   actions do
     defaults [:read, :destroy]
 
-    create :create do
+    create :begin_session do
       primary? true
 
       accept [
@@ -49,11 +52,38 @@ defmodule HiveServerElixir.Cells.AgentSession do
         :resume_on_startup,
         :last_error
       ]
+
+      change fn changeset, _context ->
+        initialize_modes(changeset)
+      end
     end
 
-    update :update do
-      primary? true
-      accept [:model_id, :model_provider_id, :current_mode, :resume_on_startup, :last_error]
+    update :set_mode do
+      require_atomic? false
+
+      argument :mode, :string do
+        allow_nil? false
+      end
+
+      validate one_of(:mode, @allowed_modes)
+
+      change fn changeset, _context ->
+        mode = Ash.Changeset.get_argument(changeset, :mode)
+
+        changeset
+        |> Ash.Changeset.force_change_attribute(:current_mode, mode)
+        |> Ash.Changeset.force_change_attribute(:last_error, nil)
+      end
+    end
+
+    update :sync_runtime_details do
+      require_atomic? false
+      accept [:model_id, :model_provider_id, :resume_on_startup]
+    end
+
+    update :record_error do
+      require_atomic? false
+      accept [:last_error]
     end
 
     action :get_session_by_cell, :map do
@@ -65,7 +95,7 @@ defmodule HiveServerElixir.Cells.AgentSession do
       end
 
       run fn input, _context ->
-        case Agents.session_payload_for_cell(input.arguments.cell_id) do
+        case AgentSessionRead.payload_for_cell(input.arguments.cell_id) do
           {:ok, %{} = payload} -> {:ok, rpc_session_payload(payload)}
           {:ok, nil} -> {:ok, %{}}
         end
@@ -85,7 +115,7 @@ defmodule HiveServerElixir.Cells.AgentSession do
         public? true
       end
 
-      validate one_of(:mode, ["plan", "build"])
+      validate one_of(:mode, @allowed_modes)
 
       run fn input, _context ->
         case Agents.set_session_mode(input.arguments.session_id, input.arguments.mode) do
@@ -151,6 +181,37 @@ defmodule HiveServerElixir.Cells.AgentSession do
     identity :unique_cell, [:cell_id]
     identity :unique_session_id, [:session_id]
   end
+
+  defp initialize_modes(changeset) do
+    start_mode = Ash.Changeset.get_attribute(changeset, :start_mode)
+    current_mode = Ash.Changeset.get_attribute(changeset, :current_mode)
+
+    with {:ok, normalized_start_mode} <- normalize_mode(:start_mode, start_mode, default: "plan"),
+         {:ok, normalized_current_mode} <-
+           normalize_mode(:current_mode, current_mode, default: normalized_start_mode) do
+      changeset
+      |> Ash.Changeset.force_change_attribute(:start_mode, normalized_start_mode)
+      |> Ash.Changeset.force_change_attribute(:current_mode, normalized_current_mode)
+    else
+      {:error, {field, message}} ->
+        Ash.Changeset.add_error(changeset, field: field, message: message)
+    end
+  end
+
+  defp normalize_mode(_field, nil, opts), do: {:ok, Keyword.fetch!(opts, :default)}
+
+  defp normalize_mode(field, mode, opts) when is_binary(mode) do
+    normalized_mode = String.trim(mode)
+
+    cond do
+      normalized_mode == "" -> {:ok, Keyword.fetch!(opts, :default)}
+      normalized_mode in @allowed_modes -> {:ok, normalized_mode}
+      true -> {:error, {field, "must be either 'plan' or 'build'"}}
+    end
+  end
+
+  defp normalize_mode(field, _mode, _opts),
+    do: {:error, {field, "must be either 'plan' or 'build'"}}
 
   defp rpc_session_payload(payload) do
     %{

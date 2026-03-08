@@ -3,10 +3,11 @@ defmodule HiveServerElixir.Cells.Service do
 
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.ServicePayload
+  alias HiveServerElixir.Cells.ServiceReconciliation
   alias HiveServerElixir.Cells.ServiceStatus
 
   use Ash.Resource,
-    extensions: [AshTypescript.Resource],
+    extensions: [AshTypescript.Resource, AshOban],
     domain: HiveServerElixir.Cells,
     data_layer: AshSqlite.DataLayer
 
@@ -21,6 +22,16 @@ defmodule HiveServerElixir.Cells.Service do
     type_name "Service"
   end
 
+  oban do
+    scheduled_actions do
+      schedule :reconcile_runtime_inventory, "*/1 * * * *" do
+        action :reconcile_runtime_inventory
+        queue :default
+        worker_module_name __MODULE__.Oban.ReconcileRuntimeInventoryWorker
+      end
+    end
+  end
+
   sqlite do
     table "cell_services"
     repo HiveServerElixir.Repo
@@ -28,6 +39,26 @@ defmodule HiveServerElixir.Cells.Service do
 
   actions do
     defaults [:read, :destroy]
+
+    action :reconcile_runtime_inventory, :map do
+      constraints fields: [reconciled_count: [type: :integer], updated_count: [type: :integer]]
+
+      run fn _input, _context ->
+        services = Ash.read!(__MODULE__, domain: Cells)
+        snapshots = ServiceReconciliation.reconcile_all(services)
+
+        updated_count =
+          services
+          |> Enum.zip(snapshots)
+          |> Enum.count(fn {service, snapshot} ->
+            service.status != snapshot.service.status ||
+              service.pid != snapshot.service.pid ||
+              service.last_known_error != snapshot.service.last_known_error
+          end)
+
+        {:ok, %{reconciled_count: length(snapshots), updated_count: updated_count}}
+      end
+    end
 
     action :start_service, :map do
       constraints fields: @service_payload_fields

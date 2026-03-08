@@ -104,6 +104,7 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
                  current_mode: mode,
                  resume_on_startup: true
                },
+               action: :begin_session,
                domain: Cells
              ) do
         {:ok, updated_cell}

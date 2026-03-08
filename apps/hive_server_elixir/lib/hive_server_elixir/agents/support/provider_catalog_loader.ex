@@ -1,7 +1,7 @@
 defmodule HiveServerElixir.Agents.Support.ProviderCatalogLoader do
   @moduledoc false
 
-  alias HiveServerElixir.Agents.Support.SessionViewBuilder
+  alias HiveServerElixir.Cells.AgentSessionRead
   alias HiveServerElixir.Opencode.Generated.Operations
   alias HiveServerElixir.Workspaces
 
@@ -15,7 +15,7 @@ defmodule HiveServerElixir.Agents.Support.ProviderCatalogLoader do
 
   @spec for_session(String.t()) :: {:ok, map()} | {:error, {atom(), String.t()}}
   def for_session(session_id) when is_binary(session_id) do
-    with {:ok, context} <- SessionViewBuilder.resolve_session_context(session_id),
+    with {:ok, context} <- AgentSessionRead.context_for_session(session_id),
          {:ok, catalog} <- fetch_provider_catalog(context.cell.workspace_path) do
       {:ok, provider_payload_from_catalog(catalog)}
     end
@@ -154,7 +154,7 @@ defmodule HiveServerElixir.Agents.Support.ProviderCatalogLoader do
         found
 
       :error ->
-        case SessionViewBuilder.maybe_existing_atom(key) do
+        case AgentSessionRead.maybe_existing_atom(key) do
           atom when is_atom(atom) -> Map.get(value, atom)
           _other -> nil
         end

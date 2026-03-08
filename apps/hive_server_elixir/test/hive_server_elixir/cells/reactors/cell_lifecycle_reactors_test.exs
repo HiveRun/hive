@@ -5,6 +5,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
   require Ash.Query
 
   alias HiveServerElixir.Cells
+  alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Lifecycle
   alias HiveServerElixir.Cells.Provisioning
@@ -70,6 +71,40 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
     assert :ok = Lifecycle.on_cell_delete(context)
   end
 
+  test "resume_cell restores persisted agent session resume projection" do
+    {workspace, cell} =
+      workspace_and_cell!("resume-session", "stopped", nil, %{
+        opencode_session_id: "session-resume"
+      })
+
+    assert {:ok, session} =
+             Ash.create(
+               AgentSession,
+               %{
+                 cell_id: cell.id,
+                 session_id: "session-resume",
+                 start_mode: "plan",
+                 current_mode: "plan",
+                 resume_on_startup: false,
+                 last_error: "stale"
+               },
+               action: :begin_session,
+               domain: Cells
+             )
+
+    assert {:ok, _updated_cell} =
+             Cells.resume_cell(%{
+               cell_id: cell.id,
+               runtime_opts: runtime_opts(),
+               fail_after_ingest: false
+             })
+
+    assert {:ok, refreshed_session} = Ash.get(AgentSession, session.id, domain: Cells)
+    assert refreshed_session.resume_on_startup == true
+
+    assert :ok = Lifecycle.on_cell_delete(%{workspace_id: workspace.id, cell_id: cell.id})
+  end
+
   test "retry_cell compensates by stopping ingest on failure" do
     {workspace, cell} = workspace_and_cell!("retry-failure", "error")
     context = %{workspace_id: workspace.id, cell_id: cell.id}
@@ -105,7 +140,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
     assert :ok = Lifecycle.on_cell_delete(context)
   end
 
-  defp workspace_and_cell!(suffix, status, last_setup_error \\ nil) do
+  defp workspace_and_cell!(suffix, status, last_setup_error \\ nil, overrides \\ %{}) do
     assert {:ok, workspace} =
              Ash.create(
                Workspace,
@@ -113,15 +148,21 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
                domain: Cells
              )
 
+    attrs =
+      Map.merge(
+        %{
+          workspace_id: workspace.id,
+          description: "Cell #{suffix}",
+          status: status,
+          last_setup_error: last_setup_error
+        },
+        overrides
+      )
+
     assert {:ok, cell} =
              Ash.create(
                Cell,
-               %{
-                 workspace_id: workspace.id,
-                 description: "Cell #{suffix}",
-                 status: status,
-                 last_setup_error: last_setup_error
-               },
+               attrs,
                domain: Cells
              )
 

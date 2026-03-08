@@ -1,6 +1,7 @@
 defmodule HiveServerElixir.Agents.SessionView do
   @moduledoc false
 
+  alias HiveServerElixir.Cells.AgentSessionRead
   alias HiveServerElixir.Agents.Support.SessionViewBuilder
 
   use Ash.Resource, domain: HiveServerElixir.Agents
@@ -15,7 +16,7 @@ defmodule HiveServerElixir.Agents.SessionView do
       end
 
       run fn input, _context ->
-        SessionViewBuilder.for_cell(input.arguments.cell_id)
+        AgentSessionRead.payload_for_cell(input.arguments.cell_id)
       end
     end
 
@@ -37,7 +38,7 @@ defmodule HiveServerElixir.Agents.SessionView do
       end
 
       run fn input, _context ->
-        SessionViewBuilder.event_snapshot_for_session(input.arguments.session_id)
+        AgentSessionRead.snapshot_for_session(input.arguments.session_id)
       end
     end
   end
