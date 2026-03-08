@@ -1,8 +1,8 @@
 defmodule HiveServerElixir.Agents.SessionView do
   @moduledoc false
 
+  alias HiveServerElixir.Agents.Support.SessionMessagesLoader
   alias HiveServerElixir.Cells.AgentSessionRead
-  alias HiveServerElixir.Agents.Support.SessionViewBuilder
 
   use Ash.Resource, domain: HiveServerElixir.Agents
 
@@ -27,7 +27,7 @@ defmodule HiveServerElixir.Agents.SessionView do
       end
 
       run fn input, _context ->
-        SessionViewBuilder.messages_for_session(input.arguments.session_id)
+        SessionMessagesLoader.for_session(input.arguments.session_id)
       end
     end
 
