@@ -469,6 +469,7 @@ Step 7 done criteria are now satisfied locally:
   - `ServiceRuntime`, service snapshot reconciliation, and resource summaries now share the Ash-owned lifecycle semantics instead of mutating free-form status strings.
   - `Provisioning` attempt tracking now uses explicit begin/finish actions so attempt counters and timestamps are no longer assembled ad hoc inside the cell reactors.
 - 2026-03-08 - Followed up on service read-time self-healing by adding an explicit `Service.reconcile_runtime_state` Ash action and routing service snapshot/resource-summary reads through a shared reconciliation helper before serialization.
+- 2026-03-08 - Added a first-class `TerminalSession` Ash resource so setup/chat/service terminal metadata (kind, runtime session id, rows/cols, status) is persisted and typed through Ash even though websocket/SSE byte streaming remains a custom Phoenix transport concern.
 
 ## Database Reset Strategy (Approved)
 

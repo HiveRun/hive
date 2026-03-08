@@ -3,6 +3,12 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
 
   use GenServer
 
+  import Ash.Expr
+  require Ash.Query
+
+  alias HiveServerElixir.Cells
+  alias HiveServerElixir.Cells.TerminalSession
+
   @type session :: %{
           sessionId: String.t(),
           status: String.t(),
@@ -190,6 +196,7 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
     key = {:chat, cell_id}
 
     session = new_session("chat", cols: @default_cols, rows: @default_rows)
+    _ = persist_restart(key, session)
 
     next_state =
       state
@@ -210,6 +217,8 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
       |> Enum.reject(fn {key, _chunks} -> key_matches_cell?(key, cell_id) end)
       |> Map.new()
 
+    _ = close_terminal_sessions(cell_id)
+
     {:reply, :ok, %{state | sessions: sessions, output: output}}
   end
 
@@ -217,10 +226,12 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
     case Map.fetch(state.sessions, key) do
       {:ok, session} ->
         next_session = %{session | cols: cols, rows: rows}
+        _ = persist_resize(key, next_session)
         {next_session, put_session(state, key, next_session)}
 
       :error ->
         session = new_session(prefix, cols: cols, rows: rows)
+        _ = persist_open(key, session)
         {session, put_session(state, key, session)}
     end
   end
@@ -256,6 +267,110 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
       startedAt: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
     }
   end
+
+  defp persist_open(key, session) when is_map(session) do
+    attrs =
+      key
+      |> terminal_session_attrs(session)
+      |> Map.put(:session_key, session_key(key))
+
+    Ash.create(TerminalSession, attrs, action: :open, domain: Cells)
+  end
+
+  defp persist_resize(key, session) when is_map(session) do
+    with %TerminalSession{} = terminal_session <- terminal_session_for_key(session_key(key)),
+         {:ok, _updated} <-
+           Ash.update(
+             terminal_session,
+             %{cols: session.cols, rows: session.rows},
+             action: :resize,
+             domain: Cells
+           ) do
+      :ok
+    else
+      _other -> :ok
+    end
+  end
+
+  defp persist_restart(key, session) when is_map(session) do
+    with %TerminalSession{} = terminal_session <- terminal_session_for_key(session_key(key)),
+         {:ok, _updated} <-
+           Ash.update(
+             terminal_session,
+             %{runtime_session_id: session.sessionId, cols: session.cols, rows: session.rows},
+             action: :restart,
+             domain: Cells
+           ) do
+      :ok
+    else
+      _other -> persist_open(key, session)
+    end
+  end
+
+  defp close_terminal_sessions(cell_id) do
+    if valid_uuid?(cell_id) do
+      cell_id
+      |> terminal_sessions_for_cell()
+      |> Enum.each(fn terminal_session ->
+        _ = Ash.update(terminal_session, %{}, action: :close, domain: Cells)
+      end)
+    end
+
+    :ok
+  end
+
+  defp terminal_sessions_for_cell(cell_id) do
+    TerminalSession
+    |> Ash.Query.filter(expr(cell_id == ^cell_id))
+    |> Ash.read!(domain: Cells)
+  end
+
+  defp terminal_session_for_key(session_key) do
+    TerminalSession
+    |> Ash.Query.filter(expr(session_key == ^session_key))
+    |> Ash.read_one!(domain: Cells)
+  end
+
+  defp terminal_session_attrs({:setup, cell_id}, session) do
+    %{
+      cell_id: cell_id,
+      kind: :setup,
+      runtime_session_id: session.sessionId,
+      cols: session.cols,
+      rows: session.rows
+    }
+  end
+
+  defp terminal_session_attrs({:chat, cell_id}, session) do
+    %{
+      cell_id: cell_id,
+      kind: :chat,
+      runtime_session_id: session.sessionId,
+      cols: session.cols,
+      rows: session.rows
+    }
+  end
+
+  defp terminal_session_attrs({:service, cell_id, service_id}, session) do
+    %{
+      cell_id: cell_id,
+      service_id: service_id,
+      kind: :service,
+      runtime_session_id: session.sessionId,
+      cols: session.cols,
+      rows: session.rows
+    }
+  end
+
+  defp session_key({:setup, cell_id}), do: "setup:" <> cell_id
+  defp session_key({:chat, cell_id}), do: "chat:" <> cell_id
+  defp session_key({:service, _cell_id, service_id}), do: "service:" <> service_id
+
+  defp valid_uuid?(value) when is_binary(value) do
+    match?({:ok, _uuid}, Ecto.UUID.cast(value))
+  end
+
+  defp valid_uuid?(_value), do: false
 
   defp key_matches_cell?({:setup, key_cell_id}, cell_id), do: key_cell_id == cell_id
   defp key_matches_cell?({:chat, key_cell_id}, cell_id), do: key_cell_id == cell_id

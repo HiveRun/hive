@@ -159,6 +159,44 @@ export type ServiceAttributesOnlySchema = {
 };
 
 
+// TerminalSession Schema
+export type TerminalSessionResourceSchema = {
+  __type: "Resource";
+  __primitiveFields: "id" | "sessionKey" | "kind" | "runtimeSessionId" | "status" | "cols" | "rows" | "startedAt" | "endedAt" | "cellId" | "serviceId";
+  id: UUID;
+  sessionKey: string;
+  kind: "setup" | "service" | "chat";
+  runtimeSessionId: string;
+  status: "running" | "closed";
+  cols: number;
+  rows: number;
+  startedAt: UtcDateTimeUsec;
+  endedAt: UtcDateTimeUsec | null;
+  cellId: UUID;
+  serviceId: UUID | null;
+  cell: { __type: "Relationship"; __resource: CellResourceSchema; };
+  service: { __type: "Relationship"; __resource: ServiceResourceSchema | null; };
+};
+
+
+
+export type TerminalSessionAttributesOnlySchema = {
+  __type: "Resource";
+  __primitiveFields: "id" | "sessionKey" | "kind" | "runtimeSessionId" | "status" | "cols" | "rows" | "startedAt" | "endedAt" | "cellId" | "serviceId";
+  id: UUID;
+  sessionKey: string;
+  kind: "setup" | "service" | "chat";
+  runtimeSessionId: string;
+  status: "running" | "closed";
+  cols: number;
+  rows: number;
+  startedAt: UtcDateTimeUsec;
+  endedAt: UtcDateTimeUsec | null;
+  cellId: UUID;
+  serviceId: UUID | null;
+};
+
+
 // Timing Schema
 export type TimingResourceSchema = {
   __type: "Resource";
@@ -558,6 +596,99 @@ export type ServiceFilterInput = {
 
 
   cell?: CellFilterInput;
+
+};
+export type TerminalSessionFilterInput = {
+  and?: Array<TerminalSessionFilterInput>;
+  or?: Array<TerminalSessionFilterInput>;
+  not?: Array<TerminalSessionFilterInput>;
+
+  id?: {
+    eq?: UUID;
+    notEq?: UUID;
+    in?: Array<UUID>;
+  };
+
+  sessionKey?: {
+    eq?: string;
+    notEq?: string;
+    in?: Array<string>;
+  };
+
+  kind?: {
+    eq?: "setup" | "service" | "chat";
+    notEq?: "setup" | "service" | "chat";
+    in?: Array<"setup" | "service" | "chat">;
+  };
+
+  runtimeSessionId?: {
+    eq?: string;
+    notEq?: string;
+    in?: Array<string>;
+  };
+
+  status?: {
+    eq?: "running" | "closed";
+    notEq?: "running" | "closed";
+    in?: Array<"running" | "closed">;
+  };
+
+  cols?: {
+    eq?: number;
+    notEq?: number;
+    greaterThan?: number;
+    greaterThanOrEqual?: number;
+    lessThan?: number;
+    lessThanOrEqual?: number;
+    in?: Array<number>;
+  };
+
+  rows?: {
+    eq?: number;
+    notEq?: number;
+    greaterThan?: number;
+    greaterThanOrEqual?: number;
+    lessThan?: number;
+    lessThanOrEqual?: number;
+    in?: Array<number>;
+  };
+
+  startedAt?: {
+    eq?: UtcDateTimeUsec;
+    notEq?: UtcDateTimeUsec;
+    greaterThan?: UtcDateTimeUsec;
+    greaterThanOrEqual?: UtcDateTimeUsec;
+    lessThan?: UtcDateTimeUsec;
+    lessThanOrEqual?: UtcDateTimeUsec;
+    in?: Array<UtcDateTimeUsec>;
+  };
+
+  endedAt?: {
+    eq?: UtcDateTimeUsec;
+    notEq?: UtcDateTimeUsec;
+    greaterThan?: UtcDateTimeUsec;
+    greaterThanOrEqual?: UtcDateTimeUsec;
+    lessThan?: UtcDateTimeUsec;
+    lessThanOrEqual?: UtcDateTimeUsec;
+    in?: Array<UtcDateTimeUsec>;
+  };
+
+  cellId?: {
+    eq?: UUID;
+    notEq?: UUID;
+    in?: Array<UUID>;
+  };
+
+  serviceId?: {
+    eq?: UUID;
+    notEq?: UUID;
+    in?: Array<UUID>;
+  };
+
+
+  cell?: CellFilterInput;
+
+  service?: ServiceFilterInput;
 
 };
 export type TimingFilterInput = {
@@ -2601,6 +2732,82 @@ export async function validateStopService(
 ): Promise<ValidationResult> {
   const payload = {
     action: "stop_service",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+export type ListTerminalSessionsInput = {
+  cellId: UUID;
+  kind?: "setup" | "service" | "chat";
+};
+
+export type ListTerminalSessionsFields = UnifiedFieldSelection<TerminalSessionResourceSchema>[];
+export type InferListTerminalSessionsResult<
+  Fields extends ListTerminalSessionsFields,
+> = Array<InferResult<TerminalSessionResourceSchema, Fields>>;
+
+export type ListTerminalSessionsResult<Fields extends ListTerminalSessionsFields> = | { success: true; data: InferListTerminalSessionsResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Read TerminalSession records
+ *
+ * @ashActionType :read
+ */
+export async function listTerminalSessions<Fields extends ListTerminalSessionsFields>(
+  config: {
+  tenant?: string;
+  input: ListTerminalSessionsInput;
+  fields: Fields;
+  filter?: TerminalSessionFilterInput;
+  sort?: string;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ListTerminalSessionsResult<Fields>> {
+  const payload = {
+    action: "list_terminal_sessions",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields }),
+    ...(config.filter && { filter: config.filter }),
+    ...(config.sort && { sort: config.sort })
+  };
+
+  return executeActionRpcRequest<ListTerminalSessionsResult<Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Read TerminalSession records
+ *
+ * @ashActionType :read
+ * @validation true
+ */
+export async function validateListTerminalSessions(
+  config: {
+  tenant?: string;
+  input: ListTerminalSessionsInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "list_terminal_sessions",
     ...(config.tenant !== undefined && { tenant: config.tenant }),
     input: config.input
   };

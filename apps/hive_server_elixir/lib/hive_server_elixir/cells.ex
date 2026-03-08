@@ -53,6 +53,10 @@ defmodule HiveServerElixir.Cells do
       rpc_action :set_agent_session_mode, :set_session_mode
     end
 
+    resource HiveServerElixir.Cells.TerminalSession do
+      rpc_action :list_terminal_sessions, :for_cell
+    end
+
     resource HiveServerElixir.Cells.Activity do
       rpc_action :list_cell_activity, :for_cell
     end
@@ -69,6 +73,7 @@ defmodule HiveServerElixir.Cells do
     resource HiveServerElixir.Cells.Provisioning
     resource HiveServerElixir.Cells.Service
     resource HiveServerElixir.Cells.AgentSession
+    resource HiveServerElixir.Cells.TerminalSession
     resource HiveServerElixir.Cells.Activity
     resource HiveServerElixir.Cells.Timing
   end

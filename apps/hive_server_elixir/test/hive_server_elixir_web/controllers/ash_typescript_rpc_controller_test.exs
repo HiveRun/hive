@@ -365,6 +365,41 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
     assert is_binary(service_payload["resourceSampledAt"])
   end
 
+  test "list_terminal_sessions returns typed terminal session records", %{conn: conn} do
+    workspace = workspace!("rpc-terminal-sessions")
+    cell = cell!(workspace, "ready")
+    service = service!(cell)
+
+    setup_session = TerminalRuntime.ensure_setup_session(cell.id)
+    service_session = TerminalRuntime.ensure_service_session(cell.id, service.id)
+
+    payload =
+      rpc_run(conn, "list_terminal_sessions", %{
+        "input" => %{"cellId" => cell.id},
+        "fields" => ["kind", "status", "runtimeSessionId", "cellId", "serviceId"]
+      })
+
+    assert payload["success"] == true
+
+    assert Enum.sort_by(payload["data"], & &1["kind"]) ==
+             [
+               %{
+                 "cellId" => cell.id,
+                 "kind" => "service",
+                 "runtimeSessionId" => service_session.sessionId,
+                 "serviceId" => service.id,
+                 "status" => "running"
+               },
+               %{
+                 "cellId" => cell.id,
+                 "kind" => "setup",
+                 "runtimeSessionId" => setup_session.sessionId,
+                 "serviceId" => nil,
+                 "status" => "running"
+               }
+             ]
+  end
+
   test "service lifecycle RPC actions update runtime-backed snapshots", %{conn: conn} do
     workspace = workspace!("rpc-service-lifecycle")
     cell = cell!(workspace, "ready")
