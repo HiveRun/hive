@@ -40,7 +40,7 @@ defmodule HiveServerElixir.Cells.ResourcesTest do
              )
 
     assert service.cell_id == cell.id
-    assert service.status == "pending"
+    assert service.status == :stopped
 
     assert {:ok, agent_session} =
              Ash.create(

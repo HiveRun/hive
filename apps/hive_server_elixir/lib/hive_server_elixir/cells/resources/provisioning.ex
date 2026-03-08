@@ -27,6 +27,22 @@ defmodule HiveServerElixir.Cells.Provisioning do
       ]
     end
 
+    create :begin_attempt_record do
+      accept [
+        :cell_id,
+        :model_id_override,
+        :provider_id_override,
+        :start_mode
+      ]
+
+      change fn changeset, _context ->
+        changeset
+        |> Ash.Changeset.force_change_attribute(:attempt_count, 1)
+        |> Ash.Changeset.force_change_attribute(:started_at, now())
+        |> Ash.Changeset.force_change_attribute(:finished_at, nil)
+      end
+    end
+
     update :update do
       primary? true
 
@@ -38,6 +54,29 @@ defmodule HiveServerElixir.Cells.Provisioning do
         :finished_at,
         :attempt_count
       ]
+    end
+
+    update :begin_attempt do
+      accept [:model_id_override, :provider_id_override, :start_mode]
+      require_atomic? false
+
+      change fn changeset, _context ->
+        next_attempt_count = max(Ash.Changeset.get_data(changeset, :attempt_count) || 0, 0) + 1
+
+        changeset
+        |> Ash.Changeset.force_change_attribute(:attempt_count, next_attempt_count)
+        |> Ash.Changeset.force_change_attribute(:started_at, now())
+        |> Ash.Changeset.force_change_attribute(:finished_at, nil)
+      end
+    end
+
+    update :finish_attempt do
+      accept []
+      require_atomic? false
+
+      change fn changeset, _context ->
+        Ash.Changeset.force_change_attribute(changeset, :finished_at, now())
+      end
     end
   end
 
@@ -89,5 +128,9 @@ defmodule HiveServerElixir.Cells.Provisioning do
 
   identities do
     identity :unique_cell, [:cell_id]
+  end
+
+  defp now do
+    DateTime.utc_now() |> DateTime.truncate(:second)
   end
 end

@@ -3,6 +3,7 @@ defmodule HiveServerElixir.Cells.Service do
 
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.ServicePayload
+  alias HiveServerElixir.Cells.ServiceStatus
 
   use Ash.Resource,
     extensions: [AshTypescript.Resource],
@@ -10,6 +11,11 @@ defmodule HiveServerElixir.Cells.Service do
     data_layer: AshSqlite.DataLayer
 
   @service_payload_fields ServicePayload.fields()
+  @allowed_lifecycle_sources %{
+    running: [:stopped, :error, :running],
+    stopped: [:running, :error, :stopped],
+    error: [:running, :stopped, :error]
+  }
 
   typescript do
     type_name "Service"
@@ -132,18 +138,54 @@ defmodule HiveServerElixir.Cells.Service do
         :command,
         :cwd,
         :env,
-        :status,
         :port,
-        :pid,
         :ready_timeout_ms,
-        :definition,
-        :last_known_error
+        :definition
       ]
+
+      change fn changeset, _context ->
+        changeset
+        |> Ash.Changeset.force_change_attribute(:status, :stopped)
+        |> Ash.Changeset.force_change_attribute(:pid, nil)
+        |> Ash.Changeset.force_change_attribute(:last_known_error, nil)
+      end
     end
 
-    update :update do
-      primary? true
-      accept [:status, :port, :pid, :last_known_error]
+    update :mark_running do
+      accept [:pid, :port]
+      require_atomic? false
+
+      change fn changeset, _context ->
+        changeset
+        |> validate_lifecycle_transition(:running)
+        |> Ash.Changeset.force_change_attribute(:status, :running)
+        |> Ash.Changeset.force_change_attribute(:last_known_error, nil)
+      end
+    end
+
+    update :mark_stopped do
+      accept [:port]
+      require_atomic? false
+
+      change fn changeset, _context ->
+        changeset
+        |> validate_lifecycle_transition(:stopped)
+        |> Ash.Changeset.force_change_attribute(:status, :stopped)
+        |> Ash.Changeset.force_change_attribute(:pid, nil)
+        |> Ash.Changeset.force_change_attribute(:last_known_error, nil)
+      end
+    end
+
+    update :mark_error do
+      accept [:last_known_error, :port]
+      require_atomic? false
+
+      change fn changeset, _context ->
+        changeset
+        |> validate_lifecycle_transition(:error)
+        |> Ash.Changeset.force_change_attribute(:status, :error)
+        |> Ash.Changeset.force_change_attribute(:pid, nil)
+      end
     end
   end
 
@@ -176,10 +218,10 @@ defmodule HiveServerElixir.Cells.Service do
       default %{}
     end
 
-    attribute :status, :string do
+    attribute :status, ServiceStatus do
       allow_nil? false
       public? true
-      default "pending"
+      default :stopped
     end
 
     attribute :port, :integer do
@@ -219,4 +261,33 @@ defmodule HiveServerElixir.Cells.Service do
       attribute_writable? true
     end
   end
+
+  defp validate_lifecycle_transition(changeset, target_status) do
+    current_status = normalize_status(Ash.Changeset.get_data(changeset, :status))
+
+    if current_status in Map.fetch!(@allowed_lifecycle_sources, target_status) do
+      changeset
+    else
+      Ash.Changeset.add_error(
+        changeset,
+        field: :status,
+        message:
+          "cannot transition service status from #{format_status(current_status)} to #{format_status(target_status)}"
+      )
+    end
+  end
+
+  defp normalize_status(status) when is_binary(status) do
+    case ServiceStatus.cast_input(status, []) do
+      {:ok, normalized} -> normalized
+      _other -> nil
+    end
+  end
+
+  defp normalize_status(status) when is_atom(status), do: status
+  defp normalize_status(_status), do: nil
+
+  defp format_status(status) when is_atom(status), do: Atom.to_string(status)
+  defp format_status(status) when is_binary(status), do: status
+  defp format_status(_status), do: "unknown"
 end

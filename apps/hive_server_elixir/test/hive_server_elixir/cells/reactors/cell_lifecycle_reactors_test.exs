@@ -10,7 +10,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
   @registry HiveServerElixir.Opencode.EventIngestRegistry
 
   test "retry_cell restarts ingest and marks cell ready" do
-    {workspace, cell} = workspace_and_cell!("retry-success", "failed")
+    {workspace, cell} = workspace_and_cell!("retry-success", "error")
     context = %{workspace_id: workspace.id, cell_id: cell.id}
 
     assert {:ok, old_pid} = Lifecycle.on_cell_create(context, runtime_opts())
@@ -30,7 +30,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
   end
 
   test "resume_cell starts ingest when cell is stopped" do
-    {workspace, cell} = workspace_and_cell!("resume-success", "paused")
+    {workspace, cell} = workspace_and_cell!("resume-success", "stopped", "stale setup error")
     context = %{workspace_id: workspace.id, cell_id: cell.id}
 
     assert {:ok, _pid} = Lifecycle.on_cell_create(context, runtime_opts())
@@ -44,13 +44,14 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
              })
 
     assert updated_cell.status == :ready
+    assert updated_cell.last_setup_error == nil
     assert [{_pid, _value}] = Registry.lookup(@registry, {workspace.id, cell.id})
 
     assert :ok = Lifecycle.on_cell_delete(context)
   end
 
   test "retry_cell compensates by stopping ingest on failure" do
-    {workspace, cell} = workspace_and_cell!("retry-failure", "failed")
+    {workspace, cell} = workspace_and_cell!("retry-failure", "error")
     context = %{workspace_id: workspace.id, cell_id: cell.id}
 
     assert {:error, _error} =
@@ -84,7 +85,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
     assert :ok = Lifecycle.on_cell_delete(context)
   end
 
-  defp workspace_and_cell!(suffix, status) do
+  defp workspace_and_cell!(suffix, status, last_setup_error \\ nil) do
     assert {:ok, workspace} =
              Ash.create(
                Workspace,
@@ -95,7 +96,12 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
     assert {:ok, cell} =
              Ash.create(
                Cell,
-               %{workspace_id: workspace.id, description: "Cell #{suffix}", status: status},
+               %{
+                 workspace_id: workspace.id,
+                 description: "Cell #{suffix}",
+                 status: status,
+                 last_setup_error: last_setup_error
+               },
                domain: Cells
              )
 

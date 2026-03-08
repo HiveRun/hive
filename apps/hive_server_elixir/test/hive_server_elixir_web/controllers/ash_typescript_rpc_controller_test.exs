@@ -644,8 +644,7 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
           command: "sleep 5",
           cwd: "/tmp",
           env: %{},
-          definition: %{},
-          status: "pending"
+          definition: %{}
         },
         overrides
       )

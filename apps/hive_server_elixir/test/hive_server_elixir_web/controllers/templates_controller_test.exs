@@ -85,6 +85,20 @@ defmodule HiveServerElixirWeb.TemplatesControllerTest do
     assert message =~ "No active workspace"
   end
 
+  test "GET /api/templates falls back to x-workspace-id header", %{conn: conn} do
+    workspace_path = template_workspace_dir!("templates-header")
+    write_workspace_config!(workspace_path)
+
+    workspace = workspace!(workspace_path, "Header Templates Workspace")
+
+    conn =
+      conn
+      |> put_req_header("x-workspace-id", workspace.id)
+      |> get(~p"/api/templates")
+
+    assert %{"templates" => [%{"id" => "basic"}]} = json_response(conn, 200)
+  end
+
   defp workspace!(path, label) do
     assert {:ok, workspace} =
              Ash.create(

@@ -12,9 +12,9 @@ import { type CreateCellInput, rpc } from "@/lib/rpc";
 import { formatRpcError, formatRpcResponseError } from "@/lib/rpc-error";
 
 export type CellStatus =
-  | "spawning"
-  | "pending"
+  | "provisioning"
   | "ready"
+  | "stopped"
   | "error"
   | "deleting";
 
@@ -134,7 +134,7 @@ function buildOpencodeCommand(
 }
 
 function presentCellStatus(status: string): CellStatus {
-  return status === "provisioning" ? "pending" : (status as CellStatus);
+  return status as CellStatus;
 }
 
 function normalizeCell(

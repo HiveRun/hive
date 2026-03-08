@@ -32,11 +32,9 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
     argument(:cell, result(:load_cell))
 
     run(fn %{cell: cell}, _context ->
-      started_at = DateTime.utc_now() |> DateTime.truncate(:second)
-
       with {:ok, updated_cell} <-
-             Ash.update(cell, %{status: "provisioning", last_setup_error: nil}, domain: Cells),
-           :ok <- bump_provisioning_state(updated_cell.id, started_at) do
+             Ash.update(cell, %{}, action: :begin_provisioning, domain: Cells),
+           :ok <- begin_provisioning_attempt(updated_cell.id) do
         {:ok, updated_cell}
       end
     end)
@@ -89,18 +87,8 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
     argument(:template_runtime, result(:apply_template_runtime))
 
     run(fn %{cell: cell, template_runtime: template_runtime}, _context ->
-      finished_at = DateTime.utc_now() |> DateTime.truncate(:second)
-
-      with {:ok, updated_cell} <-
-             Ash.update(
-               cell,
-               %{
-                 status: template_runtime.status,
-                 last_setup_error: template_runtime.last_setup_error
-               },
-               domain: Cells
-             ),
-           :ok <- finalize_provisioning_state(updated_cell.id, finished_at) do
+      with {:ok, updated_cell} <- finalize_cell_status(cell, template_runtime),
+           :ok <- finalize_provisioning_state(updated_cell.id) do
         finalize_terminal_state(updated_cell)
         {:ok, updated_cell}
       end
@@ -109,16 +97,10 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
 
   return(:finalize_cell)
 
-  defp bump_provisioning_state(cell_id, started_at) do
+  defp begin_provisioning_attempt(cell_id) do
     case provisioning_for_cell(cell_id) do
       %Provisioning{} = provisioning ->
-        attrs = %{
-          attempt_count: max(provisioning.attempt_count || 0, 0) + 1,
-          started_at: started_at,
-          finished_at: nil
-        }
-
-        case Ash.update(provisioning, attrs, domain: Cells) do
+        case Ash.update(provisioning, %{}, action: :begin_attempt, domain: Cells) do
           {:ok, _updated} -> :ok
           {:error, error} -> {:error, error}
         end
@@ -126,7 +108,8 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
       nil ->
         case Ash.create(
                Provisioning,
-               %{cell_id: cell_id, attempt_count: 1, started_at: started_at},
+               %{cell_id: cell_id},
+               action: :begin_attempt_record,
                domain: Cells
              ) do
           {:ok, _created} -> :ok
@@ -135,10 +118,10 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
     end
   end
 
-  defp finalize_provisioning_state(cell_id, finished_at) do
+  defp finalize_provisioning_state(cell_id) do
     case provisioning_for_cell(cell_id) do
       %Provisioning{} = provisioning ->
-        case Ash.update(provisioning, %{finished_at: finished_at}, domain: Cells) do
+        case Ash.update(provisioning, %{}, action: :finish_attempt, domain: Cells) do
           {:ok, _updated} -> :ok
           {:error, error} -> {:error, error}
         end
@@ -152,6 +135,22 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
     Provisioning
     |> Ash.Query.filter(expr(cell_id == ^cell_id))
     |> Ash.read_one!(domain: Cells)
+  end
+
+  defp finalize_cell_status(cell, %{status: "ready"}) do
+    Ash.update(cell, %{}, action: :mark_ready, domain: Cells)
+  end
+
+  defp finalize_cell_status(cell, %{status: "error", last_setup_error: last_setup_error}) do
+    Ash.update(cell, %{last_setup_error: last_setup_error}, action: :mark_error, domain: Cells)
+  end
+
+  defp finalize_cell_status(cell, %{status: status, last_setup_error: last_setup_error}) do
+    Ash.update(
+      cell,
+      %{status: status, last_setup_error: last_setup_error},
+      domain: Cells
+    )
   end
 
   defp finalize_terminal_state(%Cell{} = cell) do

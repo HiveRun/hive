@@ -92,7 +92,7 @@ describe("buildProvisioningChecklist", () => {
     },
   ])("maps '$step' to checklist phase", ({ step, expectedLabel }) => {
     const checklist = buildProvisioningChecklist({
-      cellStatus: "spawning",
+      cellStatus: "provisioning",
       steps: [
         {
           step,

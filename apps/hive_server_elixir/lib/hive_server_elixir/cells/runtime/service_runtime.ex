@@ -76,11 +76,15 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
 
   def handle_call({:restart_service, %Service{} = service}, _from, state) do
     with {:ok, stopped_state} <- stop_service_internal(state, service),
-         {:ok, started_state} <- start_service_internal(stopped_state, service) do
+         {:ok, reloaded_service} <- reload_service(service.id),
+         {:ok, started_state} <- start_service_internal(stopped_state, reloaded_service) do
       {:reply, :ok, started_state}
     else
       {:error, reason, next_state} ->
         {:reply, {:error, reason}, next_state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -158,20 +162,14 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
   def handle_info({port, {:exit_status, status}}, state) when is_port(port) do
     case pop_service_by_port(state, port) do
       {{:ok, service_id, entry}, next_state} ->
+        last_known_error = if(status != 0, do: "Service exited with code #{status}", else: nil)
+
         _ =
           safe_persist_service_state(entry.service, %{
             status: exit_status_to_state(status),
-            pid: nil
+            pid: nil,
+            last_known_error: last_known_error
           })
-
-        if status != 0 do
-          _ =
-            safe_persist_service_state(entry.service, %{
-              last_known_error: "Service exited with code #{status}"
-            })
-        else
-          _ = safe_persist_service_state(entry.service, %{last_known_error: nil})
-        end
 
         :ok = Events.publish_service_update(entry.cell_id, service_id)
         :ok = Events.publish_service_terminal_exit(entry.cell_id, service_id, status, nil)
@@ -359,7 +357,38 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
   end
 
   defp persist_service_state(%Service{} = service, attrs) when is_map(attrs) do
-    Ash.update(service, attrs, domain: Cells)
+    case Map.get(attrs, :status) do
+      "running" ->
+        Ash.update(service, Map.take(attrs, [:pid, :port]), action: :mark_running, domain: Cells)
+
+      :running ->
+        Ash.update(service, Map.take(attrs, [:pid, :port]), action: :mark_running, domain: Cells)
+
+      "stopped" ->
+        Ash.update(service, Map.take(attrs, [:port]), action: :mark_stopped, domain: Cells)
+
+      :stopped ->
+        Ash.update(service, Map.take(attrs, [:port]), action: :mark_stopped, domain: Cells)
+
+      "error" ->
+        Ash.update(
+          service,
+          Map.take(attrs, [:last_known_error, :port]),
+          action: :mark_error,
+          domain: Cells
+        )
+
+      :error ->
+        Ash.update(
+          service,
+          Map.take(attrs, [:last_known_error, :port]),
+          action: :mark_error,
+          domain: Cells
+        )
+
+      _other ->
+        {:error, :invalid_status_transition}
+    end
   end
 
   defp safe_persist_service_state(%Service{} = service, attrs) when is_map(attrs) do
@@ -371,4 +400,8 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
 
   defp exit_status_to_state(0), do: "stopped"
   defp exit_status_to_state(_status), do: "error"
+
+  defp reload_service(service_id) when is_binary(service_id) do
+    Ash.get(Service, service_id, domain: Cells)
+  end
 end

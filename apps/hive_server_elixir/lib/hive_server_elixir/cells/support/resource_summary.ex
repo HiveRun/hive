@@ -7,6 +7,7 @@ defmodule HiveServerElixir.Cells.ResourceSummary do
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Service
+  alias HiveServerElixir.Cells.ServiceStatus
   alias HiveServerElixir.Cells.ServiceRuntime
 
   @average_windows ["1m", "5m", "15m", "1h"]
@@ -129,17 +130,19 @@ defmodule HiveServerElixir.Cells.ResourceSummary do
       end
 
     {status, _last_known_error} =
-      derive_service_state(service.status, service.last_known_error, process_alive)
+      ServiceStatus.derive(service.status, service.last_known_error, process_alive)
+
+    presented_status = ServiceStatus.present(status)
 
     %{
       kind: "service",
       serviceType: service.type,
       id: service.id,
       name: service.name,
-      status: status,
+      status: presented_status,
       pid: pid,
       processAlive: process_alive,
-      active: process_alive and status == "running",
+      active: process_alive and ServiceStatus.running?(status),
       cpuPercent: nil,
       rssBytes: nil,
       resourceSampledAt: sampled_at,
@@ -150,18 +153,6 @@ defmodule HiveServerElixir.Cells.ResourceSummary do
   defp unavailable_reason(pid, _process_alive) when not is_integer(pid), do: "pid_missing"
   defp unavailable_reason(_pid, false), do: "process_not_alive"
   defp unavailable_reason(_pid, true), do: "sample_failed"
-
-  defp derive_service_state("running", last_known_error, false) do
-    {"error", last_known_error || "Process exited unexpectedly"}
-  end
-
-  defp derive_service_state("error", _last_known_error, true) do
-    {"running", nil}
-  end
-
-  defp derive_service_state(status, last_known_error, _alive) do
-    {status, last_known_error}
-  end
 
   defp os_pid_alive?(pid) when is_integer(pid) and pid > 0 do
     case System.cmd("kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true) do

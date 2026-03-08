@@ -46,11 +46,12 @@ defmodule HiveServerElixirWeb.TerminalChannelTest do
                  command: "sleep 5",
                  cwd: "/tmp",
                  env: %{},
-                 definition: %{},
-                 status: "running"
+                 definition: %{}
                },
                domain: Cells
              )
+
+    assert {:ok, _service} = Ash.update(service, %{pid: 42}, action: :mark_running, domain: Cells)
 
     on_exit(fn ->
       :ok = ServiceRuntime.stop_cell_services(cell.id)

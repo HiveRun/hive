@@ -46,7 +46,7 @@ import { templateQueries } from "@/queries/templates";
 import { workspaceQueries } from "@/queries/workspaces";
 
 const MAX_SELECTION_PREVIEW = 3;
-const PROVISIONING_STATUSES: CellStatus[] = ["spawning", "pending"];
+const PROVISIONING_STATUSES: CellStatus[] = ["provisioning"];
 const PROVISIONING_POLL_INTERVAL_MS = 1000;
 
 type ServiceStatusSummary = {
@@ -776,18 +776,31 @@ function CellStatusNotice({
     );
   }
 
-  if (status === "spawning" || status === "pending") {
+  if (status === "provisioning") {
     return (
       <div className="flex items-center gap-3 rounded-md border border-primary/40 bg-primary/5 p-3">
         <Loader2 className="h-4 w-4 animate-spin text-primary" />
         <div className="space-y-1">
           <p className="font-semibold text-[11px] text-primary uppercase tracking-[0.3em]">
-            Spawning cell
+            Provisioning cell
           </p>
           <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
             Setup tasks running in background
           </p>
         </div>
+      </div>
+    );
+  }
+
+  if (status === "stopped") {
+    return (
+      <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-3">
+        <p className="font-semibold text-[11px] text-foreground uppercase tracking-[0.3em]">
+          Cell stopped
+        </p>
+        <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+          Runtime is offline until resumed
+        </p>
       </div>
     );
   }

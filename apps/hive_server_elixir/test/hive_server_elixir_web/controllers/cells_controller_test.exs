@@ -126,11 +126,12 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
                  command: "sleep 5",
                  cwd: "/tmp",
                  env: %{},
-                 definition: %{},
-                 status: "running"
+                 definition: %{}
                },
                domain: Cells
              )
+
+    assert {:ok, _service} = Ash.update(service, %{pid: 42}, action: :mark_running, domain: Cells)
 
     on_exit(fn ->
       :ok = ServiceRuntime.stop_cell_services(cell.id)
@@ -174,8 +175,7 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
                  command: "sleep 5",
                  cwd: "/tmp",
                  env: %{},
-                 definition: %{},
-                 status: "pending"
+                 definition: %{}
                },
                domain: Cells
              )
@@ -235,8 +235,8 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
   end
 
   test "GET /api/cells/:id/diff returns 409 while cell workspace is not ready", %{conn: conn} do
-    workspace = workspace!("diff-pending")
-    cell = cell!(workspace.id, "diff pending", "pending")
+    workspace = workspace!("diff-provisioning")
+    cell = cell!(workspace.id, "diff provisioning", "provisioning")
 
     conn = get(conn, ~p"/api/cells/#{cell.id}/diff?mode=workspace")
 
@@ -273,11 +273,12 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
                  command: "bun run dev",
                  cwd: "/tmp/worktree",
                  env: %{"PORT" => "3000"},
-                 definition: %{"name" => "api"},
-                 status: "running"
+                 definition: %{"name" => "api"}
                },
                domain: Cells
              )
+
+    assert {:ok, _service} = Ash.update(service, %{pid: 42}, action: :mark_running, domain: Cells)
 
     assert {:ok, _session} =
              Ash.create(
@@ -343,10 +344,16 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
                  command: "bun run dev",
                  cwd: "/tmp/worktree",
                  env: %{},
-                 definition: %{},
-                 status: "running",
-                 pid: String.to_integer(System.pid())
+                 definition: %{}
                },
+               domain: Cells
+             )
+
+    assert {:ok, _service} =
+             Ash.update(
+               service,
+               %{pid: String.to_integer(System.pid())},
+               action: :mark_running,
                domain: Cells
              )
 
@@ -408,10 +415,16 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
                  command: "bun run dev",
                  cwd: "/tmp/worktree",
                  env: %{},
-                 definition: %{},
-                 status: "error",
-                 last_known_error: "Service crashed"
+                 definition: %{}
                },
+               domain: Cells
+             )
+
+    assert {:ok, _service} =
+             Ash.update(
+               service,
+               %{last_known_error: "Service crashed"},
+               action: :mark_error,
                domain: Cells
              )
 

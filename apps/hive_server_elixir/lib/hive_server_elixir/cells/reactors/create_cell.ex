@@ -89,10 +89,9 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
                Provisioning,
                %{
                  cell_id: updated_cell.id,
-                 start_mode: mode,
-                 attempt_count: 1,
-                 started_at: DateTime.utc_now() |> DateTime.truncate(:second)
+                 start_mode: mode
                },
+               action: :begin_attempt_record,
                domain: Cells
              ),
            {:ok, _agent_session} <-
@@ -159,18 +158,8 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
     argument(:template_runtime, result(:apply_template_runtime))
 
     run(fn %{cell: cell, template_runtime: template_runtime}, _context ->
-      finished_at = DateTime.utc_now() |> DateTime.truncate(:second)
-
-      with {:ok, updated_cell} <-
-             Ash.update(
-               cell,
-               %{
-                 status: template_runtime.status,
-                 last_setup_error: template_runtime.last_setup_error
-               },
-               domain: Cells
-             ),
-           :ok <- update_provisioning_state(updated_cell.id, %{finished_at: finished_at}) do
+      with {:ok, updated_cell} <- finalize_cell_status(cell, template_runtime),
+           :ok <- finish_provisioning_state(updated_cell.id) do
         finalize_terminal_state(updated_cell)
         {:ok, updated_cell}
       end
@@ -193,7 +182,7 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
     end
   end
 
-  defp update_provisioning_state(cell_id, attrs) do
+  defp finish_provisioning_state(cell_id) do
     provisioning =
       Provisioning
       |> Ash.Query.filter(expr(cell_id == ^cell_id))
@@ -201,7 +190,7 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
 
     case provisioning do
       %Provisioning{} = record ->
-        case Ash.update(record, attrs, domain: Cells) do
+        case Ash.update(record, %{}, action: :finish_attempt, domain: Cells) do
           {:ok, _updated} -> :ok
           {:error, error} -> {:error, error}
         end
@@ -209,6 +198,22 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
       nil ->
         :ok
     end
+  end
+
+  defp finalize_cell_status(cell, %{status: "ready"}) do
+    Ash.update(cell, %{}, action: :mark_ready, domain: Cells)
+  end
+
+  defp finalize_cell_status(cell, %{status: "error", last_setup_error: last_setup_error}) do
+    Ash.update(cell, %{last_setup_error: last_setup_error}, action: :mark_error, domain: Cells)
+  end
+
+  defp finalize_cell_status(cell, %{status: status, last_setup_error: last_setup_error}) do
+    Ash.update(
+      cell,
+      %{status: status, last_setup_error: last_setup_error},
+      domain: Cells
+    )
   end
 
   defp finalize_terminal_state(%Cell{} = cell) do

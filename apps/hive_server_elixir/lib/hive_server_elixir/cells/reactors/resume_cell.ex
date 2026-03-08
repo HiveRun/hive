@@ -60,7 +60,7 @@ defmodule HiveServerElixir.Cells.Reactors.ResumeCell do
     argument(:_check, result(:after_ingest_check))
 
     run(fn %{cell: cell}, _context ->
-      case Ash.update(cell, %{status: :ready}, domain: Cells) do
+      case Ash.update(cell, %{}, action: :mark_ready, domain: Cells) do
         {:ok, updated_cell} ->
           :ok =
             TerminalEvents.on_cell_ready(%{

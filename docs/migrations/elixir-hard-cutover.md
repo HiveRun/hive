@@ -463,6 +463,11 @@ Step 7 done criteria are now satisfied locally:
   - Added bounded terminal output retention in `TerminalRuntime` to avoid unbounded append growth while preserving stream order for readers.
   - Added session-scoped event sequence allocation storage so persisted OpenCode event logs keep stable ordering under concurrent writes.
 - 2026-03-07 - Tightened `Cell.status` handling by moving the resource to a dedicated Ash enum helper with compatibility coverage for legacy `paused` and `failed` states.
+- 2026-03-08 - Continued Phase C lifecycle tightening by introducing explicit Ash lifecycle actions for `Cell.status`, normalizing statuses down to `provisioning | ready | stopped | error | deleting`, migrating legacy stored values (`spawning`/`pending` -> `provisioning`, `paused` -> `stopped`, `failed` -> `error`), and updating runtime/frontend consumers to use the simplified status model.
+- 2026-03-08 - Moved `Service` and `Provisioning` lifecycle bookkeeping further into Ash:
+  - `Service.status` is now an Ash enum with explicit `mark_running`, `mark_stopped`, and `mark_error` actions, plus a migration that normalizes legacy `pending` rows to `stopped`.
+  - `ServiceRuntime`, service snapshot reconciliation, and resource summaries now share the Ash-owned lifecycle semantics instead of mutating free-form status strings.
+  - `Provisioning` attempt tracking now uses explicit begin/finish actions so attempt counters and timestamps are no longer assembled ad hoc inside the cell reactors.
 
 ## Database Reset Strategy (Approved)
 

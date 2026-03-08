@@ -33,6 +33,12 @@ defmodule HiveServerElixir.Cells.Cell do
     failed_ids: [type: {:array, :uuid}, allow_nil?: false]
   ]
 
+  @allowed_lifecycle_sources %{
+    provisioning: [:provisioning, :stopped, :ready, :error],
+    ready: [:provisioning, :stopped, :ready],
+    error: [:provisioning, :error]
+  }
+
   @service_payload_fields ServicePayload.fields()
 
   use Ash.Resource,
@@ -348,11 +354,45 @@ defmodule HiveServerElixir.Cells.Cell do
         :workspace_path,
         :opencode_session_id,
         :resume_agent_session_on_startup,
-        :status,
         :last_setup_error,
         :branch_name,
         :base_commit
       ]
+    end
+
+    update :begin_provisioning do
+      accept []
+      require_atomic? false
+
+      change fn changeset, _context ->
+        changeset
+        |> validate_lifecycle_transition(:provisioning)
+        |> Ash.Changeset.force_change_attribute(:status, :provisioning)
+        |> Ash.Changeset.force_change_attribute(:last_setup_error, nil)
+      end
+    end
+
+    update :mark_ready do
+      accept []
+      require_atomic? false
+
+      change fn changeset, _context ->
+        changeset
+        |> validate_lifecycle_transition(:ready)
+        |> Ash.Changeset.force_change_attribute(:status, :ready)
+        |> Ash.Changeset.force_change_attribute(:last_setup_error, nil)
+      end
+    end
+
+    update :mark_error do
+      accept [:last_setup_error]
+      require_atomic? false
+
+      change fn changeset, _context ->
+        changeset
+        |> validate_lifecycle_transition(:error)
+        |> Ash.Changeset.force_change_attribute(:status, :error)
+      end
     end
   end
 
@@ -458,4 +498,33 @@ defmodule HiveServerElixir.Cells.Cell do
       _value -> changeset
     end
   end
+
+  defp validate_lifecycle_transition(changeset, target_status) do
+    current_status = normalize_status(Ash.Changeset.get_data(changeset, :status))
+
+    if current_status in Map.fetch!(@allowed_lifecycle_sources, target_status) do
+      changeset
+    else
+      Ash.Changeset.add_error(
+        changeset,
+        field: :status,
+        message:
+          "cannot transition cell status from #{format_status(current_status)} to #{format_status(target_status)}"
+      )
+    end
+  end
+
+  defp normalize_status(status) when is_binary(status) do
+    case CellStatus.cast_input(status, []) do
+      {:ok, normalized} -> normalized
+      _other -> nil
+    end
+  end
+
+  defp normalize_status(status) when is_atom(status), do: status
+  defp normalize_status(_status), do: nil
+
+  defp format_status(status) when is_atom(status), do: Atom.to_string(status)
+  defp format_status(status) when is_binary(status), do: status
+  defp format_status(_status), do: "unknown"
 end

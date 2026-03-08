@@ -7,6 +7,7 @@ defmodule HiveServerElixir.Cells.ServiceSnapshot do
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.ServicePayload
   alias HiveServerElixir.Cells.Service
+  alias HiveServerElixir.Cells.ServiceStatus
   alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.TerminalRuntime
 
@@ -42,7 +43,7 @@ defmodule HiveServerElixir.Cells.ServiceSnapshot do
       end
 
     {derived_status, derived_last_known_error} =
-      derive_service_state(service.status, service.last_known_error, process_alive)
+      ServiceStatus.derive(service.status, service.last_known_error, process_alive)
 
     derived_pid =
       case runtime_status do
@@ -73,7 +74,7 @@ defmodule HiveServerElixir.Cells.ServiceSnapshot do
       id: service.id,
       name: service.name,
       type: service.type,
-      status: derived_status,
+      status: ServiceStatus.present(derived_status),
       command: service.command,
       cwd: service.cwd,
       log_path: nil,
@@ -199,18 +200,6 @@ defmodule HiveServerElixir.Cells.ServiceSnapshot do
   defp service_resource_unavailable_reason(_pid, false), do: "process_not_alive"
   defp service_resource_unavailable_reason(_pid, true), do: "sample_failed"
 
-  defp derive_service_state("running", last_known_error, false) do
-    {"error", last_known_error || "Process exited unexpectedly"}
-  end
-
-  defp derive_service_state("error", _last_known_error, true) do
-    {"running", nil}
-  end
-
-  defp derive_service_state(status, last_known_error, _alive) do
-    {status, last_known_error}
-  end
-
   defp maybe_persist_derived_service(%Service{} = service, status, last_known_error, pid) do
     should_persist =
       status != service.status ||
@@ -218,9 +207,7 @@ defmodule HiveServerElixir.Cells.ServiceSnapshot do
         pid != service.pid
 
     if should_persist do
-      case Ash.update(service, %{status: status, last_known_error: last_known_error, pid: pid},
-             domain: Cells
-           ) do
+      case persist_derived_service(service, status, last_known_error, pid) do
         {:ok, updated} ->
           updated
 
@@ -230,6 +217,28 @@ defmodule HiveServerElixir.Cells.ServiceSnapshot do
     else
       service
     end
+  end
+
+  defp persist_derived_service(service, status, last_known_error, pid)
+
+  defp persist_derived_service(service, status, _last_known_error, pid)
+       when status in [:running, "running"] do
+    Ash.update(service, %{pid: pid}, action: :mark_running, domain: Cells)
+  end
+
+  defp persist_derived_service(service, status, last_known_error, _pid)
+       when status in [:error, "error"] do
+    Ash.update(
+      service,
+      %{last_known_error: last_known_error},
+      action: :mark_error,
+      domain: Cells
+    )
+  end
+
+  defp persist_derived_service(service, status, _last_known_error, _pid)
+       when status in [:stopped, "stopped"] do
+    Ash.update(service, %{}, action: :mark_stopped, domain: Cells)
   end
 
   defp os_pid_alive?(pid) when is_integer(pid) and pid > 0 do

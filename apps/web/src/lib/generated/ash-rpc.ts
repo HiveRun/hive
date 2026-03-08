@@ -85,7 +85,7 @@ export type CellResourceSchema = {
   workspacePath: string;
   opencodeSessionId: string | null;
   resumeAgentSessionOnStartup: boolean;
-  status: "spawning" | "provisioning" | "pending" | "paused" | "failed" | "ready" | "error" | "deleting";
+  status: "provisioning" | "ready" | "stopped" | "error" | "deleting";
   lastSetupError: string | null;
   branchName: string | null;
   baseCommit: string | null;
@@ -108,7 +108,7 @@ export type CellAttributesOnlySchema = {
   workspacePath: string;
   opencodeSessionId: string | null;
   resumeAgentSessionOnStartup: boolean;
-  status: "spawning" | "provisioning" | "pending" | "paused" | "failed" | "ready" | "error" | "deleting";
+  status: "provisioning" | "ready" | "stopped" | "error" | "deleting";
   lastSetupError: string | null;
   branchName: string | null;
   baseCommit: string | null;
@@ -128,7 +128,7 @@ export type ServiceResourceSchema = {
   command: string;
   cwd: string;
   env: Record<string, any>;
-  status: string;
+  status: "stopped" | "running" | "error";
   port: number | null;
   pid: number | null;
   readyTimeoutMs: number | null;
@@ -149,7 +149,7 @@ export type ServiceAttributesOnlySchema = {
   command: string;
   cwd: string;
   env: Record<string, any>;
-  status: string;
+  status: "stopped" | "running" | "error";
   port: number | null;
   pid: number | null;
   readyTimeoutMs: number | null;
@@ -408,9 +408,9 @@ export type CellFilterInput = {
   };
 
   status?: {
-    eq?: "spawning" | "provisioning" | "pending" | "paused" | "failed" | "ready" | "error" | "deleting";
-    notEq?: "spawning" | "provisioning" | "pending" | "paused" | "failed" | "ready" | "error" | "deleting";
-    in?: Array<"spawning" | "provisioning" | "pending" | "paused" | "failed" | "ready" | "error" | "deleting">;
+    eq?: "provisioning" | "ready" | "stopped" | "error" | "deleting";
+    notEq?: "provisioning" | "ready" | "stopped" | "error" | "deleting";
+    in?: Array<"provisioning" | "ready" | "stopped" | "error" | "deleting">;
   };
 
   lastSetupError?: {
@@ -503,9 +503,9 @@ export type ServiceFilterInput = {
   };
 
   status?: {
-    eq?: string;
-    notEq?: string;
-    in?: Array<string>;
+    eq?: "stopped" | "running" | "error";
+    notEq?: "stopped" | "running" | "error";
+    in?: Array<"stopped" | "running" | "error">;
   };
 
   port?: {

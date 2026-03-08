@@ -69,7 +69,6 @@ defmodule HiveServerElixir.Cells.TemplateRuntime do
           command: service_definition.command,
           cwd: resolve_cwd(cell.workspace_path, service_definition.cwd),
           env: Map.merge(service_definition.env, base_env(cell, service_definition.name)),
-          status: "stopped",
           ready_timeout_ms: service_definition.ready_timeout_ms,
           definition: service_definition.definition
         }

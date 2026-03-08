@@ -22,8 +22,7 @@ defmodule HiveServerElixir.Cells.ServiceRuntimeTest do
                  command: "printf 'hello from service\\n'",
                  cwd: "/tmp",
                  env: %{},
-                 definition: %{},
-                 status: "running"
+                 definition: %{}
                },
                domain: Cells
              )
@@ -46,7 +45,7 @@ defmodule HiveServerElixir.Cells.ServiceRuntimeTest do
     assert is_integer(exit_code)
 
     assert {:ok, stopped_service} = Ash.get(Service, service.id, domain: Cells)
-    assert stopped_service.status == "stopped"
+    assert stopped_service.status == :stopped
     assert is_nil(stopped_service.pid)
 
     assert :ok = ServiceRuntime.stop_cell_services(cell.id)
@@ -68,8 +67,7 @@ defmodule HiveServerElixir.Cells.ServiceRuntimeTest do
                  command: "sleep 5",
                  cwd: "/tmp",
                  env: %{},
-                 definition: %{},
-                 status: "running"
+                 definition: %{}
                },
                domain: Cells
              )
@@ -79,13 +77,13 @@ defmodule HiveServerElixir.Cells.ServiceRuntimeTest do
     assert :ok = ServiceRuntime.write_input(service.id, "roundtrip\\n")
 
     assert {:ok, running_service} = Ash.get(Service, service.id, domain: Cells)
-    assert running_service.status == "running"
+    assert running_service.status == :running
     assert is_integer(running_service.pid)
 
     assert :ok = ServiceRuntime.stop_cell_services(cell.id)
 
     assert {:ok, stopped_service} = Ash.get(Service, service.id, domain: Cells)
-    assert stopped_service.status == "stopped"
+    assert stopped_service.status == :stopped
     assert is_nil(stopped_service.pid)
   end
 
