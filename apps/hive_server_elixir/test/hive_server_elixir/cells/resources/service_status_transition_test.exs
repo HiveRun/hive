@@ -63,6 +63,49 @@ defmodule HiveServerElixir.Cells.Resources.ServiceStatusTransitionTest do
     assert updated_service.last_known_error == nil
   end
 
+  test "reconcile_runtime_state can revive a stale error service" do
+    service = service!("service-status-reconcile-running")
+
+    assert {:ok, errored_service} =
+             Ash.update(
+               service,
+               %{last_known_error: "stale error"},
+               action: :mark_error,
+               domain: Cells
+             )
+
+    assert {:ok, reconciled_service} =
+             Ash.update(
+               errored_service,
+               %{status: "running", pid: 4_242},
+               action: :reconcile_runtime_state,
+               domain: Cells
+             )
+
+    assert reconciled_service.status == :running
+    assert reconciled_service.pid == 4_242
+    assert reconciled_service.last_known_error == nil
+  end
+
+  test "reconcile_runtime_state can mark a stale running service as errored" do
+    service = service!("service-status-reconcile-error")
+
+    assert {:ok, running_service} =
+             Ash.update(service, %{pid: 0}, action: :mark_running, domain: Cells)
+
+    assert {:ok, reconciled_service} =
+             Ash.update(
+               running_service,
+               %{status: "error", last_known_error: "Process exited unexpectedly"},
+               action: :reconcile_runtime_state,
+               domain: Cells
+             )
+
+    assert reconciled_service.status == :error
+    assert reconciled_service.pid == nil
+    assert reconciled_service.last_known_error == "Process exited unexpectedly"
+  end
+
   test "service lifecycle writes require explicit actions" do
     service = service!("service-status-generic")
 

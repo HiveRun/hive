@@ -1,9 +1,13 @@
 defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
   use HiveServerElixir.DataCase, async: false
 
+  import Ash.Expr
+  require Ash.Query
+
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Lifecycle
+  alias HiveServerElixir.Cells.Provisioning
   alias HiveServerElixir.Cells.Workspace
   alias HiveServerElixir.Opencode.TestOperations
 
@@ -33,6 +37,13 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
     {workspace, cell} = workspace_and_cell!("resume-success", "stopped", "stale setup error")
     context = %{workspace_id: workspace.id, cell_id: cell.id}
 
+    assert {:ok, _provisioning} =
+             Ash.create(
+               Provisioning,
+               %{cell_id: cell.id, attempt_count: 2},
+               domain: Cells
+             )
+
     assert {:ok, _pid} = Lifecycle.on_cell_create(context, runtime_opts())
     assert :ok = Lifecycle.on_cell_delete(context)
 
@@ -46,6 +57,15 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
     assert updated_cell.status == :ready
     assert updated_cell.last_setup_error == nil
     assert [{_pid, _value}] = Registry.lookup(@registry, {workspace.id, cell.id})
+
+    assert {:ok, provisioning} =
+             Provisioning
+             |> Ash.Query.filter(expr(cell_id == ^cell.id))
+             |> Ash.read_one(domain: Cells)
+
+    assert provisioning.attempt_count == 3
+    assert %DateTime{} = provisioning.started_at
+    assert %DateTime{} = provisioning.finished_at
 
     assert :ok = Lifecycle.on_cell_delete(context)
   end

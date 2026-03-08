@@ -7,8 +7,8 @@ defmodule HiveServerElixir.Cells.ResourceSummary do
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Service
+  alias HiveServerElixir.Cells.ServiceReconciliation
   alias HiveServerElixir.Cells.ServiceStatus
-  alias HiveServerElixir.Cells.ServiceRuntime
 
   @average_windows ["1m", "5m", "15m", "1h"]
 
@@ -22,7 +22,10 @@ defmodule HiveServerElixir.Cells.ResourceSummary do
       |> Ash.Query.sort(inserted_at: :asc)
       |> Ash.read!(domain: Cells)
 
-    processes = Enum.map(services, &serialize_service_process(&1, sampled_at))
+    processes =
+      services
+      |> ServiceReconciliation.reconcile_all()
+      |> Enum.map(&serialize_service_process(&1, sampled_at))
 
     summary =
       %{
@@ -114,25 +117,8 @@ defmodule HiveServerElixir.Cells.ResourceSummary do
     }
   end
 
-  defp serialize_service_process(%Service{} = service, sampled_at) do
-    runtime_status = ServiceRuntime.runtime_status(service.id)
-
-    pid =
-      case runtime_status do
-        %{status: "running", pid: runtime_pid} when is_integer(runtime_pid) -> runtime_pid
-        _other -> service.pid
-      end
-
-    process_alive =
-      case runtime_status do
-        %{status: "running"} -> true
-        _other -> os_pid_alive?(pid)
-      end
-
-    {status, _last_known_error} =
-      ServiceStatus.derive(service.status, service.last_known_error, process_alive)
-
-    presented_status = ServiceStatus.present(status)
+  defp serialize_service_process(%{service: service} = snapshot, sampled_at) do
+    presented_status = ServiceStatus.present(snapshot.status)
 
     %{
       kind: "service",
@@ -140,31 +126,19 @@ defmodule HiveServerElixir.Cells.ResourceSummary do
       id: service.id,
       name: service.name,
       status: presented_status,
-      pid: pid,
-      processAlive: process_alive,
-      active: process_alive and ServiceStatus.running?(status),
+      pid: snapshot.pid,
+      processAlive: snapshot.process_alive,
+      active: snapshot.process_alive and ServiceStatus.running?(snapshot.status),
       cpuPercent: nil,
       rssBytes: nil,
       resourceSampledAt: sampled_at,
-      resourceUnavailableReason: unavailable_reason(pid, process_alive)
+      resourceUnavailableReason: unavailable_reason(snapshot.pid, snapshot.process_alive)
     }
   end
 
   defp unavailable_reason(pid, _process_alive) when not is_integer(pid), do: "pid_missing"
   defp unavailable_reason(_pid, false), do: "process_not_alive"
   defp unavailable_reason(_pid, true), do: "sample_failed"
-
-  defp os_pid_alive?(pid) when is_integer(pid) and pid > 0 do
-    case System.cmd("kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true) do
-      {_output, 0} -> true
-      {_output, _status} -> false
-    end
-  rescue
-    _error ->
-      false
-  end
-
-  defp os_pid_alive?(_pid), do: false
 
   defp total_metric(processes, key) do
     Enum.reduce(processes, 0, fn process, total ->

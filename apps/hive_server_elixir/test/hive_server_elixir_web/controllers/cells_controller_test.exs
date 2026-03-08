@@ -278,7 +278,13 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
                domain: Cells
              )
 
-    assert {:ok, _service} = Ash.update(service, %{pid: 42}, action: :mark_running, domain: Cells)
+    assert {:ok, _service} =
+             Ash.update(
+               service,
+               %{pid: String.to_integer(System.pid())},
+               action: :mark_running,
+               domain: Cells
+             )
 
     assert {:ok, _session} =
              Ash.create(

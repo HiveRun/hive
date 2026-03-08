@@ -187,6 +187,15 @@ defmodule HiveServerElixir.Cells.Service do
         |> Ash.Changeset.force_change_attribute(:pid, nil)
       end
     end
+
+    update :reconcile_runtime_state do
+      accept [:status, :pid, :port, :last_known_error]
+      require_atomic? false
+
+      change fn changeset, _context ->
+        reconcile_runtime_state(changeset)
+      end
+    end
   end
 
   attributes do
@@ -286,6 +295,50 @@ defmodule HiveServerElixir.Cells.Service do
 
   defp normalize_status(status) when is_atom(status), do: status
   defp normalize_status(_status), do: nil
+
+  defp reconcile_runtime_state(changeset) do
+    case normalize_status(Ash.Changeset.get_argument_or_attribute(changeset, :status)) do
+      :running ->
+        changeset
+        |> Ash.Changeset.force_change_attribute(:status, :running)
+        |> Ash.Changeset.force_change_attribute(
+          :pid,
+          Ash.Changeset.get_argument_or_attribute(changeset, :pid)
+        )
+        |> maybe_force_attribute(:port, Ash.Changeset.get_argument_or_attribute(changeset, :port))
+        |> Ash.Changeset.force_change_attribute(:last_known_error, nil)
+
+      :stopped ->
+        changeset
+        |> Ash.Changeset.force_change_attribute(:status, :stopped)
+        |> Ash.Changeset.force_change_attribute(:pid, nil)
+        |> maybe_force_attribute(:port, Ash.Changeset.get_argument_or_attribute(changeset, :port))
+        |> Ash.Changeset.force_change_attribute(:last_known_error, nil)
+
+      :error ->
+        changeset
+        |> Ash.Changeset.force_change_attribute(:status, :error)
+        |> Ash.Changeset.force_change_attribute(:pid, nil)
+        |> maybe_force_attribute(:port, Ash.Changeset.get_argument_or_attribute(changeset, :port))
+        |> Ash.Changeset.force_change_attribute(
+          :last_known_error,
+          Ash.Changeset.get_argument_or_attribute(changeset, :last_known_error)
+        )
+
+      _other ->
+        Ash.Changeset.add_error(
+          changeset,
+          field: :status,
+          message: "must be a valid reconciled service status"
+        )
+    end
+  end
+
+  defp maybe_force_attribute(changeset, _attribute, nil), do: changeset
+
+  defp maybe_force_attribute(changeset, attribute, value) do
+    Ash.Changeset.force_change_attribute(changeset, attribute, value)
+  end
 
   defp format_status(status) when is_atom(status), do: Atom.to_string(status)
   defp format_status(status) when is_binary(status), do: status

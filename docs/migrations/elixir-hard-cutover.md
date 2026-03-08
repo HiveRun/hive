@@ -468,6 +468,7 @@ Step 7 done criteria are now satisfied locally:
   - `Service.status` is now an Ash enum with explicit `mark_running`, `mark_stopped`, and `mark_error` actions, plus a migration that normalizes legacy `pending` rows to `stopped`.
   - `ServiceRuntime`, service snapshot reconciliation, and resource summaries now share the Ash-owned lifecycle semantics instead of mutating free-form status strings.
   - `Provisioning` attempt tracking now uses explicit begin/finish actions so attempt counters and timestamps are no longer assembled ad hoc inside the cell reactors.
+- 2026-03-08 - Followed up on service read-time self-healing by adding an explicit `Service.reconcile_runtime_state` Ash action and routing service snapshot/resource-summary reads through a shared reconciliation helper before serialization.
 
 ## Database Reset Strategy (Approved)
 

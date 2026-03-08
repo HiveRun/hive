@@ -7,8 +7,8 @@ defmodule HiveServerElixir.Cells.ServiceSnapshot do
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.ServicePayload
   alias HiveServerElixir.Cells.Service
+  alias HiveServerElixir.Cells.ServiceReconciliation
   alias HiveServerElixir.Cells.ServiceStatus
-  alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.TerminalRuntime
 
   @default_log_lines 200
@@ -20,7 +20,8 @@ defmodule HiveServerElixir.Cells.ServiceSnapshot do
   def list_rpc_payloads(cell_id, opts \\ %{}) when is_binary(cell_id) do
     cell_id
     |> list_services()
-    |> Enum.map(&rpc_payload(&1, opts))
+    |> ServiceReconciliation.reconcile_all()
+    |> Enum.map(&snapshot_payload(&1, opts))
   end
 
   def list_transport_payloads(cell_id, opts \\ %{}) when is_binary(cell_id) do
@@ -30,39 +31,19 @@ defmodule HiveServerElixir.Cells.ServiceSnapshot do
   end
 
   def rpc_payload(%Service{} = service, opts \\ %{}) do
+    service
+    |> ServiceReconciliation.reconcile()
+    |> snapshot_payload(opts)
+  end
+
+  defp snapshot_payload(%{service: service} = snapshot, opts) do
     normalized_opts = normalize_opts(opts)
     include_resources = Map.get(normalized_opts, :include_resources, false)
     {recent_logs, total_log_lines, has_more_logs} = service_log_tail(service, normalized_opts)
 
-    runtime_status = ServiceRuntime.runtime_status(service.id)
-
-    process_alive =
-      case runtime_status do
-        %{status: "running"} -> true
-        _other -> os_pid_alive?(service.pid)
-      end
-
-    {derived_status, derived_last_known_error} =
-      ServiceStatus.derive(service.status, service.last_known_error, process_alive)
-
-    derived_pid =
-      case runtime_status do
-        %{status: "running", pid: pid} when is_integer(pid) -> pid
-        _other when process_alive -> service.pid
-        _other -> nil
-      end
-
-    service =
-      maybe_persist_derived_service(
-        service,
-        derived_status,
-        derived_last_known_error,
-        derived_pid
-      )
-
     resource_payload =
       if include_resources do
-        build_service_resource_payload(derived_pid, process_alive)
+        build_service_resource_payload(snapshot.pid, snapshot.process_alive)
       else
         %{}
       end
@@ -74,20 +55,20 @@ defmodule HiveServerElixir.Cells.ServiceSnapshot do
       id: service.id,
       name: service.name,
       type: service.type,
-      status: ServiceStatus.present(derived_status),
+      status: ServiceStatus.present(snapshot.status),
       command: service.command,
       cwd: service.cwd,
       log_path: nil,
-      last_known_error: derived_last_known_error,
+      last_known_error: snapshot.last_known_error,
       env: service.env,
       updated_at: maybe_to_iso8601(service.updated_at),
       recent_logs: recent_logs,
       total_log_lines: total_log_lines,
       has_more_logs: has_more_logs,
-      process_alive: process_alive,
+      process_alive: snapshot.process_alive,
       port_reachable: port_reachable,
       url: url,
-      pid: derived_pid,
+      pid: snapshot.pid,
       port: service.port
     }
     |> Map.merge(resource_payload)
@@ -199,59 +180,6 @@ defmodule HiveServerElixir.Cells.ServiceSnapshot do
 
   defp service_resource_unavailable_reason(_pid, false), do: "process_not_alive"
   defp service_resource_unavailable_reason(_pid, true), do: "sample_failed"
-
-  defp maybe_persist_derived_service(%Service{} = service, status, last_known_error, pid) do
-    should_persist =
-      status != service.status ||
-        last_known_error != service.last_known_error ||
-        pid != service.pid
-
-    if should_persist do
-      case persist_derived_service(service, status, last_known_error, pid) do
-        {:ok, updated} ->
-          updated
-
-        {:error, _error} ->
-          %{service | status: status, last_known_error: last_known_error, pid: pid}
-      end
-    else
-      service
-    end
-  end
-
-  defp persist_derived_service(service, status, last_known_error, pid)
-
-  defp persist_derived_service(service, status, _last_known_error, pid)
-       when status in [:running, "running"] do
-    Ash.update(service, %{pid: pid}, action: :mark_running, domain: Cells)
-  end
-
-  defp persist_derived_service(service, status, last_known_error, _pid)
-       when status in [:error, "error"] do
-    Ash.update(
-      service,
-      %{last_known_error: last_known_error},
-      action: :mark_error,
-      domain: Cells
-    )
-  end
-
-  defp persist_derived_service(service, status, _last_known_error, _pid)
-       when status in [:stopped, "stopped"] do
-    Ash.update(service, %{}, action: :mark_stopped, domain: Cells)
-  end
-
-  defp os_pid_alive?(pid) when is_integer(pid) and pid > 0 do
-    case System.cmd("kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true) do
-      {_output, 0} -> true
-      {_output, _status} -> false
-    end
-  rescue
-    _error ->
-      false
-  end
-
-  defp os_pid_alive?(_pid), do: false
 
   defp port_reachable?(port) when is_integer(port) and port > 0 do
     case :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false], 150) do
