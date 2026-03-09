@@ -2,6 +2,8 @@ defmodule HiveServerElixir.Cells.LifecycleTest do
   use HiveServerElixir.DataCase, async: false
 
   alias HiveServerElixir.Cells.Lifecycle
+  alias HiveServerElixir.Cells.Events
+  alias HiveServerElixir.Cells.TerminalRuntime
   alias HiveServerElixir.Opencode.AgentEventLog
   alias HiveServerElixir.Opencode.TestOperations
 
@@ -42,6 +44,25 @@ defmodule HiveServerElixir.Cells.LifecycleTest do
 
     assert [{^new_pid, _value}] = Registry.lookup(@registry, {"workspace-resume", "cell-resume"})
     assert :ok = Lifecycle.on_cell_delete(context)
+  end
+
+  test "handle_start_stream_result emits setup terminal failures for restart errors" do
+    cell_id = "cell-restart-error-" <> Ash.UUID.generate()
+    context = %{workspace_id: "workspace-restart-error", cell_id: cell_id}
+
+    assert :ok = Events.subscribe_setup_terminal(cell_id)
+
+    assert {:error, :ingest_unavailable} =
+             Lifecycle.handle_start_stream_result({:error, :ingest_unavailable}, context)
+
+    assert_receive {:setup_terminal_error, %{cell_id: ^cell_id, message: ":ingest_unavailable"}}
+
+    assert_receive {:setup_terminal_exit, %{cell_id: ^cell_id, exit_code: 1, signal: nil}}
+
+    assert ["[hive] provisioning failed: :ingest_unavailable\n"] =
+             TerminalRuntime.read_setup_output(cell_id)
+
+    assert :ok = TerminalRuntime.clear_cell(cell_id)
   end
 
   test "on_cell_delete is idempotent" do

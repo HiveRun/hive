@@ -9,6 +9,7 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.CellStatus
   alias HiveServerElixir.Cells.Reactors.Steps.RetryIngestStep
+  alias HiveServerElixir.Cells.SetupAttempt
   alias HiveServerElixir.Cells.TemplateRuntime
   alias HiveServerElixir.Cells.TerminalEvents
 
@@ -64,6 +65,10 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
       else
         {:ok, :ok}
       end
+    end)
+
+    compensate(fn reason, %{cell: cell}, _context ->
+      SetupAttempt.finalize_error(cell, reason)
     end)
   end
 

@@ -8,6 +8,7 @@ defmodule HiveServerElixir.Cells.Reactors.ResumeCell do
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Reactors.Steps.ResumeIngestStep
+  alias HiveServerElixir.Cells.SetupAttempt
   alias HiveServerElixir.Cells.TerminalEvents
 
   input(:cell_id)
@@ -62,6 +63,10 @@ defmodule HiveServerElixir.Cells.Reactors.ResumeCell do
       else
         {:ok, :ok}
       end
+    end)
+
+    compensate(fn reason, %{cell: cell}, _context ->
+      SetupAttempt.finalize_error(cell, reason)
     end)
   end
 

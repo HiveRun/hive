@@ -116,7 +116,51 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
                fail_after_ingest: true
              })
 
+    assert {:ok, failed_cell} = Ash.get(Cell, cell.id, domain: Cells)
+    assert failed_cell.status == :error
+    assert failed_cell.last_setup_error == "forced_failure_after_ingest"
+
+    assert {:ok, provisioning} =
+             Provisioning
+             |> Ash.Query.filter(expr(cell_id == ^cell.id))
+             |> Ash.read_one(domain: Cells)
+
+    assert %DateTime{} = provisioning.finished_at
+
     assert :ok = Lifecycle.on_cell_delete(context)
+    assert_registry_stopped(workspace.id, cell.id)
+  end
+
+  test "resume_cell finalizes provisioning attempts when post-ingest checks fail" do
+    {workspace, cell} = workspace_and_cell!("resume-failure", "stopped")
+
+    assert {:ok, _provisioning} =
+             Ash.create(
+               Provisioning,
+               %{cell_id: cell.id, attempt_count: 4},
+               domain: Cells
+             )
+
+    assert {:error, _error} =
+             Cells.resume_cell(%{
+               cell_id: cell.id,
+               runtime_opts: runtime_opts(),
+               fail_after_ingest: true
+             })
+
+    assert {:ok, failed_cell} = Ash.get(Cell, cell.id, domain: Cells)
+    assert failed_cell.status == :error
+    assert failed_cell.last_setup_error == "forced_failure_after_ingest"
+
+    assert {:ok, provisioning} =
+             Provisioning
+             |> Ash.Query.filter(expr(cell_id == ^cell.id))
+             |> Ash.read_one(domain: Cells)
+
+    assert provisioning.attempt_count == 5
+    assert %DateTime{} = provisioning.started_at
+    assert %DateTime{} = provisioning.finished_at
+
     assert_registry_stopped(workspace.id, cell.id)
   end
 
