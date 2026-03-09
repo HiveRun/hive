@@ -55,6 +55,13 @@ jobs:
           otp-version: '28.1'
           elixir-version: '1.19.4'
 
+      - name: Setup mise toolchain
+        uses: jdx/mise-action@v3
+        with:
+          version: 2025.11.2
+          install: true
+          cache: true
+
       - name: Cache Bun download artifacts
         uses: actions/cache@v4
         with:
@@ -70,7 +77,7 @@ jobs:
         run: |
           mise x -C apps/hive_server_elixir -- mix local.hex --force
           mise x -C apps/hive_server_elixir -- mix local.rebar --force
-          MIX_ENV=test mise x -C apps/hive_server_elixir -- mix deps.get
+          env MIX_ENV=test mise x -C apps/hive_server_elixir -- mix deps.get
 
       - name: Run strict high-severity audit
         run: |
@@ -108,7 +115,7 @@ jobs:
         run: |
           mise x -C apps/hive_server_elixir -- mix local.hex --force
           mise x -C apps/hive_server_elixir -- mix local.rebar --force
-          MIX_ENV=test mise x -C apps/hive_server_elixir -- mix deps.get
+          env MIX_ENV=test mise x -C apps/hive_server_elixir -- mix deps.get
 
       - name: Validate release version source
         run: bun run check:release-version
@@ -155,7 +162,7 @@ jobs:
         run: |
           mise x -C apps/hive_server_elixir -- mix local.hex --force
           mise x -C apps/hive_server_elixir -- mix local.rebar --force
-          MIX_ENV=test mise x -C apps/hive_server_elixir -- mix deps.get
+          env MIX_ENV=test mise x -C apps/hive_server_elixir -- mix deps.get
 
       - name: Run distribution gate
         run: bun run check:distribution
@@ -199,7 +206,7 @@ jobs:
         run: |
           mise x -C apps/hive_server_elixir -- mix local.hex --force
           mise x -C apps/hive_server_elixir -- mix local.rebar --force
-          MIX_ENV=test mise x -C apps/hive_server_elixir -- mix deps.get
+          env MIX_ENV=test mise x -C apps/hive_server_elixir -- mix deps.get
 
       - name: Install OpenCode CLI
         if: steps.opencode-cache.outputs.cache-hit != 'true'
