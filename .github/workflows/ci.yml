@@ -66,6 +66,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Install Elixir package managers and dependencies
+        run: |
+          mise x -C apps/hive_server_elixir -- mix local.hex --force
+          mise x -C apps/hive_server_elixir -- mix local.rebar --force
+          MIX_ENV=test mise x -C apps/hive_server_elixir -- mix deps.get
+
       - name: Run strict high-severity audit
         run: |
           if ! bun audit --audit-level high; then
@@ -97,6 +103,12 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Install Elixir package managers and dependencies
+        run: |
+          mise x -C apps/hive_server_elixir -- mix local.hex --force
+          mise x -C apps/hive_server_elixir -- mix local.rebar --force
+          MIX_ENV=test mise x -C apps/hive_server_elixir -- mix deps.get
 
       - name: Validate release version source
         run: bun run check:release-version
@@ -139,6 +151,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Install Elixir package managers and dependencies
+        run: |
+          mise x -C apps/hive_server_elixir -- mix local.hex --force
+          mise x -C apps/hive_server_elixir -- mix local.rebar --force
+          MIX_ENV=test mise x -C apps/hive_server_elixir -- mix deps.get
+
       - name: Run distribution gate
         run: bun run check:distribution
 
@@ -176,6 +194,12 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Install Elixir package managers and dependencies
+        run: |
+          mise x -C apps/hive_server_elixir -- mix local.hex --force
+          mise x -C apps/hive_server_elixir -- mix local.rebar --force
+          MIX_ENV=test mise x -C apps/hive_server_elixir -- mix deps.get
 
       - name: Install OpenCode CLI
         if: steps.opencode-cache.outputs.cache-hit != 'true'
