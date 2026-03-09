@@ -475,6 +475,7 @@ Step 7 done criteria are now satisfied locally:
 - 2026-03-08 - Added explicit AgentSession projection hooks in ingest/runtime paths so OpenCode events and retry/resume flows now create/sync persisted session rows through `begin_session`, `sync_runtime_details`, `set_mode`, and `record_error` instead of leaving session detail/error state implicit in event timelines alone.
 - 2026-03-08 - Extracted AgentSession read-model derivation into a dedicated `Cells.AgentSessionRead` helper so session context lookup, timeline-derived status/mode/model projection, and cell/session fallback resolution no longer live inside the message-fetch adapter module.
 - 2026-03-08 - Kept session message reads transport-backed for now, but extracted the OpenCode fetch + terminal fallback path into a dedicated `SessionMessagesLoader` so volatile message transport remains separate from the Ash-owned session read model.
+- 2026-03-08 - Moved setup-attempt bookkeeping behind explicit `Cell` lifecycle actions by adding `prepare_setup_attempt` and `finalize_setup_attempt`, so create/retry/resume reactors now delegate provisioning attempt rows, session resume flags, and setup completion timestamps to Ash instead of mutating `Cell`, `Provisioning`, and `AgentSession` separately.
 
 ## Database Reset Strategy (Approved)
 

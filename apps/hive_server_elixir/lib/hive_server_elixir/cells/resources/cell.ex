@@ -1,8 +1,13 @@
 defmodule HiveServerElixir.Cells.Cell do
   @moduledoc false
 
+  import Ash.Expr
+  require Ash.Query
+
+  alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.CellStatus
+  alias HiveServerElixir.Cells.Provisioning
   alias HiveServerElixir.Cells.ServicePayload
 
   @cell_payload_fields [
@@ -372,6 +377,34 @@ defmodule HiveServerElixir.Cells.Cell do
       end
     end
 
+    update :prepare_setup_attempt do
+      accept [:opencode_session_id]
+      require_atomic? false
+
+      argument :start_mode, :string do
+        allow_nil? true
+      end
+
+      validate one_of(:start_mode, ["plan", "build"])
+
+      change fn changeset, _context ->
+        session_id = resolve_setup_session_id(changeset)
+
+        changeset
+        |> validate_lifecycle_transition(:provisioning)
+        |> Ash.Changeset.force_change_attribute(:status, :provisioning)
+        |> Ash.Changeset.force_change_attribute(:last_setup_error, nil)
+        |> Ash.Changeset.force_change_attribute(:resume_agent_session_on_startup, true)
+        |> Ash.Changeset.force_change_attribute(:opencode_session_id, session_id)
+        |> Ash.Changeset.after_action(fn changeset, cell ->
+          case ensure_setup_records(cell, Ash.Changeset.get_argument(changeset, :start_mode)) do
+            :ok -> {:ok, cell}
+            {:error, error} -> {:error, error}
+          end
+        end)
+      end
+    end
+
     update :mark_ready do
       accept []
       require_atomic? false
@@ -392,6 +425,28 @@ defmodule HiveServerElixir.Cells.Cell do
         changeset
         |> validate_lifecycle_transition(:error)
         |> Ash.Changeset.force_change_attribute(:status, :error)
+      end
+    end
+
+    update :finalize_setup_attempt do
+      accept [:last_setup_error]
+      require_atomic? false
+
+      argument :result, :string do
+        allow_nil? false
+      end
+
+      validate one_of(:result, ["ready", "error"])
+
+      change fn changeset, _context ->
+        changeset
+        |> apply_setup_result()
+        |> Ash.Changeset.after_action(fn _changeset, cell ->
+          case finish_setup_attempt(cell.id) do
+            :ok -> {:ok, cell}
+            {:error, error} -> {:error, error}
+          end
+        end)
       end
     end
   end
@@ -513,6 +568,153 @@ defmodule HiveServerElixir.Cells.Cell do
       )
     end
   end
+
+  defp apply_setup_result(changeset) do
+    case Ash.Changeset.get_argument(changeset, :result) do
+      "ready" ->
+        changeset
+        |> validate_lifecycle_transition(:ready)
+        |> Ash.Changeset.force_change_attribute(:status, :ready)
+        |> Ash.Changeset.force_change_attribute(:last_setup_error, nil)
+
+      "error" ->
+        changeset
+        |> validate_lifecycle_transition(:error)
+        |> Ash.Changeset.force_change_attribute(:status, :error)
+
+      _other ->
+        changeset
+    end
+  end
+
+  defp resolve_setup_session_id(changeset) do
+    Ash.Changeset.get_attribute(changeset, :opencode_session_id) ||
+      Ash.Changeset.get_data(changeset, :opencode_session_id) ||
+      existing_session_id(changeset) ||
+      Ash.UUID.generate()
+  end
+
+  defp existing_session_id(changeset) do
+    case Ash.Changeset.get_data(changeset, :id) do
+      nil -> nil
+      cell_id -> existing_session_id_for_cell(cell_id)
+    end
+  end
+
+  defp existing_session_id_for_cell(cell_id) do
+    case agent_session_for_cell(cell_id) do
+      %AgentSession{session_id: session_id} when is_binary(session_id) and session_id != "" ->
+        session_id
+
+      _other ->
+        nil
+    end
+  end
+
+  defp ensure_setup_records(cell, start_mode) do
+    with :ok <- ensure_provisioning_attempt(cell.id, start_mode),
+         :ok <- ensure_agent_session(cell, start_mode) do
+      :ok
+    end
+  end
+
+  defp ensure_provisioning_attempt(cell_id, start_mode) do
+    attrs = maybe_put(%{}, :start_mode, normalize_start_mode(start_mode))
+
+    case provisioning_for_cell(cell_id) do
+      %Provisioning{} = provisioning ->
+        case Ash.update(provisioning, attrs, action: :begin_attempt, domain: Cells) do
+          {:ok, _updated} -> :ok
+          {:error, error} -> {:error, error}
+        end
+
+      nil ->
+        case Ash.create(
+               Provisioning,
+               Map.put(attrs, :cell_id, cell_id),
+               action: :begin_attempt_record,
+               domain: Cells
+             ) do
+          {:ok, _created} -> :ok
+          {:error, error} -> {:error, error}
+        end
+    end
+  end
+
+  defp ensure_agent_session(cell, start_mode) when is_map(cell) do
+    session_id =
+      cell.opencode_session_id || existing_session_id_for_cell(cell.id) || Ash.UUID.generate()
+
+    case session_by_session_id(session_id) || agent_session_for_cell(cell.id) do
+      %AgentSession{} = session ->
+        case Ash.update(
+               session,
+               %{resume_on_startup: true},
+               action: :sync_runtime_details,
+               domain: Cells
+             ) do
+          {:ok, _updated} -> :ok
+          {:error, error} -> {:error, error}
+        end
+
+      nil ->
+        mode = normalize_start_mode(start_mode)
+
+        case Ash.create(
+               AgentSession,
+               %{
+                 cell_id: cell.id,
+                 session_id: session_id,
+                 start_mode: mode,
+                 current_mode: mode,
+                 resume_on_startup: true
+               },
+               action: :begin_session,
+               domain: Cells
+             ) do
+          {:ok, _created} -> :ok
+          {:error, error} -> {:error, error}
+        end
+    end
+  end
+
+  defp finish_setup_attempt(cell_id) do
+    case provisioning_for_cell(cell_id) do
+      %Provisioning{} = provisioning ->
+        case Ash.update(provisioning, %{}, action: :finish_attempt, domain: Cells) do
+          {:ok, _updated} -> :ok
+          {:error, error} -> {:error, error}
+        end
+
+      nil ->
+        :ok
+    end
+  end
+
+  defp provisioning_for_cell(cell_id) do
+    Provisioning
+    |> Ash.Query.filter(expr(cell_id == ^cell_id))
+    |> Ash.read_one!(domain: Cells)
+  end
+
+  defp agent_session_for_cell(cell_id) do
+    AgentSession
+    |> Ash.Query.filter(expr(cell_id == ^cell_id))
+    |> Ash.read_one!(domain: Cells)
+  end
+
+  defp session_by_session_id(session_id) do
+    AgentSession
+    |> Ash.Query.filter(expr(session_id == ^session_id))
+    |> Ash.read_one!(domain: Cells)
+  end
+
+  defp normalize_start_mode("build"), do: "build"
+  defp normalize_start_mode("plan"), do: "plan"
+  defp normalize_start_mode(_mode), do: nil
+
+  defp maybe_put(attrs, _key, nil), do: attrs
+  defp maybe_put(attrs, key, value), do: Map.put(attrs, key, value)
 
   defp normalize_status(status) when is_binary(status) do
     case CellStatus.cast_input(status, []) do

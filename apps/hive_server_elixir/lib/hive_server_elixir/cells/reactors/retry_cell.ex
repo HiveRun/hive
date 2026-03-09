@@ -5,14 +5,9 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
 
   use Reactor
 
-  import Ash.Expr
-  require Ash.Query
-
   alias HiveServerElixir.Cells
-  alias HiveServerElixir.Cells.AgentSessionProjection
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.CellStatus
-  alias HiveServerElixir.Cells.Provisioning
   alias HiveServerElixir.Cells.Reactors.Steps.RetryIngestStep
   alias HiveServerElixir.Cells.TemplateRuntime
   alias HiveServerElixir.Cells.TerminalEvents
@@ -33,12 +28,9 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
     argument(:cell, result(:load_cell))
 
     run(fn %{cell: cell}, _context ->
-      with {:ok, updated_cell} <-
-             Ash.update(cell, %{}, action: :begin_provisioning, domain: Cells),
-           :ok <- begin_provisioning_attempt(updated_cell.id),
-           :ok <- AgentSessionProjection.ensure_resume_projection(updated_cell) do
-        {:ok, updated_cell}
-      end
+      cell
+      |> Ash.Changeset.for_update(:prepare_setup_attempt, %{})
+      |> Ash.update(domain: Cells)
     end)
   end
 
@@ -89,8 +81,7 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
     argument(:template_runtime, result(:apply_template_runtime))
 
     run(fn %{cell: cell, template_runtime: template_runtime}, _context ->
-      with {:ok, updated_cell} <- finalize_cell_status(cell, template_runtime),
-           :ok <- finalize_provisioning_state(updated_cell.id) do
+      with {:ok, updated_cell} <- finalize_cell_status(cell, template_runtime) do
         finalize_terminal_state(updated_cell)
         {:ok, updated_cell}
       end
@@ -99,60 +90,19 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
 
   return(:finalize_cell)
 
-  defp begin_provisioning_attempt(cell_id) do
-    case provisioning_for_cell(cell_id) do
-      %Provisioning{} = provisioning ->
-        case Ash.update(provisioning, %{}, action: :begin_attempt, domain: Cells) do
-          {:ok, _updated} -> :ok
-          {:error, error} -> {:error, error}
-        end
-
-      nil ->
-        case Ash.create(
-               Provisioning,
-               %{cell_id: cell_id},
-               action: :begin_attempt_record,
-               domain: Cells
-             ) do
-          {:ok, _created} -> :ok
-          {:error, error} -> {:error, error}
-        end
-    end
-  end
-
-  defp finalize_provisioning_state(cell_id) do
-    case provisioning_for_cell(cell_id) do
-      %Provisioning{} = provisioning ->
-        case Ash.update(provisioning, %{}, action: :finish_attempt, domain: Cells) do
-          {:ok, _updated} -> :ok
-          {:error, error} -> {:error, error}
-        end
-
-      nil ->
-        :ok
-    end
-  end
-
-  defp provisioning_for_cell(cell_id) do
-    Provisioning
-    |> Ash.Query.filter(expr(cell_id == ^cell_id))
-    |> Ash.read_one!(domain: Cells)
-  end
-
   defp finalize_cell_status(cell, %{status: "ready"}) do
-    Ash.update(cell, %{}, action: :mark_ready, domain: Cells)
+    cell
+    |> Ash.Changeset.for_update(:finalize_setup_attempt, %{result: "ready"})
+    |> Ash.update(domain: Cells)
   end
 
   defp finalize_cell_status(cell, %{status: "error", last_setup_error: last_setup_error}) do
-    Ash.update(cell, %{last_setup_error: last_setup_error}, action: :mark_error, domain: Cells)
-  end
-
-  defp finalize_cell_status(cell, %{status: status, last_setup_error: last_setup_error}) do
-    Ash.update(
-      cell,
-      %{status: status, last_setup_error: last_setup_error},
-      domain: Cells
+    cell
+    |> Ash.Changeset.for_update(
+      :finalize_setup_attempt,
+      %{last_setup_error: last_setup_error, result: "error"}
     )
+    |> Ash.update(domain: Cells)
   end
 
   defp finalize_terminal_state(%Cell{} = cell) do
