@@ -1,8 +1,11 @@
 defmodule HiveServerElixir.Cells.AgentSession do
   @moduledoc false
 
-  alias HiveServerElixir.Agents
+  import Ash.Expr
+  require Ash.Query
+
   alias HiveServerElixir.Cells.AgentSessionRead
+  alias HiveServerElixir.Cells
 
   use Ash.Resource,
     extensions: [AshTypescript.Resource],
@@ -95,7 +98,7 @@ defmodule HiveServerElixir.Cells.AgentSession do
       end
 
       run fn input, _context ->
-        case AgentSessionRead.payload_for_cell(input.arguments.cell_id) do
+        case payload_for_cell(input.arguments.cell_id) do
           {:ok, %{} = payload} -> {:ok, rpc_session_payload(payload)}
           {:ok, nil} -> {:ok, %{}}
         end
@@ -118,7 +121,7 @@ defmodule HiveServerElixir.Cells.AgentSession do
       validate one_of(:mode, @allowed_modes)
 
       run fn input, _context ->
-        case Agents.set_session_mode(input.arguments.session_id, input.arguments.mode) do
+        case set_mode_payload(input.arguments.session_id, input.arguments.mode) do
           {:ok, payload} -> {:ok, rpc_session_payload(payload)}
           {:error, error} -> {:error, error}
         end
@@ -213,6 +216,84 @@ defmodule HiveServerElixir.Cells.AgentSession do
   defp normalize_mode(field, _mode, _opts),
     do: {:error, {field, "must be either 'plan' or 'build'"}}
 
+  @spec payload_for_cell(String.t()) :: {:ok, map() | nil} | {:error, {atom(), String.t()}}
+  def payload_for_cell(cell_id) when is_binary(cell_id) do
+    AgentSessionRead.payload_for_cell(cell_id)
+  end
+
+  @spec fetch_for_cell(String.t()) :: t() | nil
+  def fetch_for_cell(cell_id) when is_binary(cell_id) do
+    __MODULE__
+    |> Ash.Query.filter(expr(cell_id == ^cell_id))
+    |> Ash.read_one(domain: Cells)
+    |> case do
+      {:ok, session} -> session
+      {:error, _reason} -> nil
+    end
+  end
+
+  @spec fetch_by_session_id(String.t()) :: t() | nil
+  def fetch_by_session_id(session_id) when is_binary(session_id) do
+    __MODULE__
+    |> Ash.Query.filter(expr(session_id == ^session_id))
+    |> Ash.read_one(domain: Cells)
+    |> case do
+      {:ok, session} -> session
+      {:error, _reason} -> nil
+    end
+  end
+
+  @spec event_snapshot_for_session(String.t()) :: {:ok, map()} | {:error, {atom(), String.t()}}
+  def event_snapshot_for_session(session_id) when is_binary(session_id) do
+    AgentSessionRead.snapshot_for_session(session_id)
+  end
+
+  @spec set_mode_payload(String.t(), String.t()) :: {:ok, map()} | {:error, {atom(), String.t()}}
+  def set_mode_payload(session_id, mode) when is_binary(session_id) and is_binary(mode) do
+    normalized_mode = normalize_mode(mode)
+
+    if normalized_mode in @allowed_modes do
+      with {:ok, context} <- AgentSessionRead.context_for_session(session_id),
+           {:ok, agent_session} <- resolve_persisted_session(context),
+           {:ok, updated_session} <-
+             Ash.update(agent_session, %{mode: normalized_mode}, action: :set_mode, domain: Cells) do
+        updated_context = %{context | agent_session: updated_session}
+        {:ok, AgentSessionRead.payload_from_context(updated_context)}
+      else
+        {:error, {_, _} = reason} -> {:error, reason}
+        {:error, _error} -> {:error, {:bad_request, "Failed to update session mode"}}
+      end
+    else
+      {:error, {:bad_request, "mode must be either 'plan' or 'build'"}}
+    end
+  end
+
+  defp normalize_mode("plan"), do: "plan"
+  defp normalize_mode("build"), do: "build"
+  defp normalize_mode(_mode), do: nil
+
+  defp resolve_persisted_session(%{agent_session: session}) when not is_nil(session),
+    do: {:ok, session}
+
+  defp resolve_persisted_session(_context), do: {:error, {:not_found, "Agent session not found"}}
+
+  @spec snapshot_payload(t() | nil) :: map() | nil
+  def snapshot_payload(nil), do: nil
+
+  def snapshot_payload(session) when is_map(session) do
+    %{
+      id: session.id,
+      cellId: session.cell_id,
+      sessionId: session.session_id,
+      currentMode: session.current_mode,
+      modelId: session.model_id,
+      modelProviderId: session.model_provider_id,
+      lastError: session.last_error,
+      insertedAt: maybe_to_iso8601(session.inserted_at),
+      updatedAt: maybe_to_iso8601(session.updated_at)
+    }
+  end
+
   defp rpc_session_payload(payload) do
     %{
       id: Map.get(payload, :id),
@@ -230,4 +311,7 @@ defmodule HiveServerElixir.Cells.AgentSession do
       mode_updated_at: Map.get(payload, :modeUpdatedAt)
     }
   end
+
+  defp maybe_to_iso8601(nil), do: nil
+  defp maybe_to_iso8601(datetime), do: DateTime.to_iso8601(datetime)
 end

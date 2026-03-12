@@ -1,7 +1,7 @@
 defmodule HiveServerElixirWeb.Cells.StreamTransport do
   @moduledoc false
 
-  alias HiveServerElixirWeb.TerminalEvents
+  alias HiveServerElixir.Cells.Terminals.Transport
 
   def open_sse(conn) do
     conn
@@ -51,84 +51,21 @@ defmodule HiveServerElixirWeb.Cells.StreamTransport do
     end
   end
 
-  def stream_setup_terminal_events(conn, cell_id, idle_timeout_ms) do
+  def stream_terminal_events(conn, scope, idle_timeout_ms) do
     receive do
-      {:setup_terminal_data, %{cell_id: ^cell_id, chunk: chunk}} ->
-        case send_event(conn, "data", TerminalEvents.data_payload(chunk)) do
-          {:ok, next_conn} -> stream_setup_terminal_events(next_conn, cell_id, idle_timeout_ms)
-          {:error, _reason} -> conn
-        end
+      message ->
+        case Transport.sse_event(message, scope) do
+          {:ok, event, payload} ->
+            case send_event(conn, event, payload) do
+              {:ok, next_conn} ->
+                stream_terminal_events(next_conn, scope, idle_timeout_ms)
 
-      {:setup_terminal_exit, %{cell_id: ^cell_id, exit_code: exit_code, signal: signal}} ->
-        case send_event(conn, "exit", TerminalEvents.exit_payload(exit_code, signal)) do
-          {:ok, next_conn} -> stream_setup_terminal_events(next_conn, cell_id, idle_timeout_ms)
-          {:error, _reason} -> conn
-        end
+              {:error, _reason} ->
+                conn
+            end
 
-      {:setup_terminal_error, %{cell_id: ^cell_id, message: message}} ->
-        case send_event(conn, "error", TerminalEvents.error_payload(message)) do
-          {:ok, next_conn} -> stream_setup_terminal_events(next_conn, cell_id, idle_timeout_ms)
-          {:error, _reason} -> conn
-        end
-    after
-      idle_timeout_ms ->
-        conn
-    end
-  end
-
-  def stream_service_terminal_events(conn, cell_id, service_id, idle_timeout_ms) do
-    receive do
-      {:service_terminal_data, %{cell_id: ^cell_id, service_id: ^service_id, chunk: chunk}} ->
-        case send_event(conn, "data", TerminalEvents.data_payload(chunk)) do
-          {:ok, next_conn} ->
-            stream_service_terminal_events(next_conn, cell_id, service_id, idle_timeout_ms)
-
-          {:error, _reason} ->
-            conn
-        end
-
-      {:service_terminal_exit,
-       %{cell_id: ^cell_id, service_id: ^service_id, exit_code: exit_code, signal: signal}} ->
-        case send_event(conn, "exit", TerminalEvents.exit_payload(exit_code, signal)) do
-          {:ok, next_conn} ->
-            stream_service_terminal_events(next_conn, cell_id, service_id, idle_timeout_ms)
-
-          {:error, _reason} ->
-            conn
-        end
-
-      {:service_terminal_error, %{cell_id: ^cell_id, service_id: ^service_id, message: message}} ->
-        case send_event(conn, "error", TerminalEvents.error_payload(message)) do
-          {:ok, next_conn} ->
-            stream_service_terminal_events(next_conn, cell_id, service_id, idle_timeout_ms)
-
-          {:error, _reason} ->
-            conn
-        end
-    after
-      idle_timeout_ms ->
-        conn
-    end
-  end
-
-  def stream_chat_terminal_events(conn, cell_id, idle_timeout_ms) do
-    receive do
-      {:chat_terminal_data, %{cell_id: ^cell_id, chunk: chunk}} ->
-        case send_event(conn, "data", TerminalEvents.data_payload(chunk)) do
-          {:ok, next_conn} -> stream_chat_terminal_events(next_conn, cell_id, idle_timeout_ms)
-          {:error, _reason} -> conn
-        end
-
-      {:chat_terminal_exit, %{cell_id: ^cell_id, exit_code: exit_code, signal: signal}} ->
-        case send_event(conn, "exit", TerminalEvents.exit_payload(exit_code, signal)) do
-          {:ok, next_conn} -> stream_chat_terminal_events(next_conn, cell_id, idle_timeout_ms)
-          {:error, _reason} -> conn
-        end
-
-      {:chat_terminal_error, %{cell_id: ^cell_id, message: message}} ->
-        case send_event(conn, "error", TerminalEvents.error_payload(message)) do
-          {:ok, next_conn} -> stream_chat_terminal_events(next_conn, cell_id, idle_timeout_ms)
-          {:error, _reason} -> conn
+          :ignore ->
+            stream_terminal_events(conn, scope, idle_timeout_ms)
         end
     after
       idle_timeout_ms ->

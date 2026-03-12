@@ -8,15 +8,15 @@ defmodule HiveServerElixir.Cells.AgentSessionRead do
   alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.CellStatus
+  alias HiveServerElixir.Cells.TemplateConfig
   alias HiveServerElixir.Opencode.AgentEvent
   alias HiveServerElixir.Opencode.AgentEventLog
-
-  @opencode_config_filenames ["@opencode.json", "opencode.json"]
+  alias HiveServerElixir.Opencode.EventEnvelope
 
   @spec context_for_session(String.t()) :: {:ok, map()} | {:error, {atom(), String.t()}}
   def context_for_session(session_id) do
     with true <- is_binary(session_id) and byte_size(String.trim(session_id)) > 0 do
-      case session_by_session_id(session_id) do
+      case AgentSession.fetch_by_session_id(session_id) do
         %AgentSession{} = agent_session ->
           with {:ok, cell} <- get_cell(agent_session.cell_id) do
             {:ok, build_session_context(session_id, cell, agent_session)}
@@ -77,15 +77,8 @@ defmodule HiveServerElixir.Cells.AgentSessionRead do
     |> maybe_put(:modeUpdatedAt, mode_updated_at)
   end
 
-  @spec maybe_existing_atom(String.t()) :: atom() | nil
-  def maybe_existing_atom(key) when is_binary(key) do
-    String.to_existing_atom(key)
-  rescue
-    ArgumentError -> nil
-  end
-
   defp payload_for_loaded_cell(cell) do
-    agent_session = session_by_cell_id(cell.id)
+    agent_session = AgentSession.fetch_for_cell(cell.id)
 
     session_id =
       case agent_session do
@@ -138,18 +131,6 @@ defmodule HiveServerElixir.Cells.AgentSessionRead do
       agent_session: agent_session,
       timeline: AgentEventLog.list_session_timeline(session_id)
     }
-  end
-
-  defp session_by_session_id(session_id) do
-    AgentSession
-    |> Ash.Query.filter(expr(session_id == ^session_id))
-    |> Ash.read_one!(domain: Cells)
-  end
-
-  defp session_by_cell_id(cell_id) do
-    AgentSession
-    |> Ash.Query.filter(expr(cell_id == ^cell_id))
-    |> Ash.read_one!(domain: Cells)
   end
 
   defp fallback_session_id(cell) do
@@ -205,9 +186,8 @@ defmodule HiveServerElixir.Cells.AgentSessionRead do
   end
 
   defp event_status(%AgentEvent{} = event) do
-    payload = event_payload(event)
-    event_type = read_key(payload, "type") || event.event_type
-    properties = read_key(payload, "properties") || %{}
+    event_type = EventEnvelope.type(event)
+    properties = EventEnvelope.properties(event)
 
     cond do
       event_type == "session.error" ->
@@ -219,8 +199,8 @@ defmodule HiveServerElixir.Cells.AgentSessionRead do
       event_type in ["permission.asked", "permission.updated", "question.asked"] ->
         "awaiting_input"
 
-      event_type == "session.status" and is_binary(read_key(properties, "status")) ->
-        read_key(properties, "status")
+      event_type == "session.status" and is_binary(EventEnvelope.get(properties, "status")) ->
+        EventEnvelope.get(properties, "status")
 
       event_type in [
         "message.part.delta",
@@ -239,7 +219,7 @@ defmodule HiveServerElixir.Cells.AgentSessionRead do
     mode_events =
       context.timeline
       |> Enum.flat_map(fn event ->
-        mode = event_mode(event)
+        mode = EventEnvelope.mode(event)
 
         if mode in ["plan", "build"] do
           [{mode, maybe_to_iso8601(event.inserted_at)}]
@@ -279,22 +259,6 @@ defmodule HiveServerElixir.Cells.AgentSessionRead do
     {start_mode, current_mode, mode_updated_at}
   end
 
-  defp event_mode(%AgentEvent{} = event) do
-    payload = event_payload(event)
-    properties = read_key(payload, "properties") || %{}
-
-    candidate =
-      read_key(properties, "agent") ||
-        read_key(properties, "currentMode") ||
-        read_key(properties, "startMode")
-
-    if candidate in ["plan", "build"], do: candidate, else: nil
-  end
-
-  defp event_payload(%AgentEvent{} = event) do
-    read_key(event.payload, "payload") || event.payload || %{}
-  end
-
   defp agent_session_mode(%AgentSession{} = session, :start_mode),
     do: normalize_mode(session.start_mode)
 
@@ -326,67 +290,25 @@ defmodule HiveServerElixir.Cells.AgentSessionRead do
   defp timeline_provider_id(timeline) do
     timeline
     |> Enum.reverse()
-    |> Enum.find_value(fn event ->
-      payload = event_payload(event)
-      properties = read_key(payload, "properties") || %{}
-      model = read_key(properties, "model") || %{}
-
-      read_key(model, "providerID") ||
-        read_key(model, "providerId") ||
-        read_key(properties, "providerID") ||
-        read_key(properties, "providerId")
-    end)
+    |> Enum.find_value(&EventEnvelope.provider_id/1)
   end
 
   defp timeline_model_id(timeline) do
     timeline
     |> Enum.reverse()
-    |> Enum.find_value(fn event ->
-      payload = event_payload(event)
-      properties = read_key(payload, "properties") || %{}
-      model = read_key(properties, "model") || %{}
-
-      read_key(model, "modelID") ||
-        read_key(model, "modelId") ||
-        read_key(properties, "modelID") ||
-        read_key(properties, "modelId")
-    end)
+    |> Enum.find_value(&EventEnvelope.model_id/1)
   end
 
   defp workspace_provider_id(workspace_path) do
-    case load_workspace_model_defaults(workspace_path) do
-      {provider_id, _model_id} -> provider_id
+    case TemplateConfig.load_agent_defaults(workspace_path) do
+      %{provider_id: provider_id} -> provider_id
       _other -> nil
     end
   end
 
   defp workspace_model_id(workspace_path) do
-    case load_workspace_model_defaults(workspace_path) do
-      {_provider_id, model_id} -> model_id
-      _other -> nil
-    end
-  end
-
-  defp load_workspace_model_defaults(workspace_path) when is_binary(workspace_path) do
-    @opencode_config_filenames
-    |> Enum.map(&Path.join(workspace_path, &1))
-    |> Enum.find_value(fn config_path ->
-      with {:ok, contents} <- File.read(config_path),
-           {:ok, decoded} <- Jason.decode(contents),
-           model when is_binary(model) <- Map.get(decoded, "model") do
-        parse_workspace_model(model)
-      else
-        _other -> nil
-      end
-    end)
-  end
-
-  defp load_workspace_model_defaults(_workspace_path), do: nil
-
-  defp parse_workspace_model(model) when is_binary(model) do
-    case model |> String.trim() |> String.split("/", parts: 2) do
-      [provider_id, model_id] when provider_id != "" and model_id != "" -> {provider_id, model_id}
-      [model_id] when model_id != "" -> {nil, model_id}
+    case TemplateConfig.load_agent_defaults(workspace_path) do
+      %{model_id: model_id} -> model_id
       _other -> nil
     end
   end
@@ -420,19 +342,4 @@ defmodule HiveServerElixir.Cells.AgentSessionRead do
   defp maybe_to_iso8601(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
   defp maybe_to_iso8601(value) when is_binary(value), do: value
   defp maybe_to_iso8601(_value), do: nil
-
-  defp read_key(value, key) when is_map(value) and is_binary(key) do
-    case Map.fetch(value, key) do
-      {:ok, found} ->
-        found
-
-      :error ->
-        case maybe_existing_atom(key) do
-          atom when is_atom(atom) -> Map.get(value, atom)
-          _other -> nil
-        end
-    end
-  end
-
-  defp read_key(_value, _key), do: nil
 end

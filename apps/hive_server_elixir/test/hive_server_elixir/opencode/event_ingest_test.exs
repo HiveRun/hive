@@ -39,6 +39,23 @@ defmodule HiveServerElixir.Opencode.EventIngestTest do
     assert second.event_type == "session.status"
   end
 
+  test "ingest_next normalizes persistence errors after fetch" do
+    context = %{workspace_id: "workspace-1", cell_id: "cell-1"}
+    payload = global_event_payload(type: "session.idle", session_id: "session-error")
+
+    assert {:error, error} =
+             EventIngest.ingest_next(
+               context,
+               operations_module: TestOperations,
+               global_event: fn _opts -> {:ok, payload} end,
+               persist_global_event: fn _event, _persist_context -> {:error, :db_unavailable} end
+             )
+
+    assert error.type == :persistence_error
+    assert error.status == nil
+    assert error.details == :db_unavailable
+  end
+
   defp global_event_payload(attrs) do
     attrs = Map.new(attrs)
     type = Map.fetch!(attrs, :type)

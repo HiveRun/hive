@@ -7,6 +7,7 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCellTest do
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Lifecycle
+  alias HiveServerElixir.Cells.Provisioning
   alias HiveServerElixir.Cells.Workspace
   alias HiveServerElixir.Opencode.AgentEventLog
   alias HiveServerElixir.Opencode.TestOperations
@@ -52,8 +53,15 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCellTest do
                fail_after_ingest: true
              })
 
-    assert [%{id: cell_id, status: :provisioning}] =
+    assert [%{id: cell_id, status: :error, last_setup_error: "forced_failure_after_ingest"}] =
              list_cells_by_description(workspace.id, "Create cell reactor failure")
+
+    assert {:ok, provisioning} =
+             Provisioning
+             |> Ash.Query.filter(expr(cell_id == ^cell_id))
+             |> Ash.read_one(domain: Cells)
+
+    assert %DateTime{} = provisioning.finished_at
 
     assert [] = Registry.lookup(@registry, {workspace.id, cell_id})
   end

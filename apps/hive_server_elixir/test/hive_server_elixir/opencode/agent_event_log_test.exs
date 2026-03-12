@@ -71,6 +71,40 @@ defmodule HiveServerElixir.Opencode.AgentEventLogTest do
       assert entry.event_type == "server.connected"
     end
 
+    test "uses EventEnvelope helpers for atom-keyed payloads" do
+      global_event = %{
+        payload: %{
+          type: "session.status",
+          properties: %{sessionId: "session-atom"}
+        }
+      }
+
+      context = %{workspace_id: "workspace-1", cell_id: "cell-1"}
+
+      assert {:ok, entry} = AgentEventLog.append_global_event(global_event, context)
+
+      assert entry.session_id == "session-atom"
+      assert entry.event_type == "session.status"
+      assert entry.seq == 1
+    end
+
+    test "uses legacy compatibility fallback only when envelope parsing misses session id" do
+      global_event = %{
+        "payload" => %{
+          "type" => "session.status",
+          "details" => [%{"sessionId" => "session-legacy"}]
+        }
+      }
+
+      context = %{workspace_id: "workspace-1", cell_id: "cell-1"}
+
+      assert {:ok, entry} = AgentEventLog.append_global_event(global_event, context)
+
+      assert entry.session_id == "session-legacy"
+      assert entry.event_type == "session.status"
+      assert entry.seq == 1
+    end
+
     test "allocates unique ordered sequences under concurrent writes" do
       global_event = %{
         "payload" => %{"type" => "session.idle", "properties" => %{"sessionID" => "session-f"}}

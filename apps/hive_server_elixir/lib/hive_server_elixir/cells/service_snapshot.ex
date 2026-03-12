@@ -1,12 +1,8 @@
 defmodule HiveServerElixir.Cells.ServiceSnapshot do
   @moduledoc false
 
-  import Ash.Expr
-  require Ash.Query
-
-  alias HiveServerElixir.Cells
-  alias HiveServerElixir.Cells.ServicePayload
   alias HiveServerElixir.Cells.Service
+  alias HiveServerElixir.Cells.ServicePayload
   alias HiveServerElixir.Cells.ServiceReconciliation
   alias HiveServerElixir.Cells.ServiceStatus
   alias HiveServerElixir.Cells.TerminalRuntime
@@ -82,18 +78,14 @@ defmodule HiveServerElixir.Cells.ServiceSnapshot do
   end
 
   defp list_services(cell_id) do
-    Service
-    |> Ash.Query.filter(expr(cell_id == ^cell_id))
-    |> Ash.Query.sort(inserted_at: :asc)
-    |> Ash.read!(domain: Cells)
+    Service.list_for_cell(cell_id)
   end
 
   defp normalize_opts(opts) when is_map(opts) do
-    %{
-      lines: Map.get(opts, :lines, @default_log_lines),
-      offset: Map.get(opts, :offset, @default_log_offset),
-      include_resources: Map.get(opts, :include_resources, false)
-    }
+    opts
+    |> Service.snapshot_options()
+    |> Map.put_new(:lines, @default_log_lines)
+    |> Map.put_new(:offset, @default_log_offset)
   end
 
   defp service_log_tail(%Service{} = service, %{lines: lines, offset: offset}) do

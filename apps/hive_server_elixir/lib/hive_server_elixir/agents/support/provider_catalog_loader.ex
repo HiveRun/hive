@@ -2,6 +2,7 @@ defmodule HiveServerElixir.Agents.Support.ProviderCatalogLoader do
   @moduledoc false
 
   alias HiveServerElixir.Cells.AgentSessionRead
+  alias HiveServerElixir.Opencode.EventEnvelope
   alias HiveServerElixir.Opencode.Generated.Operations
   alias HiveServerElixir.Workspaces
 
@@ -148,18 +149,5 @@ defmodule HiveServerElixir.Agents.Support.ProviderCatalogLoader do
   defp error_message(%{message: message}) when is_binary(message), do: message
   defp error_message(_body), do: "Failed to list models"
 
-  defp read_key(value, key) when is_map(value) and is_binary(key) do
-    case Map.fetch(value, key) do
-      {:ok, found} ->
-        found
-
-      :error ->
-        case AgentSessionRead.maybe_existing_atom(key) do
-          atom when is_atom(atom) -> Map.get(value, atom)
-          _other -> nil
-        end
-    end
-  end
-
-  defp read_key(_value, _key), do: nil
+  defp read_key(value, key), do: EventEnvelope.get(value, key)
 end

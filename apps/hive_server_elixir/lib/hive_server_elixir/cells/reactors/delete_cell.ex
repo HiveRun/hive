@@ -26,7 +26,7 @@ defmodule HiveServerElixir.Cells.Reactors.DeleteCell do
     argument(:cell, result(:load_cell))
 
     run(fn %{cell: cell}, _context ->
-      {:ok, %{workspace_id: cell.workspace_id, cell_id: cell.id}}
+      {:ok, Cell.ingest_context(cell)}
     end)
   end
 

@@ -1,6 +1,9 @@
 defmodule HiveServerElixir.Cells.Timing do
   @moduledoc false
 
+  import Ash.Expr
+  require Ash.Query
+
   use Ash.Resource,
     extensions: [AshTypescript.Resource],
     domain: HiveServerElixir.Cells,
@@ -183,4 +186,43 @@ defmodule HiveServerElixir.Cells.Timing do
       attribute_writable? true
     end
   end
+
+  @spec latest_for_cell(String.t()) :: t() | nil
+  def latest_for_cell(cell_id) when is_binary(cell_id) do
+    __MODULE__
+    |> Ash.Query.filter(expr(cell_id == ^cell_id))
+    |> Ash.Query.sort(inserted_at: :desc, id: :desc)
+    |> Ash.Query.limit(1)
+    |> Ash.read(domain: HiveServerElixir.Cells)
+    |> case do
+      {:ok, [timing | _]} -> timing
+      {:ok, []} -> nil
+      {:error, _reason} -> nil
+    end
+  end
+
+  @spec snapshot_payload(t() | nil) :: map() | nil
+  def snapshot_payload(nil), do: nil
+
+  def snapshot_payload(timing) when is_map(timing) do
+    %{
+      id: timing.id,
+      cellId: timing.cell_id,
+      cellName: timing.cell_name,
+      workspaceId: timing.workspace_id,
+      templateId: timing.template_id,
+      runId: timing.run_id,
+      workflow: timing.workflow,
+      step: timing.step,
+      status: timing.status,
+      attempt: timing.attempt,
+      error: timing.error,
+      metadata: timing.metadata,
+      durationMs: timing.duration_ms,
+      createdAt: maybe_to_iso8601(timing.inserted_at)
+    }
+  end
+
+  defp maybe_to_iso8601(nil), do: nil
+  defp maybe_to_iso8601(datetime), do: DateTime.to_iso8601(datetime)
 end

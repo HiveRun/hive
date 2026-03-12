@@ -1,9 +1,16 @@
 defmodule HiveServerElixir.Cells.Service do
   @moduledoc false
 
+  import Ash.Expr
+  require Ash.Query
+
+  alias HiveServerElixir.Cells.Activity
+  alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.ServicePayload
   alias HiveServerElixir.Cells.ServiceReconciliation
+  alias HiveServerElixir.Cells.ServiceRuntime
+  alias HiveServerElixir.Cells.ServiceSnapshot
   alias HiveServerElixir.Cells.ServiceStatus
 
   use Ash.Resource,
@@ -44,19 +51,7 @@ defmodule HiveServerElixir.Cells.Service do
       constraints fields: [reconciled_count: [type: :integer], updated_count: [type: :integer]]
 
       run fn _input, _context ->
-        services = Ash.read!(__MODULE__, domain: Cells)
-        snapshots = ServiceReconciliation.reconcile_all(services)
-
-        updated_count =
-          services
-          |> Enum.zip(snapshots)
-          |> Enum.count(fn {service, snapshot} ->
-            service.status != snapshot.service.status ||
-              service.pid != snapshot.service.pid ||
-              service.last_known_error != snapshot.service.last_known_error
-          end)
-
-        {:ok, %{reconciled_count: length(snapshots), updated_count: updated_count}}
+        reconcile_runtime_inventory_payload()
       end
     end
 
@@ -89,7 +84,7 @@ defmodule HiveServerElixir.Cells.Service do
       end
 
       run fn input, _context ->
-        Cells.start_service_rpc(input.arguments)
+        start_payload(input.arguments)
       end
     end
 
@@ -122,7 +117,7 @@ defmodule HiveServerElixir.Cells.Service do
       end
 
       run fn input, _context ->
-        Cells.stop_service_rpc(input.arguments)
+        stop_payload(input.arguments)
       end
     end
 
@@ -155,7 +150,7 @@ defmodule HiveServerElixir.Cells.Service do
       end
 
       run fn input, _context ->
-        Cells.restart_service_rpc(input.arguments)
+        restart_payload(input.arguments)
       end
     end
 
@@ -302,6 +297,140 @@ defmodule HiveServerElixir.Cells.Service do
     end
   end
 
+  @spec reconcile_runtime_inventory_payload() :: {:ok, map()}
+  def reconcile_runtime_inventory_payload do
+    services = Ash.read!(__MODULE__, domain: Cells)
+    snapshots = ServiceReconciliation.reconcile_all(services)
+
+    updated_count =
+      services
+      |> Enum.zip(snapshots)
+      |> Enum.count(fn {service, snapshot} ->
+        service.status != snapshot.service.status ||
+          service.pid != snapshot.service.pid ||
+          service.last_known_error != snapshot.service.last_known_error
+      end)
+
+    {:ok, %{reconciled_count: length(snapshots), updated_count: updated_count}}
+  end
+
+  @spec list_payloads(String.t(), map()) :: {:ok, [map()]} | {:error, term()}
+  def list_payloads(cell_id, opts \\ %{}) when is_binary(cell_id) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells) do
+      {:ok, ServiceSnapshot.list_rpc_payloads(cell_id, snapshot_options(opts))}
+    end
+  end
+
+  @spec start_payload(map()) :: {:ok, map()} | {:error, term()}
+  def start_payload(input) when is_map(input) do
+    lifecycle_payload(input, "service.start", &ensure_runtime_start/1, %{})
+  end
+
+  @spec stop_payload(map()) :: {:ok, map()} | {:error, term()}
+  def stop_payload(input) when is_map(input) do
+    lifecycle_payload(input, "service.stop", &ensure_runtime_stop/1, %{})
+  end
+
+  @spec restart_payload(map()) :: {:ok, map()} | {:error, term()}
+  def restart_payload(input) when is_map(input) do
+    lifecycle_payload(input, "service.restart", &ensure_runtime_restart/1, fn service ->
+      %{"serviceName" => service.name}
+    end)
+  end
+
+  @spec start_all_payloads(String.t(), map()) :: {:ok, [map()]} | {:error, term()}
+  def start_all_payloads(cell_id, audit \\ %{}) when is_binary(cell_id) and is_map(audit) do
+    batch_payloads(cell_id, audit, "services.start", &ensure_runtime_start/1)
+  end
+
+  @spec stop_all_payloads(String.t(), map()) :: {:ok, [map()]} | {:error, term()}
+  def stop_all_payloads(cell_id, audit \\ %{}) when is_binary(cell_id) and is_map(audit) do
+    batch_payloads(cell_id, audit, "services.stop", &ensure_runtime_stop/1)
+  end
+
+  @spec restart_all_payloads(String.t(), map()) :: {:ok, [map()]} | {:error, term()}
+  def restart_all_payloads(cell_id, audit \\ %{}) when is_binary(cell_id) and is_map(audit) do
+    batch_payloads(cell_id, audit, "services.restart", &ensure_runtime_restart/1)
+  end
+
+  @spec list_for_cell(String.t()) :: [map()]
+  def list_for_cell(cell_id) when is_binary(cell_id) do
+    __MODULE__
+    |> Ash.Query.filter(expr(cell_id == ^cell_id))
+    |> Ash.Query.sort(inserted_at: :asc)
+    |> Ash.read!(domain: Cells)
+  end
+
+  @spec snapshot_payload(map()) :: map()
+  def snapshot_payload(%{service: service} = _snapshot) when is_map(service) do
+    rpc_payload = ServiceSnapshot.rpc_payload(service)
+
+    %{
+      id: Map.get(rpc_payload, :id),
+      cellId: service.cell_id,
+      name: Map.get(rpc_payload, :name),
+      type: Map.get(rpc_payload, :type),
+      status: Map.get(rpc_payload, :status),
+      pid: Map.get(rpc_payload, :pid),
+      port: Map.get(rpc_payload, :port),
+      command: Map.get(rpc_payload, :command),
+      cwd: Map.get(rpc_payload, :cwd),
+      env: Map.get(rpc_payload, :env),
+      lastKnownError: Map.get(rpc_payload, :last_known_error),
+      insertedAt: maybe_to_iso8601(service.inserted_at),
+      updatedAt: Map.get(rpc_payload, :updated_at)
+    }
+  end
+
+  def snapshot_payload(service) when is_map(service) do
+    service
+    |> ServiceReconciliation.reconcile()
+    |> snapshot_payload()
+  end
+
+  @spec snapshot_payloads_for_cell(String.t()) :: [map()]
+  def snapshot_payloads_for_cell(cell_id) when is_binary(cell_id) do
+    cell_id
+    |> list_for_cell()
+    |> ServiceReconciliation.reconcile_all()
+    |> Enum.map(&snapshot_payload/1)
+  end
+
+  @spec process_summary_payload(map(), String.t()) :: map()
+  def process_summary_payload(%{service: service} = snapshot, sampled_at)
+      when is_map(service) and is_binary(sampled_at) do
+    %{
+      kind: "service",
+      serviceType: service.type,
+      id: service.id,
+      name: service.name,
+      status: ServiceStatus.present(snapshot.status),
+      pid: snapshot.pid,
+      processAlive: snapshot.process_alive,
+      active: snapshot.process_alive and ServiceStatus.running?(snapshot.status),
+      cpuPercent: nil,
+      rssBytes: nil,
+      resourceSampledAt: sampled_at,
+      resourceUnavailableReason: process_unavailable_reason(snapshot.pid, snapshot.process_alive)
+    }
+  end
+
+  def process_summary_payload(service, sampled_at)
+      when is_map(service) and is_binary(sampled_at) do
+    service
+    |> ServiceReconciliation.reconcile()
+    |> process_summary_payload(sampled_at)
+  end
+
+  @spec snapshot_options(map()) :: map()
+  def snapshot_options(input) when is_map(input) do
+    %{
+      include_resources: Map.get(input, :include_resources, false),
+      lines: Map.get(input, :lines) || Map.get(input, :log_lines) || 200,
+      offset: Map.get(input, :offset) || Map.get(input, :log_offset) || 0
+    }
+  end
+
   defp validate_lifecycle_transition(changeset, target_status) do
     current_status = normalize_status(Ash.Changeset.get_data(changeset, :status))
 
@@ -326,6 +455,92 @@ defmodule HiveServerElixir.Cells.Service do
 
   defp normalize_status(status) when is_atom(status), do: status
   defp normalize_status(_status), do: nil
+
+  defp lifecycle_payload(input, activity_type, runtime_fun, metadata_fun)
+       when is_map(input) and is_function(runtime_fun, 1) do
+    with {:ok, service} <- Ash.get(__MODULE__, Map.fetch!(input, :service_id), domain: Cells),
+         :ok <- runtime_fun.(service),
+         {:ok, updated_service} <- Ash.get(__MODULE__, service.id, domain: Cells) do
+      metadata = if is_function(metadata_fun, 1), do: metadata_fun.(service), else: metadata_fun
+      _ = record_activity(service.cell_id, service.id, activity_type, input, metadata)
+      {:ok, ServiceSnapshot.rpc_payload(updated_service)}
+    end
+  end
+
+  defp batch_payloads(cell_id, audit, activity_type, runtime_fun)
+       when is_binary(cell_id) and is_map(audit) and is_function(runtime_fun, 1) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         :ok <- apply_all(list_for_cell(cell_id), runtime_fun) do
+      _ = record_activity(cell_id, nil, activity_type, audit, %{})
+      {:ok, ServiceSnapshot.list_rpc_payloads(cell_id)}
+    end
+  end
+
+  defp apply_all(services, runtime_fun) do
+    Enum.reduce_while(services, :ok, fn service, :ok ->
+      case runtime_fun.(service) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp record_activity(cell_id, service_id, type, audit, metadata) do
+    attrs =
+      %{
+        cell_id: cell_id,
+        type: type,
+        source: Map.get(audit, :source),
+        tool_name: Map.get(audit, :tool_name),
+        metadata: merge_audit_metadata(audit, metadata || %{})
+      }
+      |> maybe_put_service_id(service_id)
+
+    case Ash.create(Activity, attrs, domain: Cells) do
+      {:ok, _activity} -> :ok
+      {:error, _error} -> :ok
+    end
+  end
+
+  defp merge_audit_metadata(audit, metadata) when is_map(metadata) do
+    metadata
+    |> maybe_put_metadata("auditEvent", Map.get(audit, :audit_event))
+    |> maybe_put_metadata("serviceName", Map.get(audit, :service_name))
+  end
+
+  defp maybe_put_service_id(attrs, nil), do: attrs
+  defp maybe_put_service_id(attrs, service_id), do: Map.put(attrs, :service_id, service_id)
+
+  defp ensure_runtime_start(service) do
+    case ServiceRuntime.start_service(service) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :service_runtime_unavailable}
+    end
+  end
+
+  defp ensure_runtime_stop(service) do
+    case ServiceRuntime.stop_service(service) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :service_runtime_unavailable}
+    end
+  end
+
+  defp ensure_runtime_restart(service) do
+    case ServiceRuntime.restart_service(service) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :service_runtime_unavailable}
+    end
+  end
+
+  defp maybe_put_metadata(metadata, _key, nil), do: metadata
+  defp maybe_put_metadata(metadata, key, value), do: Map.put(metadata, key, value)
+
+  defp maybe_to_iso8601(nil), do: nil
+  defp maybe_to_iso8601(datetime), do: DateTime.to_iso8601(datetime)
+
+  defp process_unavailable_reason(pid, _process_alive) when not is_integer(pid), do: "pid_missing"
+  defp process_unavailable_reason(_pid, false), do: "process_not_alive"
+  defp process_unavailable_reason(_pid, true), do: "sample_failed"
 
   defp reconcile_runtime_state(changeset) do
     case normalize_status(Ash.Changeset.get_argument_or_attribute(changeset, :status)) do

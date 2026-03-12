@@ -1,9 +1,6 @@
 defmodule HiveServerElixir.Cells.Resources.CellSetupActionTest do
   use HiveServerElixir.DataCase, async: false
 
-  import Ash.Expr
-  require Ash.Query
-
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells.Cell
@@ -22,13 +19,13 @@ defmodule HiveServerElixir.Cells.Resources.CellSetupActionTest do
     assert updated_cell.resume_agent_session_on_startup == true
     assert is_binary(updated_cell.opencode_session_id)
 
-    assert {:ok, provisioning} = provisioning_for_cell(updated_cell.id)
+    assert provisioning = Provisioning.fetch_for_cell(updated_cell.id)
     assert provisioning.attempt_count == 1
     assert provisioning.start_mode == "build"
     assert %DateTime{} = provisioning.started_at
     assert provisioning.finished_at == nil
 
-    assert {:ok, session} = session_for_cell(updated_cell.id)
+    assert session = AgentSession.fetch_for_cell(updated_cell.id)
     assert session.session_id == updated_cell.opencode_session_id
     assert session.start_mode == "build"
     assert session.current_mode == "build"
@@ -68,7 +65,7 @@ defmodule HiveServerElixir.Cells.Resources.CellSetupActionTest do
     assert updated_cell.last_setup_error == nil
     assert updated_cell.opencode_session_id == "persisted-session"
 
-    assert {:ok, provisioning} = provisioning_for_cell(updated_cell.id)
+    assert provisioning = Provisioning.fetch_for_cell(updated_cell.id)
     assert provisioning.attempt_count == 3
 
     assert {:ok, refreshed_session} = Ash.get(AgentSession, session.id, domain: Cells)
@@ -94,7 +91,7 @@ defmodule HiveServerElixir.Cells.Resources.CellSetupActionTest do
     assert updated_cell.status == :error
     assert updated_cell.last_setup_error == "template failed"
 
-    assert {:ok, provisioning} = provisioning_for_cell(updated_cell.id)
+    assert provisioning = Provisioning.fetch_for_cell(updated_cell.id)
     assert %DateTime{} = provisioning.finished_at
   end
 
@@ -125,17 +122,5 @@ defmodule HiveServerElixir.Cells.Resources.CellSetupActionTest do
              )
 
     cell
-  end
-
-  defp provisioning_for_cell(cell_id) do
-    Provisioning
-    |> Ash.Query.filter(expr(cell_id == ^cell_id))
-    |> Ash.read_one(domain: Cells)
-  end
-
-  defp session_for_cell(cell_id) do
-    AgentSession
-    |> Ash.Query.filter(expr(cell_id == ^cell_id))
-    |> Ash.read_one(domain: Cells)
   end
 end

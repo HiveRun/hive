@@ -91,6 +91,35 @@ defmodule HiveServerElixir.Cells.TerminalEventsTest do
     assert :ok = TerminalRuntime.clear_cell(cell_id)
   end
 
+  test "project_opencode_event falls back to nested and default session error messages" do
+    cell_id = "cell-chat-nested-errors-" <> Ash.UUID.generate()
+    context = %{workspace_id: "workspace-chat", cell_id: cell_id}
+
+    assert :ok = Events.subscribe_chat_terminal(cell_id)
+
+    assert :ok =
+             TerminalEvents.project_opencode_event(context, %{
+               "payload" => %{
+                 "type" => "session.error",
+                 "properties" => %{"error" => %{"message" => "nested crash"}}
+               }
+             })
+
+    assert_receive {:chat_terminal_error, %{cell_id: ^cell_id, message: "nested crash"}}
+
+    assert :ok =
+             TerminalEvents.project_opencode_event(context, %{
+               "payload" => %{
+                 "type" => "session.error",
+                 "properties" => %{}
+               }
+             })
+
+    assert_receive {:chat_terminal_error, %{cell_id: ^cell_id, message: "OpenCode session error"}}
+
+    assert :ok = TerminalRuntime.clear_cell(cell_id)
+  end
+
   test "project_opencode_event persists agent session runtime details and errors" do
     workspace = workspace!("terminal-events-session")
     cell = cell!(workspace, "ready")

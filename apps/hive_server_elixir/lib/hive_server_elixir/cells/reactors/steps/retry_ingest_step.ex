@@ -3,8 +3,8 @@ defmodule HiveServerElixir.Cells.Reactors.Steps.RetryIngestStep do
 
   use Reactor.Step
 
+  alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Lifecycle
-  alias HiveServerElixir.Cells.SetupAttempt
 
   @impl true
   def run(arguments, _context, _options) do
@@ -16,7 +16,7 @@ defmodule HiveServerElixir.Cells.Reactors.Steps.RetryIngestStep do
 
   @impl true
   def compensate(reason, arguments, _context, _options) do
-    SetupAttempt.finalize_error(arguments.context.cell_id, reason)
+    Cell.finalize_setup_error(arguments.context.cell_id, reason)
   end
 
   @impl true

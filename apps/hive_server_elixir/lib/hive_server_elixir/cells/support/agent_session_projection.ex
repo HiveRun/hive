@@ -1,12 +1,10 @@
 defmodule HiveServerElixir.Cells.AgentSessionProjection do
   @moduledoc false
 
-  import Ash.Expr
-  require Ash.Query
-
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells.Cell
+  alias HiveServerElixir.Opencode.EventEnvelope
 
   @healthy_session_events [
     "message.part.delta",
@@ -50,7 +48,7 @@ defmodule HiveServerElixir.Cells.AgentSessionProjection do
   end
 
   defp ensure_session(%Cell{} = cell, session_id, global_event) when is_binary(session_id) do
-    case session_by_session_id(session_id) || session_by_cell_id(cell.id) do
+    case AgentSession.fetch_by_session_id(session_id) || AgentSession.fetch_for_cell(cell.id) do
       %AgentSession{} = session ->
         {:ok, session}
 
@@ -112,7 +110,7 @@ defmodule HiveServerElixir.Cells.AgentSessionProjection do
   end
 
   defp maybe_record_error(%AgentSession{} = session, global_event) do
-    event_type = event_type(global_event)
+    event_type = EventEnvelope.type(global_event)
     error_message = event_error_message(global_event)
 
     cond do
@@ -141,79 +139,37 @@ defmodule HiveServerElixir.Cells.AgentSessionProjection do
   defp get_cell(cell_id) when is_binary(cell_id), do: Ash.get(Cell, cell_id, domain: Cells)
   defp get_cell(_cell_id), do: {:error, :cell_not_found}
 
-  defp session_by_session_id(session_id) do
-    AgentSession
-    |> Ash.Query.filter(expr(session_id == ^session_id))
-    |> Ash.read_one!(domain: Cells)
-  end
-
-  defp session_by_cell_id(cell_id) do
-    AgentSession
-    |> Ash.Query.filter(expr(cell_id == ^cell_id))
-    |> Ash.read_one!(domain: Cells)
-  end
-
   defp cell_id_from_context(context) when is_map(context) do
-    map_value(context, "cell_id")
+    EventEnvelope.get(context, "cell_id")
   end
 
   defp session_id_from_event(context, global_event) do
-    event_session_id(global_event) || map_value(context, "session_id")
-  end
-
-  defp event_session_id(global_event) do
-    properties = event_properties(global_event)
-
-    map_value(properties, "sessionID") ||
-      map_value(properties, "sessionId") ||
-      map_value(properties, "session_id") ||
-      map_value(global_event, "sessionID") ||
-      map_value(global_event, "sessionId") ||
-      map_value(global_event, "session_id")
+    EventEnvelope.session_id(global_event) || EventEnvelope.get(context, "session_id")
   end
 
   defp event_mode(global_event) do
-    properties = event_properties(global_event)
-
-    case map_value(properties, "agent") || map_value(properties, "currentMode") ||
-           map_value(properties, "startMode") do
-      "plan" -> "plan"
-      "build" -> "build"
-      _other -> nil
-    end
+    EventEnvelope.mode(global_event)
   end
 
   defp event_model_id(global_event) do
-    properties = event_properties(global_event)
-    model = map_value(properties, "model") || %{}
-
-    map_value(model, "modelID") ||
-      map_value(model, "modelId") ||
-      map_value(properties, "modelID") ||
-      map_value(properties, "modelId")
+    EventEnvelope.model_id(global_event)
   end
 
   defp event_provider_id(global_event) do
-    properties = event_properties(global_event)
-    model = map_value(properties, "model") || %{}
-
-    map_value(model, "providerID") ||
-      map_value(model, "providerId") ||
-      map_value(properties, "providerID") ||
-      map_value(properties, "providerId")
+    EventEnvelope.provider_id(global_event)
   end
 
   defp event_error_message(global_event) do
-    if event_type(global_event) == "session.error" do
-      properties = event_properties(global_event)
-      nested_error = map_value(properties, "error")
+    if EventEnvelope.type(global_event) == "session.error" do
+      properties = EventEnvelope.properties(global_event)
+      nested_error = EventEnvelope.get(properties, "error")
 
       cond do
-        is_binary(map_value(properties, "message")) ->
-          map_value(properties, "message")
+        is_binary(EventEnvelope.get(properties, "message")) ->
+          EventEnvelope.get(properties, "message")
 
-        is_map(nested_error) and is_binary(map_value(nested_error, "message")) ->
-          map_value(nested_error, "message")
+        is_map(nested_error) and is_binary(EventEnvelope.get(nested_error, "message")) ->
+          EventEnvelope.get(nested_error, "message")
 
         true ->
           "OpenCode session error"
@@ -221,30 +177,7 @@ defmodule HiveServerElixir.Cells.AgentSessionProjection do
     end
   end
 
-  defp event_type(global_event) do
-    global_event
-    |> map_value("payload")
-    |> map_value("type")
-  end
-
-  defp event_properties(global_event) do
-    global_event
-    |> map_value("payload")
-    |> map_value("properties") || %{}
-  end
-
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, _key, ""), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
-
-  defp map_value(map, key) when is_map(map) and is_binary(key) do
-    Map.get(map, key) || Map.get(map, key_to_existing_atom(key))
-  rescue
-    ArgumentError ->
-      Map.get(map, key)
-  end
-
-  defp map_value(_map, _key), do: nil
-
-  defp key_to_existing_atom(key), do: String.to_existing_atom(key)
 end

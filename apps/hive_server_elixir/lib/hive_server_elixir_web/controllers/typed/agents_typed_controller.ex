@@ -2,6 +2,7 @@ defmodule HiveServerElixir.AgentsTypedController do
   use AshTypescript.TypedController
 
   alias HiveServerElixir.Agents
+  alias HiveServerElixirWeb.TypedControllerSupport
 
   typed_controller do
     module_name(HiveServerElixirWeb.AgentReadController)
@@ -11,7 +12,7 @@ defmodule HiveServerElixir.AgentsTypedController do
       argument(:workspace_id, :string)
 
       run(fn conn, params ->
-        workspace_id = resolve_workspace_id(params, conn)
+        workspace_id = TypedControllerSupport.workspace_id_from_params_or_header(params, conn)
 
         case Agents.provider_payload_for_workspace(workspace_id) do
           {:ok, payload} ->
@@ -52,28 +53,9 @@ defmodule HiveServerElixir.AgentsTypedController do
             Phoenix.Controller.json(conn, payload)
 
           {:error, {status, message}} ->
-            conn
-            |> Plug.Conn.put_status(status)
-            |> Phoenix.Controller.json(%{message: message})
+            TypedControllerSupport.json_message(conn, status, message)
         end
       end)
-    end
-  end
-
-  defp resolve_workspace_id(params, conn) do
-    query_workspace_id = params[:workspace_id]
-
-    if is_binary(query_workspace_id) and byte_size(String.trim(query_workspace_id)) > 0 do
-      String.trim(query_workspace_id)
-    else
-      case Plug.Conn.get_req_header(conn, "x-workspace-id") do
-        [workspace_id | _rest] ->
-          trimmed_workspace_id = String.trim(workspace_id)
-          if byte_size(trimmed_workspace_id) > 0, do: trimmed_workspace_id, else: nil
-
-        _other ->
-          nil
-      end
     end
   end
 end

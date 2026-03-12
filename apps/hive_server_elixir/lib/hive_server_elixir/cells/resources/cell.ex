@@ -6,9 +6,14 @@ defmodule HiveServerElixir.Cells.Cell do
 
   alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells
+  alias HiveServerElixir.Cells.CellCommands
   alias HiveServerElixir.Cells.CellStatus
+  alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.Provisioning
+  alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.ServicePayload
+  alias HiveServerElixir.Cells.TerminalEvents
+  alias HiveServerElixir.Cells.Workspace
 
   @cell_payload_fields [
     id: [type: :uuid, allow_nil?: false],
@@ -119,7 +124,7 @@ defmodule HiveServerElixir.Cells.Cell do
       validate one_of(:start_mode, ["plan", "build"])
 
       run fn input, _context ->
-        Cells.create_cell_rpc(input.arguments)
+        create_payload(input.arguments)
       end
     end
 
@@ -152,7 +157,7 @@ defmodule HiveServerElixir.Cells.Cell do
       end
 
       run fn input, _context ->
-        Cells.retry_cell_setup_rpc(input.arguments)
+        retry_setup_payload(input.arguments)
       end
     end
 
@@ -165,7 +170,7 @@ defmodule HiveServerElixir.Cells.Cell do
       end
 
       run fn input, _context ->
-        Cells.resume_cell_setup_rpc(input.arguments)
+        resume_setup_payload(input.arguments)
       end
     end
 
@@ -178,7 +183,7 @@ defmodule HiveServerElixir.Cells.Cell do
       end
 
       run fn input, _context ->
-        Cells.delete_cell_rpc(input.arguments)
+        delete_payload(input.arguments)
       end
     end
 
@@ -191,7 +196,7 @@ defmodule HiveServerElixir.Cells.Cell do
       end
 
       run fn input, _context ->
-        Cells.delete_many_cells_rpc(input.arguments)
+        delete_many_payload(input.arguments)
       end
     end
 
@@ -220,7 +225,7 @@ defmodule HiveServerElixir.Cells.Cell do
       end
 
       run fn input, _context ->
-        Cells.list_services_rpc(input.arguments)
+        Service.list_payloads(Map.fetch!(input.arguments, :cell_id), input.arguments)
       end
     end
 
@@ -253,7 +258,7 @@ defmodule HiveServerElixir.Cells.Cell do
       end
 
       run fn input, _context ->
-        Cells.start_services_rpc(input.arguments)
+        Service.start_all_payloads(Map.fetch!(input.arguments, :cell_id), input.arguments)
       end
     end
 
@@ -286,7 +291,7 @@ defmodule HiveServerElixir.Cells.Cell do
       end
 
       run fn input, _context ->
-        Cells.stop_services_rpc(input.arguments)
+        Service.stop_all_payloads(Map.fetch!(input.arguments, :cell_id), input.arguments)
       end
     end
 
@@ -319,7 +324,7 @@ defmodule HiveServerElixir.Cells.Cell do
       end
 
       run fn input, _context ->
-        Cells.restart_services_rpc(input.arguments)
+        Service.restart_all_payloads(Map.fetch!(input.arguments, :cell_id), input.arguments)
       end
     end
 
@@ -547,6 +552,156 @@ defmodule HiveServerElixir.Cells.Cell do
     end
   end
 
+  @spec create_payload(map()) :: {:ok, map()} | {:error, term()}
+  def create_payload(input) when is_map(input) do
+    workspace_id = Map.fetch!(input, :workspace_id)
+    description = Map.get(input, :description)
+
+    with {:ok, workspace} <- Ash.get(Workspace, workspace_id, domain: Cells),
+         {:ok, cell} <-
+           CellCommands.create(%{
+             workspace_id: workspace_id,
+             name: normalize_cell_name(Map.get(input, :name), description),
+             description: description,
+             template_id: normalize_template_id(Map.get(input, :template_id)),
+             start_mode: normalize_start_mode(Map.get(input, :start_mode)),
+             workspace_root_path: workspace.path,
+             workspace_path: workspace.path,
+             runtime_opts: reactor_runtime_opts(),
+             fail_after_ingest: false
+           }),
+         :ok <- Events.publish_cell_status(cell.workspace_id, cell.id) do
+      {:ok, rpc_payload(cell)}
+    end
+  end
+
+  @spec retry_setup_payload(map()) :: {:ok, map()} | {:error, term()}
+  def retry_setup_payload(input) when is_map(input) do
+    with {:ok, cell} <-
+           CellCommands.retry(%{
+             cell_id: Map.fetch!(input, :cell_id),
+             runtime_opts: reactor_runtime_opts(),
+             fail_after_ingest: false
+           }),
+         :ok <- record_retry_activity(cell.id, input),
+         :ok <- Events.publish_cell_status(cell.workspace_id, cell.id) do
+      {:ok, rpc_payload(cell)}
+    end
+  end
+
+  @spec resume_setup_payload(map()) :: {:ok, map()} | {:error, term()}
+  def resume_setup_payload(input) when is_map(input) do
+    with {:ok, cell} <-
+           CellCommands.resume(%{
+             cell_id: Map.fetch!(input, :cell_id),
+             runtime_opts: reactor_runtime_opts(),
+             fail_after_ingest: false
+           }),
+         :ok <- Events.publish_cell_status(cell.workspace_id, cell.id) do
+      {:ok, rpc_payload(cell)}
+    end
+  end
+
+  @spec delete_payload(map()) :: {:ok, map()} | {:error, term()}
+  def delete_payload(input) when is_map(input) do
+    with {:ok, cell} <-
+           CellCommands.delete(%{
+             cell_id: Map.fetch!(input, :cell_id),
+             runtime_opts: reactor_runtime_opts(),
+             fail_after_stop: false
+           }),
+         :ok <- Events.publish_cell_removed(cell.workspace_id, cell.id) do
+      {:ok, %{deleted_id: cell.id, workspace_id: cell.workspace_id}}
+    end
+  end
+
+  @spec delete_many_payload(map()) :: {:ok, map()}
+  def delete_many_payload(input) when is_map(input) do
+    ids =
+      input
+      |> Map.get(:ids, [])
+      |> Enum.uniq()
+
+    {deleted_ids, failed_ids} =
+      Enum.reduce(ids, {[], []}, fn id, {deleted_ids, failed_ids} ->
+        case delete_payload(%{cell_id: id}) do
+          {:ok, %{deleted_id: deleted_id}} -> {[deleted_id | deleted_ids], failed_ids}
+          {:error, _error} -> {deleted_ids, [id | failed_ids]}
+        end
+      end)
+
+    {:ok, %{deleted_ids: Enum.reverse(deleted_ids), failed_ids: Enum.reverse(failed_ids)}}
+  end
+
+  @spec ingest_context(map()) :: map()
+  def ingest_context(%{workspace_id: workspace_id, id: cell_id}) do
+    %{workspace_id: workspace_id, cell_id: cell_id}
+  end
+
+  @spec finalize_template_runtime(map(), map()) :: {:ok, map()} | {:error, term()}
+  def finalize_template_runtime(cell, %{status: "ready"}) do
+    finalize_setup_result(cell, %{result: "ready"})
+  end
+
+  def finalize_template_runtime(cell, %{status: "error", last_setup_error: last_setup_error}) do
+    finalize_setup_result(cell, %{last_setup_error: last_setup_error, result: "error"})
+  end
+
+  @spec finalize_setup_error(map() | String.t(), term()) :: :ok | {:error, term()}
+  def finalize_setup_error(%{id: cell_id}, reason), do: finalize_setup_error(cell_id, reason)
+
+  def finalize_setup_error(cell_id, reason) when is_binary(cell_id) do
+    with {:ok, cell} <- Ash.get(__MODULE__, cell_id, domain: Cells) do
+      finalize_setup_error(cell, reason, cell_id)
+    end
+  end
+
+  @spec rpc_payload(map()) :: map()
+  def rpc_payload(cell) when is_map(cell) do
+    cell_payload_fields(cell)
+  end
+
+  @spec transport_payload(map(), keyword()) :: map()
+  def transport_payload(cell, opts \\ []) when is_map(cell) do
+    payload = cell_payload_fields(cell)
+    workspace_path = Keyword.get(opts, :workspace_path)
+
+    %{
+      id: payload.id,
+      name: payload.name,
+      workspaceId: payload.workspace_id,
+      description: payload.description,
+      templateId: payload.template_id,
+      workspaceRootPath: present_or_fallback(payload.workspace_root_path, workspace_path),
+      workspacePath: present_or_fallback(payload.workspace_path, workspace_path),
+      opencodeSessionId: payload.opencode_session_id,
+      opencodeCommand: payload.opencode_command,
+      createdAt: payload.created_at,
+      status: payload.status,
+      lastSetupError: payload.last_setup_error,
+      branchName: payload.branch_name,
+      baseCommit: payload.base_commit,
+      updatedAt: payload.updated_at
+    }
+  end
+
+  @spec emit_terminal_state(map()) :: :ok
+  def emit_terminal_state(%{workspace_id: workspace_id, id: cell_id} = cell) do
+    cond do
+      CellStatus.ready?(cell) ->
+        TerminalEvents.on_cell_ready(%{workspace_id: workspace_id, cell_id: cell_id})
+
+      CellStatus.error?(cell) and is_binary(cell.last_setup_error) and cell.last_setup_error != "" ->
+        TerminalEvents.on_cell_error(
+          %{workspace_id: workspace_id, cell_id: cell_id},
+          cell.last_setup_error
+        )
+
+      true ->
+        :ok
+    end
+  end
+
   defp ensure_default_attribute(changeset, attribute, default_value) do
     case Ash.Changeset.get_attribute(changeset, attribute) do
       nil -> Ash.Changeset.force_change_attribute(changeset, attribute, default_value)
@@ -569,6 +724,18 @@ defmodule HiveServerElixir.Cells.Cell do
     end
   end
 
+  defp finalize_setup_error(%{status: status}, _reason, _cell_id)
+       when status not in [:provisioning, "provisioning"] do
+    :ok
+  end
+
+  defp finalize_setup_error(cell, reason, _cell_id) do
+    case finalize_setup_result(cell, %{last_setup_error: format_reason(reason), result: "error"}) do
+      {:ok, _updated_cell} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
+
   defp apply_setup_result(changeset) do
     case Ash.Changeset.get_argument(changeset, :result) do
       "ready" ->
@@ -587,6 +754,12 @@ defmodule HiveServerElixir.Cells.Cell do
     end
   end
 
+  defp finalize_setup_result(cell, attrs) do
+    cell
+    |> Ash.Changeset.for_update(:finalize_setup_attempt, attrs)
+    |> Ash.update(domain: Cells)
+  end
+
   defp resolve_setup_session_id(changeset) do
     Ash.Changeset.get_attribute(changeset, :opencode_session_id) ||
       Ash.Changeset.get_data(changeset, :opencode_session_id) ||
@@ -602,7 +775,7 @@ defmodule HiveServerElixir.Cells.Cell do
   end
 
   defp existing_session_id_for_cell(cell_id) do
-    case agent_session_for_cell(cell_id) do
+    case AgentSession.fetch_for_cell(cell_id) do
       %AgentSession{session_id: session_id} when is_binary(session_id) and session_id != "" ->
         session_id
 
@@ -619,9 +792,9 @@ defmodule HiveServerElixir.Cells.Cell do
   end
 
   defp ensure_provisioning_attempt(cell_id, start_mode) do
-    attrs = maybe_put(%{}, :start_mode, normalize_start_mode(start_mode))
+    attrs = %{start_mode: normalize_start_mode(start_mode)}
 
-    case provisioning_for_cell(cell_id) do
+    case Provisioning.fetch_for_cell(cell_id) do
       %Provisioning{} = provisioning ->
         case Ash.update(provisioning, attrs, action: :begin_attempt, domain: Cells) do
           {:ok, _updated} -> :ok
@@ -645,7 +818,7 @@ defmodule HiveServerElixir.Cells.Cell do
     session_id =
       cell.opencode_session_id || existing_session_id_for_cell(cell.id) || Ash.UUID.generate()
 
-    case session_by_session_id(session_id) || agent_session_for_cell(cell.id) do
+    case AgentSession.fetch_by_session_id(session_id) || AgentSession.fetch_for_cell(cell.id) do
       %AgentSession{} = session ->
         case Ash.update(
                session,
@@ -679,7 +852,7 @@ defmodule HiveServerElixir.Cells.Cell do
   end
 
   defp finish_setup_attempt(cell_id) do
-    case provisioning_for_cell(cell_id) do
+    case Provisioning.fetch_for_cell(cell_id) do
       %Provisioning{} = provisioning ->
         case Ash.update(provisioning, %{}, action: :finish_attempt, domain: Cells) do
           {:ok, _updated} -> :ok
@@ -691,30 +864,91 @@ defmodule HiveServerElixir.Cells.Cell do
     end
   end
 
-  defp provisioning_for_cell(cell_id) do
-    Provisioning
-    |> Ash.Query.filter(expr(cell_id == ^cell_id))
-    |> Ash.read_one!(domain: Cells)
-  end
-
-  defp agent_session_for_cell(cell_id) do
-    AgentSession
-    |> Ash.Query.filter(expr(cell_id == ^cell_id))
-    |> Ash.read_one!(domain: Cells)
-  end
-
-  defp session_by_session_id(session_id) do
-    AgentSession
-    |> Ash.Query.filter(expr(session_id == ^session_id))
-    |> Ash.read_one!(domain: Cells)
-  end
-
   defp normalize_start_mode("build"), do: "build"
   defp normalize_start_mode("plan"), do: "plan"
-  defp normalize_start_mode(_mode), do: nil
+  defp normalize_start_mode(_mode), do: "plan"
 
-  defp maybe_put(attrs, _key, nil), do: attrs
-  defp maybe_put(attrs, key, value), do: Map.put(attrs, key, value)
+  defp normalize_cell_name(name, _description) when is_binary(name) and byte_size(name) > 0,
+    do: name
+
+  defp normalize_cell_name(_name, description)
+       when is_binary(description) and byte_size(description) > 0,
+       do: description
+
+  defp normalize_cell_name(_name, _description), do: "Cell"
+
+  defp normalize_template_id(template_id)
+       when is_binary(template_id) and byte_size(template_id) > 0,
+       do: template_id
+
+  defp normalize_template_id(_template_id), do: "default-template"
+
+  defp format_reason(reason) when is_binary(reason), do: reason
+  defp format_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp format_reason(reason), do: inspect(reason)
+
+  defp reactor_runtime_opts do
+    Application.get_env(:hive_server_elixir, :cell_reactor_runtime_opts, [])
+  end
+
+  defp record_retry_activity(cell_id, input) do
+    attrs = %{
+      cell_id: cell_id,
+      type: "setup.retry",
+      source: Map.get(input, :source),
+      tool_name: Map.get(input, :tool_name),
+      metadata:
+        %{}
+        |> maybe_put_metadata("auditEvent", Map.get(input, :audit_event))
+        |> maybe_put_metadata("serviceName", Map.get(input, :service_name))
+    }
+
+    case Ash.create(HiveServerElixir.Cells.Activity, attrs, domain: Cells) do
+      {:ok, _activity} -> :ok
+      {:error, _error} -> :ok
+    end
+  end
+
+  defp maybe_put_metadata(metadata, _key, nil), do: metadata
+  defp maybe_put_metadata(metadata, key, value), do: Map.put(metadata, key, value)
+
+  defp cell_payload_fields(cell) do
+    %{
+      id: cell.id,
+      name: cell.name,
+      workspace_id: cell.workspace_id,
+      description: cell.description,
+      template_id: cell.template_id,
+      workspace_root_path: cell.workspace_root_path,
+      workspace_path: cell.workspace_path,
+      opencode_session_id: cell.opencode_session_id,
+      opencode_command: build_opencode_command(cell.workspace_path, cell.opencode_session_id),
+      created_at: maybe_to_iso8601(cell.inserted_at),
+      status: CellStatus.present(cell.status),
+      last_setup_error: cell.last_setup_error,
+      branch_name: cell.branch_name,
+      base_commit: cell.base_commit,
+      updated_at: maybe_to_iso8601(cell.updated_at)
+    }
+  end
+
+  defp present_or_fallback(value, _fallback) when is_binary(value) and byte_size(value) > 0,
+    do: value
+
+  defp present_or_fallback(_value, fallback), do: fallback
+
+  defp build_opencode_command(workspace_path, session_id)
+       when is_binary(workspace_path) and workspace_path != "" and is_binary(session_id) and
+              session_id != "" do
+    "opencode \"" <> workspace_path <> "\" --session \"" <> session_id <> "\""
+  end
+
+  defp build_opencode_command(_workspace_path, _session_id), do: nil
+
+  defp maybe_to_iso8601(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp maybe_to_iso8601(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
+  defp maybe_to_iso8601(value) when is_binary(value), do: value
+  defp maybe_to_iso8601(_value), do: nil
 
   defp normalize_status(status) when is_binary(status) do
     case CellStatus.cast_input(status, []) do

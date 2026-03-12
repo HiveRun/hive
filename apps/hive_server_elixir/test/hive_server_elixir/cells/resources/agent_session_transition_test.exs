@@ -53,6 +53,18 @@ defmodule HiveServerElixir.Cells.Resources.AgentSessionTransitionTest do
     assert updated_session.last_error == nil
   end
 
+  test "fetch helpers return persisted sessions by cell and session id" do
+    session = agent_session!("agent-session-fetch")
+
+    cell_session = AgentSession.fetch_for_cell(session.cell_id)
+    session_lookup = AgentSession.fetch_by_session_id(session.session_id)
+
+    assert %AgentSession{id: cell_session_id} = cell_session
+    assert %AgentSession{id: session_lookup_id} = session_lookup
+    assert cell_session_id == session.id
+    assert session_lookup_id == session.id
+  end
+
   test "agent session lifecycle writes require explicit update actions" do
     session = agent_session!("agent-session-generic")
 

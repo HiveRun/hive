@@ -1,10 +1,11 @@
 defmodule HiveServerElixir.Cells.TerminalEvents do
   @moduledoc false
 
-  alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.AgentSessionProjection
+  alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.TerminalRuntime
+  alias HiveServerElixir.Opencode.EventEnvelope
 
   @spec on_cell_started(map) :: :ok
   def on_cell_started(context) when is_map(context) do
@@ -72,9 +73,9 @@ defmodule HiveServerElixir.Cells.TerminalEvents do
       cell_id ->
         :ok = AgentSessionProjection.project_opencode_event(context, global_event)
 
-        payload = map_value(global_event, "payload") || %{}
-        event_type = map_value(payload, "type")
-        properties = map_value(payload, "properties") || %{}
+        payload = EventEnvelope.get(global_event, "payload") || %{}
+        event_type = EventEnvelope.get(payload, "type")
+        properties = EventEnvelope.get(payload, "properties") || %{}
 
         case event_type do
           "message.part.delta" ->
@@ -88,7 +89,7 @@ defmodule HiveServerElixir.Cells.TerminalEvents do
             Events.publish_chat_terminal_error(cell_id, message)
 
           "pty.exited" ->
-            exit_code = map_value(properties, "exitCode")
+            exit_code = EventEnvelope.get(properties, "exitCode")
             exit_code = if(is_number(exit_code), do: trunc(exit_code), else: nil)
             Events.publish_chat_terminal_exit(cell_id, exit_code, nil)
 
@@ -99,8 +100,8 @@ defmodule HiveServerElixir.Cells.TerminalEvents do
   end
 
   defp maybe_emit_chat_delta(cell_id, properties) do
-    delta = map_value(properties, "delta")
-    field = map_value(properties, "field")
+    delta = EventEnvelope.get(properties, "delta")
+    field = EventEnvelope.get(properties, "field")
 
     if is_binary(delta) and (is_nil(field) or field in ["text", "delta"]) do
       emit_chat_chunk(cell_id, delta)
@@ -110,9 +111,9 @@ defmodule HiveServerElixir.Cells.TerminalEvents do
   end
 
   defp maybe_emit_chat_part(cell_id, properties) do
-    part = map_value(properties, "part")
-    part_type = map_value(part || %{}, "type")
-    part_text = map_value(part || %{}, "text")
+    part = EventEnvelope.get(properties, "part")
+    part_type = EventEnvelope.get(part || %{}, "type")
+    part_text = EventEnvelope.get(part || %{}, "text")
 
     if is_binary(part_text) and part_type in ["text", "reasoning"] do
       emit_chat_chunk(cell_id, part_text)
@@ -128,14 +129,14 @@ defmodule HiveServerElixir.Cells.TerminalEvents do
   end
 
   defp extract_error_message(properties) when is_map(properties) do
-    nested_error = map_value(properties, "error")
+    nested_error = EventEnvelope.get(properties, "error")
 
     cond do
-      is_binary(map_value(properties, "message")) ->
-        map_value(properties, "message")
+      is_binary(EventEnvelope.get(properties, "message")) ->
+        EventEnvelope.get(properties, "message")
 
-      is_map(nested_error) and is_binary(map_value(nested_error, "message")) ->
-        map_value(nested_error, "message")
+      is_map(nested_error) and is_binary(EventEnvelope.get(nested_error, "message")) ->
+        EventEnvelope.get(nested_error, "message")
 
       true ->
         "OpenCode session error"
@@ -145,15 +146,6 @@ defmodule HiveServerElixir.Cells.TerminalEvents do
   defp extract_error_message(_properties), do: "OpenCode session error"
 
   defp cell_id_from_context(context) when is_map(context) do
-    map_value(context, "cell_id")
+    EventEnvelope.get(context, "cell_id")
   end
-
-  defp map_value(map, key) when is_map(map) and is_binary(key) do
-    Map.get(map, key) || Map.get(map, String.to_existing_atom(key))
-  rescue
-    ArgumentError ->
-      Map.get(map, key)
-  end
-
-  defp map_value(_map, _key), do: nil
 end

@@ -7,9 +7,7 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
 
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
-  alias HiveServerElixir.Cells.CellStatus
   alias HiveServerElixir.Cells.Reactors.Steps.RetryIngestStep
-  alias HiveServerElixir.Cells.SetupAttempt
   alias HiveServerElixir.Cells.TemplateRuntime
   alias HiveServerElixir.Cells.TerminalEvents
 
@@ -39,7 +37,7 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
     argument(:cell, result(:prepare_retry_state))
 
     run(fn %{cell: cell}, _context ->
-      {:ok, %{workspace_id: cell.workspace_id, cell_id: cell.id}}
+      {:ok, Cell.ingest_context(cell)}
     end)
   end
 
@@ -68,7 +66,7 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
     end)
 
     compensate(fn reason, %{cell: cell}, _context ->
-      SetupAttempt.finalize_error(cell, reason)
+      Cell.finalize_setup_error(cell, reason)
     end)
   end
 
@@ -86,43 +84,12 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
     argument(:template_runtime, result(:apply_template_runtime))
 
     run(fn %{cell: cell, template_runtime: template_runtime}, _context ->
-      with {:ok, updated_cell} <- finalize_cell_status(cell, template_runtime) do
-        finalize_terminal_state(updated_cell)
+      with {:ok, updated_cell} <- Cell.finalize_template_runtime(cell, template_runtime) do
+        Cell.emit_terminal_state(updated_cell)
         {:ok, updated_cell}
       end
     end)
   end
 
   return(:finalize_cell)
-
-  defp finalize_cell_status(cell, %{status: "ready"}) do
-    cell
-    |> Ash.Changeset.for_update(:finalize_setup_attempt, %{result: "ready"})
-    |> Ash.update(domain: Cells)
-  end
-
-  defp finalize_cell_status(cell, %{status: "error", last_setup_error: last_setup_error}) do
-    cell
-    |> Ash.Changeset.for_update(
-      :finalize_setup_attempt,
-      %{last_setup_error: last_setup_error, result: "error"}
-    )
-    |> Ash.update(domain: Cells)
-  end
-
-  defp finalize_terminal_state(%Cell{} = cell) do
-    cond do
-      CellStatus.ready?(cell) ->
-        TerminalEvents.on_cell_ready(%{workspace_id: cell.workspace_id, cell_id: cell.id})
-
-      CellStatus.error?(cell) and is_binary(cell.last_setup_error) and cell.last_setup_error != "" ->
-        TerminalEvents.on_cell_error(
-          %{workspace_id: cell.workspace_id, cell_id: cell.id},
-          cell.last_setup_error
-        )
-
-      true ->
-        :ok
-    end
-  end
 end

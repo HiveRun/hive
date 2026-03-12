@@ -1,10 +1,8 @@
 defmodule HiveServerElixir.Templates.Support.CatalogLoader do
   @moduledoc false
 
+  alias HiveServerElixir.Cells.TemplateConfig
   alias HiveServerElixir.Workspaces
-
-  @hive_config_filename "hive.config.json"
-  @opencode_config_filenames ["@opencode.json", "opencode.json"]
 
   @spec list_templates(String.t() | nil) :: {:ok, map()} | {:error, {atom(), String.t()}}
   def list_templates(workspace_id) do
@@ -48,29 +46,13 @@ defmodule HiveServerElixir.Templates.Support.CatalogLoader do
   end
 
   defp load_workspace_config(workspace_path) do
-    config_path = Path.join(workspace_path, @hive_config_filename)
+    TemplateConfig.load_workspace_config(workspace_path)
+    |> case do
+      {:ok, config} ->
+        {:ok, config}
 
-    case File.read(config_path) do
-      {:ok, contents} ->
-        case Jason.decode(contents) do
-          {:ok, decoded} when is_map(decoded) ->
-            {:ok, decoded}
-
-          {:ok, _decoded} ->
-            {:error,
-             {:bad_request,
-              "Failed to load workspace config for workspace '#{workspace_path}': Invalid config format"}}
-
-          {:error, %Jason.DecodeError{} = error} ->
-            {:error,
-             {:bad_request,
-              "Failed to load workspace config for workspace '#{workspace_path}': #{Exception.message(error)}"}}
-        end
-
-      {:error, reason} ->
-        {:error,
-         {:bad_request,
-          "Failed to load workspace config for workspace '#{workspace_path}': #{:file.format_error(reason)}"}}
+      {:error, message} ->
+        {:error, {:bad_request, message_for_workspace(workspace_path, message)}}
     end
   end
 
@@ -106,30 +88,17 @@ defmodule HiveServerElixir.Templates.Support.CatalogLoader do
   defp normalize_start_mode(_mode), do: "plan"
 
   defp load_agent_defaults(workspace_path) do
-    @opencode_config_filenames
-    |> Enum.map(&Path.join(workspace_path, &1))
-    |> Enum.find_value(fn config_path ->
-      with {:ok, contents} <- File.read(config_path),
-           {:ok, decoded} <- Jason.decode(contents),
-           model when is_binary(model) <- Map.get(decoded, "model") do
-        parse_model_defaults(model)
-      else
-        _other -> nil
-      end
-    end)
+    TemplateConfig.load_agent_defaults(workspace_path)
   end
 
-  defp parse_model_defaults(model) do
-    case model |> String.trim() |> String.split("/", parts: 2) do
-      [provider_id, model_id] when provider_id != "" and model_id != "" ->
-        %{provider_id: provider_id, model_id: model_id}
+  defp message_for_workspace(workspace_path, message) do
+    normalized_message =
+      case String.replace_prefix(message, "Failed to load workspace config: ", "") do
+        ^message -> message
+        stripped -> stripped
+      end
 
-      [model_id] when model_id != "" ->
-        %{model_id: model_id}
-
-      _other ->
-        nil
-    end
+    "Failed to load workspace config for workspace '#{workspace_path}': #{normalized_message}"
   end
 
   defp fetch_template(config, template_id) do

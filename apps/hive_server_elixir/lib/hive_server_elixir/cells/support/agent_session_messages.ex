@@ -1,7 +1,8 @@
-defmodule HiveServerElixir.Agents.Support.SessionMessagesLoader do
+defmodule HiveServerElixir.Cells.AgentSessionMessages do
   @moduledoc false
 
   alias HiveServerElixir.Cells.AgentSessionRead
+  alias HiveServerElixir.Opencode.EventEnvelope
   alias HiveServerElixir.Cells.TerminalRuntime
   alias HiveServerElixir.Opencode.Generated.Operations
 
@@ -133,8 +134,8 @@ defmodule HiveServerElixir.Agents.Support.SessionMessagesLoader do
   end
 
   defp message_created_at(info) do
-    time = read_key(info, "time") || %{}
-    created = read_key(time, "created")
+    time = EventEnvelope.get(info, "time") || %{}
+    created = EventEnvelope.get(time, "created")
 
     case created do
       value when is_integer(value) or is_float(value) -> unix_to_iso8601(value)
@@ -158,20 +159,7 @@ defmodule HiveServerElixir.Agents.Support.SessionMessagesLoader do
 
   defp unix_to_iso8601(value) when is_float(value), do: value |> round() |> unix_to_iso8601()
 
-  defp read_key(value, key) when is_map(value) and is_binary(key) do
-    case Map.fetch(value, key) do
-      {:ok, found} ->
-        found
-
-      :error ->
-        case AgentSessionRead.maybe_existing_atom(key) do
-          atom when is_atom(atom) -> Map.get(value, atom)
-          _other -> nil
-        end
-    end
-  end
-
-  defp read_key(_value, _key), do: nil
+  defp read_key(value, key), do: EventEnvelope.get(value, key)
 
   defp opencode_client do
     Application.get_env(:hive_server_elixir, :opencode_client, HiveServerElixir.Opencode.Client)

@@ -1,6 +1,9 @@
 defmodule HiveServerElixir.Cells.Activity do
   @moduledoc false
 
+  import Ash.Expr
+  require Ash.Query
+
   use Ash.Resource,
     extensions: [AshTypescript.Resource],
     domain: HiveServerElixir.Cells,
@@ -105,4 +108,37 @@ defmodule HiveServerElixir.Cells.Activity do
       attribute_writable? true
     end
   end
+
+  @spec latest_for_cell(String.t()) :: t() | nil
+  def latest_for_cell(cell_id) when is_binary(cell_id) do
+    __MODULE__
+    |> Ash.Query.filter(expr(cell_id == ^cell_id))
+    |> Ash.Query.sort(inserted_at: :desc, id: :desc)
+    |> Ash.Query.limit(1)
+    |> Ash.read(domain: HiveServerElixir.Cells)
+    |> case do
+      {:ok, [activity | _]} -> activity
+      {:ok, []} -> nil
+      {:error, _reason} -> nil
+    end
+  end
+
+  @spec snapshot_payload(t() | nil) :: map() | nil
+  def snapshot_payload(nil), do: nil
+
+  def snapshot_payload(activity) when is_map(activity) do
+    %{
+      id: activity.id,
+      cellId: activity.cell_id,
+      serviceId: activity.service_id,
+      type: activity.type,
+      source: activity.source,
+      toolName: activity.tool_name,
+      metadata: activity.metadata,
+      createdAt: maybe_to_iso8601(activity.inserted_at)
+    }
+  end
+
+  defp maybe_to_iso8601(nil), do: nil
+  defp maybe_to_iso8601(datetime), do: DateTime.to_iso8601(datetime)
 end

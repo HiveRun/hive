@@ -8,6 +8,7 @@ defmodule HiveServerElixir.Opencode.AgentEventLog do
 
   alias HiveServerElixir.Opencode
   alias HiveServerElixir.Opencode.AgentEvent
+  alias HiveServerElixir.Opencode.EventEnvelope
   alias HiveServerElixir.Repo
 
   @spec append(map) :: {:ok, AgentEvent.t()} | {:error, Ash.Error.t()}
@@ -26,7 +27,8 @@ defmodule HiveServerElixir.Opencode.AgentEventLog do
           session_id
 
         _ ->
-          extract_session_id(global_event) || "global"
+          EventEnvelope.session_id(global_event) || compatibility_session_id(global_event) ||
+            "global"
       end
 
     attrs =
@@ -53,11 +55,9 @@ defmodule HiveServerElixir.Opencode.AgentEventLog do
     |> Ash.read!(domain: Opencode)
   end
 
-  defp extract_event_type(%{"payload" => %{"type" => type}}) when is_binary(type), do: type
-  defp extract_event_type(%{"payload" => %{type: type}}) when is_binary(type), do: type
-  defp extract_event_type(%{payload: %{"type" => type}}) when is_binary(type), do: type
-  defp extract_event_type(%{payload: %{type: type}}) when is_binary(type), do: type
-  defp extract_event_type(_), do: "unknown"
+  defp extract_event_type(global_event) do
+    EventEnvelope.type(global_event) || "unknown"
+  end
 
   defp normalize_context_attrs(context_attrs) do
     %{
@@ -105,25 +105,35 @@ defmodule HiveServerElixir.Opencode.AgentEventLog do
     end
   end
 
-  defp extract_session_id(%{"sessionID" => session_id}) when is_binary(session_id), do: session_id
-  defp extract_session_id(%{"sessionId" => session_id}) when is_binary(session_id), do: session_id
+  defp compatibility_session_id(event), do: extract_legacy_session_id(event)
 
-  defp extract_session_id(%{"session_id" => session_id}) when is_binary(session_id),
+  defp extract_legacy_session_id(%{"sessionID" => session_id}) when is_binary(session_id),
     do: session_id
 
-  defp extract_session_id(%{sessionID: session_id}) when is_binary(session_id), do: session_id
-  defp extract_session_id(%{sessionId: session_id}) when is_binary(session_id), do: session_id
-  defp extract_session_id(%{session_id: session_id}) when is_binary(session_id), do: session_id
+  defp extract_legacy_session_id(%{"sessionId" => session_id}) when is_binary(session_id),
+    do: session_id
 
-  defp extract_session_id(map) when is_map(map) do
+  defp extract_legacy_session_id(%{"session_id" => session_id}) when is_binary(session_id),
+    do: session_id
+
+  defp extract_legacy_session_id(%{sessionID: session_id}) when is_binary(session_id),
+    do: session_id
+
+  defp extract_legacy_session_id(%{sessionId: session_id}) when is_binary(session_id),
+    do: session_id
+
+  defp extract_legacy_session_id(%{session_id: session_id}) when is_binary(session_id),
+    do: session_id
+
+  defp extract_legacy_session_id(map) when is_map(map) do
     map
     |> Map.values()
-    |> Enum.find_value(&extract_session_id/1)
+    |> Enum.find_value(&extract_legacy_session_id/1)
   end
 
-  defp extract_session_id(list) when is_list(list) do
-    Enum.find_value(list, &extract_session_id/1)
+  defp extract_legacy_session_id(list) when is_list(list) do
+    Enum.find_value(list, &extract_legacy_session_id/1)
   end
 
-  defp extract_session_id(_), do: nil
+  defp extract_legacy_session_id(_), do: nil
 end

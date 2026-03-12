@@ -1,6 +1,9 @@
 defmodule HiveServerElixir.Cells.Provisioning do
   @moduledoc false
 
+  import Ash.Expr
+  require Ash.Query
+
   use Ash.Resource,
     domain: HiveServerElixir.Cells,
     data_layer: AshSqlite.DataLayer
@@ -130,7 +133,37 @@ defmodule HiveServerElixir.Cells.Provisioning do
     identity :unique_cell, [:cell_id]
   end
 
+  @spec fetch_for_cell(String.t()) :: t() | nil
+  def fetch_for_cell(cell_id) when is_binary(cell_id) do
+    __MODULE__
+    |> Ash.Query.filter(expr(cell_id == ^cell_id))
+    |> Ash.read_one(domain: HiveServerElixir.Cells)
+    |> case do
+      {:ok, provisioning} -> provisioning
+      {:error, _reason} -> nil
+    end
+  end
+
+  @spec snapshot_payload(t() | nil) :: map() | nil
+  def snapshot_payload(nil), do: nil
+
+  def snapshot_payload(provisioning) when is_map(provisioning) do
+    %{
+      id: provisioning.id,
+      cellId: provisioning.cell_id,
+      attemptCount: provisioning.attempt_count,
+      startMode: provisioning.start_mode,
+      startedAt: maybe_to_iso8601(provisioning.started_at),
+      finishedAt: maybe_to_iso8601(provisioning.finished_at),
+      insertedAt: maybe_to_iso8601(provisioning.inserted_at),
+      updatedAt: maybe_to_iso8601(provisioning.updated_at)
+    }
+  end
+
   defp now do
     DateTime.utc_now() |> DateTime.truncate(:second)
   end
+
+  defp maybe_to_iso8601(nil), do: nil
+  defp maybe_to_iso8601(datetime), do: DateTime.to_iso8601(datetime)
 end

@@ -6,15 +6,13 @@ defmodule HiveServerElixir.Workspaces do
 
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Workspace
-
-  @hive_config_filename "hive.config.json"
-  @fallback_directory "hive"
+  alias HiveServerElixir.Workspaces.PathPolicy
 
   @spec list() :: [Workspace.t()]
   def list do
     Workspace
+    |> Ash.Query.for_read(:ui_list, %{})
     |> Ash.read!(domain: Cells)
-    |> sort_workspaces()
   end
 
   @spec bootstrap_current_workspace() :: :ok
@@ -54,12 +52,7 @@ defmodule HiveServerElixir.Workspaces do
   def ensure_registered(_path, _opts), do: {:error, "Workspace path is required"}
 
   @spec default_browse_root() :: String.t()
-  def default_browse_root do
-    case System.get_env("HIVE_BROWSE_ROOT") do
-      value when is_binary(value) and value != "" -> Path.expand(value)
-      _other -> resolve_startup_workspace_root() || System.user_home!() || "."
-    end
-  end
+  def default_browse_root, do: PathPolicy.default_browse_root()
 
   @spec get(String.t()) :: {:ok, Workspace.t()} | {:error, term()}
   def get(workspace_id) when is_binary(workspace_id) do
@@ -104,7 +97,7 @@ defmodule HiveServerElixir.Workspaces do
 
   @spec resolve_active_workspace_id([Workspace.t()]) :: String.t() | nil
   def resolve_active_workspace_id(workspaces) when is_list(workspaces) do
-    case sort_workspaces(workspaces) do
+    case Enum.sort_by(workspaces, &workspace_sort_key/1, :desc) do
       [%Workspace{id: workspace_id} | _rest] ->
         workspace_id
 
@@ -137,86 +130,14 @@ defmodule HiveServerElixir.Workspaces do
     end
   end
 
-  @spec serialize(Workspace.t()) :: map()
-  def serialize(%Workspace{} = workspace) do
-    label =
-      case workspace.label do
-        value when is_binary(value) and byte_size(value) > 0 -> value
-        _value -> derive_label_from_path(workspace.path)
-      end
-
-    %{
-      id: workspace.id,
-      label: label,
-      path: workspace.path,
-      addedAt: to_iso8601(workspace.inserted_at),
-      lastOpenedAt: to_iso8601(workspace.last_opened_at)
-    }
-  end
-
   @spec resolve_startup_workspace_root() :: String.t() | nil
-  def resolve_startup_workspace_root do
-    base_root = resolve_base_workspace_root()
-    candidate = find_config_root(base_root)
-
-    if has_config_file?(candidate) and File.dir?(candidate) and
-         not cell_workspace_path?(candidate) do
-      candidate
-    else
-      nil
-    end
-  end
-
-  defp resolve_base_workspace_root do
-    case System.get_env("HIVE_WORKSPACE_ROOT") do
-      value when is_binary(value) and value != "" ->
-        Path.expand(value)
-
-      _other ->
-        current_dir = File.cwd!()
-
-        case String.split(current_dir, "/apps/", parts: 2) do
-          [root, _rest] when root != "" -> root
-          _other -> current_dir
-        end
-    end
-  end
-
-  defp find_config_root(base_root) do
-    normalized_root = Path.expand(base_root)
-
-    cond do
-      has_config_file?(normalized_root) ->
-        normalized_root
-
-      has_config_file?(Path.join(normalized_root, @fallback_directory)) ->
-        Path.join(normalized_root, @fallback_directory)
-
-      true ->
-        normalized_root
-    end
-  end
+  def resolve_startup_workspace_root, do: PathPolicy.resolve_startup_workspace_root()
 
   @spec validate_registration_path(String.t()) :: :ok | {:error, String.t()}
-  def validate_registration_path(path) do
-    cond do
-      not File.dir?(path) ->
-        {:error, "Workspace path does not exist: #{path}"}
+  def validate_registration_path(path), do: PathPolicy.validate_registration_path(path)
 
-      cell_workspace_path?(path) ->
-        {:error, "Cell worktrees cannot be registered as workspaces"}
-
-      not has_config_file?(path) ->
-        {:error, "Hive config not found in #{path}. Add #{@hive_config_filename}."}
-
-      true ->
-        :ok
-    end
-  end
-
-  defp sort_workspaces(workspaces) when is_list(workspaces) do
-    Enum.sort_by(workspaces, &workspace_sort_key/1, :desc)
-  end
+  @spec derive_label_from_path(String.t()) :: String.t()
+  def derive_label_from_path(path), do: PathPolicy.derive_label_from_path(path)
 
   defp workspace_sort_key(%Workspace{} = workspace) do
     last_opened_at = workspace.last_opened_at || workspace.inserted_at
@@ -231,37 +152,10 @@ defmodule HiveServerElixir.Workspaces do
 
   defp timestamp_sort_key(_value), do: 0
 
-  defp has_config_file?(directory) when is_binary(directory) do
-    File.exists?(Path.join(directory, @hive_config_filename))
-  end
-
-  defp cell_workspace_path?(path) when is_binary(path) do
-    hive_home = System.get_env("HIVE_HOME") || Path.join(System.user_home!(), ".hive")
-    cells_root = hive_home |> Path.join("cells") |> Path.expand()
-    normalized_path = Path.expand(path)
-
-    normalized_path == cells_root || String.starts_with?(normalized_path, cells_root <> "/")
-  end
-
-  @spec derive_label_from_path(String.t()) :: String.t()
-  def derive_label_from_path(path) when is_binary(path) do
-    case Path.basename(path) do
-      "." -> path
-      "" -> path
-      value -> value
-    end
-  end
-
   defp normalize_label(value) when is_binary(value) do
     trimmed = String.trim(value)
     if trimmed == "", do: nil, else: trimmed
   end
 
   defp normalize_label(_value), do: nil
-
-  defp to_iso8601(%DateTime{} = value), do: DateTime.to_iso8601(value)
-  defp to_iso8601(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
-  defp to_iso8601(value) when is_binary(value), do: value
-  defp to_iso8601(nil), do: nil
-  defp to_iso8601(_value), do: nil
 end

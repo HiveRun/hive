@@ -1,6 +1,8 @@
 defmodule HiveServerElixir.Cells.WorkspaceSnapshot do
   @moduledoc false
 
+  alias HiveServerElixir.Workspaces.PathPolicy
+
   @spec ensure_cell_workspace(String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
   def ensure_cell_workspace(cell_id, source_root)
       when is_binary(cell_id) and is_binary(source_root) do
@@ -21,7 +23,7 @@ defmodule HiveServerElixir.Cells.WorkspaceSnapshot do
 
   @spec remove_cell_workspace(String.t()) :: :ok
   def remove_cell_workspace(path) when is_binary(path) do
-    if cell_workspace_path?(path) do
+    if PathPolicy.cell_workspace_path?(path) do
       _ = File.rm_rf(path)
     end
 
@@ -51,12 +53,6 @@ defmodule HiveServerElixir.Cells.WorkspaceSnapshot do
       {:ok, _files} -> :ok
       {:error, reason, _path} -> {:error, "Failed to copy workspace: #{inspect(reason)}"}
     end
-  end
-
-  defp cell_workspace_path?(path) do
-    cells_root = hive_home() |> Path.join("cells") |> Path.expand()
-    expanded = Path.expand(path)
-    expanded == cells_root || String.starts_with?(expanded, cells_root <> "/")
   end
 
   defp hive_home do

@@ -59,6 +59,31 @@ defmodule HiveServerElixir.AgentsTest do
     assert payload.status == "awaiting_input"
   end
 
+  test "session_payload_for_cell falls back to workspace model defaults" do
+    workspace = workspace!("agents-domain-workspace-model")
+
+    File.write!(
+      Path.join(workspace.path, "opencode.json"),
+      Jason.encode!(%{"model" => "opencode/big-pickle"})
+    )
+
+    cell = cell!(workspace, "ready")
+
+    assert {:ok, _event} =
+             AgentEventLog.append(%{
+               workspace_id: workspace.id,
+               cell_id: cell.id,
+               session_id: "session-workspace-model-1",
+               seq: 1,
+               event_type: "session.idle",
+               payload: %{"payload" => %{"type" => "session.idle"}}
+             })
+
+    assert {:ok, payload} = Agents.session_payload_for_cell(cell.id)
+    assert payload.modelId == "big-pickle"
+    assert payload.modelProviderId == "opencode"
+  end
+
   test "messages_payload_for_session falls back to terminal output when session fetch fails" do
     workspace = workspace!("agents-domain-messages-fallback")
     cell = cell!(workspace, "ready")

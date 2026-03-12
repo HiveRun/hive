@@ -1,7 +1,27 @@
 defmodule HiveServerElixir.Cells.TemplateConfig do
   @moduledoc false
 
-  @hive_config_filename "hive.config.json"
+  alias HiveServerElixir.Cells.WorkspaceConfig
+
+  @spec load_workspace_config(String.t()) :: {:ok, map()} | {:error, String.t()}
+  def load_workspace_config(workspace_root_path) when is_binary(workspace_root_path) do
+    WorkspaceConfig.load(workspace_root_path)
+    |> case do
+      {:ok, config} -> {:ok, config}
+      {:error, reason} -> {:error, "Failed to load workspace config: #{reason}"}
+    end
+  end
+
+  def load_workspace_config(_workspace_root_path),
+    do: {:error, "Failed to load workspace config: invalid workspace path"}
+
+  @spec load_agent_defaults(String.t()) ::
+          %{provider_id: String.t(), model_id: String.t()} | %{model_id: String.t()} | nil
+  def load_agent_defaults(workspace_root_path) when is_binary(workspace_root_path) do
+    WorkspaceConfig.model_defaults(workspace_root_path)
+  end
+
+  def load_agent_defaults(_workspace_root_path), do: nil
 
   @spec fetch_template(String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
   def fetch_template(workspace_root_path, template_id)
@@ -13,27 +33,6 @@ defmodule HiveServerElixir.Cells.TemplateConfig do
   end
 
   def fetch_template(_workspace_root_path, _template_id), do: {:error, "Template not found"}
-
-  defp load_workspace_config(workspace_root_path) do
-    config_path = Path.join(workspace_root_path, @hive_config_filename)
-
-    case File.read(config_path) do
-      {:ok, contents} ->
-        case Jason.decode(contents) do
-          {:ok, decoded} when is_map(decoded) ->
-            {:ok, decoded}
-
-          {:ok, _decoded} ->
-            {:error, "Failed to load workspace config: invalid config format"}
-
-          {:error, %Jason.DecodeError{} = error} ->
-            {:error, "Failed to parse workspace config: #{Exception.message(error)}"}
-        end
-
-      {:error, reason} ->
-        {:error, "Failed to load workspace config: #{:file.format_error(reason)}"}
-    end
-  end
 
   defp extract_template(config, template_id) do
     templates = Map.get(config, "templates")

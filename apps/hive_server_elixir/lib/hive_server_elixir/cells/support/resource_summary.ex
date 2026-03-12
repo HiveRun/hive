@@ -1,14 +1,9 @@
 defmodule HiveServerElixir.Cells.ResourceSummary do
   @moduledoc false
 
-  import Ash.Expr
-  require Ash.Query
-
-  alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.ServiceReconciliation
-  alias HiveServerElixir.Cells.ServiceStatus
 
   @average_windows ["1m", "5m", "15m", "1h"]
 
@@ -16,16 +11,11 @@ defmodule HiveServerElixir.Cells.ResourceSummary do
   def build(%Cell{} = cell, opts \\ %{}) do
     sampled_at = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
 
-    services =
-      Service
-      |> Ash.Query.filter(expr(cell_id == ^cell.id))
-      |> Ash.Query.sort(inserted_at: :asc)
-      |> Ash.read!(domain: Cells)
-
     processes =
-      services
+      cell.id
+      |> Service.list_for_cell()
       |> ServiceReconciliation.reconcile_all()
-      |> Enum.map(&serialize_service_process(&1, sampled_at))
+      |> Enum.map(&Service.process_summary_payload(&1, sampled_at))
 
     summary =
       %{
@@ -116,29 +106,6 @@ defmodule HiveServerElixir.Cells.ResourceSummary do
       processes: summary.processes
     }
   end
-
-  defp serialize_service_process(%{service: service} = snapshot, sampled_at) do
-    presented_status = ServiceStatus.present(snapshot.status)
-
-    %{
-      kind: "service",
-      serviceType: service.type,
-      id: service.id,
-      name: service.name,
-      status: presented_status,
-      pid: snapshot.pid,
-      processAlive: snapshot.process_alive,
-      active: snapshot.process_alive and ServiceStatus.running?(snapshot.status),
-      cpuPercent: nil,
-      rssBytes: nil,
-      resourceSampledAt: sampled_at,
-      resourceUnavailableReason: unavailable_reason(snapshot.pid, snapshot.process_alive)
-    }
-  end
-
-  defp unavailable_reason(pid, _process_alive) when not is_integer(pid), do: "pid_missing"
-  defp unavailable_reason(_pid, false), do: "process_not_alive"
-  defp unavailable_reason(_pid, true), do: "sample_failed"
 
   defp total_metric(processes, key) do
     Enum.reduce(processes, 0, fn process, total ->

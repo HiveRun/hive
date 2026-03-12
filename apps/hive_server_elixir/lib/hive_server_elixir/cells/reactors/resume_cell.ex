@@ -8,7 +8,6 @@ defmodule HiveServerElixir.Cells.Reactors.ResumeCell do
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Reactors.Steps.ResumeIngestStep
-  alias HiveServerElixir.Cells.SetupAttempt
   alias HiveServerElixir.Cells.TerminalEvents
 
   input(:cell_id)
@@ -37,7 +36,7 @@ defmodule HiveServerElixir.Cells.Reactors.ResumeCell do
     argument(:cell, result(:prepare_resume_state))
 
     run(fn %{cell: cell}, _context ->
-      {:ok, %{workspace_id: cell.workspace_id, cell_id: cell.id}}
+      {:ok, Cell.ingest_context(cell)}
     end)
   end
 
@@ -66,7 +65,7 @@ defmodule HiveServerElixir.Cells.Reactors.ResumeCell do
     end)
 
     compensate(fn reason, %{cell: cell}, _context ->
-      SetupAttempt.finalize_error(cell, reason)
+      Cell.finalize_setup_error(cell, reason)
     end)
   end
 
@@ -75,16 +74,8 @@ defmodule HiveServerElixir.Cells.Reactors.ResumeCell do
     argument(:_check, result(:after_ingest_check))
 
     run(fn %{cell: cell}, _context ->
-      with {:ok, updated_cell} <-
-             cell
-             |> Ash.Changeset.for_update(:finalize_setup_attempt, %{result: "ready"})
-             |> Ash.update(domain: Cells) do
-        :ok =
-          TerminalEvents.on_cell_ready(%{
-            workspace_id: updated_cell.workspace_id,
-            cell_id: updated_cell.id
-          })
-
+      with {:ok, updated_cell} <- Cell.finalize_template_runtime(cell, %{status: "ready"}) do
+        :ok = Cell.emit_terminal_state(updated_cell)
         {:ok, updated_cell}
       end
     end)

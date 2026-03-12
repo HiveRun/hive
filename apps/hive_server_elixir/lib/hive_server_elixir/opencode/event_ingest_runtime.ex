@@ -4,6 +4,7 @@ defmodule HiveServerElixir.Opencode.EventIngestRuntime do
   """
 
   alias HiveServerElixir.Opencode.EventIngestWorker
+  alias HiveServerElixir.Opencode.EventIngestContext
   alias HiveServerElixir.Cells.TerminalEvents
 
   @registry HiveServerElixir.Opencode.EventIngestRegistry
@@ -11,7 +12,7 @@ defmodule HiveServerElixir.Opencode.EventIngestRuntime do
 
   @spec start_stream(map, keyword) :: DynamicSupervisor.on_start_child()
   def start_stream(context, opts \\ []) when is_map(context) do
-    normalized_context = normalize_context(context)
+    normalized_context = EventIngestContext.normalize(context)
 
     worker_opts = [
       name: via_tuple(normalized_context),
@@ -28,7 +29,7 @@ defmodule HiveServerElixir.Opencode.EventIngestRuntime do
 
   @spec stop_stream(map) :: :ok | {:error, :not_found}
   def stop_stream(context) when is_map(context) do
-    normalized_context = normalize_context(context)
+    normalized_context = EventIngestContext.normalize(context)
 
     case Registry.lookup(@registry, context_key(normalized_context)) do
       [{pid, _value}] -> DynamicSupervisor.terminate_child(@supervisor, pid)
@@ -41,26 +42,6 @@ defmodule HiveServerElixir.Opencode.EventIngestRuntime do
   end
 
   defp context_key(context) do
-    {context.workspace_id, context.cell_id}
-  end
-
-  defp normalize_context(context) do
-    workspace_id = get_context_value(context, :workspace_id)
-    cell_id = get_context_value(context, :cell_id)
-
-    if workspace_id == nil or cell_id == nil do
-      raise ArgumentError, "event ingest context requires workspace_id and cell_id"
-    end
-
-    %{
-      workspace_id: workspace_id,
-      cell_id: cell_id,
-      session_id: get_context_value(context, :session_id),
-      seq: get_context_value(context, :seq)
-    }
-  end
-
-  defp get_context_value(context, key) when is_atom(key) do
-    Map.get(context, key) || Map.get(context, Atom.to_string(key))
+    EventIngestContext.key(context)
   end
 end

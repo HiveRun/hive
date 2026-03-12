@@ -1,9 +1,11 @@
 defmodule HiveServerElixir.Cells.Workspace do
   @moduledoc false
 
-  alias HiveServerElixir.Workspaces
-
   import Ash.Expr
+  require Ash.Query
+
+  alias HiveServerElixir.Cells
+  alias HiveServerElixir.Workspaces.PathPolicy
 
   use Ash.Resource,
     extensions: [AshTypescript.Resource],
@@ -122,12 +124,12 @@ defmodule HiveServerElixir.Cells.Workspace do
     path = Ash.Changeset.get_attribute(changeset, :path)
 
     with true <- is_binary(path),
-         :ok <- Workspaces.validate_registration_path(path) do
-      existing_workspace = Workspaces.find_by_path(path)
+         :ok <- PathPolicy.validate_registration_path(path) do
+      existing_workspace = existing_workspace_for_path(path)
 
       should_activate =
         Ash.Changeset.get_argument(changeset, :activate) ||
-          is_nil(Workspaces.active_workspace_id())
+          is_nil(active_workspace_id())
 
       label =
         changeset
@@ -177,7 +179,7 @@ defmodule HiveServerElixir.Cells.Workspace do
   defp default_register_label(nil, _path, %{}), do: nil
 
   defp default_register_label(nil, path, _existing_workspace),
-    do: Workspaces.derive_label_from_path(path)
+    do: PathPolicy.derive_label_from_path(path)
 
   defp maybe_set_registered_last_opened_at(changeset, _existing_workspace, true) do
     Ash.Changeset.force_change_attribute(changeset, :last_opened_at, DateTime.utc_now())
@@ -188,4 +190,20 @@ defmodule HiveServerElixir.Cells.Workspace do
   end
 
   defp maybe_set_registered_last_opened_at(changeset, _existing_workspace, false), do: changeset
+
+  defp existing_workspace_for_path(path) when is_binary(path) do
+    __MODULE__
+    |> Ash.Query.filter(expr(path == ^path))
+    |> Ash.read_one!(domain: Cells)
+  end
+
+  defp active_workspace_id do
+    __MODULE__
+    |> Ash.Query.for_read(:ui_list, %{})
+    |> Ash.read!(domain: Cells)
+    |> case do
+      [%{id: workspace_id} | _rest] -> workspace_id
+      _other -> nil
+    end
+  end
 end

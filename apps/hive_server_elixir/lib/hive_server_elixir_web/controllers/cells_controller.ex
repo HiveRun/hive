@@ -1,18 +1,14 @@
 defmodule HiveServerElixirWeb.CellsController do
   use HiveServerElixirWeb, :controller
 
-  alias Ash.Error.Invalid.InvalidPrimaryKey
-  alias Ash.Error.Query.NotFound
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
-  alias HiveServerElixir.Cells.CellStatus
   alias HiveServerElixir.Cells.Events
-  alias HiveServerElixir.Cells.Service
-  alias HiveServerElixir.Cells.ServiceRuntime
-  alias HiveServerElixir.Cells.TerminalRuntime
+  alias HiveServerElixir.Cells.Terminals
+  alias HiveServerElixir.Cells.Terminals.Transport
+  alias HiveServerElixirWeb.CellErrorResponse
   alias HiveServerElixirWeb.Cells.Streams
   alias HiveServerElixirWeb.Cells.StreamTransport
-  alias HiveServerElixirWeb.TerminalEvents
 
   def workspace_stream(conn, %{"workspace_id" => workspace_id} = params) do
     with {:ok, _workspace} <-
@@ -47,7 +43,7 @@ defmodule HiveServerElixirWeb.CellsController do
         |> json(%{error: %{code: "not_found", message: "Service not found"}})
 
       {:error, reason} ->
-        if contains_error?(reason, NotFound) do
+        if match?({:not_found, _code}, CellErrorResponse.classify(reason)) do
           conn
           |> put_status(:not_found)
           |> json(%{error: %{code: "workspace_not_found", message: "Workspace not found"}})
@@ -86,7 +82,7 @@ defmodule HiveServerElixirWeb.CellsController do
       end
     else
       {:error, reason} ->
-        if contains_error?(reason, NotFound) do
+        if match?({:not_found, _code}, CellErrorResponse.classify(reason)) do
           conn
           |> put_status(:not_found)
           |> json(%{error: %{code: "not_found", message: "Cell not found"}})
@@ -102,17 +98,18 @@ defmodule HiveServerElixirWeb.CellsController do
     with {:ok, cell} <- Ash.get(Cell, cell_id, domain: Cells),
          :ok <- Events.subscribe_setup_terminal(cell_id) do
       stream_conn = StreamTransport.open_sse(conn)
+      scope = {:setup, cell_id}
 
-      session = TerminalEvents.ensure_session(:setup, cell_id, nil)
-      ready_payload = TerminalEvents.ready_payload(:setup, session, cell)
-      output = TerminalEvents.read_output(:setup, cell_id, nil)
+      session = Terminals.ensure_session(scope)
+      ready_payload = Transport.sse_ready_payload(scope, session, cell)
+      output = Terminals.read_output(scope)
 
       with {:ok, stream_conn} <- StreamTransport.send_event(stream_conn, "ready", ready_payload),
            {:ok, stream_conn} <-
              StreamTransport.send_event(
                stream_conn,
                "snapshot",
-               TerminalEvents.snapshot_payload(output)
+               Transport.snapshot_payload(output)
              ) do
         idle_timeout_ms =
           StreamTransport.idle_timeout_ms(Map.get(params, "idleTimeoutMs"), 30_000)
@@ -120,14 +117,14 @@ defmodule HiveServerElixirWeb.CellsController do
         if Map.get(params, "initialOnly") in ["true", "1"] do
           stream_conn
         else
-          StreamTransport.stream_setup_terminal_events(stream_conn, cell_id, idle_timeout_ms)
+          StreamTransport.stream_terminal_events(stream_conn, scope, idle_timeout_ms)
         end
       else
         {:error, _reason} -> stream_conn
       end
     else
       {:error, reason} ->
-        if contains_error?(reason, NotFound) do
+        if match?({:not_found, _code}, CellErrorResponse.classify(reason)) do
           conn
           |> put_status(:not_found)
           |> json(%{error: %{code: "not_found", message: "Cell not found"}})
@@ -142,7 +139,7 @@ defmodule HiveServerElixirWeb.CellsController do
   def setup_terminal_resize(conn, %{"id" => cell_id} = params) do
     with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
          {:ok, cols, rows} <- StreamTransport.parse_resize_params(params) do
-      session = TerminalRuntime.resize_setup_session(cell_id, cols, rows)
+      session = Terminals.resize_session({:setup, cell_id}, cols, rows)
       json(conn, %{ok: true, session: session})
     else
       {:error, :service_not_found} ->
@@ -154,16 +151,14 @@ defmodule HiveServerElixirWeb.CellsController do
         bad_request(conn, "cols and rows must be positive integers")
 
       {:error, error} ->
-        render_cell_error(conn, error)
+        CellErrorResponse.render(conn, error)
     end
   end
 
   def setup_terminal_input(conn, %{"id" => cell_id} = params) do
     with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
          {:ok, chunk} <- StreamTransport.parse_input(params) do
-      _session = TerminalRuntime.ensure_setup_session(cell_id)
-      :ok = TerminalRuntime.write_setup_input(cell_id, chunk)
-      :ok = Events.publish_setup_terminal_data(cell_id, chunk)
+      :ok = Terminals.write_input({:setup, cell_id}, chunk)
       json(conn, %{ok: true})
     else
       {:error, :service_not_found} ->
@@ -175,17 +170,18 @@ defmodule HiveServerElixirWeb.CellsController do
         bad_request(conn, "data must be a string")
 
       {:error, error} ->
-        render_cell_error(conn, error)
+        CellErrorResponse.render(conn, error)
     end
   end
 
   def service_terminal_stream(conn, %{"id" => cell_id, "service_id" => service_id} = params) do
     with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
-         {:ok, service} <- get_service_for_cell(cell_id, service_id),
-         :ok <- ensure_service_runtime(service),
+         {:ok, service} <- Terminals.get_service_for_cell(cell_id, service_id),
+         :ok <- Terminals.ensure_service_runtime(service),
          :ok <- Events.subscribe_service_terminal(cell_id, service_id) do
-      session = TerminalEvents.ensure_session(:service, cell_id, service_id)
-      output = TerminalEvents.read_output(:service, cell_id, service_id)
+      scope = {:service, cell_id, service_id}
+      session = Terminals.ensure_session(scope)
+      output = Terminals.read_output(scope)
 
       stream_conn = StreamTransport.open_sse(conn)
 
@@ -193,13 +189,13 @@ defmodule HiveServerElixirWeb.CellsController do
              StreamTransport.send_event(
                stream_conn,
                "ready",
-               TerminalEvents.ready_payload(:service, session, nil)
+               Transport.sse_ready_payload(scope, session, nil)
              ),
            {:ok, stream_conn} <-
              StreamTransport.send_event(
                stream_conn,
                "snapshot",
-               TerminalEvents.snapshot_payload(output)
+               Transport.snapshot_payload(output)
              ) do
         idle_timeout_ms =
           StreamTransport.idle_timeout_ms(Map.get(params, "idleTimeoutMs"), 30_000)
@@ -207,12 +203,7 @@ defmodule HiveServerElixirWeb.CellsController do
         if Map.get(params, "initialOnly") in ["true", "1"] do
           stream_conn
         else
-          StreamTransport.stream_service_terminal_events(
-            stream_conn,
-            cell_id,
-            service_id,
-            idle_timeout_ms
-          )
+          StreamTransport.stream_terminal_events(stream_conn, scope, idle_timeout_ms)
         end
       else
         {:error, _reason} -> stream_conn
@@ -224,7 +215,7 @@ defmodule HiveServerElixirWeb.CellsController do
         |> json(%{error: %{code: "stream_failed", message: "Service runtime unavailable"}})
 
       {:error, reason} ->
-        if contains_error?(reason, NotFound) do
+        if match?({:not_found, _code}, CellErrorResponse.classify(reason)) do
           conn
           |> put_status(:not_found)
           |> json(%{error: %{code: "not_found", message: "Service not found"}})
@@ -237,21 +228,21 @@ defmodule HiveServerElixirWeb.CellsController do
   end
 
   def service_terminal_resize(conn, %{"id" => cell_id, "service_id" => service_id} = params) do
-    with {:ok, _service} <- get_service_for_cell(cell_id, service_id),
+    with {:ok, _service} <- Terminals.get_service_for_cell(cell_id, service_id),
          {:ok, cols, rows} <- StreamTransport.parse_resize_params(params) do
-      session = TerminalRuntime.resize_service_session(cell_id, service_id, cols, rows)
+      session = Terminals.resize_session({:service, cell_id, service_id}, cols, rows)
       json(conn, %{ok: true, session: session})
     else
       {:error, :invalid_resize} -> bad_request(conn, "cols and rows must be positive integers")
-      {:error, error} -> render_cell_error(conn, error)
+      {:error, error} -> CellErrorResponse.render(conn, error)
     end
   end
 
   def service_terminal_input(conn, %{"id" => cell_id, "service_id" => service_id} = params) do
-    with {:ok, service} <- get_service_for_cell(cell_id, service_id),
-         :ok <- ensure_service_runtime(service),
+    with {:ok, service} <- Terminals.get_service_for_cell(cell_id, service_id),
+         :ok <- Terminals.ensure_service_runtime(service),
          {:ok, chunk} <- StreamTransport.parse_input(params) do
-      :ok = ServiceRuntime.write_input(service_id, chunk)
+      :ok = Terminals.write_input({:service, cell_id, service_id}, chunk)
       json(conn, %{ok: true})
     else
       {:error, :service_runtime_unavailable} ->
@@ -263,25 +254,31 @@ defmodule HiveServerElixirWeb.CellsController do
         bad_request(conn, "data must be a string")
 
       {:error, error} ->
-        render_cell_error(conn, error)
+        CellErrorResponse.render(conn, error)
     end
   end
 
   def chat_terminal_stream(conn, %{"id" => cell_id} = params) do
     with {:ok, cell} <- Ash.get(Cell, cell_id, domain: Cells),
-         :ok <- validate_chat_available(cell),
+         :ok <- Terminals.validate_chat_available(cell),
          :ok <- Events.subscribe_chat_terminal(cell_id) do
-      session = TerminalEvents.ensure_session(:chat, cell_id, nil)
-      output = TerminalEvents.read_output(:chat, cell_id, nil)
+      scope = {:chat, cell_id}
+      session = Terminals.ensure_session(scope)
+      output = Terminals.read_output(scope)
 
       stream_conn = StreamTransport.open_sse(conn)
 
-      with {:ok, stream_conn} <- StreamTransport.send_event(stream_conn, "ready", session),
+      with {:ok, stream_conn} <-
+             StreamTransport.send_event(
+               stream_conn,
+               "ready",
+               Transport.sse_ready_payload(scope, session, nil)
+             ),
            {:ok, stream_conn} <-
              StreamTransport.send_event(
                stream_conn,
                "snapshot",
-               TerminalEvents.snapshot_payload(output)
+               Transport.snapshot_payload(output)
              ) do
         idle_timeout_ms =
           StreamTransport.idle_timeout_ms(Map.get(params, "idleTimeoutMs"), 30_000)
@@ -289,7 +286,7 @@ defmodule HiveServerElixirWeb.CellsController do
         if Map.get(params, "initialOnly") in ["true", "1"] do
           stream_conn
         else
-          StreamTransport.stream_chat_terminal_events(stream_conn, cell_id, idle_timeout_ms)
+          StreamTransport.stream_terminal_events(stream_conn, scope, idle_timeout_ms)
         end
       else
         {:error, _reason} -> stream_conn
@@ -306,7 +303,7 @@ defmodule HiveServerElixirWeb.CellsController do
         })
 
       {:error, reason} ->
-        if contains_error?(reason, NotFound) do
+        if match?({:not_found, _code}, CellErrorResponse.classify(reason)) do
           conn
           |> put_status(:not_found)
           |> json(%{error: %{code: "not_found", message: "Cell not found"}})
@@ -320,9 +317,9 @@ defmodule HiveServerElixirWeb.CellsController do
 
   def chat_terminal_resize(conn, %{"id" => cell_id} = params) do
     with {:ok, cell} <- Ash.get(Cell, cell_id, domain: Cells),
-         :ok <- validate_chat_available(cell),
+         :ok <- Terminals.validate_chat_available(cell),
          {:ok, cols, rows} <- StreamTransport.parse_resize_params(params) do
-      session = TerminalRuntime.resize_chat_session(cell_id, cols, rows)
+      session = Terminals.resize_session({:chat, cell_id}, cols, rows)
       json(conn, %{ok: true, session: session})
     else
       {:error, :chat_unavailable} ->
@@ -339,17 +336,15 @@ defmodule HiveServerElixirWeb.CellsController do
         bad_request(conn, "cols and rows must be positive integers")
 
       {:error, error} ->
-        render_cell_error(conn, error)
+        CellErrorResponse.render(conn, error)
     end
   end
 
   def chat_terminal_input(conn, %{"id" => cell_id} = params) do
     with {:ok, cell} <- Ash.get(Cell, cell_id, domain: Cells),
-         :ok <- validate_chat_available(cell),
+         :ok <- Terminals.validate_chat_available(cell),
          {:ok, chunk} <- StreamTransport.parse_input(params) do
-      _session = TerminalRuntime.ensure_chat_session(cell_id)
-      :ok = TerminalRuntime.write_chat_input(cell_id, chunk)
-      :ok = Events.publish_chat_terminal_data(cell_id, chunk)
+      :ok = Terminals.write_input({:chat, cell_id}, chunk)
       json(conn, %{ok: true})
     else
       {:error, :chat_unavailable} ->
@@ -366,14 +361,14 @@ defmodule HiveServerElixirWeb.CellsController do
         bad_request(conn, "data must be a string")
 
       {:error, error} ->
-        render_cell_error(conn, error)
+        CellErrorResponse.render(conn, error)
     end
   end
 
   def chat_terminal_restart(conn, %{"id" => cell_id}) do
     with {:ok, cell} <- Ash.get(Cell, cell_id, domain: Cells),
-         :ok <- validate_chat_available(cell) do
-      session = TerminalRuntime.restart_chat_session(cell_id)
+         :ok <- Terminals.validate_chat_available(cell) do
+      session = Terminals.restart_session({:chat, cell_id})
       json(conn, session)
     else
       {:error, :chat_unavailable} ->
@@ -387,7 +382,7 @@ defmodule HiveServerElixirWeb.CellsController do
         })
 
       {:error, error} ->
-        render_cell_error(conn, error)
+        CellErrorResponse.render(conn, error)
     end
   end
 
@@ -415,7 +410,7 @@ defmodule HiveServerElixirWeb.CellsController do
       end
     else
       {:error, reason} ->
-        if contains_error?(reason, NotFound) do
+        if match?({:not_found, _code}, CellErrorResponse.classify(reason)) do
           conn
           |> put_status(:not_found)
           |> json(%{error: %{code: "not_found", message: "Cell not found"}})
@@ -427,62 +422,9 @@ defmodule HiveServerElixirWeb.CellsController do
     end
   end
 
-  defp validate_chat_available(%Cell{} = cell) do
-    if CellStatus.ready?(cell), do: :ok, else: {:error, :chat_unavailable}
-  end
-
-  defp validate_chat_available(_cell), do: {:error, :chat_unavailable}
-
-  defp get_service_for_cell(cell_id, service_id) do
-    case Ash.get(Service, service_id, domain: Cells) do
-      {:ok, %Service{cell_id: ^cell_id} = service} -> {:ok, service}
-      {:ok, _service} -> {:error, :service_not_found}
-      {:error, error} -> {:error, error}
-    end
-  end
-
-  defp ensure_service_runtime(%Service{} = service) do
-    case ServiceRuntime.ensure_service_running(service) do
-      :ok -> :ok
-      {:error, _reason} -> {:error, :service_runtime_unavailable}
-    end
-  end
-
   defp bad_request(conn, message) do
     conn
     |> put_status(:bad_request)
     |> json(%{error: %{code: "bad_request", message: message}})
-  end
-
-  defp render_cell_error(conn, error) do
-    {status, code} = classify_error(error)
-
-    conn
-    |> put_status(status)
-    |> json(%{error: %{code: code, message: Exception.message(error)}})
-  end
-
-  defp classify_error(error) do
-    cond do
-      contains_error?(error, InvalidPrimaryKey) -> {:bad_request, "invalid_cell_id"}
-      contains_error?(error, NotFound) -> {:not_found, "not_found"}
-      true -> {:unprocessable_entity, "lifecycle_failed"}
-    end
-  end
-
-  defp contains_error?(error, module) when is_atom(module) do
-    case error do
-      %{__struct__: ^module} ->
-        true
-
-      %{errors: errors} when is_list(errors) ->
-        Enum.any?(errors, &contains_error?(&1, module))
-
-      %{error: nested} ->
-        contains_error?(nested, module)
-
-      _ ->
-        false
-    end
   end
 end
