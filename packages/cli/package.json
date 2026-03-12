@@ -10,7 +10,6 @@
     "compile": "bun build --compile --minify --sourcemap ./src/index.ts --outfile hive"
   },
   "dependencies": {
-    "@hive/server": "workspace:*",
     "clipanion": "^3.2.1",
     "dotenv": "catalog:",
     "picocolors": "^1.0.0"

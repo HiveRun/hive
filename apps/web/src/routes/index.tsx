@@ -268,8 +268,8 @@ function HiveOverview() {
 function StatusBadge({ status }: { status: CellStatus }) {
   const toneMap: Record<CellStatus, string> = {
     ready: "bg-primary/15 text-primary",
-    pending: "bg-muted text-muted-foreground",
-    spawning: "bg-secondary/20 text-secondary-foreground",
+    provisioning: "bg-secondary/20 text-secondary-foreground",
+    stopped: "bg-muted text-muted-foreground",
     error: "bg-destructive/10 text-destructive",
     deleting: "bg-destructive/20 text-destructive",
   };

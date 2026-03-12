@@ -7,7 +7,16 @@ import {
 
 const SERVICES_TEMPLATE_LABEL = "E2E Services Template";
 const DELETE_PROPAGATION_TIMEOUT_MS = 30_000;
-const NOT_FOUND_STATUS = 404;
+const SERVICE_NOT_FOUND_STATUS = 404;
+
+type RpcErrorRecord = {
+  message?: string;
+  shortMessage?: string;
+};
+
+type RpcResult<T> =
+  | { success: true; data: T }
+  | { success: false; errors?: RpcErrorRecord[] };
 
 test.describe("cell deletion cleanup", () => {
   test("deletes cell and reaps service processes", async ({ page }) => {
@@ -42,17 +51,24 @@ test.describe("cell deletion cleanup", () => {
 
     expect(runningPids.length).toBeGreaterThan(0);
 
-    const deleteResponse = await fetch(`${apiUrl}/api/cells/${cellId}`, {
-      method: "DELETE",
+    const deleteResponse = await rpcRun<{ deletedId: string }>(apiUrl, {
+      action: "delete_cell",
+      input: { cellId },
+      fields: ["deletedId"],
     });
-    expect(deleteResponse.ok).toBe(true);
+    expect(deleteResponse.success).toBe(true);
 
     await waitForCondition({
       timeoutMs: DELETE_PROPAGATION_TIMEOUT_MS,
       errorMessage: "Cell record still exists after deletion",
       check: async () => {
-        const response = await fetch(`${apiUrl}/api/cells/${cellId}`);
-        return response.status === NOT_FOUND_STATUS;
+        const response = await rpcRun<null>(apiUrl, {
+          action: "get_cell",
+          input: { id: cellId },
+          fields: ["id"],
+        });
+
+        return response.success && response.data === null;
       },
     });
 
@@ -61,7 +77,7 @@ test.describe("cell deletion cleanup", () => {
       errorMessage: "Service endpoint still returns data after cell deletion",
       check: async () => {
         const response = await fetch(`${apiUrl}/api/cells/${cellId}/services`);
-        return response.status === NOT_FOUND_STATUS;
+        return response.status === SERVICE_NOT_FOUND_STATUS;
       },
     });
 
@@ -73,6 +89,25 @@ test.describe("cell deletion cleanup", () => {
     });
   });
 });
+
+async function rpcRun<T>(
+  apiUrl: string,
+  payload: Record<string, unknown>
+): Promise<RpcResult<T>> {
+  const response = await fetch(`${apiUrl}/rpc/run`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`RPC request failed with status ${response.status}`);
+  }
+
+  return (await response.json()) as RpcResult<T>;
+}
 
 function isPidAlive(pid: number): boolean {
   try {

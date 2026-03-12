@@ -1,6 +1,12 @@
 # hive
 
-Monorepo project with React + TanStack Start frontend and Elysia backend.
+Monorepo project with a React + TanStack Start frontend and an Elixir/Ash backend.
+
+## Migration Status
+
+- Active plan and change log: `docs/migrations/elixir-hard-cutover.md`
+- Hive now runs against the Elixir hard-cutover backend while preserving local-first runtime behavior.
+- If documentation appears to conflict, use the migration plan and `.ruler/prompts/*.md` as the source of truth.
 
 ## Installation
 
@@ -10,7 +16,7 @@ Monorepo project with React + TanStack Start frontend and Elysia backend.
 curl -fsSL https://raw.githubusercontent.com/HiveRun/hive/main/scripts/install.sh | bash
 ```
 
-The installer downloads the latest published release for your platform, expands it into `~/.hive`, writes a local SQLite database path to `hive.env`, symlinks `hive` into `~/.hive/bin`, and updates your shell PATH so the CLI is immediately available. Run `hive` to start the bundled server + UI on the default ports.
+The installer downloads the latest published release for your platform, expands it into `~/.hive`, writes a local SQLite database path to `hive.env`, symlinks `hive` into `~/.hive/bin`, and updates your shell PATH so the CLI is immediately available. The release bundles the Hive CLI, production web assets, and an Elixir server release, so end users do not need Bun, Node, Erlang, or Elixir installed separately. Run `hive` to start the bundled server + UI on the default ports.
 
 During install, Hive also checks for the `opencode` CLI. If missing, it attempts to install OpenCode automatically via `https://opencode.ai/install` so cell chat sessions work out of the box.
 
@@ -19,7 +25,7 @@ Environment variables:
 - `HIVE_HOME`: override the install root (defaults to `~/.hive`).
 - `HIVE_BIN_DIR`: override the bin directory that `hive` is linked into (defaults to `~/.hive/bin`).
 - `HIVE_INSTALL_URL`: override the download URL (handy for testing locally built tarballs).
-- `HIVE_MIGRATIONS_DIR`: point the runtime at a custom migrations folder (defaults to the bundled `migrations/`).
+- `HIVE_SERVER_RELEASE_ROOT`: override the packaged Elixir release directory (defaults to the bundled `server/`).
 - `HIVE_LOG_DIR`: where background logs are written (defaults to `~/.hive/logs` for installed builds, or `<binary>/logs` when running from source).
 - `HIVE_PID_FILE`: override the pid file path (defaults to `~/.hive/hive.pid`).
 - `HIVE_INSTALL_COMMAND`: override the command executed by `hive upgrade` (defaults to the stored installer behavior).
@@ -38,7 +44,7 @@ Environment variables:
   hive
   ```
   - Compiled releases fork to the background, print the browser URL, log path, and PID file, and immediately return control of your terminal. Releases serve the UI on the API port (`PORT`, defaults to `3000`).
-  - The first launch automatically runs the bundled Drizzle migrations; no extra init step is required.
+  - The first launch automatically runs bundled migrations; no extra init step is required.
 - Follow logs:
   ```bash
   hive logs
@@ -83,7 +89,12 @@ Environment variables:
   PORT=4100 hive
   ```
 - Embedded chat sessions inherit OpenCode config from workspace `@opencode.json` / `opencode.json`.
-- The SQLite database defaults to `~/.hive/state/hive.db`; set `DATABASE_URL` if you need a different location.
+- `opencode.json` also exposes Tidewave MCP servers for local runtime introspection:
+  - `tidewave_backend`: `http://localhost:{env:BACKEND_PORT}/tidewave/mcp`
+  - `tidewave_frontend`: `http://localhost:{env:FRONTEND_PORT}/tidewave/mcp`
+- This repo includes `mise.toml` to auto-load `.env.dev` / `.env.dev.local`, so entering the directory from a `mise activate` shell makes those Tidewave MCP endpoints resolve without manual sourcing.
+- OpenCode also defines repo-local `backend-expert` and `frontend-expert` agents plus a `/usage-rules-update` command for refreshing managed dependency skills.
+- The SQLite database defaults to `~/.hive/state/hive.db`; set `DATABASE_PATH` if you need a different location.
 - High-frequency transport/polling request logs are muted by default to keep runtime logs readable. Re-enable per category with `HIVE_LOG_TERMINAL_TRAFFIC=1`, `HIVE_LOG_POLLING_TRAFFIC=1`, or `HIVE_LOG_OPTIONS_REQUESTS=1`.
 
 #### OpenCode keybinds in Hive
@@ -153,7 +164,7 @@ bun run build:installer
 ls dist/install
 ```
 
-This script compiles the Bun server, copies the Vite build output, and packages everything into `dist/install/hive-<platform>-<arch>.tar.gz` plus a `.sha256` checksum. Upload that pair to a GitHub Release so the installer can fetch it. To smoke-test the installer against the locally built artifacts, run:
+This script compiles the `hive` CLI, builds the production web bundle, assembles a bundled Elixir release for `apps/hive_server_elixir`, and packages everything into `dist/install/hive-<platform>-<arch>.tar.gz` plus a `.sha256` checksum. Upload that pair to a GitHub Release so the installer can fetch it. To smoke-test the installer against the locally built artifacts, run:
 
 ```bash
 bun run local:install
@@ -186,8 +197,7 @@ mise install
 bun setup
 
 
-# Set up local database (create .env with DATABASE_URL="local.db")
-# Then run development servers
+# `bun dev` auto-generates `.env.dev.local` and defaults the Elixir dev DB under `.hive/state`
 bun dev
 ```
 
@@ -197,8 +207,7 @@ bun dev
 # One-time setup (installs deps, prepares desktop E2E prereqs when possible, pushes DB schema)
 bun setup
 
-# Set up local database (create .env with DATABASE_URL="local.db")  
-# Then run development servers
+# `bun dev` auto-generates `.env.dev.local` and defaults the Elixir dev DB under `.hive/state`
 bun dev
 ```
 
@@ -214,28 +223,25 @@ bun dev
 ```
 hive/
 ├── apps/
-│   ├── web/         # Frontend application (React + TanStack Start)
-│   └── server/      # Backend API (Elysia)
+│   ├── web/                # Frontend application (React + TanStack Start)
+│   └── hive_server_elixir/ # Active backend (Phoenix + Ash)
 ├── packages/
-│   ├── api/         # API layer / business logic
+│   ├── cli/         # Packaged Hive CLI runtime
 ```
 
 ## Testing
 
 This project uses a **hybrid testing philosophy**:
 
-### Backend Unit Tests (Vitest)
-API and business logic tested with Vitest.
+### Backend Runtime Tests (ExUnit)
+API and business logic for the runtime backend are tested with ExUnit.
 
 ```bash
-# Run unit tests in watch mode
-bun test
-
-# Run unit tests once (CI mode)
-bun test:run
+cd apps/hive_server_elixir
+mix test
 ```
 
-**Test location:** `apps/server/src/**/*.test.ts`
+For the full repo check flow, use `bun test:run` and `bun run check:commit` from the root.
 
 ### UI Testing
 True end-to-end browser testing runs with Playwright (Chromium only for now).
@@ -444,6 +450,6 @@ This command:
 
 ### Ripgrep Overrides for Agents
 
-OpenCode's search shell respects `.gitignore` by default, which hides dependencies and build outputs that agents often need to inspect. We keep a project-level `.ignore` file in the repo root with negated patterns for `node_modules`, build directories (`dist`, `build`, `dist-electron`, `apps/server/server`), cached artifacts (`.turbo`, `.cache`, `tmp`, `temp`), and coverage data. Ripgrep automatically merges these overrides, so agents can still search through those trees without humans having to toggle settings.
+OpenCode's search shell respects `.gitignore` by default, which hides dependencies and build outputs that agents often need to inspect. We keep a project-level `.ignore` file in the repo root with negated patterns for `node_modules`, build directories (`dist`, `build`, `dist-electron`, `apps/hive_server_elixir/_build`), cached artifacts (`.turbo`, `.cache`, `tmp`, `temp`), and coverage data. Ripgrep automatically merges these overrides, so agents can still search through those trees without humans having to toggle settings.
 
 If you add new tooling that writes important gitignored files, extend `.ignore` with another `!` pattern so the content remains discoverable to opencode agents.

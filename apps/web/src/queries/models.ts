@@ -1,5 +1,9 @@
 import type { UseQueryOptions } from "@tanstack/react-query";
-import { rpc } from "@/lib/rpc";
+import { fetchControllerJson } from "@/lib/controller-query";
+import {
+  agentModelsPath,
+  agentSessionModelsPath,
+} from "@/lib/generated/controller-routes";
 
 export type AvailableModel = {
   id: string;
@@ -28,12 +32,10 @@ export const modelQueries = {
   bySession: (sessionId: string): ModelsQueryOptions => ({
     queryKey: ["models", sessionId] as const,
     queryFn: async (): Promise<ModelListResponse> => {
-      const { data, error } = await rpc.api.agents
-        .sessions({ id: sessionId })
-        .models.get();
-      if (error) {
-        throw new Error("Failed to fetch models");
-      }
+      const data = await fetchControllerJson<ModelListResponse>(
+        agentSessionModelsPath({ id: sessionId }),
+        "Failed to fetch models"
+      );
       const response = data as ModelListResponse | undefined;
       return (
         response ?? {
@@ -47,12 +49,10 @@ export const modelQueries = {
   byWorkspace: (workspaceId: string): ModelsQueryOptions => ({
     queryKey: ["models", "workspace", workspaceId] as const,
     queryFn: async (): Promise<ModelListResponse> => {
-      const { data, error } = await rpc.api.agents.models.get({
-        query: { workspaceId },
-      });
-      if (error) {
-        throw new Error("Failed to fetch models");
-      }
+      const data = await fetchControllerJson<ModelListResponse>(
+        agentModelsPath({ workspaceId }),
+        "Failed to fetch models"
+      );
       const response = data as ModelListResponse | undefined;
       return (
         response ?? {

@@ -20,6 +20,15 @@ const SECONDARY_WORKSPACE_NAME = "workspace-secondary";
 
 type WorkspaceMode = "fixture" | "clone";
 
+type RpcErrorRecord = {
+  message?: string;
+  shortMessage?: string;
+};
+
+type RpcResult<T> =
+  | { success: true; data: T }
+  | { success: false; errors?: RpcErrorRecord[] };
+
 const WORKSPACE_MODE_ENV = "HIVE_E2E_WORKSPACE_MODE";
 const WORKSPACE_SOURCE_ENV = "HIVE_E2E_WORKSPACE_SOURCE";
 const DEFAULT_WORKSPACE_MODE: WorkspaceMode = "fixture";
@@ -47,7 +56,7 @@ const moduleDir = dirname(modulePath);
 const e2eRoot = join(moduleDir, "..", "..");
 const stableArtifactsDir = join(e2eRoot, "reports", "latest");
 const repoRoot = join(e2eRoot, "..", "..");
-const serverRoot = join(repoRoot, "apps", "server");
+const serverElixirRoot = join(repoRoot, "apps", "hive_server_elixir");
 const webRoot = join(repoRoot, "apps", "web");
 const e2eRunsRoot = join(repoRoot, "tmp", "e2e-runs");
 const useSharedHiveHome = process.env.HIVE_E2E_SHARED_HOME === "1";
@@ -105,6 +114,18 @@ async function run() {
       logsDir: context.logsDir,
     });
     managedProcesses.push(server);
+
+    await registerWorkspace({
+      apiUrl: context.apiUrl,
+      path: context.workspaceRoot,
+      activate: true,
+    });
+
+    await registerWorkspace({
+      apiUrl: context.apiUrl,
+      path: secondaryWorkspaceRoot,
+      activate: false,
+    });
 
     const web = startManagedProcess({
       command: "bun",
@@ -311,25 +332,60 @@ async function startServerWithRetries(options: {
   context: RuntimeContext;
   logsDir: string;
 }): Promise<ManagedProcess> {
+  const elixirEnv = {
+    ...process.env,
+    MIX_ENV: "prod",
+    PHX_SERVER: "true",
+    SECRET_KEY_BASE:
+      "hive-e2e-secret-key-base-dev-only-0001-0002-0003-0004-0005-0006-0007",
+    DATABASE_PATH: options.context.dbPath,
+    HIVE_HOME: options.context.hiveHome,
+    HIVE_WORKSPACE_ROOT: options.context.workspaceRoot,
+    HIVE_BROWSE_ROOT: options.context.runRoot,
+    HIVE_OPENCODE_START_TIMEOUT_MS: "120000",
+    HOST: "127.0.0.1",
+    PORT: String(options.context.apiPort),
+    CORS_ORIGIN: options.context.webUrl,
+  };
+
+  const runtimeEnvOverrideArgs = [
+    "env",
+    `PORT=${String(options.context.apiPort)}`,
+    `PHX_PORT=${String(options.context.apiPort)}`,
+    `BACKEND_PORT=${String(options.context.apiPort)}`,
+    `BACKEND_URL=${options.context.apiUrl}`,
+    `VITE_API_URL=${options.context.apiUrl}`,
+    `VITE_BACKEND_URL=${options.context.apiUrl}`,
+    `FRONTEND_PORT=${String(options.context.webPort)}`,
+    `FRONTEND_URL=${options.context.webUrl}`,
+  ];
+
+  await runCommand(
+    "mise",
+    ["x", "-C", ".", "--", ...runtimeEnvOverrideArgs, "mix", "ecto.migrate"],
+    {
+      cwd: serverElixirRoot,
+      env: elixirEnv,
+      label: "Migrate Elixir E2E database",
+    }
+  );
+
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= SERVER_START_ATTEMPTS; attempt += 1) {
     const server = startManagedProcess({
-      command: "bun",
-      args: ["run", "src/index.ts"],
-      cwd: serverRoot,
-      env: {
-        ...process.env,
-        DATABASE_URL: `file:${options.context.dbPath}`,
-        HIVE_HOME: options.context.hiveHome,
-        HIVE_WORKSPACE_ROOT: options.context.workspaceRoot,
-        HIVE_BROWSE_ROOT: options.context.runRoot,
-        HIVE_OPENCODE_START_TIMEOUT_MS: "120000",
-        HOST: "127.0.0.1",
-        PORT: String(options.context.apiPort),
-        WEB_PORT: String(options.context.webPort),
-        CORS_ORIGIN: options.context.webUrl,
-      },
+      command: "mise",
+      args: [
+        "x",
+        "-C",
+        ".",
+        "--",
+        ...runtimeEnvOverrideArgs,
+        "mix",
+        "phx.server",
+      ],
+      cwd: serverElixirRoot,
+      env: elixirEnv,
       logsDir: options.logsDir,
       name: "server",
     });
@@ -560,6 +616,44 @@ async function runCommand(
       );
     });
   });
+}
+
+async function registerWorkspace(options: {
+  apiUrl: string;
+  path: string;
+  activate: boolean;
+}): Promise<void> {
+  const response = await fetch(`${options.apiUrl}/rpc/run`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      action: "register_workspace",
+      input: {
+        path: options.path,
+        activate: options.activate,
+      },
+      fields: ["id"],
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(
+      `Failed to register workspace ${options.path} (status ${response.status}): ${body}`
+    );
+  }
+
+  const payload = (await response.json()) as RpcResult<{ id: string }>;
+
+  if (payload.success) {
+    return;
+  }
+
+  throw new Error(
+    `Failed to register workspace ${options.path}: ${payload.errors?.[0]?.shortMessage ?? payload.errors?.[0]?.message ?? "unknown RPC error"}`
+  );
 }
 
 async function runCommandCapture(

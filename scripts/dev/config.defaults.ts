@@ -1,4 +1,4 @@
-import type { HiveConfig } from "../../apps/server/src/config/schema";
+import type { HiveConfig } from "../../packages/config/src/hive-config-schema";
 
 const defaultIgnorePatterns = [
   "node_modules/**",
@@ -11,7 +11,8 @@ const defaultIgnorePatterns = [
   "dist/**",
   "build/**",
   "dist-electron/**",
-  "apps/server/server/**",
+  "apps/hive_server_elixir/_build/**",
+  "apps/hive_server_elixir/deps/**",
 ];
 
 export const hiveConfigDefaults: HiveConfig = {
@@ -27,10 +28,14 @@ export const hiveConfigDefaults: HiveConfig = {
       id: "hive-dev",
       label: "Hive Development Environment",
       type: "manual",
-      includePatterns: ["./.env*", "./apps/server/.env*", "./apps/web/.env*"],
+      includePatterns: [
+        "./.env*",
+        "./apps/hive_server_elixir/.env*",
+        "./apps/web/.env*",
+      ],
       ignorePatterns: defaultIgnorePatterns,
       env: {
-        DATABASE_URL: "local.db",
+        DATABASE_PATH: "local.db",
       },
       setup: ["HIVE_SKIP_DESKTOP_E2E_SETUP=1 bun setup"],
       services: {
@@ -47,10 +52,10 @@ export const hiveConfigDefaults: HiveConfig = {
         server: {
           type: "process",
           run: "bun run dev",
-          cwd: "./apps/server",
+          cwd: "./apps/hive_server_elixir",
           readyTimeoutMs: 5000,
           env: {
-            DATABASE_URL: "local.db",
+            DATABASE_PATH: "local.db",
             CORS_ORIGIN:
               "http://localhost:$PORT:web,http://127.0.0.1:$PORT:web",
           },

@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { z } from "zod";
 
-import { hiveConfigSchema } from "../../apps/server/src/config/schema";
+import { hiveConfigSchema } from "../../packages/config/src/hive-config-schema";
 
 const descriptionMap: Record<string, string> = {
   "": "Hive workspace configuration",
@@ -124,10 +124,25 @@ const hydratedSchema = {
 };
 
 const outputPath = resolve(process.cwd(), "hive.config.schema.json");
+
+const formatJson = (filePath: string) => {
+  const result = Bun.spawnSync({
+    cmd: ["bunx", "biome", "check", "--write", filePath],
+    cwd: process.cwd(),
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+
+  if (result.exitCode !== 0) {
+    throw new Error(`Failed to format ${filePath} with Biome`);
+  }
+};
+
 await writeFile(
   outputPath,
   `${JSON.stringify(hydratedSchema, null, 2)}\n`,
   "utf8"
 );
+formatJson(outputPath);
 
 console.log(`Generated ${outputPath}`);

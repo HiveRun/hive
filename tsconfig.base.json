@@ -26,10 +26,6 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "types": ["bun"],
-    "baseUrl": "./",
-    "paths": {
-      "@hive/server": ["apps/server/src/server.ts"],
-      "@hive/server/*": ["apps/server/src/*"]
-    }
+    "baseUrl": "./"
   }
 }

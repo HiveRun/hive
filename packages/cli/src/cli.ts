@@ -12,16 +12,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { fileURLToPath } from "node:url";
 
-import {
-  binaryDirectory,
-  cleanupPidFile,
-  DEFAULT_WEB_URL,
-  pidFilePath,
-  startServer,
-} from "@hive/server";
 import { Builtins, Cli, Command, Option } from "clipanion";
 import pc from "picocolors";
 
@@ -49,6 +43,14 @@ if (process.env.HIVE_DEBUG_ARGS === "1") {
   process.stderr.write(`[hive argv] ${JSON.stringify(rawArgv)}\n`);
 }
 if (!process.env.HIVE_SHELL_MODE) {
+  const defaultHiveEnvPath = join(
+    process.env.HIVE_HOME ?? join(homedir(), ".hive"),
+    "current",
+    "hive.env"
+  );
+  if (!process.env.DOTENV_CONFIG_PATH && existsSync(defaultHiveEnvPath)) {
+    process.env.DOTENV_CONFIG_PATH = defaultHiveEnvPath;
+  }
   await import("dotenv/config");
 }
 
@@ -64,6 +66,15 @@ const coerceHelpAlias = (argv: string[]) => {
 };
 
 const cliArgv = coerceHelpAlias(rawArgv);
+
+const runtimeExecutable = basename(process.execPath).toLowerCase();
+const isBunRuntime = runtimeExecutable.startsWith("bun");
+const isCompiledRuntime = !isBunRuntime;
+const moduleDir = dirname(fileURLToPath(import.meta.url));
+const sourceRuntimeRoot = resolve(moduleDir, "..", "..", "..");
+const binaryDirectory =
+  process.env.HIVE_RUNTIME_ROOT ??
+  (isCompiledRuntime ? dirname(process.execPath) : sourceRuntimeRoot);
 
 const DEFAULT_INSTALL_COMMAND =
   "curl -fsSL https://raw.githubusercontent.com/HiveRun/hive/main/scripts/install.sh | bash";
@@ -104,6 +115,208 @@ const printSummary = (title: string, rows: [string, string][]) => {
 
 const resolveHiveHomePath = () =>
   process.env.HIVE_HOME ?? join(homedir(), ".hive");
+
+const pidFilePath =
+  process.env.HIVE_PID_FILE ?? join(resolveHiveHomePath(), "hive.pid");
+
+const resolveDefaultPort = () => process.env.PORT ?? "3000";
+const DEFAULT_WEB_URL =
+  process.env.HIVE_WEB_URL ?? `http://localhost:${resolveDefaultPort()}`;
+
+const resolveDatabasePath = () =>
+  process.env.DATABASE_PATH ??
+  process.env.DATABASE_URL ??
+  join(resolveHiveHomePath(), "state", "hive.db");
+
+const resolveWebDistPath = () => {
+  const candidates = [
+    process.env.HIVE_WEB_DIST,
+    join(binaryDirectory, "public"),
+    resolve(binaryDirectory, "..", "public"),
+    join(sourceRuntimeRoot, "apps", "web", "dist"),
+  ].filter(
+    (value): value is string => typeof value === "string" && value.length > 0
+  );
+
+  return (
+    candidates.find((candidate) => existsSync(join(candidate, "index.html"))) ??
+    null
+  );
+};
+
+const resolvePackagedReleaseRoot = () => {
+  const candidates = [
+    process.env.HIVE_SERVER_RELEASE_ROOT,
+    join(binaryDirectory, "server"),
+    join(binaryDirectory, "hive_server_elixir"),
+  ].filter(
+    (value): value is string => typeof value === "string" && value.length > 0
+  );
+
+  return (
+    candidates.find((candidate) =>
+      existsSync(
+        join(
+          candidate,
+          "bin",
+          process.platform === "win32"
+            ? "hive_server_elixir.bat"
+            : "hive_server_elixir"
+        )
+      )
+    ) ?? null
+  );
+};
+
+const resolvePackagedReleaseExecutable = () => {
+  const root = resolvePackagedReleaseRoot();
+  if (!root) {
+    return null;
+  }
+
+  return join(
+    root,
+    "bin",
+    process.platform === "win32"
+      ? "hive_server_elixir.bat"
+      : "hive_server_elixir"
+  );
+};
+
+const resolveServerElixirRoot = () => {
+  const candidates = [
+    process.env.HIVE_SERVER_ELIXIR_ROOT,
+    join(binaryDirectory, "apps", "hive_server_elixir"),
+    resolve(binaryDirectory, "..", "apps", "hive_server_elixir"),
+    resolve(binaryDirectory, "..", "..", "apps", "hive_server_elixir"),
+    resolve(process.cwd(), "apps", "hive_server_elixir"),
+  ].filter(
+    (value): value is string => typeof value === "string" && value.length > 0
+  );
+
+  const match = candidates.find((candidate) =>
+    existsSync(join(candidate, "mix.exs"))
+  );
+  if (!match) {
+    throw new Error(
+      "Unable to locate apps/hive_server_elixir for CLI runtime startup"
+    );
+  }
+
+  return match;
+};
+
+const resolveMixCommand = (...args: string[]): [string, ...string[]] => {
+  if (Bun.which("mix")) {
+    return ["mix", ...args];
+  }
+
+  if (Bun.which("mise")) {
+    return ["mise", "x", "-C", ".", "--", "mix", ...args];
+  }
+
+  throw new Error(
+    "Unable to run source Elixir server: neither 'mix' nor 'mise' is available"
+  );
+};
+
+const ensureParentDirectory = (path: string) => {
+  mkdirSync(dirname(path), { recursive: true });
+};
+
+const buildElixirEnv = () => ({
+  ...process.env,
+  MIX_ENV: process.env.MIX_ENV ?? "prod",
+  PHX_SERVER: "true",
+  SECRET_KEY_BASE:
+    process.env.SECRET_KEY_BASE ??
+    "hive-cli-secret-key-base-dev-only-0001-0002-0003-0004-0005-0006-0007",
+  DATABASE_PATH: resolveDatabasePath(),
+  HIVE_HOME: resolveHiveHomePath(),
+  HIVE_WORKSPACE_ROOT: resolveWorkspaceRootEnv(),
+  HIVE_BROWSE_ROOT: process.env.HIVE_BROWSE_ROOT ?? resolveWorkspaceRootEnv(),
+  HIVE_WEB_DIST: resolveWebDistPath() ?? process.env.HIVE_WEB_DIST,
+  HIVE_SERVER_RELEASE_ROOT:
+    resolvePackagedReleaseRoot() ?? process.env.HIVE_SERVER_RELEASE_ROOT,
+  PORT: resolveDefaultPort(),
+  PHX_HOST: process.env.PHX_HOST ?? "localhost",
+  CORS_ORIGIN:
+    process.env.CORS_ORIGINS ?? process.env.CORS_ORIGIN ?? DEFAULT_WEB_URL,
+});
+
+const runElixirMigrations = () => {
+  ensureParentDirectory(resolveDatabasePath());
+  const [command, ...args] = resolveMixCommand("ecto.migrate");
+
+  const result = spawnSync(command, args, {
+    cwd: resolveServerElixirRoot(),
+    env: buildElixirEnv(),
+    stdio: "inherit",
+  });
+
+  if (result.status !== 0) {
+    throw new Error(
+      `mix ecto.migrate failed with exit code ${String(result.status ?? 1)}`
+    );
+  }
+};
+
+const startElixirServer = async () => {
+  ensureParentDirectory(resolveDatabasePath());
+  const packagedReleaseExecutable = resolvePackagedReleaseExecutable();
+
+  if (isCompiledRuntime && !packagedReleaseExecutable) {
+    throw new Error(
+      "Bundled Elixir release not found. Reinstall Hive or set HIVE_SERVER_RELEASE_ROOT."
+    );
+  }
+
+  const child = packagedReleaseExecutable
+    ? spawn(packagedReleaseExecutable, ["start"], {
+        cwd: dirname(dirname(packagedReleaseExecutable)),
+        env: buildElixirEnv(),
+        stdio: "inherit",
+      })
+    : (() => {
+        runElixirMigrations();
+
+        const [command, ...args] = resolveMixCommand("phx.server");
+
+        return spawn(command, args, {
+          cwd: resolveServerElixirRoot(),
+          env: buildElixirEnv(),
+          stdio: "inherit",
+        });
+      })();
+
+  const forwardSignal = (signal: NodeJS.Signals) => {
+    try {
+      child.kill(signal);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const handleSigint = () => forwardSignal("SIGINT");
+  const handleSigterm = () => forwardSignal("SIGTERM");
+
+  process.on("SIGINT", handleSigint);
+  process.on("SIGTERM", handleSigterm);
+
+  return await new Promise<number>((resolvePromise, reject) => {
+    child.once("error", (error) => {
+      process.off("SIGINT", handleSigint);
+      process.off("SIGTERM", handleSigterm);
+      reject(error);
+    });
+
+    child.once("exit", (code) => {
+      process.off("SIGINT", handleSigint);
+      process.off("SIGTERM", handleSigterm);
+      resolvePromise(code ?? 0);
+    });
+  });
+};
 
 const resolveDesktopPidFilePath = () =>
   process.env.HIVE_DESKTOP_PID_FILE ??
@@ -242,6 +455,18 @@ const persistPidFile = (pid: number | null) => {
         error instanceof Error ? error.message : String(error)
       }`
     );
+  }
+};
+
+const cleanupPidFile = () => {
+  if (!existsSync(pidFilePath)) {
+    return;
+  }
+
+  try {
+    unlinkSync(pidFilePath);
+  } catch {
+    /* ignore */
   }
 };
 
@@ -957,9 +1182,6 @@ const uninstallCommand = async (confirm: boolean, keepData: boolean) => {
   });
 };
 
-const runtimeExecutable = basename(process.execPath).toLowerCase();
-const isBunRuntime = runtimeExecutable.startsWith("bun");
-const isCompiledRuntime = !isBunRuntime;
 const isForcedForeground = process.env.HIVE_FOREGROUND === "1";
 const defaultShouldRunDetached = isCompiledRuntime && !isForcedForeground;
 
@@ -977,7 +1199,7 @@ const startDetachedServer = () => {
   process.exit(0);
 };
 
-const bootstrap = async (options?: { forceForeground?: boolean }) => {
+const bootstrap = (options?: { forceForeground?: boolean }) => {
   const shouldRunDetached =
     !options?.forceForeground && defaultShouldRunDetached;
 
@@ -998,10 +1220,7 @@ const bootstrap = async (options?: { forceForeground?: boolean }) => {
     process.env.HIVE_WORKSPACE_ROOT = process.cwd();
   }
 
-  await startServer();
-  return new Promise<never>(() => {
-    /* Keep process alive while server runs in foreground */
-  });
+  return startElixirServer();
 };
 
 const stopCommand = async () => {

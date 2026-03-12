@@ -30,6 +30,9 @@ const releaseArchive = join(
   "install",
   `hive-${platform}-${arch}.tar.gz`
 );
+const DISTRIBUTION_CHECK_PORT = "4330";
+const HTTP_WAIT_TIMEOUT_MS = 20_000;
+const HTTP_WAIT_INTERVAL_MS = 500;
 
 const run = (cmd: string[], env?: Record<string, string>) => {
   const result = Bun.spawnSync({
@@ -71,6 +74,44 @@ const ensureDesktopArtifact = (releaseDir: string) => {
   }
 };
 
+const readStdout = (result: Bun.SyncSubprocess) =>
+  new TextDecoder().decode(result.stdout).trim();
+
+const runCapture = (cmd: string[], env?: Record<string, string>) => {
+  const result = Bun.spawnSync({
+    cmd,
+    cwd: repoRoot,
+    env: env ? { ...process.env, ...env } : process.env,
+  });
+
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Command failed (${cmd.join(" ")}) with code ${result.exitCode}`
+    );
+  }
+
+  return readStdout(result);
+};
+
+const waitForHttp = async (url: string, timeoutMs = HTTP_WAIT_TIMEOUT_MS) => {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) {
+        return await response.text();
+      }
+    } catch {
+      /* retry */
+    }
+
+    await Bun.sleep(HTTP_WAIT_INTERVAL_MS);
+  }
+
+  throw new Error(`Timed out waiting for ${url}`);
+};
+
 console.log("Building installer artifacts...");
 run(["bun", "run", "build:installer"]);
 
@@ -104,6 +145,40 @@ try {
 
   const currentRelease = join(hiveHome, "current");
   ensureDesktopArtifact(currentRelease);
+
+  console.log("Starting installed Hive release...");
+  run([installedBinary], { ...installEnv, PORT: DISTRIBUTION_CHECK_PORT });
+
+  const healthBody = await waitForHttp(
+    `http://localhost:${DISTRIBUTION_CHECK_PORT}/health`
+  );
+  if (healthBody.trim() !== '{"status":"ok"}') {
+    throw new Error(`Unexpected health payload: ${healthBody}`);
+  }
+
+  const rootHtml = await waitForHttp(
+    `http://localhost:${DISTRIBUTION_CHECK_PORT}/`
+  );
+  if (!rootHtml.includes('<div id="root"></div>')) {
+    throw new Error(
+      "Installed Hive root page did not serve the bundled SPA shell"
+    );
+  }
+
+  const infoOutput = runCapture([installedBinary, "info"], {
+    ...installEnv,
+    PORT: DISTRIBUTION_CHECK_PORT,
+  });
+  if (!infoOutput.includes("Running (PID")) {
+    throw new Error(
+      `Installed Hive info did not report a running daemon:\n${infoOutput}`
+    );
+  }
+
+  run([installedBinary, "stop"], {
+    ...installEnv,
+    PORT: DISTRIBUTION_CHECK_PORT,
+  });
 
   console.log("Distribution check passed.");
 } finally {
