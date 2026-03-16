@@ -4,7 +4,6 @@ defmodule HiveServerElixir.Cells.Workspace do
   import Ash.Expr
   require Ash.Query
 
-  alias HiveServerElixir.Cells
   alias HiveServerElixir.Workspaces.PathPolicy
 
   use Ash.Resource,
@@ -194,13 +193,13 @@ defmodule HiveServerElixir.Cells.Workspace do
   defp existing_workspace_for_path(path) when is_binary(path) do
     __MODULE__
     |> Ash.Query.filter(expr(path == ^path))
-    |> Ash.read_one!(domain: Cells)
+    |> Ash.read_one!()
   end
 
   defp active_workspace_id do
     __MODULE__
     |> Ash.Query.for_read(:ui_list, %{})
-    |> Ash.read!(domain: Cells)
+    |> Ash.read!()
     |> case do
       [%{id: workspace_id} | _rest] -> workspace_id
       _other -> nil

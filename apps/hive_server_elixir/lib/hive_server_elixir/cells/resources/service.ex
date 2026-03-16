@@ -6,7 +6,6 @@ defmodule HiveServerElixir.Cells.Service do
 
   alias HiveServerElixir.Cells.Activity
   alias HiveServerElixir.Cells.Cell
-  alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.ServicePayload
   alias HiveServerElixir.Cells.ServiceReconciliation
   alias HiveServerElixir.Cells.ServiceRuntime
@@ -299,7 +298,7 @@ defmodule HiveServerElixir.Cells.Service do
 
   @spec reconcile_runtime_inventory_payload() :: {:ok, map()}
   def reconcile_runtime_inventory_payload do
-    services = Ash.read!(__MODULE__, domain: Cells)
+    services = Ash.read!(__MODULE__)
     snapshots = ServiceReconciliation.reconcile_all(services)
 
     updated_count =
@@ -316,7 +315,7 @@ defmodule HiveServerElixir.Cells.Service do
 
   @spec list_payloads(String.t(), map()) :: {:ok, [map()]} | {:error, term()}
   def list_payloads(cell_id, opts \\ %{}) when is_binary(cell_id) do
-    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id) do
       {:ok, ServiceSnapshot.list_rpc_payloads(cell_id, snapshot_options(opts))}
     end
   end
@@ -358,7 +357,7 @@ defmodule HiveServerElixir.Cells.Service do
     __MODULE__
     |> Ash.Query.filter(expr(cell_id == ^cell_id))
     |> Ash.Query.sort(inserted_at: :asc)
-    |> Ash.read!(domain: Cells)
+    |> Ash.read!()
   end
 
   @spec snapshot_payload(map()) :: map()
@@ -458,9 +457,9 @@ defmodule HiveServerElixir.Cells.Service do
 
   defp lifecycle_payload(input, activity_type, runtime_fun, metadata_fun)
        when is_map(input) and is_function(runtime_fun, 1) do
-    with {:ok, service} <- Ash.get(__MODULE__, Map.fetch!(input, :service_id), domain: Cells),
+    with {:ok, service} <- Ash.get(__MODULE__, Map.fetch!(input, :service_id)),
          :ok <- runtime_fun.(service),
-         {:ok, updated_service} <- Ash.get(__MODULE__, service.id, domain: Cells) do
+         {:ok, updated_service} <- Ash.get(__MODULE__, service.id) do
       metadata = if is_function(metadata_fun, 1), do: metadata_fun.(service), else: metadata_fun
       _ = record_activity(service.cell_id, service.id, activity_type, input, metadata)
       {:ok, ServiceSnapshot.rpc_payload(updated_service)}
@@ -469,7 +468,7 @@ defmodule HiveServerElixir.Cells.Service do
 
   defp batch_payloads(cell_id, audit, activity_type, runtime_fun)
        when is_binary(cell_id) and is_map(audit) and is_function(runtime_fun, 1) do
-    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
+    with {:ok, _cell} <- Ash.get(Cell, cell_id),
          :ok <- apply_all(list_for_cell(cell_id), runtime_fun) do
       _ = record_activity(cell_id, nil, activity_type, audit, %{})
       {:ok, ServiceSnapshot.list_rpc_payloads(cell_id)}
@@ -496,7 +495,7 @@ defmodule HiveServerElixir.Cells.Service do
       }
       |> maybe_put_service_id(service_id)
 
-    case Ash.create(Activity, attrs, domain: Cells) do
+    case Ash.create(Activity, attrs) do
       {:ok, _activity} -> :ok
       {:error, _error} -> :ok
     end

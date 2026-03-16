@@ -1,7 +1,6 @@
 defmodule HiveServerElixir.Cells.AgentSessionProjection do
   @moduledoc false
 
-  alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Opencode.EventEnvelope
@@ -73,7 +72,7 @@ defmodule HiveServerElixir.Cells.AgentSessionProjection do
       |> maybe_put(:model_provider_id, event_provider_id(global_event))
       |> maybe_put(:last_error, event_error_message(global_event))
 
-    Ash.create(AgentSession, attrs, action: :begin_session, domain: Cells)
+    Ash.create(AgentSession, attrs, action: :begin_session)
   end
 
   defp sync_runtime_details(%AgentSession{} = session, attrs) when is_map(attrs) do
@@ -90,7 +89,7 @@ defmodule HiveServerElixir.Cells.AgentSessionProjection do
     if map_size(changed_attrs) == 0 do
       {:ok, session}
     else
-      Ash.update(session, changed_attrs, action: :sync_runtime_details, domain: Cells)
+      Ash.update(session, changed_attrs, action: :sync_runtime_details)
     end
   end
 
@@ -105,7 +104,7 @@ defmodule HiveServerElixir.Cells.AgentSessionProjection do
         {:ok, session}
 
       true ->
-        Ash.update(session, %{mode: mode}, action: :set_mode, domain: Cells)
+        Ash.update(session, %{mode: mode}, action: :set_mode)
     end
   end
 
@@ -115,13 +114,13 @@ defmodule HiveServerElixir.Cells.AgentSessionProjection do
 
     cond do
       is_binary(error_message) and error_message != session.last_error ->
-        Ash.update(session, %{last_error: error_message}, action: :record_error, domain: Cells)
+        Ash.update(session, %{last_error: error_message}, action: :record_error)
 
       is_binary(error_message) ->
         {:ok, session}
 
       event_type in @healthy_session_events and not is_nil(session.last_error) ->
-        Ash.update(session, %{last_error: nil}, action: :record_error, domain: Cells)
+        Ash.update(session, %{last_error: nil}, action: :record_error)
 
       true ->
         {:ok, session}
@@ -136,7 +135,7 @@ defmodule HiveServerElixir.Cells.AgentSessionProjection do
     }
   end
 
-  defp get_cell(cell_id) when is_binary(cell_id), do: Ash.get(Cell, cell_id, domain: Cells)
+  defp get_cell(cell_id) when is_binary(cell_id), do: Ash.get(Cell, cell_id)
   defp get_cell(_cell_id), do: {:error, :cell_not_found}
 
   defp cell_id_from_context(context) when is_map(context) do

@@ -5,7 +5,6 @@ defmodule HiveServerElixir.Cells.Reactors.ResumeCell do
 
   use Reactor
 
-  alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Reactors.Steps.ResumeIngestStep
   alias HiveServerElixir.Cells.TerminalEvents
@@ -18,7 +17,7 @@ defmodule HiveServerElixir.Cells.Reactors.ResumeCell do
     argument(:cell_id, input(:cell_id))
 
     run(fn %{cell_id: cell_id}, _context ->
-      Ash.get(Cell, cell_id, domain: Cells)
+      Ash.get(Cell, cell_id)
     end)
   end
 
@@ -28,7 +27,7 @@ defmodule HiveServerElixir.Cells.Reactors.ResumeCell do
     run(fn %{cell: cell}, _context ->
       cell
       |> Ash.Changeset.for_update(:prepare_setup_attempt, %{})
-      |> Ash.update(domain: Cells)
+      |> Ash.update()
     end)
   end
 

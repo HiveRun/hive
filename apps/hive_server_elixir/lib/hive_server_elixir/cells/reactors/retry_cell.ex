@@ -5,7 +5,6 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
 
   use Reactor
 
-  alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Reactors.Steps.RetryIngestStep
   alias HiveServerElixir.Cells.TemplateRuntime
@@ -19,7 +18,7 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
     argument(:cell_id, input(:cell_id))
 
     run(fn %{cell_id: cell_id}, _context ->
-      Ash.get(Cell, cell_id, domain: Cells)
+      Ash.get(Cell, cell_id)
     end)
   end
 
@@ -29,7 +28,7 @@ defmodule HiveServerElixir.Cells.Reactors.RetryCell do
     run(fn %{cell: cell}, _context ->
       cell
       |> Ash.Changeset.for_update(:prepare_setup_attempt, %{})
-      |> Ash.update(domain: Cells)
+      |> Ash.update()
     end)
   end
 

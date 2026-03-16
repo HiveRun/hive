@@ -137,7 +137,7 @@ defmodule HiveServerElixir.Cells.Provisioning do
   def fetch_for_cell(cell_id) when is_binary(cell_id) do
     __MODULE__
     |> Ash.Query.filter(expr(cell_id == ^cell_id))
-    |> Ash.read_one(domain: HiveServerElixir.Cells)
+    |> Ash.read_one()
     |> case do
       {:ok, provisioning} -> provisioning
       {:error, _reason} -> nil

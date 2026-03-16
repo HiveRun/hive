@@ -4,7 +4,6 @@ defmodule HiveServerElixir.Cells.AgentSessionRead do
   import Ash.Expr
   require Ash.Query
 
-  alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.CellStatus
@@ -157,7 +156,7 @@ defmodule HiveServerElixir.Cells.AgentSessionRead do
   end
 
   defp get_cell(cell_id) do
-    case Ash.get(Cell, cell_id, domain: Cells) do
+    case Ash.get(Cell, cell_id) do
       {:ok, %Cell{} = cell} -> {:ok, cell}
       {:error, _error} -> {:error, {:not_found, "Cell not found"}}
     end

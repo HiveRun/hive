@@ -5,7 +5,6 @@ defmodule HiveServerElixir.Cells.Reactors.DeleteCell do
 
   use Reactor
 
-  alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Reactors.Steps.StopIngestStep
   alias HiveServerElixir.Cells.WorkspaceSnapshot
@@ -18,7 +17,7 @@ defmodule HiveServerElixir.Cells.Reactors.DeleteCell do
     argument(:cell_id, input(:cell_id))
 
     run(fn %{cell_id: cell_id}, _context ->
-      Ash.get(Cell, cell_id, domain: Cells)
+      Ash.get(Cell, cell_id)
     end)
   end
 
@@ -53,7 +52,7 @@ defmodule HiveServerElixir.Cells.Reactors.DeleteCell do
     argument(:_check, result(:after_stop_check))
 
     run(fn %{cell: cell}, _context ->
-      case Ash.destroy(cell, domain: Cells) do
+      case Ash.destroy(cell) do
         :ok -> {:ok, cell}
         {:ok, destroyed_cell} -> {:ok, destroyed_cell}
         {:error, reason} -> {:error, reason}

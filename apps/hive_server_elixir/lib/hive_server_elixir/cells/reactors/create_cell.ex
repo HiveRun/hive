@@ -5,7 +5,6 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
 
   use Reactor
 
-  alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Reactors.Steps.StartIngestStep
   alias HiveServerElixir.Cells.TemplateRuntime
@@ -40,19 +39,15 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
         workspace_path: workspace_path
       },
       _context ->
-        Ash.create(
-          Cell,
-          %{
-            workspace_id: workspace_id,
-            name: name,
-            description: description,
-            template_id: template_id,
-            workspace_root_path: workspace_root_path,
-            workspace_path: workspace_path,
-            status: "provisioning"
-          },
-          domain: Cells
-        )
+        Ash.create(Cell, %{
+          workspace_id: workspace_id,
+          name: name,
+          description: description,
+          template_id: template_id,
+          workspace_root_path: workspace_root_path,
+          workspace_path: workspace_path,
+          status: "provisioning"
+        })
     end)
   end
 
@@ -77,7 +72,7 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
         :prepare_setup_attempt,
         %{opencode_session_id: session_id, start_mode: mode}
       )
-      |> Ash.update(domain: Cells)
+      |> Ash.update()
     end)
   end
 
@@ -146,8 +141,7 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
 
     if is_binary(source_root) and File.dir?(source_root) do
       with {:ok, workspace_path} <- WorkspaceSnapshot.ensure_cell_workspace(cell.id, source_root),
-           {:ok, updated_cell} <-
-             Ash.update(cell, %{workspace_path: workspace_path}, domain: Cells) do
+           {:ok, updated_cell} <- Ash.update(cell, %{workspace_path: workspace_path}) do
         {:ok, updated_cell}
       end
     else

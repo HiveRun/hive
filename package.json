@@ -66,7 +66,7 @@
     "dev:server-elixir": "bash -lc 'mise x -C apps/hive_server_elixir -- mix ecto.migrate && exec mise x -C apps/hive_server_elixir -- iex -S mix phx.server'",
     "setup:server-elixir": "mise x -C apps/hive_server_elixir -- mix setup",
     "test:server-elixir": "MIX_ENV=test mise x -C apps/hive_server_elixir -- mix do compile --warnings-as-errors + test --warnings-as-errors",
-    "check:server-elixir": "mise x -C apps/hive_server_elixir -- mix format --check-formatted",
+    "check:server-elixir": "mise x -C apps/hive_server_elixir -- mix ash.codegen --check && mise x -C apps/hive_server_elixir -- mix format --check-formatted && mise x -C apps/hive_server_elixir -- mix compile --warnings-as-errors && mise x -C apps/hive_server_elixir -- mix xref graph --format cycles --label compile-connected --fail-above 0",
     "dev:desktop": "bun run --cwd apps/desktop-electron start",
     "build:desktop": "bun run --cwd apps/desktop-electron package",
     "config:generate": "bun scripts/dev/generate-config.ts && bun scripts/dev/generate-config-schema.ts",

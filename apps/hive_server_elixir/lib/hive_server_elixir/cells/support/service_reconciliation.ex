@@ -1,7 +1,6 @@
 defmodule HiveServerElixir.Cells.ServiceReconciliation do
   @moduledoc false
 
-  alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.ServiceStatus
@@ -62,8 +61,7 @@ defmodule HiveServerElixir.Cells.ServiceReconciliation do
                last_known_error: last_known_error,
                pid: pid
              },
-             action: :reconcile_runtime_state,
-             domain: Cells
+             action: :reconcile_runtime_state
            ) do
         {:ok, updated} ->
           updated

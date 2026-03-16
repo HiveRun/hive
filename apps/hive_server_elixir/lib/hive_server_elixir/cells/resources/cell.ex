@@ -5,7 +5,6 @@ defmodule HiveServerElixir.Cells.Cell do
   require Ash.Query
 
   alias HiveServerElixir.Cells.AgentSession
-  alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.CellCommands
   alias HiveServerElixir.Cells.CellStatus
   alias HiveServerElixir.Cells.Events
@@ -557,7 +556,7 @@ defmodule HiveServerElixir.Cells.Cell do
     workspace_id = Map.fetch!(input, :workspace_id)
     description = Map.get(input, :description)
 
-    with {:ok, workspace} <- Ash.get(Workspace, workspace_id, domain: Cells),
+    with {:ok, workspace} <- Ash.get(Workspace, workspace_id),
          {:ok, cell} <-
            CellCommands.create(%{
              workspace_id: workspace_id,
@@ -651,7 +650,7 @@ defmodule HiveServerElixir.Cells.Cell do
   def finalize_setup_error(%{id: cell_id}, reason), do: finalize_setup_error(cell_id, reason)
 
   def finalize_setup_error(cell_id, reason) when is_binary(cell_id) do
-    with {:ok, cell} <- Ash.get(__MODULE__, cell_id, domain: Cells) do
+    with {:ok, cell} <- Ash.get(__MODULE__, cell_id) do
       finalize_setup_error(cell, reason, cell_id)
     end
   end
@@ -757,7 +756,7 @@ defmodule HiveServerElixir.Cells.Cell do
   defp finalize_setup_result(cell, attrs) do
     cell
     |> Ash.Changeset.for_update(:finalize_setup_attempt, attrs)
-    |> Ash.update(domain: Cells)
+    |> Ash.update()
   end
 
   defp resolve_setup_session_id(changeset) do
@@ -796,17 +795,14 @@ defmodule HiveServerElixir.Cells.Cell do
 
     case Provisioning.fetch_for_cell(cell_id) do
       %Provisioning{} = provisioning ->
-        case Ash.update(provisioning, attrs, action: :begin_attempt, domain: Cells) do
+        case Ash.update(provisioning, attrs, action: :begin_attempt) do
           {:ok, _updated} -> :ok
           {:error, error} -> {:error, error}
         end
 
       nil ->
-        case Ash.create(
-               Provisioning,
-               Map.put(attrs, :cell_id, cell_id),
-               action: :begin_attempt_record,
-               domain: Cells
+        case Ash.create(Provisioning, Map.put(attrs, :cell_id, cell_id),
+               action: :begin_attempt_record
              ) do
           {:ok, _created} -> :ok
           {:error, error} -> {:error, error}
@@ -820,12 +816,7 @@ defmodule HiveServerElixir.Cells.Cell do
 
     case AgentSession.fetch_by_session_id(session_id) || AgentSession.fetch_for_cell(cell.id) do
       %AgentSession{} = session ->
-        case Ash.update(
-               session,
-               %{resume_on_startup: true},
-               action: :sync_runtime_details,
-               domain: Cells
-             ) do
+        case Ash.update(session, %{resume_on_startup: true}, action: :sync_runtime_details) do
           {:ok, _updated} -> :ok
           {:error, error} -> {:error, error}
         end
@@ -842,8 +833,7 @@ defmodule HiveServerElixir.Cells.Cell do
                  current_mode: mode,
                  resume_on_startup: true
                },
-               action: :begin_session,
-               domain: Cells
+               action: :begin_session
              ) do
           {:ok, _created} -> :ok
           {:error, error} -> {:error, error}
@@ -854,7 +844,7 @@ defmodule HiveServerElixir.Cells.Cell do
   defp finish_setup_attempt(cell_id) do
     case Provisioning.fetch_for_cell(cell_id) do
       %Provisioning{} = provisioning ->
-        case Ash.update(provisioning, %{}, action: :finish_attempt, domain: Cells) do
+        case Ash.update(provisioning, %{}, action: :finish_attempt) do
           {:ok, _updated} -> :ok
           {:error, error} -> {:error, error}
         end
@@ -903,7 +893,7 @@ defmodule HiveServerElixir.Cells.Cell do
         |> maybe_put_metadata("serviceName", Map.get(input, :service_name))
     }
 
-    case Ash.create(HiveServerElixir.Cells.Activity, attrs, domain: Cells) do
+    case Ash.create(HiveServerElixir.Cells.Activity, attrs) do
       {:ok, _activity} -> :ok
       {:error, _error} -> :ok
     end

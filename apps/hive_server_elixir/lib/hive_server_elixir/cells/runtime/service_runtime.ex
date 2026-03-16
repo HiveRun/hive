@@ -3,7 +3,6 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
 
   use GenServer
 
-  alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.TerminalRuntime
@@ -359,32 +358,22 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
   defp persist_service_state(%Service{} = service, attrs) when is_map(attrs) do
     case Map.get(attrs, :status) do
       "running" ->
-        Ash.update(service, Map.take(attrs, [:pid, :port]), action: :mark_running, domain: Cells)
+        Ash.update(service, Map.take(attrs, [:pid, :port]), action: :mark_running)
 
       :running ->
-        Ash.update(service, Map.take(attrs, [:pid, :port]), action: :mark_running, domain: Cells)
+        Ash.update(service, Map.take(attrs, [:pid, :port]), action: :mark_running)
 
       "stopped" ->
-        Ash.update(service, Map.take(attrs, [:port]), action: :mark_stopped, domain: Cells)
+        Ash.update(service, Map.take(attrs, [:port]), action: :mark_stopped)
 
       :stopped ->
-        Ash.update(service, Map.take(attrs, [:port]), action: :mark_stopped, domain: Cells)
+        Ash.update(service, Map.take(attrs, [:port]), action: :mark_stopped)
 
       "error" ->
-        Ash.update(
-          service,
-          Map.take(attrs, [:last_known_error, :port]),
-          action: :mark_error,
-          domain: Cells
-        )
+        Ash.update(service, Map.take(attrs, [:last_known_error, :port]), action: :mark_error)
 
       :error ->
-        Ash.update(
-          service,
-          Map.take(attrs, [:last_known_error, :port]),
-          action: :mark_error,
-          domain: Cells
-        )
+        Ash.update(service, Map.take(attrs, [:last_known_error, :port]), action: :mark_error)
 
       _other ->
         {:error, :invalid_status_transition}
@@ -402,6 +391,6 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
   defp exit_status_to_state(_status), do: "error"
 
   defp reload_service(service_id) when is_binary(service_id) do
-    Ash.get(Service, service_id, domain: Cells)
+    Ash.get(Service, service_id)
   end
 end

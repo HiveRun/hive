@@ -193,7 +193,7 @@ defmodule HiveServerElixir.Cells.Timing do
     |> Ash.Query.filter(expr(cell_id == ^cell_id))
     |> Ash.Query.sort(inserted_at: :desc, id: :desc)
     |> Ash.Query.limit(1)
-    |> Ash.read(domain: HiveServerElixir.Cells)
+    |> Ash.read()
     |> case do
       {:ok, [timing | _]} -> timing
       {:ok, []} -> nil

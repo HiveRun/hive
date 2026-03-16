@@ -4,7 +4,6 @@ defmodule HiveServerElixir.Cells.TemplateRuntime do
   import Ash.Expr
   require Ash.Query
 
-  alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.Service
@@ -73,7 +72,7 @@ defmodule HiveServerElixir.Cells.TemplateRuntime do
           definition: service_definition.definition
         }
 
-        case Ash.create(Service, attrs, domain: Cells) do
+        case Ash.create(Service, attrs) do
           {:ok, service} ->
             {:ok, service}
 
@@ -150,7 +149,7 @@ defmodule HiveServerElixir.Cells.TemplateRuntime do
     Service
     |> Ash.Query.filter(expr(cell_id == ^cell_id))
     |> Ash.Query.sort(inserted_at: :asc)
-    |> Ash.read!(domain: Cells)
+    |> Ash.read!()
   end
 
   defp resolve_cwd(workspace_path, nil), do: workspace_path

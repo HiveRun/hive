@@ -5,7 +5,6 @@ defmodule HiveServerElixir.Cells.AgentSession do
   require Ash.Query
 
   alias HiveServerElixir.Cells.AgentSessionRead
-  alias HiveServerElixir.Cells
 
   use Ash.Resource,
     extensions: [AshTypescript.Resource],
@@ -225,7 +224,7 @@ defmodule HiveServerElixir.Cells.AgentSession do
   def fetch_for_cell(cell_id) when is_binary(cell_id) do
     __MODULE__
     |> Ash.Query.filter(expr(cell_id == ^cell_id))
-    |> Ash.read_one(domain: Cells)
+    |> Ash.read_one()
     |> case do
       {:ok, session} -> session
       {:error, _reason} -> nil
@@ -236,7 +235,7 @@ defmodule HiveServerElixir.Cells.AgentSession do
   def fetch_by_session_id(session_id) when is_binary(session_id) do
     __MODULE__
     |> Ash.Query.filter(expr(session_id == ^session_id))
-    |> Ash.read_one(domain: Cells)
+    |> Ash.read_one()
     |> case do
       {:ok, session} -> session
       {:error, _reason} -> nil
@@ -256,7 +255,7 @@ defmodule HiveServerElixir.Cells.AgentSession do
       with {:ok, context} <- AgentSessionRead.context_for_session(session_id),
            {:ok, agent_session} <- resolve_persisted_session(context),
            {:ok, updated_session} <-
-             Ash.update(agent_session, %{mode: normalized_mode}, action: :set_mode, domain: Cells) do
+             Ash.update(agent_session, %{mode: normalized_mode}, action: :set_mode) do
         updated_context = %{context | agent_session: updated_session}
         {:ok, AgentSessionRead.payload_from_context(updated_context)}
       else

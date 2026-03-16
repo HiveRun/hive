@@ -6,7 +6,6 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
   import Ash.Expr
   require Ash.Query
 
-  alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.TerminalSession
 
   @type session :: %{
@@ -274,17 +273,14 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
       |> terminal_session_attrs(session)
       |> Map.put(:session_key, session_key(key))
 
-    Ash.create(TerminalSession, attrs, action: :open, domain: Cells)
+    Ash.create(TerminalSession, attrs, action: :open)
   end
 
   defp persist_resize(key, session) when is_map(session) do
     with %TerminalSession{} = terminal_session <- terminal_session_for_key(session_key(key)),
          {:ok, _updated} <-
-           Ash.update(
-             terminal_session,
-             %{cols: session.cols, rows: session.rows},
-             action: :resize,
-             domain: Cells
+           Ash.update(terminal_session, %{cols: session.cols, rows: session.rows},
+             action: :resize
            ) do
       :ok
     else
@@ -298,8 +294,7 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
            Ash.update(
              terminal_session,
              %{runtime_session_id: session.sessionId, cols: session.cols, rows: session.rows},
-             action: :restart,
-             domain: Cells
+             action: :restart
            ) do
       :ok
     else
@@ -312,7 +307,7 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
       cell_id
       |> terminal_sessions_for_cell()
       |> Enum.each(fn terminal_session ->
-        _ = Ash.update(terminal_session, %{}, action: :close, domain: Cells)
+        _ = Ash.update(terminal_session, %{}, action: :close)
       end)
     end
 
@@ -322,13 +317,13 @@ defmodule HiveServerElixir.Cells.TerminalRuntime do
   defp terminal_sessions_for_cell(cell_id) do
     TerminalSession
     |> Ash.Query.filter(expr(cell_id == ^cell_id))
-    |> Ash.read!(domain: Cells)
+    |> Ash.read!()
   end
 
   defp terminal_session_for_key(session_key) do
     TerminalSession
     |> Ash.Query.filter(expr(session_key == ^session_key))
-    |> Ash.read_one!(domain: Cells)
+    |> Ash.read_one!()
   end
 
   defp terminal_session_attrs({:setup, cell_id}, session) do
