@@ -46,6 +46,7 @@ defmodule HiveServerElixir.MixProject do
       {:oban, "~> 2.0"},
       {:ash_typescript, "~> 0.15"},
       {:usage_rules, "~> 1.0", only: [:dev]},
+      {:ex_dna, "~> 1.2", only: [:dev, :test], runtime: false},
       {:ash_ai, "~> 0.5"},
       {:tidewave, "~> 0.5", only: [:dev]},
       {:ash_state_machine, "~> 0.2"},
