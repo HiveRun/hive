@@ -61,29 +61,32 @@
 - 2026-03-04 - SQLite file confirmed at `.hive/state/hive_server_elixir_dev.db` after migration.
 - 2026-03-04 - `GET http://127.0.0.1:4311/health` returned `{"status":"ok"}` while server was running via `mix phx.server`.
 
-### Step 2: OpenCode Contract + Client Generation
+### Step 2: OpenCode SDK Integration
 
-- Pin OpenCode OpenAPI spec in repo (`priv/opencode/openapi.json`).
-- Generate Elixir client with `oapi_generator` into generated module namespace.
-- Add thin adapter for retries, timeouts, and error normalization.
+- Use `opencode_sdk` as the Elixir source of truth for OpenCode server lifecycle and HTTP operations.
+- Keep only minimal Hive-owned code where the SDK contract does not match runtime needs (notably global-event SSE ingest behavior).
+- Delete the in-repo generated OpenAPI client/spec pipeline once SDK-backed coverage is in place.
 - Done means:
-  - One sync call and one stream call work via adapter.
-  - Client generation is reproducible in CI.
+  - model catalog, session messages, and health use the SDK directly.
+  - global-event ingest works against the SDK SSE contract.
+  - no in-repo OpenCode codegen step remains.
 
 ### Step 2 Verification Evidence
 
-- 2026-03-04 - Pinned OpenCode OpenAPI spec at `apps/hive_server_elixir/priv/opencode/openapi.json` via `mix opencode.sync_spec`.
-- 2026-03-04 - Added deterministic generation aliases in `apps/hive_server_elixir/mix.exs`:
-  - `mix opencode.gen.client` (generate from pinned local spec)
-  - `mix opencode.refresh` (fetch latest spec + regenerate)
-- 2026-03-04 - Generated Elixir client modules with `oapi_generator` under `apps/hive_server_elixir/lib/hive_server_elixir/opencode/generated/`.
-- 2026-03-04 - Added thin adapter and transport at:
-  - `apps/hive_server_elixir/lib/hive_server_elixir/opencode/client.ex`
+- 2026-03-17 - Added `opencode_sdk` to `apps/hive_server_elixir` and moved shared OpenCode server lifecycle onto `OpenCode.create_server/1` / `OpenCode.close/1`.
+- 2026-03-17 - Removed the in-repo generated OpenCode client/spec workflow:
+  - deleted `apps/hive_server_elixir/lib/hive_server_elixir/opencode/generated/`
+  - deleted `apps/hive_server_elixir/priv/opencode/openapi.json`
+  - deleted `apps/hive_server_elixir/lib/mix/tasks/opencode.sync_spec.ex`
+  - removed `:oapi_generator` config/aliases
+- 2026-03-17 - Kept only minimal Hive-owned OpenCode runtime glue in:
   - `apps/hive_server_elixir/lib/hive_server_elixir/opencode/adapter.ex`
-- 2026-03-04 - Verified one sync and one stream endpoint path through adapter with tests:
+  - `apps/hive_server_elixir/lib/hive_server_elixir/opencode/server_manager.ex`
+- 2026-03-17 - Verified SDK-backed sync + stream paths with tests:
   - `apps/hive_server_elixir/test/hive_server_elixir/opencode/client_integration_test.exs`
   - `apps/hive_server_elixir/test/hive_server_elixir/opencode/adapter_test.exs`
-  - `apps/hive_server_elixir/test/mix/tasks/opencode_sync_spec_test.exs`
+  - `apps/hive_server_elixir/test/hive_server_elixir/opencode/server_manager_test.exs`
+  - `apps/hive_server_elixir/test/hive_server_elixir_web/controllers/agents_real_opencode_controller_test.exs`
 
 ### Step 3: Persist-All Event Ingest Pipeline
 

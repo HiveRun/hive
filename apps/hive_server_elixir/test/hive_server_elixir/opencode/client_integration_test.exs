@@ -2,41 +2,47 @@ defmodule HiveServerElixir.Opencode.ClientIntegrationTest do
   use ExUnit.Case, async: true
 
   alias HiveServerElixir.Opencode.Adapter
+  alias HiveServerElixir.OpencodeFakeServer
+  alias OpenCode.Generated.Operations
 
   setup do
-    stub_name = String.to_atom("opencode_stub_#{System.unique_integer([:positive, :monotonic])}")
-
-    Req.Test.stub(stub_name, fn conn ->
-      case conn.request_path do
-        "/global/health" ->
-          Req.Test.json(conn, %{healthy: true, version: "1.2.3"})
-
-        "/global/event" ->
-          Req.Test.json(conn, %{directory: "/tmp/project", payload: %{type: "session.idle"}})
-
-        _ ->
-          conn
-          |> Plug.Conn.put_status(404)
-          |> Req.Test.json(%{message: "not found"})
-      end
-    end)
-
-    {:ok, req_options: [plug: {Req.Test, stub_name}], base_url: "http://opencode.test"}
+    {:ok, opencode: OpencodeFakeServer.setup_open_code_stub()}
   end
 
-  test "health uses generated operation with Req transport", %{
-    req_options: req_options,
-    base_url: base_url
-  } do
-    assert {:ok, %{"healthy" => true, "version" => "1.2.3"}} =
-             Adapter.health(req_options: req_options, base_url: base_url)
+  test "global_health uses SDK operations over Req transport", %{opencode: opencode} do
+    assert {:ok, %{"healthy" => true, "version" => "test"}} =
+             Operations.global_health(opencode.client_opts)
   end
 
-  test "next_global_event uses generated stream operation", %{
-    req_options: req_options,
-    base_url: base_url
+  test "config_providers uses SDK operations over Req transport", %{opencode: opencode} do
+    assert {:ok, %{"default" => defaults, "providers" => providers}} =
+             Operations.config_providers([directory: "/tmp/project"] ++ opencode.client_opts)
+
+    assert defaults["opencode"] == "big-pickle"
+    assert is_list(providers)
+  end
+
+  test "adapter global_event_stream yields SSE events through the fake transport", %{
+    opencode: opencode
   } do
-    assert {:ok, %{"directory" => "/tmp/project", "payload" => %{"type" => "session.idle"}}} =
-             Adapter.next_global_event(req_options: req_options, base_url: base_url)
+    payload = %{"directory" => "/tmp/project", "payload" => %{"type" => "session.idle"}}
+    :ok = OpencodeFakeServer.enqueue_global_event(opencode, {:ok, payload})
+
+    assert {:ok, stream} = Adapter.global_event_stream(opencode.adapter_opts)
+    assert Enum.take(stream, 1) == [payload]
+  end
+
+  test "adapter normalizes stream transport failures" do
+    assert {:ok, stream} =
+             Adapter.global_event_stream(
+               base_url: "http://127.0.0.1:1",
+               timeout: 10,
+               retry: false
+             )
+
+    [item] = Enum.take(stream, 1)
+    assert {:error, error} = item
+
+    assert error.type == :transport_error
   end
 end

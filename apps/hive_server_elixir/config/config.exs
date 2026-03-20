@@ -125,16 +125,12 @@ config :tailwind,
     cd: Path.expand("..", __DIR__)
   ]
 
-config :oapi_generator,
-  opencode: [
-    output: [
-      base_module: HiveServerElixir.Opencode.Generated,
-      default_client: HiveServerElixir.Opencode.Client,
-      location: "lib/hive_server_elixir/opencode/generated",
-      operation_subdirectory: "operations",
-      schema_subdirectory: "schemas"
-    ]
-  ]
+config :hive_server_elixir, :opencode_server_manager,
+  enabled: true,
+  host: "127.0.0.1",
+  port: 0,
+  timeout_ms: 20_000,
+  config: %{}
 
 # Configure Elixir's Logger
 config :logger, :default_formatter,

@@ -2,6 +2,9 @@ import Config
 config :hive_server_elixir, Oban, testing: :manual
 config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true
 config :hive_server_elixir, :workspace_bootstrap, false
+config :hive_server_elixir, :opencode_server_manager, enabled: false
+config :hive_server_elixir, :cell_provisioning_bootstrap, false
+config :hive_server_elixir, :cell_provisioning_autostart, false
 
 # Configure your database
 #

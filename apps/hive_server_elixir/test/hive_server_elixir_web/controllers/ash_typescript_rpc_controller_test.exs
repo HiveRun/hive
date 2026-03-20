@@ -8,27 +8,29 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
   alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells.Activity
   alias HiveServerElixir.Cells.Cell
+  alias HiveServerElixir.Cells.CellCommands
   alias HiveServerElixir.Cells.Lifecycle
   alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.TerminalRuntime
   alias HiveServerElixir.Cells.Timing
   alias HiveServerElixir.Cells.Workspace
+  alias HiveServerElixir.OpencodeFakeServer
   alias HiveServerElixir.Workspaces
-  alias HiveServerElixir.Opencode.TestOperations
 
   @registry HiveServerElixir.Opencode.EventIngestRegistry
 
   setup do
     previous_active_workspace_id = Workspaces.active_workspace_id()
     previous_runtime_opts = Application.get_env(:hive_server_elixir, :cell_reactor_runtime_opts)
+    opencode = OpencodeFakeServer.setup_open_code_stub()
 
     Workspace
     |> Ash.read!(domain: Cells)
     |> Enum.each(&Ash.destroy!(&1, domain: Cells))
 
     :ok = Workspaces.set_active_workspace_id(nil)
-    Application.put_env(:hive_server_elixir, :cell_reactor_runtime_opts, runtime_opts())
+    Application.put_env(:hive_server_elixir, :cell_reactor_runtime_opts, runtime_opts(opencode))
 
     on_exit(fn ->
       :ok = Workspaces.set_active_workspace_id(previous_active_workspace_id)
@@ -44,7 +46,7 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
       end
     end)
 
-    :ok
+    {:ok, opencode: opencode}
   end
 
   test "list_workspaces returns Ash-backed workspace records", %{conn: conn} do
@@ -223,7 +225,7 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
     assert get_payload["data"]["templateId"] == "default-template"
   end
 
-  test "create_cell runs the reactor and returns the typed payload", %{conn: conn} do
+  test "create_cell returns a provisioning payload immediately", %{conn: conn} do
     workspace = workspace!("rpc-create-cell")
 
     payload =
@@ -234,9 +236,12 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
 
     assert payload["success"] == true
     assert payload["data"]["workspaceId"] == workspace.id
-    assert payload["data"]["status"] == "ready"
+    assert payload["data"]["status"] == "provisioning"
     assert is_binary(payload["data"]["id"])
     assert is_binary(payload["data"]["opencodeCommand"])
+
+    assert {:ok, refreshed_cell} = Ash.get(Cell, payload["data"]["id"], domain: Cells)
+    assert refreshed_cell.status in [:provisioning, :ready]
 
     on_exit(fn ->
       _ =
@@ -247,7 +252,7 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
     end)
   end
 
-  test "retry_cell_setup records retry activity and returns the updated payload", %{conn: conn} do
+  test "retry_cell_setup records retry activity and returns a provisioning payload", %{conn: conn} do
     workspace = workspace!("rpc-retry-cell")
     cell = created_cell!(workspace)
 
@@ -259,8 +264,7 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
 
     assert payload["success"] == true
     assert payload["data"]["id"] == cell.id
-    assert payload["data"]["status"] == "ready"
-    assert payload["data"]["lastSetupError"] == nil
+    assert payload["data"]["status"] == "provisioning"
 
     activity_events =
       Activity
@@ -270,7 +274,7 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
     assert length(activity_events) == 1
   end
 
-  test "resume_cell_setup returns a ready cell payload", %{conn: conn} do
+  test "resume_cell_setup returns a provisioning cell payload", %{conn: conn} do
     workspace = workspace!("rpc-resume-cell")
     cell = created_cell!(workspace)
 
@@ -282,7 +286,7 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
 
     assert payload["success"] == true
     assert payload["data"]["id"] == cell.id
-    assert payload["data"]["status"] == "ready"
+    assert payload["data"]["status"] == "provisioning"
   end
 
   test "delete_cell removes the cell and stops ingest", %{conn: conn} do
@@ -290,7 +294,12 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
     cell = cell!(workspace, "ready")
     context = %{workspace_id: workspace.id, cell_id: cell.id}
 
-    assert {:ok, _pid} = Lifecycle.on_cell_create(context, runtime_opts())
+    assert {:ok, _pid} =
+             Lifecycle.on_cell_create(
+               context,
+               Application.fetch_env!(:hive_server_elixir, :cell_reactor_runtime_opts)
+             )
+
     assert [{_pid, _value}] = Registry.lookup(@registry, {workspace.id, cell.id})
 
     payload =
@@ -695,7 +704,7 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
 
   defp created_cell!(workspace) do
     assert {:ok, cell} =
-             Cells.create_cell(%{
+             CellCommands.create(%{
                workspace_id: workspace.id,
                name: "Cell",
                description: nil,
@@ -703,7 +712,8 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
                start_mode: "plan",
                workspace_root_path: workspace.path,
                workspace_path: workspace.path,
-               runtime_opts: runtime_opts(),
+               runtime_opts:
+                 Application.fetch_env!(:hive_server_elixir, :cell_reactor_runtime_opts),
                fail_after_ingest: false
              })
 
@@ -724,12 +734,9 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
     |> Ash.read!(domain: Cells)
   end
 
-  defp runtime_opts do
+  defp runtime_opts(opencode) do
     [
-      adapter_opts: [
-        operations_module: TestOperations,
-        global_event: fn _opts -> {:error, %{type: :transport, reason: :unreachable}} end
-      ],
+      adapter_opts: opencode.adapter_opts,
       success_delay_ms: 30_000,
       error_delay_ms: 30_000
     ]

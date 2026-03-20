@@ -15,7 +15,6 @@ import { cellQueries } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
 import { workspaceQueries } from "@/queries/workspaces";
 
-const PROVISIONING_POLL_MS = 1500;
 const CELL_ROUTE_REDIRECT_FETCH_TIMEOUT_MS = 1200;
 
 async function fetchCellForRouteRedirect(args: {
@@ -103,18 +102,14 @@ function CellLayout() {
       });
   }, [cell?.workspaceId, queryClient]);
 
-  const shouldPollProvisioningTimings = cell?.status === "provisioning";
   const shouldShowProvisioningTimeline =
-    shouldPollProvisioningTimings || cell?.status === "error";
+    cell?.status === "provisioning" || cell?.status === "error";
   const timingsQuery = useQuery({
     ...cellQueries.timings(cellId, {
       workflow: "create",
       limit: 300,
     }),
     enabled: shouldShowProvisioningTimeline,
-    refetchInterval: shouldPollProvisioningTimings
-      ? PROVISIONING_POLL_MS
-      : false,
   });
   const activeRunId = timingsQuery.data?.runs[0]?.runId;
   const activeRunSteps = useMemo(() => {

@@ -88,6 +88,9 @@ Environment variables:
   ```bash
   PORT=4100 hive
   ```
+- Network access stays local-only by default. The Elixir daemon binds to loopback and accepts API/socket traffic from loopback clients unless you explicitly opt in to remote access with `HIVE_ALLOW_REMOTE_ACCESS=1`.
+- Browser origins are local-first by default (`localhost`, `127.0.0.1`, and `[::1]` on the frontend/backend ports). Override them with `CORS_ORIGINS` (or legacy `CORS_ORIGIN`) if you need a narrower or custom allowlist.
+- The active workspace is now persisted in the local database via each workspace's `lastOpenedAt` timestamp, so restarting Hive keeps the most recently opened workspace selected.
 - Embedded chat sessions inherit OpenCode config from workspace `@opencode.json` / `opencode.json`.
 - `opencode.json` also exposes Tidewave MCP servers for local runtime introspection:
   - `tidewave_backend`: `http://localhost:{env:BACKEND_PORT}/tidewave/mcp`

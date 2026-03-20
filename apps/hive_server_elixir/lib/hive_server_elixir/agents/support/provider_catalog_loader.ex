@@ -3,9 +3,7 @@ defmodule HiveServerElixir.Agents.Support.ProviderCatalogLoader do
 
   alias HiveServerElixir.Cells.AgentSessionRead
   alias HiveServerElixir.Opencode.EventEnvelope
-  alias HiveServerElixir.Opencode.Generated.Operations
   alias HiveServerElixir.Workspaces
-
   @spec for_workspace(String.t() | nil) :: {:ok, map()} | {:error, {atom(), String.t()}}
   def for_workspace(workspace_id) do
     with {:ok, workspace} <- resolve_workspace(workspace_id),
@@ -37,11 +35,15 @@ defmodule HiveServerElixir.Agents.Support.ProviderCatalogLoader do
   end
 
   defp fetch_provider_catalog(workspace_path) do
-    opts = [directory: workspace_path, client: opencode_client()] ++ opencode_client_opts()
+    opts = [directory: workspace_path] ++ opencode_client_opts()
+    operations_module = operations_module()
 
-    case Operations.config_providers(opts) do
+    case operations_module.config_providers(opts) do
       {:ok, catalog} ->
         {:ok, catalog}
+
+      {:error, {status, body}} when is_integer(status) ->
+        {:error, {status_to_http_status(status), error_message(body)}}
 
       {:error, %{status: status, body: body}} ->
         {:error, {status_to_http_status(status), error_message(body)}}
@@ -131,15 +133,24 @@ defmodule HiveServerElixir.Agents.Support.ProviderCatalogLoader do
     end)
   end
 
-  defp opencode_client do
-    Application.get_env(:hive_server_elixir, :opencode_client, HiveServerElixir.Opencode.Client)
+  defp opencode_client_opts do
+    base_url = HiveServerElixir.Opencode.ServerManager.resolved_base_url()
+
+    case Application.get_env(:hive_server_elixir, :opencode_client_opts, []) do
+      opts when is_list(opts) ->
+        if Keyword.has_key?(opts, :base_url) do
+          opts
+        else
+          [base_url: base_url] ++ opts
+        end
+
+      _value ->
+        [base_url: base_url]
+    end
   end
 
-  defp opencode_client_opts do
-    case Application.get_env(:hive_server_elixir, :opencode_client_opts, []) do
-      opts when is_list(opts) -> opts
-      _value -> []
-    end
+  defp operations_module do
+    OpenCode.Generated.Operations
   end
 
   defp status_to_http_status(status) when status in [404], do: :not_found

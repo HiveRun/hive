@@ -2,9 +2,8 @@ defmodule HiveServerElixir.Cells.AgentSessionMessages do
   @moduledoc false
 
   alias HiveServerElixir.Cells.AgentSessionRead
-  alias HiveServerElixir.Opencode.EventEnvelope
   alias HiveServerElixir.Cells.TerminalRuntime
-  alias HiveServerElixir.Opencode.Generated.Operations
+  alias HiveServerElixir.Opencode.EventEnvelope
 
   @spec for_session(String.t()) :: {:ok, %{messages: [map()]}} | {:error, {atom(), String.t()}}
   def for_session(session_id) when is_binary(session_id) do
@@ -15,15 +14,20 @@ defmodule HiveServerElixir.Cells.AgentSessionMessages do
   end
 
   defp fetch_session_messages(context) do
-    opts =
-      [directory: context.cell.workspace_path, client: opencode_client()] ++
-        opencode_client_opts()
+    opts = [directory: context.cell.workspace_path] ++ opencode_client_opts()
+    operations_module = operations_module()
 
-    case Operations.session_messages(context.session_id, opts) do
+    case operations_module.session_messages(context.session_id, opts) do
       {:ok, payload} when is_list(payload) ->
         {:ok,
          Enum.with_index(payload)
          |> Enum.map(fn {entry, index} -> serialize_message(entry, context, index) end)}
+
+      {:error, {404, _body}} ->
+        {:ok, fallback_messages_from_terminal(context)}
+
+      {:error, {status, _body}} when is_integer(status) ->
+        {:ok, fallback_messages_from_terminal(context)}
 
       {:error, %{status: 404}} ->
         {:ok, fallback_messages_from_terminal(context)}
@@ -161,14 +165,23 @@ defmodule HiveServerElixir.Cells.AgentSessionMessages do
 
   defp read_key(value, key), do: EventEnvelope.get(value, key)
 
-  defp opencode_client do
-    Application.get_env(:hive_server_elixir, :opencode_client, HiveServerElixir.Opencode.Client)
+  defp opencode_client_opts do
+    base_url = HiveServerElixir.Opencode.ServerManager.resolved_base_url()
+
+    case Application.get_env(:hive_server_elixir, :opencode_client_opts, []) do
+      opts when is_list(opts) ->
+        if Keyword.has_key?(opts, :base_url) do
+          opts
+        else
+          [base_url: base_url] ++ opts
+        end
+
+      _value ->
+        [base_url: base_url]
+    end
   end
 
-  defp opencode_client_opts do
-    case Application.get_env(:hive_server_elixir, :opencode_client_opts, []) do
-      opts when is_list(opts) -> opts
-      _value -> []
-    end
+  defp operations_module do
+    OpenCode.Generated.Operations
   end
 end

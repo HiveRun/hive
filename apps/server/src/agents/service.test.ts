@@ -160,6 +160,41 @@ describe("agent model selection", () => {
     expect(sessionMessagesMock).toHaveBeenCalled();
   });
 
+  it("passes workspace permission rules when creating a new session", async () => {
+    loadOpencodeConfigSpy.mockResolvedValue({
+      config: {
+        permission: {
+          external_directory: {
+            "*": "ask",
+            "/home/aureatus/.opencode/repos/**": "allow",
+          },
+        },
+      },
+      source: "workspace",
+    });
+
+    await ensureAgentSession(cellId);
+
+    expect(clientStub.session.create).toHaveBeenCalledWith({
+      body: {
+        title: "Model Test Cell",
+        permission: [
+          {
+            permission: "external_directory",
+            pattern: "*",
+            action: "ask",
+          },
+          {
+            permission: "external_directory",
+            pattern: "/home/aureatus/.opencode/repos/**",
+            action: "allow",
+          },
+        ],
+      },
+      query: { directory: "/tmp/model-test" },
+    });
+  });
+
   it("sends prompts using the updated provider/model selection", async () => {
     sessionMessagesMock.mockResolvedValue({
       data: [

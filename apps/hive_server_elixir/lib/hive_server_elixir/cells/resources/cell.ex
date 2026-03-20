@@ -5,10 +5,10 @@ defmodule HiveServerElixir.Cells.Cell do
   require Ash.Query
 
   alias HiveServerElixir.Cells.AgentSession
-  alias HiveServerElixir.Cells.CellCommands
   alias HiveServerElixir.Cells.CellStatus
   alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.Provisioning
+  alias HiveServerElixir.Cells.ProvisioningRuntime
   alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.ServicePayload
   alias HiveServerElixir.Cells.TerminalEvents
@@ -555,10 +555,11 @@ defmodule HiveServerElixir.Cells.Cell do
   def create_payload(input) when is_map(input) do
     workspace_id = Map.fetch!(input, :workspace_id)
     description = Map.get(input, :description)
+    runtime_opts = reactor_runtime_opts()
 
     with {:ok, workspace} <- Ash.get(Workspace, workspace_id),
          {:ok, cell} <-
-           CellCommands.create(%{
+           create_cell_record(%{
              workspace_id: workspace_id,
              name: normalize_cell_name(Map.get(input, :name), description),
              description: description,
@@ -566,7 +567,7 @@ defmodule HiveServerElixir.Cells.Cell do
              start_mode: normalize_start_mode(Map.get(input, :start_mode)),
              workspace_root_path: workspace.path,
              workspace_path: workspace.path,
-             runtime_opts: reactor_runtime_opts(),
+             runtime_opts: runtime_opts,
              fail_after_ingest: false
            }),
          :ok <- Events.publish_cell_status(cell.workspace_id, cell.id) do
@@ -576,10 +577,12 @@ defmodule HiveServerElixir.Cells.Cell do
 
   @spec retry_setup_payload(map()) :: {:ok, map()} | {:error, term()}
   def retry_setup_payload(input) when is_map(input) do
+    runtime_opts = reactor_runtime_opts()
+
     with {:ok, cell} <-
-           CellCommands.retry(%{
+           retry_cell_record(%{
              cell_id: Map.fetch!(input, :cell_id),
-             runtime_opts: reactor_runtime_opts(),
+             runtime_opts: runtime_opts,
              fail_after_ingest: false
            }),
          :ok <- record_retry_activity(cell.id, input),
@@ -590,10 +593,12 @@ defmodule HiveServerElixir.Cells.Cell do
 
   @spec resume_setup_payload(map()) :: {:ok, map()} | {:error, term()}
   def resume_setup_payload(input) when is_map(input) do
+    runtime_opts = reactor_runtime_opts()
+
     with {:ok, cell} <-
-           CellCommands.resume(%{
+           resume_cell_record(%{
              cell_id: Map.fetch!(input, :cell_id),
-             runtime_opts: reactor_runtime_opts(),
+             runtime_opts: runtime_opts,
              fail_after_ingest: false
            }),
          :ok <- Events.publish_cell_status(cell.workspace_id, cell.id) do
@@ -604,7 +609,7 @@ defmodule HiveServerElixir.Cells.Cell do
   @spec delete_payload(map()) :: {:ok, map()} | {:error, term()}
   def delete_payload(input) when is_map(input) do
     with {:ok, cell} <-
-           CellCommands.delete(%{
+           Reactor.run(reactor_module(:delete), %{
              cell_id: Map.fetch!(input, :cell_id),
              runtime_opts: reactor_runtime_opts(),
              fail_after_stop: false
@@ -652,6 +657,73 @@ defmodule HiveServerElixir.Cells.Cell do
   def finalize_setup_error(cell_id, reason) when is_binary(cell_id) do
     with {:ok, cell} <- Ash.get(__MODULE__, cell_id) do
       finalize_setup_error(cell, reason, cell_id)
+    end
+  end
+
+  @spec enqueue_provisioning(:create | :retry | :resume, map(), keyword()) ::
+          :ok | {:error, term()}
+  def enqueue_provisioning(mode, cell, opts \\ [])
+      when mode in [:create, :retry, :resume] do
+    if Application.get_env(:hive_server_elixir, :cell_provisioning_autostart, true) do
+      runtime_opts = Keyword.get(opts, :runtime_opts, [])
+      fail_after_ingest = Keyword.get(opts, :fail_after_ingest, false)
+
+      case ProvisioningRuntime.restart(mode, cell.id,
+             runtime_opts: runtime_opts,
+             fail_after_ingest: fail_after_ingest
+           ) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      :ok
+    end
+  end
+
+  defp create_cell_record(input) do
+    prepared_input =
+      input
+      |> Map.put_new(:name, "Cell")
+      |> Map.put_new(:template_id, "default-template")
+      |> Map.put_new(:start_mode, "plan")
+      |> Map.put_new(:workspace_root_path, ".")
+      |> Map.put_new(:workspace_path, ".")
+      |> Map.put_new(:runtime_opts, [])
+
+    with {:ok, cell} <- Reactor.run(reactor_module(:create), prepared_input),
+         :ok <-
+           enqueue_provisioning(:create, cell,
+             runtime_opts: Map.get(prepared_input, :runtime_opts, []),
+             fail_after_ingest: Map.get(prepared_input, :fail_after_ingest, false)
+           ) do
+      {:ok, cell}
+    end
+  end
+
+  defp retry_cell_record(input) do
+    prepared_input = Map.put_new(input, :runtime_opts, [])
+
+    with {:ok, cell} <- Reactor.run(reactor_module(:retry), prepared_input),
+         :ok <-
+           enqueue_provisioning(:retry, cell,
+             runtime_opts: Map.get(prepared_input, :runtime_opts, []),
+             fail_after_ingest: Map.get(prepared_input, :fail_after_ingest, false)
+           ) do
+      {:ok, cell}
+    end
+  end
+
+  defp resume_cell_record(input) do
+    prepared_input = Map.put_new(input, :runtime_opts, [])
+
+    with {:ok, cell} <- Reactor.run(reactor_module(:resume), prepared_input),
+         :ok <-
+           enqueue_provisioning(:resume, cell,
+             runtime_opts: Map.get(prepared_input, :runtime_opts, []),
+             fail_after_ingest: Map.get(prepared_input, :fail_after_ingest, false)
+           ) do
+      {:ok, cell}
     end
   end
 
@@ -939,6 +1011,11 @@ defmodule HiveServerElixir.Cells.Cell do
   defp maybe_to_iso8601(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
   defp maybe_to_iso8601(value) when is_binary(value), do: value
   defp maybe_to_iso8601(_value), do: nil
+
+  defp reactor_module(:create), do: Module.concat([HiveServerElixir.Cells.Reactors, "CreateCell"])
+  defp reactor_module(:retry), do: Module.concat([HiveServerElixir.Cells.Reactors, "RetryCell"])
+  defp reactor_module(:resume), do: Module.concat([HiveServerElixir.Cells.Reactors, "ResumeCell"])
+  defp reactor_module(:delete), do: Module.concat([HiveServerElixir.Cells.Reactors, "DeleteCell"])
 
   defp normalize_status(status) when is_binary(status) do
     case CellStatus.cast_input(status, []) do

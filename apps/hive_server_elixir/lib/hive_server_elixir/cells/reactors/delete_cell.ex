@@ -6,6 +6,7 @@ defmodule HiveServerElixir.Cells.Reactors.DeleteCell do
   use Reactor
 
   alias HiveServerElixir.Cells.Cell
+  alias HiveServerElixir.Cells.ProvisioningRuntime
   alias HiveServerElixir.Cells.Reactors.Steps.StopIngestStep
   alias HiveServerElixir.Cells.WorkspaceSnapshot
 
@@ -29,8 +30,20 @@ defmodule HiveServerElixir.Cells.Reactors.DeleteCell do
     end)
   end
 
+  step :stop_provisioning do
+    argument(:cell, result(:load_cell))
+
+    run(fn %{cell: cell}, _context ->
+      case ProvisioningRuntime.stop(cell.id) do
+        :ok -> {:ok, :ok}
+        {:error, :not_found} -> {:ok, :ok}
+      end
+    end)
+  end
+
   step :stop_ingest, StopIngestStep do
     argument(:context, result(:build_ingest_context))
+    argument(:_provisioning, result(:stop_provisioning))
     argument(:runtime_opts, input(:runtime_opts))
   end
 

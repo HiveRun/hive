@@ -76,7 +76,7 @@ defmodule HiveServerElixir.MixProject do
        depth: 1},
       {:swoosh, "~> 1.16"},
       {:req, "~> 0.5"},
-      {:oapi_generator, "~> 0.4", only: [:dev, :test]},
+      {:opencode_sdk, "~> 0.1.19"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 1.0"},
@@ -105,8 +105,6 @@ defmodule HiveServerElixir.MixProject do
         "esbuild hive_server_elixir --minify",
         "phx.digest"
       ],
-      "opencode.gen.client": ["api.gen opencode priv/opencode/openapi.json"],
-      "opencode.refresh": ["opencode.sync_spec", "opencode.gen.client"],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"],
       "ash.setup": ["ash.setup", "run priv/repo/seeds.exs"]
     ]

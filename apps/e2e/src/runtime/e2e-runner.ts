@@ -332,7 +332,7 @@ async function startServerWithRetries(options: {
   context: RuntimeContext;
   logsDir: string;
 }): Promise<ManagedProcess> {
-  const elixirEnv = {
+  const elixirEnv: NodeJS.ProcessEnv = {
     ...process.env,
     MIX_ENV: "prod",
     PHX_SERVER: "true",

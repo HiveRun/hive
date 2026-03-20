@@ -1,30 +1,34 @@
 defmodule HiveServerElixir.Cells.LifecycleTest do
   use HiveServerElixir.DataCase, async: false
 
-  alias HiveServerElixir.Cells.Lifecycle
   alias HiveServerElixir.Cells.Events
+  alias HiveServerElixir.Cells.Lifecycle
   alias HiveServerElixir.Cells.TerminalRuntime
   alias HiveServerElixir.Opencode.AgentEventLog
-  alias HiveServerElixir.Opencode.TestOperations
+  alias HiveServerElixir.OpencodeFakeServer
 
   @registry HiveServerElixir.Opencode.EventIngestRegistry
 
-  test "on_cell_create starts ingest stream for the cell" do
+  setup do
+    {:ok, opencode: OpencodeFakeServer.setup_open_code_stub()}
+  end
+
+  test "on_cell_create starts ingest stream for the cell", %{opencode: opencode} do
     context = %{workspace_id: "workspace-create", cell_id: "cell-create"}
 
-    assert {:ok, pid} = Lifecycle.on_cell_create(context, runtime_opts())
+    assert {:ok, pid} = Lifecycle.on_cell_create(context, runtime_opts(opencode))
     assert [{^pid, _value}] = Registry.lookup(@registry, {"workspace-create", "cell-create"})
 
     assert :ok = Lifecycle.on_cell_delete(context)
   end
 
-  test "on_cell_retry restarts ingest stream" do
+  test "on_cell_retry restarts ingest stream", %{opencode: opencode} do
     context = %{workspace_id: "workspace-retry", cell_id: "cell-retry"}
 
-    assert {:ok, old_pid} = Lifecycle.on_cell_create(context, runtime_opts())
+    assert {:ok, old_pid} = Lifecycle.on_cell_create(context, runtime_opts(opencode))
     old_ref = Process.monitor(old_pid)
 
-    assert {:ok, new_pid} = Lifecycle.on_cell_retry(context, runtime_opts())
+    assert {:ok, new_pid} = Lifecycle.on_cell_retry(context, runtime_opts(opencode))
     assert_receive {:DOWN, ^old_ref, :process, ^old_pid, _reason}
     assert new_pid != old_pid
 
@@ -32,13 +36,13 @@ defmodule HiveServerElixir.Cells.LifecycleTest do
     assert :ok = Lifecycle.on_cell_delete(context)
   end
 
-  test "on_cell_resume restarts ingest stream" do
+  test "on_cell_resume restarts ingest stream", %{opencode: opencode} do
     context = %{workspace_id: "workspace-resume", cell_id: "cell-resume"}
 
-    assert {:ok, old_pid} = Lifecycle.on_cell_create(context, runtime_opts())
+    assert {:ok, old_pid} = Lifecycle.on_cell_create(context, runtime_opts(opencode))
     old_ref = Process.monitor(old_pid)
 
-    assert {:ok, new_pid} = Lifecycle.on_cell_resume(context, runtime_opts())
+    assert {:ok, new_pid} = Lifecycle.on_cell_resume(context, runtime_opts(opencode))
     assert_receive {:DOWN, ^old_ref, :process, ^old_pid, _reason}
     assert new_pid != old_pid
 
@@ -65,10 +69,10 @@ defmodule HiveServerElixir.Cells.LifecycleTest do
     assert :ok = TerminalRuntime.clear_cell(cell_id)
   end
 
-  test "on_cell_delete is idempotent" do
+  test "on_cell_delete is idempotent", %{opencode: opencode} do
     context = %{workspace_id: "workspace-delete", cell_id: "cell-delete"}
 
-    assert {:ok, pid} = Lifecycle.on_cell_create(context, runtime_opts())
+    assert {:ok, pid} = Lifecycle.on_cell_create(context, runtime_opts(opencode))
     ref = Process.monitor(pid)
 
     assert :ok = Lifecycle.on_cell_delete(context)
@@ -76,20 +80,20 @@ defmodule HiveServerElixir.Cells.LifecycleTest do
     assert :ok = Lifecycle.on_cell_delete(context)
   end
 
-  test "lifecycle hooks ingest and persist events across create and retry" do
+  test "lifecycle hooks ingest and persist events across create and retry", %{opencode: opencode} do
     context = %{workspace_id: "workspace-flow", cell_id: "cell-flow"}
 
-    queue_pid =
-      start_supervised!(
-        {Agent, fn -> [event_payload("session.idle"), event_payload("session.status")] end}
-      )
+    :ok = OpencodeFakeServer.enqueue_global_event(opencode, {:ok, event_payload("session.idle")})
 
-    adapter_opts = queue_adapter_opts(self(), queue_pid)
+    :ok =
+      OpencodeFakeServer.enqueue_global_event(opencode, {:ok, event_payload("session.status")})
+
+    adapter_opts = queue_adapter_opts(opencode, self())
 
     assert {:ok, _pid} =
              Lifecycle.on_cell_create(
                context,
-               runtime_opts(adapter_opts,
+               runtime_opts(opencode, adapter_opts,
                  success_delay_ms: 30_000,
                  error_delay_ms: 30_000
                )
@@ -103,7 +107,7 @@ defmodule HiveServerElixir.Cells.LifecycleTest do
     assert {:ok, _pid} =
              Lifecycle.on_cell_retry(
                context,
-               runtime_opts(adapter_opts,
+               runtime_opts(opencode, adapter_opts,
                  success_delay_ms: 30_000,
                  error_delay_ms: 30_000
                )
@@ -123,13 +127,8 @@ defmodule HiveServerElixir.Cells.LifecycleTest do
     assert :ok = Lifecycle.on_cell_delete(context)
   end
 
-  defp runtime_opts(adapter_opts \\ nil, overrides \\ []) do
-    adapter_opts =
-      adapter_opts ||
-        [
-          operations_module: TestOperations,
-          global_event: fn _opts -> {:error, %{type: :transport, reason: :unreachable}} end
-        ]
+  defp runtime_opts(opencode, adapter_opts \\ nil, overrides \\ []) do
+    adapter_opts = adapter_opts || opencode.adapter_opts
 
     [
       adapter_opts: adapter_opts,
@@ -139,21 +138,14 @@ defmodule HiveServerElixir.Cells.LifecycleTest do
     |> Keyword.merge(overrides)
   end
 
-  defp queue_adapter_opts(test_pid, queue_pid) do
+  defp queue_adapter_opts(opencode, test_pid) do
     [
-      operations_module: TestOperations,
-      global_event: fn _opts ->
-        Agent.get_and_update(queue_pid, fn
-          [next | rest] -> {{:ok, next}, rest}
-          [] -> {{:error, %{type: :transport, reason: :empty_queue}}, []}
-        end)
-      end,
       persist_global_event: fn event, persist_context ->
         result = AgentEventLog.append_global_event(event, persist_context)
         send(test_pid, {:persisted, result})
         result
       end
-    ]
+    ] ++ opencode.adapter_opts
   end
 
   defp event_payload(type) do

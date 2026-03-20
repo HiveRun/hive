@@ -5,6 +5,7 @@ defmodule HiveServerElixir.Opencode.EventIngestRuntime do
 
   alias HiveServerElixir.Opencode.EventIngestWorker
   alias HiveServerElixir.Opencode.EventIngestContext
+  alias HiveServerElixir.Opencode.AgentEventLog
   alias HiveServerElixir.Cells.TerminalEvents
 
   @registry HiveServerElixir.Opencode.EventIngestRegistry
@@ -13,11 +14,19 @@ defmodule HiveServerElixir.Opencode.EventIngestRuntime do
   @spec start_stream(map, keyword) :: DynamicSupervisor.on_start_child()
   def start_stream(context, opts \\ []) when is_map(context) do
     normalized_context = EventIngestContext.normalize(context)
+    raw_adapter_opts = Keyword.get(opts, :adapter_opts, [])
 
     worker_opts = [
       name: via_tuple(normalized_context),
       context: normalized_context,
-      adapter_opts: Keyword.get(opts, :adapter_opts, []),
+      adapter_opts: Keyword.delete(raw_adapter_opts, :persist_global_event),
+      persist_global_event:
+        Keyword.get(opts, :persist_global_event) ||
+          Keyword.get(
+            raw_adapter_opts,
+            :persist_global_event,
+            &AgentEventLog.append_global_event/2
+          ),
       success_delay_ms: Keyword.get(opts, :success_delay_ms, 0),
       error_delay_ms: Keyword.get(opts, :error_delay_ms, 1_000),
       project_global_event:

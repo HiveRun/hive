@@ -8,35 +8,68 @@ defmodule HiveServerElixir.AgentsTest do
   alias HiveServerElixir.Cells.TerminalRuntime
   alias HiveServerElixir.Cells.Workspace
   alias HiveServerElixir.Opencode.AgentEventLog
-  alias HiveServerElixir.Opencode.TestClient
+  alias HiveServerElixir.OpencodeFakeServer
   alias HiveServerElixir.Workspaces
 
   setup do
     previous_active_workspace_id = Workspaces.active_workspace_id()
-    previous_client = Application.get_env(:hive_server_elixir, :opencode_client)
     previous_client_opts = Application.get_env(:hive_server_elixir, :opencode_client_opts)
+    opencode = OpencodeFakeServer.setup_open_code_stub()
 
-    Application.put_env(:hive_server_elixir, :opencode_client, TestClient)
-    Application.delete_env(:hive_server_elixir, :opencode_client_opts)
+    Application.put_env(:hive_server_elixir, :opencode_client_opts, opencode.client_opts)
     :ok = Workspaces.set_active_workspace_id(nil)
 
     on_exit(fn ->
       :ok = Workspaces.set_active_workspace_id(previous_active_workspace_id)
 
-      restore_env(:opencode_client, previous_client)
       restore_env(:opencode_client_opts, previous_client_opts)
     end)
 
-    :ok
+    {:ok, opencode: opencode}
   end
 
-  test "provider_payload_for_workspace returns normalized catalog payload" do
+  test "provider_payload_for_workspace returns normalized catalog payload", %{opencode: opencode} do
     workspace = workspace!("agents-domain-models")
 
     assert {:ok, payload} = Agents.provider_payload_for_workspace(workspace.id)
     assert payload.defaults == %{"opencode" => "big-pickle"}
     assert Enum.any?(payload.providers, &(&1.id == "opencode"))
     assert Enum.any?(payload.models, &(&1.id == "big-pickle" and &1.provider == "opencode"))
+
+    assert [%{method: "GET", path: "/config/providers", params: %{"directory" => directory}}] =
+             OpencodeFakeServer.requests(opencode)
+
+    assert directory == workspace.path
+  end
+
+  test "provider_payload_for_session resolves workspace path through the real client transport",
+       %{
+         opencode: opencode
+       } do
+    workspace = workspace!("agents-domain-session-models")
+    cell = cell!(workspace, "ready")
+    session = agent_session!(cell)
+
+    assert {:ok, payload} = Agents.provider_payload_for_session(session.session_id)
+    assert payload.defaults == %{"opencode" => "big-pickle"}
+
+    assert [%{method: "GET", path: "/config/providers", params: %{"directory" => directory}}] =
+             OpencodeFakeServer.requests(opencode)
+
+    assert directory == workspace.path
+  end
+
+  test "provider_payload_for_workspace surfaces transport-backed errors", %{opencode: opencode} do
+    workspace = workspace!("agents-domain-models-error")
+
+    :ok =
+      OpencodeFakeServer.put_catalog(
+        opencode,
+        {:error, %{status: 400, body: %{message: "Catalog unavailable"}}}
+      )
+
+    assert {:error, {:bad_request, "Catalog unavailable"}} =
+             Agents.provider_payload_for_workspace(workspace.id)
   end
 
   test "session_payload_for_cell falls back to persisted event session context" do
@@ -84,16 +117,70 @@ defmodule HiveServerElixir.AgentsTest do
     assert payload.modelProviderId == "opencode"
   end
 
-  test "messages_payload_for_session falls back to terminal output when session fetch fails" do
+  test "messages_payload_for_session returns normalized messages through the real client transport",
+       %{
+         opencode: opencode
+       } do
+    workspace = workspace!("agents-domain-messages")
+    cell = cell!(workspace, "ready")
+    session = agent_session!(cell)
+
+    :ok =
+      OpencodeFakeServer.put_session_messages(opencode, session.session_id, {
+        :ok,
+        [
+          %{
+            "info" => %{
+              "id" => "message-user-1",
+              "role" => "user",
+              "sessionID" => session.session_id,
+              "time" => %{"created" => 1_704_067_200_000}
+            },
+            "parts" => [
+              %{"id" => "part-user-1", "type" => "text", "text" => "Summarize project status"}
+            ]
+          },
+          %{
+            "info" => %{
+              "id" => "message-assistant-1",
+              "role" => "assistant",
+              "sessionID" => session.session_id,
+              "finish" => "stop",
+              "time" => %{"created" => 1_704_067_201_000, "completed" => 1_704_067_202_000}
+            },
+            "parts" => [
+              %{"id" => "part-assistant-1", "type" => "text", "text" => "Status is green."}
+            ]
+          }
+        ]
+      })
+
+    assert {:ok, %{messages: [user_message, assistant_message]}} =
+             Agents.messages_payload_for_session(session.session_id)
+
+    assert user_message.role == "user"
+    assert user_message.content == "Summarize project status"
+    assert assistant_message.role == "assistant"
+    assert assistant_message.content == "Status is green."
+
+    assert [%{method: "GET", path: path, params: %{"directory" => directory}}] =
+             OpencodeFakeServer.requests(opencode)
+
+    assert path == "/session/#{session.session_id}/message"
+    assert directory == workspace.path
+  end
+
+  test "messages_payload_for_session falls back to terminal output when session fetch returns not found",
+       %{opencode: opencode} do
     workspace = workspace!("agents-domain-messages-fallback")
     cell = cell!(workspace, "ready")
     session = agent_session!(cell)
 
-    Application.put_env(
-      :hive_server_elixir,
-      :opencode_client_opts,
-      test_client_callback: fn _operation -> {:error, %{status: 404, body: %{}}} end
-    )
+    :ok =
+      OpencodeFakeServer.put_session_messages(opencode, session.session_id, {
+        :error,
+        %{status: 404, body: %{message: "missing session"}}
+      })
 
     :ok = TerminalRuntime.append_chat_output(cell.id, "Need a summary")
 

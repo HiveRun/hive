@@ -12,8 +12,11 @@ defmodule HiveServerElixir.Application do
         HiveServerElixirWeb.Telemetry,
         HiveServerElixir.Repo,
         {Registry, keys: :unique, name: HiveServerElixir.Opencode.EventIngestRegistry},
+        {Registry, keys: :unique, name: HiveServerElixir.Cells.ProvisioningRegistry},
         {DynamicSupervisor,
          strategy: :one_for_one, name: HiveServerElixir.Opencode.EventIngestSupervisor},
+        {DynamicSupervisor,
+         strategy: :one_for_one, name: HiveServerElixir.Cells.ProvisioningSupervisor},
         {Ecto.Migrator,
          repos: Application.fetch_env!(:hive_server_elixir, :ecto_repos), skip: skip_migrations?()},
         {Oban,
@@ -22,6 +25,7 @@ defmodule HiveServerElixir.Application do
            Application.fetch_env!(:hive_server_elixir, Oban)
          )}
       ] ++
+        opencode_children() ++
         workspace_bootstrap_children() ++
         [
           {
@@ -35,7 +39,7 @@ defmodule HiveServerElixir.Application do
           {HiveServerElixir.Cells.TerminalRuntime, name: HiveServerElixir.Cells.TerminalRuntime},
           {HiveServerElixir.Cells.ServiceRuntime, name: HiveServerElixir.Cells.ServiceRuntime},
           HiveServerElixirWeb.Endpoint
-        ]
+        ] ++ provisioning_bootstrap_children()
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
@@ -58,7 +62,33 @@ defmodule HiveServerElixir.Application do
 
   defp workspace_bootstrap_children do
     if Application.get_env(:hive_server_elixir, :workspace_bootstrap, true) do
-      [{Task, fn -> HiveServerElixir.Workspaces.bootstrap_current_workspace() end}]
+      [
+        Supervisor.child_spec(
+          {Task, fn -> HiveServerElixir.Workspaces.bootstrap_current_workspace() end},
+          id: :workspace_bootstrap_task
+        )
+      ]
+    else
+      []
+    end
+  end
+
+  defp opencode_children do
+    if Application.get_env(:hive_server_elixir, :opencode_server_manager, [])[:enabled] do
+      [HiveServerElixir.Opencode.ServerManager]
+    else
+      []
+    end
+  end
+
+  defp provisioning_bootstrap_children do
+    if Application.get_env(:hive_server_elixir, :cell_provisioning_bootstrap, true) do
+      [
+        Supervisor.child_spec(
+          {Task, fn -> HiveServerElixir.Cells.ProvisioningRuntime.resume_incomplete_cells() end},
+          id: :cell_provisioning_bootstrap_task
+        )
+      ]
     else
       []
     end

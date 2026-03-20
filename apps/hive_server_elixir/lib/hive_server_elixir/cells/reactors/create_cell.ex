@@ -1,15 +1,11 @@
 defmodule HiveServerElixir.Cells.Reactors.CreateCell do
   @moduledoc """
-  Creates a cell record and starts ingest with rollback if downstream checks fail.
+  Persists the initial provisioning cell state before detached background work begins.
   """
 
   use Reactor
 
   alias HiveServerElixir.Cells.Cell
-  alias HiveServerElixir.Cells.Reactors.Steps.StartIngestStep
-  alias HiveServerElixir.Cells.TemplateRuntime
-  alias HiveServerElixir.Cells.TerminalEvents
-  alias HiveServerElixir.Cells.WorkspaceSnapshot
 
   input(:workspace_id)
   input(:name)
@@ -18,8 +14,6 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
   input(:start_mode)
   input(:workspace_root_path)
   input(:workspace_path)
-  input(:runtime_opts)
-  input(:fail_after_ingest)
 
   step :create_cell do
     argument(:workspace_id, input(:workspace_id))
@@ -55,7 +49,7 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
     argument(:cell, result(:create_cell))
 
     run(fn %{cell: cell}, _context ->
-      maybe_prepare_workspace(cell)
+      {:ok, cell}
     end)
   end
 
@@ -76,78 +70,7 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
     end)
   end
 
-  step :build_ingest_context do
-    argument(:cell, result(:initialize_runtime_records))
-
-    run(fn %{cell: cell}, _context ->
-      {:ok, Cell.ingest_context(cell)}
-    end)
-  end
-
-  step :start_ingest, StartIngestStep do
-    argument(:context, result(:build_ingest_context))
-    argument(:runtime_opts, input(:runtime_opts))
-  end
-
-  step :after_ingest_check do
-    argument(:_started, result(:start_ingest))
-    argument(:cell, result(:initialize_runtime_records))
-    argument(:fail_after_ingest, input(:fail_after_ingest))
-
-    run(fn %{cell: cell, fail_after_ingest: fail_after_ingest}, _context ->
-      if fail_after_ingest do
-        :ok =
-          TerminalEvents.on_cell_error(
-            %{workspace_id: cell.workspace_id, cell_id: cell.id},
-            "forced_failure_after_ingest"
-          )
-
-        {:error, :forced_failure_after_ingest}
-      else
-        {:ok, :ok}
-      end
-    end)
-
-    compensate(fn reason, %{cell: cell}, _context ->
-      Cell.finalize_setup_error(cell, reason)
-    end)
-  end
-
-  step :apply_template_runtime do
-    argument(:cell, result(:initialize_runtime_records))
-    argument(:_check, result(:after_ingest_check))
-
-    run(fn %{cell: cell}, _context ->
-      TemplateRuntime.prepare_cell(cell)
-    end)
-  end
-
-  step :finalize_cell do
-    argument(:cell, result(:initialize_runtime_records))
-    argument(:template_runtime, result(:apply_template_runtime))
-
-    run(fn %{cell: cell, template_runtime: template_runtime}, _context ->
-      with {:ok, updated_cell} <- Cell.finalize_template_runtime(cell, template_runtime) do
-        Cell.emit_terminal_state(updated_cell)
-        {:ok, updated_cell}
-      end
-    end)
-  end
-
-  return(:finalize_cell)
-
-  defp maybe_prepare_workspace(%Cell{} = cell) do
-    source_root = cell.workspace_root_path || cell.workspace_path
-
-    if is_binary(source_root) and File.dir?(source_root) do
-      with {:ok, workspace_path} <- WorkspaceSnapshot.ensure_cell_workspace(cell.id, source_root),
-           {:ok, updated_cell} <- Ash.update(cell, %{workspace_path: workspace_path}) do
-        {:ok, updated_cell}
-      end
-    else
-      {:ok, cell}
-    end
-  end
+  return(:initialize_runtime_records)
 
   defp normalize_start_mode("build"), do: "build"
   defp normalize_start_mode(_mode), do: "plan"

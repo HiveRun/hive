@@ -47,21 +47,15 @@ export function useCellStatusStream(
             }
 
             const nextCells = [...currentCells];
-            const existingCell = nextCells[existingIndex];
-            if (!existingCell) {
+            if (!nextCells[existingIndex]) {
               return currentCells;
             }
 
-            nextCells[existingIndex] = {
-              ...existingCell,
-              ...cellData,
-            };
+            nextCells[existingIndex] = cellData;
             return nextCells;
           }
         );
-        queryClient.setQueryData<Cell>(["cells", cellData.id], (currentCell) =>
-          currentCell ? { ...currentCell, ...cellData } : cellData
-        );
+        queryClient.setQueryData<Cell>(["cells", cellData.id], cellData);
       } catch {
         /* ignore malformed events */
       }

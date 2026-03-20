@@ -5,7 +5,6 @@ defmodule HiveServerElixir.Cells do
 
   use Ash.Domain, extensions: [AshTypescript.Rpc]
 
-  alias HiveServerElixir.Cells.CellCommands
   alias HiveServerElixir.Cells.Service
 
   typescript_rpc do
@@ -65,18 +64,6 @@ defmodule HiveServerElixir.Cells do
     resource HiveServerElixir.Cells.Activity
     resource HiveServerElixir.Cells.Timing
   end
-
-  @spec create_cell(map) :: {:ok, HiveServerElixir.Cells.Cell.t()} | {:error, term()}
-  def create_cell(input) when is_map(input), do: CellCommands.create(input)
-
-  @spec retry_cell(map) :: {:ok, HiveServerElixir.Cells.Cell.t()} | {:error, term()}
-  def retry_cell(input) when is_map(input), do: CellCommands.retry(input)
-
-  @spec resume_cell(map) :: {:ok, HiveServerElixir.Cells.Cell.t()} | {:error, term()}
-  def resume_cell(input) when is_map(input), do: CellCommands.resume(input)
-
-  @spec delete_cell(map) :: {:ok, HiveServerElixir.Cells.Cell.t()} | {:error, term()}
-  def delete_cell(input) when is_map(input), do: CellCommands.delete(input)
 
   @spec reconcile_service_runtime_inventory() :: {:ok, map()} | {:error, term()}
   def reconcile_service_runtime_inventory do

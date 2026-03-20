@@ -58,8 +58,6 @@ jobs:
               files.append((int(added), int(removed), path))
 
           detail_categories = OrderedDict([
-              ('Generated OpenAPI spec', lambda p: p == 'apps/hive_server_elixir/priv/opencode/openapi.json'),
-              ('Generated OpenCode client', lambda p: p.startswith('apps/hive_server_elixir/lib/hive_server_elixir/opencode/generated/')),
               ('Managed agent docs/skills', lambda p: p.startswith('.agents/skills/') or p == 'apps/hive_server_elixir/AGENTS.md'),
               ('Ash resource snapshots', lambda p: p.startswith('apps/hive_server_elixir/priv/resource_snapshots/')),
               ('Vendored assets', lambda p: '/vendor/' in p),
@@ -110,9 +108,8 @@ jobs:
               ),
               (
                   'OpenCode runtime glue',
-                  lambda p: (p.startswith('apps/hive_server_elixir/lib/hive_server_elixir/opencode/')
-                  or p == 'apps/hive_server_elixir/lib/hive_server_elixir/opencode.ex')
-                  and not p.startswith('apps/hive_server_elixir/lib/hive_server_elixir/opencode/generated/'),
+                  lambda p: p.startswith('apps/hive_server_elixir/lib/hive_server_elixir/opencode/')
+                  or p == 'apps/hive_server_elixir/lib/hive_server_elixir/opencode.ex',
               ),
               ('Phoenix controllers', lambda p: p.startswith('apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/')),
               (
@@ -220,8 +217,6 @@ jobs:
 
           group_map = OrderedDict([
               ('Generated / managed / vendored', [
-                  'Generated OpenAPI spec',
-                  'Generated OpenCode client',
                   'Managed agent docs/skills',
                   'Ash resource snapshots',
                   'Vendored assets',
