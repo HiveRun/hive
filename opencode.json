@@ -2,6 +2,7 @@
   "$schema": "https://opencode.ai/config.json",
   "instructions": ["AGENTS.md"],
   "autoupdate": true,
+  "plugin": ["opencode-repo-local"],
   "skills": {
     "urls": [
       "https://skills.sh/vercel-labs/agent-browser/agent-browser",
@@ -12,10 +13,74 @@
     ]
   },
   "mcp": {
+    "tidewave_backend": {
+      "type": "remote",
+      "enabled": true,
+      "url": "http://localhost:{env:BACKEND_PORT}/tidewave/mcp"
+    },
+    "tidewave_frontend": {
+      "type": "remote",
+      "enabled": true,
+      "url": "http://localhost:{env:FRONTEND_PORT}/tidewave/mcp"
+    },
+    "context7": {
+      "type": "remote",
+      "enabled": true,
+      "url": "https://mcp.context7.com/mcp"
+    },
+    "grep-app": {
+      "type": "remote",
+      "enabled": true,
+      "url": "https://mcp.grep.app"
+    },
     "linear": {
       "type": "local",
       "enabled": true,
       "command": ["bunx", "mcp-remote", "https://mcp.linear.app/mcp"]
+    }
+  },
+  "permission": {
+    "external_directory": {
+      "*": "ask",
+      "/home/aureatus/.opencode/repos/**": "allow"
+    }
+  },
+  "agent": {
+    "backend-expert": {
+      "description": "Backend expert for Ash/Phoenix architecture, resources, migrations, and backend/runtime contracts. Use proactively for backend implementation and docs-backed guidance.",
+      "mode": "subagent",
+      "model": "openai/gpt-5.4",
+      "temperature": 0.1,
+      "reasoningEffort": "high",
+      "textVerbosity": "medium",
+      "tools": {
+        "tidewave_backend_*": true,
+        "read": true,
+        "grep": true,
+        "glob": true,
+        "write": true,
+        "edit": true,
+        "bash": true
+      },
+      "prompt": "{file:./.opencode/prompts/backend-expert.md}"
+    },
+    "frontend-expert": {
+      "description": "Frontend expert for React/TanStack Router/Query architecture, route/data-loading patterns, and UI behavior in apps/web. Use proactively for frontend implementation and docs-backed guidance.",
+      "mode": "subagent",
+      "model": "openai/gpt-5.4",
+      "temperature": 0.1,
+      "reasoningEffort": "high",
+      "textVerbosity": "medium",
+      "tools": {
+        "tidewave_frontend_*": true,
+        "read": true,
+        "grep": true,
+        "glob": true,
+        "write": true,
+        "edit": true,
+        "bash": true
+      },
+      "prompt": "{file:./.opencode/prompts/frontend-expert.md}"
     }
   }
 }

@@ -210,7 +210,7 @@ mv "$src" "$target"
 cat > "$target/hive.env" <<EOF
 DATABASE_URL="$STATE_DIR/hive.db"
 HIVE_WEB_DIST="$target/public"
-HIVE_MIGRATIONS_DIR="$target/migrations"
+HIVE_SERVER_RELEASE_ROOT="$target/server"
 HIVE_LOG_DIR="$INSTALL_ROOT/logs"
 HIVE_INSTALL_URL="$download"
 EOF

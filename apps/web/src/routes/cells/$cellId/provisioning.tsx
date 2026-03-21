@@ -10,12 +10,10 @@ import { useCellTimingStream } from "@/hooks/use-cell-timing-stream";
 import { buildProvisioningChecklist } from "@/lib/provisioning-checklist";
 import {
   resolveProvisioningStatusMessage,
-  shouldPollProvisioningStatus,
   shouldStreamProvisioningTimeline,
 } from "@/lib/provisioning-route-state";
 import { cellMutations, cellQueries } from "@/queries/cells";
 
-const PROVISIONING_POLL_MS = 1500;
 const ignorePromiseRejection = (_error: unknown) => null;
 
 export const Route = createFileRoute("/cells/$cellId/provisioning")({
@@ -38,13 +36,6 @@ function CellProvisioningRoute() {
   const navigate = useNavigate({ from: "/cells/$cellId/provisioning" });
   const cellQuery = useQuery({
     ...cellQueries.detail(cellId),
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      return shouldPollProvisioningStatus(status)
-        ? PROVISIONING_POLL_MS
-        : false;
-    },
-    refetchIntervalInBackground: true,
   });
   const shouldStreamTimeline = shouldStreamProvisioningTimeline({
     hasCell: Boolean(cellQuery.data),

@@ -7,6 +7,7 @@
 - Use the published `@opencode-ai/sdk` package for runtime integrations.
 - Project documentation is distributed across several key locations:
   - `CONCEPTS.md` - High-level concepts (cells, templates, services, etc.)
+  - `docs/migrations/elixir-hard-cutover.md` - Active backend migration plan and execution status
   - `.ruler/prompts/` - AI agent guidance and coding standards  
   - `README.md` - Project overview and getting started
   When you need context, prioritize these markdown sources over external knowledge bases.
@@ -16,5 +17,8 @@
 - Keep E2E fixtures/config in sync with runtime defaults (provider/model IDs, template labels) so test behavior matches production paths.
 - When the user requests a change to agent guidance or project docs, proactively locate the relevant file(s) and make the update without waiting for another reminder.
 - Update `.ruler/prompts/*.md` whenever guidance for agents changes; the prompt bundle is our source of truth for AI behavior.
+- For package/framework behavior in `apps/hive_server_elixir`, verify current docs first with `mix usage_rules.search_docs "<query>" -p <package>`, `mix usage_rules.docs Module.function/arity`, or `mix help <task>` before implementation.
+- Dependency guidance is provided via generated skills in `.agents/skills/`; refresh them with `mise x -C apps/hive_server_elixir -- mix usage_rules.sync --yes` and prefer `/usage-rules-update` in OpenCode when you want to update the package and regenerate managed skills.
+- Do not manually edit managed skill blocks between `<!-- usage-rules-skill-start -->` and `<!-- usage-rules-skill-end -->`.
 - Commit prompt changes like any other source code so CI and Husky enforce lint/type/build checks.
 - **Documentation PR References**: Use sequential step numbers (Step 1, Step 2, etc.) instead of actual GitHub PR numbers in planning documents. This prevents reference mismatches when PR sequences change or when implementation diverges from original plans.

@@ -137,4 +137,41 @@ describe("useCellStatusStream", () => {
       expect.objectContaining({ id: cell.id, status: "error" }),
     ]);
   });
+
+  it("replaces cached cell snapshots instead of merging stale fields", () => {
+    const queryClient = new QueryClient();
+    const cell = {
+      ...makeCell("cell-2", "error"),
+      lastSetupError: "stale failure",
+    };
+
+    queryClient.setQueryData(["cells", WORKSPACE_ID], [cell]);
+    queryClient.setQueryData(["cells", cell.id], cell);
+
+    renderHook(() => useCellStatusStream(WORKSPACE_ID), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    const stream = mockEventSourceInstances[0];
+    expect(stream).toBeDefined();
+
+    stream?.emit(
+      "cell",
+      JSON.stringify({
+        ...makeCell(cell.id, "ready"),
+        lastSetupError: undefined,
+      })
+    );
+
+    expect(queryClient.getQueryData(["cells", WORKSPACE_ID])).toEqual([
+      expect.objectContaining({ id: cell.id, status: "ready" }),
+    ]);
+    expect(queryClient.getQueryData(["cells", cell.id])).toEqual(
+      expect.objectContaining({ id: cell.id, status: "ready" })
+    );
+    expect(
+      (queryClient.getQueryData(["cells", cell.id]) as Cell | undefined)
+        ?.lastSetupError
+    ).toBeUndefined();
+  });
 });

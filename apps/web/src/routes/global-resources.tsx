@@ -1644,8 +1644,8 @@ function ramHeaderLabel(sortMetric: SortMetric): string {
 function statusClass(status: CellStatus): string {
   const toneMap: Record<CellStatus, string> = {
     ready: "border-border/60 bg-background/40 text-foreground",
-    pending: "border-border/60 bg-background/20 text-muted-foreground",
-    spawning: "border-border/60 bg-background/20 text-muted-foreground",
+    provisioning: "border-border/60 bg-background/20 text-muted-foreground",
+    stopped: "border-border/60 bg-background/20 text-muted-foreground",
     error: "border-destructive/50 bg-destructive/10 text-destructive",
     deleting: "border-destructive/50 bg-destructive/10 text-destructive",
   };

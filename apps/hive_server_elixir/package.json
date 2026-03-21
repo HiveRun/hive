@@ -1,0 +1,9 @@
+{
+  "name": "@hive/server-elixir",
+  "private": true,
+  "scripts": {
+    "dev": "bash -lc 'mise x -C . -- mix ecto.migrate && exec mise x -C . -- iex -S mix phx.server'",
+    "test:run": "MIX_ENV=test mise x -C . -- mix do compile --warnings-as-errors + test --warnings-as-errors",
+    "check": "mise x -C . -- mix format --check-formatted && MIX_ENV=test mise x -C . -- mix do compile --warnings-as-errors + test --warnings-as-errors"
+  }
+}

@@ -389,7 +389,7 @@ function ServiceCard({
                 <Button
                   aria-label="Copy command"
                   className="h-5 w-5 shrink-0 p-0"
-                  onClick={() => handleCopy(service.command)}
+                  onClick={() => handleCopy(service.command ?? "")}
                   size="icon-sm"
                   type="button"
                   variant="ghost"
@@ -412,7 +412,7 @@ function ServiceCard({
                 <Button
                   aria-label="Copy working directory"
                   className="h-5 w-5 shrink-0 p-0"
-                  onClick={() => handleCopy(service.cwd)}
+                  onClick={() => handleCopy(service.cwd ?? "")}
                   size="icon-sm"
                   type="button"
                   variant="ghost"

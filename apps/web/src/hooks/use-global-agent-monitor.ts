@@ -2,15 +2,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { useActiveWorkspace } from "@/hooks/use-active-workspace";
-import { getApiBase } from "@/lib/api-base";
 import type { AgentSession } from "@/queries/agents";
 import { agentQueries } from "@/queries/agents";
 import type { Cell } from "@/queries/cells";
 import { cellQueries } from "@/queries/cells";
 
-const API_BASE = getApiBase();
 const NOTIFICATION_SOUND_PATH = "/sounds/agent-awaiting-input.wav";
 const NOTIFICATION_SOUND_VOLUME = 0.2;
+const AGENT_MONITOR_POLL_INTERVAL_MS = 3000;
 
 export function useGlobalAgentMonitor() {
   const queryClient = useQueryClient();
@@ -26,9 +25,7 @@ export function useGlobalAgentMonitor() {
     ...cellsQuery,
     enabled: Boolean(workspaceId),
   });
-  const sessionStreams = useRef<
-    Map<string, { source: EventSource; sessionId: string }>
-  >(new Map());
+  const trackedSessionIds = useRef<Map<string, string>>(new Map());
   const lastStatuses = useRef<Map<string, string>>(new Map());
   const windowFocusedRef = useRef(true);
 
@@ -54,165 +51,75 @@ export function useGlobalAgentMonitor() {
     window.addEventListener("blur", handleBlur);
     window.addEventListener("visibilitychange", handleVisibilityChange);
 
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("blur", handleBlur);
+      window.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !workspaceId) {
+      return;
+    }
+
     const readyCells = (cells ?? []).filter((cell) => cell.status === "ready");
     const readyIds = new Set(readyCells.map((cell) => cell.id));
 
-    for (const [cellId, stream] of sessionStreams.current.entries()) {
+    for (const [cellId, sessionId] of trackedSessionIds.current.entries()) {
       if (!readyIds.has(cellId)) {
-        stream.source.close();
-        sessionStreams.current.delete(cellId);
-        lastStatuses.current.delete(stream.sessionId);
+        trackedSessionIds.current.delete(cellId);
+        lastStatuses.current.delete(sessionId);
       }
     }
 
-    const startMonitor = async (cell: Cell) => {
+    const syncCellSession = async (cell: Cell) => {
       const sessionQuery = agentQueries.sessionByCell(cell.id);
 
       try {
-        const session = await queryClient.ensureQueryData(sessionQuery);
-        if (!session?.id) {
-          return;
-        }
-
-        const currentStream = sessionStreams.current.get(cell.id);
-        if (currentStream) {
-          if (currentStream.sessionId === session.id) {
-            return;
-          }
-          currentStream.source.close();
-          sessionStreams.current.delete(cell.id);
-        }
-
-        const eventSource = new EventSource(
-          `${API_BASE}/api/agents/sessions/${session.id}/events`
-        );
-        sessionStreams.current.set(cell.id, {
-          source: eventSource,
-          sessionId: session.id,
+        const session = await queryClient.fetchQuery({
+          ...sessionQuery,
+          staleTime: 0,
+          retry: false,
         });
 
-        const handleStatus = (event: MessageEvent<string>) => {
-          try {
-            const payload = JSON.parse(event.data) as {
-              status: string;
-              error?: string;
-            };
-
-            queryClient.setQueryData(
-              sessionQuery.queryKey,
-              (previous: AgentSession | null) => {
-                if (!previous) {
-                  return previous;
-                }
-                return { ...previous, status: payload.status };
-              }
-            );
-
-            const previousStatus = lastStatuses.current.get(session.id);
-            lastStatuses.current.set(session.id, payload.status);
-
-            if (
-              payload.status === "awaiting_input" &&
-              previousStatus !== "awaiting_input"
-            ) {
-              dispatchAwaitingInputNotification({
-                cell,
-                isWindowFocused: windowFocusedRef.current,
-              });
-            }
-          } catch {
-            // ignore malformed events
-          }
-        };
-
-        const handleMode = (event: MessageEvent<string>) => {
-          try {
-            const payload = JSON.parse(event.data) as {
-              startMode: "plan" | "build";
-              currentMode: "plan" | "build";
-              modeUpdatedAt?: string;
-            };
-
-            queryClient.setQueryData(
-              sessionQuery.queryKey,
-              (previous: AgentSession | null) => {
-                if (!previous) {
-                  return previous;
-                }
-
-                return {
-                  ...previous,
-                  startMode: payload.startMode,
-                  currentMode: payload.currentMode,
-                  ...(payload.modeUpdatedAt
-                    ? { modeUpdatedAt: payload.modeUpdatedAt }
-                    : {}),
-                };
-              }
-            );
-          } catch {
-            // ignore malformed events
-          }
-        };
-
-        const handleInputRequired = (_event: MessageEvent<string>) => {
-          queryClient.setQueryData(
-            sessionQuery.queryKey,
-            (previous: AgentSession | null) => {
-              if (!previous) {
-                return previous;
-              }
-
-              return {
-                ...previous,
-                status: "awaiting_input",
-              };
-            }
-          );
-
-          const previousStatus = lastStatuses.current.get(session.id);
-          lastStatuses.current.set(session.id, "awaiting_input");
-          if (previousStatus !== "awaiting_input") {
-            dispatchAwaitingInputNotification({
-              cell,
-              isWindowFocused: windowFocusedRef.current,
-            });
-          }
-        };
-
-        eventSource.addEventListener("status", handleStatus);
-        eventSource.addEventListener("mode", handleMode);
-        eventSource.addEventListener("input_required", handleInputRequired);
-        eventSource.onerror = () => {
-          eventSource.close();
-          sessionStreams.current.delete(cell.id);
-          lastStatuses.current.delete(session.id);
-        };
+        syncTrackedSession({
+          cell,
+          session,
+          trackedSessionIds: trackedSessionIds.current,
+          lastStatuses: lastStatuses.current,
+          isWindowFocused: windowFocusedRef.current,
+        });
       } catch {
         // ignore session fetch errors
       }
     };
 
-    for (const cell of readyCells) {
-      const existingStream = sessionStreams.current.get(cell.id);
-      if (existingStream?.sessionId) {
-        continue;
-      }
-      startMonitor(cell);
-    }
+    let cancelled = false;
+
+    const syncReadyCells = async () => {
+      await Promise.allSettled(
+        readyCells.map(async (cell) => {
+          if (cancelled) {
+            return;
+          }
+
+          await syncCellSession(cell);
+        })
+      );
+    };
+
+    syncReadyCells().catch(ignorePromiseRejection);
+    const intervalId = window.setInterval(
+      syncReadyCells,
+      AGENT_MONITOR_POLL_INTERVAL_MS
+    );
 
     return () => {
-      window.removeEventListener("focus", handleFocus);
-      window.removeEventListener("blur", handleBlur);
-      window.removeEventListener("visibilitychange", handleVisibilityChange);
-
-      for (const stream of sessionStreams.current.values()) {
-        stream.source.close();
-      }
-      sessionStreams.current.clear();
-      lastStatuses.current.clear();
+      cancelled = true;
+      window.clearInterval(intervalId);
     };
-  }, [cells, queryClient]);
+  }, [cells, queryClient, workspaceId]);
 }
 
 type AwaitingInputNotificationOptions = {
@@ -286,10 +193,71 @@ function playNotificationSound() {
   }
 }
 
+function ignorePromiseRejection() {
+  return;
+}
+
 function hasDesktopBridge() {
   if (typeof window === "undefined") {
     return false;
   }
 
   return typeof window.hiveDesktop?.notify === "function";
+}
+
+type SyncTrackedSessionOptions = {
+  cell: Cell;
+  session: AgentSession | null;
+  trackedSessionIds: Map<string, string>;
+  lastStatuses: Map<string, string>;
+  isWindowFocused: boolean;
+};
+
+function syncTrackedSession(options: SyncTrackedSessionOptions) {
+  const { cell, session, trackedSessionIds, lastStatuses, isWindowFocused } =
+    options;
+  const previousSessionId = trackedSessionIds.get(cell.id);
+
+  if (!session?.id) {
+    removeTrackedSession(
+      cell.id,
+      previousSessionId,
+      trackedSessionIds,
+      lastStatuses
+    );
+    return;
+  }
+
+  if (previousSessionId && previousSessionId !== session.id) {
+    lastStatuses.delete(previousSessionId);
+  }
+
+  trackedSessionIds.set(cell.id, session.id);
+
+  const previousStatus = lastStatuses.get(session.id);
+  lastStatuses.set(session.id, session.status);
+
+  if (
+    session.status === "awaiting_input" &&
+    previousStatus !== "awaiting_input"
+  ) {
+    dispatchAwaitingInputNotification({
+      cell,
+      isWindowFocused,
+    });
+  }
+}
+
+function removeTrackedSession(
+  cellId: string,
+  sessionId: string | undefined,
+  trackedSessionIds: Map<string, string>,
+  lastStatuses: Map<string, string>
+) {
+  if (!sessionId) {
+    return;
+  }
+
+  trackedSessionIds.delete(cellId);
+  lastStatuses.delete(sessionId);
 }

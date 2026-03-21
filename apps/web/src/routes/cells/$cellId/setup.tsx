@@ -500,7 +500,7 @@ function CellInfoSection({ cell, templateLabel }: CellInfoSectionProps) {
               <Button
                 aria-label="Copy workspace path"
                 className="h-5 w-5 shrink-0 p-0"
-                onClick={() => handleCopy(cell.workspacePath)}
+                onClick={() => handleCopy(cell.workspacePath ?? "")}
                 size="icon-sm"
                 type="button"
                 variant="ghost"

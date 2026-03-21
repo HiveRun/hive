@@ -1,4 +1,4 @@
-const ACTIVE_PROVISIONING_STATUSES = new Set(["spawning", "pending"]);
+const ACTIVE_PROVISIONING_STATUSES = new Set(["provisioning"]);
 
 export function shouldPollProvisioningStatus(
   status: string | undefined
@@ -10,7 +10,9 @@ export function shouldStreamProvisioningTimeline(args: {
   hasCell: boolean;
   status: string | undefined;
 }): boolean {
-  return args.hasCell && args.status !== "ready";
+  return (
+    args.hasCell && (args.status === "provisioning" || args.status === "error")
+  );
 }
 
 export function resolveProvisioningStatusMessage(
@@ -19,11 +21,11 @@ export function resolveProvisioningStatusMessage(
   if (status === "error") {
     return "Provisioning failed";
   }
-  if (status === "pending") {
-    return "Preparing agent session";
+  if (status === "provisioning") {
+    return "Provisioning workspace, services, and agent session";
   }
-  if (status === "spawning") {
-    return "Provisioning workspace and services";
+  if (status === "stopped") {
+    return "Runtime stopped";
   }
 
   return "Waiting for provisioning status update";

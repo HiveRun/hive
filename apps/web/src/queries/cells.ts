@@ -1,39 +1,298 @@
+import { fetchControllerJson } from "@/lib/controller-query";
+import type {
+  ActivityAttributesOnlySchema,
+  CellAttributesOnlySchema,
+  TimingAttributesOnlySchema,
+} from "@/lib/generated/ash-rpc";
+import {
+  cellDiffPath,
+  cellResourcesPath,
+} from "@/lib/generated/controller-routes";
 import { type CreateCellInput, rpc } from "@/lib/rpc";
 import { formatRpcError, formatRpcResponseError } from "@/lib/rpc-error";
+
+export type CellStatus =
+  | "provisioning"
+  | "ready"
+  | "stopped"
+  | "error"
+  | "deleting";
+
+const DEFAULT_ACTIVITY_LIMIT = 50;
+const DEFAULT_TIMING_LIMIT = 200;
+
+type CellRecord = {
+  id: string;
+  name: string;
+  description?: string | null;
+  status: CellStatus;
+  workspaceId: string;
+  workspacePath?: string | null;
+  workspaceRootPath?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  templateId: string;
+  opencodeSessionId?: string | null;
+  opencodeCommand?: string | null;
+  lastSetupError?: string;
+  currentMode?: "plan" | "build" | null;
+  startMode?: "plan" | "build" | null;
+  branchName?: string | null;
+  baseCommit?: string | null;
+  setupLog?: string | null;
+  setupLogPath?: string | null;
+};
+
+type CellServiceRecord = {
+  id: string;
+  name: string;
+  status: string;
+  type?: string;
+  command?: string;
+  cwd?: string;
+  port?: number | null;
+  pid?: number | null;
+  cpuPercent?: number | null;
+  rssBytes?: number | null;
+  lastKnownError?: string | null;
+  recentLogs?: string | null;
+  totalLogLines?: number | null;
+  hasMoreLogs?: boolean;
+  processAlive?: boolean;
+  url?: string;
+  portReachable?: boolean;
+  resourceSampledAt?: string | null;
+  resourceUnavailableReason?: string | null;
+};
+
+type CellResourceProcessRecord = {
+  id: string;
+  name: string;
+  kind: string;
+  serviceType?: string | null;
+  active: boolean;
+  status?: string | null;
+  pid?: number | null;
+  cpuPercent?: number | null;
+  rssBytes?: number | null;
+};
+
+type CellResourceHistoryPoint = {
+  activeCpuPercent: number;
+  activeRssBytes: number;
+  processes: CellResourceProcessRecord[];
+};
+
+type CellResourceHistoryAverageRecord = {
+  window: string;
+  averageActiveCpuPercent: number;
+  averageActiveRssBytes: number;
+  peakActiveCpuPercent: number;
+  peakActiveRssBytes: number;
+  sampleCount: number;
+};
+
+type CellResourceSummaryRecord = {
+  sampledAt: string;
+  processCount: number;
+  activeProcessCount: number;
+  activeCpuPercent: number;
+  activeRssBytes: number;
+  processes: CellResourceProcessRecord[];
+  history?: CellResourceHistoryPoint[];
+  historyAverages?: CellResourceHistoryAverageRecord[];
+  message?: string;
+  details?: string;
+};
+
+type CellActivityEventRecord = {
+  id: string;
+  type: string;
+  createdAt: string;
+  title?: string | null;
+  description?: string | null;
+  toolName?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+type CellActivityResponse = {
+  events: CellActivityEventRecord[];
+  nextCursor?: string | null;
+  message?: string;
+  details?: string;
+};
+
+function buildOpencodeCommand(
+  workspacePath: string | null | undefined,
+  sessionId: string | null | undefined
+): string | null {
+  if (!(workspacePath && sessionId)) {
+    return null;
+  }
+
+  return `opencode "${workspacePath}" --session "${sessionId}"`;
+}
+
+function presentCellStatus(status: string): CellStatus {
+  return status as CellStatus;
+}
+
+function normalizeCell(
+  cell: CellAttributesOnlySchema | CellRecord
+): CellRecord {
+  if ("insertedAt" in cell) {
+    return {
+      id: cell.id,
+      name: cell.name,
+      description: cell.description,
+      status: presentCellStatus(cell.status),
+      workspaceId: cell.workspaceId,
+      workspacePath: cell.workspacePath,
+      workspaceRootPath: cell.workspaceRootPath,
+      createdAt: cell.insertedAt,
+      updatedAt: cell.updatedAt,
+      templateId: cell.templateId,
+      opencodeSessionId: cell.opencodeSessionId,
+      opencodeCommand: buildOpencodeCommand(
+        cell.workspacePath,
+        cell.opencodeSessionId
+      ),
+      lastSetupError: cell.lastSetupError ?? undefined,
+      branchName: cell.branchName ?? undefined,
+      baseCommit: cell.baseCommit ?? undefined,
+    };
+  }
+
+  return {
+    ...cell,
+    status: presentCellStatus(cell.status),
+    lastSetupError: cell.lastSetupError ?? undefined,
+  };
+}
+
+function buildActivityCursor(insertedAt: string, id: string): string | null {
+  const timestamp = Date.parse(insertedAt);
+  return Number.isNaN(timestamp) ? null : `${timestamp}:${id}`;
+}
+
+function toActivityResponse(
+  activities: ActivityAttributesOnlySchema[],
+  limit: number
+): CellActivityResponse {
+  const page = activities.slice(0, limit);
+  const lastEvent = page.at(-1);
+
+  return {
+    events: page.map((activity) => ({
+      id: activity.id,
+      type: activity.type,
+      createdAt: activity.insertedAt,
+      toolName: activity.toolName,
+      metadata: activity.metadata,
+    })),
+    nextCursor:
+      activities.length > limit && lastEvent
+        ? buildActivityCursor(lastEvent.insertedAt, lastEvent.id)
+        : null,
+  };
+}
+
+function toTimingStep(timing: TimingAttributesOnlySchema): CellTimingStep {
+  return {
+    id: timing.id,
+    cellId: timing.cellId ?? "",
+    cellName: timing.cellName,
+    workspaceId: timing.workspaceId,
+    templateId: timing.templateId,
+    runId: timing.runId,
+    workflow: timing.workflow as CellTimingWorkflow,
+    step: timing.step,
+    status: timing.status as CellTimingStatus,
+    durationMs: timing.durationMs,
+    attempt: timing.attempt,
+    error: timing.error,
+    metadata: timing.metadata,
+    createdAt: timing.insertedAt,
+  };
+}
+
+function toTimingRuns(timings: TimingAttributesOnlySchema[]): CellTimingRun[] {
+  return Array.from(
+    timings.reduce((runs, timing) => {
+      const entries = runs.get(timing.runId) ?? [];
+      entries.push(timing);
+      runs.set(timing.runId, entries);
+      return runs;
+    }, new Map<string, TimingAttributesOnlySchema[]>())
+  )
+    .map(([runId, runSteps]) => {
+      const ordered = [...runSteps].sort((left, right) =>
+        left.insertedAt.localeCompare(right.insertedAt)
+      );
+      const first = ordered[0];
+      const last = ordered.at(-1);
+      const totalStep = ordered.find((step) => step.step === "total");
+
+      return {
+        runId,
+        cellId: first?.cellId ?? "",
+        cellName: first?.cellName ?? null,
+        workspaceId: first?.workspaceId ?? null,
+        templateId: first?.templateId ?? null,
+        workflow: (first?.workflow ?? "create") as CellTimingWorkflow,
+        status: (ordered.some((step) => step.status === "error")
+          ? "error"
+          : "ok") as CellTimingStatus,
+        startedAt: first?.insertedAt ?? "",
+        finishedAt: last?.insertedAt ?? "",
+        totalDurationMs: totalStep
+          ? totalStep.durationMs
+          : ordered.reduce((sum, step) => sum + step.durationMs, 0),
+        stepCount: ordered.length,
+        attempt: ordered.find((step) => step.attempt != null)?.attempt ?? null,
+      };
+    })
+    .sort((left, right) => right.finishedAt.localeCompare(left.finishedAt));
+}
+
+function toTimingResponse(
+  timings: TimingAttributesOnlySchema[],
+  limit: number
+): CellTimingResponse {
+  return {
+    steps: timings.slice(0, limit).map(toTimingStep),
+    runs: toTimingRuns(timings),
+  };
+}
 
 export const cellQueries = {
   all: (workspaceId: string) => ({
     queryKey: ["cells", workspaceId] as const,
     staleTime: 0,
-    queryFn: async () => {
+    queryFn: async (): Promise<CellRecord[]> => {
       const { data, error } = await rpc.api.cells.get({
         query: { workspaceId },
       });
       if (error) {
         throw new Error(formatRpcError(error, "Failed to fetch cells"));
       }
-      return data.cells.map(normalizeCell);
+
+      return Array.isArray(data)
+        ? (data as CellAttributesOnlySchema[]).map(normalizeCell)
+        : [];
     },
   }),
 
   detail: (id: string) => ({
     queryKey: ["cells", id] as const,
     staleTime: 0,
-    queryFn: async () => {
-      const { data, error } = await rpc.api.cells({ id }).get({
-        query: {
-          includeSetupLog: false,
-        },
-      });
+    queryFn: async (): Promise<CellRecord & { status: CellStatus }> => {
+      const { data, error } = await rpc.api.cells({ id }).get();
       if (error) {
         throw new Error(formatRpcError(error, "Cell not found"));
       }
 
-      if ("message" in data) {
-        throw new Error(formatRpcResponseError(data, "Cell not found"));
-      }
-
-      return normalizeCell(data);
+      return normalizeCell(data as CellAttributesOnlySchema);
     },
   }),
 
@@ -44,7 +303,7 @@ export const cellQueries = {
       "services",
       options.includeResources ?? false,
     ] as const,
-    queryFn: async () => {
+    queryFn: async (): Promise<CellServiceRecord[]> => {
       const { data, error } = await rpc.api.cells({ id }).services.get({
         query: {
           includeResources: options.includeResources,
@@ -54,11 +313,7 @@ export const cellQueries = {
         throw new Error(formatRpcError(error, "Failed to load services"));
       }
 
-      if ("message" in data) {
-        throw new Error(formatRpcResponseError(data, "Cell not found"));
-      }
-
-      return data.services;
+      return data as CellServiceRecord[];
     },
   }),
 
@@ -82,26 +337,20 @@ export const cellQueries = {
       options.historyLimit ?? null,
       options.rollupLimit ?? null,
     ] as const,
-    queryFn: async () => {
-      const { data, error } = await rpc.api.cells({ id }).resources.get({
-        query: {
-          includeHistory: options.includeHistory,
-          includeAverages: options.includeAverages,
-          includeRollups: options.includeRollups,
-          historyLimit: options.historyLimit,
-          rollupLimit: options.rollupLimit,
-        },
-      });
-      if (error) {
-        throw new Error(formatRpcError(error, "Failed to load resources"));
-      }
-
-      if ("message" in data) {
-        throw new Error(formatRpcResponseError(data, "Cell not found"));
-      }
-
-      return data;
-    },
+    queryFn: async (): Promise<CellResourceSummaryRecord> =>
+      fetchControllerJson<CellResourceSummaryRecord>(
+        cellResourcesPath(
+          { id },
+          {
+            includeHistory: options.includeHistory,
+            includeAverages: options.includeAverages,
+            includeRollups: options.includeRollups,
+            historyLimit: options.historyLimit,
+            rollupLimit: options.rollupLimit,
+          }
+        ),
+        "Failed to load resources"
+      ),
   }),
 
   activity: (
@@ -120,7 +369,7 @@ export const cellQueries = {
       options.cursor ?? null,
       options.types?.join(",") ?? null,
     ] as const,
-    queryFn: async () => {
+    queryFn: async (): Promise<CellActivityResponse> => {
       const query: Record<string, string | number> = {};
       if (typeof options.limit === "number") {
         query.limit = options.limit;
@@ -138,13 +387,11 @@ export const cellQueries = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to load activity"));
       }
-      if ("message" in data) {
-        throw new Error(
-          formatRpcResponseError(data, "Failed to load activity")
-        );
-      }
 
-      return data;
+      return toActivityResponse(
+        Array.isArray(data) ? (data as ActivityAttributesOnlySchema[]) : [],
+        options.limit ?? DEFAULT_ACTIVITY_LIMIT
+      );
     },
   }),
 
@@ -182,11 +429,11 @@ export const cellQueries = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to load timings"));
       }
-      if ("message" in data) {
-        throw new Error(formatRpcResponseError(data, "Failed to load timings"));
-      }
 
-      return data as CellTimingResponse;
+      return toTimingResponse(
+        Array.isArray(data) ? (data as TimingAttributesOnlySchema[]) : [],
+        options.limit ?? DEFAULT_TIMING_LIMIT
+      );
     },
   }),
 
@@ -234,7 +481,10 @@ export const cellQueries = {
         throw new Error(formatRpcError(error, "Failed to load timings"));
       }
 
-      return data as CellTimingResponse;
+      return toTimingResponse(
+        Array.isArray(data) ? (data as TimingAttributesOnlySchema[]) : [],
+        options.limit ?? DEFAULT_TIMING_LIMIT
+      );
     },
   }),
 };
@@ -257,11 +507,16 @@ export const cellMutations = {
         throw new Error(formatRpcError(error, "Failed to create cell"));
       }
 
-      if ("message" in data) {
+      if (
+        data &&
+        typeof data === "object" &&
+        "message" in data &&
+        typeof data.message === "string"
+      ) {
         throw new Error(formatRpcResponseError(data, "Failed to create cell"));
       }
 
-      return normalizeCell(data);
+      return normalizeCell(data as CellRecord);
     },
   },
 
@@ -282,11 +537,13 @@ export const cellMutations = {
         throw new Error(formatRpcError(error, "Failed to delete cells"));
       }
 
-      if ("message" in data) {
-        throw new Error(formatRpcResponseError(data, "Failed to delete cells"));
+      const result = data as { deletedIds: string[]; failedIds?: string[] };
+
+      if (result.deletedIds.length === 0) {
+        throw new Error("No cells found for provided ids");
       }
 
-      return data;
+      return result;
     },
   },
 
@@ -316,6 +573,19 @@ export const cellMutations = {
     },
   },
 
+  restartService: {
+    mutationFn: async ({ cellId, serviceId }: ServiceActionInput) => {
+      const { data, error } = await rpc.api
+        .cells({ id: cellId })
+        .services({ serviceId })
+        .restart.post();
+      if (error) {
+        throw new Error(formatRpcError(error, "Failed to restart service"));
+      }
+      return data;
+    },
+  },
+
   startAllServices: {
     mutationFn: async ({ cellId }: ServiceBulkActionInput) => {
       const { data, error } = await rpc.api
@@ -340,6 +610,18 @@ export const cellMutations = {
     },
   },
 
+  restartAllServices: {
+    mutationFn: async ({ cellId }: ServiceBulkActionInput) => {
+      const { data, error } = await rpc.api
+        .cells({ id: cellId })
+        .services.restart.post();
+      if (error) {
+        throw new Error(formatRpcError(error, "Failed to restart services"));
+      }
+      return data;
+    },
+  },
+
   retrySetup: {
     mutationFn: async (cellId: string) => {
       const { data, error } = await rpc.api
@@ -348,7 +630,7 @@ export const cellMutations = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to retry setup"));
       }
-      return normalizeCell(data);
+      return normalizeCell(data as CellRecord);
     },
   },
 };
@@ -360,56 +642,39 @@ export const cellDiffQueries = {
     options: { files?: string[] } = {}
   ) => ({
     queryKey: ["cell-diff", cellId, mode, "summary"] as const,
-    queryFn: async (): Promise<CellDiffResponse> => {
-      const query: Record<string, string> = { mode };
-      if (options.files?.length) {
-        query.files = options.files.join(",");
-      }
-      const { data, error } = await rpc.api
-        .cells({ id: cellId })
-        .diff.get({ query });
-      if (error) {
-        throw new Error(formatRpcError(error, "Failed to load cell diff"));
-      }
-      return data as CellDiffResponse;
-    },
+    queryFn: async (): Promise<CellDiffResponse> =>
+      fetchControllerJson<CellDiffResponse>(
+        cellDiffPath(
+          { id: cellId },
+          {
+            mode,
+            files: options.files?.length ? options.files.join(",") : undefined,
+          }
+        ),
+        "Failed to load cell diff"
+      ),
   }),
   detail: (cellId: string, mode: DiffMode, file: string) => ({
     queryKey: ["cell-diff", cellId, mode, "detail", file] as const,
     queryFn: async (): Promise<DiffFileDetail | null> => {
-      const { data, error } = await rpc.api.cells({ id: cellId }).diff.get({
-        query: {
-          mode,
-          files: file,
-          summary: "none",
-        },
-      });
-      if (error) {
-        throw new Error(
-          formatRpcError(error, `Failed to load diff for ${file}`)
-        );
-      }
-      const details = (data.details as DiffFileDetail[] | undefined) ?? [];
+      const data = await fetchControllerJson<CellDiffResponse>(
+        cellDiffPath(
+          { id: cellId },
+          {
+            mode,
+            files: file,
+            summary: "none",
+          }
+        ),
+        `Failed to load diff for ${file}`
+      );
+      const details = (data.details ?? []) as DiffFileDetail[];
       return details.find((detail) => detail.path === file) ?? null;
     },
   }),
 };
 
-const normalizeCell = <T extends { status: string }>(
-  cell: T
-): T & { status: CellStatus } => ({
-  ...cell,
-  status: cell.status as CellStatus,
-});
-
 // Export inferred types for use in components
-export type CellStatus =
-  | "spawning"
-  | "pending"
-  | "ready"
-  | "error"
-  | "deleting";
-
 export type Cell = Awaited<
   ReturnType<ReturnType<typeof cellQueries.detail>["queryFn"]>
 > & {

@@ -1,34 +1,28 @@
 # Backend Patterns
 
-## Tech Stack
+## Runtime Backend
 
-- **Framework**: Elysia (TypeScript backend framework built on Bun)
-- **Database**: Drizzle ORM with SQLite (local) / PostgreSQL (production)
-- **Validation**: Elysia's built-in TypeBox validation
-- **Logging**: @bogeychan/elysia-logger (JSON). Pipe output through `pino-pretty` locally if you need formatted logs.
+- Hard cutover plan: `docs/migrations/elixir-hard-cutover.md`
+- Hive now runs against `apps/hive_server_elixir`; treat it as the only active backend runtime.
+- If dormant `apps/server` code still exists during cleanup, do not route new features or runtime wiring through it.
+
+## Backend (`apps/hive_server_elixir`)
+
+- Stack: Phoenix API, Ash, AshSqlite, Reactor, Oban Lite.
+- Model state transitions and business actions in Ash resources/actions.
+- Treat Ash as the application data API: call `Ash.*` and resource actions from domain modules instead of direct `Repo`/`Ecto.Query`.
+- Put multi-step workflows (create/retry/delete/resume) in Reactor with compensation paths.
+- Persist OpenCode event ingestion in append-only logs first, then project into query models.
 
 ## Tooling & Commands
 
-- Start the backend in dev mode with `bun run dev:server` (Turbo fan-out) or `bun -C apps/server run dev` when working locally only.
-- Build the package via `bun -C apps/server run build`; compiled output lives in `dist/`.
-- Run Vitest in watch mode with `bun -C apps/server run test`; CI-style runs use `bun -C apps/server run test:run`.
-- Target a specific spec with `bun -C apps/server run test -- src/db.test.ts -t "creates user"` (adjust file and test name as needed).
+- Backend dev: `bun run dev:server` or `mix phx.server` from `apps/hive_server_elixir`
+- Backend tests: `mix test` from `apps/hive_server_elixir`
+- Migration/codegen tasks: `bun run db:migrate` and `bun run db:generate`
 
-## Key Patterns
+## Backend Rules
 
-**ALWAYS use TypeBox validation** for all API endpoints that accept input:
-- `body: t.Object({...})` for POST/PUT requests
-- `query: t.Object({...})` for query parameters
-- `params: t.Object({...})` for path parameters
-
-**Error handling**: Use Elysia's `error(statusCode, message)` helper for consistent error responses.
-
-**Type safety**: Eden Treaty consumes Elysia types automatically for end-to-end type safety. No need for manual type definitions - TypeBox validation IS your type definition.
-
-**Database**: Use Drizzle ORM for all database operations (`db.insert()`, `db.query.table.findMany()`, `db.update()`, `db.delete()`).
-
-**Transactions**: Multi-step operations that must succeed or fail together MUST use `db.transaction()`.
-
-**Design for rollback**: Operations modifying multiple resources should be designed to be reversible or compensatable.
-
-**Logging**: All requests are automatically logged via @bogeychan/elysia-logger. Only add custom logs (`log.info()`, `log.error()`) for important business logic.
+- Keep local-first runtime constraints front and center (single required Hive daemon, SQLite default).
+- Restrict direct Ecto usage to infrastructure concerns (migrations, repo setup, sandbox/test plumbing, low-level adapters where Ash cannot express the behavior).
+- When contracts change, update frontend query factories and migration docs in the same change.
+- Record major backend decisions in the migration doc change log so the cutover trail stays explicit.

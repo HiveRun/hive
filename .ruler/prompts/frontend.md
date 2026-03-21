@@ -37,17 +37,19 @@ Components are stored in `apps/web/src/components/ui/`
 
 ## Backend Communication
 
-The backend is a separate **Elysia** server. Communication happens via **Eden Treaty RPC** which provides end-to-end type safety.
+The runtime backend is Phoenix/Ash in `apps/hive_server_elixir`.
 
-**ALWAYS import from `@/lib/rpc`:**
+Keep frontend data access behind `@/lib/rpc` so transport/client changes do not leak into UI components.
+
+**Always import data client helpers from `@/lib/rpc`:**
 
 ```typescript
 import { rpc } from "@/lib/rpc"
 ```
 
-Eden Treaty provides automatic TypeScript inference from your Elysia backend. No manual typing needed.
+`@/lib/rpc` is the frontend's stable API wrapper. Components should not import backend framework types directly.
 
-### Eden Treaty Usage
+### Client Usage Pattern
 
 ```typescript
 // GET request
@@ -118,7 +120,7 @@ export const userMutations = {
 **ALWAYS use TanStack Form with shadcn/ui components and Zod validation.**
 
 Key integrations:
-- Mutations: Eden Treaty with `useMutation` for backend calls
+- Mutations: typed RPC client with `useMutation` for backend calls
 - Toasts: sonner for success/error notifications
 - Drafts: Auto-save with `storage.set('form-draft', form.state.values)`
 - Validation: `zodValidator()` adapter with validation on `onChange`/`onBlur`/`onSubmit`

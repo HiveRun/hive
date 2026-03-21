@@ -89,10 +89,15 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 function retrySetup(apiUrl: string, cellId: string): Promise<Response> {
-  return fetch(`${apiUrl}/api/cells/${cellId}/setup/retry`, {
+  return fetch(`${apiUrl}/rpc/run`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
     },
+    body: JSON.stringify({
+      action: "retry_cell_setup",
+      input: { cellId },
+      fields: ["id"],
+    }),
   });
 }
