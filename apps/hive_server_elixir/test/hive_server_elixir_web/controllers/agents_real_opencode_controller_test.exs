@@ -6,14 +6,6 @@ defmodule HiveServerElixirWeb.AgentsRealOpencodeControllerTest do
   alias HiveServerElixir.Opencode.ServerManager
   alias HiveServerElixir.OpencodeRealServer
 
-  setup_all do
-    if System.find_executable("opencode") do
-      :ok
-    else
-      {:skip, "opencode executable not available"}
-    end
-  end
-
   setup do
     previous_base_url = Application.get_env(:hive_server_elixir, :opencode_base_url)
 

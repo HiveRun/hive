@@ -3,14 +3,6 @@ defmodule HiveServerElixir.Opencode.ServerManagerTest do
 
   alias HiveServerElixir.Opencode.ServerManager
 
-  setup_all do
-    if System.find_executable("opencode") do
-      :ok
-    else
-      {:skip, "opencode executable not available"}
-    end
-  end
-
   test "managed mode starts a healthy shared OpenCode server" do
     name = unique_name()
     pid = start_supervised!({ServerManager, name: name, timeout_ms: 15_000})

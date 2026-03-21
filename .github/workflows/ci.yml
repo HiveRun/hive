@@ -117,6 +117,20 @@ jobs:
           mise x -C apps/hive_server_elixir -- mix local.rebar --force
           env MIX_ENV=test mise x -C apps/hive_server_elixir -- mix deps.get
 
+      - name: Cache OpenCode CLI
+        id: opencode-cache-quality
+        uses: actions/cache@v4
+        with:
+          path: ~/.opencode/bin
+          key: opencode-${{ runner.os }}-1
+
+      - name: Install OpenCode CLI
+        if: steps.opencode-cache-quality.outputs.cache-hit != 'true'
+        run: curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
+
+      - name: Add OpenCode CLI to PATH
+        run: echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+
       - name: Validate release version source
         run: bun run check:release-version
 
