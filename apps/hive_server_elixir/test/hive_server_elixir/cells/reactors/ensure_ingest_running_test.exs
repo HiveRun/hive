@@ -32,7 +32,17 @@ defmodule HiveServerElixir.Cells.Reactors.EnsureIngestRunningTest do
                fail_after_start: true
              })
 
-    assert [] = Registry.lookup(@registry, {"workspace-reactor-failure", "cell-reactor-failure"})
+    case Registry.lookup(@registry, {"workspace-reactor-failure", "cell-reactor-failure"}) do
+      [] ->
+        :ok
+
+      [{pid, _value}] ->
+        ref = Process.monitor(pid)
+        assert_receive {:DOWN, ^ref, :process, ^pid, _reason}
+
+        assert [] =
+                 Registry.lookup(@registry, {"workspace-reactor-failure", "cell-reactor-failure"})
+    end
   end
 
   defp runtime_opts do

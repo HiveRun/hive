@@ -83,10 +83,10 @@ defmodule HiveServerElixir.OpencodeFakeServer do
 
     case {conn.method, conn.request_path} do
       {"GET", "/config/providers"} ->
-        respond(conn, Agent.get(state_pid, & &1.catalog))
+        respond(conn, safe_agent_get(state_pid, & &1.catalog))
 
       {"GET", "/global/health"} ->
-        respond(conn, Agent.get(state_pid, & &1.health))
+        respond(conn, safe_agent_get(state_pid, & &1.health))
 
       {"GET", "/global/event"} ->
         state_pid
@@ -108,7 +108,7 @@ defmodule HiveServerElixir.OpencodeFakeServer do
   end
 
   defp session_messages_response(session_id, state_pid) do
-    Agent.get(state_pid, fn state ->
+    safe_agent_get(state_pid, fn state ->
       Map.get(
         state.session_messages,
         session_id,
@@ -118,7 +118,7 @@ defmodule HiveServerElixir.OpencodeFakeServer do
   end
 
   defp next_global_event(state_pid) do
-    Agent.get_and_update(state_pid, fn state ->
+    safe_agent_get_and_update(state_pid, fn state ->
       case :queue.out(state.global_events) do
         {{:value, response}, queue} ->
           {response, %{state | global_events: queue}}
@@ -178,7 +178,11 @@ defmodule HiveServerElixir.OpencodeFakeServer do
   end
 
   defp update(server, fun) when is_function(fun, 1) do
-    Agent.update(state_pid(server), fun)
+    try do
+      Agent.update(state_pid(server), fun)
+    catch
+      :exit, _reason -> :ok
+    end
   end
 
   defp state_pid(%{state_pid: state_pid}), do: state_pid
@@ -189,6 +193,22 @@ defmodule HiveServerElixir.OpencodeFakeServer do
     {:ok, {_address, port}} = :inet.sockname(socket)
     :ok = :gen_tcp.close(socket)
     port
+  end
+
+  defp safe_agent_get(state_pid, fun) do
+    try do
+      Agent.get(state_pid, fun)
+    catch
+      :exit, _reason -> {:error, %{status: 503, body: %{message: "stub unavailable"}}}
+    end
+  end
+
+  defp safe_agent_get_and_update(state_pid, fun) do
+    try do
+      Agent.get_and_update(state_pid, fun)
+    catch
+      :exit, _reason -> {:error, %{status: 503, body: %{message: "stub unavailable"}}}
+    end
   end
 
   defp default_catalog do
