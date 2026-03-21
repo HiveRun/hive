@@ -3,7 +3,6 @@ defmodule HiveServerElixir.Opencode.EventIngestRuntimeTest do
 
   alias HiveServerElixir.Opencode.AgentEventLog
   alias HiveServerElixir.Opencode.EventIngestRuntime
-  alias HiveServerElixir.Opencode.TestOperations
 
   test "start_stream ingests continuously and stop_stream terminates worker" do
     test_pid = self()
@@ -21,7 +20,6 @@ defmodule HiveServerElixir.Opencode.EventIngestRuntimeTest do
       )
 
     adapter_opts = [
-      operations_module: TestOperations,
       global_event: fn _opts ->
         Agent.get_and_update(queue_pid, fn
           [next | rest] ->
@@ -73,7 +71,6 @@ defmodule HiveServerElixir.Opencode.EventIngestRuntimeTest do
     context = %{workspace_id: "workspace-dup", cell_id: "cell-dup"}
 
     adapter_opts = [
-      operations_module: TestOperations,
       global_event: fn _opts -> {:error, %{type: :transport, reason: :unreachable}} end
     ]
 

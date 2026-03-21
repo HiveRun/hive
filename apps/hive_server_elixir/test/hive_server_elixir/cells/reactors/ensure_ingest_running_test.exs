@@ -3,7 +3,6 @@ defmodule HiveServerElixir.Cells.Reactors.EnsureIngestRunningTest do
 
   alias HiveServerElixir.Cells.Lifecycle
   alias HiveServerElixir.Cells.Reactors.EnsureIngestRunning
-  alias HiveServerElixir.Opencode.TestOperations
 
   @registry HiveServerElixir.Opencode.EventIngestRegistry
 
@@ -48,7 +47,6 @@ defmodule HiveServerElixir.Cells.Reactors.EnsureIngestRunningTest do
   defp runtime_opts do
     [
       adapter_opts: [
-        operations_module: TestOperations,
         global_event: fn _opts -> {:error, %{type: :transport, reason: :unreachable}} end
       ],
       success_delay_ms: 0,

@@ -11,29 +11,17 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCellTest do
   alias HiveServerElixir.Cells.ProvisioningWorker
   alias HiveServerElixir.Cells.Workspace
   alias HiveServerElixir.Opencode.AgentEventLog
-  alias HiveServerElixir.OpencodeFakeServer
 
   @registry HiveServerElixir.Opencode.EventIngestRegistry
-  setup do
-    {:ok, opencode: OpencodeFakeServer.setup_open_code_stub()}
-  end
 
-  test "creates a provisioning cell immediately and completes setup asynchronously", %{
-    opencode: opencode
-  } do
+  test "creates a provisioning cell immediately and completes setup asynchronously" do
     workspace = workspace!("create")
-
-    :ok =
-      OpencodeFakeServer.enqueue_global_event(
-        opencode,
-        {:ok, event_payload("session.idle", "session-create-cell")}
-      )
 
     assert {:ok, cell} =
              CellCommands.create(%{
                workspace_id: workspace.id,
                description: "Create cell reactor success",
-               runtime_opts: runtime_opts(opencode, self()),
+               runtime_opts: runtime_opts(self()),
                fail_after_ingest: false
              })
 
@@ -44,7 +32,7 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCellTest do
              ProvisioningWorker.run_once(
                cell_id: cell.id,
                mode: :create,
-               runtime_opts: runtime_opts(opencode, self()),
+               runtime_opts: runtime_opts(self()),
                fail_after_ingest: false
              )
 
@@ -65,16 +53,14 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCellTest do
              })
   end
 
-  test "returns provisioning immediately and finalizes errors asynchronously", %{
-    opencode: opencode
-  } do
+  test "returns provisioning immediately and finalizes errors asynchronously" do
     workspace = workspace!("failure")
 
     assert {:ok, cell} =
              CellCommands.create(%{
                workspace_id: workspace.id,
                description: "Create cell reactor failure",
-               runtime_opts: runtime_opts_without_persist(opencode),
+               runtime_opts: runtime_opts_without_persist(),
                fail_after_ingest: true
              })
 
@@ -84,7 +70,7 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCellTest do
              ProvisioningWorker.run_once(
                cell_id: cell.id,
                mode: :create,
-               runtime_opts: runtime_opts_without_persist(opencode),
+               runtime_opts: runtime_opts_without_persist(),
                fail_after_ingest: true
              )
 
@@ -112,24 +98,26 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCellTest do
     workspace
   end
 
-  defp runtime_opts(opencode, test_pid) do
+  defp runtime_opts(test_pid) do
     [
-      adapter_opts:
-        [
-          persist_global_event: fn event, persist_context ->
-            result = AgentEventLog.append_global_event(event, persist_context)
-            send(test_pid, {:persisted, result})
-            result
-          end
-        ] ++ opencode.adapter_opts,
+      adapter_opts: [
+        global_event: fn _opts -> {:ok, event_payload("session.idle", "session-create-cell")} end,
+        persist_global_event: fn event, persist_context ->
+          result = AgentEventLog.append_global_event(event, persist_context)
+          send(test_pid, {:persisted, result})
+          result
+        end
+      ],
       success_delay_ms: 30_000,
       error_delay_ms: 30_000
     ]
   end
 
-  defp runtime_opts_without_persist(opencode) do
+  defp runtime_opts_without_persist do
     [
-      adapter_opts: opencode.adapter_opts,
+      adapter_opts: [
+        global_event: fn _opts -> {:error, %{type: :transport, reason: :unreachable}} end
+      ],
       success_delay_ms: 30_000,
       error_delay_ms: 30_000
     ]

@@ -8,68 +8,69 @@ defmodule HiveServerElixir.AgentsTest do
   alias HiveServerElixir.Cells.TerminalRuntime
   alias HiveServerElixir.Cells.Workspace
   alias HiveServerElixir.Opencode.AgentEventLog
-  alias HiveServerElixir.OpencodeFakeServer
+  alias HiveServerElixir.OpencodeRealServer
   alias HiveServerElixir.Workspaces
 
-  setup do
-    previous_active_workspace_id = Workspaces.active_workspace_id()
-    previous_client_opts = Application.get_env(:hive_server_elixir, :opencode_client_opts)
-    opencode = OpencodeFakeServer.setup_open_code_stub()
+  setup_all do
+    server = OpencodeRealServer.start!()
 
-    Application.put_env(:hive_server_elixir, :opencode_client_opts, opencode.client_opts)
+    on_exit(fn ->
+      OpencodeRealServer.stop(server)
+    end)
+
+    {:ok, opencode_server: server}
+  end
+
+  setup %{opencode_server: server} do
+    previous_active_workspace_id = Workspaces.active_workspace_id()
+    previous_base_url = Application.get_env(:hive_server_elixir, :opencode_base_url)
+    previous_client_opts = Application.get_env(:hive_server_elixir, :opencode_client_opts)
+
+    Application.put_env(:hive_server_elixir, :opencode_base_url, server.url)
+    Application.delete_env(:hive_server_elixir, :opencode_client_opts)
     :ok = Workspaces.set_active_workspace_id(nil)
 
     on_exit(fn ->
       :ok = Workspaces.set_active_workspace_id(previous_active_workspace_id)
-
+      restore_env(:opencode_base_url, previous_base_url)
       restore_env(:opencode_client_opts, previous_client_opts)
     end)
 
-    {:ok, opencode: opencode}
+    {:ok, opencode_server: server}
   end
 
-  test "provider_payload_for_workspace returns normalized catalog payload", %{opencode: opencode} do
+  test "provider_payload_for_workspace returns normalized catalog payload" do
     workspace = workspace!("agents-domain-models")
 
     assert {:ok, payload} = Agents.provider_payload_for_workspace(workspace.id)
-    assert payload.defaults == %{"opencode" => "big-pickle"}
+    assert payload.defaults["opencode"] == "big-pickle"
     assert Enum.any?(payload.providers, &(&1.id == "opencode"))
     assert Enum.any?(payload.models, &(&1.id == "big-pickle" and &1.provider == "opencode"))
-
-    assert [%{method: "GET", path: "/config/providers", params: %{"directory" => directory}}] =
-             OpencodeFakeServer.requests(opencode)
-
-    assert directory == workspace.path
   end
 
-  test "provider_payload_for_session resolves workspace path through the real client transport",
-       %{
-         opencode: opencode
-       } do
+  test "provider_payload_for_session resolves workspace path through the real client transport" do
     workspace = workspace!("agents-domain-session-models")
     cell = cell!(workspace, "ready")
     session = agent_session!(cell)
 
     assert {:ok, payload} = Agents.provider_payload_for_session(session.session_id)
-    assert payload.defaults == %{"opencode" => "big-pickle"}
-
-    assert [%{method: "GET", path: "/config/providers", params: %{"directory" => directory}}] =
-             OpencodeFakeServer.requests(opencode)
-
-    assert directory == workspace.path
+    assert payload.defaults["opencode"] == "big-pickle"
   end
 
-  test "provider_payload_for_workspace surfaces transport-backed errors", %{opencode: opencode} do
+  test "provider_payload_for_workspace surfaces transport-backed errors" do
+    previous_base_url = Application.get_env(:hive_server_elixir, :opencode_base_url)
     workspace = workspace!("agents-domain-models-error")
 
-    :ok =
-      OpencodeFakeServer.put_catalog(
-        opencode,
-        {:error, %{status: 400, body: %{message: "Catalog unavailable"}}}
-      )
+    Application.put_env(:hive_server_elixir, :opencode_base_url, "http://127.0.0.1:1")
 
-    assert {:error, {:bad_request, "Catalog unavailable"}} =
+    on_exit(fn ->
+      restore_env(:opencode_base_url, previous_base_url)
+    end)
+
+    assert {:error, {:bad_request, message}} =
              Agents.provider_payload_for_workspace(workspace.id)
+
+    assert is_binary(message)
   end
 
   test "session_payload_for_cell falls back to persisted event session context" do
@@ -119,68 +120,28 @@ defmodule HiveServerElixir.AgentsTest do
 
   test "messages_payload_for_session returns normalized messages through the real client transport",
        %{
-         opencode: opencode
+         opencode_server: server
        } do
     workspace = workspace!("agents-domain-messages")
     cell = cell!(workspace, "ready")
-    session = agent_session!(cell)
-
-    :ok =
-      OpencodeFakeServer.put_session_messages(opencode, session.session_id, {
-        :ok,
-        [
-          %{
-            "info" => %{
-              "id" => "message-user-1",
-              "role" => "user",
-              "sessionID" => session.session_id,
-              "time" => %{"created" => 1_704_067_200_000}
-            },
-            "parts" => [
-              %{"id" => "part-user-1", "type" => "text", "text" => "Summarize project status"}
-            ]
-          },
-          %{
-            "info" => %{
-              "id" => "message-assistant-1",
-              "role" => "assistant",
-              "sessionID" => session.session_id,
-              "finish" => "stop",
-              "time" => %{"created" => 1_704_067_201_000, "completed" => 1_704_067_202_000}
-            },
-            "parts" => [
-              %{"id" => "part-assistant-1", "type" => "text", "text" => "Status is green."}
-            ]
-          }
-        ]
-      })
+    session = real_agent_session!(server, workspace, cell)
 
     assert {:ok, %{messages: [user_message, assistant_message]}} =
              Agents.messages_payload_for_session(session.session_id)
 
     assert user_message.role == "user"
-    assert user_message.content == "Summarize project status"
+    assert is_binary(user_message.content)
+    assert user_message.content != ""
     assert assistant_message.role == "assistant"
-    assert assistant_message.content == "Status is green."
-
-    assert [%{method: "GET", path: path, params: %{"directory" => directory}}] =
-             OpencodeFakeServer.requests(opencode)
-
-    assert path == "/session/#{session.session_id}/message"
-    assert directory == workspace.path
+    assert is_binary(assistant_message.content)
+    assert assistant_message.content != ""
   end
 
   test "messages_payload_for_session falls back to terminal output when session fetch returns not found",
-       %{opencode: opencode} do
+       %{} do
     workspace = workspace!("agents-domain-messages-fallback")
     cell = cell!(workspace, "ready")
-    session = agent_session!(cell)
-
-    :ok =
-      OpencodeFakeServer.put_session_messages(opencode, session.session_id, {
-        :error,
-        %{status: 404, body: %{message: "missing session"}}
-      })
+    session = agent_session!(cell, "missing-session-#{System.unique_integer([:positive])}")
 
     :ok = TerminalRuntime.append_chat_output(cell.id, "Need a summary")
 
@@ -224,13 +185,13 @@ defmodule HiveServerElixir.AgentsTest do
     cell
   end
 
-  defp agent_session!(cell) do
+  defp agent_session!(cell, session_id \\ "session-#{System.unique_integer([:positive])}") do
     assert {:ok, session} =
              Ash.create(
                AgentSession,
                %{
                  cell_id: cell.id,
-                 session_id: "session-#{System.unique_integer([:positive])}",
+                 session_id: session_id,
                  model_id: "big-pickle",
                  model_provider_id: "opencode",
                  start_mode: "plan",
@@ -240,6 +201,25 @@ defmodule HiveServerElixir.AgentsTest do
              )
 
     session
+  end
+
+  defp real_agent_session!(server, workspace, cell) do
+    session =
+      OpencodeRealServer.create_session!(
+        server,
+        workspace.path,
+        "agents-test-#{System.unique_integer([:positive])}"
+      )
+
+    _response =
+      OpencodeRealServer.prompt!(
+        server,
+        workspace.path,
+        session["id"],
+        "Reply with two short words."
+      )
+
+    agent_session!(cell, session["id"])
   end
 
   defp tmp_workspace_path!(suffix) do

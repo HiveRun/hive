@@ -15,7 +15,6 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
   alias HiveServerElixir.Cells.TerminalRuntime
   alias HiveServerElixir.Cells.Timing
   alias HiveServerElixir.Cells.Workspace
-  alias HiveServerElixir.OpencodeFakeServer
   alias HiveServerElixir.Workspaces
 
   @registry HiveServerElixir.Opencode.EventIngestRegistry
@@ -23,14 +22,13 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
   setup do
     previous_active_workspace_id = Workspaces.active_workspace_id()
     previous_runtime_opts = Application.get_env(:hive_server_elixir, :cell_reactor_runtime_opts)
-    opencode = OpencodeFakeServer.setup_open_code_stub()
 
     Workspace
     |> Ash.read!(domain: Cells)
     |> Enum.each(&Ash.destroy!(&1, domain: Cells))
 
     :ok = Workspaces.set_active_workspace_id(nil)
-    Application.put_env(:hive_server_elixir, :cell_reactor_runtime_opts, runtime_opts(opencode))
+    Application.put_env(:hive_server_elixir, :cell_reactor_runtime_opts, runtime_opts())
 
     on_exit(fn ->
       :ok = Workspaces.set_active_workspace_id(previous_active_workspace_id)
@@ -46,7 +44,7 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
       end
     end)
 
-    {:ok, opencode: opencode}
+    :ok
   end
 
   test "list_workspaces returns Ash-backed workspace records", %{conn: conn} do
@@ -734,9 +732,11 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
     |> Ash.read!(domain: Cells)
   end
 
-  defp runtime_opts(opencode) do
+  defp runtime_opts do
     [
-      adapter_opts: opencode.adapter_opts,
+      adapter_opts: [
+        global_event: fn _opts -> {:error, %{type: :transport, reason: :unreachable}} end
+      ],
       success_delay_ms: 30_000,
       error_delay_ms: 30_000
     ]

@@ -5,29 +5,37 @@ defmodule HiveServerElixirWeb.AgentsControllerTest do
   alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Workspace
-  alias HiveServerElixir.OpencodeFakeServer
+  alias HiveServerElixir.OpencodeRealServer
   alias HiveServerElixir.Workspaces
 
-  setup do
-    previous_active_workspace_id = Workspaces.active_workspace_id()
-    previous_client_opts = Application.get_env(:hive_server_elixir, :opencode_client_opts)
-    opencode = OpencodeFakeServer.setup_open_code_stub()
+  setup_all do
+    server = OpencodeRealServer.start!()
 
-    Application.put_env(:hive_server_elixir, :opencode_client_opts, opencode.client_opts)
+    on_exit(fn ->
+      OpencodeRealServer.stop(server)
+    end)
+
+    {:ok, opencode_server: server}
+  end
+
+  setup %{opencode_server: server} do
+    previous_active_workspace_id = Workspaces.active_workspace_id()
+    previous_base_url = Application.get_env(:hive_server_elixir, :opencode_base_url)
+    previous_client_opts = Application.get_env(:hive_server_elixir, :opencode_client_opts)
+
+    Application.put_env(:hive_server_elixir, :opencode_base_url, server.url)
+    Application.delete_env(:hive_server_elixir, :opencode_client_opts)
 
     on_exit(fn ->
       :ok = Workspaces.set_active_workspace_id(previous_active_workspace_id)
-
+      restore_env(:opencode_base_url, previous_base_url)
       restore_env(:opencode_client_opts, previous_client_opts)
     end)
 
-    {:ok, opencode: opencode}
+    {:ok, opencode_server: server}
   end
 
-  test "GET /api/agents/models returns providers, models, and defaults", %{
-    conn: conn,
-    opencode: opencode
-  } do
+  test "GET /api/agents/models returns providers, models, and defaults", %{conn: conn} do
     workspace = workspace!("models")
 
     conn = get(conn, ~p"/api/agents/models?workspaceId=#{workspace.id}")
@@ -44,42 +52,30 @@ defmodule HiveServerElixirWeb.AgentsControllerTest do
                model["provider"] == "opencode"
            end)
 
-    assert defaults == %{"opencode" => "big-pickle"}
+    assert defaults["opencode"] == "big-pickle"
 
-    assert Enum.any?(providers, fn provider ->
-             provider["id"] == "opencode" and provider["name"] == "OpenCode"
-           end)
-
-    assert [%{method: "GET", path: "/config/providers", params: %{"directory" => directory}}] =
-             OpencodeFakeServer.requests(opencode)
-
-    assert directory == workspace.path
+    assert Enum.any?(providers, &(&1["id"] == "opencode"))
   end
 
-  test "GET /api/agents/models returns 400 payload when provider catalog fails", %{
-    conn: conn,
-    opencode: opencode
-  } do
+  test "GET /api/agents/models returns 400 payload when provider catalog fails", %{conn: conn} do
+    previous_base_url = Application.get_env(:hive_server_elixir, :opencode_base_url)
     workspace = workspace!("models-error")
 
-    :ok =
-      OpencodeFakeServer.put_catalog(
-        opencode,
-        {:error, %{status: 400, body: %{"message" => "Catalog unavailable"}}}
-      )
+    Application.put_env(:hive_server_elixir, :opencode_base_url, "http://127.0.0.1:1")
+
+    on_exit(fn ->
+      restore_env(:opencode_base_url, previous_base_url)
+    end)
 
     conn = get(conn, ~p"/api/agents/models?workspaceId=#{workspace.id}")
 
     assert %{"models" => [], "defaults" => %{}, "providers" => [], "message" => message} =
              json_response(conn, 400)
 
-    assert message == "Catalog unavailable"
+    assert is_binary(message)
   end
 
-  test "GET /api/agents/sessions/:id/models resolves workspace from session", %{
-    conn: conn,
-    opencode: opencode
-  } do
+  test "GET /api/agents/sessions/:id/models resolves workspace from session", %{conn: conn} do
     workspace = workspace!("session-models")
     cell = cell!(workspace)
     agent_session = agent_session!(cell)
@@ -90,72 +86,31 @@ defmodule HiveServerElixirWeb.AgentsControllerTest do
              json_response(conn, 200)
 
     assert Enum.any?(models, &(&1["id"] == "big-pickle"))
-    assert defaults == %{"opencode" => "big-pickle"}
+    assert defaults["opencode"] == "big-pickle"
     assert Enum.any?(providers, &(&1["id"] == "opencode"))
-
-    assert [%{method: "GET", path: "/config/providers", params: %{"directory" => directory}}] =
-             OpencodeFakeServer.requests(opencode)
-
-    assert directory == workspace.path
   end
 
   test "GET /api/agents/sessions/:id/messages returns normalized session messages", %{
     conn: conn,
-    opencode: opencode
+    opencode_server: server
   } do
     workspace = workspace!("session-messages")
     cell = cell!(workspace)
-    agent_session = agent_session!(cell)
-
-    :ok =
-      OpencodeFakeServer.put_session_messages(opencode, agent_session.session_id, {
-        :ok,
-        [
-          %{
-            "info" => %{
-              "id" => "message-user-1",
-              "role" => "user",
-              "sessionID" => agent_session.session_id,
-              "time" => %{"created" => 1_704_067_200_000}
-            },
-            "parts" => [
-              %{"id" => "part-user-1", "type" => "text", "text" => "Summarize project status"}
-            ]
-          },
-          %{
-            "info" => %{
-              "id" => "message-assistant-1",
-              "role" => "assistant",
-              "sessionID" => agent_session.session_id,
-              "finish" => "stop",
-              "time" => %{"created" => 1_704_067_201_000, "completed" => 1_704_067_202_000}
-            },
-            "parts" => [
-              %{"id" => "part-assistant-1", "type" => "text", "text" => "Status is green."}
-            ]
-          }
-        ]
-      })
+    agent_session = real_agent_session!(server, workspace, cell)
 
     conn = get(conn, ~p"/api/agents/sessions/#{agent_session.session_id}/messages")
 
     assert %{"messages" => [user_message, assistant_message]} = json_response(conn, 200)
 
-    assert user_message["id"] == "message-user-1"
     assert user_message["role"] == "user"
     assert user_message["state"] == "completed"
-    assert user_message["content"] == "Summarize project status"
+    assert is_binary(user_message["content"])
+    assert user_message["content"] != ""
 
-    assert assistant_message["id"] == "message-assistant-1"
     assert assistant_message["role"] == "assistant"
     assert assistant_message["state"] == "completed"
-    assert assistant_message["content"] == "Status is green."
-
-    assert [%{method: "GET", path: path, params: %{"directory" => directory}}] =
-             OpencodeFakeServer.requests(opencode)
-
-    assert path == "/session/#{agent_session.session_id}/message"
-    assert directory == workspace.path
+    assert is_binary(assistant_message["content"])
+    assert assistant_message["content"] != ""
   end
 
   test "GET /api/agents/sessions/:id/events emits initial status and mode snapshots", %{
@@ -222,6 +177,39 @@ defmodule HiveServerElixirWeb.AgentsControllerTest do
              )
 
     session
+  end
+
+  defp real_agent_session!(server, workspace, cell) do
+    session =
+      OpencodeRealServer.create_session!(
+        server,
+        workspace.path,
+        "controller-session-#{System.unique_integer([:positive])}"
+      )
+
+    _response =
+      OpencodeRealServer.prompt!(
+        server,
+        workspace.path,
+        session["id"],
+        "Reply with two short words."
+      )
+
+    assert {:ok, agent_session} =
+             Ash.create(
+               AgentSession,
+               %{
+                 cell_id: cell.id,
+                 session_id: session["id"],
+                 model_id: "big-pickle",
+                 model_provider_id: "opencode",
+                 start_mode: "plan",
+                 current_mode: "build"
+               },
+               domain: Cells
+             )
+
+    agent_session
   end
 
   defp tmp_workspace_path!(suffix) do

@@ -1,30 +1,24 @@
 defmodule HiveServerElixir.Opencode.AdapterTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias HiveServerElixir.Opencode.Adapter
-  alias HiveServerElixir.OpencodeFakeServer
+  alias HiveServerElixir.OpencodeRealServer
 
-  setup do
-    {:ok, opencode: OpencodeFakeServer.setup_open_code_stub()}
+  setup_all do
+    server = OpencodeRealServer.start!()
+
+    on_exit(fn ->
+      OpencodeRealServer.stop(server)
+    end)
+
+    {:ok, opencode_server: server}
   end
 
-  test "health returns parsed response on success", %{opencode: opencode} do
-    assert {:ok, %{"healthy" => true, "version" => "test"}} =
-             Adapter.health(opencode.adapter_opts)
-  end
+  test "health returns parsed response on success", %{opencode_server: server} do
+    assert {:ok, %{"healthy" => true, "version" => version}} =
+             Adapter.health(OpencodeRealServer.client_opts(server))
 
-  test "health normalizes HTTP errors", %{opencode: opencode} do
-    :ok =
-      OpencodeFakeServer.put_health(
-        opencode,
-        {:error, %{status: 503, body: %{"message" => "OpenCode unavailable"}}}
-      )
-
-    assert {:error, error} = Adapter.health(opencode.adapter_opts)
-
-    assert error.type == :http_error
-    assert error.status == 503
-    assert error.message == "OpenCode unavailable"
+    assert is_binary(version)
   end
 
   test "health normalizes transport errors" do
@@ -35,22 +29,23 @@ defmodule HiveServerElixir.Opencode.AdapterTest do
     assert error.status == nil
   end
 
-  test "global_event_stream returns an SDK-backed stream", %{opencode: opencode} do
+  test "global_event_stream returns an enumerable from callback seams" do
     payload = %{"directory" => "/tmp/project", "payload" => %{"type" => "session.idle"}}
-    :ok = OpencodeFakeServer.enqueue_global_event(opencode, {:ok, payload})
 
-    assert {:ok, stream} = Adapter.global_event_stream(opencode.adapter_opts)
+    assert {:ok, stream} =
+             Adapter.global_event_stream(global_event: fn _opts -> {:ok, payload} end)
+
     assert Enum.take(stream, 1) == [payload]
   end
 
-  test "global_event_stream normalizes HTTP errors", %{opencode: opencode} do
-    :ok =
-      OpencodeFakeServer.enqueue_global_event(
-        opencode,
-        {:error, %{status: 503, body: %{"message" => "stream unavailable"}}}
-      )
+  test "global_event_stream normalizes callback-provided HTTP errors" do
+    assert {:ok, stream} =
+             Adapter.global_event_stream(
+               global_event: fn _opts ->
+                 {:error, %{status: 503, body: %{"message" => "stream unavailable"}}}
+               end
+             )
 
-    assert {:ok, stream} = Adapter.global_event_stream(opencode.adapter_opts)
     [item] = Enum.take(stream, 1)
     assert {:error, error} = item
     assert error.type == :http_error

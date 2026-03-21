@@ -12,24 +12,19 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
   alias HiveServerElixir.Cells.Provisioning
   alias HiveServerElixir.Cells.ProvisioningWorker
   alias HiveServerElixir.Cells.Workspace
-  alias HiveServerElixir.OpencodeFakeServer
 
   @registry HiveServerElixir.Opencode.EventIngestRegistry
 
-  setup do
-    {:ok, opencode: OpencodeFakeServer.setup_open_code_stub()}
-  end
-
-  test "retry_cell returns provisioning and completes asynchronously", %{opencode: opencode} do
+  test "retry_cell returns provisioning and completes asynchronously" do
     {workspace, cell} = workspace_and_cell!("retry-success", "error")
     context = %{workspace_id: workspace.id, cell_id: cell.id}
 
-    assert {:ok, old_pid} = Lifecycle.on_cell_create(context, runtime_opts(opencode))
+    assert {:ok, old_pid} = Lifecycle.on_cell_create(context, runtime_opts())
 
     assert {:ok, updated_cell} =
              CellCommands.retry(%{
                cell_id: cell.id,
-               runtime_opts: runtime_opts(opencode),
+               runtime_opts: runtime_opts(),
                fail_after_ingest: false
              })
 
@@ -39,7 +34,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
              ProvisioningWorker.run_once(
                cell_id: cell.id,
                mode: :retry,
-               runtime_opts: runtime_opts(opencode),
+               runtime_opts: runtime_opts(),
                fail_after_ingest: false
              )
 
@@ -51,7 +46,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
     assert :ok = Lifecycle.on_cell_delete(context)
   end
 
-  test "resume_cell returns provisioning and completes asynchronously", %{opencode: opencode} do
+  test "resume_cell returns provisioning and completes asynchronously" do
     {workspace, cell} = workspace_and_cell!("resume-success", "stopped", "stale setup error")
     context = %{workspace_id: workspace.id, cell_id: cell.id}
 
@@ -62,13 +57,13 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
                domain: Cells
              )
 
-    assert {:ok, _pid} = Lifecycle.on_cell_create(context, runtime_opts(opencode))
+    assert {:ok, _pid} = Lifecycle.on_cell_create(context, runtime_opts())
     assert :ok = Lifecycle.on_cell_delete(context)
 
     assert {:ok, updated_cell} =
              CellCommands.resume(%{
                cell_id: cell.id,
-               runtime_opts: runtime_opts(opencode),
+               runtime_opts: runtime_opts(),
                fail_after_ingest: false
              })
 
@@ -78,7 +73,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
              ProvisioningWorker.run_once(
                cell_id: cell.id,
                mode: :resume,
-               runtime_opts: runtime_opts(opencode),
+               runtime_opts: runtime_opts(),
                fail_after_ingest: false
              )
 
@@ -99,7 +94,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
     assert :ok = Lifecycle.on_cell_delete(context)
   end
 
-  test "resume_cell restores persisted agent session resume projection", %{opencode: opencode} do
+  test "resume_cell restores persisted agent session resume projection" do
     {workspace, cell} =
       workspace_and_cell!("resume-session", "stopped", nil, %{
         opencode_session_id: "session-resume"
@@ -123,7 +118,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
     assert {:ok, updated_cell} =
              CellCommands.resume(%{
                cell_id: cell.id,
-               runtime_opts: runtime_opts(opencode),
+               runtime_opts: runtime_opts(),
                fail_after_ingest: false
              })
 
@@ -133,7 +128,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
              ProvisioningWorker.run_once(
                cell_id: cell.id,
                mode: :resume,
-               runtime_opts: runtime_opts(opencode),
+               runtime_opts: runtime_opts(),
                fail_after_ingest: false
              )
 
@@ -143,14 +138,14 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
     assert :ok = Lifecycle.on_cell_delete(%{workspace_id: workspace.id, cell_id: cell.id})
   end
 
-  test "retry_cell finalizes errors asynchronously", %{opencode: opencode} do
+  test "retry_cell finalizes errors asynchronously" do
     {workspace, cell} = workspace_and_cell!("retry-failure", "error")
     context = %{workspace_id: workspace.id, cell_id: cell.id}
 
     assert {:ok, updated_cell} =
              CellCommands.retry(%{
                cell_id: cell.id,
-               runtime_opts: runtime_opts(opencode),
+               runtime_opts: runtime_opts(),
                fail_after_ingest: true
              })
 
@@ -160,7 +155,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
              ProvisioningWorker.run_once(
                cell_id: cell.id,
                mode: :retry,
-               runtime_opts: runtime_opts(opencode),
+               runtime_opts: runtime_opts(),
                fail_after_ingest: true
              )
 
@@ -179,9 +174,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
     assert_registry_stopped(workspace.id, cell.id)
   end
 
-  test "resume_cell finalizes provisioning attempts when post-ingest checks fail", %{
-    opencode: opencode
-  } do
+  test "resume_cell finalizes provisioning attempts when post-ingest checks fail" do
     {workspace, cell} = workspace_and_cell!("resume-failure", "stopped")
 
     assert {:ok, _provisioning} =
@@ -194,7 +187,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
     assert {:ok, updated_cell} =
              CellCommands.resume(%{
                cell_id: cell.id,
-               runtime_opts: runtime_opts(opencode),
+               runtime_opts: runtime_opts(),
                fail_after_ingest: true
              })
 
@@ -204,7 +197,7 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
              ProvisioningWorker.run_once(
                cell_id: cell.id,
                mode: :resume,
-               runtime_opts: runtime_opts(opencode),
+               runtime_opts: runtime_opts(),
                fail_after_ingest: true
              )
 
@@ -224,16 +217,16 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
     assert_registry_stopped(workspace.id, cell.id)
   end
 
-  test "delete_cell compensates by restoring ingest when downstream fails", %{opencode: opencode} do
+  test "delete_cell compensates by restoring ingest when downstream fails" do
     {workspace, cell} = workspace_and_cell!("delete-failure", "ready")
     context = %{workspace_id: workspace.id, cell_id: cell.id}
 
-    assert {:ok, _pid} = Lifecycle.on_cell_create(context, runtime_opts(opencode))
+    assert {:ok, _pid} = Lifecycle.on_cell_create(context, runtime_opts())
 
     assert {:error, _error} =
              CellCommands.delete(%{
                cell_id: cell.id,
-               runtime_opts: runtime_opts(opencode),
+               runtime_opts: runtime_opts(),
                fail_after_stop: true
              })
 
@@ -273,9 +266,11 @@ defmodule HiveServerElixir.Cells.Reactors.CellLifecycleReactorsTest do
     {workspace, cell}
   end
 
-  defp runtime_opts(opencode) do
+  defp runtime_opts do
     [
-      adapter_opts: opencode.adapter_opts,
+      adapter_opts: [
+        global_event: fn _opts -> {:error, %{type: :transport, reason: :unreachable}} end
+      ],
       success_delay_ms: 30_000,
       error_delay_ms: 30_000
     ]
