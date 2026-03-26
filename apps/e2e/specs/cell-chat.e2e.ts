@@ -1,7 +1,9 @@
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import { selectors } from "../src/selectors";
 import {
-  createCellViaApi,
+  createCell,
+  fetchAgentModels,
+  fetchCell,
   waitForChatRoute,
   waitForProvisioningOrChatRoute,
 } from "../src/test-helpers";
@@ -45,9 +47,7 @@ const SEND_API_TIMEOUT_MS = 8000;
 const POST_RESPONSE_VIDEO_SETTLE_MS = 500;
 const POLL_INTERVAL_MS = 500;
 const TERMINAL_RECOVERY_WAIT_MS = 750;
-const CELL_TEMPLATE_LABEL = "E2E Template";
-const EXPECTED_MODEL_ID = "big-pickle";
-const EXPECTED_MODEL_PROVIDER_ID = "opencode";
+const CELL_TEMPLATE_LABEL = "Basic Template";
 const PROVISIONING_TIMELINE_TEXT = /Provisioning timeline/i;
 
 test.describe("cell chat flow", () => {
@@ -60,11 +60,33 @@ test.describe("cell chat flow", () => {
     }
 
     await page.goto("/");
-    const cellId = await createCellViaApi({
-      apiUrl,
+    const cellId = await createCell({
+      page,
       name: `E2E Cell ${Date.now()}`,
       templateLabel: CELL_TEMPLATE_LABEL,
     });
+
+    const cell = await fetchCell(apiUrl, cellId);
+    const modelsPayload = await fetchAgentModels(apiUrl, cell.workspaceId);
+    const expectedProviderId =
+      Object.keys(modelsPayload.defaults)[0] ??
+      modelsPayload.models[0]?.provider ??
+      null;
+    const expectedModelId =
+      (expectedProviderId
+        ? modelsPayload.defaults[expectedProviderId]
+        : null) ??
+      modelsPayload.models.find(
+        (model) => model.provider === expectedProviderId
+      )?.id ??
+      modelsPayload.models[0]?.id ??
+      null;
+
+    if (!(expectedProviderId && expectedModelId)) {
+      throw new Error(
+        "Could not determine expected model selection for strict chat E2E"
+      );
+    }
 
     await page.goto(`/cells/${cellId}/chat`);
 
@@ -91,8 +113,8 @@ test.describe("cell chat flow", () => {
     await assertSessionModelSelection({
       apiUrl,
       cellId,
-      expectedModelId: EXPECTED_MODEL_ID,
-      expectedProviderId: EXPECTED_MODEL_PROVIDER_ID,
+      expectedModelId,
+      expectedProviderId,
     });
 
     const prompt = `E2E token ${Date.now()}`;
@@ -106,8 +128,8 @@ test.describe("cell chat flow", () => {
     await assertSessionModelSelection({
       apiUrl,
       cellId,
-      expectedModelId: EXPECTED_MODEL_ID,
-      expectedProviderId: EXPECTED_MODEL_PROVIDER_ID,
+      expectedModelId,
+      expectedProviderId,
     });
 
     await attachFinalStateScreenshot({ cellId, page, testInfo });
@@ -506,26 +528,10 @@ async function assertSessionModelSelection(options: {
 }
 
 async function sendPrompt(options: {
-  apiUrl: string;
   cellId: string;
   page: Page;
   prompt: string;
 }): Promise<void> {
-  const response = await fetch(
-    `${options.apiUrl}/api/cells/${options.cellId}/chat/terminal/input`,
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ data: `${options.prompt}\n` }),
-    }
-  );
-
-  if (response.ok) {
-    return;
-  }
-
   await focusTerminalInput(options.page);
   await options.page.keyboard.type(options.prompt, { delay: 25 });
   await options.page.keyboard.press("Enter");

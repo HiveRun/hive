@@ -189,7 +189,7 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
       :use_stdio,
       :hide,
       {:line, 8_192},
-      args: ["-lc", service.command],
+      args: ["-lc", "exec #{service.command}"],
       cd: valid_cwd(service.cwd),
       env: env_to_charlist(service.env)
     ]
@@ -299,7 +299,9 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
         end
 
       {%{port: port} = entry, services} ->
+        os_pid = service_os_pid(entry.service, port)
         _ = safe_port_close(port)
+        _ = terminate_pid(os_pid)
 
         next_state = %{state | services: services, ports: Map.delete(state.ports, port)}
 
@@ -353,6 +355,60 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
   rescue
     _error ->
       :ok
+  end
+
+  defp service_os_pid(%Service{} = service, port), do: service.pid || port_os_pid(port)
+
+  defp port_os_pid(port) when is_port(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, pid} when is_integer(pid) -> pid
+      _other -> nil
+    end
+  end
+
+  defp port_os_pid(_port), do: nil
+
+  defp terminate_pid(pid) when is_integer(pid) and pid > 0 do
+    signal_process(-pid, "-TERM") || signal_process(pid, "-TERM")
+    wait_for_pid_exit(pid, 10)
+
+    if os_pid_alive?(pid) do
+      signal_process(-pid, "-KILL") || signal_process(pid, "-KILL")
+      wait_for_pid_exit(pid, 10)
+    end
+
+    :ok
+  end
+
+  defp terminate_pid(_pid), do: :ok
+
+  defp signal_process(target, signal) do
+    case System.cmd("kill", [signal, Integer.to_string(target)], stderr_to_stdout: true) do
+      {_output, 0} -> true
+      _other -> false
+    end
+  rescue
+    _error -> false
+  end
+
+  defp os_pid_alive?(pid) do
+    case System.cmd("kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true) do
+      {_output, 0} -> true
+      _other -> false
+    end
+  rescue
+    _error -> false
+  end
+
+  defp wait_for_pid_exit(_pid, 0), do: :ok
+
+  defp wait_for_pid_exit(pid, attempts_left) do
+    if os_pid_alive?(pid) do
+      Process.sleep(100)
+      wait_for_pid_exit(pid, attempts_left - 1)
+    else
+      :ok
+    end
   end
 
   defp persist_service_state(%Service{} = service, attrs) when is_map(attrs) do

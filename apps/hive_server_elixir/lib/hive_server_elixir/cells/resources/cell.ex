@@ -114,6 +114,16 @@ defmodule HiveServerElixir.Cells.Cell do
         public? true
       end
 
+      argument :provider_id, :string do
+        allow_nil? true
+        public? true
+      end
+
+      argument :model_id, :string do
+        allow_nil? true
+        public? true
+      end
+
       argument :start_mode, :string do
         allow_nil? false
         default "plan"
@@ -389,6 +399,14 @@ defmodule HiveServerElixir.Cells.Cell do
         allow_nil? true
       end
 
+      argument :provider_id, :string do
+        allow_nil? true
+      end
+
+      argument :model_id, :string do
+        allow_nil? true
+      end
+
       validate one_of(:start_mode, ["plan", "build"])
 
       change fn changeset, _context ->
@@ -401,7 +419,12 @@ defmodule HiveServerElixir.Cells.Cell do
         |> Ash.Changeset.force_change_attribute(:resume_agent_session_on_startup, true)
         |> Ash.Changeset.force_change_attribute(:opencode_session_id, session_id)
         |> Ash.Changeset.after_action(fn changeset, cell ->
-          case ensure_setup_records(cell, Ash.Changeset.get_argument(changeset, :start_mode)) do
+          case ensure_setup_records(
+                 cell,
+                 Ash.Changeset.get_argument(changeset, :start_mode),
+                 Ash.Changeset.get_argument(changeset, :model_id),
+                 Ash.Changeset.get_argument(changeset, :provider_id)
+               ) do
             :ok -> {:ok, cell}
             {:error, error} -> {:error, error}
           end
@@ -564,6 +587,8 @@ defmodule HiveServerElixir.Cells.Cell do
              name: normalize_cell_name(Map.get(input, :name), description),
              description: description,
              template_id: normalize_template_id(Map.get(input, :template_id)),
+             provider_id: Map.get(input, :provider_id),
+             model_id: Map.get(input, :model_id),
              start_mode: normalize_start_mode(Map.get(input, :start_mode)),
              workspace_root_path: workspace.path,
              workspace_path: workspace.path,
@@ -855,15 +880,19 @@ defmodule HiveServerElixir.Cells.Cell do
     end
   end
 
-  defp ensure_setup_records(cell, start_mode) do
-    with :ok <- ensure_provisioning_attempt(cell.id, start_mode),
-         :ok <- ensure_agent_session(cell, start_mode) do
+  defp ensure_setup_records(cell, start_mode, model_id, provider_id) do
+    with :ok <- ensure_provisioning_attempt(cell.id, start_mode, model_id, provider_id),
+         :ok <- ensure_agent_session(cell, start_mode, model_id, provider_id) do
       :ok
     end
   end
 
-  defp ensure_provisioning_attempt(cell_id, start_mode) do
-    attrs = %{start_mode: normalize_start_mode(start_mode)}
+  defp ensure_provisioning_attempt(cell_id, start_mode, model_id, provider_id) do
+    attrs = %{
+      start_mode: normalize_start_mode(start_mode),
+      model_id_override: normalize_optional_string(model_id),
+      provider_id_override: normalize_optional_string(provider_id)
+    }
 
     case Provisioning.fetch_for_cell(cell_id) do
       %Provisioning{} = provisioning ->
@@ -882,13 +911,24 @@ defmodule HiveServerElixir.Cells.Cell do
     end
   end
 
-  defp ensure_agent_session(cell, start_mode) when is_map(cell) do
+  defp ensure_agent_session(cell, start_mode, model_id, provider_id) when is_map(cell) do
     session_id =
       cell.opencode_session_id || existing_session_id_for_cell(cell.id) || Ash.UUID.generate()
 
+    normalized_model_id = normalize_optional_string(model_id)
+    normalized_provider_id = normalize_optional_string(provider_id)
+
     case AgentSession.fetch_by_session_id(session_id) || AgentSession.fetch_for_cell(cell.id) do
       %AgentSession{} = session ->
-        case Ash.update(session, %{resume_on_startup: true}, action: :sync_runtime_details) do
+        case Ash.update(
+               session,
+               %{
+                 resume_on_startup: true,
+                 model_id: normalized_model_id,
+                 model_provider_id: normalized_provider_id
+               },
+               action: :sync_runtime_details
+             ) do
           {:ok, _updated} -> :ok
           {:error, error} -> {:error, error}
         end
@@ -901,6 +941,8 @@ defmodule HiveServerElixir.Cells.Cell do
                %{
                  cell_id: cell.id,
                  session_id: session_id,
+                 model_id: normalized_model_id,
+                 model_provider_id: normalized_provider_id,
                  start_mode: mode,
                  current_mode: mode,
                  resume_on_startup: true
@@ -929,6 +971,13 @@ defmodule HiveServerElixir.Cells.Cell do
   defp normalize_start_mode("build"), do: "build"
   defp normalize_start_mode("plan"), do: "plan"
   defp normalize_start_mode(_mode), do: "plan"
+
+  defp normalize_optional_string(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed == "", do: nil, else: trimmed
+  end
+
+  defp normalize_optional_string(_value), do: nil
 
   defp normalize_cell_name(name, _description) when is_binary(name) and byte_size(name) > 0,
     do: name

@@ -47,14 +47,21 @@ type WorkspacesResponse = {
   activeWorkspaceId?: string | null;
 };
 
-type TemplateRecord = {
-  id: string;
-  label: string;
-};
-
 type RpcErrorRecord = {
   message?: string;
   shortMessage?: string;
+};
+
+type AgentModelRecord = {
+  id: string;
+  name: string;
+  provider: string;
+};
+
+type AgentModelsResponse = {
+  defaults: Record<string, string>;
+  models: AgentModelRecord[];
+  providers: Array<{ id: string; name: string }>;
 };
 
 type RpcResult<T> =
@@ -94,6 +101,7 @@ export async function createCell(options: {
   name: string;
   workspaceId?: string;
   templateLabel?: string;
+  startMode?: "plan" | "build";
   timeoutMs?: number;
 }): Promise<string> {
   const timeoutMs = options.timeoutMs ?? CELL_CREATION_TIMEOUT_MS;
@@ -101,56 +109,39 @@ export async function createCell(options: {
     readPathname(options.page.url())
   );
 
-  try {
-    await openCellCreationSheet(options.page, options.workspaceId);
-    await options.page.locator(selectors.cellNameInput).fill(options.name);
+  await openCellCreationSheet(options.page, options.workspaceId);
+  await options.page.locator(selectors.cellNameInput).fill(options.name);
 
-    if (options.templateLabel) {
-      await selectTemplate(options.page, options.templateLabel);
-    }
-
-    await expect(options.page.locator(selectors.cellSubmitButton)).toBeEnabled({
-      timeout: timeoutMs,
-    });
-    await options.page.locator(selectors.cellSubmitButton).click();
-
-    await options.page.waitForURL(
-      (url) => {
-        const currentCellId = extractCellIdFromPath(url.pathname);
-        if (!currentCellId) {
-          return false;
-        }
-
-        if (!previousCellId) {
-          return true;
-        }
-
-        return currentCellId !== previousCellId;
-      },
-      { timeout: timeoutMs }
-    );
-
-    return parseCellIdFromUrl(options.page.url());
-  } catch (error) {
-    const apiUrl = process.env.HIVE_E2E_API_URL;
-    if (!apiUrl) {
-      throw error;
-    }
-
-    const cellId = await createCellViaApi({
-      apiUrl,
-      name: options.name,
-      workspaceId: options.workspaceId,
-      templateLabel: options.templateLabel,
-    });
-
-    await options.page.goto(`/cells/${cellId}`);
-    await options.page.waitForURL(
-      (url) => extractCellIdFromPath(url.pathname) === cellId,
-      { timeout: timeoutMs }
-    );
-    return cellId;
+  if (options.templateLabel) {
+    await selectTemplate(options.page, options.templateLabel);
   }
+
+  if (options.startMode && options.startMode !== "plan") {
+    await selectStartMode(options.page, options.startMode);
+  }
+
+  await expect(options.page.locator(selectors.cellSubmitButton)).toBeEnabled({
+    timeout: timeoutMs,
+  });
+  await options.page.locator(selectors.cellSubmitButton).click();
+
+  await options.page.waitForURL(
+    (url) => {
+      const currentCellId = extractCellIdFromPath(url.pathname);
+      if (!currentCellId) {
+        return false;
+      }
+
+      if (!previousCellId) {
+        return true;
+      }
+
+      return currentCellId !== previousCellId;
+    },
+    { timeout: timeoutMs }
+  );
+
+  return parseCellIdFromUrl(options.page.url());
 }
 
 function extractCellIdFromPath(pathname: string): string | null {
@@ -224,39 +215,11 @@ export async function waitForChatRoute(options: {
   });
 }
 
-export async function createCellViaApi(options: {
-  apiUrl: string;
-  name: string;
-  workspaceId?: string;
-  templateLabel?: string;
-  startMode?: "plan" | "build";
-}): Promise<string> {
-  const workspaceId = await resolveWorkspaceId(options);
-  const templateId = await resolveTemplateId(options);
-  const payload = await rpcRun<{ id?: string }>(options.apiUrl, {
-    action: "create_cell",
-    input: {
-      name: options.name,
-      templateId,
-      workspaceId,
-      ...(options.startMode ? { startMode: options.startMode } : {}),
-    },
-    fields: ["id"],
-  });
-
-  if (!payload.success) {
-    throw new Error(
-      payload.errors?.[0]?.shortMessage ??
-        payload.errors?.[0]?.message ??
-        "Failed to create cell via RPC"
-    );
-  }
-
-  if (!payload.data.id) {
-    throw new Error("Cell API response missing id");
-  }
-
-  return payload.data.id;
+async function selectStartMode(page: Page, startMode: "plan" | "build") {
+  await page.locator("#startMode").click();
+  await page
+    .getByRole("option", { name: startMode === "build" ? "Build" : "Plan" })
+    .click();
 }
 
 async function rpcRun<T>(
@@ -276,64 +239,6 @@ async function rpcRun<T>(
   }
 
   return (await response.json()) as RpcResult<T>;
-}
-
-async function resolveWorkspaceId(options: {
-  apiUrl: string;
-  workspaceId?: string;
-}): Promise<string> {
-  if (options.workspaceId) {
-    return options.workspaceId;
-  }
-
-  const workspaces = await fetchWorkspaces(options.apiUrl);
-  const fallbackId =
-    workspaces.activeWorkspaceId ?? workspaces.workspaces[0]?.id ?? null;
-  if (!fallbackId) {
-    throw new Error("No workspace available for API cell creation");
-  }
-
-  return fallbackId;
-}
-
-async function resolveTemplateId(options: {
-  apiUrl: string;
-  workspaceId?: string;
-  templateLabel?: string;
-}): Promise<string> {
-  if (!options.templateLabel) {
-    return "e2e-template";
-  }
-
-  const params = new URLSearchParams();
-  if (options.workspaceId) {
-    params.set("workspaceId", options.workspaceId);
-  }
-
-  const response = await fetch(
-    `${options.apiUrl}/api/templates${params.size ? `?${params.toString()}` : ""}`
-  );
-  if (!response.ok) {
-    throw new Error(`Failed to fetch templates: ${response.status}`);
-  }
-
-  const payload = (await response.json()) as {
-    templates?: TemplateRecord[];
-    message?: string;
-  };
-  if (payload.message && !payload.templates) {
-    throw new Error(payload.message);
-  }
-
-  const templates = payload.templates ?? [];
-  const match = templates.find(
-    (template) => template.label === options.templateLabel
-  );
-  if (!match) {
-    throw new Error(`Template not found: ${options.templateLabel}`);
-  }
-
-  return match.id;
 }
 
 export async function openCellCreationSheet(
@@ -527,6 +432,21 @@ export async function fetchWorkspaceCells(
   }
 
   return payload.data;
+}
+
+export async function fetchAgentModels(
+  apiUrl: string,
+  workspaceId: string
+): Promise<AgentModelsResponse> {
+  const response = await fetch(
+    `${apiUrl}/api/agents/models?workspaceId=${encodeURIComponent(workspaceId)}`
+  );
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch agent models: ${response.status}`);
+  }
+
+  return (await response.json()) as AgentModelsResponse;
 }
 
 export async function waitForCellStatus(options: {

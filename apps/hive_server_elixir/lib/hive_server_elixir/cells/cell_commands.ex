@@ -56,6 +56,8 @@ defmodule HiveServerElixir.Cells.CellCommands do
     input
     |> Map.put_new(:name, "Cell")
     |> Map.put_new(:template_id, "default-template")
+    |> Map.put_new(:provider_id, nil)
+    |> Map.put_new(:model_id, nil)
     |> Map.put_new(:start_mode, "plan")
     |> Map.put_new(:workspace_root_path, ".")
     |> Map.put_new(:workspace_path, ".")

@@ -8,7 +8,7 @@ import {
 const INITIAL_ROUTE_TIMEOUT_MS = 10_000;
 const READY_TIMEOUT_MS = 180_000;
 const PROVISIONING_TIMELINE_TEXT = /Provisioning timeline/i;
-const DETACHED_TEMPLATE_LABEL = "E2E Template";
+const DETACHED_TEMPLATE_LABEL = "Basic Template";
 
 test.describe("detached cell create", () => {
   test("returns to a cell route before provisioning completes", async ({

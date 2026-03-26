@@ -1703,6 +1703,8 @@ export type CreateCellInput = {
   name?: string;
   description?: string;
   templateId?: string;
+  providerId?: string;
+  modelId?: string;
   startMode?: string;
 };
 

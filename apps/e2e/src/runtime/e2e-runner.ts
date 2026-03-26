@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
-import { cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRuntimeContext, type RuntimeContext } from "./runtime-context";
@@ -31,7 +31,7 @@ type RpcResult<T> =
 
 const WORKSPACE_MODE_ENV = "HIVE_E2E_WORKSPACE_MODE";
 const WORKSPACE_SOURCE_ENV = "HIVE_E2E_WORKSPACE_SOURCE";
-const DEFAULT_WORKSPACE_MODE: WorkspaceMode = "fixture";
+const DEFAULT_WORKSPACE_MODE: WorkspaceMode = "clone";
 
 type ManagedProcess = {
   name: string;
@@ -103,7 +103,20 @@ async function run() {
         sourceRoot: workspaceSource,
         workspaceRoot: context.workspaceRoot,
       });
-      await createFixtureWorkspace(secondaryWorkspaceRoot);
+      await syncWorkingTreeChangesIntoClone({
+        sourceRoot: workspaceSource,
+        workspaceRoot: context.workspaceRoot,
+      });
+      await createClonedWorkspace({
+        sourceRoot: workspaceSource,
+        workspaceRoot: secondaryWorkspaceRoot,
+      });
+      await syncWorkingTreeChangesIntoClone({
+        sourceRoot: workspaceSource,
+        workspaceRoot: secondaryWorkspaceRoot,
+      });
+      await addCloneOnlyE2ETemplates(context.workspaceRoot);
+      await addCloneOnlyE2ETemplates(secondaryWorkspaceRoot);
     } else {
       await createFixtureWorkspace(context.workspaceRoot);
       await createFixtureWorkspace(secondaryWorkspaceRoot);
@@ -535,6 +548,86 @@ async function createClonedWorkspace(options: {
   });
 }
 
+async function addCloneOnlyE2ETemplates(workspaceRoot: string): Promise<void> {
+  const hiveConfigPath = join(workspaceRoot, "hive.config.json");
+  const rawConfig = await readFile(hiveConfigPath, "utf8");
+  const parsed = JSON.parse(rawConfig) as {
+    templates?: Record<string, unknown>;
+  };
+
+  const nextConfig = {
+    ...parsed,
+    templates: {
+      ...(parsed.templates ?? {}),
+      "e2e-setup-retry-template": {
+        id: "e2e-setup-retry-template",
+        label: "E2E Setup Retry Template",
+        type: "manual",
+        setup: [
+          'test -f .hive-setup-pass || { echo "marker missing: .hive-setup-pass" >&2; exit 37; }',
+        ],
+      },
+    },
+  };
+
+  await writeFile(
+    hiveConfigPath,
+    `${JSON.stringify(nextConfig, null, 2)}\n`,
+    "utf8"
+  );
+}
+
+async function syncWorkingTreeChangesIntoClone(options: {
+  sourceRoot: string;
+  workspaceRoot: string;
+}): Promise<void> {
+  const changedFiles = listGitPaths(options.sourceRoot, [
+    "diff",
+    "--name-only",
+    "--diff-filter=ACMRTUXB",
+    "HEAD",
+  ]);
+  const deletedFiles = listGitPaths(options.sourceRoot, [
+    "diff",
+    "--name-only",
+    "--diff-filter=D",
+    "HEAD",
+  ]);
+  const untrackedFiles = listGitPaths(options.sourceRoot, [
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+  ]);
+
+  for (const relativePath of [...changedFiles, ...untrackedFiles]) {
+    const sourcePath = join(options.sourceRoot, relativePath);
+    const destinationPath = join(options.workspaceRoot, relativePath);
+
+    await mkdir(dirname(destinationPath), { recursive: true });
+    await cp(sourcePath, destinationPath, { force: true, recursive: true });
+  }
+
+  for (const relativePath of deletedFiles) {
+    await rm(join(options.workspaceRoot, relativePath), {
+      recursive: true,
+      force: true,
+    });
+  }
+}
+
+function listGitPaths(cwd: string, args: string[]): string[] {
+  const output = execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  return output
+    .split("\n")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
 async function resolveSourceBranch(sourceRoot: string): Promise<string | null> {
   try {
     const branch = await runCommandCapture(
@@ -607,6 +700,7 @@ async function runCommand(
         resolve();
         return;
       }
+
       reject(
         new Error(
           `${options.label} failed (exit ${String(

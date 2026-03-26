@@ -614,6 +614,8 @@ export const rpc = {
             ...(body.name ? { name: body.name } : {}),
             ...(body.description ? { description: body.description } : {}),
             ...(body.templateId ? { templateId: body.templateId } : {}),
+            ...(body.providerId ? { providerId: body.providerId } : {}),
+            ...(body.modelId ? { modelId: body.modelId } : {}),
             ...(body.startMode ? { startMode: body.startMode } : {}),
           },
           fields: cellMutationFields,

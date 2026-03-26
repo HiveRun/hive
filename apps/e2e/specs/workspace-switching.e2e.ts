@@ -1,7 +1,7 @@
 import { basename } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
-  createCellViaApi,
+  createCell,
   fetchCell,
   fetchWorkspaceCells,
   fetchWorkspaces,
@@ -9,7 +9,7 @@ import {
   waitForProvisioningOrChatRoute,
 } from "../src/test-helpers";
 
-const CELL_TEMPLATE_LABEL = "E2E Template";
+const CELL_TEMPLATE_LABEL = "Basic Template";
 const ROUTE_TIMEOUT_MS = 45_000;
 
 test.describe("workspace switching", () => {
@@ -65,20 +65,21 @@ test.describe("workspace switching", () => {
     const primaryCellName = `E2E Workspace A ${Date.now()}`;
     const secondaryCellName = `E2E Workspace B ${Date.now()}`;
 
-    const [primaryCellId, secondaryCellId] = await Promise.all([
-      createCellViaApi({
-        apiUrl,
-        name: primaryCellName,
-        workspaceId: primaryWorkspace.id,
-        templateLabel: CELL_TEMPLATE_LABEL,
-      }),
-      createCellViaApi({
-        apiUrl,
-        name: secondaryCellName,
-        workspaceId: secondaryWorkspace.id,
-        templateLabel: CELL_TEMPLATE_LABEL,
-      }),
-    ]);
+    const primaryCellId = await createCell({
+      page,
+      name: primaryCellName,
+      workspaceId: primaryWorkspace.id,
+      templateLabel: CELL_TEMPLATE_LABEL,
+    });
+
+    await page.goto("/");
+
+    const secondaryCellId = await createCell({
+      page,
+      name: secondaryCellName,
+      workspaceId: secondaryWorkspace.id,
+      templateLabel: CELL_TEMPLATE_LABEL,
+    });
 
     await page.reload();
 

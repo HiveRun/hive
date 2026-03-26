@@ -55,7 +55,8 @@ defmodule HiveServerElixir.Cells.TemplateConfig do
       label: normalize_string(Map.get(template, "label"), template_id),
       setup: normalize_commands(Map.get(template, "setup")),
       env: normalize_env(Map.get(template, "env")),
-      services: normalize_services(Map.get(template, "services"))
+      services: normalize_services(Map.get(template, "services")),
+      ignore_patterns: normalize_patterns(Map.get(template, "ignorePatterns"))
     }
   end
 
@@ -101,6 +102,15 @@ defmodule HiveServerElixir.Cells.TemplateConfig do
   end
 
   defp normalize_commands(_commands), do: []
+
+  defp normalize_patterns(patterns) when is_list(patterns) do
+    patterns
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp normalize_patterns(_patterns), do: []
 
   defp normalize_env(env) when is_map(env) do
     Enum.reduce(env, %{}, fn {key, value}, acc ->

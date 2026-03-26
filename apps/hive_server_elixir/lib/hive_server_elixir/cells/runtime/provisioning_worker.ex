@@ -8,6 +8,7 @@ defmodule HiveServerElixir.Cells.ProvisioningWorker do
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.Lifecycle
+  alias HiveServerElixir.Cells.TemplateConfig
   alias HiveServerElixir.Cells.TemplateRuntime
   alias HiveServerElixir.Cells.WorkspaceSnapshot
 
@@ -82,6 +83,7 @@ defmodule HiveServerElixir.Cells.ProvisioningWorker do
 
   defp maybe_prepare_workspace(:create, cell) do
     source_root = cell.workspace_root_path || cell.workspace_path
+    ignore_patterns = template_ignore_patterns(cell)
 
     cond do
       not is_binary(source_root) ->
@@ -92,7 +94,7 @@ defmodule HiveServerElixir.Cells.ProvisioningWorker do
 
       true ->
         with {:ok, workspace_path} <-
-               WorkspaceSnapshot.ensure_cell_workspace(cell.id, source_root),
+               WorkspaceSnapshot.ensure_cell_workspace(cell.id, source_root, ignore_patterns),
              {:ok, updated_cell} <- Ash.update(cell, %{workspace_path: workspace_path}) do
           {:ok, updated_cell}
         end
@@ -124,6 +126,15 @@ defmodule HiveServerElixir.Cells.ProvisioningWorker do
 
   defp apply_template_runtime(:resume, _cell), do: {:ok, %{status: "ready"}}
   defp apply_template_runtime(_mode, cell), do: TemplateRuntime.prepare_cell(cell)
+
+  defp template_ignore_patterns(cell) do
+    workspace_root = cell.workspace_root_path || cell.workspace_path
+
+    case TemplateConfig.fetch_template(workspace_root, cell.template_id) do
+      {:ok, template} -> Map.get(template, :ignore_patterns, [])
+      {:error, _reason} -> []
+    end
+  end
 
   defp finalize_async_error(cell_id, reason) do
     case Ash.get(Cell, cell_id) do

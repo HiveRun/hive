@@ -88,12 +88,21 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCellTest do
   end
 
   defp workspace!(suffix) do
+    path =
+      Path.join(System.tmp_dir!(), "workspace-#{suffix}-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(path)
+
     assert {:ok, workspace} =
              Ash.create(
                Workspace,
-               %{path: "/tmp/workspace-#{suffix}", label: "Workspace #{suffix}"},
+               %{path: path, label: "Workspace #{suffix}"},
                domain: Cells
              )
+
+    on_exit(fn ->
+      File.rm_rf!(path)
+    end)
 
     workspace
   end

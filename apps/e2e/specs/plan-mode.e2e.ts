@@ -1,6 +1,6 @@
 import { test } from "@playwright/test";
 import {
-  createCellViaApi,
+  createCell,
   waitForChatRoute,
   waitForCondition,
   waitForProvisioningOrChatRoute,
@@ -24,7 +24,7 @@ const SESSION_MODE_TIMEOUT_MS = 120_000;
 const BUILD_TRANSITION_TIMEOUT_MS = 170_000;
 const PLAN_TO_BUILD_TEST_TIMEOUT_MS = 240_000;
 const MODE_POLL_INTERVAL_MS = 500;
-const CELL_TEMPLATE_LABEL = "E2E Template";
+const CELL_TEMPLATE_LABEL = "Basic Template";
 
 test.describe("plan mode @plan-mode", () => {
   test("@plan-mode defaults new cells to plan mode", async ({ page }) => {
@@ -34,8 +34,8 @@ test.describe("plan mode @plan-mode", () => {
     }
 
     await page.goto("/");
-    const cellId = await createCellViaApi({
-      apiUrl,
+    const cellId = await createCell({
+      page,
       name: `Plan Mode Default ${Date.now()}`,
       templateLabel: CELL_TEMPLATE_LABEL,
     });
@@ -69,8 +69,8 @@ test.describe("plan mode @plan-mode", () => {
     }
 
     await page.goto("/");
-    const cellId = await createCellViaApi({
-      apiUrl,
+    const cellId = await createCell({
+      page,
       name: `Build Mode Override ${Date.now()}`,
       templateLabel: CELL_TEMPLATE_LABEL,
       startMode: "build",
@@ -109,8 +109,8 @@ test.describe("plan mode @plan-mode", () => {
     }
 
     await page.goto("/");
-    const cellId = await createCellViaApi({
-      apiUrl,
+    const cellId = await createCell({
+      page,
       name: `Plan To Build ${Date.now()}`,
       templateLabel: CELL_TEMPLATE_LABEL,
     });

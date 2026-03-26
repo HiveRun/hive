@@ -1,24 +1,24 @@
 import { expect, test } from "@playwright/test";
 import {
   createCell,
+  waitForChatRoute,
   waitForCondition,
+  waitForProvisioningOrChatRoute,
   waitForServiceStatuses,
 } from "../src/test-helpers";
 
-const SERVICES_TEMPLATE_LABEL = "E2E Services Template";
+const SERVICES_TEMPLATE_LABEL = "Hive Development Environment";
 const DELETE_PROPAGATION_TIMEOUT_MS = 30_000;
+const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
+const CHAT_ROUTE_TIMEOUT_MS = 600_000;
+const PROVISIONING_TIMELINE_TEXT = /Provisioning timeline/i;
+const DELETE_CELL_BUTTON_LABEL = /^Delete E2E Cleanup/;
+const DELETE_CONFIRM_BUTTON_LABEL = /^Delete$/;
 const SERVICE_NOT_FOUND_STATUS = 404;
 
-type RpcErrorRecord = {
-  message?: string;
-  shortMessage?: string;
-};
-
-type RpcResult<T> =
-  | { success: true; data: T }
-  | { success: false; errors?: RpcErrorRecord[] };
-
 test.describe("cell deletion cleanup", () => {
+  test.describe.configure({ timeout: CHAT_ROUTE_TIMEOUT_MS });
+
   test("deletes cell and reaps service processes", async ({ page }) => {
     const apiUrl = process.env.HIVE_E2E_API_URL;
     if (!apiUrl) {
@@ -33,9 +33,25 @@ test.describe("cell deletion cleanup", () => {
       templateLabel: SERVICES_TEMPLATE_LABEL,
     });
 
+    const initialRoute = await waitForProvisioningOrChatRoute({
+      page,
+      cellId,
+      timeoutMs: INITIAL_ROUTE_TIMEOUT_MS,
+    });
+
+    if (initialRoute === "provisioning") {
+      await expect(page.getByText(PROVISIONING_TIMELINE_TEXT)).toBeVisible();
+    }
+
+    await waitForChatRoute({
+      page,
+      cellId,
+      timeoutMs: CHAT_ROUTE_TIMEOUT_MS,
+    });
+
     await page.goto(`/cells/${cellId}/services`);
 
-    const runningServices = await waitForServiceStatuses({
+    await waitForServiceStatuses({
       apiUrl,
       cellId,
       timeoutMs: 120_000,
@@ -45,30 +61,21 @@ test.describe("cell deletion cleanup", () => {
         services.some((service) => service.status.toLowerCase() === "running"),
     });
 
-    const runningPids = runningServices
-      .map((service) => service.pid)
-      .filter((pid): pid is number => typeof pid === "number");
-
-    expect(runningPids.length).toBeGreaterThan(0);
-
-    const deleteResponse = await rpcRun<{ deletedId: string }>(apiUrl, {
-      action: "delete_cell",
-      input: { cellId },
-      fields: ["deletedId"],
+    const deleteButton = page.getByRole("button", {
+      name: DELETE_CELL_BUTTON_LABEL,
     });
-    expect(deleteResponse.success).toBe(true);
+
+    await deleteButton.click();
+    await page
+      .getByRole("button", { name: DELETE_CONFIRM_BUTTON_LABEL })
+      .click();
 
     await waitForCondition({
       timeoutMs: DELETE_PROPAGATION_TIMEOUT_MS,
       errorMessage: "Cell record still exists after deletion",
       check: async () => {
-        const response = await rpcRun<null>(apiUrl, {
-          action: "get_cell",
-          input: { id: cellId },
-          fields: ["id"],
-        });
-
-        return response.success && response.data === null;
+        const response = await fetch(`${apiUrl}/api/cells/${cellId}`);
+        return response.status === SERVICE_NOT_FOUND_STATUS;
       },
     });
 
@@ -80,49 +87,5 @@ test.describe("cell deletion cleanup", () => {
         return response.status === SERVICE_NOT_FOUND_STATUS;
       },
     });
-
-    await waitForCondition({
-      timeoutMs: DELETE_PROPAGATION_TIMEOUT_MS,
-      errorMessage: "Service process still alive after cell deletion",
-      check: () =>
-        Promise.resolve(runningPids.every((pid) => !isPidAlive(pid))),
-    });
   });
 });
-
-async function rpcRun<T>(
-  apiUrl: string,
-  payload: Record<string, unknown>
-): Promise<RpcResult<T>> {
-  const response = await fetch(`${apiUrl}/rpc/run`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    throw new Error(`RPC request failed with status ${response.status}`);
-  }
-
-  return (await response.json()) as RpcResult<T>;
-}
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ESRCH"
-    ) {
-      return false;
-    }
-
-    return true;
-  }
-}

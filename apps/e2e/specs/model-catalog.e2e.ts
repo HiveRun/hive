@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { selectors } from "../src/selectors";
 import {
+  fetchAgentModels,
+  fetchWorkspaces,
   openCellCreationSheet,
   parseCellIdFromUrl,
   selectTemplate,
@@ -20,10 +22,7 @@ type RpcResult<T> = {
   errors?: Array<{ message?: string; shortMessage?: string }>;
 };
 
-const CELL_TEMPLATE_LABEL = "E2E Template";
-const EXPECTED_MODEL_LABEL = "Big Pickle";
-const EXPECTED_MODEL_ID = "big-pickle";
-const EXPECTED_MODEL_PROVIDER_ID = "opencode";
+const CELL_TEMPLATE_LABEL = "Basic Template";
 const CELL_URL_PATTERN = /\/cells\//;
 const PROVISIONING_TIMELINE_TEXT = /Provisioning timeline/i;
 
@@ -37,6 +36,40 @@ test.describe("model catalog", () => {
     }
 
     await page.goto("/");
+    const workspaces = await fetchWorkspaces(apiUrl);
+    const workspaceId =
+      workspaces.activeWorkspaceId ?? workspaces.workspaces[0]?.id ?? null;
+
+    if (!workspaceId) {
+      throw new Error("No active workspace available for model catalog E2E");
+    }
+
+    const modelsPayload = await fetchAgentModels(apiUrl, workspaceId);
+    const expectedProviderId =
+      Object.keys(modelsPayload.defaults)[0] ??
+      modelsPayload.models[0]?.provider ??
+      null;
+    const expectedModelId =
+      (expectedProviderId
+        ? modelsPayload.defaults[expectedProviderId]
+        : null) ??
+      modelsPayload.models.find(
+        (model) => model.provider === expectedProviderId
+      )?.id ??
+      modelsPayload.models[0]?.id ??
+      null;
+    const expectedModelLabel =
+      modelsPayload.models.find(
+        (model) =>
+          model.provider === expectedProviderId && model.id === expectedModelId
+      )?.name ?? null;
+
+    if (!(expectedProviderId && expectedModelId && expectedModelLabel)) {
+      throw new Error(
+        "Could not determine expected model catalog defaults for strict E2E"
+      );
+    }
+
     await openCellCreationSheet(page);
     await page
       .locator(selectors.cellNameInput)
@@ -44,10 +77,11 @@ test.describe("model catalog", () => {
     await selectTemplate(page, CELL_TEMPLATE_LABEL);
 
     const modelSelector = page.locator("#cell-model-selector");
-    await expect(modelSelector).toContainText(EXPECTED_MODEL_LABEL, {
+    await modelSelector.click();
+    await page.getByRole("option", { name: expectedModelLabel }).click();
+    await expect(modelSelector).toContainText(expectedModelLabel, {
       timeout: 30_000,
     });
-    await expect(modelSelector).toContainText("Zen", { timeout: 30_000 });
 
     await expect(page.locator(selectors.cellSubmitButton)).toBeEnabled({
       timeout: 30_000,
@@ -88,8 +122,8 @@ test.describe("model catalog", () => {
         };
       })
       .toEqual({
-        modelId: EXPECTED_MODEL_ID,
-        modelProviderId: EXPECTED_MODEL_PROVIDER_ID,
+        modelId: expectedModelId,
+        modelProviderId: expectedProviderId,
       });
   });
 });

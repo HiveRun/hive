@@ -11,6 +11,8 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
   input(:name)
   input(:description)
   input(:template_id)
+  input(:provider_id)
+  input(:model_id)
   input(:start_mode)
   input(:workspace_root_path)
   input(:workspace_path)
@@ -20,6 +22,8 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
     argument(:name, input(:name))
     argument(:description, input(:description))
     argument(:template_id, input(:template_id))
+    argument(:provider_id, input(:provider_id))
+    argument(:model_id, input(:model_id))
     argument(:workspace_root_path, input(:workspace_root_path))
     argument(:workspace_path, input(:workspace_path))
 
@@ -29,6 +33,8 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
         name: name,
         description: description,
         template_id: template_id,
+        provider_id: provider_id,
+        model_id: model_id,
         workspace_root_path: workspace_root_path,
         workspace_path: workspace_path
       },
@@ -56,15 +62,23 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCell do
   step :initialize_runtime_records do
     argument(:cell, result(:prepare_workspace))
     argument(:start_mode, input(:start_mode))
+    argument(:provider_id, input(:provider_id))
+    argument(:model_id, input(:model_id))
 
-    run(fn %{cell: cell, start_mode: start_mode}, _context ->
+    run(fn %{cell: cell, start_mode: start_mode, provider_id: provider_id, model_id: model_id},
+           _context ->
       mode = normalize_start_mode(start_mode)
       session_id = cell.opencode_session_id || Ash.UUID.generate()
 
       cell
       |> Ash.Changeset.for_update(
         :prepare_setup_attempt,
-        %{opencode_session_id: session_id, start_mode: mode}
+        %{
+          opencode_session_id: session_id,
+          start_mode: mode,
+          provider_id: provider_id,
+          model_id: model_id
+        }
       )
       |> Ash.update()
     end)

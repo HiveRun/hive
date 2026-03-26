@@ -2,13 +2,18 @@ import { expect, test } from "@playwright/test";
 import {
   createCell,
   fetchActivity,
+  waitForChatRoute,
   waitForCondition,
+  waitForProvisioningOrChatRoute,
   waitForServiceStatuses,
 } from "../src/test-helpers";
 
-const SERVICES_TEMPLATE_LABEL = "E2E Services Template";
+const SERVICES_TEMPLATE_LABEL = "Hive Development Environment";
 const STOP_BUTTON_LABEL = /^Stop$/;
 const START_BUTTON_LABEL = /^Start$/;
+const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
+const CHAT_ROUTE_TIMEOUT_MS = 180_000;
+const PROVISIONING_TIMELINE_TEXT = /Provisioning timeline/i;
 const isActiveStatus = (status: string) => {
   const normalized = status.toLowerCase();
   return normalized === "running" || normalized === "starting";
@@ -29,6 +34,22 @@ test.describe("service controls", () => {
       page,
       name: `E2E Services ${Date.now()}`,
       templateLabel: SERVICES_TEMPLATE_LABEL,
+    });
+
+    const initialRoute = await waitForProvisioningOrChatRoute({
+      page,
+      cellId,
+      timeoutMs: INITIAL_ROUTE_TIMEOUT_MS,
+    });
+
+    if (initialRoute === "provisioning") {
+      await expect(page.getByText(PROVISIONING_TIMELINE_TEXT)).toBeVisible();
+    }
+
+    await waitForChatRoute({
+      page,
+      cellId,
+      timeoutMs: CHAT_ROUTE_TIMEOUT_MS,
     });
 
     await page.goto(`/cells/${cellId}/services`);
