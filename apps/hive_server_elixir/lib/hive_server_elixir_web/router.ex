@@ -61,8 +61,6 @@ defmodule HiveServerElixirWeb.Router do
     pipe_through(:api_stream)
 
     get("/api/agents/sessions/:id/events", AgentsController, :session_events)
-    get("/api/cells/workspace/:workspace_id/stream", CellsController, :workspace_stream)
-    get("/api/cells/:id/timings/stream", CellsController, :timing_stream)
     get("/api/cells/:id/setup/terminal/stream", CellsController, :setup_terminal_stream)
     get("/api/cells/:id/services/stream", CellsController, :services_stream)
 

@@ -55,6 +55,9 @@
     },
     {
       "includes": ["apps/web/src/lib/generated/**"],
+      "assist": {
+        "enabled": false
+      },
       "linter": {
         "enabled": false
       },

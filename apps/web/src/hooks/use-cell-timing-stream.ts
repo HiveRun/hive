@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { getApiBase } from "@/lib/api-base";
+import { joinTimingRealtimeChannel } from "@/lib/realtime-channels";
 import type {
   CellTimingResponse,
   CellTimingRun,
@@ -37,16 +38,6 @@ export function useCellTimingStream(
       return;
     }
 
-    const params = new URLSearchParams();
-    if (workflow !== "all") {
-      params.set("workflow", workflow);
-    }
-
-    const query = params.toString();
-    const source = new EventSource(
-      `${API_BASE}/api/cells/${cellId}/timings/stream${query ? `?${query}` : ""}`
-    );
-
     const syncTimingStep = (step: CellTimingStep) => {
       for (const queryEntry of queryClient.getQueryCache().findAll({
         predicate: (queryRecord) =>
@@ -64,16 +55,17 @@ export function useCellTimingStream(
       }
     };
 
-    const timingListener = (event: MessageEvent<string>) => {
-      try {
-        const step = JSON.parse(event.data) as CellTimingStep;
-        syncTimingStep(step);
-      } catch {
-        // Ignore malformed timing events.
+    const timingListener = (payload: unknown) => {
+      const step = payload as CellTimingStep;
+
+      if (workflow !== "all" && step.workflow !== workflow) {
+        return;
       }
+
+      syncTimingStep(step);
     };
 
-    const snapshotListener = () => {
+    const resyncSnapshot = () => {
       queryClient.invalidateQueries({
         predicate: (queryEntry) =>
           isCellTimingQuery(queryEntry.queryKey, cellId),
@@ -84,19 +76,20 @@ export function useCellTimingStream(
       });
     };
 
-    const errorListener = () => {
-      // Keep the stream open so EventSource can auto-reconnect.
-    };
-
-    source.addEventListener("timing", timingListener);
-    source.addEventListener("snapshot", snapshotListener);
-    source.addEventListener("error", errorListener);
+    const subscription = joinTimingRealtimeChannel({
+      apiBase: API_BASE,
+      cellId,
+      handlers: {
+        timing_snapshot: timingListener,
+      },
+      onJoin: resyncSnapshot,
+      onError: () => {
+        // Phoenix Socket will reconnect automatically; keep current data until rejoined.
+      },
+    });
 
     return () => {
-      source.removeEventListener("timing", timingListener);
-      source.removeEventListener("snapshot", snapshotListener);
-      source.removeEventListener("error", errorListener);
-      source.close();
+      subscription.unsubscribe();
     };
   }, [cellId, enabled, queryClient, workflow]);
 }

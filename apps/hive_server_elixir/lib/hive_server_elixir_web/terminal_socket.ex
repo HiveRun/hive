@@ -3,6 +3,8 @@ defmodule HiveServerElixirWeb.TerminalSocket do
 
   use Phoenix.Socket
 
+  channel("workspace:*", HiveServerElixirWeb.WorkspaceChannel)
+  channel("timings:*", HiveServerElixirWeb.TimingChannel)
   channel("setup_terminal:*", HiveServerElixirWeb.TerminalChannel)
   channel("service_terminal:*", HiveServerElixirWeb.TerminalChannel)
   channel("chat_terminal:*", HiveServerElixirWeb.TerminalChannel)

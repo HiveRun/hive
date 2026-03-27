@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { getApiBase } from "@/lib/api-base";
+import { joinWorkspaceRealtimeChannel } from "@/lib/realtime-channels";
 import type { Cell } from "@/queries/cells";
 
 const API_BASE = getApiBase();
@@ -23,94 +24,77 @@ export function useCellStatusStream(
 
     let isActive = true;
 
-    const url = `${API_BASE}/api/cells/workspace/${workspaceId}/stream`;
-    const source = new EventSource(url);
-
-    const cellListener = (event: MessageEvent<string>) => {
+    const cellListener = (payload: unknown) => {
       if (!isActive) {
         return;
       }
-      try {
-        const cellData = JSON.parse(event.data) as Cell;
-        queryClient.setQueryData<Cell[]>(
-          ["cells", workspaceId],
-          (currentCells) => {
-            if (!currentCells) {
-              return currentCells;
-            }
-
-            const existingIndex = currentCells.findIndex(
-              (cell) => cell.id === cellData.id
-            );
-            if (existingIndex === -1) {
-              return [...currentCells, cellData];
-            }
-
-            const nextCells = [...currentCells];
-            if (!nextCells[existingIndex]) {
-              return currentCells;
-            }
-
-            nextCells[existingIndex] = cellData;
-            return nextCells;
+      const cellData = payload as Cell;
+      queryClient.setQueryData<Cell[]>(
+        ["cells", workspaceId],
+        (currentCells) => {
+          if (!currentCells) {
+            return currentCells;
           }
-        );
-        queryClient.setQueryData<Cell>(["cells", cellData.id], cellData);
-      } catch {
-        /* ignore malformed events */
-      }
-    };
 
-    const cellRemovedListener = (event: MessageEvent<string>) => {
-      if (!isActive) {
-        return;
-      }
+          const existingIndex = currentCells.findIndex(
+            (cell) => cell.id === cellData.id
+          );
+          if (existingIndex === -1) {
+            return [...currentCells, cellData];
+          }
 
-      try {
-        const payload = JSON.parse(event.data) as { id?: string };
-        if (!payload.id) {
-          return;
+          const nextCells = [...currentCells];
+          if (!nextCells[existingIndex]) {
+            return currentCells;
+          }
+
+          nextCells[existingIndex] = cellData;
+          return nextCells;
         }
+      );
+      queryClient.setQueryData<Cell>(["cells", cellData.id], cellData);
+    };
 
-        queryClient.setQueryData<Cell[]>(
-          ["cells", workspaceId],
-          (currentCells) => {
-            if (!currentCells) {
-              return currentCells;
-            }
-
-            return currentCells.filter((cell) => cell.id !== payload.id);
-          }
-        );
-        queryClient.removeQueries({
-          queryKey: ["cells", payload.id],
-          exact: true,
-        });
-      } catch {
-        /* ignore malformed events */
+    const cellRemovedListener = (payload: { id?: string }) => {
+      if (!isActive) {
+        return;
       }
+
+      if (!payload.id) {
+        return;
+      }
+
+      queryClient.setQueryData<Cell[]>(
+        ["cells", workspaceId],
+        (currentCells) => {
+          if (!currentCells) {
+            return currentCells;
+          }
+
+          return currentCells.filter((cell) => cell.id !== payload.id);
+        }
+      );
+      queryClient.removeQueries({
+        queryKey: ["cells", payload.id],
+        exact: true,
+      });
     };
 
-    const errorListener = () => {
-      // Keep the stream open so EventSource can auto-reconnect.
-    };
-
-    source.addEventListener("cell", cellListener as EventListener);
-    source.addEventListener(
-      "cell_removed",
-      cellRemovedListener as EventListener
-    );
-    source.addEventListener("error", errorListener);
+    const subscription = joinWorkspaceRealtimeChannel({
+      apiBase: API_BASE,
+      workspaceId,
+      handlers: {
+        cell_snapshot: cellListener,
+        cell_removed: cellRemovedListener,
+      },
+      onJoin: () => {
+        queryClient.invalidateQueries({ queryKey: ["cells", workspaceId] });
+      },
+    });
 
     return () => {
       isActive = false;
-      source.removeEventListener("cell", cellListener as EventListener);
-      source.removeEventListener(
-        "cell_removed",
-        cellRemovedListener as EventListener
-      );
-      source.removeEventListener("error", errorListener);
-      source.close();
+      subscription.unsubscribe();
     };
   }, [workspaceId, enabled, queryClient]);
 }

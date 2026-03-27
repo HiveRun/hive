@@ -15,6 +15,11 @@ config :ash_typescript,
     HiveServerElixir.AgentsTypedController,
     HiveServerElixir.CellReadTypedController
   ],
+  typed_channels: [
+    HiveServerElixirWeb.WorkspaceChannel,
+    HiveServerElixirWeb.TimingChannel
+  ],
+  typed_channels_output_file: "../web/src/lib/generated/ash-typed-channels.ts",
   router: HiveServerElixirWeb.Router,
   routes_output_file: "../web/src/lib/generated/controller-routes.ts",
   run_endpoint: "/rpc/run",

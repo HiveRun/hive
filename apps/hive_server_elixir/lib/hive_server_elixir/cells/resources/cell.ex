@@ -42,6 +42,28 @@ defmodule HiveServerElixir.Cells.Cell do
     failed_ids: [type: {:array, :uuid}, allow_nil?: false]
   ]
 
+  @channel_cell_snapshot_fields [
+    id: [type: :uuid, allow_nil?: false],
+    name: [type: :string, allow_nil?: false],
+    workspaceId: [type: :uuid, allow_nil?: false],
+    description: [type: :string, allow_nil?: true],
+    templateId: [type: :string, allow_nil?: false],
+    workspaceRootPath: [type: :string, allow_nil?: false],
+    workspacePath: [type: :string, allow_nil?: false],
+    opencodeSessionId: [type: :string, allow_nil?: true],
+    opencodeCommand: [type: :string, allow_nil?: true],
+    createdAt: [type: :string, allow_nil?: true],
+    status: [type: :string, allow_nil?: false],
+    lastSetupError: [type: :string, allow_nil?: true],
+    branchName: [type: :string, allow_nil?: true],
+    baseCommit: [type: :string, allow_nil?: true],
+    updatedAt: [type: :string, allow_nil?: true]
+  ]
+
+  @channel_cell_removed_fields [
+    id: [type: :uuid, allow_nil?: false]
+  ]
+
   @allowed_lifecycle_sources %{
     provisioning: [:provisioning, :stopped, :ready, :error],
     ready: [:provisioning, :stopped, :ready],
@@ -52,6 +74,7 @@ defmodule HiveServerElixir.Cells.Cell do
 
   use Ash.Resource,
     extensions: [AshTypescript.Resource],
+    notifiers: [Ash.Notifier.PubSub],
     domain: HiveServerElixir.Cells,
     data_layer: AshSqlite.DataLayer
 
@@ -478,6 +501,53 @@ defmodule HiveServerElixir.Cells.Cell do
     end
   end
 
+  pub_sub do
+    module HiveServerElixirWeb.Endpoint
+    prefix "workspace"
+
+    publish :create, [:workspace_id],
+      event: "cell_snapshot",
+      public?: true,
+      returns: :map,
+      constraints: [fields: @channel_cell_snapshot_fields],
+      transform: fn notification -> channel_snapshot_payload(notification.data) end
+
+    publish :prepare_setup_attempt, [:workspace_id],
+      event: "cell_snapshot",
+      public?: true,
+      returns: :map,
+      constraints: [fields: @channel_cell_snapshot_fields],
+      transform: fn notification -> channel_snapshot_payload(notification.data) end
+
+    publish :mark_ready, [:workspace_id],
+      event: "cell_snapshot",
+      public?: true,
+      returns: :map,
+      constraints: [fields: @channel_cell_snapshot_fields],
+      transform: fn notification -> channel_snapshot_payload(notification.data) end
+
+    publish :mark_error, [:workspace_id],
+      event: "cell_snapshot",
+      public?: true,
+      returns: :map,
+      constraints: [fields: @channel_cell_snapshot_fields],
+      transform: fn notification -> channel_snapshot_payload(notification.data) end
+
+    publish :finalize_setup_attempt, [:workspace_id],
+      event: "cell_snapshot",
+      public?: true,
+      returns: :map,
+      constraints: [fields: @channel_cell_snapshot_fields],
+      transform: fn notification -> channel_snapshot_payload(notification.data) end
+
+    publish :destroy, [:workspace_id],
+      event: "cell_removed",
+      public?: true,
+      returns: :map,
+      constraints: [fields: @channel_cell_removed_fields],
+      transform: fn notification -> channel_removed_payload(notification.data) end
+  end
+
   attributes do
     uuid_primary_key :id
 
@@ -780,6 +850,14 @@ defmodule HiveServerElixir.Cells.Cell do
       updatedAt: payload.updated_at
     }
   end
+
+  @spec channel_snapshot_payload(map()) :: map()
+  def channel_snapshot_payload(cell) when is_map(cell) do
+    transport_payload(cell)
+  end
+
+  @spec channel_removed_payload(map()) :: map()
+  def channel_removed_payload(%{id: id}) when not is_nil(id), do: %{id: id}
 
   @spec emit_terminal_state(map()) :: :ok
   def emit_terminal_state(%{workspace_id: workspace_id, id: cell_id} = cell) do

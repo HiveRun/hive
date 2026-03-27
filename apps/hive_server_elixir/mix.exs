@@ -44,7 +44,7 @@ defmodule HiveServerElixir.MixProject do
     [
       {:sourceror, "~> 1.8", only: [:dev, :test]},
       {:oban, "~> 2.0"},
-      {:ash_typescript, "~> 0.15"},
+      {:ash_typescript, "~> 0.16"},
       {:usage_rules, "~> 1.0", only: [:dev]},
       {:ex_dna, "~> 1.2", only: [:dev, :test], runtime: false},
       {:ash_ai, "~> 0.5"},
@@ -54,7 +54,7 @@ defmodule HiveServerElixir.MixProject do
       {:ash_oban, "~> 0.7"},
       {:ash_sqlite, "~> 0.2"},
       {:ash_phoenix, "~> 2.0"},
-      {:ash, "~> 3.0"},
+      {:ash, "~> 3.21"},
       {:igniter, "~> 0.6", only: [:dev, :test]},
       {:phoenix, "~> 1.8.4"},
       {:phoenix_ecto, "~> 4.5"},

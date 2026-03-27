@@ -6,8 +6,26 @@ defmodule HiveServerElixir.Cells.Timing do
 
   use Ash.Resource,
     extensions: [AshTypescript.Resource],
+    notifiers: [Ash.Notifier.PubSub],
     domain: HiveServerElixir.Cells,
     data_layer: AshSqlite.DataLayer
+
+  @channel_timing_fields [
+    id: [type: :uuid, allow_nil?: false],
+    cellId: [type: :uuid, allow_nil?: false],
+    cellName: [type: :string, allow_nil?: true],
+    workspaceId: [type: :uuid, allow_nil?: true],
+    templateId: [type: :string, allow_nil?: true],
+    runId: [type: :string, allow_nil?: false],
+    workflow: [type: :string, allow_nil?: false],
+    step: [type: :string, allow_nil?: false],
+    status: [type: :string, allow_nil?: false],
+    attempt: [type: :integer, allow_nil?: true],
+    error: [type: :string, allow_nil?: true],
+    metadata: [type: :map, allow_nil?: false],
+    durationMs: [type: :integer, allow_nil?: false],
+    createdAt: [type: :string, allow_nil?: true]
+  ]
 
   typescript do
     type_name "Timing"
@@ -115,6 +133,38 @@ defmodule HiveServerElixir.Cells.Timing do
         :metadata
       ]
     end
+  end
+
+  pub_sub do
+    module HiveServerElixirWeb.Endpoint
+    prefix "timings"
+
+    publish :create, [:cell_id],
+      event: "timing_snapshot",
+      public?: true,
+      returns: :map,
+      constraints: [fields: @channel_timing_fields],
+      transform: fn notification -> channel_payload(notification.data) end
+  end
+
+  @spec channel_payload(map()) :: map()
+  def channel_payload(%{} = timing) do
+    %{
+      id: timing.id,
+      cellId: timing.cell_id,
+      cellName: timing.cell_name,
+      workspaceId: timing.workspace_id,
+      templateId: timing.template_id,
+      runId: timing.run_id,
+      workflow: timing.workflow,
+      step: timing.step,
+      status: timing.status,
+      attempt: timing.attempt,
+      error: timing.error,
+      metadata: timing.metadata,
+      durationMs: timing.duration_ms,
+      createdAt: maybe_to_iso8601(timing.inserted_at)
+    }
   end
 
   attributes do

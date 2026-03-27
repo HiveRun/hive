@@ -4,7 +4,6 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
   import Ash.Expr
   require Ash.Query
 
-  alias Ecto.UUID
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Activity
   alias HiveServerElixir.Cells.AgentSession
@@ -14,63 +13,6 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
   alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.Timing
   alias HiveServerElixir.Cells.Workspace
-
-  test "GET /api/cells/workspace/:id/stream emits ready, cell snapshot, and snapshot marker", %{
-    conn: conn
-  } do
-    workspace = workspace!("stream")
-    cell = cell!(workspace.id, "stream cell", "ready")
-
-    conn = get(conn, ~p"/api/cells/workspace/#{workspace.id}/stream?initialOnly=true")
-
-    assert conn.status == 200
-    assert conn.resp_body =~ "event: ready"
-    assert conn.resp_body =~ "event: cell"
-    assert conn.resp_body =~ cell.id
-    assert conn.resp_body =~ "event: snapshot"
-  end
-
-  test "GET /api/cells/workspace/:id/stream returns 404 for unknown workspace", %{conn: conn} do
-    conn = get(conn, ~p"/api/cells/workspace/#{UUID.generate()}/stream?initialOnly=true")
-
-    assert %{"error" => %{"code" => "workspace_not_found"}} = json_response(conn, 404)
-  end
-
-  test "GET /api/cells/:id/timings/stream emits ready, timing snapshot, and snapshot marker", %{
-    conn: conn
-  } do
-    workspace = workspace!("timing-stream")
-    cell = cell!(workspace.id, "timing stream cell", "ready")
-
-    assert {:ok, timing} =
-             Ash.create(
-               Timing,
-               %{
-                 cell_id: cell.id,
-                 workflow: "create",
-                 run_id: "run-timing-stream",
-                 step: "ensure_services",
-                 status: "ok",
-                 duration_ms: 12,
-                 metadata: %{"source" => "test"}
-               },
-               domain: Cells
-             )
-
-    conn = get(conn, ~p"/api/cells/#{cell.id}/timings/stream?initialOnly=true")
-
-    assert conn.status == 200
-    assert conn.resp_body =~ "event: ready"
-    assert conn.resp_body =~ "event: timing"
-    assert conn.resp_body =~ timing.id
-    assert conn.resp_body =~ "event: snapshot"
-  end
-
-  test "GET /api/cells/:id/timings/stream returns 404 for missing cells", %{conn: conn} do
-    conn = get(conn, ~p"/api/cells/#{UUID.generate()}/timings/stream?initialOnly=true")
-
-    assert %{"error" => %{"code" => "not_found"}} = json_response(conn, 404)
-  end
 
   test "GET /api/cells/:id/setup/terminal/stream emits ready and snapshot semantics", %{
     conn: conn
@@ -86,7 +28,7 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
   end
 
   test "GET /api/cells/:id/setup/terminal/stream returns 404 for missing cells", %{conn: conn} do
-    conn = get(conn, ~p"/api/cells/#{UUID.generate()}/setup/terminal/stream?initialOnly=true")
+    conn = get(conn, ~p"/api/cells/#{Ash.UUID.generate()}/setup/terminal/stream?initialOnly=true")
 
     assert %{"error" => %{"code" => "not_found"}} = json_response(conn, 404)
   end
@@ -154,7 +96,7 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
     cell = cell!(workspace.id, "service terminal cell", "ready")
 
     conn =
-      post(conn, ~p"/api/cells/#{cell.id}/services/#{UUID.generate()}/terminal/input", %{
+      post(conn, ~p"/api/cells/#{cell.id}/services/#{Ash.UUID.generate()}/terminal/input", %{
         "data" => "hello"
       })
 

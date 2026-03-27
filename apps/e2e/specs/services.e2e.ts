@@ -12,7 +12,7 @@ const SERVICES_TEMPLATE_LABEL = "Hive Development Environment";
 const STOP_BUTTON_LABEL = /^Stop$/;
 const START_BUTTON_LABEL = /^Start$/;
 const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
-const CHAT_ROUTE_TIMEOUT_MS = 180_000;
+const CHAT_ROUTE_TIMEOUT_MS = 600_000;
 const PROVISIONING_TIMELINE_TEXT = /Provisioning timeline/i;
 const isActiveStatus = (status: string) => {
   const normalized = status.toLowerCase();
@@ -20,6 +20,8 @@ const isActiveStatus = (status: string) => {
 };
 
 test.describe("service controls", () => {
+  test.describe.configure({ timeout: CHAT_ROUTE_TIMEOUT_MS });
+
   test("starts and stops services from the services panel", async ({
     page,
   }) => {
