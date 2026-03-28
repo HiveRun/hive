@@ -3,6 +3,7 @@ defmodule HiveServerElixirWeb.TerminalSocket do
 
   use Phoenix.Socket
 
+  channel("ash_typescript_rpc:*", HiveServerElixirWeb.AshTypescriptRpcChannel)
   channel("workspace:*", HiveServerElixirWeb.WorkspaceChannel)
   channel("timings:*", HiveServerElixirWeb.TimingChannel)
   channel("setup_terminal:*", HiveServerElixirWeb.TerminalChannel)

@@ -18,6 +18,7 @@ defmodule HiveServerElixir.Cells.Service do
     data_layer: AshSqlite.DataLayer
 
   @service_payload_fields ServicePayload.fields()
+  @terminal_control_payload_fields [ok: [type: :boolean, allow_nil?: false]]
   @allowed_lifecycle_sources %{
     running: [:stopped, :error, :running],
     stopped: [:running, :error, :stopped],
@@ -150,6 +151,49 @@ defmodule HiveServerElixir.Cells.Service do
 
       run fn input, _context ->
         restart_payload(input.arguments)
+      end
+    end
+
+    action :service_terminal_input, :map do
+      constraints fields: @terminal_control_payload_fields
+
+      argument :service_id, :uuid do
+        allow_nil? false
+        public? true
+      end
+
+      argument :data, :string do
+        allow_nil? false
+        public? true
+      end
+
+      run fn input, _context ->
+        terminal_input_payload(input.arguments)
+      end
+    end
+
+    action :service_terminal_resize, :map do
+      constraints fields: @terminal_control_payload_fields
+
+      argument :service_id, :uuid do
+        allow_nil? false
+        public? true
+      end
+
+      argument :cols, :integer do
+        allow_nil? false
+        constraints min: 1
+        public? true
+      end
+
+      argument :rows, :integer do
+        allow_nil? false
+        constraints min: 1
+        public? true
+      end
+
+      run fn input, _context ->
+        terminal_resize_payload(input.arguments)
       end
     end
 
@@ -335,6 +379,34 @@ defmodule HiveServerElixir.Cells.Service do
     lifecycle_payload(input, "service.restart", &ensure_runtime_restart/1, fn service ->
       %{"serviceName" => service.name}
     end)
+  end
+
+  @spec terminal_input_payload(map()) :: {:ok, map()} | {:error, term()}
+  def terminal_input_payload(%{service_id: service_id, data: data}) when is_binary(data) do
+    with {:ok, service} <- Ash.get(__MODULE__, service_id),
+         :ok <- ServiceRuntime.ensure_service_running(service),
+         :ok <- ServiceRuntime.write_input(service_id, data) do
+      {:ok, %{ok: true}}
+    else
+      {:error, :not_running} -> {:error, "Service is not running"}
+      {:error, error} -> {:error, inspect(error)}
+    end
+  end
+
+  @spec terminal_resize_payload(map()) :: {:ok, map()} | {:error, term()}
+  def terminal_resize_payload(%{service_id: service_id, cols: cols, rows: rows}) do
+    with {:ok, service} <- Ash.get(__MODULE__, service_id) do
+      _session =
+        HiveServerElixir.Cells.Terminals.resize_session(
+          {:service, service.cell_id, service_id},
+          cols,
+          rows
+        )
+
+      {:ok, %{ok: true}}
+    else
+      {:error, error} -> {:error, inspect(error)}
+    end
   end
 
   @spec start_all_payloads(String.t(), map()) :: {:ok, [map()]} | {:error, term()}

@@ -23,6 +23,11 @@ defmodule HiveServerElixir.Cells do
       rpc_action :resume_cell_setup, :resume_cell_setup
       rpc_action :delete_cell, :delete_cell
       rpc_action :delete_many_cells, :delete_many_cells
+      rpc_action :setup_terminal_input, :setup_terminal_input
+      rpc_action :setup_terminal_resize, :setup_terminal_resize
+      rpc_action :chat_terminal_input, :chat_terminal_input
+      rpc_action :chat_terminal_resize, :chat_terminal_resize
+      rpc_action :chat_terminal_restart, :chat_terminal_restart
       rpc_action :list_services, :list_services
       rpc_action :start_services, :start_services
       rpc_action :stop_services, :stop_services
@@ -33,6 +38,8 @@ defmodule HiveServerElixir.Cells do
       rpc_action :start_service, :start_service
       rpc_action :stop_service, :stop_service
       rpc_action :restart_service, :restart_service
+      rpc_action :service_terminal_input, :service_terminal_input
+      rpc_action :service_terminal_resize, :service_terminal_resize
     end
 
     resource HiveServerElixir.Cells.AgentSession do

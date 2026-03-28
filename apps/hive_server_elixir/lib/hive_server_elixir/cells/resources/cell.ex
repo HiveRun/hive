@@ -11,6 +11,7 @@ defmodule HiveServerElixir.Cells.Cell do
   alias HiveServerElixir.Cells.ProvisioningRuntime
   alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.ServicePayload
+  alias HiveServerElixir.Cells.Terminals
   alias HiveServerElixir.Cells.TerminalEvents
   alias HiveServerElixir.Cells.Workspace
 
@@ -40,6 +41,10 @@ defmodule HiveServerElixir.Cells.Cell do
   @delete_many_payload_fields [
     deleted_ids: [type: {:array, :uuid}, allow_nil?: false],
     failed_ids: [type: {:array, :uuid}, allow_nil?: false]
+  ]
+
+  @terminal_control_payload_fields [
+    ok: [type: :boolean, allow_nil?: false]
   ]
 
   @channel_cell_snapshot_fields [
@@ -229,6 +234,105 @@ defmodule HiveServerElixir.Cells.Cell do
 
       run fn input, _context ->
         delete_many_payload(input.arguments)
+      end
+    end
+
+    action :setup_terminal_input, :map do
+      constraints fields: @terminal_control_payload_fields
+
+      argument :cell_id, :uuid do
+        allow_nil? false
+        public? true
+      end
+
+      argument :data, :string do
+        allow_nil? false
+        public? true
+      end
+
+      run fn input, _context ->
+        setup_terminal_input_payload(input.arguments)
+      end
+    end
+
+    action :setup_terminal_resize, :map do
+      constraints fields: @terminal_control_payload_fields
+
+      argument :cell_id, :uuid do
+        allow_nil? false
+        public? true
+      end
+
+      argument :cols, :integer do
+        allow_nil? false
+        constraints min: 1
+        public? true
+      end
+
+      argument :rows, :integer do
+        allow_nil? false
+        constraints min: 1
+        public? true
+      end
+
+      run fn input, _context ->
+        setup_terminal_resize_payload(input.arguments)
+      end
+    end
+
+    action :chat_terminal_input, :map do
+      constraints fields: @terminal_control_payload_fields
+
+      argument :cell_id, :uuid do
+        allow_nil? false
+        public? true
+      end
+
+      argument :data, :string do
+        allow_nil? false
+        public? true
+      end
+
+      run fn input, _context ->
+        chat_terminal_input_payload(input.arguments)
+      end
+    end
+
+    action :chat_terminal_resize, :map do
+      constraints fields: @terminal_control_payload_fields
+
+      argument :cell_id, :uuid do
+        allow_nil? false
+        public? true
+      end
+
+      argument :cols, :integer do
+        allow_nil? false
+        constraints min: 1
+        public? true
+      end
+
+      argument :rows, :integer do
+        allow_nil? false
+        constraints min: 1
+        public? true
+      end
+
+      run fn input, _context ->
+        chat_terminal_resize_payload(input.arguments)
+      end
+    end
+
+    action :chat_terminal_restart, :map do
+      constraints fields: @terminal_control_payload_fields
+
+      argument :cell_id, :uuid do
+        allow_nil? false
+        public? true
+      end
+
+      run fn input, _context ->
+        chat_terminal_restart_payload(input.arguments)
       end
     end
 
@@ -714,6 +818,69 @@ defmodule HiveServerElixir.Cells.Cell do
     end
   end
 
+  def setup_terminal_input_payload(%{cell_id: cell_id, data: data}) when is_binary(data) do
+    with {:ok, _cell} <- Ash.get(__MODULE__, cell_id),
+         :ok <- Terminals.write_input({:setup, cell_id}, data) do
+      {:ok, %{ok: true}}
+    else
+      {:error, reason} -> {:error, terminal_control_error(reason, "Cell not found")}
+    end
+  end
+
+  def setup_terminal_resize_payload(%{cell_id: cell_id, cols: cols, rows: rows}) do
+    with {:ok, _cell} <- Ash.get(__MODULE__, cell_id) do
+      _session = Terminals.resize_session({:setup, cell_id}, cols, rows)
+      {:ok, %{ok: true}}
+    else
+      {:error, reason} -> {:error, terminal_control_error(reason, "Cell not found")}
+    end
+  end
+
+  def chat_terminal_input_payload(%{cell_id: cell_id, data: data}) when is_binary(data) do
+    with {:ok, cell} <- Ash.get(__MODULE__, cell_id),
+         :ok <- Terminals.validate_chat_available(cell),
+         :ok <- Terminals.write_input({:chat, cell_id}, data) do
+      {:ok, %{ok: true}}
+    else
+      {:error, reason} ->
+        {:error,
+         terminal_control_error(
+           reason,
+           "Chat terminal is unavailable until provisioning completes"
+         )}
+    end
+  end
+
+  def chat_terminal_resize_payload(%{cell_id: cell_id, cols: cols, rows: rows}) do
+    with {:ok, cell} <- Ash.get(__MODULE__, cell_id),
+         :ok <- Terminals.validate_chat_available(cell) do
+      _session = Terminals.resize_session({:chat, cell_id}, cols, rows)
+      {:ok, %{ok: true}}
+    else
+      {:error, reason} ->
+        {:error,
+         terminal_control_error(
+           reason,
+           "Chat terminal is unavailable until provisioning completes"
+         )}
+    end
+  end
+
+  def chat_terminal_restart_payload(%{cell_id: cell_id}) do
+    with {:ok, cell} <- Ash.get(__MODULE__, cell_id),
+         :ok <- Terminals.validate_chat_available(cell) do
+      _session = Terminals.restart_session({:chat, cell_id})
+      {:ok, %{ok: true}}
+    else
+      {:error, reason} ->
+        {:error,
+         terminal_control_error(
+           reason,
+           "Chat terminal is unavailable until provisioning completes"
+         )}
+    end
+  end
+
   @spec delete_many_payload(map()) :: {:ok, map()}
   def delete_many_payload(input) when is_map(input) do
     ids =
@@ -1056,6 +1223,21 @@ defmodule HiveServerElixir.Cells.Cell do
   end
 
   defp normalize_optional_string(_value), do: nil
+
+  defp terminal_control_error(:chat_unavailable, fallback), do: fallback
+  defp terminal_control_error(:not_running, _fallback), do: "Service is not running"
+
+  defp terminal_control_error(%Ash.Error.Query.NotFound{}, fallback), do: fallback
+
+  defp terminal_control_error(%{errors: errors}, fallback) when is_list(errors) do
+    if Enum.any?(errors, &match?(%Ash.Error.Query.NotFound{}, &1)) do
+      fallback
+    else
+      inspect(%{errors: errors})
+    end
+  end
+
+  defp terminal_control_error(reason, _fallback), do: inspect(reason)
 
   defp normalize_cell_name(name, _description) when is_binary(name) and byte_size(name) > 0,
     do: name

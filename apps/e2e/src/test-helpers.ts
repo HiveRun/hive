@@ -120,6 +120,8 @@ export async function createCell(options: {
     await selectStartMode(options.page, options.startMode);
   }
 
+  await ensureCellFormReady(options.page);
+
   await expect(options.page.locator(selectors.cellSubmitButton)).toBeEnabled({
     timeout: timeoutMs,
   });
@@ -220,6 +222,27 @@ async function selectStartMode(page: Page, startMode: "plan" | "build") {
   await page
     .getByRole("option", { name: startMode === "build" ? "Build" : "Plan" })
     .click();
+}
+
+async function ensureCellFormReady(page: Page): Promise<void> {
+  const submitButton = page.locator(selectors.cellSubmitButton);
+
+  if (await submitButton.isEnabled()) {
+    return;
+  }
+
+  const modelSelector = page.locator("#cell-model-selector");
+  if (!(await modelSelector.count())) {
+    return;
+  }
+
+  const modelText = (await modelSelector.textContent())?.trim() ?? "";
+  if (!modelText.includes("Select model")) {
+    return;
+  }
+
+  await modelSelector.click();
+  await page.getByRole("option").first().click();
 }
 
 async function rpcRun<T>(

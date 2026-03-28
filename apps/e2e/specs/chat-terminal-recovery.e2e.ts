@@ -13,6 +13,7 @@ const CHAT_ROUTE_TIMEOUT_MS = 180_000;
 const CONNECTION_TRANSITION_TIMEOUT_MS = 30_000;
 const POST_RESTART_INPUT_TIMEOUT_MS = 30_000;
 const PID_PATTERN = /pid\s+(\d+)/i;
+const CHAT_TEMPLATE_LABEL = "Basic Template";
 
 test.describe("chat terminal recovery", () => {
   test("recovers from a terminated chat terminal process", async ({ page }) => {
@@ -21,6 +22,7 @@ test.describe("chat terminal recovery", () => {
     const cellId = await createCell({
       page,
       name: `E2E Chat Recovery ${Date.now()}`,
+      templateLabel: CHAT_TEMPLATE_LABEL,
     });
 
     await page.goto(`/cells/${cellId}/chat`);

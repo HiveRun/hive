@@ -1,7 +1,6 @@
 defmodule HiveServerElixir.Cells.Terminals do
   @moduledoc false
 
-  alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.CellStatus
   alias HiveServerElixir.Cells.Events
@@ -20,7 +19,7 @@ defmodule HiveServerElixir.Cells.Terminals do
 
   @spec get_service_for_cell(String.t(), String.t()) :: {:ok, Service.t()} | {:error, term()}
   def get_service_for_cell(cell_id, service_id) do
-    case Ash.get(Service, service_id, domain: Cells) do
+    case Ash.get(Service, service_id) do
       {:ok, %Service{cell_id: ^cell_id} = service} -> {:ok, service}
       {:ok, _service} -> {:error, :service_not_found}
       {:error, error} -> {:error, error}

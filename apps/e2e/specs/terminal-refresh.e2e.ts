@@ -9,6 +9,7 @@ import {
 
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
 const OUTPUT_TIMEOUT_MS = 30_000;
+const TERMINAL_TEMPLATE_LABEL = "Basic Template";
 
 test.describe("terminal reconnect", () => {
   test("reconnects after page refresh and still accepts input", async ({
@@ -19,6 +20,7 @@ test.describe("terminal reconnect", () => {
     const cellId = await createCell({
       page,
       name: `E2E Terminal Refresh ${Date.now()}`,
+      templateLabel: TERMINAL_TEMPLATE_LABEL,
     });
 
     await page.goto(`/cells/${cellId}/terminal`);

@@ -1,4 +1,4 @@
-import { Socket } from "phoenix";
+import { type Channel, Socket } from "phoenix";
 import {
   createTimingChannel,
   createWorkspaceChannel,
@@ -32,8 +32,12 @@ type ChannelJoinResult = {
 
 let socket: Socket | null = null;
 let socketUrl: string | null = null;
+let rpcChannel: Channel | null = null;
+let rpcChannelUrl: string | null = null;
+let rpcChannelJoinPromise: Promise<Channel> | null = null;
 
 const PHOENIX_SOCKET_PATH = "/api/cells/terminal/socket";
+const ASH_RPC_TOPIC = "ash_typescript_rpc:browser";
 
 export function joinWorkspaceRealtimeChannel(options: {
   apiBase: string;
@@ -97,10 +101,52 @@ function ensureSocket(apiBase: string): Socket {
   }
 
   socket?.disconnect();
+  rpcChannel = null;
+  rpcChannelUrl = null;
+  rpcChannelJoinPromise = null;
   socket = new Socket(url);
   socket.connect();
   socketUrl = url;
   return socket;
+}
+
+export function getAshRpcChannel(apiBase: string): Promise<Channel> {
+  const realtimeSocket = ensureSocket(apiBase);
+  const url = buildPhoenixSocketUrl(apiBase);
+
+  if (rpcChannel && rpcChannelUrl === url) {
+    return Promise.resolve(rpcChannel);
+  }
+
+  if (rpcChannelJoinPromise && rpcChannelUrl === url) {
+    return rpcChannelJoinPromise;
+  }
+
+  rpcChannel = realtimeSocket.channel(ASH_RPC_TOPIC, {});
+  rpcChannelUrl = url;
+  rpcChannelJoinPromise = new Promise<Channel>((resolve, reject) => {
+    rpcChannel
+      ?.join()
+      .receive("ok", () => {
+        if (!rpcChannel) {
+          reject(new Error("AshTypescript RPC channel missing after join"));
+          return;
+        }
+
+        resolve(rpcChannel);
+      })
+      .receive("error", (reason) => {
+        rpcChannel = null;
+        rpcChannelJoinPromise = null;
+        reject(
+          new Error(
+            `Failed to join AshTypescript RPC channel: ${JSON.stringify(reason)}`
+          )
+        );
+      });
+  });
+
+  return rpcChannelJoinPromise;
 }
 
 function buildPhoenixSocketUrl(apiBase: string): string {

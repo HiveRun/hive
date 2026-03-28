@@ -1,3 +1,15 @@
+import type { Channel } from "phoenix";
+import {
+  chatTerminalInputChannel,
+  chatTerminalResizeChannel,
+  chatTerminalRestartChannel,
+  serviceTerminalInputChannel,
+  serviceTerminalResizeChannel,
+  setupTerminalInputChannel,
+  setupTerminalResizeChannel,
+} from "@/lib/generated/ash-rpc";
+import { getAshRpcChannel } from "@/lib/realtime-channels";
+
 export type TerminalSocketMessage = {
   type: string;
   [key: string]: unknown;
@@ -29,6 +41,11 @@ type PhoenixFramePayload = {
   payload: Record<string, unknown>;
 };
 
+type TerminalScope =
+  | { kind: "setup"; cellId: string }
+  | { kind: "chat"; cellId: string }
+  | { kind: "service"; cellId: string; serviceId: string };
+
 const SOCKET_CONNECTING_STATE = 0;
 const SOCKET_OPEN_STATE = 1;
 const SOCKET_CLOSING_STATE = 2;
@@ -38,6 +55,7 @@ const PHOENIX_HEARTBEAT_INTERVAL_MS = 25_000;
 const PHOENIX_SOCKET_PATH = "/api/cells/terminal/socket/websocket";
 const PHOENIX_SOCKET_VERSION = "2.0.0";
 const PHOENIX_FRAME_MIN_LENGTH = 5;
+const TERMINAL_CONTROL_FIELDS: "ok"[] = ["ok"];
 
 const SERVICE_TERMINAL_TOPIC_PATTERN =
   /^\/api\/cells\/([^/]+)\/services\/([^/]+)\/terminal(?:\/(?:stream|ws))?$/;
@@ -56,9 +74,9 @@ export const createTerminalSocket = (options: {
   apiBase: string;
   terminalPath: string;
 }): TerminalSocketLike => {
-  const topic = resolveTerminalTopic(options.terminalPath);
+  const scope = resolveTerminalScope(options.terminalPath);
 
-  if (!topic) {
+  if (!scope) {
     const websocketUrl = buildWebSocketUrl(
       options.apiBase,
       options.terminalPath
@@ -67,7 +85,11 @@ export const createTerminalSocket = (options: {
   }
 
   const phoenixUrl = buildPhoenixSocketUrl(options.apiBase);
-  return createPhoenixTerminalSocket({ url: phoenixUrl, topic });
+  return createPhoenixTerminalSocket({
+    apiBase: options.apiBase,
+    url: phoenixUrl,
+    scope,
+  });
 };
 
 export const parseTerminalSocketMessage = (
@@ -106,28 +128,51 @@ export const sendTerminalSocketMessage = (
   return true;
 };
 
-const resolveTerminalTopic = (terminalPath: string): string | null => {
+const resolveTerminalScope = (terminalPath: string): TerminalScope | null => {
   const pathname = extractPathname(terminalPath);
 
   const serviceMatch = pathname.match(SERVICE_TERMINAL_TOPIC_PATTERN);
   if (serviceMatch) {
-    const [, cellId, serviceId] = serviceMatch;
-    return `service_terminal:${cellId}:${serviceId}`;
+    const cellId = serviceMatch[1];
+    const serviceId = serviceMatch[2];
+    if (!(cellId && serviceId)) {
+      return null;
+    }
+    return { kind: "service", cellId, serviceId };
   }
 
   const setupMatch = pathname.match(SETUP_TERMINAL_TOPIC_PATTERN);
   if (setupMatch) {
-    const [, cellId] = setupMatch;
-    return `setup_terminal:${cellId}`;
+    const cellId = setupMatch[1];
+    if (!cellId) {
+      return null;
+    }
+    return { kind: "setup", cellId };
   }
 
   const chatMatch = pathname.match(CHAT_TERMINAL_TOPIC_PATTERN);
   if (chatMatch) {
-    const [, cellId] = chatMatch;
-    return `chat_terminal:${cellId}`;
+    const cellId = chatMatch[1];
+    if (!cellId) {
+      return null;
+    }
+    return { kind: "chat", cellId };
   }
 
   return null;
+};
+
+const topicForScope = (scope: TerminalScope): string => {
+  switch (scope.kind) {
+    case "setup":
+      return `setup_terminal:${scope.cellId}`;
+    case "chat":
+      return `chat_terminal:${scope.cellId}`;
+    case "service":
+      return `service_terminal:${scope.cellId}:${scope.serviceId}`;
+    default:
+      return "terminal";
+  }
 };
 
 const extractPathname = (value: string): string => {
@@ -152,11 +197,13 @@ const buildPhoenixSocketUrl = (apiBase: string): string => {
 };
 
 const createPhoenixTerminalSocket = (options: {
+  apiBase: string;
   url: string;
-  topic: string;
+  scope: TerminalScope;
 }): TerminalSocketLike => {
   const websocket = new WebSocket(options.url);
   const outboundQueue: TerminalSocketMessage[] = [];
+  const topic = topicForScope(options.scope);
 
   let socketReadyState = SOCKET_CONNECTING_STATE;
   let heartbeatTimer: number | null = null;
@@ -191,13 +238,7 @@ const createPhoenixTerminalSocket = (options: {
         return;
       }
 
-      sendFrame({
-        joinRef,
-        ref: nextRef(),
-        topic: options.topic,
-        event: "terminal_message",
-        payload,
-      });
+      dispatchControlMessage(payload);
     },
     close(code, reason) {
       if (closed) {
@@ -217,7 +258,7 @@ const createPhoenixTerminalSocket = (options: {
     sendFrame({
       joinRef,
       ref: joinRequestRef,
-      topic: options.topic,
+      topic,
       event: "phx_join",
       payload: {},
     });
@@ -234,7 +275,7 @@ const createPhoenixTerminalSocket = (options: {
       return;
     }
 
-    if (frame.event === "terminal_event" && frame.topic === options.topic) {
+    if (frame.event === "terminal_event" && frame.topic === topic) {
       socket.onmessage?.(
         new MessageEvent("message", {
           data: JSON.stringify(frame.payload ?? {}),
@@ -243,7 +284,7 @@ const createPhoenixTerminalSocket = (options: {
       return;
     }
 
-    if (frame.topic !== options.topic) {
+    if (frame.topic !== topic) {
       return;
     }
 
@@ -298,13 +339,7 @@ const createPhoenixTerminalSocket = (options: {
         continue;
       }
 
-      sendFrame({
-        joinRef,
-        ref: nextRef(),
-        topic: options.topic,
-        event: "terminal_message",
-        payload,
-      });
+      dispatchControlMessage(payload);
     }
   };
 
@@ -343,7 +378,7 @@ const createPhoenixTerminalSocket = (options: {
   const handleJoinReply = (frame: PhoenixFramePayload): boolean => {
     if (
       frame.event !== "phx_reply" ||
-      frame.topic !== options.topic ||
+      frame.topic !== topic ||
       frame.ref !== joinRequestRef ||
       joined
     ) {
@@ -363,8 +398,218 @@ const createPhoenixTerminalSocket = (options: {
     return true;
   };
 
+  const dispatchControlMessage = (payload: TerminalSocketMessage): void => {
+    getAshRpcChannel(options.apiBase)
+      .then((channel) => {
+        switch (payload.type) {
+          case "input":
+            dispatchTerminalInput(
+              channel,
+              options.scope,
+              payload,
+              emitControlError
+            );
+            break;
+          case "resize":
+            dispatchTerminalResize(
+              channel,
+              options.scope,
+              payload,
+              emitControlError
+            );
+            break;
+          case "restart":
+            dispatchTerminalRestart(
+              channel,
+              options.scope,
+              emitControlError,
+              () => {
+                socket.close();
+              }
+            );
+            break;
+          case "ping":
+            emitControlEvent({ type: "pong" });
+            break;
+          default:
+            emitControlError("Unsupported message");
+        }
+      })
+      .catch((error: unknown) => {
+        emitControlError(
+          error instanceof Error
+            ? error.message
+            : "Terminal control channel unavailable"
+        );
+      });
+  };
+
+  const emitControlEvent = (payload: Record<string, unknown>) => {
+    socket.onmessage?.(
+      new MessageEvent("message", {
+        data: JSON.stringify(payload),
+      })
+    );
+  };
+
+  const emitControlError = (message: string) => {
+    emitControlEvent({ type: "error", message });
+  };
+
   return socket;
 };
+
+function dispatchTerminalInput(
+  channel: Channel,
+  scope: TerminalScope,
+  payload: TerminalSocketMessage,
+  onError: (message: string) => void
+) {
+  const data = typeof payload.data === "string" ? payload.data : "";
+
+  if (scope.kind === "setup") {
+    setupTerminalInputChannel({
+      channel,
+      input: { cellId: scope.cellId, data },
+      fields: TERMINAL_CONTROL_FIELDS,
+      resultHandler: noopResult,
+      errorHandler: (error: unknown) =>
+        onError(channelErrorMessage(error, "Failed to send setup input")),
+      timeoutHandler: () => onError("Setup terminal input timed out"),
+    });
+    return;
+  }
+
+  if (scope.kind === "chat") {
+    chatTerminalInputChannel({
+      channel,
+      input: { cellId: scope.cellId, data },
+      fields: TERMINAL_CONTROL_FIELDS,
+      resultHandler: noopResult,
+      errorHandler: (error: unknown) =>
+        onError(channelErrorMessage(error, "Failed to send chat input")),
+      timeoutHandler: () => onError("Chat terminal input timed out"),
+    });
+    return;
+  }
+
+  serviceTerminalInputChannel({
+    channel,
+    input: { serviceId: scope.serviceId, data },
+    fields: TERMINAL_CONTROL_FIELDS,
+    resultHandler: noopResult,
+    errorHandler: (error: unknown) =>
+      onError(channelErrorMessage(error, "Failed to send service input")),
+    timeoutHandler: () => onError("Service terminal input timed out"),
+  });
+}
+
+function dispatchTerminalResize(
+  channel: Channel,
+  scope: TerminalScope,
+  payload: TerminalSocketMessage,
+  onError: (message: string) => void
+) {
+  const cols =
+    typeof payload.cols === "number" ? payload.cols : Number(payload.cols);
+  const rows =
+    typeof payload.rows === "number" ? payload.rows : Number(payload.rows);
+
+  if (
+    !(Number.isInteger(cols) && cols > 0 && Number.isInteger(rows) && rows > 0)
+  ) {
+    onError("cols and rows must be positive integers");
+    return;
+  }
+
+  if (scope.kind === "setup") {
+    setupTerminalResizeChannel({
+      channel,
+      input: { cellId: scope.cellId, cols, rows },
+      fields: TERMINAL_CONTROL_FIELDS,
+      resultHandler: noopResult,
+      errorHandler: (error: unknown) =>
+        onError(channelErrorMessage(error, "Failed to resize setup terminal")),
+      timeoutHandler: () => onError("Setup terminal resize timed out"),
+    });
+    return;
+  }
+
+  if (scope.kind === "chat") {
+    chatTerminalResizeChannel({
+      channel,
+      input: { cellId: scope.cellId, cols, rows },
+      fields: TERMINAL_CONTROL_FIELDS,
+      resultHandler: noopResult,
+      errorHandler: (error: unknown) =>
+        onError(channelErrorMessage(error, "Failed to resize chat terminal")),
+      timeoutHandler: () => onError("Chat terminal resize timed out"),
+    });
+    return;
+  }
+
+  serviceTerminalResizeChannel({
+    channel,
+    input: { serviceId: scope.serviceId, cols, rows },
+    fields: TERMINAL_CONTROL_FIELDS,
+    resultHandler: noopResult,
+    errorHandler: (error: unknown) =>
+      onError(channelErrorMessage(error, "Failed to resize service terminal")),
+    timeoutHandler: () => onError("Service terminal resize timed out"),
+  });
+}
+
+function dispatchTerminalRestart(
+  channel: Channel,
+  scope: TerminalScope,
+  onError: (message: string) => void,
+  onSuccess: () => void
+) {
+  if (scope.kind !== "chat") {
+    onError("Restart is unsupported");
+    return;
+  }
+
+  chatTerminalRestartChannel({
+    channel,
+    input: { cellId: scope.cellId },
+    fields: TERMINAL_CONTROL_FIELDS,
+    resultHandler: () => {
+      onSuccess();
+    },
+    errorHandler: (error: unknown) =>
+      onError(channelErrorMessage(error, "Failed to restart chat terminal")),
+    timeoutHandler: () => onError("Chat terminal restart timed out"),
+  });
+}
+
+function noopResult(_result: unknown) {
+  return;
+}
+
+function channelErrorMessage(error: unknown, fallback: string): string {
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (error && typeof error === "object") {
+    const errorRecord = error as {
+      reason?: unknown;
+      errors?: Array<{ message?: string }>;
+    };
+
+    if (typeof errorRecord.reason === "string") {
+      return errorRecord.reason;
+    }
+
+    const firstMessage = errorRecord.errors?.[0]?.message;
+    if (typeof firstMessage === "string") {
+      return firstMessage;
+    }
+  }
+
+  return fallback;
+}
 
 const parsePhoenixFrame = (rawData: unknown): PhoenixFramePayload | null => {
   if (typeof rawData !== "string") {
