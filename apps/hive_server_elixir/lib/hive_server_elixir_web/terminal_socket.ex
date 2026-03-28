@@ -6,6 +6,7 @@ defmodule HiveServerElixirWeb.TerminalSocket do
   channel("ash_typescript_rpc:*", HiveServerElixirWeb.AshTypescriptRpcChannel)
   channel("workspace:*", HiveServerElixirWeb.WorkspaceChannel)
   channel("timings:*", HiveServerElixirWeb.TimingChannel)
+  channel("services:*", HiveServerElixirWeb.ServiceChannel)
   channel("setup_terminal:*", HiveServerElixirWeb.TerminalChannel)
   channel("service_terminal:*", HiveServerElixirWeb.TerminalChannel)
   channel("chat_terminal:*", HiveServerElixirWeb.TerminalChannel)

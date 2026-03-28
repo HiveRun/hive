@@ -38,6 +38,7 @@ defmodule HiveServerElixir.Cells do
       rpc_action :start_service, :start_service
       rpc_action :stop_service, :stop_service
       rpc_action :restart_service, :restart_service
+      rpc_action :service_snapshot, :service_snapshot
       rpc_action :service_terminal_input, :service_terminal_input
       rpc_action :service_terminal_resize, :service_terminal_resize
     end

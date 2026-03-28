@@ -7,7 +7,6 @@ defmodule HiveServerElixirWeb.CellsController do
   alias HiveServerElixir.Cells.Terminals
   alias HiveServerElixir.Cells.Terminals.Transport
   alias HiveServerElixirWeb.CellErrorResponse
-  alias HiveServerElixirWeb.Cells.Streams
   alias HiveServerElixirWeb.Cells.StreamTransport
 
   def setup_terminal_stream(conn, %{"id" => cell_id} = params) do
@@ -299,42 +298,6 @@ defmodule HiveServerElixirWeb.CellsController do
 
       {:error, error} ->
         CellErrorResponse.render(conn, error)
-    end
-  end
-
-  def services_stream(conn, %{"id" => cell_id} = params) do
-    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
-         :ok <- Events.subscribe_cell_services(cell_id) do
-      stream_conn = StreamTransport.open_sse(conn)
-
-      with {:ok, stream_conn} <-
-             StreamTransport.send_event(stream_conn, "ready", %{
-               timestamp: System.system_time(:millisecond)
-             }),
-           {:ok, stream_conn} <- Streams.send_services_snapshot(stream_conn, cell_id, params),
-           {:ok, stream_conn} <-
-             StreamTransport.send_event(stream_conn, "snapshot", %{
-               timestamp: System.system_time(:millisecond)
-             }) do
-        if Map.get(params, "initialOnly") in ["true", "1"] do
-          stream_conn
-        else
-          Streams.stream_service_events(stream_conn, cell_id, params)
-        end
-      else
-        {:error, _reason} -> stream_conn
-      end
-    else
-      {:error, reason} ->
-        if match?({:not_found, _code}, CellErrorResponse.classify(reason)) do
-          conn
-          |> put_status(:not_found)
-          |> json(%{error: %{code: "not_found", message: "Cell not found"}})
-        else
-          conn
-          |> put_status(:unprocessable_entity)
-          |> json(%{error: %{code: "stream_failed", message: inspect(reason)}})
-        end
     end
   end
 

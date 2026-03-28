@@ -1,12 +1,18 @@
 import { type Channel, Socket } from "phoenix";
 import {
+  createServiceChannel,
   createTimingChannel,
   createWorkspaceChannel,
+  onServiceChannelMessages,
   onTimingChannelMessages,
   onWorkspaceChannelMessages,
+  type ServiceChannel,
+  type ServiceChannelHandlers,
+  type ServiceChannelRefs,
   type TimingChannel,
   type TimingChannelHandlers,
   type TimingChannelRefs,
+  unsubscribeServiceChannel,
   unsubscribeTimingChannel,
   unsubscribeWorkspaceChannel,
   type WorkspaceChannel,
@@ -88,6 +94,33 @@ export function joinTimingRealtimeChannel(options: {
   return {
     unsubscribe: () => {
       unsubscribeTimingChannel(channel, refs as TimingChannelRefs);
+      channel.leave();
+    },
+  };
+}
+
+export function joinServiceRealtimeChannel(options: {
+  apiBase: string;
+  cellId: string;
+  handlers: ServiceChannelHandlers;
+  onJoin?: () => void;
+  onError?: (reason: unknown) => void;
+}): ChannelJoinResult {
+  const realtimeSocket = ensureSocket(options.apiBase);
+  const channel = createServiceChannel(
+    realtimeSocket,
+    options.cellId
+  ) as ServiceChannel & RealtimeJoinable;
+  const refs = onServiceChannelMessages(channel, options.handlers);
+
+  channel
+    .join()
+    .receive("ok", () => options.onJoin?.())
+    .receive("error", (reason: unknown) => options.onError?.(reason));
+
+  return {
+    unsubscribe: () => {
+      unsubscribeServiceChannel(channel, refs as ServiceChannelRefs);
       channel.leave();
     },
   };

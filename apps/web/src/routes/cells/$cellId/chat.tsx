@@ -1,10 +1,13 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { useEffect } from "react";
 import { CellTerminal } from "@/components/cell-terminal";
 import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
+import { rpc } from "@/lib/rpc";
+import { cn } from "@/lib/utils";
+import { agentQueries } from "@/queries/agents";
 import { cellQueries } from "@/queries/cells";
 
 const ignorePromiseRejection = (_error: unknown) => null;
@@ -14,6 +17,9 @@ export const Route = createFileRoute("/cells/$cellId/chat")({
     queryClient
       .prefetchQuery(cellQueries.detail(params.cellId))
       .catch(ignorePromiseRejection);
+    queryClient
+      .prefetchQuery(agentQueries.sessionByCell(params.cellId))
+      .catch(ignorePromiseRejection);
     return null;
   },
   component: CellChat,
@@ -22,7 +28,35 @@ export const Route = createFileRoute("/cells/$cellId/chat")({
 function CellChat() {
   const { cellId } = Route.useParams();
   const navigate = useNavigate({ from: "/cells/$cellId/chat" });
+  const queryClient = useQueryClient();
   const cellQuery = useQuery(cellQueries.detail(cellId));
+  const sessionQuery = useQuery(agentQueries.sessionByCell(cellId));
+
+  const setModeMutation = useMutation({
+    mutationFn: async (mode: "plan" | "build") => {
+      const sessionId = sessionQuery.data?.id;
+      if (!sessionId) {
+        throw new Error("Agent session is not available yet");
+      }
+
+      const { error } = await rpc.api.agents
+        .sessions({ id: sessionId })
+        .mode.post({
+          mode,
+        });
+
+      if (error) {
+        throw new Error("Failed to update agent mode");
+      }
+
+      return mode;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: agentQueries.sessionByCell(cellId).queryKey,
+      });
+    },
+  });
 
   useEffect(() => {
     if (!cellQuery.data || cellQuery.data.status === "ready") {
@@ -121,18 +155,66 @@ function CellChat() {
   }
 
   return (
-    <CellTerminal
-      cellId={cellId}
-      connectCommand={cellQuery.data?.opencodeCommand ?? null}
-      endpointBase="chat/terminal"
-      reconnectLabel="Reconnect chat"
-      restartLabel="Restart chat"
-      startupReadiness="terminal-content"
-      startupStatusMessage={startupStatusMessage}
-      startupTextMatch={cellQuery.data?.name ?? null}
-      terminalLineHeight={1}
-      themeMode={themeMode}
-      title="Cell Chat"
-    />
+    <div className="flex h-full min-h-0 flex-1 flex-col gap-3">
+      <ModeSwitcher
+        currentMode={sessionQuery.data?.currentMode ?? null}
+        disabled={setModeMutation.isPending || !sessionQuery.data?.id}
+        onSelectMode={(mode) => setModeMutation.mutate(mode)}
+      />
+
+      <CellTerminal
+        cellId={cellId}
+        connectCommand={cellQuery.data?.opencodeCommand ?? null}
+        endpointBase="chat/terminal"
+        reconnectLabel="Reconnect chat"
+        restartLabel="Restart chat"
+        startupReadiness="terminal-content"
+        startupStatusMessage={startupStatusMessage}
+        startupTextMatch={cellQuery.data?.name ?? null}
+        terminalLineHeight={1}
+        themeMode={themeMode}
+        title="Cell Chat"
+      />
+    </div>
+  );
+}
+
+function ModeSwitcher({
+  currentMode,
+  disabled,
+  onSelectMode,
+}: {
+  currentMode: "plan" | "build" | null;
+  disabled: boolean;
+  onSelectMode: (mode: "plan" | "build") => void;
+}) {
+  return (
+    <div className="flex items-center justify-end gap-2">
+      <span className="text-[10px] text-muted-foreground uppercase tracking-[0.24em]">
+        Agent mode
+      </span>
+      <Button
+        className={cn(currentMode === "plan" && "border-primary")}
+        data-testid="agent-mode-plan"
+        disabled={disabled}
+        onClick={() => onSelectMode("plan")}
+        size="sm"
+        type="button"
+        variant={currentMode === "plan" ? "secondary" : "outline"}
+      >
+        Plan
+      </Button>
+      <Button
+        className={cn(currentMode === "build" && "border-primary")}
+        data-testid="agent-mode-build"
+        disabled={disabled}
+        onClick={() => onSelectMode("build")}
+        size="sm"
+        type="button"
+        variant={currentMode === "build" ? "secondary" : "outline"}
+      >
+        Build
+      </Button>
+    </div>
   );
 }

@@ -3048,6 +3048,137 @@ export async function restartServiceChannel<Fields extends RestartServiceFields 
 }
 
 
+export type ServiceSnapshotInput = {
+  serviceId: UUID;
+};
+
+export type ServiceSnapshotFields = UnifiedFieldSelection<{id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "type" | "status" | "command" | "cwd" | "logPath" | "lastKnownError" | "env" | "updatedAt" | "recentLogs" | "totalLogLines" | "hasMoreLogs" | "processAlive" | "portReachable" | "url" | "pid" | "port" | "cpuPercent" | "rssBytes" | "resourceSampledAt" | "resourceUnavailableReason"}>[];
+
+export type InferServiceSnapshotResult<
+  Fields extends ServiceSnapshotFields | undefined,
+> = InferResult<{id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null, __type: "TypedMap", __primitiveFields: "id" | "name" | "type" | "status" | "command" | "cwd" | "logPath" | "lastKnownError" | "env" | "updatedAt" | "recentLogs" | "totalLogLines" | "hasMoreLogs" | "processAlive" | "portReachable" | "url" | "pid" | "port" | "cpuPercent" | "rssBytes" | "resourceSampledAt" | "resourceUnavailableReason"}, Fields>;
+
+export type ServiceSnapshotResult<Fields extends ServiceSnapshotFields | undefined = undefined> = | { success: true; data: InferServiceSnapshotResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on Service
+ *
+ * @ashActionType :action
+ */
+export async function serviceSnapshot<Fields extends ServiceSnapshotFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: ServiceSnapshotInput;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ServiceSnapshotResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "service_snapshot",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<ServiceSnapshotResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Service
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateServiceSnapshot(
+  config: {
+  tenant?: string;
+  input: ServiceSnapshotInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "service_snapshot",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Service
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateServiceSnapshotChannel(config: {
+  channel: Channel;
+  tenant?: string;
+  input: ServiceSnapshotInput;
+  hookCtx?: ValidationChannelHookContext;
+  resultHandler: (result: ValidationResult) => void;
+  errorHandler?: (error: any) => void;
+  timeoutHandler?: () => void;
+  timeout?: number;
+}) {
+  executeValidationChannelPush<ValidationResult>(
+    config.channel,
+    {
+    action: "service_snapshot",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  },
+    config.timeout,
+    config
+  );
+}
+
+
+/**
+ * Execute generic action on Service
+ *
+ * @ashActionType :action
+ */
+export async function serviceSnapshotChannel<Fields extends ServiceSnapshotFields | undefined = undefined>(config: {
+  channel: Channel;
+  tenant?: string;
+  input: ServiceSnapshotInput;
+  hookCtx?: ActionChannelHookContext;
+  fields: Fields;
+  resultHandler: (result: ServiceSnapshotResult<Fields>) => void;
+  errorHandler?: (error: any) => void;
+  timeoutHandler?: () => void;
+  timeout?: number;
+}) {
+  executeActionChannelPush<ServiceSnapshotResult<Fields>>(
+    config.channel,
+    {
+    action: "service_snapshot",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  },
+    config.timeout,
+    config
+  );
+}
+
+
 export type ServiceTerminalInputInput = {
   serviceId: UUID;
   data: string;

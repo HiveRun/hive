@@ -1274,7 +1274,28 @@ export type ValidationResult =
 
 export type CellRemovedPayload = {id: UUID};
 export type CellSnapshotPayload = {id: UUID, name: string, workspaceId: UUID, description: string | null, templateId: string, workspaceRootPath: string, workspacePath: string, opencodeSessionId: string | null, opencodeCommand: string | null, createdAt: string | null, status: string, lastSetupError: string | null, branchName: string | null, baseCommit: string | null, updatedAt: string | null};
+export type ServiceSnapshotPayload = {id: UUID, name: string, type: string, status: string, command: string, cwd: string, logPath: string | null, lastKnownError: string | null, env: Record<string, any>, updatedAt: string | null, recentLogs: string | null, totalLogLines: number | null, hasMoreLogs: boolean, processAlive: boolean, portReachable: boolean | null, url: string | null, pid: number | null, port: number | null, cpuPercent: number | null, rssBytes: number | null, resourceSampledAt: string | null, resourceUnavailableReason: string | null};
 export type TimingSnapshotPayload = {id: UUID, cellId: UUID, cellName: string | null, workspaceId: UUID | null, templateId: string | null, runId: string, workflow: string, step: string, status: string, attempt: number | null, error: string | null, metadata: Record<string, any>, durationMs: number, createdAt: string | null};
+
+// Channel types for HiveServerElixirWeb.ServiceChannel
+
+export type ServiceChannel = {
+  readonly __channelType: "ServiceChannel";
+  on(event: string, callback: (payload: unknown) => void): number;
+  off(event: string, ref: number): void;
+};
+
+export type ServiceChannelEvents = {
+  service_snapshot: ServiceSnapshotPayload;
+};
+
+export type ServiceChannelHandlers = {
+  [E in keyof ServiceChannelEvents]?: (payload: ServiceChannelEvents[E]) => void;
+};
+
+export type ServiceChannelRefs = {
+  [E in keyof ServiceChannelEvents]?: number;
+};
 
 // Channel types for HiveServerElixirWeb.TimingChannel
 

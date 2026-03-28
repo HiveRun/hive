@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { getApiBase } from "@/lib/api-base";
-import type { CellServiceSummary } from "@/queries/cells";
+import { joinServiceRealtimeChannel } from "@/lib/realtime-channels";
+import { type CellServiceSummary, cellQueries } from "@/queries/cells";
 
 const API_BASE = getApiBase();
 
@@ -9,100 +11,64 @@ export function useServiceStream(
   options: { enabled?: boolean; includeResources?: boolean } = {}
 ) {
   const { enabled = true, includeResources = false } = options;
-  const [services, setServices] = useState<CellServiceSummary[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | undefined>();
+  const queryClient = useQueryClient();
+
+  const servicesQuery = useQuery({
+    ...cellQueries.services(cellId, { includeResources }),
+    enabled,
+  });
 
   useEffect(() => {
-    if (!enabled) {
-      setServices([]);
-      setIsLoading(false);
-      setError(undefined);
+    if (!(enabled && cellId) || typeof window === "undefined") {
       return;
     }
 
-    if (!cellId || typeof window === "undefined") {
-      return;
-    }
+    const queryKey = cellQueries.services(cellId, {
+      includeResources,
+    }).queryKey;
 
-    let isActive = true;
-    setServices([]);
-    setIsLoading(true);
-    setError(undefined);
+    const subscription = joinServiceRealtimeChannel({
+      apiBase: API_BASE,
+      cellId,
+      handlers: {
+        service_snapshot: (payload) => {
+          const service = payload as CellServiceSummary;
 
-    const params = new URLSearchParams();
-    if (includeResources) {
-      params.set("includeResources", "true");
-    }
-    const query = params.toString();
-    const source = new EventSource(
-      `${API_BASE}/api/cells/${cellId}/services/stream${query ? `?${query}` : ""}`
-    );
+          queryClient.setQueryData<CellServiceSummary[]>(
+            queryKey,
+            (current = []) => {
+              const services = current as CellServiceSummary[];
+              const index = services.findIndex(
+                (item) => item.id === service.id
+              );
+              if (index === -1) {
+                return [...services, service];
+              }
 
-    const upsertService = (service: CellServiceSummary) => {
-      setServices((current) => {
-        const index = current.findIndex((item) => item.id === service.id);
-        if (index === -1) {
-          return [...current, service];
-        }
-        const next = current.slice();
-        next[index] = service;
-        return next;
-      });
-      setIsLoading(false);
-      setError(undefined);
-    };
+              const next = services.slice();
+              next[index] = service;
+              return next;
+            }
+          );
+        },
+      },
+      onJoin: () => {
+        queryClient.invalidateQueries({ queryKey });
+      },
+      onError: () => {
+        queryClient.invalidateQueries({ queryKey });
+      },
+    });
 
-    const serviceListener = (event: MessageEvent<string>) => {
-      try {
-        const payload = JSON.parse(event.data) as CellServiceSummary;
-        upsertService(payload);
-      } catch {
-        /* ignore malformed events */
-      }
-    };
+    return subscription.unsubscribe;
+  }, [cellId, enabled, includeResources, queryClient]);
 
-    const snapshotListener = () => {
-      if (isActive) {
-        setIsLoading(false);
-      }
-    };
-
-    const readyListener = () => {
-      if (isActive) {
-        setIsLoading(false);
-      }
-    };
-
-    const heartbeatListener = () => {
-      if (isActive) {
-        setIsLoading(false);
-      }
-    };
-
-    const errorListener = () => {
-      if (isActive) {
-        setError("Lost connection to service stream");
-        setIsLoading(false);
-      }
-    };
-
-    source.addEventListener("service", serviceListener as EventListener);
-    source.addEventListener("snapshot", snapshotListener);
-    source.addEventListener("ready", readyListener);
-    source.addEventListener("heartbeat", heartbeatListener);
-    source.addEventListener("error", errorListener);
-
-    return () => {
-      isActive = false;
-      source.removeEventListener("service", serviceListener as EventListener);
-      source.removeEventListener("snapshot", snapshotListener);
-      source.removeEventListener("ready", readyListener);
-      source.removeEventListener("heartbeat", heartbeatListener);
-      source.removeEventListener("error", errorListener);
-      source.close();
-    };
-  }, [cellId, enabled, includeResources]);
-
-  return { services, isLoading, error };
+  return {
+    services: servicesQuery.data ?? [],
+    isLoading: servicesQuery.isLoading,
+    error:
+      servicesQuery.error instanceof Error
+        ? servicesQuery.error.message
+        : undefined,
+  };
 }

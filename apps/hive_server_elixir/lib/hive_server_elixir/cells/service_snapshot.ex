@@ -77,6 +77,34 @@ defmodule HiveServerElixir.Cells.ServiceSnapshot do
     |> camelize_top_level_keys()
   end
 
+  def channel_payload(%Service{} = service) do
+    %{
+      id: service.id,
+      name: service.name,
+      type: service.type,
+      status: ServiceStatus.present(service.status),
+      command: service.command,
+      cwd: service.cwd,
+      log_path: nil,
+      last_known_error: service.last_known_error,
+      env: service.env,
+      updated_at: maybe_to_iso8601(service.updated_at),
+      recent_logs: nil,
+      total_log_lines: nil,
+      has_more_logs: false,
+      process_alive: is_integer(service.pid),
+      port_reachable: if(is_integer(service.port), do: port_reachable?(service.port), else: nil),
+      url: build_service_url(service.port),
+      pid: service.pid,
+      port: service.port,
+      cpu_percent: nil,
+      rss_bytes: nil,
+      resource_sampled_at: nil,
+      resource_unavailable_reason: nil
+    }
+    |> camelize_top_level_keys()
+  end
+
   defp list_services(cell_id) do
     Service.list_for_cell(cell_id)
   end

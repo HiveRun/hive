@@ -62,7 +62,6 @@ defmodule HiveServerElixirWeb.Router do
 
     get("/api/agents/sessions/:id/events", AgentsController, :session_events)
     get("/api/cells/:id/setup/terminal/stream", CellsController, :setup_terminal_stream)
-    get("/api/cells/:id/services/stream", CellsController, :services_stream)
 
     get(
       "/api/cells/:id/services/:service_id/terminal/stream",

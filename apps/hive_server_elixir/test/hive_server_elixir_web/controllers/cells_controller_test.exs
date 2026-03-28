@@ -103,33 +103,6 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
     assert %{"error" => %{"code" => "not_found"}} = json_response(conn, 404)
   end
 
-  test "GET /api/cells/:id/services/stream emits ready, services, and snapshot", %{conn: conn} do
-    workspace = workspace!("services-stream")
-    cell = cell!(workspace.id, "service stream", "ready")
-
-    assert {:ok, _service} =
-             Ash.create(
-               Service,
-               %{
-                 cell_id: cell.id,
-                 name: "api",
-                 type: "process",
-                 command: "sleep 5",
-                 cwd: "/tmp",
-                 env: %{},
-                 definition: %{}
-               },
-               domain: Cells
-             )
-
-    conn = get(conn, ~p"/api/cells/#{cell.id}/services/stream?initialOnly=true")
-
-    assert conn.status == 200
-    assert conn.resp_body =~ "event: ready"
-    assert conn.resp_body =~ "event: service"
-    assert conn.resp_body =~ "event: snapshot"
-  end
-
   test "POST /api/cells/:id/chat/terminal/restart rotates terminal session", %{conn: conn} do
     workspace = workspace!("chat-terminal-restart")
     cell = cell!(workspace.id, "chat terminal cell", "ready")

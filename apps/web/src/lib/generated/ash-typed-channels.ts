@@ -1,5 +1,48 @@
-import type { TimingChannel, TimingChannelEvents, TimingChannelHandlers, TimingChannelRefs, WorkspaceChannel, WorkspaceChannelEvents, WorkspaceChannelHandlers, WorkspaceChannelRefs } from "./ash_types";
+import type { ServiceChannel, ServiceChannelEvents, ServiceChannelHandlers, ServiceChannelRefs, TimingChannel, TimingChannelEvents, TimingChannelHandlers, TimingChannelRefs, WorkspaceChannel, WorkspaceChannelEvents, WorkspaceChannelHandlers, WorkspaceChannelRefs } from "./ash_types";
 export type * from "./ash_types";
+
+export function createServiceChannel(
+  socket: { channel(topic: string, params?: object): unknown },
+  suffix: string
+): ServiceChannel {
+  return socket.channel(`services:${suffix}`) as ServiceChannel;
+}
+
+export function onServiceChannelMessage<E extends keyof ServiceChannelEvents>(
+  channel: ServiceChannel,
+  event: E,
+  handler: (payload: ServiceChannelEvents[E]) => void
+): number {
+  return channel.on(event, (payload: unknown) => handler(payload as ServiceChannelEvents[E]));
+}
+
+export function onServiceChannelMessages(
+  channel: ServiceChannel,
+  handlers: ServiceChannelHandlers
+): ServiceChannelRefs {
+  const refs: ServiceChannelRefs = {};
+  for (const event in handlers) {
+    const e = event as keyof ServiceChannelEvents;
+    const handler = handlers[e];
+    if (handler) {
+      refs[e] = channel.on(event, (payload) => (handler as (p: unknown) => void)(payload));
+    }
+  }
+  return refs;
+}
+
+export function unsubscribeServiceChannel(
+  channel: ServiceChannel,
+  refs: ServiceChannelRefs
+): void {
+  for (const event in refs) {
+    const e = event as keyof ServiceChannelRefs;
+    const ref = refs[e];
+    if (ref !== undefined) {
+      channel.off(event, ref);
+    }
+  }
+}
 
 export function createTimingChannel(
   socket: { channel(topic: string, params?: object): unknown },

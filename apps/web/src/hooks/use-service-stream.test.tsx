@@ -1,74 +1,95 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook } from "@testing-library/react";
+import type { PropsWithChildren } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { CellServiceSummary } from "@/queries/cells";
 import { useServiceStream } from "./use-service-stream";
 
-type MockEventSourceInstance = {
-  url: string;
-  closed: boolean;
-  addEventListener: (
-    event: string,
-    listener: EventListenerOrEventListenerObject
-  ) => void;
-  removeEventListener: (
-    event: string,
-    listener: EventListenerOrEventListenerObject
-  ) => void;
-  close: () => void;
-};
+const { joinServiceRealtimeChannel } = vi.hoisted(() => ({
+  joinServiceRealtimeChannel: vi.fn(),
+}));
 
-const mockEventSourceInstances: MockEventSourceInstance[] = [];
+vi.mock("@/lib/realtime-channels", () => ({
+  joinServiceRealtimeChannel,
+}));
 
-function MockEventSource(url: string): MockEventSourceInstance {
-  const instance: MockEventSourceInstance = {
-    url,
-    closed: false,
-    addEventListener() {
-      return;
-    },
-    removeEventListener() {
-      return;
-    },
-    close() {
-      instance.closed = true;
-    },
+const CELL_ID = "cell-1";
+const SERVICES_QUERY_KEY = ["cells", CELL_ID, "services", true] as const;
+
+function createWrapper(queryClient: QueryClient) {
+  return ({ children }: PropsWithChildren) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+}
+
+function makeService(id: string, status: string): CellServiceSummary {
+  return {
+    id,
+    name: `Service ${id}`,
+    type: "process",
+    status,
+    command: "bun dev",
+    cwd: "/workspace",
   };
-
-  mockEventSourceInstances.push(instance);
-  return instance;
 }
 
 describe("useServiceStream", () => {
   beforeEach(() => {
-    mockEventSourceInstances.length = 0;
-    vi.stubGlobal(
-      "EventSource",
-      MockEventSource as unknown as typeof EventSource
-    );
+    joinServiceRealtimeChannel.mockReset();
+    joinServiceRealtimeChannel.mockImplementation((options) => ({
+      unsubscribe: vi.fn(),
+      __options: options,
+    }));
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    vi.unstubAllGlobals();
   });
 
-  it("does not include includeResources query by default", () => {
-    renderHook(() => useServiceStream("cell-1", { enabled: true }));
+  it("joins the service realtime channel and invalidates on join", () => {
+    const queryClient = new QueryClient();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
-    expect(mockEventSourceInstances).toHaveLength(1);
-    expect(mockEventSourceInstances[0]?.url).toContain(
-      "/api/cells/cell-1/services/stream"
-    );
-    expect(mockEventSourceInstances[0]?.url).not.toContain("includeResources");
+    renderHook(() => useServiceStream(CELL_ID, { includeResources: true }), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    expect(joinServiceRealtimeChannel).toHaveBeenCalledTimes(1);
+    const call = joinServiceRealtimeChannel.mock.calls[0]?.[0];
+    expect(call?.cellId).toBe(CELL_ID);
+
+    call?.onJoin?.();
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: SERVICES_QUERY_KEY,
+    });
   });
 
-  it("includes includeResources query when enabled", () => {
-    renderHook(() =>
-      useServiceStream("cell-1", { enabled: true, includeResources: true })
-    );
+  it("patches service query snapshots from channel payloads", () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(SERVICES_QUERY_KEY, [
+      makeService("svc-1", "starting"),
+    ]);
 
-    expect(mockEventSourceInstances).toHaveLength(1);
-    expect(mockEventSourceInstances[0]?.url).toContain(
-      "/api/cells/cell-1/services/stream?includeResources=true"
-    );
+    renderHook(() => useServiceStream(CELL_ID, { includeResources: true }), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    const call = joinServiceRealtimeChannel.mock.calls[0]?.[0];
+    call?.handlers.service_snapshot(makeService("svc-1", "running"));
+
+    expect(queryClient.getQueryData(SERVICES_QUERY_KEY)).toEqual([
+      expect.objectContaining({ id: "svc-1", status: "running" }),
+    ]);
+  });
+
+  it("does not subscribe when disabled", () => {
+    const queryClient = new QueryClient();
+
+    renderHook(() => useServiceStream(CELL_ID, { enabled: false }), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    expect(joinServiceRealtimeChannel).not.toHaveBeenCalled();
   });
 });

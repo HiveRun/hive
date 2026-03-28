@@ -136,16 +136,7 @@ test.describe("plan mode @plan-mode", () => {
       expectedCurrentMode: "plan",
     });
 
-    const session = await fetchAgentSession(apiUrl, cellId);
-    if (!session) {
-      throw new Error(`Missing session for cell ${cellId}`);
-    }
-
-    await updateSessionMode({
-      apiUrl,
-      sessionId: session.id,
-      mode: "build",
-    });
+    await page.getByTestId("agent-mode-build").click();
 
     await waitForPlanToBuildTransition({
       apiUrl,
@@ -225,24 +216,6 @@ async function waitForPlanToBuildTransition(options: {
 
   if (!switched) {
     throw new Error(`Session mode mismatch for cell ${options.cellId}`);
-  }
-}
-
-async function updateSessionMode(options: {
-  apiUrl: string;
-  sessionId: string;
-  mode: "plan" | "build";
-}): Promise<void> {
-  const payload = await rpcRun<AgentSession>(options.apiUrl, {
-    action: "set_agent_session_mode",
-    input: { sessionId: options.sessionId, mode: options.mode },
-    fields: ["id", "startMode", "currentMode", "modeUpdatedAt"],
-  });
-
-  if (!payload.success) {
-    throw new Error(
-      `Failed to switch session mode to ${options.mode}: ${payload.errors?.[0]?.shortMessage ?? payload.errors?.[0]?.message ?? "unknown error"}`
-    );
   }
 }
 

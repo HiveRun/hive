@@ -17,7 +17,8 @@ config :ash_typescript,
   ],
   typed_channels: [
     HiveServerElixirWeb.WorkspaceChannel,
-    HiveServerElixirWeb.TimingChannel
+    HiveServerElixirWeb.TimingChannel,
+    HiveServerElixirWeb.ServiceChannel
   ],
   typed_channels_output_file: "../web/src/lib/generated/ash-typed-channels.ts",
   router: HiveServerElixirWeb.Router,

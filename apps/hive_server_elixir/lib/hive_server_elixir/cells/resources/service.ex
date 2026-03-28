@@ -14,6 +14,7 @@ defmodule HiveServerElixir.Cells.Service do
 
   use Ash.Resource,
     extensions: [AshTypescript.Resource, AshOban],
+    notifiers: [Ash.Notifier.PubSub],
     domain: HiveServerElixir.Cells,
     data_layer: AshSqlite.DataLayer
 
@@ -197,6 +198,30 @@ defmodule HiveServerElixir.Cells.Service do
       end
     end
 
+    action :service_snapshot, :map do
+      constraints fields: @service_payload_fields
+
+      argument :service_id, :uuid do
+        allow_nil? false
+        public? true
+      end
+
+      run fn input, _context ->
+        case Ash.get(__MODULE__, input.arguments.service_id) do
+          {:ok, service} ->
+            {:ok,
+             ServiceSnapshot.transport_payload(service, %{
+               include_resources: true,
+               lines: 200,
+               offset: 0
+             })}
+
+          {:error, error} ->
+            {:error, error}
+        end
+      end
+    end
+
     create :create do
       primary? true
 
@@ -265,6 +290,39 @@ defmodule HiveServerElixir.Cells.Service do
         reconcile_runtime_state(changeset)
       end
     end
+  end
+
+  pub_sub do
+    module HiveServerElixirWeb.Endpoint
+    prefix "services"
+
+    publish :create, [:cell_id],
+      event: "service_snapshot",
+      public?: true,
+      returns: :map,
+      constraints: [fields: @service_payload_fields],
+      transform: fn notification -> ServiceSnapshot.channel_payload(notification.data) end
+
+    publish :mark_running, [:cell_id],
+      event: "service_snapshot",
+      public?: true,
+      returns: :map,
+      constraints: [fields: @service_payload_fields],
+      transform: fn notification -> ServiceSnapshot.channel_payload(notification.data) end
+
+    publish :mark_stopped, [:cell_id],
+      event: "service_snapshot",
+      public?: true,
+      returns: :map,
+      constraints: [fields: @service_payload_fields],
+      transform: fn notification -> ServiceSnapshot.channel_payload(notification.data) end
+
+    publish :mark_error, [:cell_id],
+      event: "service_snapshot",
+      public?: true,
+      returns: :map,
+      constraints: [fields: @service_payload_fields],
+      transform: fn notification -> ServiceSnapshot.channel_payload(notification.data) end
   end
 
   attributes do
