@@ -83,6 +83,11 @@ defmodule HiveServerElixir.Cells.AgentSession do
       accept [:model_id, :model_provider_id, :resume_on_startup]
     end
 
+    update :sync_session_identity do
+      require_atomic? false
+      accept [:session_id]
+    end
+
     update :record_error do
       require_atomic? false
       accept [:last_error]

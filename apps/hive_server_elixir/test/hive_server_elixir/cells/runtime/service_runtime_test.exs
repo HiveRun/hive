@@ -7,6 +7,12 @@ defmodule HiveServerElixir.Cells.ServiceRuntimeTest do
   alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.Workspace
   alias HiveServerElixir.Cells.Cell
+  alias HiveServerElixir.Repo
+
+  setup do
+    Ecto.Adapters.SQL.Sandbox.allow(Repo, self(), Process.whereis(ServiceRuntime))
+    :ok
+  end
 
   test "ensure_service_running streams real process output and exit" do
     workspace = workspace!("service-runtime-output")
@@ -28,7 +34,14 @@ defmodule HiveServerElixir.Cells.ServiceRuntimeTest do
              )
 
     assert :ok = Events.subscribe_service_terminal(cell.id, service.id)
+    assert :ok = Events.subscribe_cell_services(cell.id)
     assert :ok = ServiceRuntime.ensure_service_running(service)
+
+    assert_receive {:service_update, %{cell_id: start_cell_id, service_id: start_service_id}},
+                   1_000
+
+    assert start_cell_id == cell.id
+    assert start_service_id == service.id
 
     assert_receive {:service_terminal_data,
                     %{cell_id: cell_id, service_id: service_id, chunk: chunk}},
@@ -43,6 +56,8 @@ defmodule HiveServerElixir.Cells.ServiceRuntimeTest do
                    1_000
 
     assert is_integer(exit_code)
+
+    assert_receive {:service_update, %{cell_id: ^cell_id, service_id: ^service_id}}, 1_000
 
     assert {:ok, stopped_service} = Ash.get(Service, service.id, domain: Cells)
     assert stopped_service.status == :stopped

@@ -3,12 +3,15 @@ defmodule HiveServerElixir.Cells.Terminals do
 
   alias HiveServerElixir.Cells.Cell
   alias HiveServerElixir.Cells.CellStatus
-  alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.TerminalRuntime
 
-  @type scope :: {:setup, String.t()} | {:chat, String.t()} | {:service, String.t(), String.t()}
+  @type scope ::
+          {:terminal, String.t()}
+          | {:setup, String.t()}
+          | {:chat, String.t()}
+          | {:service, String.t(), String.t()}
 
   @spec validate_chat_available(Cell.t()) :: :ok | {:error, :chat_unavailable}
   def validate_chat_available(%Cell{} = cell) do
@@ -34,33 +37,33 @@ defmodule HiveServerElixir.Cells.Terminals do
     end
   end
 
-  @spec ensure_session(scope()) :: map()
+  @spec ensure_session(scope()) :: {:ok, map()} | {:error, term()}
+  def ensure_session({:terminal, cell_id}), do: TerminalRuntime.ensure_terminal_session(cell_id)
   def ensure_session({:setup, cell_id}), do: TerminalRuntime.ensure_setup_session(cell_id)
   def ensure_session({:chat, cell_id}), do: TerminalRuntime.ensure_chat_session(cell_id)
 
-  def ensure_session({:service, cell_id, service_id}) when is_binary(service_id) do
-    TerminalRuntime.ensure_service_session(cell_id, service_id)
-  end
+  def ensure_session({:service, cell_id, service_id}),
+    do: TerminalRuntime.ensure_service_session(cell_id, service_id)
 
-  @spec read_output(scope()) :: [String.t()]
+  @spec read_output(scope()) :: String.t()
+  def read_output({:terminal, cell_id}), do: TerminalRuntime.read_terminal_output(cell_id)
   def read_output({:setup, cell_id}), do: TerminalRuntime.read_setup_output(cell_id)
   def read_output({:chat, cell_id}), do: TerminalRuntime.read_chat_output(cell_id)
 
-  def read_output({:service, cell_id, service_id}) when is_binary(service_id) do
-    TerminalRuntime.read_service_output(cell_id, service_id)
+  def read_output({:service, cell_id, service_id}),
+    do: TerminalRuntime.read_service_output(cell_id, service_id)
+
+  @spec write_input(scope(), String.t()) :: :ok | {:error, term()}
+  def write_input({:terminal, cell_id}, chunk) when is_binary(chunk) do
+    TerminalRuntime.write_terminal_input(cell_id, chunk)
   end
 
-  @spec write_input(scope(), String.t()) :: :ok | {:error, :not_running}
-  def write_input({:setup, cell_id} = scope, chunk) when is_binary(chunk) do
-    _session = ensure_session(scope)
-    :ok = TerminalRuntime.write_setup_input(cell_id, chunk)
-    Events.publish_setup_terminal_data(cell_id, chunk)
+  def write_input({:setup, cell_id}, chunk) when is_binary(chunk) do
+    TerminalRuntime.write_setup_input(cell_id, chunk)
   end
 
-  def write_input({:chat, cell_id} = scope, chunk) when is_binary(chunk) do
-    _session = ensure_session(scope)
-    :ok = TerminalRuntime.write_chat_input(cell_id, chunk)
-    Events.publish_chat_terminal_data(cell_id, chunk)
+  def write_input({:chat, cell_id}, chunk) when is_binary(chunk) do
+    TerminalRuntime.write_chat_input(cell_id, chunk)
   end
 
   def write_input({:service, _cell_id, service_id}, chunk)
@@ -68,19 +71,22 @@ defmodule HiveServerElixir.Cells.Terminals do
     ServiceRuntime.write_input(service_id, chunk)
   end
 
-  @spec resize_session(scope(), pos_integer(), pos_integer()) :: map()
-  def resize_session({:setup, cell_id}, cols, rows) do
-    TerminalRuntime.resize_setup_session(cell_id, cols, rows)
-  end
+  @spec resize_session(scope(), pos_integer(), pos_integer()) :: {:ok, map()} | {:error, term()}
+  def resize_session({:terminal, cell_id}, cols, rows),
+    do: TerminalRuntime.resize_terminal_session(cell_id, cols, rows)
 
-  def resize_session({:chat, cell_id}, cols, rows) do
-    TerminalRuntime.resize_chat_session(cell_id, cols, rows)
-  end
+  def resize_session({:setup, cell_id}, cols, rows),
+    do: TerminalRuntime.resize_setup_session(cell_id, cols, rows)
 
-  def resize_session({:service, cell_id, service_id}, cols, rows) when is_binary(service_id) do
-    TerminalRuntime.resize_service_session(cell_id, service_id, cols, rows)
-  end
+  def resize_session({:chat, cell_id}, cols, rows),
+    do: TerminalRuntime.resize_chat_session(cell_id, cols, rows)
 
-  @spec restart_session({:chat, String.t()}) :: map()
+  def resize_session({:service, cell_id, service_id}, cols, rows),
+    do: TerminalRuntime.resize_service_session(cell_id, service_id, cols, rows)
+
+  @spec restart_session({:terminal, String.t()} | {:chat, String.t()} | {:setup, String.t()}) ::
+          {:ok, map()} | {:error, term()}
+  def restart_session({:terminal, cell_id}), do: TerminalRuntime.restart_terminal_session(cell_id)
   def restart_session({:chat, cell_id}), do: TerminalRuntime.restart_chat_session(cell_id)
+  def restart_session({:setup, cell_id}), do: TerminalRuntime.restart_setup_session(cell_id)
 end

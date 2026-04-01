@@ -5,7 +5,6 @@ defmodule HiveServerElixir.AgentsTest do
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells.Cell
-  alias HiveServerElixir.Cells.TerminalRuntime
   alias HiveServerElixir.Cells.Workspace
   alias HiveServerElixir.Opencode.AgentEventLog
   alias HiveServerElixir.OpencodeRealServer
@@ -137,21 +136,14 @@ defmodule HiveServerElixir.AgentsTest do
     assert assistant_message.content != ""
   end
 
-  test "messages_payload_for_session falls back to terminal output when session fetch returns not found",
+  test "messages_payload_for_session returns an empty list when session fetch returns not found",
        %{} do
     workspace = workspace!("agents-domain-messages-fallback")
     cell = cell!(workspace, "ready")
     session = agent_session!(cell, "missing-session-#{System.unique_integer([:positive])}")
 
-    :ok = TerminalRuntime.append_chat_output(cell.id, "Need a summary")
-
-    assert {:ok, %{messages: [user_message, assistant_message]}} =
+    assert {:ok, %{messages: []}} =
              Agents.messages_payload_for_session(session.session_id)
-
-    assert user_message.role == "user"
-    assert user_message.content == "Need a summary"
-    assert assistant_message.role == "assistant"
-    assert assistant_message.content == "Need a summary"
   end
 
   defp workspace!(suffix) do
@@ -233,7 +225,7 @@ defmodule HiveServerElixir.AgentsTest do
     File.write!(Path.join(path, "hive.config.json"), "{}")
 
     on_exit(fn ->
-      File.rm_rf!(path)
+      _ = File.rm_rf(path)
     end)
 
     path

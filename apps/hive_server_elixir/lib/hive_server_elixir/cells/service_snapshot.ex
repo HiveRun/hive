@@ -117,12 +117,11 @@ defmodule HiveServerElixir.Cells.ServiceSnapshot do
   end
 
   defp service_log_tail(%Service{} = service, %{lines: lines, offset: offset}) do
-    chunks = TerminalRuntime.read_service_output(service.cell_id, service.id)
+    output = TerminalRuntime.read_service_output(service.cell_id, service.id)
 
-    if chunks == [] do
+    if output == "" do
       {nil, nil, false}
     else
-      output = Enum.join(chunks, "")
       normalized = String.replace(output, "\r\n", "\n") |> String.replace("\r", "\n")
       all_lines = String.split(normalized, "\n")
       total_lines = length(all_lines)

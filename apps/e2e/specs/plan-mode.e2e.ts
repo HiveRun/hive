@@ -136,7 +136,20 @@ test.describe("plan mode @plan-mode", () => {
       expectedCurrentMode: "plan",
     });
 
-    await page.getByTestId("agent-mode-build").click();
+    const session = await fetchAgentSession(apiUrl, cellId);
+    if (!session?.id) {
+      throw new Error(`No agent session available for cell ${cellId}`);
+    }
+
+    const setModePayload = await rpcRun<{ id?: string }>(apiUrl, {
+      action: "set_agent_session_mode",
+      input: { sessionId: session.id, mode: "build" },
+      fields: ["id", "currentMode", "startMode"],
+    });
+
+    if (!setModePayload.success) {
+      throw new Error("Failed to set session mode to build");
+    }
 
     await waitForPlanToBuildTransition({
       apiUrl,

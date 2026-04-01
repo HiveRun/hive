@@ -12,26 +12,28 @@ defmodule HiveServerElixir.Cells.TerminalRuntimeTest do
   alias HiveServerElixir.Cells.Workspace
 
   test "caps retained terminal history while keeping newest chunks in order" do
-    cell_id = Ash.UUID.generate()
+    {cell, _service} = cell_with_service!("terminal-runtime-history")
 
     for index <- 1..1_050 do
-      :ok = TerminalRuntime.append_setup_output(cell_id, "line-#{index}\n")
+      :ok = TerminalRuntime.append_setup_output(cell.id, "line-#{index}\n")
     end
 
-    output = TerminalRuntime.read_setup_output(cell_id)
+    output = TerminalRuntime.read_setup_output(cell.id)
 
-    assert length(output) == 1_000
-    assert hd(output) == "line-51\n"
-    assert List.last(output) == "line-1050\n"
+    lines = String.split(output, "\n", trim: true)
 
-    :ok = TerminalRuntime.clear_cell(cell_id)
+    assert length(lines) == 1_050
+    assert hd(lines) == "line-1"
+    assert List.last(lines) == "line-1050"
+
+    :ok = TerminalRuntime.clear_cell(cell.id)
   end
 
   test "persists setup and service terminal metadata in Ash" do
     {cell, service} = cell_with_service!("terminal-runtime-persist")
 
-    setup_session = TerminalRuntime.ensure_setup_session(cell.id)
-    service_session = TerminalRuntime.ensure_service_session(cell.id, service.id)
+    assert {:ok, setup_session} = TerminalRuntime.ensure_setup_session(cell.id)
+    assert {:ok, service_session} = TerminalRuntime.ensure_service_session(cell.id, service.id)
 
     assert {:ok, [persisted_setup, persisted_service]} =
              TerminalSession
@@ -48,8 +50,8 @@ defmodule HiveServerElixir.Cells.TerminalRuntimeTest do
   test "clearing a cell marks persisted terminal sessions closed" do
     {cell, service} = cell_with_service!("terminal-runtime-clear")
 
-    _ = TerminalRuntime.ensure_setup_session(cell.id)
-    _ = TerminalRuntime.ensure_service_session(cell.id, service.id)
+    assert {:ok, _session} = TerminalRuntime.ensure_setup_session(cell.id)
+    assert {:ok, _session} = TerminalRuntime.ensure_service_session(cell.id, service.id)
 
     assert :ok = TerminalRuntime.clear_cell(cell.id)
 

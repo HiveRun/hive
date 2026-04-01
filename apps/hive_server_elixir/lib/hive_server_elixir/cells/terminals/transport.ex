@@ -21,10 +21,10 @@ defmodule HiveServerElixir.Cells.Terminals.Transport do
     Map.put(ready_payload(scope, session, cell), :type, "ready")
   end
 
-  @spec snapshot_payload([String.t()]) :: map()
+  @spec snapshot_payload(String.t()) :: map()
   def snapshot_payload(output), do: %{output: output}
 
-  @spec snapshot_event([String.t()]) :: map()
+  @spec snapshot_event(String.t()) :: map()
   def snapshot_event(output), do: %{type: "snapshot", output: output}
 
   @spec data_payload(String.t()) :: map()
@@ -50,6 +50,27 @@ defmodule HiveServerElixir.Cells.Terminals.Transport do
   @spec sse_event(term(), Terminals.scope()) :: {:ok, String.t(), map()} | :ignore
   def sse_event(message, scope) do
     transport_event(message, scope)
+  end
+
+  defp transport_event(
+         {:cell_terminal_data, %{cell_id: cell_id, chunk: chunk}},
+         {:terminal, cell_id}
+       ) do
+    {:ok, "data", data_payload(chunk)}
+  end
+
+  defp transport_event(
+         {:cell_terminal_exit, %{cell_id: cell_id, exit_code: exit_code, signal: signal}},
+         {:terminal, cell_id}
+       ) do
+    {:ok, "exit", exit_payload(exit_code, signal)}
+  end
+
+  defp transport_event(
+         {:cell_terminal_error, %{cell_id: cell_id, message: message}},
+         {:terminal, cell_id}
+       ) do
+    {:ok, "error", error_payload(message)}
   end
 
   defp transport_event(

@@ -12,11 +12,31 @@ defmodule HiveServerElixirWeb.TerminalChannel do
   alias HiveServerElixirWeb.Cells.StreamTransport
 
   @impl true
+  def join("terminal:" <> cell_id, _payload, socket) do
+    with {:ok, _cell} <- Ash.get(Cell, cell_id, domain: Cells),
+         :ok <- Events.subscribe_cell_terminal(cell_id),
+         {:ok, session} <- Terminals.ensure_session({:terminal, cell_id}) do
+      scope = {:terminal, cell_id}
+      output = Terminals.read_output(scope)
+
+      socket =
+        socket
+        |> assign(:terminal_kind, :terminal)
+        |> assign(:cell_id, cell_id)
+
+      send(self(), {:terminal_ready, Transport.ready_event(scope, session, nil)})
+      send(self(), {:terminal_snapshot, Transport.snapshot_event(output)})
+      {:ok, socket}
+    else
+      {:error, reason} -> {:error, %{reason: error_message(reason, "Cell not found")}}
+    end
+  end
+
   def join("setup_terminal:" <> cell_id, _payload, socket) do
     with {:ok, cell} <- Ash.get(Cell, cell_id, domain: Cells),
-         :ok <- Events.subscribe_setup_terminal(cell_id) do
+         :ok <- Events.subscribe_setup_terminal(cell_id),
+         {:ok, session} <- Terminals.ensure_session({:setup, cell_id}) do
       scope = {:setup, cell_id}
-      session = Terminals.ensure_session(scope)
       output = Terminals.read_output(scope)
 
       socket =
@@ -40,9 +60,9 @@ defmodule HiveServerElixirWeb.TerminalChannel do
     with {:ok, cell_id, service_id} <- parse_service_key(key),
          {:ok, service} <- Terminals.get_service_for_cell(cell_id, service_id),
          :ok <- Terminals.ensure_service_runtime(service),
-         :ok <- Events.subscribe_service_terminal(cell_id, service_id) do
+         :ok <- Events.subscribe_service_terminal(cell_id, service_id),
+         {:ok, session} <- Terminals.ensure_session({:service, cell_id, service_id}) do
       scope = {:service, cell_id, service_id}
-      session = Terminals.ensure_session(scope)
       output = Terminals.read_output(scope)
 
       socket =
@@ -65,9 +85,9 @@ defmodule HiveServerElixirWeb.TerminalChannel do
   def join("chat_terminal:" <> cell_id, _payload, socket) do
     with {:ok, cell} <- Ash.get(Cell, cell_id, domain: Cells),
          :ok <- Terminals.validate_chat_available(cell),
-         :ok <- Events.subscribe_chat_terminal(cell_id) do
+         :ok <- Events.subscribe_chat_terminal(cell_id),
+         {:ok, session} <- Terminals.ensure_session({:chat, cell_id}) do
       scope = {:chat, cell_id}
-      session = Terminals.ensure_session(scope)
       output = Terminals.read_output(scope)
 
       socket =
@@ -96,8 +116,23 @@ defmodule HiveServerElixirWeb.TerminalChannel do
   def handle_in("terminal_message", %{"type" => "input", "data" => chunk}, socket)
       when is_binary(chunk) do
     case socket.assigns.terminal_kind do
+      :terminal ->
+        case Terminals.write_input({:terminal, socket.assigns.cell_id}, chunk) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            push(socket, "terminal_event", %{type: "error", message: inspect(reason)})
+        end
+
       :setup ->
-        :ok = Terminals.write_input({:setup, socket.assigns.cell_id}, chunk)
+        case Terminals.write_input({:setup, socket.assigns.cell_id}, chunk) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            push(socket, "terminal_event", %{type: "error", message: inspect(reason)})
+        end
 
       :service ->
         case Terminals.write_input(
@@ -112,7 +147,13 @@ defmodule HiveServerElixirWeb.TerminalChannel do
         end
 
       :chat ->
-        :ok = Terminals.write_input({:chat, socket.assigns.cell_id}, chunk)
+        case Terminals.write_input({:chat, socket.assigns.cell_id}, chunk) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            push(socket, "terminal_event", %{type: "error", message: inspect(reason)})
+        end
     end
 
     {:noreply, socket}
@@ -122,10 +163,16 @@ defmodule HiveServerElixirWeb.TerminalChannel do
     with {:ok, parsed_cols, parsed_rows} <-
            StreamTransport.parse_resize_params(%{"cols" => cols, "rows" => rows}) do
       scope = terminal_scope(socket)
-      session = Terminals.resize_session(scope, parsed_cols, parsed_rows)
 
-      push(socket, "terminal_event", Transport.resized_event(session))
-      {:noreply, socket}
+      case Terminals.resize_session(scope, parsed_cols, parsed_rows) do
+        {:ok, session} ->
+          push(socket, "terminal_event", Transport.resized_event(session))
+          {:noreply, socket}
+
+        {:error, reason} ->
+          push(socket, "terminal_event", %{type: "error", message: inspect(reason)})
+          {:noreply, socket}
+      end
     else
       {:error, :invalid_resize} ->
         push(socket, "terminal_event", %{
@@ -140,13 +187,38 @@ defmodule HiveServerElixirWeb.TerminalChannel do
   def handle_in(
         "terminal_message",
         %{"type" => "restart"},
+        %{assigns: %{terminal_kind: :terminal}} = socket
+      ) do
+    scope = {:terminal, socket.assigns.cell_id}
+
+    case Terminals.restart_session(scope) do
+      {:ok, session} ->
+        push(socket, "terminal_event", Transport.ready_event(scope, session, nil))
+        push(socket, "terminal_event", Transport.snapshot_event(""))
+
+      {:error, reason} ->
+        push(socket, "terminal_event", %{type: "error", message: inspect(reason)})
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_in(
+        "terminal_message",
+        %{"type" => "restart"},
         %{assigns: %{terminal_kind: :chat}} = socket
       ) do
     scope = {:chat, socket.assigns.cell_id}
-    session = Terminals.restart_session(scope)
 
-    push(socket, "terminal_event", Transport.ready_event(scope, session, nil))
-    push(socket, "terminal_event", Transport.snapshot_event([]))
+    case Terminals.restart_session(scope) do
+      {:ok, session} ->
+        push(socket, "terminal_event", Transport.ready_event(scope, session, nil))
+        push(socket, "terminal_event", Transport.snapshot_event(""))
+
+      {:error, reason} ->
+        push(socket, "terminal_event", %{type: "error", message: inspect(reason)})
+    end
+
     {:noreply, socket}
   end
 
@@ -181,6 +253,9 @@ defmodule HiveServerElixirWeb.TerminalChannel do
         {:noreply, socket}
     end
   end
+
+  defp terminal_scope(%{assigns: %{terminal_kind: :terminal, cell_id: cell_id}}),
+    do: {:terminal, cell_id}
 
   defp terminal_scope(%{assigns: %{terminal_kind: :setup, cell_id: cell_id}}),
     do: {:setup, cell_id}

@@ -7,6 +7,7 @@ defmodule HiveServerElixirWeb.TerminalChannelTest do
   alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.Workspace
+  alias HiveServerElixir.Opencode.ServerManager
   alias HiveServerElixirWeb.TerminalChannel
   alias HiveServerElixirWeb.TerminalSocket
 
@@ -25,8 +26,10 @@ defmodule HiveServerElixirWeb.TerminalChannelTest do
     assert_push("terminal_event", %{type: "ready", session: _session, setupState: "running"})
     assert_push("terminal_event", %{type: "snapshot", output: _output})
 
-    push(socket, "terminal_message", %{"type" => "input", "data" => "echo setup"})
-    assert_push("terminal_event", %{type: "data", chunk: "echo setup"})
+    push(socket, "terminal_message", %{"type" => "input", "data" => "echo setup\n"})
+    assert_push("terminal_event", %{type: "data", chunk: _chunk})
+    assert_push("terminal_event", %{type: "data", chunk: chunk}, 1_000)
+    assert chunk =~ "echo setup"
 
     push(socket, "terminal_message", %{"type" => "ping"})
     assert_push("terminal_event", %{type: "pong"})
@@ -80,6 +83,8 @@ defmodule HiveServerElixirWeb.TerminalChannelTest do
   end
 
   test "chat terminal channel restart emits ready and snapshot", %{socket: socket} do
+    _ = start_supervised!({ServerManager, timeout_ms: 15_000})
+
     workspace = workspace!("chat-restart")
     cell = cell!(workspace.id, "chat cell", "ready")
 
@@ -91,28 +96,52 @@ defmodule HiveServerElixirWeb.TerminalChannelTest do
 
     push(socket, "terminal_message", %{"type" => "restart"})
 
-    assert_push("terminal_event", %{type: "ready", session: %{sessionId: second_session_id}})
-    assert_push("terminal_event", %{type: "snapshot", output: []})
+    assert_push(
+      "terminal_event",
+      %{type: "ready", session: %{sessionId: second_session_id}},
+      15_000
+    )
+
+    assert_push("terminal_event", %{type: "snapshot", output: ""}, 15_000)
 
     refute first_session_id == second_session_id
   end
 
   defp workspace!(suffix) do
+    path = "/tmp/ws-#{suffix}-#{System.unique_integer([:positive])}"
+    File.mkdir_p!(path)
+
     assert {:ok, workspace} =
              Ash.create(
                Workspace,
-               %{path: "/tmp/ws-#{suffix}", label: "Workspace #{suffix}"},
+               %{path: path, label: "Workspace #{suffix}"},
                domain: Cells
              )
+
+    on_exit(fn ->
+      _ = File.rm_rf(path)
+    end)
 
     workspace
   end
 
   defp cell!(workspace_id, description, status) do
+    {:ok, workspace} = Ash.get(Workspace, workspace_id, domain: Cells)
+
     assert {:ok, cell} =
              Ash.create(
                Cell,
-               %{workspace_id: workspace_id, description: description, status: status},
+               %{
+                 workspace_id: workspace_id,
+                 description: description,
+                 name: description,
+                 template_id: "basic",
+                 workspace_root_path: workspace.path,
+                 workspace_path: workspace.path,
+                 opencode_session_id: "session-#{System.unique_integer([:positive])}",
+                 resume_agent_session_on_startup: true,
+                 status: status
+               },
                domain: Cells
              )
 

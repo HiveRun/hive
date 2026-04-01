@@ -34,6 +34,8 @@ defmodule HiveServerElixirWeb.Router do
     get("/api/agents/sessions/:id/models", AgentReadController, :agent_session_models)
     get("/api/agents/sessions/:id/messages", AgentReadController, :agent_session_messages)
     get("/api/cells/:id/diff", CellReadController, :cell_diff)
+    post("/api/cells/:id/terminal/input", CellsController, :terminal_input)
+    post("/api/cells/:id/terminal/resize", CellsController, :terminal_resize)
     post("/api/cells/:id/setup/terminal/input", CellsController, :setup_terminal_input)
     post("/api/cells/:id/setup/terminal/resize", CellsController, :setup_terminal_resize)
 
@@ -61,6 +63,7 @@ defmodule HiveServerElixirWeb.Router do
     pipe_through(:api_stream)
 
     get("/api/agents/sessions/:id/events", AgentsController, :session_events)
+    get("/api/cells/:id/terminal/stream", CellsController, :terminal_stream)
     get("/api/cells/:id/setup/terminal/stream", CellsController, :setup_terminal_stream)
 
     get(

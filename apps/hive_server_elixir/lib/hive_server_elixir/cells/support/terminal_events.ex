@@ -15,9 +15,7 @@ defmodule HiveServerElixir.Cells.TerminalEvents do
 
       cell_id ->
         _ = TerminalRuntime.ensure_setup_session(cell_id)
-        _ = TerminalRuntime.ensure_chat_session(cell_id)
         :ok = TerminalRuntime.append_setup_output(cell_id, "[hive] provisioning started\n")
-        Events.publish_setup_terminal_data(cell_id, "[hive] provisioning started\n")
     end
   end
 
@@ -29,7 +27,6 @@ defmodule HiveServerElixir.Cells.TerminalEvents do
 
       cell_id ->
         :ok = TerminalRuntime.append_setup_output(cell_id, "[hive] provisioning completed\n")
-        :ok = Events.publish_setup_terminal_data(cell_id, "[hive] provisioning completed\n")
         Events.publish_setup_terminal_exit(cell_id, 0, nil)
     end
   end
@@ -78,54 +75,14 @@ defmodule HiveServerElixir.Cells.TerminalEvents do
         properties = EventEnvelope.get(payload, "properties") || %{}
 
         case event_type do
-          "message.part.delta" ->
-            maybe_emit_chat_delta(cell_id, properties)
-
-          "message.part.updated" ->
-            maybe_emit_chat_part(cell_id, properties)
-
           "session.error" ->
             message = extract_error_message(properties)
             Events.publish_chat_terminal_error(cell_id, message)
-
-          "pty.exited" ->
-            exit_code = EventEnvelope.get(properties, "exitCode")
-            exit_code = if(is_number(exit_code), do: trunc(exit_code), else: nil)
-            Events.publish_chat_terminal_exit(cell_id, exit_code, nil)
 
           _other ->
             :ok
         end
     end
-  end
-
-  defp maybe_emit_chat_delta(cell_id, properties) do
-    delta = EventEnvelope.get(properties, "delta")
-    field = EventEnvelope.get(properties, "field")
-
-    if is_binary(delta) and (is_nil(field) or field in ["text", "delta"]) do
-      emit_chat_chunk(cell_id, delta)
-    else
-      :ok
-    end
-  end
-
-  defp maybe_emit_chat_part(cell_id, properties) do
-    part = EventEnvelope.get(properties, "part")
-    part_type = EventEnvelope.get(part || %{}, "type")
-    part_text = EventEnvelope.get(part || %{}, "text")
-
-    if is_binary(part_text) and part_type in ["text", "reasoning"] do
-      emit_chat_chunk(cell_id, part_text)
-    else
-      :ok
-    end
-  end
-
-  defp emit_chat_chunk(cell_id, chunk) do
-    _ = TerminalRuntime.ensure_chat_session(cell_id)
-    :ok = TerminalRuntime.append_chat_output(cell_id, chunk)
-    Events.publish_chat_terminal_data(cell_id, chunk)
   end
 
   defp extract_error_message(properties) when is_map(properties) do

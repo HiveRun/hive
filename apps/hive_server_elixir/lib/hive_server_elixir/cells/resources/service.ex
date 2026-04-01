@@ -453,14 +453,13 @@ defmodule HiveServerElixir.Cells.Service do
 
   @spec terminal_resize_payload(map()) :: {:ok, map()} | {:error, term()}
   def terminal_resize_payload(%{service_id: service_id, cols: cols, rows: rows}) do
-    with {:ok, service} <- Ash.get(__MODULE__, service_id) do
-      _session =
-        HiveServerElixir.Cells.Terminals.resize_session(
-          {:service, service.cell_id, service_id},
-          cols,
-          rows
-        )
-
+    with {:ok, service} <- Ash.get(__MODULE__, service_id),
+         {:ok, _session} <-
+           HiveServerElixir.Cells.Terminals.resize_session(
+             {:service, service.cell_id, service_id},
+             cols,
+             rows
+           ) do
       {:ok, %{ok: true}}
     else
       {:error, error} -> {:error, inspect(error)}

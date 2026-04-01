@@ -3716,7 +3716,7 @@ export async function stopServiceChannel<Fields extends StopServiceFields | unde
 
 export type ListTerminalSessionsInput = {
   cellId: UUID;
-  kind?: "setup" | "service" | "chat";
+  kind?: "terminal" | "setup" | "service" | "chat";
 };
 
 export type ListTerminalSessionsFields = UnifiedFieldSelection<TerminalSessionResourceSchema>[];

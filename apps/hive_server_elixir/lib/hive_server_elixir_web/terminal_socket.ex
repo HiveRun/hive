@@ -7,6 +7,7 @@ defmodule HiveServerElixirWeb.TerminalSocket do
   channel("workspace:*", HiveServerElixirWeb.WorkspaceChannel)
   channel("timings:*", HiveServerElixirWeb.TimingChannel)
   channel("services:*", HiveServerElixirWeb.ServiceChannel)
+  channel("terminal:*", HiveServerElixirWeb.TerminalChannel)
   channel("setup_terminal:*", HiveServerElixirWeb.TerminalChannel)
   channel("service_terminal:*", HiveServerElixirWeb.TerminalChannel)
   channel("chat_terminal:*", HiveServerElixirWeb.TerminalChannel)

@@ -42,6 +42,7 @@ type PhoenixFramePayload = {
 };
 
 type TerminalScope =
+  | { kind: "terminal"; cellId: string }
   | { kind: "setup"; cellId: string }
   | { kind: "chat"; cellId: string }
   | { kind: "service"; cellId: string; serviceId: string };
@@ -61,8 +62,10 @@ const SERVICE_TERMINAL_TOPIC_PATTERN =
   /^\/api\/cells\/([^/]+)\/services\/([^/]+)\/terminal(?:\/(?:stream|ws))?$/;
 const SETUP_TERMINAL_TOPIC_PATTERN =
   /^\/api\/cells\/([^/]+)\/setup\/terminal(?:\/(?:stream|ws))?$/;
+const CELL_TERMINAL_TOPIC_PATTERN =
+  /^\/api\/cells\/([^/]+)\/terminal(?:\/(?:stream|ws))?$/;
 const CHAT_TERMINAL_TOPIC_PATTERN =
-  /^\/api\/cells\/([^/]+)\/(?:chat\/)?terminal(?:\/(?:stream|ws))?$/;
+  /^\/api\/cells\/([^/]+)\/chat\/terminal(?:\/(?:stream|ws))?$/;
 
 export const toWebSocketUrl = (value: string): string => {
   const url = new URL(value);
@@ -150,6 +153,15 @@ const resolveTerminalScope = (terminalPath: string): TerminalScope | null => {
     return { kind: "setup", cellId };
   }
 
+  const terminalMatch = pathname.match(CELL_TERMINAL_TOPIC_PATTERN);
+  if (terminalMatch) {
+    const cellId = terminalMatch[1];
+    if (!cellId) {
+      return null;
+    }
+    return { kind: "terminal", cellId };
+  }
+
   const chatMatch = pathname.match(CHAT_TERMINAL_TOPIC_PATTERN);
   if (chatMatch) {
     const cellId = chatMatch[1];
@@ -164,6 +176,8 @@ const resolveTerminalScope = (terminalPath: string): TerminalScope | null => {
 
 const topicForScope = (scope: TerminalScope): string => {
   switch (scope.kind) {
+    case "terminal":
+      return `terminal:${scope.cellId}`;
     case "setup":
       return `setup_terminal:${scope.cellId}`;
     case "chat":
@@ -399,6 +413,22 @@ const createPhoenixTerminalSocket = (options: {
   };
 
   const dispatchControlMessage = (payload: TerminalSocketMessage): void => {
+    if (options.scope.kind === "terminal") {
+      if (!(joined && socketReadyState === SOCKET_OPEN_STATE && joinRef)) {
+        emitControlError("Terminal socket unavailable");
+        return;
+      }
+
+      sendFrame({
+        joinRef,
+        ref: nextRef(),
+        topic,
+        event: "terminal_message",
+        payload,
+      });
+      return;
+    }
+
     getAshRpcChannel(options.apiBase)
       .then((channel) => {
         switch (payload.type) {
@@ -493,15 +523,17 @@ function dispatchTerminalInput(
     return;
   }
 
-  serviceTerminalInputChannel({
-    channel,
-    input: { serviceId: scope.serviceId, data },
-    fields: TERMINAL_CONTROL_FIELDS,
-    resultHandler: noopResult,
-    errorHandler: (error: unknown) =>
-      onError(channelErrorMessage(error, "Failed to send service input")),
-    timeoutHandler: () => onError("Service terminal input timed out"),
-  });
+  if (scope.kind === "service") {
+    serviceTerminalInputChannel({
+      channel,
+      input: { serviceId: scope.serviceId, data },
+      fields: TERMINAL_CONTROL_FIELDS,
+      resultHandler: noopResult,
+      errorHandler: (error: unknown) =>
+        onError(channelErrorMessage(error, "Failed to send service input")),
+      timeoutHandler: () => onError("Service terminal input timed out"),
+    });
+  }
 }
 
 function dispatchTerminalResize(
@@ -548,15 +580,19 @@ function dispatchTerminalResize(
     return;
   }
 
-  serviceTerminalResizeChannel({
-    channel,
-    input: { serviceId: scope.serviceId, cols, rows },
-    fields: TERMINAL_CONTROL_FIELDS,
-    resultHandler: noopResult,
-    errorHandler: (error: unknown) =>
-      onError(channelErrorMessage(error, "Failed to resize service terminal")),
-    timeoutHandler: () => onError("Service terminal resize timed out"),
-  });
+  if (scope.kind === "service") {
+    serviceTerminalResizeChannel({
+      channel,
+      input: { serviceId: scope.serviceId, cols, rows },
+      fields: TERMINAL_CONTROL_FIELDS,
+      resultHandler: noopResult,
+      errorHandler: (error: unknown) =>
+        onError(
+          channelErrorMessage(error, "Failed to resize service terminal")
+        ),
+      timeoutHandler: () => onError("Service terminal resize timed out"),
+    });
+  }
 }
 
 function dispatchTerminalRestart(

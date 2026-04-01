@@ -75,6 +75,21 @@ defmodule HiveServerElixir.Cells.ProvisioningWorker do
   end
 
   defp load_cell(cell_id) do
+    load_cell(cell_id, 20)
+  end
+
+  defp load_cell(cell_id, attempts_left) when attempts_left > 1 do
+    case Ash.get(Cell, cell_id) do
+      {:ok, cell} ->
+        {:ok, cell}
+
+      {:error, _error} ->
+        Process.sleep(50)
+        load_cell(cell_id, attempts_left - 1)
+    end
+  end
+
+  defp load_cell(cell_id, _attempts_left) do
     case Ash.get(Cell, cell_id) do
       {:ok, cell} -> {:ok, cell}
       {:error, _error} -> {:cancelled, :cell_not_found}
@@ -82,22 +97,26 @@ defmodule HiveServerElixir.Cells.ProvisioningWorker do
   end
 
   defp maybe_prepare_workspace(:create, cell) do
-    source_root = cell.workspace_root_path || cell.workspace_path
-    ignore_patterns = template_ignore_patterns(cell)
+    if System.get_env("HIVE_E2E_SKIP_WORKSPACE_SNAPSHOT") == "1" do
+      {:ok, cell}
+    else
+      source_root = cell.workspace_root_path || cell.workspace_path
+      ignore_patterns = template_ignore_patterns(cell)
 
-    cond do
-      not is_binary(source_root) ->
-        {:ok, cell}
+      cond do
+        not is_binary(source_root) ->
+          {:ok, cell}
 
-      not File.dir?(source_root) ->
-        {:ok, cell}
+        not File.dir?(source_root) ->
+          {:ok, cell}
 
-      true ->
-        with {:ok, workspace_path} <-
-               WorkspaceSnapshot.ensure_cell_workspace(cell.id, source_root, ignore_patterns),
-             {:ok, updated_cell} <- Ash.update(cell, %{workspace_path: workspace_path}) do
-          {:ok, updated_cell}
-        end
+        true ->
+          with {:ok, workspace_path} <-
+                 WorkspaceSnapshot.ensure_cell_workspace(cell.id, source_root, ignore_patterns),
+               {:ok, updated_cell} <- Ash.update(cell, %{workspace_path: workspace_path}) do
+            {:ok, updated_cell}
+          end
+      end
     end
   end
 

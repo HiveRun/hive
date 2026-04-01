@@ -1,5 +1,5 @@
 defmodule HiveServerElixir.Cells.Reactors.EnsureIngestRunningTest do
-  use ExUnit.Case, async: false
+  use HiveServerElixir.DataCase, async: false
 
   alias HiveServerElixir.Cells.Lifecycle
   alias HiveServerElixir.Cells.Reactors.EnsureIngestRunning
@@ -7,7 +7,7 @@ defmodule HiveServerElixir.Cells.Reactors.EnsureIngestRunningTest do
   @registry HiveServerElixir.Opencode.EventIngestRegistry
 
   test "runs successfully and keeps ingest worker alive" do
-    context = %{workspace_id: "workspace-reactor-success", cell_id: "cell-reactor-success"}
+    context = ingest_context!("success")
     on_exit(fn -> _ = Lifecycle.on_cell_delete(context) end)
 
     assert {:ok, %{context: ^context, pid: pid}} =
@@ -17,12 +17,11 @@ defmodule HiveServerElixir.Cells.Reactors.EnsureIngestRunningTest do
                fail_after_start: false
              })
 
-    assert [{^pid, _value}] =
-             Registry.lookup(@registry, {"workspace-reactor-success", "cell-reactor-success"})
+    assert [{^pid, _value}] = Registry.lookup(@registry, {context.workspace_id, context.cell_id})
   end
 
   test "compensates by stopping ingest when downstream step fails" do
-    context = %{workspace_id: "workspace-reactor-failure", cell_id: "cell-reactor-failure"}
+    context = ingest_context!("failure")
 
     assert {:error, _error} =
              Reactor.run(EnsureIngestRunning, %{
@@ -37,7 +36,7 @@ defmodule HiveServerElixir.Cells.Reactors.EnsureIngestRunningTest do
 
       [{pid, _value}] ->
         ref = Process.monitor(pid)
-        assert_receive {:DOWN, ^ref, :process, ^pid, _reason}
+        assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
 
         assert [] =
                  Registry.lookup(@registry, {"workspace-reactor-failure", "cell-reactor-failure"})
@@ -52,5 +51,29 @@ defmodule HiveServerElixir.Cells.Reactors.EnsureIngestRunningTest do
       success_delay_ms: 0,
       error_delay_ms: 30_000
     ]
+  end
+
+  defp ingest_context!(suffix) do
+    path = "/tmp/ws-reactor-#{suffix}-#{System.unique_integer([:positive])}"
+    File.mkdir_p!(path)
+
+    {:ok, workspace} =
+      Ash.create(HiveServerElixir.Cells.Workspace, %{path: path, label: "Reactor #{suffix}"})
+
+    {:ok, cell} =
+      Ash.create(HiveServerElixir.Cells.Cell, %{
+        workspace_id: workspace.id,
+        name: "Reactor #{suffix}",
+        template_id: "basic",
+        workspace_root_path: path,
+        workspace_path: path,
+        status: "provisioning"
+      })
+
+    on_exit(fn ->
+      _ = File.rm_rf(path)
+    end)
+
+    %{workspace_id: workspace.id, cell_id: cell.id}
   end
 end

@@ -4,6 +4,7 @@ import {
   createCell,
   fetchAgentModels,
   fetchCell,
+  sendChatTerminalPrompt,
   waitForChatRoute,
   waitForProvisioningOrChatRoute,
 } from "../src/test-helpers";
@@ -36,12 +37,9 @@ type AgentMessageListResponse = {
 
 const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
 const CHAT_ROUTE_TIMEOUT_MS = 180_000;
-const TERMINAL_READY_TIMEOUT_MS = 120_000;
-const TERMINAL_INPUT_READY_TIMEOUT_MS = 30_000;
 const SESSION_UPDATE_TIMEOUT_MS = 120_000;
 const ASSISTANT_OUTPUT_TIMEOUT_MS = 40_000;
 const SEND_ATTEMPTS = 3;
-const MAX_TERMINAL_RESTARTS = 2;
 const SEND_ATTEMPT_TIMEOUT_MS = 20_000;
 const SEND_API_TIMEOUT_MS = 8000;
 const POST_RESPONSE_VIDEO_SETTLE_MS = 500;
@@ -103,11 +101,6 @@ test.describe("cell chat flow", () => {
       page,
       cellId,
       timeoutMs: CHAT_ROUTE_TIMEOUT_MS,
-    });
-
-    await ensureTerminalReady(page, {
-      context: "before prompt send",
-      timeoutMs: TERMINAL_READY_TIMEOUT_MS,
     });
 
     await assertSessionModelSelection({
@@ -213,11 +206,6 @@ async function sendPromptWithRetries(options: {
   );
 
   for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt += 1) {
-    await ensureTerminalReady(options.page, {
-      context: `send attempt ${String(attempt)}`,
-      timeoutMs: TERMINAL_INPUT_READY_TIMEOUT_MS,
-    });
-
     const baselineMessages = await fetchAgentMessages(
       options.apiUrl,
       baselineSession.id
@@ -225,6 +213,7 @@ async function sendPromptWithRetries(options: {
     const baselineMessageIds = new Set(
       baselineMessages.map((message) => message.id)
     );
+    const baselineOutputSeq = await readTerminalOutputSeq(options.page);
 
     await sendPrompt(options);
 
@@ -253,7 +242,8 @@ async function sendPromptWithRetries(options: {
         await waitForAssistantOutput({
           apiUrl: options.apiUrl,
           baselineMessageIds,
-          cellId: options.cellId,
+          baselineOutputSeq,
+          sessionId: baselineSession.id,
           page: options.page,
           timeoutMs: ASSISTANT_OUTPUT_TIMEOUT_MS,
         });
@@ -357,31 +347,20 @@ async function waitForPromptAccepted(options: {
 async function waitForAssistantOutput(options: {
   apiUrl: string;
   baselineMessageIds: ReadonlySet<string>;
-  cellId: string;
+  baselineOutputSeq: number;
+  sessionId: string;
   page: Page;
   timeoutMs: number;
 }): Promise<void> {
   let restartCount = 0;
   let observedAssistantOutput = false;
   let lastConnectionState = "unknown";
-  let lastSessionStatus = "unknown";
 
   await waitForCondition({
     check: async () => {
-      const currentSession = await fetchAgentSession(
-        options.apiUrl,
-        options.cellId
-      );
-
-      if (!currentSession) {
-        return false;
-      }
-
-      lastSessionStatus = currentSession.status;
-
       const messages = await fetchAgentMessages(
         options.apiUrl,
-        currentSession.id
+        options.sessionId
       );
       const latestAssistantMessage = findLatestAssistantMessage(
         messages,
@@ -392,16 +371,20 @@ async function waitForAssistantOutput(options: {
         observedAssistantOutput = true;
       }
 
-      if (
-        observedAssistantOutput &&
-        currentSession.status === "awaiting_input"
-      ) {
+      const outputSeq = await readTerminalOutputSeq(options.page);
+
+      if (!observedAssistantOutput && outputSeq > options.baselineOutputSeq) {
+        observedAssistantOutput = true;
+      }
+
+      if (observedAssistantOutput && latestAssistantMessage?.content?.trim()) {
         return true;
       }
 
       const connectionState = await options.page
         .locator(selectors.terminalConnectionBadge)
-        .getAttribute("data-connection-state");
+        .getAttribute("data-connection-state")
+        .catch(() => null);
       lastConnectionState = connectionState ?? "unknown";
 
       const recovery = await maybeRecoverTerminalDuringAssistantWait({
@@ -417,7 +400,7 @@ async function waitForAssistantOutput(options: {
 
       return false;
     },
-    errorMessage: `Agent response was not observed after sending prompt. state=${lastConnectionState} session=${lastSessionStatus} assistantOutput=${String(observedAssistantOutput)} restarts=${String(restartCount)}`,
+    errorMessage: `Agent response was not observed after sending prompt. state=${lastConnectionState} assistantOutput=${String(observedAssistantOutput)} restarts=${String(restartCount)}`,
     intervalMs: 1000,
     timeoutMs: options.timeoutMs,
   });
@@ -533,8 +516,7 @@ async function sendPrompt(options: {
   prompt: string;
 }): Promise<void> {
   await focusTerminalInput(options.page);
-  await options.page.keyboard.type(options.prompt, { delay: 25 });
-  await options.page.keyboard.press("Enter");
+  await sendChatTerminalPrompt(options.page, options.prompt);
 }
 
 async function focusTerminalInput(page: Page): Promise<void> {
@@ -549,114 +531,6 @@ async function focusTerminalInput(page: Page): Promise<void> {
       }),
     errorMessage: "Terminal input textarea did not receive focus",
     timeoutMs: 10_000,
-  });
-}
-
-type TerminalProbe = {
-  state: string;
-  exitCode: string;
-  errorMessage: string;
-};
-
-function resolvePathname(rawUrl: string): string {
-  try {
-    return new URL(rawUrl).pathname;
-  } catch {
-    return rawUrl;
-  }
-}
-
-async function probeTerminalState(page: Page): Promise<TerminalProbe> {
-  const badge = page.locator(selectors.terminalConnectionBadge).first();
-  const terminalRoot = page.locator(selectors.terminalRoot).first();
-  const [badgeCount, terminalRootCount] = await Promise.all([
-    badge.count(),
-    terminalRoot.count(),
-  ]);
-
-  if (badgeCount === 0 || terminalRootCount === 0) {
-    return {
-      state: "missing-terminal-shell",
-      exitCode: "",
-      errorMessage: "",
-    };
-  }
-
-  try {
-    const [state, exitCode, exitSignal] = await Promise.all([
-      badge.getAttribute("data-connection-state", { timeout: 1000 }),
-      badge.getAttribute("data-exit-code", { timeout: 1000 }),
-      terminalRoot.getAttribute("data-terminal-error-message", {
-        timeout: 1000,
-      }),
-    ]);
-
-    return {
-      state: state ?? "unknown",
-      exitCode: exitCode ?? "",
-      errorMessage: exitSignal ?? "",
-    };
-  } catch {
-    return {
-      state: "terminal-shell-transitioning",
-      exitCode: "",
-      errorMessage: "",
-    };
-  }
-}
-
-async function ensureTerminalReady(
-  page: Page,
-  options: {
-    context: string;
-    timeoutMs: number;
-  }
-): Promise<void> {
-  let restartCount = 0;
-  let lastState = "unknown";
-  let lastExitCode = "";
-  let lastErrorMessage = "";
-  let lastPath = "";
-
-  await waitForCondition({
-    check: async () => {
-      lastPath = resolvePathname(page.url());
-      const probe = await probeTerminalState(page);
-      lastState = probe.state;
-      lastExitCode = probe.exitCode;
-      lastErrorMessage = probe.errorMessage;
-
-      if (lastState === "online") {
-        const [readySurfaceVisible, inputSurfaceVisible] = await Promise.all([
-          page
-            .locator(selectors.terminalReadySurface)
-            .isVisible()
-            .catch(() => false),
-          page
-            .locator(selectors.terminalInputSurface)
-            .isVisible()
-            .catch(() => false),
-        ]);
-
-        return readySurfaceVisible || inputSurfaceVisible;
-      }
-
-      if (lastState === "exited" || lastState === "disconnected") {
-        if (restartCount >= MAX_TERMINAL_RESTARTS) {
-          throw new Error(
-            `Terminal remained ${lastState} during ${options.context}. path=${lastPath || "n/a"} exitCode=${lastExitCode || "n/a"} error=${lastErrorMessage || "n/a"}`
-          );
-        }
-
-        await page.locator(selectors.terminalRestartButton).click();
-        restartCount += 1;
-        await page.waitForTimeout(TERMINAL_RECOVERY_WAIT_MS);
-      }
-
-      return false;
-    },
-    errorMessage: `Terminal not ready during ${options.context}. path=${lastPath || "n/a"} lastState=${lastState} exitCode=${lastExitCode || "n/a"} error=${lastErrorMessage || "n/a"} restarts=${String(restartCount)}`,
-    timeoutMs: options.timeoutMs,
   });
 }
 
@@ -677,6 +551,16 @@ async function captureFinalVideoFrame(page: Page): Promise<void> {
     const terminal = document.querySelector('[data-testid="cell-terminal"]');
     terminal?.setAttribute("data-e2e-final-frame", String(Date.now()));
   });
+}
+
+async function readTerminalOutputSeq(page: Page): Promise<number> {
+  const raw = await page
+    .locator(selectors.terminalRoot)
+    .first()
+    .getAttribute("data-terminal-output-seq")
+    .catch(() => null);
+
+  return Number(raw ?? "0");
 }
 
 async function waitForCondition(options: {

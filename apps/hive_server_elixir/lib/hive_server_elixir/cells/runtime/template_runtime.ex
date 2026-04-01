@@ -5,13 +5,10 @@ defmodule HiveServerElixir.Cells.TemplateRuntime do
   require Ash.Query
 
   alias HiveServerElixir.Cells.Cell
-  alias HiveServerElixir.Cells.Events
   alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.TemplateConfig
-  alias HiveServerElixir.Cells.TerminalRuntime
-
-  @shell System.find_executable("sh") || "/bin/sh"
+  alias HiveServerElixir.Cells.Terminals.SetupRunner
 
   @spec prepare_cell(Cell.t()) :: {:ok, %{status: String.t(), last_setup_error: String.t() | nil}}
   def prepare_cell(%Cell{} = cell) do
@@ -113,70 +110,16 @@ defmodule HiveServerElixir.Cells.TemplateRuntime do
   end
 
   defp run_setup_commands(%Cell{} = cell, template) do
-    if template.setup == [] do
-      :ok
-    else
-      :ok = emit_setup_line(cell.id, "[setup] Starting template setup for #{template.id}")
-
-      template.setup
-      |> Enum.reduce_while(:ok, fn command, :ok ->
-        :ok = emit_setup_line(cell.id, "[setup] Running: #{command}")
-
-        env =
-          base_env(cell, template.id)
-          |> Map.merge(template.env)
-          |> Map.put("HIVE_WORKTREE_SETUP", "true")
-          |> Map.put("HIVE_MAIN_REPO", cell.workspace_root_path)
-          |> Map.put("FORCE_COLOR", "1")
-
-        case System.cmd(@shell, ["-lc", command],
-               cd: cell.workspace_path,
-               env: Enum.to_list(env),
-               stderr_to_stdout: true
-             ) do
-          {output, 0} ->
-            emit_setup_output(cell.id, output)
-            :ok = emit_setup_line(cell.id, "[setup] Completed: #{command}")
-            {:cont, :ok}
-
-          {output, exit_code} ->
-            emit_setup_output(cell.id, output)
-            :ok = emit_setup_line(cell.id, "[setup] Failed: #{command} (exit #{exit_code})")
-
-            {:halt,
-             {:error,
-              "Template setup command failed with exit code #{exit_code}: #{command}\n\n#{summarize_setup_output(output)}"}}
-        end
-      end)
-    end
-  end
-
-  defp emit_setup_line(cell_id, line) do
-    emit_setup_output(cell_id, line <> "\n")
-  end
-
-  defp emit_setup_output(cell_id, output) when is_binary(output) do
-    if output != "" do
-      :ok = TerminalRuntime.append_setup_output(cell_id, output)
-      :ok = Events.publish_setup_terminal_data(cell_id, output)
-    end
-
-    :ok
-  end
-
-  defp summarize_setup_output(output) when is_binary(output) do
-    output
-    |> String.trim()
-    |> case do
-      "" ->
-        "(no setup output captured)"
-
-      trimmed ->
-        trimmed
-        |> String.split("\n")
-        |> Enum.take(-20)
-        |> Enum.join("\n")
-    end
+    SetupRunner.run(cell, %{
+      id: template.id,
+      env:
+        base_env(cell, template.id)
+        |> Map.merge(template.env)
+        |> Map.put("HIVE_WORKTREE_SETUP", "true")
+        |> Map.put("HIVE_MAIN_REPO", cell.workspace_root_path)
+        |> Map.put("FORCE_COLOR", "1"),
+      setup: template.setup
+    })
   end
 
   defp list_services(cell_id) do

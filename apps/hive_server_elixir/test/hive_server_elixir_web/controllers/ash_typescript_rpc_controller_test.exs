@@ -23,6 +23,8 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
     previous_active_workspace_id = Workspaces.active_workspace_id()
     previous_runtime_opts = Application.get_env(:hive_server_elixir, :cell_reactor_runtime_opts)
 
+    cleanup_terminal_runtime!()
+
     Workspace
     |> Ash.read!(domain: Cells)
     |> Enum.each(&Ash.destroy!(&1, domain: Cells))
@@ -31,6 +33,7 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
     Application.put_env(:hive_server_elixir, :cell_reactor_runtime_opts, runtime_opts())
 
     on_exit(fn ->
+      cleanup_terminal_runtime!()
       :ok = Workspaces.set_active_workspace_id(previous_active_workspace_id)
 
       if is_nil(previous_runtime_opts) do
@@ -45,6 +48,15 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
     end)
 
     :ok
+  end
+
+  defp cleanup_terminal_runtime! do
+    Cell
+    |> Ash.read!(domain: Cells)
+    |> Enum.each(fn cell ->
+      :ok = ServiceRuntime.stop_cell_services(cell.id)
+      :ok = TerminalRuntime.clear_cell(cell.id)
+    end)
   end
 
   test "list_workspaces returns Ash-backed workspace records", %{conn: conn} do
@@ -377,8 +389,8 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
     cell = cell!(workspace, "ready")
     service = service!(cell)
 
-    setup_session = TerminalRuntime.ensure_setup_session(cell.id)
-    service_session = TerminalRuntime.ensure_service_session(cell.id, service.id)
+    assert {:ok, setup_session} = TerminalRuntime.ensure_setup_session(cell.id)
+    assert {:ok, service_session} = TerminalRuntime.ensure_service_session(cell.id, service.id)
 
     payload =
       rpc_run(conn, "list_terminal_sessions", %{

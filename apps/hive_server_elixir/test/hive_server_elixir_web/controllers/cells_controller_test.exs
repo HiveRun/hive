@@ -13,6 +13,7 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
   alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.Timing
   alias HiveServerElixir.Cells.Workspace
+  alias HiveServerElixir.Opencode.ServerManager
 
   test "GET /api/cells/:id/setup/terminal/stream emits ready and snapshot semantics", %{
     conn: conn
@@ -104,6 +105,8 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
   end
 
   test "POST /api/cells/:id/chat/terminal/restart rotates terminal session", %{conn: conn} do
+    _ = start_supervised!({ServerManager, timeout_ms: 15_000})
+
     workspace = workspace!("chat-terminal-restart")
     cell = cell!(workspace.id, "chat terminal cell", "ready")
 
@@ -362,12 +365,19 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
   end
 
   defp workspace!(suffix) do
+    path = "/tmp/controller-workspace-#{suffix}-#{System.unique_integer([:positive])}"
+    File.mkdir_p!(path)
+
     assert {:ok, workspace} =
              Ash.create(
                Workspace,
-               %{path: "/tmp/controller-workspace-#{suffix}", label: "Workspace #{suffix}"},
+               %{path: path, label: "Workspace #{suffix}"},
                domain: Cells
              )
+
+    on_exit(fn ->
+      _ = File.rm_rf(path)
+    end)
 
     workspace
   end

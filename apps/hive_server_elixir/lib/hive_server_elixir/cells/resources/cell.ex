@@ -3,6 +3,7 @@ defmodule HiveServerElixir.Cells.Cell do
 
   import Ash.Expr
   require Ash.Query
+  require Logger
 
   alias HiveServerElixir.Cells.AgentSession
   alias HiveServerElixir.Cells.CellStatus
@@ -828,8 +829,8 @@ defmodule HiveServerElixir.Cells.Cell do
   end
 
   def setup_terminal_resize_payload(%{cell_id: cell_id, cols: cols, rows: rows}) do
-    with {:ok, _cell} <- Ash.get(__MODULE__, cell_id) do
-      _session = Terminals.resize_session({:setup, cell_id}, cols, rows)
+    with {:ok, _cell} <- Ash.get(__MODULE__, cell_id),
+         {:ok, _session} <- Terminals.resize_session({:setup, cell_id}, cols, rows) do
       {:ok, %{ok: true}}
     else
       {:error, reason} -> {:error, terminal_control_error(reason, "Cell not found")}
@@ -853,8 +854,8 @@ defmodule HiveServerElixir.Cells.Cell do
 
   def chat_terminal_resize_payload(%{cell_id: cell_id, cols: cols, rows: rows}) do
     with {:ok, cell} <- Ash.get(__MODULE__, cell_id),
-         :ok <- Terminals.validate_chat_available(cell) do
-      _session = Terminals.resize_session({:chat, cell_id}, cols, rows)
+         :ok <- Terminals.validate_chat_available(cell),
+         {:ok, _session} <- Terminals.resize_session({:chat, cell_id}, cols, rows) do
       {:ok, %{ok: true}}
     else
       {:error, reason} ->
@@ -868,8 +869,8 @@ defmodule HiveServerElixir.Cells.Cell do
 
   def chat_terminal_restart_payload(%{cell_id: cell_id}) do
     with {:ok, cell} <- Ash.get(__MODULE__, cell_id),
-         :ok <- Terminals.validate_chat_available(cell) do
-      _session = Terminals.restart_session({:chat, cell_id})
+         :ok <- Terminals.validate_chat_available(cell),
+         {:ok, _session} <- Terminals.restart_session({:chat, cell_id}) do
       {:ok, %{ok: true}}
     else
       {:error, reason} ->
@@ -930,16 +931,39 @@ defmodule HiveServerElixir.Cells.Cell do
       runtime_opts = Keyword.get(opts, :runtime_opts, [])
       fail_after_ingest = Keyword.get(opts, :fail_after_ingest, false)
 
-      case ProvisioningRuntime.restart(mode, cell.id,
-             runtime_opts: runtime_opts,
-             fail_after_ingest: fail_after_ingest
-           ) do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
-        {:error, reason} -> {:error, reason}
+      if mode == :create do
+        {:ok, _task} =
+          Task.start(fn ->
+            Process.sleep(100)
+
+            case start_provisioning_runtime(mode, cell.id, runtime_opts, fail_after_ingest) do
+              :ok ->
+                :ok
+
+              {:error, reason} ->
+                Logger.warning(
+                  "Failed to enqueue provisioning worker for cell #{cell.id}: #{inspect(reason)}"
+                )
+            end
+          end)
+
+        :ok
+      else
+        start_provisioning_runtime(mode, cell.id, runtime_opts, fail_after_ingest)
       end
     else
       :ok
+    end
+  end
+
+  defp start_provisioning_runtime(mode, cell_id, runtime_opts, fail_after_ingest) do
+    case ProvisioningRuntime.restart(mode, cell_id,
+           runtime_opts: runtime_opts,
+           fail_after_ingest: fail_after_ingest
+         ) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 

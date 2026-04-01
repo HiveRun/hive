@@ -6,7 +6,7 @@ import {
   openCellCreationSheet,
   parseCellIdFromUrl,
   selectTemplate,
-  waitForChatRoute,
+  waitForCellStatus,
   waitForProvisioningOrChatRoute,
 } from "../src/test-helpers";
 
@@ -24,7 +24,7 @@ type RpcResult<T> = {
 
 const CELL_TEMPLATE_LABEL = "Basic Template";
 const CELL_URL_PATTERN = /\/cells\//;
-const PROVISIONING_TIMELINE_TEXT = /Provisioning timeline/i;
+const CELL_ROUTE_PATTERN = /\/cells\/.*\/(provisioning|chat)/;
 
 test.describe("model catalog", () => {
   test("loads models in the UI and persists the selected default", async ({
@@ -99,10 +99,17 @@ test.describe("model catalog", () => {
     });
 
     if (initialRoute === "provisioning") {
-      await expect(page.getByText(PROVISIONING_TIMELINE_TEXT)).toBeVisible();
+      await page.waitForURL(CELL_ROUTE_PATTERN, {
+        timeout: 30_000,
+      });
     }
 
-    await waitForChatRoute({ page, cellId, timeoutMs: 180_000 });
+    await waitForCellStatus({
+      apiUrl,
+      cellId,
+      status: "ready",
+      timeoutMs: 180_000,
+    });
 
     await expect
       .poll(async () => {

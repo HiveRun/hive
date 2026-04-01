@@ -17,6 +17,7 @@ test.describe("setup retry", () => {
   test("recovers a failed setup after retry", async ({ page }) => {
     const apiUrl = process.env.HIVE_E2E_API_URL;
     const hiveHome = process.env.HIVE_E2E_HIVE_HOME;
+    const workspacePath = process.env.HIVE_E2E_WORKSPACE_PATH;
     if (!apiUrl) {
       throw new Error("HIVE_E2E_API_URL is required for E2E tests");
     }
@@ -52,7 +53,9 @@ test.describe("setup retry", () => {
       await expect(page.getByText(PROVISIONING_TIMELINE_TEXT)).toBeVisible();
     }
 
-    const markerPath = join(hiveHome, "cells", cellId, ".hive-setup-pass");
+    const markerPath = workspacePath
+      ? join(workspacePath, ".hive-setup-pass")
+      : join(hiveHome, "cells", cellId, ".hive-setup-pass");
     await writeFile(markerPath, "ok\n", "utf8");
     expect(await fileExists(markerPath)).toBe(true);
 

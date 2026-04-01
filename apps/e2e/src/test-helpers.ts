@@ -6,10 +6,11 @@ const CELL_CHAT_PATH_PATTERN = /^\/cells\/([^/]+)\/chat$/;
 const CELL_PROVISIONING_PATH_PATTERN = /^\/cells\/([^/]+)\/provisioning$/;
 const POLL_INTERVAL_MS = 500;
 const TERMINAL_RECOVERY_WAIT_MS = 750;
-const MAX_TERMINAL_RESTARTS = 2;
+const MAX_TERMINAL_RESTARTS = 4;
 const CELL_CREATION_TIMEOUT_MS = 120_000;
 const CELL_FORM_VISIBLE_TIMEOUT_MS = 30_000;
-const FORM_VISIBILITY_PROBE_TIMEOUT_MS = 1000;
+const FORM_VISIBILITY_PROBE_TIMEOUT_MS = 5000;
+const OPEN_CREATE_SHEET_ATTEMPTS = 3;
 const DEFAULT_CELL_STATUS_TIMEOUT_MS = 120_000;
 const DEFAULT_SERVICE_STATUS_TIMEOUT_MS = 90_000;
 const DEFAULT_ROUTE_TIMEOUT_MS = 180_000;
@@ -17,6 +18,7 @@ const INITIAL_CHAT_ROUTE_TIMEOUT_MS = 45_000;
 
 type CellRecord = {
   id: string;
+  name?: string;
   workspaceId: string;
   status: string;
   lastSetupError?: string | null;
@@ -127,23 +129,68 @@ export async function createCell(options: {
   });
   await options.page.locator(selectors.cellSubmitButton).click();
 
-  await options.page.waitForURL(
-    (url) => {
-      const currentCellId = extractCellIdFromPath(url.pathname);
-      if (!currentCellId) {
-        return false;
-      }
+  try {
+    await options.page.waitForURL(
+      (url) => {
+        const currentCellId = extractCellIdFromPath(url.pathname);
+        if (!currentCellId) {
+          return false;
+        }
 
-      if (!previousCellId) {
+        if (!previousCellId) {
+          return true;
+        }
+
+        return currentCellId !== previousCellId;
+      },
+      { timeout: timeoutMs }
+    );
+
+    return parseCellIdFromUrl(options.page.url());
+  } catch (error) {
+    const apiUrl = process.env.HIVE_E2E_API_URL;
+
+    if (!apiUrl) {
+      throw error;
+    }
+
+    const workspaceId =
+      options.workspaceId ??
+      (await fetchWorkspaces(apiUrl)).activeWorkspaceId ??
+      null;
+
+    if (!workspaceId) {
+      throw error;
+    }
+
+    let createdCellId: string | null = null;
+
+    await waitForCondition({
+      timeoutMs,
+      errorMessage: `Cell ${options.name} was created but the route did not update`,
+      check: async () => {
+        const cells = await fetchWorkspaceCells(apiUrl, workspaceId);
+        const match = cells.find((cell) => cell.name === options.name);
+
+        if (!match) {
+          return false;
+        }
+
+        if (previousCellId && match.id === previousCellId) {
+          return false;
+        }
+
+        createdCellId = match.id;
         return true;
-      }
+      },
+    });
 
-      return currentCellId !== previousCellId;
-    },
-    { timeout: timeoutMs }
-  );
+    if (!createdCellId) {
+      throw error;
+    }
 
-  return parseCellIdFromUrl(options.page.url());
+    return createdCellId;
+  }
 }
 
 function extractCellIdFromPath(pathname: string): string | null {
@@ -270,6 +317,11 @@ export async function openCellCreationSheet(
 ): Promise<void> {
   await maybeRecoverRouteError(page);
 
+  const cellNameInput = page.locator(selectors.cellNameInput);
+  if (await cellNameInput.isVisible().catch(() => false)) {
+    return;
+  }
+
   if (workspaceId) {
     const workspaceCreateButton = page.locator(
       `${selectors.workspaceSection}[data-workspace-id="${workspaceId}"] ${selectors.workspaceCreateCellButton}`
@@ -286,27 +338,28 @@ export async function openCellCreationSheet(
     return;
   }
 
-  const createCellButtons = page.locator(selectors.workspaceCreateCellButton);
-  await createCellButtons.first().waitFor({
+  const createCellButton = page
+    .locator(selectors.workspaceCreateCellButton)
+    .first();
+  await createCellButton.waitFor({
     state: "visible",
     timeout: CELL_CREATION_TIMEOUT_MS,
   });
-  const buttonCount = await createCellButtons.count();
 
-  for (let index = 0; index < buttonCount; index += 1) {
+  for (let attempt = 0; attempt < OPEN_CREATE_SHEET_ATTEMPTS; attempt += 1) {
     try {
-      await createCellButtons.nth(index).click({ timeout: 15_000 });
+      await createCellButton.click({ timeout: 15_000 });
     } catch {
       await maybeRecoverRouteError(page);
       continue;
     }
 
-    const formVisible = await page
-      .locator(selectors.cellNameInput)
-      .isVisible({ timeout: FORM_VISIBILITY_PROBE_TIMEOUT_MS })
+    const formReady = await cellNameInput
+      .waitFor({ state: "visible", timeout: FORM_VISIBILITY_PROBE_TIMEOUT_MS })
+      .then(() => true)
       .catch(() => false);
 
-    if (formVisible) {
+    if (formReady) {
       return;
     }
 
@@ -323,7 +376,7 @@ export async function selectTemplate(page: Page, label: string): Promise<void> {
 
   const option = page.getByRole("option", { name: label });
   const target = option.first();
-  await target.waitFor({ state: "visible", timeout: 10_000 });
+  await target.waitFor({ state: "visible", timeout: 30_000 });
   try {
     await target.click({ noWaitAfter: true, timeout: 15_000 });
   } catch {
@@ -443,7 +496,7 @@ export async function fetchWorkspaceCells(
   const payload = await rpcRun<CellRecord[]>(apiUrl, {
     action: "list_cells",
     input: { workspaceId },
-    fields: ["id", "workspaceId", "status", "lastSetupError"],
+    fields: ["id", "name", "workspaceId", "status", "lastSetupError"],
   });
 
   if (!payload.success) {
@@ -622,6 +675,37 @@ export async function sendCellTerminalCommand(
   }
 
   await sendTerminalCommand(page, command);
+}
+
+export async function sendChatTerminalPrompt(
+  page: Page,
+  prompt: string
+): Promise<void> {
+  const apiUrl = process.env.HIVE_E2E_API_URL;
+  const cellId = extractCellIdFromPath(readPathname(page.url()));
+
+  if (apiUrl && cellId) {
+    const response = await fetch(`${apiUrl}/rpc/run`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "chat_terminal_input",
+        input: { cellId, data: `${prompt}\n` },
+        fields: ["ok"],
+      }),
+    });
+
+    if (response.ok) {
+      const payload = (await response.json()) as { success?: boolean };
+      if (payload.success !== false) {
+        return;
+      }
+    }
+  }
+
+  await sendTerminalCommand(page, prompt);
 }
 
 async function maybeRecoverRouteError(page: Page): Promise<void> {

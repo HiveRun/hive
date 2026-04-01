@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   createCell,
-  waitForChatRoute,
+  waitForCellStatus,
   waitForCondition,
   waitForProvisioningOrChatRoute,
   waitForServiceStatuses,
@@ -43,9 +43,10 @@ test.describe("cell deletion cleanup", () => {
       await expect(page.getByText(PROVISIONING_TIMELINE_TEXT)).toBeVisible();
     }
 
-    await waitForChatRoute({
-      page,
+    await waitForCellStatus({
+      apiUrl,
       cellId,
+      status: "ready",
       timeoutMs: CHAT_ROUTE_TIMEOUT_MS,
     });
 

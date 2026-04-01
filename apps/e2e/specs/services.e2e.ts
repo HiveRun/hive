@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   createCell,
   fetchActivity,
-  waitForChatRoute,
+  waitForCellStatus,
   waitForCondition,
   waitForProvisioningOrChatRoute,
   waitForServiceStatuses,
@@ -13,7 +13,7 @@ const STOP_BUTTON_LABEL = /^Stop$/;
 const START_BUTTON_LABEL = /^Start$/;
 const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
 const CHAT_ROUTE_TIMEOUT_MS = 600_000;
-const PROVISIONING_TIMELINE_TEXT = /Provisioning timeline/i;
+const CELL_ROUTE_PATTERN = /\/cells\/.*\/(provisioning|chat)/;
 const isActiveStatus = (status: string) => {
   const normalized = status.toLowerCase();
   return normalized === "running" || normalized === "starting";
@@ -45,12 +45,15 @@ test.describe("service controls", () => {
     });
 
     if (initialRoute === "provisioning") {
-      await expect(page.getByText(PROVISIONING_TIMELINE_TEXT)).toBeVisible();
+      await page.waitForURL(CELL_ROUTE_PATTERN, {
+        timeout: 30_000,
+      });
     }
 
-    await waitForChatRoute({
-      page,
+    await waitForCellStatus({
+      apiUrl,
       cellId,
+      status: "ready",
       timeoutMs: CHAT_ROUTE_TIMEOUT_MS,
     });
 

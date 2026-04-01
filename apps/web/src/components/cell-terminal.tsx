@@ -67,6 +67,12 @@ const CSI_MARKER = "[";
 const OSC_MARKER = "]";
 const OSC_ESCAPE_TERMINATOR = "\\";
 const NON_WHITESPACE_RE = /\S/;
+
+const hasLineBufferedPassthroughChar = (value: string) =>
+  Array.from(value).some((character) => {
+    const code = character.charCodeAt(0);
+    return code < ASCII_SPACE_CODE || code === ASCII_DELETE_CODE;
+  });
 const TERMINAL_FONT_FAMILY =
   '"JetBrainsMono Nerd Font", "MesloLGS NF", "CaskaydiaMono Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font Mono", "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Noto Color Emoji", monospace';
 const TERMINAL_THEME_DARK = {
@@ -253,6 +259,7 @@ type CellTerminalProps = {
   startupTextMatch?: string | null;
   startupStatusMessage?: string | null;
   startupOverlay?: ReactNode;
+  lineBufferedInput?: boolean;
 };
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Terminal lifecycle handling intentionally coordinates stream events, reconnects, and UI status in one component.
@@ -270,6 +277,7 @@ export function CellTerminal({
   startupTextMatch = null,
   startupStatusMessage = null,
   startupOverlay = null,
+  lineBufferedInput = false,
 }: CellTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
@@ -280,6 +288,7 @@ export function CellTerminal({
   const outputRef = useRef<string>("");
   const visibleOutputRef = useRef<string>("");
   const inputBufferRef = useRef<string>("");
+  const lineInputBufferRef = useRef<string>("");
   const inputFlushTimeoutRef = useRef<number | null>(null);
   const inputBatchWindowMsRef = useRef(INPUT_BATCH_BASE_WINDOW_MS);
   const inputBatchChunkCountRef = useRef(0);
@@ -440,9 +449,86 @@ export function CellTerminal({
     inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
   }, []);
 
+  const flushLineInputBuffer = useCallback(() => {
+    const buffered = lineInputBufferRef.current;
+    lineInputBufferRef.current = "";
+    return buffered;
+  }, []);
+
+  const sendLineBufferedInput = useCallback(
+    (data: string) => {
+      if (data === "\r" || data === "\n") {
+        const buffered = flushLineInputBuffer();
+        sendSocketMessage({ type: "input", data: `${buffered}\n` });
+        return;
+      }
+
+      if (data === "\u007f") {
+        lineInputBufferRef.current = lineInputBufferRef.current.slice(0, -1);
+        return;
+      }
+
+      if (!hasLineBufferedPassthroughChar(data)) {
+        lineInputBufferRef.current += data;
+        return;
+      }
+
+      const buffered = flushLineInputBuffer();
+      if (buffered.length > 0) {
+        sendSocketMessage({ type: "input", data: `${buffered}\n` });
+        return;
+      }
+
+      sendSocketMessage({ type: "input", data });
+    },
+    [flushLineInputBuffer, sendSocketMessage]
+  );
+
+  const handleLineBufferedKeydown = useCallback(
+    (event: KeyboardEvent) => {
+      if (!lineBufferedInput) {
+        return;
+      }
+
+      if (event.isComposing) {
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const buffered = flushLineInputBuffer();
+        sendSocketMessage({ type: "input", data: `${buffered}\n` });
+        return;
+      }
+
+      if (event.key === "Backspace") {
+        event.preventDefault();
+        lineInputBufferRef.current = lineInputBufferRef.current.slice(0, -1);
+        return;
+      }
+
+      if (
+        event.key.length === 1 &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      ) {
+        event.preventDefault();
+        lineInputBufferRef.current += event.key;
+      }
+    },
+    [flushLineInputBuffer, lineBufferedInput, sendSocketMessage]
+  );
+
   const sendInput = useCallback(
     (data: string) => {
       if (data.length === 0) {
+        return;
+      }
+
+      if (lineBufferedInput) {
+        discardQueuedMouseInput();
+        sendLineBufferedInput(data);
         return;
       }
 
@@ -472,7 +558,13 @@ export function CellTerminal({
         flushQueuedInput();
       }, inputBatchWindowMsRef.current);
     },
-    [discardQueuedMouseInput, flushQueuedInput, sendSocketMessage]
+    [
+      discardQueuedMouseInput,
+      flushQueuedInput,
+      lineBufferedInput,
+      sendLineBufferedInput,
+      sendSocketMessage,
+    ]
   );
 
   const scheduleResizeSync = useCallback(() => {
@@ -836,6 +928,14 @@ export function CellTerminal({
       fitAddon.fit();
       terminal.focus();
 
+      if (lineBufferedInput) {
+        containerRef.current.addEventListener(
+          "keydown",
+          handleLineBufferedKeydown,
+          true
+        );
+      }
+
       terminalRef.current = terminal;
       fitAddonRef.current = fitAddon;
       serializeAddonRef.current = serializeAddon;
@@ -862,6 +962,14 @@ export function CellTerminal({
       scheduleResizeSync();
 
       return () => {
+        if (lineBufferedInput) {
+          containerRef.current?.removeEventListener(
+            "keydown",
+            handleLineBufferedKeydown,
+            true
+          );
+        }
+
         cleanupWheelBridge();
       };
     };
@@ -887,6 +995,7 @@ export function CellTerminal({
         inputFlushTimeoutRef.current = null;
       }
       inputBufferRef.current = "";
+      lineInputBufferRef.current = "";
       inputBatchChunkCountRef.current = 0;
       inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
       restartPendingRef.current = false;
@@ -916,6 +1025,8 @@ export function CellTerminal({
     };
   }, [
     buildTerminalSocketPath,
+    handleLineBufferedKeydown,
+    lineBufferedInput,
     scheduleResizeSync,
     sendInput,
     themeMode,

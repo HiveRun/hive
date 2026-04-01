@@ -2,7 +2,6 @@ defmodule HiveServerElixir.Cells.AgentSessionMessages do
   @moduledoc false
 
   alias HiveServerElixir.Cells.AgentSessionRead
-  alias HiveServerElixir.Cells.TerminalRuntime
   alias HiveServerElixir.Opencode.EventEnvelope
 
   @spec for_session(String.t()) :: {:ok, %{messages: [map()]}} | {:error, {atom(), String.t()}}
@@ -44,38 +43,8 @@ defmodule HiveServerElixir.Cells.AgentSessionMessages do
   end
 
   defp fallback_messages_from_terminal(context) do
-    output =
-      context.cell.id
-      |> TerminalRuntime.read_chat_output()
-      |> Enum.join("")
-      |> String.trim()
-
-    if output == "" do
-      []
-    else
-      timestamp = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
-
-      [
-        %{
-          id: "fallback-user-#{context.cell.id}",
-          sessionId: context.session_id,
-          role: "user",
-          content: output,
-          state: "completed",
-          createdAt: timestamp,
-          parts: []
-        },
-        %{
-          id: "fallback-assistant-#{context.cell.id}",
-          sessionId: context.session_id,
-          role: "assistant",
-          content: output,
-          state: "completed",
-          createdAt: timestamp,
-          parts: []
-        }
-      ]
-    end
+    _ = context
+    []
   end
 
   defp serialize_message(entry, context, index) do

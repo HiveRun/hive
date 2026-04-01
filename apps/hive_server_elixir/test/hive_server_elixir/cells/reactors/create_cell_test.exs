@@ -14,6 +14,21 @@ defmodule HiveServerElixir.Cells.Reactors.CreateCellTest do
 
   @registry HiveServerElixir.Opencode.EventIngestRegistry
 
+  setup do
+    previous = System.get_env("HIVE_E2E_SKIP_WORKSPACE_SNAPSHOT")
+    System.put_env("HIVE_E2E_SKIP_WORKSPACE_SNAPSHOT", "1")
+
+    on_exit(fn ->
+      if previous do
+        System.put_env("HIVE_E2E_SKIP_WORKSPACE_SNAPSHOT", previous)
+      else
+        System.delete_env("HIVE_E2E_SKIP_WORKSPACE_SNAPSHOT")
+      end
+    end)
+
+    :ok
+  end
+
   test "creates a provisioning cell immediately and completes setup asynchronously" do
     workspace = workspace!("create")
 

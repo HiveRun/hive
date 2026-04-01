@@ -27,8 +27,7 @@ defmodule HiveServerElixirWeb.CellsSerializer do
   defp maybe_setup_log_payload(_cell_id, false), do: %{}
 
   defp maybe_setup_log_payload(cell_id, true) do
-    output = TerminalRuntime.read_setup_output(cell_id)
-    setup_log = output |> Enum.join("") |> String.trim()
+    setup_log = cell_id |> TerminalRuntime.read_setup_output() |> String.trim()
 
     %{
       setupLog: if(setup_log == "", do: nil, else: setup_log),

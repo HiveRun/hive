@@ -163,7 +163,7 @@ export type TerminalSessionResourceSchema = {
   __primitiveFields: "id" | "sessionKey" | "kind" | "runtimeSessionId" | "status" | "cols" | "rows" | "startedAt" | "endedAt" | "cellId" | "serviceId";
   id: UUID;
   sessionKey: string;
-  kind: "setup" | "service" | "chat";
+  kind: "terminal" | "setup" | "service" | "chat";
   runtimeSessionId: string;
   status: "running" | "closed";
   cols: number;
@@ -183,7 +183,7 @@ export type TerminalSessionAttributesOnlySchema = {
   __primitiveFields: "id" | "sessionKey" | "kind" | "runtimeSessionId" | "status" | "cols" | "rows" | "startedAt" | "endedAt" | "cellId" | "serviceId";
   id: UUID;
   sessionKey: string;
-  kind: "setup" | "service" | "chat";
+  kind: "terminal" | "setup" | "service" | "chat";
   runtimeSessionId: string;
   status: "running" | "closed";
   cols: number;
@@ -612,9 +612,9 @@ export type TerminalSessionFilterInput = {
   };
 
   kind?: {
-    eq?: "setup" | "service" | "chat";
-    notEq?: "setup" | "service" | "chat";
-    in?: Array<"setup" | "service" | "chat">;
+    eq?: "terminal" | "setup" | "service" | "chat";
+    notEq?: "terminal" | "setup" | "service" | "chat";
+    in?: Array<"terminal" | "setup" | "service" | "chat">;
   };
 
   runtimeSessionId?: {
