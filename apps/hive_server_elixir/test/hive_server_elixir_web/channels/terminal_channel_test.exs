@@ -27,9 +27,7 @@ defmodule HiveServerElixirWeb.TerminalChannelTest do
     assert_push("terminal_event", %{type: "snapshot", output: _output})
 
     push(socket, "terminal_message", %{"type" => "input", "data" => "echo setup\n"})
-    assert_push("terminal_event", %{type: "data", chunk: _chunk})
-    assert_push("terminal_event", %{type: "data", chunk: chunk}, 1_000)
-    assert chunk =~ "echo setup"
+    assert_terminal_chunk_matches("echo setup")
 
     push(socket, "terminal_message", %{"type" => "ping"})
     assert_push("terminal_event", %{type: "pong"})
@@ -123,6 +121,22 @@ defmodule HiveServerElixirWeb.TerminalChannelTest do
     end)
 
     workspace
+  end
+
+  defp assert_terminal_chunk_matches(expected, attempts_left \\ 10)
+
+  defp assert_terminal_chunk_matches(_expected, 0) do
+    flunk("terminal never emitted expected chunk")
+  end
+
+  defp assert_terminal_chunk_matches(expected, attempts_left) do
+    assert_push("terminal_event", %{type: "data", chunk: chunk}, 1_000)
+
+    if String.contains?(chunk, expected) do
+      assert chunk =~ expected
+    else
+      assert_terminal_chunk_matches(expected, attempts_left - 1)
+    end
   end
 
   defp cell!(workspace_id, description, status) do

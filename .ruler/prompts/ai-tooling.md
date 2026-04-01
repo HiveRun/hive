@@ -13,6 +13,8 @@
   When you need context, prioritize these markdown sources over external knowledge bases.
 - Before pushing, run `bun run check:push` (lint, types, unit tests, build).
 - Run `bun run test:e2e` when modifying cell lifecycle, terminal handling, service orchestration, or workspace management.
+- Do not parallelize resource-heavy local verification commands in this repo (`bun run test:e2e`, Playwright spec runs, desktop E2E, or other commands that spawn full app stacks/browsers/opencode servers); run one at a time and wait for it to finish before starting another.
+- Before starting a new E2E/browser run after an interruption, inspect for stale runner/browser/opencode processes from your own prior attempts and clean up only those leftovers; do not kill the user's long-lived dev servers.
 - For `apps/e2e` changes, prefer deterministic checks (session/message metadata + UI confirmation) instead of fixed sleeps.
 - Keep E2E fixtures/config in sync with runtime defaults (provider/model IDs, template labels) so test behavior matches production paths.
 - When the user requests a change to agent guidance or project docs, proactively locate the relevant file(s) and make the update without waiting for another reminder.

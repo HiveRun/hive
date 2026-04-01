@@ -26,10 +26,12 @@ bun run test:e2e:spec specs/cell-chat.e2e.ts
 ```
 
 - Run `bun run test:e2e` locally when changing cell creation, terminal handling, service orchestration, or workspace management.
+- Run only one runtime/browser-heavy E2E command at a time on a shared dev machine. Do not parallelize Playwright spec runs or stack-spawning verification commands in this repo.
 - Prefer deterministic assertions (session/messages/metadata) over timing-only waits.
 - Keep fixture defaults aligned with runtime providers/models (currently `opencode/big-pickle`).
 - Use `HIVE_E2E_KEEP_ARTIFACTS=1` when debugging failures; inspect screenshots/video/trace in `tmp/e2e-runs/`.
 - Use `HIVE_E2E_WORKSPACE_MODE=clone` for dev-parity debugging without mutating your real workspace.
+- If an E2E run is interrupted, check for stale `run-fast`, Playwright browser, and orphaned `opencode serve` processes from that run before launching the next one.
 - For user-facing browser changes, verify with `agent-browser` when practical.
 - Use headless mode by default; only use headed mode for manual login/2FA/CAPTCHA or explicit live walkthrough requests.
 - Include verification evidence in your final response (key observed behavior and/or captured artifacts).

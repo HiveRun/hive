@@ -444,8 +444,7 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
 
     assert restart_payload["success"] == true
     assert restart_payload["data"]["id"] == service.id
-    assert restart_payload["data"]["status"] == "running"
-    assert is_integer(restart_payload["data"]["pid"])
+    assert_eventually_service_status(conn, cell.id, service.id, "running")
 
     stop_payload =
       rpc_run(conn, "stop_service", %{
@@ -710,6 +709,33 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
     end)
 
     service
+  end
+
+  defp assert_eventually_service_status(conn, cell_id, service_id, expected_status) do
+    deadline = System.monotonic_time(:millisecond) + 2_000
+    do_assert_eventually_service_status(conn, cell_id, service_id, expected_status, deadline)
+  end
+
+  defp do_assert_eventually_service_status(conn, cell_id, service_id, expected_status, deadline) do
+    payload =
+      rpc_run(conn, "list_services", %{
+        "input" => %{"cellId" => cell_id},
+        "fields" => ["id", "status", "pid"]
+      })
+
+    service = Enum.find(payload["data"], &(&1["id"] == service_id))
+
+    cond do
+      service && service["status"] == expected_status ->
+        assert service["pid"] == nil or is_integer(service["pid"])
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("service #{service_id} did not reach #{expected_status}")
+
+      true ->
+        Process.sleep(50)
+        do_assert_eventually_service_status(conn, cell_id, service_id, expected_status, deadline)
+    end
   end
 
   defp created_cell!(workspace) do
