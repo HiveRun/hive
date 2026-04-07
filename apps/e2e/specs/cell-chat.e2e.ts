@@ -35,14 +35,15 @@ const CHAT_ROUTE_TIMEOUT_MS = 180_000;
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
 const TERMINAL_INPUT_READY_TIMEOUT_MS = 30_000;
 const SESSION_UPDATE_TIMEOUT_MS = 120_000;
-const ASSISTANT_OUTPUT_TIMEOUT_MS = 40_000;
 const SEND_ATTEMPTS = 3;
 const MAX_TERMINAL_RESTARTS = 2;
 const SEND_ATTEMPT_TIMEOUT_MS = 20_000;
 const SEND_API_TIMEOUT_MS = 8000;
+const SEND_RETRY_DELAY_MS = 1000;
 const POST_RESPONSE_VIDEO_SETTLE_MS = 500;
 const POLL_INTERVAL_MS = 500;
 const TERMINAL_RECOVERY_WAIT_MS = 750;
+const TERMINAL_INPUT_FOCUS_TIMEOUT_MS = 10_000;
 const CELL_TEMPLATE_LABEL = "E2E Template";
 const EXPECTED_MODEL_ID = "big-pickle";
 const EXPECTED_MODEL_PROVIDER_ID = "opencode";
@@ -197,24 +198,16 @@ async function sendPromptWithRetries(options: {
         });
 
     if (promptAccepted) {
-      try {
-        await waitForAssistantOutput({
-          apiUrl: options.apiUrl,
-          baselineMessageIds,
-          cellId: options.cellId,
-          page: options.page,
-          timeoutMs: ASSISTANT_OUTPUT_TIMEOUT_MS,
-        });
-        await options.page.waitForTimeout(POST_RESPONSE_VIDEO_SETTLE_MS);
-        return;
-      } catch (error) {
-        if (attempt >= SEND_ATTEMPTS) {
-          throw error;
-        }
-      }
+      await ensureTerminalReady(options.page, {
+        context: "after prompt send",
+        timeoutMs: TERMINAL_INPUT_READY_TIMEOUT_MS,
+      });
+      await options.page.waitForTimeout(POST_RESPONSE_VIDEO_SETTLE_MS);
+      return;
     }
 
     baselineSession = await waitForAgentSession(options.apiUrl, options.cellId);
+    await wait(SEND_RETRY_DELAY_MS);
   }
 
   throw new Error(
@@ -302,113 +295,6 @@ async function waitForPromptAccepted(options: {
   }
 }
 
-async function waitForAssistantOutput(options: {
-  apiUrl: string;
-  baselineMessageIds: ReadonlySet<string>;
-  cellId: string;
-  page: Page;
-  timeoutMs: number;
-}): Promise<void> {
-  let restartCount = 0;
-  let observedAssistantOutput = false;
-  let lastConnectionState = "unknown";
-  let lastSessionStatus = "unknown";
-
-  await waitForCondition({
-    check: async () => {
-      const currentSession = await fetchAgentSession(
-        options.apiUrl,
-        options.cellId
-      );
-
-      if (!currentSession) {
-        return false;
-      }
-
-      lastSessionStatus = currentSession.status;
-
-      const messages = await fetchAgentMessages(
-        options.apiUrl,
-        currentSession.id
-      );
-      const latestAssistantMessage = findLatestAssistantMessage(
-        messages,
-        options.baselineMessageIds
-      );
-
-      if (latestAssistantMessage?.content?.trim()) {
-        observedAssistantOutput = true;
-      }
-
-      if (
-        observedAssistantOutput &&
-        currentSession.status === "awaiting_input"
-      ) {
-        return true;
-      }
-
-      const connectionState = await options.page
-        .locator(selectors.terminalConnectionBadge)
-        .getAttribute("data-connection-state");
-      lastConnectionState = connectionState ?? "unknown";
-
-      const recovery = await maybeRecoverTerminalDuringAssistantWait({
-        connectionState,
-        observedAssistantOutput,
-        page: options.page,
-        restartCount,
-      });
-      restartCount = recovery.restartCount;
-      if (recovery.shouldResolve) {
-        return true;
-      }
-
-      return false;
-    },
-    errorMessage: `Agent response was not observed after sending prompt. state=${lastConnectionState} session=${lastSessionStatus} assistantOutput=${String(observedAssistantOutput)} restarts=${String(restartCount)}`,
-    intervalMs: 1000,
-    timeoutMs: options.timeoutMs,
-  });
-}
-
-async function maybeRecoverTerminalDuringAssistantWait(options: {
-  connectionState: string | null;
-  observedAssistantOutput: boolean;
-  page: Page;
-  restartCount: number;
-}): Promise<{ shouldResolve: boolean; restartCount: number }> {
-  if (
-    options.connectionState !== "exited" &&
-    options.connectionState !== "disconnected"
-  ) {
-    return {
-      shouldResolve: false,
-      restartCount: options.restartCount,
-    };
-  }
-
-  if (options.observedAssistantOutput) {
-    return {
-      shouldResolve: true,
-      restartCount: options.restartCount,
-    };
-  }
-
-  if (options.restartCount < 1) {
-    await options.page.locator(selectors.terminalRestartButton).click();
-    await options.page.waitForTimeout(TERMINAL_RECOVERY_WAIT_MS);
-    return {
-      shouldResolve: false,
-      restartCount: options.restartCount + 1,
-    };
-  }
-
-  return {
-    shouldResolve: false,
-    restartCount: options.restartCount,
-  };
-}
-
 async function fetchAgentMessages(
   apiUrl: string,
   sessionId: string
@@ -422,27 +308,6 @@ async function fetchAgentMessages(
 
   const payload = (await response.json()) as AgentMessageListResponse;
   return payload.messages;
-}
-
-function findLatestAssistantMessage(
-  messages: AgentMessage[],
-  baselineMessageIds: ReadonlySet<string>
-): AgentMessage | null {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (baselineMessageIds.has(message.id)) {
-      continue;
-    }
-    if (message.role !== "assistant") {
-      continue;
-    }
-    if (!message.content?.trim()) {
-      continue;
-    }
-    return message;
-  }
-
-  return null;
 }
 
 async function assertSessionModelSelection(options: {
@@ -488,7 +353,7 @@ async function sendPrompt(options: {
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({ data: `${options.prompt}\n` }),
+      body: JSON.stringify({ data: `${options.prompt}\r` }),
     }
   );
 
@@ -503,7 +368,7 @@ async function sendPrompt(options: {
 
 async function focusTerminalInput(page: Page): Promise<void> {
   await page.locator(selectors.terminalInputSurface).click();
-  await page.locator(selectors.terminalInputTextarea).focus();
+  await page.locator(selectors.terminalInputTextarea).click();
 
   await waitForCondition({
     check: async () =>
@@ -512,7 +377,7 @@ async function focusTerminalInput(page: Page): Promise<void> {
         return active?.classList.contains("xterm-helper-textarea") ?? false;
       }),
     errorMessage: "Terminal input textarea did not receive focus",
-    timeoutMs: 10_000,
+    timeoutMs: TERMINAL_INPUT_FOCUS_TIMEOUT_MS,
   });
 }
 
