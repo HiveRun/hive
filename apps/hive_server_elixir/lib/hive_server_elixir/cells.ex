@@ -10,6 +10,7 @@ defmodule HiveServerElixir.Cells do
   typescript_rpc do
     resource HiveServerElixir.Cells.Workspace do
       rpc_action :list_workspaces, :ui_list
+      rpc_action :workspace_overview, :overview
       rpc_action :register_workspace, :register
       rpc_action :activate_workspace, :activate, identities: [:_primary_key]
       rpc_action :delete_workspace, :destroy, identities: [:_primary_key]
@@ -25,6 +26,7 @@ defmodule HiveServerElixir.Cells do
       rpc_action :delete_many_cells, :delete_many_cells
       rpc_action :setup_terminal_input, :setup_terminal_input
       rpc_action :setup_terminal_resize, :setup_terminal_resize
+      rpc_action :setup_log, :setup_log
       rpc_action :chat_terminal_input, :chat_terminal_input
       rpc_action :chat_terminal_resize, :chat_terminal_resize
       rpc_action :chat_terminal_restart, :chat_terminal_restart

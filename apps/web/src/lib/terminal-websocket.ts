@@ -1,8 +1,5 @@
 import type { Channel } from "phoenix";
 import {
-  chatTerminalInputChannel,
-  chatTerminalResizeChannel,
-  chatTerminalRestartChannel,
   serviceTerminalInputChannel,
   serviceTerminalResizeChannel,
   setupTerminalInputChannel,
@@ -413,7 +410,7 @@ const createPhoenixTerminalSocket = (options: {
   };
 
   const dispatchControlMessage = (payload: TerminalSocketMessage): void => {
-    if (options.scope.kind === "terminal") {
+    if (options.scope.kind === "terminal" || options.scope.kind === "chat") {
       if (!(joined && socketReadyState === SOCKET_OPEN_STATE && joinRef)) {
         emitControlError("Terminal socket unavailable");
         return;
@@ -449,14 +446,7 @@ const createPhoenixTerminalSocket = (options: {
             );
             break;
           case "restart":
-            dispatchTerminalRestart(
-              channel,
-              options.scope,
-              emitControlError,
-              () => {
-                socket.close();
-              }
-            );
+            dispatchTerminalRestart(options.scope, emitControlError);
             break;
           case "ping":
             emitControlEvent({ type: "pong" });
@@ -510,19 +500,6 @@ function dispatchTerminalInput(
     return;
   }
 
-  if (scope.kind === "chat") {
-    chatTerminalInputChannel({
-      channel,
-      input: { cellId: scope.cellId, data },
-      fields: TERMINAL_CONTROL_FIELDS,
-      resultHandler: noopResult,
-      errorHandler: (error: unknown) =>
-        onError(channelErrorMessage(error, "Failed to send chat input")),
-      timeoutHandler: () => onError("Chat terminal input timed out"),
-    });
-    return;
-  }
-
   if (scope.kind === "service") {
     serviceTerminalInputChannel({
       channel,
@@ -567,19 +544,6 @@ function dispatchTerminalResize(
     return;
   }
 
-  if (scope.kind === "chat") {
-    chatTerminalResizeChannel({
-      channel,
-      input: { cellId: scope.cellId, cols, rows },
-      fields: TERMINAL_CONTROL_FIELDS,
-      resultHandler: noopResult,
-      errorHandler: (error: unknown) =>
-        onError(channelErrorMessage(error, "Failed to resize chat terminal")),
-      timeoutHandler: () => onError("Chat terminal resize timed out"),
-    });
-    return;
-  }
-
   if (scope.kind === "service") {
     serviceTerminalResizeChannel({
       channel,
@@ -596,27 +560,13 @@ function dispatchTerminalResize(
 }
 
 function dispatchTerminalRestart(
-  channel: Channel,
   scope: TerminalScope,
-  onError: (message: string) => void,
-  onSuccess: () => void
+  onError: (message: string) => void
 ) {
-  if (scope.kind !== "chat") {
+  if (scope.kind === "service" || scope.kind === "setup") {
     onError("Restart is unsupported");
     return;
   }
-
-  chatTerminalRestartChannel({
-    channel,
-    input: { cellId: scope.cellId },
-    fields: TERMINAL_CONTROL_FIELDS,
-    resultHandler: () => {
-      onSuccess();
-    },
-    errorHandler: (error: unknown) =>
-      onError(channelErrorMessage(error, "Failed to restart chat terminal")),
-    timeoutHandler: () => onError("Chat terminal restart timed out"),
-  });
 }
 
 function noopResult(_result: unknown) {

@@ -2378,6 +2378,137 @@ export async function retryCellSetupChannel<Fields extends RetryCellSetupFields 
 }
 
 
+export type SetupLogInput = {
+  cellId: UUID;
+};
+
+export type SetupLogFields = UnifiedFieldSelection<{setupLog: string, __type: "TypedMap", __primitiveFields: "setupLog"}>[];
+
+export type InferSetupLogResult<
+  Fields extends SetupLogFields | undefined,
+> = InferResult<{setupLog: string, __type: "TypedMap", __primitiveFields: "setupLog"}, Fields>;
+
+export type SetupLogResult<Fields extends SetupLogFields | undefined = undefined> = | { success: true; data: InferSetupLogResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on Cell
+ *
+ * @ashActionType :action
+ */
+export async function setupLog<Fields extends SetupLogFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  input: SetupLogInput;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<SetupLogResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "setup_log",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<SetupLogResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Cell
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateSetupLog(
+  config: {
+  tenant?: string;
+  input: SetupLogInput;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "setup_log",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Cell
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateSetupLogChannel(config: {
+  channel: Channel;
+  tenant?: string;
+  input: SetupLogInput;
+  hookCtx?: ValidationChannelHookContext;
+  resultHandler: (result: ValidationResult) => void;
+  errorHandler?: (error: any) => void;
+  timeoutHandler?: () => void;
+  timeout?: number;
+}) {
+  executeValidationChannelPush<ValidationResult>(
+    config.channel,
+    {
+    action: "setup_log",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input
+  },
+    config.timeout,
+    config
+  );
+}
+
+
+/**
+ * Execute generic action on Cell
+ *
+ * @ashActionType :action
+ */
+export async function setupLogChannel<Fields extends SetupLogFields | undefined = undefined>(config: {
+  channel: Channel;
+  tenant?: string;
+  input: SetupLogInput;
+  hookCtx?: ActionChannelHookContext;
+  fields: Fields;
+  resultHandler: (result: SetupLogResult<Fields>) => void;
+  errorHandler?: (error: any) => void;
+  timeoutHandler?: () => void;
+  timeout?: number;
+}) {
+  executeActionChannelPush<SetupLogResult<Fields>>(
+    config.channel,
+    {
+    action: "setup_log",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  },
+    config.timeout,
+    config
+  );
+}
+
+
 export type SetupTerminalInputInput = {
   cellId: UUID;
   data: string;
@@ -4631,6 +4762,125 @@ export async function registerWorkspaceChannel<Fields extends RegisterWorkspaceF
     action: "register_workspace",
     ...(config.tenant !== undefined && { tenant: config.tenant }),
     input: config.input,
+    ...(config.fields !== undefined && { fields: config.fields })
+  },
+    config.timeout,
+    config
+  );
+}
+
+
+export type WorkspaceOverviewFields = UnifiedFieldSelection<{workspaces: Array<Record<string, any>>, activeWorkspaceId: UUID | null, __type: "TypedMap", __primitiveFields: "workspaces" | "activeWorkspaceId"}>[];
+
+export type InferWorkspaceOverviewResult<
+  Fields extends WorkspaceOverviewFields | undefined,
+> = InferResult<{workspaces: Array<Record<string, any>>, activeWorkspaceId: UUID | null, __type: "TypedMap", __primitiveFields: "workspaces" | "activeWorkspaceId"}, Fields>;
+
+export type WorkspaceOverviewResult<Fields extends WorkspaceOverviewFields | undefined = undefined> = | { success: true; data: InferWorkspaceOverviewResult<Fields>; }
+| { success: false; errors: AshRpcError[]; }
+
+;
+
+/**
+ * Execute generic action on Workspace
+ *
+ * @ashActionType :action
+ */
+export async function workspaceOverview<Fields extends WorkspaceOverviewFields | undefined = undefined>(
+  config: {
+  tenant?: string;
+  fields: Fields;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<WorkspaceOverviewResult<Fields extends undefined ? [] : Fields>> {
+  const payload = {
+    action: "workspace_overview",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
+    ...(config.fields !== undefined && { fields: config.fields })
+  };
+
+  return executeActionRpcRequest<WorkspaceOverviewResult<Fields extends undefined ? [] : Fields>>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Workspace
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateWorkspaceOverview(
+  config: {
+  tenant?: string;
+  headers?: Record<string, string>;
+  fetchOptions?: RequestInit;
+  customFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
+): Promise<ValidationResult> {
+  const payload = {
+    action: "workspace_overview",
+    ...(config.tenant !== undefined && { tenant: config.tenant })
+  };
+
+  return executeValidationRpcRequest<ValidationResult>(
+    payload,
+    config
+  );
+}
+
+
+/**
+ * Validate: Execute generic action on Workspace
+ *
+ * @ashActionType :action
+ * @validation true
+ */
+export async function validateWorkspaceOverviewChannel(config: {
+  channel: Channel;
+  tenant?: string;
+  hookCtx?: ValidationChannelHookContext;
+  resultHandler: (result: ValidationResult) => void;
+  errorHandler?: (error: any) => void;
+  timeoutHandler?: () => void;
+  timeout?: number;
+}) {
+  executeValidationChannelPush<ValidationResult>(
+    config.channel,
+    {
+    action: "workspace_overview",
+    ...(config.tenant !== undefined && { tenant: config.tenant })
+  },
+    config.timeout,
+    config
+  );
+}
+
+
+/**
+ * Execute generic action on Workspace
+ *
+ * @ashActionType :action
+ */
+export async function workspaceOverviewChannel<Fields extends WorkspaceOverviewFields | undefined = undefined>(config: {
+  channel: Channel;
+  tenant?: string;
+  hookCtx?: ActionChannelHookContext;
+  fields: Fields;
+  resultHandler: (result: WorkspaceOverviewResult<Fields>) => void;
+  errorHandler?: (error: any) => void;
+  timeoutHandler?: () => void;
+  timeout?: number;
+}) {
+  executeActionChannelPush<WorkspaceOverviewResult<Fields>>(
+    config.channel,
+    {
+    action: "workspace_overview",
+    ...(config.tenant !== undefined && { tenant: config.tenant }),
     ...(config.fields !== undefined && { fields: config.fields })
   },
     config.timeout,

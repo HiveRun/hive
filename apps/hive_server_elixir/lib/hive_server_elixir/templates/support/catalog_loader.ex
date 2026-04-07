@@ -21,6 +21,22 @@ defmodule HiveServerElixir.Templates.Support.CatalogLoader do
     end
   end
 
+  @spec list_templates_for_path(String.t()) :: {:ok, map()} | {:error, {atom(), String.t()}}
+  def list_templates_for_path(workspace_path) when is_binary(workspace_path) do
+    with {:ok, config} <- load_workspace_config(workspace_path) do
+      templates = list_template_payloads(config)
+      defaults = build_defaults(config)
+      agent_defaults = load_agent_defaults(workspace_path)
+
+      {:ok,
+       %{
+         templates: templates,
+         defaults: if(map_size(defaults) == 0, do: nil, else: defaults),
+         agent_defaults: agent_defaults
+       }}
+    end
+  end
+
   @spec get_template(String.t() | nil, String.t()) ::
           {:ok, map()} | {:error, {atom(), String.t()}}
   def get_template(workspace_id, template_id) when is_binary(template_id) do

@@ -504,6 +504,16 @@ async function createFixtureWorkspace(workspaceRoot: string): Promise<void> {
           'test -f .hive-setup-pass || { echo "marker missing: .hive-setup-pass" >&2; exit 37; }',
         ],
       },
+      "e2e-setup-progress-template": {
+        id: "e2e-setup-progress-template",
+        label: "E2E Setup Progress Template",
+        type: "manual",
+        setup: [
+          "sleep 2",
+          'for _ in 1 2 3; do if test -f .hive-setup-progress-pass; then sleep 2; exit 0; fi; sleep 1; done; echo "progress marker missing: .hive-setup-progress-pass" >&2; exit 38',
+          "sleep 1",
+        ],
+      },
     },
   };
 
@@ -610,6 +620,16 @@ async function addCloneOnlyE2ETemplates(
         type: "manual",
         setup: [
           'test -f .hive-setup-pass || { echo "marker missing: .hive-setup-pass" >&2; exit 37; }',
+        ],
+      },
+      "e2e-setup-progress-template": {
+        id: "e2e-setup-progress-template",
+        label: "E2E Setup Progress Template",
+        type: "manual",
+        setup: [
+          "sleep 2",
+          'for _ in 1 2 3; do if test -f .hive-setup-progress-pass; then sleep 2; exit 0; fi; sleep 1; done; echo "progress marker missing: .hive-setup-progress-pass" >&2; exit 38',
+          "sleep 1",
         ],
       },
     },

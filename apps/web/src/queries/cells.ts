@@ -395,6 +395,18 @@ export const cellQueries = {
     },
   }),
 
+  setupLog: (id: string) => ({
+    queryKey: ["cells", id, "setup-log"] as const,
+    queryFn: async (): Promise<string> => {
+      const { data, error } = await rpc.api.cells({ id }).setup.log.get();
+      if (error) {
+        throw new Error(formatRpcError(error, "Failed to load setup log"));
+      }
+
+      return data.setupLog;
+    },
+  }),
+
   timings: (
     id: string,
     options: {

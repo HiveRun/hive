@@ -66,6 +66,25 @@ type AgentModelsResponse = {
   providers: Array<{ id: string; name: string }>;
 };
 
+export type AgentSessionRecord = {
+  id: string;
+  status: string;
+  modelId?: string;
+  modelProviderId?: string;
+  updatedAt?: string;
+};
+
+export type AgentMessageRecord = {
+  id: string;
+  role: string;
+  state?: string;
+  content?: string | null;
+};
+
+type AgentMessageListResponse = {
+  messages: AgentMessageRecord[];
+};
+
 type RpcResult<T> =
   | { success: true; data: T }
   | { success: false; errors?: RpcErrorRecord[] };
@@ -525,6 +544,39 @@ export async function fetchAgentModels(
   return (await response.json()) as AgentModelsResponse;
 }
 
+export async function fetchAgentSession(
+  apiUrl: string,
+  cellId: string
+): Promise<AgentSessionRecord | null> {
+  const payload = await rpcRun<Partial<AgentSessionRecord>>(apiUrl, {
+    action: "get_agent_session_by_cell",
+    input: { cellId },
+    fields: ["id", "status", "modelId", "modelProviderId", "updatedAt"],
+  });
+
+  if (!(payload.success && payload.data.id)) {
+    return null;
+  }
+
+  return payload.data as AgentSessionRecord;
+}
+
+export async function fetchAgentMessages(
+  apiUrl: string,
+  sessionId: string
+): Promise<AgentMessageRecord[]> {
+  const response = await fetch(
+    `${apiUrl}/api/agents/sessions/${sessionId}/messages`
+  );
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = (await response.json()) as AgentMessageListResponse;
+  return payload.messages;
+}
+
 export async function waitForCellStatus(options: {
   apiUrl: string;
   cellId: string;
@@ -681,30 +733,6 @@ export async function sendChatTerminalPrompt(
   page: Page,
   prompt: string
 ): Promise<void> {
-  const apiUrl = process.env.HIVE_E2E_API_URL;
-  const cellId = extractCellIdFromPath(readPathname(page.url()));
-
-  if (apiUrl && cellId) {
-    const response = await fetch(`${apiUrl}/rpc/run`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        action: "chat_terminal_input",
-        input: { cellId, data: `${prompt}\n` },
-        fields: ["ok"],
-      }),
-    });
-
-    if (response.ok) {
-      const payload = (await response.json()) as { success?: boolean };
-      if (payload.success !== false) {
-        return;
-      }
-    }
-  }
-
   await sendTerminalCommand(page, prompt);
 }
 

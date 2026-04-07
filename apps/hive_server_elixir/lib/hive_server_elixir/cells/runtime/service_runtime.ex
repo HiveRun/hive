@@ -7,6 +7,8 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
   alias HiveServerElixir.Cells.Service
   alias HiveServerElixir.Cells.TerminalRuntime
 
+  @service_call_timeout_ms 120_000
+
   @type state :: %{
           services: %{String.t() => %{cell_id: String.t(), service: Service.t()}}
         }
@@ -17,22 +19,22 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
 
   @spec ensure_service_running(Service.t()) :: :ok | {:error, term()}
   def ensure_service_running(%Service{} = service) do
-    GenServer.call(__MODULE__, {:start_service, service})
+    GenServer.call(__MODULE__, {:start_service, service}, @service_call_timeout_ms)
   end
 
   @spec start_service(Service.t()) :: :ok | {:error, term()}
   def start_service(%Service{} = service) do
-    GenServer.call(__MODULE__, {:start_service, service})
+    GenServer.call(__MODULE__, {:start_service, service}, @service_call_timeout_ms)
   end
 
   @spec stop_service(Service.t()) :: :ok | {:error, term()}
   def stop_service(%Service{} = service) do
-    GenServer.call(__MODULE__, {:stop_service, service})
+    GenServer.call(__MODULE__, {:stop_service, service}, @service_call_timeout_ms)
   end
 
   @spec restart_service(Service.t()) :: :ok | {:error, term()}
   def restart_service(%Service{} = service) do
-    GenServer.call(__MODULE__, {:restart_service, service})
+    GenServer.call(__MODULE__, {:restart_service, service}, @service_call_timeout_ms)
   end
 
   @spec write_input(String.t(), String.t()) :: :ok | {:error, :not_running}
@@ -42,7 +44,7 @@ defmodule HiveServerElixir.Cells.ServiceRuntime do
 
   @spec stop_cell_services(String.t()) :: :ok
   def stop_cell_services(cell_id) when is_binary(cell_id) do
-    GenServer.call(__MODULE__, {:stop_cell_services, cell_id})
+    GenServer.call(__MODULE__, {:stop_cell_services, cell_id}, @service_call_timeout_ms)
   end
 
   @spec runtime_status(String.t()) :: %{status: String.t(), pid: integer() | nil} | nil

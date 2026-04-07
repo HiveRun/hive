@@ -13,7 +13,7 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
   alias HiveServerElixir.Cells.ServiceRuntime
   alias HiveServerElixir.Cells.Timing
   alias HiveServerElixir.Cells.Workspace
-  alias HiveServerElixir.Opencode.ServerManager
+  alias HiveServerElixir.OpencodeRealServer
 
   test "GET /api/cells/:id/setup/terminal/stream emits ready and snapshot semantics", %{
     conn: conn
@@ -105,7 +105,14 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
   end
 
   test "POST /api/cells/:id/chat/terminal/restart rotates terminal session", %{conn: conn} do
-    _ = start_supervised!({ServerManager, timeout_ms: 15_000})
+    previous_base_url = Application.get_env(:hive_server_elixir, :opencode_base_url)
+    server = OpencodeRealServer.start!()
+    Application.put_env(:hive_server_elixir, :opencode_base_url, server.url)
+
+    on_exit(fn ->
+      OpencodeRealServer.stop(server)
+      restore_env(:opencode_base_url, previous_base_url)
+    end)
 
     workspace = workspace!("chat-terminal-restart")
     cell = cell!(workspace.id, "chat terminal cell", "ready")
@@ -460,4 +467,7 @@ defmodule HiveServerElixirWeb.CellsControllerTest do
     |> Jason.decode!()
     |> Map.fetch!("sessionId")
   end
+
+  defp restore_env(key, nil), do: Application.delete_env(:hive_server_elixir, key)
+  defp restore_env(key, value), do: Application.put_env(:hive_server_elixir, key, value)
 end

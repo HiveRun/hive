@@ -6,6 +6,11 @@ defmodule HiveServerElixir.Cells.Workspace do
 
   alias HiveServerElixir.Workspaces.PathPolicy
 
+  @overview_payload_fields [
+    workspaces: [type: {:array, :map}, allow_nil?: false],
+    active_workspace_id: [type: :uuid, allow_nil?: true]
+  ]
+
   use Ash.Resource,
     extensions: [AshTypescript.Resource],
     domain: HiveServerElixir.Cells,
@@ -25,6 +30,14 @@ defmodule HiveServerElixir.Cells.Workspace do
 
     read :ui_list do
       prepare build(sort: [last_opened_at: :desc, inserted_at: :desc])
+    end
+
+    action :overview, :map do
+      constraints fields: @overview_payload_fields
+
+      run fn _input, _context ->
+        apply(HiveServerElixir.Cells.OverviewPayload, :build, [])
+      end
     end
 
     create :create do

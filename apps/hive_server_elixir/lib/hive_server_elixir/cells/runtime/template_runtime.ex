@@ -10,6 +10,9 @@ defmodule HiveServerElixir.Cells.TemplateRuntime do
   alias HiveServerElixir.Cells.TemplateConfig
   alias HiveServerElixir.Cells.Terminals.SetupRunner
 
+  @service_create_attempts 5
+  @service_create_retry_ms 100
+
   @spec prepare_cell(Cell.t()) :: {:ok, %{status: String.t(), last_setup_error: String.t() | nil}}
   def prepare_cell(%Cell{} = cell) do
     case TemplateConfig.fetch_template(cell.workspace_root_path, cell.template_id) do
@@ -87,7 +90,7 @@ defmodule HiveServerElixir.Cells.TemplateRuntime do
           definition: service_definition.definition
         }
 
-        case Ash.create(Service, attrs) do
+        case create_service_with_retry(attrs) do
           {:ok, service} ->
             {:ok, service}
 
@@ -95,6 +98,31 @@ defmodule HiveServerElixir.Cells.TemplateRuntime do
             {:error, "Failed to create service '#{service_definition.name}': #{inspect(error)}"}
         end
     end
+  end
+
+  defp create_service_with_retry(attrs, attempts_left \\ @service_create_attempts)
+
+  defp create_service_with_retry(attrs, attempts_left) when attempts_left > 1 do
+    case Ash.create(Service, attrs) do
+      {:ok, service} ->
+        {:ok, service}
+
+      {:error, error} ->
+        if busy_sqlite_error?(error) do
+          Process.sleep(@service_create_retry_ms)
+          create_service_with_retry(attrs, attempts_left - 1)
+        else
+          {:error, error}
+        end
+    end
+  end
+
+  defp create_service_with_retry(attrs, _attempts_left) do
+    Ash.create(Service, attrs)
+  end
+
+  defp busy_sqlite_error?(error) do
+    inspect(error) |> String.contains?("Database busy")
   end
 
   defp start_services(services) do

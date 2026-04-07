@@ -10,7 +10,8 @@ defmodule HiveServerElixir.Opencode.ServerManager do
   @type state :: %{
           mode: :managed | :external,
           base_url: String.t(),
-          server: map() | nil
+          server: map() | nil,
+          ready: boolean()
         }
 
   @spec child_spec(keyword()) :: Supervisor.child_spec()
@@ -21,6 +22,9 @@ defmodule HiveServerElixir.Opencode.ServerManager do
     }
   end
 
+  @spec supervisor_name() :: module()
+  def supervisor_name, do: __MODULE__.Supervisor
+
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
@@ -29,6 +33,7 @@ defmodule HiveServerElixir.Opencode.ServerManager do
 
   @spec base_url(GenServer.server()) :: String.t()
   def base_url(server \\ __MODULE__) do
+    maybe_ensure_default_manager(server)
     GenServer.call(server, :base_url)
   end
 
@@ -36,16 +41,30 @@ defmodule HiveServerElixir.Opencode.ServerManager do
   def resolved_base_url do
     System.get_env("HIVE_OPENCODE_BASE_URL") ||
       Application.get_env(:hive_server_elixir, :opencode_base_url) ||
-      if is_pid(Process.whereis(__MODULE__)) do
-        base_url()
-      else
-        "http://localhost:4096"
+      case ensure_started() do
+        {:ok, _pid} -> base_url()
+        {:error, :disabled} -> "http://localhost:4096"
+        {:error, _reason} -> "http://localhost:4096"
       end
   end
 
   @spec status(GenServer.server()) :: %{mode: :managed | :external, base_url: String.t()}
   def status(server \\ __MODULE__) do
+    maybe_ensure_default_manager(server)
     GenServer.call(server, :status)
+  end
+
+  @spec ensure_started(keyword()) :: {:ok, pid()} | {:error, term()}
+  def ensure_started(opts \\ []) do
+    name = Keyword.get(opts, :name, __MODULE__)
+
+    case Process.whereis(name) do
+      pid when is_pid(pid) ->
+        {:ok, pid}
+
+      _other ->
+        if(manager_enabled?(opts), do: start_under_supervisor(opts), else: {:error, :disabled})
+    end
   end
 
   @impl true
@@ -55,7 +74,7 @@ defmodule HiveServerElixir.Opencode.ServerManager do
     case resolve_external_base_url(opts) do
       base_url when is_binary(base_url) and base_url != "" ->
         Logger.info("OpenCode server mode=external base_url=#{base_url}")
-        {:ok, %{mode: :external, base_url: base_url, server: nil}}
+        {:ok, %{mode: :external, base_url: base_url, server: nil, ready: true}}
 
       _nil ->
         start_managed_server(opts)
@@ -69,7 +88,7 @@ defmodule HiveServerElixir.Opencode.ServerManager do
 
   @impl true
   def handle_call(:status, _from, state) do
-    {:reply, Map.take(state, [:mode, :base_url]), state}
+    {:reply, Map.take(state, [:mode, :base_url, :ready]), state}
   end
 
   @impl true
@@ -91,6 +110,22 @@ defmodule HiveServerElixir.Opencode.ServerManager do
     {:stop, {:opencode_server_exited, status}, state}
   end
 
+  def handle_info({:managed_server_ready, base_url, :ok}, %{base_url: base_url} = state) do
+    Logger.info("OpenCode server mode=managed base_url=#{base_url}")
+    {:noreply, %{state | ready: true}}
+  end
+
+  def handle_info(
+        {:managed_server_ready, base_url, {:error, reason}},
+        %{base_url: base_url} = state
+      ) do
+    Logger.warning(
+      "OpenCode managed server readiness timed out base_url=#{base_url} reason=#{inspect(reason)}"
+    )
+
+    {:noreply, state}
+  end
+
   def handle_info(_message, state), do: {:noreply, state}
 
   @impl true
@@ -100,6 +135,29 @@ defmodule HiveServerElixir.Opencode.ServerManager do
   end
 
   def terminate(_reason, _state), do: :ok
+
+  defp maybe_ensure_default_manager(server) do
+    if server == __MODULE__ do
+      case ensure_started() do
+        {:ok, _pid} -> :ok
+        {:error, :disabled} -> :ok
+        {:error, reason} -> raise "Failed to start OpenCode server manager: #{inspect(reason)}"
+      end
+    end
+
+    :ok
+  end
+
+  defp start_under_supervisor(opts) do
+    child_spec = {__MODULE__, Keyword.put_new(opts, :name, __MODULE__)}
+
+    case DynamicSupervisor.start_child(supervisor_name(), child_spec) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, {:already_started, pid}} -> {:ok, pid}
+      {:error, {:already_present, _child}} -> ensure_started(opts)
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   defp start_managed_server(opts) do
     host = resolve_host(opts)
@@ -112,7 +170,13 @@ defmodule HiveServerElixir.Opencode.ServerManager do
       start_fun when is_function(start_fun, 1) ->
         case start_fun.(%{hostname: host, port: port, timeout: timeout_ms, config: config}) do
           {:ok, server} ->
-            {:ok, %{mode: :managed, base_url: Map.get(server, :url, base_url), server: server}}
+            {:ok,
+             %{
+               mode: :managed,
+               base_url: Map.get(server, :url, base_url),
+               server: server,
+               ready: true
+             }}
 
           {:error, reason} ->
             {:stop, {:opencode_server_start_failed, reason}}
@@ -131,16 +195,26 @@ defmodule HiveServerElixir.Opencode.ServerManager do
       )
 
     with :ok <- write_server_config(config_root, config),
-         {:ok, server} <- spawn_server_process(config_root, host, port),
-         :ok <- await_server_ready(base_url, timeout_ms) do
-      Logger.info("OpenCode server mode=managed base_url=#{base_url}")
+         {:ok, server} <- spawn_server_process(config_root, host, port) do
+      notify_when_ready(self(), base_url, timeout_ms)
 
       {:ok,
-       %{mode: :managed, base_url: base_url, server: Map.put(server, :config_root, config_root)}}
+       %{
+         mode: :managed,
+         base_url: base_url,
+         server: Map.put(server, :config_root, config_root),
+         ready: false
+       }}
     else
       {:error, reason} ->
         {:stop, {:opencode_server_start_failed, reason}}
     end
+  end
+
+  defp notify_when_ready(parent, base_url, timeout_ms) do
+    Task.start(fn ->
+      send(parent, {:managed_server_ready, base_url, await_server_ready(base_url, timeout_ms)})
+    end)
   end
 
   defp spawn_server_process(config_root, host, port) do
@@ -196,7 +270,7 @@ defmodule HiveServerElixir.Opencode.ServerManager do
   end
 
   defp do_await_server_ready(base_url, deadline) do
-    case Req.get(base_url <> "/health") do
+    case Req.get(base_url <> "/health", retry: false) do
       {:ok, %{status: 200}} ->
         :ok
 
@@ -242,6 +316,10 @@ defmodule HiveServerElixir.Opencode.ServerManager do
 
     @default_config
     |> Map.merge(configured)
+  end
+
+  defp manager_enabled?(opts) do
+    Keyword.get(opts, :enabled, resolve_manager_config().enabled)
   end
 
   defp resolve_host(opts) do

@@ -4,16 +4,13 @@ import {
   fetchActivity,
   waitForCellStatus,
   waitForCondition,
-  waitForProvisioningOrChatRoute,
   waitForServiceStatuses,
 } from "../src/test-helpers";
 
 const SERVICES_TEMPLATE_LABEL = "Hive Development Environment";
 const STOP_BUTTON_LABEL = /^Stop$/;
 const START_BUTTON_LABEL = /^Start$/;
-const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
 const CHAT_ROUTE_TIMEOUT_MS = 600_000;
-const CELL_ROUTE_PATTERN = /\/cells\/.*\/(provisioning|chat)/;
 const isActiveStatus = (status: string) => {
   const normalized = status.toLowerCase();
   return normalized === "running" || normalized === "starting";
@@ -37,18 +34,6 @@ test.describe("service controls", () => {
       name: `E2E Services ${Date.now()}`,
       templateLabel: SERVICES_TEMPLATE_LABEL,
     });
-
-    const initialRoute = await waitForProvisioningOrChatRoute({
-      page,
-      cellId,
-      timeoutMs: INITIAL_ROUTE_TIMEOUT_MS,
-    });
-
-    if (initialRoute === "provisioning") {
-      await page.waitForURL(CELL_ROUTE_PATTERN, {
-        timeout: 30_000,
-      });
-    }
 
     await waitForCellStatus({
       apiUrl,
@@ -81,7 +66,9 @@ test.describe("service controls", () => {
         ),
     });
 
-    const targetService = runningServices[0];
+    const targetService =
+      runningServices.find((service) => service.name === "web") ??
+      runningServices[0];
     if (!targetService) {
       throw new Error("No service available to run single-service assertions");
     }

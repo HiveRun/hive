@@ -17,6 +17,61 @@ export type WorkspaceListResponse = {
   activeWorkspaceId?: string | null;
 };
 
+export type WorkspaceOverviewService = {
+  id: string;
+  name: string;
+  status: string;
+  port?: number | null;
+  cpuPercent?: number | null;
+  rssBytes?: number | null;
+};
+
+export type WorkspaceOverviewCell = {
+  id: string;
+  name: string;
+  description?: string | null;
+  status: "provisioning" | "ready" | "stopped" | "error" | "deleting";
+  workspaceId: string;
+  templateId: string;
+  templateLabel?: string | null;
+  branchName?: string | null;
+  baseCommit?: string | null;
+  insertedAt?: string | null;
+  updatedAt?: string | null;
+  services: WorkspaceOverviewService[];
+};
+
+export type WorkspaceOverviewWorkspace = WorkspaceSummary & {
+  cells: WorkspaceOverviewCell[];
+};
+
+export type WorkspaceOverviewResponse = {
+  workspaces: WorkspaceOverviewWorkspace[];
+  activeWorkspaceId?: string | null;
+};
+
+type WorkspaceOverviewRpcWorkspace = {
+  id: string;
+  label: string;
+  path: string;
+  insertedAt?: string | null;
+  lastOpenedAt?: string | null;
+  cells?: Array<{
+    id: string;
+    name: string;
+    description?: string | null;
+    status: WorkspaceOverviewCell["status"];
+    workspaceId: string;
+    templateId: string;
+    templateLabel?: string | null;
+    branchName?: string | null;
+    baseCommit?: string | null;
+    insertedAt?: string | null;
+    updatedAt?: string | null;
+    services?: WorkspaceOverviewService[];
+  }>;
+};
+
 function deriveWorkspaceLabel(path: string, label: string | null): string {
   if (typeof label === "string" && label.trim() !== "") {
     return label;
@@ -83,6 +138,50 @@ export const workspaceQueries = {
         workspaces,
         activeWorkspaceId: workspaces[0]?.id ?? null,
       } satisfies WorkspaceListResponse;
+    },
+  }),
+  overview: () => ({
+    queryKey: ["workspaces", "overview"] as const,
+    staleTime: 15_000,
+    queryFn: async (): Promise<WorkspaceOverviewResponse> => {
+      const { data, error } = await rpc.api.workspaces.overview.get();
+      if (error) {
+        throw new Error(
+          formatRpcError(error, "Failed to load workspace overview")
+        );
+      }
+
+      const response = (data as WorkspaceOverviewResponse) ?? {
+        workspaces: [],
+        activeWorkspaceId: null,
+      };
+
+      return {
+        workspaces: (
+          response.workspaces as WorkspaceOverviewRpcWorkspace[]
+        ).map((workspace) => ({
+          id: workspace.id,
+          label: deriveWorkspaceLabel(workspace.path, workspace.label),
+          path: workspace.path,
+          addedAt: workspace.insertedAt ?? "",
+          lastOpenedAt: workspace.lastOpenedAt ?? null,
+          cells: (workspace.cells ?? []).map((cell) => ({
+            id: cell.id,
+            name: cell.name,
+            description: cell.description,
+            status: cell.status,
+            workspaceId: cell.workspaceId,
+            templateId: cell.templateId,
+            templateLabel: cell.templateLabel ?? null,
+            branchName: cell.branchName ?? null,
+            baseCommit: cell.baseCommit ?? null,
+            insertedAt: cell.insertedAt ?? null,
+            updatedAt: cell.updatedAt ?? null,
+            services: cell.services ?? [],
+          })),
+        })),
+        activeWorkspaceId: response.activeWorkspaceId ?? null,
+      };
     },
   }),
   browse: (path?: string, filter?: string) => ({

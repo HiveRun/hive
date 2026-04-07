@@ -7,13 +7,12 @@ defmodule HiveServerElixir.Opencode.ServerManagerTest do
     name = unique_name()
     pid = start_supervised!({ServerManager, name: name, timeout_ms: 15_000})
 
-    assert %{mode: :managed, base_url: base_url} = ServerManager.status(name)
+    assert %{mode: :managed, base_url: base_url, ready: false} = ServerManager.status(name)
     assert is_binary(base_url)
     assert base_url =~ "http://127.0.0.1:"
     assert is_pid(pid)
 
-    assert {:ok, %Req.Response{status: 200}} =
-             Req.get(base_url <> "/global/health", retry: false)
+    wait_for_health(base_url)
   end
 
   test "external mode uses the configured base url without starting a managed server" do
@@ -24,6 +23,20 @@ defmodule HiveServerElixir.Opencode.ServerManagerTest do
            )
 
     assert %{mode: :external, base_url: "http://127.0.0.1:4123"} = ServerManager.status(name)
+  end
+
+  test "ensure_started lazily starts the default manager under its supervisor" do
+    assert {:ok, pid} =
+             ServerManager.ensure_started(
+               enabled: true,
+               create_server_fun: fn _opts -> {:ok, %{url: "http://127.0.0.1:4555"}} end
+             )
+
+    assert is_pid(pid)
+
+    assert %{mode: :managed, base_url: base_url, ready: true} = ServerManager.status()
+    assert is_binary(base_url)
+    assert String.starts_with?(base_url, "http://127.0.0.1:")
   end
 
   test "startup failure surfaces the wrapped manager error" do
@@ -41,5 +54,22 @@ defmodule HiveServerElixir.Opencode.ServerManagerTest do
 
   defp unique_name do
     {:global, {:opencode_server_manager, make_ref()}}
+  end
+
+  defp wait_for_health(base_url, attempts_left \\ 60)
+
+  defp wait_for_health(_base_url, 0) do
+    flunk("managed OpenCode server did not become healthy in time")
+  end
+
+  defp wait_for_health(base_url, attempts_left) do
+    case Req.get(base_url <> "/global/health", retry: false) do
+      {:ok, %Req.Response{status: 200}} ->
+        :ok
+
+      _other ->
+        Process.sleep(250)
+        wait_for_health(base_url, attempts_left - 1)
+    end
   end
 end

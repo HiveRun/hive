@@ -48,6 +48,10 @@ defmodule HiveServerElixir.Cells.Cell do
     ok: [type: :boolean, allow_nil?: false]
   ]
 
+  @setup_log_payload_fields [
+    setup_log: [type: :string, allow_nil?: false]
+  ]
+
   @channel_cell_snapshot_fields [
     id: [type: :uuid, allow_nil?: false],
     name: [type: :string, allow_nil?: false],
@@ -334,6 +338,19 @@ defmodule HiveServerElixir.Cells.Cell do
 
       run fn input, _context ->
         chat_terminal_restart_payload(input.arguments)
+      end
+    end
+
+    action :setup_log, :map do
+      constraints fields: @setup_log_payload_fields
+
+      argument :cell_id, :uuid do
+        allow_nil? false
+        public? true
+      end
+
+      run fn input, _context ->
+        setup_log_payload(input.arguments)
       end
     end
 
@@ -879,6 +896,14 @@ defmodule HiveServerElixir.Cells.Cell do
            reason,
            "Chat terminal is unavailable until provisioning completes"
          )}
+    end
+  end
+
+  def setup_log_payload(%{cell_id: cell_id}) do
+    with {:ok, _cell} <- Ash.get(__MODULE__, cell_id) do
+      {:ok, %{setup_log: Terminals.read_output({:setup, cell_id})}}
+    else
+      {:error, reason} -> {:error, terminal_control_error(reason, "Cell not found")}
     end
   end
 

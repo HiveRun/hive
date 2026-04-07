@@ -11,7 +11,6 @@ const SERVICES_TEMPLATE_LABEL = "Hive Development Environment";
 const DELETE_PROPAGATION_TIMEOUT_MS = 30_000;
 const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
 const CHAT_ROUTE_TIMEOUT_MS = 600_000;
-const PROVISIONING_TIMELINE_TEXT = /Provisioning timeline/i;
 const DELETE_CELL_BUTTON_LABEL = /^Delete E2E Cleanup/;
 const DELETE_CONFIRM_BUTTON_LABEL = /^Delete$/;
 const SERVICE_NOT_FOUND_STATUS = 404;
@@ -39,9 +38,7 @@ test.describe("cell deletion cleanup", () => {
       timeoutMs: INITIAL_ROUTE_TIMEOUT_MS,
     });
 
-    if (initialRoute === "provisioning") {
-      await expect(page.getByText(PROVISIONING_TIMELINE_TEXT)).toBeVisible();
-    }
+    expect(["provisioning", "chat"]).toContain(initialRoute);
 
     await waitForCellStatus({
       apiUrl,

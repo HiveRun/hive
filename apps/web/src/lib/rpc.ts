@@ -20,10 +20,12 @@ import {
   resumeCellSetup,
   retryCellSetup,
   setAgentSessionMode,
+  setupLog,
   startService,
   startServices,
   stopService,
   stopServices,
+  workspaceOverview,
 } from "@/lib/generated/ash-rpc";
 
 const API_URL = getApiBase();
@@ -61,6 +63,10 @@ const workspaceFields: Parameters<typeof listWorkspaces>[0]["fields"] = [
   "lastOpenedAt",
   "insertedAt",
 ];
+
+const workspaceOverviewFields: Parameters<
+  typeof workspaceOverview
+>[0]["fields"] = ["workspaces", "activeWorkspaceId"];
 
 const cellFields: Parameters<typeof listCells>[0]["fields"] = [
   "id",
@@ -107,6 +113,8 @@ const cellMutationFields: Parameters<typeof createCell>[0]["fields"] = [
   "baseCommit",
   "updatedAt",
 ];
+
+const setupLogFields: Parameters<typeof setupLog>[0]["fields"] = ["setupLog"];
 
 const deleteCellFields: Parameters<typeof deleteCell>[0]["fields"] = [
   "deletedId",
@@ -543,6 +551,14 @@ const cellRoutes = (id: string) => ({
       }),
   },
   setup: {
+    log: {
+      get: () =>
+        setupLog({
+          input: { cellId: id },
+          fields: setupLogFields,
+          customFetch: ashFetch,
+        }).then(fromAshResult),
+    },
     retry: {
       post: () =>
         retryCellSetup({
@@ -674,6 +690,13 @@ export const rpc = {
           }
 
           return response;
+        },
+        overview: {
+          get: async () =>
+            workspaceOverview({
+              fields: workspaceOverviewFields,
+              customFetch: ashFetch,
+            }).then(fromAshResult),
         },
         post: (body: { path: string; label?: string; activate?: boolean }) =>
           registerWorkspace({

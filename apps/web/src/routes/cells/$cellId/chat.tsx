@@ -166,12 +166,10 @@ function CellChat() {
         cellId={cellId}
         connectCommand={cellQuery.data?.opencodeCommand ?? null}
         endpointBase="chat/terminal"
-        lineBufferedInput
         reconnectLabel="Reconnect chat"
         restartLabel="Restart chat"
-        startupReadiness="terminal-content"
+        startupReadiness="session"
         startupStatusMessage={startupStatusMessage}
-        startupTextMatch={cellQuery.data?.name ?? null}
         terminalLineHeight={1}
         themeMode={themeMode}
         title="Cell Chat"

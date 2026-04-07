@@ -41,6 +41,11 @@ test.describe("setup retry", () => {
     });
     expect(initialCell.lastSetupError).toContain("marker missing");
 
+    await page.goto(`/cells/${cellId}/setup`);
+    await expect(
+      page.getByTestId("setup-command-item").first()
+    ).toHaveAttribute("data-state", "error");
+
     await page.goto(`/cells/${cellId}/provisioning`);
 
     const initialRoute = await waitForProvisioningOrChatRoute({
@@ -68,6 +73,11 @@ test.describe("setup retry", () => {
       timeoutMs: RETRY_STATE_TIMEOUT_MS,
     });
     expect(recoveredCell.lastSetupError ?? null).toBeNull();
+
+    await page.goto(`/cells/${cellId}/setup`);
+    await expect(
+      page.getByTestId("setup-command-item").first()
+    ).toHaveAttribute("data-state", "done");
 
     await waitForCondition({
       timeoutMs: 30_000,

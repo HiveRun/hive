@@ -9,6 +9,8 @@ config :hive_server_elixir, HiveServerElixir.Repo,
   stacktrace: true,
   show_sensitive_data_on_connection_error: true
 
+config :hive_server_elixir, :run_migrations_on_start, true
+
 # For development, we disable any cache and enable
 # debugging and code reloading.
 #

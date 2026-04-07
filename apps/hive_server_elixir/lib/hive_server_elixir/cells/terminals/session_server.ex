@@ -11,14 +11,12 @@ defmodule HiveServerElixir.Cells.Terminals.SessionServer do
 
   import Ash.Expr
   require Ash.Query
-  require Logger
 
   @default_kill_timeout 2_000
   @plan_mode_status_pattern ~r/\b(Plan|Build)\b/
   @plan_mode_poll_interval_ms 300
   @plan_mode_switch_retry_ms 2_000
   @plan_mode_timeout_ms 12_000
-  @chat_prompt_flush_ms 500
   @ascii_end_of_text <<3>>
   @ascii_end_of_transmission <<4>>
 
@@ -48,9 +46,7 @@ defmodule HiveServerElixir.Cells.Terminals.SessionServer do
            process: nil,
            session: nil,
            buffer: Buffer.empty(spec.buffer_kind),
-           exit_directives: %{},
-           chat_prompt_buffer: "",
-           chat_prompt_timer_ref: nil
+           exit_directives: %{}
          }) do
       {:ok, state} -> {:ok, state}
       {:error, reason} -> {:stop, reason}
@@ -94,14 +90,7 @@ defmodule HiveServerElixir.Cells.Terminals.SessionServer do
         {:reply, :ok, state}
       else
         normalized_chunk = normalize_input(state.spec, chunk)
-
-        case maybe_submit_chat_prompt(state, normalized_chunk) do
-          {:handled, next_state} ->
-            {:reply, :ok, next_state}
-
-          {:passthrough, next_state} ->
-            {:reply, NetRunner.Process.write(state.process, normalized_chunk), next_state}
-        end
+        {:reply, NetRunner.Process.write(state.process, normalized_chunk), state}
       end
     end
   end
@@ -164,12 +153,6 @@ defmodule HiveServerElixir.Cells.Terminals.SessionServer do
   def handle_info({:schedule_plan_mode_switch, generation}, %{generation: generation} = state) do
     {:noreply, maybe_plan_mode_switch(state)}
   end
-
-  def handle_info({:flush_chat_prompt, generation}, %{generation: generation} = state) do
-    {:noreply, flush_chat_prompt(state)}
-  end
-
-  def handle_info({:flush_chat_prompt, _generation}, state), do: {:noreply, state}
 
   def handle_info(_message, state), do: {:noreply, state}
 
@@ -485,123 +468,6 @@ defmodule HiveServerElixir.Cells.Terminals.SessionServer do
   end
 
   defp normalize_input(_spec, chunk), do: chunk
-
-  defp maybe_submit_chat_prompt(%{spec: %SessionSpec{kind: :chat}} = state, chunk) do
-    if prompt_chunk?(chunk) do
-      {:handled, queue_chat_prompt(state, chunk)}
-    else
-      {:passthrough, state}
-    end
-  end
-
-  defp maybe_submit_chat_prompt(state, _chunk), do: {:passthrough, state}
-
-  defp prompt_chunk?(chunk) do
-    String.valid?(chunk) and not String.contains?(chunk, "\e")
-  end
-
-  defp queue_chat_prompt(state, chunk) do
-    if state.chat_prompt_timer_ref do
-      Process.cancel_timer(state.chat_prompt_timer_ref)
-    end
-
-    timer_ref =
-      Process.send_after(self(), {:flush_chat_prompt, state.generation}, @chat_prompt_flush_ms)
-
-    %{
-      state
-      | chat_prompt_buffer: state.chat_prompt_buffer <> chunk,
-        chat_prompt_timer_ref: timer_ref
-    }
-  end
-
-  defp flush_chat_prompt(%{chat_prompt_buffer: ""} = state) do
-    %{state | chat_prompt_timer_ref: nil}
-  end
-
-  defp flush_chat_prompt(state) do
-    prompt = String.trim(state.chat_prompt_buffer)
-
-    next_state = %{state | chat_prompt_buffer: "", chat_prompt_timer_ref: nil}
-
-    case prompt do
-      "" ->
-        next_state
-
-      _value ->
-        case submit_chat_prompt(state, prompt) do
-          :ok -> next_state
-          {:error, _reason} -> next_state
-        end
-    end
-  end
-
-  defp submit_chat_prompt(state, prompt) do
-    cell_id = cell_id_for_scope(state.scope)
-
-    if System.get_env("HIVE_LOG_CHAT_INPUT") == "1" do
-      Logger.info("submit_chat_prompt cell_id=#{cell_id} prompt=#{inspect(prompt)}")
-    end
-
-    with %HiveServerElixir.Cells.AgentSession{} = agent_session <-
-           HiveServerElixir.Cells.AgentSession.fetch_for_cell(cell_id) do
-      params = %{
-        parts: [%{type: "text", text: prompt}]
-      }
-
-      params =
-        if is_binary(agent_session.current_mode) do
-          Map.put(params, :agent, agent_session.current_mode)
-        else
-          params
-        end
-
-      params =
-        if is_binary(agent_session.model_provider_id) and is_binary(agent_session.model_id) do
-          Map.put(params, :model, %{
-            providerID: agent_session.model_provider_id,
-            modelID: agent_session.model_id
-          })
-        else
-          params
-        end
-
-      case OpenCode.Generated.Operations.session_prompt_async(
-             agent_session.session_id,
-             params,
-             base_url: HiveServerElixir.Opencode.ServerManager.resolved_base_url(),
-             directory: state.session.cwd
-           ) do
-        {:ok, payload} ->
-          if System.get_env("HIVE_LOG_CHAT_INPUT") == "1" do
-            Logger.info("submit_chat_prompt ok cell_id=#{cell_id} payload=#{inspect(payload)}")
-          end
-
-          :ok
-
-        {:error, error} ->
-          if System.get_env("HIVE_LOG_CHAT_INPUT") == "1" do
-            Logger.info("submit_chat_prompt error cell_id=#{cell_id} error=#{inspect(error)}")
-          end
-
-          {:error, error}
-
-        :error ->
-          if System.get_env("HIVE_LOG_CHAT_INPUT") == "1" do
-            Logger.info("submit_chat_prompt error cell_id=#{cell_id} error=:prompt_failed")
-          end
-
-          {:error, :prompt_failed}
-      end
-    else
-      other ->
-        if System.get_env("HIVE_LOG_CHAT_INPUT") == "1" do
-          Logger.info("submit_chat_prompt error cell_id=#{cell_id} error=#{inspect(other)}")
-        end
-
-        {:error, :session_unavailable}
-    end
-  end
 
   defp runtime_status_payload(%{session: %{status: "running", pid: pid}}),
     do: %{status: "running", pid: pid}

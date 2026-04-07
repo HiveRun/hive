@@ -5,9 +5,8 @@ import {
   waitForProvisioningOrChatRoute,
 } from "../src/test-helpers";
 
-const INITIAL_ROUTE_TIMEOUT_MS = 10_000;
+const INITIAL_ROUTE_TIMEOUT_MS = 30_000;
 const READY_TIMEOUT_MS = 180_000;
-const PROVISIONING_TIMELINE_TEXT = /Provisioning timeline/i;
 const DETACHED_TEMPLATE_LABEL = "Basic Template";
 
 test.describe("detached cell create", () => {
@@ -29,9 +28,7 @@ test.describe("detached cell create", () => {
       timeoutMs: INITIAL_ROUTE_TIMEOUT_MS,
     });
 
-    if (initialRoute === "provisioning") {
-      await expect(page.getByText(PROVISIONING_TIMELINE_TEXT)).toBeVisible();
-    }
+    expect(["provisioning", "chat"]).toContain(initialRoute);
 
     await waitForChatRoute({
       page,

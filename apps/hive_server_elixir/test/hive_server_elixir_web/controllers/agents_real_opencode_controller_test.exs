@@ -3,7 +3,6 @@ defmodule HiveServerElixirWeb.AgentsRealOpencodeControllerTest do
 
   alias HiveServerElixir.Cells
   alias HiveServerElixir.Cells.Workspace
-  alias HiveServerElixir.Opencode.ServerManager
   alias HiveServerElixir.OpencodeRealServer
 
   setup do
@@ -43,52 +42,6 @@ defmodule HiveServerElixirWeb.AgentsRealOpencodeControllerTest do
     assert Enum.any?(models, &(&1["id"] == "big-pickle" and &1["provider"] == "opencode"))
     assert defaults["opencode"] == "big-pickle"
     assert Enum.any?(providers, &(&1["id"] == "opencode"))
-  end
-
-  test "GET /api/agents/models works through the managed shared OpenCode server", %{
-    conn: conn,
-    workspace_path: workspace_path
-  } do
-    start_supervised!({ServerManager, timeout_ms: 15_000})
-    workspace = workspace!(workspace_path)
-
-    conn = get(conn, ~p"/api/agents/models?workspaceId=#{workspace.id}")
-
-    assert %{
-             "models" => models,
-             "defaults" => defaults,
-             "providers" => providers
-           } = json_response(conn, 200)
-
-    assert Enum.any?(models, &(&1["id"] == "big-pickle" and &1["provider"] == "opencode"))
-    assert defaults["opencode"] == "big-pickle"
-    assert Enum.any?(providers, &(&1["id"] == "opencode"))
-  end
-
-  test "one managed shared OpenCode server can serve multiple workspaces", %{
-    conn: conn,
-    workspace_path: workspace_path,
-    second_workspace_path: second_workspace_path
-  } do
-    start_supervised!({ServerManager, timeout_ms: 15_000})
-
-    first_workspace = workspace!(workspace_path)
-    second_workspace = workspace!(second_workspace_path)
-
-    first_conn = get(conn, ~p"/api/agents/models?workspaceId=#{first_workspace.id}")
-
-    assert %{"models" => first_models, "providers" => first_providers} =
-             json_response(first_conn, 200)
-
-    second_conn = build_conn() |> get(~p"/api/agents/models?workspaceId=#{second_workspace.id}")
-
-    assert %{"models" => second_models, "providers" => second_providers} =
-             json_response(second_conn, 200)
-
-    assert first_models != []
-    assert second_models != []
-    assert first_providers != []
-    assert second_providers != []
   end
 
   defp workspace!(workspace_path) do

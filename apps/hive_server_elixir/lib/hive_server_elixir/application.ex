@@ -17,6 +17,8 @@ defmodule HiveServerElixir.Application do
          strategy: :one_for_one, name: HiveServerElixir.Opencode.EventIngestSupervisor},
         {DynamicSupervisor,
          strategy: :one_for_one, name: HiveServerElixir.Cells.ProvisioningSupervisor},
+        {DynamicSupervisor,
+         strategy: :one_for_one, name: HiveServerElixir.Opencode.ServerManager.Supervisor},
         {Ecto.Migrator,
          repos: Application.fetch_env!(:hive_server_elixir, :ecto_repos), skip: skip_migrations?()},
         {Oban,
@@ -25,7 +27,6 @@ defmodule HiveServerElixir.Application do
            Application.fetch_env!(:hive_server_elixir, Oban)
          )}
       ] ++
-        opencode_children() ++
         workspace_bootstrap_children() ++
         [
           {
@@ -55,9 +56,14 @@ defmodule HiveServerElixir.Application do
     :ok
   end
 
-  defp skip_migrations?() do
-    # By default, sqlite migrations are run when using a release
-    System.get_env("RELEASE_NAME") == nil
+  defp skip_migrations?(), do: not run_migrations_on_start?()
+
+  defp run_migrations_on_start? do
+    Application.get_env(
+      :hive_server_elixir,
+      :run_migrations_on_start,
+      System.get_env("RELEASE_NAME") != nil
+    )
   end
 
   defp workspace_bootstrap_children do
@@ -68,14 +74,6 @@ defmodule HiveServerElixir.Application do
           id: :workspace_bootstrap_task
         )
       ]
-    else
-      []
-    end
-  end
-
-  defp opencode_children do
-    if Application.get_env(:hive_server_elixir, :opencode_server_manager, [])[:enabled] do
-      [HiveServerElixir.Opencode.ServerManager]
     else
       []
     end

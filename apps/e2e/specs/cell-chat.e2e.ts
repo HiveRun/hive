@@ -4,7 +4,7 @@ import {
   createCell,
   fetchAgentModels,
   fetchCell,
-  sendChatTerminalPrompt,
+  fetchWorkspaces,
   waitForChatRoute,
   waitForProvisioningOrChatRoute,
 } from "../src/test-helpers";
@@ -58,6 +58,8 @@ test.describe("cell chat flow", () => {
     }
 
     await page.goto("/");
+    await assertWorkspaceVisible(page, apiUrl);
+
     const cellId = await createCell({
       page,
       name: `E2E Cell ${Date.now()}`,
@@ -109,6 +111,8 @@ test.describe("cell chat flow", () => {
       expectedModelId,
       expectedProviderId,
     });
+
+    await expect(page.locator(selectors.terminalRoot).first()).toBeVisible();
 
     const prompt = `E2E token ${Date.now()}`;
 
@@ -284,6 +288,28 @@ async function waitForPromptAcceptedViaKeyboard(options: {
     prompt: options.prompt,
     timeoutMs: SEND_ATTEMPT_TIMEOUT_MS - SEND_API_TIMEOUT_MS,
   });
+}
+
+async function assertWorkspaceVisible(
+  page: Page,
+  apiUrl: string
+): Promise<void> {
+  const workspaces = await fetchWorkspaces(apiUrl);
+  const activeWorkspace =
+    workspaces.workspaces.find(
+      (workspace) => workspace.id === workspaces.activeWorkspaceId
+    ) ?? workspaces.workspaces[0];
+
+  if (!activeWorkspace) {
+    throw new Error("No workspace available for chat E2E");
+  }
+
+  await expect(
+    page
+      .locator(selectors.workspaceSection)
+      .filter({ hasText: activeWorkspace.label })
+      .first()
+  ).toBeVisible();
 }
 
 async function waitForPromptAccepted(options: {
@@ -516,7 +542,20 @@ async function sendPrompt(options: {
   prompt: string;
 }): Promise<void> {
   await focusTerminalInput(options.page);
-  await sendChatTerminalPrompt(options.page, options.prompt);
+  await options.page.keyboard.type(options.prompt, { delay: 25 });
+  await waitForCondition({
+    timeoutMs: 30_000,
+    errorMessage: "Buffered chat draft was not visible before pressing Enter",
+    check: async () => {
+      const draftLength = await options.page
+        .getByTestId("cell-terminal")
+        .getAttribute("data-terminal-draft-length")
+        .catch(() => null);
+
+      return Number(draftLength ?? "0") > 0;
+    },
+  });
+  await options.page.keyboard.press("Enter");
 }
 
 async function focusTerminalInput(page: Page): Promise<void> {

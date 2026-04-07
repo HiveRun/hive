@@ -119,6 +119,7 @@ defmodule HiveServerElixir.Opencode.AgentEventLogTest do
             {:ok, entry} = AgentEventLog.append_global_event(global_event, context)
             entry.seq
           end,
+          max_concurrency: 2,
           ordered: false,
           timeout: :infinity
         )

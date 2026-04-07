@@ -27,7 +27,7 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
 
     Workspace
     |> Ash.read!(domain: Cells)
-    |> Enum.each(&Ash.destroy!(&1, domain: Cells))
+    |> Enum.each(&destroy_workspace_with_retry!/1)
 
     :ok = Workspaces.set_active_workspace_id(nil)
     Application.put_env(:hive_server_elixir, :cell_reactor_runtime_opts, runtime_opts())
@@ -57,6 +57,31 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
       :ok = ServiceRuntime.stop_cell_services(cell.id)
       :ok = TerminalRuntime.clear_cell(cell.id)
     end)
+  end
+
+  defp destroy_workspace_with_retry!(workspace, attempts_left \\ 5)
+
+  defp destroy_workspace_with_retry!(workspace, attempts_left) when attempts_left > 1 do
+    Ash.destroy(workspace, domain: Cells)
+    |> case do
+      :ok ->
+        :ok
+
+      {:ok, _destroyed} ->
+        :ok
+
+      {:error, error} ->
+        if String.contains?(inspect(error), "Database busy") do
+          Process.sleep(100)
+          destroy_workspace_with_retry!(workspace, attempts_left - 1)
+        else
+          Ash.destroy!(workspace, domain: Cells)
+        end
+    end
+  end
+
+  defp destroy_workspace_with_retry!(workspace, _attempts_left) do
+    Ash.destroy!(workspace, domain: Cells)
   end
 
   test "list_workspaces returns Ash-backed workspace records", %{conn: conn} do
@@ -484,8 +509,12 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
       })
 
     assert restart_payload["success"] == true
-    assert Enum.all?(restart_payload["data"], &(&1["status"] == "running"))
-    assert Enum.all?(restart_payload["data"], &is_integer(&1["pid"]))
+
+    assert_eventually_services_status(
+      conn,
+      cell.id,
+      %{service_a.id => "running", service_b.id => "running"}
+    )
 
     stop_payload =
       rpc_run(conn, "stop_services", %{
@@ -494,8 +523,12 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
       })
 
     assert stop_payload["success"] == true
-    assert Enum.all?(stop_payload["data"], &(&1["status"] == "stopped"))
-    assert Enum.all?(stop_payload["data"], &is_nil(&1["pid"]))
+
+    assert_eventually_services_status(
+      conn,
+      cell.id,
+      %{service_a.id => "stopped", service_b.id => "stopped"}
+    )
   end
 
   test "service lifecycle RPC actions persist audit metadata", %{conn: conn} do
@@ -711,30 +744,63 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
     service
   end
 
-  defp assert_eventually_service_status(conn, cell_id, service_id, expected_status) do
+  defp assert_eventually_service_status(_conn, _cell_id, service_id, expected_status) do
     deadline = System.monotonic_time(:millisecond) + 2_000
-    do_assert_eventually_service_status(conn, cell_id, service_id, expected_status, deadline)
+    do_assert_eventually_service_status(service_id, expected_status, deadline)
   end
 
-  defp do_assert_eventually_service_status(conn, cell_id, service_id, expected_status, deadline) do
-    payload =
-      rpc_run(conn, "list_services", %{
-        "input" => %{"cellId" => cell_id},
-        "fields" => ["id", "status", "pid"]
-      })
+  defp assert_eventually_services_status(_conn, _cell_id, expected_statuses) do
+    deadline = System.monotonic_time(:millisecond) + 2_000
+    do_assert_eventually_services_status(expected_statuses, deadline)
+  end
 
-    service = Enum.find(payload["data"], &(&1["id"] == service_id))
-
+  defp do_assert_eventually_service_status(service_id, expected_status, deadline) do
     cond do
-      service && service["status"] == expected_status ->
-        assert service["pid"] == nil or is_integer(service["pid"])
+      match?({:ok, %Service{}}, Ash.get(Service, service_id, domain: Cells)) ->
+        {:ok, service} = Ash.get(Service, service_id, domain: Cells)
+
+        if to_string(service.status) == expected_status do
+          assert service.pid == nil or is_integer(service.pid)
+        else
+          if System.monotonic_time(:millisecond) >= deadline do
+            flunk("service #{service_id} did not reach #{expected_status}")
+          else
+            Process.sleep(50)
+            do_assert_eventually_service_status(service_id, expected_status, deadline)
+          end
+        end
 
       System.monotonic_time(:millisecond) >= deadline ->
         flunk("service #{service_id} did not reach #{expected_status}")
 
       true ->
         Process.sleep(50)
-        do_assert_eventually_service_status(conn, cell_id, service_id, expected_status, deadline)
+        do_assert_eventually_service_status(service_id, expected_status, deadline)
+    end
+  end
+
+  defp do_assert_eventually_services_status(expected_statuses, deadline) do
+    matches? =
+      Enum.all?(expected_statuses, fn {service_id, expected_status} ->
+        case Ash.get(Service, service_id, domain: Cells) do
+          {:ok, %Service{status: status, pid: pid}} ->
+            to_string(status) == expected_status && (pid == nil or is_integer(pid))
+
+          _other ->
+            false
+        end
+      end)
+
+    cond do
+      matches? ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("services did not reach expected statuses")
+
+      true ->
+        Process.sleep(50)
+        do_assert_eventually_services_status(expected_statuses, deadline)
     end
   end
 

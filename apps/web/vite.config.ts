@@ -8,6 +8,9 @@ import tsconfigPaths from "vite-tsconfig-paths";
 const DEFAULT_DEV_SERVER_PORT = 3001;
 const DEFAULT_API_SERVER_PORT = "3000";
 const ROUTE_FILE_IGNORE_PATTERN = "\\.(test|spec)\\.(ts|tsx|js|jsx)$";
+
+const envFlagEnabled = (value?: string) => value === "1";
+
 const resolvedDevPort = Number(
   process.env.FRONTEND_PORT ?? process.env.PORT ?? DEFAULT_DEV_SERVER_PORT
 );
@@ -21,6 +24,13 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const requiredApiUrl = env.VITE_API_URL?.trim();
   const buildBase = env.VITE_APP_BASE?.trim() || "/";
+  const disableTsconfigPaths = envFlagEnabled(
+    env.HIVE_VITE_DISABLE_TSCONFIG_PATHS
+  );
+  const disableTanstackRouter = envFlagEnabled(
+    env.HIVE_VITE_DISABLE_TANSTACK_ROUTER
+  );
+  const disableTidewave = envFlagEnabled(env.HIVE_VITE_DISABLE_TIDEWAVE);
 
   if (!requiredApiUrl || requiredApiUrl === "undefined") {
     throw new Error(
@@ -31,16 +41,18 @@ export default defineConfig(({ mode }) => {
   return {
     base: buildBase,
     plugins: [
-      tsconfigPaths({
-        root: "./",
-      }),
+      !disableTsconfigPaths &&
+        tsconfigPaths({
+          root: "./",
+        }),
       tailwindcss(),
-      tanstackRouter({
-        routeFileIgnorePattern: ROUTE_FILE_IGNORE_PATTERN,
-      }),
+      !disableTanstackRouter &&
+        tanstackRouter({
+          routeFileIgnorePattern: ROUTE_FILE_IGNORE_PATTERN,
+        }),
       viteReact(),
-      tidewave(),
-    ],
+      !disableTidewave && tidewave(),
+    ].filter(Boolean),
     resolve: {
       alias: {
         // Prevent OpenCode SDK server code from being bundled (browser incompatible)
@@ -51,6 +63,14 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         external: ["node:child_process"],
       },
+    },
+    optimizeDeps: {
+      include: [
+        "@xterm/xterm",
+        "@xterm/addon-fit",
+        "@xterm/addon-serialize",
+        "@xterm/addon-web-links",
+      ],
     },
     server: {
       port: devServerPort,
