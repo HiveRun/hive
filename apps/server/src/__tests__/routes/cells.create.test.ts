@@ -418,7 +418,7 @@ describe("POST /api/cells", () => {
     expect(rows[0]?.status).toBe("error");
   });
 
-  it("sends the cell description as the first agent prompt", async () => {
+  it("sends the cell title and description as the first agent prompt", async () => {
     const sendAgentMessage = vi
       .fn<SendAgentMessageFn>()
       .mockResolvedValue(undefined);
@@ -448,7 +448,7 @@ describe("POST /api/cells", () => {
     expect(capturedSessionId).toBeTruthy();
     expect(sendAgentMessage).toHaveBeenCalledWith(
       capturedSessionId,
-      "Fix the failing specs in apps/web"
+      "Autostart Cell\n\nFix the failing specs in apps/web"
     );
   });
 
@@ -857,7 +857,7 @@ describe("POST /api/cells/:id/setup/retry", () => {
     expect(sendAgentMessage).toHaveBeenCalledTimes(1);
     expect(sendAgentMessage).toHaveBeenCalledWith(
       `session-${cellId}`,
-      "Send this after retry"
+      "Retry No Session\n\nSend this after retry"
     );
   });
 

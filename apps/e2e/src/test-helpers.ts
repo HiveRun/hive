@@ -204,14 +204,42 @@ export async function waitForChatRoute(options: {
   timeoutMs?: number;
 }): Promise<void> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_ROUTE_TIMEOUT_MS;
+  const apiUrl = process.env.HIVE_E2E_API_URL;
+  let lastPath = "unknown";
+  let lastStatus = "unknown";
 
   await waitForCondition({
     timeoutMs,
-    errorMessage: `Cell ${options.cellId} did not reach chat route`,
-    check: () =>
-      Promise.resolve(
-        readPathname(options.page.url()) === `/cells/${options.cellId}/chat`
-      ),
+    errorMessage: `Cell ${options.cellId} did not reach chat route. lastPath=${lastPath} lastStatus=${lastStatus}`,
+    check: async () => {
+      lastPath = readPathname(options.page.url());
+
+      if (!apiUrl) {
+        return lastPath === `/cells/${options.cellId}/chat`;
+      }
+
+      const cell = await fetchCell(apiUrl, options.cellId);
+      lastStatus = cell.status;
+
+      if (cell.status === "error") {
+        throw new Error(
+          `Cell ${options.cellId} entered error status while waiting for chat route: ${cell.lastSetupError ?? "setup failed"}`
+        );
+      }
+
+      if (
+        lastPath === `/cells/${options.cellId}/chat` &&
+        cell.status === "ready"
+      ) {
+        return true;
+      }
+
+      if (cell.status === "ready") {
+        await options.page.goto(`/cells/${options.cellId}/chat`);
+      }
+
+      return false;
+    },
   });
 }
 
@@ -559,10 +587,22 @@ export async function ensureTerminalReady(
     timeoutMs: options.timeoutMs,
     errorMessage: `Terminal not ready during ${options.context}. Last state=${lastState} exitCode=${lastExitCode || "n/a"}`,
     check: async () => {
-      const badge = page.locator(selectors.terminalConnectionBadge);
+      const badge = page.locator(selectors.terminalConnectionBadge).first();
+      const terminalRoot = page.locator(selectors.terminalRoot).first();
+      const [badgeCount, terminalRootCount] = await Promise.all([
+        badge.count(),
+        terminalRoot.count(),
+      ]);
+
+      if (badgeCount === 0 || terminalRootCount === 0) {
+        lastState = "missing";
+        lastExitCode = "";
+        return false;
+      }
+
       const [state, exitCode] = await Promise.all([
-        badge.getAttribute("data-connection-state"),
-        badge.getAttribute("data-exit-code"),
+        badge.getAttribute("data-connection-state", { timeout: 1000 }),
+        badge.getAttribute("data-exit-code", { timeout: 1000 }),
       ]);
 
       lastState = state ?? "unknown";

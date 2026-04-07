@@ -9,7 +9,8 @@
     "report:e2e": "playwright show-report reports/latest/playwright-report",
     "report:e2e:open": "playwright show-report reports/latest/playwright-report",
     "report:e2e:serve": "playwright show-report reports/latest/playwright-report",
-    "install:browsers": "playwright install chromium"
+    "install:browsers": "playwright install chromium",
+    "install:browsers:ci": "playwright install --with-deps chromium"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.1",

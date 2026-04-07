@@ -4532,7 +4532,10 @@ async function finalizeCellProvisioning(
     };
   }
 
-  const initialPrompt = body.description?.trim();
+  const initialPrompt = buildInitialPromptContent({
+    title: body.name,
+    description: body.description,
+  });
   const shouldSendInitialPrompt = shouldSendInitialPromptForAttempt({
     attempt,
     initialPrompt,
@@ -4894,6 +4897,24 @@ function shouldSendInitialPromptForAttempt(args: {
   }
 
   return !args.existingSessionId;
+}
+
+function buildInitialPromptContent(args: {
+  title?: string | null;
+  description?: string | null;
+}): string | undefined {
+  const title = args.title?.trim();
+  const description = args.description?.trim();
+
+  if (!description) {
+    return;
+  }
+
+  if (!title) {
+    return description;
+  }
+
+  return `${title}\n\n${description}`;
 }
 
 function buildAgentSessionOptions(body: Static<typeof CreateCellSchema>) {
