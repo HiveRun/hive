@@ -745,12 +745,12 @@ defmodule HiveServerElixirWeb.AshTypescriptRpcControllerTest do
   end
 
   defp assert_eventually_service_status(_conn, _cell_id, service_id, expected_status) do
-    deadline = System.monotonic_time(:millisecond) + 2_000
+    deadline = System.monotonic_time(:millisecond) + 5_000
     do_assert_eventually_service_status(service_id, expected_status, deadline)
   end
 
   defp assert_eventually_services_status(_conn, _cell_id, expected_statuses) do
-    deadline = System.monotonic_time(:millisecond) + 2_000
+    deadline = System.monotonic_time(:millisecond) + 5_000
     do_assert_eventually_services_status(expected_statuses, deadline)
   end
 

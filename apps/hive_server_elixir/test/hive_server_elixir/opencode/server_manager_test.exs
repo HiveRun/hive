@@ -25,16 +25,47 @@ defmodule HiveServerElixir.Opencode.ServerManagerTest do
     assert %{mode: :external, base_url: "http://127.0.0.1:4123"} = ServerManager.status(name)
   end
 
-  test "ensure_started lazily starts the default manager under its supervisor" do
+  test "ensure_started rejects lazily starting the default manager" do
+    assert {:error, :default_manager_must_be_supervised} =
+             ServerManager.ensure_started(enabled: true)
+  end
+
+  test "ensure_started lazily starts a named manager under its supervisor" do
+    name = unique_name()
+
+    config_root =
+      Path.join(
+        System.tmp_dir!(),
+        "opencode-server-manager-test-#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(config_root)
+
     assert {:ok, pid} =
              ServerManager.ensure_started(
+               name: name,
                enabled: true,
-               create_server_fun: fn _opts -> {:ok, %{url: "http://127.0.0.1:4555"}} end
+               create_server_fun: fn _opts ->
+                 {:ok,
+                  %{
+                    url: "http://127.0.0.1:4555",
+                    port: nil,
+                    os_pid: nil,
+                    config_root: config_root
+                  }}
+               end
              )
+
+    on_exit(fn ->
+      case GenServer.whereis(name) do
+        pid when is_pid(pid) -> GenServer.stop(pid)
+        _other -> :ok
+      end
+    end)
 
     assert is_pid(pid)
 
-    assert %{mode: :managed, base_url: base_url, ready: true} = ServerManager.status()
+    assert %{mode: :managed, base_url: base_url, ready: true} = ServerManager.status(name)
     assert is_binary(base_url)
     assert String.starts_with?(base_url, "http://127.0.0.1:")
   end

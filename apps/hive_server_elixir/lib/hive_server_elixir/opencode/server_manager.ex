@@ -33,7 +33,6 @@ defmodule HiveServerElixir.Opencode.ServerManager do
 
   @spec base_url(GenServer.server()) :: String.t()
   def base_url(server \\ __MODULE__) do
-    maybe_ensure_default_manager(server)
     GenServer.call(server, :base_url)
   end
 
@@ -41,16 +40,14 @@ defmodule HiveServerElixir.Opencode.ServerManager do
   def resolved_base_url do
     System.get_env("HIVE_OPENCODE_BASE_URL") ||
       Application.get_env(:hive_server_elixir, :opencode_base_url) ||
-      case ensure_started() do
-        {:ok, _pid} -> base_url()
-        {:error, :disabled} -> "http://localhost:4096"
-        {:error, _reason} -> "http://localhost:4096"
+      case GenServer.whereis(__MODULE__) do
+        pid when is_pid(pid) -> base_url()
+        _other -> "http://localhost:4096"
       end
   end
 
   @spec status(GenServer.server()) :: %{mode: :managed | :external, base_url: String.t()}
   def status(server \\ __MODULE__) do
-    maybe_ensure_default_manager(server)
     GenServer.call(server, :status)
   end
 
@@ -58,12 +55,21 @@ defmodule HiveServerElixir.Opencode.ServerManager do
   def ensure_started(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
 
-    case Process.whereis(name) do
+    case GenServer.whereis(name) do
       pid when is_pid(pid) ->
         {:ok, pid}
 
       _other ->
-        if(manager_enabled?(opts), do: start_under_supervisor(opts), else: {:error, :disabled})
+        cond do
+          name == __MODULE__ ->
+            {:error, :default_manager_must_be_supervised}
+
+          manager_enabled?(opts) ->
+            start_under_supervisor(opts)
+
+          true ->
+            {:error, :disabled}
+        end
     end
   end
 
@@ -135,18 +141,6 @@ defmodule HiveServerElixir.Opencode.ServerManager do
   end
 
   def terminate(_reason, _state), do: :ok
-
-  defp maybe_ensure_default_manager(server) do
-    if server == __MODULE__ do
-      case ensure_started() do
-        {:ok, _pid} -> :ok
-        {:error, :disabled} -> :ok
-        {:error, reason} -> raise "Failed to start OpenCode server manager: #{inspect(reason)}"
-      end
-    end
-
-    :ok
-  end
 
   defp start_under_supervisor(opts) do
     child_spec = {__MODULE__, Keyword.put_new(opts, :name, __MODULE__)}
@@ -247,10 +241,15 @@ defmodule HiveServerElixir.Opencode.ServerManager do
     error -> {:error, error}
   end
 
-  defp stop_managed_server(%{port: port_ref, os_pid: os_pid, config_root: config_root}) do
-    _ = safe_port_close(port_ref)
-    _ = terminate_pid(os_pid)
-    _ = File.rm_rf(config_root)
+  defp stop_managed_server(server) when is_map(server) do
+    _ = safe_port_close(Map.get(server, :port))
+    _ = terminate_pid(Map.get(server, :os_pid))
+
+    case Map.get(server, :config_root) do
+      config_root when is_binary(config_root) -> _ = File.rm_rf(config_root)
+      _other -> :ok
+    end
+
     :ok
   end
 
@@ -367,6 +366,8 @@ defmodule HiveServerElixir.Opencode.ServerManager do
   rescue
     _error -> :ok
   end
+
+  defp safe_port_close(_port_ref), do: :ok
 
   defp terminate_pid(pid) when is_integer(pid) and pid > 0 do
     _ = System.cmd("kill", ["-TERM", Integer.to_string(pid)], stderr_to_stdout: true)

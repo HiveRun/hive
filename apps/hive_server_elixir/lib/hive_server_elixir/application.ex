@@ -27,6 +27,7 @@ defmodule HiveServerElixir.Application do
            Application.fetch_env!(:hive_server_elixir, Oban)
          )}
       ] ++
+        opencode_server_manager_children() ++
         workspace_bootstrap_children() ++
         [
           {
@@ -57,6 +58,18 @@ defmodule HiveServerElixir.Application do
   end
 
   defp skip_migrations?(), do: not run_migrations_on_start?()
+
+  defp opencode_server_manager_children do
+    if Keyword.get(
+         Application.get_env(:hive_server_elixir, :opencode_server_manager, []),
+         :enabled,
+         true
+       ) do
+      [{HiveServerElixir.Opencode.ServerManager, []}]
+    else
+      []
+    end
+  end
 
   defp run_migrations_on_start? do
     Application.get_env(

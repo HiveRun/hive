@@ -81,7 +81,7 @@ defmodule HiveServerElixirWeb.TerminalChannelTest do
   end
 
   test "chat terminal channel restart emits ready and snapshot", %{socket: socket} do
-    _ = ServerManager.ensure_started(enabled: true)
+    start_supervised!({ServerManager, name: ServerManager, timeout_ms: 15_000})
 
     workspace = workspace!("chat-restart")
     cell = cell!(workspace.id, "chat cell", "ready")
