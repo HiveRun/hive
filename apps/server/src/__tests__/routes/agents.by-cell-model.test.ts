@@ -131,6 +131,7 @@ describe("agents by-cell model capture", () => {
         config: {},
         source: "default" as const,
       })),
+      loadEffectiveOpencodeDefaults: vi.fn(async () => ({})),
       acquireOpencodeClient: vi.fn(async () => client),
     });
 

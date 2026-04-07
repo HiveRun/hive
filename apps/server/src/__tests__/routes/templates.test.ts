@@ -44,7 +44,7 @@ const workspaceRecord: WorkspaceRegistry.WorkspaceRecord = {
 
 let getWorkspaceRegistrySpy: any;
 let loadConfigSpy: any;
-let loadOpencodeConfigSpy: any;
+let loadEffectiveOpencodeDefaultsSpy: any;
 let statSpy: any;
 
 const createApp = () => new Elysia().use(templatesRoutes);
@@ -68,9 +68,9 @@ describe("templatesRoutes", () => {
       .spyOn(FsPromises, "stat")
       .mockResolvedValue({ mtimeMs: 1000 } as Stats);
 
-    loadOpencodeConfigSpy = vi
-      .spyOn(OpencodeConfig, "loadOpencodeConfig")
-      .mockResolvedValue({ config: {}, source: "workspace" });
+    loadEffectiveOpencodeDefaultsSpy = vi
+      .spyOn(OpencodeConfig, "loadEffectiveOpencodeDefaults")
+      .mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -79,9 +79,7 @@ describe("templatesRoutes", () => {
 
   it("returns the templates list for a workspace", async () => {
     const agentDefaults = { providerId: "anthropic", modelId: "claude-3" };
-    loadOpencodeConfigSpy.mockResolvedValue({
-      config: {},
-      source: "workspace",
+    loadEffectiveOpencodeDefaultsSpy.mockResolvedValue({
       defaultModel: agentDefaults,
     });
 
@@ -168,7 +166,9 @@ describe("templatesRoutes", () => {
   });
 
   it("returns 400 when OpenCode config cannot be read", async () => {
-    loadOpencodeConfigSpy.mockRejectedValue(new Error("opencode missing"));
+    loadEffectiveOpencodeDefaultsSpy.mockRejectedValue(
+      new Error("opencode missing")
+    );
 
     const app = createApp();
     const response = await app.handle(

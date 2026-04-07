@@ -1,8 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { ServerOptions } from "@opencode-ai/sdk";
+import type { OpencodeClient, ServerOptions } from "@opencode-ai/sdk";
 import { mergeHiveBrowserSafeKeybinds } from "../opencode/browser-safe-keybinds";
+import { acquireSharedOpencodeClient } from "./opencode-server";
 
 const WORKSPACE_CONFIG_CANDIDATES = [
   "@opencode.json",
@@ -25,6 +26,15 @@ export type LoadedOpencodeConfig = {
   details?: string;
   defaultModel?: DefaultModel;
 };
+
+export type EffectiveOpencodeDefaults = {
+  defaultModel?: DefaultModel;
+  startMode?: "plan" | "build";
+};
+
+function normalizeStartMode(value: unknown): "plan" | "build" | undefined {
+  return value === "plan" || value === "build" ? value : undefined;
+}
 
 function withHiveInstructions(
   config: OpencodeServerConfig
@@ -89,6 +99,33 @@ export async function loadOpencodeConfig(
     config: fallback,
     source: "default",
     ...(fallbackDefaultModel ? { defaultModel: fallbackDefaultModel } : {}),
+  };
+}
+
+export async function loadEffectiveOpencodeDefaults(
+  workspaceRootPath: string,
+  options?: { client?: Pick<OpencodeClient, "config"> }
+): Promise<EffectiveOpencodeDefaults> {
+  const client = options?.client ?? (await acquireSharedOpencodeClient());
+  const response = await client.config.get({
+    throwOnError: true,
+    query: { directory: workspaceRootPath },
+  });
+
+  if (!response.data) {
+    throw new Error("OpenCode server returned an empty config response");
+  }
+
+  const config = response.data as OpencodeServerConfig & {
+    default_agent?: unknown;
+  };
+
+  const defaultModel = extractDefaultModel(config);
+  const startMode = normalizeStartMode(config.default_agent);
+
+  return {
+    ...(defaultModel ? { defaultModel } : {}),
+    ...(startMode ? { startMode } : {}),
   };
 }
 
