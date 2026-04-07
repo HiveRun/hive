@@ -33,17 +33,13 @@ type CellFormValues = CreateCellInput;
 type SpawnFromMode = "head" | "branch" | "pr";
 
 const NAME_MAX_LENGTH = 255;
-const DESCRIPTION_MAX_LENGTH = 1000;
 
 const cellSchema = z.object({
   name: z
     .string()
     .min(1, "Name is required")
     .max(NAME_MAX_LENGTH, "Name too long"),
-  description: z
-    .string()
-    .max(DESCRIPTION_MAX_LENGTH, "Description too long")
-    .optional(),
+  description: z.string().optional(),
   templateId: z.string().min(1, "Template is required"),
   modelId: z.string().optional(),
   providerId: z.string().optional(),
