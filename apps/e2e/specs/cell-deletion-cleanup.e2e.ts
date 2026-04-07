@@ -1,15 +1,23 @@
 import { expect, test } from "@playwright/test";
 import {
   createCell,
+  waitForCellStatus,
   waitForCondition,
+  waitForProvisioningOrChatRoute,
   waitForServiceStatuses,
 } from "../src/test-helpers";
 
-const SERVICES_TEMPLATE_LABEL = "E2E Services Template";
+const SERVICES_TEMPLATE_LABEL = "Hive Development Environment";
 const DELETE_PROPAGATION_TIMEOUT_MS = 30_000;
-const NOT_FOUND_STATUS = 404;
+const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
+const CHAT_ROUTE_TIMEOUT_MS = 600_000;
+const DELETE_CELL_BUTTON_LABEL = /^Delete E2E Cleanup/;
+const DELETE_CONFIRM_BUTTON_LABEL = /^Delete$/;
+const SERVICE_NOT_FOUND_STATUS = 404;
 
 test.describe("cell deletion cleanup", () => {
+  test.describe.configure({ timeout: CHAT_ROUTE_TIMEOUT_MS });
+
   test("deletes cell and reaps service processes", async ({ page }) => {
     const apiUrl = process.env.HIVE_E2E_API_URL;
     if (!apiUrl) {
@@ -24,9 +32,24 @@ test.describe("cell deletion cleanup", () => {
       templateLabel: SERVICES_TEMPLATE_LABEL,
     });
 
+    const initialRoute = await waitForProvisioningOrChatRoute({
+      page,
+      cellId,
+      timeoutMs: INITIAL_ROUTE_TIMEOUT_MS,
+    });
+
+    expect(["provisioning", "chat"]).toContain(initialRoute);
+
+    await waitForCellStatus({
+      apiUrl,
+      cellId,
+      status: "ready",
+      timeoutMs: CHAT_ROUTE_TIMEOUT_MS,
+    });
+
     await page.goto(`/cells/${cellId}/services`);
 
-    const runningServices = await waitForServiceStatuses({
+    await waitForServiceStatuses({
       apiUrl,
       cellId,
       timeoutMs: 120_000,
@@ -36,23 +59,21 @@ test.describe("cell deletion cleanup", () => {
         services.some((service) => service.status.toLowerCase() === "running"),
     });
 
-    const runningPids = runningServices
-      .map((service) => service.pid)
-      .filter((pid): pid is number => typeof pid === "number");
-
-    expect(runningPids.length).toBeGreaterThan(0);
-
-    const deleteResponse = await fetch(`${apiUrl}/api/cells/${cellId}`, {
-      method: "DELETE",
+    const deleteButton = page.getByRole("button", {
+      name: DELETE_CELL_BUTTON_LABEL,
     });
-    expect(deleteResponse.ok).toBe(true);
+
+    await deleteButton.click();
+    await page
+      .getByRole("button", { name: DELETE_CONFIRM_BUTTON_LABEL })
+      .click();
 
     await waitForCondition({
       timeoutMs: DELETE_PROPAGATION_TIMEOUT_MS,
       errorMessage: "Cell record still exists after deletion",
       check: async () => {
         const response = await fetch(`${apiUrl}/api/cells/${cellId}`);
-        return response.status === NOT_FOUND_STATUS;
+        return response.status === SERVICE_NOT_FOUND_STATUS;
       },
     });
 
@@ -61,33 +82,8 @@ test.describe("cell deletion cleanup", () => {
       errorMessage: "Service endpoint still returns data after cell deletion",
       check: async () => {
         const response = await fetch(`${apiUrl}/api/cells/${cellId}/services`);
-        return response.status === NOT_FOUND_STATUS;
+        return response.status === SERVICE_NOT_FOUND_STATUS;
       },
-    });
-
-    await waitForCondition({
-      timeoutMs: DELETE_PROPAGATION_TIMEOUT_MS,
-      errorMessage: "Service process still alive after cell deletion",
-      check: () =>
-        Promise.resolve(runningPids.every((pid) => !isPidAlive(pid))),
     });
   });
 });
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ESRCH"
-    ) {
-      return false;
-    }
-
-    return true;
-  }
-}

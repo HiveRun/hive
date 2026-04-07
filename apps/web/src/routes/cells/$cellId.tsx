@@ -15,7 +15,6 @@ import { cellQueries } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
 import { workspaceQueries } from "@/queries/workspaces";
 
-const PROVISIONING_POLL_MS = 1500;
 const CELL_ROUTE_REDIRECT_FETCH_TIMEOUT_MS = 1200;
 
 async function fetchCellForRouteRedirect(args: {
@@ -103,19 +102,14 @@ function CellLayout() {
       });
   }, [cell?.workspaceId, queryClient]);
 
-  const shouldPollProvisioningTimings =
-    cell?.status === "spawning" || cell?.status === "pending";
   const shouldShowProvisioningTimeline =
-    shouldPollProvisioningTimings || cell?.status === "error";
+    cell?.status === "provisioning" || cell?.status === "error";
   const timingsQuery = useQuery({
     ...cellQueries.timings(cellId, {
       workflow: "create",
       limit: 300,
     }),
     enabled: shouldShowProvisioningTimeline,
-    refetchInterval: shouldPollProvisioningTimings
-      ? PROVISIONING_POLL_MS
-      : false,
   });
   const activeRunId = timingsQuery.data?.runs[0]?.runId;
   const activeRunSteps = useMemo(() => {
@@ -136,7 +130,7 @@ function CellLayout() {
     [cell?.status, activeRunSteps]
   );
   const navItems = [
-    ...(cell?.status !== "ready"
+    ...(cell?.status === "provisioning" || cell?.status === "error"
       ? [
           {
             routeId: "/cells/$cellId/provisioning",
@@ -214,10 +208,11 @@ function CellLayout() {
 
   const titlePrefix = workspaceLabel?.trim();
   let statusMessage = "Ready";
-  if (cell.status === "spawning") {
-    statusMessage = "Provisioning workspace and services";
-  } else if (cell.status === "pending") {
-    statusMessage = "Preparing agent session";
+  if (cell.status === "provisioning") {
+    statusMessage = "Provisioning workspace, services, and agent session";
+  } else if (cell.status === "stopped") {
+    statusMessage =
+      "Runtime is stopped. Resume the cell to reconnect services and chat.";
   } else if (cell.status === "error") {
     statusMessage =
       "Provisioning failed. Open Info to inspect setup logs and retry.";
@@ -226,6 +221,8 @@ function CellLayout() {
   let statusTone = "text-amber-200 border-amber-500/40 bg-amber-500/10";
   if (cell.status === "ready") {
     statusTone = "text-emerald-300 border-emerald-500/40 bg-emerald-500/10";
+  } else if (cell.status === "stopped") {
+    statusTone = "text-slate-300 border-slate-500/40 bg-slate-500/10";
   } else if (cell.status === "error") {
     statusTone = "text-red-300 border-red-500/40 bg-red-500/10";
   }

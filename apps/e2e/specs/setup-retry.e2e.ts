@@ -1,4 +1,4 @@
-import { access, rm, writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
@@ -6,16 +6,18 @@ import {
   fetchActivity,
   waitForCellStatus,
   waitForCondition,
+  waitForProvisioningOrChatRoute,
 } from "../src/test-helpers";
 
 const SETUP_RETRY_TEMPLATE_LABEL = "E2E Setup Retry Template";
-const INITIAL_READY_TIMEOUT_MS = 300_000;
 const RETRY_STATE_TIMEOUT_MS = 180_000;
+const PROVISIONING_TIMELINE_TEXT = /Provisioning timeline/i;
 
 test.describe("setup retry", () => {
   test("recovers a failed setup after retry", async ({ page }) => {
     const apiUrl = process.env.HIVE_E2E_API_URL;
     const hiveHome = process.env.HIVE_E2E_HIVE_HOME;
+    const workspacePath = process.env.HIVE_E2E_WORKSPACE_PATH;
     if (!apiUrl) {
       throw new Error("HIVE_E2E_API_URL is required for E2E tests");
     }
@@ -34,31 +36,35 @@ test.describe("setup retry", () => {
     const initialCell = await waitForCellStatus({
       apiUrl,
       cellId,
-      status: "ready",
-      timeoutMs: INITIAL_READY_TIMEOUT_MS,
-    });
-    expect(initialCell.lastSetupError ?? null).toBeNull();
-
-    const markerPath = join(hiveHome, "cells", cellId, ".hive-setup-pass");
-    await rm(markerPath, { force: true });
-    expect(await fileExists(markerPath)).toBe(false);
-
-    const firstRetryResponse = await retrySetup(apiUrl, cellId);
-    expect(firstRetryResponse.ok).toBe(true);
-
-    const failedCell = await waitForCellStatus({
-      apiUrl,
-      cellId,
       status: "error",
       timeoutMs: RETRY_STATE_TIMEOUT_MS,
     });
-    expect(failedCell.lastSetupError).toContain("marker missing");
+    expect(initialCell.lastSetupError).toContain("marker missing");
 
+    await page.goto(`/cells/${cellId}/setup`);
+    await expect(
+      page.getByTestId("setup-command-item").first()
+    ).toHaveAttribute("data-state", "error");
+
+    await page.goto(`/cells/${cellId}/provisioning`);
+
+    const initialRoute = await waitForProvisioningOrChatRoute({
+      page,
+      cellId,
+      timeoutMs: RETRY_STATE_TIMEOUT_MS,
+    });
+
+    if (initialRoute === "provisioning") {
+      await expect(page.getByText(PROVISIONING_TIMELINE_TEXT)).toBeVisible();
+    }
+
+    const markerPath = workspacePath
+      ? join(workspacePath, ".hive-setup-pass")
+      : join(hiveHome, "cells", cellId, ".hive-setup-pass");
     await writeFile(markerPath, "ok\n", "utf8");
     expect(await fileExists(markerPath)).toBe(true);
 
-    const secondRetryResponse = await retrySetup(apiUrl, cellId);
-    expect(secondRetryResponse.ok).toBe(true);
+    await page.getByRole("button", { name: "Retry provisioning" }).click();
 
     const recoveredCell = await waitForCellStatus({
       apiUrl,
@@ -67,6 +73,11 @@ test.describe("setup retry", () => {
       timeoutMs: RETRY_STATE_TIMEOUT_MS,
     });
     expect(recoveredCell.lastSetupError ?? null).toBeNull();
+
+    await page.goto(`/cells/${cellId}/setup`);
+    await expect(
+      page.getByTestId("setup-command-item").first()
+    ).toHaveAttribute("data-state", "done");
 
     await waitForCondition({
       timeoutMs: 30_000,
@@ -86,13 +97,4 @@ async function fileExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-function retrySetup(apiUrl: string, cellId: string): Promise<Response> {
-  return fetch(`${apiUrl}/api/cells/${cellId}/setup/retry`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-  });
 }

@@ -1,41 +1,23 @@
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useRouterState } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import {
-  type CellServiceSummary,
-  type CellStatus,
-  cellQueries,
-} from "@/queries/cells";
-import { type TemplatesResponse, templateQueries } from "@/queries/templates";
+import type { CellStatus } from "@/queries/cells";
+import type {
+  WorkspaceOverviewResponse,
+  WorkspaceOverviewService,
+} from "@/queries/workspaces";
 import { workspaceQueries } from "@/queries/workspaces";
 
 const BYTES_PER_UNIT = 1024;
 const ZERO_DECIMALS = 0;
 const ONE_DECIMAL = 1;
 
-type CellSummary = Awaited<
-  ReturnType<ReturnType<typeof cellQueries.all>["queryFn"]>
->[number];
-
 export const Route = createFileRoute("/")({
-  loader: ({ context: { queryClient } }) => {
-    queryClient
-      .fetchQuery(workspaceQueries.list())
-      .then((workspaceData) => {
-        for (const workspace of workspaceData.workspaces) {
-          queryClient.prefetchQuery(cellQueries.all(workspace.id));
-          queryClient.prefetchQuery(templateQueries.all(workspace.id));
-        }
-      })
-      .catch(() => {
-        // non-blocking prefetch; overview component handles fetch errors
-      });
-
-    return null;
-  },
+  loader: ({ context: { queryClient } }) =>
+    queryClient.ensureQueryData(workspaceQueries.overview()),
   component: HiveOverview,
 });
 
@@ -43,77 +25,9 @@ function HiveOverview() {
   const routerState = useRouterState({
     select: (state) => ({ pathname: state.location.pathname }),
   });
-  const workspaceQuery = useQuery(workspaceQueries.list());
-  const workspaces = workspaceQuery.data?.workspaces ?? [];
-
-  const cellListQueries = useQueries({
-    queries: workspaces.map((workspace) => {
-      const config = cellQueries.all(workspace.id);
-      return {
-        queryKey: config.queryKey,
-        queryFn: config.queryFn,
-      };
-    }),
-  });
-
-  const templatesQueries = useQueries({
-    queries: workspaces.map((workspace) => {
-      const config = templateQueries.all(workspace.id);
-      return {
-        queryKey: config.queryKey,
-        queryFn: config.queryFn,
-        staleTime: 30_000,
-      };
-    }),
-  });
-
-  const cellsByWorkspace = new Map<string, CellSummary[]>();
-  workspaces.forEach((workspace, index) => {
-    const query = cellListQueries[index];
-    if (query?.data) {
-      cellsByWorkspace.set(workspace.id, query.data);
-    }
-  });
-
-  const templatesByWorkspace = new Map<string, TemplatesResponse>();
-  workspaces.forEach((workspace, index) => {
-    const query = templatesQueries[index];
-    if (query?.data) {
-      templatesByWorkspace.set(workspace.id, query.data);
-    }
-  });
-
-  const allCells = workspaces.flatMap(
-    (workspace) => cellsByWorkspace.get(workspace.id) ?? []
-  );
-
-  const serviceQueries = useQueries({
-    queries: allCells.map((cell) => {
-      const config = cellQueries.services(cell.id, { includeResources: true });
-      return {
-        queryKey: config.queryKey,
-        queryFn: config.queryFn,
-        enabled: cell.status === "ready",
-        staleTime: 15_000,
-      };
-    }),
-  });
-
-  const servicesByCellId = new Map<
-    string,
-    { services?: CellServiceSummary[]; isLoading: boolean; isError: boolean }
-  >();
-  allCells.forEach((cell, index) => {
-    const query = serviceQueries[index];
-    if (!query) {
-      return;
-    }
-    servicesByCellId.set(cell.id, {
-      services: query.data,
-      isLoading: query.isLoading,
-      isError: query.isError,
-    });
-  });
+  const workspaceQuery = useQuery(workspaceQueries.overview());
+  const overview = workspaceQuery.data ?? emptyOverviewResponse;
+  const workspaces = overview.workspaces;
 
   if (workspaceQuery.isLoading) {
     return (
@@ -160,10 +74,7 @@ function HiveOverview() {
 
       <div className="grid gap-6">
         {workspaces.map((workspace) => {
-          const cells = cellsByWorkspace.get(workspace.id) ?? [];
-          const templates = templatesByWorkspace.get(workspace.id)?.templates;
-          const templateLabel = (templateId?: string) =>
-            templates?.find((t) => t.id === templateId)?.label ?? templateId;
+          const cells = workspace.cells ?? [];
 
           return (
             <Card className="border-2 border-border bg-card" key={workspace.id}>
@@ -196,7 +107,6 @@ function HiveOverview() {
                       const isActive = routerState.pathname.startsWith(
                         `/cells/${cell.id}`
                       );
-                      const serviceState = servicesByCellId.get(cell.id);
                       return (
                         <div
                           className={cn(
@@ -234,7 +144,7 @@ function HiveOverview() {
                               Template
                             </div>
                             <div className="mt-1 truncate font-mono text-[11px] text-foreground">
-                              {templateLabel(cell.templateId) ?? "—"}
+                              {cell.templateLabel ?? cell.templateId ?? "—"}
                             </div>
                           </div>
 
@@ -245,9 +155,7 @@ function HiveOverview() {
                             <div className="mt-2">
                               <ServicesSummary
                                 cellStatus={cell.status}
-                                services={serviceState?.services}
-                                servicesError={serviceState?.isError}
-                                servicesLoading={serviceState?.isLoading}
+                                services={cell.services}
                               />
                             </div>
                           </div>
@@ -268,8 +176,8 @@ function HiveOverview() {
 function StatusBadge({ status }: { status: CellStatus }) {
   const toneMap: Record<CellStatus, string> = {
     ready: "bg-primary/15 text-primary",
-    pending: "bg-muted text-muted-foreground",
-    spawning: "bg-secondary/20 text-secondary-foreground",
+    provisioning: "bg-secondary/20 text-secondary-foreground",
+    stopped: "bg-muted text-muted-foreground",
     error: "bg-destructive/10 text-destructive",
     deleting: "bg-destructive/20 text-destructive",
   };
@@ -288,34 +196,14 @@ function StatusBadge({ status }: { status: CellStatus }) {
 function ServicesSummary({
   cellStatus,
   services,
-  servicesLoading,
-  servicesError,
 }: {
   cellStatus: CellStatus;
-  services?: CellServiceSummary[];
-  servicesLoading?: boolean;
-  servicesError?: boolean;
+  services?: WorkspaceOverviewService[];
 }) {
   if (cellStatus !== "ready") {
     return (
       <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
         Not available while {cellStatus}
-      </p>
-    );
-  }
-
-  if (servicesLoading) {
-    return (
-      <p className="text-[11px] text-muted-foreground uppercase tracking-[0.3em]">
-        Loading services…
-      </p>
-    );
-  }
-
-  if (servicesError) {
-    return (
-      <p className="text-[11px] text-destructive uppercase tracking-[0.3em]">
-        Service status unavailable
       </p>
     );
   }
@@ -410,3 +298,8 @@ function ServiceStatusPill({ status }: { status: string }) {
     </span>
   );
 }
+
+const emptyOverviewResponse: WorkspaceOverviewResponse = {
+  workspaces: [],
+  activeWorkspaceId: null,
+};

@@ -1,4 +1,8 @@
-import { rpc } from "@/lib/rpc";
+import { fetchControllerJson } from "@/lib/controller-query";
+import {
+  listTemplatesPath,
+  showTemplatePath,
+} from "@/lib/generated/controller-routes";
 
 export type TemplateService = {
   type: string;
@@ -57,33 +61,28 @@ export const templateQueries = {
     queryKey: ["templates", workspaceId] as const,
     staleTime: 60_000,
     queryFn: async (): Promise<TemplatesResponse> => {
-      const { data, error } = await rpc.api.templates.get({
-        query: { workspaceId },
-      });
-      if (error) {
-        throw new Error("Failed to fetch templates");
-      }
-      if (!(data && Array.isArray(data.templates))) {
+      const data = await fetchControllerJson<Partial<TemplatesResponse>>(
+        listTemplatesPath({ workspaceId }),
+        "Failed to fetch templates"
+      );
+      const response = data as Partial<TemplatesResponse> | null;
+      if (!(response && Array.isArray(response.templates))) {
         throw new Error("Invalid templates response from server");
       }
       return {
-        templates: data.templates,
-        defaults: data.defaults,
-        agentDefaults: data.agentDefaults,
+        templates: response.templates,
+        defaults: response.defaults,
+        agentDefaults: response.agentDefaults,
       };
     },
   }),
 
   detail: (workspaceId: string, id: string) => ({
     queryKey: ["templates", workspaceId, id] as const,
-    queryFn: async (): Promise<Template> => {
-      const { data, error } = await rpc.api.templates({ id }).get({
-        query: { workspaceId },
-      });
-      if (error) {
-        throw new Error("Template not found");
-      }
-      return data;
-    },
+    queryFn: async (): Promise<Template> =>
+      fetchControllerJson<Template>(
+        showTemplatePath({ id }, { workspaceId }),
+        "Template not found"
+      ),
   }),
 };

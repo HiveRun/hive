@@ -2,19 +2,23 @@ import { expect, test } from "@playwright/test";
 import {
   createCell,
   fetchActivity,
+  waitForCellStatus,
   waitForCondition,
   waitForServiceStatuses,
 } from "../src/test-helpers";
 
-const SERVICES_TEMPLATE_LABEL = "E2E Services Template";
+const SERVICES_TEMPLATE_LABEL = "Hive Development Environment";
 const STOP_BUTTON_LABEL = /^Stop$/;
 const START_BUTTON_LABEL = /^Start$/;
+const CHAT_ROUTE_TIMEOUT_MS = 600_000;
 const isActiveStatus = (status: string) => {
   const normalized = status.toLowerCase();
   return normalized === "running" || normalized === "starting";
 };
 
 test.describe("service controls", () => {
+  test.describe.configure({ timeout: CHAT_ROUTE_TIMEOUT_MS });
+
   test("starts and stops services from the services panel", async ({
     page,
   }) => {
@@ -29,6 +33,13 @@ test.describe("service controls", () => {
       page,
       name: `E2E Services ${Date.now()}`,
       templateLabel: SERVICES_TEMPLATE_LABEL,
+    });
+
+    await waitForCellStatus({
+      apiUrl,
+      cellId,
+      status: "ready",
+      timeoutMs: CHAT_ROUTE_TIMEOUT_MS,
     });
 
     await page.goto(`/cells/${cellId}/services`);
@@ -55,7 +66,9 @@ test.describe("service controls", () => {
         ),
     });
 
-    const targetService = runningServices[0];
+    const targetService =
+      runningServices.find((service) => service.name === "web") ??
+      runningServices[0];
     if (!targetService) {
       throw new Error("No service available to run single-service assertions");
     }

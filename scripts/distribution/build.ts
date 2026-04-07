@@ -26,6 +26,14 @@ const desktopBinaryName = "hive-desktop";
 const desktopElectronRoot = join(repoRoot, "apps", "desktop-electron");
 const desktopElectronOutputDir = join(desktopElectronRoot, "out");
 const desktopElectronPublicDir = join(desktopElectronRoot, "public");
+const serverElixirRoot = join(repoRoot, "apps", "hive_server_elixir");
+const serverElixirReleaseDir = join(
+  serverElixirRoot,
+  "_build",
+  "prod",
+  "rel",
+  "hive_server_elixir"
+);
 const WINDOWS_SETUP_EXE_PATTERN = /setup.*\.exe$/i;
 
 const run = async (
@@ -43,6 +51,20 @@ const run = async (
   if (code !== 0) {
     throw new Error(`Command failed (${cmd.join(" ")}) with exit code ${code}`);
   }
+};
+
+const resolveMixCommand = (...args: string[]) => {
+  if (Bun.which("mix")) {
+    return ["mix", ...args];
+  }
+
+  if (Bun.which("mise")) {
+    return ["mise", "x", "-C", ".", "--", "mix", ...args];
+  }
+
+  throw new Error(
+    "Neither 'mix' nor 'mise' is available to build the Elixir release"
+  );
 };
 
 const runCapture = (cmd: string[], cwd = repoRoot) => {
@@ -85,6 +107,37 @@ const buildCli = () =>
   run(["bun", "run", "compile"], {
     cwd: join(repoRoot, "packages", "cli"),
   });
+
+const buildServerElixirRelease = async () => {
+  const releaseEnv = {
+    ...process.env,
+    MIX_ENV: "prod",
+    SECRET_KEY_BASE:
+      process.env.SECRET_KEY_BASE ??
+      "hive-distribution-secret-key-base-dev-only-0001-0002-0003-0004-0005-0006",
+    DATABASE_PATH:
+      process.env.DATABASE_PATH ??
+      join(repoRoot, "tmp", "hive-installer-build.db"),
+    PHX_HOST: process.env.PHX_HOST ?? "localhost",
+    PORT: process.env.PORT ?? "4000",
+  } satisfies NodeJS.ProcessEnv;
+
+  await run(resolveMixCommand("deps.get"), {
+    cwd: serverElixirRoot,
+    env: releaseEnv,
+  });
+
+  await run(resolveMixCommand("assets.deploy"), {
+    cwd: serverElixirRoot,
+    env: releaseEnv,
+  });
+
+  await run(resolveMixCommand("release", "--overwrite"), {
+    cwd: serverElixirRoot,
+    env: releaseEnv,
+  });
+};
+
 const buildDesktopElectron = () =>
   run(["bun", "run", "package"], {
     cwd: desktopElectronRoot,
@@ -244,6 +297,7 @@ const main = async () => {
   await buildFrontend();
   await syncDesktopRendererAssets();
   await buildCli();
+  await buildServerElixirRelease();
   await buildDesktopElectron();
 
   const cliBinaryCandidates = [
@@ -272,23 +326,19 @@ const main = async () => {
 
   await cp(frontendDist, join(releaseDir, "public"), { recursive: true });
 
+  if (!existsSync(serverElixirReleaseDir)) {
+    throw new Error(
+      "Elixir release directory missing. Did the release build succeed?"
+    );
+  }
+
+  await cp(serverElixirReleaseDir, join(releaseDir, "server"), {
+    recursive: true,
+  });
+
   const installerScriptSource = join(repoRoot, "scripts", "install.sh");
   await copyFile(installerScriptSource, join(releaseDir, "install.sh"));
   await chmod(join(releaseDir, "install.sh"), EXECUTABLE_PERMISSIONS);
-
-  const serverMigrationsDir = join(
-    repoRoot,
-    "apps",
-    "server",
-    "src",
-    "migrations"
-  );
-  if (!existsSync(serverMigrationsDir)) {
-    throw new Error("Server migrations directory missing.");
-  }
-  await cp(serverMigrationsDir, join(releaseDir, "migrations"), {
-    recursive: true,
-  });
 
   await copyDesktopBundle(releaseDir);
 
@@ -313,6 +363,7 @@ const main = async () => {
     builtAt: new Date().toISOString(),
     binary: releaseBinaryName,
     assetsDir: "public",
+    serverDir: "server",
   } satisfies Record<string, string>;
 
   await writeFile(

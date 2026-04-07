@@ -1,0 +1,373 @@
+name: PR Stats
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-stats-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-stats:
+    name: PR Stats
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Calculate PR diff stats
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 <<'PY'
+          import os
+          import subprocess
+          from collections import OrderedDict
+          from pathlib import Path
+
+          base_sha = os.environ['BASE_SHA']
+          head_sha = os.environ['HEAD_SHA']
+          pr_number = os.environ['PR_NUMBER']
+
+          diff_output = subprocess.check_output(
+              ['git', 'diff', '--numstat', base_sha, head_sha],
+              text=True,
+          )
+
+          files = []
+          for line in diff_output.splitlines():
+              added, removed, path = line.split('\t')
+              if added == '-' or removed == '-':
+                  continue
+              files.append((int(added), int(removed), path))
+
+          detail_categories = OrderedDict([
+              ('Managed agent docs/skills', lambda p: p.startswith('.agents/skills/') or p == 'apps/hive_server_elixir/AGENTS.md'),
+              ('Ash resource snapshots', lambda p: p.startswith('apps/hive_server_elixir/priv/resource_snapshots/')),
+              ('Vendored assets', lambda p: '/vendor/' in p),
+              ('Lockfiles', lambda p: p in {'bun.lock', 'apps/hive_server_elixir/mix.lock'} or p.endswith('package-lock.json')),
+              ('Tests', lambda p: '/test/' in p or p.startswith('apps/e2e/') or p.startswith('apps/e2e-desktop/') or p.startswith('apps/web/e2e/')),
+              (
+                  'Ash resources',
+                  lambda p: p in {
+                      'apps/hive_server_elixir/lib/hive_server_elixir/cells/workspace.ex',
+                      'apps/hive_server_elixir/lib/hive_server_elixir/cells/cell.ex',
+                      'apps/hive_server_elixir/lib/hive_server_elixir/cells/provisioning.ex',
+                      'apps/hive_server_elixir/lib/hive_server_elixir/cells/service.ex',
+                      'apps/hive_server_elixir/lib/hive_server_elixir/cells/agent_session.ex',
+                      'apps/hive_server_elixir/lib/hive_server_elixir/cells/activity.ex',
+                      'apps/hive_server_elixir/lib/hive_server_elixir/cells/timing.ex',
+                  },
+              ),
+              ('Ash reactors', lambda p: p.startswith('apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/')),
+              (
+                  'Cell/runtime services',
+                  lambda p: (
+                      (
+                          p.startswith('apps/hive_server_elixir/lib/hive_server_elixir/cells/')
+                          and p not in {
+                              'apps/hive_server_elixir/lib/hive_server_elixir/cells/workspace.ex',
+                              'apps/hive_server_elixir/lib/hive_server_elixir/cells/cell.ex',
+                              'apps/hive_server_elixir/lib/hive_server_elixir/cells/provisioning.ex',
+                              'apps/hive_server_elixir/lib/hive_server_elixir/cells/service.ex',
+                              'apps/hive_server_elixir/lib/hive_server_elixir/cells/agent_session.ex',
+                              'apps/hive_server_elixir/lib/hive_server_elixir/cells/activity.ex',
+                              'apps/hive_server_elixir/lib/hive_server_elixir/cells/timing.ex',
+                          }
+                          and not p.startswith('apps/hive_server_elixir/lib/hive_server_elixir/cells/reactors/')
+                      )
+                      or p == 'apps/hive_server_elixir/lib/hive_server_elixir/cells.ex'
+                  ),
+              ),
+              (
+                  'Agent/workspace runtime',
+                  lambda p: p in {
+                      'apps/hive_server_elixir/lib/hive_server_elixir/agents.ex',
+                      'apps/hive_server_elixir/lib/hive_server_elixir/workspaces.ex',
+                      'apps/hive_server_elixir/lib/hive_server_elixir/application.ex',
+                      'apps/hive_server_elixir/lib/hive_server_elixir/repo.ex',
+                      'apps/hive_server_elixir/lib/hive_server_elixir/mailer.ex',
+                      'apps/hive_server_elixir/lib/hive_server_elixir.ex',
+                  },
+              ),
+              (
+                  'OpenCode runtime glue',
+                  lambda p: p.startswith('apps/hive_server_elixir/lib/hive_server_elixir/opencode/')
+                  or p == 'apps/hive_server_elixir/lib/hive_server_elixir/opencode.ex',
+              ),
+              ('Phoenix controllers', lambda p: p.startswith('apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/')),
+              (
+                  'Phoenix channels/sockets',
+                  lambda p: p.startswith('apps/hive_server_elixir/lib/hive_server_elixir_web/channels/')
+                  or p == 'apps/hive_server_elixir/lib/hive_server_elixir_web/terminal_socket.ex',
+              ),
+              (
+                  'Phoenix router/plugs/endpoint',
+                  lambda p: p.startswith('apps/hive_server_elixir/lib/hive_server_elixir_web/plugs/')
+                  or p in {
+                      'apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex',
+                      'apps/hive_server_elixir/lib/hive_server_elixir_web/endpoint.ex',
+                  },
+              ),
+              (
+                  'Phoenix serializers/components',
+                  lambda p: (p.startswith('apps/hive_server_elixir/lib/hive_server_elixir_web/')
+                  or p == 'apps/hive_server_elixir/lib/hive_server_elixir_web.ex')
+                  and not p.startswith('apps/hive_server_elixir/lib/hive_server_elixir_web/controllers/')
+                  and not p.startswith('apps/hive_server_elixir/lib/hive_server_elixir_web/channels/')
+                  and not p.startswith('apps/hive_server_elixir/lib/hive_server_elixir_web/plugs/')
+                  and p not in {
+                      'apps/hive_server_elixir/lib/hive_server_elixir_web/router.ex',
+                      'apps/hive_server_elixir/lib/hive_server_elixir_web/endpoint.ex',
+                      'apps/hive_server_elixir/lib/hive_server_elixir_web/terminal_socket.ex',
+                  },
+              ),
+              (
+                  'Database migrations/seeds',
+                  lambda p: p.startswith('apps/hive_server_elixir/priv/repo/migrations/')
+                  or p == 'apps/hive_server_elixir/priv/repo/seeds.exs',
+              ),
+              ('Frontend app', lambda p: p.startswith('apps/web/')),
+              (
+                  'Tooling / CLI / CI',
+                  lambda p: p.startswith('packages/cli/')
+                  or p.startswith('packages/config/')
+                  or p.startswith('scripts/')
+                  or p.startswith('.github/')
+                  or p in {
+                      'package.json',
+                      'turbo.json',
+                      'tsconfig.json',
+                      'tsconfig.base.json',
+                      'biome.json',
+                      'mise.toml',
+                      'opencode.json',
+                      'hive.config.json',
+                      'hive.config.example.json',
+                      '.gitignore',
+                      '.ignore',
+                      '.tool-versions',
+                  },
+              ),
+              (
+                  'Backend config/tooling',
+                  lambda p: p.startswith('apps/hive_server_elixir/config/')
+                  or p.startswith('apps/hive_server_elixir/lib/mix/tasks/')
+                  or p in {
+                      'apps/hive_server_elixir/mix.exs',
+                      'apps/hive_server_elixir/.formatter.exs',
+                      'apps/hive_server_elixir/.gitignore',
+                      'apps/hive_server_elixir/.igniter.exs',
+                      'apps/hive_server_elixir/package.json',
+                  },
+              ),
+              (
+                  'Backend scaffold assets',
+                  lambda p: p.startswith('apps/hive_server_elixir/assets/')
+                  or p.startswith('apps/hive_server_elixir/priv/gettext/')
+                  or p.startswith('apps/hive_server_elixir/priv/static/'),
+              ),
+              (
+                  'Docs / plans',
+                  lambda p: p.startswith('docs/')
+                  or p == 'README.md'
+                  or p.startswith('.ruler/prompts/')
+                  or p.startswith('.opencode/plans/')
+                  or p.startswith('.opencode/prompts/')
+                  or p.startswith('.opencode/commands/')
+                  or p in {'CONCEPTS.md', 'apps/hive_server_elixir/README.md'},
+              ),
+          ])
+
+          detail_totals = OrderedDict((label, {'added': 0, 'removed': 0}) for label in detail_categories)
+          detail_totals['Uncategorized'] = {'added': 0, 'removed': 0}
+          path_labels = {}
+
+          uncategorized = []
+          for added, removed, path in files:
+              matched = False
+              for label, predicate in detail_categories.items():
+                  if predicate(path):
+                      detail_totals[label]['added'] += added
+                      detail_totals[label]['removed'] += removed
+                      path_labels[path] = label
+                      matched = True
+                      break
+              if not matched:
+                  detail_totals['Uncategorized']['added'] += added
+                  detail_totals['Uncategorized']['removed'] += removed
+                  path_labels[path] = 'Uncategorized'
+                  uncategorized.append((added, removed, path))
+
+          group_map = OrderedDict([
+              ('Generated / managed / vendored', [
+                  'Managed agent docs/skills',
+                  'Ash resource snapshots',
+                  'Vendored assets',
+                  'Lockfiles',
+              ]),
+              ('Backend runtime / Ash', [
+                  'Ash resources',
+                  'Ash reactors',
+                  'Cell/runtime services',
+                  'Agent/workspace runtime',
+                  'OpenCode runtime glue',
+                  'Database migrations/seeds',
+                  'Backend config/tooling',
+                  'Backend scaffold assets',
+              ]),
+              ('Phoenix web layer', [
+                  'Phoenix controllers',
+                  'Phoenix channels/sockets',
+                  'Phoenix router/plugs/endpoint',
+                  'Phoenix serializers/components',
+              ]),
+              ('Testing', ['Tests']),
+              ('Frontend app', ['Frontend app']),
+              ('Tooling / CI / docs', ['Tooling / CLI / CI', 'Docs / plans']),
+              ('Uncategorized', ['Uncategorized']),
+          ])
+
+          generated_labels = set(group_map['Generated / managed / vendored'])
+
+          def sums(labels):
+              added = sum(detail_totals[label]['added'] for label in labels)
+              removed = sum(detail_totals[label]['removed'] for label in labels)
+              return added, removed
+
+          total_added = sum(added for added, _, _ in files)
+          total_removed = sum(removed for _, removed, _ in files)
+          total_files = len(files)
+          generated_added, generated_removed = sums(group_map['Generated / managed / vendored'])
+          humanish_added = total_added - generated_added
+          humanish_removed = total_removed - generated_removed
+
+          reviewer_groups = OrderedDict([
+              ('Generated / managed / vendored', group_map['Generated / managed / vendored']),
+              ('Backend app / runtime', group_map['Backend runtime / Ash']),
+              ('Phoenix API / web layer', group_map['Phoenix web layer']),
+              ('Tests', group_map['Testing']),
+              ('Frontend / tooling / docs', group_map['Frontend app'] + group_map['Tooling / CI / docs']),
+          ])
+
+          top_app_files = []
+          top_test_files = []
+          for added, removed, path in sorted(files, key=lambda row: (row[0], -(row[1]), row[2]), reverse=True):
+              matched_label = path_labels[path]
+
+              if matched_label in generated_labels:
+                  continue
+
+              if matched_label == 'Tests':
+                  if len(top_test_files) < 10:
+                      top_test_files.append((added, removed, path))
+                  continue
+
+              if len(top_app_files) < 10:
+                  top_app_files.append((added, removed, path))
+
+              if len(top_app_files) == 10 and len(top_test_files) == 10:
+                  break
+
+          def pct(value, total):
+              if total == 0:
+                  return '0.0%'
+              return f'{(value / total) * 100:.1f}%'
+
+          lines = []
+          lines.append('## PR Stats')
+          lines.append('')
+          lines.append(f'Compared `{base_sha[:7]}`...`{head_sha[:7]}` for PR #{pr_number}.')
+          lines.append('')
+          lines.append(f'- Files changed: `{total_files}`')
+          lines.append(f'- Total diff: `+{total_added} / -{total_removed}`')
+          lines.append(
+              f'- Handwritten-ish diff (everything except generated/managed/vendored): `+{humanish_added} / -{humanish_removed}`'
+          )
+          lines.append('')
+          lines.append('### Reviewer view')
+          lines.append('')
+          lines.append('| Category | Added | Removed | Net | Share of added |')
+          lines.append('|---|---:|---:|---:|---:|')
+
+          for group_label, detail_labels in reviewer_groups.items():
+              added, removed = sums(detail_labels)
+              if added == 0 and removed == 0:
+                  continue
+              lines.append(
+                  f'| {group_label} | +{added} | -{removed} | {added - removed} | {pct(added, total_added)} |'
+              )
+
+          lines.append('')
+          lines.append('### Top non-generated app files by added lines')
+          lines.append('')
+          lines.append('| File | Added | Removed | Net |')
+          lines.append('|---|---:|---:|---:|')
+
+          for added, removed, path in top_app_files:
+              lines.append(f'| `{path}` | +{added} | -{removed} | {added - removed} |')
+
+          lines.append('')
+          lines.append('### Top test files by added lines')
+          lines.append('')
+          lines.append('| File | Added | Removed | Net |')
+          lines.append('|---|---:|---:|---:|')
+
+          for added, removed, path in top_test_files:
+              lines.append(f'| `{path}` | +{added} | -{removed} | {added - removed} |')
+
+          lines.append('')
+          lines.append('<details>')
+          lines.append('<summary>Detailed path-based breakdown</summary>')
+          lines.append('')
+          lines.append('')
+          lines.append('| Detail | Added | Removed | Net | Share of added |')
+          lines.append('|---|---:|---:|---:|---:|')
+
+          for label, stats in detail_totals.items():
+              added = stats['added']
+              removed = stats['removed']
+              if added == 0 and removed == 0:
+                  continue
+              lines.append(f'| {label} | +{added} | -{removed} | {added - removed} | {pct(added, total_added)} |')
+
+          if uncategorized:
+              lines.append('')
+              lines.append('Uncategorized files:')
+              lines.append('')
+              for _added, _removed, path in sorted(uncategorized, reverse=True):
+                  lines.append(f'- `{path}`')
+
+          lines.append('')
+          lines.append('</details>')
+          lines.append('')
+          lines.append('_Heuristic, path-based counts. Useful for review sizing, not accounting._')
+
+          comment = '\n'.join(lines) + '\n'
+          Path('comment.md').write_text(comment)
+          Path(os.environ['GITHUB_STEP_SUMMARY']).write_text(comment)
+          print(comment)
+          PY
+
+      - name: Post or update PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: pr-stats
+          path: comment.md
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

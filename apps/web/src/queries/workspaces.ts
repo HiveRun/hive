@@ -1,5 +1,8 @@
+import { fetchControllerJson } from "@/lib/controller-query";
+import type { WorkspaceAttributesOnlySchema } from "@/lib/generated/ash-rpc";
+import { workspaceBrowsePath } from "@/lib/generated/controller-routes";
 import { rpc } from "@/lib/rpc";
-import { formatRpcError, formatRpcResponseError } from "@/lib/rpc-error";
+import { formatRpcError } from "@/lib/rpc-error";
 
 export type WorkspaceSummary = {
   id: string;
@@ -13,6 +16,85 @@ export type WorkspaceListResponse = {
   workspaces: WorkspaceSummary[];
   activeWorkspaceId?: string | null;
 };
+
+export type WorkspaceOverviewService = {
+  id: string;
+  name: string;
+  status: string;
+  port?: number | null;
+  cpuPercent?: number | null;
+  rssBytes?: number | null;
+};
+
+export type WorkspaceOverviewCell = {
+  id: string;
+  name: string;
+  description?: string | null;
+  status: "provisioning" | "ready" | "stopped" | "error" | "deleting";
+  workspaceId: string;
+  templateId: string;
+  templateLabel?: string | null;
+  branchName?: string | null;
+  baseCommit?: string | null;
+  insertedAt?: string | null;
+  updatedAt?: string | null;
+  services: WorkspaceOverviewService[];
+};
+
+export type WorkspaceOverviewWorkspace = WorkspaceSummary & {
+  cells: WorkspaceOverviewCell[];
+};
+
+export type WorkspaceOverviewResponse = {
+  workspaces: WorkspaceOverviewWorkspace[];
+  activeWorkspaceId?: string | null;
+};
+
+type WorkspaceOverviewRpcWorkspace = {
+  id: string;
+  label: string;
+  path: string;
+  insertedAt?: string | null;
+  lastOpenedAt?: string | null;
+  cells?: Array<{
+    id: string;
+    name: string;
+    description?: string | null;
+    status: WorkspaceOverviewCell["status"];
+    workspaceId: string;
+    templateId: string;
+    templateLabel?: string | null;
+    branchName?: string | null;
+    baseCommit?: string | null;
+    insertedAt?: string | null;
+    updatedAt?: string | null;
+    services?: WorkspaceOverviewService[];
+  }>;
+};
+
+function deriveWorkspaceLabel(path: string, label: string | null): string {
+  if (typeof label === "string" && label.trim() !== "") {
+    return label;
+  }
+
+  return path.split("/").filter(Boolean).at(-1) ?? path;
+}
+
+function normalizeWorkspace(
+  workspace: WorkspaceAttributesOnlySchema | WorkspaceSummary
+): WorkspaceSummary {
+  if ("addedAt" in workspace) {
+    return workspace;
+  }
+
+  return {
+    id: workspace.id,
+    label: deriveWorkspaceLabel(workspace.path, workspace.label),
+    path: workspace.path,
+    addedAt: workspace.insertedAt,
+    lastOpenedAt: workspace.lastOpenedAt,
+  };
+}
 
 export type WorkspaceBrowseEntry = {
   name: string;
@@ -40,22 +122,6 @@ export type RemoveWorkspaceInput = {
   id: string;
 };
 
-function ensureWorkspaceResponse(
-  data: unknown,
-  fallbackMessage: string
-): WorkspaceSummary {
-  if (
-    data &&
-    typeof data === "object" &&
-    "workspace" in data &&
-    data.workspace &&
-    typeof (data as { workspace: unknown }).workspace === "object"
-  ) {
-    return (data as { workspace: WorkspaceSummary }).workspace;
-  }
-  throw new Error(fallbackMessage);
-}
-
 export const workspaceQueries = {
   list: () => ({
     queryKey: ["workspaces"] as const,
@@ -64,54 +130,77 @@ export const workspaceQueries = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to load workspaces"));
       }
-      if (data && typeof data === "object" && "message" in data) {
+      const workspaces = Array.isArray(data)
+        ? (data as WorkspaceAttributesOnlySchema[]).map(normalizeWorkspace)
+        : [];
+
+      return {
+        workspaces,
+        activeWorkspaceId: workspaces[0]?.id ?? null,
+      } satisfies WorkspaceListResponse;
+    },
+  }),
+  overview: () => ({
+    queryKey: ["workspaces", "overview"] as const,
+    staleTime: 15_000,
+    queryFn: async (): Promise<WorkspaceOverviewResponse> => {
+      const { data, error } = await rpc.api.workspaces.overview.get();
+      if (error) {
         throw new Error(
-          formatRpcResponseError(data, "Failed to load workspaces")
+          formatRpcError(error, "Failed to load workspace overview")
         );
       }
 
-      const { workspaces, activeWorkspaceId } = (data ?? {}) as {
-        workspaces?: unknown;
-        activeWorkspaceId?: unknown;
+      const response = (data as WorkspaceOverviewResponse) ?? {
+        workspaces: [],
+        activeWorkspaceId: null,
       };
 
-      const normalizedWorkspaces = Array.isArray(workspaces)
-        ? (workspaces as WorkspaceSummary[])
-        : [];
-      const normalizedActiveId =
-        typeof activeWorkspaceId === "string" || activeWorkspaceId === null
-          ? activeWorkspaceId
-          : null;
-
       return {
-        workspaces: normalizedWorkspaces,
-        activeWorkspaceId: normalizedActiveId,
-      } satisfies WorkspaceListResponse;
+        workspaces: (
+          response.workspaces as WorkspaceOverviewRpcWorkspace[]
+        ).map((workspace) => ({
+          id: workspace.id,
+          label: deriveWorkspaceLabel(workspace.path, workspace.label),
+          path: workspace.path,
+          addedAt: workspace.insertedAt ?? "",
+          lastOpenedAt: workspace.lastOpenedAt ?? null,
+          cells: (workspace.cells ?? []).map((cell) => ({
+            id: cell.id,
+            name: cell.name,
+            description: cell.description,
+            status: cell.status,
+            workspaceId: cell.workspaceId,
+            templateId: cell.templateId,
+            templateLabel: cell.templateLabel ?? null,
+            branchName: cell.branchName ?? null,
+            baseCommit: cell.baseCommit ?? null,
+            insertedAt: cell.insertedAt ?? null,
+            updatedAt: cell.updatedAt ?? null,
+            services: cell.services ?? [],
+          })),
+        })),
+        activeWorkspaceId: response.activeWorkspaceId ?? null,
+      };
     },
   }),
   browse: (path?: string, filter?: string) => ({
     queryKey: ["workspace-browse", path ?? "__root__", filter ?? ""] as const,
-    queryFn: async (): Promise<WorkspaceBrowseResponse> => {
-      type BrowseArgs = Parameters<
-        (typeof rpc.api.workspaces.browse)["get"]
-      >[0];
+    queryFn: async (): Promise<WorkspaceBrowseResponse> =>
+      fetchControllerJson<WorkspaceBrowseResponse>(
+        workspaceBrowsePath(path || filter ? { path, filter } : undefined),
+        "Failed to load directories"
+      ).then((data) => {
+        if (
+          !data ||
+          typeof data !== "object" ||
+          !Array.isArray((data as { directories?: unknown }).directories)
+        ) {
+          throw new Error("Invalid directory response");
+        }
 
-      const args: BrowseArgs =
-        path || filter ? { query: { path, filter } } : undefined;
-      const { data, error } = await rpc.api.workspaces.browse.get(args);
-      if (error) {
-        throw new Error(formatRpcError(error, "Failed to load directories"));
-      }
-      if (
-        !data ||
-        typeof data !== "object" ||
-        !("directories" in data) ||
-        !Array.isArray((data as { directories?: unknown }).directories)
-      ) {
-        throw new Error("Invalid directory response");
-      }
-      return data as WorkspaceBrowseResponse;
-    },
+        return data;
+      }),
   }),
 };
 
@@ -124,7 +213,7 @@ export const workspaceMutations = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to register workspace"));
       }
-      return ensureWorkspaceResponse(data, "Failed to register workspace");
+      return normalizeWorkspace(data as WorkspaceAttributesOnlySchema);
     },
   },
   activate: {
@@ -135,29 +224,14 @@ export const workspaceMutations = {
       if (error) {
         throw new Error(formatRpcError(error, "Failed to activate workspace"));
       }
-      if (
-        data &&
-        typeof data === "object" &&
-        "message" in data &&
-        !("workspace" in data)
-      ) {
-        throw new Error(
-          formatRpcResponseError(data, "Failed to activate workspace")
-        );
-      }
-      return ensureWorkspaceResponse(data, "Failed to activate workspace");
+      return normalizeWorkspace(data as WorkspaceAttributesOnlySchema);
     },
   },
   remove: {
     mutationFn: async ({ id }: RemoveWorkspaceInput): Promise<void> => {
-      const { data, error } = await rpc.api.workspaces({ id }).delete();
+      const { error } = await rpc.api.workspaces({ id }).delete();
       if (error) {
         throw new Error(formatRpcError(error, "Failed to remove workspace"));
-      }
-      if (data && typeof data === "object" && "message" in data) {
-        throw new Error(
-          formatRpcResponseError(data, "Failed to remove workspace")
-        );
       }
     },
   },

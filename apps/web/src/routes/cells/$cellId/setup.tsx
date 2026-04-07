@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Copy } from "lucide-react";
-import { useState } from "react";
+import { Check, Circle, CircleX, Copy, Loader2 } from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { PtyStreamTerminal } from "@/components/pty-stream-terminal";
 import { Button } from "@/components/ui/button";
@@ -14,9 +14,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  buildSetupCommandProgress,
+  type SetupCommandProgressState,
+} from "@/lib/setup-command-progress";
 import type { Cell, CellActivityEvent } from "@/queries/cells";
 import { cellMutations, cellQueries } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
+
+const SETUP_LOG_POLL_INTERVAL_MS = 1000;
 
 export const Route = createFileRoute("/cells/$cellId/setup")({
   component: CellSetupPanel,
@@ -24,7 +30,13 @@ export const Route = createFileRoute("/cells/$cellId/setup")({
 
 function CellSetupPanel() {
   const { cellId } = Route.useParams();
-  const cellQuery = useQuery(cellQueries.detail(cellId));
+  const cellQuery = useQuery({
+    ...cellQueries.detail(cellId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status && status !== "ready" ? SETUP_LOG_POLL_INTERVAL_MS : false;
+    },
+  });
   const retryMutation = useMutation({
     mutationFn: cellMutations.retrySetup.mutationFn,
     onSuccess: (_updated) => {
@@ -44,24 +56,8 @@ function CellSetupPanel() {
     enabled: Boolean(workspaceId),
   });
 
-  if (cellQuery.isLoading || !cell) {
-    return (
-      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground text-sm">
-        Loading cell info…
-      </div>
-    );
-  }
-
-  if (cellQuery.error instanceof Error) {
-    return (
-      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-destructive text-sm">
-        {cellQuery.error.message}
-      </div>
-    );
-  }
-
   const template = templateQuery.data?.templates.find(
-    (entry) => entry.id === cell.templateId
+    (entry) => entry.id === cell?.templateId
   );
   const templateLabel = template?.label;
   const setupCommands = template?.configJson.setup ?? [];
@@ -78,9 +74,29 @@ function CellSetupPanel() {
     templateQuery.error instanceof Error
       ? templateQuery.error.message
       : undefined;
-  const lastUpdatedLabel = cellQuery.dataUpdatedAt
-    ? new Date(cellQuery.dataUpdatedAt).toLocaleTimeString()
-    : null;
+  const setupProgress = useSetupCommandProgress({
+    cellId,
+    cellStatus: cell?.status,
+    setupCommands,
+    isRetrying: retryMutation.isPending,
+    fallbackUpdatedAt: cellQuery.dataUpdatedAt,
+  });
+
+  if (cellQuery.isLoading || !cell) {
+    return (
+      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground text-sm">
+        Loading cell info…
+      </div>
+    );
+  }
+
+  if (cellQuery.error instanceof Error) {
+    return (
+      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-destructive text-sm">
+        {cellQuery.error.message}
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
@@ -111,6 +127,7 @@ function CellSetupPanel() {
 
         <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[1fr_1.4fr]">
           <TemplateCommandsPanel
+            commandProgress={setupProgress.commandProgress}
             errorMessage={templateError}
             includeTargets={includeTargets}
             isLoading={templateQuery.isLoading}
@@ -119,7 +136,7 @@ function CellSetupPanel() {
           <SetupLogPanel
             cell={cell}
             isRetrying={retryMutation.isPending}
-            lastUpdatedLabel={lastUpdatedLabel}
+            lastUpdatedLabel={setupProgress.lastUpdatedLabel}
             onRetry={() => retryMutation.mutate(cellId)}
           />
         </div>
@@ -316,6 +333,7 @@ function describeActivityEvent(event: CellActivityEvent): string {
 }
 
 type TemplateCommandsPanelProps = {
+  commandProgress: Array<{ command: string; state: SetupCommandProgressState }>;
   errorMessage?: string;
   includeTargets: string[];
   isLoading: boolean;
@@ -323,6 +341,7 @@ type TemplateCommandsPanelProps = {
 };
 
 function TemplateCommandsPanel({
+  commandProgress,
   errorMessage,
   includeTargets,
   isLoading,
@@ -342,10 +361,15 @@ function TemplateCommandsPanel({
       </p>
     );
   } else {
+    const completedCount = commandProgress.filter(
+      (item) => item.state === "done"
+    ).length;
+
     description = (
       <p className="text-muted-foreground text-xs">
         {setupCommands.length} command{setupCommands.length === 1 ? "" : "s"}{" "}
-        will run before services start.
+        will run before services start. {completedCount}/{setupCommands.length}{" "}
+        complete.
       </p>
     );
   }
@@ -360,19 +384,33 @@ function TemplateCommandsPanel({
       </div>
       {setupCommands.length > 0 ? (
         <ol className="min-h-0 space-y-2 overflow-auto">
-          {setupCommands.map((item) => (
-            <li
-              className="space-y-1 rounded-sm border border-border/50 bg-background/40 px-2.5 py-2"
-              key={item.id}
-            >
-              <span className="text-[11px] text-muted-foreground uppercase tracking-[0.4em]">
-                Step {item.order}
-              </span>
-              <pre className="whitespace-pre-wrap text-[13px] text-foreground leading-relaxed">
-                {item.command}
-              </pre>
-            </li>
-          ))}
+          {setupCommands.map((item, index) => {
+            const state = commandProgress[index]?.state ?? "pending";
+
+            return (
+              <li
+                className={`space-y-1 rounded-sm border px-2.5 py-2 ${commandCardClassName(state)}`}
+                data-state={state}
+                data-testid="setup-command-item"
+                key={item.id}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="flex items-center gap-2">
+                    <span className="text-[11px] text-muted-foreground uppercase tracking-[0.4em]">
+                      Step {item.order}
+                    </span>
+                    <SetupCommandIcon state={state} />
+                  </span>
+                  <span className="font-mono text-[11px] text-muted-foreground uppercase tracking-[0.16em]">
+                    {formatSetupCommandState(state)}
+                  </span>
+                </div>
+                <pre className="whitespace-pre-wrap text-[13px] text-foreground leading-relaxed">
+                  {item.command}
+                </pre>
+              </li>
+            );
+          })}
         </ol>
       ) : null}
       <div className="mt-auto space-y-2">
@@ -398,6 +436,91 @@ function TemplateCommandsPanel({
       </div>
     </section>
   );
+}
+
+function commandCardClassName(state: SetupCommandProgressState) {
+  if (state === "done") {
+    return "border-emerald-500/50 bg-emerald-500/10";
+  }
+
+  if (state === "running") {
+    return "border-primary/70 bg-primary/10";
+  }
+
+  if (state === "error") {
+    return "border-destructive/70 bg-destructive/10";
+  }
+
+  return "border-border/50 bg-background/40";
+}
+
+function SetupCommandIcon({ state }: { state: SetupCommandProgressState }) {
+  if (state === "done") {
+    return <Check className="size-4 text-emerald-400" />;
+  }
+
+  if (state === "running") {
+    return <Loader2 className="size-4 animate-spin text-primary" />;
+  }
+
+  if (state === "error") {
+    return <CircleX className="size-4 text-destructive" />;
+  }
+
+  return <Circle className="size-4 text-muted-foreground" />;
+}
+
+function formatSetupCommandState(state: SetupCommandProgressState) {
+  if (state === "done") {
+    return "done";
+  }
+
+  if (state === "running") {
+    return "in progress";
+  }
+
+  if (state === "error") {
+    return "failed";
+  }
+
+  return "queued";
+}
+
+function useSetupCommandProgress(args: {
+  cellId: string;
+  cellStatus: Cell["status"] | undefined;
+  setupCommands: string[];
+  isRetrying: boolean;
+  fallbackUpdatedAt: number;
+}) {
+  const setupLogQuery = useQuery({
+    ...cellQueries.setupLog(args.cellId),
+    enabled: args.setupCommands.length > 0,
+    refetchInterval:
+      (args.cellStatus && args.cellStatus !== "ready") || args.isRetrying
+        ? SETUP_LOG_POLL_INTERVAL_MS
+        : false,
+  });
+
+  const commandProgress = useMemo(
+    () =>
+      buildSetupCommandProgress({
+        cellStatus: args.cellStatus,
+        commands: args.setupCommands,
+        setupLog: setupLogQuery.data,
+      }),
+    [args.cellStatus, args.setupCommands, setupLogQuery.data]
+  );
+
+  const lastUpdatedSource =
+    setupLogQuery.dataUpdatedAt || args.fallbackUpdatedAt;
+
+  return {
+    commandProgress,
+    lastUpdatedLabel: lastUpdatedSource
+      ? new Date(lastUpdatedSource).toLocaleTimeString()
+      : null,
+  };
 }
 
 type SetupLogPanelProps = {
@@ -500,7 +623,7 @@ function CellInfoSection({ cell, templateLabel }: CellInfoSectionProps) {
               <Button
                 aria-label="Copy workspace path"
                 className="h-5 w-5 shrink-0 p-0"
-                onClick={() => handleCopy(cell.workspacePath)}
+                onClick={() => handleCopy(cell.workspacePath ?? "")}
                 size="icon-sm"
                 type="button"
                 variant="ghost"

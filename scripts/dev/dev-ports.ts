@@ -1,0 +1,233 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import net from "node:net";
+import { resolve } from "node:path";
+import { parseArgs as parseNodeArgs } from "node:util";
+
+type Args = {
+  root: string;
+  frontend: number;
+  backend: number;
+  shell: boolean;
+};
+
+const CHECK_HOSTS = ["127.0.0.1", "::1"];
+const MAX_PORT_SCAN = 2000;
+const DECIMAL_RADIX = 10;
+const DEFAULT_FRONTEND_PORT = 3001;
+const DEFAULT_BACKEND_PORT = 4000;
+const NEWLINE_PATTERN = /\r?\n/;
+
+const parseArgs = (argv: string[]): Args => {
+  const parsed = parseNodeArgs({
+    args: argv,
+    options: {
+      root: { type: "string" },
+      frontend: { type: "string" },
+      backend: { type: "string" },
+      shell: { type: "boolean" },
+    },
+    allowPositionals: false,
+  });
+
+  const root = parsed.values.root ?? process.cwd();
+  const frontend =
+    Number.parseInt(
+      parsed.values.frontend ?? String(DEFAULT_FRONTEND_PORT),
+      DECIMAL_RADIX
+    ) || DEFAULT_FRONTEND_PORT;
+  const backend =
+    Number.parseInt(
+      parsed.values.backend ?? String(DEFAULT_BACKEND_PORT),
+      DECIMAL_RADIX
+    ) || DEFAULT_BACKEND_PORT;
+
+  return {
+    root,
+    frontend,
+    backend,
+    shell: parsed.values.shell ?? false,
+  };
+};
+
+const canBindPort = async (port: number, host: string): Promise<boolean> =>
+  new Promise((resolveCanBind) => {
+    const server = net.createServer();
+
+    server.once("error", () => {
+      server.close();
+      resolveCanBind(false);
+    });
+
+    server.listen({ host, port, exclusive: true }, () => {
+      server.close(() => resolveCanBind(true));
+    });
+  });
+
+const findFreePort = async (
+  preferred: number,
+  blockedPorts: Set<number> = new Set()
+): Promise<number> => {
+  for (let port = preferred; port <= preferred + MAX_PORT_SCAN; port += 1) {
+    if (blockedPorts.has(port)) {
+      continue;
+    }
+
+    const checks = await Promise.all(
+      CHECK_HOSTS.map((host) => canBindPort(port, host))
+    );
+
+    if (checks.every(Boolean)) {
+      return port;
+    }
+  }
+
+  throw new Error(
+    `Unable to find a free port in range ${preferred}-${preferred + MAX_PORT_SCAN}`
+  );
+};
+
+const parseKeyValues = (path: string): Record<string, string> => {
+  if (!existsSync(path)) {
+    return {};
+  }
+
+  const values: Record<string, string> = {};
+  const content = readFileSync(path, "utf8");
+
+  for (const rawLine of content.split(NEWLINE_PATTERN)) {
+    const line = rawLine.trim();
+
+    if (!line || line.startsWith("#") || !line.includes("=")) {
+      continue;
+    }
+
+    const [key, ...rest] = line.split("=");
+    if (!key) {
+      continue;
+    }
+
+    values[key.trim()] = rest.join("=").trim();
+  }
+
+  return values;
+};
+
+const writePortCache = (
+  root: string,
+  frontendPort: number,
+  backendPort: number,
+  backendUrl: string
+) => {
+  const cacheDir = resolve(root, ".hive");
+  const cachePath = resolve(cacheDir, "dev-ports.json");
+
+  mkdirSync(cacheDir, { recursive: true });
+  writeFileSync(
+    cachePath,
+    `${JSON.stringify(
+      {
+        apiPort: backendPort,
+        webPort: frontendPort,
+        apiUrl: backendUrl,
+        generatedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+};
+
+const renderShell = (
+  frontendPort: number,
+  frontendUrl: string,
+  backendPort: number,
+  backendUrl: string
+) =>
+  [
+    `export FRONTEND_PORT=${frontendPort}`,
+    `export FRONTEND_URL=${frontendUrl}`,
+    `export BACKEND_PORT=${backendPort}`,
+    `export BACKEND_URL=${backendUrl}`,
+    `export VITE_API_URL=${backendUrl}`,
+    `export VITE_BACKEND_URL=${backendUrl}`,
+    `export PORT=${backendPort}`,
+    `export PHX_PORT=${backendPort}`,
+    `export HIVE_DEV_WEB_PORT=${frontendPort}`,
+    `export HIVE_DEV_API_PORT=${backendPort}`,
+    `export HIVE_DEV_API_URL=${backendUrl}`,
+  ].join("\n");
+
+const main = async (): Promise<number> => {
+  const { root, frontend, backend, shell } = parseArgs(process.argv.slice(2));
+  const envDev = resolve(root, ".env.dev");
+  const envLocal = resolve(root, ".env.dev.local");
+
+  const envValues = parseKeyValues(envDev);
+  const preferredFrontend =
+    Number.parseInt(
+      envValues.FRONTEND_PORT ?? String(frontend),
+      DECIMAL_RADIX
+    ) || frontend;
+  const preferredBackend =
+    Number.parseInt(envValues.BACKEND_PORT ?? String(backend), DECIMAL_RADIX) ||
+    backend;
+
+  const frontendPort = await findFreePort(preferredFrontend);
+
+  let backendPort = preferredBackend;
+  if (
+    backendPort === frontendPort ||
+    !(await canBindPort(backendPort, "127.0.0.1"))
+  ) {
+    backendPort = await findFreePort(preferredBackend, new Set([frontendPort]));
+  }
+
+  const frontendUrl = `http://localhost:${frontendPort}`;
+  const backendUrl = `http://127.0.0.1:${backendPort}`;
+  const corsOrigins = `${frontendUrl},http://127.0.0.1:${frontendPort}`;
+
+  const contentLines = [
+    "# Autogenerated by scripts/dev/dev-ports.ts",
+    "# Safe to delete; regenerated on each dev run.",
+    `FRONTEND_PORT=${frontendPort}`,
+    `FRONTEND_URL=${frontendUrl}`,
+    `BACKEND_PORT=${backendPort}`,
+    `BACKEND_URL=${backendUrl}`,
+    `VITE_API_URL=${backendUrl}`,
+    `VITE_BACKEND_URL=${backendUrl}`,
+    "# CORS",
+    `CORS_ORIGINS=${corsOrigins}`,
+    "# Phoenix ports",
+    `PORT=${backendPort}`,
+    `PHX_PORT=${backendPort}`,
+    "",
+  ];
+
+  writeFileSync(envLocal, contentLines.join("\n"), "utf8");
+  writePortCache(root, frontendPort, backendPort, backendUrl);
+
+  if (shell) {
+    process.stdout.write(
+      `${renderShell(frontendPort, frontendUrl, backendPort, backendUrl)}\n`
+    );
+    return 0;
+  }
+
+  process.stdout.write(`Wrote ${envLocal}\n`);
+  process.stdout.write(`Frontend: ${frontendUrl}\n`);
+  process.stdout.write(`Backend:  ${backendUrl}\n`);
+
+  return 0;
+};
+
+main().then(
+  (code) => {
+    process.exit(code);
+  },
+  (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`Failed to generate dev ports: ${message}\n`);
+    process.exit(1);
+  }
+);

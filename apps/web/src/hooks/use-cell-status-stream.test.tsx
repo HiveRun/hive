@@ -5,60 +5,34 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Cell } from "@/queries/cells";
 import { useCellStatusStream } from "./use-cell-status-stream";
 
-type MockEventSourceInstance = {
-  url: string;
-  closed: boolean;
-  addEventListener: (
-    event: string,
-    listener: EventListenerOrEventListenerObject
-  ) => void;
-  removeEventListener: (
-    event: string,
-    listener: EventListenerOrEventListenerObject
-  ) => void;
-  close: () => void;
-  emit: (event: string, data?: string) => void;
-};
+const { joinWorkspaceRealtimeChannel } = vi.hoisted(() => ({
+  joinWorkspaceRealtimeChannel: vi.fn(),
+}));
 
-const mockEventSourceInstances: MockEventSourceInstance[] = [];
+vi.mock("@/lib/realtime-channels", () => ({
+  joinWorkspaceRealtimeChannel,
+}));
+
 const WORKSPACE_ID = "workspace-1";
 
-function MockEventSource(url: string): MockEventSourceInstance {
-  const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
-
-  const instance: MockEventSourceInstance = {
-    url,
-    closed: false,
-    addEventListener(event, listener) {
-      const existing = listeners.get(event) ?? new Set();
-      existing.add(listener);
-      listeners.set(event, existing);
-    },
-    removeEventListener(event, listener) {
-      listeners.get(event)?.delete(listener);
-    },
-    close() {
-      instance.closed = true;
-    },
-    emit(event, data = "{}") {
-      const message = new MessageEvent(event, { data });
-      const registered = listeners.get(event);
-      if (!registered) {
-        return;
-      }
-
-      for (const listener of registered) {
-        if (typeof listener === "function") {
-          listener(message);
-        } else {
-          listener.handleEvent(message);
-        }
-      }
-    },
+function makeCell(id: string, status: Cell["status"]): Cell {
+  return {
+    id,
+    name: `Cell ${id}`,
+    workspaceId: WORKSPACE_ID,
+    description: null,
+    templateId: "template-1",
+    workspaceRootPath: "/workspace",
+    workspacePath: "/workspace",
+    opencodeSessionId: null,
+    opencodeCommand: null,
+    createdAt: new Date().toISOString(),
+    status,
+    lastSetupError: status === "error" ? "boom" : undefined,
+    branchName: null,
+    baseCommit: null,
+    updatedAt: new Date().toISOString(),
   };
-
-  mockEventSourceInstances.push(instance);
-  return instance;
 }
 
 function createWrapper(queryClient: QueryClient) {
@@ -67,74 +41,89 @@ function createWrapper(queryClient: QueryClient) {
   );
 }
 
-function makeCell(id: string, status: Cell["status"]): Cell {
-  return {
-    id,
-    name: `Cell ${id}`,
-    description: null,
-    templateId: "template",
-    workspacePath: `/tmp/${id}`,
-    workspaceId: WORKSPACE_ID,
-    workspaceRootPath: "/tmp/workspace",
-    opencodeSessionId: null,
-    opencodeCommand: null,
-    createdAt: new Date().toISOString(),
-    status,
-    lastSetupError: undefined,
-    branchName: undefined,
-    baseCommit: undefined,
-  };
-}
-
 describe("useCellStatusStream", () => {
   beforeEach(() => {
-    mockEventSourceInstances.length = 0;
-    vi.stubGlobal(
-      "EventSource",
-      MockEventSource as unknown as typeof EventSource
-    );
+    joinWorkspaceRealtimeChannel.mockReset();
+    joinWorkspaceRealtimeChannel.mockImplementation((options) => ({
+      unsubscribe: vi.fn(),
+      __options: options,
+    }));
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    vi.unstubAllGlobals();
   });
 
-  it("subscribes to workspace status stream", () => {
+  it("joins the workspace realtime channel and invalidates on join", () => {
     const queryClient = new QueryClient();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
     renderHook(() => useCellStatusStream(WORKSPACE_ID), {
       wrapper: createWrapper(queryClient),
     });
 
-    expect(mockEventSourceInstances).toHaveLength(1);
-    const stream = mockEventSourceInstances[0];
-    expect(stream?.url).toContain(
-      `/api/cells/workspace/${WORKSPACE_ID}/stream`
-    );
+    expect(joinWorkspaceRealtimeChannel).toHaveBeenCalledTimes(1);
+    const call = joinWorkspaceRealtimeChannel.mock.calls[0]?.[0];
+    expect(call?.workspaceId).toBe(WORKSPACE_ID);
+
+    call?.onJoin?.();
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["cells", WORKSPACE_ID],
+    });
   });
 
-  it("removes and re-adds cells through stream events", () => {
+  it("replaces cached cell snapshots instead of merging stale fields", () => {
     const queryClient = new QueryClient();
-    const cell = makeCell("cell-1", "ready");
+    const staleCell = {
+      ...makeCell("cell-1", "error"),
+      lastSetupError: "stale failure",
+    };
 
-    queryClient.setQueryData(["cells", WORKSPACE_ID], [cell]);
-    queryClient.setQueryData(["cells", cell.id], cell);
+    queryClient.setQueryData(["cells", WORKSPACE_ID], [staleCell]);
+    queryClient.setQueryData(["cells", staleCell.id], staleCell);
 
     renderHook(() => useCellStatusStream(WORKSPACE_ID), {
       wrapper: createWrapper(queryClient),
     });
 
-    const stream = mockEventSourceInstances[0];
-    expect(stream).toBeDefined();
+    const call = joinWorkspaceRealtimeChannel.mock.calls[0]?.[0];
+    const nextCell = {
+      ...makeCell(staleCell.id, "ready"),
+      lastSetupError: undefined,
+    };
 
-    stream?.emit("cell_removed", JSON.stringify({ id: cell.id }));
-    expect(queryClient.getQueryData(["cells", WORKSPACE_ID])).toEqual([]);
-    expect(queryClient.getQueryData(["cells", cell.id])).toBeUndefined();
+    call?.handlers.cell_snapshot(nextCell);
 
-    stream?.emit("cell", JSON.stringify({ ...cell, status: "error" }));
     expect(queryClient.getQueryData(["cells", WORKSPACE_ID])).toEqual([
-      expect.objectContaining({ id: cell.id, status: "error" }),
+      expect.objectContaining({ id: staleCell.id, status: "ready" }),
     ]);
+    expect(queryClient.getQueryData(["cells", staleCell.id])).toEqual(
+      expect.objectContaining({ id: staleCell.id, status: "ready" })
+    );
+    expect(
+      (queryClient.getQueryData(["cells", staleCell.id]) as Cell | undefined)
+        ?.lastSetupError
+    ).toBeUndefined();
+  });
+
+  it("removes deleted cells from cache", () => {
+    const queryClient = new QueryClient();
+    const existingCell = makeCell("cell-2", "ready");
+
+    queryClient.setQueryData(["cells", WORKSPACE_ID], [existingCell]);
+    queryClient.setQueryData(["cells", existingCell.id], existingCell);
+
+    renderHook(() => useCellStatusStream(WORKSPACE_ID), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    const call = joinWorkspaceRealtimeChannel.mock.calls[0]?.[0];
+    call?.handlers.cell_removed({ id: existingCell.id });
+
+    expect(queryClient.getQueryData(["cells", WORKSPACE_ID])).toEqual([]);
+    expect(
+      queryClient.getQueryData(["cells", existingCell.id])
+    ).toBeUndefined();
   });
 });

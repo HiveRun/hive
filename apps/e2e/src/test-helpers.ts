@@ -6,10 +6,11 @@ const CELL_CHAT_PATH_PATTERN = /^\/cells\/([^/]+)\/chat$/;
 const CELL_PROVISIONING_PATH_PATTERN = /^\/cells\/([^/]+)\/provisioning$/;
 const POLL_INTERVAL_MS = 500;
 const TERMINAL_RECOVERY_WAIT_MS = 750;
-const MAX_TERMINAL_RESTARTS = 2;
+const MAX_TERMINAL_RESTARTS = 4;
 const CELL_CREATION_TIMEOUT_MS = 120_000;
 const CELL_FORM_VISIBLE_TIMEOUT_MS = 30_000;
-const FORM_VISIBILITY_PROBE_TIMEOUT_MS = 1000;
+const FORM_VISIBILITY_PROBE_TIMEOUT_MS = 5000;
+const OPEN_CREATE_SHEET_ATTEMPTS = 3;
 const DEFAULT_CELL_STATUS_TIMEOUT_MS = 120_000;
 const DEFAULT_SERVICE_STATUS_TIMEOUT_MS = 90_000;
 const DEFAULT_ROUTE_TIMEOUT_MS = 180_000;
@@ -17,6 +18,7 @@ const INITIAL_CHAT_ROUTE_TIMEOUT_MS = 45_000;
 
 type CellRecord = {
   id: string;
+  name?: string;
   workspaceId: string;
   status: string;
   lastSetupError?: string | null;
@@ -47,10 +49,45 @@ type WorkspacesResponse = {
   activeWorkspaceId?: string | null;
 };
 
-type TemplateRecord = {
-  id: string;
-  label: string;
+type RpcErrorRecord = {
+  message?: string;
+  shortMessage?: string;
 };
+
+type AgentModelRecord = {
+  id: string;
+  name: string;
+  provider: string;
+};
+
+type AgentModelsResponse = {
+  defaults: Record<string, string>;
+  models: AgentModelRecord[];
+  providers: Array<{ id: string; name: string }>;
+};
+
+export type AgentSessionRecord = {
+  id: string;
+  status: string;
+  modelId?: string;
+  modelProviderId?: string;
+  updatedAt?: string;
+};
+
+export type AgentMessageRecord = {
+  id: string;
+  role: string;
+  state?: string;
+  content?: string | null;
+};
+
+type AgentMessageListResponse = {
+  messages: AgentMessageRecord[];
+};
+
+type RpcResult<T> =
+  | { success: true; data: T }
+  | { success: false; errors?: RpcErrorRecord[] };
 
 export async function waitForCondition(options: {
   check: () => Promise<boolean>;
@@ -85,6 +122,7 @@ export async function createCell(options: {
   name: string;
   workspaceId?: string;
   templateLabel?: string;
+  startMode?: "plan" | "build";
   timeoutMs?: number;
 }): Promise<string> {
   const timeoutMs = options.timeoutMs ?? CELL_CREATION_TIMEOUT_MS;
@@ -92,19 +130,25 @@ export async function createCell(options: {
     readPathname(options.page.url())
   );
 
+  await openCellCreationSheet(options.page, options.workspaceId);
+  await options.page.locator(selectors.cellNameInput).fill(options.name);
+
+  if (options.templateLabel) {
+    await selectTemplate(options.page, options.templateLabel);
+  }
+
+  if (options.startMode && options.startMode !== "plan") {
+    await selectStartMode(options.page, options.startMode);
+  }
+
+  await ensureCellFormReady(options.page);
+
+  await expect(options.page.locator(selectors.cellSubmitButton)).toBeEnabled({
+    timeout: timeoutMs,
+  });
+  await options.page.locator(selectors.cellSubmitButton).click();
+
   try {
-    await openCellCreationSheet(options.page, options.workspaceId);
-    await options.page.locator(selectors.cellNameInput).fill(options.name);
-
-    if (options.templateLabel) {
-      await selectTemplate(options.page, options.templateLabel);
-    }
-
-    await expect(options.page.locator(selectors.cellSubmitButton)).toBeEnabled({
-      timeout: timeoutMs,
-    });
-    await options.page.locator(selectors.cellSubmitButton).click();
-
     await options.page.waitForURL(
       (url) => {
         const currentCellId = extractCellIdFromPath(url.pathname);
@@ -124,23 +168,47 @@ export async function createCell(options: {
     return parseCellIdFromUrl(options.page.url());
   } catch (error) {
     const apiUrl = process.env.HIVE_E2E_API_URL;
+
     if (!apiUrl) {
       throw error;
     }
 
-    const cellId = await createCellViaApi({
-      apiUrl,
-      name: options.name,
-      workspaceId: options.workspaceId,
-      templateLabel: options.templateLabel,
+    const workspaceId =
+      options.workspaceId ??
+      (await fetchWorkspaces(apiUrl)).activeWorkspaceId ??
+      null;
+
+    if (!workspaceId) {
+      throw error;
+    }
+
+    let createdCellId: string | null = null;
+
+    await waitForCondition({
+      timeoutMs,
+      errorMessage: `Cell ${options.name} was created but the route did not update`,
+      check: async () => {
+        const cells = await fetchWorkspaceCells(apiUrl, workspaceId);
+        const match = cells.find((cell) => cell.name === options.name);
+
+        if (!match) {
+          return false;
+        }
+
+        if (previousCellId && match.id === previousCellId) {
+          return false;
+        }
+
+        createdCellId = match.id;
+        return true;
+      },
     });
 
-    await options.page.goto(`/cells/${cellId}`);
-    await options.page.waitForURL(
-      (url) => extractCellIdFromPath(url.pathname) === cellId,
-      { timeout: timeoutMs }
-    );
-    return cellId;
+    if (!createdCellId) {
+      throw error;
+    }
+
+    return createdCellId;
   }
 }
 
@@ -215,99 +283,51 @@ export async function waitForChatRoute(options: {
   });
 }
 
-export async function createCellViaApi(options: {
-  apiUrl: string;
-  name: string;
-  workspaceId?: string;
-  templateLabel?: string;
-  startMode?: "plan" | "build";
-}): Promise<string> {
-  const workspaceId = await resolveWorkspaceId(options);
-  const templateId = await resolveTemplateId(options);
-  const response = await fetch(`${options.apiUrl}/api/cells`, {
+async function selectStartMode(page: Page, startMode: "plan" | "build") {
+  await page.locator("#startMode").click();
+  await page
+    .getByRole("option", { name: startMode === "build" ? "Build" : "Plan" })
+    .click();
+}
+
+async function ensureCellFormReady(page: Page): Promise<void> {
+  const submitButton = page.locator(selectors.cellSubmitButton);
+
+  if (await submitButton.isEnabled()) {
+    return;
+  }
+
+  const modelSelector = page.locator("#cell-model-selector");
+  if (!(await modelSelector.count())) {
+    return;
+  }
+
+  const modelText = (await modelSelector.textContent())?.trim() ?? "";
+  if (!modelText.includes("Select model")) {
+    return;
+  }
+
+  await modelSelector.click();
+  await page.getByRole("option").first().click();
+}
+
+async function rpcRun<T>(
+  apiUrl: string,
+  payload: Record<string, unknown>
+): Promise<RpcResult<T>> {
+  const response = await fetch(`${apiUrl}/rpc/run`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
     },
-    body: JSON.stringify({
-      name: options.name,
-      templateId,
-      workspaceId,
-      ...(options.startMode ? { startMode: options.startMode } : {}),
-    }),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to create cell via API: ${response.status}`);
+    throw new Error(`RPC request failed with status ${response.status}`);
   }
 
-  const payload = (await response.json()) as { id?: string; message?: string };
-  if (payload.message) {
-    throw new Error(payload.message);
-  }
-  if (!payload.id) {
-    throw new Error("Cell API response missing id");
-  }
-
-  return payload.id;
-}
-
-async function resolveWorkspaceId(options: {
-  apiUrl: string;
-  workspaceId?: string;
-}): Promise<string> {
-  if (options.workspaceId) {
-    return options.workspaceId;
-  }
-
-  const workspaces = await fetchWorkspaces(options.apiUrl);
-  const fallbackId =
-    workspaces.activeWorkspaceId ?? workspaces.workspaces[0]?.id ?? null;
-  if (!fallbackId) {
-    throw new Error("No workspace available for API cell creation");
-  }
-
-  return fallbackId;
-}
-
-async function resolveTemplateId(options: {
-  apiUrl: string;
-  workspaceId?: string;
-  templateLabel?: string;
-}): Promise<string> {
-  if (!options.templateLabel) {
-    return "e2e-template";
-  }
-
-  const params = new URLSearchParams();
-  if (options.workspaceId) {
-    params.set("workspaceId", options.workspaceId);
-  }
-
-  const response = await fetch(
-    `${options.apiUrl}/api/templates${params.size ? `?${params.toString()}` : ""}`
-  );
-  if (!response.ok) {
-    throw new Error(`Failed to fetch templates: ${response.status}`);
-  }
-
-  const payload = (await response.json()) as {
-    templates?: TemplateRecord[];
-    message?: string;
-  };
-  if (payload.message && !payload.templates) {
-    throw new Error(payload.message);
-  }
-
-  const templates = payload.templates ?? [];
-  const match = templates.find(
-    (template) => template.label === options.templateLabel
-  );
-  if (!match) {
-    throw new Error(`Template not found: ${options.templateLabel}`);
-  }
-
-  return match.id;
+  return (await response.json()) as RpcResult<T>;
 }
 
 export async function openCellCreationSheet(
@@ -315,6 +335,11 @@ export async function openCellCreationSheet(
   workspaceId?: string
 ): Promise<void> {
   await maybeRecoverRouteError(page);
+
+  const cellNameInput = page.locator(selectors.cellNameInput);
+  if (await cellNameInput.isVisible().catch(() => false)) {
+    return;
+  }
 
   if (workspaceId) {
     const workspaceCreateButton = page.locator(
@@ -332,27 +357,28 @@ export async function openCellCreationSheet(
     return;
   }
 
-  const createCellButtons = page.locator(selectors.workspaceCreateCellButton);
-  await createCellButtons.first().waitFor({
+  const createCellButton = page
+    .locator(selectors.workspaceCreateCellButton)
+    .first();
+  await createCellButton.waitFor({
     state: "visible",
     timeout: CELL_CREATION_TIMEOUT_MS,
   });
-  const buttonCount = await createCellButtons.count();
 
-  for (let index = 0; index < buttonCount; index += 1) {
+  for (let attempt = 0; attempt < OPEN_CREATE_SHEET_ATTEMPTS; attempt += 1) {
     try {
-      await createCellButtons.nth(index).click({ timeout: 15_000 });
+      await createCellButton.click({ timeout: 15_000 });
     } catch {
       await maybeRecoverRouteError(page);
       continue;
     }
 
-    const formVisible = await page
-      .locator(selectors.cellNameInput)
-      .isVisible({ timeout: FORM_VISIBILITY_PROBE_TIMEOUT_MS })
+    const formReady = await cellNameInput
+      .waitFor({ state: "visible", timeout: FORM_VISIBILITY_PROBE_TIMEOUT_MS })
+      .then(() => true)
       .catch(() => false);
 
-    if (formVisible) {
+    if (formReady) {
       return;
     }
 
@@ -369,7 +395,7 @@ export async function selectTemplate(page: Page, label: string): Promise<void> {
 
   const option = page.getByRole("option", { name: label });
   const target = option.first();
-  await target.waitFor({ state: "visible", timeout: 10_000 });
+  await target.waitFor({ state: "visible", timeout: 30_000 });
   try {
     await target.click({ noWaitAfter: true, timeout: 15_000 });
   } catch {
@@ -381,15 +407,25 @@ export async function fetchCell(
   apiUrl: string,
   cellId: string
 ): Promise<CellRecord> {
-  const response = await fetch(`${apiUrl}/api/cells/${cellId}`);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch cell ${cellId}: ${response.status}`);
+  const payload = await rpcRun<CellRecord | null>(apiUrl, {
+    action: "get_cell",
+    input: { id: cellId },
+    fields: ["id", "workspaceId", "status", "lastSetupError"],
+  });
+
+  if (!payload.success) {
+    throw new Error(
+      payload.errors?.[0]?.shortMessage ??
+        payload.errors?.[0]?.message ??
+        `Failed to fetch cell ${cellId}`
+    );
   }
-  const payload = (await response.json()) as CellRecord | { message: string };
-  if ("message" in payload) {
-    throw new Error(payload.message);
+
+  if (!payload.data) {
+    throw new Error(`Cell ${cellId} not found`);
   }
-  return payload;
+
+  return payload.data;
 }
 
 export async function fetchServices(
@@ -397,92 +433,148 @@ export async function fetchServices(
   cellId: string,
   options: { includeResources?: boolean } = {}
 ): Promise<ServiceRecord[]> {
-  const params = new URLSearchParams();
-  if (options.includeResources) {
-    params.set("includeResources", "true");
-  }
-  const query = params.toString();
-  const response = await fetch(
-    `${apiUrl}/api/cells/${cellId}/services${query ? `?${query}` : ""}`
-  );
-  if (!response.ok) {
+  const payload = await rpcRun<ServiceRecord[]>(apiUrl, {
+    action: "list_services",
+    input: {
+      cellId,
+      includeResources: options.includeResources ?? false,
+    },
+    fields: [
+      "id",
+      "name",
+      "status",
+      "pid",
+      "port",
+      "cpuPercent",
+      "rssBytes",
+      "resourceUnavailableReason",
+    ],
+  });
+
+  if (!payload.success) {
     throw new Error(
-      `Failed to fetch services for ${cellId}: ${response.status}`
+      payload.errors?.[0]?.shortMessage ??
+        payload.errors?.[0]?.message ??
+        `Failed to fetch services for ${cellId}`
     );
   }
 
-  const payload = (await response.json()) as
-    | { services: ServiceRecord[] }
-    | { message: string };
-  if ("message" in payload) {
-    throw new Error(payload.message);
-  }
-
-  return payload.services;
+  return payload.data;
 }
 
 export async function fetchActivity(
   apiUrl: string,
   cellId: string
 ): Promise<ActivityRecord[]> {
-  const response = await fetch(
-    `${apiUrl}/api/cells/${cellId}/activity?limit=200`
-  );
-  if (!response.ok) {
+  const payload = await rpcRun<ActivityRecord[]>(apiUrl, {
+    action: "list_cell_activity",
+    input: { cellId, limit: 200 },
+    fields: ["id", "type"],
+  });
+
+  if (!payload.success) {
     throw new Error(
-      `Failed to fetch activity for ${cellId}: ${response.status}`
+      payload.errors?.[0]?.shortMessage ??
+        payload.errors?.[0]?.message ??
+        `Failed to fetch activity for ${cellId}`
     );
   }
 
-  const payload = (await response.json()) as
-    | { events: ActivityRecord[] }
-    | { message: string };
-  if ("message" in payload) {
-    throw new Error(payload.message);
-  }
-
-  return payload.events;
+  return payload.data;
 }
 
 export async function fetchWorkspaces(
   apiUrl: string
 ): Promise<WorkspacesResponse> {
-  const response = await fetch(`${apiUrl}/api/workspaces`);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch workspaces: ${response.status}`);
+  const payload = await rpcRun<WorkspacesResponse["workspaces"][number][]>(
+    apiUrl,
+    {
+      action: "list_workspaces",
+      fields: ["id", "label", "path"],
+    }
+  );
+
+  if (!payload.success) {
+    throw new Error(
+      payload.errors?.[0]?.shortMessage ??
+        payload.errors?.[0]?.message ??
+        "Failed to fetch workspaces"
+    );
   }
 
-  const payload = (await response.json()) as
-    | WorkspacesResponse
-    | { message: string };
-  if ("message" in payload) {
-    throw new Error(payload.message);
-  }
-
-  return payload;
+  return {
+    workspaces: payload.data,
+    activeWorkspaceId: payload.data[0]?.id ?? null,
+  };
 }
 
 export async function fetchWorkspaceCells(
   apiUrl: string,
   workspaceId: string
 ): Promise<CellRecord[]> {
-  const response = await fetch(
-    `${apiUrl}/api/cells?workspaceId=${workspaceId}`
-  );
-  if (!response.ok) {
+  const payload = await rpcRun<CellRecord[]>(apiUrl, {
+    action: "list_cells",
+    input: { workspaceId },
+    fields: ["id", "name", "workspaceId", "status", "lastSetupError"],
+  });
+
+  if (!payload.success) {
     throw new Error(
-      `Failed to fetch cells for workspace ${workspaceId}: ${response.status}`
+      payload.errors?.[0]?.shortMessage ??
+        payload.errors?.[0]?.message ??
+        `Failed to fetch cells for workspace ${workspaceId}`
     );
   }
 
-  const payload = (await response.json()) as
-    | { cells: CellRecord[] }
-    | { message: string };
-  if ("message" in payload) {
-    throw new Error(payload.message);
+  return payload.data;
+}
+
+export async function fetchAgentModels(
+  apiUrl: string,
+  workspaceId: string
+): Promise<AgentModelsResponse> {
+  const response = await fetch(
+    `${apiUrl}/api/agents/models?workspaceId=${encodeURIComponent(workspaceId)}`
+  );
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch agent models: ${response.status}`);
   }
 
-  return payload.cells;
+  return (await response.json()) as AgentModelsResponse;
+}
+
+export async function fetchAgentSession(
+  apiUrl: string,
+  cellId: string
+): Promise<AgentSessionRecord | null> {
+  const payload = await rpcRun<Partial<AgentSessionRecord>>(apiUrl, {
+    action: "get_agent_session_by_cell",
+    input: { cellId },
+    fields: ["id", "status", "modelId", "modelProviderId", "updatedAt"],
+  });
+
+  if (!(payload.success && payload.data.id)) {
+    return null;
+  }
+
+  return payload.data as AgentSessionRecord;
+}
+
+export async function fetchAgentMessages(
+  apiUrl: string,
+  sessionId: string
+): Promise<AgentMessageRecord[]> {
+  const response = await fetch(
+    `${apiUrl}/api/agents/sessions/${sessionId}/messages`
+  );
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = (await response.json()) as AgentMessageListResponse;
+  return payload.messages;
 }
 
 export async function waitForCellStatus(options: {
@@ -569,7 +661,18 @@ export async function ensureTerminalReady(
       lastExitCode = exitCode ?? "";
 
       if (state === "online") {
-        return page.locator(selectors.terminalInputTextarea).isVisible();
+        const [readySurfaceVisible, inputSurfaceVisible] = await Promise.all([
+          page
+            .locator(selectors.terminalReadySurface)
+            .isVisible()
+            .catch(() => false),
+          page
+            .locator(selectors.terminalInputSurface)
+            .isVisible()
+            .catch(() => false),
+        ]);
+
+        return readySurfaceVisible || inputSurfaceVisible;
       }
 
       if (state === "exited" || state === "disconnected") {
@@ -624,6 +727,13 @@ export async function sendCellTerminalCommand(
   }
 
   await sendTerminalCommand(page, command);
+}
+
+export async function sendChatTerminalPrompt(
+  page: Page,
+  prompt: string
+): Promise<void> {
+  await sendTerminalCommand(page, prompt);
 }
 
 async function maybeRecoverRouteError(page: Page): Promise<void> {

@@ -44,7 +44,7 @@ import { cellMutations, cellQueries } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
 import { workspaceQueries } from "@/queries/workspaces";
 
-const PROVISIONING_STATUSES: CellStatus[] = ["spawning", "pending"];
+const PROVISIONING_STATUSES: CellStatus[] = ["provisioning"];
 
 type WorkspaceTreeProps = {
   collapsed: boolean;
@@ -818,12 +818,12 @@ function getCellStatusIcon({
     return <CircleX className={cn(iconClass, "text-destructive")} />;
   }
 
-  if (cellStatus === "pending") {
+  if (cellStatus === "provisioning") {
     return <Wrench className={cn(iconClass, "text-amber-400")} />;
   }
 
-  if (cellStatus === "spawning") {
-    return <Wrench className={cn(iconClass, "text-amber-400")} />;
+  if (cellStatus === "stopped") {
+    return <ChevronRight className={cn(iconClass, "text-muted-foreground")} />;
   }
 
   if (cellStatus === "deleting") {

@@ -8,6 +8,7 @@ import {
 } from "../src/test-helpers";
 
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
+const TERMINAL_TEMPLATE_LABEL = "Basic Template";
 
 test.describe("terminal route", () => {
   test("opens terminal route, accepts input, and recovers after restart", async ({
@@ -18,6 +19,7 @@ test.describe("terminal route", () => {
     const cellId = await createCell({
       page,
       name: `E2E Terminal ${Date.now()}`,
+      templateLabel: TERMINAL_TEMPLATE_LABEL,
     });
 
     await page.goto(`/cells/${cellId}/terminal`);

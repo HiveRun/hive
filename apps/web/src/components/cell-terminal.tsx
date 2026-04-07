@@ -14,9 +14,10 @@ import { Button } from "@/components/ui/button";
 import { getApiBase } from "@/lib/api-base";
 import { isMouseMovementInputChunk } from "@/lib/terminal-input";
 import {
+  createTerminalSocket,
   parseTerminalSocketMessage,
   sendTerminalSocketMessage,
-  toWebSocketUrl,
+  type TerminalSocketLike,
 } from "@/lib/terminal-websocket";
 
 type ConnectionState = "connecting" | "online" | "disconnected" | "exited";
@@ -44,6 +45,7 @@ const STARTUP_VISIBLE_BUFFER_LIMIT = 8192;
 const STARTUP_FALLBACK_VISIBLE_LENGTH = 48;
 const STARTUP_FALLBACK_READY_DELAY_MS = 2500;
 const SOCKET_RECONNECT_DELAY_MS = 800;
+const RESTART_EXIT_SUPPRESSION_WINDOW_MS = 2000;
 const INPUT_BATCH_BASE_WINDOW_MS = 16;
 const INPUT_BATCH_MAX_WINDOW_MS = 24;
 const INPUT_BATCH_WINDOW_STEP_MS = 8;
@@ -65,6 +67,7 @@ const CSI_MARKER = "[";
 const OSC_MARKER = "]";
 const OSC_ESCAPE_TERMINATOR = "\\";
 const NON_WHITESPACE_RE = /\S/;
+
 const TERMINAL_FONT_FAMILY =
   '"JetBrainsMono Nerd Font", "MesloLGS NF", "CaskaydiaMono Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font Mono", "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Noto Color Emoji", monospace';
 const TERMINAL_THEME_DARK = {
@@ -273,7 +276,7 @@ export function CellTerminal({
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<{ fit: () => void } | null>(null);
   const serializeAddonRef = useRef<{ serialize: () => string } | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
+  const socketRef = useRef<TerminalSocketLike | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const outputRef = useRef<string>("");
   const visibleOutputRef = useRef<string>("");
@@ -282,6 +285,8 @@ export function CellTerminal({
   const inputBatchWindowMsRef = useRef(INPUT_BATCH_BASE_WINDOW_MS);
   const inputBatchChunkCountRef = useRef(0);
   const restartPendingRef = useRef(false);
+  const suppressExitAfterRestartRef = useRef(false);
+  const suppressExitTimeoutRef = useRef<number | null>(null);
   const socketCloseErrorRef = useRef<string | null>(null);
   const resizeTimeoutRef = useRef<number | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -331,8 +336,8 @@ export function CellTerminal({
     [terminalApiBase, themeMode]
   );
 
-  const buildTerminalSocketEndpoint = useCallback(
-    () => toWebSocketUrl(buildTerminalEndpoint("ws")),
+  const buildTerminalSocketPath = useCallback(
+    () => buildTerminalEndpoint("ws"),
     [buildTerminalEndpoint]
   );
 
@@ -535,6 +540,7 @@ export function CellTerminal({
     }
 
     restartPendingRef.current = true;
+    suppressExitAfterRestartRef.current = false;
     setIsRestarting(true);
     setConnection("connecting");
     setSession(null);
@@ -551,6 +557,7 @@ export function CellTerminal({
     outputRef.current = "";
   }, [flushQueuedInput, sendSocketMessage, startupReadiness]);
 
+  // Terminal setup intentionally coordinates addons, socket lifecycle, and buffered input.
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -570,7 +577,10 @@ export function CellTerminal({
     setIsStartupReady(startupReadiness === "session");
 
     const connectStream = () => {
-      const socket = new WebSocket(buildTerminalSocketEndpoint());
+      const socket = createTerminalSocket({
+        apiBase: API_BASE,
+        terminalPath: buildTerminalSocketPath(),
+      });
       socketRef.current = socket;
       socketCloseErrorRef.current = null;
 
@@ -600,6 +610,17 @@ export function CellTerminal({
           if (restartPendingRef.current) {
             restartPendingRef.current = false;
             setIsRestarting(false);
+            suppressExitAfterRestartRef.current = true;
+            if (typeof window !== "undefined") {
+              if (suppressExitTimeoutRef.current !== null) {
+                window.clearTimeout(suppressExitTimeoutRef.current);
+              }
+
+              suppressExitTimeoutRef.current = window.setTimeout(() => {
+                suppressExitTimeoutRef.current = null;
+                suppressExitAfterRestartRef.current = false;
+              }, RESTART_EXIT_SUPPRESSION_WINDOW_MS);
+            }
             toast.success("Terminal restarted");
           }
           const activeTerminal = terminalRef.current;
@@ -677,6 +698,18 @@ export function CellTerminal({
         if (message.type === "exit") {
           const exitCode =
             typeof message.exitCode === "number" ? message.exitCode : 0;
+          if (suppressExitAfterRestartRef.current && exitCode === 0) {
+            suppressExitAfterRestartRef.current = false;
+            if (
+              typeof window !== "undefined" &&
+              suppressExitTimeoutRef.current !== null
+            ) {
+              window.clearTimeout(suppressExitTimeoutRef.current);
+              suppressExitTimeoutRef.current = null;
+            }
+            return;
+          }
+
           setConnection("exited");
           setSession((current) =>
             current
@@ -859,7 +892,12 @@ export function CellTerminal({
       inputBatchChunkCountRef.current = 0;
       inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
       restartPendingRef.current = false;
+      suppressExitAfterRestartRef.current = false;
       socketCloseErrorRef.current = null;
+      if (suppressExitTimeoutRef.current !== null) {
+        window.clearTimeout(suppressExitTimeoutRef.current);
+        suppressExitTimeoutRef.current = null;
+      }
       if (resizeTimeoutRef.current !== null) {
         window.clearTimeout(resizeTimeoutRef.current);
       }
@@ -879,7 +917,7 @@ export function CellTerminal({
       setIsTerminalInitialized(false);
     };
   }, [
-    buildTerminalSocketEndpoint,
+    buildTerminalSocketPath,
     scheduleResizeSync,
     sendInput,
     themeMode,

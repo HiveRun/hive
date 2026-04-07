@@ -2,63 +2,27 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook } from "@testing-library/react";
 import type { PropsWithChildren } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { CellTimingResponse } from "@/queries/cells";
 import { useCellTimingStream } from "./use-cell-timing-stream";
 
-type MockEventSourceInstance = {
-  url: string;
-  closed: boolean;
-  addEventListener: (
-    event: string,
-    listener: EventListenerOrEventListenerObject
-  ) => void;
-  removeEventListener: (
-    event: string,
-    listener: EventListenerOrEventListenerObject
-  ) => void;
-  close: () => void;
-  emit: (event: string, data?: string) => void;
-};
+const { joinTimingRealtimeChannel } = vi.hoisted(() => ({
+  joinTimingRealtimeChannel: vi.fn(),
+}));
 
-const mockEventSourceInstances: MockEventSourceInstance[] = [];
-const INVALIDATION_DEBOUNCE_MS = 350;
+vi.mock("@/lib/realtime-channels", () => ({
+  joinTimingRealtimeChannel,
+}));
 
-function MockEventSource(url: string): MockEventSourceInstance {
-  const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
-
-  const instance: MockEventSourceInstance = {
-    url,
-    closed: false,
-    addEventListener(event, listener) {
-      const existing = listeners.get(event) ?? new Set();
-      existing.add(listener);
-      listeners.set(event, existing);
-    },
-    removeEventListener(event, listener) {
-      listeners.get(event)?.delete(listener);
-    },
-    close() {
-      instance.closed = true;
-    },
-    emit(event, data = "{}") {
-      const message = new MessageEvent(event, { data });
-      const registered = listeners.get(event);
-      if (!registered) {
-        return;
-      }
-
-      for (const listener of registered) {
-        if (typeof listener === "function") {
-          listener(message);
-        } else {
-          listener.handleEvent(message);
-        }
-      }
-    },
-  };
-
-  mockEventSourceInstances.push(instance);
-  return instance;
-}
+const CELL_ID = "cell-1";
+const TIMING_QUERY_LIMIT = 300;
+const TIMING_QUERY_KEY = [
+  "cells",
+  CELL_ID,
+  "timings",
+  TIMING_QUERY_LIMIT,
+  "create",
+  null,
+] as const;
 
 function createWrapper(queryClient: QueryClient) {
   return ({ children }: PropsWithChildren) => (
@@ -66,110 +30,86 @@ function createWrapper(queryClient: QueryClient) {
   );
 }
 
+function seedTimingResponse(): CellTimingResponse {
+  return {
+    steps: [],
+    runs: [],
+  };
+}
+
 describe("useCellTimingStream", () => {
   beforeEach(() => {
-    mockEventSourceInstances.length = 0;
-    vi.useFakeTimers();
-    vi.stubGlobal(
-      "EventSource",
-      MockEventSource as unknown as typeof EventSource
-    );
+    joinTimingRealtimeChannel.mockReset();
+    joinTimingRealtimeChannel.mockImplementation((options) => ({
+      unsubscribe: vi.fn(),
+      __options: options,
+    }));
   });
 
   afterEach(() => {
-    vi.runOnlyPendingTimers();
-    vi.useRealTimers();
     vi.restoreAllMocks();
-    vi.unstubAllGlobals();
   });
 
-  it("subscribes to timing SSE and invalidates timing queries", async () => {
+  it("joins the timing realtime channel and invalidates on join", () => {
     const queryClient = new QueryClient();
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
-    renderHook(() => useCellTimingStream("cell-1", { workflow: "create" }), {
+    renderHook(() => useCellTimingStream(CELL_ID, { workflow: "create" }), {
       wrapper: createWrapper(queryClient),
     });
 
-    expect(mockEventSourceInstances).toHaveLength(1);
-    const stream = mockEventSourceInstances[0];
-    expect(stream?.url).toContain("/api/cells/cell-1/timings/stream");
-    expect(stream?.url).toContain("workflow=create");
+    expect(joinTimingRealtimeChannel).toHaveBeenCalledTimes(1);
+    const call = joinTimingRealtimeChannel.mock.calls[0]?.[0];
+    expect(call?.cellId).toBe(CELL_ID);
 
-    stream?.emit("timing", '{"cellId":"cell-1","workflow":"create"}');
-    vi.advanceTimersByTime(INVALIDATION_DEBOUNCE_MS);
-    await Promise.resolve();
-
-    expect(invalidateSpy).toHaveBeenCalledTimes(2);
-
-    expect(invalidateSpy.mock.calls[0]?.[0]).toMatchObject({
-      predicate: expect.any(Function),
-    });
-    expect(invalidateSpy.mock.calls[1]?.[0]).toMatchObject({
-      queryKey: ["cells", "timings", "global"],
-    });
-  });
-
-  it("invalidates timing queries on snapshot events", () => {
-    const queryClient = new QueryClient();
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
-
-    renderHook(() => useCellTimingStream("cell-1", { workflow: "create" }), {
-      wrapper: createWrapper(queryClient),
-    });
-
-    const stream = mockEventSourceInstances[0];
-    expect(stream).toBeDefined();
-
-    stream?.emit("snapshot", '{"timestamp":123}');
+    call?.onJoin?.();
 
     expect(invalidateSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("debounces timing-event invalidations", async () => {
+  it("patches matching timing queries from channel payloads", () => {
     const queryClient = new QueryClient();
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    queryClient.setQueryData(TIMING_QUERY_KEY, seedTimingResponse());
 
-    renderHook(() => useCellTimingStream("cell-1", { workflow: "create" }), {
+    renderHook(() => useCellTimingStream(CELL_ID, { workflow: "create" }), {
       wrapper: createWrapper(queryClient),
     });
 
-    const stream = mockEventSourceInstances[0];
-    expect(stream).toBeDefined();
+    const call = joinTimingRealtimeChannel.mock.calls[0]?.[0];
+    call?.handlers.timing_snapshot({
+      id: "timing-1",
+      cellId: CELL_ID,
+      cellName: "Cell 1",
+      workspaceId: "workspace-1",
+      templateId: "template-1",
+      runId: "run-1",
+      workflow: "create",
+      step: "prepare_workspace",
+      status: "ok",
+      attempt: 1,
+      error: null,
+      metadata: {},
+      durationMs: 12,
+      createdAt: "2026-03-26T00:00:00.000Z",
+    });
 
-    stream?.emit("timing", '{"step":"one"}');
-    stream?.emit("timing", '{"step":"two"}');
-    stream?.emit("timing", '{"step":"three"}');
-
-    vi.advanceTimersByTime(INVALIDATION_DEBOUNCE_MS);
-    await Promise.resolve();
-
-    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+    expect(
+      queryClient.getQueryData<CellTimingResponse>(TIMING_QUERY_KEY)
+    ).toEqual({
+      steps: [
+        expect.objectContaining({ id: "timing-1", step: "prepare_workspace" }),
+      ],
+      runs: [expect.objectContaining({ runId: "run-1", stepCount: 1 })],
+    });
   });
 
   it("does not subscribe when disabled", () => {
     const queryClient = new QueryClient();
 
-    renderHook(() => useCellTimingStream("cell-1", { enabled: false }), {
+    renderHook(() => useCellTimingStream(CELL_ID, { enabled: false }), {
       wrapper: createWrapper(queryClient),
     });
 
-    expect(mockEventSourceInstances).toHaveLength(0);
-  });
-
-  it("closes the event source on unmount", () => {
-    const queryClient = new QueryClient();
-
-    const { unmount } = renderHook(() => useCellTimingStream("cell-1"), {
-      wrapper: createWrapper(queryClient),
-    });
-
-    expect(mockEventSourceInstances).toHaveLength(1);
-    const stream = mockEventSourceInstances[0];
-    expect(stream?.closed).toBe(false);
-
-    unmount();
-
-    expect(stream?.closed).toBe(true);
+    expect(joinTimingRealtimeChannel).not.toHaveBeenCalled();
   });
 });

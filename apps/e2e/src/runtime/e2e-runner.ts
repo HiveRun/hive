@@ -1,8 +1,12 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
-import { cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  acquireRuntimeE2ELock,
+  installRuntimeE2ELockSignalCleanup,
+} from "./e2e-lock";
 import { createRuntimeContext, type RuntimeContext } from "./runtime-context";
 import { waitForHttpOk } from "./wait";
 
@@ -20,9 +24,18 @@ const SECONDARY_WORKSPACE_NAME = "workspace-secondary";
 
 type WorkspaceMode = "fixture" | "clone";
 
+type RpcErrorRecord = {
+  message?: string;
+  shortMessage?: string;
+};
+
+type RpcResult<T> =
+  | { success: true; data: T }
+  | { success: false; errors?: RpcErrorRecord[] };
+
 const WORKSPACE_MODE_ENV = "HIVE_E2E_WORKSPACE_MODE";
 const WORKSPACE_SOURCE_ENV = "HIVE_E2E_WORKSPACE_SOURCE";
-const DEFAULT_WORKSPACE_MODE: WorkspaceMode = "fixture";
+const DEFAULT_WORKSPACE_MODE: WorkspaceMode = "clone";
 
 type ManagedProcess = {
   name: string;
@@ -47,9 +60,10 @@ const moduleDir = dirname(modulePath);
 const e2eRoot = join(moduleDir, "..", "..");
 const stableArtifactsDir = join(e2eRoot, "reports", "latest");
 const repoRoot = join(e2eRoot, "..", "..");
-const serverRoot = join(repoRoot, "apps", "server");
+const serverElixirRoot = join(repoRoot, "apps", "hive_server_elixir");
 const webRoot = join(repoRoot, "apps", "web");
 const e2eRunsRoot = join(repoRoot, "tmp", "e2e-runs");
+const runtimeE2ELockPath = join(repoRoot, "tmp", "runtime-e2e.lock.json");
 const useSharedHiveHome = process.env.HIVE_E2E_SHARED_HOME === "1";
 const sharedHiveHomePath = join(repoRoot, "tmp", "e2e-shared", "hive-home");
 
@@ -59,22 +73,33 @@ type ProcessEntry = {
 };
 
 async function run() {
+  const lockHandle = await acquireRuntimeE2ELock({
+    force: process.env.HIVE_E2E_FORCE === "1",
+    lockFilePath: runtimeE2ELockPath,
+    logger: (message) => process.stdout.write(`${message}\n`),
+  });
+  const removeLockSignalCleanup = installRuntimeE2ELockSignalCleanup(
+    lockHandle,
+    (message) => process.stderr.write(`${message}\n`)
+  );
   const args = parseArgs(process.argv.slice(2));
   const workspaceMode = resolveWorkspaceMode();
   const workspaceRootName = workspaceMode === "clone" ? "hive" : "workspace";
-  const context = await createRuntimeContext({
-    hiveHomePath: useSharedHiveHome ? sharedHiveHomePath : undefined,
-    repoRoot,
-    workspaceName: workspaceRootName,
-  });
-  const secondaryWorkspaceRoot = join(
-    context.runRoot,
-    SECONDARY_WORKSPACE_NAME
-  );
+  let context: RuntimeContext | null = null;
   const managedProcesses: ManagedProcess[] = [];
   let runSucceeded = false;
 
   try {
+    context = await createRuntimeContext({
+      hiveHomePath: useSharedHiveHome ? sharedHiveHomePath : undefined,
+      repoRoot,
+      workspaceName: workspaceRootName,
+    });
+    const secondaryWorkspaceRoot = join(
+      context.runRoot,
+      SECONDARY_WORKSPACE_NAME
+    );
+
     await cleanupOrphanedOpencodeProcesses({
       currentPid: process.pid,
       e2eRunsRoot,
@@ -94,7 +119,20 @@ async function run() {
         sourceRoot: workspaceSource,
         workspaceRoot: context.workspaceRoot,
       });
-      await createFixtureWorkspace(secondaryWorkspaceRoot);
+      await syncWorkingTreeChangesIntoClone({
+        sourceRoot: workspaceSource,
+        workspaceRoot: context.workspaceRoot,
+      });
+      await createClonedWorkspace({
+        sourceRoot: workspaceSource,
+        workspaceRoot: secondaryWorkspaceRoot,
+      });
+      await syncWorkingTreeChangesIntoClone({
+        sourceRoot: workspaceSource,
+        workspaceRoot: secondaryWorkspaceRoot,
+      });
+      await addCloneOnlyE2ETemplates(context.workspaceRoot, workspaceSource);
+      await addCloneOnlyE2ETemplates(secondaryWorkspaceRoot, workspaceSource);
     } else {
       await createFixtureWorkspace(context.workspaceRoot);
       await createFixtureWorkspace(secondaryWorkspaceRoot);
@@ -105,6 +143,18 @@ async function run() {
       logsDir: context.logsDir,
     });
     managedProcesses.push(server);
+
+    await registerWorkspace({
+      apiUrl: context.apiUrl,
+      path: context.workspaceRoot,
+      activate: true,
+    });
+
+    await registerWorkspace({
+      apiUrl: context.apiUrl,
+      path: secondaryWorkspaceRoot,
+      activate: false,
+    });
 
     const web = startManagedProcess({
       command: "bun",
@@ -164,16 +214,21 @@ async function run() {
         .map((managedProcess) => stopManagedProcess(managedProcess))
     );
 
-    await cleanupOpencodeProcessesForRunRoot(context.runRoot);
+    if (context) {
+      await cleanupOpencodeProcessesForRunRoot(context.runRoot);
 
-    await publishArtifacts(context.artifactsDir, stableArtifactsDir);
-    process.stdout.write(`E2E reports: ${stableArtifactsDir}\n`);
+      await publishArtifacts(context.artifactsDir, stableArtifactsDir);
+      process.stdout.write(`E2E reports: ${stableArtifactsDir}\n`);
 
-    if (!KEEP_ARTIFACTS && runSucceeded) {
-      await rm(context.runRoot, { recursive: true, force: true });
-    } else {
-      process.stdout.write(`E2E run artifacts: ${context.runRoot}\n`);
+      if (!KEEP_ARTIFACTS && runSucceeded) {
+        await rm(context.runRoot, { recursive: true, force: true });
+      } else {
+        process.stdout.write(`E2E run artifacts: ${context.runRoot}\n`);
+      }
     }
+
+    removeLockSignalCleanup();
+    await lockHandle.release();
   }
 }
 
@@ -311,25 +366,61 @@ async function startServerWithRetries(options: {
   context: RuntimeContext;
   logsDir: string;
 }): Promise<ManagedProcess> {
+  const elixirEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    MIX_ENV: "prod",
+    PHX_SERVER: "true",
+    SECRET_KEY_BASE:
+      "hive-e2e-secret-key-base-dev-only-0001-0002-0003-0004-0005-0006-0007",
+    DATABASE_PATH: options.context.dbPath,
+    HIVE_HOME: options.context.hiveHome,
+    HIVE_E2E_SKIP_WORKSPACE_SNAPSHOT: "1",
+    HIVE_WORKSPACE_ROOT: options.context.workspaceRoot,
+    HIVE_BROWSE_ROOT: options.context.runRoot,
+    HIVE_OPENCODE_START_TIMEOUT_MS: "120000",
+    HOST: "127.0.0.1",
+    PORT: String(options.context.apiPort),
+    CORS_ORIGIN: options.context.webUrl,
+  };
+
+  const runtimeEnvOverrideArgs = [
+    "env",
+    `PORT=${String(options.context.apiPort)}`,
+    `PHX_PORT=${String(options.context.apiPort)}`,
+    `BACKEND_PORT=${String(options.context.apiPort)}`,
+    `BACKEND_URL=${options.context.apiUrl}`,
+    `VITE_API_URL=${options.context.apiUrl}`,
+    `VITE_BACKEND_URL=${options.context.apiUrl}`,
+    `FRONTEND_PORT=${String(options.context.webPort)}`,
+    `FRONTEND_URL=${options.context.webUrl}`,
+  ];
+
+  await runCommand(
+    "mise",
+    ["x", "-C", ".", "--", ...runtimeEnvOverrideArgs, "mix", "ecto.migrate"],
+    {
+      cwd: serverElixirRoot,
+      env: elixirEnv,
+      label: "Migrate Elixir E2E database",
+    }
+  );
+
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= SERVER_START_ATTEMPTS; attempt += 1) {
     const server = startManagedProcess({
-      command: "bun",
-      args: ["run", "src/index.ts"],
-      cwd: serverRoot,
-      env: {
-        ...process.env,
-        DATABASE_URL: `file:${options.context.dbPath}`,
-        HIVE_HOME: options.context.hiveHome,
-        HIVE_WORKSPACE_ROOT: options.context.workspaceRoot,
-        HIVE_BROWSE_ROOT: options.context.runRoot,
-        HIVE_OPENCODE_START_TIMEOUT_MS: "120000",
-        HOST: "127.0.0.1",
-        PORT: String(options.context.apiPort),
-        WEB_PORT: String(options.context.webPort),
-        CORS_ORIGIN: options.context.webUrl,
-      },
+      command: "mise",
+      args: [
+        "x",
+        "-C",
+        ".",
+        "--",
+        ...runtimeEnvOverrideArgs,
+        "mix",
+        "phx.server",
+      ],
+      cwd: serverElixirRoot,
+      env: elixirEnv,
       logsDir: options.logsDir,
       name: "server",
     });
@@ -413,6 +504,16 @@ async function createFixtureWorkspace(workspaceRoot: string): Promise<void> {
           'test -f .hive-setup-pass || { echo "marker missing: .hive-setup-pass" >&2; exit 37; }',
         ],
       },
+      "e2e-setup-progress-template": {
+        id: "e2e-setup-progress-template",
+        label: "E2E Setup Progress Template",
+        type: "manual",
+        setup: [
+          "sleep 2",
+          'for _ in 1 2 3; do if test -f .hive-setup-progress-pass; then sleep 2; exit 0; fi; sleep 1; done; echo "progress marker missing: .hive-setup-progress-pass" >&2; exit 38',
+          "sleep 1",
+        ],
+      },
     },
   };
 
@@ -477,6 +578,119 @@ async function createClonedWorkspace(options: {
     cwd: repoRoot,
     label: "Clone fixture workspace",
   });
+}
+
+async function addCloneOnlyE2ETemplates(
+  workspaceRoot: string,
+  sourceRoot: string
+): Promise<void> {
+  const hiveConfigPath = join(workspaceRoot, "hive.config.json");
+  const rawConfig = await readFile(hiveConfigPath, "utf8");
+  const parsed = JSON.parse(rawConfig) as {
+    templates?: Record<string, Record<string, unknown>>;
+  };
+
+  const existingHiveDev = parsed.templates?.["hive-dev"] ?? {};
+  const existingHiveDevEnv =
+    typeof existingHiveDev.env === "object" && existingHiveDev.env !== null
+      ? (existingHiveDev.env as Record<string, unknown>)
+      : {};
+
+  const nextConfig = {
+    ...parsed,
+    templates: {
+      ...(parsed.templates ?? {}),
+      "hive-dev": {
+        ...existingHiveDev,
+        env: {
+          ...existingHiveDevEnv,
+          MIX_DEPS_PATH: join(sourceRoot, "apps", "hive_server_elixir", "deps"),
+          MIX_BUILD_PATH: join(
+            sourceRoot,
+            "apps",
+            "hive_server_elixir",
+            "_build"
+          ),
+        },
+        setup: ["HIVE_SKIP_DESKTOP_E2E_SETUP=1 bun install"],
+      },
+      "e2e-setup-retry-template": {
+        id: "e2e-setup-retry-template",
+        label: "E2E Setup Retry Template",
+        type: "manual",
+        setup: [
+          'test -f .hive-setup-pass || { echo "marker missing: .hive-setup-pass" >&2; exit 37; }',
+        ],
+      },
+      "e2e-setup-progress-template": {
+        id: "e2e-setup-progress-template",
+        label: "E2E Setup Progress Template",
+        type: "manual",
+        setup: [
+          "sleep 2",
+          'for _ in 1 2 3; do if test -f .hive-setup-progress-pass; then sleep 2; exit 0; fi; sleep 1; done; echo "progress marker missing: .hive-setup-progress-pass" >&2; exit 38',
+          "sleep 1",
+        ],
+      },
+    },
+  };
+
+  await writeFile(
+    hiveConfigPath,
+    `${JSON.stringify(nextConfig, null, 2)}\n`,
+    "utf8"
+  );
+}
+
+async function syncWorkingTreeChangesIntoClone(options: {
+  sourceRoot: string;
+  workspaceRoot: string;
+}): Promise<void> {
+  const changedFiles = listGitPaths(options.sourceRoot, [
+    "diff",
+    "--name-only",
+    "--diff-filter=ACMRTUXB",
+    "HEAD",
+  ]);
+  const deletedFiles = listGitPaths(options.sourceRoot, [
+    "diff",
+    "--name-only",
+    "--diff-filter=D",
+    "HEAD",
+  ]);
+  const untrackedFiles = listGitPaths(options.sourceRoot, [
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+  ]);
+
+  for (const relativePath of [...changedFiles, ...untrackedFiles]) {
+    const sourcePath = join(options.sourceRoot, relativePath);
+    const destinationPath = join(options.workspaceRoot, relativePath);
+
+    await mkdir(dirname(destinationPath), { recursive: true });
+    await cp(sourcePath, destinationPath, { force: true, recursive: true });
+  }
+
+  for (const relativePath of deletedFiles) {
+    await rm(join(options.workspaceRoot, relativePath), {
+      recursive: true,
+      force: true,
+    });
+  }
+}
+
+function listGitPaths(cwd: string, args: string[]): string[] {
+  const output = execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  return output
+    .split("\n")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
 }
 
 async function resolveSourceBranch(sourceRoot: string): Promise<string | null> {
@@ -551,6 +765,7 @@ async function runCommand(
         resolve();
         return;
       }
+
       reject(
         new Error(
           `${options.label} failed (exit ${String(
@@ -560,6 +775,44 @@ async function runCommand(
       );
     });
   });
+}
+
+async function registerWorkspace(options: {
+  apiUrl: string;
+  path: string;
+  activate: boolean;
+}): Promise<void> {
+  const response = await fetch(`${options.apiUrl}/rpc/run`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      action: "register_workspace",
+      input: {
+        path: options.path,
+        activate: options.activate,
+      },
+      fields: ["id"],
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(
+      `Failed to register workspace ${options.path} (status ${response.status}): ${body}`
+    );
+  }
+
+  const payload = (await response.json()) as RpcResult<{ id: string }>;
+
+  if (payload.success) {
+    return;
+  }
+
+  throw new Error(
+    `Failed to register workspace ${options.path}: ${payload.errors?.[0]?.shortMessage ?? payload.errors?.[0]?.message ?? "unknown RPC error"}`
+  );
 }
 
 async function runCommandCapture(

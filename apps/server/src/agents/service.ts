@@ -34,6 +34,21 @@ const cellSessionMap = new Map<string, string>();
 const DEFAULT_SERVICE_HOST = process.env.SERVICE_HOST ?? "localhost";
 const DEFAULT_SERVICE_PROTOCOL = process.env.SERVICE_PROTOCOL ?? "http";
 const HIVE_INSTRUCTIONS_RELATIVE_PATH = ".hive/instructions.md";
+const PERMISSION_PATTERN_ALL = "*";
+
+type SessionPermissionAction = "ask" | "allow" | "deny";
+
+type SessionPermissionRule = {
+  permission: string;
+  pattern: string;
+  action: SessionPermissionAction;
+};
+
+type SessionPermissionRuleset = SessionPermissionRule[];
+
+type SerializablePermissionConfig = Record<string, unknown> & {
+  __originalKeys?: string[];
+};
 
 type DirectoryQuery = {
   directory?: string;
@@ -562,6 +577,96 @@ function resolveConfigDefaultMode(args: {
   }
 
   return "plan";
+}
+
+function isPermissionAction(value: unknown): value is SessionPermissionAction {
+  return value === "ask" || value === "allow" || value === "deny";
+}
+
+function isScopedPermissionConfig(
+  value: unknown
+): value is Record<string, SessionPermissionAction> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every(isPermissionAction)
+  );
+}
+
+function listPermissionNames(
+  permissionConfig: SerializablePermissionConfig
+): string[] {
+  const explicitOrder = Array.isArray(permissionConfig.__originalKeys)
+    ? permissionConfig.__originalKeys.filter(
+        (name) =>
+          name !== "__originalKeys" && permissionConfig[name] !== undefined
+      )
+    : [];
+
+  const discoveredOrder = Object.keys(permissionConfig).filter(
+    (name) => name !== "__originalKeys" && !explicitOrder.includes(name)
+  );
+
+  return [...explicitOrder, ...discoveredOrder];
+}
+
+function serializePermissionRuleConfig(args: {
+  permission: string;
+  config: unknown;
+}): SessionPermissionRuleset {
+  const { permission, config } = args;
+  if (isPermissionAction(config)) {
+    return [
+      {
+        permission,
+        pattern: PERMISSION_PATTERN_ALL,
+        action: config,
+      },
+    ];
+  }
+
+  if (!isScopedPermissionConfig(config)) {
+    return [];
+  }
+
+  const scopedConfig = config;
+  return Object.entries(scopedConfig).map(([pattern, action]) => ({
+    permission,
+    pattern,
+    action,
+  }));
+}
+
+function serializePermissionConfigToRuleset(
+  config: Awaited<ReturnType<typeof loadOpencodeConfig>>["config"]
+): SessionPermissionRuleset | undefined {
+  const permissionConfig = config.permission;
+  if (
+    !permissionConfig ||
+    typeof permissionConfig !== "object" ||
+    Array.isArray(permissionConfig)
+  ) {
+    return;
+  }
+
+  const normalizedPermissionConfig =
+    permissionConfig as SerializablePermissionConfig;
+  const rules = listPermissionNames(normalizedPermissionConfig).flatMap(
+    (permission) => {
+      const ruleConfig = normalizedPermissionConfig[permission];
+      if (!ruleConfig) {
+        return [];
+      }
+
+      return serializePermissionRuleConfig({
+        permission,
+        config: ruleConfig,
+      });
+    }
+  );
+
+  return rules.length > 0 ? rules : undefined;
 }
 
 async function shouldApplyProvisioningModelOverride(args: {
@@ -1438,6 +1543,7 @@ async function ensureRuntimeForCell(
     modelId: requestedModelId,
     startMode,
     force: options?.force ?? false,
+    mergedOpencodeConfig: mergedConfig,
     deps,
   });
 
@@ -1566,6 +1672,7 @@ type StartRuntimeArgs = {
   modelId?: string;
   startMode: AgentMode;
   force: boolean;
+  mergedOpencodeConfig: Awaited<ReturnType<typeof loadOpencodeConfig>>;
   deps: AgentRuntimeDependencies;
 };
 
@@ -1618,6 +1725,7 @@ async function startOpencodeRuntime({
   modelId,
   startMode,
   force,
+  mergedOpencodeConfig,
   deps,
 }: StartRuntimeArgs): Promise<{ runtime: RuntimeHandle; created: boolean }> {
   const client = await deps.acquireOpencodeClient();
@@ -1627,6 +1735,9 @@ async function startOpencodeRuntime({
     cell,
     directoryQuery,
     force,
+    permissionRules: serializePermissionConfigToRuleset(
+      mergedOpencodeConfig.config
+    ),
   });
 
   if (created) {
@@ -1737,6 +1848,7 @@ type ResolveSessionArgs = {
   cell: Cell;
   directoryQuery: DirectoryQuery;
   force: boolean;
+  permissionRules?: SessionPermissionRuleset;
 };
 
 async function resolveOpencodeSession({
@@ -1744,6 +1856,7 @@ async function resolveOpencodeSession({
   cell,
   directoryQuery,
   force,
+  permissionRules,
 }: ResolveSessionArgs): Promise<{ session: Session; created: boolean }> {
   if (!force && cell.opencodeSessionId) {
     const existing = await getRemoteSession(
@@ -1759,6 +1872,7 @@ async function resolveOpencodeSession({
   const created = await client.session.create({
     body: {
       title: cell.name,
+      ...(permissionRules ? { permission: permissionRules } : {}),
     },
     query: directoryQuery,
   });
