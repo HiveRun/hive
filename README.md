@@ -257,6 +257,12 @@ bun run test:e2e:report:open
 bun run test:e2e:report:serve
 ```
 
+Install Playwright browsers on fresh environments or after Playwright upgrades:
+
+```bash
+bun -C apps/e2e run install:browsers
+```
+
 Notes:
 - The E2E harness creates a dedicated temp workspace and SQLite database per run.
 - Local dev DB/state are not reused.
