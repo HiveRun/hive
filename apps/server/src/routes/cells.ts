@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { logger } from "@bogeychan/elysia-logger";
 import { and, desc, eq, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import { Elysia, type Static, sse, t } from "elysia";
-import { loadOpencodeConfig } from "../agents/opencode-config";
+import { loadEffectiveOpencodeDefaults } from "../agents/opencode-config";
 import { getSharedOpencodeServerBaseUrl } from "../agents/opencode-server";
 import type { AgentRuntimeService } from "../agents/service";
 import { agentRuntimeService } from "../agents/service";
@@ -916,11 +916,11 @@ async function resolveDefaultStartMode(args: {
   }
 
   try {
-    const mergedConfig = await loadOpencodeConfig(args.workspaceRootPath);
-    const candidate = (mergedConfig.config as { default_agent?: unknown })
-      .default_agent;
-    if (typeof candidate === "string") {
-      const normalized = normalizeStartMode(candidate);
+    const effectiveDefaults = await loadEffectiveOpencodeDefaults(
+      args.workspaceRootPath
+    );
+    if (effectiveDefaults.startMode) {
+      const normalized = normalizeStartMode(effectiveDefaults.startMode);
       if (normalized) {
         return normalized;
       }
