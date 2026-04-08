@@ -17,7 +17,10 @@ import { cellProvisioningStates } from "../schema/cell-provisioning";
 import { type Cell, cells } from "../schema/cells";
 import { type CellService, cellServices } from "../schema/services";
 import { publishAgentEvent } from "./events";
-import { loadOpencodeConfig } from "./opencode-config";
+import {
+  loadEffectiveOpencodeDefaults,
+  loadOpencodeConfig,
+} from "./opencode-config";
 import { acquireSharedOpencodeClient } from "./opencode-server";
 import type {
   AgentMessageRecord,
@@ -320,6 +323,7 @@ type AgentRuntimeDependencies = {
   db: typeof db;
   loadHiveConfig: (workspaceRoot?: string) => Promise<HiveConfig>;
   loadOpencodeConfig: typeof loadOpencodeConfig;
+  loadEffectiveOpencodeDefaults: typeof loadEffectiveOpencodeDefaults;
   publishAgentEvent: typeof publishAgentEvent;
   acquireOpencodeClient: () => Promise<OpencodeClient>;
 };
@@ -343,6 +347,9 @@ const getAgentRuntimeDependencies = (): AgentRuntimeDependencies => ({
   loadHiveConfig: agentRuntimeOverrides.loadHiveConfig ?? loadHiveConfig,
   loadOpencodeConfig:
     agentRuntimeOverrides.loadOpencodeConfig ?? loadOpencodeConfig,
+  loadEffectiveOpencodeDefaults:
+    agentRuntimeOverrides.loadEffectiveOpencodeDefaults ??
+    loadEffectiveOpencodeDefaults,
   publishAgentEvent:
     agentRuntimeOverrides.publishAgentEvent ?? publishAgentEvent,
   acquireOpencodeClient:
@@ -544,18 +551,19 @@ async function loadProvisioningStartMode(args: {
 
 function resolveConfigDefaultMode(args: {
   hiveConfig: HiveConfig;
-  mergedOpencodeConfig: Awaited<ReturnType<typeof loadOpencodeConfig>>;
+  effectiveOpencodeDefaults: Awaited<
+    ReturnType<typeof loadEffectiveOpencodeDefaults>
+  >;
 }): AgentMode {
   const explicit = normalizeAgentMode(args.hiveConfig.opencode?.defaultMode);
   if (explicit) {
     return explicit;
   }
 
-  const mergedConfig = args.mergedOpencodeConfig.config as {
-    default_agent?: unknown;
-  };
-  if (typeof mergedConfig.default_agent === "string") {
-    const fromAgent = normalizeAgentMode(mergedConfig.default_agent);
+  if (args.effectiveOpencodeDefaults.startMode) {
+    const fromAgent = normalizeAgentMode(
+      args.effectiveOpencodeDefaults.startMode
+    );
     if (fromAgent) {
       return fromAgent;
     }
@@ -922,15 +930,12 @@ function resolveModelSelection({
     providers,
   });
 
-  const workspaceFallback = resolveModelFallback({
-    candidates: [
-      {
-        providerId: validOpencodeDefault?.providerId,
-        modelId: validOpencodeDefault?.modelId,
-      },
-    ],
+  const configFallback = resolveCandidateModel({
+    candidate: {
+      providerId: configDefaultProvider,
+      modelId: configDefaultModel,
+    },
     providers,
-    defaults,
   });
 
   const providerFallback = resolveModelFallback({
@@ -940,7 +945,11 @@ function resolveModelSelection({
   });
 
   const resolvedModel =
-    overrideModel ?? agentModel ?? workspaceFallback ?? providerFallback;
+    overrideModel ??
+    agentModel ??
+    validOpencodeDefault ??
+    configFallback ??
+    providerFallback;
   const effectiveOptions = options;
   const effectiveAgentConfig =
     agentConfig?.modelId && !agentModel ? undefined : agentConfig;
@@ -1390,13 +1399,14 @@ async function ensureRuntimeForCell(
   const { hiveConfig, template } = await hydrateInstructionsForCell(deps, cell);
 
   const agentConfig = resolveTemplateAgentConfig(template);
-  const mergedConfig = await deps.loadOpencodeConfig(workspaceRootPath);
-  const defaultOpencodeModel = mergedConfig.defaultModel;
+  const effectiveOpencodeDefaults =
+    await deps.loadEffectiveOpencodeDefaults(workspaceRootPath);
+  const defaultOpencodeModel = effectiveOpencodeDefaults.defaultModel;
   const configDefaultProvider = hiveConfig.opencode?.defaultProvider;
   const configDefaultModel = hiveConfig.opencode?.defaultModel;
   const configDefaultMode = resolveConfigDefaultMode({
     hiveConfig,
-    mergedOpencodeConfig: mergedConfig,
+    effectiveOpencodeDefaults,
   });
 
   const providerCatalog =

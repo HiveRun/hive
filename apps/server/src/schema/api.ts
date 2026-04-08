@@ -326,11 +326,7 @@ export const CreateCellSchema = t.Object({
     minLength: 1,
     maxLength: 255,
   }),
-  description: t.Optional(
-    t.String({
-      maxLength: 1000,
-    })
-  ),
+  description: t.Optional(t.String()),
   templateId: t.String({
     minLength: 1,
   }),

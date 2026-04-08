@@ -2,7 +2,10 @@ import { stat } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { Elysia, type Static, t } from "elysia";
 import { glob } from "tinyglobby";
-import { loadOpencodeConfig } from "../agents/opencode-config";
+import {
+  type EffectiveOpencodeDefaults,
+  loadEffectiveOpencodeDefaults,
+} from "../agents/opencode-config";
 import { loadConfig } from "../config/loader";
 import type { Template } from "../config/schema";
 import {
@@ -22,7 +25,6 @@ const HTTP_STATUS = {
 
 type TemplateListResponse = Static<typeof TemplateListResponseSchema>;
 type TemplateResponse = Static<typeof TemplateResponseSchema>;
-type AgentDefaults = TemplateListResponse["agentDefaults"];
 type StartMode = "plan" | "build";
 
 const POSIX_SEPARATOR = "/";
@@ -51,11 +53,7 @@ const workspaceConfigCache = new Map<
 
 const opencodeDefaultsCache = new Map<
   string,
-  { expiresAt: number; value?: AgentDefaults }
->();
-const opencodeStartModeCache = new Map<
-  string,
-  { expiresAt: number; value?: StartMode }
+  { expiresAt: number; value: EffectiveOpencodeDefaults }
 >();
 
 const normalizeStartMode = (
@@ -306,11 +304,11 @@ const workspaceConfig = async (workspaceId?: string) => {
 
 const loadOpencodeForWorkspace = async (workspacePath: string) => {
   try {
-    return await loadOpencodeConfig(workspacePath);
+    return await loadEffectiveOpencodeDefaults(workspacePath);
   } catch (cause) {
     throw {
       _tag: "OpencodeConfigError",
-      message: `Failed to load OpenCode config for workspace '${workspacePath}': ${formatUnknown(
+      message: `Failed to load effective OpenCode defaults for workspace '${workspacePath}': ${formatUnknown(
         cause
       )}`,
     } satisfies TemplatesRouteError;
@@ -319,10 +317,9 @@ const loadOpencodeForWorkspace = async (workspacePath: string) => {
 
 const loadCachedOpencodeDefaults = async (
   workspacePath: string
-): Promise<AgentDefaults | undefined> => {
+): Promise<EffectiveOpencodeDefaults> => {
   if (!shouldUseRouteCaches()) {
-    const opencodeConfig = await loadOpencodeForWorkspace(workspacePath);
-    return opencodeConfig.defaultModel;
+    return await loadOpencodeForWorkspace(workspacePath);
   }
 
   const now = Date.now();
@@ -331,45 +328,11 @@ const loadCachedOpencodeDefaults = async (
     return cached.value;
   }
 
-  const opencodeConfig = await loadOpencodeForWorkspace(workspacePath);
-  const value = opencodeConfig.defaultModel;
+  const value = await loadOpencodeForWorkspace(workspacePath);
   opencodeDefaultsCache.set(workspacePath, {
     value,
     expiresAt: now + OPENCODE_DEFAULTS_CACHE_TTL_MS,
   });
-  return value;
-};
-
-const loadCachedOpencodeStartMode = async (
-  workspacePath: string
-): Promise<StartMode | undefined> => {
-  if (!shouldUseRouteCaches()) {
-    const opencodeConfig = await loadOpencodeForWorkspace(workspacePath);
-    const defaultAgent = (opencodeConfig.config as { default_agent?: unknown })
-      .default_agent;
-    return typeof defaultAgent === "string"
-      ? normalizeStartMode(defaultAgent)
-      : undefined;
-  }
-
-  const now = Date.now();
-  const cached = opencodeStartModeCache.get(workspacePath);
-  if (cached && cached.expiresAt > now) {
-    return cached.value;
-  }
-
-  const opencodeConfig = await loadOpencodeForWorkspace(workspacePath);
-  const defaultAgent = (opencodeConfig.config as { default_agent?: unknown })
-    .default_agent;
-  const value =
-    typeof defaultAgent === "string"
-      ? normalizeStartMode(defaultAgent)
-      : undefined;
-  opencodeStartModeCache.set(workspacePath, {
-    value,
-    expiresAt: now + OPENCODE_DEFAULTS_CACHE_TTL_MS,
-  });
-
   return value;
 };
 
@@ -382,8 +345,9 @@ const listTemplates = async (
     templateToResponse(id, template)
   );
 
-  const agentDefaults = await loadCachedOpencodeDefaults(workspacePath);
-  const mergedStartMode = await loadCachedOpencodeStartMode(workspacePath);
+  const opencodeDefaults = await loadCachedOpencodeDefaults(workspacePath);
+  const agentDefaults = opencodeDefaults.defaultModel;
+  const mergedStartMode = normalizeStartMode(opencodeDefaults.startMode);
   const defaultStartMode =
     config.defaults?.startMode ??
     config.opencode?.defaultMode ??
