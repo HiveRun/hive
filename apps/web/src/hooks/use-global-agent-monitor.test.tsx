@@ -216,6 +216,58 @@ describe("useGlobalAgentMonitor", () => {
     });
   });
 
+  it("restores the previous status on a later non-transition mode update", async () => {
+    const queryClient = new QueryClient();
+
+    renderHook(() => useGlobalAgentMonitor(), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await waitFor(() => {
+      expect(mockEventSourceInstances).toHaveLength(1);
+    });
+
+    const stream = mockEventSourceInstances[0];
+
+    act(() => {
+      stream?.emit(
+        "mode",
+        JSON.stringify({
+          startMode: "plan",
+          currentMode: "build",
+        })
+      );
+    });
+
+    await waitFor(() => {
+      expect(queryClient.getQueryData(["agent-session", CELL_ID])).toEqual(
+        expect.objectContaining({
+          currentMode: "build",
+          status: "starting",
+        })
+      );
+    });
+
+    act(() => {
+      stream?.emit(
+        "mode",
+        JSON.stringify({
+          startMode: "plan",
+          currentMode: "plan",
+        })
+      );
+    });
+
+    await waitFor(() => {
+      expect(queryClient.getQueryData(["agent-session", CELL_ID])).toEqual(
+        expect.objectContaining({
+          currentMode: "plan",
+          status: "working",
+        })
+      );
+    });
+  });
+
   it(
     "restores the previous status if no newer status arrives",
     async () => {

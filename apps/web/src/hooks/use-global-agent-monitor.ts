@@ -256,7 +256,7 @@ export function useGlobalAgentMonitor() {
               return;
             }
 
-            cancelPendingModeTransition(session.id);
+            restorePendingModeTransition(session.id);
           } catch {
             // ignore malformed events
           }
