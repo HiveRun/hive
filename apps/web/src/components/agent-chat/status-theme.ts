@@ -32,5 +32,8 @@ export function getStatusAppearance(status?: string): StatusAppearance {
 }
 
 export function formatStatus(status: string) {
+  if (status === "starting") {
+    return "LOADING";
+  }
   return status.replace(/_/g, " ").toUpperCase();
 }
