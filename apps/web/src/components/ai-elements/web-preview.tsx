@@ -1,10 +1,10 @@
 import {
-  type ComponentProps,
   createContext,
   type ReactNode,
   useCallback,
   useContext,
   useEffect,
+  useId,
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
@@ -129,12 +129,16 @@ export function WebPreviewNavigationButton({
 
 export function WebPreviewUrl({ className }: { className?: string }) {
   const { url, setUrl } = useWebPreviewContext();
+  const [draftUrl, setDraftUrl] = useState(url ?? "");
+
+  useEffect(() => {
+    setDraftUrl(url ?? "");
+  }, [url]);
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
       if (event.key === "Enter") {
-        const input = event.currentTarget;
-        const newUrl = input.value.trim();
+        const newUrl = event.currentTarget.value.trim();
         setUrl(newUrl || null);
       }
     },
@@ -144,22 +148,26 @@ export function WebPreviewUrl({ className }: { className?: string }) {
   return (
     <Input
       className={cn("h-8 w-full min-w-0 max-w-md font-mono text-xs", className)}
+      onChange={(event) => setDraftUrl(event.currentTarget.value)}
       onKeyDown={handleKeyDown}
       placeholder="Enter URL and press Enter..."
       type="url"
-      value={url ?? ""}
+      value={draftUrl}
     />
   );
 }
 
 export function WebPreviewBody({
   className,
-  iframeProps = {},
+  children,
+  emptyState,
 }: {
   className?: string;
-  iframeProps?: Omit<ComponentProps<"iframe">, "key" | "sandbox">;
+  children?: ReactNode;
+  emptyState?: ReactNode;
 }) {
   const { url, viewportPreset, isLoading, error } = useWebPreviewContext();
+  const fallbackTitleId = useId();
 
   const frameStyle = resolveViewportStyle(viewportPreset);
 
@@ -197,7 +205,7 @@ export function WebPreviewBody({
           className
         )}
       >
-        No URL to preview
+        {emptyState ?? "No URL to preview"}
       </div>
     );
   }
@@ -209,16 +217,22 @@ export function WebPreviewBody({
           className="overflow-hidden rounded-sm border border-border bg-card shadow-sm"
           style={frameStyle}
         >
-          <iframe
-            className="h-full w-full border-0 bg-background"
-            key={`${viewportPreset}-${url}`}
-            loading="lazy"
-            referrerPolicy="no-referrer"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
-            src={url}
-            title="Web preview"
-            {...iframeProps}
-          />
+          {children ?? (
+            <div className="flex h-full min-h-[320px] w-full items-center justify-center bg-background px-6 text-center">
+              <div className="flex max-w-md flex-col gap-3 text-muted-foreground text-sm">
+                <p
+                  className="font-semibold text-foreground text-sm uppercase tracking-[0.2em]"
+                  id={fallbackTitleId}
+                >
+                  Browser preview unavailable
+                </p>
+                <p>
+                  This route now requires Hive Desktop so Electron can manage
+                  the embedded browser surface directly.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

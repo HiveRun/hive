@@ -8,6 +8,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { NativeWebPreview } from "@/components/ai-elements/native-web-preview";
 import {
   WebPreview,
   WebPreviewBody,
@@ -22,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useDesktopViewer } from "@/hooks/use-desktop-viewer";
 import { useServiceStream } from "@/hooks/use-service-stream";
 import { type CellServiceSummary, cellQueries } from "@/queries/cells";
 
@@ -153,52 +155,6 @@ function useBrowserReachability({
   return browserReachability;
 }
 
-function createViewerActions({
-  iframeRef,
-  viewerUrl,
-}: {
-  iframeRef: { current: HTMLIFrameElement | null };
-  viewerUrl: string | null;
-}) {
-  const handleRefresh = () => {
-    if (iframeRef.current && viewerUrl) {
-      iframeRef.current.src = viewerUrl;
-    }
-  };
-
-  const handleBack = () => {
-    if (iframeRef.current) {
-      iframeRef.current.contentWindow?.history?.back();
-    }
-  };
-
-  const handleForward = () => {
-    if (iframeRef.current) {
-      iframeRef.current.contentWindow?.history?.forward();
-    }
-  };
-
-  const handleOpenInNewTab = () => {
-    if (viewerUrl) {
-      window.open(viewerUrl, "_blank", "noopener,noreferrer");
-    }
-  };
-
-  const handleMaximize = () => {
-    if (iframeRef.current) {
-      iframeRef.current.requestFullscreen?.();
-    }
-  };
-
-  return {
-    handleBack,
-    handleForward,
-    handleMaximize,
-    handleOpenInNewTab,
-    handleRefresh,
-  };
-}
-
 function CellServiceViewerLive({ cellId }: { cellId: string }) {
   const { services, isLoading, error } = useServiceStream(cellId, {
     enabled: true,
@@ -218,43 +174,98 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
 
   const resolvedReachability =
     browserReachability ?? selectedService?.portReachable ?? null;
+  const previewContainerRef = useRef<HTMLDivElement | null>(null);
+  const { actions, isSupported, state } = useDesktopViewer(
+    previewContainerRef,
+    {
+      enabled: Boolean(viewerUrl),
+      url: viewerUrl,
+    }
+  );
 
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const isDesktopRuntime = isSupported;
 
-  const {
-    handleBack,
-    handleForward,
-    handleMaximize,
-    handleOpenInNewTab,
-    handleRefresh,
-  } = createViewerActions({ iframeRef, viewerUrl });
+  useEffect(() => {
+    if (!isDesktopRuntime) {
+      return;
+    }
+
+    return () => {
+      actions?.hide().catch(() => {
+        /* ignore teardown failures */
+      });
+    };
+  }, [actions, isDesktopRuntime]);
+
+  const hasViewerUrl = viewerUrl !== null;
+
+  const disabledControls = {
+    back: hasViewerUrl ? !state.canGoBack : true,
+    forward: hasViewerUrl ? !state.canGoForward : true,
+    maximize: !hasViewerUrl,
+    openExternal: !hasViewerUrl,
+    refresh: !hasViewerUrl,
+  };
+
+  const handleRefresh = () => {
+    actions?.reload().catch(() => {
+      /* ignore refresh failures */
+    });
+  };
+
+  const handleBack = () => {
+    actions?.goBack().catch(() => {
+      /* ignore navigation failures */
+    });
+  };
+
+  const handleForward = () => {
+    actions?.goForward().catch(() => {
+      /* ignore navigation failures */
+    });
+  };
+
+  const handleOpenExternal = () => {
+    actions?.openExternal().catch(() => {
+      /* ignore external open failures */
+    });
+  };
+
+  const handleMaximize = () => {
+    document.documentElement.requestFullscreen?.().catch(() => {
+      /* ignore fullscreen failures */
+    });
+  };
 
   return (
-    <div className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
+    <div
+      className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-border bg-card"
+      data-testid="cell-viewer-route"
+    >
       <div className="flex h-full w-full flex-col gap-4 p-4">
         <WebPreview
           error={error ?? undefined}
-          isLoading={isLoading}
-          url={viewerUrl}
+          isLoading={isLoading || state.isLoading}
+          url={state.url ?? viewerUrl}
         >
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-sm border-2 border-border bg-card p-2">
             <div className="flex flex-wrap items-center gap-2">
               <WebPreviewNavigationButton
-                disabled={!viewerUrl}
+                disabled={disabledControls.back}
                 onClick={handleBack}
                 tooltip="Back"
               >
                 <ArrowLeft className="h-3.5 w-3.5" />
               </WebPreviewNavigationButton>
               <WebPreviewNavigationButton
-                disabled={!viewerUrl}
+                disabled={disabledControls.forward}
                 onClick={handleForward}
                 tooltip="Forward"
               >
                 <ArrowRight className="h-3.5 w-3.5" />
               </WebPreviewNavigationButton>
               <WebPreviewNavigationButton
-                disabled={!viewerUrl}
+                disabled={disabledControls.refresh}
                 onClick={handleRefresh}
                 tooltip="Refresh"
               >
@@ -268,14 +279,14 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
 
               <div className="flex flex-wrap items-center gap-2">
                 <WebPreviewNavigationButton
-                  disabled={!viewerUrl}
-                  onClick={handleOpenInNewTab}
-                  tooltip="Open in new tab"
+                  disabled={disabledControls.openExternal}
+                  onClick={handleOpenExternal}
+                  tooltip="Open externally"
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
                 </WebPreviewNavigationButton>
                 <WebPreviewNavigationButton
-                  disabled={!viewerUrl}
+                  disabled={disabledControls.maximize}
                   onClick={handleMaximize}
                   tooltip="Fullscreen"
                 >
@@ -319,15 +330,46 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
             </div>
           </div>
 
-          <WebPreviewBody
-            iframeProps={{
-              ref: iframeRef,
-              title: selectedService
-                ? `Service ${selectedService.name} viewer`
-                : "Web preview",
-            }}
-          />
+          <div className="contents">
+            <WebPreviewBody
+              emptyState={
+                isDesktopRuntime ? undefined : <DesktopOnlyViewerMessage />
+              }
+            >
+              {isDesktopRuntime && viewerUrl ? (
+                <NativeWebPreview
+                  containerRef={previewContainerRef}
+                  title={
+                    selectedService
+                      ? `Service ${selectedService.name} viewer`
+                      : "Web preview"
+                  }
+                />
+              ) : (
+                <DesktopOnlyViewerMessage />
+              )}
+            </WebPreviewBody>
+          </div>
         </WebPreview>
+      </div>
+    </div>
+  );
+}
+
+function DesktopOnlyViewerMessage() {
+  return (
+    <div
+      className="flex h-full min-h-[320px] w-full items-center justify-center bg-background px-6 text-center"
+      data-testid="viewer-desktop-only-message"
+    >
+      <div className="flex max-w-md flex-col gap-3 text-muted-foreground text-sm">
+        <p className="font-semibold text-foreground text-sm uppercase tracking-[0.2em]">
+          Hive Desktop required
+        </p>
+        <p>
+          Browser preview now uses Electron directly. Open this cell in Hive
+          Desktop to inspect services without iframe focus and history quirks.
+        </p>
       </div>
     </div>
   );

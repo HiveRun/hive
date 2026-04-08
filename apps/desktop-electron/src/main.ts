@@ -1,11 +1,13 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { app, BrowserWindow, ipcMain } from "electron";
-import { createIpcHandlers, IPC_CHANNELS } from "./ipc";
+import { registerIpcHandlers } from "./ipc";
 
 const DEFAULT_WINDOW_WIDTH = 1400;
 const DEFAULT_WINDOW_HEIGHT = 900;
 const moduleDir = import.meta.dirname;
+
+app.commandLine.appendSwitch("disable-gpu");
 
 const resolveWindowIcon = () => {
   const configuredPath = process.env.HIVE_DESKTOP_ICON_PATH;
@@ -58,13 +60,17 @@ const createMainWindow = async () => {
     title: "Hive Desktop",
   });
 
+  const handlers = registerIpcHandlers({ ipcMain, window });
+
   window.webContents.setWindowOpenHandler(({ url }) => {
-    createIpcHandlers()
-      .openExternal(url)
-      .catch(() => {
-        /* ignore open failures */
-      });
+    handlers.openExternal(url).catch(() => {
+      /* ignore open failures */
+    });
     return { action: "deny" };
+  });
+
+  window.on("closed", () => {
+    handlers.viewer.destroy();
   });
 
   const desktopUrl = process.env.HIVE_DESKTOP_URL;
@@ -83,20 +89,7 @@ const createMainWindow = async () => {
   await window.loadFile(rendererEntry);
 };
 
-const registerIpc = () => {
-  const handlers = createIpcHandlers();
-  ipcMain.handle(IPC_CHANNELS.getRuntimeInfo, () => handlers.getRuntimeInfo());
-  ipcMain.handle(IPC_CHANNELS.notify, (_event, payload) =>
-    handlers.notify(payload)
-  );
-  ipcMain.handle(IPC_CHANNELS.openExternal, (_event, url: string) =>
-    handlers.openExternal(url)
-  );
-};
-
 const bootstrap = async () => {
-  registerIpc();
-
   await app.whenReady();
   await createMainWindow();
 
