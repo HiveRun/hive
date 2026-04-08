@@ -10,4 +10,8 @@ describe("status-theme", () => {
   it("formats status labels for display", () => {
     expect(formatStatus("awaiting_input")).toBe("AWAITING INPUT");
   });
+
+  it("formats starting as loading", () => {
+    expect(formatStatus("starting")).toBe("LOADING");
+  });
 });

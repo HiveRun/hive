@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { useActiveWorkspace } from "@/hooks/use-active-workspace";
 import { getApiBase } from "@/lib/api-base";
@@ -11,6 +11,41 @@ import { cellQueries } from "@/queries/cells";
 const API_BASE = getApiBase();
 const NOTIFICATION_SOUND_PATH = "/sounds/agent-awaiting-input.wav";
 const NOTIFICATION_SOUND_VOLUME = 0.2;
+const MODE_TRANSITION_LOADING_TIMEOUT_MS = 4000;
+
+type ModeEventPayload = {
+  startMode: "plan" | "build";
+  currentMode: "plan" | "build";
+  modeUpdatedAt?: string;
+};
+
+function resolveModeSessionUpdate(
+  previous: AgentSession,
+  payload: ModeEventPayload
+) {
+  const isPlanToBuildTransition =
+    previous.currentMode === "plan" && payload.currentMode === "build";
+
+  return {
+    nextSession: {
+      ...previous,
+      startMode: payload.startMode,
+      currentMode: payload.currentMode,
+      ...(isPlanToBuildTransition ? { status: "starting" } : {}),
+      ...(payload.modeUpdatedAt
+        ? { modeUpdatedAt: payload.modeUpdatedAt }
+        : {}),
+    },
+    isPlanToBuildTransition,
+    fallbackStatus: previous.status,
+  };
+}
+
+type PendingModeTransition = {
+  timeoutId: ReturnType<typeof setTimeout>;
+  sessionQueryKey: ReturnType<typeof agentQueries.sessionByCell>["queryKey"];
+  fallbackStatus: string;
+};
 
 export function useGlobalAgentMonitor() {
   const queryClient = useQueryClient();
@@ -30,7 +65,18 @@ export function useGlobalAgentMonitor() {
     Map<string, { source: EventSource; sessionId: string }>
   >(new Map());
   const lastStatuses = useRef<Map<string, string>>(new Map());
+  const pendingModeTransitions = useRef<Map<string, PendingModeTransition>>(
+    new Map()
+  );
   const windowFocusedRef = useRef(true);
+
+  const cancelPendingModeTransition = useCallback((sessionId: string) => {
+    const pendingTransition = pendingModeTransitions.current.get(sessionId);
+    if (pendingTransition) {
+      clearTimeout(pendingTransition.timeoutId);
+      pendingModeTransitions.current.delete(sessionId);
+    }
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -57,11 +103,63 @@ export function useGlobalAgentMonitor() {
     const readyCells = (cells ?? []).filter((cell) => cell.status === "ready");
     const readyIds = new Set(readyCells.map((cell) => cell.id));
 
+    const scheduleModeTransitionReset = (
+      sessionId: string,
+      sessionQueryKey: ReturnType<
+        typeof agentQueries.sessionByCell
+      >["queryKey"],
+      fallbackStatus: string
+    ) => {
+      cancelPendingModeTransition(sessionId);
+      const timeoutId = setTimeout(() => {
+        queryClient.setQueryData(
+          sessionQueryKey,
+          (previous: AgentSession | null) => {
+            if (!previous || previous.status !== "starting") {
+              return previous;
+            }
+
+            return { ...previous, status: fallbackStatus };
+          }
+        );
+        pendingModeTransitions.current.delete(sessionId);
+      }, MODE_TRANSITION_LOADING_TIMEOUT_MS);
+      pendingModeTransitions.current.set(sessionId, {
+        timeoutId,
+        sessionQueryKey,
+        fallbackStatus,
+      });
+    };
+
+    const restorePendingModeTransition = (sessionId: string) => {
+      const pendingTransition = pendingModeTransitions.current.get(sessionId);
+      if (!pendingTransition) {
+        return;
+      }
+
+      clearTimeout(pendingTransition.timeoutId);
+      queryClient.setQueryData(
+        pendingTransition.sessionQueryKey,
+        (previous: AgentSession | null) => {
+          if (!previous || previous.status !== "starting") {
+            return previous;
+          }
+
+          return {
+            ...previous,
+            status: pendingTransition.fallbackStatus,
+          };
+        }
+      );
+      pendingModeTransitions.current.delete(sessionId);
+    };
+
     for (const [cellId, stream] of sessionStreams.current.entries()) {
       if (!readyIds.has(cellId)) {
         stream.source.close();
         sessionStreams.current.delete(cellId);
         lastStatuses.current.delete(stream.sessionId);
+        restorePendingModeTransition(stream.sessionId);
       }
     }
 
@@ -80,6 +178,7 @@ export function useGlobalAgentMonitor() {
             return;
           }
           currentStream.source.close();
+          restorePendingModeTransition(currentStream.sessionId);
           sessionStreams.current.delete(cell.id);
         }
 
@@ -108,6 +207,8 @@ export function useGlobalAgentMonitor() {
               }
             );
 
+            cancelPendingModeTransition(session.id);
+
             const previousStatus = lastStatuses.current.get(session.id);
             lastStatuses.current.set(session.id, payload.status);
 
@@ -127,11 +228,10 @@ export function useGlobalAgentMonitor() {
 
         const handleMode = (event: MessageEvent<string>) => {
           try {
-            const payload = JSON.parse(event.data) as {
-              startMode: "plan" | "build";
-              currentMode: "plan" | "build";
-              modeUpdatedAt?: string;
-            };
+            const payload = JSON.parse(event.data) as ModeEventPayload;
+
+            let fallbackStatus = "working";
+            let isPlanToBuildTransition = false;
 
             queryClient.setQueryData(
               sessionQuery.queryKey,
@@ -140,16 +240,23 @@ export function useGlobalAgentMonitor() {
                   return previous;
                 }
 
-                return {
-                  ...previous,
-                  startMode: payload.startMode,
-                  currentMode: payload.currentMode,
-                  ...(payload.modeUpdatedAt
-                    ? { modeUpdatedAt: payload.modeUpdatedAt }
-                    : {}),
-                };
+                const next = resolveModeSessionUpdate(previous, payload);
+                isPlanToBuildTransition = next.isPlanToBuildTransition;
+                fallbackStatus = next.fallbackStatus;
+                return next.nextSession;
               }
             );
+
+            if (isPlanToBuildTransition) {
+              scheduleModeTransitionReset(
+                session.id,
+                sessionQuery.queryKey,
+                fallbackStatus
+              );
+              return;
+            }
+
+            cancelPendingModeTransition(session.id);
           } catch {
             // ignore malformed events
           }
@@ -170,6 +277,8 @@ export function useGlobalAgentMonitor() {
             }
           );
 
+          cancelPendingModeTransition(session.id);
+
           const previousStatus = lastStatuses.current.get(session.id);
           lastStatuses.current.set(session.id, "awaiting_input");
           if (previousStatus !== "awaiting_input") {
@@ -187,6 +296,7 @@ export function useGlobalAgentMonitor() {
           eventSource.close();
           sessionStreams.current.delete(cell.id);
           lastStatuses.current.delete(session.id);
+          restorePendingModeTransition(session.id);
         };
       } catch {
         // ignore session fetch errors
@@ -211,8 +321,11 @@ export function useGlobalAgentMonitor() {
       }
       sessionStreams.current.clear();
       lastStatuses.current.clear();
+      for (const sessionId of pendingModeTransitions.current.keys()) {
+        restorePendingModeTransition(sessionId);
+      }
     };
-  }, [cells, queryClient]);
+  }, [cancelPendingModeTransition, cells, queryClient]);
 }
 
 type AwaitingInputNotificationOptions = {
