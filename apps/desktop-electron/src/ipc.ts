@@ -30,8 +30,14 @@ export const createIpcHandlers = (window: BrowserWindow) => {
 
     viewer = createViewerController({
       onStateChange: (state) => {
-        if (!window.webContents.isDestroyed()) {
+        try {
+          if (window.isDestroyed() || window.webContents.isDestroyed()) {
+            return;
+          }
+
           window.webContents.send(IPC_CHANNELS.viewerStateChanged, state);
+        } catch {
+          /* ignore teardown races while the window is closing */
         }
       },
       window,

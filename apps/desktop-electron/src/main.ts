@@ -57,6 +57,7 @@ const createMainWindow = async (ipcRegistry: IpcRegistry) => {
       preload: join(moduleDir, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: false,
     },
     title: "Hive Desktop",
   });

@@ -37,20 +37,36 @@ export const createViewerController = (options: {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: false,
     },
   });
 
   let attached = false;
   let lastBounds: ViewerBounds = { height: 0, width: 0, x: 0, y: 0 };
 
-  const getState = (): ViewerState => ({
-    canGoBack: view.webContents.navigationHistory.canGoBack(),
-    canGoForward: view.webContents.navigationHistory.canGoForward(),
-    isLoading: view.webContents.isLoading(),
+  const emptyState = (): ViewerState => ({
+    canGoBack: false,
+    canGoForward: false,
+    isLoading: false,
     isVisible: attached,
-    title: view.webContents.getTitle(),
-    url: view.webContents.getURL() || null,
+    title: "",
+    url: null,
   });
+
+  const getState = (): ViewerState => {
+    if (view.webContents.isDestroyed()) {
+      return emptyState();
+    }
+
+    return {
+      canGoBack: view.webContents.navigationHistory.canGoBack(),
+      canGoForward: view.webContents.navigationHistory.canGoForward(),
+      isLoading: view.webContents.isLoading(),
+      isVisible: attached,
+      title: view.webContents.getTitle(),
+      url: view.webContents.getURL() || null,
+    };
+  };
 
   const emitState = () => {
     const nextState = getState();
