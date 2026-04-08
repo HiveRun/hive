@@ -46,7 +46,9 @@ const resolveRendererEntry = () => {
   return candidates.find((entry) => existsSync(entry)) ?? null;
 };
 
-const createMainWindow = async () => {
+type IpcRegistry = ReturnType<typeof registerIpcHandlers>;
+
+const createMainWindow = async (ipcRegistry: IpcRegistry) => {
   const window = new BrowserWindow({
     width: DEFAULT_WINDOW_WIDTH,
     height: DEFAULT_WINDOW_HEIGHT,
@@ -59,17 +61,17 @@ const createMainWindow = async () => {
     title: "Hive Desktop",
   });
 
-  const handlers = registerIpcHandlers({ ipcMain, window });
+  ipcRegistry.attachWindow(window);
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    handlers.openExternal(url).catch(() => {
+    ipcRegistry.openExternal(url).catch(() => {
       /* ignore open failures */
     });
     return { action: "deny" };
   });
 
   window.on("closed", () => {
-    handlers.viewer.destroy();
+    ipcRegistry.detachWindow(window);
   });
 
   const desktopUrl = process.env.HIVE_DESKTOP_URL;
@@ -90,11 +92,13 @@ const createMainWindow = async () => {
 
 const bootstrap = async () => {
   await app.whenReady();
-  await createMainWindow();
+  const ipcRegistry = registerIpcHandlers({ ipcMain });
+
+  await createMainWindow(ipcRegistry);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow().catch((error) => {
+      createMainWindow(ipcRegistry).catch((error) => {
         process.stderr.write(
           `Failed to create desktop window: ${String(error)}\n`
         );

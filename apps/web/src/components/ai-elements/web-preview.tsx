@@ -30,6 +30,9 @@ type WebPreviewContextValue = {
 const WebPreviewContext = createContext<WebPreviewContextValue | undefined>(
   undefined
 );
+const noopSetUrl = (_url: string | null) => {
+  // Intentionally empty for read-only preview contexts.
+};
 
 function useWebPreviewContext() {
   const context = useContext(WebPreviewContext);
@@ -41,23 +44,19 @@ function useWebPreviewContext() {
 
 export function WebPreview({
   children,
-  url: initialUrl,
+  onUrlChange,
+  url,
   viewportPreset: defaultViewportPreset = "desktop",
   isLoading = false,
   error = null,
 }: {
   children: ReactNode;
   url: string | null;
+  onUrlChange?: (url: string | null) => void;
   viewportPreset?: ViewportPreset;
   isLoading?: boolean;
   error?: string | null;
 }) {
-  const [url, setUrl] = useState<string | null>(initialUrl);
-
-  useEffect(() => {
-    setUrl(initialUrl);
-  }, [initialUrl]);
-
   const [viewportPreset, setViewportPreset] = useState<ViewportPreset>(
     defaultViewportPreset
   );
@@ -66,7 +65,7 @@ export function WebPreview({
     <WebPreviewContext.Provider
       value={{
         url,
-        setUrl,
+        setUrl: onUrlChange ?? noopSetUrl,
         viewportPreset,
         setViewportPreset,
         isLoading,

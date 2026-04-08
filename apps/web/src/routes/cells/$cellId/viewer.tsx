@@ -165,10 +165,34 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
 
   const portServices = services.filter((service) => service.port != null);
 
-  const viewerUrl = selectedService?.url ?? null;
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const lastSelectedServiceIdRef = useRef<string | null>(null);
+  const lastSelectedServiceUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const nextServiceId = selectedService?.id ?? null;
+    const nextServiceUrl = selectedService?.url ?? null;
+    const selectedServiceChanged =
+      lastSelectedServiceIdRef.current !== nextServiceId;
+
+    setPreviewUrl((currentPreviewUrl) => {
+      if (selectedServiceChanged) {
+        return nextServiceUrl;
+      }
+
+      if (currentPreviewUrl === lastSelectedServiceUrlRef.current) {
+        return nextServiceUrl;
+      }
+
+      return currentPreviewUrl;
+    });
+
+    lastSelectedServiceIdRef.current = nextServiceId;
+    lastSelectedServiceUrlRef.current = nextServiceUrl;
+  }, [selectedService?.id, selectedService?.url]);
 
   const browserReachability = useBrowserReachability({
-    viewerUrl,
+    viewerUrl: previewUrl,
     serviceStatus: selectedService?.status,
   });
 
@@ -178,8 +202,8 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
   const { actions, isSupported, state } = useDesktopViewer(
     previewContainerRef,
     {
-      enabled: Boolean(viewerUrl),
-      url: viewerUrl,
+      enabled: Boolean(previewUrl),
+      url: previewUrl,
     }
   );
 
@@ -197,7 +221,7 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
     };
   }, [actions, isDesktopRuntime]);
 
-  const hasViewerUrl = viewerUrl !== null;
+  const hasViewerUrl = previewUrl !== null;
 
   const disabledControls = {
     back: hasViewerUrl ? !state.canGoBack : true,
@@ -246,7 +270,8 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
         <WebPreview
           error={error ?? undefined}
           isLoading={isLoading || state.isLoading}
-          url={state.url ?? viewerUrl}
+          onUrlChange={setPreviewUrl}
+          url={previewUrl}
         >
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-sm border-2 border-border bg-card p-2">
             <div className="flex flex-wrap items-center gap-2">
@@ -336,7 +361,7 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
                 isDesktopRuntime ? undefined : <DesktopOnlyViewerMessage />
               }
             >
-              {isDesktopRuntime && viewerUrl ? (
+              {isDesktopRuntime && previewUrl ? (
                 <NativeWebPreview
                   containerRef={previewContainerRef}
                   title={

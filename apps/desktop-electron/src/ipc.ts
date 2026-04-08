@@ -1,6 +1,6 @@
 import {
   type BrowserWindow,
-  type IpcMainInvokeEvent,
+  type IpcMain,
   Notification,
   shell,
 } from "electron";
@@ -14,6 +14,11 @@ type NotifyInput = {
 };
 
 type IpcHandlers = ReturnType<typeof createIpcHandlers>;
+
+const openExternal = async (url: string) => {
+  await shell.openExternal(url);
+  return { ok: true } as const;
+};
 
 export const createIpcHandlers = (window: BrowserWindow) => {
   let viewer: ReturnType<typeof createViewerController> | null = null;
@@ -55,11 +60,6 @@ export const createIpcHandlers = (window: BrowserWindow) => {
     return { delivered: true } as const;
   };
 
-  const openExternal = async (url: string) => {
-    await shell.openExternal(url);
-    return { ok: true } as const;
-  };
-
   const viewerGetState = () => getViewer().getState();
   const viewerShow = (bounds: ViewerBounds) => getViewer().show(bounds);
   const viewerHide = () => getViewer().hide();
@@ -93,53 +93,82 @@ export const createIpcHandlers = (window: BrowserWindow) => {
   };
 };
 
-export const registerIpcHandlers = (options: {
-  ipcMain: {
-    handle: (
-      channel: string,
-      listener: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
-    ) => void;
+export const registerIpcHandlers = (options: { ipcMain: IpcMain }) => {
+  let activeWindow: BrowserWindow | null = null;
+  let activeHandlers: IpcHandlers | null = null;
+
+  const requireHandlers = () => {
+    if (!activeHandlers) {
+      throw new Error("Desktop window is not available");
+    }
+
+    return activeHandlers;
   };
-  window: BrowserWindow;
-}) => {
-  const handlers = createIpcHandlers(options.window);
+
+  const attachWindow = (window: BrowserWindow) => {
+    if (activeWindow === window && activeHandlers) {
+      return activeHandlers;
+    }
+
+    activeHandlers?.viewer.destroy();
+    activeWindow = window;
+    activeHandlers = createIpcHandlers(window);
+
+    return activeHandlers;
+  };
+
+  const detachWindow = (window: BrowserWindow) => {
+    if (activeWindow !== window) {
+      return;
+    }
+
+    activeHandlers?.viewer.destroy();
+    activeHandlers = null;
+    activeWindow = null;
+  };
 
   options.ipcMain.handle(IPC_CHANNELS.getRuntimeInfo, () =>
-    handlers.getRuntimeInfo()
+    requireHandlers().getRuntimeInfo()
   );
   options.ipcMain.handle(IPC_CHANNELS.notify, (_event, payload) =>
-    handlers.notify(payload as NotifyInput)
+    requireHandlers().notify(payload as NotifyInput)
   );
   options.ipcMain.handle(IPC_CHANNELS.openExternal, (_event, url) =>
-    handlers.openExternal(url as string)
+    openExternal(url as string)
   );
   options.ipcMain.handle(IPC_CHANNELS.viewerGetState, () =>
-    handlers.viewerGetState()
+    requireHandlers().viewerGetState()
   );
   options.ipcMain.handle(IPC_CHANNELS.viewerShow, (_event, bounds) =>
-    handlers.viewerShow(bounds as ViewerBounds)
+    requireHandlers().viewerShow(bounds as ViewerBounds)
   );
-  options.ipcMain.handle(IPC_CHANNELS.viewerHide, () => handlers.viewerHide());
+  options.ipcMain.handle(IPC_CHANNELS.viewerHide, () =>
+    requireHandlers().viewerHide()
+  );
   options.ipcMain.handle(IPC_CHANNELS.viewerSetBounds, (_event, bounds) =>
-    handlers.viewerSetBounds(bounds as ViewerBounds)
+    requireHandlers().viewerSetBounds(bounds as ViewerBounds)
   );
   options.ipcMain.handle(IPC_CHANNELS.viewerNavigate, (_event, url) =>
-    handlers.viewerNavigate(url as string)
+    requireHandlers().viewerNavigate(url as string)
   );
   options.ipcMain.handle(IPC_CHANNELS.viewerGoBack, () =>
-    handlers.viewerGoBack()
+    requireHandlers().viewerGoBack()
   );
   options.ipcMain.handle(IPC_CHANNELS.viewerGoForward, () =>
-    handlers.viewerGoForward()
+    requireHandlers().viewerGoForward()
   );
   options.ipcMain.handle(IPC_CHANNELS.viewerReload, () =>
-    handlers.viewerReload()
+    requireHandlers().viewerReload()
   );
   options.ipcMain.handle(IPC_CHANNELS.viewerOpenExternal, () =>
-    handlers.viewerOpenExternal()
+    requireHandlers().viewerOpenExternal()
   );
 
-  return handlers;
+  return {
+    attachWindow,
+    detachWindow,
+    openExternal,
+  };
 };
 
 export type { IpcHandlers };
