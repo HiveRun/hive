@@ -12,6 +12,10 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { getApiBase } from "@/lib/api-base";
+import {
+  copyTextToClipboard,
+  registerTerminalClipboard,
+} from "@/lib/terminal-clipboard";
 import { isMouseMovementInputChunk } from "@/lib/terminal-input";
 import {
   parseTerminalSocketMessage,
@@ -292,7 +296,7 @@ export function PtyStreamTerminal({
       const serialized = serializeAddonRef.current?.serialize();
       const text =
         serialized && serialized.length > 0 ? serialized : outputRef.current;
-      await navigator.clipboard.writeText(text);
+      await copyTextToClipboard(text);
       toast.success("Copied terminal output");
     } catch {
       toast.error("Failed to copy terminal output");
@@ -588,6 +592,17 @@ export function PtyStreamTerminal({
               sendInput(data);
             })
           : null;
+      const cleanupClipboard = registerTerminalClipboard({
+        terminal,
+        container: containerRef.current,
+        canPaste: allowInput && Boolean(inputPath),
+        onCopySuccess: () => {
+          toast.success("Copied terminal selection");
+        },
+        onCopyError: () => {
+          toast.error("Failed to copy terminal selection");
+        },
+      });
 
       resizeObserverRef.current = new ResizeObserver(() => {
         fitAddonRef.current?.fit();
@@ -598,17 +613,28 @@ export function PtyStreamTerminal({
       window.addEventListener("resize", scheduleResizeSync);
       connectStream();
       scheduleResizeSync();
+
+      return () => {
+        cleanupClipboard();
+      };
     };
 
-    initializeTerminal().catch((error) => {
-      setConnection("disconnected");
-      setErrorMessage(
-        error instanceof Error ? error.message : "Terminal failed"
-      );
-    });
+    let cleanupTerminalInteractions: (() => void) | null = null;
+
+    initializeTerminal()
+      .then((cleanup) => {
+        cleanupTerminalInteractions = cleanup ?? null;
+      })
+      .catch((error) => {
+        setConnection("disconnected");
+        setErrorMessage(
+          error instanceof Error ? error.message : "Terminal failed"
+        );
+      });
 
     return () => {
       disposed = true;
+      cleanupTerminalInteractions?.();
       if (inputFlushTimeoutRef.current !== null) {
         window.clearTimeout(inputFlushTimeoutRef.current);
         inputFlushTimeoutRef.current = null;
