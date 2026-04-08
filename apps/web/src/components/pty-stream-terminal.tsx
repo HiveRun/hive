@@ -596,15 +596,11 @@ export function PtyStreamTerminal({
         terminal,
         container: containerRef.current,
         canPaste: allowInput && Boolean(inputPath),
-        onPasteText: sendInput,
         onCopySuccess: () => {
           toast.success("Copied terminal selection");
         },
         onCopyError: () => {
           toast.error("Failed to copy terminal selection");
-        },
-        onPasteError: () => {
-          toast.error("Failed to paste into terminal");
         },
       });
 

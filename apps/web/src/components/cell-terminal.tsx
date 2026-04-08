@@ -832,15 +832,11 @@ export function CellTerminal({
       const cleanupClipboard = registerTerminalClipboard({
         terminal,
         container: containerRef.current,
-        onPasteText: sendInput,
         onCopySuccess: () => {
           toast.success("Copied terminal selection");
         },
         onCopyError: () => {
           toast.error("Failed to copy terminal selection");
-        },
-        onPasteError: () => {
-          toast.error("Failed to paste into terminal");
         },
       });
 

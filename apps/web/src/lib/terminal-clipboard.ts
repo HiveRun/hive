@@ -4,10 +4,8 @@ type TerminalClipboardOptions = {
   terminal: XTerm;
   container: HTMLElement;
   canPaste?: boolean;
-  onPasteText?: (text: string) => void;
   onCopySuccess?: () => void;
   onCopyError?: () => void;
-  onPasteError?: () => void;
 };
 
 const isCtrlShiftClipboardModifier = (event: KeyboardEvent) =>
@@ -27,7 +25,7 @@ export async function copyTextToClipboard(text: string): Promise<void> {
 }
 
 export function registerTerminalClipboard(options: TerminalClipboardOptions) {
-  const { canPaste = true, container, onPasteText, terminal } = options;
+  const { canPaste = true, container, terminal } = options;
 
   const getSelection = () => {
     if (!terminal.hasSelection()) {
@@ -63,7 +61,7 @@ export function registerTerminalClipboard(options: TerminalClipboardOptions) {
       return;
     }
 
-    onPasteText?.(text);
+    terminal.paste(text);
   };
 
   terminal.attachCustomKeyEventHandler((event) => {
