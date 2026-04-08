@@ -32,6 +32,7 @@
     "test:e2e:report": "bun run --cwd apps/e2e report:e2e",
     "test:e2e:report:open": "bun run --cwd apps/e2e report:e2e:open",
     "test:e2e:report:serve": "bun run --cwd apps/e2e report:e2e:serve",
+    "test:e2e:backend": "bun run --cwd apps/server test:e2e:backend",
     "test:e2e:desktop": "bun run --cwd apps/e2e-desktop test:e2e",
     "test:e2e:desktop:spec": "bun run --cwd apps/e2e-desktop test:e2e -- --spec",
     "ab:shot": "bash scripts/agent-browser.sh shot",
