@@ -748,14 +748,33 @@ describe("agent model selection", () => {
     ).toBe(true);
   });
 
-  it("does not resync mode from message history on cell session fetch", async () => {
+  it("resyncs mode from message history on cell session fetch", async () => {
+    sessionMessagesMock.mockResolvedValue({
+      data: [
+        {
+          info: {
+            id: "msg-assistant",
+            sessionID: "session-runtime",
+            role: "assistant",
+            mode: "build",
+            time: {
+              created: Date.now(),
+              updated: Date.now(),
+              completed: Date.now(),
+            },
+          },
+          parts: [],
+        },
+      ],
+    });
+
     await ensureAgentSession(cellId, { startMode: "plan" });
-    const callsBeforeFetch = sessionMessagesMock.mock.calls.length;
 
     const session = await fetchAgentSessionForCell(cellId);
 
     expect(session).not.toBeNull();
-    expect(sessionMessagesMock).toHaveBeenCalledTimes(callsBeforeFetch);
+    expect(session?.currentMode).toBe("build");
+    expect(sessionMessagesMock).toHaveBeenCalled();
   });
 
   it("persists resumable working state when a plan question is answered", async () => {

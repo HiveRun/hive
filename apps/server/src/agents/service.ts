@@ -1004,6 +1004,8 @@ export async function fetchAgentSessionForCell(
     const runtime = await ensureRuntimeForCell(cellId, {
       force: false,
     });
+    await synchronizeRuntimeMode(runtime);
+    await synchronizeRuntimeStatus(runtime);
     return toSessionRecord(runtime);
   } catch {
     return null;
