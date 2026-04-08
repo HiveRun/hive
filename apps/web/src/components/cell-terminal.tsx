@@ -12,6 +12,10 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { getApiBase } from "@/lib/api-base";
+import {
+  copyTextToClipboard,
+  registerTerminalClipboard,
+} from "@/lib/terminal-clipboard";
 import { isMouseMovementInputChunk } from "@/lib/terminal-input";
 import {
   parseTerminalSocketMessage,
@@ -505,7 +509,7 @@ export function CellTerminal({
       const serialized = serializeAddonRef.current?.serialize();
       const text =
         serialized && serialized.length > 0 ? serialized : outputRef.current;
-      await navigator.clipboard.writeText(text);
+      await copyTextToClipboard(text);
       toast.success("Copied terminal output");
     } catch {
       toast.error("Failed to copy terminal output");
@@ -518,7 +522,7 @@ export function CellTerminal({
     }
 
     try {
-      await navigator.clipboard.writeText(connectCommand);
+      await copyTextToClipboard(connectCommand);
       toast.success("Copied connect command");
     } catch {
       toast.error("Failed to copy connect command");
@@ -825,12 +829,27 @@ export function CellTerminal({
         wheelScrollBehavior,
         sendInput
       );
+      const cleanupClipboard = registerTerminalClipboard({
+        terminal,
+        container: containerRef.current,
+        onPasteText: sendInput,
+        onCopySuccess: () => {
+          toast.success("Copied terminal selection");
+        },
+        onCopyError: () => {
+          toast.error("Failed to copy terminal selection");
+        },
+        onPasteError: () => {
+          toast.error("Failed to paste into terminal");
+        },
+      });
 
       window.addEventListener("resize", scheduleResizeSync);
       connectStream();
       scheduleResizeSync();
 
       return () => {
+        cleanupClipboard();
         cleanupWheelBridge();
       };
     };
