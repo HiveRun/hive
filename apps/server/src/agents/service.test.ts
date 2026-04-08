@@ -79,7 +79,7 @@ describe("agent model selection", () => {
   const cellId = "cell-model-test";
   let clientStub: ClientStub;
   let loadHiveConfigMock: Mock;
-  let loadOpencodeConfigSpy: Mock;
+  let loadEffectiveOpencodeDefaultsSpy: Mock;
   let acquireOpencodeClientMock: Mock;
 
   beforeAll(async () => {
@@ -95,17 +95,14 @@ describe("agent model selection", () => {
     );
 
     loadHiveConfigMock = vi.fn(async () => mockHiveConfig);
-    loadOpencodeConfigSpy = vi
-      .spyOn(OpencodeConfig, "loadOpencodeConfig")
-      .mockResolvedValue({
-        config: {},
-        source: "default",
-      });
+    loadEffectiveOpencodeDefaultsSpy = vi
+      .spyOn(OpencodeConfig, "loadEffectiveOpencodeDefaults")
+      .mockResolvedValue({});
 
     setAgentRuntimeDependencies({
       db: testDb as unknown as AppDb,
       loadHiveConfig: loadHiveConfigMock,
-      loadOpencodeConfig: OpencodeConfig.loadOpencodeConfig,
+      loadEffectiveOpencodeDefaults: loadEffectiveOpencodeDefaultsSpy,
       acquireOpencodeClient: acquireOpencodeClientMock,
     });
 
@@ -207,10 +204,7 @@ describe("agent model selection", () => {
   });
 
   it("prefers the template's agent configuration over opencode defaults", async () => {
-    loadOpencodeConfigSpy.mockResolvedValue({
-      config: { model: "openai/gpt-5.1-codex-high" },
-      source: "workspace",
-      details: undefined,
+    loadEffectiveOpencodeDefaultsSpy.mockResolvedValue({
       defaultModel: { providerId: "openai", modelId: "gpt-5.1-codex-high" },
     });
 
@@ -254,10 +248,7 @@ describe("agent model selection", () => {
     };
 
     loadHiveConfigMock.mockResolvedValue(hiveConfigWithoutModel);
-    loadOpencodeConfigSpy.mockResolvedValue({
-      config: { model: "opencode/workspace-default" },
-      source: "workspace",
-      details: undefined,
+    loadEffectiveOpencodeDefaultsSpy.mockResolvedValue({
       defaultModel: { providerId: "opencode", modelId: "workspace-default" },
     });
 
@@ -301,10 +292,7 @@ describe("agent model selection", () => {
     };
 
     loadHiveConfigMock.mockResolvedValue(hiveConfigWithoutModel);
-    loadOpencodeConfigSpy.mockResolvedValue({
-      config: { model: "opencode/workspace-default" },
-      source: "workspace",
-      details: undefined,
+    loadEffectiveOpencodeDefaultsSpy.mockResolvedValue({
       defaultModel: { providerId: "openai", modelId: "gpt-5.1-codex-high" },
     });
 
@@ -640,10 +628,7 @@ describe("agent model selection", () => {
     };
 
     loadHiveConfigMock.mockResolvedValue(hiveConfigWithoutModel);
-    loadOpencodeConfigSpy.mockResolvedValue({
-      config: { model: "opencode/gpt-5.2-xhigh" },
-      source: "workspace",
-      details: undefined,
+    loadEffectiveOpencodeDefaultsSpy.mockResolvedValue({
       defaultModel: { providerId: "opencode", modelId: "gpt-5.2-xhigh" },
     });
 
@@ -794,7 +779,7 @@ describe("agent model selection", () => {
     setAgentRuntimeDependencies({
       db: testDb as unknown as AppDb,
       loadHiveConfig: loadHiveConfigMock,
-      loadOpencodeConfig: OpencodeConfig.loadOpencodeConfig,
+      loadEffectiveOpencodeDefaults: loadEffectiveOpencodeDefaultsSpy,
       acquireOpencodeClient: acquireOpencodeClientMock,
     });
 
@@ -912,7 +897,7 @@ describe("agent model selection", () => {
     setAgentRuntimeDependencies({
       db: testDb as unknown as AppDb,
       loadHiveConfig: loadHiveConfigMock,
-      loadOpencodeConfig: loadOpencodeConfigSpy,
+      loadEffectiveOpencodeDefaults: loadEffectiveOpencodeDefaultsSpy,
       acquireOpencodeClient: acquireOpencodeClientMock,
     });
 

@@ -190,7 +190,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('apps/e2e/package.json') }}
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock', 'apps/e2e/package.json', 'apps/e2e-desktop/package.json') }}
           restore-keys: |
             playwright-${{ runner.os }}-
 
@@ -212,7 +212,7 @@ jobs:
         run: echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
 
       - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
+        run: bun run --cwd apps/e2e install:browsers:ci
 
       - name: Run Playwright E2E suite
         run: bun run test:e2e
@@ -254,6 +254,14 @@ jobs:
           restore-keys: |
             bun-cache-${{ runner.os }}-
 
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock', 'apps/e2e/package.json', 'apps/e2e-desktop/package.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
       - name: Cache OpenCode CLI
         id: opencode-cache-desktop
         uses: actions/cache@v4
@@ -285,6 +293,9 @@ jobs:
 
       - name: Add OpenCode CLI to PATH
         run: echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+
+      - name: Install Playwright Chromium
+        run: bun run --cwd apps/e2e-desktop install:browsers:ci
 
       - name: Run desktop Electron smoke suite
         run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" bun run test:e2e:desktop

@@ -2,7 +2,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadOpencodeConfig } from "./opencode-config";
+import {
+  loadEffectiveOpencodeDefaults,
+  loadOpencodeConfig,
+} from "./opencode-config";
 
 const createdDirs: string[] = [];
 
@@ -143,5 +146,40 @@ describe("loadOpencodeConfig", () => {
       ".hive/instructions.md",
       "docs/custom.md",
     ]);
+  });
+});
+
+describe("loadEffectiveOpencodeDefaults", () => {
+  it("reads the effective default model from OpenCode config", async () => {
+    const client: any = {
+      config: {
+        get: async () => ({
+          data: { model: "openai/gpt-5.4-xhigh", default_agent: "plan" },
+        }),
+      },
+    };
+
+    const defaults = await loadEffectiveOpencodeDefaults("/tmp/workspace", {
+      client,
+    });
+
+    expect(defaults).toEqual({
+      defaultModel: { providerId: "openai", modelId: "gpt-5.4-xhigh" },
+      startMode: "plan",
+    });
+  });
+
+  it("returns an empty object when OpenCode exposes no model or start mode", async () => {
+    const client: any = {
+      config: {
+        get: async () => ({ data: {} }),
+      },
+    };
+
+    const defaults = await loadEffectiveOpencodeDefaults("/tmp/workspace", {
+      client,
+    });
+
+    expect(defaults).toEqual({});
   });
 });

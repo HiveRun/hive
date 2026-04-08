@@ -13,6 +13,10 @@ test.describe("terminal route", () => {
   test("opens terminal route, accepts input, and recovers after restart", async ({
     page,
   }) => {
+    await page
+      .context()
+      .grantPermissions(["clipboard-read", "clipboard-write"]);
+
     await page.goto("/");
 
     const cellId = await createCell({
@@ -47,13 +51,39 @@ test.describe("terminal route", () => {
     });
 
     const afterFirstCommand = await readTerminalMetrics(page);
+    const pasteToken = `HIVE_TERMINAL_PASTE_${Date.now()}`;
+
+    await page.evaluate(async (text) => {
+      await navigator.clipboard.writeText(text);
+    }, `echo ${pasteToken}`);
+    await page.locator(selectors.terminalInputTextarea).focus();
+    await page.keyboard.press("Control+Shift+V");
+    await page.keyboard.press("Enter");
+
+    await waitForCondition({
+      timeoutMs: 30_000,
+      errorMessage: "Terminal did not process pasted command",
+      check: async () => {
+        const metrics = await readTerminalMetrics(page);
+        return metrics.outputSeq > afterFirstCommand.outputSeq;
+      },
+    });
+
+    await expect
+      .poll(async () => readTerminalText(page), {
+        message: "Terminal did not render pasted token",
+      })
+      .toContain(pasteToken);
+
+    const afterPasteCommand = await readTerminalMetrics(page);
+
     await sendCellTerminalCommand(page, "pwd");
     await waitForCondition({
       timeoutMs: 30_000,
       errorMessage: "Terminal did not process second command",
       check: async () => {
         const metrics = await readTerminalMetrics(page);
-        return metrics.outputSeq > afterFirstCommand.outputSeq;
+        return metrics.outputSeq > afterPasteCommand.outputSeq;
       },
     });
 
@@ -86,4 +116,10 @@ async function readTerminalMetrics(page: Page): Promise<{ outputSeq: number }> {
   return {
     outputSeq: Number(outputSeqRaw ?? "0"),
   };
+}
+
+async function readTerminalText(page: Page): Promise<string> {
+  return (
+    (await page.locator(selectors.terminalInputSurface).textContent()) ?? ""
+  );
 }
