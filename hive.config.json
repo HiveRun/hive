@@ -39,6 +39,8 @@
       "ignorePatterns": [
         "node_modules/**",
         ".hive/**",
+        ".opencode/state/**",
+        ".opencode/themes/**",
         ".turbo/**",
         "tmp/**",
         "temp/**",
@@ -69,6 +71,8 @@
       "ignorePatterns": [
         "node_modules/**",
         ".hive/**",
+        ".opencode/state/**",
+        ".opencode/themes/**",
         ".turbo/**",
         "tmp/**",
         "temp/**",
@@ -88,6 +92,8 @@
       "ignorePatterns": [
         "node_modules/**",
         ".hive/**",
+        ".opencode/state/**",
+        ".opencode/themes/**",
         ".turbo/**",
         "tmp/**",
         "temp/**",
@@ -110,6 +116,8 @@
       "ignorePatterns": [
         "node_modules/**",
         ".hive/**",
+        ".opencode/state/**",
+        ".opencode/themes/**",
         ".turbo/**",
         "tmp/**",
         "temp/**",
@@ -129,6 +137,8 @@
       "ignorePatterns": [
         "node_modules/**",
         ".hive/**",
+        ".opencode/state/**",
+        ".opencode/themes/**",
         ".turbo/**",
         "tmp/**",
         "temp/**",

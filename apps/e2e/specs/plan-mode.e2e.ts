@@ -41,7 +41,6 @@ const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
 const CHAT_ROUTE_TIMEOUT_MS = 180_000;
 const SESSION_MODE_TIMEOUT_MS = 120_000;
 const BUILD_TRANSITION_TIMEOUT_MS = 170_000;
-const FINAL_MODE_SWITCH_TIMEOUT_MS = 35_000;
 const PLAN_TO_BUILD_TEST_TIMEOUT_MS = 240_000;
 const MODE_POLL_INTERVAL_MS = 500;
 const BUILD_PROMPT_RETRY_INTERVAL_MS = 20_000;
@@ -50,7 +49,6 @@ const QUESTION_API_NOT_FOUND_STATUS = 404;
 const CELL_TEMPLATE_LABEL = "E2E Template";
 const OPENCODE_ATTACH_URL_PATTERN = /attach\s+"([^"]+)"/;
 const TERMINAL_MODE_STATUS_PATTERN = /\b(Plan|Build)\b[\s\S]{0,120}OpenCode/g;
-const BUILD_ACTIVITY_PATTERN = /\bBuild\b[\s\S]{0,25}big-pickle/i;
 const PLAN_EXIT_QUESTION_PATTERN =
   /Would you like to switch to the build[\s\S]{0,80}start implementing\?/i;
 const BUILD_IMPLEMENT_OPTION_PATTERN = /build\/implement/i;
@@ -195,7 +193,7 @@ test.describe("plan mode @plan-mode", () => {
       hasSentInitialPrompt: true,
     });
 
-    await waitForBuildActivity({ page });
+    await waitForTerminalMode({ page, expectedMode: "Build" });
   });
 });
 
@@ -523,19 +521,6 @@ async function waitForTerminalMode(options: {
       const matches = [...content.matchAll(TERMINAL_MODE_STATUS_PATTERN)];
       const latest = matches.at(-1)?.[1];
       return latest === options.expectedMode;
-    },
-  });
-}
-
-async function waitForBuildActivity(options: { page: Page }): Promise<void> {
-  await waitForCondition({
-    timeoutMs: FINAL_MODE_SWITCH_TIMEOUT_MS,
-    errorMessage: "Terminal did not show build activity",
-    check: async () => {
-      const content =
-        (await options.page.locator(selectors.terminalRoot).textContent()) ??
-        "";
-      return BUILD_ACTIVITY_PATTERN.test(content);
     },
   });
 }

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { logger } from "@bogeychan/elysia-logger";
 import { and, desc, eq, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import { Elysia, type Static, sse, t } from "elysia";
-import { loadOpencodeConfig } from "../agents/opencode-config";
+import { loadEffectiveOpencodeDefaults } from "../agents/opencode-config";
 import { getSharedOpencodeServerBaseUrl } from "../agents/opencode-server";
 import type { AgentRuntimeService } from "../agents/service";
 import { agentRuntimeService } from "../agents/service";
@@ -916,11 +916,11 @@ async function resolveDefaultStartMode(args: {
   }
 
   try {
-    const mergedConfig = await loadOpencodeConfig(args.workspaceRootPath);
-    const candidate = (mergedConfig.config as { default_agent?: unknown })
-      .default_agent;
-    if (typeof candidate === "string") {
-      const normalized = normalizeStartMode(candidate);
+    const effectiveDefaults = await loadEffectiveOpencodeDefaults(
+      args.workspaceRootPath
+    );
+    if (effectiveDefaults.startMode) {
+      const normalized = normalizeStartMode(effectiveDefaults.startMode);
       if (normalized) {
         return normalized;
       }
@@ -4532,7 +4532,10 @@ async function finalizeCellProvisioning(
     };
   }
 
-  const initialPrompt = body.description?.trim();
+  const initialPrompt = buildInitialPromptContent({
+    title: body.name,
+    description: body.description,
+  });
   const shouldSendInitialPrompt = shouldSendInitialPromptForAttempt({
     attempt,
     initialPrompt,
@@ -4894,6 +4897,24 @@ function shouldSendInitialPromptForAttempt(args: {
   }
 
   return !args.existingSessionId;
+}
+
+function buildInitialPromptContent(args: {
+  title?: string | null;
+  description?: string | null;
+}): string | undefined {
+  const title = args.title?.trim();
+  const description = args.description?.trim();
+
+  if (!description) {
+    return;
+  }
+
+  if (!title) {
+    return description;
+  }
+
+  return `${title}\n\n${description}`;
 }
 
 function buildAgentSessionOptions(body: Static<typeof CreateCellSchema>) {

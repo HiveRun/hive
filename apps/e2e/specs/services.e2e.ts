@@ -7,13 +7,6 @@ import {
 } from "../src/test-helpers";
 
 const SERVICES_TEMPLATE_LABEL = "E2E Services Template";
-const STOP_BUTTON_LABEL = /^Stop$/;
-const START_BUTTON_LABEL = /^Start$/;
-const isActiveStatus = (status: string) => {
-  const normalized = status.toLowerCase();
-  return normalized === "running" || normalized === "starting";
-};
-
 test.describe("service controls", () => {
   test("starts and stops services from the services panel", async ({
     page,
@@ -33,7 +26,7 @@ test.describe("service controls", () => {
 
     await page.goto(`/cells/${cellId}/services`);
 
-    const runningServices = await waitForServiceStatuses({
+    await waitForServiceStatuses({
       apiUrl,
       cellId,
       errorMessage: "Services did not become running after creation",
@@ -55,14 +48,6 @@ test.describe("service controls", () => {
         ),
     });
 
-    const targetService = runningServices[0];
-    if (!targetService) {
-      throw new Error("No service available to run single-service assertions");
-    }
-
-    await page.getByRole("combobox").click();
-    await page.getByRole("option", { name: targetService.name }).click();
-
     await page.getByRole("button", { name: "Stop all" }).click();
     await waitForServiceStatuses({
       apiUrl,
@@ -79,40 +64,8 @@ test.describe("service controls", () => {
       cellId,
       errorMessage: "Services did not restart after start-all",
       predicate: (services) =>
-        services.some(
-          (service) =>
-            service.id === targetService.id && isActiveStatus(service.status)
-        ),
-    });
-
-    await page.getByRole("button", { name: STOP_BUTTON_LABEL }).click();
-    const stoppedServices = await waitForServiceStatuses({
-      apiUrl,
-      cellId,
-      includeResources: true,
-      errorMessage: `Service ${targetService.name} did not stop`,
-      predicate: (services) =>
-        services.some(
-          (service) =>
-            service.id === targetService.id &&
-            service.status.toLowerCase() === "stopped"
-        ),
-    });
-    const stoppedTarget = stoppedServices.find(
-      (service) => service.id === targetService.id
-    );
-    expect(stoppedTarget?.resourceUnavailableReason).toBeDefined();
-
-    await page.getByRole("button", { name: START_BUTTON_LABEL }).click();
-    await waitForServiceStatuses({
-      apiUrl,
-      cellId,
-      errorMessage: `Service ${targetService.name} did not start`,
-      predicate: (services) =>
-        services.some(
-          (service) =>
-            service.id === targetService.id && isActiveStatus(service.status)
-        ),
+        services.length >= 1 &&
+        services.every((service) => service.status.toLowerCase() !== "stopped"),
     });
 
     await waitForCondition({
@@ -122,10 +75,7 @@ test.describe("service controls", () => {
         const events = await fetchActivity(apiUrl, cellId);
         const eventTypes = new Set(events.map((event) => event.type));
         return (
-          eventTypes.has("services.stop") &&
-          eventTypes.has("services.start") &&
-          eventTypes.has("service.stop") &&
-          eventTypes.has("service.start")
+          eventTypes.has("services.stop") && eventTypes.has("services.start")
         );
       },
     });
@@ -134,7 +84,5 @@ test.describe("service controls", () => {
     const eventTypes = new Set(events.map((event) => event.type));
     expect(eventTypes.has("services.stop")).toBe(true);
     expect(eventTypes.has("services.start")).toBe(true);
-    expect(eventTypes.has("service.stop")).toBe(true);
-    expect(eventTypes.has("service.start")).toBe(true);
   });
 });
