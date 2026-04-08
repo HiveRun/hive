@@ -1,0 +1,15 @@
+export const IPC_CHANNELS = {
+  getRuntimeInfo: "hive.desktop.getRuntimeInfo",
+  notify: "hive.desktop.notify",
+  openExternal: "hive.desktop.openExternal",
+  viewerGetState: "hive.desktop.viewer.getState",
+  viewerGoBack: "hive.desktop.viewer.goBack",
+  viewerGoForward: "hive.desktop.viewer.goForward",
+  viewerHide: "hive.desktop.viewer.hide",
+  viewerNavigate: "hive.desktop.viewer.navigate",
+  viewerOpenExternal: "hive.desktop.viewer.openExternal",
+  viewerReload: "hive.desktop.viewer.reload",
+  viewerSetBounds: "hive.desktop.viewer.setBounds",
+  viewerShow: "hive.desktop.viewer.show",
+  viewerStateChanged: "hive.desktop.viewer.stateChanged",
+} as const;

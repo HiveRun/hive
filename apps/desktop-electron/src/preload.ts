@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { IPC_CHANNELS } from "./ipc";
+import { IPC_CHANNELS } from "./ipc-channels";
 
 type NotificationInput = {
   title: string;

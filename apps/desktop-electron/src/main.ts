@@ -54,7 +54,6 @@ const createMainWindow = async () => {
     webPreferences: {
       preload: join(moduleDir, "preload.js"),
       contextIsolation: true,
-      sandbox: true,
       nodeIntegration: false,
     },
     title: "Hive Desktop",

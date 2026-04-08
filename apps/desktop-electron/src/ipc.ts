@@ -4,24 +4,9 @@ import {
   Notification,
   shell,
 } from "electron";
+import { IPC_CHANNELS } from "./ipc-channels";
 import type { ViewerBounds } from "./viewer-controller";
 import { createViewerController } from "./viewer-controller";
-
-export const IPC_CHANNELS = {
-  getRuntimeInfo: "hive.desktop.getRuntimeInfo",
-  notify: "hive.desktop.notify",
-  openExternal: "hive.desktop.openExternal",
-  viewerGetState: "hive.desktop.viewer.getState",
-  viewerGoBack: "hive.desktop.viewer.goBack",
-  viewerGoForward: "hive.desktop.viewer.goForward",
-  viewerHide: "hive.desktop.viewer.hide",
-  viewerNavigate: "hive.desktop.viewer.navigate",
-  viewerOpenExternal: "hive.desktop.viewer.openExternal",
-  viewerReload: "hive.desktop.viewer.reload",
-  viewerSetBounds: "hive.desktop.viewer.setBounds",
-  viewerShow: "hive.desktop.viewer.show",
-  viewerStateChanged: "hive.desktop.viewer.stateChanged",
-} as const;
 
 type NotifyInput = {
   title: string;
@@ -31,14 +16,24 @@ type NotifyInput = {
 type IpcHandlers = ReturnType<typeof createIpcHandlers>;
 
 export const createIpcHandlers = (window: BrowserWindow) => {
-  const viewer = createViewerController({
-    onStateChange: (state) => {
-      if (!window.webContents.isDestroyed()) {
-        window.webContents.send(IPC_CHANNELS.viewerStateChanged, state);
-      }
-    },
-    window,
-  });
+  let viewer: ReturnType<typeof createViewerController> | null = null;
+
+  const getViewer = () => {
+    if (viewer) {
+      return viewer;
+    }
+
+    viewer = createViewerController({
+      onStateChange: (state) => {
+        if (!window.webContents.isDestroyed()) {
+          window.webContents.send(IPC_CHANNELS.viewerStateChanged, state);
+        }
+      },
+      window,
+    });
+
+    return viewer;
+  };
 
   const getRuntimeInfo = () => ({
     runtime: "electron" as const,
@@ -65,21 +60,27 @@ export const createIpcHandlers = (window: BrowserWindow) => {
     return { ok: true } as const;
   };
 
-  const viewerGetState = () => viewer.getState();
-  const viewerShow = (bounds: ViewerBounds) => viewer.show(bounds);
-  const viewerHide = () => viewer.hide();
-  const viewerSetBounds = (bounds: ViewerBounds) => viewer.setBounds(bounds);
-  const viewerNavigate = async (url: string) => await viewer.loadURL(url);
-  const viewerGoBack = () => viewer.goBack();
-  const viewerGoForward = () => viewer.goForward();
-  const viewerReload = () => viewer.reload();
-  const viewerOpenExternal = async () => await viewer.openExternal();
+  const viewerGetState = () => getViewer().getState();
+  const viewerShow = (bounds: ViewerBounds) => getViewer().show(bounds);
+  const viewerHide = () => getViewer().hide();
+  const viewerSetBounds = (bounds: ViewerBounds) =>
+    getViewer().setBounds(bounds);
+  const viewerNavigate = async (url: string) => await getViewer().loadURL(url);
+  const viewerGoBack = () => getViewer().goBack();
+  const viewerGoForward = () => getViewer().goForward();
+  const viewerReload = () => getViewer().reload();
+  const viewerOpenExternal = async () => await getViewer().openExternal();
 
   return {
     getRuntimeInfo,
     notify,
     openExternal,
-    viewer,
+    viewer: {
+      destroy: () => {
+        viewer?.destroy();
+        viewer = null;
+      },
+    },
     viewerGetState,
     viewerGoBack,
     viewerGoForward,

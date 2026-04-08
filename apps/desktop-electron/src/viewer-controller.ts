@@ -37,7 +37,6 @@ export const createViewerController = (options: {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
     },
   });
 
