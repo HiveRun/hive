@@ -34,6 +34,7 @@ bun run test:e2e:spec specs/cell-chat.e2e.ts
 - Use headless mode by default; only use headed mode for manual login/2FA/CAPTCHA or explicit live walkthrough requests.
 - Include verification evidence in your final response (key observed behavior and/or captured artifacts).
 - If pre-push fails on the known flaky backend spec (`apps/server/src/__tests__/routes/cells.create.test.ts`), run `bun -C apps/server run test -- src/__tests__/routes/cells.create.test.ts -t "returns detailed payload when template setup fails"` once, then rerun `bun run check:push`.
+- Never commit `test.fixme`, `test.skip`, `it.skip`, or `describe.skip`. `bun run check:no-disabled-tests` enforces this; if coverage cannot be made reliable, fix the harness or remove the test instead of disabling it.
 
 ### Desktop Smoke E2E (Playwright + Electron)
 Desktop runtime parity checks live under `apps/e2e-desktop` and run Playwright against a debug Electron runtime.
