@@ -80,6 +80,51 @@ describe("resolveRuntimeStatusFromEvent", () => {
     });
   });
 
+  it("returns awaiting_input for plan questions", () => {
+    const event: Event = {
+      type: "question.asked",
+      properties: {
+        id: "question_test",
+        sessionID: "ses_test",
+        text: "Continue?",
+      },
+    } as unknown as Event;
+
+    expect(resolveRuntimeStatusFromEvent(event)).toEqual({
+      status: "awaiting_input",
+    });
+  });
+
+  it("returns working for answered plan questions", () => {
+    const event: Event = {
+      type: "question.replied",
+      properties: {
+        id: "question_test",
+        sessionID: "ses_test",
+        text: "Continue?",
+        answer: "Yes",
+      },
+    } as unknown as Event;
+
+    expect(resolveRuntimeStatusFromEvent(event)).toEqual({
+      status: "working",
+    });
+  });
+
+  it("returns awaiting_input for rejected plan questions", () => {
+    const event: Event = {
+      type: "question.rejected",
+      properties: {
+        id: "question_test",
+        sessionID: "ses_test",
+      },
+    } as unknown as Event;
+
+    expect(resolveRuntimeStatusFromEvent(event)).toEqual({
+      status: "awaiting_input",
+    });
+  });
+
   it("returns error info for session errors", () => {
     const event: Event = {
       type: "session.error",

@@ -24,6 +24,11 @@ const TEST_SESSION_WITH_MODE: AgentSessionRecord = {
   modeUpdatedAt: new Date().toISOString(),
 };
 
+const TEST_WORKING_SESSION: AgentSessionRecord = {
+  ...TEST_SESSION,
+  status: "working",
+};
+
 const HTTP_OK = 200;
 const HTTP_NOT_FOUND = 404;
 
@@ -100,6 +105,51 @@ describe("agent status stream", () => {
     expect(response.status).toBe(HTTP_NOT_FOUND);
     const payload = (await response.json()) as { message: string };
     expect(payload.message).toBe("Agent session not found");
+  });
+
+  it("emits working as the initial restored status", async () => {
+    vi.spyOn(AgentService, "fetchAgentSession").mockImplementation(
+      async (id: string) =>
+        id === TEST_SESSION.id ? TEST_WORKING_SESSION : null
+    );
+
+    const app = new Elysia().use(agentsRoutes);
+    const response = await app.handle(
+      new Request(
+        `http://localhost/api/agents/sessions/${TEST_SESSION.id}/events`
+      )
+    );
+
+    expect(response.status).toBe(HTTP_OK);
+
+    const reader = response.body?.getReader();
+    expect(reader).toBeDefined();
+    if (!reader) {
+      throw new Error("Expected event stream body");
+    }
+
+    const decoder = new TextDecoder();
+    const readChunk = async () => {
+      const next = await reader.read();
+      const value = next.value;
+      if (typeof value === "string") {
+        return value;
+      }
+      if (value instanceof Uint8Array) {
+        return decoder.decode(value);
+      }
+      if (value instanceof ArrayBuffer) {
+        return decoder.decode(new Uint8Array(value));
+      }
+      return "";
+    };
+
+    const initial = await readChunk();
+
+    expect(initial).toContain("event: status");
+    expect(initial).toContain("working");
+
+    await reader.cancel();
   });
 
   it("emits initial mode and forwards mode updates", async () => {
