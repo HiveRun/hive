@@ -105,7 +105,7 @@ describe("agent model selection", () => {
     setAgentRuntimeDependencies({
       db: testDb as unknown as AppDb,
       loadHiveConfig: loadHiveConfigMock,
-      loadOpencodeConfig: loadOpencodeConfigSpy,
+      loadOpencodeConfig: OpencodeConfig.loadOpencodeConfig,
       acquireOpencodeClient: acquireOpencodeClientMock,
     });
 
@@ -794,7 +794,7 @@ describe("agent model selection", () => {
     setAgentRuntimeDependencies({
       db: testDb as unknown as AppDb,
       loadHiveConfig: loadHiveConfigMock,
-      loadOpencodeConfig: loadOpencodeConfigSpy,
+      loadOpencodeConfig: OpencodeConfig.loadOpencodeConfig,
       acquireOpencodeClient: acquireOpencodeClientMock,
     });
 
