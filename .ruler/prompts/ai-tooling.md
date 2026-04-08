@@ -14,7 +14,7 @@
 - Run `bun run test:e2e` when modifying cell lifecycle, terminal handling, service orchestration, or workspace management.
 - For `apps/e2e` changes, prefer deterministic checks (session/message metadata + UI confirmation) instead of fixed sleeps.
 - Keep E2E fixtures/config in sync with runtime defaults (provider/model IDs, template labels) so test behavior matches production paths.
-- Treat `.hive/` and generated `.opencode/state/`, `.opencode/themes/`, and `.opencode/tools/` paths as runtime artifacts that should not be committed; keep `opencode.json` and intentional source under `.opencode/plugin/` trackable.
+- Treat `.hive/` and generated `.opencode/state/`, `.opencode/themes/`, and `.opencode/tools/` paths as runtime artifacts that should not be committed. Keep `.opencode/tools/` available for spawned-cell copies so OpenCode tools can propagate, and keep `opencode.json` plus intentional source under `.opencode/plugin/` trackable.
 - When the user requests a change to agent guidance or project docs, proactively locate the relevant file(s) and make the update without waiting for another reminder.
 - Update `.ruler/prompts/*.md` whenever guidance for agents changes; the prompt bundle is our source of truth for AI behavior.
 - Commit prompt changes like any other source code so CI and Husky enforce lint/type/build checks.

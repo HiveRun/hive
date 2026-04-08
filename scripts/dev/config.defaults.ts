@@ -5,7 +5,6 @@ const defaultIgnorePatterns = [
   ".hive/**",
   ".opencode/state/**",
   ".opencode/themes/**",
-  ".opencode/tools/**",
   ".turbo/**",
   "tmp/**",
   "temp/**",

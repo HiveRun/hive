@@ -83,7 +83,7 @@ Environment variables:
   PORT=4100 hive
   ```
 - Embedded chat sessions inherit OpenCode config from workspace `@opencode.json` / `opencode.json`.
-- Keep `opencode.json` in version control. Hive also generates per-worktree runtime artifacts under `.hive/` and `.opencode/state/`, `.opencode/themes/`, and `.opencode/tools/` for embedded chat sessions; those machine-generated files should stay ignored. Intentional OpenCode source under `.opencode/plugin/` remains trackable.
+- Keep `opencode.json` in version control. Hive also generates per-worktree runtime artifacts under `.hive/` and `.opencode/state/`, `.opencode/themes/`, and `.opencode/tools/` for embedded chat sessions; those machine-generated files should stay ignored in git. Hive still copies `.opencode/tools/` into spawned cells so OpenCode tools can propagate across nested cell spawns. Intentional OpenCode source under `.opencode/plugin/` remains trackable.
 - The SQLite database defaults to `~/.hive/state/hive.db`; set `DATABASE_URL` if you need a different location.
 - High-frequency transport/polling request logs are muted by default to keep runtime logs readable. Re-enable per category with `HIVE_LOG_TERMINAL_TRAFFIC=1`, `HIVE_LOG_POLLING_TRAFFIC=1`, or `HIVE_LOG_OPTIONS_REQUESTS=1`.
 
