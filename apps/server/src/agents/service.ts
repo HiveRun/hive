@@ -990,6 +990,7 @@ export async function fetchAgentSession(
   try {
     const runtime = await ensureRuntimeForSession(sessionId);
     await synchronizeRuntimeMode(runtime);
+    await synchronizeRuntimeStatus(runtime);
     return toSessionRecord(runtime);
   } catch {
     return null;
@@ -1003,6 +1004,8 @@ export async function fetchAgentSessionForCell(
     const runtime = await ensureRuntimeForCell(cellId, {
       force: false,
     });
+    await synchronizeRuntimeMode(runtime);
+    await synchronizeRuntimeStatus(runtime);
     return toSessionRecord(runtime);
   } catch {
     return null;
@@ -1058,7 +1061,7 @@ export async function interruptAgentSession(sessionId: string): Promise<void> {
     );
   }
 
-  setRuntimeStatus(runtime, "awaiting_input");
+  await applyRuntimeStatus(runtime, "awaiting_input");
 }
 
 export async function stopAgentSession(
@@ -1142,11 +1145,13 @@ export async function resumeAgentSessionsOnStartup(): Promise<void> {
       const shouldResume = await shouldResumeRuntime(runtime);
       if (shouldResume) {
         await runtime.sendMessage(RESUME_SESSION_PROMPT);
+        continue;
       }
       await runtimeDb
         .update(cells)
         .set({ resumeAgentSessionOnStartup: false })
         .where(eq(cells.id, cell.id));
+      runtime.cell.resumeAgentSessionOnStartup = false;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(
@@ -1166,15 +1171,23 @@ async function shouldResumeRuntime(runtime: RuntimeHandle): Promise<boolean> {
   });
 
   if (response.error || !response.data?.length) {
-    return false;
+    return Boolean(runtime.cell.resumeAgentSessionOnStartup);
   }
 
   const lastMessage = response.data.at(-1)?.info;
   if (!lastMessage) {
+    return Boolean(runtime.cell.resumeAgentSessionOnStartup);
+  }
+
+  if (shouldResumeFromMessage(lastMessage)) {
+    return true;
+  }
+
+  if (!runtime.cell.resumeAgentSessionOnStartup) {
     return false;
   }
 
-  return shouldResumeFromMessage(lastMessage);
+  return !isCompletedAssistantMessage(lastMessage);
 }
 
 function shouldResumeFromMessage(message: Message): boolean {
@@ -1185,6 +1198,13 @@ function shouldResumeFromMessage(message: Message): boolean {
     return false;
   }
   return !message.time.completed;
+}
+
+function isCompletedAssistantMessage(message: Message): boolean {
+  return (
+    message.role === "assistant" &&
+    (Boolean(message.error) || Boolean(message.time.completed))
+  );
 }
 
 type AgentRuntimeError = {
@@ -1463,6 +1483,8 @@ async function ensureRuntimeForCell(
     setRuntimeMode(runtime, restoredMode);
   }
 
+  await synchronizeRuntimeStatus(runtime);
+
   if (
     createdSession &&
     shouldSeedModelPreference({
@@ -1676,7 +1698,7 @@ async function startOpencodeRuntime({
     currentMode: startMode,
     modeUpdatedAt: new Date().toISOString(),
     async sendMessage(content) {
-      setRuntimeStatus(runtime, "working");
+      await applyRuntimeStatus(runtime, "working");
 
       const activeModelId = runtime.modelId;
       const parts = [{ type: "text" as const, text: content }];
@@ -1703,7 +1725,7 @@ async function startOpencodeRuntime({
       if (response.error) {
         if (runtime.pendingInterrupt && isMessageAbortedError(response.error)) {
           runtime.pendingInterrupt = false;
-          setRuntimeStatus(runtime, "awaiting_input");
+          await applyRuntimeStatus(runtime, "awaiting_input");
           return;
         }
 
@@ -1711,7 +1733,7 @@ async function startOpencodeRuntime({
           response.error,
           "Agent prompt failed"
         );
-        setRuntimeStatus(runtime, "error", errorMessage);
+        await applyRuntimeStatus(runtime, "error", errorMessage);
         throw new Error(errorMessage);
       }
 
@@ -1726,7 +1748,9 @@ async function startOpencodeRuntime({
           client,
         });
       }
-      setRuntimeStatus(runtime, "completed");
+      await applyRuntimeStatus(runtime, "completed", undefined, {
+        persist: options.deleteRemote === true,
+      });
     },
   };
 
@@ -1826,7 +1850,7 @@ async function startEventStream({
       updateRuntimeModeFromEvent(runtime, event);
       recordCompactionEvent(runtime, event);
       publish(runtime.session.id, event);
-      updateRuntimeStatusFromEvent(runtime, event);
+      await updateRuntimeStatusFromEvent(runtime, event);
     }
   } catch {
     // Event stream closed
@@ -1910,6 +1934,53 @@ async function synchronizeRuntimeMode(runtime: RuntimeHandle): Promise<void> {
   }
 
   setRuntimeMode(runtime, resolvedMode);
+}
+
+async function resolveSessionStatusPreference(
+  runtime: RuntimeHandle
+): Promise<AgentSessionStatus | null> {
+  try {
+    const query = runtime.directoryQuery.directory
+      ? { directory: runtime.directoryQuery.directory, limit: 100 }
+      : { limit: 100 };
+    const response = await runtime.client.session.messages({
+      path: { id: runtime.session.id },
+      query,
+    });
+
+    if (response.error || !response.data?.length) {
+      return runtime.cell.resumeAgentSessionOnStartup ? "working" : null;
+    }
+
+    const lastMessage = response.data.at(-1)?.info;
+    if (!lastMessage) {
+      return runtime.cell.resumeAgentSessionOnStartup ? "working" : null;
+    }
+
+    if (shouldResumeFromMessage(lastMessage)) {
+      return "working";
+    }
+
+    if (
+      runtime.cell.resumeAgentSessionOnStartup &&
+      !isCompletedAssistantMessage(lastMessage)
+    ) {
+      return "working";
+    }
+
+    return null;
+  } catch {
+    return runtime.cell.resumeAgentSessionOnStartup ? "working" : null;
+  }
+}
+
+async function synchronizeRuntimeStatus(runtime: RuntimeHandle): Promise<void> {
+  const resolvedStatus = await resolveSessionStatusPreference(runtime);
+  if (!resolvedStatus) {
+    return;
+  }
+
+  setRuntimeStatus(runtime, resolvedStatus);
 }
 
 async function seedSessionModelPreference(
@@ -2040,17 +2111,17 @@ function getFallbackEventSessionId(event: Event): string | null {
   return typeof sessionId === "string" ? sessionId : null;
 }
 
-function updateRuntimeStatusFromEvent(
+async function updateRuntimeStatusFromEvent(
   runtime: RuntimeHandle,
   event: Event
-): void {
+): Promise<void> {
   if (
     event.type === "session.error" &&
     runtime.pendingInterrupt &&
     isSessionErrorAborted(event)
   ) {
     runtime.pendingInterrupt = false;
-    setRuntimeStatus(runtime, "awaiting_input");
+    await applyRuntimeStatus(runtime, "awaiting_input");
     return;
   }
 
@@ -2063,7 +2134,7 @@ function updateRuntimeStatusFromEvent(
     return;
   }
 
-  setRuntimeStatus(runtime, update.status, update.error);
+  await applyRuntimeStatus(runtime, update.status, update.error);
 }
 
 export function resolveRuntimeStatusFromEvent(
@@ -2226,6 +2297,50 @@ function setRuntimeStatus(
       : { type: "status" as const, status, error };
   const { publishAgentEvent: publish } = getAgentRuntimeDependencies();
   publish(runtime.session.id, statusEvent);
+}
+
+async function applyRuntimeStatus(
+  runtime: RuntimeHandle,
+  status: AgentSessionStatus,
+  error?: string,
+  options?: { persist?: boolean }
+): Promise<void> {
+  setRuntimeStatus(runtime, status, error);
+
+  if (options?.persist === false) {
+    return;
+  }
+
+  try {
+    await persistRuntimeResumeState(runtime, status);
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+
+    // biome-ignore lint/suspicious/noConsole: non-fatal persistence failures should not break the runtime event loop
+    console.warn("[agent] Failed to persist runtime resume state", {
+      cellId: runtime.cell.id,
+      sessionId: runtime.session.id,
+      status,
+      message,
+    });
+  }
+}
+
+async function persistRuntimeResumeState(
+  runtime: RuntimeHandle,
+  status: AgentSessionStatus
+): Promise<void> {
+  const shouldResume = status === "working" && !runtime.pendingInterrupt;
+  if (runtime.cell.resumeAgentSessionOnStartup === shouldResume) {
+    return;
+  }
+
+  const { db: runtimeDb } = getAgentRuntimeDependencies();
+  await runtimeDb
+    .update(cells)
+    .set({ resumeAgentSessionOnStartup: shouldResume })
+    .where(eq(cells.id, runtime.cell.id));
+  runtime.cell.resumeAgentSessionOnStartup = shouldResume;
 }
 
 function resolveRuntimeModeFromEvent(event: Event): AgentMode | undefined {

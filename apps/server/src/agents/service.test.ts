@@ -65,9 +65,11 @@ import {
   closeAgentSession,
   closeAllAgentSessions,
   ensureAgentSession,
+  fetchAgentSession,
   fetchAgentSessionForCell,
   fetchCompactionStats,
   resetAgentRuntimeDependencies,
+  resumeAgentSessionsOnStartup,
   sendAgentMessage,
   setAgentRuntimeDependencies,
   updateAgentSessionModel,
@@ -746,14 +748,191 @@ describe("agent model selection", () => {
     ).toBe(true);
   });
 
-  it("does not resync mode from message history on cell session fetch", async () => {
+  it("resyncs mode from message history on cell session fetch", async () => {
+    sessionMessagesMock.mockResolvedValue({
+      data: [
+        {
+          info: {
+            id: "msg-assistant",
+            sessionID: "session-runtime",
+            role: "assistant",
+            mode: "build",
+            time: {
+              created: Date.now(),
+              updated: Date.now(),
+              completed: Date.now(),
+            },
+          },
+          parts: [],
+        },
+      ],
+    });
+
     await ensureAgentSession(cellId, { startMode: "plan" });
-    const callsBeforeFetch = sessionMessagesMock.mock.calls.length;
 
     const session = await fetchAgentSessionForCell(cellId);
 
     expect(session).not.toBeNull();
-    expect(sessionMessagesMock).toHaveBeenCalledTimes(callsBeforeFetch);
+    expect(session?.currentMode).toBe("build");
+    expect(sessionMessagesMock).toHaveBeenCalled();
+  });
+
+  it("persists resumable working state when a plan question is answered", async () => {
+    const questionAnsweredEvent = {
+      type: "question.replied",
+      properties: {
+        id: "question_123",
+        sessionID: "session-runtime",
+        text: "Continue?",
+        answer: "Yes",
+      },
+    } as unknown as OpencodeEvent;
+
+    const clientStubWithEvents = buildClientStubWithEvents([
+      questionAnsweredEvent,
+    ]);
+    acquireOpencodeClientMock = vi.fn(
+      async () => clientStubWithEvents as unknown as OpencodeClient
+    );
+
+    setAgentRuntimeDependencies({
+      db: testDb as unknown as AppDb,
+      loadHiveConfig: loadHiveConfigMock,
+      loadEffectiveOpencodeDefaults: loadEffectiveOpencodeDefaultsSpy,
+      acquireOpencodeClient: acquireOpencodeClientMock,
+    });
+
+    await ensureAgentSession(cellId, { startMode: "plan" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const [cell] = await testDb
+      .select({
+        resumeAgentSessionOnStartup: cells.resumeAgentSessionOnStartup,
+      })
+      .from(cells)
+      .where(eq(cells.id, cellId));
+
+    expect(cell?.resumeAgentSessionOnStartup).toBe(true);
+  });
+
+  it("restores working status from persisted resume state when remote history lags", async () => {
+    const session = await ensureAgentSession(cellId, { startMode: "plan" });
+
+    await closeAllAgentSessions({ deleteRemote: false });
+    await testDb
+      .update(cells)
+      .set({ resumeAgentSessionOnStartup: true })
+      .where(eq(cells.id, cellId));
+
+    sessionMessagesMock.mockResolvedValue({
+      data: [
+        {
+          info: {
+            id: "msg-user",
+            sessionID: session.id,
+            role: "user",
+            time: {
+              created: Date.now(),
+              updated: Date.now(),
+            },
+          },
+          parts: [],
+        },
+      ],
+    });
+
+    const restored = await fetchAgentSession(session.id);
+
+    expect(restored?.status).toBe("working");
+  });
+
+  it("resumes flagged sessions on startup even before assistant streaming resumes", async () => {
+    const session = await ensureAgentSession(cellId, { startMode: "plan" });
+
+    await closeAllAgentSessions({ deleteRemote: false });
+    await testDb
+      .update(cells)
+      .set({ resumeAgentSessionOnStartup: true })
+      .where(eq(cells.id, cellId));
+
+    sessionMessagesMock.mockResolvedValue({
+      data: [
+        {
+          info: {
+            id: "msg-user",
+            sessionID: session.id,
+            role: "user",
+            time: {
+              created: Date.now(),
+              updated: Date.now(),
+            },
+          },
+          parts: [],
+        },
+      ],
+    });
+
+    clientStub.session.prompt.mockClear();
+
+    await resumeAgentSessionsOnStartup();
+
+    expect(clientStub.session.prompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: { id: session.id },
+        body: expect.objectContaining({
+          parts: [{ type: "text", text: "Please continue" }],
+        }),
+      })
+    );
+
+    const [cell] = await testDb
+      .select({
+        resumeAgentSessionOnStartup: cells.resumeAgentSessionOnStartup,
+      })
+      .from(cells)
+      .where(eq(cells.id, cellId));
+
+    expect(cell?.resumeAgentSessionOnStartup).toBe(true);
+  });
+
+  it("keeps persisted resume state when shutting down without deleting the remote session", async () => {
+    const questionAnsweredEvent = {
+      type: "question.replied",
+      properties: {
+        id: "question_123",
+        sessionID: "session-runtime",
+        text: "Continue?",
+        answer: "Yes",
+      },
+    } as unknown as OpencodeEvent;
+
+    const clientStubWithEvents = buildClientStubWithEvents([
+      questionAnsweredEvent,
+    ]);
+    acquireOpencodeClientMock = vi.fn(
+      async () => clientStubWithEvents as unknown as OpencodeClient
+    );
+
+    setAgentRuntimeDependencies({
+      db: testDb as unknown as AppDb,
+      loadHiveConfig: loadHiveConfigMock,
+      loadEffectiveOpencodeDefaults: loadEffectiveOpencodeDefaultsSpy,
+      acquireOpencodeClient: acquireOpencodeClientMock,
+    });
+
+    await ensureAgentSession(cellId, { startMode: "plan" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    await closeAllAgentSessions({ deleteRemote: false });
+
+    const [cell] = await testDb
+      .select({
+        resumeAgentSessionOnStartup: cells.resumeAgentSessionOnStartup,
+      })
+      .from(cells)
+      .where(eq(cells.id, cellId));
+
+    expect(cell?.resumeAgentSessionOnStartup).toBe(true);
   });
 
   it("deletes remote opencode session when runtime stops", async () => {

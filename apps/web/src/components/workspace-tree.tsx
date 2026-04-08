@@ -509,7 +509,7 @@ function WorkspaceSection({
           state: { data: { status?: string } | null | undefined };
         }) => {
           const status = queryInstance.state.data?.status;
-          if (status === "working") {
+          if (status === "working" || status === "starting") {
             return AGENT_STATUS_POLL_WORKING_MS;
           }
           if (status === "awaiting_input") {
