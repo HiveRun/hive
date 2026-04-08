@@ -42,13 +42,15 @@ export const createViewerController = (options: {
   });
 
   let attached = false;
+  let disposed = false;
+  let visible = false;
   let lastBounds: ViewerBounds = { height: 0, width: 0, x: 0, y: 0 };
 
   const emptyState = (): ViewerState => ({
     canGoBack: false,
     canGoForward: false,
     isLoading: false,
-    isVisible: attached,
+    isVisible: visible,
     title: "",
     url: null,
   });
@@ -62,7 +64,7 @@ export const createViewerController = (options: {
       canGoBack: view.webContents.navigationHistory.canGoBack(),
       canGoForward: view.webContents.navigationHistory.canGoForward(),
       isLoading: view.webContents.isLoading(),
-      isVisible: attached,
+      isVisible: visible,
       title: view.webContents.getTitle(),
       url: view.webContents.getURL() || null,
     };
@@ -75,8 +77,17 @@ export const createViewerController = (options: {
   };
 
   const applyBounds = (bounds: ViewerBounds) => {
+    if (disposed) {
+      return;
+    }
+
     lastBounds = bounds;
-    view.setBounds(bounds);
+    visible = bounds.width > 0 && bounds.height > 0;
+    try {
+      view.setBounds(bounds);
+    } catch {
+      /* ignore bounds updates during teardown */
+    }
   };
 
   const attach = () => {
@@ -94,8 +105,18 @@ export const createViewerController = (options: {
       return;
     }
 
-    options.window.removeBrowserView(view);
     attached = false;
+    visible = false;
+
+    if (options.window.isDestroyed()) {
+      return;
+    }
+
+    try {
+      options.window.removeBrowserView(view);
+    } catch {
+      /* ignore detach failures while Electron destroys the view */
+    }
   };
 
   const handleWindowOpen = ({ url }: { url: string }) => {
@@ -115,15 +136,25 @@ export const createViewerController = (options: {
   view.webContents.on("page-title-updated", emitState);
 
   view.webContents.on("destroyed", () => {
-    detach();
+    attached = false;
+    visible = false;
     emitState();
   });
 
   return {
     destroy: () => {
+      if (disposed) {
+        return;
+      }
+
+      disposed = true;
       detach();
       if (!view.webContents.isDestroyed()) {
-        view.webContents.close();
+        try {
+          view.webContents.close();
+        } catch {
+          /* ignore close failures during teardown */
+        }
       }
     },
     getState,
@@ -142,7 +173,8 @@ export const createViewerController = (options: {
       return emitState();
     },
     hide: () => {
-      detach();
+      attach();
+      applyBounds({ height: 0, width: 0, x: 0, y: 0 });
       return emitState();
     },
     loadURL: async (url: string) => {
@@ -167,12 +199,13 @@ export const createViewerController = (options: {
       return emitState();
     },
     setBounds: (bounds: ViewerBounds) => {
+      attach();
       applyBounds(bounds);
       return emitState();
     },
     show: (bounds: ViewerBounds) => {
-      applyBounds(bounds);
       attach();
+      applyBounds(bounds);
       return emitState();
     },
   };

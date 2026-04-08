@@ -8,7 +8,6 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { NativeWebPreview } from "@/components/ai-elements/native-web-preview";
 import {
   WebPreview,
   WebPreviewBody,
@@ -360,10 +359,14 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
               emptyState={
                 isDesktopRuntime ? undefined : <DesktopOnlyViewerMessage />
               }
+              previewRef={
+                isDesktopRuntime && previewUrl ? previewContainerRef : undefined
+              }
             >
               {isDesktopRuntime && previewUrl ? (
-                <NativeWebPreview
-                  containerRef={previewContainerRef}
+                <div
+                  className="h-full min-h-[320px] w-full bg-background"
+                  data-testid="native-web-preview"
                   title={
                     selectedService
                       ? `Service ${selectedService.name} viewer`

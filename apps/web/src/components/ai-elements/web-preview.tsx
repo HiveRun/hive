@@ -1,6 +1,7 @@
 import {
   createContext,
   type ReactNode,
+  type RefObject,
   useCallback,
   useContext,
   useEffect,
@@ -160,41 +161,17 @@ export function WebPreviewBody({
   className,
   children,
   emptyState,
+  previewRef,
 }: {
   className?: string;
   children?: ReactNode;
   emptyState?: ReactNode;
+  previewRef?: RefObject<HTMLDivElement | null>;
 }) {
   const { url, viewportPreset, isLoading, error } = useWebPreviewContext();
   const fallbackTitleId = useId();
 
   const frameStyle = resolveViewportStyle(viewportPreset);
-
-  if (isLoading) {
-    return (
-      <div
-        className={cn(
-          "flex h-full w-full items-center justify-center rounded-sm border border-border bg-card text-muted-foreground",
-          className
-        )}
-      >
-        Loading…
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div
-        className={cn(
-          "flex h-full w-full items-center justify-center rounded-sm border-2 border-destructive/50 bg-destructive/10 text-destructive",
-          className
-        )}
-      >
-        {error}
-      </div>
-    );
-  }
 
   if (!url) {
     return (
@@ -213,7 +190,8 @@ export function WebPreviewBody({
     <div className="flex min-h-0 flex-1 overflow-hidden rounded-sm border border-border bg-background">
       <div className="flex h-full w-full items-center justify-center overflow-auto px-2">
         <div
-          className="overflow-hidden rounded-sm border border-border bg-card shadow-sm"
+          className="relative overflow-hidden rounded-sm border border-border bg-card shadow-sm"
+          ref={previewRef}
           style={frameStyle}
         >
           {children ?? (
@@ -232,6 +210,18 @@ export function WebPreviewBody({
               </div>
             </div>
           )}
+
+          {isLoading ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-background/80 text-muted-foreground backdrop-blur-[1px]">
+              Loading…
+            </div>
+          ) : null}
+
+          {error ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-destructive/10 px-6 text-center text-destructive">
+              {error}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

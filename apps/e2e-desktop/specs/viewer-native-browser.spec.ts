@@ -1,8 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { type ElectronApplication, expect, test } from "@playwright/test";
 import { launchDesktopApp, navigateInDesktopApp } from "./utils/desktop-app";
 
 const VIEWER_ROUTE_TIMEOUT_MS = 30_000;
 const VIEWER_STATE_TIMEOUT_MS = 15_000;
+const VIEWER_CELL_READY_TIMEOUT_MS = 120_000;
+const VIEWER_CELL_POLL_INTERVAL_MS = 500;
 const ABOUT_BLANK = "about:blank";
 
 test("desktop viewer route mounts and unmounts a native browser view", async () => {
@@ -18,6 +20,8 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
       apiUrl,
       name: `Desktop Viewer Cell ${Date.now()}`,
     });
+
+    await waitForCellReady(apiUrl, cellId);
 
     await navigateInDesktopApp(page, `/cells/${cellId}/viewer`);
     await page.waitForSelector("[data-testid='cell-viewer-route']", {
@@ -37,33 +41,31 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
     await urlInput.press("Enter");
 
     await expect
-      .poll(
-        async () =>
-          await page.evaluate(
-            async () => await window.hiveDesktop?.viewer.getState()
-          ),
-        { timeout: VIEWER_STATE_TIMEOUT_MS }
-      )
+      .poll(async () => await readDesktopBrowserView(app), {
+        timeout: VIEWER_STATE_TIMEOUT_MS,
+      })
       .toMatchObject(
         expect.objectContaining({
-          isVisible: true,
           url: ABOUT_BLANK,
+          width: expect.any(Number),
+          height: expect.any(Number),
         })
       );
+
+    const activeView = await readDesktopBrowserView(app);
+    expect(activeView?.width ?? 0).toBeGreaterThan(0);
+    expect(activeView?.height ?? 0).toBeGreaterThan(0);
 
     await navigateInDesktopApp(page, "/");
 
     await expect
-      .poll(
-        async () =>
-          await page.evaluate(
-            async () => await window.hiveDesktop?.viewer.getState()
-          ),
-        { timeout: VIEWER_STATE_TIMEOUT_MS }
-      )
+      .poll(async () => await readDesktopBrowserView(app), {
+        timeout: VIEWER_STATE_TIMEOUT_MS,
+      })
       .toMatchObject(
         expect.objectContaining({
-          isVisible: false,
+          height: 0,
+          width: 0,
         })
       );
   } finally {
@@ -128,4 +130,68 @@ async function resolveWorkspaceId(apiUrl: string) {
   }
 
   return firstWorkspaceId;
+}
+
+async function waitForCellReady(apiUrl: string, cellId: string) {
+  const timeoutAt = Date.now() + VIEWER_CELL_READY_TIMEOUT_MS;
+
+  while (Date.now() < timeoutAt) {
+    const cell = await fetchCellDetail(apiUrl, cellId);
+    const status = cell?.status as string | undefined;
+
+    if (status === "ready") {
+      return;
+    }
+
+    if (status === "error") {
+      throw new Error(
+        `Viewer cell ${cellId} entered error status: ${cell?.lastSetupError ?? "setup failed"}`
+      );
+    }
+
+    await wait(VIEWER_CELL_POLL_INTERVAL_MS);
+  }
+
+  throw new Error(
+    `Timed out waiting for viewer cell ${cellId} to become ready`
+  );
+}
+
+async function fetchCellDetail(apiUrl: string, cellId: string) {
+  const response = await fetch(
+    `${apiUrl}/api/cells/${cellId}?includeSetupLog=false`
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = await response.json();
+  return payload?.message ? null : payload;
+}
+
+function wait(durationMs: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, durationMs);
+  });
+}
+
+async function readDesktopBrowserView(app: ElectronApplication) {
+  return await app.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    const view = window?.getBrowserViews()[0];
+
+    if (!view) {
+      return null;
+    }
+
+    const bounds = view.getBounds();
+    return {
+      height: bounds.height,
+      url: view.webContents.getURL(),
+      width: bounds.width,
+      x: bounds.x,
+      y: bounds.y,
+    };
+  });
 }

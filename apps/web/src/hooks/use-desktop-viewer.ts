@@ -40,7 +40,12 @@ function getDesktopBridge() {
 }
 
 function readBounds(element: HTMLElement) {
-  const rect = element.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  const rect =
+    elementRect.width > 0 && elementRect.height > 0
+      ? elementRect
+      : (element.parentElement?.getBoundingClientRect() ?? elementRect);
+
   return {
     height: Math.round(rect.height),
     width: Math.round(rect.width),
@@ -97,18 +102,26 @@ export function useDesktopViewer(
     }
 
     const element = containerRef.current;
-    if (!(options.enabled && options.url && element)) {
-      lastRequestedUrlRef.current = null;
-      viewer.hide().catch(() => {
+    if (!element) {
+      return;
+    }
+
+    const hideViewer = () => {
+      viewer.setBounds({ height: 0, width: 0, x: 0, y: 0 }).catch(() => {
         /* ignore hide failures during teardown */
       });
+    };
+
+    if (!options.enabled) {
+      hideViewer();
       return;
     }
 
     let frameHandle = 0;
-    const syncBounds = () => {
+
+    const sendBounds = () => {
       frameHandle = 0;
-      viewer.show(readBounds(element)).catch(() => {
+      viewer.setBounds(readBounds(element)).catch(() => {
         /* ignore transient layout sync failures */
       });
     };
@@ -118,44 +131,52 @@ export function useDesktopViewer(
         return;
       }
 
-      frameHandle = window.requestAnimationFrame(syncBounds);
+      frameHandle = window.requestAnimationFrame(sendBounds);
     };
+
+    sendBounds();
 
     const observer = new ResizeObserver(scheduleBoundsSync);
     observer.observe(element);
     window.addEventListener("resize", scheduleBoundsSync);
-    window.addEventListener("scroll", scheduleBoundsSync, true);
-    scheduleBoundsSync();
-
-    if (lastRequestedUrlRef.current !== options.url) {
-      lastRequestedUrlRef.current = options.url;
-      viewer.navigate(options.url).catch(() => {
-        /* ignore navigation failures; viewer state will surface them */
-      });
-    }
 
     return () => {
       observer.disconnect();
       window.removeEventListener("resize", scheduleBoundsSync);
-      window.removeEventListener("scroll", scheduleBoundsSync, true);
       if (frameHandle !== 0) {
         window.cancelAnimationFrame(frameHandle);
       }
+      hideViewer();
     };
-  }, [containerRef, options.enabled, options.url, viewer]);
+  }, [containerRef, options.enabled, viewer]);
 
   useEffect(() => {
-    if (!(viewer && options.enabled)) {
+    if (!(viewer && options.enabled && options.url)) {
+      lastRequestedUrlRef.current = null;
       return;
     }
 
-    return () => {
-      lastRequestedUrlRef.current = null;
-      viewer.hide().catch(() => {
-        /* ignore hide failures during teardown */
+    if (lastRequestedUrlRef.current === options.url) {
+      return;
+    }
+
+    lastRequestedUrlRef.current = options.url;
+    viewer
+      .navigate(options.url)
+      .then(() => {
+        const element = containerRef.current;
+        if (!element) {
+          return;
+        }
+
+        viewer.setBounds(readBounds(element)).catch(() => {
+          /* ignore post-navigation bounds sync failures */
+        });
+      })
+      .catch(() => {
+        /* ignore navigation failures; viewer state will surface them */
       });
-    };
-  }, [options.enabled, viewer]);
+  }, [containerRef, options.enabled, options.url, viewer]);
 
   const actions = useMemo<DesktopViewerActions | null>(() => {
     if (!viewer) {
