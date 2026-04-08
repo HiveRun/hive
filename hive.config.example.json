@@ -17,6 +17,9 @@
       "ignorePatterns": [
         "node_modules/**",
         ".hive/**",
+        ".opencode/state/**",
+        ".opencode/themes/**",
+        ".opencode/tools/**",
         ".turbo/**",
         "tmp/**",
         "temp/**",

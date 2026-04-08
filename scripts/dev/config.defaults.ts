@@ -3,6 +3,9 @@ import type { HiveConfig } from "../../apps/server/src/config/schema";
 const defaultIgnorePatterns = [
   "node_modules/**",
   ".hive/**",
+  ".opencode/state/**",
+  ".opencode/themes/**",
+  ".opencode/tools/**",
   ".turbo/**",
   "tmp/**",
   "temp/**",
