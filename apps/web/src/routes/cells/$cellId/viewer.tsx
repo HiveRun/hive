@@ -272,64 +272,71 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
           onUrlChange={handleNavigate}
           url={displayUrl}
         >
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-sm border-2 border-border bg-card p-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <WebPreviewNavigationButton
-                disabled={disabledControls.back}
-                onClick={handleBack}
-                tooltip="Back"
-              >
-                <ArrowLeft className="h-3.5 w-3.5" />
-              </WebPreviewNavigationButton>
-              <WebPreviewNavigationButton
-                disabled={disabledControls.forward}
-                onClick={handleForward}
-                tooltip="Forward"
-              >
-                <ArrowRight className="h-3.5 w-3.5" />
-              </WebPreviewNavigationButton>
-              <WebPreviewNavigationButton
-                disabled={disabledControls.refresh}
-                onClick={handleRefresh}
-                tooltip="Refresh"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-              </WebPreviewNavigationButton>
-              <WebPreviewNavigationButton
-                disabled={!activeService?.url}
-                onClick={handleReset}
-                tooltip="Reset to service root"
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-              </WebPreviewNavigationButton>
-              <WebPreviewUrl />
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <WebPreviewViewportControls options={viewportOptions} />
-
-              <div className="flex flex-wrap items-center gap-2">
-                <WebPreviewNavigationButton
-                  disabled={disabledControls.openExternal}
-                  onClick={handleOpenExternal}
-                  tooltip="Open externally"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </WebPreviewNavigationButton>
-                <WebPreviewNavigationButton
-                  disabled={disabledControls.maximize}
-                  onClick={handleMaximize}
-                  tooltip="Fullscreen"
-                >
-                  <Maximize2 className="h-3.5 w-3.5" />
-                </WebPreviewNavigationButton>
-              </div>
-
+          <div className="flex flex-col gap-3 rounded-sm border-2 border-border bg-card p-3">
+            <div className="flex flex-col gap-1">
+              <span className="font-semibold text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
+                Services
+              </span>
               <ServiceTabs
                 activeServiceId={activeServiceId}
                 onValueChange={setActiveServiceId}
                 services={previewableServices}
               />
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 border-border border-t pt-3">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                <WebPreviewNavigationButton
+                  disabled={disabledControls.back}
+                  onClick={handleBack}
+                  tooltip="Back"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                </WebPreviewNavigationButton>
+                <WebPreviewNavigationButton
+                  disabled={disabledControls.forward}
+                  onClick={handleForward}
+                  tooltip="Forward"
+                >
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </WebPreviewNavigationButton>
+                <WebPreviewNavigationButton
+                  disabled={disabledControls.refresh}
+                  onClick={handleRefresh}
+                  tooltip="Refresh"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </WebPreviewNavigationButton>
+                <WebPreviewNavigationButton
+                  disabled={!activeService?.url}
+                  onClick={handleReset}
+                  tooltip="Reset to service root"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                </WebPreviewNavigationButton>
+                <WebPreviewUrl className="max-w-none sm:max-w-md" />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <WebPreviewViewportControls options={viewportOptions} />
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <WebPreviewNavigationButton
+                    disabled={disabledControls.openExternal}
+                    onClick={handleOpenExternal}
+                    tooltip="Open externally"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </WebPreviewNavigationButton>
+                  <WebPreviewNavigationButton
+                    disabled={disabledControls.maximize}
+                    onClick={handleMaximize}
+                    tooltip="Fullscreen"
+                  >
+                    <Maximize2 className="h-3.5 w-3.5" />
+                  </WebPreviewNavigationButton>
+                </div>
+              </div>
 
               <ReachabilityWarning
                 error={error}
@@ -380,30 +387,25 @@ function ServiceTabs({
   services: CellServiceSummary[];
 }) {
   return (
-    <div className="flex min-w-0 flex-col gap-1">
-      <span className="font-semibold text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
-        Service Tabs
-      </span>
-      <Tabs onValueChange={onValueChange} value={activeServiceId ?? undefined}>
-        <TabsList className="h-auto w-full flex-wrap justify-start gap-1 rounded-sm border border-border bg-background p-1">
-          {services.map((service) => (
-            <TabsTrigger
-              className="min-w-[110px] flex-col items-start gap-0 rounded-sm px-3 py-2 text-left data-[state=active]:bg-card"
-              data-testid={`viewer-service-tab-${service.name}`}
-              key={service.id}
-              value={service.id}
-            >
-              <span className="font-semibold text-[12px] text-foreground uppercase tracking-[0.2em]">
-                {service.name}
-              </span>
-              <span className="text-[10px] text-muted-foreground">
-                Port {service.port}
-              </span>
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-    </div>
+    <Tabs onValueChange={onValueChange} value={activeServiceId ?? undefined}>
+      <TabsList className="h-auto w-full flex-wrap justify-start gap-1 rounded-sm border border-border bg-background p-1">
+        {services.map((service) => (
+          <TabsTrigger
+            className="min-w-[118px] flex-col items-start gap-0 rounded-sm border-border/60 px-3 py-2 text-left data-[state=active]:border-border data-[state=active]:bg-card"
+            data-testid={`viewer-service-tab-${service.name}`}
+            key={service.id}
+            value={service.id}
+          >
+            <span className="font-semibold text-[12px] text-foreground uppercase tracking-[0.2em]">
+              {service.name}
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              Port {service.port}
+            </span>
+          </TabsTrigger>
+        ))}
+      </TabsList>
+    </Tabs>
   );
 }
 
