@@ -66,6 +66,7 @@
     "dev:web": "turbo -F web dev",
     "dev:server": "bun scripts/dev/with-local-hive-home.ts -- turbo -F @hive/server dev",
     "dev:desktop": "bun scripts/dev/with-local-hive-home.ts -- bun run --cwd apps/desktop-electron start",
+    "dev:desktop:full": "bun scripts/dev/start-desktop-full.ts",
     "build:desktop": "bun run --cwd apps/desktop-electron package",
     "config:generate": "bun scripts/dev/generate-config.ts && bun scripts/dev/generate-config-schema.ts",
     "db:local": "cd apps/server && bun db:local",
