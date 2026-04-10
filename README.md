@@ -190,6 +190,11 @@ bun setup
 # Set up local database (create .env with DATABASE_URL="local.db")
 # Then run development servers
 bun dev
+
+Source dev commands default `HIVE_HOME` to `<workspace>/.hive/home` when the
+environment variable is unset. This keeps local repo/worktree testing isolated
+from your global `~/.hive` state. Set `HIVE_HOME` explicitly if you want to
+share a different Hive home.
 ```
 
 ### Manual Setup
@@ -201,6 +206,11 @@ bun setup
 # Set up local database (create .env with DATABASE_URL="local.db")  
 # Then run development servers
 bun dev
+
+Source dev commands default `HIVE_HOME` to `<workspace>/.hive/home` when the
+environment variable is unset. This keeps local repo/worktree testing isolated
+from your global `~/.hive` state. Set `HIVE_HOME` explicitly if you want to
+share a different Hive home.
 ```
 
 **URLs:**
