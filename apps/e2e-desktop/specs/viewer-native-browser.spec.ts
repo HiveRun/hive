@@ -19,6 +19,7 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
     const cellId = await createCellViaApi({
       apiUrl,
       name: `Desktop Viewer Cell ${Date.now()}`,
+      templateId: "viewer-template",
     });
 
     await waitForCellReady(apiUrl, cellId);
@@ -35,6 +36,26 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
         { timeout: VIEWER_STATE_TIMEOUT_MS }
       )
       .toBe(true);
+
+    await expect
+      .poll(async () => await readDesktopBrowserView(app), {
+        timeout: VIEWER_STATE_TIMEOUT_MS,
+      })
+      .toMatchObject(
+        expect.objectContaining({
+          url: expect.stringContaining("localhost"),
+          width: expect.any(Number),
+          height: expect.any(Number),
+        })
+      );
+
+    const initialServiceUrl = (await readDesktopBrowserView(app))?.url;
+    expect(initialServiceUrl).toContain("localhost");
+
+    const webTab = page.getByTestId("viewer-service-tab-web");
+    const docsTab = page.getByTestId("viewer-service-tab-docs");
+    await expect(webTab).toBeVisible();
+    await expect(docsTab).toBeVisible();
 
     const urlInput = page.getByPlaceholder("Enter URL and press Enter...");
     await urlInput.fill(ABOUT_BLANK);
@@ -55,6 +76,45 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
     const activeView = await readDesktopBrowserView(app);
     expect(activeView?.width ?? 0).toBeGreaterThan(0);
     expect(activeView?.height ?? 0).toBeGreaterThan(0);
+
+    await docsTab.click();
+
+    await expect
+      .poll(async () => await readDesktopBrowserView(app), {
+        timeout: VIEWER_STATE_TIMEOUT_MS,
+      })
+      .toMatchObject(
+        expect.objectContaining({
+          url: expect.stringContaining("localhost"),
+        })
+      );
+
+    const docsUrl = (await readDesktopBrowserView(app))?.url;
+    expect(docsUrl).not.toBe(ABOUT_BLANK);
+
+    await webTab.click();
+
+    await expect
+      .poll(async () => await readDesktopBrowserView(app), {
+        timeout: VIEWER_STATE_TIMEOUT_MS,
+      })
+      .toMatchObject(
+        expect.objectContaining({
+          url: ABOUT_BLANK,
+        })
+      );
+
+    await page.getByLabel("Reset to service root").click();
+
+    await expect
+      .poll(async () => await readDesktopBrowserView(app), {
+        timeout: VIEWER_STATE_TIMEOUT_MS,
+      })
+      .toMatchObject(
+        expect.objectContaining({
+          url: initialServiceUrl,
+        })
+      );
 
     await navigateInDesktopApp(page, "/");
 
@@ -82,7 +142,11 @@ function resolveApiUrl() {
   return apiUrl;
 }
 
-async function createCellViaApi(options: { apiUrl: string; name: string }) {
+async function createCellViaApi(options: {
+  apiUrl: string;
+  name: string;
+  templateId?: string;
+}) {
   const workspaceId = await resolveWorkspaceId(options.apiUrl);
   const response = await fetch(`${options.apiUrl}/api/cells`, {
     method: "POST",
@@ -91,7 +155,7 @@ async function createCellViaApi(options: { apiUrl: string; name: string }) {
     },
     body: JSON.stringify({
       name: options.name,
-      templateId: "e2e-template",
+      templateId: options.templateId ?? "e2e-template",
       workspaceId,
     }),
   });

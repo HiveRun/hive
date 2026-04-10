@@ -1,6 +1,7 @@
-import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useEffect, useMemo, useState } from "react";
 
 type DesktopViewerState = {
+  activeServiceId: string | null;
   canGoBack: boolean;
   canGoForward: boolean;
   isLoading: boolean;
@@ -10,19 +11,29 @@ type DesktopViewerState = {
 };
 
 type DesktopViewerActions = {
+  activateServiceTab: (serviceId: string) => Promise<DesktopViewerState>;
   goBack: () => Promise<DesktopViewerState>;
   goForward: () => Promise<DesktopViewerState>;
   hide: () => Promise<DesktopViewerState>;
+  navigate: (url: string) => Promise<DesktopViewerState>;
   openExternal: () => Promise<{ ok: boolean }>;
+  resetActiveTab: () => Promise<DesktopViewerState>;
   reload: () => Promise<DesktopViewerState>;
 };
 
+type DesktopViewerServiceTab = {
+  serviceId: string;
+  rootUrl: string;
+};
+
 type UseDesktopViewerOptions = {
+  activeServiceId: string | null;
   enabled: boolean;
-  url: string | null;
+  serviceTabs: DesktopViewerServiceTab[];
 };
 
 const EMPTY_VIEWER_STATE: DesktopViewerState = {
+  activeServiceId: null,
   canGoBack: false,
   canGoForward: false,
   isLoading: false,
@@ -62,7 +73,6 @@ export function useDesktopViewer(
   const viewer = desktop?.viewer;
   const isSupported = Boolean(viewer);
   const [state, setState] = useState<DesktopViewerState>(EMPTY_VIEWER_STATE);
-  const lastRequestedUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!viewer) {
@@ -101,6 +111,33 @@ export function useDesktopViewer(
       return;
     }
 
+    viewer.syncServiceTabs(options.serviceTabs).catch(() => {
+      /* ignore service sync failures during transient updates */
+    });
+  }, [options.serviceTabs, viewer]);
+
+  useEffect(() => {
+    if (!viewer) {
+      return;
+    }
+
+    if (!(options.enabled && options.activeServiceId)) {
+      viewer.hide().catch(() => {
+        /* ignore hide failures during teardown */
+      });
+      return;
+    }
+
+    viewer.activateServiceTab(options.activeServiceId).catch(() => {
+      /* ignore activation failures during rapid service churn */
+    });
+  }, [options.activeServiceId, options.enabled, viewer]);
+
+  useEffect(() => {
+    if (!viewer) {
+      return;
+    }
+
     const element = containerRef.current;
     if (!element) {
       return;
@@ -112,7 +149,7 @@ export function useDesktopViewer(
       });
     };
 
-    if (!options.enabled) {
+    if (!(options.enabled && options.activeServiceId)) {
       hideViewer();
       return;
     }
@@ -148,35 +185,7 @@ export function useDesktopViewer(
       }
       hideViewer();
     };
-  }, [containerRef, options.enabled, viewer]);
-
-  useEffect(() => {
-    if (!(viewer && options.enabled && options.url)) {
-      lastRequestedUrlRef.current = null;
-      return;
-    }
-
-    if (lastRequestedUrlRef.current === options.url) {
-      return;
-    }
-
-    lastRequestedUrlRef.current = options.url;
-    viewer
-      .navigate(options.url)
-      .then(() => {
-        const element = containerRef.current;
-        if (!element) {
-          return;
-        }
-
-        viewer.setBounds(readBounds(element)).catch(() => {
-          /* ignore post-navigation bounds sync failures */
-        });
-      })
-      .catch(() => {
-        /* ignore navigation failures; viewer state will surface them */
-      });
-  }, [containerRef, options.enabled, options.url, viewer]);
+  }, [containerRef, options.activeServiceId, options.enabled, viewer]);
 
   const actions = useMemo<DesktopViewerActions | null>(() => {
     if (!viewer) {
@@ -184,10 +193,14 @@ export function useDesktopViewer(
     }
 
     return {
+      activateServiceTab: (serviceId: string) =>
+        viewer.activateServiceTab(serviceId),
       goBack: () => viewer.goBack(),
       goForward: () => viewer.goForward(),
       hide: () => viewer.hide(),
+      navigate: (url: string) => viewer.navigate(url),
       openExternal: () => viewer.openExternal(),
+      resetActiveTab: () => viewer.resetActiveTab(),
       reload: () => viewer.reload(),
     };
   }, [viewer]);

@@ -5,7 +5,7 @@ import {
   shell,
 } from "electron";
 import { IPC_CHANNELS } from "./ipc-channels";
-import type { ViewerBounds } from "./viewer-controller";
+import type { ViewerBounds, ViewerServiceTab } from "./viewer-controller";
 import { createViewerController } from "./viewer-controller";
 
 type NotifyInput = {
@@ -67,6 +67,8 @@ export const createIpcHandlers = (window: BrowserWindow) => {
   };
 
   const viewerGetState = () => getViewer().getState();
+  const viewerActivateServiceTab = async (serviceId: string) =>
+    await getViewer().activateServiceTab(serviceId);
   const viewerShow = (bounds: ViewerBounds) => getViewer().show(bounds);
   const viewerHide = () => getViewer().hide();
   const viewerSetBounds = (bounds: ViewerBounds) =>
@@ -74,8 +76,11 @@ export const createIpcHandlers = (window: BrowserWindow) => {
   const viewerNavigate = async (url: string) => await getViewer().loadURL(url);
   const viewerGoBack = () => getViewer().goBack();
   const viewerGoForward = () => getViewer().goForward();
+  const viewerResetActiveTab = async () => await getViewer().resetActiveTab();
   const viewerReload = () => getViewer().reload();
   const viewerOpenExternal = async () => await getViewer().openExternal();
+  const viewerSyncServiceTabs = async (tabs: ViewerServiceTab[]) =>
+    await getViewer().syncServiceTabs(tabs);
 
   return {
     getRuntimeInfo,
@@ -87,15 +92,18 @@ export const createIpcHandlers = (window: BrowserWindow) => {
         viewer = null;
       },
     },
+    viewerActivateServiceTab,
     viewerGetState,
     viewerGoBack,
     viewerGoForward,
     viewerHide,
     viewerNavigate,
     viewerOpenExternal,
+    viewerResetActiveTab,
     viewerReload,
     viewerSetBounds,
     viewerShow,
+    viewerSyncServiceTabs,
   };
 };
 
@@ -145,6 +153,11 @@ export const registerIpcHandlers = (options: { ipcMain: IpcMain }) => {
   options.ipcMain.handle(IPC_CHANNELS.viewerGetState, () =>
     requireHandlers().viewerGetState()
   );
+  options.ipcMain.handle(
+    IPC_CHANNELS.viewerActivateServiceTab,
+    (_event, serviceId) =>
+      requireHandlers().viewerActivateServiceTab(serviceId as string)
+  );
   options.ipcMain.handle(IPC_CHANNELS.viewerShow, (_event, bounds) =>
     requireHandlers().viewerShow(bounds as ViewerBounds)
   );
@@ -163,11 +176,17 @@ export const registerIpcHandlers = (options: { ipcMain: IpcMain }) => {
   options.ipcMain.handle(IPC_CHANNELS.viewerGoForward, () =>
     requireHandlers().viewerGoForward()
   );
+  options.ipcMain.handle(IPC_CHANNELS.viewerResetActiveTab, () =>
+    requireHandlers().viewerResetActiveTab()
+  );
   options.ipcMain.handle(IPC_CHANNELS.viewerReload, () =>
     requireHandlers().viewerReload()
   );
   options.ipcMain.handle(IPC_CHANNELS.viewerOpenExternal, () =>
     requireHandlers().viewerOpenExternal()
+  );
+  options.ipcMain.handle(IPC_CHANNELS.viewerSyncServiceTabs, (_event, tabs) =>
+    requireHandlers().viewerSyncServiceTabs(tabs as ViewerServiceTab[])
   );
 
   return {

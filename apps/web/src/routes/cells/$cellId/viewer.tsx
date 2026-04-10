@@ -6,6 +6,7 @@ import {
   ExternalLink,
   Maximize2,
   RefreshCw,
+  RotateCcw,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -15,13 +16,7 @@ import {
   WebPreviewUrl,
   WebPreviewViewportControls,
 } from "@/components/ai-elements/web-preview";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDesktopViewer } from "@/hooks/use-desktop-viewer";
 import { useServiceStream } from "@/hooks/use-service-stream";
 import { type CellServiceSummary, cellQueries } from "@/queries/cells";
@@ -66,20 +61,18 @@ function CellServiceViewer() {
   return <CellServiceViewerLive cellId={cellId} />;
 }
 
-function useServiceSelection(services: CellServiceSummary[]) {
-  const [selectedServiceId, setSelectedServiceId] = useState<string | null>(
-    null
-  );
+function useActiveServiceTab(services: CellServiceSummary[]) {
+  const [activeServiceId, setActiveServiceId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!services.length) {
-      setSelectedServiceId(null);
+      setActiveServiceId(null);
       return;
     }
 
     if (
-      selectedServiceId &&
-      services.some((service) => service.id === selectedServiceId)
+      activeServiceId &&
+      services.some((service) => service.id === activeServiceId)
     ) {
       return;
     }
@@ -92,18 +85,24 @@ function useServiceSelection(services: CellServiceSummary[]) {
       services.find((service) => service.port != null) ??
       null;
 
-    setSelectedServiceId(fallback?.id ?? null);
-  }, [services, selectedServiceId]);
+    setActiveServiceId(fallback?.id ?? null);
+  }, [activeServiceId, services]);
 
-  const selectedService = services.find(
-    (service) => service.id === selectedServiceId
+  const activeService = services.find(
+    (service) => service.id === activeServiceId
   );
 
   return {
-    selectedService,
-    selectedServiceId,
-    setSelectedServiceId,
+    activeService,
+    activeServiceId,
+    setActiveServiceId,
   };
+}
+
+function isPreviewableService(
+  service: CellServiceSummary
+): service is CellServiceSummary & { port: number; url: string } {
+  return service.port != null && typeof service.url === "string";
 }
 
 function useBrowserReachability({
@@ -159,50 +158,31 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
     enabled: true,
   });
 
-  const { selectedService, selectedServiceId, setSelectedServiceId } =
-    useServiceSelection(services);
+  const previewableServices = services.filter(isPreviewableService);
+  const { activeService, activeServiceId, setActiveServiceId } =
+    useActiveServiceTab(previewableServices);
 
-  const portServices = services.filter((service) => service.port != null);
+  const serviceTabs = previewableServices.map((service) => ({
+    rootUrl: service.url,
+    serviceId: service.id,
+  }));
 
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const lastSelectedServiceIdRef = useRef<string | null>(null);
-  const lastSelectedServiceUrlRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    const nextServiceId = selectedService?.id ?? null;
-    const nextServiceUrl = selectedService?.url ?? null;
-    const selectedServiceChanged =
-      lastSelectedServiceIdRef.current !== nextServiceId;
-
-    setPreviewUrl((currentPreviewUrl) => {
-      if (selectedServiceChanged) {
-        return nextServiceUrl;
-      }
-
-      if (currentPreviewUrl === lastSelectedServiceUrlRef.current) {
-        return nextServiceUrl;
-      }
-
-      return currentPreviewUrl;
-    });
-
-    lastSelectedServiceIdRef.current = nextServiceId;
-    lastSelectedServiceUrlRef.current = nextServiceUrl;
-  }, [selectedService?.id, selectedService?.url]);
+  const previewUrl = activeService?.url ?? null;
 
   const browserReachability = useBrowserReachability({
     viewerUrl: previewUrl,
-    serviceStatus: selectedService?.status,
+    serviceStatus: activeService?.status,
   });
 
   const resolvedReachability =
-    browserReachability ?? selectedService?.portReachable ?? null;
+    browserReachability ?? activeService?.portReachable ?? null;
   const previewContainerRef = useRef<HTMLDivElement | null>(null);
   const { actions, isSupported, state } = useDesktopViewer(
     previewContainerRef,
     {
-      enabled: Boolean(previewUrl),
-      url: previewUrl,
+      activeServiceId,
+      enabled: previewableServices.length > 0,
+      serviceTabs,
     }
   );
 
@@ -220,7 +200,11 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
     };
   }, [actions, isDesktopRuntime]);
 
-  const hasViewerUrl = previewUrl !== null;
+  const displayUrl =
+    state.activeServiceId === activeServiceId
+      ? (state.url ?? previewUrl)
+      : previewUrl;
+  const hasViewerUrl = displayUrl !== null;
 
   const disabledControls = {
     back: hasViewerUrl ? !state.canGoBack : true,
@@ -260,6 +244,22 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
     });
   };
 
+  const handleReset = () => {
+    actions?.resetActiveTab().catch(() => {
+      /* ignore reset failures */
+    });
+  };
+
+  const handleNavigate = (url: string | null) => {
+    if (!url) {
+      return;
+    }
+
+    actions?.navigate(url).catch(() => {
+      /* ignore navigation failures */
+    });
+  };
+
   return (
     <div
       className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-border bg-card"
@@ -269,8 +269,8 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
         <WebPreview
           error={error ?? undefined}
           isLoading={isLoading || state.isLoading}
-          onUrlChange={setPreviewUrl}
-          url={previewUrl}
+          onUrlChange={handleNavigate}
+          url={displayUrl}
         >
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-sm border-2 border-border bg-card p-2">
             <div className="flex flex-wrap items-center gap-2">
@@ -295,6 +295,13 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
               >
                 <RefreshCw className="h-3.5 w-3.5" />
               </WebPreviewNavigationButton>
+              <WebPreviewNavigationButton
+                disabled={!activeService?.url}
+                onClick={handleReset}
+                tooltip="Reset to service root"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+              </WebPreviewNavigationButton>
               <WebPreviewUrl />
             </div>
 
@@ -318,34 +325,11 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
                 </WebPreviewNavigationButton>
               </div>
 
-              <div className="flex flex-col gap-1">
-                <span className="font-semibold text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
-                  Service
-                </span>
-                <Select
-                  disabled={portServices.length === 0}
-                  onValueChange={setSelectedServiceId}
-                  value={selectedServiceId ?? ""}
-                >
-                  <SelectTrigger className="w-[180px] border-border bg-background text-foreground">
-                    <SelectValue placeholder="Select service" />
-                  </SelectTrigger>
-                  <SelectContent className="border-border bg-card text-foreground">
-                    {portServices.map((service) => (
-                      <SelectItem key={service.id} value={service.id}>
-                        <span className="flex flex-col gap-0.5">
-                          <span className="font-semibold text-[12px] text-foreground uppercase tracking-[0.2em]">
-                            {service.name}
-                          </span>
-                          <span className="text-[10px] text-muted-foreground">
-                            Port {service.port}
-                          </span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              <ServiceTabs
+                activeServiceId={activeServiceId}
+                onValueChange={setActiveServiceId}
+                services={previewableServices}
+              />
 
               <ReachabilityWarning
                 error={error}
@@ -360,16 +344,18 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
                 isDesktopRuntime ? undefined : <DesktopOnlyViewerMessage />
               }
               previewRef={
-                isDesktopRuntime && previewUrl ? previewContainerRef : undefined
+                isDesktopRuntime && activeServiceId
+                  ? previewContainerRef
+                  : undefined
               }
             >
-              {isDesktopRuntime && previewUrl ? (
+              {isDesktopRuntime && activeServiceId ? (
                 <div
                   className="h-full min-h-[320px] w-full bg-background"
                   data-testid="native-web-preview"
                   title={
-                    selectedService
-                      ? `Service ${selectedService.name} viewer`
+                    activeService
+                      ? `Service ${activeService.name} viewer`
                       : "Web preview"
                   }
                 />
@@ -380,6 +366,43 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
           </div>
         </WebPreview>
       </div>
+    </div>
+  );
+}
+
+function ServiceTabs({
+  activeServiceId,
+  onValueChange,
+  services,
+}: {
+  activeServiceId: string | null;
+  onValueChange: (value: string) => void;
+  services: CellServiceSummary[];
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <span className="font-semibold text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
+        Service Tabs
+      </span>
+      <Tabs onValueChange={onValueChange} value={activeServiceId ?? undefined}>
+        <TabsList className="h-auto w-full flex-wrap justify-start gap-1 rounded-sm border border-border bg-background p-1">
+          {services.map((service) => (
+            <TabsTrigger
+              className="min-w-[110px] flex-col items-start gap-0 rounded-sm px-3 py-2 text-left data-[state=active]:bg-card"
+              data-testid={`viewer-service-tab-${service.name}`}
+              key={service.id}
+              value={service.id}
+            >
+              <span className="font-semibold text-[12px] text-foreground uppercase tracking-[0.2em]">
+                {service.name}
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                Port {service.port}
+              </span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
     </div>
   );
 }

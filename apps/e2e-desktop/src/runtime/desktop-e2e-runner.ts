@@ -287,6 +287,21 @@ async function createFixtureWorkspace(workspaceRoot: string): Promise<void> {
           providerId: "opencode",
         },
       },
+      "viewer-template": {
+        id: "viewer-template",
+        label: "Viewer Template",
+        type: "manual",
+        services: {
+          web: {
+            type: "process",
+            run: `bun -e "Bun.serve({ port: Number(process.env.PORT), fetch() { return new Response('<title>Viewer Web</title><h1>Viewer Web</h1>', { headers: { 'content-type': 'text/html' } }); } });"`,
+          },
+          docs: {
+            type: "process",
+            run: `bun -e "Bun.serve({ port: Number(process.env.PORT), fetch() { return new Response('<title>Viewer Docs</title><h1>Viewer Docs</h1>', { headers: { 'content-type': 'text/html' } }); } });"`,
+          },
+        },
+      },
     },
   };
 

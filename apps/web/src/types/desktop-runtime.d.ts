@@ -15,12 +15,18 @@ type DesktopViewerBounds = {
 };
 
 type DesktopViewerState = {
+  activeServiceId: string | null;
   canGoBack: boolean;
   canGoForward: boolean;
   isLoading: boolean;
   isVisible: boolean;
   title: string;
   url: string | null;
+};
+
+type DesktopViewerServiceTab = {
+  serviceId: string;
+  rootUrl: string;
 };
 
 type DesktopRuntimeBridge = {
@@ -32,15 +38,20 @@ type DesktopRuntimeBridge = {
     platform: string;
   }>;
   viewer: {
+    activateServiceTab: (serviceId: string) => Promise<DesktopViewerState>;
     getState: () => Promise<DesktopViewerState>;
     goBack: () => Promise<DesktopViewerState>;
     goForward: () => Promise<DesktopViewerState>;
     hide: () => Promise<DesktopViewerState>;
     navigate: (url: string) => Promise<DesktopViewerState>;
     openExternal: () => Promise<{ ok: boolean }>;
+    resetActiveTab: () => Promise<DesktopViewerState>;
     reload: () => Promise<DesktopViewerState>;
     setBounds: (bounds: DesktopViewerBounds) => Promise<DesktopViewerState>;
     show: (bounds: DesktopViewerBounds) => Promise<DesktopViewerState>;
+    syncServiceTabs: (
+      tabs: DesktopViewerServiceTab[]
+    ) => Promise<DesktopViewerState>;
     subscribe: (listener: (state: DesktopViewerState) => void) => () => void;
   };
 };
