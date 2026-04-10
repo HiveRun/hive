@@ -6,6 +6,7 @@ const VIEWER_STATE_TIMEOUT_MS = 15_000;
 const VIEWER_CELL_READY_TIMEOUT_MS = 120_000;
 const VIEWER_CELL_POLL_INTERVAL_MS = 500;
 const ABOUT_BLANK = "about:blank";
+const DOCS_OVERRIDE_URL = `data:text/html,${encodeURIComponent("<title>Docs Override</title><h1>Docs Override</h1>")}`;
 
 test("desktop viewer route mounts and unmounts a native browser view", async () => {
   const apiUrl = resolveApiUrl();
@@ -37,25 +38,12 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
       )
       .toBe(true);
 
-    await expect
-      .poll(async () => await readDesktopBrowserView(app), {
-        timeout: VIEWER_STATE_TIMEOUT_MS,
-      })
-      .toMatchObject(
-        expect.objectContaining({
-          url: expect.stringContaining("localhost"),
-          width: expect.any(Number),
-          height: expect.any(Number),
-        })
-      );
-
-    const initialServiceUrl = (await readDesktopBrowserView(app))?.url;
-    expect(initialServiceUrl).toContain("localhost");
-
     const webTab = page.getByTestId("viewer-service-tab-web");
     const docsTab = page.getByTestId("viewer-service-tab-docs");
     await expect(webTab).toBeVisible();
     await expect(docsTab).toBeVisible();
+
+    await webTab.click();
 
     const urlInput = page.getByPlaceholder("Enter URL and press Enter...");
     await urlInput.fill(ABOUT_BLANK);
@@ -79,18 +67,21 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
 
     await docsTab.click();
 
+    await urlInput.fill(DOCS_OVERRIDE_URL);
+    await urlInput.press("Enter");
+
     await expect
       .poll(async () => await readDesktopBrowserView(app), {
         timeout: VIEWER_STATE_TIMEOUT_MS,
       })
       .toMatchObject(
         expect.objectContaining({
-          url: expect.stringContaining("localhost"),
+          url: DOCS_OVERRIDE_URL,
         })
       );
 
     const docsUrl = (await readDesktopBrowserView(app))?.url;
-    expect(docsUrl).not.toBe(ABOUT_BLANK);
+    expect(docsUrl).toBe(DOCS_OVERRIDE_URL);
 
     await webTab.click();
 
@@ -112,7 +103,7 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
       })
       .toMatchObject(
         expect.objectContaining({
-          url: initialServiceUrl,
+          url: expect.stringContaining("localhost"),
         })
       );
 

@@ -164,6 +164,26 @@ export const createViewerController = (options: {
     }
   };
 
+  const isNavigationAbortError = (error: unknown) => {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    return (
+      error.message.includes("ERR_ABORTED") || error.message.includes("-3")
+    );
+  };
+
+  const loadUrlSafely = async (entry: ViewerEntry, url: string) => {
+    try {
+      await entry.view.webContents.loadURL(url);
+    } catch (error) {
+      if (!isNavigationAbortError(error)) {
+        throw error;
+      }
+    }
+  };
+
   const createEntry = (serviceId: string, rootUrl: string) => {
     const view = new BrowserView({
       webPreferences: {
@@ -216,7 +236,7 @@ export const createViewerController = (options: {
       return;
     }
 
-    await entry.view.webContents.loadURL(entry.rootUrl);
+    await loadUrlSafely(entry, entry.rootUrl);
   };
 
   const getActiveEntry = () =>
@@ -238,8 +258,9 @@ export const createViewerController = (options: {
       }
 
       const currentUrl = entry.view.webContents.getURL();
-      if (!currentUrl || currentUrl === previousRootUrl) {
-        await entry.view.webContents.loadURL(nextRootUrl);
+      const rootUrlChanged = nextRootUrl !== previousRootUrl;
+      if (rootUrlChanged && (!currentUrl || currentUrl === previousRootUrl)) {
+        await loadUrlSafely(entry, nextRootUrl);
       }
     }
   };
@@ -323,7 +344,7 @@ export const createViewerController = (options: {
       }
 
       attachServiceView(activeServiceId);
-      await activeEntry.view.webContents.loadURL(url);
+      await loadUrlSafely(activeEntry, url);
       return emitState();
     },
     openExternal: async () => {
@@ -344,7 +365,7 @@ export const createViewerController = (options: {
       }
 
       attachServiceView(activeServiceId);
-      await activeEntry.view.webContents.loadURL(activeEntry.rootUrl);
+      await loadUrlSafely(activeEntry, activeEntry.rootUrl);
       return emitState();
     },
     reload: () => {
