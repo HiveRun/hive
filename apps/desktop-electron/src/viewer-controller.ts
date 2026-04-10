@@ -340,7 +340,7 @@ export const createViewerController = (options: {
     loadURL: async (url: string) => {
       const activeEntry = getActiveEntry();
       if (!(activeServiceId && activeEntry)) {
-        throw new Error("No active viewer service tab is selected");
+        return emitState();
       }
 
       attachServiceView(activeServiceId);
@@ -361,7 +361,7 @@ export const createViewerController = (options: {
     resetActiveTab: async () => {
       const activeEntry = getActiveEntry();
       if (!(activeServiceId && activeEntry)) {
-        throw new Error("No active viewer service tab is selected");
+        return emitState();
       }
 
       attachServiceView(activeServiceId);

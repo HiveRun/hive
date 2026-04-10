@@ -251,7 +251,7 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
   };
 
   const handleNavigate = (url: string | null) => {
-    if (!url) {
+    if (!(url && activeServiceId)) {
       return;
     }
 
