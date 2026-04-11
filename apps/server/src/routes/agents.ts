@@ -1,5 +1,6 @@
 import { Elysia, sse, t } from "elysia";
 import { subscribeAgentEvents } from "../agents/events";
+import { loadOpencodeModelPreferences } from "../agents/opencode-config";
 import {
   fetchAgentMessages,
   fetchAgentSession,
@@ -54,7 +55,7 @@ const toError = (status: number, message: string): AgentRouteError => ({
 const mapAgentError = (message: string, cause: unknown): AgentRouteError =>
   toError(HTTP_STATUS.BAD_REQUEST, formatUnknown(cause, message));
 
-const providerPayload = (catalog: unknown) => {
+const providerPayload = async (catalog: unknown) => {
   const providerEntries = normalizeProviderEntries(
     (catalog as { providers?: unknown }).providers
   );
@@ -62,18 +63,38 @@ const providerPayload = (catalog: unknown) => {
   const defaults = normalizeProviderDefaults(
     (catalog as { default?: Record<string, string> }).default ?? {}
   );
+  const stickyVariants = filterStickyVariantsForModels(
+    (await loadOpencodeModelPreferences()).stickyVariants,
+    models
+  );
   const providers = providerEntries.map(({ id, name }) =>
     name ? { id, name } : { id }
   );
-  return { models, defaults, providers };
+  return { models, defaults, providers, stickyVariants };
 };
 
 const emptyProviderPayload = (message: string) => ({
   models: [],
   defaults: {},
   providers: [],
+  stickyVariants: {},
   message,
 });
+
+function filterStickyVariantsForModels(
+  stickyVariants: Record<string, string>,
+  models: Array<{ provider: string; id: string }>
+) {
+  const availableModelKeys = new Set(
+    models.map((model) => `${model.provider}/${model.id}`)
+  );
+
+  return Object.fromEntries(
+    Object.entries(stickyVariants).filter(([key]) =>
+      availableModelKeys.has(key)
+    )
+  );
+}
 
 const resolveWorkspaceCatalog = async (
   getWorkspaceContext: WorkspaceContextFetcher,
@@ -133,7 +154,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
           query.workspaceId
         );
         set.status = HTTP_STATUS.OK;
-        return providerPayload(catalog);
+        return await providerPayload(catalog);
       } catch (error) {
         const routeError = asAgentRouteError(error, "Failed to list models");
         set.status = routeError.status;
@@ -151,9 +172,15 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
               id: t.String(),
               name: t.String(),
               provider: t.String(),
+              variants: t.Array(
+                t.Object({
+                  id: t.String(),
+                })
+              ),
             })
           ),
           defaults: t.Record(t.String(), t.String()),
+          stickyVariants: t.Record(t.String(), t.String()),
           providers: t.Array(
             t.Object({ id: t.String(), name: t.Optional(t.String()) })
           ),
@@ -164,9 +191,15 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
               id: t.String(),
               name: t.String(),
               provider: t.String(),
+              variants: t.Array(
+                t.Object({
+                  id: t.String(),
+                })
+              ),
             })
           ),
           defaults: t.Record(t.String(), t.String()),
+          stickyVariants: t.Record(t.String(), t.String()),
           providers: t.Array(
             t.Object({ id: t.String(), name: t.Optional(t.String()) })
           ),
@@ -187,7 +220,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
           session.workspacePath
         );
         set.status = HTTP_STATUS.OK;
-        return providerPayload(catalog);
+        return await providerPayload(catalog);
       } catch (error) {
         const routeError = asAgentRouteError(error, "Failed to list models");
         set.status = routeError.status;
@@ -203,9 +236,15 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
               id: t.String(),
               name: t.String(),
               provider: t.String(),
+              variants: t.Array(
+                t.Object({
+                  id: t.String(),
+                })
+              ),
             })
           ),
           defaults: t.Record(t.String(), t.String()),
+          stickyVariants: t.Record(t.String(), t.String()),
           providers: t.Array(
             t.Object({ id: t.String(), name: t.Optional(t.String()) })
           ),
@@ -216,9 +255,15 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
               id: t.String(),
               name: t.String(),
               provider: t.String(),
+              variants: t.Array(
+                t.Object({
+                  id: t.String(),
+                })
+              ),
             })
           ),
           defaults: t.Record(t.String(), t.String()),
+          stickyVariants: t.Record(t.String(), t.String()),
           providers: t.Array(
             t.Object({ id: t.String(), name: t.Optional(t.String()) })
           ),
@@ -355,14 +400,22 @@ function normalizeProviderEntries(input: unknown): ProviderEntry[] {
 }
 
 function flattenProviderModels(providers: ProviderEntry[]) {
-  const models: { id: string; name: string; provider: string }[] = [];
+  const models: {
+    id: string;
+    name: string;
+    provider: string;
+    variants: Array<{ id: string }>;
+  }[] = [];
 
   for (const provider of providers) {
     const providerModels = provider.models ?? {};
     for (const [modelKey, model] of Object.entries(providerModels)) {
       const id = model?.id ?? modelKey;
       const name = model?.name ?? id;
-      models.push({ id, name, provider: provider.id });
+      const variants = Object.entries(model?.variants ?? {})
+        .filter(([, variant]) => !variant?.disabled)
+        .map(([variantId]) => ({ id: variantId }));
+      models.push({ id, name, provider: provider.id, variants });
     }
   }
 

@@ -71,6 +71,13 @@
       "when": 1783000000000,
       "tag": "0009_resource_rollups",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1784000000000,
+      "tag": "0010_variant_support",
+      "breakpoints": true
     }
   ]
 }

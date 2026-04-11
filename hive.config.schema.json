@@ -234,12 +234,36 @@
             "description": "Agent configuration for this template",
             "type": "object",
             "properties": {
+              "model": {
+                "description": "Model configuration for this template",
+                "type": "object",
+                "properties": {
+                  "providerId": {
+                    "description": "OpenCode provider identifier",
+                    "type": "string"
+                  },
+                  "id": {
+                    "description": "Model identifier within the provider",
+                    "type": "string"
+                  },
+                  "variant": {
+                    "description": "Optional model variant identifier",
+                    "type": "string"
+                  }
+                },
+                "required": ["providerId", "id"],
+                "additionalProperties": false
+              },
               "providerId": {
-                "description": "OpenCode provider identifier",
+                "description": "Deprecated: OpenCode provider identifier",
                 "type": "string"
               },
               "modelId": {
-                "description": "Model identifier within the provider",
+                "description": "Deprecated: model identifier within the provider",
+                "type": "string"
+              },
+              "variant": {
+                "description": "Deprecated: model variant identifier",
                 "type": "string"
               },
               "agentId": {
@@ -247,7 +271,6 @@
                 "type": "string"
               }
             },
-            "required": ["providerId"],
             "additionalProperties": false
           },
           "teardown": {
