@@ -1038,7 +1038,6 @@ type ModelSelectionContext = {
   defaults: Record<string, string>;
 };
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: central fallback resolution is easier to reason about in one place
 function resolveModelSelection({
   options,
   agentConfig,
