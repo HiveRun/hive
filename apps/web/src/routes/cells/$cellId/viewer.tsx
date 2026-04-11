@@ -6,8 +6,9 @@ import {
   ExternalLink,
   Maximize2,
   RefreshCw,
+  RotateCcw,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   WebPreview,
   WebPreviewBody,
@@ -15,13 +16,8 @@ import {
   WebPreviewUrl,
   WebPreviewViewportControls,
 } from "@/components/ai-elements/web-preview";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useDesktopViewer } from "@/hooks/use-desktop-viewer";
 import { useServiceStream } from "@/hooks/use-service-stream";
 import { type CellServiceSummary, cellQueries } from "@/queries/cells";
 
@@ -65,20 +61,18 @@ function CellServiceViewer() {
   return <CellServiceViewerLive cellId={cellId} />;
 }
 
-function useServiceSelection(services: CellServiceSummary[]) {
-  const [selectedServiceId, setSelectedServiceId] = useState<string | null>(
-    null
-  );
+function useActiveServiceTab(services: CellServiceSummary[]) {
+  const [activeServiceId, setActiveServiceId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!services.length) {
-      setSelectedServiceId(null);
+      setActiveServiceId(null);
       return;
     }
 
     if (
-      selectedServiceId &&
-      services.some((service) => service.id === selectedServiceId)
+      activeServiceId &&
+      services.some((service) => service.id === activeServiceId)
     ) {
       return;
     }
@@ -91,18 +85,24 @@ function useServiceSelection(services: CellServiceSummary[]) {
       services.find((service) => service.port != null) ??
       null;
 
-    setSelectedServiceId(fallback?.id ?? null);
-  }, [services, selectedServiceId]);
+    setActiveServiceId(fallback?.id ?? null);
+  }, [activeServiceId, services]);
 
-  const selectedService = services.find(
-    (service) => service.id === selectedServiceId
+  const activeService = services.find(
+    (service) => service.id === activeServiceId
   );
 
   return {
-    selectedService,
-    selectedServiceId,
-    setSelectedServiceId,
+    activeService,
+    activeServiceId,
+    setActiveServiceId,
   };
+}
+
+function isPreviewableService(
+  service: CellServiceSummary
+): service is CellServiceSummary & { port: number; url: string } {
+  return service.port != null && typeof service.url === "string";
 }
 
 function useBrowserReachability({
@@ -153,49 +153,92 @@ function useBrowserReachability({
   return browserReachability;
 }
 
-function createViewerActions({
-  iframeRef,
-  viewerUrl,
+function useViewerControls({
+  actions,
+  activeServiceId,
+  activeServiceUrl,
+  displayUrl,
+  isDesktopRuntime,
+  state,
 }: {
-  iframeRef: { current: HTMLIFrameElement | null };
-  viewerUrl: string | null;
+  actions: ReturnType<typeof useDesktopViewer>["actions"];
+  activeServiceId: string | null;
+  activeServiceUrl: string | null;
+  displayUrl: string | null;
+  isDesktopRuntime: boolean;
+  state: ReturnType<typeof useDesktopViewer>["state"];
 }) {
-  const handleRefresh = () => {
-    if (iframeRef.current && viewerUrl) {
-      iframeRef.current.src = viewerUrl;
+  const hasViewerUrl = displayUrl !== null;
+
+  const runForActiveServiceTab = (
+    callback: (serviceId: string) => Promise<unknown>
+  ) => {
+    if (!(actions && activeServiceId)) {
+      return;
     }
+
+    actions
+      .activateServiceTab(activeServiceId)
+      .then(() => callback(activeServiceId))
+      .catch(() => {
+        /* ignore transient tab action failures */
+      });
+  };
+
+  const disabledControls = {
+    back: isDesktopRuntime && hasViewerUrl ? !state.canGoBack : true,
+    forward: isDesktopRuntime && hasViewerUrl ? !state.canGoForward : true,
+    maximize: !(isDesktopRuntime && hasViewerUrl),
+    openExternal: !(isDesktopRuntime && hasViewerUrl),
+    refresh: !(isDesktopRuntime && hasViewerUrl),
+    reset: !(isDesktopRuntime && activeServiceUrl),
+  };
+
+  const handleRefresh = () => {
+    runForActiveServiceTab(() => actions?.reload() ?? Promise.resolve());
   };
 
   const handleBack = () => {
-    if (iframeRef.current) {
-      iframeRef.current.contentWindow?.history?.back();
-    }
+    runForActiveServiceTab(() => actions?.goBack() ?? Promise.resolve());
   };
 
   const handleForward = () => {
-    if (iframeRef.current) {
-      iframeRef.current.contentWindow?.history?.forward();
-    }
+    runForActiveServiceTab(() => actions?.goForward() ?? Promise.resolve());
   };
 
-  const handleOpenInNewTab = () => {
-    if (viewerUrl) {
-      window.open(viewerUrl, "_blank", "noopener,noreferrer");
-    }
+  const handleOpenExternal = () => {
+    runForActiveServiceTab(() => actions?.openExternal() ?? Promise.resolve());
   };
 
   const handleMaximize = () => {
-    if (iframeRef.current) {
-      iframeRef.current.requestFullscreen?.();
+    document.documentElement.requestFullscreen?.().catch(() => {
+      /* ignore fullscreen failures */
+    });
+  };
+
+  const handleReset = () => {
+    runForActiveServiceTab(
+      () => actions?.resetActiveTab() ?? Promise.resolve()
+    );
+  };
+
+  const handleNavigate = (url: string | null) => {
+    if (!(isDesktopRuntime && url && activeServiceId)) {
+      return;
     }
+
+    runForActiveServiceTab(() => actions?.navigate(url) ?? Promise.resolve());
   };
 
   return {
+    disabledControls,
     handleBack,
     handleForward,
     handleMaximize,
-    handleOpenInNewTab,
+    handleNavigate,
+    handleOpenExternal,
     handleRefresh,
+    handleReset,
   };
 }
 
@@ -204,112 +247,153 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
     enabled: true,
   });
 
-  const { selectedService, selectedServiceId, setSelectedServiceId } =
-    useServiceSelection(services);
+  const previewableServices = useMemo(
+    () => services.filter(isPreviewableService),
+    [services]
+  );
+  const { activeService, activeServiceId, setActiveServiceId } =
+    useActiveServiceTab(previewableServices);
 
-  const portServices = services.filter((service) => service.port != null);
+  const serviceTabs = useMemo(
+    () =>
+      previewableServices.map((service) => ({
+        rootUrl: service.url,
+        serviceId: service.id,
+      })),
+    [previewableServices]
+  );
 
-  const viewerUrl = selectedService?.url ?? null;
+  const previewUrl = activeService?.url ?? null;
 
   const browserReachability = useBrowserReachability({
-    viewerUrl,
-    serviceStatus: selectedService?.status,
+    viewerUrl: previewUrl,
+    serviceStatus: activeService?.status,
   });
 
   const resolvedReachability =
-    browserReachability ?? selectedService?.portReachable ?? null;
+    browserReachability ?? activeService?.portReachable ?? null;
+  const previewContainerRef = useRef<HTMLDivElement | null>(null);
+  const { actions, isSupported, state } = useDesktopViewer(
+    previewContainerRef,
+    {
+      activeServiceId,
+      enabled: previewableServices.length > 0,
+      serviceTabs,
+    }
+  );
 
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const isDesktopRuntime = isSupported;
 
+  useEffect(() => {
+    if (!isDesktopRuntime) {
+      return;
+    }
+
+    return () => {
+      actions?.hide().catch(() => {
+        /* ignore teardown failures */
+      });
+    };
+  }, [actions, isDesktopRuntime]);
+
+  const displayUrl =
+    state.activeServiceId === activeServiceId
+      ? (state.url ?? previewUrl)
+      : previewUrl;
   const {
+    disabledControls,
     handleBack,
     handleForward,
     handleMaximize,
-    handleOpenInNewTab,
+    handleNavigate,
+    handleOpenExternal,
     handleRefresh,
-  } = createViewerActions({ iframeRef, viewerUrl });
+    handleReset,
+  } = useViewerControls({
+    actions,
+    activeServiceId,
+    activeServiceUrl: activeService?.url ?? null,
+    displayUrl,
+    isDesktopRuntime,
+    state,
+  });
 
   return (
-    <div className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
+    <div
+      className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-border bg-card"
+      data-testid="cell-viewer-route"
+    >
       <div className="flex h-full w-full flex-col gap-4 p-4">
         <WebPreview
           error={error ?? undefined}
-          isLoading={isLoading}
-          url={viewerUrl}
+          isLoading={isLoading || state.isLoading}
+          onUrlChange={handleNavigate}
+          url={displayUrl}
         >
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-sm border-2 border-border bg-card p-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <WebPreviewNavigationButton
-                disabled={!viewerUrl}
-                onClick={handleBack}
-                tooltip="Back"
-              >
-                <ArrowLeft className="h-3.5 w-3.5" />
-              </WebPreviewNavigationButton>
-              <WebPreviewNavigationButton
-                disabled={!viewerUrl}
-                onClick={handleForward}
-                tooltip="Forward"
-              >
-                <ArrowRight className="h-3.5 w-3.5" />
-              </WebPreviewNavigationButton>
-              <WebPreviewNavigationButton
-                disabled={!viewerUrl}
-                onClick={handleRefresh}
-                tooltip="Refresh"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-              </WebPreviewNavigationButton>
-              <WebPreviewUrl />
+          <div className="flex flex-col gap-3 rounded-sm border-2 border-border bg-card p-3">
+            <div className="flex flex-col gap-1">
+              <span className="font-semibold text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
+                Services
+              </span>
+              <ServiceTabs
+                activeServiceId={activeServiceId}
+                onValueChange={setActiveServiceId}
+                services={previewableServices}
+              />
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <WebPreviewViewportControls options={viewportOptions} />
-
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-border border-t pt-3">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                 <WebPreviewNavigationButton
-                  disabled={!viewerUrl}
-                  onClick={handleOpenInNewTab}
-                  tooltip="Open in new tab"
+                  disabled={disabledControls.back}
+                  onClick={handleBack}
+                  tooltip="Back"
                 >
-                  <ExternalLink className="h-3.5 w-3.5" />
+                  <ArrowLeft className="h-3.5 w-3.5" />
                 </WebPreviewNavigationButton>
                 <WebPreviewNavigationButton
-                  disabled={!viewerUrl}
-                  onClick={handleMaximize}
-                  tooltip="Fullscreen"
+                  disabled={disabledControls.forward}
+                  onClick={handleForward}
+                  tooltip="Forward"
                 >
-                  <Maximize2 className="h-3.5 w-3.5" />
+                  <ArrowRight className="h-3.5 w-3.5" />
                 </WebPreviewNavigationButton>
+                <WebPreviewNavigationButton
+                  disabled={disabledControls.refresh}
+                  onClick={handleRefresh}
+                  tooltip="Refresh"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </WebPreviewNavigationButton>
+                <WebPreviewNavigationButton
+                  disabled={!activeService?.url}
+                  onClick={handleReset}
+                  tooltip="Reset to service root"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                </WebPreviewNavigationButton>
+                <WebPreviewUrl className="max-w-none sm:max-w-md" />
               </div>
 
-              <div className="flex flex-col gap-1">
-                <span className="font-semibold text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
-                  Service
-                </span>
-                <Select
-                  disabled={portServices.length === 0}
-                  onValueChange={setSelectedServiceId}
-                  value={selectedServiceId ?? ""}
-                >
-                  <SelectTrigger className="w-[180px] border-border bg-background text-foreground">
-                    <SelectValue placeholder="Select service" />
-                  </SelectTrigger>
-                  <SelectContent className="border-border bg-card text-foreground">
-                    {portServices.map((service) => (
-                      <SelectItem key={service.id} value={service.id}>
-                        <span className="flex flex-col gap-0.5">
-                          <span className="font-semibold text-[12px] text-foreground uppercase tracking-[0.2em]">
-                            {service.name}
-                          </span>
-                          <span className="text-[10px] text-muted-foreground">
-                            Port {service.port}
-                          </span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="flex flex-wrap items-center gap-3">
+                <WebPreviewViewportControls options={viewportOptions} />
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <WebPreviewNavigationButton
+                    disabled={disabledControls.openExternal}
+                    onClick={handleOpenExternal}
+                    tooltip="Open externally"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </WebPreviewNavigationButton>
+                  <WebPreviewNavigationButton
+                    disabled={disabledControls.maximize}
+                    onClick={handleMaximize}
+                    tooltip="Fullscreen"
+                  >
+                    <Maximize2 className="h-3.5 w-3.5" />
+                  </WebPreviewNavigationButton>
+                </div>
               </div>
 
               <ReachabilityWarning
@@ -319,15 +403,84 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
             </div>
           </div>
 
-          <WebPreviewBody
-            iframeProps={{
-              ref: iframeRef,
-              title: selectedService
-                ? `Service ${selectedService.name} viewer`
-                : "Web preview",
-            }}
-          />
+          <div className="contents">
+            <WebPreviewBody
+              emptyState={
+                isDesktopRuntime ? undefined : <DesktopOnlyViewerMessage />
+              }
+              previewRef={
+                isDesktopRuntime && activeServiceId
+                  ? previewContainerRef
+                  : undefined
+              }
+            >
+              {isDesktopRuntime && activeServiceId ? (
+                <div
+                  className="h-full min-h-[320px] w-full bg-background"
+                  data-testid="native-web-preview"
+                  title={
+                    activeService
+                      ? `Service ${activeService.name} viewer`
+                      : "Web preview"
+                  }
+                />
+              ) : (
+                <DesktopOnlyViewerMessage />
+              )}
+            </WebPreviewBody>
+          </div>
         </WebPreview>
+      </div>
+    </div>
+  );
+}
+
+function ServiceTabs({
+  activeServiceId,
+  onValueChange,
+  services,
+}: {
+  activeServiceId: string | null;
+  onValueChange: (value: string) => void;
+  services: CellServiceSummary[];
+}) {
+  return (
+    <Tabs onValueChange={onValueChange} value={activeServiceId ?? undefined}>
+      <TabsList className="h-auto w-full flex-wrap justify-start gap-1 rounded-sm border border-border bg-background p-1">
+        {services.map((service) => (
+          <TabsTrigger
+            className="min-w-[118px] flex-col items-start gap-0 rounded-sm border-border/60 px-3 py-2 text-left data-[state=active]:border-border data-[state=active]:bg-card"
+            data-testid={`viewer-service-tab-${service.name}`}
+            key={service.id}
+            value={service.id}
+          >
+            <span className="font-semibold text-[12px] text-foreground uppercase tracking-[0.2em]">
+              {service.name}
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              Port {service.port}
+            </span>
+          </TabsTrigger>
+        ))}
+      </TabsList>
+    </Tabs>
+  );
+}
+
+function DesktopOnlyViewerMessage() {
+  return (
+    <div
+      className="flex h-full min-h-[320px] w-full items-center justify-center bg-background px-6 text-center"
+      data-testid="viewer-desktop-only-message"
+    >
+      <div className="flex max-w-md flex-col gap-3 text-muted-foreground text-sm">
+        <p className="font-semibold text-foreground text-sm uppercase tracking-[0.2em]">
+          Hive Desktop required
+        </p>
+        <p>
+          Browser preview now uses Electron directly. Open this cell in Hive
+          Desktop to inspect services without iframe focus and history quirks.
+        </p>
       </div>
     </div>
   );

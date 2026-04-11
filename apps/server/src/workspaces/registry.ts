@@ -91,10 +91,6 @@ async function validateWorkspaceDirectory(path: string): Promise<string> {
     throw new Error(`Workspace path is not a directory: ${absolutePath}`);
   }
 
-  if (isCellWorkspacePath(absolutePath)) {
-    throw new Error("Cell worktrees cannot be registered as workspaces");
-  }
-
   const configPath = findConfigPath(absolutePath);
   if (!configPath) {
     throw new Error(

@@ -1,17 +1,51 @@
-import { Notification, shell } from "electron";
-
-export const IPC_CHANNELS = {
-  getRuntimeInfo: "hive.desktop.getRuntimeInfo",
-  notify: "hive.desktop.notify",
-  openExternal: "hive.desktop.openExternal",
-} as const;
+import {
+  type BrowserWindow,
+  type IpcMain,
+  Notification,
+  shell,
+} from "electron";
+import { IPC_CHANNELS } from "./ipc-channels";
+import type { ViewerBounds, ViewerServiceTab } from "./viewer-controller";
+import { createViewerController } from "./viewer-controller";
 
 type NotifyInput = {
   title: string;
   body?: string;
 };
 
-export const createIpcHandlers = () => {
+type IpcHandlers = ReturnType<typeof createIpcHandlers>;
+
+const openExternal = async (url: string) => {
+  await shell.openExternal(url);
+  return { ok: true } as const;
+};
+
+export const createIpcHandlers = (window: BrowserWindow) => {
+  let viewer: ReturnType<typeof createViewerController> | null = null;
+
+  const getViewer = () => {
+    if (viewer) {
+      return viewer;
+    }
+
+    viewer = createViewerController({
+      onStateChange: (state) => {
+        try {
+          if (window.isDestroyed() || window.webContents.isDestroyed()) {
+            return;
+          }
+
+          window.webContents.send(IPC_CHANNELS.viewerStateChanged, state);
+        } catch {
+          /* ignore teardown races while the window is closing */
+        }
+      },
+      window,
+    });
+
+    return viewer;
+  };
+
   const getRuntimeInfo = () => ({
     runtime: "electron" as const,
     version: process.versions.electron,
@@ -32,14 +66,135 @@ export const createIpcHandlers = () => {
     return { delivered: true } as const;
   };
 
-  const openExternal = async (url: string) => {
-    await shell.openExternal(url);
-    return { ok: true } as const;
-  };
+  const viewerGetState = () => getViewer().getState();
+  const viewerActivateServiceTab = async (serviceId: string) =>
+    await getViewer().activateServiceTab(serviceId);
+  const viewerShow = (bounds: ViewerBounds) => getViewer().show(bounds);
+  const viewerHide = () => getViewer().hide();
+  const viewerSetBounds = (bounds: ViewerBounds) =>
+    getViewer().setBounds(bounds);
+  const viewerNavigate = async (url: string) => await getViewer().loadURL(url);
+  const viewerGoBack = () => getViewer().goBack();
+  const viewerGoForward = () => getViewer().goForward();
+  const viewerResetActiveTab = async () => await getViewer().resetActiveTab();
+  const viewerReload = () => getViewer().reload();
+  const viewerOpenExternal = async () => await getViewer().openExternal();
+  const viewerSyncServiceTabs = async (tabs: ViewerServiceTab[]) =>
+    await getViewer().syncServiceTabs(tabs);
 
   return {
     getRuntimeInfo,
     notify,
     openExternal,
+    viewer: {
+      destroy: () => {
+        viewer?.destroy();
+        viewer = null;
+      },
+    },
+    viewerActivateServiceTab,
+    viewerGetState,
+    viewerGoBack,
+    viewerGoForward,
+    viewerHide,
+    viewerNavigate,
+    viewerOpenExternal,
+    viewerResetActiveTab,
+    viewerReload,
+    viewerSetBounds,
+    viewerShow,
+    viewerSyncServiceTabs,
   };
 };
+
+export const registerIpcHandlers = (options: { ipcMain: IpcMain }) => {
+  let activeWindow: BrowserWindow | null = null;
+  let activeHandlers: IpcHandlers | null = null;
+
+  const requireHandlers = () => {
+    if (!activeHandlers) {
+      throw new Error("Desktop window is not available");
+    }
+
+    return activeHandlers;
+  };
+
+  const attachWindow = (window: BrowserWindow) => {
+    if (activeWindow === window && activeHandlers) {
+      return activeHandlers;
+    }
+
+    activeHandlers?.viewer.destroy();
+    activeWindow = window;
+    activeHandlers = createIpcHandlers(window);
+
+    return activeHandlers;
+  };
+
+  const detachWindow = (window: BrowserWindow) => {
+    if (activeWindow !== window) {
+      return;
+    }
+
+    activeHandlers?.viewer.destroy();
+    activeHandlers = null;
+    activeWindow = null;
+  };
+
+  options.ipcMain.handle(IPC_CHANNELS.getRuntimeInfo, () =>
+    requireHandlers().getRuntimeInfo()
+  );
+  options.ipcMain.handle(IPC_CHANNELS.notify, (_event, payload) =>
+    requireHandlers().notify(payload as NotifyInput)
+  );
+  options.ipcMain.handle(IPC_CHANNELS.openExternal, (_event, url) =>
+    openExternal(url as string)
+  );
+  options.ipcMain.handle(IPC_CHANNELS.viewerGetState, () =>
+    requireHandlers().viewerGetState()
+  );
+  options.ipcMain.handle(
+    IPC_CHANNELS.viewerActivateServiceTab,
+    (_event, serviceId) =>
+      requireHandlers().viewerActivateServiceTab(serviceId as string)
+  );
+  options.ipcMain.handle(IPC_CHANNELS.viewerShow, (_event, bounds) =>
+    requireHandlers().viewerShow(bounds as ViewerBounds)
+  );
+  options.ipcMain.handle(IPC_CHANNELS.viewerHide, () =>
+    requireHandlers().viewerHide()
+  );
+  options.ipcMain.handle(IPC_CHANNELS.viewerSetBounds, (_event, bounds) =>
+    requireHandlers().viewerSetBounds(bounds as ViewerBounds)
+  );
+  options.ipcMain.handle(IPC_CHANNELS.viewerNavigate, (_event, url) =>
+    requireHandlers().viewerNavigate(url as string)
+  );
+  options.ipcMain.handle(IPC_CHANNELS.viewerGoBack, () =>
+    requireHandlers().viewerGoBack()
+  );
+  options.ipcMain.handle(IPC_CHANNELS.viewerGoForward, () =>
+    requireHandlers().viewerGoForward()
+  );
+  options.ipcMain.handle(IPC_CHANNELS.viewerResetActiveTab, () =>
+    requireHandlers().viewerResetActiveTab()
+  );
+  options.ipcMain.handle(IPC_CHANNELS.viewerReload, () =>
+    requireHandlers().viewerReload()
+  );
+  options.ipcMain.handle(IPC_CHANNELS.viewerOpenExternal, () =>
+    requireHandlers().viewerOpenExternal()
+  );
+  options.ipcMain.handle(IPC_CHANNELS.viewerSyncServiceTabs, (_event, tabs) =>
+    requireHandlers().viewerSyncServiceTabs(tabs as ViewerServiceTab[])
+  );
+
+  return {
+    attachWindow,
+    detachWindow,
+    openExternal,
+  };
+};
+
+export type { IpcHandlers };
+export type { ViewerBounds, ViewerState } from "./viewer-controller";

@@ -190,6 +190,20 @@ bun setup
 # Set up local database (create .env with DATABASE_URL="local.db")
 # Then run development servers
 bun dev
+
+Source dev commands default `HIVE_HOME` to `<workspace>/.hive/home` when the
+environment variable is unset. This keeps local repo/worktree testing isolated
+from your global `~/.hive` state. Set `HIVE_HOME` explicitly if you want to
+share a different Hive home.
+
+To launch the local web/server dev stack and Electron together, run:
+
+```bash
+bun run dev:desktop:full
+```
+
+This waits for `http://localhost:3001` by default before opening Electron.
+Override `HIVE_DESKTOP_URL` if your web dev server uses a different URL.
 ```
 
 ### Manual Setup
@@ -201,6 +215,20 @@ bun setup
 # Set up local database (create .env with DATABASE_URL="local.db")  
 # Then run development servers
 bun dev
+
+Source dev commands default `HIVE_HOME` to `<workspace>/.hive/home` when the
+environment variable is unset. This keeps local repo/worktree testing isolated
+from your global `~/.hive` state. Set `HIVE_HOME` explicitly if you want to
+share a different Hive home.
+
+To launch the local web/server dev stack and Electron together, run:
+
+```bash
+bun run dev:desktop:full
+```
+
+This waits for `http://localhost:3001` by default before opening Electron.
+Override `HIVE_DESKTOP_URL` if your web dev server uses a different URL.
 ```
 
 **URLs:**

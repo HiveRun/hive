@@ -1,10 +1,11 @@
 import {
-  type ComponentProps,
   createContext,
   type ReactNode,
+  type RefObject,
   useCallback,
   useContext,
   useEffect,
+  useId,
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,9 @@ type WebPreviewContextValue = {
 const WebPreviewContext = createContext<WebPreviewContextValue | undefined>(
   undefined
 );
+const noopSetUrl = (_url: string | null) => {
+  // Intentionally empty for read-only preview contexts.
+};
 
 function useWebPreviewContext() {
   const context = useContext(WebPreviewContext);
@@ -41,23 +45,19 @@ function useWebPreviewContext() {
 
 export function WebPreview({
   children,
-  url: initialUrl,
+  onUrlChange,
+  url,
   viewportPreset: defaultViewportPreset = "desktop",
   isLoading = false,
   error = null,
 }: {
   children: ReactNode;
   url: string | null;
+  onUrlChange?: (url: string | null) => void;
   viewportPreset?: ViewportPreset;
   isLoading?: boolean;
   error?: string | null;
 }) {
-  const [url, setUrl] = useState<string | null>(initialUrl);
-
-  useEffect(() => {
-    setUrl(initialUrl);
-  }, [initialUrl]);
-
   const [viewportPreset, setViewportPreset] = useState<ViewportPreset>(
     defaultViewportPreset
   );
@@ -66,7 +66,7 @@ export function WebPreview({
     <WebPreviewContext.Provider
       value={{
         url,
-        setUrl,
+        setUrl: onUrlChange ?? noopSetUrl,
         viewportPreset,
         setViewportPreset,
         isLoading,
@@ -129,12 +129,16 @@ export function WebPreviewNavigationButton({
 
 export function WebPreviewUrl({ className }: { className?: string }) {
   const { url, setUrl } = useWebPreviewContext();
+  const [draftUrl, setDraftUrl] = useState(url ?? "");
+
+  useEffect(() => {
+    setDraftUrl(url ?? "");
+  }, [url]);
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
       if (event.key === "Enter") {
-        const input = event.currentTarget;
-        const newUrl = input.value.trim();
+        const newUrl = event.currentTarget.value.trim();
         setUrl(newUrl || null);
       }
     },
@@ -144,50 +148,30 @@ export function WebPreviewUrl({ className }: { className?: string }) {
   return (
     <Input
       className={cn("h-8 w-full min-w-0 max-w-md font-mono text-xs", className)}
+      onChange={(event) => setDraftUrl(event.currentTarget.value)}
       onKeyDown={handleKeyDown}
       placeholder="Enter URL and press Enter..."
       type="url"
-      value={url ?? ""}
+      value={draftUrl}
     />
   );
 }
 
 export function WebPreviewBody({
   className,
-  iframeProps = {},
+  children,
+  emptyState,
+  previewRef,
 }: {
   className?: string;
-  iframeProps?: Omit<ComponentProps<"iframe">, "key" | "sandbox">;
+  children?: ReactNode;
+  emptyState?: ReactNode;
+  previewRef?: RefObject<HTMLDivElement | null>;
 }) {
   const { url, viewportPreset, isLoading, error } = useWebPreviewContext();
+  const fallbackTitleId = useId();
 
   const frameStyle = resolveViewportStyle(viewportPreset);
-
-  if (isLoading) {
-    return (
-      <div
-        className={cn(
-          "flex h-full w-full items-center justify-center rounded-sm border border-border bg-card text-muted-foreground",
-          className
-        )}
-      >
-        Loading…
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div
-        className={cn(
-          "flex h-full w-full items-center justify-center rounded-sm border-2 border-destructive/50 bg-destructive/10 text-destructive",
-          className
-        )}
-      >
-        {error}
-      </div>
-    );
-  }
 
   if (!url) {
     return (
@@ -197,7 +181,7 @@ export function WebPreviewBody({
           className
         )}
       >
-        No URL to preview
+        {emptyState ?? "No URL to preview"}
       </div>
     );
   }
@@ -206,19 +190,38 @@ export function WebPreviewBody({
     <div className="flex min-h-0 flex-1 overflow-hidden rounded-sm border border-border bg-background">
       <div className="flex h-full w-full items-center justify-center overflow-auto px-2">
         <div
-          className="overflow-hidden rounded-sm border border-border bg-card shadow-sm"
+          className="relative overflow-hidden rounded-sm border border-border bg-card shadow-sm"
+          ref={previewRef}
           style={frameStyle}
         >
-          <iframe
-            className="h-full w-full border-0 bg-background"
-            key={`${viewportPreset}-${url}`}
-            loading="lazy"
-            referrerPolicy="no-referrer"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
-            src={url}
-            title="Web preview"
-            {...iframeProps}
-          />
+          {children ?? (
+            <div className="flex h-full min-h-[320px] w-full items-center justify-center bg-background px-6 text-center">
+              <div className="flex max-w-md flex-col gap-3 text-muted-foreground text-sm">
+                <p
+                  className="font-semibold text-foreground text-sm uppercase tracking-[0.2em]"
+                  id={fallbackTitleId}
+                >
+                  Browser preview unavailable
+                </p>
+                <p>
+                  This route now requires Hive Desktop so Electron can manage
+                  the embedded browser surface directly.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {isLoading ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-background/80 text-muted-foreground backdrop-blur-[1px]">
+              Loading…
+            </div>
+          ) : null}
+
+          {error ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-destructive/10 px-6 text-center text-destructive">
+              {error}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

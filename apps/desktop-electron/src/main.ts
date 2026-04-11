@@ -1,11 +1,13 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { app, BrowserWindow, ipcMain } from "electron";
-import { createIpcHandlers, IPC_CHANNELS } from "./ipc";
+import { registerIpcHandlers } from "./ipc";
 
 const DEFAULT_WINDOW_WIDTH = 1400;
 const DEFAULT_WINDOW_HEIGHT = 900;
 const moduleDir = import.meta.dirname;
+
+app.commandLine.appendSwitch("disable-gpu");
 
 const resolveWindowIcon = () => {
   const configuredPath = process.env.HIVE_DESKTOP_ICON_PATH;
@@ -44,7 +46,9 @@ const resolveRendererEntry = () => {
   return candidates.find((entry) => existsSync(entry)) ?? null;
 };
 
-const createMainWindow = async () => {
+type IpcRegistry = ReturnType<typeof registerIpcHandlers>;
+
+const createMainWindow = async (ipcRegistry: IpcRegistry) => {
   const window = new BrowserWindow({
     width: DEFAULT_WINDOW_WIDTH,
     height: DEFAULT_WINDOW_HEIGHT,
@@ -52,19 +56,23 @@ const createMainWindow = async () => {
     webPreferences: {
       preload: join(moduleDir, "preload.js"),
       contextIsolation: true,
-      sandbox: true,
       nodeIntegration: false,
+      sandbox: false,
     },
     title: "Hive Desktop",
   });
 
+  ipcRegistry.attachWindow(window);
+
   window.webContents.setWindowOpenHandler(({ url }) => {
-    createIpcHandlers()
-      .openExternal(url)
-      .catch(() => {
-        /* ignore open failures */
-      });
+    ipcRegistry.openExternal(url).catch(() => {
+      /* ignore open failures */
+    });
     return { action: "deny" };
+  });
+
+  window.on("closed", () => {
+    ipcRegistry.detachWindow(window);
   });
 
   const desktopUrl = process.env.HIVE_DESKTOP_URL;
@@ -83,26 +91,15 @@ const createMainWindow = async () => {
   await window.loadFile(rendererEntry);
 };
 
-const registerIpc = () => {
-  const handlers = createIpcHandlers();
-  ipcMain.handle(IPC_CHANNELS.getRuntimeInfo, () => handlers.getRuntimeInfo());
-  ipcMain.handle(IPC_CHANNELS.notify, (_event, payload) =>
-    handlers.notify(payload)
-  );
-  ipcMain.handle(IPC_CHANNELS.openExternal, (_event, url: string) =>
-    handlers.openExternal(url)
-  );
-};
-
 const bootstrap = async () => {
-  registerIpc();
-
   await app.whenReady();
-  await createMainWindow();
+  const ipcRegistry = registerIpcHandlers({ ipcMain });
+
+  await createMainWindow(ipcRegistry);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow().catch((error) => {
+      createMainWindow(ipcRegistry).catch((error) => {
         process.stderr.write(
           `Failed to create desktop window: ${String(error)}\n`
         );

@@ -1,4 +1,8 @@
-import { _electron as electron, type Page } from "@playwright/test";
+import {
+  type ElectronApplication,
+  _electron as electron,
+  type Page,
+} from "@playwright/test";
 import electronPath from "electron";
 
 const DIAGNOSTIC_SNIPPET_LIMIT = 400;
@@ -39,14 +43,29 @@ export const navigateInDesktopApp = async (page: Page, path: string) => {
 };
 
 export const readDesktopDiagnostics = async (page: Page) =>
-  await page.evaluate(() => ({
-    href: window.location.href,
-    title: document.title,
-    readyState: document.readyState,
-    bodySnippet: (document.body?.innerText ?? "").slice(
-      0,
-      DIAGNOSTIC_SNIPPET_LIMIT
-    ),
-    hasRoot: Boolean(document.querySelector("#root")),
-    scriptCount: document.scripts.length,
-  }));
+  await page.evaluate(
+    (snippetLimit) => ({
+      href: window.location.href,
+      title: document.title,
+      readyState: document.readyState,
+      hasDesktopViewerBridge: Boolean(window.hiveDesktop?.viewer),
+      bodySnippet: (document.body?.innerText ?? "").slice(0, snippetLimit),
+      hasRoot: Boolean(document.querySelector("#root")),
+      scriptCount: document.scripts.length,
+    }),
+    DIAGNOSTIC_SNIPPET_LIMIT
+  );
+
+export const evaluateDesktopWindow = async <T>(
+  app: ElectronApplication,
+  expression: string
+) =>
+  await app.evaluate(async ({ BrowserWindow }, source) => {
+    const window = BrowserWindow.getAllWindows()[0];
+
+    if (!window) {
+      throw new Error("No desktop window is available");
+    }
+
+    return (await window.webContents.executeJavaScript(source, true)) as T;
+  }, expression);
