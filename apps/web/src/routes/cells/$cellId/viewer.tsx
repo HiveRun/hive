@@ -170,6 +170,21 @@ function useViewerControls({
 }) {
   const hasViewerUrl = displayUrl !== null;
 
+  const runForActiveServiceTab = (
+    callback: (serviceId: string) => Promise<unknown>
+  ) => {
+    if (!(actions && activeServiceId)) {
+      return;
+    }
+
+    actions
+      .activateServiceTab(activeServiceId)
+      .then(() => callback(activeServiceId))
+      .catch(() => {
+        /* ignore transient tab action failures */
+      });
+  };
+
   const disabledControls = {
     back: isDesktopRuntime && hasViewerUrl ? !state.canGoBack : true,
     forward: isDesktopRuntime && hasViewerUrl ? !state.canGoForward : true,
@@ -180,27 +195,19 @@ function useViewerControls({
   };
 
   const handleRefresh = () => {
-    actions?.reload().catch(() => {
-      /* ignore refresh failures */
-    });
+    runForActiveServiceTab(() => actions?.reload() ?? Promise.resolve());
   };
 
   const handleBack = () => {
-    actions?.goBack().catch(() => {
-      /* ignore navigation failures */
-    });
+    runForActiveServiceTab(() => actions?.goBack() ?? Promise.resolve());
   };
 
   const handleForward = () => {
-    actions?.goForward().catch(() => {
-      /* ignore navigation failures */
-    });
+    runForActiveServiceTab(() => actions?.goForward() ?? Promise.resolve());
   };
 
   const handleOpenExternal = () => {
-    actions?.openExternal().catch(() => {
-      /* ignore external open failures */
-    });
+    runForActiveServiceTab(() => actions?.openExternal() ?? Promise.resolve());
   };
 
   const handleMaximize = () => {
@@ -210,9 +217,9 @@ function useViewerControls({
   };
 
   const handleReset = () => {
-    actions?.resetActiveTab().catch(() => {
-      /* ignore reset failures */
-    });
+    runForActiveServiceTab(
+      () => actions?.resetActiveTab() ?? Promise.resolve()
+    );
   };
 
   const handleNavigate = (url: string | null) => {
@@ -220,9 +227,7 @@ function useViewerControls({
       return;
     }
 
-    actions?.navigate(url).catch(() => {
-      /* ignore navigation failures */
-    });
+    runForActiveServiceTab(() => actions?.navigate(url) ?? Promise.resolve());
   };
 
   return {
