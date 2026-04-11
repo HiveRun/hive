@@ -14,6 +14,12 @@ export type TemplateService = {
   readyTimeoutMs?: number;
 };
 
+export type TemplateAgentModel = {
+  providerId: string;
+  id: string;
+  variant?: string;
+};
+
 export type TemplateConfig = {
   includePatterns?: string[];
   ignorePatterns?: string[];
@@ -23,8 +29,10 @@ export type TemplateConfig = {
   prompts?: string[];
   teardown?: string[];
   agent?: {
-    providerId: string;
+    model?: TemplateAgentModel;
+    providerId?: string;
     modelId?: string;
+    variant?: string;
   };
 };
 
@@ -44,6 +52,7 @@ export type Defaults = {
 export type AgentDefaults = {
   providerId?: string;
   modelId?: string;
+  variant?: string;
 };
 
 export type TemplatesResponse = {

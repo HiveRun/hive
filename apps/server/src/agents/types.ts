@@ -60,6 +60,7 @@ export type AgentSessionRecord = {
   completedAt?: string;
   modelId?: string;
   modelProviderId?: string;
+  modelVariant?: string;
   startMode?: AgentMode;
   currentMode?: AgentMode;
   modeUpdatedAt?: string;

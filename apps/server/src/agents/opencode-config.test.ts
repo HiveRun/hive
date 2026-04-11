@@ -154,7 +154,15 @@ describe("loadEffectiveOpencodeDefaults", () => {
     const client: any = {
       config: {
         get: async () => ({
-          data: { model: "openai/gpt-5.4-xhigh", default_agent: "plan" },
+          data: {
+            model: "openai/gpt-5.4-xhigh",
+            default_agent: "plan",
+            agent: {
+              plan: {
+                variant: "high",
+              },
+            },
+          },
         }),
       },
     };
@@ -164,8 +172,44 @@ describe("loadEffectiveOpencodeDefaults", () => {
     });
 
     expect(defaults).toEqual({
-      defaultModel: { providerId: "openai", modelId: "gpt-5.4-xhigh" },
+      defaultModel: {
+        providerId: "openai",
+        modelId: "gpt-5.4-xhigh",
+        variant: "high",
+      },
       startMode: "plan",
+    });
+  });
+
+  it("prefers the active agent model and variant over the root model", async () => {
+    const client: any = {
+      config: {
+        get: async () => ({
+          data: {
+            model: "openai/gpt-5.4",
+            default_agent: "build",
+            agent: {
+              build: {
+                model: "openai/gpt-5.5",
+                variant: "xhigh",
+              },
+            },
+          },
+        }),
+      },
+    };
+
+    const defaults = await loadEffectiveOpencodeDefaults("/tmp/workspace", {
+      client,
+    });
+
+    expect(defaults).toEqual({
+      defaultModel: {
+        providerId: "openai",
+        modelId: "gpt-5.5",
+        variant: "xhigh",
+      },
+      startMode: "build",
     });
   });
 
