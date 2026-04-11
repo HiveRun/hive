@@ -10,6 +10,7 @@ test.describe("viewer route in web runtime", () => {
     const cellId = await createCell({
       page,
       name: `Viewer Web Fallback ${Date.now()}`,
+      templateId: "viewer-template",
     });
 
     await page.goto(`/cells/${cellId}/viewer`);
@@ -19,5 +20,16 @@ test.describe("viewer route in web runtime", () => {
     await expect(
       page.getByText("Browser preview now uses Electron directly.")
     ).toBeVisible();
+
+    const viewerRoute = page.getByTestId("cell-viewer-route");
+
+    await expect(viewerRoute.getByLabel("Back")).toBeDisabled();
+    await expect(viewerRoute.getByLabel("Forward")).toBeDisabled();
+    await expect(viewerRoute.getByLabel("Refresh")).toBeDisabled();
+    await expect(
+      viewerRoute.getByLabel("Reset to service root")
+    ).toBeDisabled();
+    await expect(viewerRoute.getByLabel("Open externally")).toBeDisabled();
+    await expect(viewerRoute.getByLabel("Fullscreen")).toBeDisabled();
   });
 });

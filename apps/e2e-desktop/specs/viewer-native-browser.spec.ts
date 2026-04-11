@@ -5,6 +5,7 @@ const VIEWER_ROUTE_TIMEOUT_MS = 30_000;
 const VIEWER_STATE_TIMEOUT_MS = 15_000;
 const VIEWER_CELL_READY_TIMEOUT_MS = 120_000;
 const VIEWER_CELL_POLL_INTERVAL_MS = 500;
+const VIEWER_ROUTE_ATTEMPTS = 3;
 const ABOUT_BLANK = "about:blank";
 const DOCS_OVERRIDE_URL = `data:text/html,${encodeURIComponent("<title>Docs Override</title><h1>Docs Override</h1>")}`;
 
@@ -25,10 +26,7 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
 
     await waitForCellReady(apiUrl, cellId);
 
-    await navigateInDesktopApp(page, `/cells/${cellId}/viewer`);
-    await page.waitForSelector("[data-testid='cell-viewer-route']", {
-      timeout: VIEWER_ROUTE_TIMEOUT_MS,
-    });
+    await waitForViewerRoute(page, `/cells/${cellId}/viewer`);
 
     await expect
       .poll(
@@ -229,6 +227,28 @@ function wait(durationMs: number) {
   return new Promise((resolve) => {
     setTimeout(resolve, durationMs);
   });
+}
+
+async function waitForViewerRoute(
+  page: import("@playwright/test").Page,
+  path: string
+) {
+  for (let attempt = 1; attempt <= VIEWER_ROUTE_ATTEMPTS; attempt += 1) {
+    await navigateInDesktopApp(page, path);
+
+    try {
+      await page.waitForSelector("[data-testid='cell-viewer-route']", {
+        timeout: VIEWER_ROUTE_TIMEOUT_MS,
+      });
+      return;
+    } catch (error) {
+      if (attempt >= VIEWER_ROUTE_ATTEMPTS) {
+        throw error;
+      }
+
+      await wait(VIEWER_CELL_POLL_INTERVAL_MS);
+    }
+  }
 }
 
 async function readDesktopBrowserView(app: ElectronApplication) {

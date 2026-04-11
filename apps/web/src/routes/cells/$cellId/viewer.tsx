@@ -8,7 +8,7 @@ import {
   RefreshCw,
   RotateCcw,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   WebPreview,
   WebPreviewBody,
@@ -153,65 +153,30 @@ function useBrowserReachability({
   return browserReachability;
 }
 
-function CellServiceViewerLive({ cellId }: { cellId: string }) {
-  const { services, isLoading, error } = useServiceStream(cellId, {
-    enabled: true,
-  });
-
-  const previewableServices = services.filter(isPreviewableService);
-  const { activeService, activeServiceId, setActiveServiceId } =
-    useActiveServiceTab(previewableServices);
-
-  const serviceTabs = previewableServices.map((service) => ({
-    rootUrl: service.url,
-    serviceId: service.id,
-  }));
-
-  const previewUrl = activeService?.url ?? null;
-
-  const browserReachability = useBrowserReachability({
-    viewerUrl: previewUrl,
-    serviceStatus: activeService?.status,
-  });
-
-  const resolvedReachability =
-    browserReachability ?? activeService?.portReachable ?? null;
-  const previewContainerRef = useRef<HTMLDivElement | null>(null);
-  const { actions, isSupported, state } = useDesktopViewer(
-    previewContainerRef,
-    {
-      activeServiceId,
-      enabled: previewableServices.length > 0,
-      serviceTabs,
-    }
-  );
-
-  const isDesktopRuntime = isSupported;
-
-  useEffect(() => {
-    if (!isDesktopRuntime) {
-      return;
-    }
-
-    return () => {
-      actions?.hide().catch(() => {
-        /* ignore teardown failures */
-      });
-    };
-  }, [actions, isDesktopRuntime]);
-
-  const displayUrl =
-    state.activeServiceId === activeServiceId
-      ? (state.url ?? previewUrl)
-      : previewUrl;
+function useViewerControls({
+  actions,
+  activeServiceId,
+  activeServiceUrl,
+  displayUrl,
+  isDesktopRuntime,
+  state,
+}: {
+  actions: ReturnType<typeof useDesktopViewer>["actions"];
+  activeServiceId: string | null;
+  activeServiceUrl: string | null;
+  displayUrl: string | null;
+  isDesktopRuntime: boolean;
+  state: ReturnType<typeof useDesktopViewer>["state"];
+}) {
   const hasViewerUrl = displayUrl !== null;
 
   const disabledControls = {
-    back: hasViewerUrl ? !state.canGoBack : true,
-    forward: hasViewerUrl ? !state.canGoForward : true,
-    maximize: !hasViewerUrl,
-    openExternal: !hasViewerUrl,
-    refresh: !hasViewerUrl,
+    back: isDesktopRuntime && hasViewerUrl ? !state.canGoBack : true,
+    forward: isDesktopRuntime && hasViewerUrl ? !state.canGoForward : true,
+    maximize: !(isDesktopRuntime && hasViewerUrl),
+    openExternal: !(isDesktopRuntime && hasViewerUrl),
+    refresh: !(isDesktopRuntime && hasViewerUrl),
+    reset: !(isDesktopRuntime && activeServiceUrl),
   };
 
   const handleRefresh = () => {
@@ -251,7 +216,7 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
   };
 
   const handleNavigate = (url: string | null) => {
-    if (!(url && activeServiceId)) {
+    if (!(isDesktopRuntime && url && activeServiceId)) {
       return;
     }
 
@@ -259,6 +224,94 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
       /* ignore navigation failures */
     });
   };
+
+  return {
+    disabledControls,
+    handleBack,
+    handleForward,
+    handleMaximize,
+    handleNavigate,
+    handleOpenExternal,
+    handleRefresh,
+    handleReset,
+  };
+}
+
+function CellServiceViewerLive({ cellId }: { cellId: string }) {
+  const { services, isLoading, error } = useServiceStream(cellId, {
+    enabled: true,
+  });
+
+  const previewableServices = useMemo(
+    () => services.filter(isPreviewableService),
+    [services]
+  );
+  const { activeService, activeServiceId, setActiveServiceId } =
+    useActiveServiceTab(previewableServices);
+
+  const serviceTabs = useMemo(
+    () =>
+      previewableServices.map((service) => ({
+        rootUrl: service.url,
+        serviceId: service.id,
+      })),
+    [previewableServices]
+  );
+
+  const previewUrl = activeService?.url ?? null;
+
+  const browserReachability = useBrowserReachability({
+    viewerUrl: previewUrl,
+    serviceStatus: activeService?.status,
+  });
+
+  const resolvedReachability =
+    browserReachability ?? activeService?.portReachable ?? null;
+  const previewContainerRef = useRef<HTMLDivElement | null>(null);
+  const { actions, isSupported, state } = useDesktopViewer(
+    previewContainerRef,
+    {
+      activeServiceId,
+      enabled: previewableServices.length > 0,
+      serviceTabs,
+    }
+  );
+
+  const isDesktopRuntime = isSupported;
+
+  useEffect(() => {
+    if (!isDesktopRuntime) {
+      return;
+    }
+
+    return () => {
+      actions?.hide().catch(() => {
+        /* ignore teardown failures */
+      });
+    };
+  }, [actions, isDesktopRuntime]);
+
+  const displayUrl =
+    state.activeServiceId === activeServiceId
+      ? (state.url ?? previewUrl)
+      : previewUrl;
+  const {
+    disabledControls,
+    handleBack,
+    handleForward,
+    handleMaximize,
+    handleNavigate,
+    handleOpenExternal,
+    handleRefresh,
+    handleReset,
+  } = useViewerControls({
+    actions,
+    activeServiceId,
+    activeServiceUrl: activeService?.url ?? null,
+    displayUrl,
+    isDesktopRuntime,
+    state,
+  });
 
   return (
     <div

@@ -30,6 +30,17 @@ describe("local hive home helpers", () => {
     expect(resolveWorkspaceRoot(desktopDir)).toBe(workspaceRoot);
   });
 
+  test("resolveWorkspaceRoot uses the closest apps segment for nested parent paths", () => {
+    const parentRoot = createTempDir();
+    const workspaceRoot = join(parentRoot, "apps", "hive-worktree");
+    const desktopDir = join(workspaceRoot, "apps", "desktop-electron");
+
+    mkdirSync(desktopDir, { recursive: true });
+    writeFileSync(join(workspaceRoot, "hive.config.json"), "{}\n");
+
+    expect(resolveWorkspaceRoot(desktopDir)).toBe(workspaceRoot);
+  });
+
   test("resolveWorkspaceRoot prefers nested hive directory when parent lacks config", () => {
     const parentRoot = createTempDir();
     const nestedWorkspace = join(parentRoot, "hive");

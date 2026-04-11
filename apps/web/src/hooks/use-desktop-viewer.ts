@@ -176,10 +176,12 @@ export function useDesktopViewer(
     const observer = new ResizeObserver(scheduleBoundsSync);
     observer.observe(element);
     window.addEventListener("resize", scheduleBoundsSync);
+    window.addEventListener("scroll", scheduleBoundsSync, true);
 
     return () => {
       observer.disconnect();
       window.removeEventListener("resize", scheduleBoundsSync);
+      window.removeEventListener("scroll", scheduleBoundsSync, true);
       if (frameHandle !== 0) {
         window.cancelAnimationFrame(frameHandle);
       }

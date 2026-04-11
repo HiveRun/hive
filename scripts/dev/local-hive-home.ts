@@ -23,9 +23,10 @@ export function resolveDefaultDevHiveHome(currentDir: string) {
 function resolveBaseWorkspaceRoot(currentDir: string) {
   const normalizedCurrentDir = resolve(currentDir);
   const appsSegment = `${sep}apps${sep}`;
+  const appsIndex = normalizedCurrentDir.lastIndexOf(appsSegment);
 
-  if (normalizedCurrentDir.includes(appsSegment)) {
-    const [root] = normalizedCurrentDir.split(appsSegment);
+  if (appsIndex >= 0) {
+    const root = normalizedCurrentDir.slice(0, appsIndex);
     return root || normalizedCurrentDir;
   }
 
