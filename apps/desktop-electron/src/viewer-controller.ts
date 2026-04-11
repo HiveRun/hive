@@ -286,9 +286,9 @@ export const createViewerController = (options: {
     entries.delete(serviceId);
     if (!entry.view.webContents.isDestroyed()) {
       try {
-        entry.view.webContents.close();
+        entry.view.webContents.destroy();
       } catch {
-        /* ignore close failures during teardown */
+        /* ignore destroy failures during teardown */
       }
     }
   };

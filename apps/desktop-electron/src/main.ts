@@ -71,7 +71,7 @@ const createMainWindow = async (ipcRegistry: IpcRegistry) => {
     return { action: "deny" };
   });
 
-  window.on("close", () => {
+  window.on("closed", () => {
     ipcRegistry.detachWindow(window);
   });
 
