@@ -1,10 +1,15 @@
 import type { UseQueryOptions } from "@tanstack/react-query";
 import { rpc } from "@/lib/rpc";
 
+export type AvailableModelVariant = {
+  id: string;
+};
+
 export type AvailableModel = {
   id: string;
   name: string;
   provider: string;
+  variants: AvailableModelVariant[];
 };
 
 export type ProviderInfo = {
@@ -15,6 +20,7 @@ export type ProviderInfo = {
 export type ModelListResponse = {
   models: AvailableModel[];
   defaults: Record<string, string>;
+  stickyVariants: Record<string, string>;
   providers: ProviderInfo[];
 };
 
@@ -39,6 +45,7 @@ export const modelQueries = {
         response ?? {
           models: [],
           defaults: {},
+          stickyVariants: {},
           providers: [],
         }
       );
@@ -58,6 +65,7 @@ export const modelQueries = {
         response ?? {
           models: [],
           defaults: {},
+          stickyVariants: {},
           providers: [],
         }
       );

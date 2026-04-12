@@ -273,6 +273,7 @@ type RuntimeHandle = {
   cell: Cell;
   providerId?: string;
   modelId?: string;
+  variant?: string;
   directoryQuery: DirectoryQuery;
   client: OpencodeClient;
   abortController: AbortController;
@@ -290,6 +291,7 @@ type EnsureAgentSessionOptions = {
   force?: boolean;
   modelId?: string;
   providerId?: string;
+  variant?: string;
   startMode?: AgentMode;
 };
 
@@ -297,9 +299,14 @@ type StopRuntimeOptions = {
   deleteRemote?: boolean;
 };
 
+type ProviderVariant = {
+  disabled?: boolean;
+};
+
 export type ProviderModel = {
   id?: string;
   name?: string;
+  variants?: Record<string, ProviderVariant>;
 };
 
 export type ProviderEntry = {
@@ -423,6 +430,7 @@ async function ensureProviderCredentials(
 type TemplateAgentConfig = {
   providerId: string;
   modelId?: string;
+  variant?: string;
 };
 
 function resolveTemplateAgentConfig(
@@ -432,12 +440,25 @@ function resolveTemplateAgentConfig(
     return;
   }
 
+  const modelConfig = template.agent.model;
+  const providerId = modelConfig?.providerId ?? template.agent.providerId;
+  const modelId = modelConfig?.id ?? template.agent.modelId;
+  const variant = modelConfig?.variant ?? template.agent.variant;
+
+  if (!providerId) {
+    return;
+  }
+
   const agentConfig: TemplateAgentConfig = {
-    providerId: template.agent.providerId,
+    providerId,
   };
 
-  if (template.agent.modelId) {
-    agentConfig.modelId = template.agent.modelId;
+  if (modelId) {
+    agentConfig.modelId = modelId;
+  }
+
+  if (variant) {
+    agentConfig.variant = variant;
   }
 
   return agentConfig;
@@ -500,7 +521,45 @@ function resolveModelId({
 type ModelSelectionCandidate = {
   providerId?: string;
   modelId?: string;
+  variant?: string;
 };
+
+type ModelSelectionSource =
+  | "override"
+  | "template"
+  | "opencode-default"
+  | "config-default"
+  | "provider-fallback";
+
+type ResolvedModelSelection = ModelSelectionCandidate & {
+  source: ModelSelectionSource;
+};
+
+function pickResolvedSelection(args: {
+  overrideModel: ModelSelectionCandidate | null;
+  agentModel: ModelSelectionCandidate | null;
+  validOpencodeDefault: ModelSelectionCandidate | null;
+  configFallback: ModelSelectionCandidate | null;
+  providerFallback: ModelSelectionCandidate | null;
+}): ResolvedModelSelection {
+  if (args.overrideModel) {
+    return { source: "override", ...args.overrideModel };
+  }
+
+  if (args.agentModel) {
+    return { source: "template", ...args.agentModel };
+  }
+
+  if (args.validOpencodeDefault) {
+    return { source: "opencode-default", ...args.validOpencodeDefault };
+  }
+
+  if (args.configFallback) {
+    return { source: "config-default", ...args.configFallback };
+  }
+
+  return { source: "provider-fallback", ...(args.providerFallback ?? {}) };
+}
 
 function normalizeAgentMode(value: string | undefined): AgentMode | undefined {
   if (value === "plan" || value === "build") {
@@ -517,6 +576,7 @@ async function loadProvisioningModelOverride(args: {
     .select({
       modelId: cellProvisioningStates.modelIdOverride,
       providerId: cellProvisioningStates.providerIdOverride,
+      variant: cellProvisioningStates.variantOverride,
     })
     .from(cellProvisioningStates)
     .where(eq(cellProvisioningStates.cellId, args.cellId))
@@ -530,6 +590,9 @@ async function loadProvisioningModelOverride(args: {
     modelId: provisioningState.modelId,
     ...(provisioningState.providerId
       ? { providerId: provisioningState.providerId }
+      : {}),
+    ...(provisioningState.variant
+      ? { variant: provisioningState.variant }
       : {}),
   };
 }
@@ -601,14 +664,16 @@ async function shouldApplyProvisioningModelOverride(args: {
 function resolveExplicitModelSelection(options?: {
   modelId?: string;
   providerId?: string;
+  variant?: string;
 }): ModelSelectionCandidate | undefined {
-  if (!(options?.modelId || options?.providerId)) {
+  if (!(options?.modelId || options?.providerId || options?.variant)) {
     return;
   }
 
   return {
     ...(options?.modelId ? { modelId: options.modelId } : {}),
     ...(options?.providerId ? { providerId: options.providerId } : {}),
+    ...(options?.variant ? { variant: options.variant } : {}),
   };
 }
 
@@ -737,6 +802,21 @@ function listProviderModelIdentifiers(provider: ProviderEntry): string[] {
   return Array.from(unique).sort((a, b) => a.localeCompare(b));
 }
 
+function listProviderModelVariantIdentifiers(args: {
+  provider: ProviderEntry;
+  modelId: string;
+}): string[] {
+  const model = args.provider.models?.[args.modelId];
+  if (!model?.variants) {
+    return [];
+  }
+
+  return Object.entries(model.variants)
+    .filter(([, variant]) => !variant?.disabled)
+    .map(([variantId]) => variantId)
+    .sort((a, b) => a.localeCompare(b));
+}
+
 function buildInvalidModelOverrideMessage(args: {
   modelId: string;
   providerId?: string;
@@ -768,6 +848,28 @@ function buildInvalidModelOverrideMessage(args: {
   return `Selected model override is invalid: model "${modelId}" was not found in the provider catalog. Available providers: ${providerSummary}.`;
 }
 
+function buildInvalidVariantOverrideMessage(args: {
+  providerId: string;
+  modelId: string;
+  variant: string;
+  providers: ProviderEntry[];
+}): string {
+  const provider = findProviderById(args.providers, args.providerId);
+  if (!provider?.models?.[args.modelId]) {
+    return `Selected model variant override is invalid: model "${args.modelId}" is unavailable for provider "${args.providerId}".`;
+  }
+
+  const availableVariants = listProviderModelVariantIdentifiers({
+    provider,
+    modelId: args.modelId,
+  });
+  const variantSummary = availableVariants.length
+    ? formatListPreview(availableVariants)
+    : "none";
+
+  return `Selected model variant override is invalid: variant "${args.variant}" is unavailable for model "${args.modelId}" on provider "${args.providerId}". Available variants: ${variantSummary}. Refresh the model catalog and try again.`;
+}
+
 function resolveProviderModelMatch(
   provider: ProviderEntry,
   candidateModelId: string
@@ -788,6 +890,28 @@ function resolveProviderModelMatch(
   return match?.[0];
 }
 
+function resolveProviderVariantMatch(args: {
+  provider: ProviderEntry;
+  modelId: string;
+  candidateVariant: string | undefined;
+}): string | undefined | null {
+  if (!args.candidateVariant) {
+    return;
+  }
+
+  const variants = args.provider.models?.[args.modelId]?.variants;
+  if (!variants) {
+    return null;
+  }
+
+  const variant = variants[args.candidateVariant];
+  if (variant && !variant.disabled) {
+    return args.candidateVariant;
+  }
+
+  return null;
+}
+
 function getFirstModelId(
   models: Record<string, ProviderModel> | undefined
 ): string | undefined {
@@ -804,6 +928,38 @@ function getFirstModelId(
   return modelIds.length ? modelIds[0] : undefined;
 }
 
+function resolveCandidateModelForProvider(args: {
+  provider: ProviderEntry;
+  candidate: ModelSelectionCandidate;
+}): ModelSelectionCandidate | null {
+  if (!args.candidate.modelId) {
+    return null;
+  }
+
+  const resolvedModelId = resolveProviderModelMatch(
+    args.provider,
+    args.candidate.modelId
+  );
+  if (!resolvedModelId) {
+    return null;
+  }
+
+  const resolvedVariant = resolveProviderVariantMatch({
+    provider: args.provider,
+    modelId: resolvedModelId,
+    candidateVariant: args.candidate.variant,
+  });
+  if (args.candidate.variant && !resolvedVariant) {
+    return null;
+  }
+
+  return {
+    providerId: args.provider.id,
+    modelId: resolvedModelId,
+    ...(resolvedVariant ? { variant: resolvedVariant } : {}),
+  };
+}
+
 function resolveCandidateModel({
   candidate,
   providers,
@@ -818,24 +974,15 @@ function resolveCandidateModel({
   if (candidate.providerId) {
     const provider = findProviderById(providers, candidate.providerId);
     if (provider) {
-      const resolvedModelId = resolveProviderModelMatch(
-        provider,
-        candidate.modelId
-      );
-      if (resolvedModelId) {
-        return { providerId: provider.id, modelId: resolvedModelId };
-      }
+      return resolveCandidateModelForProvider({ provider, candidate });
     }
     return null;
   }
 
   for (const provider of providers) {
-    const resolvedModelId = resolveProviderModelMatch(
-      provider,
-      candidate.modelId
-    );
-    if (resolvedModelId) {
-      return { providerId: provider.id, modelId: resolvedModelId };
+    const resolved = resolveCandidateModelForProvider({ provider, candidate });
+    if (resolved) {
+      return resolved;
     }
   }
 
@@ -878,9 +1025,13 @@ function resolveModelFallback({
 }
 
 type ModelSelectionContext = {
-  options?: { modelId?: string; providerId?: string };
+  options?: { modelId?: string; providerId?: string; variant?: string };
   agentConfig?: TemplateAgentConfig;
-  defaultOpencodeModel?: { providerId?: string; modelId?: string };
+  defaultOpencodeModel?: {
+    providerId?: string;
+    modelId?: string;
+    variant?: string;
+  };
   configDefaultProvider?: string;
   configDefaultModel?: string;
   providers: ProviderEntry[];
@@ -895,16 +1046,47 @@ function resolveModelSelection({
   configDefaultModel,
   providers,
   defaults,
-}: ModelSelectionContext): ModelSelectionCandidate {
+}: ModelSelectionContext): ResolvedModelSelection {
   const overrideModel = resolveCandidateModel({
     candidate: {
       providerId: options?.providerId,
       modelId: options?.modelId,
+      variant: options?.variant,
     },
     providers,
   });
 
   if (options?.modelId && !overrideModel) {
+    const resolvedProviderId =
+      options.providerId ??
+      resolveCandidateModel({
+        candidate: {
+          providerId: options.providerId,
+          modelId: options.modelId,
+        },
+        providers,
+      })?.providerId;
+
+    if (options.variant && resolvedProviderId) {
+      const resolvedModelId =
+        resolveCandidateModel({
+          candidate: {
+            providerId: resolvedProviderId,
+            modelId: options.modelId,
+          },
+          providers,
+        })?.modelId ?? options.modelId;
+
+      throw new Error(
+        buildInvalidVariantOverrideMessage({
+          providerId: resolvedProviderId,
+          modelId: resolvedModelId,
+          variant: options.variant,
+          providers,
+        })
+      );
+    }
+
     throw new Error(
       buildInvalidModelOverrideMessage({
         modelId: options.modelId,
@@ -918,6 +1100,7 @@ function resolveModelSelection({
     candidate: {
       providerId: agentConfig?.providerId,
       modelId: agentConfig?.modelId,
+      variant: agentConfig?.variant,
     },
     providers,
   });
@@ -926,6 +1109,7 @@ function resolveModelSelection({
     candidate: {
       providerId: defaultOpencodeModel?.providerId,
       modelId: defaultOpencodeModel?.modelId,
+      variant: defaultOpencodeModel?.variant,
     },
     providers,
   });
@@ -944,12 +1128,14 @@ function resolveModelSelection({
     defaults,
   });
 
-  const resolvedModel =
-    overrideModel ??
-    agentModel ??
-    validOpencodeDefault ??
-    configFallback ??
-    providerFallback;
+  const resolvedSelection = pickResolvedSelection({
+    overrideModel,
+    agentModel,
+    validOpencodeDefault,
+    configFallback,
+    providerFallback,
+  });
+  const resolvedModel = resolvedSelection;
   const effectiveOptions = options;
   const effectiveAgentConfig =
     agentConfig?.modelId && !agentModel ? undefined : agentConfig;
@@ -973,7 +1159,12 @@ function resolveModelSelection({
       resolvedProviderId: providerId,
     });
 
-  return { providerId, modelId };
+  return {
+    source: resolvedSelection.source,
+    providerId,
+    modelId,
+    ...(resolvedModel?.variant ? { variant: resolvedModel.variant } : {}),
+  };
 }
 
 export async function ensureAgentSession(
@@ -1028,13 +1219,14 @@ export async function fetchCompactionStats(
 
 export async function updateAgentSessionModel(
   sessionId: string,
-  model: { modelId: string; providerId?: string }
+  model: { modelId: string; providerId?: string; variant?: string }
 ): Promise<AgentSessionRecord> {
   const runtime = await ensureRuntimeForSession(sessionId);
   const nextProviderId = model.providerId ?? runtime.providerId;
   await ensureProviderCredentials(nextProviderId);
   runtime.providerId = nextProviderId;
   runtime.modelId = model.modelId;
+  runtime.variant = model.variant;
   return toSessionRecord(runtime);
 }
 
@@ -1246,7 +1438,7 @@ export type AgentRuntimeService = {
   ) => Promise<RuntimeCompactionState>;
   readonly updateAgentSessionModel: (
     sessionId: string,
-    model: { modelId: string; providerId?: string }
+    model: { modelId: string; providerId?: string; variant?: string }
   ) => Promise<AgentSessionRecord>;
   readonly sendAgentMessage: (
     sessionId: string,
@@ -1456,9 +1648,17 @@ async function ensureRuntimeForCell(
     providers,
     defaults,
   });
+  const shouldDeferToOpencodeDefault = selection.source === "opencode-default";
 
-  const requestedProviderId = selection.providerId;
-  const requestedModelId = selection.modelId;
+  const requestedProviderId = shouldDeferToOpencodeDefault
+    ? undefined
+    : selection.providerId;
+  const requestedModelId = shouldDeferToOpencodeDefault
+    ? undefined
+    : selection.modelId;
+  const requestedVariant = shouldDeferToOpencodeDefault
+    ? undefined
+    : selection.variant;
 
   await ensureProviderCredentials(requestedProviderId);
 
@@ -1466,6 +1666,7 @@ async function ensureRuntimeForCell(
     cell,
     providerId: requestedProviderId,
     modelId: requestedModelId,
+    variant: requestedVariant,
     startMode,
     force: options?.force ?? false,
     deps,
@@ -1476,6 +1677,7 @@ async function ensureRuntimeForCell(
     await ensureProviderCredentials(restoredModel.providerId);
     runtime.providerId = restoredModel.providerId;
     runtime.modelId = restoredModel.modelId;
+    runtime.variant = restoredModel.variant;
   }
 
   const restoredMode = await resolveSessionModePreference(runtime);
@@ -1505,7 +1707,11 @@ async function ensureRuntimeForCell(
 function shouldSeedModelPreference(args: {
   selectionOptions: ModelSelectionCandidate | undefined;
   runtime: RuntimeHandle;
-  restoredModel: { providerId: string; modelId: string } | null;
+  restoredModel: {
+    providerId: string;
+    modelId: string;
+    variant?: string;
+  } | null;
 }): boolean {
   if (!(args.selectionOptions?.modelId && args.runtime.modelId)) {
     return false;
@@ -1517,7 +1723,8 @@ function shouldSeedModelPreference(args: {
 
   return !(
     args.restoredModel.modelId === args.runtime.modelId &&
-    args.restoredModel.providerId === args.runtime.providerId
+    args.restoredModel.providerId === args.runtime.providerId &&
+    args.restoredModel.variant === args.runtime.variant
   );
 }
 
@@ -1596,6 +1803,7 @@ type StartRuntimeArgs = {
   cell: Cell;
   providerId?: string;
   modelId?: string;
+  variant?: string;
   startMode: AgentMode;
   force: boolean;
   deps: AgentRuntimeDependencies;
@@ -1608,6 +1816,7 @@ async function primeSessionAgentMode(args: {
   startMode: AgentMode;
   providerId?: string;
   modelId?: string;
+  variant?: string;
 }): Promise<void> {
   if (args.startMode !== "plan") {
     return;
@@ -1621,6 +1830,7 @@ async function primeSessionAgentMode(args: {
               providerID: args.providerId,
               modelID: args.modelId,
             },
+            ...(args.variant ? { variant: args.variant } : {}),
           }
         : {};
 
@@ -1648,6 +1858,7 @@ async function startOpencodeRuntime({
   cell,
   providerId,
   modelId,
+  variant,
   startMode,
   force,
   deps,
@@ -1669,6 +1880,7 @@ async function startOpencodeRuntime({
       startMode,
       providerId,
       modelId,
+      variant,
     });
   }
 
@@ -1688,6 +1900,7 @@ async function startOpencodeRuntime({
     cell,
     providerId,
     modelId,
+    variant,
     directoryQuery,
     client,
     abortController,
@@ -1710,6 +1923,7 @@ async function startOpencodeRuntime({
                 providerID: runtime.providerId,
                 modelID: activeModelId,
               },
+              ...(runtime.variant ? { variant: runtime.variant } : {}),
             }
           : { parts };
 
@@ -1859,7 +2073,7 @@ async function startEventStream({
 
 async function resolveSessionModelPreference(
   runtime: RuntimeHandle
-): Promise<{ providerId: string; modelId: string } | null> {
+): Promise<{ providerId: string; modelId: string; variant?: string } | null> {
   try {
     const query = runtime.directoryQuery.directory
       ? { directory: runtime.directoryQuery.directory, limit: 100 }
@@ -1884,6 +2098,9 @@ async function resolveSessionModelPreference(
         return {
           providerId: modelSelection.providerId,
           modelId: modelSelection.modelId,
+          ...(modelSelection.variant
+            ? { variant: modelSelection.variant }
+            : {}),
         };
       }
     }
@@ -2000,6 +2217,7 @@ async function seedSessionModelPreference(
           providerID: runtime.providerId,
           modelID: runtime.modelId,
         },
+        ...(runtime.variant ? { variant: runtime.variant } : {}),
         parts: [],
       },
     });
@@ -2019,6 +2237,7 @@ async function seedSessionModelPreference(
       sessionId: runtime.session.id,
       providerId: runtime.providerId,
       modelId: runtime.modelId,
+      variant: runtime.variant,
       message,
     });
   } catch (error) {
@@ -2030,6 +2249,7 @@ async function seedSessionModelPreference(
       sessionId: runtime.session.id,
       providerId: runtime.providerId,
       modelId: runtime.modelId,
+      variant: runtime.variant,
       message,
     });
   }
@@ -2038,6 +2258,7 @@ async function seedSessionModelPreference(
 type MessageModelSelection = {
   providerId: string;
   modelId: string;
+  variant?: string;
 };
 
 function extractMessageModelSelection(
@@ -2051,11 +2272,16 @@ function extractMessageModelSelection(
     typeof (candidate as { providerID?: unknown }).providerID === "string" &&
     typeof (candidate as { modelID?: unknown }).modelID === "string"
   ) {
-    const { providerID, modelID } = candidate as {
+    const { providerID, modelID, variant } = candidate as {
       providerID: string;
       modelID: string;
+      variant?: string;
     };
-    return { providerId: providerID, modelId: modelID };
+    return {
+      providerId: providerID,
+      modelId: modelID,
+      ...(typeof variant === "string" ? { variant } : {}),
+    };
   }
   return null;
 }
@@ -2267,7 +2493,11 @@ function toSessionRecord(runtime: RuntimeHandle): AgentSessionRecord {
   const modelFields =
     runtime.modelId === undefined
       ? {}
-      : { modelId: runtime.modelId, modelProviderId: runtime.providerId };
+      : {
+          modelId: runtime.modelId,
+          modelProviderId: runtime.providerId,
+          ...(runtime.variant ? { modelVariant: runtime.variant } : {}),
+        };
 
   return {
     id: runtime.session.id,

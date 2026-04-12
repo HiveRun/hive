@@ -41,8 +41,13 @@ const descriptionMap: Record<string, string> = {
   "templates/*/prompts":
     "Paths to prompt files or directories (relative to workspace root)",
   "templates/*/agent": "Agent configuration for this template",
+  "templates/*/agent/model": "Model configuration for this template",
+  "templates/*/agent/model/providerId": "OpenCode provider identifier",
+  "templates/*/agent/model/id": "Model identifier within the provider",
+  "templates/*/agent/model/variant": "Optional model variant identifier",
   "templates/*/agent/providerId": "OpenCode provider identifier",
   "templates/*/agent/modelId": "Model identifier within the provider",
+  "templates/*/agent/variant": "Deprecated: model variant identifier",
   "templates/*/agent/agentId": "Agent preset identifier",
   "templates/*/teardown": "Cleanup commands on cell stop",
   "templates/*/includePatterns":

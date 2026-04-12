@@ -56,12 +56,28 @@ export const serviceSchema = z
   ])
   .describe("Supported service definitions");
 
-const templateAgentSchema = z.object({
+const templateAgentModelSchema = z.object({
   providerId: z.string().describe("OpenCode provider identifier"),
+  id: z.string().describe("Model identifier within the provider"),
+  variant: z.string().optional().describe("Optional model variant identifier"),
+});
+
+const templateAgentSchema = z.object({
+  model: templateAgentModelSchema
+    .optional()
+    .describe("Model configuration for this template"),
+  providerId: z
+    .string()
+    .optional()
+    .describe("Deprecated: OpenCode provider identifier"),
   modelId: z
     .string()
     .optional()
-    .describe("Model identifier within the provider"),
+    .describe("Deprecated: model identifier within the provider"),
+  variant: z
+    .string()
+    .optional()
+    .describe("Deprecated: model variant identifier"),
   agentId: z.string().optional().describe("Agent preset identifier"),
 });
 

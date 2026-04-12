@@ -43,6 +43,7 @@ const cellSchema = z.object({
   templateId: z.string().min(1, "Template is required"),
   modelId: z.string().optional(),
   providerId: z.string().optional(),
+  variant: z.string().optional(),
   startMode: z.enum(["plan", "build"]),
   spawnFromMode: z.enum(["head", "branch", "pr"]),
   spawnFromValue: z.string().optional(),
@@ -127,6 +128,7 @@ export function CellForm({
       templateId: defaultTemplateId,
       modelId: undefined,
       providerId: undefined,
+      variant: undefined,
       startMode: defaultStartMode,
       spawnFromMode: "head" as SpawnFromMode,
       spawnFromValue: "",
@@ -153,7 +155,9 @@ export function CellForm({
   );
   const templateAgent = activeTemplate?.configJson.agent;
   const providerPreference =
-    selectedModel?.providerId ?? templateAgent?.providerId;
+    selectedModel?.providerId ??
+    templateAgent?.model?.providerId ??
+    templateAgent?.providerId;
 
   useEffect(() => {
     const nextSelection = resolveAutoSelectedModel({
@@ -233,10 +237,14 @@ export function CellForm({
 
   const form = useForm({
     defaultValues,
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: submit path keeps validation and payload shaping together
     onSubmit: ({ value }) => {
       const formValues = value as CellFormValues;
       const { spawnFromValue: _ignoredSpawnFromValue, ...baseFormValues } =
         formValues;
+      const explicitModelSelection = hasExplicitModelSelection
+        ? selectedModel
+        : undefined;
       const spawnFromMode = formValues.spawnFromMode ?? "head";
       const spawnFromValue = formValues.spawnFromValue?.trim();
       if (spawnFromMode !== "head" && !spawnFromValue) {
@@ -251,8 +259,15 @@ export function CellForm({
       mutation.mutate({
         ...baseFormValues,
         workspaceId,
-        modelId: selectedModel?.id ?? formValues.modelId,
-        providerId: selectedModel?.providerId ?? formValues.providerId,
+        ...(explicitModelSelection?.id
+          ? { modelId: explicitModelSelection.id }
+          : {}),
+        ...(explicitModelSelection?.providerId
+          ? { providerId: explicitModelSelection.providerId }
+          : {}),
+        ...(explicitModelSelection?.variant
+          ? { variant: explicitModelSelection.variant }
+          : {}),
         spawnFromMode,
         ...(spawnFromMode !== "head" && spawnFromValue
           ? { spawnFromValue }
@@ -265,8 +280,8 @@ export function CellForm({
     model: ModelSelection,
     source: ModelSelectionSource
   ) => {
-    setSelectedModel(model);
-    setHasExplicitModelSelection(source === "user");
+    setSelectedModel({ ...model, selectionSource: source });
+    setHasExplicitModelSelection(source === "user" || source === "sticky");
   };
 
   const mutationErrorMessage =
@@ -437,7 +452,8 @@ export function CellForm({
               workspaceId={workspaceId}
             />
             <p className="text-muted-foreground text-xs">
-              Sets the provider/model used when the cell's agent session starts.
+              Sets the provider, model, and optional variant used when the
+              cell's agent session starts.
             </p>
           </div>
 

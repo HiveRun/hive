@@ -63,13 +63,34 @@ describe("Template Schema", () => {
       label: "Agent Template",
       type: "manual" as const,
       agent: {
-        providerId: "zen",
-        modelId: "big-pickle",
+        model: {
+          providerId: "zen",
+          id: "big-pickle",
+          variant: "high",
+        },
       },
     };
 
     const result = templateSchema.parse(templateWithAgent);
+    expect(result.agent?.model?.providerId).toBe("zen");
+    expect(result.agent?.model?.variant).toBe("high");
+  });
+
+  it("should keep supporting deprecated flat agent model keys", () => {
+    const templateWithLegacyAgent = {
+      id: "legacy-agent-template",
+      label: "Legacy Agent Template",
+      type: "manual" as const,
+      agent: {
+        providerId: "zen",
+        modelId: "big-pickle",
+        variant: "high",
+      },
+    };
+
+    const result = templateSchema.parse(templateWithLegacyAgent);
     expect(result.agent?.providerId).toBe("zen");
+    expect(result.agent?.variant).toBe("high");
   });
 });
 

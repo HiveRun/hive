@@ -7,8 +7,11 @@ import {
 const templateWithAgentModel = {
   configJson: {
     agent: {
-      modelId: "big-pickle",
-      providerId: "opencode",
+      model: {
+        id: "big-pickle",
+        providerId: "opencode",
+        variant: "high",
+      },
     },
   },
   id: "t-1",
@@ -26,6 +29,7 @@ describe("cell form model selection", () => {
     expect(selection).toEqual({
       id: "big-pickle",
       providerId: "opencode",
+      variant: "high",
     });
   });
 
@@ -42,12 +46,14 @@ describe("cell form model selection", () => {
       {
         modelId: "big-pickle",
         providerId: "opencode",
+        variant: "balanced",
       }
     );
 
     expect(selection).toEqual({
       id: "big-pickle",
       providerId: "opencode",
+      variant: "balanced",
     });
   });
 
@@ -107,6 +113,31 @@ describe("cell form model selection", () => {
     expect(selection).toEqual({
       id: "big-pickle",
       providerId: "opencode",
+      variant: "high",
+    });
+  });
+
+  it("uses workspace default variant when template only pins provider", () => {
+    const selection = resolveTemplateModelSelection(
+      {
+        ...templateWithAgentModel,
+        configJson: {
+          agent: {
+            providerId: "opencode",
+          },
+        },
+      },
+      {
+        modelId: "big-pickle",
+        providerId: "opencode",
+        variant: "balanced",
+      }
+    );
+
+    expect(selection).toEqual({
+      id: "big-pickle",
+      providerId: "opencode",
+      variant: "balanced",
     });
   });
 });

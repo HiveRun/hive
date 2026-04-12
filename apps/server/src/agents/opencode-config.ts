@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { OpencodeClient, ServerOptions } from "@opencode-ai/sdk";
@@ -18,6 +19,12 @@ type OpencodeServerConfig = NonNullable<ServerOptions["config"]>;
 type DefaultModel = {
   providerId?: string;
   modelId?: string;
+  variant?: string;
+};
+
+type AgentScopedConfig = {
+  model?: unknown;
+  variant?: unknown;
 };
 
 export type LoadedOpencodeConfig = {
@@ -30,6 +37,10 @@ export type LoadedOpencodeConfig = {
 export type EffectiveOpencodeDefaults = {
   defaultModel?: DefaultModel;
   startMode?: "plan" | "build";
+};
+
+export type OpencodeModelPreferences = {
+  stickyVariants: Record<string, string>;
 };
 
 function normalizeStartMode(value: unknown): "plan" | "build" | undefined {
@@ -129,6 +140,46 @@ export async function loadEffectiveOpencodeDefaults(
   };
 }
 
+export async function loadOpencodeModelPreferences(): Promise<OpencodeModelPreferences> {
+  const configPath = join(
+    resolveOpencodeStateDirectory(),
+    "opencode",
+    "model.json"
+  );
+
+  try {
+    const raw = await readFile(configPath, "utf8");
+    const parsed = JSON.parse(raw) as { variant?: unknown };
+    const rawVariants =
+      parsed && typeof parsed === "object" && parsed.variant
+        ? parsed.variant
+        : undefined;
+
+    if (!rawVariants || typeof rawVariants !== "object") {
+      return { stickyVariants: {} };
+    }
+
+    const stickyVariants = Object.fromEntries(
+      Object.entries(rawVariants).filter(
+        ([, value]) => typeof value === "string" && value !== "default"
+      ) as [string, string][]
+    );
+
+    return { stickyVariants };
+  } catch {
+    return { stickyVariants: {} };
+  }
+}
+
+function resolveOpencodeStateDirectory(): string {
+  const stateHome = process.env.XDG_STATE_HOME?.trim();
+  if (stateHome) {
+    return stateHome;
+  }
+
+  return join(homedir(), ".local", "state");
+}
+
 async function readWorkspaceConfig(
   workspaceRootPath: string
 ): Promise<OpencodeServerConfig | undefined> {
@@ -181,23 +232,103 @@ function assertIsOpencodeConfig(
 function extractDefaultModel(
   config: OpencodeServerConfig
 ): DefaultModel | undefined {
+  const agentDefaultModel = extractAgentDefaultModel(config);
+  if (agentDefaultModel) {
+    return agentDefaultModel;
+  }
+
   const raw = typeof config.model === "string" ? config.model.trim() : "";
   if (!raw) {
     return;
   }
 
   const [providerId, modelId] = raw.split("/", 2);
+  const variant = extractDefaultVariant(config);
   if (modelId) {
     const defaultModel: DefaultModel = { modelId };
     if (providerId) {
       defaultModel.providerId = providerId;
     }
+    if (variant) {
+      defaultModel.variant = variant;
+    }
     return defaultModel;
   }
 
   if (providerId) {
-    return { modelId: providerId };
+    return variant ? { modelId: providerId, variant } : { modelId: providerId };
   }
 
   return;
+}
+
+function extractAgentDefaultModel(
+  config: OpencodeServerConfig & { default_agent?: unknown }
+): DefaultModel | undefined {
+  const defaultAgentId =
+    typeof config.default_agent === "string" ? config.default_agent : undefined;
+  if (!defaultAgentId) {
+    return;
+  }
+
+  const agentConfig = readAgentConfig(config, defaultAgentId);
+  const rawModel =
+    typeof agentConfig?.model === "string" ? agentConfig.model.trim() : "";
+  if (!rawModel) {
+    return;
+  }
+
+  const [providerId, modelId] = rawModel.split("/", 2);
+  const variant =
+    typeof agentConfig?.variant === "string" &&
+    agentConfig.variant.trim().length > 0
+      ? agentConfig.variant.trim()
+      : undefined;
+
+  if (modelId) {
+    return {
+      providerId,
+      modelId,
+      ...(variant ? { variant } : {}),
+    };
+  }
+
+  return {
+    modelId: providerId,
+    ...(variant ? { variant } : {}),
+  };
+}
+
+function extractDefaultVariant(
+  config: OpencodeServerConfig & { default_agent?: unknown }
+): string | undefined {
+  const defaultAgentId =
+    typeof config.default_agent === "string" ? config.default_agent : undefined;
+  if (!defaultAgentId) {
+    return;
+  }
+
+  const variant = readAgentVariant(config, defaultAgentId);
+  return typeof variant === "string" && variant.trim().length > 0
+    ? variant.trim()
+    : undefined;
+}
+
+function readAgentConfig(
+  config: OpencodeServerConfig,
+  agentId: string
+): AgentScopedConfig | undefined {
+  const candidate = config as {
+    agent?: Record<string, AgentScopedConfig>;
+    mode?: Record<string, AgentScopedConfig>;
+  };
+
+  return candidate.agent?.[agentId] ?? candidate.mode?.[agentId];
+}
+
+function readAgentVariant(
+  config: OpencodeServerConfig,
+  agentId: string
+): unknown {
+  return readAgentConfig(config, agentId)?.variant;
 }

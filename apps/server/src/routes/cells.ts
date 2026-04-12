@@ -199,7 +199,7 @@ export type CellRouteDependencies = {
     opencodeSessionId: string;
     opencodeServerUrl: string;
     opencodeThemeMode?: OpencodeThemeMode;
-    preferredModel?: { providerId: string; modelId: string };
+    preferredModel?: { providerId: string; modelId: string; variant?: string };
     startMode?: AgentMode;
   }) => ChatTerminalSession;
   getChatTerminalSession?: (cellId: string) => ChatTerminalSession | null;
@@ -961,6 +961,9 @@ async function ensureChatTerminalSessionForCell(
       ? {
           modelId: agentSession.modelId,
           providerId: preferredProviderId,
+          ...(agentSession.modelVariant
+            ? { variant: agentSession.modelVariant }
+            : {}),
         }
       : undefined;
   const session = chatTerminal.ensureChatTerminalSession({
@@ -1240,6 +1243,7 @@ export function createCellsRoutes(
               cellId: cell.id,
               modelIdOverride: null,
               providerIdOverride: null,
+              variantOverride: null,
               startMode: "build",
               startedAt: null,
               finishedAt: null,
@@ -4188,6 +4192,7 @@ async function createCellRecord(
       cellId: state.cellId,
       modelIdOverride: body.modelId ?? null,
       providerIdOverride: body.providerId ?? null,
+      variantOverride: body.variant ?? null,
       startMode: body.startMode ?? "plan",
       startedAt: null,
       finishedAt: null,
@@ -4877,6 +4882,9 @@ function resolveProvisioningParams(
     ...(provisioningState?.providerIdOverride != null
       ? { providerId: provisioningState.providerIdOverride }
       : {}),
+    ...(provisioningState?.variantOverride != null
+      ? { variant: provisioningState.variantOverride }
+      : {}),
     ...(provisioningState?.startMode != null
       ? { startMode: normalizeStartMode(provisioningState.startMode) }
       : {}),
@@ -4921,6 +4929,7 @@ function buildAgentSessionOptions(body: Static<typeof CreateCellSchema>) {
   return {
     ...(body.modelId ? { modelId: body.modelId } : {}),
     ...(body.providerId ? { providerId: body.providerId } : {}),
+    ...(body.variant ? { variant: body.variant } : {}),
     ...(body.startMode ? { startMode: body.startMode } : {}),
   };
 }

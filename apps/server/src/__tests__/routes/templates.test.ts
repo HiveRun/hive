@@ -78,7 +78,11 @@ describe("templatesRoutes", () => {
   });
 
   it("returns the templates list for a workspace", async () => {
-    const agentDefaults = { providerId: "anthropic", modelId: "claude-3" };
+    const agentDefaults = {
+      providerId: "anthropic",
+      modelId: "claude-3",
+      variant: "high",
+    };
     loadEffectiveOpencodeDefaultsSpy.mockResolvedValue({
       defaultModel: agentDefaults,
     });

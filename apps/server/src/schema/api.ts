@@ -340,6 +340,11 @@ export const CreateCellSchema = t.Object({
       minLength: 1,
     })
   ),
+  variant: t.Optional(
+    t.String({
+      minLength: 1,
+    })
+  ),
   startMode: t.Optional(t.Union([t.Literal("plan"), t.Literal("build")])),
   spawnFromMode: t.Optional(
     t.Union([t.Literal("head"), t.Literal("branch"), t.Literal("pr")])
@@ -382,6 +387,7 @@ export const DefaultsResponseSchema = t.Object({
 const AgentDefaultsSchema = t.Object({
   providerId: t.Optional(t.String()),
   modelId: t.Optional(t.String()),
+  variant: t.Optional(t.String()),
 });
 
 export const TemplateListResponseSchema = t.Object({
@@ -402,6 +408,7 @@ export const AgentSessionSchema = t.Object({
   completedAt: t.Optional(t.String()),
   modelId: t.Optional(t.String()),
   modelProviderId: t.Optional(t.String()),
+  modelVariant: t.Optional(t.String()),
   startMode: t.Optional(t.Union([t.Literal("plan"), t.Literal("build")])),
   currentMode: t.Optional(t.Union([t.Literal("plan"), t.Literal("build")])),
   modeUpdatedAt: t.Optional(t.String()),
@@ -412,6 +419,7 @@ export const CreateAgentSessionSchema = t.Object({
   force: t.Optional(t.Boolean()),
   modelId: t.Optional(t.String()),
   providerId: t.Optional(t.String()),
+  variant: t.Optional(t.String()),
 });
 
 export const AgentMessageSchema = t.Object({

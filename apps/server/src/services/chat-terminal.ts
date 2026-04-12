@@ -30,6 +30,7 @@ const WORKSPACE_CONFIG_CANDIDATES = [
 type ChatTerminalModelPreference = {
   providerId: string;
   modelId: string;
+  variant?: string;
 };
 
 const HIVE_THEME_CONTENT = `${JSON.stringify(
@@ -205,14 +206,35 @@ function createMergedInlineOpencodeConfig(
   const workspaceKeybinds = readWorkspaceKeybinds(workspacePath);
   const inlineKeybinds = normalizeOpencodeKeybinds(inlineConfig.keybinds);
   const model = toOpencodeModelValue(preferredModel);
+  const configuredStartMode =
+    startMode ??
+    (typeof inlineConfig.default_agent === "string"
+      ? normalizeStartMode(inlineConfig.default_agent)
+      : undefined);
   const keybinds = mergeHiveEmbeddedBrowserSafeKeybinds(
     workspaceKeybinds,
     inlineKeybinds
   );
+  const agentConfig =
+    preferredModel?.variant && configuredStartMode
+      ? {
+          ...((inlineConfig.agent as Record<string, unknown> | undefined) ??
+            {}),
+          [configuredStartMode]: {
+            ...(((
+              inlineConfig.agent as
+                | Record<string, Record<string, unknown>>
+                | undefined
+            )?.[configuredStartMode] ?? {}) as Record<string, unknown>),
+            variant: preferredModel.variant,
+          },
+        }
+      : inlineConfig.agent;
   const config = {
     ...inlineConfig,
     ...(model ? { model } : {}),
-    ...(startMode ? { default_agent: startMode } : {}),
+    ...(configuredStartMode ? { default_agent: configuredStartMode } : {}),
+    ...(agentConfig ? { agent: agentConfig } : {}),
     keybinds,
     theme: HIVE_THEME_NAME,
   };

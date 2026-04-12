@@ -203,6 +203,38 @@ describe("agent model selection", () => {
     });
   });
 
+  it("passes variants through when sending prompts", async () => {
+    const session = await ensureAgentSession(cellId);
+
+    await updateAgentSessionModel(session.id, {
+      modelId: "big-pickle",
+      providerId: "opencode",
+      variant: "high",
+    });
+
+    const updated = await fetchAgentSession(session.id);
+    expect(updated?.modelVariant).toBe("high");
+
+    await sendAgentMessage(session.id, "Run task with variant");
+
+    const promptCall = clientStub.session.prompt.mock.calls.at(-1);
+    expect(promptCall).toBeDefined();
+    const promptPayload = (
+      promptCall?.[0] as {
+        body?: {
+          model?: { providerID: string; modelID: string };
+          variant?: string;
+        };
+      }
+    )?.body;
+
+    expect(promptPayload?.model).toEqual({
+      providerID: "opencode",
+      modelID: "big-pickle",
+    });
+    expect(promptPayload?.variant).toBe("high");
+  });
+
   it("prefers the template's agent configuration over opencode defaults", async () => {
     loadEffectiveOpencodeDefaultsSpy.mockResolvedValue({
       defaultModel: { providerId: "openai", modelId: "gpt-5.1-codex-high" },
@@ -228,7 +260,7 @@ describe("agent model selection", () => {
     expect(session.modelId).toBe("template-default");
   });
 
-  it("uses workspace defaults when template agents omit models and providers match", async () => {
+  it("defers to OpenCode defaults when template agents omit models and providers match", async () => {
     const baseTemplate = mockHiveConfig.templates["template-basic"];
     if (!baseTemplate) {
       throw new Error("Test template missing");
@@ -268,8 +300,64 @@ describe("agent model selection", () => {
 
     const session = await ensureAgentSession(cellId);
 
-    expect(session.provider).toBe("opencode");
-    expect(session.modelId).toBe("workspace-default");
+    expect(session.provider).toBeUndefined();
+    expect(session.modelId).toBeUndefined();
+  });
+
+  it("does not force an explicit model when using OpenCode defaults", async () => {
+    const baseTemplate = mockHiveConfig.templates["template-basic"];
+    if (!baseTemplate) {
+      throw new Error("Test template missing");
+    }
+
+    const hiveConfigWithoutModel: HiveConfig = {
+      ...mockHiveConfig,
+      opencode: {},
+      templates: {
+        ...mockHiveConfig.templates,
+        "template-basic": {
+          ...baseTemplate,
+          agent: {
+            providerId: "opencode",
+          },
+        },
+      },
+    };
+
+    loadHiveConfigMock.mockResolvedValue(hiveConfigWithoutModel);
+    loadEffectiveOpencodeDefaultsSpy.mockResolvedValue({
+      defaultModel: { providerId: "openai", modelId: "gpt-5.4" },
+    });
+
+    clientStub.config.providers.mockResolvedValue({
+      data: {
+        providers: [
+          {
+            id: "openai",
+            models: {
+              "gpt-5.4": { id: "gpt-5.4" },
+            },
+          },
+          {
+            id: "opencode",
+            models: {
+              "template-default": { id: "template-default" },
+            },
+          },
+        ],
+        default: { openai: "gpt-5.4" },
+      },
+    });
+
+    const session = await ensureAgentSession(cellId, { startMode: "build" });
+    await sendAgentMessage(session.id, "Reply with ok");
+
+    const promptCall = clientStub.session.prompt.mock.calls.at(-1);
+    expect(promptCall).toBeDefined();
+    const promptPayload = (promptCall?.[0] as { body?: { model?: unknown } })
+      ?.body;
+
+    expect(promptPayload?.model).toBeUndefined();
   });
 
   it("falls back to hive defaults when workspace defaults target another provider", async () => {

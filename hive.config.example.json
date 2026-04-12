@@ -30,8 +30,10 @@
         "apps/server/server/**"
       ],
       "agent": {
-        "providerId": "zen",
-        "modelId": "big-pickle"
+        "model": {
+          "providerId": "zen",
+          "id": "big-pickle"
+        }
       },
       "services": {
         "api": {

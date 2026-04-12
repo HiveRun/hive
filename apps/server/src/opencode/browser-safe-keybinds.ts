@@ -1,8 +1,4 @@
-import type { ServerOptions } from "@opencode-ai/sdk/v2";
-
-type OpencodeKeybindsConfig = NonNullable<
-  NonNullable<ServerOptions["config"]>["keybinds"]
->;
+type OpencodeKeybindsConfig = Record<string, string>;
 type HiveBrowserSafeKeybindsConfig = Partial<OpencodeKeybindsConfig>;
 const DEFAULT_LEADER_KEYBIND = "ctrl+x";
 const CTRL_C_KEYBIND = "ctrl+c";
