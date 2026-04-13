@@ -18,7 +18,7 @@ const baseOptions = () => ({
 describe("resolveUninstallStopResult", () => {
   it("does not stop or probe when uninstall is not confirmed", async () => {
     const stopBackgroundProcess = vi.fn(() => "stopped" as const);
-    const probeJson = vi.fn(async () => ({ status: "ok" }));
+    const probeJson = vi.fn(async () => ({ service: "hive", status: "ok" }));
 
     const result = await resolveUninstallStopResult({
       confirmed: false,
@@ -49,7 +49,7 @@ describe("resolveUninstallStopResult", () => {
 
   it("returns failed when health response looks like Hive", async () => {
     const stopBackgroundProcess = vi.fn(() => "not_running" as const);
-    const probeJson = vi.fn(async () => ({ status: "ok" }));
+    const probeJson = vi.fn(async () => ({ service: "hive", status: "ok" }));
     const options = baseOptions();
 
     const result = await resolveUninstallStopResult({

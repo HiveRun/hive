@@ -76,6 +76,123 @@ ensure_opencode_cli() {
   exit 1
 }
 
+probe_hive_health() {
+  local port="$1"
+  local response
+  local host
+
+  for host in "127.0.0.1" "localhost" "[::1]"; do
+    response=$(curl -fsS --max-time 1 "http://${host}:${port}/health" 2>/dev/null || true)
+
+    if printf '%s' "$response" | grep -Eq '"service"[[:space:]]*:[[:space:]]*"hive"' && \
+      printf '%s' "$response" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+resolve_existing_hive_port() {
+  local env_file="$INSTALL_ROOT/current/hive.env"
+
+  if [ -f "$env_file" ]; then
+    local configured_port
+    configured_port=$(grep -E '^PORT=' "$env_file" 2>/dev/null | tail -n 1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true)
+    if [ -n "$configured_port" ]; then
+      printf '%s\n' "$configured_port"
+      return 0
+    fi
+  fi
+
+  printf '%s\n' "${PORT:-3000}"
+}
+
+env_file_has_key() {
+  local file="$1"
+  local key="$2"
+  [ -f "$file" ] && grep -Eq "^${key}=" "$file"
+}
+
+write_env_var() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local tmp_file
+  local escaped_value
+  tmp_file=$(mktemp)
+  escaped_value=${value//\\/\\\\}
+  escaped_value=${escaped_value//\"/\\\"}
+
+  if [ -f "$file" ]; then
+    grep -Ev "^${key}=" "$file" > "$tmp_file" || true
+  fi
+
+  printf '%s="%s"\n' "$key" "$escaped_value" >> "$tmp_file"
+  mv "$tmp_file" "$file"
+}
+
+seed_hive_env() {
+  local file="$1"
+  local current_env="$INSTALL_ROOT/current/hive.env"
+
+  if [ -f "$current_env" ]; then
+    cp "$current_env" "$file"
+    return
+  fi
+
+  : > "$file"
+}
+
+stop_running_hive() {
+  local existing_hive="$BIN_DIR/hive"
+  local port
+  port=$(resolve_existing_hive_port)
+
+  if [ -x "$existing_hive" ]; then
+    "$existing_hive" stop >/dev/null 2>&1 || true
+  fi
+
+  if probe_hive_health "$port" && command -v lsof >/dev/null 2>&1; then
+    local pid
+    pid=$(lsof -n -P -t -iTCP:"${port}" -sTCP:LISTEN 2>/dev/null | head -n 1 || true)
+
+    if [ -n "$pid" ]; then
+      kill "$pid" 2>/dev/null || true
+
+      local attempt
+      for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        if ! probe_hive_health "$port"; then
+          break
+        fi
+        sleep 1
+      done
+    fi
+  fi
+
+  if probe_hive_health "$port" && command -v ss >/dev/null 2>&1; then
+    local pid
+    pid=$(ss -ltnp "sport = :${port}" 2>/dev/null | grep -o 'pid=[0-9]*' | head -n 1 | cut -d= -f2 || true)
+
+    if [ -n "$pid" ]; then
+      kill "$pid" 2>/dev/null || true
+
+      local attempt
+      for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        if ! probe_hive_health "$port"; then
+          break
+        fi
+        sleep 1
+      done
+    fi
+  fi
+
+  if probe_hive_health "$port"; then
+    echo "Error: a running Hive daemon is still responding on http://127.0.0.1:${port}. Stop it before reinstalling." >&2
+    exit 1
+  fi
+}
+
 add_path_entry() {
   local file="$1"
   local command_line="$2"
@@ -176,6 +293,7 @@ require curl
 require tar
 mkdir -p "$BIN_DIR" "$RELEASES_DIR" "$STATE_DIR"
 ensure_opencode_cli
+stop_running_hive
 
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
@@ -204,23 +322,33 @@ src="$workdir/$release_dir"
 [ -d "$src" ] || { echo "Archive missing payload" >&2; exit 1; }
 
 target="$RELEASES_DIR/$release_dir"
-rm -rf "$target"
-mv "$src" "$target"
-
-cat > "$target/hive.env" <<EOF
-DATABASE_URL="$STATE_DIR/hive.db"
-HIVE_WEB_DIST="$target/public"
-HIVE_MIGRATIONS_DIR="$target/migrations"
-HIVE_LOG_DIR="$INSTALL_ROOT/logs"
-HIVE_INSTALL_URL="$download"
-EOF
-
-if [ -n "$install_command_override" ]; then
-  echo "HIVE_INSTALL_COMMAND=\"$install_command_override\"" >> "$target/hive.env"
+if [ -e "$target" ]; then
+  target=$(mktemp -d "$RELEASES_DIR/${release_dir}.XXXXXX")
+  rm -rf "$target"
 fi
 
-if [ -n "$OPENCODE_BIN" ]; then
-  echo "HIVE_OPENCODE_BIN=\"$OPENCODE_BIN\"" >> "$target/hive.env"
+mv "$src" "$target"
+
+seed_hive_env "$target/hive.env"
+
+if ! env_file_has_key "$target/hive.env" "DATABASE_URL"; then
+  write_env_var "$target/hive.env" "DATABASE_URL" "$STATE_DIR/hive.db"
+fi
+
+write_env_var "$target/hive.env" "HIVE_WEB_DIST" "$target/public"
+write_env_var "$target/hive.env" "HIVE_MIGRATIONS_DIR" "$target/migrations"
+if ! env_file_has_key "$target/hive.env" "HIVE_LOG_DIR"; then
+  write_env_var "$target/hive.env" "HIVE_LOG_DIR" "$INSTALL_ROOT/logs"
+fi
+
+write_env_var "$target/hive.env" "HIVE_INSTALL_URL" "$download"
+
+if [ -n "$install_command_override" ]; then
+  write_env_var "$target/hive.env" "HIVE_INSTALL_COMMAND" "$install_command_override"
+fi
+
+if [ -n "$OPENCODE_BIN" ] && ! env_file_has_key "$target/hive.env" "HIVE_OPENCODE_BIN"; then
+  write_env_var "$target/hive.env" "HIVE_OPENCODE_BIN" "$OPENCODE_BIN"
 fi
 
 ln -snf "$target" "$INSTALL_ROOT/current"
