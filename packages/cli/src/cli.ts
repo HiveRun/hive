@@ -18,6 +18,7 @@ import { createInterface } from "node:readline/promises";
 import {
   binaryDirectory,
   cleanupPidFile,
+  DEFAULT_API_URL,
   DEFAULT_WEB_URL,
   pidFilePath,
   startServer,
@@ -33,7 +34,10 @@ import {
 } from "./completions";
 import {
   ensureTrailingNewline,
+  extractPortFromUrl,
+  findListeningProcessId,
   installCompletionScript,
+  isHiveHealthResponse,
   type WaitForServerReadyConfig,
   waitForServerReady,
 } from "./runtime-utils";
@@ -109,6 +113,9 @@ const resolveDesktopPidFilePath = () =>
   process.env.HIVE_DESKTOP_PID_FILE ??
   join(resolveHiveHomePath(), "desktop.pid");
 
+const resolveDaemonStartLockFilePath = () =>
+  join(resolveHiveHomePath(), "daemon-start.pid");
+
 const normalizeShell = (shell?: string): CompletionShell | null => {
   if (!shell) {
     return null;
@@ -147,8 +154,10 @@ const getDefaultCompletionInstallPath = (shell: CompletionShell) => {
 const trimTrailingSlash = (value: string) =>
   value.endsWith("/") ? value.slice(0, -1) : value;
 
-const HEALTHCHECK_URL = `${trimTrailingSlash(DEFAULT_WEB_URL)}/health`;
+const HEALTHCHECK_URL = `${trimTrailingSlash(DEFAULT_API_URL)}/health`;
 const DAEMON_PROBE_TIMEOUT_MS = 800;
+const MANAGED_DAEMON_VERIFY_TIMEOUT_MS = 5000;
+const MANAGED_DAEMON_VERIFY_INTERVAL_MS = 200;
 const DAEMON_STOP_WAIT_TIMEOUT_MS = 10_000;
 const DAEMON_STOP_POLL_INTERVAL_MS = 100;
 
@@ -178,16 +187,18 @@ const isPidAlive = (pid: number) => {
   }
 };
 
-const isDaemonRunning = () => {
+const readManagedDaemonPid = () => {
   const pid = readActivePid();
   if (!pid) {
-    return false;
+    return null;
   }
+
   if (isPidAlive(pid)) {
-    return true;
+    return pid;
   }
+
   cleanupPidFile();
-  return false;
+  return null;
 };
 
 const probeJson = async (url: string) => {
@@ -209,6 +220,87 @@ const probeJson = async (url: string) => {
   } finally {
     clearTimeout(timeout);
   }
+};
+
+const isHiveReadyResponse = async (response: Response) => {
+  try {
+    return isHiveHealthResponse(await response.json());
+  } catch {
+    return false;
+  }
+};
+
+const detectManagedDaemon = async () => {
+  const pid = readManagedDaemonPid();
+  if (!pid) {
+    return null;
+  }
+
+  const startupPid = readDaemonStartLockPid();
+
+  const ready = await waitForServerReady({
+    intervalMs: MANAGED_DAEMON_VERIFY_INTERVAL_MS,
+    isReadyResponse: isHiveReadyResponse,
+    timeoutMs: MANAGED_DAEMON_VERIFY_TIMEOUT_MS,
+    url: HEALTHCHECK_URL,
+  });
+  if (!ready) {
+    if (startupPid === pid) {
+      return { pid };
+    }
+
+    cleanupPidFile();
+    return null;
+  }
+
+  const port = extractPortFromUrl(HEALTHCHECK_URL);
+  const listeningPid = port ? findListeningProcessId({ port }) : null;
+  if (listeningPid && listeningPid !== pid) {
+    cleanupPidFile();
+    return null;
+  }
+
+  return { pid };
+};
+
+type UnmanagedDaemon = {
+  pid: number | null;
+};
+
+const detectUnmanagedDaemon = async (): Promise<UnmanagedDaemon | null> => {
+  if (await detectManagedDaemon()) {
+    return null;
+  }
+
+  const healthPayload = await probeJson(HEALTHCHECK_URL);
+  if (!isHiveHealthResponse(healthPayload)) {
+    return null;
+  }
+
+  const port = extractPortFromUrl(HEALTHCHECK_URL);
+  return {
+    pid: port ? findListeningProcessId({ port }) : null,
+  };
+};
+
+const detectRunningDaemon = async () => {
+  const managedDaemon = await detectManagedDaemon();
+  if (managedDaemon) {
+    return {
+      managed: true,
+      pid: managedDaemon.pid,
+    } as const;
+  }
+
+  const unmanagedDaemon = await detectUnmanagedDaemon();
+  if (!unmanagedDaemon) {
+    return null;
+  }
+
+  return {
+    managed: false,
+    pid: unmanagedDaemon.pid,
+  } as const;
 };
 
 type LaunchResult = { pid: number | null; logFile: string };
@@ -245,6 +337,22 @@ const persistPidFile = (pid: number | null) => {
   }
 };
 
+const persistPidFileIfAlive = (pid: number | null) => {
+  if (!(pid && isPidAlive(pid))) {
+    return false;
+  }
+
+  const port = extractPortFromUrl(HEALTHCHECK_URL);
+  const listeningPid = port ? findListeningProcessId({ port }) : null;
+  if (listeningPid && listeningPid !== pid) {
+    return false;
+  }
+
+  persistPidFile(pid);
+  cleanupDaemonStartLock();
+  return true;
+};
+
 const launchDetachedServer = (): LaunchResult => {
   const logDir = resolveLogDirectory();
   ensureLogDirectory(logDir);
@@ -267,12 +375,13 @@ const launchDetachedServer = (): LaunchResult => {
     closeStream(stderrFd);
 
     child.unref();
-    persistPidFile(child.pid ?? null);
+    persistDaemonStartLock(child.pid ?? null);
 
     return { pid: child.pid ?? null, logFile };
   } catch (error) {
     closeStream(stdoutFd);
     closeStream(stderrFd);
+    cleanupDaemonStartLock();
     throw error;
   }
 };
@@ -281,20 +390,48 @@ const ensureDaemonRunning = async (
   config?: Omit<WaitForServerReadyConfig, "url">
 ): Promise<boolean> => {
   try {
-    if (isDaemonRunning()) {
+    if (await reuseStartingDaemon(config)) {
       return true;
     }
 
+    const runningDaemon = await detectRunningDaemon();
+    if (runningDaemon?.managed) {
+      return true;
+    }
+
+    if (runningDaemon) {
+      logWarning(
+        runningDaemon.pid
+          ? `Detected a running Hive daemon without a managed PID file (PID ${runningDaemon.pid}). Reusing it.`
+          : "Detected a running Hive daemon without a managed PID file. Reusing it."
+      );
+      return true;
+    }
+
+    if (!tryAcquireDaemonStartLock()) {
+      if (await reuseStartingDaemon(config)) {
+        return true;
+      }
+
+      logError("Hive is already starting in another process.");
+      return false;
+    }
+
     logInfo("Hive is not running. Starting background daemon...");
-    launchDetachedServer();
+    const launch = launchDetachedServer();
 
     const ready = await waitForServerReady({
+      isReadyResponse: isHiveReadyResponse,
       url: HEALTHCHECK_URL,
       ...config,
     });
     if (!ready) {
-      logWarning("Daemon started, but /health did not respond before timeout.");
+      logError("Daemon did not become ready before timeout.");
+      return false;
     }
+
+    persistPidFileIfAlive(launch.pid);
+
     return true;
   } catch (error) {
     logError(
@@ -303,6 +440,59 @@ const ensureDaemonRunning = async (
       }`
     );
     return false;
+  }
+};
+
+const reuseStartingDaemon = async (
+  config?: Omit<WaitForServerReadyConfig, "url">
+) => {
+  const startupPid = readDaemonStartLockPid();
+  if (!startupPid) {
+    return false;
+  }
+
+  const startupReady = await waitForServerReady({
+    isReadyResponse: isHiveReadyResponse,
+    url: HEALTHCHECK_URL,
+    ...config,
+  });
+  if (!startupReady) {
+    return false;
+  }
+
+  return true;
+};
+
+const printAlreadyRunningSummary = (daemonLabel: string) => {
+  printSummary("Hive is already running", [
+    ["UI", DEFAULT_WEB_URL],
+    ["Daemon", daemonLabel],
+    ["Stop", "hive stop"],
+    ["Stream logs", "hive logs"],
+  ]);
+};
+
+const maybeStartDetachedServer = async () => {
+  if (!tryAcquireDaemonStartLock()) {
+    if (await reuseStartingDaemon()) {
+      printAlreadyRunningSummary("Starting in another process");
+      return 0;
+    }
+
+    logWarning("Hive is already starting in another process.");
+    return 1;
+  }
+
+  try {
+    await startDetachedServer();
+    return 0;
+  } catch (error) {
+    logWarning(
+      `Failed to launch background process: ${
+        error instanceof Error ? error.message : String(error)
+      }. Falling back to foreground mode.`
+    );
+    return null;
   }
 };
 
@@ -531,6 +721,77 @@ const ensurePidDirectory = () => {
   }
 };
 
+const cleanupDaemonStartLock = () => {
+  const lockPath = resolveDaemonStartLockFilePath();
+  if (!existsSync(lockPath)) {
+    return;
+  }
+
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    /* ignore */
+  }
+};
+
+const persistDaemonStartLock = (pid: number | null) => {
+  if (!pid) {
+    return;
+  }
+
+  ensurePidDirectory();
+  try {
+    writeFileSync(resolveDaemonStartLockFilePath(), `${pid}\n`);
+  } catch {
+    /* ignore */
+  }
+};
+
+const readDaemonStartLockPid = () => {
+  const lockPath = resolveDaemonStartLockFilePath();
+  if (!existsSync(lockPath)) {
+    return null;
+  }
+
+  try {
+    const pid = Number(readFileSync(lockPath, "utf8").trim());
+    if (!pid || Number.isNaN(pid)) {
+      cleanupDaemonStartLock();
+      return null;
+    }
+
+    if (isPidAlive(pid)) {
+      return pid;
+    }
+
+    cleanupDaemonStartLock();
+    return null;
+  } catch {
+    cleanupDaemonStartLock();
+    return null;
+  }
+};
+
+const tryAcquireDaemonStartLock = () => {
+  if (readDaemonStartLockPid()) {
+    return false;
+  }
+
+  ensurePidDirectory();
+  try {
+    writeFileSync(resolveDaemonStartLockFilePath(), `${process.pid}\n`, {
+      flag: "wx",
+    });
+    return true;
+  } catch (error) {
+    if (getErrnoCode(error) === "EEXIST") {
+      return false;
+    }
+
+    throw error;
+  }
+};
+
 const ensureDesktopPidDirectory = () => {
   try {
     mkdirSync(dirname(resolveDesktopPidFilePath()), { recursive: true });
@@ -581,7 +842,7 @@ const readDesktopPid = (): number | null => {
   }
 };
 
-const describePidStatus = () => {
+const describeManagedPidStatus = () => {
   if (!existsSync(pidFilePath)) {
     return "Not running (pid file missing)";
   }
@@ -608,11 +869,29 @@ const describePidStatus = () => {
   }
 };
 
+const describeDaemonStatus = async () => {
+  const runningDaemon = await detectRunningDaemon();
+  if (runningDaemon?.managed) {
+    return `Running (PID ${runningDaemon.pid})`;
+  }
+
+  if (!runningDaemon) {
+    return describeManagedPidStatus();
+  }
+
+  return runningDaemon.pid
+    ? `Running (unmanaged PID ${runningDaemon.pid})`
+    : "Running (unmanaged daemon)";
+};
+
 type StopBackgroundProcessResult =
   | "failed"
   | "not_running"
   | "stale_pid"
   | "stopped";
+
+const UNMANAGED_DAEMON_STOP_ERROR =
+  "Detected a running Hive daemon without a managed PID file, but could not resolve its process ID. Stop it manually and retry.";
 
 const sleep = (milliseconds: number) =>
   new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
@@ -647,29 +926,6 @@ const waitForProcessExit = async (
   return false;
 };
 
-const readManagedPidForStop = (emitError: (message: string) => void) => {
-  let pidText: string;
-  try {
-    pidText = readFileSync(pidFilePath, "utf8").trim();
-  } catch (error) {
-    emitError(
-      `Unable to read pid file ${pidFilePath}: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-    return null;
-  }
-
-  const pid = Number(pidText);
-  if (!pid || Number.isNaN(pid)) {
-    emitError(`Pid file ${pidFilePath} contains invalid data.`);
-    cleanupPidFile();
-    return null;
-  }
-
-  return pid;
-};
-
 const sendStopSignal = (
   pid: number,
   emitInfo: (message: string) => void,
@@ -694,6 +950,52 @@ const sendStopSignal = (
   }
 };
 
+const stopUnmanagedDaemon = async (options: {
+  silent?: boolean;
+  waitForExitMs?: number;
+  emitNotRunningMessage?: boolean;
+}): Promise<StopBackgroundProcessResult> => {
+  const silent = options.silent ?? false;
+  const waitForExitMs = options.waitForExitMs;
+  const emitNotRunningMessage = options.emitNotRunningMessage ?? false;
+  const log = (message: string) => {
+    if (!silent) {
+      logInfo(message);
+    }
+  };
+
+  const unmanagedDaemon = await detectUnmanagedDaemon();
+  if (!unmanagedDaemon) {
+    if (emitNotRunningMessage) {
+      log("No running Hive instance found.");
+    }
+    return "not_running" as const;
+  }
+
+  if (!unmanagedDaemon.pid) {
+    logError(UNMANAGED_DAEMON_STOP_ERROR);
+    return "failed" as const;
+  }
+
+  const signalResult = sendStopSignal(unmanagedDaemon.pid, log, logError);
+  if (signalResult === "failed") {
+    return "failed" as const;
+  }
+
+  if (waitForExitMs && waitForExitMs > 0) {
+    const exited = await waitForProcessExit(unmanagedDaemon.pid, waitForExitMs);
+    if (!exited) {
+      logError(
+        `Timed out waiting for Hive (PID ${unmanagedDaemon.pid}) to exit.`
+      );
+      return "failed" as const;
+    }
+  }
+
+  logSuccess(`Stopped Hive (PID ${unmanagedDaemon.pid}).`);
+  return "stopped" as const;
+};
+
 const stopBackgroundProcess = async (options?: {
   silent?: boolean;
   waitForExitMs?: number;
@@ -707,14 +1009,23 @@ const stopBackgroundProcess = async (options?: {
   };
 
   if (!existsSync(pidFilePath)) {
-    log("No running Hive instance found.");
-    return "not_running" as const;
+    return await stopUnmanagedDaemon({
+      silent,
+      waitForExitMs,
+      emitNotRunningMessage: true,
+    });
   }
 
-  const pid = readManagedPidForStop(logError);
-  if (!pid) {
-    return "failed" as const;
+  const managedDaemon = await detectManagedDaemon();
+  if (!managedDaemon) {
+    return await stopUnmanagedDaemon({
+      silent,
+      waitForExitMs,
+      emitNotRunningMessage: false,
+    });
   }
+
+  const pid = managedDaemon.pid;
 
   const signalResult = sendStopSignal(pid, log, logError);
   if (signalResult === "failed") {
@@ -722,7 +1033,13 @@ const stopBackgroundProcess = async (options?: {
   }
 
   if (signalResult === "stale_pid") {
-    return "stale_pid" as const;
+    const unmanagedStopResult = await stopUnmanagedDaemon({
+      silent,
+      waitForExitMs,
+    });
+    return unmanagedStopResult === "not_running"
+      ? ("stale_pid" as const)
+      : unmanagedStopResult;
   }
 
   if (waitForExitMs && waitForExitMs > 0) {
@@ -856,8 +1173,8 @@ const runUpgrade = async () => {
       cwd: binaryDirectory,
     });
   } else if (storedInstallUrl) {
-    const command = `set -euo pipefail; curl -fsSL ${storedInstallUrl} | bash`;
-    child = spawn("bash", ["-c", command], {
+    const command = 'set -euo pipefail; curl -fsSL -- "$1" | bash';
+    child = spawn("bash", ["-c", command, "hive-install", storedInstallUrl], {
       stdio: "inherit",
       env,
     });
@@ -937,7 +1254,11 @@ const uninstallCommand = async (confirm: boolean, keepData: boolean) => {
   const stopResult = await resolveUninstallStopResult({
     confirmed: confirmation,
     healthcheckUrl: HEALTHCHECK_URL,
-    stopBackgroundProcess: () => stopBackgroundProcess({ silent: true }),
+    stopBackgroundProcess: () =>
+      stopBackgroundProcess({
+        silent: true,
+        waitForExitMs: DAEMON_STOP_WAIT_TIMEOUT_MS,
+      }),
     probeJson,
     logInfo,
     logError,
@@ -963,8 +1284,20 @@ const isCompiledRuntime = !isBunRuntime;
 const isForcedForeground = process.env.HIVE_FOREGROUND === "1";
 const defaultShouldRunDetached = isCompiledRuntime && !isForcedForeground;
 
-const startDetachedServer = () => {
-  const { logFile } = launchDetachedServer();
+const startDetachedServer = async () => {
+  const { logFile, pid } = launchDetachedServer();
+
+  const ready = await waitForServerReady({
+    isReadyResponse: isHiveReadyResponse,
+    url: HEALTHCHECK_URL,
+  });
+  if (!ready) {
+    cleanupPidFile();
+    cleanupDaemonStartLock();
+    throw new Error("Daemon did not become ready before timeout.");
+  }
+
+  persistPidFileIfAlive(pid);
 
   printSummary("Hive is running in the background", [
     ["UI", DEFAULT_WEB_URL],
@@ -980,17 +1313,29 @@ const startDetachedServer = () => {
 const bootstrap = async (options?: { forceForeground?: boolean }) => {
   const shouldRunDetached =
     !options?.forceForeground && defaultShouldRunDetached;
+  if (await reuseStartingDaemon()) {
+    printAlreadyRunningSummary("Starting in another process");
+    return 0;
+  }
+
+  const runningDaemon = await detectRunningDaemon();
+
+  if (runningDaemon) {
+    let daemonLabel = "Unmanaged daemon";
+    if (runningDaemon.managed) {
+      daemonLabel = `Managed PID ${runningDaemon.pid}`;
+    } else if (runningDaemon.pid) {
+      daemonLabel = `Unmanaged PID ${runningDaemon.pid}`;
+    }
+
+    printAlreadyRunningSummary(daemonLabel);
+    return 0;
+  }
 
   if (shouldRunDetached) {
-    try {
-      startDetachedServer();
-      return 0;
-    } catch (error) {
-      logWarning(
-        `Failed to launch background process: ${
-          error instanceof Error ? error.message : String(error)
-        }. Falling back to foreground mode.`
-      );
+    const detachedResult = await maybeStartDetachedServer();
+    if (detachedResult !== null) {
+      return detachedResult;
     }
   }
 
@@ -1047,10 +1392,11 @@ const desktopCommand = async () => {
   return 0;
 };
 
-const infoCommand = () => {
+const infoCommand = async () => {
   const hiveHome = resolveHiveHomePath();
   const logDir = resolveLogDirectory();
   const logFile = resolveLogFilePath();
+  const daemonStatus = await describeDaemonStatus();
   const summaryRows: [string, string][] = [
     ["Version", CLI_VERSION],
     ["Hive home", hiveHome],
@@ -1059,7 +1405,7 @@ const infoCommand = () => {
     ["Logs", logDir],
     ["Log file", logFile],
     ["PID file", pidFilePath],
-    ["Daemon", describePidStatus()],
+    ["Daemon", daemonStatus],
     ["Default UI", DEFAULT_WEB_URL],
   ];
 

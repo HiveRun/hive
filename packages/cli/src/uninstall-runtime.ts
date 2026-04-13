@@ -1,3 +1,5 @@
+import { isHiveHealthResponse } from "./runtime-utils";
+
 import type { StopRuntimeResult } from "./uninstall";
 
 type Logger = (message: string) => void;
@@ -17,12 +19,6 @@ type ResolveUninstallStopResultOptions = {
   logInfo: Logger;
   logError: Logger;
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === "object";
-
-const isHiveHealthResponse = (value: unknown) =>
-  isRecord(value) && value.status === "ok";
 
 export const resolveUninstallStopResult = async ({
   confirmed,

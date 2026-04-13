@@ -38,6 +38,18 @@ const DEFAULT_HOSTNAME = "localhost";
 const PORT = Number(process.env.PORT ?? DEFAULT_SERVER_PORT);
 const HOSTNAME = process.env.HOST ?? process.env.HOSTNAME ?? DEFAULT_HOSTNAME;
 
+function formatHostForLocalUrl(hostname: string) {
+  if (hostname === "0.0.0.0") {
+    return "127.0.0.1";
+  }
+
+  if (hostname === "::") {
+    return "[::1]";
+  }
+
+  return hostname.includes(":") ? `[${hostname}]` : hostname;
+}
+
 const SILENCE_TERMINAL_TRAFFIC_LOGS =
   process.env.HIVE_LOG_TERMINAL_TRAFFIC !== "1";
 const SILENCE_POLLING_TRAFFIC_LOGS =
@@ -99,6 +111,8 @@ function shouldIgnoreAutoRequestLog(ctx: {
 const runtimeExecutable = basename(process.execPath).toLowerCase();
 const isBunRuntime = runtimeExecutable.startsWith("bun");
 const isCompiledRuntime = !isBunRuntime;
+export const DEFAULT_API_PORT = String(PORT);
+export const DEFAULT_API_URL = `http://${formatHostForLocalUrl(HOSTNAME)}:${DEFAULT_API_PORT}`;
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 export const binaryDirectory = dirname(process.execPath);
@@ -114,7 +128,11 @@ const DEFAULT_CORS_ORIGINS = [
 ];
 export const DEFAULT_WEB_URL = `http://localhost:${DEFAULT_WEB_PORT}`;
 //
-const resolvedCorsOrigins = (process.env.CORS_ORIGIN || "")
+const resolvedCorsOrigins = (
+  process.env.CORS_ORIGINS ||
+  process.env.CORS_ORIGIN ||
+  ""
+)
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
@@ -214,7 +232,7 @@ const createApp = () =>
         credentials: true,
       })
     )
-    .get("/health", () => ({ status: "ok" }))
+    .get("/health", () => ({ service: "hive", status: "ok" }))
     .get("/api/example", () => ({
       message: "Hello from Elysia!",
       timestamp: Date.now(),
