@@ -79,11 +79,17 @@ docs/.obsidian/appearance.json
 
 # Track OpenCode config in repo
 !opencode.json
+!AGENTS.md
 
 # OpenCode local runtime artifacts
+.opencode/package-lock.json
 .opencode/state/
 .opencode/themes/
 .opencode/tools/
+
+# Local agent config artifacts
+.gemini/
+.qwen/
 
 # OpenCode local planning artifacts
 .opencode/plans/

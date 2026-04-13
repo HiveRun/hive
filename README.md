@@ -466,8 +466,9 @@ This command:
 3. Propagates the combined content to all AI agent configs
 
 **Note:**
-- Generated files (`.ruler/01-readme.md`, `AGENTS.md`, `CLAUDE.md`, etc.) are gitignored
-- Only edit source files in `.ruler/prompts/` - never edit generated files directly
+- `.ruler/01-readme.md`, `CLAUDE.md`, and other Ruler outputs are generated artifacts; avoid editing them directly
+- `AGENTS.md` is a committed generated artifact consumed by OpenCode. After changing `README.md` or `.ruler/prompts/*.md`, run `bun run ruler:apply` and commit the regenerated `AGENTS.md`
+- Only edit source files in `.ruler/prompts/` (plus `README.md`) - never hand-edit generated artifacts
 - Ruler automatically reads all `.md` files from `.ruler/` directory
 
 ### Prompt File Guidelines
