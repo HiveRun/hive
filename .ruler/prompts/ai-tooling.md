@@ -10,6 +10,7 @@
   - `.ruler/prompts/` - AI agent guidance and coding standards  
   - `README.md` - Project overview and getting started
   When you need context, prioritize these markdown sources over external knowledge bases.
+- `AGENTS.md` is a committed generated artifact for OpenCode. After changing `README.md` or `.ruler/prompts/*.md`, run `bun run ruler:apply` and commit the regenerated `AGENTS.md`.
 - Before pushing, run `bun run check:push` (lint, types, unit tests, build).
 - Run `bun run test:e2e` when modifying cell lifecycle, terminal handling, service orchestration, or workspace management.
 - For `apps/e2e` changes, prefer deterministic checks (session/message metadata + UI confirmation) instead of fixed sleeps.
