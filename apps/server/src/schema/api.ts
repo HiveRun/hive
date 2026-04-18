@@ -485,3 +485,59 @@ export const VoiceTranscriptionResponseSchema = t.Object({
     })
   ),
 });
+
+export const LinearUserSchema = t.Object({
+  id: t.String(),
+  name: t.String(),
+  email: t.Union([t.String(), t.Null()]),
+});
+
+export const LinearOrganizationSchema = t.Object({
+  id: t.String(),
+  name: t.String(),
+});
+
+export const LinearTeamSchema = t.Object({
+  id: t.String(),
+  key: t.Union([t.String(), t.Null()]),
+  name: t.String(),
+});
+
+export const LinearStatusResponseSchema = t.Object({
+  connected: t.Boolean(),
+  user: t.Union([LinearUserSchema, t.Null()]),
+  organization: t.Union([LinearOrganizationSchema, t.Null()]),
+  team: t.Union([LinearTeamSchema, t.Null()]),
+});
+
+export const LinearOAuthStartResponseSchema = t.Object({
+  authorizationUrl: t.String(),
+});
+
+export const LinearTeamListResponseSchema = t.Object({
+  teams: t.Array(LinearTeamSchema),
+});
+
+export const LinearIssueStateSchema = t.Object({
+  id: t.String(),
+  name: t.String(),
+  color: t.Union([t.String(), t.Null()]),
+});
+
+export const LinearIssueSchema = t.Object({
+  id: t.String(),
+  teamId: t.Union([t.String(), t.Null()]),
+  identifier: t.String(),
+  title: t.String(),
+  description: t.Union([t.String(), t.Null()]),
+  url: t.Union([t.String(), t.Null()]),
+  updatedAt: t.String(),
+  state: t.Union([LinearIssueStateSchema, t.Null()]),
+  assignee: t.Union([LinearUserSchema, t.Null()]),
+});
+
+export const LinearIssueListResponseSchema = t.Object({
+  issues: t.Array(LinearIssueSchema),
+  nextCursor: t.Union([t.String(), t.Null()]),
+  hasNextPage: t.Boolean(),
+});

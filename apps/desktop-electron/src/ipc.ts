@@ -15,8 +15,19 @@ type NotifyInput = {
 
 type IpcHandlers = ReturnType<typeof createIpcHandlers>;
 
-const openExternal = async (url: string) => {
-  await shell.openExternal(url);
+const blurWindowIfFocused = (window: BrowserWindow) => {
+  if (window.isDestroyed()) {
+    return;
+  }
+
+  if (window.isFocused()) {
+    window.blur();
+  }
+};
+
+const openExternal = async (window: BrowserWindow, url: string) => {
+  await shell.openExternal(url, { activate: true });
+  blurWindowIfFocused(window);
   return { ok: true } as const;
 };
 
@@ -81,11 +92,13 @@ export const createIpcHandlers = (window: BrowserWindow) => {
   const viewerOpenExternal = async () => await getViewer().openExternal();
   const viewerSyncServiceTabs = async (tabs: ViewerServiceTab[]) =>
     await getViewer().syncServiceTabs(tabs);
+  const appOpenExternal = async (url: string) =>
+    await openExternal(window, url);
 
   return {
     getRuntimeInfo,
     notify,
-    openExternal,
+    openExternal: appOpenExternal,
     viewer: {
       destroy: () => {
         viewer?.destroy();
@@ -148,7 +161,7 @@ export const registerIpcHandlers = (options: { ipcMain: IpcMain }) => {
     requireHandlers().notify(payload as NotifyInput)
   );
   options.ipcMain.handle(IPC_CHANNELS.openExternal, (_event, url) =>
-    openExternal(url as string)
+    requireHandlers().openExternal(url as string)
   );
   options.ipcMain.handle(IPC_CHANNELS.viewerGetState, () =>
     requireHandlers().viewerGetState()
@@ -192,7 +205,8 @@ export const registerIpcHandlers = (options: { ipcMain: IpcMain }) => {
   return {
     attachWindow,
     detachWindow,
-    openExternal,
+    openExternal: async (url: string) =>
+      await requireHandlers().openExternal(url),
   };
 };
 

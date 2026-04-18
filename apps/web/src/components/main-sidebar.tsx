@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Clock3, Gauge, Home, Minus, Plus } from "lucide-react";
+import { Clock3, Gauge, Home, Minus, Plus, Ticket } from "lucide-react";
 import type { ComponentProps } from "react";
 import { useState } from "react";
 import { ModeToggle } from "@/components/mode-toggle";
@@ -142,6 +142,38 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <WorkspaceTree collapsed={sidebarState === "collapsed"} />
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel
+            className={cn(
+              "text-[0.6rem] text-muted-foreground uppercase tracking-[0.32em]",
+              sidebarState === "collapsed" && "hidden"
+            )}
+          >
+            Integrations
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  className={cn(
+                    "relative box-border w-full rounded-none border-2 border-transparent bg-transparent py-1.5 pr-4 pl-3 text-left text-muted-foreground text-xs tracking-normal transition-none",
+                    "hover:bg-primary/5 hover:text-foreground",
+                    pathname.startsWith("/linear") &&
+                      "bg-primary/10 text-foreground shadow-[inset_3px_0_0_0_hsl(var(--primary))]"
+                  )}
+                  tooltip="Linear"
+                >
+                  <Link aria-label="Linear" to="/linear">
+                    <Ticket className="size-4" />
+                    <span>Linear</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 

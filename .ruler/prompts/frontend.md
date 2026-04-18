@@ -34,6 +34,8 @@ Components are stored in `apps/web/src/components/ui/`
 - **Tailwind CSS** for styling
 - Dark mode via `next-themes`
 - Component variants using `class-variance-authority` (cva)
+- For layout, spacing, overflow, or scrolling fixes, verify the real rendered UI in the target viewport/runtime before claiming success. Do not rely on class inspection or unit tests alone.
+- When changing split panes or internal scroll regions, confirm which element actually scrolls by checking rendered geometry (`clientHeight`/`scrollHeight`) and capture a fresh screenshot.
 
 ## Backend Communication
 
