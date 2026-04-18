@@ -35,7 +35,10 @@ import {
   LinearTeamListResponseSchema,
 } from "../schema/api";
 import type { ResolveWorkspaceContext } from "../workspaces/context";
-import { createWorkspaceContextPlugin } from "../workspaces/plugin";
+import {
+  createWorkspaceContextPlugin,
+  WorkspaceContextResolutionError,
+} from "../workspaces/plugin";
 
 const HTTP_STATUS = {
   OK: 200,
@@ -118,6 +121,10 @@ const formatUnknown = (error: unknown, fallback: string) => {
 const asLinearRouteError = (error: unknown, fallback: string) => {
   if (error instanceof LinearRouteError) {
     return error;
+  }
+
+  if (error instanceof WorkspaceContextResolutionError) {
+    return new LinearRouteError(HTTP_STATUS.BAD_REQUEST, error.message);
   }
 
   if (error instanceof LinearAuthenticationError) {

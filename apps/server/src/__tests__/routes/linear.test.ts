@@ -121,6 +121,19 @@ describe("createLinearRoutes", () => {
     });
   });
 
+  it("returns 400 when the workspace id is stale or unknown", async () => {
+    const response = await createApp().handle(
+      new Request(
+        "http://localhost/api/linear/status?workspaceId=missing-workspace"
+      )
+    );
+
+    expect(response.status).toBe(HTTP_BAD_REQUEST);
+    await expect(response.json()).resolves.toEqual({
+      message: "Workspace 'missing-workspace' not found",
+    });
+  });
+
   it("saves a pasted personal token without requiring OAuth env", async () => {
     vi.spyOn(LinearClientModule, "fetchLinearViewerContext").mockResolvedValue({
       viewer: {
