@@ -13,6 +13,7 @@ import {
   type ModelSelectionSource,
   ModelSelector,
 } from "@/components/model-selector";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -94,14 +95,23 @@ const getSpawnSourcePlaceholder = (mode: SpawnFromMode) => {
   return "";
 };
 
+export type CellFormInitialPrefill = {
+  name: string;
+  description: string;
+  sourceLabel?: string;
+};
+
 type CellFormProps = {
   workspaceId: string;
+  initialPrefill?: CellFormInitialPrefill;
   onSuccess?: () => void;
   onCancel?: () => void;
   onCreated?: (cell: { id: string; name: string; workspaceId: string }) => void;
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: form coordinates template, model, and spawn defaults
 export function CellForm({
+  initialPrefill,
   workspaceId,
   onSuccess,
   onCancel,
@@ -123,8 +133,8 @@ export function CellForm({
 
   const defaultValues = useMemo(
     () => ({
-      name: "",
-      description: "",
+      name: initialPrefill?.name ?? "",
+      description: initialPrefill?.description ?? "",
       templateId: defaultTemplateId,
       modelId: undefined,
       providerId: undefined,
@@ -133,7 +143,12 @@ export function CellForm({
       spawnFromMode: "head" as SpawnFromMode,
       spawnFromValue: "",
     }),
-    [defaultStartMode, defaultTemplateId]
+    [
+      defaultStartMode,
+      defaultTemplateId,
+      initialPrefill?.description,
+      initialPrefill?.name,
+    ]
   );
 
   const [activeTemplateId, setActiveTemplateId] = useState(
@@ -276,6 +291,11 @@ export function CellForm({
     },
   });
 
+  useEffect(() => {
+    form.setFieldValue("name", initialPrefill?.name ?? "");
+    form.setFieldValue("description", initialPrefill?.description ?? "");
+  }, [form, initialPrefill?.description, initialPrefill?.name]);
+
   const handleModelChange = (
     model: ModelSelection,
     source: ModelSelectionSource
@@ -320,6 +340,13 @@ export function CellForm({
     <Card className="w-full max-w-2xl">
       <CardHeader>
         <CardTitle>Create New Cell</CardTitle>
+        {initialPrefill?.sourceLabel ? (
+          <div>
+            <Badge variant="outline">
+              Source: Linear {initialPrefill.sourceLabel}
+            </Badge>
+          </div>
+        ) : null}
       </CardHeader>
       <CardContent>
         {mutation.isError && mutationErrorMessage && (

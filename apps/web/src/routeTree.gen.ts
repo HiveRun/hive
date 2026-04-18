@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TimingsRouteImport } from './routes/timings'
+import { Route as LinearRouteImport } from './routes/linear'
 import { Route as GlobalTimingsRouteImport } from './routes/global-timings'
 import { Route as GlobalResourcesRouteImport } from './routes/global-resources'
 import { Route as CellsRouteImport } from './routes/cells'
@@ -28,6 +29,11 @@ import { Route as CellsCellIdChatRouteImport } from './routes/cells/$cellId/chat
 const TimingsRoute = TimingsRouteImport.update({
   id: '/timings',
   path: '/timings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LinearRoute = LinearRouteImport.update({
+  id: '/linear',
+  path: '/linear',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GlobalTimingsRoute = GlobalTimingsRouteImport.update({
@@ -106,6 +112,7 @@ export interface FileRoutesByFullPath {
   '/cells': typeof CellsRouteWithChildren
   '/global-resources': typeof GlobalResourcesRoute
   '/global-timings': typeof GlobalTimingsRoute
+  '/linear': typeof LinearRoute
   '/timings': typeof TimingsRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
   '/cells/new': typeof CellsNewRoute
@@ -123,6 +130,7 @@ export interface FileRoutesByTo {
   '/cells': typeof CellsRouteWithChildren
   '/global-resources': typeof GlobalResourcesRoute
   '/global-timings': typeof GlobalTimingsRoute
+  '/linear': typeof LinearRoute
   '/timings': typeof TimingsRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
   '/cells/new': typeof CellsNewRoute
@@ -141,6 +149,7 @@ export interface FileRoutesById {
   '/cells': typeof CellsRouteWithChildren
   '/global-resources': typeof GlobalResourcesRoute
   '/global-timings': typeof GlobalTimingsRoute
+  '/linear': typeof LinearRoute
   '/timings': typeof TimingsRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
   '/cells/new': typeof CellsNewRoute
@@ -160,6 +169,7 @@ export interface FileRouteTypes {
     | '/cells'
     | '/global-resources'
     | '/global-timings'
+    | '/linear'
     | '/timings'
     | '/cells/$cellId'
     | '/cells/new'
@@ -177,6 +187,7 @@ export interface FileRouteTypes {
     | '/cells'
     | '/global-resources'
     | '/global-timings'
+    | '/linear'
     | '/timings'
     | '/cells/$cellId'
     | '/cells/new'
@@ -194,6 +205,7 @@ export interface FileRouteTypes {
     | '/cells'
     | '/global-resources'
     | '/global-timings'
+    | '/linear'
     | '/timings'
     | '/cells/$cellId'
     | '/cells/new'
@@ -212,6 +224,7 @@ export interface RootRouteChildren {
   CellsRoute: typeof CellsRouteWithChildren
   GlobalResourcesRoute: typeof GlobalResourcesRoute
   GlobalTimingsRoute: typeof GlobalTimingsRoute
+  LinearRoute: typeof LinearRoute
   TimingsRoute: typeof TimingsRoute
 }
 
@@ -222,6 +235,13 @@ declare module '@tanstack/react-router' {
       path: '/timings'
       fullPath: '/timings'
       preLoaderRoute: typeof TimingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/linear': {
+      id: '/linear'
+      path: '/linear'
+      fullPath: '/linear'
+      preLoaderRoute: typeof LinearRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/global-timings': {
@@ -368,6 +388,7 @@ const rootRouteChildren: RootRouteChildren = {
   CellsRoute: CellsRouteWithChildren,
   GlobalResourcesRoute: GlobalResourcesRoute,
   GlobalTimingsRoute: GlobalTimingsRoute,
+  LinearRoute: LinearRoute,
   TimingsRoute: TimingsRoute,
 }
 export const routeTree = rootRouteImport

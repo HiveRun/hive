@@ -9,7 +9,7 @@ const HTTP_STATUS = {
   BAD_REQUEST: 400,
 } as const;
 
-class WorkspaceContextResolutionError extends Error {
+export class WorkspaceContextResolutionError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "WorkspaceContextResolutionError";
@@ -71,13 +71,15 @@ export function createWorkspaceContextPlugin({
         const resolvedId = inferWorkspaceId(workspaceId);
         if (!cachedPromise || cachedFor !== resolvedId) {
           cachedFor = resolvedId ?? null;
-          cachedPromise = resolveContext(resolvedId).catch((error: unknown) => {
-            const message =
-              error instanceof Error
-                ? error.message
-                : "Failed to resolve workspace context";
-            throw new WorkspaceContextResolutionError(message);
-          });
+          cachedPromise = Promise.resolve()
+            .then(() => resolveContext(resolvedId))
+            .catch((error: unknown) => {
+              const message =
+                error instanceof Error
+                  ? error.message
+                  : "Failed to resolve workspace context";
+              throw new WorkspaceContextResolutionError(message);
+            });
         }
 
         if (!cachedPromise) {

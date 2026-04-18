@@ -22,6 +22,7 @@ import { resolveWorkspaceRoot } from "./config/context";
 import { DatabaseService } from "./db";
 import { agentsRoutes } from "./routes/agents";
 import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
+import { linearRoutes } from "./routes/linear";
 import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
 import { cells } from "./schema/cells";
@@ -237,6 +238,7 @@ const createApp = () =>
       message: "Hello from Elysia!",
       timestamp: Date.now(),
     }))
+    .use(linearRoutes)
     .use(templatesRoutes)
     .use(workspacesRoutes)
     .use(cellsRoutes)

@@ -151,11 +151,19 @@ export const createViewerController = (options: {
   };
 
   const handleWindowOpen = ({ url }: { url: string }) => {
-    shell.openExternal(url).catch(() => {
+    openExternalUrl(url).catch(() => {
       /* ignore open failures */
     });
 
     return { action: "deny" as const };
+  };
+
+  const openExternalUrl = async (url: string) => {
+    await shell.openExternal(url, { activate: true });
+
+    if (!options.window.isDestroyed() && options.window.isFocused()) {
+      options.window.blur();
+    }
   };
 
   const emitStateForService = (serviceId: string) => {
@@ -355,7 +363,7 @@ export const createViewerController = (options: {
         return { ok: false } as const;
       }
 
-      await shell.openExternal(currentUrl);
+      await openExternalUrl(currentUrl);
       return { ok: true } as const;
     },
     resetActiveTab: async () => {

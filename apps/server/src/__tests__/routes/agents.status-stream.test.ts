@@ -67,9 +67,6 @@ describe("agent status stream", () => {
       if (value instanceof Uint8Array) {
         return decoder.decode(value);
       }
-      if (value instanceof ArrayBuffer) {
-        return decoder.decode(new Uint8Array(value));
-      }
       return "";
     };
 
@@ -138,9 +135,6 @@ describe("agent status stream", () => {
       if (value instanceof Uint8Array) {
         return decoder.decode(value);
       }
-      if (value instanceof ArrayBuffer) {
-        return decoder.decode(new Uint8Array(value));
-      }
       return "";
     };
 
@@ -181,9 +175,6 @@ describe("agent status stream", () => {
       }
       if (value instanceof Uint8Array) {
         return decoder.decode(value);
-      }
-      if (value instanceof ArrayBuffer) {
-        return decoder.decode(new Uint8Array(value));
       }
       return "";
     };
@@ -237,9 +228,6 @@ describe("agent status stream", () => {
       }
       if (value instanceof Uint8Array) {
         return decoder.decode(value);
-      }
-      if (value instanceof ArrayBuffer) {
-        return decoder.decode(new Uint8Array(value));
       }
       return "";
     };

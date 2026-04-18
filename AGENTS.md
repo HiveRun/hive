@@ -787,6 +787,8 @@ Components are stored in `apps/web/src/components/ui/`
 - **Tailwind CSS** for styling
 - Dark mode via `next-themes`
 - Component variants using `class-variance-authority` (cva)
+- For layout, spacing, overflow, or scrolling fixes, verify the real rendered UI in the target viewport/runtime before claiming success. Do not rely on class inspection or unit tests alone.
+- When changing split panes or internal scroll regions, confirm which element actually scrolls by checking rendered geometry (`clientHeight`/`scrollHeight`) and capture a fresh screenshot.
 
 ## Backend Communication
 
@@ -1168,6 +1170,7 @@ bun run test:e2e:spec specs/cell-chat.e2e.ts
 - Use `HIVE_E2E_KEEP_ARTIFACTS=1` when debugging failures; inspect screenshots/video/trace in `tmp/e2e-runs/`.
 - Use `HIVE_E2E_WORKSPACE_MODE=clone` for dev-parity debugging without mutating your real workspace.
 - For user-facing browser changes, verify with `agent-browser` when practical.
+- For layout/scroll/overflow fixes, always validate the actual rendered page in the affected viewport and runtime. Confirm the intended container scrolls and that surrounding panes do not accidentally overflow.
 - Use headless mode by default; only use headed mode for manual login/2FA/CAPTCHA or explicit live walkthrough requests.
 - Include verification evidence in your final response (key observed behavior and/or captured artifacts).
 - If pre-push fails on the known flaky backend spec (`apps/server/src/__tests__/routes/cells.create.test.ts`), run `bun -C apps/server run test -- src/__tests__/routes/cells.create.test.ts -t "returns detailed payload when template setup fails"` once, then rerun `bun run check:push`.

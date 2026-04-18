@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
-import { CellForm } from "@/components/cell-form";
+import { CellForm, type CellFormInitialPrefill } from "@/components/cell-form";
 import {
   Sheet,
   SheetContent,
@@ -13,9 +13,11 @@ type CellCreationSheetProps = {
   onOpenChange: (open: boolean) => void;
   workspaceId: string;
   workspaceLabel?: string;
+  initialPrefill?: CellFormInitialPrefill;
 };
 
 export function CellCreationSheet({
+  initialPrefill,
   open,
   onOpenChange,
   workspaceId,
@@ -40,6 +42,7 @@ export function CellCreationSheet({
 
         <div className="p-4">
           <CellForm
+            initialPrefill={initialPrefill}
             onCancel={() => onOpenChange(false)}
             onCreated={(cell) => {
               onOpenChange(false);

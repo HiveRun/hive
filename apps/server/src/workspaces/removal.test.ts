@@ -15,6 +15,7 @@ import { setupTestDb, testDb } from "../__tests__/test-db";
 import type { AgentRuntimeService } from "../agents/service";
 import type { LoggerService as Logger } from "../logger";
 import { cells } from "../schema/cells";
+import { linearIntegrations } from "../schema/linear-integrations";
 import type { ServiceSupervisorService } from "../services/supervisor";
 import type { WorktreeManagerService } from "../worktree/manager";
 import {
@@ -48,6 +49,7 @@ describe("removeWorkspaceCascade", () => {
     hiveHome = await mkdtemp(join(tmpdir(), "hive-home-removal-"));
     process.env.HIVE_HOME = hiveHome;
     await testDb.delete(cells);
+    await testDb.delete(linearIntegrations);
   });
 
   afterEach(async () => {
@@ -80,6 +82,25 @@ describe("removeWorkspaceCascade", () => {
       baseCommit: null,
     });
 
+    await testDb.insert(linearIntegrations).values({
+      workspaceId: workspace.id,
+      accessToken: "enc-access",
+      refreshToken: "enc-refresh",
+      accessTokenExpiresAt: new Date(),
+      tokenType: "Bearer",
+      scope: "read",
+      linearUserId: "linear-user-1",
+      linearUserName: "Linear User",
+      linearUserEmail: "linear@example.com",
+      linearOrganizationId: "linear-org-1",
+      linearOrganizationName: "Linear Org",
+      teamId: "linear-team-1",
+      teamKey: "ENG",
+      teamName: "Engineering",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
     const stopCellServices = vi.fn().mockResolvedValue(undefined);
     const closeAgentSession = vi.fn().mockResolvedValue(undefined);
     const { logger } = createTestLogger();
@@ -99,6 +120,12 @@ describe("removeWorkspaceCascade", () => {
       .from(cells)
       .where(eq(cells.workspaceId, workspace.id));
     expect(remainingCells).toHaveLength(0);
+
+    const remainingIntegrations = await testDb
+      .select()
+      .from(linearIntegrations)
+      .where(eq(linearIntegrations.workspaceId, workspace.id));
+    expect(remainingIntegrations).toHaveLength(0);
 
     const registry = await getWorkspaceRegistry();
     expect(registry.workspaces).toHaveLength(0);

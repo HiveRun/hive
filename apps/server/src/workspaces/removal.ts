@@ -7,6 +7,7 @@ import {
 import { DatabaseService } from "../db";
 import { type LoggerService as Logger, LoggerService } from "../logger";
 import { cells } from "../schema/cells";
+import { linearIntegrations } from "../schema/linear-integrations";
 import {
   type ServiceSupervisorService as ServiceSupervisorApi,
   ServiceSupervisorService,
@@ -108,6 +109,8 @@ export async function removeWorkspaceCascade(
     await deleteCellsForWorkspace(deps.db, workspaceId);
   }
 
+  await deleteLinearIntegrationForWorkspace(deps.db, workspaceId);
+
   await deps.removeWorkspace(workspaceId).catch((cause: unknown) =>
     logWarning(deps.logger, "Failed to remove workspace registry entry", {
       workspaceId,
@@ -132,6 +135,15 @@ const deleteCellsForWorkspace = async (
   workspaceId: string
 ): Promise<void> => {
   await db.delete(cells).where(eq(cells.workspaceId, workspaceId));
+};
+
+const deleteLinearIntegrationForWorkspace = async (
+  db: typeof DatabaseService.db,
+  workspaceId: string
+): Promise<void> => {
+  await db
+    .delete(linearIntegrations)
+    .where(eq(linearIntegrations.workspaceId, workspaceId));
 };
 
 type CleanupArgs = {
