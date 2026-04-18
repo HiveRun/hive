@@ -440,6 +440,7 @@ function makeLinearIssue(overrides: Partial<Record<string, unknown>> = {}) {
     description: "Investigate the issue details",
     url: "https://linear.app/hiverun/issue/ENG-42",
     updatedAt: new Date("2025-01-01T00:00:00Z"),
+    completedAt: null,
     assignee: {
       id: "assignee-1",
       displayName: "Assignee Person",

@@ -32,6 +32,7 @@ export type LinearIssue = {
   description: string | null;
   url: string | null;
   updatedAt: string;
+  completedAt: string | null;
   state: LinearIssueState | null;
   assignee: LinearUser | null;
 };

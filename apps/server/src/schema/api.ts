@@ -532,6 +532,7 @@ export const LinearIssueSchema = t.Object({
   description: t.Union([t.String(), t.Null()]),
   url: t.Union([t.String(), t.Null()]),
   updatedAt: t.String(),
+  completedAt: t.Union([t.String(), t.Null()]),
   state: t.Union([LinearIssueStateSchema, t.Null()]),
   assignee: t.Union([LinearUserSchema, t.Null()]),
 });

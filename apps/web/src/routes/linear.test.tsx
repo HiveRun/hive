@@ -196,6 +196,7 @@ describe("Linear route", () => {
                   "Searchable description for the Linear integration issue that is long enough to produce a collapsed preview in the list while still being visible in the expanded details panel for this ticket.",
                 url: "https://linear.app/hiverun/issue/ENG-42",
                 updatedAt: "2025-01-01T00:00:00.000Z",
+                completedAt: null,
                 state: {
                   id: "state-1",
                   name: "Backlog",
@@ -215,9 +216,10 @@ describe("Linear route", () => {
                 description: "Short note.",
                 url: "https://linear.app/hiverun/issue/ENG-7",
                 updatedAt: "2025-01-02T00:00:00.000Z",
+                completedAt: "2025-01-03T00:00:00.000Z",
                 state: {
                   id: "state-2",
-                  name: "Todo",
+                  name: "Done",
                   color: null,
                 },
                 assignee: null,
@@ -250,6 +252,16 @@ describe("Linear route", () => {
     expect(
       screen.getAllByRole("button", { name: "Create Cell" }).length
     ).toBeGreaterThan(0);
+  });
+
+  it("hides done tickets by default and reveals them on demand", () => {
+    render(<LinearRouteComponent />);
+
+    expect(screen.queryByText("Short issue summary")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show Done (1)" }));
+
+    expect(screen.getByText("Short issue summary")).toBeInTheDocument();
   });
 
   it("opens the shared cell creation sheet from a Linear issue", () => {
@@ -329,6 +341,8 @@ describe("Linear route", () => {
 
   it("hides the expand toggle when the description is already short", () => {
     render(<LinearRouteComponent />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show Done (1)" }));
 
     const [shortIssueTitle] = screen.getAllByText("Short issue summary");
     if (!shortIssueTitle) {

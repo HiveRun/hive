@@ -33,6 +33,7 @@ export type LinearIssuePayload = {
   description: string | null;
   url: string | null;
   updatedAt: string;
+  completedAt: string | null;
   state: {
     id: string;
     name: string;
@@ -128,6 +129,7 @@ export const mapLinearIssue = async (
     description: includeDescription ? (issue.description ?? null) : null,
     url: issue.url ?? null,
     updatedAt: issue.updatedAt.toISOString(),
+    completedAt: issue.completedAt ? issue.completedAt.toISOString() : null,
     state: mapLinearWorkflowState(state),
     assignee: assignee ? mapLinearUser(assignee) : null,
   };

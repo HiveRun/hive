@@ -600,6 +600,7 @@ function IssuesPlaceholderCard({ connected }: { connected: boolean }) {
   );
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: issue list combines loading, filtering, create-sheet, and toggle states in one route surface
 function IssuesCard({
   hasNextPage,
   isFetchingNextPage,
@@ -626,6 +627,7 @@ function IssuesCard({
   workspaceLabel?: string;
 }) {
   const [filterValue, setFilterValue] = useState("");
+  const [showCompleted, setShowCompleted] = useState(false);
   const [pendingIssueForCreate, setPendingIssueForCreate] =
     useState<LinearIssue | null>(null);
   const deferredFilterValue = useDeferredValue(filterValue);
@@ -633,12 +635,18 @@ function IssuesCard({
     () => getIssueFilterSpec(deferredFilterValue),
     [deferredFilterValue]
   );
+  const openIssues = useMemo(
+    () => issues.filter((issue) => issue.completedAt === null),
+    [issues]
+  );
+  const issuesToFilter = showCompleted ? issues : openIssues;
+  const hiddenCompletedCount = issues.length - openIssues.length;
   const filteredIssues = useMemo(() => {
     if (!filterSpec.raw) {
-      return issues;
+      return issuesToFilter;
     }
 
-    return issues.filter((issue) => {
+    return issuesToFilter.filter((issue) => {
       const issueIdentifier = issue.identifier.toLowerCase();
       const issueUrl = issue.url?.toLowerCase() ?? "";
 
@@ -653,7 +661,7 @@ function IssuesCard({
       const haystack = buildIssueSearchHaystack(issue);
       return haystack.includes(filterSpec.raw);
     });
-  }, [filterSpec, issues]);
+  }, [filterSpec, issuesToFilter]);
 
   let body: React.ReactNode;
 
@@ -770,6 +778,18 @@ function IssuesCard({
             <p className="text-muted-foreground text-xs uppercase tracking-[0.24em]">
               {filteredIssues.length} of {issues.length} loaded
             </p>
+            {hiddenCompletedCount > 0 ? (
+              <Button
+                onClick={() => setShowCompleted((current) => !current)}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                {showCompleted
+                  ? "Hide Done"
+                  : `Show Done (${hiddenCompletedCount})`}
+              </Button>
+            ) : null}
             {filterValue ? (
               <Button
                 onClick={() => setFilterValue("")}
