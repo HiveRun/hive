@@ -530,29 +530,32 @@ function TokenSetupCard({
         <p className="text-muted-foreground text-sm leading-5">
           Paste a Linear personal API token. No `Bearer` prefix.
         </p>
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto_auto] xl:items-center">
+        <div className="space-y-3">
           <Input
             onChange={(event) => onAccessTokenChange(event.target.value)}
             placeholder="lin_api_..."
             type="password"
             value={accessToken}
           />
-          <Button
-            disabled={isSavingToken || accessToken.trim().length === 0}
-            onClick={onSaveToken}
-            type="button"
-          >
-            {isSavingToken ? "Saving…" : "Save Token"}
-          </Button>
-          <a
-            className="inline-flex items-center gap-2 text-muted-foreground text-sm underline-offset-4 hover:text-foreground hover:underline"
-            href="https://linear.app/settings/api"
-            rel="noreferrer"
-            target="_blank"
-          >
-            <ExternalLink className="size-4" />
-            Open Linear API settings
-          </a>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              className="w-full"
+              disabled={isSavingToken || accessToken.trim().length === 0}
+              onClick={onSaveToken}
+              type="button"
+            >
+              {isSavingToken ? "Saving…" : "Save Token"}
+            </Button>
+            <a
+              className="inline-flex items-center gap-2 text-muted-foreground text-sm leading-5 underline-offset-4 hover:text-foreground hover:underline"
+              href="https://linear.app/settings/api"
+              rel="noreferrer"
+              target="_blank"
+            >
+              <ExternalLink className="size-4" />
+              Open Linear API settings
+            </a>
+          </div>
         </div>
       </>
     );
