@@ -360,6 +360,42 @@ describe("agent model selection", () => {
     expect(promptPayload?.model).toBeUndefined();
   });
 
+  it("passes file parts through when sending prompts", async () => {
+    const session = await ensureAgentSession(cellId);
+
+    await sendAgentMessage(session.id, {
+      parts: [
+        { type: "text", text: "Inspect the screenshot" },
+        {
+          type: "file",
+          mime: "image/png",
+          filename: "cell.png",
+          url: "data:image/png;base64,aGVsbG8=",
+        },
+      ],
+    });
+
+    const promptCall = clientStub.session.prompt.mock.calls.at(-1);
+    expect(promptCall).toBeDefined();
+    const promptPayload = (
+      promptCall?.[0] as {
+        body?: {
+          parts?: Record<string, unknown>[];
+        };
+      }
+    )?.body;
+
+    expect(promptPayload?.parts).toEqual([
+      { type: "text", text: "Inspect the screenshot" },
+      {
+        type: "file",
+        mime: "image/png",
+        filename: "cell.png",
+        url: "data:image/png;base64,aGVsbG8=",
+      },
+    ]);
+  });
+
   it("falls back to hive defaults when workspace defaults target another provider", async () => {
     const baseTemplate = mockHiveConfig.templates["template-basic"];
     if (!baseTemplate) {

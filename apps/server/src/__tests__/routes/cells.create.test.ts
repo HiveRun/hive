@@ -27,6 +27,17 @@ const WAIT_INTERVAL_MS = 10;
 const DETACHED_PROMPT_READY_TIMEOUT_MS = 2000;
 const TEST_PR_NUMBER = 123;
 const CELLS_API_URL = "http://localhost/api/cells";
+const TEST_INITIAL_PROMPT_IMAGE = {
+  filename: "cell.png",
+  mimeType: "image/png",
+  base64Data: "aGVsbG8=",
+};
+const TEST_INITIAL_PROMPT_FILE_PART = {
+  type: "file",
+  mime: TEST_INITIAL_PROMPT_IMAGE.mimeType,
+  filename: TEST_INITIAL_PROMPT_IMAGE.filename,
+  url: `data:${TEST_INITIAL_PROMPT_IMAGE.mimeType};base64,${TEST_INITIAL_PROMPT_IMAGE.base64Data}`,
+};
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -446,10 +457,85 @@ describe("POST /api/cells", () => {
     await waitForCondition(() => sendAgentMessage.mock.calls.length === 1);
 
     expect(capturedSessionId).toBeTruthy();
-    expect(sendAgentMessage).toHaveBeenCalledWith(
-      capturedSessionId,
-      "Autostart Cell\n\nFix the failing specs in apps/web"
-    );
+    expect(sendAgentMessage).toHaveBeenCalledWith(capturedSessionId, {
+      parts: [
+        {
+          type: "text",
+          text: "Autostart Cell\n\nFix the failing specs in apps/web",
+        },
+      ],
+    });
+  });
+
+  it("sends image-only initial prompts", async () => {
+    const sendAgentMessage = vi
+      .fn<SendAgentMessageFn>()
+      .mockResolvedValue(undefined);
+    let capturedSessionId: string | null = null;
+
+    const app = createTestApp({
+      sendAgentMessage,
+      onEnsureAgentSession: (_cellId, sessionId) => {
+        capturedSessionId = sessionId;
+      },
+    });
+
+    const payload = await createCellAndExpectSpawning({
+      app,
+      body: {
+        name: "Prompt With Image",
+        templateId,
+        workspaceId: "test-workspace",
+        initialPromptImages: [TEST_INITIAL_PROMPT_IMAGE],
+      },
+    });
+
+    await waitForCellStatus(payload.id, "ready");
+    await waitForCondition(() => Boolean(capturedSessionId));
+    await waitForCondition(() => sendAgentMessage.mock.calls.length === 1);
+
+    expect(sendAgentMessage).toHaveBeenCalledWith(capturedSessionId, {
+      parts: [TEST_INITIAL_PROMPT_FILE_PART],
+    });
+  });
+
+  it("sends text and image parts together in the initial prompt", async () => {
+    const sendAgentMessage = vi
+      .fn<SendAgentMessageFn>()
+      .mockResolvedValue(undefined);
+    let capturedSessionId: string | null = null;
+
+    const app = createTestApp({
+      sendAgentMessage,
+      onEnsureAgentSession: (_cellId, sessionId) => {
+        capturedSessionId = sessionId;
+      },
+    });
+
+    const payload = await createCellAndExpectSpawning({
+      app,
+      body: {
+        name: "Prompt With Image",
+        templateId,
+        workspaceId: "test-workspace",
+        description: "Inspect this screenshot",
+        initialPromptImages: [TEST_INITIAL_PROMPT_IMAGE],
+      },
+    });
+
+    await waitForCellStatus(payload.id, "ready");
+    await waitForCondition(() => Boolean(capturedSessionId));
+    await waitForCondition(() => sendAgentMessage.mock.calls.length === 1);
+
+    expect(sendAgentMessage).toHaveBeenCalledWith(capturedSessionId, {
+      parts: [
+        {
+          type: "text",
+          text: "Prompt With Image\n\nInspect this screenshot",
+        },
+        TEST_INITIAL_PROMPT_FILE_PART,
+      ],
+    });
   });
 
   it("continues provisioning when the initial prompt is slow", async () => {
@@ -688,6 +774,44 @@ describe("POST /api/cells", () => {
     expect(sendAgentMessage).not.toHaveBeenCalled();
   });
 
+  it("rejects invalid initial prompt images", async () => {
+    const app = createTestApp();
+
+    const response = await postCreateCell(app, {
+      name: "Invalid Image",
+      templateId,
+      workspaceId: "test-workspace",
+      initialPromptImages: [
+        {
+          filename: "notes.txt",
+          mimeType: "text/plain",
+          base64Data: "aGVsbG8=",
+        },
+      ],
+    });
+
+    expect(response.status).toBe(BAD_REQUEST_STATUS);
+  });
+
+  it("rejects malformed base64 image payloads", async () => {
+    const app = createTestApp();
+
+    const response = await postCreateCell(app, {
+      name: "Broken Base64 Image",
+      templateId,
+      workspaceId: "test-workspace",
+      initialPromptImages: [
+        {
+          filename: "broken.png",
+          mimeType: "image/png",
+          base64Data: "abcde",
+        },
+      ],
+    });
+
+    expect(response.status).toBe(BAD_REQUEST_STATUS);
+  });
+
   it("persists create_worktree timing sub-steps while provisioning is still running", async () => {
     let releaseWorktree = () => {
       // replaced when deferred worktree promise is created
@@ -855,10 +979,51 @@ describe("POST /api/cells/:id/setup/retry", () => {
 
     await waitForCellStatus(cellId, "ready");
     expect(sendAgentMessage).toHaveBeenCalledTimes(1);
-    expect(sendAgentMessage).toHaveBeenCalledWith(
-      `session-${cellId}`,
-      "Retry No Session\n\nSend this after retry"
-    );
+    expect(sendAgentMessage).toHaveBeenCalledWith(`session-${cellId}`, {
+      parts: [
+        {
+          type: "text",
+          text: "Retry No Session\n\nSend this after retry",
+        },
+      ],
+    });
+  });
+
+  it("resends stored initial prompt images on retry when no prior session exists", async () => {
+    const sendAgentMessage = vi
+      .fn<SendAgentMessageFn>()
+      .mockResolvedValue(undefined);
+    const app = createTestApp({ sendAgentMessage });
+    const cellId = "retry-image-cell";
+
+    await insertCellRow({
+      id: cellId,
+      name: "Retry Image Cell",
+      description: "Use the screenshot",
+      opencodeSessionId: null,
+      status: "error",
+      lastSetupError: "setup failed",
+    });
+
+    await insertProvisioningStateRow(cellId, {
+      attemptCount: 1,
+      initialPromptImagesJson: JSON.stringify([TEST_INITIAL_PROMPT_IMAGE]),
+    });
+
+    const retryResponse = await postSetupRetry(app, cellId);
+    expect(retryResponse.status).toBe(OK_STATUS);
+
+    await waitForCellStatus(cellId, "ready");
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+    expect(sendAgentMessage).toHaveBeenCalledWith(`session-${cellId}`, {
+      parts: [
+        {
+          type: "text",
+          text: "Retry Image Cell\n\nUse the screenshot",
+        },
+        TEST_INITIAL_PROMPT_FILE_PART,
+      ],
+    });
   });
 
   it("returns 409 when the cell is being deleted", async () => {
