@@ -7,14 +7,14 @@ const TIMING_INVALIDATION_DEBOUNCE_MS = 350;
 
 type CellTimingStreamOptions = {
   enabled?: boolean;
-  workflow?: "all" | "create" | "delete";
+  workflow?: "create";
 };
 
 export function useCellTimingStream(
   cellId: string,
   options: CellTimingStreamOptions = {}
 ) {
-  const { enabled = true, workflow = "all" } = options;
+  const { enabled = true, workflow = "create" } = options;
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -23,7 +23,7 @@ export function useCellTimingStream(
     }
 
     const params = new URLSearchParams();
-    if (workflow !== "all") {
+    if (workflow) {
       params.set("workflow", workflow);
     }
 
@@ -43,10 +43,6 @@ export function useCellTimingStream(
             queryKey[2] === "timings"
           );
         },
-      });
-
-      queryClient.invalidateQueries({
-        queryKey: ["cells", "timings", "global"],
       });
     };
 
