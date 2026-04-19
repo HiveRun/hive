@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import "../config/runtime-env";
 
 import { type IExitEvent, type IPty, spawn } from "bun-pty";
 import type { AgentMode } from "../agents/types";

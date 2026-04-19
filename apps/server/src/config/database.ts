@@ -1,33 +1,7 @@
-import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, URL } from "node:url";
-import dotenv from "dotenv";
+import "./runtime-env";
 
-const moduleDir = dirname(fileURLToPath(import.meta.url));
-const serverEnvPath = resolve(moduleDir, "../../.env");
-const binaryDirectory = dirname(process.execPath);
-
-const candidateEnvFiles = [
-  process.env.HIVE_ENV_FILE,
-  join(binaryDirectory, "hive.env"),
-  join(binaryDirectory, ".env"),
-  serverEnvPath,
-].filter((file): file is string => Boolean(file));
-
-for (const envFile of candidateEnvFiles) {
-  if (!existsSync(envFile)) {
-    continue;
-  }
-
-  dotenv.config({
-    path: envFile,
-    override: false,
-  });
-}
-
-type BunRuntime = { env?: Record<string, string | undefined> };
-const bunEnv = (globalThis as { Bun?: BunRuntime }).Bun?.env;
-const envDatabaseUrl = bunEnv?.DATABASE_URL ?? process.env.DATABASE_URL;
+const envDatabaseUrl = process.env.DATABASE_URL;
 
 if (!envDatabaseUrl) {
   throw new Error("DATABASE_URL environment variable is required");

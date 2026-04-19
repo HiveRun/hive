@@ -1,9 +1,10 @@
 import { existsSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import "./runtime-env";
+import { binaryDirectory } from "./runtime-env";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
-const binaryDirectory = dirname(process.execPath);
 
 const normalize = (value: string | undefined) =>
   value ? resolve(value) : undefined;
