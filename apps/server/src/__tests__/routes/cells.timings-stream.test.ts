@@ -165,52 +165,6 @@ describe("Cell timings stream route", () => {
     expect(timingText).toContain('"step":"create_worktree"');
   });
 
-  it("filters timing events by workflow", async () => {
-    await seedCell();
-    const app = new Elysia().use(
-      createCellsRoutes(createMinimalDependencies())
-    );
-
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/timings/stream?workflow=create`
-      )
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-
-    const reader = response.body?.getReader();
-    expect(reader).toBeDefined();
-    if (!reader) {
-      throw new Error("Expected SSE reader");
-    }
-
-    await reader.read(); // ready
-    await reader.read(); // snapshot
-
-    emitCellTimingUpdate({
-      cellId: TEST_CELL_ID,
-      workflow: "delete",
-      runId: "run-delete",
-      step: "remove_workspace",
-      status: "ok",
-      createdAt: new Date().toISOString(),
-    });
-    emitCellTimingUpdate({
-      cellId: TEST_CELL_ID,
-      workflow: "create",
-      runId: "run-create",
-      step: "mark_ready",
-      status: "ok",
-      createdAt: new Date().toISOString(),
-    });
-
-    const timingText = decodeChunk((await reader.read()).value);
-    expect(timingText).toContain("event: timing");
-    expect(timingText).toContain('"workflow":"create"');
-    expect(timingText).not.toContain('"workflow":"delete"');
-  });
-
   it("returns 404 when the cell does not exist", async () => {
     const app = new Elysia().use(
       createCellsRoutes(createMinimalDependencies())

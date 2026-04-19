@@ -1,6 +1,6 @@
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-export const CELL_TIMING_WORKFLOWS = ["create", "delete"] as const;
+export const CELL_TIMING_WORKFLOWS = ["create"] as const;
 export type CellTimingWorkflow = (typeof CELL_TIMING_WORKFLOWS)[number];
 
 export const CELL_TIMING_STATUSES = ["ok", "error"] as const;

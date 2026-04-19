@@ -93,94 +93,6 @@ export const CellServiceListResponseSchema = t.Object({
   services: t.Array(CellServiceSchema),
 });
 
-export const CellResourceProcessSchema = t.Object({
-  kind: t.Union([
-    t.Literal("service"),
-    t.Literal("opencode"),
-    t.Literal("terminal"),
-    t.Literal("setup"),
-  ]),
-  serviceType: t.Optional(t.String()),
-  id: t.String(),
-  name: t.String(),
-  status: t.String(),
-  pid: t.Union([t.Number(), t.Null()]),
-  processAlive: t.Boolean(),
-  active: t.Boolean(),
-  cpuPercent: t.Union([t.Number(), t.Null()]),
-  rssBytes: t.Union([t.Number(), t.Null()]),
-  resourceSampledAt: t.String(),
-  resourceUnavailableReason: t.Optional(
-    t.Union([
-      t.Literal("pid_missing"),
-      t.Literal("process_not_alive"),
-      t.Literal("sample_failed"),
-      t.Literal("unsupported_platform"),
-    ])
-  ),
-});
-
-export const CellResourceSummaryResponseSchema = t.Object({
-  cellId: t.String(),
-  sampledAt: t.String(),
-  processCount: t.Number(),
-  activeProcessCount: t.Number(),
-  tracked: t.Object({
-    services: t.Number(),
-    opencode: t.Number(),
-    terminal: t.Number(),
-    setup: t.Number(),
-  }),
-  totalCpuPercent: t.Number(),
-  totalRssBytes: t.Number(),
-  activeCpuPercent: t.Number(),
-  activeRssBytes: t.Number(),
-  processes: t.Array(CellResourceProcessSchema),
-  history: t.Optional(
-    t.Array(
-      t.Object({
-        sampledAt: t.String(),
-        processCount: t.Number(),
-        activeProcessCount: t.Number(),
-        totalCpuPercent: t.Number(),
-        totalRssBytes: t.Number(),
-        activeCpuPercent: t.Number(),
-        activeRssBytes: t.Number(),
-        processes: t.Array(CellResourceProcessSchema),
-      })
-    )
-  ),
-  historyAverages: t.Optional(
-    t.Array(
-      t.Object({
-        window: t.Union([
-          t.Literal("1m"),
-          t.Literal("5m"),
-          t.Literal("15m"),
-          t.Literal("1h"),
-        ]),
-        sampleCount: t.Number(),
-        averageActiveCpuPercent: t.Number(),
-        averageActiveRssBytes: t.Number(),
-        peakActiveCpuPercent: t.Number(),
-        peakActiveRssBytes: t.Number(),
-      })
-    )
-  ),
-  rollups: t.Optional(
-    t.Array(
-      t.Object({
-        bucketStartAt: t.String(),
-        sampleCount: t.Number(),
-        averageActiveCpuPercent: t.Number(),
-        averageActiveRssBytes: t.Number(),
-        peakActiveCpuPercent: t.Number(),
-        peakActiveRssBytes: t.Number(),
-      })
-    )
-  ),
-});
-
 export const CellTerminalSessionSchema = t.Object({
   sessionId: t.String(),
   cellId: t.String(),
@@ -238,10 +150,7 @@ export const CellActivityEventListResponseSchema = t.Object({
   nextCursor: t.Union([t.String(), t.Null()]),
 });
 
-const CellTimingWorkflowSchema = t.Union([
-  t.Literal("create"),
-  t.Literal("delete"),
-]);
+const CellTimingWorkflowSchema = t.Union([t.Literal("create")]);
 
 const CellTimingStatusSchema = t.Union([t.Literal("ok"), t.Literal("error")]);
 

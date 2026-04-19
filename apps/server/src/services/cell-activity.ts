@@ -71,7 +71,7 @@ export function normalizeActivityTypes(
     .map((value) => value.trim())
     .filter((value) => allowed.has(value));
 
-  return filtered.length ? (filtered as ActivityEventType[]) : null;
+  return filtered.length ? (filtered as ActivityEventType[]) : [];
 }
 
 export async function fetchCellActivityPage(args: {
@@ -81,6 +81,13 @@ export async function fetchCellActivityPage(args: {
   types: ActivityEventType[] | null;
   cursor: ActivityCursor | null;
 }): Promise<CellActivityPage> {
+  if (args.types?.length === 0) {
+    return {
+      events: [],
+      nextCursor: null,
+    };
+  }
+
   const whereClause = and(
     eq(cellActivityEvents.cellId, args.cellId),
     args.types ? inArray(cellActivityEvents.type, args.types) : undefined,
