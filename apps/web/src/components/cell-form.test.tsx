@@ -214,6 +214,91 @@ describe("CellForm", () => {
     });
   });
 
+  it("blocks submit until image reads finish", async () => {
+    const originalFileReader = globalThis.FileReader;
+    let finishRead: (() => void) | undefined;
+
+    class DeferredFileReader {
+      onerror: FileReader["onerror"] = null;
+      onload: FileReader["onload"] = null;
+      result: FileReader["result"] = null;
+
+      readAsDataURL(file: Blob) {
+        finishRead = () => {
+          this.result = `data:${file.type};base64,aGVsbG8=`;
+          this.onload?.call(
+            this as unknown as FileReader,
+            new ProgressEvent("load") as ProgressEvent<FileReader>
+          );
+        };
+      }
+    }
+
+    globalThis.FileReader = DeferredFileReader as unknown as typeof FileReader;
+
+    try {
+      render(
+        <TestQueryProvider>
+          <CellForm workspaceId="workspace-1" />
+        </TestQueryProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Name")).toBeInTheDocument();
+      });
+
+      fireEvent.change(screen.getByLabelText("Name"), {
+        target: { value: "Image Cell" },
+      });
+
+      fireEvent.click(
+        within(screen.getByTestId("template-select")).getByRole("combobox")
+      );
+      fireEvent.click(
+        await screen.findByRole("option", { name: "Template 1" })
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("cell-submit-button")).not.toBeDisabled();
+      });
+
+      fireEvent.change(screen.getByTestId("cell-image-input"), {
+        target: {
+          files: [new File(["hello"], "slow.png", { type: "image/png" })],
+        },
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Loading 1 image")).toBeInTheDocument();
+      });
+      expect(screen.getByTestId("cell-submit-button")).toBeDisabled();
+
+      fireEvent.submit(screen.getByTestId("cell-form"));
+      expect(createCellMutationMock).not.toHaveBeenCalled();
+
+      if (!finishRead) {
+        throw new Error("Image read completion callback was not registered");
+      }
+
+      finishRead();
+
+      await waitFor(() => {
+        expect(screen.getByText("slow.png")).toBeInTheDocument();
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId("cell-submit-button")).not.toBeDisabled();
+      });
+
+      fireEvent.submit(screen.getByTestId("cell-form"));
+
+      await waitFor(() => {
+        expect(createCellMutationMock).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      globalThis.FileReader = originalFileReader;
+    }
+  });
+
   it("clears attached images when the form is repurposed with a new prefill", async () => {
     const { rerender } = render(
       <TestQueryProvider>

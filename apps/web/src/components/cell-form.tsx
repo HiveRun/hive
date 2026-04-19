@@ -245,6 +245,7 @@ export function CellForm({
   const [initialPromptImages, setInitialPromptImages] = useState<
     ImageAttachment[]
   >([]);
+  const [pendingImageReads, setPendingImageReads] = useState(0);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -325,6 +326,7 @@ export function CellForm({
       setSelectedModel(undefined);
       setHasExplicitModelSelection(false);
       setInitialPromptImages([]);
+      setPendingImageReads(0);
       setActiveTemplateId(defaultValues.templateId);
       onSuccess?.();
     },
@@ -360,6 +362,11 @@ export function CellForm({
         return;
       }
 
+      if (pendingImageReads > 0) {
+        toast.error("Please wait for images to finish loading");
+        return;
+      }
+
       mutation.mutate({
         ...baseFormValues,
         workspaceId,
@@ -391,6 +398,7 @@ export function CellForm({
     form.setFieldValue("name", initialPrefill?.name ?? "");
     form.setFieldValue("description", initialPrefill?.description ?? "");
     setInitialPromptImages([]);
+    setPendingImageReads(0);
   }, [form, initialPrefill?.description, initialPrefill?.name]);
 
   useEffect(() => {
@@ -418,6 +426,7 @@ export function CellForm({
       return;
     }
 
+    setPendingImageReads((current) => current + files.length);
     try {
       const nextAttachments = await Promise.all(
         files.map((file) => readFileAsImageAttachment(file))
@@ -427,6 +436,8 @@ export function CellForm({
       toast.error(
         error instanceof Error ? error.message : "Failed to add images"
       );
+    } finally {
+      setPendingImageReads((current) => Math.max(0, current - files.length));
     }
   };
 
@@ -471,13 +482,17 @@ export function CellForm({
 
   const mutationErrorMessage =
     mutation.error instanceof Error ? mutation.error.message : undefined;
+  const imageReadsInFlight = pendingImageReads > 0;
   const hasModelSelection =
     typeof selectedModel?.id === "string" &&
     selectedModel.id.length > 0 &&
     typeof selectedModel.providerId === "string" &&
     selectedModel.providerId.length > 0;
   const submitDisabled =
-    mutation.isPending || isModelSelectorLoading || !hasModelSelection;
+    mutation.isPending ||
+    isModelSelectorLoading ||
+    imageReadsInFlight ||
+    !hasModelSelection;
 
   if (templatesLoading) {
     return <div>Loading templates...</div>;
@@ -595,6 +610,12 @@ export function CellForm({
               </div>
 
               <div className="flex items-center gap-2">
+                {imageReadsInFlight ? (
+                  <Badge variant="secondary">
+                    Loading {pendingImageReads} image
+                    {pendingImageReads === 1 ? "" : "s"}
+                  </Badge>
+                ) : null}
                 {initialPromptImages.length > 0 ? (
                   <Badge variant="outline">
                     {initialPromptImages.length} attached
