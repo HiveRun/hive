@@ -1,6 +1,14 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { ImagePlus, X } from "lucide-react";
+import {
+  type ChangeEvent,
+  type ClipboardEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import {
@@ -32,8 +40,84 @@ import { templateQueries } from "@/queries/templates";
 
 type CellFormValues = CreateCellInput;
 type SpawnFromMode = "head" | "branch" | "pr";
+type InitialPromptImage = NonNullable<
+  CreateCellInput["initialPromptImages"]
+>[number];
+type ImageAttachment = InitialPromptImage & { id: string; sizeBytes: number };
 
 const NAME_MAX_LENGTH = 255;
+const ATTACHMENT_PREVIEW_WIDTH = 96;
+const ATTACHMENT_PREVIEW_HEIGHT = 64;
+const BYTES_PER_KILOBYTE = 1024;
+const BYTES_PER_MEGABYTE = BYTES_PER_KILOBYTE * BYTES_PER_KILOBYTE;
+const IMAGE_INPUT_ACCEPT = "image/*";
+
+const formatImageSize = (sizeBytes: number) => {
+  if (sizeBytes >= BYTES_PER_MEGABYTE) {
+    return `${(sizeBytes / BYTES_PER_MEGABYTE).toFixed(1)} MB`;
+  }
+
+  return `${Math.max(1, Math.round(sizeBytes / BYTES_PER_KILOBYTE))} KB`;
+};
+
+const buildImagePreviewUrl = (image: InitialPromptImage) =>
+  `data:${image.mimeType};base64,${image.base64Data}`;
+
+const createAttachmentId = (file: File) =>
+  `${file.name}-${file.size}-${file.lastModified}-${
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random()}`
+  }`;
+
+const readFileAsImageAttachment = (file: File): Promise<ImageAttachment> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onerror = () => {
+      reject(new Error(`Failed to read ${file.name}`));
+    };
+
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error(`Failed to read ${file.name}`));
+        return;
+      }
+
+      const prefix = `data:${file.type};base64,`;
+      if (!result.startsWith(prefix)) {
+        reject(new Error(`Failed to parse ${file.name}`));
+        return;
+      }
+
+      const mimeType = file.type as InitialPromptImage["mimeType"];
+      resolve({
+        id: createAttachmentId(file),
+        mimeType,
+        base64Data: result.slice(prefix.length),
+        ...(file.name ? { filename: file.name } : {}),
+        sizeBytes: file.size,
+      });
+    };
+
+    reader.readAsDataURL(file);
+  });
+
+const validateImageFile = (file: File) => {
+  if (!file.type.startsWith("image/")) {
+    return `${file.name} must use an image MIME type`;
+  }
+};
+
+const getInvalidImageMessage = (files: File[]) => {
+  for (const file of files) {
+    const validationMessage = validateImageFile(file);
+    if (validationMessage) {
+      return validationMessage;
+    }
+  }
+};
 
 const cellSchema = z.object({
   name: z
@@ -158,6 +242,11 @@ export function CellForm({
   const [hasExplicitModelSelection, setHasExplicitModelSelection] =
     useState(false);
   const [selectedModel, setSelectedModel] = useState<ModelSelection>();
+  const [initialPromptImages, setInitialPromptImages] = useState<
+    ImageAttachment[]
+  >([]);
+  const [pendingImageReads, setPendingImageReads] = useState(0);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setActiveTemplateId(defaultValues.templateId);
@@ -236,6 +325,8 @@ export function CellForm({
       form.reset();
       setSelectedModel(undefined);
       setHasExplicitModelSelection(false);
+      setInitialPromptImages([]);
+      setPendingImageReads(0);
       setActiveTemplateId(defaultValues.templateId);
       onSuccess?.();
     },
@@ -271,9 +362,21 @@ export function CellForm({
         return;
       }
 
+      if (pendingImageReads > 0) {
+        toast.error("Please wait for images to finish loading");
+        return;
+      }
+
       mutation.mutate({
         ...baseFormValues,
         workspaceId,
+        ...(initialPromptImages.length > 0
+          ? {
+              initialPromptImages: initialPromptImages.map(
+                ({ id: _id, sizeBytes: _sizeBytes, ...image }) => image
+              ),
+            }
+          : {}),
         ...(explicitModelSelection?.id
           ? { modelId: explicitModelSelection.id }
           : {}),
@@ -294,7 +397,15 @@ export function CellForm({
   useEffect(() => {
     form.setFieldValue("name", initialPrefill?.name ?? "");
     form.setFieldValue("description", initialPrefill?.description ?? "");
+    setInitialPromptImages([]);
+    setPendingImageReads(0);
   }, [form, initialPrefill?.description, initialPrefill?.name]);
+
+  useEffect(() => {
+    if (!form.state.values.templateId && defaultValues.templateId) {
+      form.setFieldValue("templateId", defaultValues.templateId);
+    }
+  }, [defaultValues.templateId, form]);
 
   const handleModelChange = (
     model: ModelSelection,
@@ -304,15 +415,84 @@ export function CellForm({
     setHasExplicitModelSelection(source === "user" || source === "sticky");
   };
 
+  const appendImageFiles = async (files: File[]) => {
+    if (files.length === 0) {
+      return;
+    }
+
+    const validationMessage = getInvalidImageMessage(files);
+    if (validationMessage) {
+      toast.error(validationMessage);
+      return;
+    }
+
+    setPendingImageReads((current) => current + files.length);
+    try {
+      const nextAttachments = await Promise.all(
+        files.map((file) => readFileAsImageAttachment(file))
+      );
+      setInitialPromptImages((current) => [...current, ...nextAttachments]);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to add images"
+      );
+    } finally {
+      setPendingImageReads((current) => Math.max(0, current - files.length));
+    }
+  };
+
+  const handleImageInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.currentTarget.files ?? []);
+    event.currentTarget.value = "";
+    appendImageFiles(files);
+  };
+
+  const handlePaste = (event: ClipboardEvent<HTMLFormElement>) => {
+    if (mutation.isPending) {
+      return;
+    }
+
+    const items = Array.from(event.clipboardData.items);
+    const imageFiles = items
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+
+    if (imageFiles.length === 0) {
+      return;
+    }
+
+    const hasStringItem = items.some((item) => item.kind === "string");
+    if (!hasStringItem) {
+      event.preventDefault();
+    }
+
+    appendImageFiles(imageFiles);
+  };
+
+  const removeImage = (imageId: string) => {
+    setInitialPromptImages((current) =>
+      current.filter((image) => image.id !== imageId)
+    );
+  };
+
+  const openImagePicker = () => {
+    imageInputRef.current?.click();
+  };
+
   const mutationErrorMessage =
     mutation.error instanceof Error ? mutation.error.message : undefined;
+  const imageReadsInFlight = pendingImageReads > 0;
   const hasModelSelection =
     typeof selectedModel?.id === "string" &&
     selectedModel.id.length > 0 &&
     typeof selectedModel.providerId === "string" &&
     selectedModel.providerId.length > 0;
   const submitDisabled =
-    mutation.isPending || isModelSelectorLoading || !hasModelSelection;
+    mutation.isPending ||
+    isModelSelectorLoading ||
+    imageReadsInFlight ||
+    !hasModelSelection;
 
   if (templatesLoading) {
     return <div>Loading templates...</div>;
@@ -360,6 +540,7 @@ export function CellForm({
         <form
           className="space-y-6"
           data-testid="cell-form"
+          onPaste={handlePaste}
           onSubmit={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -417,6 +598,90 @@ export function CellForm({
               </div>
             )}
           </form.Field>
+
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-border/50 bg-background/30 p-3">
+              <div className="space-y-1">
+                <Label>Images</Label>
+                <p className="max-w-md text-muted-foreground text-xs">
+                  Paste screenshots anywhere in this form, or add images to the
+                  first agent message.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {imageReadsInFlight ? (
+                  <Badge variant="secondary">
+                    Loading {pendingImageReads} image
+                    {pendingImageReads === 1 ? "" : "s"}
+                  </Badge>
+                ) : null}
+                {initialPromptImages.length > 0 ? (
+                  <Badge variant="outline">
+                    {initialPromptImages.length} attached
+                  </Badge>
+                ) : null}
+                <input
+                  accept={IMAGE_INPUT_ACCEPT}
+                  className="hidden"
+                  data-testid="cell-image-input"
+                  disabled={mutation.isPending}
+                  id="cell-image-input"
+                  multiple
+                  onChange={handleImageInputChange}
+                  ref={imageInputRef}
+                  type="file"
+                />
+                <Button
+                  disabled={mutation.isPending}
+                  onClick={openImagePicker}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  <ImagePlus />
+                  Add Images
+                </Button>
+              </div>
+            </div>
+
+            {initialPromptImages.length > 0 ? (
+              <div className="grid gap-2">
+                {initialPromptImages.map((image) => (
+                  <div
+                    className="flex items-center gap-3 rounded-md border border-border/60 bg-background/20 p-2"
+                    key={image.id}
+                  >
+                    <img
+                      alt={image.filename ?? "Cell attachment"}
+                      className="h-16 w-24 shrink-0 rounded-md border border-border/40 object-cover"
+                      height={ATTACHMENT_PREVIEW_HEIGHT}
+                      src={buildImagePreviewUrl(image)}
+                      width={ATTACHMENT_PREVIEW_WIDTH}
+                    />
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <p className="truncate font-medium text-sm">
+                        {image.filename ?? "Pasted image"}
+                      </p>
+                      <p className="text-muted-foreground text-xs">
+                        {image.mimeType} • {formatImageSize(image.sizeBytes)}
+                      </p>
+                    </div>
+                    <Button
+                      aria-label={`Remove ${image.filename ?? "image"}`}
+                      disabled={mutation.isPending}
+                      onClick={() => removeImage(image.id)}
+                      size="icon-sm"
+                      type="button"
+                      variant="ghost"
+                    >
+                      <X />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
 
           <form.Field
             name="templateId"

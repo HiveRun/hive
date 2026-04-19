@@ -7,7 +7,7 @@ import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { Elysia, type Static, sse, t } from "elysia";
 import { loadEffectiveOpencodeDefaults } from "../agents/opencode-config";
 import { getSharedOpencodeServerBaseUrl } from "../agents/opencode-server";
-import type { AgentRuntimeService } from "../agents/service";
+import type { AgentPromptInput, AgentRuntimeService } from "../agents/service";
 import { agentRuntimeService } from "../agents/service";
 import type { AgentMode } from "../agents/types";
 import type { Template } from "../config/schema";
@@ -133,6 +133,13 @@ type DatabaseClient = DatabaseServiceType["db"];
 type WorkspaceContextResolverLike = (
   workspaceId?: string
 ) => WorkspaceRuntimeContext | Promise<WorkspaceRuntimeContext>;
+
+type CreateCellRequest = Static<typeof CreateCellSchema>;
+type CreateCellImageInput = NonNullable<
+  CreateCellRequest["initialPromptImages"]
+>[number];
+
+const BASE64_DATA_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
 
 const resolveWorkspaceContextFromDeps = async (
   resolver: WorkspaceContextResolverLike,
@@ -3726,8 +3733,11 @@ async function handleCellCreationRequest(
     configDefaultMode: hiveConfig.opencode?.defaultMode,
   });
   const worktreeStartPoint = resolveWorktreeStartPoint(rawBody);
-  const body: Static<typeof CreateCellSchema> = {
+  const body: CreateCellRequest = {
     ...rawBody,
+    initialPromptImages: sanitizeInitialPromptImages(
+      rawBody.initialPromptImages
+    ),
     startMode: normalizeStartMode(rawBody.startMode) ?? defaultStartMode,
     spawnFromMode: worktreeStartPoint.mode,
     spawnFromValue:
@@ -4034,6 +4044,9 @@ async function createCellRecord(
       providerIdOverride: body.providerId ?? null,
       variantOverride: body.variant ?? null,
       startMode: body.startMode ?? "plan",
+      initialPromptImagesJson: serializeInitialPromptImages(
+        body.initialPromptImages
+      ),
       startedAt: null,
       finishedAt: null,
       attemptCount: 0,
@@ -4377,13 +4390,14 @@ async function finalizeCellProvisioning(
     };
   }
 
-  const initialPrompt = buildInitialPromptContent({
+  const initialPrompt = buildInitialPromptInput({
     title: body.name,
     description: body.description,
+    images: body.initialPromptImages,
   });
   const shouldSendInitialPrompt = shouldSendInitialPromptForAttempt({
     attempt,
-    initialPrompt,
+    hasInitialPrompt: Boolean(initialPrompt),
     existingSessionId,
   });
   if (shouldSendInitialPrompt && initialPrompt) {
@@ -4391,7 +4405,7 @@ async function finalizeCellProvisioning(
       dispatchInitialPromptInBackground({
         sendAgentMessage: dispatchAgentMessage,
         sessionId: session.id,
-        content: initialPrompt,
+        input: initialPrompt,
         timeoutMs: INITIAL_PROMPT_BACKGROUND_WARN_TIMEOUT_MS,
         cellId: state.cellId,
         log: context.log,
@@ -4707,13 +4721,118 @@ async function deleteCellRecordIfCreated(context: ProvisionContext) {
   }
 }
 
+function decodeBase64Data(base64Data: string): Buffer {
+  const decoded = Buffer.from(base64Data, "base64");
+  if (decoded.length === 0 || decoded.toString("base64") !== base64Data) {
+    throw new Error("Invalid base64 data");
+  }
+
+  return decoded;
+}
+
+function sanitizeInitialPromptImage(
+  image: unknown,
+  index: number
+): CreateCellImageInput {
+  if (typeof image !== "object" || image === null) {
+    throw new Error(`Initial prompt image ${index + 1} is invalid`);
+  }
+
+  const mimeType = (image as { mimeType?: unknown }).mimeType;
+  const rawBase64Data = (image as { base64Data?: unknown }).base64Data;
+  const rawFilename = (image as { filename?: unknown }).filename;
+
+  if (typeof mimeType !== "string") {
+    throw new Error(`Initial prompt image ${index + 1} is missing a MIME type`);
+  }
+
+  if (!mimeType.startsWith("image/")) {
+    throw new Error(
+      `Initial prompt image ${index + 1} must use an image MIME type`
+    );
+  }
+
+  const narrowedMimeType = mimeType as CreateCellImageInput["mimeType"];
+
+  if (typeof rawBase64Data !== "string") {
+    throw new Error(`Initial prompt image ${index + 1} is missing image data`);
+  }
+
+  const base64Data = rawBase64Data.trim();
+  if (!BASE64_DATA_PATTERN.test(base64Data)) {
+    throw new Error(`Initial prompt image ${index + 1} is not valid base64`);
+  }
+
+  if (decodeBase64Data(base64Data).byteLength < 1) {
+    throw new Error(`Initial prompt image ${index + 1} is empty`);
+  }
+
+  const filename =
+    typeof rawFilename === "string" ? rawFilename.trim() : undefined;
+  return {
+    mimeType: narrowedMimeType,
+    base64Data,
+    ...(filename ? { filename } : {}),
+  } satisfies CreateCellImageInput;
+}
+
+function sanitizeInitialPromptImages(
+  images?: CreateCellRequest["initialPromptImages"]
+): CreateCellRequest["initialPromptImages"] {
+  if (!images?.length) {
+    return;
+  }
+
+  return images.map((image, index) => sanitizeInitialPromptImage(image, index));
+}
+
+function serializeInitialPromptImages(
+  images?: CreateCellRequest["initialPromptImages"]
+): string | null {
+  if (!images?.length) {
+    return null;
+  }
+
+  return JSON.stringify(images);
+}
+
+function parseInitialPromptImages(
+  value: string | null | undefined
+): CreateCellRequest["initialPromptImages"] {
+  if (!value) {
+    return;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("Stored initial prompt images are invalid JSON");
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error("Stored initial prompt images must be an array");
+  }
+
+  return sanitizeInitialPromptImages(
+    parsed as CreateCellRequest["initialPromptImages"]
+  );
+}
+
 function resolveProvisioningParams(
   cell: typeof cells.$inferSelect,
   provisioningState?: CellProvisioningState | null
-): Static<typeof CreateCellSchema> {
+): CreateCellRequest {
   return {
     name: cell.name,
     ...(cell.description != null ? { description: cell.description } : {}),
+    ...(provisioningState?.initialPromptImagesJson
+      ? {
+          initialPromptImages: parseInitialPromptImages(
+            provisioningState.initialPromptImagesJson
+          ),
+        }
+      : {}),
     templateId: cell.templateId,
     workspaceId: cell.workspaceId,
     ...(provisioningState?.modelIdOverride != null
@@ -4733,10 +4852,10 @@ function resolveProvisioningParams(
 
 function shouldSendInitialPromptForAttempt(args: {
   attempt: number | null;
-  initialPrompt?: string;
+  hasInitialPrompt: boolean;
   existingSessionId: string | null;
 }): boolean {
-  if (!args.initialPrompt) {
+  if (!args.hasInitialPrompt) {
     return false;
   }
 
@@ -4747,22 +4866,36 @@ function shouldSendInitialPromptForAttempt(args: {
   return !args.existingSessionId;
 }
 
-function buildInitialPromptContent(args: {
+function buildInitialPromptInput(args: {
   title?: string | null;
   description?: string | null;
-}): string | undefined {
+  images?: CreateCellRequest["initialPromptImages"];
+}): AgentPromptInput | undefined {
   const title = args.title?.trim();
   const description = args.description?.trim();
+  const parts: AgentPromptInput["parts"] = [];
 
-  if (!description) {
+  if (description) {
+    parts.push({
+      type: "text",
+      text: title ? `${title}\n\n${description}` : description,
+    });
+  }
+
+  for (const image of args.images ?? []) {
+    parts.push({
+      type: "file",
+      mime: image.mimeType,
+      url: `data:${image.mimeType};base64,${image.base64Data}`,
+      ...(image.filename ? { filename: image.filename } : {}),
+    });
+  }
+
+  if (parts.length === 0) {
     return;
   }
 
-  if (!title) {
-    return description;
-  }
-
-  return `${title}\n\n${description}`;
+  return { parts };
 }
 
 function buildAgentSessionOptions(body: Static<typeof CreateCellSchema>) {
@@ -4777,13 +4910,13 @@ function buildAgentSessionOptions(body: Static<typeof CreateCellSchema>) {
 function dispatchInitialPromptInBackground(args: {
   sendAgentMessage: CellRouteDependencies["sendAgentMessage"];
   sessionId: string;
-  content: string;
+  input: AgentPromptInput;
   timeoutMs: number;
   cellId: string;
   log: LoggerLike;
 }): void {
   const promptStartedAt = Date.now();
-  const promptDispatch = args.sendAgentMessage(args.sessionId, args.content);
+  const promptDispatch = args.sendAgentMessage(args.sessionId, args.input);
   let timeoutHandle: ReturnType<typeof setTimeout> | null = setTimeout(() => {
     args.log.warn(
       {

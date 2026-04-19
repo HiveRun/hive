@@ -4,10 +4,12 @@ import { join } from "node:path";
 import type {
   AssistantMessage,
   Event,
+  FilePartInput,
   Message,
   OpencodeClient,
   Part,
   Session,
+  TextPartInput,
 } from "@opencode-ai/sdk";
 import { eq, inArray } from "drizzle-orm";
 import { loadHiveConfig } from "../config/context";
@@ -268,6 +270,24 @@ type RuntimeCompactionState = {
   lastCompactionAt: string | null;
 };
 
+type UserPromptPartInput = TextPartInput | FilePartInput;
+
+export type AgentPromptInput = {
+  parts: UserPromptPartInput[];
+};
+
+function normalizePromptInput(
+  input: string | AgentPromptInput
+): AgentPromptInput {
+  if (typeof input === "string") {
+    return {
+      parts: [{ type: "text", text: input }],
+    };
+  }
+
+  return input;
+}
+
 type RuntimeHandle = {
   session: Session;
   cell: Cell;
@@ -283,7 +303,7 @@ type RuntimeHandle = {
   startMode: AgentMode;
   currentMode: AgentMode;
   modeUpdatedAt: string;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (input: string | AgentPromptInput) => Promise<void>;
   stop: (options?: StopRuntimeOptions) => Promise<void>;
 };
 
@@ -1232,10 +1252,10 @@ export async function updateAgentSessionModel(
 
 export async function sendAgentMessage(
   sessionId: string,
-  content: string
+  input: string | AgentPromptInput
 ): Promise<void> {
   const runtime = await ensureRuntimeForSession(sessionId);
-  await runtime.sendMessage(content);
+  await runtime.sendMessage(input);
 }
 
 export async function interruptAgentSession(sessionId: string): Promise<void> {
@@ -1442,7 +1462,7 @@ export type AgentRuntimeService = {
   ) => Promise<AgentSessionRecord>;
   readonly sendAgentMessage: (
     sessionId: string,
-    content: string
+    input: string | AgentPromptInput
   ) => Promise<void>;
   readonly interruptAgentSession: (sessionId: string) => Promise<void>;
   readonly stopAgentSession: (
@@ -1910,11 +1930,11 @@ async function startOpencodeRuntime({
     startMode,
     currentMode: startMode,
     modeUpdatedAt: new Date().toISOString(),
-    async sendMessage(content) {
+    async sendMessage(input) {
       await applyRuntimeStatus(runtime, "working");
 
       const activeModelId = runtime.modelId;
-      const parts = [{ type: "text" as const, text: content }];
+      const { parts } = normalizePromptInput(input);
       const promptBody =
         activeModelId && runtime.providerId
           ? {

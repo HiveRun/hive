@@ -10,6 +10,7 @@ export const cellProvisioningStates = sqliteTable("cell_provisioning_state", {
   providerIdOverride: text("provider_id_override"),
   variantOverride: text("variant_override"),
   startMode: text("start_mode"),
+  initialPromptImagesJson: text("initial_prompt_images_json"),
   startedAt: integer("started_at", { mode: "timestamp" }),
   finishedAt: integer("finished_at", { mode: "timestamp" }),
   attemptCount: integer("attempt_count").notNull().default(0),

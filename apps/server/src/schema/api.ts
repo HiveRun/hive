@@ -1,5 +1,13 @@
 import { t } from "elysia";
 
+export const CreateCellImageSchema = t.Object({
+  filename: t.Optional(t.String({ minLength: 1 })),
+  mimeType: t.String({ minLength: 1 }),
+  base64Data: t.String({
+    minLength: 1,
+  }),
+});
+
 // Cell schemas
 export const CellResponseSchema = t.Object({
   id: t.String(),
@@ -236,6 +244,7 @@ export const CreateCellSchema = t.Object({
     maxLength: 255,
   }),
   description: t.Optional(t.String()),
+  initialPromptImages: t.Optional(t.Array(CreateCellImageSchema)),
   templateId: t.String({
     minLength: 1,
   }),
