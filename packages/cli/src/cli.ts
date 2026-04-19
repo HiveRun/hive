@@ -400,11 +400,14 @@ const ensureDaemonRunning = async (
     }
 
     if (runningDaemon) {
-      logWarning(
-        runningDaemon.pid
-          ? `Detected a running Hive daemon without a managed PID file (PID ${runningDaemon.pid}). Reusing it.`
-          : "Detected a running Hive daemon without a managed PID file. Reusing it."
-      );
+      const adoptedRunningDaemon = persistPidFileIfAlive(runningDaemon.pid);
+      if (!adoptedRunningDaemon) {
+        logWarning(
+          runningDaemon.pid
+            ? `Detected a running Hive daemon without a managed PID file (PID ${runningDaemon.pid}). Reusing it.`
+            : "Detected a running Hive daemon without a managed PID file. Reusing it."
+        );
+      }
       return true;
     }
 
@@ -460,6 +463,7 @@ const reuseStartingDaemon = async (
     return false;
   }
 
+  persistPidFileIfAlive(startupPid);
   return true;
 };
 
