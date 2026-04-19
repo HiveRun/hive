@@ -64,9 +64,9 @@ export function normalizeTimingLimit(limit?: number): number {
 }
 
 export function normalizeTimingWorkflow(
-  value?: "create" | "delete" | "all"
+  value?: "create"
 ): CellTimingWorkflow | null {
-  if (value === "create" || value === "delete") {
+  if (value === "create") {
     return value;
   }
 
@@ -76,10 +76,7 @@ export function normalizeTimingWorkflow(
 export function parseTimingStep(
   row: CellTimingEventRow
 ): CellTimingStepRecord | null {
-  const workflow =
-    row.workflow === "create" || row.workflow === "delete"
-      ? row.workflow
-      : null;
+  const workflow = row.workflow === "create" ? row.workflow : null;
 
   if (!workflow) {
     return null;

@@ -100,13 +100,10 @@ describe("useCellTimingStream", () => {
     vi.advanceTimersByTime(INVALIDATION_DEBOUNCE_MS);
     await Promise.resolve();
 
-    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
 
     expect(invalidateSpy.mock.calls[0]?.[0]).toMatchObject({
       predicate: expect.any(Function),
-    });
-    expect(invalidateSpy.mock.calls[1]?.[0]).toMatchObject({
-      queryKey: ["cells", "timings", "global"],
     });
   });
 
@@ -123,7 +120,7 @@ describe("useCellTimingStream", () => {
 
     stream?.emit("snapshot", '{"timestamp":123}');
 
-    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
   });
 
   it("debounces timing-event invalidations", async () => {
@@ -144,7 +141,7 @@ describe("useCellTimingStream", () => {
     vi.advanceTimersByTime(INVALIDATION_DEBOUNCE_MS);
     await Promise.resolve();
 
-    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
   });
 
   it("does not subscribe when disabled", () => {
