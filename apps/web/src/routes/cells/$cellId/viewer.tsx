@@ -8,7 +8,7 @@ import {
   RefreshCw,
   RotateCcw,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   WebPreview,
   WebPreviewBody,
@@ -63,10 +63,19 @@ function CellServiceViewer() {
 
 function useActiveServiceTab(services: CellServiceSummary[]) {
   const [activeServiceId, setActiveServiceId] = useState<string | null>(null);
+  const activeServiceIdRef = useRef<string | null>(null);
+
+  const setActiveServiceIdImmediate = useCallback(
+    (nextServiceId: string | null) => {
+      activeServiceIdRef.current = nextServiceId;
+      setActiveServiceId(nextServiceId);
+    },
+    []
+  );
 
   useEffect(() => {
     if (!services.length) {
-      setActiveServiceId(null);
+      setActiveServiceIdImmediate(null);
       return;
     }
 
@@ -85,8 +94,8 @@ function useActiveServiceTab(services: CellServiceSummary[]) {
       services.find((service) => service.port != null) ??
       null;
 
-    setActiveServiceId(fallback?.id ?? null);
-  }, [activeServiceId, services]);
+    setActiveServiceIdImmediate(fallback?.id ?? null);
+  }, [activeServiceId, services, setActiveServiceIdImmediate]);
 
   const activeService = services.find(
     (service) => service.id === activeServiceId
@@ -95,7 +104,8 @@ function useActiveServiceTab(services: CellServiceSummary[]) {
   return {
     activeService,
     activeServiceId,
-    setActiveServiceId,
+    activeServiceIdRef,
+    setActiveServiceId: setActiveServiceIdImmediate,
   };
 }
 
@@ -155,14 +165,14 @@ function useBrowserReachability({
 
 function useViewerControls({
   actions,
-  activeServiceId,
+  activeServiceIdRef,
   activeServiceUrl,
   displayUrl,
   isDesktopRuntime,
   state,
 }: {
   actions: ReturnType<typeof useDesktopViewer>["actions"];
-  activeServiceId: string | null;
+  activeServiceIdRef: { current: string | null };
   activeServiceUrl: string | null;
   displayUrl: string | null;
   isDesktopRuntime: boolean;
@@ -173,13 +183,14 @@ function useViewerControls({
   const runForActiveServiceTab = (
     callback: (serviceId: string) => Promise<unknown>
   ) => {
-    if (!(actions && activeServiceId)) {
+    const serviceId = activeServiceIdRef.current;
+    if (!(actions && serviceId)) {
       return;
     }
 
     actions
-      .activateServiceTab(activeServiceId)
-      .then(() => callback(activeServiceId))
+      .activateServiceTab(serviceId)
+      .then(() => callback(serviceId))
       .catch(() => {
         /* ignore transient tab action failures */
       });
@@ -223,7 +234,7 @@ function useViewerControls({
   };
 
   const handleNavigate = (url: string | null) => {
-    if (!(isDesktopRuntime && url && activeServiceId)) {
+    if (!(isDesktopRuntime && url && activeServiceIdRef.current)) {
       return;
     }
 
@@ -251,8 +262,12 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
     () => services.filter(isPreviewableService),
     [services]
   );
-  const { activeService, activeServiceId, setActiveServiceId } =
-    useActiveServiceTab(previewableServices);
+  const {
+    activeService,
+    activeServiceId,
+    activeServiceIdRef,
+    setActiveServiceId,
+  } = useActiveServiceTab(previewableServices);
 
   const serviceTabs = useMemo(
     () =>
@@ -311,7 +326,7 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
     handleReset,
   } = useViewerControls({
     actions,
-    activeServiceId,
+    activeServiceIdRef,
     activeServiceUrl: activeService?.url ?? null,
     displayUrl,
     isDesktopRuntime,
