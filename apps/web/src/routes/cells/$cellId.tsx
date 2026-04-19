@@ -6,17 +6,20 @@ import {
   redirect,
   useRouterState,
 } from "@tanstack/react-router";
-import { Loader2 } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ProvisioningChecklistPanel } from "@/components/provisioning-checklist-panel";
 import { Button } from "@/components/ui/button";
 import { buildProvisioningChecklist } from "@/lib/provisioning-checklist";
+import { cn } from "@/lib/utils";
 import { cellQueries } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
 import { workspaceQueries } from "@/queries/workspaces";
 
 const PROVISIONING_POLL_MS = 1500;
 const CELL_ROUTE_REDIRECT_FETCH_TIMEOUT_MS = 1200;
+const DESCRIPTION_EXPAND_FALLBACK_THRESHOLD = 140;
+const DESCRIPTION_LINE_BREAK_PATTERN = /\r?\n/;
 
 async function fetchCellForRouteRedirect(args: {
   queryClient: ReturnType<typeof useQueryClient>;
@@ -71,7 +74,7 @@ export const Route = createFileRoute("/cells/$cellId")({
   component: CellLayout,
 });
 
-function CellLayout() {
+export function CellLayout() {
   const { cellId } = Route.useParams();
   const queryClient = useQueryClient();
   const cellQuery = useQuery(cellQueries.detail(cellId));
@@ -79,8 +82,24 @@ function CellLayout() {
   const routerState = useRouterState();
   const activeRouteId = routerState.matches.at(-1)?.routeId;
   const isProvisioningRoute = activeRouteId === "/cells/$cellId/provisioning";
+  const isInfoRoute = activeRouteId === "/cells/$cellId/setup";
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
+  const descriptionRef = useRef<HTMLParagraphElement | null>(null);
+  const [canExpandDescription, setCanExpandDescription] = useState(false);
 
   const cell = cellQuery.data;
+  const description = cell?.description ?? "";
+  const hasDescription = description.trim().length > 0;
+  const descriptionCharacterCount = description.trim().length;
+  const descriptionLineCount = hasDescription
+    ? description.split(DESCRIPTION_LINE_BREAK_PATTERN).length
+    : 0;
+  const descriptionMetaLabel =
+    descriptionLineCount > 1
+      ? `${descriptionLineCount} lines`
+      : `${descriptionCharacterCount.toLocaleString()} chars`;
+  const previousCellIdRef = useRef(cellId);
+  const previousDescriptionRef = useRef(description);
   const workspaceLabel = useMemo(() => {
     if (!cell?.workspaceId) {
       return;
@@ -102,6 +121,82 @@ function CellLayout() {
         // non-blocking prefetch; template routes/components handle fetch errors
       });
   }, [cell?.workspaceId, queryClient]);
+
+  useEffect(() => {
+    if (!isInfoRoute) {
+      setIsDescriptionExpanded(false);
+    }
+  }, [isInfoRoute]);
+
+  useEffect(() => {
+    setCanExpandDescription(
+      description.trim().length > DESCRIPTION_EXPAND_FALLBACK_THRESHOLD ||
+        description.includes("\n")
+    );
+
+    if (
+      previousCellIdRef.current === cellId &&
+      previousDescriptionRef.current === description
+    ) {
+      return;
+    }
+
+    previousCellIdRef.current = cellId;
+    previousDescriptionRef.current = description;
+    setIsDescriptionExpanded(false);
+  }, [cellId, description]);
+
+  useEffect(() => {
+    if (!hasDescription) {
+      setCanExpandDescription(false);
+      return;
+    }
+
+    if (isDescriptionExpanded) {
+      return;
+    }
+
+    const element = descriptionRef.current;
+    if (!element) {
+      return;
+    }
+
+    const fallbackCanExpand =
+      description.trim().length > DESCRIPTION_EXPAND_FALLBACK_THRESHOLD ||
+      description.includes("\n");
+
+    const measure = () => {
+      setCanExpandDescription(
+        fallbackCanExpand || element.scrollHeight > element.clientHeight + 1
+      );
+    };
+
+    let frameId: number | null = null;
+
+    const runMeasure = () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+
+      frameId = window.requestAnimationFrame(() => {
+        frameId = null;
+        measure();
+      });
+    };
+
+    runMeasure();
+
+    const observer = new ResizeObserver(runMeasure);
+    observer.observe(element);
+
+    return () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+
+      observer.disconnect();
+    };
+  }, [description, hasDescription, isDescriptionExpanded]);
 
   const shouldPollProvisioningTimings =
     cell?.status === "spawning" || cell?.status === "pending";
@@ -229,6 +324,10 @@ function CellLayout() {
   } else if (cell.status === "error") {
     statusTone = "text-red-300 border-red-500/40 bg-red-500/10";
   }
+  const shouldShowDescriptionPanel = hasDescription && isInfoRoute;
+  const showDescriptionToggle =
+    shouldShowDescriptionPanel &&
+    (canExpandDescription || isDescriptionExpanded);
 
   return (
     <div className="flex h-full w-full flex-1 flex-col overflow-hidden">
@@ -262,10 +361,65 @@ function CellLayout() {
                 ))}
               </div>
             </div>
-            {cell.description ? (
-              <p className="max-w-3xl text-muted-foreground text-sm">
-                {cell.description}
-              </p>
+            {shouldShowDescriptionPanel ? (
+              <div className="w-full border border-border/60 bg-background/35">
+                <div className="flex items-center justify-between gap-3 border-border/60 border-b px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-[0.65rem] text-muted-foreground uppercase tracking-[0.22em]">
+                      Prompt
+                    </p>
+                    <p className="text-[11px] text-muted-foreground uppercase tracking-[0.08em]">
+                      {descriptionMetaLabel}
+                    </p>
+                  </div>
+                </div>
+                <div
+                  className={cn(
+                    "min-w-0 px-3 py-3",
+                    isDescriptionExpanded
+                      ? "max-h-[min(50vh,32rem)] overflow-y-auto overscroll-contain"
+                      : "relative"
+                  )}
+                >
+                  <p
+                    className={cn(
+                      "whitespace-pre-wrap break-words text-foreground/90 text-sm leading-6",
+                      isDescriptionExpanded ? "" : "line-clamp-4"
+                    )}
+                    ref={descriptionRef}
+                  >
+                    {description}
+                  </p>
+                  {!isDescriptionExpanded && showDescriptionToggle ? (
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-x-3 bottom-3 h-10 bg-gradient-to-t from-card via-card/95 to-transparent"
+                    />
+                  ) : null}
+                </div>
+                {showDescriptionToggle ? (
+                  <div className="flex justify-end border-border/60 border-t px-3 py-2">
+                    <Button
+                      className="h-7 px-2.5 text-[11px] uppercase tracking-[0.2em]"
+                      onClick={() =>
+                        setIsDescriptionExpanded((current) => !current)
+                      }
+                      size="sm"
+                      type="button"
+                      variant="ghost"
+                    >
+                      {isDescriptionExpanded ? (
+                        <ChevronUp className="size-3.5" />
+                      ) : (
+                        <ChevronDown className="size-3.5" />
+                      )}
+                      {isDescriptionExpanded
+                        ? "Collapse prompt"
+                        : "Expand prompt"}
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
             ) : null}
             <div
               className={`inline-flex w-fit items-center gap-2 border px-3 py-1 text-[11px] uppercase tracking-[0.2em] ${statusTone}`}
