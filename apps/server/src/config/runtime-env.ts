@@ -28,6 +28,58 @@ type ApplyRuntimeEnvFilesOptions = {
   readFile: (path: string) => string;
 };
 
+const normalizePath = (value: string) => value.replaceAll("\\", "/");
+
+const stripFilePrefix = (value: string) => {
+  if (!value.startsWith("file:")) {
+    return value;
+  }
+
+  if (value.startsWith("file://")) {
+    return fileURLToPath(value);
+  }
+
+  const withoutPrefix = value.slice("file:".length);
+  const [pathOnly = ""] = withoutPrefix.split("?");
+  return pathOnly;
+};
+
+const looksLikeManagedDatabaseUrl = (value: string) => {
+  const normalized = normalizePath(stripFilePrefix(value));
+  return (
+    normalized.includes("/.hive/") && normalized.endsWith("/state/hive.db")
+  );
+};
+
+const looksLikeBundledReleasePath = (value: string, suffix: string) => {
+  const normalized = normalizePath(value);
+  return normalized.includes("/.hive/releases/") && normalized.endsWith(suffix);
+};
+
+const shouldPreferBundledValue = (key: string, currentValue: string) => {
+  switch (key) {
+    case "DATABASE_URL":
+      return looksLikeManagedDatabaseUrl(currentValue);
+    case "HIVE_MIGRATIONS_DIR":
+      return looksLikeBundledReleasePath(currentValue, "/migrations");
+    case "HIVE_WEB_DIST":
+      return looksLikeBundledReleasePath(currentValue, "/public");
+    default:
+      return false;
+  }
+};
+
+const readParsedEnvFile = (args: {
+  path: string;
+  readFile: (path: string) => string;
+}) => {
+  try {
+    return dotenv.parse(args.readFile(args.path));
+  } catch {
+    return;
+  }
+};
+
 const applyManagedEnvKeys = (args: {
   env: RuntimeEnvMap;
   parsedEnv: Record<string, string>;
@@ -35,6 +87,14 @@ const applyManagedEnvKeys = (args: {
 }) => {
   for (const [key, value] of Object.entries(args.parsedEnv)) {
     if (!installManagedEnvKeys.has(key) || args.appliedManagedKeys.has(key)) {
+      continue;
+    }
+
+    const currentValue = args.env[key];
+    if (
+      typeof currentValue === "string" &&
+      !shouldPreferBundledValue(key, currentValue)
+    ) {
       continue;
     }
 
@@ -68,7 +128,10 @@ export const applyRuntimeEnvFiles = ({
       continue;
     }
 
-    const parsed = dotenv.parse(readFile(envFile));
+    const parsed = readParsedEnvFile({ path: envFile, readFile });
+    if (!parsed) {
+      continue;
+    }
 
     if (compiledRuntime) {
       applyManagedEnvKeys({
