@@ -3,11 +3,11 @@ import { createConnection } from "node:net";
 import { join } from "node:path";
 
 import { logger } from "@bogeychan/elysia-logger";
-import { and, desc, eq, gte, inArray, lt, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { Elysia, type Static, sse, t } from "elysia";
 import { loadEffectiveOpencodeDefaults } from "../agents/opencode-config";
 import { getSharedOpencodeServerBaseUrl } from "../agents/opencode-server";
-import type { AgentRuntimeService } from "../agents/service";
+import type { AgentPromptInput, AgentRuntimeService } from "../agents/service";
 import { agentRuntimeService } from "../agents/service";
 import type { AgentMode } from "../agents/types";
 import type { Template } from "../config/schema";
@@ -23,7 +23,6 @@ import {
   CellActivityEventListResponseSchema,
   CellDiffResponseSchema,
   CellListResponseSchema,
-  CellResourceSummaryResponseSchema,
   CellResponseSchema,
   CellServiceListResponseSchema,
   CellServiceSchema,
@@ -43,11 +42,6 @@ import {
   cellProvisioningStates,
 } from "../schema/cell-provisioning";
 import { type CellStatus, cells, type NewCell } from "../schema/cells";
-import {
-  cellResourceHistory,
-  cellResourceRollups,
-  type StoredResourceProcess,
-} from "../schema/resource-history";
 import { cellServices } from "../schema/services";
 import {
   type CellTimingStatus,
@@ -139,6 +133,13 @@ type DatabaseClient = DatabaseServiceType["db"];
 type WorkspaceContextResolverLike = (
   workspaceId?: string
 ) => WorkspaceRuntimeContext | Promise<WorkspaceRuntimeContext>;
+
+type CreateCellRequest = Static<typeof CreateCellSchema>;
+type CreateCellImageInput = NonNullable<
+  CreateCellRequest["initialPromptImages"]
+>[number];
+
+const BASE64_DATA_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
 
 const resolveWorkspaceContextFromDeps = async (
   resolver: WorkspaceContextResolverLike,
@@ -347,9 +348,6 @@ const resolveCellRouteDependencies = (() => {
 })();
 
 type CellServiceListResponse = Static<typeof CellServiceListResponseSchema>;
-type CellResourceSummaryResponse = Static<
-  typeof CellResourceSummaryResponseSchema
->;
 type CellDiffResponse = Static<typeof CellDiffResponseSchema>;
 type CellServiceResponse = Static<typeof CellServiceSchema>;
 type CellResponse = Static<typeof CellResponseSchema>;
@@ -471,15 +469,14 @@ async function fetchTimingSteps(args: {
   runId?: string;
   workspaceId?: string;
 }): Promise<CellTimingStepRecord[]> {
+  const workflow = args.workflow ?? "create";
   const rows = await args.database
     .select()
     .from(cellTimingEvents)
     .where(
       and(
         args.cellId ? eq(cellTimingEvents.cellId, args.cellId) : undefined,
-        args.workflow
-          ? eq(cellTimingEvents.workflow, args.workflow)
-          : undefined,
+        eq(cellTimingEvents.workflow, workflow),
         args.runId ? eq(cellTimingEvents.runId, args.runId) : undefined,
         args.workspaceId
           ? eq(cellTimingEvents.workspaceId, args.workspaceId)
@@ -529,31 +526,6 @@ const LOG_LINE_SPLIT_RE = /\r?\n/;
 const PORT_CHECK_TIMEOUT_MS = 500;
 const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
 const SERVICES_RESOURCE_REFRESH_INTERVAL_MS = 5000;
-const MINUTE_MS = 60_000;
-const CELL_RESOURCE_HISTORY_DEFAULT_LIMIT = 60;
-const CELL_RESOURCE_HISTORY_MAX_LIMIT = 360;
-const CELL_RESOURCE_HISTORY_RETENTION_POINTS = 17_280;
-const CELL_RESOURCE_CAPTURE_INTERVAL_MS = 15_000;
-const CELL_RESOURCE_ROLLUP_BUCKET_MS = MINUTE_MS;
-const CELL_RESOURCE_ROLLUP_DEFAULT_LIMIT = 180;
-const CELL_RESOURCE_ROLLUP_MAX_LIMIT = 1440;
-const HOURS_PER_DAY = 24;
-const MINUTES_PER_HOUR = 60;
-const CELL_RESOURCE_ROLLUP_RETENTION_DAYS = 30;
-const CELL_RESOURCE_ROLLUP_RETENTION_MINUTES =
-  CELL_RESOURCE_ROLLUP_RETENTION_DAYS * HOURS_PER_DAY * MINUTES_PER_HOUR;
-const CELL_RESOURCE_ROLLUP_RETENTION_MS =
-  CELL_RESOURCE_ROLLUP_RETENTION_MINUTES * MINUTE_MS;
-const CELL_RESOURCE_AVERAGE_WINDOWS = [
-  { window: "1m", durationMs: MINUTE_MS },
-  // biome-ignore lint/style/noMagicNumbers: resource-average windows are fixed product defaults.
-  { window: "5m", durationMs: 5 * MINUTE_MS },
-  // biome-ignore lint/style/noMagicNumbers: resource-average windows are fixed product defaults.
-  { window: "15m", durationMs: 15 * MINUTE_MS },
-  { window: "1h", durationMs: 60 * MINUTE_MS },
-] as const;
-const CELL_RESOURCE_AVERAGE_MAX_WINDOW_MS =
-  CELL_RESOURCE_AVERAGE_WINDOWS.at(-1)?.durationMs ?? 0;
 const TERMINAL_RESIZE_MIN_COLS = 20;
 const TERMINAL_RESIZE_MAX_COLS = 500;
 const TERMINAL_RESIZE_MIN_ROWS = 5;
@@ -1569,75 +1541,6 @@ export function createCellsRoutes(
     )
 
     .get(
-      "/:id/resources",
-      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: resources endpoint intentionally composes optional payload sections.
-      async ({ params, query, set }) => {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return {
-            message: "Cell not found",
-          } satisfies { message: string };
-        }
-
-        const summary = await buildCellResourceSummary({
-          deps,
-          database,
-          cell,
-        });
-        await persistCellResourceHistoryPoint(database, summary);
-
-        const includeHistory = query.includeHistory ?? false;
-        const includeAverages = query.includeAverages ?? false;
-        const includeRollups = query.includeRollups ?? false;
-        const historyLimit = normalizeHistoryLimit(query.historyLimit);
-        const rollupLimit = normalizeRollupLimit(query.rollupLimit);
-        const history = includeHistory
-          ? await listCellResourceHistory(database, cell.id, historyLimit)
-          : undefined;
-        const historyAverages = includeAverages
-          ? await listCellResourceHistoryAverages(database, cell.id)
-          : undefined;
-        const rollups = includeRollups
-          ? await listCellResourceRollups(database, cell.id, rollupLimit)
-          : undefined;
-
-        return {
-          ...summary,
-          ...(history ? { history } : {}),
-          ...(historyAverages ? { historyAverages } : {}),
-          ...(rollups ? { rollups } : {}),
-        } satisfies CellResourceSummaryResponse;
-      },
-      {
-        params: t.Object({ id: t.String() }),
-        query: t.Object({
-          includeHistory: t.Optional(t.Boolean()),
-          includeAverages: t.Optional(t.Boolean()),
-          includeRollups: t.Optional(t.Boolean()),
-          historyLimit: t.Optional(
-            t.Number({
-              minimum: 1,
-              maximum: CELL_RESOURCE_HISTORY_MAX_LIMIT,
-            })
-          ),
-          rollupLimit: t.Optional(
-            t.Number({
-              minimum: 1,
-              maximum: CELL_RESOURCE_ROLLUP_MAX_LIMIT,
-            })
-          ),
-        }),
-        response: {
-          200: CellResourceSummaryResponseSchema,
-          404: t.Object({ message: t.String() }),
-        },
-      }
-    )
-
-    .get(
       "/:id/activity",
       async ({ params, query, set }) => {
         const { db: database } = await resolveDeps();
@@ -1702,48 +1605,6 @@ export function createCellsRoutes(
     )
 
     .get(
-      "/timings/global",
-      async ({ query }) => {
-        const { db: database } = await resolveDeps();
-        const workflow = normalizeTimingWorkflow(query.workflow);
-        const limit = normalizeTimingLimit(query.limit);
-
-        const steps = await fetchTimingSteps({
-          database,
-          workflow,
-          runId: query.runId,
-          workspaceId: query.workspaceId,
-          cellId: query.cellId,
-        });
-
-        return toTimingListResponse(steps, limit);
-      },
-      {
-        query: t.Object({
-          limit: t.Optional(
-            t.Number({
-              minimum: 1,
-              maximum: MAX_TIMING_LIMIT,
-              default: DEFAULT_TIMING_LIMIT,
-            })
-          ),
-          workflow: t.Optional(
-            t.Union([
-              t.Literal("create"),
-              t.Literal("delete"),
-              t.Literal("all"),
-            ])
-          ),
-          runId: t.Optional(t.String()),
-          workspaceId: t.Optional(t.String()),
-          cellId: t.Optional(t.String()),
-        }),
-        response: {
-          200: CellTimingListResponseSchema,
-        },
-      }
-    )
-    .get(
       "/:id/timings",
       async ({ params, query, set }) => {
         const { db: database } = await resolveDeps();
@@ -1777,13 +1638,7 @@ export function createCellsRoutes(
               default: DEFAULT_TIMING_LIMIT,
             })
           ),
-          workflow: t.Optional(
-            t.Union([
-              t.Literal("create"),
-              t.Literal("delete"),
-              t.Literal("all"),
-            ])
-          ),
+          workflow: t.Optional(t.Literal("create")),
           runId: t.Optional(t.String()),
         }),
         response: {
@@ -1830,13 +1685,7 @@ export function createCellsRoutes(
       {
         params: t.Object({ id: t.String() }),
         query: t.Object({
-          workflow: t.Optional(
-            t.Union([
-              t.Literal("create"),
-              t.Literal("delete"),
-              t.Literal("all"),
-            ])
-          ),
+          workflow: t.Optional(t.Literal("create")),
         }),
         response: {
           200: t.Any(),
@@ -3729,7 +3578,6 @@ export function createCellsRoutes(
                 stopCellServices: stopCellServicesFn,
                 getWorktreeService: fetchManager,
                 log,
-                recordTimingEvent: insertCellTimingEvent,
               });
               deletedIds.push(cell.id);
             } catch (error) {
@@ -3814,7 +3662,6 @@ export function createCellsRoutes(
             stopCellServices: stopCellServicesFn,
             getWorktreeService: async () => worktreeService,
             log,
-            recordTimingEvent: insertCellTimingEvent,
           });
 
           return { message: "Cell deleted successfully" };
@@ -3886,8 +3733,11 @@ async function handleCellCreationRequest(
     configDefaultMode: hiveConfig.opencode?.defaultMode,
   });
   const worktreeStartPoint = resolveWorktreeStartPoint(rawBody);
-  const body: Static<typeof CreateCellSchema> = {
+  const body: CreateCellRequest = {
     ...rawBody,
+    initialPromptImages: sanitizeInitialPromptImages(
+      rawBody.initialPromptImages
+    ),
     startMode: normalizeStartMode(rawBody.startMode) ?? defaultStartMode,
     spawnFromMode: worktreeStartPoint.mode,
     spawnFromValue:
@@ -4194,6 +4044,9 @@ async function createCellRecord(
       providerIdOverride: body.providerId ?? null,
       variantOverride: body.variant ?? null,
       startMode: body.startMode ?? "plan",
+      initialPromptImagesJson: serializeInitialPromptImages(
+        body.initialPromptImages
+      ),
       startedAt: null,
       finishedAt: null,
       attemptCount: 0,
@@ -4537,13 +4390,14 @@ async function finalizeCellProvisioning(
     };
   }
 
-  const initialPrompt = buildInitialPromptContent({
+  const initialPrompt = buildInitialPromptInput({
     title: body.name,
     description: body.description,
+    images: body.initialPromptImages,
   });
   const shouldSendInitialPrompt = shouldSendInitialPromptForAttempt({
     attempt,
-    initialPrompt,
+    hasInitialPrompt: Boolean(initialPrompt),
     existingSessionId,
   });
   if (shouldSendInitialPrompt && initialPrompt) {
@@ -4551,7 +4405,7 @@ async function finalizeCellProvisioning(
       dispatchInitialPromptInBackground({
         sendAgentMessage: dispatchAgentMessage,
         sessionId: session.id,
-        content: initialPrompt,
+        input: initialPrompt,
         timeoutMs: INITIAL_PROMPT_BACKGROUND_WARN_TIMEOUT_MS,
         cellId: state.cellId,
         log: context.log,
@@ -4867,13 +4721,118 @@ async function deleteCellRecordIfCreated(context: ProvisionContext) {
   }
 }
 
+function decodeBase64Data(base64Data: string): Buffer {
+  const decoded = Buffer.from(base64Data, "base64");
+  if (decoded.length === 0 || decoded.toString("base64") !== base64Data) {
+    throw new Error("Invalid base64 data");
+  }
+
+  return decoded;
+}
+
+function sanitizeInitialPromptImage(
+  image: unknown,
+  index: number
+): CreateCellImageInput {
+  if (typeof image !== "object" || image === null) {
+    throw new Error(`Initial prompt image ${index + 1} is invalid`);
+  }
+
+  const mimeType = (image as { mimeType?: unknown }).mimeType;
+  const rawBase64Data = (image as { base64Data?: unknown }).base64Data;
+  const rawFilename = (image as { filename?: unknown }).filename;
+
+  if (typeof mimeType !== "string") {
+    throw new Error(`Initial prompt image ${index + 1} is missing a MIME type`);
+  }
+
+  if (!mimeType.startsWith("image/")) {
+    throw new Error(
+      `Initial prompt image ${index + 1} must use an image MIME type`
+    );
+  }
+
+  const narrowedMimeType = mimeType as CreateCellImageInput["mimeType"];
+
+  if (typeof rawBase64Data !== "string") {
+    throw new Error(`Initial prompt image ${index + 1} is missing image data`);
+  }
+
+  const base64Data = rawBase64Data.trim();
+  if (!BASE64_DATA_PATTERN.test(base64Data)) {
+    throw new Error(`Initial prompt image ${index + 1} is not valid base64`);
+  }
+
+  if (decodeBase64Data(base64Data).byteLength < 1) {
+    throw new Error(`Initial prompt image ${index + 1} is empty`);
+  }
+
+  const filename =
+    typeof rawFilename === "string" ? rawFilename.trim() : undefined;
+  return {
+    mimeType: narrowedMimeType,
+    base64Data,
+    ...(filename ? { filename } : {}),
+  } satisfies CreateCellImageInput;
+}
+
+function sanitizeInitialPromptImages(
+  images?: CreateCellRequest["initialPromptImages"]
+): CreateCellRequest["initialPromptImages"] {
+  if (!images?.length) {
+    return;
+  }
+
+  return images.map((image, index) => sanitizeInitialPromptImage(image, index));
+}
+
+function serializeInitialPromptImages(
+  images?: CreateCellRequest["initialPromptImages"]
+): string | null {
+  if (!images?.length) {
+    return null;
+  }
+
+  return JSON.stringify(images);
+}
+
+function parseInitialPromptImages(
+  value: string | null | undefined
+): CreateCellRequest["initialPromptImages"] {
+  if (!value) {
+    return;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("Stored initial prompt images are invalid JSON");
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error("Stored initial prompt images must be an array");
+  }
+
+  return sanitizeInitialPromptImages(
+    parsed as CreateCellRequest["initialPromptImages"]
+  );
+}
+
 function resolveProvisioningParams(
   cell: typeof cells.$inferSelect,
   provisioningState?: CellProvisioningState | null
-): Static<typeof CreateCellSchema> {
+): CreateCellRequest {
   return {
     name: cell.name,
     ...(cell.description != null ? { description: cell.description } : {}),
+    ...(provisioningState?.initialPromptImagesJson
+      ? {
+          initialPromptImages: parseInitialPromptImages(
+            provisioningState.initialPromptImagesJson
+          ),
+        }
+      : {}),
     templateId: cell.templateId,
     workspaceId: cell.workspaceId,
     ...(provisioningState?.modelIdOverride != null
@@ -4893,10 +4852,10 @@ function resolveProvisioningParams(
 
 function shouldSendInitialPromptForAttempt(args: {
   attempt: number | null;
-  initialPrompt?: string;
+  hasInitialPrompt: boolean;
   existingSessionId: string | null;
 }): boolean {
-  if (!args.initialPrompt) {
+  if (!args.hasInitialPrompt) {
     return false;
   }
 
@@ -4907,22 +4866,36 @@ function shouldSendInitialPromptForAttempt(args: {
   return !args.existingSessionId;
 }
 
-function buildInitialPromptContent(args: {
+function buildInitialPromptInput(args: {
   title?: string | null;
   description?: string | null;
-}): string | undefined {
+  images?: CreateCellRequest["initialPromptImages"];
+}): AgentPromptInput | undefined {
   const title = args.title?.trim();
   const description = args.description?.trim();
+  const parts: AgentPromptInput["parts"] = [];
 
-  if (!description) {
+  if (description) {
+    parts.push({
+      type: "text",
+      text: title ? `${title}\n\n${description}` : description,
+    });
+  }
+
+  for (const image of args.images ?? []) {
+    parts.push({
+      type: "file",
+      mime: image.mimeType,
+      url: `data:${image.mimeType};base64,${image.base64Data}`,
+      ...(image.filename ? { filename: image.filename } : {}),
+    });
+  }
+
+  if (parts.length === 0) {
     return;
   }
 
-  if (!title) {
-    return description;
-  }
-
-  return `${title}\n\n${description}`;
+  return { parts };
 }
 
 function buildAgentSessionOptions(body: Static<typeof CreateCellSchema>) {
@@ -4937,13 +4910,13 @@ function buildAgentSessionOptions(body: Static<typeof CreateCellSchema>) {
 function dispatchInitialPromptInBackground(args: {
   sendAgentMessage: CellRouteDependencies["sendAgentMessage"];
   sessionId: string;
-  content: string;
+  input: AgentPromptInput;
   timeoutMs: number;
   cellId: string;
   log: LoggerLike;
 }): void {
   const promptStartedAt = Date.now();
-  const promptDispatch = args.sendAgentMessage(args.sessionId, args.content);
+  const promptDispatch = args.sendAgentMessage(args.sessionId, args.input);
   let timeoutHandle: ReturnType<typeof setTimeout> | null = setTimeout(() => {
     args.log.warn(
       {
@@ -5111,7 +5084,6 @@ const resumeDeletingCells = async (deps: CellRouteDependencies) => {
         stopCellServices: deps.stopServicesForCell,
         getWorktreeService: fetchManager,
         log: backgroundProvisioningLogger,
-        recordTimingEvent: insertCellTimingEvent,
       });
     } catch {
       // best-effort startup recovery: failed deletes restore cells to error status
@@ -5569,465 +5541,6 @@ function deriveTrackedServiceProcess(
     processAlive,
     active: processAlive && isServiceRuntimeActive(status),
   };
-}
-
-function resolveProcessResourceSnapshot(args: {
-  trackedProcess: ResourceTrackedProcess;
-  resourcesByPid: Map<number, ProcessResourceSnapshot>;
-  sampledAt: string;
-}): ProcessResourceSnapshot {
-  const { trackedProcess, resourcesByPid, sampledAt } = args;
-
-  if (!trackedProcess.pid) {
-    return {
-      cpuPercent: null,
-      rssBytes: null,
-      resourceSampledAt: sampledAt,
-      resourceUnavailableReason: "pid_missing",
-    };
-  }
-
-  if (!trackedProcess.processAlive) {
-    return {
-      cpuPercent: null,
-      rssBytes: null,
-      resourceSampledAt: sampledAt,
-      resourceUnavailableReason: "process_not_alive",
-    };
-  }
-
-  return (
-    resourcesByPid.get(trackedProcess.pid) ?? {
-      cpuPercent: null,
-      rssBytes: null,
-      resourceSampledAt: sampledAt,
-      resourceUnavailableReason: "sample_failed",
-    }
-  );
-}
-
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: keeps per-cell process aggregation in one place.
-async function buildCellResourceSummary(args: {
-  deps: CellRouteDependencies;
-  database: DatabaseClient;
-  cell: typeof cells.$inferSelect;
-}): Promise<CellResourceSummaryResponse> {
-  const { deps, database, cell } = args;
-  const sampledAt = new Date().toISOString();
-  const serviceRows = await fetchServiceRows(database, cell.id);
-  const trackedProcesses: ResourceTrackedProcess[] = serviceRows.map((row) =>
-    deriveTrackedServiceProcess(deps, row)
-  );
-
-  const chatSession = deps.getChatTerminalSession?.(cell.id) ?? null;
-  if (chatSession || cell.opencodeSessionId) {
-    const processAlive = chatSession
-      ? chatSession.status === "running" || isProcessAlive(chatSession.pid)
-      : false;
-    trackedProcesses.push({
-      kind: "opencode",
-      id: cell.opencodeSessionId ?? `opencode:${cell.id}`,
-      name: "OpenCode",
-      status: chatSession?.status ?? "idle",
-      pid: chatSession?.pid ?? null,
-      processAlive,
-      active: processAlive && chatSession?.status === "running",
-    });
-  }
-
-  const terminalSession = deps.getTerminalSession?.(cell.id) ?? null;
-  if (terminalSession) {
-    const processAlive =
-      terminalSession.status === "running" ||
-      isProcessAlive(terminalSession.pid);
-    trackedProcesses.push({
-      kind: "terminal",
-      id: terminalSession.sessionId,
-      name: "Workspace Terminal",
-      status: terminalSession.status,
-      pid: terminalSession.pid,
-      processAlive,
-      active: processAlive && terminalSession.status === "running",
-    });
-  }
-
-  const setupSession = deps.getSetupTerminalSession(cell.id);
-  if (setupSession) {
-    const hasValidPid =
-      Number.isInteger(setupSession.pid) && setupSession.pid > 0;
-    const processAlive = hasValidPid
-      ? setupSession.status === "running" || isProcessAlive(setupSession.pid)
-      : false;
-    trackedProcesses.push({
-      kind: "setup",
-      id: setupSession.sessionId,
-      name: "Setup",
-      status: setupSession.status,
-      pid: setupSession.pid,
-      processAlive,
-      active: processAlive && setupSession.status === "running",
-    });
-  }
-
-  const resourcesByPid = await sampleResourcesByPid(
-    deps,
-    trackedProcesses
-      .map((process) => process.pid)
-      .filter((pid): pid is number => typeof pid === "number")
-  );
-
-  const processes = trackedProcesses.map((trackedProcess) => {
-    const snapshot = resolveProcessResourceSnapshot({
-      trackedProcess,
-      resourcesByPid,
-      sampledAt,
-    });
-
-    return {
-      kind: trackedProcess.kind,
-      ...(trackedProcess.serviceType
-        ? { serviceType: trackedProcess.serviceType }
-        : {}),
-      id: trackedProcess.id,
-      name: trackedProcess.name,
-      status: trackedProcess.status,
-      pid: trackedProcess.pid,
-      processAlive: trackedProcess.processAlive,
-      active: trackedProcess.active,
-      cpuPercent: snapshot.cpuPercent,
-      rssBytes: snapshot.rssBytes,
-      resourceSampledAt: snapshot.resourceSampledAt,
-      ...(snapshot.resourceUnavailableReason
-        ? { resourceUnavailableReason: snapshot.resourceUnavailableReason }
-        : {}),
-    };
-  });
-
-  const totalCpuPercent = processes.reduce(
-    (total, process) => total + (process.cpuPercent ?? 0),
-    0
-  );
-  const totalRssBytes = processes.reduce(
-    (total, process) => total + (process.rssBytes ?? 0),
-    0
-  );
-  const activeCpuPercent = processes.reduce(
-    (total, process) =>
-      total + (process.active ? (process.cpuPercent ?? 0) : 0),
-    0
-  );
-  const activeRssBytes = processes.reduce(
-    (total, process) => total + (process.active ? (process.rssBytes ?? 0) : 0),
-    0
-  );
-
-  return {
-    cellId: cell.id,
-    sampledAt,
-    processCount: processes.length,
-    activeProcessCount: processes.filter((process) => process.active).length,
-    tracked: {
-      services: processes.filter((process) => process.kind === "service")
-        .length,
-      opencode: processes.filter((process) => process.kind === "opencode")
-        .length,
-      terminal: processes.filter((process) => process.kind === "terminal")
-        .length,
-      setup: processes.filter((process) => process.kind === "setup").length,
-    },
-    totalCpuPercent,
-    totalRssBytes,
-    activeCpuPercent,
-    activeRssBytes,
-    processes,
-  };
-}
-
-function normalizeHistoryLimit(limit?: number): number {
-  if (typeof limit !== "number" || !Number.isFinite(limit)) {
-    return CELL_RESOURCE_HISTORY_DEFAULT_LIMIT;
-  }
-
-  return Math.min(
-    Math.max(Math.floor(limit), 1),
-    CELL_RESOURCE_HISTORY_MAX_LIMIT
-  );
-}
-
-function normalizeRollupLimit(limit?: number): number {
-  if (typeof limit !== "number" || !Number.isFinite(limit)) {
-    return CELL_RESOURCE_ROLLUP_DEFAULT_LIMIT;
-  }
-
-  return Math.min(
-    Math.max(Math.floor(limit), 1),
-    CELL_RESOURCE_ROLLUP_MAX_LIMIT
-  );
-}
-
-type CellResourceHistoryResponsePoint = NonNullable<
-  CellResourceSummaryResponse["history"]
->[number];
-type CellResourceHistoryAveragePoint = NonNullable<
-  CellResourceSummaryResponse["historyAverages"]
->[number];
-type CellResourceRollupResponsePoint = NonNullable<
-  CellResourceSummaryResponse["rollups"]
->[number];
-
-const resourceHistoryLastCapturedAtByCellId = new Map<string, number>();
-
-function shouldPersistResourceHistoryPoint(
-  cellId: string,
-  sampledAtMs: number
-): boolean {
-  const lastCapturedAt = resourceHistoryLastCapturedAtByCellId.get(cellId);
-  if (
-    typeof lastCapturedAt === "number" &&
-    sampledAtMs - lastCapturedAt < CELL_RESOURCE_CAPTURE_INTERVAL_MS
-  ) {
-    return false;
-  }
-
-  resourceHistoryLastCapturedAtByCellId.set(cellId, sampledAtMs);
-  return true;
-}
-
-async function persistCellResourceHistoryPoint(
-  database: DatabaseClient,
-  summary: CellResourceSummaryResponse
-): Promise<void> {
-  const sampledAt = new Date(summary.sampledAt);
-  const sampledAtMs = sampledAt.getTime();
-  if (!Number.isFinite(sampledAtMs)) {
-    return;
-  }
-
-  if (!shouldPersistResourceHistoryPoint(summary.cellId, sampledAtMs)) {
-    return;
-  }
-
-  const createdAt = new Date();
-  const rollupBucketStartAt = new Date(
-    Math.floor(sampledAtMs / CELL_RESOURCE_ROLLUP_BUCKET_MS) *
-      CELL_RESOURCE_ROLLUP_BUCKET_MS
-  );
-  const rollupId = `${summary.cellId}:${rollupBucketStartAt.toISOString()}`;
-
-  await database.insert(cellResourceHistory).values({
-    id: randomUUID(),
-    cellId: summary.cellId,
-    sampledAt,
-    processCount: summary.processCount,
-    activeProcessCount: summary.activeProcessCount,
-    totalCpuPercent: summary.totalCpuPercent,
-    totalRssBytes: summary.totalRssBytes,
-    activeCpuPercent: summary.activeCpuPercent,
-    activeRssBytes: summary.activeRssBytes,
-    processes: summary.processes,
-    createdAt,
-  });
-
-  await database
-    .insert(cellResourceRollups)
-    .values({
-      id: rollupId,
-      cellId: summary.cellId,
-      bucketStartAt: rollupBucketStartAt,
-      sampleCount: 1,
-      sumActiveCpuPercent: summary.activeCpuPercent,
-      sumActiveRssBytes: summary.activeRssBytes,
-      peakActiveCpuPercent: summary.activeCpuPercent,
-      peakActiveRssBytes: summary.activeRssBytes,
-      createdAt,
-      updatedAt: createdAt,
-    })
-    .onConflictDoUpdate({
-      target: cellResourceRollups.id,
-      set: {
-        sampleCount: sql`${cellResourceRollups.sampleCount} + 1`,
-        sumActiveCpuPercent: sql`${cellResourceRollups.sumActiveCpuPercent} + ${summary.activeCpuPercent}`,
-        sumActiveRssBytes: sql`${cellResourceRollups.sumActiveRssBytes} + ${summary.activeRssBytes}`,
-        peakActiveCpuPercent: sql`max(${cellResourceRollups.peakActiveCpuPercent}, ${summary.activeCpuPercent})`,
-        peakActiveRssBytes: sql`max(${cellResourceRollups.peakActiveRssBytes}, ${summary.activeRssBytes})`,
-        updatedAt: createdAt,
-      },
-    });
-
-  const recentRows = await database
-    .select({ id: cellResourceHistory.id })
-    .from(cellResourceHistory)
-    .where(eq(cellResourceHistory.cellId, summary.cellId))
-    .orderBy(desc(cellResourceHistory.sampledAt))
-    .limit(CELL_RESOURCE_HISTORY_RETENTION_POINTS + 1);
-
-  const staleIds = recentRows
-    .slice(CELL_RESOURCE_HISTORY_RETENTION_POINTS)
-    .map((row) => row.id);
-
-  if (staleIds.length > 0) {
-    await database
-      .delete(cellResourceHistory)
-      .where(inArray(cellResourceHistory.id, staleIds));
-  }
-
-  const rollupRetentionCutoff = new Date(
-    sampledAtMs - CELL_RESOURCE_ROLLUP_RETENTION_MS
-  );
-  await database
-    .delete(cellResourceRollups)
-    .where(
-      and(
-        eq(cellResourceRollups.cellId, summary.cellId),
-        lt(cellResourceRollups.bucketStartAt, rollupRetentionCutoff)
-      )
-    );
-}
-
-async function listCellResourceHistory(
-  database: DatabaseClient,
-  cellId: string,
-  limit: number
-): Promise<CellResourceHistoryResponsePoint[]> {
-  const rows = await database
-    .select({
-      sampledAt: cellResourceHistory.sampledAt,
-      processCount: cellResourceHistory.processCount,
-      activeProcessCount: cellResourceHistory.activeProcessCount,
-      totalCpuPercent: cellResourceHistory.totalCpuPercent,
-      totalRssBytes: cellResourceHistory.totalRssBytes,
-      activeCpuPercent: cellResourceHistory.activeCpuPercent,
-      activeRssBytes: cellResourceHistory.activeRssBytes,
-      processes: cellResourceHistory.processes,
-    })
-    .from(cellResourceHistory)
-    .where(eq(cellResourceHistory.cellId, cellId))
-    .orderBy(desc(cellResourceHistory.sampledAt))
-    .limit(limit);
-
-  return rows.reverse().map((row) => {
-    const sampledAt =
-      row.sampledAt instanceof Date
-        ? row.sampledAt.toISOString()
-        : new Date(row.sampledAt).toISOString();
-
-    return {
-      sampledAt,
-      processCount: row.processCount,
-      activeProcessCount: row.activeProcessCount,
-      totalCpuPercent: row.totalCpuPercent,
-      totalRssBytes: row.totalRssBytes,
-      activeCpuPercent: row.activeCpuPercent,
-      activeRssBytes: row.activeRssBytes,
-      processes: (row.processes ?? []) as StoredResourceProcess[],
-    };
-  });
-}
-
-async function listCellResourceRollups(
-  database: DatabaseClient,
-  cellId: string,
-  limit: number
-): Promise<CellResourceRollupResponsePoint[]> {
-  const rows = await database
-    .select({
-      bucketStartAt: cellResourceRollups.bucketStartAt,
-      sampleCount: cellResourceRollups.sampleCount,
-      sumActiveCpuPercent: cellResourceRollups.sumActiveCpuPercent,
-      sumActiveRssBytes: cellResourceRollups.sumActiveRssBytes,
-      peakActiveCpuPercent: cellResourceRollups.peakActiveCpuPercent,
-      peakActiveRssBytes: cellResourceRollups.peakActiveRssBytes,
-    })
-    .from(cellResourceRollups)
-    .where(eq(cellResourceRollups.cellId, cellId))
-    .orderBy(desc(cellResourceRollups.bucketStartAt))
-    .limit(limit);
-
-  return rows.reverse().map((row) => {
-    const bucketStartAt =
-      row.bucketStartAt instanceof Date
-        ? row.bucketStartAt.toISOString()
-        : new Date(row.bucketStartAt).toISOString();
-    const sampleCount = Math.max(row.sampleCount, 1);
-
-    return {
-      bucketStartAt,
-      sampleCount: row.sampleCount,
-      averageActiveCpuPercent: row.sumActiveCpuPercent / sampleCount,
-      averageActiveRssBytes: row.sumActiveRssBytes / sampleCount,
-      peakActiveCpuPercent: row.peakActiveCpuPercent,
-      peakActiveRssBytes: row.peakActiveRssBytes,
-    };
-  });
-}
-
-const toSampleTimestampMs = (value: Date | number): number =>
-  value instanceof Date ? value.getTime() : new Date(value).getTime();
-
-async function listCellResourceHistoryAverages(
-  database: DatabaseClient,
-  cellId: string
-): Promise<CellResourceHistoryAveragePoint[]> {
-  const nowMs = Date.now();
-  const earliestSample = new Date(nowMs - CELL_RESOURCE_AVERAGE_MAX_WINDOW_MS);
-  const rows = await database
-    .select({
-      sampledAt: cellResourceHistory.sampledAt,
-      activeCpuPercent: cellResourceHistory.activeCpuPercent,
-      activeRssBytes: cellResourceHistory.activeRssBytes,
-    })
-    .from(cellResourceHistory)
-    .where(
-      and(
-        eq(cellResourceHistory.cellId, cellId),
-        gte(cellResourceHistory.sampledAt, earliestSample)
-      )
-    )
-    .orderBy(desc(cellResourceHistory.sampledAt));
-
-  return CELL_RESOURCE_AVERAGE_WINDOWS.map((window) => {
-    const cutoff = nowMs - window.durationMs;
-    const samples = rows.filter(
-      (row) => toSampleTimestampMs(row.sampledAt) >= cutoff
-    );
-
-    if (samples.length === 0) {
-      return {
-        window: window.window,
-        sampleCount: 0,
-        averageActiveCpuPercent: 0,
-        averageActiveRssBytes: 0,
-        peakActiveCpuPercent: 0,
-        peakActiveRssBytes: 0,
-      };
-    }
-
-    const totalActiveCpuPercent = samples.reduce(
-      (total, sample) => total + sample.activeCpuPercent,
-      0
-    );
-    const totalActiveRssBytes = samples.reduce(
-      (total, sample) => total + sample.activeRssBytes,
-      0
-    );
-    const peakActiveCpuPercent = samples.reduce(
-      (peak, sample) => Math.max(peak, sample.activeCpuPercent),
-      0
-    );
-    const peakActiveRssBytes = samples.reduce(
-      (peak, sample) => Math.max(peak, sample.activeRssBytes),
-      0
-    );
-
-    return {
-      window: window.window,
-      sampleCount: samples.length,
-      averageActiveCpuPercent: totalActiveCpuPercent / samples.length,
-      averageActiveRssBytes: totalActiveRssBytes / samples.length,
-      peakActiveCpuPercent,
-      peakActiveRssBytes,
-    };
-  });
 }
 
 type SerializeServiceOptions = {

@@ -62,48 +62,6 @@ export const cellQueries = {
     },
   }),
 
-  resources: (
-    id: string,
-    options: {
-      includeHistory?: boolean;
-      includeAverages?: boolean;
-      includeRollups?: boolean;
-      historyLimit?: number;
-      rollupLimit?: number;
-    } = {}
-  ) => ({
-    queryKey: [
-      "cells",
-      id,
-      "resources",
-      options.includeHistory ?? false,
-      options.includeAverages ?? false,
-      options.includeRollups ?? false,
-      options.historyLimit ?? null,
-      options.rollupLimit ?? null,
-    ] as const,
-    queryFn: async () => {
-      const { data, error } = await rpc.api.cells({ id }).resources.get({
-        query: {
-          includeHistory: options.includeHistory,
-          includeAverages: options.includeAverages,
-          includeRollups: options.includeRollups,
-          historyLimit: options.historyLimit,
-          rollupLimit: options.rollupLimit,
-        },
-      });
-      if (error) {
-        throw new Error(formatRpcError(error, "Failed to load resources"));
-      }
-
-      if ("message" in data) {
-        throw new Error(formatRpcResponseError(data, "Cell not found"));
-      }
-
-      return data;
-    },
-  }),
-
   activity: (
     id: string,
     options: {
@@ -152,7 +110,7 @@ export const cellQueries = {
     id: string,
     options: {
       limit?: number;
-      workflow?: "all" | "create" | "delete";
+      workflow?: "create";
       runId?: string;
     } = {}
   ) => ({
@@ -161,7 +119,7 @@ export const cellQueries = {
       id,
       "timings",
       options.limit ?? null,
-      options.workflow ?? "all",
+      options.workflow ?? "create",
       options.runId ?? null,
     ] as const,
     queryFn: async (): Promise<CellTimingResponse> => {
@@ -184,54 +142,6 @@ export const cellQueries = {
       }
       if ("message" in data) {
         throw new Error(formatRpcResponseError(data, "Failed to load timings"));
-      }
-
-      return data as CellTimingResponse;
-    },
-  }),
-
-  timingsGlobal: (
-    options: {
-      limit?: number;
-      workflow?: "all" | "create" | "delete";
-      runId?: string;
-      workspaceId?: string;
-      cellId?: string;
-    } = {}
-  ) => ({
-    queryKey: [
-      "cells",
-      "timings",
-      "global",
-      options.limit ?? null,
-      options.workflow ?? "all",
-      options.runId ?? null,
-      options.workspaceId ?? null,
-      options.cellId ?? null,
-    ] as const,
-    queryFn: async (): Promise<CellTimingResponse> => {
-      const query: Record<string, string | number> = {};
-      if (typeof options.limit === "number") {
-        query.limit = options.limit;
-      }
-      if (options.workflow) {
-        query.workflow = options.workflow;
-      }
-      if (options.runId) {
-        query.runId = options.runId;
-      }
-      if (options.workspaceId) {
-        query.workspaceId = options.workspaceId;
-      }
-      if (options.cellId) {
-        query.cellId = options.cellId;
-      }
-
-      const { data, error } = await rpc.api.cells.timings.global.get({
-        query,
-      });
-      if (error) {
-        throw new Error(formatRpcError(error, "Failed to load timings"));
       }
 
       return data as CellTimingResponse;
@@ -426,12 +336,6 @@ export type CellServiceSummary = Awaited<
   ReturnType<ReturnType<typeof cellQueries.services>["queryFn"]>
 >[number];
 
-export type CellResourceSummary = Awaited<
-  ReturnType<ReturnType<typeof cellQueries.resources>["queryFn"]>
->;
-
-export type CellResourceProcess = CellResourceSummary["processes"][number];
-
 export type CellActivityEventListResponse = Awaited<
   ReturnType<ReturnType<typeof cellQueries.activity>["queryFn"]>
 >;
@@ -439,7 +343,7 @@ export type CellActivityEventListResponse = Awaited<
 export type CellActivityEvent = CellActivityEventListResponse["events"][number];
 
 export type CellTimingStatus = "ok" | "error";
-export type CellTimingWorkflow = "create" | "delete";
+export type CellTimingWorkflow = "create";
 
 export type CellTimingStep = {
   id: string;

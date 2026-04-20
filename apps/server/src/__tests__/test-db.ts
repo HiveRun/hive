@@ -16,6 +16,7 @@ export async function setupTestDb() {
     setupPromise = (async () => {
       sqlite.exec("DROP TABLE IF EXISTS cell_timing_events;");
       sqlite.exec("DROP TABLE IF EXISTS cell_activity_events;");
+      // Historical migrations still create these tables before the new drop migration removes them.
       sqlite.exec("DROP TABLE IF EXISTS cell_resource_rollups;");
       sqlite.exec("DROP TABLE IF EXISTS cell_resource_history;");
       sqlite.exec("DROP TABLE IF EXISTS cell_services;");

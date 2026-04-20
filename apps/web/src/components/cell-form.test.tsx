@@ -1,17 +1,49 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { type ReactNode, useEffect, useRef } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CellForm } from "./cell-form";
 
+const { createCellMutationMock } = vi.hoisted(() => ({
+  createCellMutationMock: vi.fn(),
+}));
+const REMOVE_BUTTON_NAME_PATTERN = /remove/i;
+
 vi.mock("@/components/model-selector", () => ({
-  ModelSelector: () => <div data-testid="mock-model-selector" />,
+  ModelSelector: ({ onLoadingChange, onModelChange }: any) => {
+    const initializedRef = useRef(false);
+
+    useEffect(() => {
+      if (initializedRef.current) {
+        return;
+      }
+
+      initializedRef.current = true;
+      onLoadingChange(false);
+      onModelChange(
+        {
+          id: "big-pickle",
+          providerId: "opencode",
+        },
+        "user"
+      );
+    }, [onLoadingChange, onModelChange]);
+
+    return <div data-testid="mock-model-selector" />;
+  },
 }));
 
 vi.mock("@/queries/cells", () => ({
   cellMutations: {
     create: {
-      mutationFn: vi.fn(),
+      mutationFn: createCellMutationMock,
     },
   },
   cellQueries: {
@@ -56,6 +88,26 @@ vi.mock("@/queries/templates", () => ({
 }));
 
 describe("CellForm", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+      writable: true,
+    });
+    createCellMutationMock.mockReset();
+    createCellMutationMock.mockResolvedValue({
+      id: "cell-1",
+      name: "Image Cell",
+      workspaceId: "workspace-1",
+      status: "spawning",
+      lastSetupError: null,
+    });
+  });
+
   it("renders the Linear prefill and source badge", async () => {
     const { rerender } = render(
       <TestQueryProvider>
@@ -104,6 +156,252 @@ describe("CellForm", () => {
       "Fix follow-up issue\n\nCarry the second issue details into the form."
     );
     expect(screen.getByText("Source: Linear ENG-43")).toBeInTheDocument();
+  });
+
+  it("adds pasted and selected images, then removes them", async () => {
+    render(
+      <TestQueryProvider>
+        <CellForm workspaceId="workspace-1" />
+      </TestQueryProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("cell-image-input")).toBeInTheDocument();
+    });
+
+    const fileInput = screen.getByTestId("cell-image-input");
+    const selectedFile = new File(["selected"], "selected.png", {
+      type: "image/png",
+    });
+    fireEvent.change(fileInput, {
+      target: { files: [selectedFile] },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("selected.png")).toBeInTheDocument();
+    });
+
+    const pastedFile = new File(["pasted"], "pasted.png", {
+      type: "image/png",
+    });
+    fireEvent.paste(screen.getByTestId("cell-form"), {
+      clipboardData: {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => pastedFile,
+          },
+        ],
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("pasted.png")).toBeInTheDocument();
+    });
+
+    const [removeButton] = screen.getAllByRole("button", {
+      name: REMOVE_BUTTON_NAME_PATTERN,
+    });
+    if (!removeButton) {
+      throw new Error("Remove button not found");
+    }
+
+    fireEvent.click(removeButton);
+
+    await waitFor(() => {
+      expect(screen.queryByText("selected.png")).not.toBeInTheDocument();
+    });
+  });
+
+  it("blocks submit until image reads finish", async () => {
+    const originalFileReader = globalThis.FileReader;
+    let finishRead: (() => void) | undefined;
+
+    class DeferredFileReader {
+      onerror: FileReader["onerror"] = null;
+      onload: FileReader["onload"] = null;
+      result: FileReader["result"] = null;
+
+      readAsDataURL(file: Blob) {
+        finishRead = () => {
+          this.result = `data:${file.type};base64,aGVsbG8=`;
+          this.onload?.call(
+            this as unknown as FileReader,
+            new ProgressEvent("load") as ProgressEvent<FileReader>
+          );
+        };
+      }
+    }
+
+    globalThis.FileReader = DeferredFileReader as unknown as typeof FileReader;
+
+    try {
+      render(
+        <TestQueryProvider>
+          <CellForm workspaceId="workspace-1" />
+        </TestQueryProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByLabelText("Name")).toBeInTheDocument();
+      });
+
+      fireEvent.change(screen.getByLabelText("Name"), {
+        target: { value: "Image Cell" },
+      });
+
+      fireEvent.click(
+        within(screen.getByTestId("template-select")).getByRole("combobox")
+      );
+      fireEvent.click(
+        await screen.findByRole("option", { name: "Template 1" })
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("cell-submit-button")).not.toBeDisabled();
+      });
+
+      fireEvent.change(screen.getByTestId("cell-image-input"), {
+        target: {
+          files: [new File(["hello"], "slow.png", { type: "image/png" })],
+        },
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Loading 1 image")).toBeInTheDocument();
+      });
+      expect(screen.getByTestId("cell-submit-button")).toBeDisabled();
+
+      fireEvent.submit(screen.getByTestId("cell-form"));
+      expect(createCellMutationMock).not.toHaveBeenCalled();
+
+      if (!finishRead) {
+        throw new Error("Image read completion callback was not registered");
+      }
+
+      finishRead();
+
+      await waitFor(() => {
+        expect(screen.getByText("slow.png")).toBeInTheDocument();
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId("cell-submit-button")).not.toBeDisabled();
+      });
+
+      fireEvent.submit(screen.getByTestId("cell-form"));
+
+      await waitFor(() => {
+        expect(createCellMutationMock).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      globalThis.FileReader = originalFileReader;
+    }
+  });
+
+  it("clears attached images when the form is repurposed with a new prefill", async () => {
+    const { rerender } = render(
+      <TestQueryProvider>
+        <CellForm
+          initialPrefill={{
+            name: "First issue",
+            description: "First description",
+          }}
+          workspaceId="workspace-1"
+        />
+      </TestQueryProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("cell-image-input")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByTestId("cell-image-input"), {
+      target: {
+        files: [new File(["hello"], "carryover.png", { type: "image/png" })],
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("carryover.png")).toBeInTheDocument();
+    });
+
+    rerender(
+      <TestQueryProvider>
+        <CellForm
+          initialPrefill={{
+            name: "Second issue",
+            description: "Second description",
+          }}
+          workspaceId="workspace-1"
+        />
+      </TestQueryProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("carryover.png")).not.toBeInTheDocument();
+    });
+  });
+
+  it("submits selected images with the create payload", async () => {
+    render(
+      <TestQueryProvider>
+        <CellForm workspaceId="workspace-1" />
+      </TestQueryProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Name")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Image Cell" },
+    });
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "Inspect this screenshot" },
+    });
+
+    fireEvent.click(
+      within(screen.getByTestId("template-select")).getByRole("combobox")
+    );
+    fireEvent.click(await screen.findByRole("option", { name: "Template 1" }));
+
+    const fileInput = screen.getByTestId("cell-image-input");
+    const screenshot = new File(["hello"], "screenshot.png", {
+      type: "image/png",
+    });
+    fireEvent.change(fileInput, {
+      target: { files: [screenshot] },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("screenshot.png")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("cell-submit-button")).not.toBeDisabled();
+    });
+
+    fireEvent.submit(screen.getByTestId("cell-form"));
+
+    await waitFor(() => {
+      expect(createCellMutationMock).toHaveBeenCalledTimes(1);
+    });
+
+    expect(createCellMutationMock.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        name: "Image Cell",
+        description: "Inspect this screenshot",
+        workspaceId: "workspace-1",
+        initialPromptImages: [
+          expect.objectContaining({
+            filename: "screenshot.png",
+            mimeType: "image/png",
+            base64Data: "aGVsbG8=",
+          }),
+        ],
+      })
+    );
   });
 });
 
