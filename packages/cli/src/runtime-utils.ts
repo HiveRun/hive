@@ -29,6 +29,7 @@ const SS_PID_PATTERN = /pid=(\d+)/;
 const NETSTAT_MIN_COLUMNS = 5;
 const HTTP_DEFAULT_PORT = 80;
 const HTTPS_DEFAULT_PORT = 443;
+const DEFAULT_SERVER_READY_TIMEOUT_MS = 90_000;
 
 const sleep = (ms: number) =>
   new Promise<void>((resolvePromise) => {
@@ -202,7 +203,9 @@ const responseIndicatesReady = async (
 
 export const waitForServerReady = async ({
   url,
-  timeoutMs = 10_000,
+  // Cold starts can spend over a minute in migrations and shared service
+  // bootstrap before the daemon starts answering health checks.
+  timeoutMs = DEFAULT_SERVER_READY_TIMEOUT_MS,
   intervalMs = 500,
   requestTimeoutMs = 1000,
   fetchImpl = fetch,

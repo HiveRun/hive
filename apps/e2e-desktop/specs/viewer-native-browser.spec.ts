@@ -6,8 +6,8 @@ const VIEWER_STATE_TIMEOUT_MS = 15_000;
 const VIEWER_CELL_READY_TIMEOUT_MS = 120_000;
 const VIEWER_CELL_POLL_INTERVAL_MS = 500;
 const VIEWER_ROUTE_ATTEMPTS = 3;
-const ABOUT_BLANK = "about:blank";
-const DOCS_OVERRIDE_URL = `data:text/html,${encodeURIComponent("<title>Docs Override</title><h1>Docs Override</h1>")}`;
+const WEB_OVERRIDE_PATH = "/web-override";
+const DOCS_OVERRIDE_PATH = "/docs-override";
 
 test("desktop viewer route mounts and unmounts a native browser view", async () => {
   const apiUrl = resolveApiUrl();
@@ -43,8 +43,28 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
 
     await webTab.click();
 
+    await expect
+      .poll(async () => await readDesktopBrowserView(app), {
+        timeout: VIEWER_STATE_TIMEOUT_MS,
+      })
+      .toMatchObject(
+        expect.objectContaining({
+          url: expect.stringContaining("localhost"),
+          width: expect.any(Number),
+          height: expect.any(Number),
+        })
+      );
+
+    const webRootUrl = (await readDesktopBrowserView(app))?.url;
+    expect(webRootUrl).toBeTruthy();
+
+    const webOverrideUrl = resolveViewerOverrideUrl(
+      webRootUrl ?? "",
+      WEB_OVERRIDE_PATH
+    );
+
     const urlInput = page.getByPlaceholder("Enter URL and press Enter...");
-    await urlInput.fill(ABOUT_BLANK);
+    await urlInput.fill(webOverrideUrl);
     await urlInput.press("Enter");
 
     await expect
@@ -53,7 +73,7 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
       })
       .toMatchObject(
         expect.objectContaining({
-          url: ABOUT_BLANK,
+          url: webOverrideUrl,
           width: expect.any(Number),
           height: expect.any(Number),
         })
@@ -65,7 +85,25 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
 
     await docsTab.click();
 
-    await urlInput.fill(DOCS_OVERRIDE_URL);
+    await expect
+      .poll(async () => await readDesktopBrowserView(app), {
+        timeout: VIEWER_STATE_TIMEOUT_MS,
+      })
+      .toMatchObject(
+        expect.objectContaining({
+          url: expect.stringContaining("localhost"),
+        })
+      );
+
+    const docsRootUrl = (await readDesktopBrowserView(app))?.url;
+    expect(docsRootUrl).toBeTruthy();
+
+    const docsOverrideUrl = resolveViewerOverrideUrl(
+      docsRootUrl ?? "",
+      DOCS_OVERRIDE_PATH
+    );
+
+    await urlInput.fill(docsOverrideUrl);
     await urlInput.press("Enter");
 
     await expect
@@ -74,12 +112,12 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
       })
       .toMatchObject(
         expect.objectContaining({
-          url: DOCS_OVERRIDE_URL,
+          url: docsOverrideUrl,
         })
       );
 
     const docsUrl = (await readDesktopBrowserView(app))?.url;
-    expect(docsUrl).toBe(DOCS_OVERRIDE_URL);
+    expect(docsUrl).toBe(docsOverrideUrl);
 
     await webTab.click();
 
@@ -89,7 +127,7 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
       })
       .toMatchObject(
         expect.objectContaining({
-          url: ABOUT_BLANK,
+          url: webOverrideUrl,
         })
       );
 
@@ -101,7 +139,7 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
       })
       .toMatchObject(
         expect.objectContaining({
-          url: expect.stringContaining("localhost"),
+          url: webRootUrl,
         })
       );
 
@@ -227,6 +265,10 @@ function wait(durationMs: number) {
   return new Promise((resolve) => {
     setTimeout(resolve, durationMs);
   });
+}
+
+function resolveViewerOverrideUrl(rootUrl: string, path: string) {
+  return new URL(path, rootUrl).toString();
 }
 
 async function waitForViewerRoute(
