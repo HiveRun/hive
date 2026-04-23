@@ -182,6 +182,24 @@ describe("waitForServerReady", () => {
     expect(ready).toBe(true);
     rmSync(tempDir, { recursive: true, force: true });
   });
+
+  it("ignores a ready file with the wrong pid", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "hive-cli-ready-"));
+    const readyFilePath = join(tempDir, "daemon-ready");
+    writeFileSync(readyFilePath, "9999\n", "utf8");
+
+    const ready = await waitForServerReady({
+      url: "http://localhost:3000/health",
+      fetchImpl: vi.fn().mockRejectedValue(new Error("unreachable")),
+      intervalMs: 5,
+      timeoutMs: 20,
+      readyFilePath,
+      readyFileContents: "1234",
+    });
+
+    expect(ready).toBe(false);
+    rmSync(tempDir, { recursive: true, force: true });
+  });
 });
 
 describe("installCompletionScript", () => {

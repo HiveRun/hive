@@ -1,5 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, resolve } from "node:path";
 
 export type WaitForServerReadyConfig = {
@@ -301,9 +310,22 @@ const readinessLogIndicatesReady = (
   }
 
   try {
-    return readyLogPattern.test(
-      readFileSync(readyLogFilePath, "utf8").slice(readyLogInitialOffset)
-    );
+    const stats = statSync(readyLogFilePath);
+    if (stats.size <= readyLogInitialOffset) {
+      return false;
+    }
+
+    const length = stats.size - readyLogInitialOffset;
+    const buffer = Buffer.alloc(length);
+    const fd = openSync(readyLogFilePath, "r");
+
+    try {
+      readSync(fd, buffer, 0, length, readyLogInitialOffset);
+    } finally {
+      closeSync(fd);
+    }
+
+    return readyLogPattern.test(buffer.toString("utf8"));
   } catch {
     return false;
   }

@@ -162,6 +162,7 @@ const MANAGED_DAEMON_VERIFY_TIMEOUT_MS = 5000;
 const MANAGED_DAEMON_VERIFY_INTERVAL_MS = 200;
 const DETACHED_DAEMON_READY_TIMEOUT_MS = 180_000;
 const DETACHED_DAEMON_READY_INTERVAL_MS = 500;
+const DETACHED_READY_FILE_PREWAIT_TIMEOUT_MS = 5000;
 const DAEMON_STOP_WAIT_TIMEOUT_MS = 10_000;
 const DAEMON_STOP_POLL_INTERVAL_MS = 100;
 
@@ -365,6 +366,36 @@ const cleanupReadyFile = () => {
   }
 };
 
+const launchDetachedServerWithSpawn = (
+  childEnv: NodeJS.ProcessEnv,
+  logFile: string,
+  logOffset: number
+): LaunchResult => {
+  const { stdoutFd, stderrFd } = openLogStreams(logFile);
+
+  try {
+    const child = spawn(process.execPath, ["--foreground"], {
+      cwd: binaryDirectory,
+      env: childEnv,
+      detached: true,
+      stdio: ["ignore", stdoutFd, stderrFd],
+    });
+
+    closeStream(stdoutFd);
+    closeStream(stderrFd);
+
+    child.unref();
+    persistDaemonStartLock(child.pid ?? null);
+
+    return { pid: child.pid ?? null, logFile, logOffset };
+  } catch (error) {
+    closeStream(stdoutFd);
+    closeStream(stderrFd);
+    cleanupDaemonStartLock();
+    throw error;
+  }
+};
+
 const launchDetachedServer = (): LaunchResult => {
   const logDir = resolveLogDirectory();
   ensureLogDirectory(logDir);
@@ -392,45 +423,27 @@ const launchDetachedServer = (): LaunchResult => {
       }
     );
 
-    if (result.status !== 0) {
-      throw new Error(
+    if (result.status === 0) {
+      const pid = Number.parseInt(result.stdout.trim(), 10);
+      if (!Number.isInteger(pid) || pid <= 0) {
+        throw new Error("Detached launch did not return a valid child pid");
+      }
+
+      persistDaemonStartLock(pid);
+      return { pid, logFile, logOffset };
+    }
+
+    if (process.platform !== "darwin") {
+      logWarning(
         result.stderr.trim() ||
-          `Detached launch shell failed with code ${result.status}`
+          `Detached launch shell failed with code ${result.status}; falling back to process spawn.`
       );
     }
 
-    const pid = Number.parseInt(result.stdout.trim(), 10);
-    if (!Number.isInteger(pid) || pid <= 0) {
-      throw new Error("Detached launch did not return a valid child pid");
-    }
-
-    persistDaemonStartLock(pid);
-    return { pid, logFile, logOffset };
+    return launchDetachedServerWithSpawn(childEnv, logFile, logOffset);
   }
 
-  const { stdoutFd, stderrFd } = openLogStreams(logFile);
-
-  try {
-    const child = spawn(process.execPath, ["--foreground"], {
-      cwd: binaryDirectory,
-      env: childEnv,
-      detached: true,
-      stdio: ["ignore", stdoutFd, stderrFd],
-    });
-
-    closeStream(stdoutFd);
-    closeStream(stderrFd);
-
-    child.unref();
-    persistDaemonStartLock(child.pid ?? null);
-
-    return { pid: child.pid ?? null, logFile, logOffset };
-  } catch (error) {
-    closeStream(stdoutFd);
-    closeStream(stderrFd);
-    cleanupDaemonStartLock();
-    throw error;
-  }
+  return launchDetachedServerWithSpawn(childEnv, logFile, logOffset);
 };
 
 const waitForDetachedDaemonReady = async (
@@ -442,11 +455,15 @@ const waitForDetachedDaemonReady = async (
   }
 
   const deadline =
-    Date.now() + (config?.timeoutMs ?? DETACHED_DAEMON_READY_TIMEOUT_MS);
+    Date.now() +
+    Math.min(
+      config?.timeoutMs ?? DETACHED_DAEMON_READY_TIMEOUT_MS,
+      DETACHED_READY_FILE_PREWAIT_TIMEOUT_MS
+    );
   while (Date.now() < deadline) {
     if (existsSync(readyFilePath)) {
       try {
-        if (readFileSync(readyFilePath, "utf8").trim().length > 0) {
+        if (readFileSync(readyFilePath, "utf8").trim() === String(launch.pid)) {
           return true;
         }
       } catch {
@@ -483,6 +500,7 @@ const startDetachedManagedDaemon = async (
   const ready = await waitForServerReady({
     isReadyResponse: isHiveReadyResponse,
     readyFilePath,
+    readyFileContents: launch.pid ? String(launch.pid) : undefined,
     readyLogFilePath: launch.logFile,
     readyLogInitialOffset: launch.logOffset,
     readyLogPattern: DAEMON_READY_LOG_PATTERN,
@@ -519,9 +537,8 @@ const ensureDaemonLaunchStarted = async (): Promise<boolean> => {
         return true;
       }
 
-      // Another shell may be starting Hive right now; let the desktop app open
-      // and connect once the daemon finishes booting.
-      return true;
+      logError("Hive is already starting in another process.");
+      return false;
     }
 
     logInfo("Hive is not running. Starting background daemon...");
