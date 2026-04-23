@@ -43,6 +43,7 @@ import {
 const DEFAULT_SERVER_PORT = 3000;
 const DEFAULT_HOSTNAME = "localhost";
 const STARTUP_RECOVERY_DELAY_MS = 1000;
+const NANOSECONDS_PER_MILLISECOND = 1_000_000;
 const PORT = Number(process.env.PORT ?? DEFAULT_SERVER_PORT);
 const HOSTNAME = process.env.HOST ?? process.env.HOSTNAME ?? DEFAULT_HOSTNAME;
 
@@ -216,6 +217,18 @@ const runMigrations = async (): Promise<void> => {
 const startOpencodeServer = async (workspaceRoot: string): Promise<void> => {
   const config = await loadOpencodeConfig(workspaceRoot);
   await startSharedOpencodeServer(config);
+};
+
+const warmSharedOpencodeServer = (workspaceRoot: string) => {
+  timeStartupStep("shared OpenCode warmup", async () => {
+    await startOpencodeServer(workspaceRoot);
+  }).catch((error) => {
+    process.stderr.write(
+      `Shared OpenCode warmup failed: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`
+    );
+  });
 };
 
 export const cleanupPidFile = () => {
@@ -398,11 +411,29 @@ type StartupRecoveryTask = {
   run: () => Promise<void>;
 };
 
+const formatElapsedMilliseconds = (startedAt: bigint) =>
+  (
+    Number(process.hrtime.bigint() - startedAt) / NANOSECONDS_PER_MILLISECOND
+  ).toFixed(1);
+
+const timeStartupStep = async <T>(label: string, run: () => Promise<T>) => {
+  const startedAt = process.hrtime.bigint();
+  const result = await run();
+  process.stderr.write(
+    `Startup timing: ${label} completed in ${formatElapsedMilliseconds(startedAt)}ms\n`
+  );
+  return result;
+};
+
 const runStartupRecoveryTask = async (
   task: StartupRecoveryTask
 ): Promise<void> => {
+  const startedAt = process.hrtime.bigint();
   try {
     await task.run();
+    process.stderr.write(
+      `Startup timing: ${task.label} completed in ${formatElapsedMilliseconds(startedAt)}ms\n`
+    );
   } catch (failure) {
     process.stderr.write(
       `Failed to ${task.label}: ${
@@ -413,10 +444,11 @@ const runStartupRecoveryTask = async (
 };
 
 const bootstrapServerCore = async (workspaceRoot: string): Promise<void> => {
-  await runMigrations();
-  await registerWorkspace(workspaceRoot);
-  await startOpencodeServer(workspaceRoot);
-  await bootstrapSupervisor();
+  await timeStartupStep("database migrations", runMigrations);
+  await timeStartupStep("workspace registration", async () => {
+    await registerWorkspace(workspaceRoot);
+  });
+  await timeStartupStep("service supervisor bootstrap", bootstrapSupervisor);
 };
 
 const runStartupRecoveryTasks = async (): Promise<void> => {
@@ -441,6 +473,7 @@ const runStartupRecoveryTasks = async (): Promise<void> => {
 };
 
 export const startServer = async () => {
+  const serverStartTime = process.hrtime.bigint();
   const app = createApp();
   cleanupReadyFile();
 
@@ -459,6 +492,10 @@ export const startServer = async () => {
     cleanupPidFile();
     process.exit(1);
   }
+
+  process.stderr.write(
+    `Startup timing: core bootstrap completed in ${formatElapsedMilliseconds(serverStartTime)}ms\n`
+  );
 
   registerSignalHandlers();
 
@@ -483,11 +520,15 @@ export const startServer = async () => {
   process.stderr.write(
     `API listening on http://${boundHostname}:${boundPort}\n`
   );
+  process.stderr.write(
+    `Startup timing: server ready in ${formatElapsedMilliseconds(serverStartTime)}ms\n`
+  );
   markDaemonReady();
 
   // Recovery can sweep a large backlog of cells and sessions. Give external
   // clients a short window to connect before that background work begins.
   setTimeout(() => {
+    warmSharedOpencodeServer(workspaceRoot);
     runStartupRecoveryTasks().catch((error) => {
       process.stderr.write(
         `Startup recovery tasks failed: ${

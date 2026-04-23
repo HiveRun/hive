@@ -5,8 +5,14 @@ import { join } from "node:path";
 import { logger } from "@bogeychan/elysia-logger";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { Elysia, type Static, sse, t } from "elysia";
-import { loadEffectiveOpencodeDefaults } from "../agents/opencode-config";
-import { getSharedOpencodeServerBaseUrl } from "../agents/opencode-server";
+import {
+  loadEffectiveOpencodeDefaults,
+  loadOpencodeConfig,
+} from "../agents/opencode-config";
+import {
+  getSharedOpencodeServerBaseUrl,
+  startSharedOpencodeServer,
+} from "../agents/opencode-server";
 import type { AgentPromptInput, AgentRuntimeService } from "../agents/service";
 import { agentRuntimeService } from "../agents/service";
 import type { AgentMode } from "../agents/types";
@@ -909,8 +915,15 @@ async function ensureChatTerminalSessionForCell(
   cell: typeof cells.$inferSelect,
   themeMode: OpencodeThemeMode
 ) {
-  const serverUrl =
+  let serverUrl =
     process.env.HIVE_OPENCODE_SERVER_URL ?? getSharedOpencodeServerBaseUrl();
+  if (!serverUrl) {
+    const config = await loadOpencodeConfig(cell.workspaceRootPath);
+    await startSharedOpencodeServer(config);
+    serverUrl =
+      process.env.HIVE_OPENCODE_SERVER_URL ?? getSharedOpencodeServerBaseUrl();
+  }
+
   if (!serverUrl) {
     throw new Error("Shared OpenCode server is not running");
   }
