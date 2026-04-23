@@ -498,6 +498,45 @@ const startDetachedManagedDaemon = async (
   return true;
 };
 
+const ensureDaemonLaunchStarted = async (): Promise<boolean> => {
+  try {
+    if (await reuseStartingDaemon()) {
+      return true;
+    }
+
+    const runningDaemon = await detectRunningDaemon();
+    if (runningDaemon?.managed) {
+      return true;
+    }
+
+    if (runningDaemon) {
+      persistPidFileIfAlive(runningDaemon.pid);
+      return true;
+    }
+
+    if (!tryAcquireDaemonStartLock()) {
+      if (await reuseStartingDaemon()) {
+        return true;
+      }
+
+      // Another shell may be starting Hive right now; let the desktop app open
+      // and connect once the daemon finishes booting.
+      return true;
+    }
+
+    logInfo("Hive is not running. Starting background daemon...");
+    launchDetachedServer();
+    return true;
+  } catch (error) {
+    logError(
+      `Failed to start Hive: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return false;
+  }
+};
+
 const ensureDaemonRunning = async (
   config?: Omit<WaitForServerReadyConfig, "url">
 ): Promise<boolean> => {
@@ -1483,8 +1522,8 @@ const webCommand = async () => {
 };
 
 const desktopCommand = async () => {
-  const ready = await ensureDaemonRunning();
-  if (!ready) {
+  const launched = await ensureDaemonLaunchStarted();
+  if (!launched) {
     return 1;
   }
 
