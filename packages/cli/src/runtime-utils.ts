@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 export type WaitForServerReadyConfig = {
@@ -9,6 +9,11 @@ export type WaitForServerReadyConfig = {
   requestTimeoutMs?: number;
   fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
   isReadyResponse?: (response: Response) => Promise<boolean>;
+  readyFilePath?: string;
+  readyFileContents?: string;
+  readyLogFilePath?: string;
+  readyLogInitialOffset?: number;
+  readyLogPattern?: RegExp;
 };
 
 type RunCommandResult = {
@@ -29,7 +34,10 @@ const SS_PID_PATTERN = /pid=(\d+)/;
 const NETSTAT_MIN_COLUMNS = 5;
 const HTTP_DEFAULT_PORT = 80;
 const HTTPS_DEFAULT_PORT = 443;
-const DEFAULT_SERVER_READY_TIMEOUT_MS = 90_000;
+const DEFAULT_SERVER_READY_TIMEOUT_MS = 180_000;
+const LOOPBACK_HOSTNAMES = ["localhost", "127.0.0.1", "::1"];
+const OPEN_BRACKET_PREFIX_PATTERN = /^\[/;
+const CLOSE_BRACKET_SUFFIX_PATTERN = /\]$/;
 
 const sleep = (ms: number) =>
   new Promise<void>((resolvePromise) => {
@@ -170,6 +178,88 @@ export const extractPortFromUrl = (url: string) => {
   }
 };
 
+const normalizeHostname = (hostname: string) =>
+  hostname
+    .replace(OPEN_BRACKET_PREFIX_PATTERN, "")
+    .replace(CLOSE_BRACKET_SUFFIX_PATTERN, "")
+    .toLowerCase();
+
+const waitForReadySignal = (args: {
+  readyFilePath?: string;
+  readyFileContents?: string;
+  readyLogFilePath?: string;
+  readyLogInitialOffset?: number;
+  readyLogPattern?: RegExp;
+}) =>
+  readinessFileIndicatesReady(args.readyFilePath, args.readyFileContents) ||
+  readinessLogIndicatesReady(
+    args.readyLogFilePath,
+    args.readyLogInitialOffset,
+    args.readyLogPattern
+  );
+
+const probeCandidateUrl = async (args: {
+  candidateUrl: string;
+  requestTimeoutMs: number;
+  fetchImpl: (url: string, init?: RequestInit) => Promise<Response>;
+  isReadyResponse?: (response: Response) => Promise<boolean>;
+}) => {
+  let response: Response | null = null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), args.requestTimeoutMs);
+
+  try {
+    response = await args.fetchImpl(args.candidateUrl, {
+      method: "GET",
+      signal: controller.signal,
+    });
+  } catch {
+    response = null;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (
+    response &&
+    (await responseIndicatesReady(response, args.isReadyResponse))
+  ) {
+    return true;
+  }
+
+  if (response?.body) {
+    await response.body.cancel().catch(() => null);
+  }
+
+  return false;
+};
+
+const expandLoopbackProbeUrls = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    const normalizedHostname = normalizeHostname(parsed.hostname);
+    if (!LOOPBACK_HOSTNAMES.includes(normalizedHostname)) {
+      return [url];
+    }
+
+    const candidates = [url];
+    for (const hostname of LOOPBACK_HOSTNAMES) {
+      if (hostname === normalizedHostname) {
+        continue;
+      }
+
+      const candidate = new URL(url);
+      candidate.host = hostname.includes(":")
+        ? `[${hostname}]${candidate.port ? `:${candidate.port}` : ""}`
+        : `${hostname}${candidate.port ? `:${candidate.port}` : ""}`;
+      candidates.push(candidate.toString());
+    }
+
+    return candidates;
+  } catch {
+    return [url];
+  }
+};
+
 export const findListeningProcessId = ({
   port,
   platform = process.platform,
@@ -201,39 +291,86 @@ const responseIndicatesReady = async (
   return await isReadyResponse(candidateResponse);
 };
 
+const readinessLogIndicatesReady = (
+  readyLogFilePath?: string,
+  readyLogInitialOffset = 0,
+  readyLogPattern?: RegExp
+) => {
+  if (!(readyLogFilePath && readyLogPattern && existsSync(readyLogFilePath))) {
+    return false;
+  }
+
+  try {
+    return readyLogPattern.test(
+      readFileSync(readyLogFilePath, "utf8").slice(readyLogInitialOffset)
+    );
+  } catch {
+    return false;
+  }
+};
+
+const readinessFileIndicatesReady = (
+  readyFilePath?: string,
+  readyFileContents?: string
+) => {
+  if (!(readyFilePath && existsSync(readyFilePath))) {
+    return false;
+  }
+
+  try {
+    const contents = readFileSync(readyFilePath, "utf8").trim();
+    if (!readyFileContents) {
+      return contents.length > 0;
+    }
+
+    return contents === readyFileContents;
+  } catch {
+    return false;
+  }
+};
+
 export const waitForServerReady = async ({
   url,
-  // Cold starts can spend over a minute in migrations and shared service
-  // bootstrap before the daemon starts answering health checks.
+  // Cold starts can spend well over a minute in migrations and shared
+  // service bootstrap before the daemon starts answering health checks.
   timeoutMs = DEFAULT_SERVER_READY_TIMEOUT_MS,
   intervalMs = 500,
   requestTimeoutMs = 1000,
   fetchImpl = fetch,
   isReadyResponse,
+  readyFilePath,
+  readyFileContents,
+  readyLogFilePath,
+  readyLogInitialOffset,
+  readyLogPattern,
 }: WaitForServerReadyConfig): Promise<boolean> => {
   const deadline = Date.now() + timeoutMs;
+  const candidateUrls = expandLoopbackProbeUrls(url);
+
   while (Date.now() < deadline) {
-    let response: Response | null = null;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-
-    try {
-      response = await fetchImpl(url, {
-        method: "GET",
-        signal: controller.signal,
-      });
-    } catch {
-      response = null;
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    if (response && (await responseIndicatesReady(response, isReadyResponse))) {
+    if (
+      waitForReadySignal({
+        readyFilePath,
+        readyFileContents,
+        readyLogFilePath,
+        readyLogInitialOffset,
+        readyLogPattern,
+      })
+    ) {
       return true;
     }
 
-    if (response?.body) {
-      await response.body.cancel().catch(() => null);
+    for (const candidateUrl of candidateUrls) {
+      if (
+        await probeCandidateUrl({
+          candidateUrl,
+          requestTimeoutMs,
+          fetchImpl,
+          isReadyResponse,
+        })
+      ) {
+        return true;
+      }
     }
 
     await sleep(intervalMs);

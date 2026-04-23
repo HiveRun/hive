@@ -1,5 +1,5 @@
 /// <reference types="vitest" />
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,6 +18,7 @@ const HTTP_DEFAULT_PORT = 80;
 const HTTPS_DEFAULT_PORT = 443;
 const UNIX_HIVE_PID = 401_148;
 const WINDOWS_HIVE_PID = 8124;
+const API_LISTENING_PATTERN = /API listening on /;
 
 describe("waitForServerReady", () => {
   it("resolves when the healthcheck responds", async () => {
@@ -75,6 +76,111 @@ describe("waitForServerReady", () => {
 
     expect(ready).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("tries equivalent loopback hosts before timing out", async () => {
+    const fetchMock = vi.fn((requestUrl: string) => {
+      if (requestUrl === "http://[::1]:3000/health") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ service: "hive", status: "ok" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          })
+        );
+      }
+
+      return Promise.reject(new Error("unreachable"));
+    });
+
+    const ready = await waitForServerReady({
+      url: "http://localhost:3000/health",
+      fetchImpl: fetchMock,
+      intervalMs: 5,
+      timeoutMs: 50,
+      isReadyResponse: async (response) =>
+        isHiveHealthResponse(await response.json()),
+    });
+
+    expect(ready).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:3000/health",
+      expect.objectContaining({ method: "GET" })
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:3000/health",
+      expect.objectContaining({ method: "GET" })
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://[::1]:3000/health",
+      expect.objectContaining({ method: "GET" })
+    );
+  });
+
+  it("accepts a daemon readiness log line even before health responds", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "hive-cli-log-"));
+    const logPath = join(tempDir, "hive.log");
+    const fetchMock = vi.fn().mockRejectedValue(new Error("unreachable"));
+
+    setTimeout(() => {
+      writeFileSync(
+        logPath,
+        "API listening on http://localhost:3000\n",
+        "utf8"
+      );
+    }, 10);
+
+    const ready = await waitForServerReady({
+      url: "http://localhost:3000/health",
+      fetchImpl: fetchMock,
+      intervalMs: 5,
+      timeoutMs: 50,
+      readyLogFilePath: logPath,
+      readyLogInitialOffset: 0,
+      readyLogPattern: API_LISTENING_PATTERN,
+    });
+
+    expect(ready).toBe(true);
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("ignores stale readiness lines before the launch offset", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "hive-cli-log-"));
+    const logPath = join(tempDir, "hive.log");
+    writeFileSync(logPath, "API listening on http://localhost:3000\n", "utf8");
+
+    const ready = await waitForServerReady({
+      url: "http://localhost:3000/health",
+      fetchImpl: vi.fn().mockRejectedValue(new Error("unreachable")),
+      intervalMs: 5,
+      timeoutMs: 20,
+      readyLogFilePath: logPath,
+      readyLogInitialOffset: readFileSync(logPath, "utf8").length,
+      readyLogPattern: API_LISTENING_PATTERN,
+    });
+
+    expect(ready).toBe(false);
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("accepts a ready file that matches the launched pid", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "hive-cli-ready-"));
+    const readyFilePath = join(tempDir, "daemon-ready");
+
+    setTimeout(() => {
+      writeFileSync(readyFilePath, "1234\n", "utf8");
+    }, 10);
+
+    const ready = await waitForServerReady({
+      url: "http://localhost:3000/health",
+      fetchImpl: vi.fn().mockRejectedValue(new Error("unreachable")),
+      intervalMs: 5,
+      timeoutMs: 50,
+      readyFilePath,
+      readyFileContents: "1234",
+    });
+
+    expect(ready).toBe(true);
+    rmSync(tempDir, { recursive: true, force: true });
   });
 });
 

@@ -21,6 +21,7 @@ import {
   DEFAULT_API_URL,
   DEFAULT_WEB_URL,
   pidFilePath,
+  readyFilePath,
   startServer,
 } from "@hive/server";
 import { Builtins, Cli, Command, Option } from "clipanion";
@@ -155,9 +156,12 @@ const trimTrailingSlash = (value: string) =>
   value.endsWith("/") ? value.slice(0, -1) : value;
 
 const HEALTHCHECK_URL = `${trimTrailingSlash(DEFAULT_API_URL)}/health`;
+const DAEMON_READY_LOG_PATTERN = /API listening on /;
 const DAEMON_PROBE_TIMEOUT_MS = 800;
 const MANAGED_DAEMON_VERIFY_TIMEOUT_MS = 5000;
 const MANAGED_DAEMON_VERIFY_INTERVAL_MS = 200;
+const DETACHED_DAEMON_READY_TIMEOUT_MS = 180_000;
+const DETACHED_DAEMON_READY_INTERVAL_MS = 500;
 const DAEMON_STOP_WAIT_TIMEOUT_MS = 10_000;
 const DAEMON_STOP_POLL_INTERVAL_MS = 100;
 
@@ -303,7 +307,7 @@ const detectRunningDaemon = async () => {
   } as const;
 };
 
-type LaunchResult = { pid: number | null; logFile: string };
+type LaunchResult = { pid: number | null; logFile: string; logOffset: number };
 
 const openLogStreams = (logFile: string) => ({
   stdoutFd: openSync(logFile, "a"),
@@ -353,20 +357,63 @@ const persistPidFileIfAlive = (pid: number | null) => {
   return true;
 };
 
+const cleanupReadyFile = () => {
+  try {
+    unlinkSync(readyFilePath);
+  } catch {
+    /* ignore ready file cleanup errors */
+  }
+};
+
 const launchDetachedServer = (): LaunchResult => {
   const logDir = resolveLogDirectory();
   ensureLogDirectory(logDir);
   const logFile = resolveLogFilePath();
+  const logOffset = existsSync(logFile) ? statSync(logFile).size : 0;
+  cleanupReadyFile();
+
+  const childEnv = {
+    ...process.env,
+    HIVE_FOREGROUND: "1",
+    HIVE_WORKSPACE_ROOT: resolveWorkspaceRootEnv(),
+  };
+
+  if (process.platform !== "win32") {
+    const command =
+      'setsid "$1" --foreground >"$2" 2>&1 < /dev/null & printf "%s" "$!"';
+    const result = spawnSync(
+      "sh",
+      ["-c", command, "hive-detached", process.execPath, logFile],
+      {
+        cwd: binaryDirectory,
+        env: childEnv,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }
+    );
+
+    if (result.status !== 0) {
+      throw new Error(
+        result.stderr.trim() ||
+          `Detached launch shell failed with code ${result.status}`
+      );
+    }
+
+    const pid = Number.parseInt(result.stdout.trim(), 10);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      throw new Error("Detached launch did not return a valid child pid");
+    }
+
+    persistDaemonStartLock(pid);
+    return { pid, logFile, logOffset };
+  }
+
   const { stdoutFd, stderrFd } = openLogStreams(logFile);
 
   try {
     const child = spawn(process.execPath, ["--foreground"], {
       cwd: binaryDirectory,
-      env: {
-        ...process.env,
-        HIVE_FOREGROUND: "1",
-        HIVE_WORKSPACE_ROOT: resolveWorkspaceRootEnv(),
-      },
+      env: childEnv,
       detached: true,
       stdio: ["ignore", stdoutFd, stderrFd],
     });
@@ -377,13 +424,78 @@ const launchDetachedServer = (): LaunchResult => {
     child.unref();
     persistDaemonStartLock(child.pid ?? null);
 
-    return { pid: child.pid ?? null, logFile };
+    return { pid: child.pid ?? null, logFile, logOffset };
   } catch (error) {
     closeStream(stdoutFd);
     closeStream(stderrFd);
     cleanupDaemonStartLock();
     throw error;
   }
+};
+
+const waitForDetachedDaemonReady = async (
+  launch: LaunchResult,
+  config?: Omit<WaitForServerReadyConfig, "url">
+) => {
+  if (!(process.platform !== "win32" && launch.pid)) {
+    return false;
+  }
+
+  const deadline =
+    Date.now() + (config?.timeoutMs ?? DETACHED_DAEMON_READY_TIMEOUT_MS);
+  while (Date.now() < deadline) {
+    if (existsSync(readyFilePath)) {
+      try {
+        if (readFileSync(readyFilePath, "utf8").trim().length > 0) {
+          return true;
+        }
+      } catch {
+        /* ignore transient ready-file reads */
+      }
+    }
+
+    await sleep(DETACHED_DAEMON_READY_INTERVAL_MS);
+  }
+
+  return false;
+};
+
+const startDetachedManagedDaemon = async (
+  config?: Omit<WaitForServerReadyConfig, "url">
+) => {
+  if (!tryAcquireDaemonStartLock()) {
+    if (await reuseStartingDaemon(config)) {
+      return true;
+    }
+
+    logError("Hive is already starting in another process.");
+    return false;
+  }
+
+  logInfo("Hive is not running. Starting background daemon...");
+  const launch = launchDetachedServer();
+
+  if (await waitForDetachedDaemonReady(launch, config)) {
+    persistPidFileIfAlive(launch.pid);
+    return true;
+  }
+
+  const ready = await waitForServerReady({
+    isReadyResponse: isHiveReadyResponse,
+    readyFilePath,
+    readyLogFilePath: launch.logFile,
+    readyLogInitialOffset: launch.logOffset,
+    readyLogPattern: DAEMON_READY_LOG_PATTERN,
+    url: HEALTHCHECK_URL,
+    ...config,
+  });
+  if (!ready) {
+    logError("Daemon did not become ready before timeout.");
+    return false;
+  }
+
+  persistPidFileIfAlive(launch.pid);
+  return true;
 };
 
 const ensureDaemonRunning = async (
@@ -411,31 +523,7 @@ const ensureDaemonRunning = async (
       return true;
     }
 
-    if (!tryAcquireDaemonStartLock()) {
-      if (await reuseStartingDaemon(config)) {
-        return true;
-      }
-
-      logError("Hive is already starting in another process.");
-      return false;
-    }
-
-    logInfo("Hive is not running. Starting background daemon...");
-    const launch = launchDetachedServer();
-
-    const ready = await waitForServerReady({
-      isReadyResponse: isHiveReadyResponse,
-      url: HEALTHCHECK_URL,
-      ...config,
-    });
-    if (!ready) {
-      logError("Daemon did not become ready before timeout.");
-      return false;
-    }
-
-    persistPidFileIfAlive(launch.pid);
-
-    return true;
+    return await startDetachedManagedDaemon(config);
   } catch (error) {
     logError(
       `Failed to start Hive: ${
@@ -1289,10 +1377,27 @@ const isForcedForeground = process.env.HIVE_FOREGROUND === "1";
 const defaultShouldRunDetached = isCompiledRuntime && !isForcedForeground;
 
 const startDetachedServer = async () => {
-  const { logFile, pid } = launchDetachedServer();
+  const { logFile, logOffset, pid } = launchDetachedServer();
+
+  if (await waitForDetachedDaemonReady({ logFile, logOffset, pid })) {
+    persistPidFileIfAlive(pid);
+
+    printSummary("Hive is running in the background", [
+      ["UI", DEFAULT_WEB_URL],
+      ["Logs", logFile],
+      ["PID file", pidFilePath],
+      ["Stop", "hive stop"],
+      ["Stream logs", "hive logs"],
+    ]);
+    return;
+  }
 
   const ready = await waitForServerReady({
     isReadyResponse: isHiveReadyResponse,
+    readyFilePath,
+    readyLogFilePath: logFile,
+    readyLogInitialOffset: logOffset,
+    readyLogPattern: DAEMON_READY_LOG_PATTERN,
     url: HEALTHCHECK_URL,
   });
   if (!ready) {
