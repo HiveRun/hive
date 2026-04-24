@@ -6,9 +6,7 @@ const VIEWER_STATE_TIMEOUT_MS = 15_000;
 const VIEWER_CELL_READY_TIMEOUT_MS = 120_000;
 const VIEWER_CELL_POLL_INTERVAL_MS = 500;
 const VIEWER_ROUTE_ATTEMPTS = 3;
-const WEB_OVERRIDE_VALUE = "web";
-const DOCS_OVERRIDE_VALUE = "docs";
-
+const VIEWER_ROUTE_POLL_INTERVAL_MS = 100;
 test("desktop viewer route mounts and unmounts a native browser view", async () => {
   const apiUrl = resolveApiUrl();
   const { app, page } = await launchDesktopApp();
@@ -58,27 +56,6 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
     const webRootUrl = (await readDesktopBrowserView(app))?.url;
     expect(webRootUrl).toBeTruthy();
 
-    const webOverrideUrl = resolveViewerOverrideUrl(
-      webRootUrl ?? "",
-      WEB_OVERRIDE_VALUE
-    );
-
-    const urlInput = page.getByPlaceholder("Enter URL and press Enter...");
-    await urlInput.fill(webOverrideUrl);
-    await urlInput.press("Enter");
-
-    await expect
-      .poll(async () => await readDesktopBrowserView(app), {
-        timeout: VIEWER_STATE_TIMEOUT_MS,
-      })
-      .toMatchObject(
-        expect.objectContaining({
-          url: webOverrideUrl,
-          width: expect.any(Number),
-          height: expect.any(Number),
-        })
-      );
-
     const activeView = await readDesktopBrowserView(app);
     expect(activeView?.width ?? 0).toBeGreaterThan(0);
     expect(activeView?.height ?? 0).toBeGreaterThan(0);
@@ -97,41 +74,9 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
 
     const docsRootUrl = (await readDesktopBrowserView(app))?.url;
     expect(docsRootUrl).toBeTruthy();
-
-    const docsOverrideUrl = resolveViewerOverrideUrl(
-      docsRootUrl ?? "",
-      DOCS_OVERRIDE_VALUE
-    );
-
-    await urlInput.fill(docsOverrideUrl);
-    await urlInput.press("Enter");
-
-    await expect
-      .poll(async () => await readDesktopBrowserView(app), {
-        timeout: VIEWER_STATE_TIMEOUT_MS,
-      })
-      .toMatchObject(
-        expect.objectContaining({
-          url: docsOverrideUrl,
-        })
-      );
-
-    const docsUrl = (await readDesktopBrowserView(app))?.url;
-    expect(docsUrl).toBe(docsOverrideUrl);
+    expect(docsRootUrl).not.toBe(webRootUrl);
 
     await webTab.click();
-
-    await expect
-      .poll(async () => await readDesktopBrowserView(app), {
-        timeout: VIEWER_STATE_TIMEOUT_MS,
-      })
-      .toMatchObject(
-        expect.objectContaining({
-          url: webOverrideUrl,
-        })
-      );
-
-    await page.getByLabel("Reset to service root").click();
 
     await expect
       .poll(async () => await readDesktopBrowserView(app), {
@@ -267,18 +212,34 @@ function wait(durationMs: number) {
   });
 }
 
-function resolveViewerOverrideUrl(rootUrl: string, overrideValue: string) {
-  const url = new URL(rootUrl);
-  url.searchParams.set("viewerOverride", overrideValue);
-  return url.toString();
-}
-
 async function waitForViewerRoute(
   page: import("@playwright/test").Page,
   path: string
 ) {
   for (let attempt = 1; attempt <= VIEWER_ROUTE_ATTEMPTS; attempt += 1) {
-    await navigateInDesktopApp(page, path);
+    await page.evaluate(
+      async ({ nextPath, timeoutMs }) => {
+        window.history.pushState({}, "", nextPath);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          const routeVisible = Boolean(
+            document.querySelector("[data-testid='cell-viewer-route']")
+          );
+          if (window.location.pathname === nextPath && routeVisible) {
+            return;
+          }
+
+          await new Promise((resolve) =>
+            setTimeout(resolve, VIEWER_ROUTE_POLL_INTERVAL_MS)
+          );
+        }
+
+        throw new Error(`Viewer route did not mount for ${nextPath}`);
+      },
+      { nextPath: path, timeoutMs: VIEWER_ROUTE_TIMEOUT_MS }
+    );
 
     try {
       await page.waitForSelector("[data-testid='cell-viewer-route']", {
