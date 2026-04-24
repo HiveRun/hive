@@ -6,6 +6,7 @@ import {
   openSync,
   readFileSync,
   readSync,
+  realpathSync,
   statSync,
   unlinkSync,
   watch,
@@ -163,8 +164,21 @@ const MANAGED_DAEMON_VERIFY_INTERVAL_MS = 200;
 const DETACHED_DAEMON_READY_TIMEOUT_MS = 180_000;
 const DETACHED_DAEMON_READY_INTERVAL_MS = 500;
 const DETACHED_READY_FILE_PREWAIT_TIMEOUT_MS = 5000;
+const DESKTOP_DAEMON_READY_TIMEOUT_MS = 5000;
 const DAEMON_STOP_WAIT_TIMEOUT_MS = 10_000;
 const DAEMON_STOP_POLL_INTERVAL_MS = 100;
+const EXECUTABLE_PATH =
+  realpathSync.native?.(process.execPath) ?? realpathSync(process.execPath);
+const DETACHED_DAEMON_CWD = dirname(EXECUTABLE_PATH);
+const DETACHED_DAEMON_ENV_STRIP_KEYS = [
+  "DATABASE_URL",
+  "DOTENV_CONFIG_SILENT",
+  "HIVE_INSTALL_URL",
+  "HIVE_LOG_DIR",
+  "HIVE_MIGRATIONS_DIR",
+  "HIVE_OPENCODE_BIN",
+  "HIVE_WEB_DIST",
+] as const;
 
 const readActivePid = (): number | null => {
   if (!existsSync(pidFilePath)) {
@@ -308,7 +322,12 @@ const detectRunningDaemon = async () => {
   } as const;
 };
 
-type LaunchResult = { pid: number | null; logFile: string; logOffset: number };
+type LaunchResult = {
+  pid: number | null;
+  logFile: string;
+  logOffset: number;
+  readyFileContents?: string;
+};
 
 const openLogStreams = (logFile: string) => ({
   stdoutFd: openSync(logFile, "a"),
@@ -374,8 +393,8 @@ const launchDetachedServerWithSpawn = (
   const { stdoutFd, stderrFd } = openLogStreams(logFile);
 
   try {
-    const child = spawn(process.execPath, ["--foreground"], {
-      cwd: binaryDirectory,
+    const child = spawn(EXECUTABLE_PATH, ["--foreground"], {
+      cwd: DETACHED_DAEMON_CWD,
       env: childEnv,
       detached: true,
       stdio: ["ignore", stdoutFd, stderrFd],
@@ -387,7 +406,12 @@ const launchDetachedServerWithSpawn = (
     child.unref();
     persistDaemonStartLock(child.pid ?? null);
 
-    return { pid: child.pid ?? null, logFile, logOffset };
+    return {
+      pid: child.pid ?? null,
+      logFile,
+      logOffset,
+      readyFileContents: child.pid ? String(child.pid) : undefined,
+    };
   } catch (error) {
     closeStream(stdoutFd);
     closeStream(stderrFd);
@@ -403,47 +427,62 @@ const launchDetachedServer = (): LaunchResult => {
   const logOffset = existsSync(logFile) ? statSync(logFile).size : 0;
   cleanupReadyFile();
 
-  const childEnv = {
+  const childEnv: Record<string, string | undefined> = {
     ...process.env,
     HIVE_FOREGROUND: "1",
     HIVE_WORKSPACE_ROOT: resolveWorkspaceRootEnv(),
   };
+  for (const key of DETACHED_DAEMON_ENV_STRIP_KEYS) {
+    delete childEnv[key];
+  }
 
   if (process.platform !== "win32") {
-    const command =
-      'setsid "$1" --foreground >"$2" 2>&1 < /dev/null & printf "%s" "$!"';
-    const result = spawnSync(
-      "sh",
-      ["-c", command, "hive-detached", process.execPath, logFile],
-      {
-        cwd: binaryDirectory,
-        env: childEnv,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-      }
-    );
+    const command = 'setsid "$1" --foreground >"$2" 2>&1 < /dev/null &';
 
-    if (result.status === 0) {
-      const pid = Number.parseInt(result.stdout.trim(), 10);
-      if (!Number.isInteger(pid) || pid <= 0) {
-        throw new Error("Detached launch did not return a valid child pid");
-      }
-
-      persistDaemonStartLock(pid);
-      return { pid, logFile, logOffset };
-    }
-
-    if (process.platform !== "darwin") {
-      logWarning(
-        result.stderr.trim() ||
-          `Detached launch shell failed with code ${result.status}; falling back to process spawn.`
+    try {
+      const child = spawn(
+        "sh",
+        ["-c", command, "hive-detached", EXECUTABLE_PATH, logFile],
+        {
+          cwd: DETACHED_DAEMON_CWD,
+          env: childEnv,
+          detached: true,
+          stdio: "ignore",
+        }
       );
-    }
 
-    return launchDetachedServerWithSpawn(childEnv, logFile, logOffset);
+      child.unref();
+      persistDaemonStartLock(child.pid ?? null);
+      return { pid: child.pid ?? null, logFile, logOffset };
+    } catch (error) {
+      if (process.platform !== "darwin") {
+        logWarning(
+          error instanceof Error
+            ? error.message
+            : "Detached launch shell failed; falling back to process spawn."
+        );
+      }
+
+      return launchDetachedServerWithSpawn(childEnv, logFile, logOffset);
+    }
   }
 
   return launchDetachedServerWithSpawn(childEnv, logFile, logOffset);
+};
+
+const detachedReadyFileMatchesLaunch = (launch: LaunchResult) => {
+  if (!existsSync(readyFilePath)) {
+    return false;
+  }
+
+  try {
+    const readyFileValue = readFileSync(readyFilePath, "utf8").trim();
+    return launch.readyFileContents
+      ? readyFileValue === launch.readyFileContents
+      : readyFileValue.length > 0;
+  } catch {
+    return false;
+  }
 };
 
 const waitForDetachedDaemonReady = async (
@@ -461,14 +500,8 @@ const waitForDetachedDaemonReady = async (
       DETACHED_READY_FILE_PREWAIT_TIMEOUT_MS
     );
   while (Date.now() < deadline) {
-    if (existsSync(readyFilePath)) {
-      try {
-        if (readFileSync(readyFilePath, "utf8").trim() === String(launch.pid)) {
-          return true;
-        }
-      } catch {
-        /* ignore transient ready-file reads */
-      }
+    if (detachedReadyFileMatchesLaunch(launch)) {
+      return true;
     }
 
     await sleep(DETACHED_DAEMON_READY_INTERVAL_MS);
@@ -500,7 +533,7 @@ const startDetachedManagedDaemon = async (
   const ready = await waitForServerReady({
     isReadyResponse: isHiveReadyResponse,
     readyFilePath,
-    readyFileContents: launch.pid ? String(launch.pid) : undefined,
+    readyFileContents: launch.readyFileContents,
     readyLogFilePath: launch.logFile,
     readyLogInitialOffset: launch.logOffset,
     readyLogPattern: DAEMON_READY_LOG_PATTERN,
@@ -512,46 +545,11 @@ const startDetachedManagedDaemon = async (
     return false;
   }
 
-  persistPidFileIfAlive(launch.pid);
-  return true;
-};
-
-const ensureDaemonLaunchStarted = async (): Promise<boolean> => {
-  try {
-    if (await reuseStartingDaemon()) {
-      return true;
-    }
-
-    const runningDaemon = await detectRunningDaemon();
-    if (runningDaemon?.managed) {
-      return true;
-    }
-
-    if (runningDaemon) {
-      persistPidFileIfAlive(runningDaemon.pid);
-      return true;
-    }
-
-    if (!tryAcquireDaemonStartLock()) {
-      if (await reuseStartingDaemon()) {
-        return true;
-      }
-
-      logError("Hive is already starting in another process.");
-      return false;
-    }
-
-    logInfo("Hive is not running. Starting background daemon...");
-    launchDetachedServer();
-    return true;
-  } catch (error) {
-    logError(
-      `Failed to start Hive: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-    return false;
+  if (!persistPidFileIfAlive(launch.pid)) {
+    const port = extractPortFromUrl(HEALTHCHECK_URL);
+    persistPidFileIfAlive(port ? findListeningProcessId({ port }) : null);
   }
+  return true;
 };
 
 const ensureDaemonRunning = async (
@@ -1539,8 +1537,10 @@ const webCommand = async () => {
 };
 
 const desktopCommand = async () => {
-  const launched = await ensureDaemonLaunchStarted();
-  if (!launched) {
+  const ready = await ensureDaemonRunning({
+    timeoutMs: DESKTOP_DAEMON_READY_TIMEOUT_MS,
+  });
+  if (!ready) {
     return 1;
   }
 

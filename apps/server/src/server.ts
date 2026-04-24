@@ -448,11 +448,14 @@ const bootstrapServerCore = async (workspaceRoot: string): Promise<void> => {
   await timeStartupStep("workspace registration", async () => {
     await registerWorkspace(workspaceRoot);
   });
-  await timeStartupStep("service supervisor bootstrap", bootstrapSupervisor);
 };
 
 const runStartupRecoveryTasks = async (): Promise<void> => {
   const tasks: StartupRecoveryTask[] = [
+    {
+      label: "bootstrap service supervisor",
+      run: bootstrapSupervisor,
+    },
     {
       label: "resume cell provisioning",
       run: resumeProvisioning,
