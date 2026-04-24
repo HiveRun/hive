@@ -6,8 +6,8 @@ const VIEWER_STATE_TIMEOUT_MS = 15_000;
 const VIEWER_CELL_READY_TIMEOUT_MS = 120_000;
 const VIEWER_CELL_POLL_INTERVAL_MS = 500;
 const VIEWER_ROUTE_ATTEMPTS = 3;
-const WEB_OVERRIDE_PATH = "/web-override";
-const DOCS_OVERRIDE_PATH = "/docs-override";
+const WEB_OVERRIDE_VALUE = "web";
+const DOCS_OVERRIDE_VALUE = "docs";
 
 test("desktop viewer route mounts and unmounts a native browser view", async () => {
   const apiUrl = resolveApiUrl();
@@ -60,7 +60,7 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
 
     const webOverrideUrl = resolveViewerOverrideUrl(
       webRootUrl ?? "",
-      WEB_OVERRIDE_PATH
+      WEB_OVERRIDE_VALUE
     );
 
     const urlInput = page.getByPlaceholder("Enter URL and press Enter...");
@@ -100,7 +100,7 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
 
     const docsOverrideUrl = resolveViewerOverrideUrl(
       docsRootUrl ?? "",
-      DOCS_OVERRIDE_PATH
+      DOCS_OVERRIDE_VALUE
     );
 
     await urlInput.fill(docsOverrideUrl);
@@ -267,8 +267,10 @@ function wait(durationMs: number) {
   });
 }
 
-function resolveViewerOverrideUrl(rootUrl: string, path: string) {
-  return new URL(path, rootUrl).toString();
+function resolveViewerOverrideUrl(rootUrl: string, overrideValue: string) {
+  const url = new URL(rootUrl);
+  url.searchParams.set("viewerOverride", overrideValue);
+  return url.toString();
 }
 
 async function waitForViewerRoute(
