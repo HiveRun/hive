@@ -4,10 +4,7 @@ import { join } from "node:path";
 
 import type { OpencodeClient, ServerOptions } from "@opencode-ai/sdk";
 import { mergeHiveBrowserSafeKeybinds } from "../opencode/browser-safe-keybinds";
-import {
-  acquireSharedOpencodeClient,
-  startSharedOpencodeServer,
-} from "./opencode-server";
+import { acquireSharedOpencodeClient } from "./opencode-server";
 
 const WORKSPACE_CONFIG_CANDIDATES = [
   "@opencode.json",
@@ -120,13 +117,7 @@ export async function loadEffectiveOpencodeDefaults(
   workspaceRootPath: string,
   options?: { client?: Pick<OpencodeClient, "config"> }
 ): Promise<EffectiveOpencodeDefaults> {
-  const client =
-    options?.client ??
-    (await (async () => {
-      const config = await loadOpencodeConfig(workspaceRootPath);
-      await startSharedOpencodeServer(config);
-      return await acquireSharedOpencodeClient();
-    })());
+  const client = options?.client ?? (await acquireSharedOpencodeClient());
   const response = await client.config.get({
     throwOnError: true,
     query: { directory: workspaceRootPath },

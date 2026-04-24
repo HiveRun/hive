@@ -219,18 +219,6 @@ const startOpencodeServer = async (workspaceRoot: string): Promise<void> => {
   await startSharedOpencodeServer(config);
 };
 
-const warmSharedOpencodeServer = (workspaceRoot: string) => {
-  timeStartupStep("shared OpenCode warmup", async () => {
-    await startOpencodeServer(workspaceRoot);
-  }).catch((error) => {
-    process.stderr.write(
-      `Shared OpenCode warmup failed: ${
-        error instanceof Error ? error.message : String(error)
-      }\n`
-    );
-  });
-};
-
 export const cleanupPidFile = () => {
   try {
     rmSync(pidFilePath);
@@ -448,14 +436,14 @@ const bootstrapServerCore = async (workspaceRoot: string): Promise<void> => {
   await timeStartupStep("workspace registration", async () => {
     await registerWorkspace(workspaceRoot);
   });
+  await timeStartupStep("shared OpenCode bootstrap", async () => {
+    await startOpencodeServer(workspaceRoot);
+  });
+  await timeStartupStep("service supervisor bootstrap", bootstrapSupervisor);
 };
 
 const runStartupRecoveryTasks = async (): Promise<void> => {
   const tasks: StartupRecoveryTask[] = [
-    {
-      label: "bootstrap service supervisor",
-      run: bootstrapSupervisor,
-    },
     {
       label: "resume cell provisioning",
       run: resumeProvisioning,
@@ -531,7 +519,6 @@ export const startServer = async () => {
   // Recovery can sweep a large backlog of cells and sessions. Give external
   // clients a short window to connect before that background work begins.
   setTimeout(() => {
-    warmSharedOpencodeServer(workspaceRoot);
     runStartupRecoveryTasks().catch((error) => {
       process.stderr.write(
         `Startup recovery tasks failed: ${
