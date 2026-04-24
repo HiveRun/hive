@@ -218,7 +218,7 @@ async function waitForViewerRoute(
 ) {
   for (let attempt = 1; attempt <= VIEWER_ROUTE_ATTEMPTS; attempt += 1) {
     await page.evaluate(
-      async ({ nextPath, timeoutMs }) => {
+      async ({ nextPath, timeoutMs, pollIntervalMs }) => {
         window.history.pushState({}, "", nextPath);
         window.dispatchEvent(new PopStateEvent("popstate"));
 
@@ -231,14 +231,16 @@ async function waitForViewerRoute(
             return;
           }
 
-          await new Promise((resolve) =>
-            setTimeout(resolve, VIEWER_ROUTE_POLL_INTERVAL_MS)
-          );
+          await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
         }
 
         throw new Error(`Viewer route did not mount for ${nextPath}`);
       },
-      { nextPath: path, timeoutMs: VIEWER_ROUTE_TIMEOUT_MS }
+      {
+        nextPath: path,
+        timeoutMs: VIEWER_ROUTE_TIMEOUT_MS,
+        pollIntervalMs: VIEWER_ROUTE_POLL_INTERVAL_MS,
+      }
     );
 
     try {

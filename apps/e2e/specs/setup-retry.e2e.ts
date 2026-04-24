@@ -54,6 +54,15 @@ test.describe("setup retry", () => {
     });
     expect(failedCell.lastSetupError).toContain("marker missing");
 
+    await waitForCondition({
+      timeoutMs: 30_000,
+      errorMessage: "initial setup.retry activity event was not recorded",
+      check: async () => {
+        const events = await fetchActivity(apiUrl, cellId);
+        return events.some((event) => event.type === "setup.retry");
+      },
+    });
+
     await writeFile(markerPath, "ok\n", "utf8");
     expect(await fileExists(markerPath)).toBe(true);
 
