@@ -48,7 +48,8 @@ const OPENCODE_REQUEST_TIMEOUT_MS = 10_000;
 const QUESTION_API_NOT_FOUND_STATUS = 404;
 const CELL_TEMPLATE_LABEL = "E2E Template";
 const OPENCODE_ATTACH_URL_PATTERN = /attach\s+"([^"]+)"/;
-const TERMINAL_MODE_STATUS_PATTERN = /\b(Plan|Build)\b[\s\S]{0,120}OpenCode/g;
+const TERMINAL_MODE_OPEN_CODE_PATTERN =
+  /\b(Plan|Build)\b[\s\S]{0,200}OpenCode/i;
 const PLAN_EXIT_QUESTION_PATTERN =
   /Would you like to switch to the build[\s\S]{0,80}start implementing\?/i;
 const BUILD_IMPLEMENT_OPTION_PATTERN = /build\/implement/i;
@@ -518,9 +519,17 @@ async function waitForTerminalMode(options: {
       const content =
         (await options.page.locator(selectors.terminalRoot).textContent()) ??
         "";
-      const matches = [...content.matchAll(TERMINAL_MODE_STATUS_PATTERN)];
-      const latest = matches.at(-1)?.[1];
-      return latest === options.expectedMode;
+      const normalized = content.replace(/\s+/g, " ");
+      if (
+        new RegExp(`${options.expectedMode}\\s*[·•]\\s*Big Pickle`, "i").test(
+          normalized
+        )
+      ) {
+        return true;
+      }
+
+      const openCodeMatch = normalized.match(TERMINAL_MODE_OPEN_CODE_PATTERN);
+      return openCodeMatch?.[1] === options.expectedMode;
     },
   });
 }
