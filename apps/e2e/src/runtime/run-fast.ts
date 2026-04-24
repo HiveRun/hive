@@ -12,6 +12,7 @@ const moduleDir = dirname(modulePath);
 const e2eRoot = join(moduleDir, "..", "..");
 const FAILURE_EXIT_CODE = 1;
 const DEFAULT_FAST_WORKERS = 4;
+const DEFAULT_FAST_WORKERS_CI = 2;
 
 async function run(): Promise<void> {
   const workerResolution = resolveWorkerSetting();
@@ -60,7 +61,11 @@ function resolveWorkerSetting(): WorkerResolution {
     return { source: "env", value: envWorkers };
   }
 
-  return { source: "default", value: String(DEFAULT_FAST_WORKERS) };
+  const defaultWorkers = process.env.CI
+    ? DEFAULT_FAST_WORKERS_CI
+    : DEFAULT_FAST_WORKERS;
+
+  return { source: "default", value: String(defaultWorkers) };
 }
 
 run().catch((error) => {
