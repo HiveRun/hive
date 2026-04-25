@@ -12,7 +12,7 @@ const moduleDir = dirname(modulePath);
 const e2eRoot = join(moduleDir, "..", "..");
 const FAILURE_EXIT_CODE = 1;
 const DEFAULT_FAST_WORKERS = 4;
-const DEFAULT_FAST_WORKERS_CI = 2;
+const DEFAULT_FAST_WORKERS_CI = 1;
 
 async function run(): Promise<void> {
   const workerResolution = resolveWorkerSetting();
