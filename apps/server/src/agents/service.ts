@@ -2148,11 +2148,11 @@ async function resolveSessionModePreference(
 
     for (let index = response.data.length - 1; index >= 0; index -= 1) {
       const entry = response.data[index];
-      if (!entry?.info || entry.info.role !== "assistant") {
+      if (!entry?.info) {
         continue;
       }
 
-      const mode = normalizeAgentMode(entry.info.mode);
+      const mode = resolveMessageMode(entry.info);
       if (mode) {
         return mode;
       }
@@ -2593,17 +2593,19 @@ async function persistRuntimeResumeState(
   runtime.cell.resumeAgentSessionOnStartup = shouldResume;
 }
 
-function resolveRuntimeModeFromEvent(event: Event): AgentMode | undefined {
+export function resolveRuntimeModeFromEvent(
+  event: Event
+): AgentMode | undefined {
   if (event.type !== "message.updated") {
     return;
   }
 
-  const info = event.properties.info;
-  if (info.role !== "assistant") {
-    return;
-  }
+  return resolveMessageMode(event.properties.info);
+}
 
-  return normalizeAgentMode(info.mode);
+function resolveMessageMode(info: Message): AgentMode | undefined {
+  const mode = (info as { mode?: unknown }).mode;
+  return typeof mode === "string" ? normalizeAgentMode(mode) : undefined;
 }
 
 function setRuntimeMode(runtime: RuntimeHandle, mode: AgentMode): void {

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
@@ -6,9 +6,12 @@ import dotenv from "dotenv";
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const serverEnvPath = resolve(moduleDir, "../../.env");
 
-export const binaryDirectory = dirname(process.execPath);
+const resolvedExecPath =
+  realpathSync.native?.(process.execPath) ?? realpathSync(process.execPath);
 
-const runtimeExecutable = basename(process.execPath).toLowerCase();
+export const binaryDirectory = dirname(resolvedExecPath);
+
+const runtimeExecutable = basename(resolvedExecPath).toLowerCase();
 export const isCompiledRuntime = !runtimeExecutable.startsWith("bun");
 
 export const installManagedEnvKeys = new Set([

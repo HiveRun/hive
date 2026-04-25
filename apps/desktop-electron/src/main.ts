@@ -78,7 +78,7 @@ const createMainWindow = async (ipcRegistry: IpcRegistry) => {
   const desktopUrl = process.env.HIVE_DESKTOP_URL;
   if (desktopUrl) {
     await window.loadURL(desktopUrl);
-    return;
+    return window;
   }
 
   const rendererEntry = resolveRendererEntry();
@@ -89,6 +89,7 @@ const createMainWindow = async (ipcRegistry: IpcRegistry) => {
   }
 
   await window.loadFile(rendererEntry);
+  return window;
 };
 
 const bootstrap = async () => {

@@ -1,5 +1,11 @@
 import "dotenv/config";
-import { existsSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -36,6 +42,8 @@ import {
 
 const DEFAULT_SERVER_PORT = 3000;
 const DEFAULT_HOSTNAME = "localhost";
+const STARTUP_RECOVERY_DELAY_MS = 1000;
+const NANOSECONDS_PER_MILLISECOND = 1_000_000;
 const PORT = Number(process.env.PORT ?? DEFAULT_SERVER_PORT);
 const HOSTNAME = process.env.HOST ?? process.env.HOSTNAME ?? DEFAULT_HOSTNAME;
 
@@ -109,18 +117,22 @@ function shouldIgnoreAutoRequestLog(ctx: {
   return false;
 }
 
-const runtimeExecutable = basename(process.execPath).toLowerCase();
+const resolvedExecPath =
+  realpathSync.native?.(process.execPath) ?? realpathSync(process.execPath);
+const runtimeExecutable = basename(resolvedExecPath).toLowerCase();
 const isBunRuntime = runtimeExecutable.startsWith("bun");
 const isCompiledRuntime = !isBunRuntime;
 export const DEFAULT_API_PORT = String(PORT);
 export const DEFAULT_API_URL = `http://${formatHostForLocalUrl(HOSTNAME)}:${DEFAULT_API_PORT}`;
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
-export const binaryDirectory = dirname(process.execPath);
+export const binaryDirectory = dirname(resolvedExecPath);
 const forcedMigrationsDirectory = process.env.HIVE_MIGRATIONS_DIR;
 const hiveHome = resolveHiveHome();
 export const pidFilePath =
   process.env.HIVE_PID_FILE ?? join(hiveHome, "hive.pid");
+export const readyFilePath =
+  process.env.HIVE_READY_FILE ?? join(hiveHome, "daemon-ready");
 export const DEFAULT_WEB_PORT =
   process.env.WEB_PORT ?? (isCompiledRuntime ? String(PORT) : "3001");
 const DEFAULT_CORS_ORIGINS = [
@@ -215,6 +227,23 @@ export const cleanupPidFile = () => {
   }
 };
 
+export const cleanupReadyFile = () => {
+  try {
+    rmSync(readyFilePath);
+  } catch {
+    /* ignore ready file cleanup errors */
+  }
+};
+
+const markDaemonReady = () => {
+  try {
+    mkdirSync(dirname(readyFilePath), { recursive: true });
+    writeFileSync(readyFilePath, `${process.pid}\n`, "utf8");
+  } catch {
+    /* ignore ready file write errors */
+  }
+};
+
 const createApp = () =>
   new Elysia()
     .use(
@@ -264,6 +293,7 @@ const shutdown = async (): Promise<void> => {
   }
   await closeAllAgentSessions({ deleteRemote: false });
   await stopSharedOpencodeServer();
+  cleanupReadyFile();
   cleanupPidFile();
 };
 
@@ -291,6 +321,7 @@ const registerSignalHandlers = () => {
       process.exit(0);
     } catch (error) {
       process.stderr.write(`Error during shutdown: ${error}\n`);
+      cleanupReadyFile();
       cleanupPidFile();
       process.exit(1);
     }
@@ -368,11 +399,29 @@ type StartupRecoveryTask = {
   run: () => Promise<void>;
 };
 
+const formatElapsedMilliseconds = (startedAt: bigint) =>
+  (
+    Number(process.hrtime.bigint() - startedAt) / NANOSECONDS_PER_MILLISECOND
+  ).toFixed(1);
+
+const timeStartupStep = async <T>(label: string, run: () => Promise<T>) => {
+  const startedAt = process.hrtime.bigint();
+  const result = await run();
+  process.stderr.write(
+    `Startup timing: ${label} completed in ${formatElapsedMilliseconds(startedAt)}ms\n`
+  );
+  return result;
+};
+
 const runStartupRecoveryTask = async (
   task: StartupRecoveryTask
 ): Promise<void> => {
+  const startedAt = process.hrtime.bigint();
   try {
     await task.run();
+    process.stderr.write(
+      `Startup timing: ${task.label} completed in ${formatElapsedMilliseconds(startedAt)}ms\n`
+    );
   } catch (failure) {
     process.stderr.write(
       `Failed to ${task.label}: ${
@@ -383,10 +432,14 @@ const runStartupRecoveryTask = async (
 };
 
 const bootstrapServerCore = async (workspaceRoot: string): Promise<void> => {
-  await runMigrations();
-  await registerWorkspace(workspaceRoot);
-  await startOpencodeServer(workspaceRoot);
-  await bootstrapSupervisor();
+  await timeStartupStep("database migrations", runMigrations);
+  await timeStartupStep("workspace registration", async () => {
+    await registerWorkspace(workspaceRoot);
+  });
+  await timeStartupStep("shared OpenCode bootstrap", async () => {
+    await startOpencodeServer(workspaceRoot);
+  });
+  await timeStartupStep("service supervisor bootstrap", bootstrapSupervisor);
 };
 
 const runStartupRecoveryTasks = async (): Promise<void> => {
@@ -411,7 +464,9 @@ const runStartupRecoveryTasks = async (): Promise<void> => {
 };
 
 export const startServer = async () => {
+  const serverStartTime = process.hrtime.bigint();
   const app = createApp();
+  cleanupReadyFile();
 
   app.get("/", () => "OK");
 
@@ -428,6 +483,10 @@ export const startServer = async () => {
     cleanupPidFile();
     process.exit(1);
   }
+
+  process.stderr.write(
+    `Startup timing: core bootstrap completed in ${formatElapsedMilliseconds(serverStartTime)}ms\n`
+  );
 
   registerSignalHandlers();
 
@@ -452,14 +511,22 @@ export const startServer = async () => {
   process.stderr.write(
     `API listening on http://${boundHostname}:${boundPort}\n`
   );
+  process.stderr.write(
+    `Startup timing: server ready in ${formatElapsedMilliseconds(serverStartTime)}ms\n`
+  );
+  markDaemonReady();
 
-  runStartupRecoveryTasks().catch((error) => {
-    process.stderr.write(
-      `Startup recovery tasks failed: ${
-        error instanceof Error ? error.message : String(error)
-      }\n`
-    );
-  });
+  // Recovery can sweep a large backlog of cells and sessions. Give external
+  // clients a short window to connect before that background work begins.
+  setTimeout(() => {
+    runStartupRecoveryTasks().catch((error) => {
+      process.stderr.write(
+        `Startup recovery tasks failed: ${
+          error instanceof Error ? error.message : String(error)
+        }\n`
+      );
+    });
+  }, STARTUP_RECOVERY_DELAY_MS);
 
   return app;
 };

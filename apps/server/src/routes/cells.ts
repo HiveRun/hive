@@ -911,6 +911,7 @@ async function ensureChatTerminalSessionForCell(
 ) {
   const serverUrl =
     process.env.HIVE_OPENCODE_SERVER_URL ?? getSharedOpencodeServerBaseUrl();
+
   if (!serverUrl) {
     throw new Error("Shared OpenCode server is not running");
   }
@@ -1243,7 +1244,7 @@ export function createCellsRoutes(
             lastSetupError: null,
           });
 
-          const context = await createExistingProvisionContext({
+          const context = createExistingProvisionContext({
             cell: {
               ...cell,
               status: "spawning",
@@ -3763,7 +3764,7 @@ async function handleCellCreationRequest(
     sendAgentMessage: dispatchAgentMessage,
     ensureServices,
     stopCellServices,
-    worktreeService,
+    getWorktreeService: async () => worktreeService,
     workspace: workspaceContext.workspace,
     log,
   });
@@ -3864,7 +3865,7 @@ type ProvisionContext = {
   sendAgentMessage: CellRouteDependencies["sendAgentMessage"];
   ensureServices: CellRouteDependencies["ensureServicesForCell"];
   stopCellServices: CellRouteDependencies["stopServicesForCell"];
-  worktreeService: AsyncWorktreeManager;
+  getWorktreeService: () => Promise<AsyncWorktreeManager>;
   workspace: WorkspaceRecord;
   log: LoggerLike;
   state: CellProvisionState;
@@ -3922,7 +3923,7 @@ function createProvisionContext(args: {
   sendAgentMessage: CellRouteDependencies["sendAgentMessage"];
   ensureServices: CellRouteDependencies["ensureServicesForCell"];
   stopCellServices: CellRouteDependencies["stopServicesForCell"];
-  worktreeService: AsyncWorktreeManager;
+  getWorktreeService: () => Promise<AsyncWorktreeManager>;
   workspace: WorkspaceRecord;
   log: LoggerLike;
 }): ProvisionContext {
@@ -3944,7 +3945,7 @@ function createProvisionContext(args: {
   };
 }
 
-async function createExistingProvisionContext(args: {
+function createExistingProvisionContext(args: {
   cell: typeof cells.$inferSelect;
   provisioningState: CellProvisioningState | null;
   body: Static<typeof CreateCellSchema>;
@@ -3957,10 +3958,6 @@ async function createExistingProvisionContext(args: {
   workspaceContext: WorkspaceRuntimeContext;
   log: LoggerLike;
 }) {
-  const worktreeService = toAsyncWorktreeManager(
-    await args.workspaceContext.createWorktreeManager()
-  );
-
   return {
     body: args.body,
     template: args.template,
@@ -3969,7 +3966,10 @@ async function createExistingProvisionContext(args: {
     sendAgentMessage: args.sendAgentMessage,
     ensureServices: args.ensureServices,
     stopCellServices: args.stopCellServices,
-    worktreeService,
+    getWorktreeService: async () =>
+      toAsyncWorktreeManager(
+        await args.workspaceContext.createWorktreeManager()
+      ),
     workspace: args.workspaceContext.workspace,
     log: args.log,
     state: {
@@ -4075,11 +4075,13 @@ async function ensureCellWorktree(
   context: ProvisionContext,
   onTimingEvent?: (event: CapturedWorktreeCreateTimingEvent) => void
 ): Promise<void> {
-  const { body, database, worktreeService, state } = context;
+  const { body, database, state } = context;
 
   if (state.worktreeCreated && state.workspacePath && state.baseCommit) {
     return;
   }
+
+  const worktreeService = await context.getWorktreeService();
 
   let worktree: { path: string; branch: string; baseCommit: string };
   try {
@@ -4687,8 +4689,10 @@ async function removeWorktreeIfCreated(context: ProvisionContext) {
     return;
   }
 
+  const worktreeService = await context.getWorktreeService();
+
   await removeCellWorkspace(
-    context.worktreeService,
+    worktreeService,
     {
       id: context.state.cellId,
       workspacePath: context.state.workspacePath,
@@ -5006,7 +5010,7 @@ const resumeSingleCell = async (
       return;
     }
 
-    const context = await createExistingProvisionContext({
+    const context = createExistingProvisionContext({
       cell,
       provisioningState,
       body: resolveProvisioningParams(cell, provisioningState),
