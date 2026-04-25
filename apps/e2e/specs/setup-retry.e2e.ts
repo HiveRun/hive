@@ -22,12 +22,12 @@ test.describe("setup retry", () => {
     test.setTimeout(SETUP_RETRY_TEST_TIMEOUT_MS);
 
     const apiUrl = process.env.HIVE_E2E_API_URL;
-    const hiveHome = process.env.HIVE_E2E_HIVE_HOME;
+    const workspacePath = process.env.HIVE_E2E_WORKSPACE_PATH;
     if (!apiUrl) {
       throw new Error("HIVE_E2E_API_URL is required for E2E tests");
     }
-    if (!hiveHome) {
-      throw new Error("HIVE_E2E_HIVE_HOME is required for E2E tests");
+    if (!workspacePath) {
+      throw new Error("HIVE_E2E_WORKSPACE_PATH is required for E2E tests");
     }
 
     await page.goto("/");
@@ -46,52 +46,56 @@ test.describe("setup retry", () => {
     });
     expect(initialCell.lastSetupError ?? null).toBeNull();
 
-    const markerPath = join(hiveHome, "cells", cellId, ".hive-setup-pass");
+    const markerPath = join(workspacePath, ".hive-setup-pass");
     await rm(markerPath, { force: true });
     expect(await fileExists(markerPath)).toBe(false);
 
-    const firstRetryResponse = await retrySetup(apiUrl, cellId);
-    expect(firstRetryResponse.ok).toBe(true);
+    try {
+      const firstRetryResponse = await retrySetup(apiUrl, cellId);
+      expect(firstRetryResponse.ok).toBe(true);
 
-    const failedCell = await waitForCellStatus({
-      apiUrl,
-      cellId,
-      status: "error",
-      timeoutMs: RETRY_STATE_TIMEOUT_MS,
-    });
-    expect(failedCell.lastSetupError).toContain("marker missing");
+      const failedCell = await waitForCellStatus({
+        apiUrl,
+        cellId,
+        status: "error",
+        timeoutMs: RETRY_STATE_TIMEOUT_MS,
+      });
+      expect(failedCell.lastSetupError).toContain("marker missing");
 
-    await waitForCondition({
-      timeoutMs: 30_000,
-      errorMessage: "initial setup.retry activity event was not recorded",
-      check: async () => {
-        const events = await fetchActivity(apiUrl, cellId);
-        return events.some((event) => event.type === "setup.retry");
-      },
-    });
+      await waitForCondition({
+        timeoutMs: 30_000,
+        errorMessage: "initial setup.retry activity event was not recorded",
+        check: async () => {
+          const events = await fetchActivity(apiUrl, cellId);
+          return events.some((event) => event.type === "setup.retry");
+        },
+      });
 
-    await writeFile(markerPath, "ok\n", "utf8");
-    expect(await fileExists(markerPath)).toBe(true);
+      await writeFile(markerPath, "ok\n", "utf8");
+      expect(await fileExists(markerPath)).toBe(true);
 
-    const secondRetryResponse = await retrySetup(apiUrl, cellId);
-    expect(secondRetryResponse.ok).toBe(true);
+      const secondRetryResponse = await retrySetup(apiUrl, cellId);
+      expect(secondRetryResponse.ok).toBe(true);
 
-    const recoveredCell = await waitForCellStatus({
-      apiUrl,
-      cellId,
-      status: "ready",
-      timeoutMs: RETRY_STATE_TIMEOUT_MS,
-    });
-    expect(recoveredCell.lastSetupError ?? null).toBeNull();
+      const recoveredCell = await waitForCellStatus({
+        apiUrl,
+        cellId,
+        status: "ready",
+        timeoutMs: RETRY_STATE_TIMEOUT_MS,
+      });
+      expect(recoveredCell.lastSetupError ?? null).toBeNull();
 
-    await waitForCondition({
-      timeoutMs: 30_000,
-      errorMessage: "setup.retry activity event was not recorded",
-      check: async () => {
-        const events = await fetchActivity(apiUrl, cellId);
-        return events.some((event) => event.type === "setup.retry");
-      },
-    });
+      await waitForCondition({
+        timeoutMs: 30_000,
+        errorMessage: "setup.retry activity event was not recorded",
+        check: async () => {
+          const events = await fetchActivity(apiUrl, cellId);
+          return events.some((event) => event.type === "setup.retry");
+        },
+      });
+    } finally {
+      await writeFile(markerPath, "ok\n", "utf8");
+    }
   });
 });
 

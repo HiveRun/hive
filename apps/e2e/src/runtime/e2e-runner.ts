@@ -425,7 +425,7 @@ async function createFixtureWorkspace(workspaceRoot: string): Promise<void> {
         label: "E2E Setup Retry Template",
         type: "manual",
         setup: [
-          'test -f .hive-setup-pass || { echo "marker missing: .hive-setup-pass" >&2; exit 37; }',
+          'test -f "$HIVE_MAIN_REPO/.hive-setup-pass" || { echo "marker missing: $HIVE_MAIN_REPO/.hive-setup-pass" >&2; exit 37; }',
         ],
       },
     },
