@@ -7,6 +7,15 @@ type DesktopNotifyResult = {
   delivered: boolean;
 };
 
+type DesktopRuntimeInfo = {
+  runtime: "electron";
+  version: string;
+  platform: string;
+  backendUrl: string;
+  healthUrl: string;
+  startupMode: "starting" | "reconnecting";
+};
+
 type DesktopViewerBounds = {
   x: number;
   y: number;
@@ -30,13 +39,10 @@ type DesktopViewerServiceTab = {
 };
 
 type DesktopRuntimeBridge = {
+  runtimeInfo: DesktopRuntimeInfo;
   notify: (payload: DesktopNotifyInput) => Promise<DesktopNotifyResult>;
   openExternal: (url: string) => Promise<{ ok: boolean }>;
-  getRuntimeInfo: () => Promise<{
-    runtime: "electron";
-    version: string;
-    platform: string;
-  }>;
+  getRuntimeInfo: () => Promise<DesktopRuntimeInfo>;
   viewer: {
     activateServiceTab: (serviceId: string) => Promise<DesktopViewerState>;
     getState: () => Promise<DesktopViewerState>;

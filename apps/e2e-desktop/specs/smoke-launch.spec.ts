@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { launchDesktopApp, readDesktopDiagnostics } from "./utils/desktop-app";
 
+const STARTUP_PHASE_PATTERN = /Starting Hive daemon|Connecting to Hive/i;
+
 test("desktop launch smoke loads workspace shell", async () => {
   const { app, page } = await launchDesktopApp();
 
@@ -17,6 +19,24 @@ test("desktop launch smoke loads workspace shell", async () => {
     }
 
     await expect(page.getByTestId("workspace-create-cell")).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});
+
+test("desktop launch shows in-window startup while backend connects", async () => {
+  const { app, page } = await launchDesktopApp({
+    apiUrl: "http://127.0.0.1:9",
+    startupMode: "starting",
+  });
+
+  try {
+    await expect(page.getByTestId("desktop-startup-screen")).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByTestId("desktop-startup-phase")).toContainText(
+      STARTUP_PHASE_PATTERN
+    );
   } finally {
     await app.close();
   }

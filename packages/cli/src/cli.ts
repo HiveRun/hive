@@ -164,9 +164,12 @@ const MANAGED_DAEMON_VERIFY_INTERVAL_MS = 200;
 const DETACHED_DAEMON_READY_TIMEOUT_MS = 180_000;
 const DETACHED_DAEMON_READY_INTERVAL_MS = 500;
 const DETACHED_READY_FILE_PREWAIT_TIMEOUT_MS = 5000;
-const DESKTOP_DAEMON_READY_TIMEOUT_MS = 5000;
 const DAEMON_STOP_WAIT_TIMEOUT_MS = 10_000;
 const DAEMON_STOP_POLL_INTERVAL_MS = 100;
+const DESKTOP_STARTUP_MODE_STARTING = "starting";
+const DESKTOP_STARTUP_MODE_RECONNECTING = "reconnecting";
+const CF_BUNDLE_EXECUTABLE_PATTERN =
+  /<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/;
 const EXECUTABLE_PATH =
   realpathSync.native?.(process.execPath) ?? realpathSync(process.execPath);
 const DETACHED_DAEMON_CWD = dirname(EXECUTABLE_PATH);
@@ -420,7 +423,7 @@ const launchDetachedServerWithSpawn = (
   }
 };
 
-const launchDetachedServer = (): LaunchResult => {
+const prepareDetachedLaunch = () => {
   const logDir = resolveLogDirectory();
   ensureLogDirectory(logDir);
   const logFile = resolveLogFilePath();
@@ -435,6 +438,17 @@ const launchDetachedServer = (): LaunchResult => {
   for (const key of DETACHED_DAEMON_ENV_STRIP_KEYS) {
     delete childEnv[key];
   }
+
+  return { childEnv, logFile, logOffset };
+};
+
+const launchDetachedServerDirect = (): LaunchResult => {
+  const { childEnv, logFile, logOffset } = prepareDetachedLaunch();
+  return launchDetachedServerWithSpawn(childEnv, logFile, logOffset);
+};
+
+const launchDetachedServer = (): LaunchResult => {
+  const { childEnv, logFile, logOffset } = prepareDetachedLaunch();
 
   if (process.platform !== "win32") {
     const command = 'setsid "$1" --foreground >"$2" 2>&1 < /dev/null &';
@@ -711,11 +725,43 @@ const getDesktopExecutableCandidates = () => {
 
 const resolveMacAppExecutable = (appPath: string) => {
   const appName = basename(appPath, ".app");
-  const executable = join(appPath, "Contents", "MacOS", appName);
-  return existsSync(executable) ? executable : null;
+  const directExecutable = join(appPath, "Contents", "MacOS", appName);
+  if (existsSync(directExecutable)) {
+    return directExecutable;
+  }
+
+  try {
+    const infoPlist = readFileSync(
+      join(appPath, "Contents", "Info.plist"),
+      "utf8"
+    );
+    const executableName = infoPlist.match(CF_BUNDLE_EXECUTABLE_PATTERN)?.[1];
+    if (!executableName) {
+      return null;
+    }
+
+    const plistExecutable = join(appPath, "Contents", "MacOS", executableName);
+    return existsSync(plistExecutable) ? plistExecutable : null;
+  } catch {
+    return null;
+  }
 };
 
-const launchDesktopApplication = () => {
+type DesktopLaunchOptions = {
+  startupMode?:
+    | typeof DESKTOP_STARTUP_MODE_STARTING
+    | typeof DESKTOP_STARTUP_MODE_RECONNECTING;
+};
+
+const resolveDesktopStartupMode = (): DesktopLaunchOptions["startupMode"] => {
+  if (readManagedDaemonPid() || readDaemonStartLockPid()) {
+    return DESKTOP_STARTUP_MODE_RECONNECTING;
+  }
+
+  return DESKTOP_STARTUP_MODE_STARTING;
+};
+
+const launchDesktopApplication = (options: DesktopLaunchOptions = {}) => {
   const target = getDesktopExecutableCandidates().find(
     (candidate) => candidate && existsSync(candidate)
   );
@@ -730,8 +776,8 @@ const launchDesktopApplication = () => {
 
   try {
     let command = target;
-    let args: string[] = [];
-    let options: SpawnOptions = {
+    const args: string[] = [];
+    let spawnOptions: SpawnOptions = {
       stdio: "ignore",
       detached: true,
       cwd: dirname(target),
@@ -739,31 +785,39 @@ const launchDesktopApplication = () => {
 
     if (process.platform === "darwin" && target.endsWith(".app")) {
       const appExecutable = resolveMacAppExecutable(target);
-      if (appExecutable) {
-        command = appExecutable;
-        options = {
-          stdio: "ignore",
-          detached: true,
-          cwd: dirname(appExecutable),
-        };
-      } else {
-        command = "open";
-        args = [target];
-        options = { stdio: "ignore", detached: true };
+      if (!appExecutable) {
+        return {
+          ok: false,
+          message: `Unable to resolve the executable inside ${target}.`,
+        } as const;
       }
+
+      command = appExecutable;
+      spawnOptions = {
+        stdio: "ignore",
+        detached: true,
+        cwd: dirname(appExecutable),
+      };
     }
 
     const rendererPath = join(binaryDirectory, "public", "index.html");
-    const env =
-      existsSync(rendererPath) && !process.env.HIVE_DESKTOP_RENDERER_PATH
-        ? {
-            ...process.env,
-            HIVE_DESKTOP_RENDERER_PATH: rendererPath,
-          }
-        : process.env;
+    const env = {
+      ...process.env,
+      HIVE_DESKTOP_BACKEND_URL:
+        process.env.HIVE_DESKTOP_BACKEND_URL ?? DEFAULT_API_URL,
+      HIVE_DESKTOP_HEALTH_URL:
+        process.env.HIVE_DESKTOP_HEALTH_URL ?? HEALTHCHECK_URL,
+      HIVE_DESKTOP_STARTUP_MODE:
+        process.env.HIVE_DESKTOP_STARTUP_MODE ??
+        options.startupMode ??
+        DESKTOP_STARTUP_MODE_STARTING,
+      ...(existsSync(rendererPath) && !process.env.HIVE_DESKTOP_RENDERER_PATH
+        ? { HIVE_DESKTOP_RENDERER_PATH: rendererPath }
+        : {}),
+    };
 
     const child = spawn(command, args, {
-      ...options,
+      ...spawnOptions,
       env,
     });
     child.unref();
@@ -776,6 +830,37 @@ const launchDesktopApplication = () => {
           ? error.message
           : "Failed to launch Hive desktop",
     } as const;
+  }
+};
+
+const ensureDesktopDaemonStarted = async () => {
+  try {
+    if (readDaemonStartLockPid()) {
+      return true;
+    }
+
+    const runningDaemon = await detectRunningDaemon();
+    if (runningDaemon) {
+      if (!runningDaemon.managed) {
+        persistPidFileIfAlive(runningDaemon.pid);
+      }
+      return true;
+    }
+
+    if (!tryAcquireDaemonStartLock()) {
+      return true;
+    }
+
+    launchDetachedServerDirect();
+    return true;
+  } catch (error) {
+    cleanupDaemonStartLock();
+    logError(
+      `Failed to start Hive: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return false;
   }
 };
 
@@ -1537,14 +1622,9 @@ const webCommand = async () => {
 };
 
 const desktopCommand = async () => {
-  const ready = await ensureDaemonRunning({
-    timeoutMs: DESKTOP_DAEMON_READY_TIMEOUT_MS,
+  const result = launchDesktopApplication({
+    startupMode: resolveDesktopStartupMode(),
   });
-  if (!ready) {
-    return 1;
-  }
-
-  const result = launchDesktopApplication();
   if (!result.ok) {
     if (result.message) {
       logError(`Failed to launch Hive desktop: ${result.message}`);
@@ -1553,6 +1633,11 @@ const desktopCommand = async () => {
   }
 
   persistDesktopPidFile(result.pid ?? null);
+
+  if (!(await ensureDesktopDaemonStarted())) {
+    return 1;
+  }
+
   logSuccess("Launched Hive desktop application.");
   return 0;
 };

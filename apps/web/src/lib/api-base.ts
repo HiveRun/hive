@@ -2,14 +2,19 @@ const DEFAULT_API_BASE = "http://localhost:3000";
 
 export const resolveApiBase = () => {
   const envUrl = import.meta.env.VITE_API_URL?.trim();
-  const isDesktopRuntime =
-    typeof window !== "undefined" && "hiveDesktop" in window;
+  const desktopRuntimeInfo =
+    typeof window !== "undefined" ? window.hiveDesktop?.runtimeInfo : undefined;
+  const desktopApiUrl = desktopRuntimeInfo?.backendUrl.trim() || undefined;
+
+  if (desktopApiUrl && desktopApiUrl !== "undefined") {
+    return desktopApiUrl;
+  }
 
   if (envUrl && envUrl !== "undefined") {
     return envUrl;
   }
 
-  if (isDesktopRuntime) {
+  if (typeof window !== "undefined" && "hiveDesktop" in window) {
     return DEFAULT_API_BASE;
   }
 
