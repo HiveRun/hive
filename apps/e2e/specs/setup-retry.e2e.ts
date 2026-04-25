@@ -11,9 +11,16 @@ import {
 const SETUP_RETRY_TEMPLATE_LABEL = "E2E Setup Retry Template";
 const INITIAL_READY_TIMEOUT_MS = 300_000;
 const RETRY_STATE_TIMEOUT_MS = 180_000;
+const SETUP_RETRY_TIMEOUT_BUFFER_MS = 60_000;
+const SETUP_RETRY_TEST_TIMEOUT_MS =
+  INITIAL_READY_TIMEOUT_MS +
+  RETRY_STATE_TIMEOUT_MS * 2 +
+  SETUP_RETRY_TIMEOUT_BUFFER_MS;
 
 test.describe("setup retry", () => {
   test("recovers a failed setup after retry", async ({ page }) => {
+    test.setTimeout(SETUP_RETRY_TEST_TIMEOUT_MS);
+
     const apiUrl = process.env.HIVE_E2E_API_URL;
     const hiveHome = process.env.HIVE_E2E_HIVE_HOME;
     if (!apiUrl) {

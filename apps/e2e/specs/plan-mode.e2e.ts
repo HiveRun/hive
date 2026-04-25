@@ -276,9 +276,9 @@ async function sendBuildModePromptViaOpencode(options: {
   opencodeServerUrl: string;
   sessionId: string;
   workspacePath: string;
-}): Promise<void> {
+}): Promise<boolean> {
   const query = new URLSearchParams({ directory: options.workspacePath });
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `${options.opencodeServerUrl}/session/${options.sessionId}/message?${query.toString()}`,
     {
       method: "POST",
@@ -298,10 +298,10 @@ async function sendBuildModePromptViaOpencode(options: {
   );
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to send build-mode prompt via OpenCode server (status ${response.status})`
-    );
+    return false;
   }
+
+  return true;
 }
 
 async function sendBuildPromptForTransition(options: {
@@ -311,16 +311,25 @@ async function sendBuildPromptForTransition(options: {
   sessionId: string;
   workspacePath: string;
 }): Promise<void> {
-  await sendBuildModePromptViaOpencode({
-    opencodeServerUrl: options.opencodeServerUrl,
-    sessionId: options.sessionId,
-    workspacePath: options.workspacePath,
-  });
-
-  await sendBuildPromptViaChatTerminalApi({
+  const sentViaTerminal = await sendBuildPromptViaChatTerminalApi({
     apiUrl: options.apiUrl,
     cellId: options.cellId,
   });
+
+  if (sentViaTerminal) {
+    return;
+  }
+
+  try {
+    await sendBuildModePromptViaOpencode({
+      opencodeServerUrl: options.opencodeServerUrl,
+      sessionId: options.sessionId,
+      workspacePath: options.workspacePath,
+    });
+  } catch {
+    // The direct OpenCode API can hold the response open while the agent works;
+    // transition polling below will retry through both available input paths.
+  }
 }
 
 async function sendBuildPromptViaChatTerminalApi(options: {
