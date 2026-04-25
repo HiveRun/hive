@@ -24,39 +24,17 @@ type CellDetails = {
   opencodeCommand: string | null;
 };
 
-type QuestionOption = {
-  label?: string;
-  description?: string;
-};
-
-type PendingQuestion = {
-  id?: string;
-  sessionID?: string;
-  questions?: Array<{
-    options?: QuestionOption[];
-  }>;
-};
-
 const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
 const CHAT_ROUTE_TIMEOUT_MS = 180_000;
 const SESSION_MODE_TIMEOUT_MS = 120_000;
-const BUILD_TRANSITION_TIMEOUT_MS = 200_000;
 const PLAN_TO_BUILD_TEST_TIMEOUT_MS = 300_000;
 const MODE_POLL_INTERVAL_MS = 500;
-const BUILD_PROMPT_RETRY_INTERVAL_MS = 20_000;
 const OPENCODE_REQUEST_TIMEOUT_MS = 10_000;
-const QUESTION_API_NOT_FOUND_STATUS = 404;
 const CELL_TEMPLATE_LABEL = "E2E Template";
 const OPENCODE_ATTACH_URL_PATTERN = /attach\s+"([^"]+)"/;
 const TERMINAL_MODE_OPEN_CODE_PATTERN =
   /\b(Plan|Build)\b[\s\S]{0,200}OpenCode/i;
-const PLAN_EXIT_QUESTION_PATTERN =
-  /Would you like to switch to the build[\s\S]{0,80}start implementing\?/i;
-const BUILD_IMPLEMENT_OPTION_PATTERN = /build\/implement/i;
-const QUESTION_PROMPT_HINT_PATTERN = /↑↓\s*select[\s\S]{0,40}enter\s*submit/i;
-const YES_LABEL_PATTERN = /^yes$/i;
-const BUILD_MODE_PROMPT_TEXT =
-  "Switch to build mode and acknowledge with a short response.";
+const BUILD_MODE_PROMPT_TEXT = "Switch to build mode.";
 
 test.describe("plan mode @plan-mode", () => {
   test("@plan-mode defaults new cells to plan mode", async ({ page }) => {
@@ -176,22 +154,10 @@ test.describe("plan mode @plan-mode", () => {
     }
 
     const opencodeServerUrl = parseOpencodeServerUrl(cell.opencodeCommand);
-    await sendBuildPromptForTransition({
-      apiUrl,
-      cellId,
+    await sendBuildModePromptViaOpencode({
       opencodeServerUrl,
       sessionId: cell.opencodeSessionId,
       workspacePath: cell.workspacePath,
-    });
-
-    await waitForPlanToBuildTransition({
-      apiUrl,
-      cellId,
-      page,
-      opencodeServerUrl,
-      sessionId: cell.opencodeSessionId,
-      workspacePath: cell.workspacePath,
-      hasSentInitialPrompt: true,
     });
 
     await waitForTerminalMode({ page, expectedMode: "Build" });
@@ -276,10 +242,10 @@ async function sendBuildModePromptViaOpencode(options: {
   opencodeServerUrl: string;
   sessionId: string;
   workspacePath: string;
-}): Promise<boolean> {
+}): Promise<void> {
   const query = new URLSearchParams({ directory: options.workspacePath });
   const response = await fetchWithTimeout(
-    `${options.opencodeServerUrl}/session/${options.sessionId}/message?${query.toString()}`,
+    `${options.opencodeServerUrl}/session/${options.sessionId}/prompt_async?${query.toString()}`,
     {
       method: "POST",
       headers: {
@@ -287,6 +253,7 @@ async function sendBuildModePromptViaOpencode(options: {
       },
       body: JSON.stringify({
         agent: "build",
+        noReply: true,
         parts: [
           {
             type: "text",
@@ -298,223 +265,10 @@ async function sendBuildModePromptViaOpencode(options: {
   );
 
   if (!response.ok) {
-    return false;
-  }
-
-  return true;
-}
-
-async function sendBuildPromptForTransition(options: {
-  apiUrl: string;
-  cellId: string;
-  opencodeServerUrl: string;
-  sessionId: string;
-  workspacePath: string;
-}): Promise<void> {
-  const sentViaTerminal = await sendBuildPromptViaChatTerminalApi({
-    apiUrl: options.apiUrl,
-    cellId: options.cellId,
-  });
-
-  if (sentViaTerminal) {
-    return;
-  }
-
-  try {
-    await sendBuildModePromptViaOpencode({
-      opencodeServerUrl: options.opencodeServerUrl,
-      sessionId: options.sessionId,
-      workspacePath: options.workspacePath,
-    });
-  } catch {
-    // The direct OpenCode API can hold the response open while the agent works;
-    // transition polling below will retry through both available input paths.
-  }
-}
-
-async function sendBuildPromptViaChatTerminalApi(options: {
-  apiUrl: string;
-  cellId: string;
-}): Promise<boolean> {
-  try {
-    const response = await fetchWithTimeout(
-      `${options.apiUrl}/api/cells/${options.cellId}/chat/terminal/input`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          data: `${BUILD_MODE_PROMPT_TEXT}\r`,
-        }),
-      }
+    throw new Error(
+      `Failed to switch OpenCode mode via prompt_async (status ${response.status})`
     );
-
-    return response.ok;
-  } catch {
-    return false;
   }
-}
-
-async function waitForPlanToBuildTransition(options: {
-  apiUrl: string;
-  cellId: string;
-  page: Page;
-  opencodeServerUrl: string;
-  sessionId: string;
-  workspacePath: string;
-  hasSentInitialPrompt: boolean;
-}): Promise<void> {
-  const startedAt = Date.now();
-  let lastPromptAt = options.hasSentInitialPrompt ? Date.now() : 0;
-
-  while (Date.now() - startedAt < BUILD_TRANSITION_TIMEOUT_MS) {
-    const switched = await waitForSessionMode({
-      apiUrl: options.apiUrl,
-      cellId: options.cellId,
-      expectedStartMode: "plan",
-      expectedCurrentMode: "build",
-      timeoutMs: MODE_POLL_INTERVAL_MS,
-      failOnTimeout: false,
-    });
-    if (switched) {
-      return;
-    }
-
-    await tryHandleBuildTransitionQuestion(options);
-
-    const shouldResendPrompt =
-      Date.now() - lastPromptAt >= BUILD_PROMPT_RETRY_INTERVAL_MS;
-    if (shouldResendPrompt) {
-      await sendBuildPromptForTransition({
-        apiUrl: options.apiUrl,
-        cellId: options.cellId,
-        opencodeServerUrl: options.opencodeServerUrl,
-        sessionId: options.sessionId,
-        workspacePath: options.workspacePath,
-      });
-      lastPromptAt = Date.now();
-    }
-
-    await wait(MODE_POLL_INTERVAL_MS);
-  }
-
-  throw new Error(`Session mode mismatch for cell ${options.cellId}`);
-}
-
-async function tryHandleBuildTransitionQuestion(options: {
-  page: Page;
-  opencodeServerUrl: string;
-  sessionId: string;
-}): Promise<boolean> {
-  if (await submitQuestionViaOpencodeApi(options)) {
-    return true;
-  }
-
-  const content =
-    (await options.page.locator(selectors.terminalRoot).textContent()) ?? "";
-  if (PLAN_EXIT_QUESTION_PATTERN.test(content)) {
-    await options.page.locator(selectors.terminalInputSurface).click();
-    await options.page.keyboard.press("Enter");
-    return true;
-  }
-
-  if (
-    QUESTION_PROMPT_HINT_PATTERN.test(content) &&
-    BUILD_IMPLEMENT_OPTION_PATTERN.test(content)
-  ) {
-    await options.page.locator(selectors.terminalInputSurface).click();
-    await options.page.keyboard.press("ArrowDown");
-    await options.page.keyboard.press("Enter");
-    return true;
-  }
-
-  return false;
-}
-
-async function submitQuestionViaOpencodeApi(options: {
-  opencodeServerUrl: string;
-  sessionId: string;
-}): Promise<boolean> {
-  try {
-    const listResponse = await fetchWithTimeout(
-      `${options.opencodeServerUrl}/question`
-    );
-    if (listResponse.status === QUESTION_API_NOT_FOUND_STATUS) {
-      return false;
-    }
-    if (!listResponse.ok) {
-      return false;
-    }
-
-    const payload = (await listResponse.json()) as unknown;
-    if (!Array.isArray(payload)) {
-      return false;
-    }
-
-    const question = payload.find((candidate) => {
-      if (!candidate || typeof candidate !== "object") {
-        return false;
-      }
-
-      const sessionID = (candidate as PendingQuestion).sessionID;
-      return typeof sessionID === "string" && sessionID === options.sessionId;
-    }) as PendingQuestion | undefined;
-
-    if (!question || typeof question.id !== "string") {
-      return false;
-    }
-
-    const answers = buildQuestionAnswers(question);
-    const replyResponse = await fetchWithTimeout(
-      `${options.opencodeServerUrl}/question/${question.id}/reply`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ answers }),
-      }
-    );
-
-    return replyResponse.ok;
-  } catch {
-    return false;
-  }
-}
-
-function buildQuestionAnswers(question: PendingQuestion): string[][] {
-  const prompts = Array.isArray(question.questions) ? question.questions : [];
-  if (prompts.length === 0) {
-    return [["Yes"]];
-  }
-
-  return prompts.map((prompt) => {
-    const options = Array.isArray(prompt.options) ? prompt.options : [];
-    const labels = options
-      .map((option) => {
-        if (!option || typeof option !== "object") {
-          return "";
-        }
-
-        return typeof option.label === "string" ? option.label : "";
-      })
-      .filter((label) => label.length > 0);
-
-    const buildLabel = labels.find((label) =>
-      BUILD_IMPLEMENT_OPTION_PATTERN.test(label)
-    );
-    if (buildLabel) {
-      return [buildLabel];
-    }
-
-    const yesLabel = labels.find((label) => YES_LABEL_PATTERN.test(label));
-    if (yesLabel) {
-      return [yesLabel];
-    }
-
-    return [labels[0] ?? "Yes"];
-  });
 }
 
 async function waitForTerminalMode(options: {

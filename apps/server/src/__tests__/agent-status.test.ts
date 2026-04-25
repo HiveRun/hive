@@ -1,6 +1,9 @@
 import type { Event } from "@opencode-ai/sdk";
 import { describe, expect, it } from "vitest";
-import { resolveRuntimeStatusFromEvent } from "../agents/service";
+import {
+  resolveRuntimeModeFromEvent,
+  resolveRuntimeStatusFromEvent,
+} from "../agents/service";
 
 describe("resolveRuntimeStatusFromEvent", () => {
   it("returns null when user message updates", () => {
@@ -141,9 +144,24 @@ describe("resolveRuntimeStatusFromEvent", () => {
   });
 });
 
+describe("resolveRuntimeModeFromEvent", () => {
+  it("uses user message mode updates for no-reply prompts", () => {
+    const event = buildMessageUpdatedEvent("user", { mode: "build" });
+    expect(resolveRuntimeModeFromEvent(event)).toBe("build");
+  });
+
+  it("uses assistant message mode updates", () => {
+    const event = buildMessageUpdatedEvent("assistant", { mode: "plan" });
+    expect(resolveRuntimeModeFromEvent(event)).toBe("plan");
+  });
+});
+
 function buildMessageUpdatedEvent(
   role: "user" | "assistant",
-  options?: { time?: { created: number; completed?: number } }
+  options?: {
+    mode?: "plan" | "build";
+    time?: { created: number; completed?: number };
+  }
 ): Event {
   if (role === "assistant") {
     const info = {
@@ -159,6 +177,7 @@ function buildMessageUpdatedEvent(
         providerID: "provider_test",
         modelID: "model_test",
       },
+      ...(options?.mode ? { mode: options.mode } : {}),
     };
 
     return {
@@ -175,11 +194,13 @@ function buildMessageUpdatedEvent(
       created: Date.now(),
       ...options?.time,
     },
+    ...(options?.mode ? { mode: options.mode } : {}),
   } as {
     id: string;
     sessionID: string;
     role: "user";
     time: { created: number; completed?: number };
+    mode?: "plan" | "build";
   };
 
   return {
