@@ -270,8 +270,11 @@ bun test:run
 True end-to-end browser testing runs with Playwright (Chromium only for now).
 
 ```bash
-# Run true E2E flow (starts isolated API + web + dedicated DB)
+# Run CI-parity true E2E flow with serialized workers
 bun run test:e2e
+
+# Run faster local iteration with parallel workers
+bun run test:e2e:fast
 
 # Run headed mode for local debugging
 bun run test:e2e:headed
@@ -295,6 +298,7 @@ bun -C apps/e2e run install:browsers
 Notes:
 - The E2E harness creates a dedicated temp workspace and SQLite database per run.
 - Local dev DB/state are not reused.
+- Use `bun run test:e2e:fast` while iterating locally; run the default `bun run test:e2e` before creating a PR that touches cell lifecycle, terminal handling, service orchestration, or workspace management.
 - `HIVE_HOME` is ephemeral per run by default; set `HIVE_E2E_SHARED_HOME=1` to opt into a shared cache at `tmp/e2e-shared/hive-home` when debugging startup behavior.
 - `HIVE_E2E_WORKSPACE_MODE=clone` clones a source repo into the run sandbox (default source is this repo) and registers it as `hive` for closer dev parity.
 - `HIVE_E2E_WORKSPACE_SOURCE=/abs/path/to/repo` overrides the clone source when using `HIVE_E2E_WORKSPACE_MODE=clone`.

@@ -21,11 +21,14 @@ The opt-in true end-to-end flow lives under `apps/e2e` and validates cell creati
 
 ```bash
 bun run test:e2e
+bun run test:e2e:fast
 bun run test:e2e:headed
 bun run test:e2e:spec specs/cell-chat.e2e.ts
+bun run test:e2e:fast:spec specs/cell-chat.e2e.ts
 ```
 
-- Run `bun run test:e2e` locally when changing cell creation, terminal handling, service orchestration, or workspace management.
+- Use `bun run test:e2e:fast` or `bun run test:e2e:fast:spec <spec>` while iterating on cell creation, terminal handling, service orchestration, or workspace management.
+- Run the default `bun run test:e2e` before creating a PR for those areas; it is the CI-parity path with serialized workers, fresh runtime state, headless browser execution, and retained artifacts.
 - Prefer deterministic assertions (session/messages/metadata) over timing-only waits.
 - Keep fixture defaults aligned with runtime providers/models (currently `opencode/big-pickle`).
 - Use `HIVE_E2E_KEEP_ARTIFACTS=1` when debugging failures; inspect screenshots/video/trace in `tmp/e2e-runs/`.

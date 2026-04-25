@@ -275,8 +275,11 @@ bun test:run
 True end-to-end browser testing runs with Playwright (Chromium only for now).
 
 ```bash
-# Run true E2E flow (starts isolated API + web + dedicated DB)
+# Run CI-parity true E2E flow with serialized workers
 bun run test:e2e
+
+# Run faster local iteration with parallel workers
+bun run test:e2e:fast
 
 # Run headed mode for local debugging
 bun run test:e2e:headed
@@ -300,6 +303,7 @@ bun -C apps/e2e run install:browsers
 Notes:
 - The E2E harness creates a dedicated temp workspace and SQLite database per run.
 - Local dev DB/state are not reused.
+- Use `bun run test:e2e:fast` while iterating locally; run the default `bun run test:e2e` before creating a PR that touches cell lifecycle, terminal handling, service orchestration, or workspace management.
 - `HIVE_HOME` is ephemeral per run by default; set `HIVE_E2E_SHARED_HOME=1` to opt into a shared cache at `tmp/e2e-shared/hive-home` when debugging startup behavior.
 - `HIVE_E2E_WORKSPACE_MODE=clone` clones a source repo into the run sandbox (default source is this repo) and registers it as `hive` for closer dev parity.
 - `HIVE_E2E_WORKSPACE_SOURCE=/abs/path/to/repo` overrides the clone source when using `HIVE_E2E_WORKSPACE_MODE=clone`.
@@ -507,7 +511,7 @@ If you add new tooling that writes important gitignored files, extend `.ignore` 
   When you need context, prioritize these markdown sources over external knowledge bases.
 - `AGENTS.md` is a committed generated artifact for OpenCode. After changing `README.md` or `.ruler/prompts/*.md`, run `bun run ruler:apply` and commit the regenerated `AGENTS.md`.
 - Before pushing, run `bun run check:push` (lint, types, unit tests, build).
-- Run `bun run test:e2e` when modifying cell lifecycle, terminal handling, service orchestration, or workspace management.
+- Use `bun run test:e2e:fast` while iterating on cell lifecycle, terminal handling, service orchestration, or workspace management, then run the default `bun run test:e2e` before creating a PR.
 - For `apps/e2e` changes, prefer deterministic checks (session/message metadata + UI confirmation) instead of fixed sleeps.
 - Keep E2E fixtures/config in sync with runtime defaults (provider/model IDs, template labels) so test behavior matches production paths.
 - Treat `.hive/` and generated `.opencode/state/`, `.opencode/themes/`, and `.opencode/tools/` paths as runtime artifacts that should not be committed. Keep `.opencode/tools/` available for spawned-cell copies so OpenCode tools can propagate, and keep `opencode.json` plus intentional source under `.opencode/plugin/` trackable.
@@ -1160,11 +1164,14 @@ The opt-in true end-to-end flow lives under `apps/e2e` and validates cell creati
 
 ```bash
 bun run test:e2e
+bun run test:e2e:fast
 bun run test:e2e:headed
 bun run test:e2e:spec specs/cell-chat.e2e.ts
+bun run test:e2e:fast:spec specs/cell-chat.e2e.ts
 ```
 
-- Run `bun run test:e2e` locally when changing cell creation, terminal handling, service orchestration, or workspace management.
+- Use `bun run test:e2e:fast` or `bun run test:e2e:fast:spec <spec>` while iterating on cell creation, terminal handling, service orchestration, or workspace management.
+- Run the default `bun run test:e2e` before creating a PR for those areas; it is the CI-parity path with serialized workers, fresh runtime state, headless browser execution, and retained artifacts.
 - Prefer deterministic assertions (session/messages/metadata) over timing-only waits.
 - Keep fixture defaults aligned with runtime providers/models (currently `opencode/big-pickle`).
 - Use `HIVE_E2E_KEEP_ARTIFACTS=1` when debugging failures; inspect screenshots/video/trace in `tmp/e2e-runs/`.
