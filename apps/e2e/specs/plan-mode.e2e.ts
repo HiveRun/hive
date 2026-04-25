@@ -24,7 +24,7 @@ const PLAN_TO_BUILD_TEST_TIMEOUT_MS = 300_000;
 const MODE_POLL_INTERVAL_MS = 500;
 const CELL_TEMPLATE_LABEL = "E2E Template";
 const TERMINAL_MODE_OPEN_CODE_PATTERN =
-  /\b(Plan|Build)\b[\s\S]{0,200}OpenCode/i;
+  /\b(Plan|Build)\b(?:\s*[·•])?\s+Big Pickle\s+OpenCode/gi;
 const MODE_TOGGLE_INPUT = "\t";
 
 test.describe("plan mode @plan-mode", () => {
@@ -211,16 +211,8 @@ async function waitForTerminalMode(options: {
         (await options.page.locator(selectors.terminalRoot).textContent()) ??
         "";
       const normalized = content.replace(/\s+/g, " ");
-      if (
-        new RegExp(`${options.expectedMode}\\s*[·•]\\s*Big Pickle`, "i").test(
-          normalized
-        )
-      ) {
-        return true;
-      }
-
-      const openCodeMatch = normalized.match(TERMINAL_MODE_OPEN_CODE_PATTERN);
-      return openCodeMatch?.[1] === options.expectedMode;
+      const matches = [...normalized.matchAll(TERMINAL_MODE_OPEN_CODE_PATTERN)];
+      return matches.at(-1)?.[1] === options.expectedMode;
     },
   });
 }
