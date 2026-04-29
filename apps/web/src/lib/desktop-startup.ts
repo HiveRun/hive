@@ -21,10 +21,9 @@ export type DesktopStartupPhase =
   | "starting-daemon"
   | "connecting"
   | "loading-workspaces"
-  | "ready"
-  | "error";
+  | "ready";
 
-export type DesktopStartupSnapshot = {
+type DesktopStartupSnapshot = {
   phase: DesktopStartupPhase;
   backendUrl?: string;
   healthUrl?: string;
@@ -32,7 +31,6 @@ export type DesktopStartupSnapshot = {
   message: string;
   attempt: number;
   startedAt: number;
-  error?: string;
 };
 
 function createInitialSnapshot(): DesktopStartupSnapshot {
@@ -53,19 +51,11 @@ function createInitialSnapshot(): DesktopStartupSnapshot {
   };
 }
 
-const listeners = new Set<() => void>();
 let startupPromise: Promise<void> | null = null;
 let snapshot: DesktopStartupSnapshot = createInitialSnapshot();
 
-const notify = () => {
-  for (const listener of listeners) {
-    listener();
-  }
-};
-
 const updateSnapshot = (next: Partial<DesktopStartupSnapshot>) => {
   snapshot = { ...snapshot, ...next };
-  notify();
 };
 
 const resolveHealthUrl = (
@@ -128,25 +118,15 @@ export const isDesktopRuntime = () => Boolean(getRuntimeInfo());
 
 export const getDesktopStartupSnapshot = () => snapshot;
 
-export const subscribeDesktopStartup = (listener: () => void) => {
-  listeners.add(listener);
-
-  return () => {
-    listeners.delete(listener);
-  };
-};
-
 export const resetDesktopStartup = () => {
   startupPromise = null;
   snapshot = createInitialSnapshot();
-  notify();
 };
 
 export const setDesktopStartupLoadingWorkspaces = () => {
   updateSnapshot({
     phase: "loading-workspaces",
     message: "Loading workspaces",
-    error: undefined,
   });
 };
 
@@ -154,20 +134,8 @@ export const markDesktopStartupReady = () => {
   updateSnapshot({
     phase: "ready",
     message: "Hive is ready",
-    error: undefined,
   });
 };
-
-export const setDesktopStartupError = (message: string) => {
-  updateSnapshot({
-    phase: "error",
-    message: "Hive did not become ready",
-    error: message,
-  });
-};
-
-export const isDesktopStartupFailure = (error: unknown) =>
-  error instanceof Error && error.message.startsWith("Desktop startup failed:");
 
 export const ensureDesktopBackendReady = async () => {
   const runtimeInfo = getRuntimeInfo();
@@ -203,14 +171,12 @@ export const ensureDesktopBackendReady = async () => {
         attempt,
         phase: shouldShowStarting ? "starting-daemon" : "connecting",
         message: resolveConnectionMessage(shouldShowStarting, isTakingLong),
-        error: undefined,
       });
 
       if (await probeHealth(healthUrl)) {
         updateSnapshot({
           phase: "loading-workspaces",
           message: "Loading workspaces",
-          error: undefined,
         });
         return;
       }

@@ -7,19 +7,16 @@ import {
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { DesktopStartupScreen } from "@/components/desktop-startup-screen";
 import ErrorPage from "@/components/error";
 import Loader from "@/components/loader";
 import { MainLayout } from "@/components/main-layout";
 import { Toaster } from "@/components/ui/sonner";
-import { useDesktopStartup } from "@/hooks/use-desktop-startup";
 import {
   ensureDesktopBackendReady,
+  getDesktopStartupSnapshot,
   isDesktopRuntime,
-  isDesktopStartupFailure,
   markDesktopStartupReady,
   resetDesktopStartup,
-  setDesktopStartupError,
   setDesktopStartupLoadingWorkspaces,
 } from "@/lib/desktop-startup";
 import { workspaceQueries } from "@/queries/workspaces";
@@ -80,11 +77,11 @@ function RootComponent() {
 function useDesktopStartupController() {
   const queryClient = useQueryClient();
   const router = useRouter();
-  const snapshot = useDesktopStartup();
   const [retryToken, setRetryToken] = useState(0);
   const retryTokenRef = useRef(retryToken);
+  const [error, setError] = useState<Error | null>(null);
   const [isReady, setIsReady] = useState(
-    () => !isDesktopRuntime() || snapshot.phase === "ready"
+    () => !isDesktopRuntime() || getDesktopStartupSnapshot().phase === "ready"
   );
 
   useEffect(() => {
@@ -100,6 +97,7 @@ function useDesktopStartupController() {
 
     const runStartup = async () => {
       try {
+        setError(null);
         await prepareDesktopStartup(queryClient);
 
         if (shouldIgnoreStartupResult()) {
@@ -108,16 +106,16 @@ function useDesktopStartupController() {
 
         setIsReady(true);
         await router.invalidate();
-      } catch (error) {
+      } catch (startupError) {
         if (shouldIgnoreStartupResult()) {
           return;
         }
 
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Desktop startup failed: Hive did not become ready.";
-        setDesktopStartupError(message);
+        setError(
+          startupError instanceof Error
+            ? startupError
+            : new Error("Desktop startup failed: Hive did not become ready.")
+        );
       }
     };
 
@@ -130,12 +128,13 @@ function useDesktopStartupController() {
 
   return {
     isReady: isReady || !isDesktopRuntime(),
+    error,
     retry: () => {
       resetDesktopStartup();
+      setError(null);
       setIsReady(false);
       setRetryToken((value) => value + 1);
     },
-    snapshot,
   };
 }
 
@@ -146,19 +145,22 @@ function DesktopStartupGate({ children }: { children: ReactNode }) {
     return children;
   }
 
-  return (
-    <DesktopStartupScreen
-      onRetry={startup.snapshot.phase === "error" ? startup.retry : undefined}
-      snapshot={startup.snapshot}
-    />
-  );
+  if (startup.error) {
+    return <ErrorPage error={startup.error} reset={startup.retry} />;
+  }
+
+  return <Loader />;
 }
 
 function RootPendingComponent() {
   const startup = useDesktopStartupController();
 
   if (!startup.isReady) {
-    return <DesktopStartupScreen snapshot={startup.snapshot} />;
+    if (startup.error) {
+      return <ErrorPage error={startup.error} reset={startup.retry} />;
+    }
+
+    return <Loader />;
   }
 
   return <Loader />;
@@ -174,27 +176,19 @@ function RootErrorComponent({
   const startup = useDesktopStartupController();
 
   if (!startup.isReady) {
-    return (
-      <DesktopStartupScreen
-        onRetry={() => {
-          startup.retry();
-          reset?.();
-        }}
-        snapshot={startup.snapshot}
-      />
-    );
-  }
+    if (startup.error) {
+      return (
+        <ErrorPage
+          error={startup.error}
+          reset={() => {
+            startup.retry();
+            reset?.();
+          }}
+        />
+      );
+    }
 
-  if (isDesktopStartupFailure(error)) {
-    return (
-      <DesktopStartupScreen
-        onRetry={() => {
-          resetDesktopStartup();
-          reset?.();
-        }}
-        snapshot={startup.snapshot}
-      />
-    );
+    return <Loader />;
   }
 
   return <ErrorPage error={error} reset={reset} />;
