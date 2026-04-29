@@ -1,8 +1,7 @@
-const STARTUP_TIMEOUT_MS = 120_000;
+const STARTUP_WAIT_NOTICE_MS = 120_000;
 const STARTUP_POLL_INTERVAL_MS = 300;
 const HEALTH_PROBE_TIMEOUT_MS = 1500;
 const STARTING_PHASE_MIN_MS = 1200;
-const MS_PER_SECOND = 1000;
 
 const sleep = async (ms: number) =>
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -86,6 +85,21 @@ const isHiveHealthPayload = (payload: unknown) => {
 
   const value = payload as { service?: unknown; status?: unknown };
   return value.service === "hive" && value.status === "ok";
+};
+
+const resolveConnectionMessage = (
+  shouldShowStarting: boolean,
+  isTakingLong: boolean
+) => {
+  if (shouldShowStarting) {
+    return "Starting Hive daemon";
+  }
+
+  if (isTakingLong) {
+    return "Still connecting to Hive";
+  }
+
+  return "Connecting to Hive";
 };
 
 const probeHealth = async (healthUrl: string) => {
@@ -177,19 +191,18 @@ export const ensureDesktopBackendReady = async () => {
       startedAt,
     });
 
-    while (Date.now() - startedAt < STARTUP_TIMEOUT_MS) {
+    while (true) {
       attempt += 1;
       const elapsed = Date.now() - startedAt;
       const shouldShowStarting =
         runtimeInfo.startupMode === "starting" &&
         elapsed < STARTING_PHASE_MIN_MS;
+      const isTakingLong = elapsed >= STARTUP_WAIT_NOTICE_MS;
 
       updateSnapshot({
         attempt,
         phase: shouldShowStarting ? "starting-daemon" : "connecting",
-        message: shouldShowStarting
-          ? "Starting Hive daemon"
-          : "Connecting to Hive",
+        message: resolveConnectionMessage(shouldShowStarting, isTakingLong),
         error: undefined,
       });
 
@@ -204,12 +217,6 @@ export const ensureDesktopBackendReady = async () => {
 
       await sleep(STARTUP_POLL_INTERVAL_MS);
     }
-
-    const message = `Desktop startup failed: Hive did not respond at ${healthUrl} within ${Math.round(
-      STARTUP_TIMEOUT_MS / MS_PER_SECOND
-    )} seconds.`;
-    setDesktopStartupError(message);
-    throw new Error(message);
   })().catch((error) => {
     startupPromise = null;
     throw error;
