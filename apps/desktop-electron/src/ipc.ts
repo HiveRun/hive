@@ -5,6 +5,7 @@ import {
   shell,
 } from "electron";
 import { IPC_CHANNELS } from "./ipc-channels";
+import { getDesktopRuntimeInfo } from "./runtime-info";
 import type { ViewerBounds, ViewerServiceTab } from "./viewer-controller";
 import { createViewerController } from "./viewer-controller";
 
@@ -57,11 +58,7 @@ export const createIpcHandlers = (window: BrowserWindow) => {
     return viewer;
   };
 
-  const getRuntimeInfo = () => ({
-    runtime: "electron" as const,
-    version: process.versions.electron,
-    platform: process.platform,
-  });
+  const getRuntimeInfo = () => getDesktopRuntimeInfo();
 
   const notify = (input: NotifyInput) => {
     if (!Notification.isSupported()) {

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC_CHANNELS } from "./ipc-channels";
+import { getDesktopRuntimeInfo } from "./runtime-info";
 
 type NotificationInput = {
   title: string;
@@ -29,6 +30,7 @@ type ViewerServiceTab = {
 };
 
 const hiveDesktopBridge = {
+  runtimeInfo: getDesktopRuntimeInfo(),
   getRuntimeInfo: async () =>
     await ipcRenderer.invoke(IPC_CHANNELS.getRuntimeInfo),
   notify: async (payload: NotificationInput) =>
