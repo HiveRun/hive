@@ -380,6 +380,15 @@ const persistPidFileIfAlive = (pid: number | null) => {
   return true;
 };
 
+const persistLaunchedOrListeningDaemonPid = (pid: number | null) => {
+  if (persistPidFileIfAlive(pid)) {
+    return true;
+  }
+
+  const port = extractPortFromUrl(HEALTHCHECK_URL);
+  return persistPidFileIfAlive(port ? findListeningProcessId({ port }) : null);
+};
+
 const cleanupReadyFile = () => {
   try {
     unlinkSync(readyFilePath);
@@ -440,11 +449,6 @@ const prepareDetachedLaunch = () => {
   }
 
   return { childEnv, logFile, logOffset };
-};
-
-const launchDetachedServerDirect = (): LaunchResult => {
-  const { childEnv, logFile, logOffset } = prepareDetachedLaunch();
-  return launchDetachedServerWithSpawn(childEnv, logFile, logOffset);
 };
 
 const launchDetachedServer = (): LaunchResult => {
@@ -540,7 +544,7 @@ const startDetachedManagedDaemon = async (
   const launch = launchDetachedServer();
 
   if (await waitForDetachedDaemonReady(launch, config)) {
-    persistPidFileIfAlive(launch.pid);
+    persistLaunchedOrListeningDaemonPid(launch.pid);
     return true;
   }
 
@@ -559,10 +563,7 @@ const startDetachedManagedDaemon = async (
     return false;
   }
 
-  if (!persistPidFileIfAlive(launch.pid)) {
-    const port = extractPortFromUrl(HEALTHCHECK_URL);
-    persistPidFileIfAlive(port ? findListeningProcessId({ port }) : null);
-  }
+  persistLaunchedOrListeningDaemonPid(launch.pid);
   return true;
 };
 
@@ -833,36 +834,7 @@ const launchDesktopApplication = (options: DesktopLaunchOptions = {}) => {
   }
 };
 
-const ensureDesktopDaemonStarted = async () => {
-  try {
-    if (readDaemonStartLockPid()) {
-      return true;
-    }
-
-    const runningDaemon = await detectRunningDaemon();
-    if (runningDaemon) {
-      if (!runningDaemon.managed) {
-        persistPidFileIfAlive(runningDaemon.pid);
-      }
-      return true;
-    }
-
-    if (!tryAcquireDaemonStartLock()) {
-      return true;
-    }
-
-    launchDetachedServerDirect();
-    return true;
-  } catch (error) {
-    cleanupDaemonStartLock();
-    logError(
-      `Failed to start Hive: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-    return false;
-  }
-};
+const ensureDesktopDaemonStarted = async () => await ensureDaemonRunning();
 
 const resolveDesktopProcessTargets = () => {
   const candidates = getDesktopExecutableCandidates();
@@ -1287,6 +1259,48 @@ const stopBackgroundProcess = async (options?: {
   return "stopped" as const;
 };
 
+const stopStartingDaemon = async (options?: {
+  silent?: boolean;
+  waitForExitMs?: number;
+}): Promise<"failed" | "not_running" | "stopped"> => {
+  const startupPid = readDaemonStartLockPid();
+  if (!startupPid) {
+    return "not_running";
+  }
+
+  try {
+    process.kill(startupPid, "SIGTERM");
+  } catch (error) {
+    if (getErrnoCode(error) === "ESRCH") {
+      cleanupDaemonStartLock();
+      return "not_running";
+    }
+
+    logError(
+      `Failed to stop starting Hive daemon (PID ${startupPid}): ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return "failed";
+  }
+
+  if (options?.waitForExitMs && options.waitForExitMs > 0) {
+    const exited = await waitForProcessExit(startupPid, options.waitForExitMs);
+    if (!exited) {
+      logError(
+        `Timed out waiting for starting Hive daemon (PID ${startupPid}) to exit.`
+      );
+      return "failed";
+    }
+  }
+
+  cleanupDaemonStartLock();
+  if (!options?.silent) {
+    logSuccess(`Stopped starting Hive daemon (PID ${startupPid}).`);
+  }
+  return "stopped";
+};
+
 const streamLogs = () => {
   const logFile = resolveLogFilePath();
   if (!existsSync(logFile)) {
@@ -1519,7 +1533,7 @@ const startDetachedServer = async () => {
   const { logFile, logOffset, pid } = launchDetachedServer();
 
   if (await waitForDetachedDaemonReady({ logFile, logOffset, pid })) {
-    persistPidFileIfAlive(pid);
+    persistLaunchedOrListeningDaemonPid(pid);
 
     printSummary("Hive is running in the background", [
       ["UI", DEFAULT_WEB_URL],
@@ -1545,7 +1559,7 @@ const startDetachedServer = async () => {
     throw new Error("Daemon did not become ready before timeout.");
   }
 
-  persistPidFileIfAlive(pid);
+  persistLaunchedOrListeningDaemonPid(pid);
 
   printSummary("Hive is running in the background", [
     ["UI", DEFAULT_WEB_URL],
@@ -1601,8 +1615,12 @@ const stopCommand = async () => {
   const result = await stopBackgroundProcess({
     waitForExitMs: DAEMON_STOP_WAIT_TIMEOUT_MS,
   });
+  const startupResult = await stopStartingDaemon({
+    silent: result === "stopped",
+    waitForExitMs: DAEMON_STOP_WAIT_TIMEOUT_MS,
+  });
   closeDesktopApplication();
-  return result === "failed" ? 1 : 0;
+  return result === "failed" || startupResult === "failed" ? 1 : 0;
 };
 
 const webCommand = async () => {
