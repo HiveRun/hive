@@ -26,6 +26,7 @@ import {
 } from "./agents/service";
 import { resolveWorkspaceRoot } from "./config/context";
 import { DatabaseService } from "./db";
+import { repairLegacyMigrationGaps } from "./legacy-migration-repairs";
 import { agentsRoutes } from "./routes/agents";
 import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
 import { linearRoutes } from "./routes/linear";
@@ -201,6 +202,13 @@ const resolveMigrationsDirectory = () => {
 
 const runMigrations = async (): Promise<void> => {
   try {
+    const repairedGaps = repairLegacyMigrationGaps(DatabaseService.db);
+    if (repairedGaps.length > 0) {
+      process.stderr.write(
+        `Repaired legacy migration gaps: ${repairedGaps.join(", ")}\n`
+      );
+    }
+
     const migrationsFolder = resolveMigrationsDirectory();
     await migrate(DatabaseService.db, { migrationsFolder });
     process.stderr.write("Database migrations applied.\n");

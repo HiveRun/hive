@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { sqliteDatabasePath } from "../config/database";
+import { repairLegacyMigrationGaps } from "../legacy-migration-repairs";
 import { schema } from "../schema";
 
 async function runMigrations() {
@@ -12,6 +13,11 @@ async function runMigrations() {
 
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const migrationsFolder = resolve(scriptsDir, "../migrations");
+
+  const repairedGaps = repairLegacyMigrationGaps(db);
+  if (repairedGaps.length > 0) {
+    console.log(`Repaired legacy migration gaps: ${repairedGaps.join(", ")}`);
+  }
 
   await migrate(db, { migrationsFolder });
   console.log("✅ Database migrations complete");
