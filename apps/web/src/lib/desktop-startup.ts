@@ -23,6 +23,14 @@ export type DesktopStartupPhase =
   | "loading-workspaces"
   | "ready";
 
+type ElectronStartupState = NonNullable<
+  NonNullable<Window["hiveDesktop"]>["startup"]
+> extends {
+  getState: () => Promise<infer State>;
+}
+  ? State
+  : never;
+
 type DesktopStartupSnapshot = {
   phase: DesktopStartupPhase;
   backendUrl?: string;
@@ -92,6 +100,15 @@ const resolveConnectionMessage = (
   return "Connecting to Hive";
 };
 
+const isElectronStartupReady = (state: ElectronStartupState) =>
+  state.phase === "api-ready";
+
+const isElectronStartupError = (state: ElectronStartupState) =>
+  state.phase === "error";
+
+const createElectronStartupError = (state: ElectronStartupState) =>
+  new Error(state.error ?? state.message ?? "Hive daemon did not become ready");
+
 const probeHealth = async (healthUrl: string) => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), HEALTH_PROBE_TIMEOUT_MS);
@@ -121,6 +138,7 @@ export const getDesktopStartupSnapshot = () => snapshot;
 export const resetDesktopStartup = () => {
   startupPromise = null;
   snapshot = createInitialSnapshot();
+  window.hiveDesktop?.startup?.retry().catch(() => null);
 };
 
 export const setDesktopStartupLoadingWorkspaces = () => {
@@ -144,6 +162,58 @@ export const ensureDesktopBackendReady = async () => {
   }
 
   if (startupPromise) {
+    return await startupPromise;
+  }
+
+  const electronStartup = window.hiveDesktop?.startup;
+  if (electronStartup) {
+    startupPromise = new Promise<void>((resolve, reject) => {
+      let unsubscribe: (() => void) | null = null;
+
+      const handleState = (state: ElectronStartupState) => {
+        updateSnapshot({
+          backendUrl: state.backendUrl,
+          healthUrl: state.healthUrl,
+          phase:
+            state.phase === "starting-daemon"
+              ? "starting-daemon"
+              : "connecting",
+          message: state.message,
+          startedAt: state.startedAt,
+        });
+
+        if (isElectronStartupReady(state)) {
+          unsubscribe?.();
+          updateSnapshot({
+            phase: "loading-workspaces",
+            message: "Loading workspaces",
+          });
+          resolve();
+          return;
+        }
+
+        if (isElectronStartupError(state)) {
+          unsubscribe?.();
+          reject(createElectronStartupError(state));
+        }
+      };
+
+      electronStartup
+        .getState()
+        .then((state) => {
+          handleState(state);
+          if (isElectronStartupReady(state) || isElectronStartupError(state)) {
+            return;
+          }
+          unsubscribe = electronStartup.subscribe(handleState);
+          electronStartup.getState().then(handleState).catch(reject);
+        })
+        .catch(reject);
+    }).catch((error) => {
+      startupPromise = null;
+      throw error;
+    });
+
     return await startupPromise;
   }
 

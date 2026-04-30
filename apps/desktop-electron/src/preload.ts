@@ -14,6 +14,23 @@ type ViewerBounds = {
   height: number;
 };
 
+type StartupState = {
+  phase:
+    | "idle"
+    | "detecting-daemon"
+    | "starting-daemon"
+    | "waiting-for-api"
+    | "api-ready"
+    | "error";
+  message: string;
+  backendUrl: string;
+  healthUrl: string;
+  pid?: number | null;
+  startedAt: number;
+  updatedAt: number;
+  error?: string;
+};
+
 type ViewerState = {
   activeServiceId: string | null;
   canGoBack: boolean;
@@ -37,6 +54,24 @@ const hiveDesktopBridge = {
     await ipcRenderer.invoke(IPC_CHANNELS.notify, payload),
   openExternal: async (url: string) =>
     await ipcRenderer.invoke(IPC_CHANNELS.openExternal, url),
+  startup: {
+    getState: async () =>
+      await ipcRenderer.invoke(IPC_CHANNELS.startupGetState),
+    retry: async () => await ipcRenderer.invoke(IPC_CHANNELS.startupRetry),
+    subscribe: (listener: (state: StartupState) => void) => {
+      const wrappedListener = (_event: unknown, state: StartupState) => {
+        listener(state);
+      };
+
+      ipcRenderer.on(IPC_CHANNELS.startupStateChanged, wrappedListener);
+      return () => {
+        ipcRenderer.removeListener(
+          IPC_CHANNELS.startupStateChanged,
+          wrappedListener
+        );
+      };
+    },
+  },
   viewer: {
     activateServiceTab: async (serviceId: string) =>
       await ipcRenderer.invoke(

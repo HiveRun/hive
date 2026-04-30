@@ -2,16 +2,14 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { describe, expect, it, vi } from "vitest";
-
 import {
   extractPortFromUrl,
   findListeningProcessId,
   installCompletionScript,
   isHiveHealthResponse,
   waitForServerReady,
-} from "./runtime-utils";
+} from "@hive/daemon-runtime";
+import { describe, expect, it, vi } from "vitest";
 
 const HIVE_PORT = 3000;
 const HTTP_DEFAULT_PORT = 80;

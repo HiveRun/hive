@@ -1,4 +1,4 @@
-import { isHiveHealthResponse } from "./runtime-utils";
+import { isHiveHealthResponse } from "@hive/daemon-runtime";
 
 import type { StopRuntimeResult } from "./uninstall";
 

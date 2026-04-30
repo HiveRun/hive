@@ -1,0 +1,22 @@
+{
+  "name": "@hive/daemon-runtime",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "check": "biome check --write .",
+    "check-types": "tsc -b",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.6",
+    "typescript": "catalog:",
+    "vitest": "^4.0.3"
+  }
+}
