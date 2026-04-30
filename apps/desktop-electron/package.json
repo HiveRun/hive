@@ -6,10 +6,13 @@
   "author": "HiveRun",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsdown src/main.ts src/preload.ts --format cjs --out-dir dist --external electron",
+    "build": "tsdown",
     "prepare:renderer": "bun run scripts/prepare-renderer.ts",
     "start": "bun run build && electron dist/main.js",
     "package": "bun run build && bun run prepare:renderer && electron-builder --config electron-builder.yml --publish never"
+  },
+  "dependencies": {
+    "@hive/daemon-runtime": "workspace:*"
   },
   "devDependencies": {
     "electron": "^37.2.3",

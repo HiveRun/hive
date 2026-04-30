@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
+import { createWriteStream, existsSync } from "node:fs";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { dirname, join, resolve as resolvePath } from "node:path";
@@ -62,6 +62,36 @@ const desktopRendererEntry = join(
   "index.html"
 );
 
+function resolvePackagedDesktopExecutable(): string {
+  let candidates: string[];
+  if (process.platform === "darwin") {
+    candidates = [
+      join(
+        desktopRoot,
+        "out",
+        "mac",
+        "Hive Desktop.app",
+        "Contents",
+        "MacOS",
+        "Hive Desktop"
+      ),
+    ];
+  } else if (process.platform === "win32") {
+    candidates = [join(desktopRoot, "out", "win-unpacked", "Hive Desktop.exe")];
+  } else {
+    candidates = [join(desktopRoot, "out", "linux-unpacked", "hive-desktop")];
+  }
+
+  const executable = candidates.find((candidate) => existsSync(candidate));
+  if (!executable) {
+    throw new Error(
+      `Unable to locate packaged desktop executable. Checked: ${candidates.join(", ")}`
+    );
+  }
+
+  return executable;
+}
+
 async function run() {
   const args = parseArgs(process.argv.slice(2));
   const context = await createRuntimeContext({ repoRoot });
@@ -89,12 +119,14 @@ async function run() {
       timeoutMs: BUILD_TIMEOUT_MS,
     });
 
-    process.stdout.write("Building Electron desktop runtime...\n");
-    await runCommand("bun", ["run", "build"], {
+    process.stdout.write("Packaging Electron desktop runtime...\n");
+    await runCommand("bun", ["run", "package"], {
       cwd: desktopRoot,
-      label: "Build desktop electron runtime",
+      label: "Package desktop electron runtime",
       timeoutMs: BUILD_TIMEOUT_MS,
     });
+
+    const desktopPackagedExecutable = resolvePackagedDesktopExecutable();
 
     const playwrightArgs = [
       "playwright",
@@ -110,9 +142,11 @@ async function run() {
         ...process.env,
         HIVE_E2E_API_URL: context.apiUrl,
         HIVE_E2E_ARTIFACTS_DIR: context.artifactsDir,
+        HIVE_E2E_BUN_EXECUTABLE: process.execPath,
         HIVE_E2E_WORKSPACE_PATH: context.workspaceRoot,
         HIVE_E2E_HIVE_HOME: context.hiveHome,
         HIVE_E2E_DESKTOP_MAIN_ENTRY: desktopMainEntry,
+        HIVE_E2E_DESKTOP_PACKAGED_EXECUTABLE: desktopPackagedExecutable,
         HIVE_E2E_DESKTOP_RENDERER_ENTRY: desktopRendererEntry,
       },
       label: "Desktop Playwright suite",

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { app, BrowserWindow, ipcMain } from "electron";
 import { registerIpcHandlers } from "./ipc";
+import { createDesktopStartupController } from "./startup-controller";
 
 const DEFAULT_WINDOW_WIDTH = 1400;
 const DEFAULT_WINDOW_HEIGHT = 900;
@@ -94,7 +95,11 @@ const createMainWindow = async (ipcRegistry: IpcRegistry) => {
 
 const bootstrap = async () => {
   await app.whenReady();
-  const ipcRegistry = registerIpcHandlers({ ipcMain });
+  const startupController = createDesktopStartupController();
+  const ipcRegistry = registerIpcHandlers({ ipcMain, startupController });
+  startupController.start().catch((error) => {
+    process.stderr.write(`Desktop startup failed: ${String(error)}\n`);
+  });
 
   await createMainWindow(ipcRegistry);
 

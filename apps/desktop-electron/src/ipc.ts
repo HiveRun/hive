@@ -6,6 +6,7 @@ import {
 } from "electron";
 import { IPC_CHANNELS } from "./ipc-channels";
 import { getDesktopRuntimeInfo } from "./runtime-info";
+import type { DesktopStartupController } from "./startup-controller";
 import type { ViewerBounds, ViewerServiceTab } from "./viewer-controller";
 import { createViewerController } from "./viewer-controller";
 
@@ -32,8 +33,22 @@ const openExternal = async (window: BrowserWindow, url: string) => {
   return { ok: true } as const;
 };
 
-export const createIpcHandlers = (window: BrowserWindow) => {
+export const createIpcHandlers = (
+  window: BrowserWindow,
+  startupController: DesktopStartupController
+) => {
   let viewer: ReturnType<typeof createViewerController> | null = null;
+  const unsubscribeStartup = startupController.subscribe((state) => {
+    try {
+      if (window.isDestroyed() || window.webContents.isDestroyed()) {
+        return;
+      }
+
+      window.webContents.send(IPC_CHANNELS.startupStateChanged, state);
+    } catch {
+      /* ignore teardown races while the window is closing */
+    }
+  });
 
   const getViewer = () => {
     if (viewer) {
@@ -75,6 +90,11 @@ export const createIpcHandlers = (window: BrowserWindow) => {
   };
 
   const viewerGetState = () => getViewer().getState();
+  const startupGetState = () => startupController.getState();
+  const startupRetry = async () => {
+    await startupController.retry();
+    return startupController.getState();
+  };
   const viewerActivateServiceTab = async (serviceId: string) =>
     await getViewer().activateServiceTab(serviceId);
   const viewerShow = (bounds: ViewerBounds) => getViewer().show(bounds);
@@ -96,8 +116,11 @@ export const createIpcHandlers = (window: BrowserWindow) => {
     getRuntimeInfo,
     notify,
     openExternal: appOpenExternal,
+    startupGetState,
+    startupRetry,
     viewer: {
       destroy: () => {
+        unsubscribeStartup();
         viewer?.destroy();
         viewer = null;
       },
@@ -117,7 +140,10 @@ export const createIpcHandlers = (window: BrowserWindow) => {
   };
 };
 
-export const registerIpcHandlers = (options: { ipcMain: IpcMain }) => {
+export const registerIpcHandlers = (options: {
+  ipcMain: IpcMain;
+  startupController: DesktopStartupController;
+}) => {
   let activeWindow: BrowserWindow | null = null;
   let activeHandlers: IpcHandlers | null = null;
 
@@ -136,7 +162,7 @@ export const registerIpcHandlers = (options: { ipcMain: IpcMain }) => {
 
     activeHandlers?.viewer.destroy();
     activeWindow = window;
-    activeHandlers = createIpcHandlers(window);
+    activeHandlers = createIpcHandlers(window, options.startupController);
 
     return activeHandlers;
   };
@@ -159,6 +185,12 @@ export const registerIpcHandlers = (options: { ipcMain: IpcMain }) => {
   );
   options.ipcMain.handle(IPC_CHANNELS.openExternal, (_event, url) =>
     requireHandlers().openExternal(url as string)
+  );
+  options.ipcMain.handle(IPC_CHANNELS.startupGetState, () =>
+    requireHandlers().startupGetState()
+  );
+  options.ipcMain.handle(IPC_CHANNELS.startupRetry, () =>
+    requireHandlers().startupRetry()
   );
   options.ipcMain.handle(IPC_CHANNELS.viewerGetState, () =>
     requireHandlers().viewerGetState()

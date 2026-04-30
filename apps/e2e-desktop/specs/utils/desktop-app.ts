@@ -12,9 +12,56 @@ const rendererDiagnostics = new WeakMap<Page, string[]>();
 const trimTrailingSlash = (value: string) =>
   value.replace(TRAILING_SLASH_PATTERN, "");
 
+const resolveApiUrl = (apiUrl?: string) =>
+  apiUrl ?? process.env.HIVE_E2E_API_URL;
+
+const createDesktopRuntimeEnv = (
+  apiUrl: string | undefined,
+  options: LaunchDesktopAppOptions = {}
+) => ({
+  ...process.env,
+  ...(apiUrl
+    ? {
+        HIVE_DESKTOP_BACKEND_URL: apiUrl,
+        HIVE_DESKTOP_HEALTH_URL: `${trimTrailingSlash(apiUrl)}/health`,
+        VITE_API_URL: apiUrl,
+      }
+    : {}),
+  ...(options.startupMode
+    ? { HIVE_DESKTOP_STARTUP_MODE: options.startupMode }
+    : {}),
+  ...(options.daemonCommand
+    ? { HIVE_DESKTOP_DAEMON_COMMAND: options.daemonCommand }
+    : {}),
+  ...(options.daemonArgs
+    ? { HIVE_DESKTOP_DAEMON_ARGS: JSON.stringify(options.daemonArgs) }
+    : {}),
+  ...(options.daemonCwd ? { HIVE_DESKTOP_DAEMON_CWD: options.daemonCwd } : {}),
+  ...(options.preserveDaemonEnv
+    ? { HIVE_DESKTOP_PRESERVE_DAEMON_ENV: "1" }
+    : {}),
+  ...(typeof options.startupTimeoutMs === "number"
+    ? { HIVE_DESKTOP_STARTUP_TIMEOUT_MS: String(options.startupTimeoutMs) }
+    : {}),
+  ...(typeof options.useShellDetach === "boolean"
+    ? {
+        HIVE_DESKTOP_DAEMON_USE_SHELL_DETACH: options.useShellDetach
+          ? "1"
+          : "0",
+      }
+    : {}),
+  VITE_APP_BASE: "./",
+});
+
 type LaunchDesktopAppOptions = {
   apiUrl?: string;
+  daemonArgs?: string[];
+  daemonCommand?: string;
+  daemonCwd?: string;
+  preserveDaemonEnv?: boolean;
   startupMode?: "starting" | "reconnecting";
+  startupTimeoutMs?: number;
+  useShellDetach?: boolean;
 };
 
 export const launchDesktopApp = async (
@@ -22,7 +69,7 @@ export const launchDesktopApp = async (
 ) => {
   const mainEntry = process.env.HIVE_E2E_DESKTOP_MAIN_ENTRY;
   const rendererEntry = process.env.HIVE_E2E_DESKTOP_RENDERER_ENTRY;
-  const apiUrl = options.apiUrl ?? process.env.HIVE_E2E_API_URL;
+  const apiUrl = resolveApiUrl(options.apiUrl);
 
   if (!mainEntry) {
     throw new Error("HIVE_E2E_DESKTOP_MAIN_ENTRY is required");
@@ -36,23 +83,37 @@ export const launchDesktopApp = async (
     executablePath: electronPath as unknown as string,
     args: [mainEntry],
     env: {
-      ...process.env,
+      ...createDesktopRuntimeEnv(apiUrl, options),
       HIVE_DESKTOP_RENDERER_PATH: rendererEntry,
-      ...(apiUrl
-        ? {
-            HIVE_DESKTOP_BACKEND_URL: apiUrl,
-            HIVE_DESKTOP_HEALTH_URL: `${trimTrailingSlash(apiUrl)}/health`,
-          }
-        : {}),
-      ...(options.startupMode
-        ? { HIVE_DESKTOP_STARTUP_MODE: options.startupMode }
-        : {}),
-      VITE_APP_BASE: "./",
-      ...(apiUrl ? { VITE_API_URL: apiUrl } : {}),
     },
   });
 
   const page = await app.firstWindow();
+  trackDesktopPage(page);
+
+  return { app, page };
+};
+
+export const launchPackagedDesktopApp = async (
+  options: LaunchDesktopAppOptions = {}
+) => {
+  const executablePath = process.env.HIVE_E2E_DESKTOP_PACKAGED_EXECUTABLE;
+  if (!executablePath) {
+    throw new Error("HIVE_E2E_DESKTOP_PACKAGED_EXECUTABLE is required");
+  }
+
+  const app = await electron.launch({
+    executablePath,
+    env: createDesktopRuntimeEnv(resolveApiUrl(options.apiUrl), options),
+  });
+
+  const page = await app.firstWindow();
+  trackDesktopPage(page);
+
+  return { app, page };
+};
+
+const trackDesktopPage = (page: Page) => {
   const messages: string[] = [];
   rendererDiagnostics.set(page, messages);
   page.on("console", (message) => {
@@ -61,8 +122,6 @@ export const launchDesktopApp = async (
   page.on("pageerror", (error) => {
     messages.push(`pageerror: ${error.message}`);
   });
-
-  return { app, page };
 };
 
 export const navigateInDesktopApp = async (page: Page, path: string) => {

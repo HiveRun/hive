@@ -15,7 +15,15 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
-
+import {
+  ensureTrailingNewline,
+  extractPortFromUrl,
+  findListeningProcessId,
+  installCompletionScript,
+  isHiveHealthResponse,
+  type WaitForServerReadyConfig,
+  waitForServerReady,
+} from "@hive/daemon-runtime";
 import {
   binaryDirectory,
   cleanupPidFile,
@@ -27,22 +35,12 @@ import {
 } from "@hive/server";
 import { Builtins, Cli, Command, Option } from "clipanion";
 import pc from "picocolors";
-
 import {
   buildCompletionCommandModel,
   COMPLETION_SHELLS,
   type CompletionShell,
   renderCompletionScript,
 } from "./completions";
-import {
-  ensureTrailingNewline,
-  extractPortFromUrl,
-  findListeningProcessId,
-  installCompletionScript,
-  isHiveHealthResponse,
-  type WaitForServerReadyConfig,
-  waitForServerReady,
-} from "./runtime-utils";
 import { uninstallHive } from "./uninstall";
 import {
   resolveUninstallConfirmation,
@@ -166,8 +164,6 @@ const DETACHED_DAEMON_READY_INTERVAL_MS = 500;
 const DETACHED_READY_FILE_PREWAIT_TIMEOUT_MS = 5000;
 const DAEMON_STOP_WAIT_TIMEOUT_MS = 10_000;
 const DAEMON_STOP_POLL_INTERVAL_MS = 100;
-const DESKTOP_STARTUP_MODE_STARTING = "starting";
-const DESKTOP_STARTUP_MODE_RECONNECTING = "reconnecting";
 const CF_BUNDLE_EXECUTABLE_PATTERN =
   /<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/;
 const EXECUTABLE_PATH =
@@ -748,21 +744,33 @@ const resolveMacAppExecutable = (appPath: string) => {
   }
 };
 
-type DesktopLaunchOptions = {
-  startupMode?:
-    | typeof DESKTOP_STARTUP_MODE_STARTING
-    | typeof DESKTOP_STARTUP_MODE_RECONNECTING;
+const resolveDesktopLaunchEnv = () => {
+  const rendererPath = join(binaryDirectory, "public", "index.html");
+
+  return {
+    ...process.env,
+    HIVE_DESKTOP_CLI_BINARY:
+      process.env.HIVE_DESKTOP_CLI_BINARY ?? EXECUTABLE_PATH,
+    HIVE_DESKTOP_DAEMON_ARGS:
+      process.env.HIVE_DESKTOP_DAEMON_ARGS ?? JSON.stringify(["--foreground"]),
+    HIVE_DESKTOP_DAEMON_COMMAND:
+      process.env.HIVE_DESKTOP_DAEMON_COMMAND ??
+      process.env.HIVE_DESKTOP_CLI_BINARY ??
+      EXECUTABLE_PATH,
+    HIVE_DESKTOP_DAEMON_CWD:
+      process.env.HIVE_DESKTOP_DAEMON_CWD ?? DETACHED_DAEMON_CWD,
+    HIVE_DESKTOP_BACKEND_URL:
+      process.env.HIVE_DESKTOP_BACKEND_URL ?? DEFAULT_API_URL,
+    HIVE_DESKTOP_HEALTH_URL:
+      process.env.HIVE_DESKTOP_HEALTH_URL ?? HEALTHCHECK_URL,
+    HIVE_WORKSPACE_ROOT: resolveWorkspaceRootEnv(),
+    ...(existsSync(rendererPath) && !process.env.HIVE_DESKTOP_RENDERER_PATH
+      ? { HIVE_DESKTOP_RENDERER_PATH: rendererPath }
+      : {}),
+  };
 };
 
-const resolveDesktopStartupMode = (): DesktopLaunchOptions["startupMode"] => {
-  if (readManagedDaemonPid() || readDaemonStartLockPid()) {
-    return DESKTOP_STARTUP_MODE_RECONNECTING;
-  }
-
-  return DESKTOP_STARTUP_MODE_STARTING;
-};
-
-const launchDesktopApplication = (options: DesktopLaunchOptions = {}) => {
+const launchDesktopApplication = () => {
   const target = getDesktopExecutableCandidates().find(
     (candidate) => candidate && existsSync(candidate)
   );
@@ -801,25 +809,9 @@ const launchDesktopApplication = (options: DesktopLaunchOptions = {}) => {
       };
     }
 
-    const rendererPath = join(binaryDirectory, "public", "index.html");
-    const env = {
-      ...process.env,
-      HIVE_DESKTOP_BACKEND_URL:
-        process.env.HIVE_DESKTOP_BACKEND_URL ?? DEFAULT_API_URL,
-      HIVE_DESKTOP_HEALTH_URL:
-        process.env.HIVE_DESKTOP_HEALTH_URL ?? HEALTHCHECK_URL,
-      HIVE_DESKTOP_STARTUP_MODE:
-        process.env.HIVE_DESKTOP_STARTUP_MODE ??
-        options.startupMode ??
-        DESKTOP_STARTUP_MODE_STARTING,
-      ...(existsSync(rendererPath) && !process.env.HIVE_DESKTOP_RENDERER_PATH
-        ? { HIVE_DESKTOP_RENDERER_PATH: rendererPath }
-        : {}),
-    };
-
     const child = spawn(command, args, {
       ...spawnOptions,
-      env,
+      env: resolveDesktopLaunchEnv(),
     });
     child.unref();
     return { ok: true, path: target, pid: child.pid ?? null } as const;
@@ -833,8 +825,6 @@ const launchDesktopApplication = (options: DesktopLaunchOptions = {}) => {
     } as const;
   }
 };
-
-const ensureDesktopDaemonStarted = async () => await ensureDaemonRunning();
 
 const resolveDesktopProcessTargets = () => {
   const candidates = getDesktopExecutableCandidates();
@@ -1639,10 +1629,8 @@ const webCommand = async () => {
   return 0;
 };
 
-const desktopCommand = async () => {
-  const result = launchDesktopApplication({
-    startupMode: resolveDesktopStartupMode(),
-  });
+const desktopCommand = () => {
+  const result = launchDesktopApplication();
   if (!result.ok) {
     if (result.message) {
       logError(`Failed to launch Hive desktop: ${result.message}`);
@@ -1651,11 +1639,6 @@ const desktopCommand = async () => {
   }
 
   persistDesktopPidFile(result.pid ?? null);
-
-  if (!(await ensureDesktopDaemonStarted())) {
-    return 1;
-  }
-
   logSuccess("Launched Hive desktop application.");
   return 0;
 };

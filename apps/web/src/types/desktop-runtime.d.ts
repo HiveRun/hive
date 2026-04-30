@@ -16,6 +16,23 @@ type DesktopRuntimeInfo = {
   startupMode: "starting" | "reconnecting";
 };
 
+type DesktopStartupState = {
+  phase:
+    | "idle"
+    | "detecting-daemon"
+    | "starting-daemon"
+    | "waiting-for-api"
+    | "api-ready"
+    | "error";
+  message: string;
+  backendUrl: string;
+  healthUrl: string;
+  pid?: number | null;
+  startedAt: number;
+  updatedAt: number;
+  error?: string;
+};
+
 type DesktopViewerBounds = {
   x: number;
   y: number;
@@ -43,6 +60,11 @@ type DesktopRuntimeBridge = {
   notify: (payload: DesktopNotifyInput) => Promise<DesktopNotifyResult>;
   openExternal: (url: string) => Promise<{ ok: boolean }>;
   getRuntimeInfo: () => Promise<DesktopRuntimeInfo>;
+  startup?: {
+    getState: () => Promise<DesktopStartupState>;
+    retry: () => Promise<DesktopStartupState>;
+    subscribe: (listener: (state: DesktopStartupState) => void) => () => void;
+  };
   viewer: {
     activateServiceTab: (serviceId: string) => Promise<DesktopViewerState>;
     getState: () => Promise<DesktopViewerState>;
