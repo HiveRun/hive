@@ -50,12 +50,15 @@ vi.mock("@/components/cell-creation-sheet", () => ({
     initialPrefill,
     open,
   }: {
-    initialPrefill?: { sourceLabel?: string };
+    initialPrefill?: { description?: string; sourceLabel?: string };
     open: boolean;
   }) =>
     open ? (
       <div data-testid="mock-cell-creation-sheet">
         <div>Create New Cell</div>
+        {initialPrefill?.description ? (
+          <div>{initialPrefill.description}</div>
+        ) : null}
         {initialPrefill?.sourceLabel ? (
           <div>Source: Linear {initialPrefill.sourceLabel}</div>
         ) : null}
@@ -277,6 +280,10 @@ describe("Linear route", () => {
     fireEvent.click(createCellButton);
 
     expect(screen.getByText("Create New Cell")).toBeInTheDocument();
+    const sheet = screen.getByTestId("mock-cell-creation-sheet");
+    expect(sheet.textContent).toContain(
+      "Linear issue: https://linear.app/hiverun/issue/ENG-42"
+    );
   });
 
   it("filters loaded issues from title, description, or pasted links", () => {

@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { CellForm } from "@/components/cell-form";
+import { linearIssueToCellPrefill } from "@/lib/linear-issue-cell-prefill";
 import { linearQueries } from "@/queries/linear";
 import { templateQueries } from "@/queries/templates";
 import { workspaceQueries } from "@/queries/workspaces";
@@ -43,16 +44,7 @@ export const Route = createFileRoute("/cells/new")({
 function RouteComponent() {
   const { linearIssue, workspaceId } = Route.useLoaderData();
   const initialPrefill = linearIssue
-    ? {
-        name: linearIssue.title,
-        description: [linearIssue.title, linearIssue.description]
-          .filter(
-            (value): value is string =>
-              typeof value === "string" && value.length > 0
-          )
-          .join("\n\n"),
-        sourceLabel: linearIssue.identifier,
-      }
+    ? linearIssueToCellPrefill(linearIssue)
     : undefined;
 
   return (

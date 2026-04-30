@@ -36,6 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { linearIssueToCellPrefill } from "@/lib/linear-issue-cell-prefill";
 import { cn } from "@/lib/utils";
 import {
   type LinearIssue,
@@ -88,14 +89,6 @@ const getIssueFilterSpec = (value: string) => {
     raw,
   };
 };
-
-const linearIssueToPrefill = (issue: LinearIssue) => ({
-  name: issue.title,
-  description: [issue.title, issue.description]
-    .filter((value): value is string => Boolean(value && value.length > 0))
-    .join("\n\n"),
-  sourceLabel: issue.identifier,
-});
 
 const buildIssueSearchHaystack = (issue: LinearIssue) =>
   [
@@ -692,7 +685,7 @@ function IssuesCard({
       <>
         {pendingIssueForCreate ? (
           <CellCreationSheet
-            initialPrefill={linearIssueToPrefill(pendingIssueForCreate)}
+            initialPrefill={linearIssueToCellPrefill(pendingIssueForCreate)}
             onOpenChange={(open) => {
               if (!open) {
                 setPendingIssueForCreate(null);
