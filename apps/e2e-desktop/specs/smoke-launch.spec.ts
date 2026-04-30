@@ -1,5 +1,6 @@
 import { createServer } from "node:net";
-import { expect, test } from "@playwright/test";
+import { join } from "node:path";
+import { type ElectronApplication, expect, test } from "@playwright/test";
 import {
   launchDesktopApp,
   launchPackagedDesktopApp,
@@ -61,10 +62,36 @@ const stopProcess = (pid?: number | null) => {
   }
 };
 
+const expectIsolatedDesktopEnv = async (app: ElectronApplication) => {
+  const hiveHome = process.env.HIVE_E2E_HIVE_HOME;
+  if (!hiveHome) {
+    return;
+  }
+
+  const workspaceRoot = process.env.HIVE_E2E_WORKSPACE_PATH;
+  const desktopEnv = await app.evaluate(() => ({
+    hiveHome: process.env.HIVE_HOME,
+    logDir: process.env.HIVE_LOG_DIR,
+    pidFile: process.env.HIVE_PID_FILE,
+    readyFile: process.env.HIVE_READY_FILE,
+    workspaceRoot: process.env.HIVE_WORKSPACE_ROOT,
+  }));
+
+  expect(desktopEnv).toMatchObject({
+    hiveHome,
+    logDir: join(hiveHome, "logs"),
+    pidFile: join(hiveHome, "hive.pid"),
+    readyFile: join(hiveHome, "daemon-ready"),
+    ...(workspaceRoot ? { workspaceRoot } : {}),
+  });
+};
+
 test("desktop launch smoke loads workspace shell", async () => {
   const { app, page } = await launchDesktopApp();
 
   try {
+    await expectIsolatedDesktopEnv(app);
+
     try {
       await page.waitForSelector("[data-testid='workspace-create-cell']", {
         timeout: 120_000,
@@ -86,6 +113,8 @@ test("packaged desktop launch opens a renderer window", async () => {
   const { app, page } = await launchPackagedDesktopApp();
 
   try {
+    await expectIsolatedDesktopEnv(app);
+
     await expect(page.locator("#root")).toHaveCount(1, {
       timeout: ROOT_CONTENT_TIMEOUT_MS,
     });

@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import {
   type ElectronApplication,
   _electron as electron,
@@ -15,11 +16,29 @@ const trimTrailingSlash = (value: string) =>
 const resolveApiUrl = (apiUrl?: string) =>
   apiUrl ?? process.env.HIVE_E2E_API_URL;
 
+const createIsolatedHiveEnv = () => {
+  const hiveHome = process.env.HIVE_E2E_HIVE_HOME;
+  const workspaceRoot = process.env.HIVE_E2E_WORKSPACE_PATH;
+
+  return {
+    ...(hiveHome
+      ? {
+          HIVE_HOME: hiveHome,
+          HIVE_LOG_DIR: join(hiveHome, "logs"),
+          HIVE_PID_FILE: join(hiveHome, "hive.pid"),
+          HIVE_READY_FILE: join(hiveHome, "daemon-ready"),
+        }
+      : {}),
+    ...(workspaceRoot ? { HIVE_WORKSPACE_ROOT: workspaceRoot } : {}),
+  };
+};
+
 const createDesktopRuntimeEnv = (
   apiUrl: string | undefined,
   options: LaunchDesktopAppOptions = {}
 ) => ({
   ...process.env,
+  ...createIsolatedHiveEnv(),
   ...(apiUrl
     ? {
         HIVE_DESKTOP_BACKEND_URL: apiUrl,
