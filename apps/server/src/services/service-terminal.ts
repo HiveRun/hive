@@ -333,5 +333,3 @@ export const createServiceTerminalRuntime = (): ServiceTerminalRuntime => {
 };
 
 export const serviceTerminalRuntime = createServiceTerminalRuntime();
-
-export const ServiceTerminalRuntimeTag = serviceTerminalRuntime;

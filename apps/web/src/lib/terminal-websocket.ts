@@ -1,4 +1,4 @@
-export type TerminalSocketMessage = {
+type TerminalSocketMessage = {
   type: string;
   [key: string]: unknown;
 };

@@ -9,12 +9,12 @@ const serverEnvPath = resolve(moduleDir, "../../.env");
 const resolvedExecPath =
   realpathSync.native?.(process.execPath) ?? realpathSync(process.execPath);
 
-export const binaryDirectory = dirname(resolvedExecPath);
+const binaryDirectory = dirname(resolvedExecPath);
 
 const runtimeExecutable = basename(resolvedExecPath).toLowerCase();
-export const isCompiledRuntime = !runtimeExecutable.startsWith("bun");
+const isCompiledRuntime = !runtimeExecutable.startsWith("bun");
 
-export const installManagedEnvKeys = new Set([
+const installManagedEnvKeys = new Set([
   "DATABASE_URL",
   "HIVE_MIGRATIONS_DIR",
   "HIVE_WEB_DIST",

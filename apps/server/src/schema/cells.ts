@@ -1,6 +1,6 @@
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-export const cellStatusValues = [
+const cellStatusValues = [
   "spawning",
   "pending",
   "ready",

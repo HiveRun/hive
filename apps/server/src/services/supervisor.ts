@@ -245,7 +245,7 @@ export type EnsureCellServicesTimingEvent = {
   metadata?: Record<string, unknown>;
 };
 
-export type ServiceSupervisor = {
+type ServiceSupervisor = {
   bootstrap(): Promise<void>;
   ensureCellServices(args: {
     cell: Cell;
@@ -265,7 +265,7 @@ export type ServiceSupervisor = {
   stopAll(): Promise<void>;
 };
 
-export type SupervisorDependencies = {
+type SupervisorDependencies = {
   db: typeof defaultDb;
   spawnProcess: SpawnProcess;
   runCommand: RunCommand;
@@ -1672,5 +1672,3 @@ export const ServiceSupervisorService = makeServiceSupervisorService(
   createServiceSupervisor({ terminalRuntime: serviceTerminalRuntime }),
   serviceTerminalRuntime
 );
-
-export const serviceSupervisor = ServiceSupervisorService;

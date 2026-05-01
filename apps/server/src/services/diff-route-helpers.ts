@@ -8,13 +8,13 @@ import {
   getCellDiffSummary,
 } from "./diff-service";
 
-export type ParsedDiffRequest = {
+type ParsedDiffRequest = {
   mode: DiffMode;
   files: string[];
   includeSummary: boolean;
 };
 
-export type DiffRequestParseResult =
+type DiffRequestParseResult =
   | { ok: true; value: ParsedDiffRequest }
   | { ok: false; status: number; message: string };
 

@@ -30,7 +30,7 @@ const extractWorkspaceId = (value: unknown): string | undefined => {
     : undefined;
 };
 
-export type WorkspaceContextFetcher = (
+type WorkspaceContextFetcher = (
   workspaceId?: string
 ) => Promise<WorkspaceRuntimeContext>;
 

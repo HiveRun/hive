@@ -78,7 +78,7 @@ const REFLINK_UNSUPPORTED_ERROR_CODES = new Set([
 type CopyOptions = NonNullable<Parameters<typeof cp>[2]>;
 type CopyStrategy = "reflink" | "copy";
 
-export type WorktreeInfo = {
+type WorktreeInfo = {
   id: string;
   path: string;
   branch: string;
@@ -110,7 +110,7 @@ export type WorktreeLocation = {
   baseCommit: string;
 };
 
-export type WorktreeErrorKind =
+type WorktreeErrorKind =
   | "git"
   | "filesystem"
   | "conflict"
@@ -133,17 +133,6 @@ export function describeWorktreeError(error: WorktreeManagerError) {
     context: error.context,
     cause: error.cause?.message ?? null,
   };
-}
-
-export function worktreeErrorToError(error: WorktreeManagerError): Error {
-  const contextSuffix = error.context
-    ? ` ${JSON.stringify(error.context)}`
-    : "";
-  const formatted = new Error(`${error.message}${contextSuffix}`);
-  if (error.cause) {
-    (formatted as Error & { cause?: Error }).cause = error.cause;
-  }
-  return formatted;
 }
 
 function isWorktreeManagerError(value: unknown): value is WorktreeManagerError {
@@ -1531,7 +1520,7 @@ export function createWorktreeManager(
   };
 }
 
-export type WorktreeManagerInitError = {
+type WorktreeManagerInitError = {
   readonly _tag: "WorktreeManagerInitError";
   readonly workspacePath: string;
   readonly cause: unknown;

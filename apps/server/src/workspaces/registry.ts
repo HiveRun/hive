@@ -25,7 +25,7 @@ type RegistryFile = {
   activeWorkspaceId?: string | null;
 };
 
-export type WorkspaceRegistry = {
+type WorkspaceRegistry = {
   workspaces: WorkspaceRecord[];
   activeWorkspaceId?: string | null;
 };
@@ -433,40 +433,3 @@ async function shouldActivateWorkspace(path: string): Promise<boolean> {
 
   return registry.activeWorkspaceId === existing.id;
 }
-
-export type WorkspaceRegistryError = {
-  readonly _tag: "WorkspaceRegistryError";
-  readonly message: string;
-  readonly cause?: unknown;
-};
-
-export type WorkspaceRegistryService = {
-  readonly getRegistry: () => Promise<WorkspaceRegistry>;
-  readonly listWorkspaces: () => Promise<WorkspaceRecord[]>;
-  readonly registerWorkspace: (
-    input: RegisterWorkspaceInput,
-    options?: RegisterWorkspaceOptions
-  ) => Promise<WorkspaceRecord>;
-  readonly removeWorkspace: (id: string) => Promise<boolean>;
-  readonly updateWorkspaceLabel: (
-    input: UpdateWorkspaceLabelInput
-  ) => Promise<WorkspaceRecord | null>;
-  readonly activateWorkspace: (id: string) => Promise<WorkspaceRecord | null>;
-  readonly ensureWorkspaceRegistered: (
-    path: string,
-    options?: EnsureWorkspaceOptions
-  ) => Promise<WorkspaceRecord>;
-};
-
-const createWorkspaceRegistryService = (): WorkspaceRegistryService => ({
-  getRegistry: () => getWorkspaceRegistry(),
-  listWorkspaces: () => listWorkspaces(),
-  registerWorkspace: (input, options) => registerWorkspace(input, options),
-  removeWorkspace: (id) => removeWorkspace(id),
-  updateWorkspaceLabel: (input) => updateWorkspaceLabel(input),
-  activateWorkspace: (id) => activateWorkspace(id),
-  ensureWorkspaceRegistered: (path, options) =>
-    ensureWorkspaceRegistered(path, options),
-});
-
-export const workspaceRegistryService = createWorkspaceRegistryService();

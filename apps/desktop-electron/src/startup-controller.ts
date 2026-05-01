@@ -7,7 +7,7 @@ import {
 } from "@hive/daemon-runtime";
 import { getDesktopRuntimeInfo } from "./runtime-info";
 
-export type DesktopStartupPhase =
+type DesktopStartupPhase =
   | "idle"
   | "detecting-daemon"
   | "starting-daemon"
@@ -15,7 +15,7 @@ export type DesktopStartupPhase =
   | "api-ready"
   | "error";
 
-export type DesktopStartupState = {
+type DesktopStartupState = {
   phase: DesktopStartupPhase;
   message: string;
   backendUrl: string;

@@ -1,7 +1,6 @@
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { eq } from "drizzle-orm";
-import { db } from "../db";
 import type { CellService } from "../schema/services";
 import { cellServices } from "../schema/services";
 
@@ -152,17 +151,3 @@ async function terminatePid(pid: number): Promise<void> {
     /* ignore cleanup errors */
   }
 }
-
-export type PortManagerService = {
-  readonly ensureServicePort: (service: CellService) => Promise<number>;
-  readonly rememberSpecificPort: (serviceId: string, port: number) => void;
-  readonly releasePortFor: (serviceId: string) => void;
-  readonly findFreePort: () => Promise<number>;
-};
-
-export const portManager: PortManagerService = createPortManager({
-  db,
-  now: () => new Date(),
-});
-
-export const PortManagerService = portManager;

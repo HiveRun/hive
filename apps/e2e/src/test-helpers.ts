@@ -71,7 +71,7 @@ export async function waitForCondition(options: {
   throw new Error(options.errorMessage);
 }
 
-export function parseCellIdFromUrl(url: string): string {
+function parseCellIdFromUrl(url: string): string {
   const pathname = readPathname(url);
   const cellId = extractCellIdFromPath(pathname);
   if (!cellId) {
@@ -338,7 +338,7 @@ async function resolveTemplateId(options: {
   return match.id;
 }
 
-export async function openCellCreationSheet(
+async function openCellCreationSheet(
   page: Page,
   workspaceId?: string
 ): Promise<void> {
@@ -390,7 +390,7 @@ export async function openCellCreationSheet(
   throw new Error("Failed to open create-cell form for any workspace");
 }
 
-export async function selectTemplate(page: Page, label: string): Promise<void> {
+async function selectTemplate(page: Page, label: string): Promise<void> {
   const trigger = page.locator(selectors.templateSelectTrigger);
   await trigger.waitFor({ state: "visible", timeout: 15_000 });
   await trigger.click({ noWaitAfter: true });
@@ -420,7 +420,7 @@ export async function fetchCell(
   return payload;
 }
 
-export async function fetchServices(
+async function fetchServices(
   apiUrl: string,
   cellId: string,
   options: { includeResources?: boolean } = {}

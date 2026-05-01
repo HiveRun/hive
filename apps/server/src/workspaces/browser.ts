@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { hasConfigFile } from "../config/files";
 import { isCellWorkspacePath } from "./registry";
 
-export type WorkspaceDirectoryEntry = {
+type WorkspaceDirectoryEntry = {
   name: string;
   path: string;
   hasConfig: boolean;

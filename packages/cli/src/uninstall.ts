@@ -15,7 +15,7 @@ export type StopRuntimeResult = "failed" | "not_running" | "stopped";
 
 type Logger = (message: string) => void;
 
-export type UninstallHiveOptions = {
+type UninstallHiveOptions = {
   confirm: boolean;
   preserveData?: boolean;
   hiveHome: string;

@@ -1,9 +1,10 @@
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { createdAtColumn, metadataColumn } from "./common-columns";
 
-export const CELL_TIMING_WORKFLOWS = ["create"] as const;
+const CELL_TIMING_WORKFLOWS = ["create"] as const;
 export type CellTimingWorkflow = (typeof CELL_TIMING_WORKFLOWS)[number];
 
-export const CELL_TIMING_STATUSES = ["ok", "error"] as const;
+const CELL_TIMING_STATUSES = ["ok", "error"] as const;
 export type CellTimingStatus = (typeof CELL_TIMING_STATUSES)[number];
 
 export const cellTimingEvents = sqliteTable("cell_timing_events", {
@@ -19,11 +20,6 @@ export const cellTimingEvents = sqliteTable("cell_timing_events", {
   durationMs: integer("duration_ms").notNull(),
   attempt: integer("attempt"),
   error: text("error"),
-  metadata: text("metadata", { mode: "json" })
-    .$type<Record<string, unknown>>()
-    .notNull(),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  metadata: metadataColumn(),
+  createdAt: createdAtColumn(),
 });
-
-export type CellTimingEvent = typeof cellTimingEvents.$inferSelect;
-export type NewCellTimingEvent = typeof cellTimingEvents.$inferInsert;

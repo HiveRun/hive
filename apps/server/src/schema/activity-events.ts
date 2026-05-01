@@ -1,5 +1,6 @@
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { cells } from "./cells";
+import { createdAtColumn, metadataColumn } from "./common-columns";
 import { cellServices } from "./services";
 
 export const ACTIVITY_EVENT_TYPES = [
@@ -27,11 +28,6 @@ export const cellActivityEvents = sqliteTable("cell_activity_events", {
   type: text("type").$type<ActivityEventType>().notNull(),
   source: text("source"),
   toolName: text("tool_name"),
-  metadata: text("metadata", { mode: "json" })
-    .$type<Record<string, unknown>>()
-    .notNull(),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  metadata: metadataColumn(),
+  createdAt: createdAtColumn(),
 });
-
-export type CellActivityEvent = typeof cellActivityEvents.$inferSelect;
-export type NewCellActivityEvent = typeof cellActivityEvents.$inferInsert;

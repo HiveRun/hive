@@ -10,6 +10,6 @@ export type DatabaseService = {
   readonly db: typeof db;
 };
 
-export const databaseService: DatabaseService = { db };
+const databaseService: DatabaseService = { db };
 
 export const DatabaseService = databaseService;

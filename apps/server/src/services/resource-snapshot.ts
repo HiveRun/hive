@@ -13,7 +13,7 @@ type PsSnapshot = {
   rssBytes: number | null;
 };
 
-export type ResourceUnavailableReason =
+type ResourceUnavailableReason =
   | "pid_missing"
   | "process_not_alive"
   | "sample_failed"

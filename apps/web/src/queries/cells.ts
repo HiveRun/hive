@@ -336,14 +336,14 @@ export type CellServiceSummary = Awaited<
   ReturnType<ReturnType<typeof cellQueries.services>["queryFn"]>
 >[number];
 
-export type CellActivityEventListResponse = Awaited<
+type CellActivityEventListResponse = Awaited<
   ReturnType<ReturnType<typeof cellQueries.activity>["queryFn"]>
 >;
 
 export type CellActivityEvent = CellActivityEventListResponse["events"][number];
 
-export type CellTimingStatus = "ok" | "error";
-export type CellTimingWorkflow = "create";
+type CellTimingStatus = "ok" | "error";
+type CellTimingWorkflow = "create";
 
 export type CellTimingStep = {
   id: string;
@@ -362,7 +362,7 @@ export type CellTimingStep = {
   createdAt: string;
 };
 
-export type CellTimingRun = {
+type CellTimingRun = {
   runId: string;
   cellId: string;
   cellName: string | null;
@@ -377,7 +377,7 @@ export type CellTimingRun = {
   attempt: number | null;
 };
 
-export type CellTimingResponse = {
+type CellTimingResponse = {
   steps: CellTimingStep[];
   runs: CellTimingRun[];
 };
@@ -397,7 +397,7 @@ export type DiffFileDetail = DiffFileSummary & {
   patch?: string | null;
 };
 
-export type CellDiffResponse = {
+type CellDiffResponse = {
   mode: DiffMode;
   baseCommit?: string | null;
   headCommit?: string | null;

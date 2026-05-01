@@ -1,6 +1,6 @@
 const DEFAULT_API_BASE = "http://localhost:3000";
 
-export const resolveApiBase = () => {
+const resolveApiBase = () => {
   const envUrl = import.meta.env.VITE_API_URL?.trim();
   const desktopRuntimeInfo =
     typeof window !== "undefined" ? window.hiveDesktop?.runtimeInfo : undefined;

@@ -7,7 +7,7 @@ import {
 
 export type ViewerBounds = Pick<Rectangle, "x" | "y" | "width" | "height">;
 
-export type ViewerState = {
+type ViewerState = {
   activeServiceId: string | null;
   canGoBack: boolean;
   canGoForward: boolean;

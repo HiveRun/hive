@@ -12,7 +12,7 @@ const DEFAULT_SHELL =
     ? (process.env.COMSPEC ?? "powershell.exe")
     : "/bin/bash");
 
-export type CellTerminalStatus = "running" | "exited";
+type CellTerminalStatus = "running" | "exited";
 
 export type CellTerminalSession = {
   sessionId: string;
@@ -47,7 +47,7 @@ type CellTerminalRecord = {
   buffer: string;
 };
 
-export type CellTerminalService = {
+type CellTerminalService = {
   ensureSession(args: {
     cellId: string;
     workspacePath: string;

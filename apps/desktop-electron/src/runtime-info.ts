@@ -1,8 +1,8 @@
 const DEFAULT_BACKEND_URL = "http://localhost:3000";
 
-export type DesktopStartupMode = "starting" | "reconnecting";
+type DesktopStartupMode = "starting" | "reconnecting";
 
-export type DesktopRuntimeInfo = {
+type DesktopRuntimeInfo = {
   runtime: "electron";
   version: string;
   platform: NodeJS.Platform;

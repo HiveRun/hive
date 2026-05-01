@@ -304,7 +304,7 @@ function createOpencodeThemeEnv(
   return env;
 }
 
-export type ChatTerminalStatus = "running" | "exited";
+type ChatTerminalStatus = "running" | "exited";
 
 export type ChatTerminalSession = {
   sessionId: string;
@@ -345,7 +345,7 @@ type ChatTerminalRecord = {
   allowEmbeddedControlInput: boolean;
 };
 
-export type ChatTerminalService = {
+type ChatTerminalService = {
   ensureSession(args: {
     cellId: string;
     workspacePath: string;

@@ -2,7 +2,7 @@ import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import type { Service } from "../config/schema";
 import { cells } from "./cells";
 
-export const SERVICE_STATUSES = [
+const SERVICE_STATUSES = [
   "pending",
   "starting",
   "running",
@@ -34,4 +34,3 @@ export const cellServices = sqliteTable("cell_services", {
 });
 
 export type CellService = typeof cellServices.$inferSelect;
-export type NewCellService = typeof cellServices.$inferInsert;

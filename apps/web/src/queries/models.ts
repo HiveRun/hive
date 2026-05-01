@@ -1,7 +1,7 @@
 import type { UseQueryOptions } from "@tanstack/react-query";
 import { rpc } from "@/lib/rpc";
 
-export type AvailableModelVariant = {
+type AvailableModelVariant = {
   id: string;
 };
 
@@ -12,7 +12,7 @@ export type AvailableModel = {
   variants: AvailableModelVariant[];
 };
 
-export type ProviderInfo = {
+type ProviderInfo = {
   id: string;
   name?: string;
 };

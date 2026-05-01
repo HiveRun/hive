@@ -1,6 +1,6 @@
 import { t } from "elysia";
 
-export const CreateCellImageSchema = t.Object({
+const CreateCellImageSchema = t.Object({
   filename: t.Optional(t.String({ minLength: 1 })),
   mimeType: t.String({ minLength: 1 }),
   base64Data: t.String({
@@ -118,7 +118,7 @@ export const CellTerminalActionResponseSchema = t.Object({
   ok: t.Boolean(),
 });
 
-export const RuntimeTerminalSessionSchema = t.Object({
+const RuntimeTerminalSessionSchema = t.Object({
   sessionId: t.String(),
   pid: t.Number(),
   cwd: t.String(),
@@ -134,7 +134,7 @@ export const RuntimeTerminalResizeResponseSchema = t.Object({
   session: RuntimeTerminalSessionSchema,
 });
 
-export const CellActivityEventSchema = t.Object({
+const CellActivityEventSchema = t.Object({
   id: t.String(),
   cellId: t.String(),
   serviceId: t.Union([t.String(), t.Null()]),
@@ -154,7 +154,7 @@ const CellTimingWorkflowSchema = t.Union([t.Literal("create")]);
 
 const CellTimingStatusSchema = t.Union([t.Literal("ok"), t.Literal("error")]);
 
-export const CellTimingStepSchema = t.Object({
+const CellTimingStepSchema = t.Object({
   id: t.String(),
   cellId: t.String(),
   cellName: t.Union([t.String(), t.Null()]),
@@ -171,7 +171,7 @@ export const CellTimingStepSchema = t.Object({
   createdAt: t.String(),
 });
 
-export const CellTimingRunSchema = t.Object({
+const CellTimingRunSchema = t.Object({
   runId: t.String(),
   cellId: t.String(),
   cellName: t.Union([t.String(), t.Null()]),
@@ -197,15 +197,9 @@ const DiffStatusSchema = t.Union([
   t.Literal("deleted"),
 ]);
 
-export const DiffModeSchema = t.Union([
-  t.Literal("workspace"),
-  t.Literal("branch"),
-]);
+const DiffModeSchema = t.Union([t.Literal("workspace"), t.Literal("branch")]);
 
-export const DiffSummaryModeSchema = t.Union([
-  t.Literal("full"),
-  t.Literal("none"),
-]);
+const DiffSummaryModeSchema = t.Union([t.Literal("full"), t.Literal("none")]);
 
 export const DiffQuerySchema = t.Object({
   mode: t.Optional(DiffModeSchema),
@@ -213,14 +207,14 @@ export const DiffQuerySchema = t.Object({
   summary: t.Optional(DiffSummaryModeSchema),
 });
 
-export const DiffFileSummarySchema = t.Object({
+const DiffFileSummarySchema = t.Object({
   path: t.String(),
   status: DiffStatusSchema,
   additions: t.Number(),
   deletions: t.Number(),
 });
 
-export const DiffFileDetailSchema = t.Object({
+const DiffFileDetailSchema = t.Object({
   path: t.String(),
   status: DiffStatusSchema,
   additions: t.Number(),
@@ -297,7 +291,7 @@ export const TemplateResponseSchema = t.Object({
   includeDirectories: t.Optional(t.Array(t.String())),
 });
 
-export const DefaultsResponseSchema = t.Object({
+const DefaultsResponseSchema = t.Object({
   templateId: t.Optional(t.String()),
   startMode: t.Optional(t.Union([t.Literal("plan"), t.Literal("build")])),
 });
@@ -314,7 +308,7 @@ export const TemplateListResponseSchema = t.Object({
   agentDefaults: t.Optional(AgentDefaultsSchema),
 });
 
-export const AgentSessionSchema = t.Object({
+const AgentSessionSchema = t.Object({
   id: t.String(),
   cellId: t.String(),
   templateId: t.String(),
@@ -332,15 +326,7 @@ export const AgentSessionSchema = t.Object({
   modeUpdatedAt: t.Optional(t.String()),
 });
 
-export const CreateAgentSessionSchema = t.Object({
-  cellId: t.String(),
-  force: t.Optional(t.Boolean()),
-  modelId: t.Optional(t.String()),
-  providerId: t.Optional(t.String()),
-  variant: t.Optional(t.String()),
-});
-
-export const AgentMessageSchema = t.Object({
+const AgentMessageSchema = t.Object({
   id: t.String(),
   sessionId: t.String(),
   role: t.String(),
@@ -361,61 +347,18 @@ export const AgentSessionByCellResponseSchema = t.Object({
   session: t.Union([AgentSessionSchema, t.Null()]),
 });
 
-export const SendAgentMessageSchema = t.Object({
-  content: t.String({ minLength: 1 }),
-});
-
-export const RespondPermissionSchema = t.Object({
-  response: t.Union([
-    t.Literal("once"),
-    t.Literal("always"),
-    t.Literal("reject"),
-  ]),
-});
-
-export const VoiceTranscriptionRequestSchema = t.Object({
-  audioBase64: t.String({ minLength: 1 }),
-  mimeType: t.Optional(t.String()),
-  workspaceId: t.Optional(t.String({ minLength: 1 })),
-});
-
-export const WorkspaceDirectoryEntrySchema = t.Object({
-  name: t.String(),
-  path: t.String(),
-  hasConfig: t.Boolean(),
-});
-
-export const WorkspaceBrowseResponseSchema = t.Object({
-  path: t.String(),
-  parentPath: t.Optional(t.Union([t.String(), t.Null()])),
-  directories: t.Array(WorkspaceDirectoryEntrySchema),
-});
-
-export const VoiceTranscriptionResponseSchema = t.Object({
-  text: t.String(),
-  language: t.Union([t.String(), t.Null()]),
-  durationInSeconds: t.Union([t.Number(), t.Null()]),
-  segments: t.Array(
-    t.Object({
-      text: t.String(),
-      start: t.Union([t.Number(), t.Null()]),
-      end: t.Union([t.Number(), t.Null()]),
-    })
-  ),
-});
-
-export const LinearUserSchema = t.Object({
+const LinearUserSchema = t.Object({
   id: t.String(),
   name: t.String(),
   email: t.Union([t.String(), t.Null()]),
 });
 
-export const LinearOrganizationSchema = t.Object({
+const LinearOrganizationSchema = t.Object({
   id: t.String(),
   name: t.String(),
 });
 
-export const LinearTeamSchema = t.Object({
+const LinearTeamSchema = t.Object({
   id: t.String(),
   key: t.Union([t.String(), t.Null()]),
   name: t.String(),
@@ -428,15 +371,11 @@ export const LinearStatusResponseSchema = t.Object({
   team: t.Union([LinearTeamSchema, t.Null()]),
 });
 
-export const LinearOAuthStartResponseSchema = t.Object({
-  authorizationUrl: t.String(),
-});
-
 export const LinearTeamListResponseSchema = t.Object({
   teams: t.Array(LinearTeamSchema),
 });
 
-export const LinearIssueStateSchema = t.Object({
+const LinearIssueStateSchema = t.Object({
   id: t.String(),
   name: t.String(),
   color: t.Union([t.String(), t.Null()]),

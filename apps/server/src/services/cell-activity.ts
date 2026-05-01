@@ -12,12 +12,12 @@ type DatabaseClient = DatabaseServiceType["db"];
 export const DEFAULT_ACTIVITY_LIMIT = 50;
 export const MAX_ACTIVITY_LIMIT = 200;
 
-export type ActivityCursor = {
+type ActivityCursor = {
   createdAt: Date;
   id: string;
 };
 
-export type CellActivityPage = {
+type CellActivityPage = {
   events: Array<{
     id: string;
     cellId: string;
@@ -31,7 +31,7 @@ export type CellActivityPage = {
   nextCursor: string | null;
 };
 
-export function encodeActivityCursor(createdAt: Date, id: string): string {
+function encodeActivityCursor(createdAt: Date, id: string): string {
   return `${createdAt.getTime()}:${id}`;
 }
 

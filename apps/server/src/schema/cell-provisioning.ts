@@ -17,5 +17,3 @@ export const cellProvisioningStates = sqliteTable("cell_provisioning_state", {
 });
 
 export type CellProvisioningState = typeof cellProvisioningStates.$inferSelect;
-export type NewCellProvisioningState =
-  typeof cellProvisioningStates.$inferInsert;

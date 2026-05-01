@@ -1,7 +1,5 @@
 import { stat } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
-import type { WorkspaceRegistryError } from "../workspaces/registry";
-import { getWorkspaceRegistry } from "../workspaces/registry";
 import { hasConfigFile } from "./files";
 import { loadConfig } from "./loader";
 import type { HiveConfig } from "./schema";
@@ -91,7 +89,7 @@ export function clearHiveConfigCache(workspaceRoot?: string): void {
   configCache.clear();
 }
 
-export type HiveConfigError = {
+type HiveConfigError = {
   readonly _tag: "HiveConfigError";
   readonly workspaceRoot: string;
   readonly cause: unknown;
@@ -106,28 +104,7 @@ const makeHiveConfigError = (
   cause,
 });
 
-export type HiveConfigWorkspaceError = {
-  readonly _tag: "HiveConfigWorkspaceError";
-  readonly workspaceId?: string;
-  readonly message: string;
-};
-
-export type HiveConfigResolutionError =
-  | HiveConfigError
-  | HiveConfigWorkspaceError
-  | WorkspaceRegistryError;
-
-const makeHiveConfigWorkspaceError = (
-  workspaceId?: string
-): HiveConfigWorkspaceError => ({
-  _tag: "HiveConfigWorkspaceError",
-  workspaceId,
-  message: workspaceId
-    ? `Workspace '${workspaceId}' not found`
-    : "No active workspace. Register and activate a workspace to continue.",
-});
-
-export type HiveConfigService = {
+type HiveConfigService = {
   readonly workspaceRoot: string;
   readonly resolve: () => string;
   readonly load: (workspaceRoot?: string) => Promise<HiveConfig>;
@@ -152,31 +129,5 @@ export const hiveConfigService: HiveConfigService = {
   },
 };
 
-export const HiveConfigService = hiveConfigService;
-
-const selectWorkspaceForConfig = (
-  registry: Awaited<ReturnType<typeof getWorkspaceRegistry>>,
-  workspaceId?: string
-) => {
-  if (workspaceId) {
-    return registry.workspaces.find((entry) => entry.id === workspaceId);
-  }
-  if (registry.activeWorkspaceId) {
-    return registry.workspaces.find(
-      (entry) => entry.id === registry.activeWorkspaceId
-    );
-  }
-  return null;
-};
-
 export const loadHiveConfig = (workspaceRoot?: string) =>
   hiveConfigService.load(workspaceRoot);
-
-export const loadWorkspaceHiveConfig = async (workspaceId?: string) => {
-  const registry = await getWorkspaceRegistry();
-  const workspace = selectWorkspaceForConfig(registry, workspaceId);
-  if (!workspace) {
-    throw makeHiveConfigWorkspaceError(workspaceId);
-  }
-  return await loadHiveConfig(workspace.path);
-};

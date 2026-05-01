@@ -1,13 +1,13 @@
 import { rpc } from "@/lib/rpc";
 import { formatRpcError, formatRpcResponseError } from "@/lib/rpc-error";
 
-export type LinearUser = {
+type LinearUser = {
   id: string;
   name: string;
   email: string | null;
 };
 
-export type LinearOrganization = {
+type LinearOrganization = {
   id: string;
   name: string;
 };
@@ -18,7 +18,7 @@ export type LinearTeam = {
   name: string;
 };
 
-export type LinearIssueState = {
+type LinearIssueState = {
   id: string;
   name: string;
   color: string | null;
@@ -37,25 +37,25 @@ export type LinearIssue = {
   assignee: LinearUser | null;
 };
 
-export type LinearStatus = {
+type LinearStatus = {
   connected: boolean;
   user: LinearUser | null;
   organization: LinearOrganization | null;
   team: LinearTeam | null;
 };
 
-export type LinearIssueListResponse = {
+type LinearIssueListResponse = {
   issues: LinearIssue[];
   nextCursor: string | null;
   hasNextPage: boolean;
 };
 
-export type SaveLinearTokenInput = {
+type SaveLinearTokenInput = {
   workspaceId: string;
   accessToken: string;
 };
 
-export type LinkLinearTeamInput = {
+type LinkLinearTeamInput = {
   workspaceId: string;
   teamId: string;
 };

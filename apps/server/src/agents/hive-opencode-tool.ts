@@ -18,7 +18,7 @@ export const HIVE_TOOL_SOURCE = HIVE_TOOL_SOURCE_EMBEDDED;
  * Configuration written to .hive/config.json in each cell worktree.
  * Tools read this to get the cell ID and Hive server URL.
  */
-export type HiveToolConfig = {
+type HiveToolConfig = {
   cellId: string;
   hiveUrl: string;
 };

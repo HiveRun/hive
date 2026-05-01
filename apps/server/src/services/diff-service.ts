@@ -1,16 +1,16 @@
 import { join } from "node:path";
 
 export type DiffMode = "workspace" | "branch";
-export type DiffStatus = "modified" | "added" | "deleted";
+type DiffStatus = "modified" | "added" | "deleted";
 
-export type DiffFileSummary = {
+type DiffFileSummary = {
   path: string;
   status: DiffStatus;
   additions: number;
   deletions: number;
 };
 
-export type DiffFileDetail = DiffFileSummary & {
+type DiffFileDetail = DiffFileSummary & {
   beforeContent?: string;
   afterContent?: string;
   patch?: string;

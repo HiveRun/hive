@@ -23,7 +23,7 @@ import {
 } from "./context";
 import { removeWorkspace, type WorkspaceRecord } from "./registry";
 
-export type WorkspaceRemovalResult = {
+type WorkspaceRemovalResult = {
   workspace: WorkspaceRecord;
   deletedCellIds: string[];
 };

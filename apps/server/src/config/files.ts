@@ -1,9 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-export const CONFIG_FILENAMES = ["hive.config.json"] as const;
-
-export type ConfigFilename = (typeof CONFIG_FILENAMES)[number];
+const CONFIG_FILENAMES = ["hive.config.json"] as const;
 
 export const PREFERRED_CONFIG_FILENAME = CONFIG_FILENAMES[0];
 

@@ -23,7 +23,7 @@ export type CellTimingStepRecord = {
   createdAt: string;
 };
 
-export type CellTimingRunRecord = {
+type CellTimingRunRecord = {
   runId: string;
   cellId: string;
   cellName: string | null;

@@ -170,7 +170,7 @@ const createWorktreeManagerFetcher = (
   };
 };
 
-export type CellRouteDependencies = {
+type CellRouteDependencies = {
   db: DatabaseClient;
   resolveWorkspaceContext: WorkspaceContextResolverLike;
   ensureAgentSession: AgentRuntimeService["ensureAgentSession"];
