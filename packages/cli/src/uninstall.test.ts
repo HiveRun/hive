@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { uninstallHive } from "./uninstall";
 
 const createLogger = () => vi.fn<(message: string) => void>();
+const stopNotRunning = () => "not_running" as const;
 
 const pathExists = (path: string) => {
   try {
@@ -30,6 +31,33 @@ const pathExists = (path: string) => {
 describe("uninstallHive", () => {
   const tempRoots: string[] = [];
 
+  const createTempRoot = () => {
+    const root = mkdtempSync(join(tmpdir(), "hive-uninstall-"));
+    tempRoots.push(root);
+    return root;
+  };
+
+  const createHiveHome = (root: string) => {
+    const hiveHome = join(root, ".hive");
+    mkdirSync(hiveHome, { recursive: true });
+    return hiveHome;
+  };
+
+  const createUninstallOptions = (
+    hiveHome: string,
+    overrides: Partial<Parameters<typeof uninstallHive>[0]> = {}
+  ): Parameters<typeof uninstallHive>[0] => ({
+    confirm: true,
+    hiveHome,
+    stopRuntime: vi.fn(stopNotRunning),
+    closeDesktop: vi.fn(),
+    logInfo: createLogger(),
+    logSuccess: createLogger(),
+    logWarning: createLogger(),
+    logError: createLogger(),
+    ...overrides,
+  });
+
   afterEach(() => {
     for (const root of tempRoots) {
       rmSync(root, { recursive: true, force: true });
@@ -38,9 +66,7 @@ describe("uninstallHive", () => {
   });
 
   it("removes hive home and managed binary when confirmed", () => {
-    const root = mkdtempSync(join(tmpdir(), "hive-uninstall-"));
-    tempRoots.push(root);
-
+    const root = createTempRoot();
     const hiveHome = join(root, ".hive");
     const releaseDir = join(hiveHome, "releases", "hive-linux-x64");
     mkdirSync(releaseDir, { recursive: true });
@@ -50,20 +76,16 @@ describe("uninstallHive", () => {
     mkdirSync(binDir, { recursive: true });
     symlinkSync(join(hiveHome, "current", "hive"), join(binDir, "hive"));
 
-    const stopRuntime = vi.fn(() => "not_running" as const);
+    const stopRuntime = vi.fn(stopNotRunning);
     const closeDesktop = vi.fn();
 
-    const exitCode = uninstallHive({
-      confirm: true,
-      hiveHome,
-      hiveBinDir: binDir,
-      stopRuntime,
-      closeDesktop,
-      logInfo: createLogger(),
-      logSuccess: createLogger(),
-      logWarning: createLogger(),
-      logError: createLogger(),
-    });
+    const exitCode = uninstallHive(
+      createUninstallOptions(hiveHome, {
+        hiveBinDir: binDir,
+        stopRuntime,
+        closeDesktop,
+      })
+    );
 
     expect(exitCode).toBe(0);
     expect(stopRuntime).toHaveBeenCalledTimes(1);
@@ -73,26 +95,20 @@ describe("uninstallHive", () => {
   });
 
   it("requires --yes confirmation", () => {
-    const root = mkdtempSync(join(tmpdir(), "hive-uninstall-"));
-    tempRoots.push(root);
+    const hiveHome = createHiveHome(createTempRoot());
 
-    const hiveHome = join(root, ".hive");
-    mkdirSync(hiveHome, { recursive: true });
-
-    const stopRuntime = vi.fn(() => "not_running" as const);
+    const stopRuntime = vi.fn(stopNotRunning);
     const closeDesktop = vi.fn();
     const logError = createLogger();
 
-    const exitCode = uninstallHive({
-      confirm: false,
-      hiveHome,
-      stopRuntime,
-      closeDesktop,
-      logInfo: createLogger(),
-      logSuccess: createLogger(),
-      logWarning: createLogger(),
-      logError,
-    });
+    const exitCode = uninstallHive(
+      createUninstallOptions(hiveHome, {
+        confirm: false,
+        stopRuntime,
+        closeDesktop,
+        logError,
+      })
+    );
 
     expect(exitCode).toBe(1);
     expect(stopRuntime).not.toHaveBeenCalled();
@@ -104,27 +120,20 @@ describe("uninstallHive", () => {
   });
 
   it("aborts uninstall when daemon stop check fails", () => {
-    const root = mkdtempSync(join(tmpdir(), "hive-uninstall-"));
-    tempRoots.push(root);
-
-    const hiveHome = join(root, ".hive");
-    mkdirSync(hiveHome, { recursive: true });
+    const hiveHome = createHiveHome(createTempRoot());
     writeFileSync(join(hiveHome, "hive.env"), "test");
 
     const stopRuntime = vi.fn(() => "failed" as const);
     const closeDesktop = vi.fn();
     const logError = createLogger();
 
-    const exitCode = uninstallHive({
-      confirm: true,
-      hiveHome,
-      stopRuntime,
-      closeDesktop,
-      logInfo: createLogger(),
-      logSuccess: createLogger(),
-      logWarning: createLogger(),
-      logError,
-    });
+    const exitCode = uninstallHive(
+      createUninstallOptions(hiveHome, {
+        stopRuntime,
+        closeDesktop,
+        logError,
+      })
+    );
 
     expect(exitCode).toBe(1);
     expect(closeDesktop).not.toHaveBeenCalled();
@@ -135,8 +144,7 @@ describe("uninstallHive", () => {
   });
 
   it("can uninstall app files while preserving data", () => {
-    const root = mkdtempSync(join(tmpdir(), "hive-uninstall-"));
-    tempRoots.push(root);
+    const root = createTempRoot();
 
     const hiveHome = join(root, ".hive");
     const releasesDir = join(hiveHome, "releases", "hive-linux-x64");
@@ -147,22 +155,20 @@ describe("uninstallHive", () => {
     writeFileSync(join(releasesDir, "hive"), "binary");
     writeFileSync(join(stateDir, "hive.db"), "sqlite");
 
-    const stopRuntime = vi.fn(() => "not_running" as const);
+    const stopRuntime = vi.fn(stopNotRunning);
     const closeDesktop = vi.fn();
     const logInfo = createLogger();
     const logSuccess = createLogger();
 
-    const exitCode = uninstallHive({
-      confirm: true,
-      preserveData: true,
-      hiveHome,
-      stopRuntime,
-      closeDesktop,
-      logInfo,
-      logSuccess,
-      logWarning: createLogger(),
-      logError: createLogger(),
-    });
+    const exitCode = uninstallHive(
+      createUninstallOptions(hiveHome, {
+        preserveData: true,
+        stopRuntime,
+        closeDesktop,
+        logInfo,
+        logSuccess,
+      })
+    );
 
     expect(exitCode).toBe(0);
     expect(existsSync(hiveHome)).toBe(true);
@@ -177,8 +183,7 @@ describe("uninstallHive", () => {
   });
 
   it("removes managed shell path entries and completion scripts", () => {
-    const root = mkdtempSync(join(tmpdir(), "hive-uninstall-"));
-    tempRoots.push(root);
+    const root = createTempRoot();
 
     const homeDir = join(root, "home");
     const xdgConfigHome = join(homeDir, ".config");
@@ -221,26 +226,24 @@ describe("uninstallHive", () => {
     });
     writeFileSync(fishCompletionPath, "# fish completion for hive\n");
 
-    const stopRuntime = vi.fn(() => "not_running" as const);
+    const stopRuntime = vi.fn(stopNotRunning);
     const closeDesktop = vi.fn();
     const logInfo = createLogger();
     const logWarning = createLogger();
 
-    const exitCode = uninstallHive({
-      confirm: true,
-      hiveHome,
-      hiveBinDir: binDir,
-      homeDir,
-      xdgConfigHome,
-      zshCustom,
-      shellPath: "/bin/zsh",
-      stopRuntime,
-      closeDesktop,
-      logInfo,
-      logSuccess: createLogger(),
-      logWarning,
-      logError: createLogger(),
-    });
+    const exitCode = uninstallHive(
+      createUninstallOptions(hiveHome, {
+        hiveBinDir: binDir,
+        homeDir,
+        xdgConfigHome,
+        zshCustom,
+        shellPath: "/bin/zsh",
+        stopRuntime,
+        closeDesktop,
+        logInfo,
+        logWarning,
+      })
+    );
 
     expect(exitCode).toBe(0);
     expect(readFileSync(zshrcPath, "utf8")).not.toContain(
@@ -263,8 +266,7 @@ describe("uninstallHive", () => {
   });
 
   it("discovers managed bin dir from PATH and removes ~/.config zsh completion", () => {
-    const root = mkdtempSync(join(tmpdir(), "hive-uninstall-"));
-    tempRoots.push(root);
+    const root = createTempRoot();
 
     const homeDir = join(root, "home");
     const xdgConfigHome = join(homeDir, ".xdg-config");
@@ -292,7 +294,7 @@ describe("uninstallHive", () => {
     });
     writeFileSync(zshCompletionPath, "#compdef hive\n_hive() {}\n");
 
-    const stopRuntime = vi.fn(() => "not_running" as const);
+    const stopRuntime = vi.fn(stopNotRunning);
     const closeDesktop = vi.fn();
 
     const originalPath = process.env.PATH;
@@ -301,18 +303,14 @@ describe("uninstallHive", () => {
       .join(delimiter);
 
     try {
-      const exitCode = uninstallHive({
-        confirm: true,
-        hiveHome,
-        homeDir,
-        xdgConfigHome,
-        stopRuntime,
-        closeDesktop,
-        logInfo: createLogger(),
-        logSuccess: createLogger(),
-        logWarning: createLogger(),
-        logError: createLogger(),
-      });
+      const exitCode = uninstallHive(
+        createUninstallOptions(hiveHome, {
+          homeDir,
+          xdgConfigHome,
+          stopRuntime,
+          closeDesktop,
+        })
+      );
 
       expect(exitCode).toBe(0);
       expect(pathExists(join(customBinDir, "hive"))).toBe(false);

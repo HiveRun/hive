@@ -10,11 +10,12 @@ import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ProvisioningChecklistPanel } from "@/components/provisioning-checklist-panel";
 import { Button } from "@/components/ui/button";
-import { buildProvisioningChecklist } from "@/lib/provisioning-checklist";
 import { cn } from "@/lib/utils";
 import { cellQueries } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
 import { workspaceQueries } from "@/queries/workspaces";
+import { useCreateProvisioningChecklist } from "../-shared/cell-route";
+import { useOverflowToggle } from "../-shared/use-overflow-toggle";
 
 const PROVISIONING_POLL_MS = 1500;
 const CELL_ROUTE_REDIRECT_FETCH_TIMEOUT_MS = 1200;
@@ -85,7 +86,6 @@ export function CellLayout() {
   const isInfoRoute = activeRouteId === "/cells/$cellId/setup";
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const descriptionRef = useRef<HTMLParagraphElement | null>(null);
-  const [canExpandDescription, setCanExpandDescription] = useState(false);
 
   const cell = cellQuery.data;
   const description = cell?.description ?? "";
@@ -129,11 +129,6 @@ export function CellLayout() {
   }, [isInfoRoute]);
 
   useEffect(() => {
-    setCanExpandDescription(
-      description.trim().length > DESCRIPTION_EXPAND_FALLBACK_THRESHOLD ||
-        description.includes("\n")
-    );
-
     if (
       previousCellIdRef.current === cellId &&
       previousDescriptionRef.current === description
@@ -146,57 +141,15 @@ export function CellLayout() {
     setIsDescriptionExpanded(false);
   }, [cellId, description]);
 
-  useEffect(() => {
-    if (!hasDescription) {
-      setCanExpandDescription(false);
-      return;
-    }
-
-    if (isDescriptionExpanded) {
-      return;
-    }
-
-    const element = descriptionRef.current;
-    if (!element) {
-      return;
-    }
-
-    const fallbackCanExpand =
-      description.trim().length > DESCRIPTION_EXPAND_FALLBACK_THRESHOLD ||
-      description.includes("\n");
-
-    const measure = () => {
-      setCanExpandDescription(
-        fallbackCanExpand || element.scrollHeight > element.clientHeight + 1
-      );
-    };
-
-    let frameId: number | null = null;
-
-    const runMeasure = () => {
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId);
-      }
-
-      frameId = window.requestAnimationFrame(() => {
-        frameId = null;
-        measure();
-      });
-    };
-
-    runMeasure();
-
-    const observer = new ResizeObserver(runMeasure);
-    observer.observe(element);
-
-    return () => {
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId);
-      }
-
-      observer.disconnect();
-    };
-  }, [description, hasDescription, isDescriptionExpanded]);
+  const canExpandDescription = useOverflowToggle({
+    canExpandFallback:
+      hasDescription &&
+      (description.trim().length > DESCRIPTION_EXPAND_FALLBACK_THRESHOLD ||
+        description.includes("\n")),
+    deps: [description, hasDescription],
+    isExpanded: isDescriptionExpanded,
+    ref: descriptionRef,
+  });
 
   const shouldPollProvisioningTimings =
     cell?.status === "spawning" || cell?.status === "pending";
@@ -212,24 +165,10 @@ export function CellLayout() {
       ? PROVISIONING_POLL_MS
       : false,
   });
-  const activeRunId = timingsQuery.data?.runs[0]?.runId;
-  const activeRunSteps = useMemo(() => {
-    if (!activeRunId) {
-      return [];
-    }
-
-    return (timingsQuery.data?.steps ?? []).filter(
-      (step) => step.runId === activeRunId
-    );
-  }, [activeRunId, timingsQuery.data?.steps]);
-  const provisioningChecklist = useMemo(
-    () =>
-      buildProvisioningChecklist({
-        cellStatus: cell?.status,
-        steps: activeRunSteps,
-      }),
-    [cell?.status, activeRunSteps]
-  );
+  const provisioningChecklist = useCreateProvisioningChecklist({
+    cellStatus: cell?.status,
+    timings: timingsQuery.data,
+  });
   const navItems = [
     ...(cell?.status !== "ready"
       ? [

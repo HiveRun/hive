@@ -1,6 +1,5 @@
-import { spawn } from "node:child_process";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolveRuntimePaths } from "./paths";
+import { runInheritedCommand } from "./process";
 
 const DEFAULT_FAST_WORKERS_LOW = 2;
 const DEFAULT_FAST_WORKERS_MEDIUM = 3;
@@ -25,9 +24,7 @@ type BenchmarkCase = {
   runs: BenchmarkRun[];
 };
 
-const modulePath = fileURLToPath(import.meta.url);
-const moduleDir = dirname(modulePath);
-const e2eRoot = join(moduleDir, "..", "..");
+const { e2eRoot } = resolveRuntimePaths(import.meta.url);
 
 async function run(): Promise<void> {
   const workersToTest = parseWorkerList(process.env.HIVE_E2E_BENCH_WORKERS);
@@ -155,29 +152,16 @@ function parseRepeats(value: string | undefined): number {
 }
 
 function runSuiteWithWorkers(workers: number): Promise<number> {
-  return new Promise((resolve) => {
-    const child = spawn("bun", ["run", "src/runtime/e2e-runner.ts"], {
-      cwd: e2eRoot,
-      env: {
-        ...process.env,
-        HIVE_E2E_VIDEO_MODE: process.env.HIVE_E2E_VIDEO_MODE ?? "on",
-        HIVE_E2E_WORKERS: String(workers),
-      },
-      stdio: "inherit",
-    });
-
-    child.on("exit", (code, signal) => {
-      if (signal) {
-        resolve(FAILURE_EXIT_CODE);
-        return;
-      }
-
-      resolve(code ?? FAILURE_EXIT_CODE);
-    });
-
-    child.on("error", () => {
-      resolve(FAILURE_EXIT_CODE);
-    });
+  return runInheritedCommand({
+    command: "bun",
+    args: ["run", "src/runtime/e2e-runner.ts"],
+    cwd: e2eRoot,
+    env: {
+      ...process.env,
+      HIVE_E2E_VIDEO_MODE: process.env.HIVE_E2E_VIDEO_MODE ?? "on",
+      HIVE_E2E_WORKERS: String(workers),
+    },
+    failureExitCode: FAILURE_EXIT_CODE,
   });
 }
 

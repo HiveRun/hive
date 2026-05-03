@@ -35,107 +35,117 @@ describe("createAsyncEventIterator", () => {
     setTimeout(() => emitToAll("event2"), SECOND_EVENT_DELAY_MS);
     setTimeout(() => controller.abort(), ABORT_DELAY_MS);
 
-    const events: string[] = [];
-    for await (const event of iterator) {
-      events.push(event);
-    }
-
-    expect(events).toEqual(["event1", "event2"]);
+    await expect(collectEvents(iterator)).resolves.toEqual([
+      "event1",
+      "event2",
+    ]);
   });
 
   test("yields queued events before async ones", async () => {
-    let handler: ((event: string) => void) | null = null;
+    const subscription = createStoredSubscription<string>();
     const subscribe = (h: (event: string) => void) => {
-      handler = h;
+      subscription.handler = h;
       h("queued1");
       h("queued2");
-      return () => {
-        handler = null;
-      };
+      return subscription.clear;
     };
 
     const controller = new AbortController();
     const { iterator } = createAsyncEventIterator(subscribe, controller.signal);
 
-    setTimeout(() => handler?.("async1"), FIRST_EVENT_DELAY_MS);
+    setTimeout(() => subscription.handler?.("async1"), FIRST_EVENT_DELAY_MS);
     setTimeout(() => controller.abort(), SECOND_EVENT_DELAY_MS);
 
-    const events: string[] = [];
-    for await (const event of iterator) {
-      events.push(event);
-    }
-
-    expect(events).toEqual(["queued1", "queued2", "async1"]);
+    await expect(collectEvents(iterator)).resolves.toEqual([
+      "queued1",
+      "queued2",
+      "async1",
+    ]);
   });
 
   test("cleanup unsubscribes on abort", async () => {
-    const unsubscribe = vi.fn();
-    const subscribe = (_handler: (event: string) => void) => unsubscribe;
-
-    const controller = new AbortController();
-    const { iterator } = createAsyncEventIterator(subscribe, controller.signal);
+    const { controller, iterator, unsubscribe } = createAbortableIterator();
 
     controller.abort();
 
-    const events: string[] = [];
-    for await (const event of iterator) {
-      events.push(event);
-    }
-
+    const events = await collectEvents(iterator);
     expect(unsubscribe).toHaveBeenCalledOnce();
     expect(events).toEqual([]);
   });
 
   test("cleanup is idempotent", async () => {
-    const unsubscribe = vi.fn();
-    const subscribe = (_handler: (event: string) => void) => unsubscribe;
-
-    const controller = new AbortController();
-    const { iterator, cleanup } = createAsyncEventIterator(
-      subscribe,
-      controller.signal
-    );
+    const { controller, iterator, cleanup, unsubscribe } =
+      createAbortableIterator();
 
     cleanup();
     cleanup();
     controller.abort();
 
-    const events: string[] = [];
-    for await (const event of iterator) {
-      events.push(event);
-    }
+    await collectEvents(iterator);
 
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
   test("works with typed events", async () => {
     type TestEvent = { type: "add" | "remove"; id: number };
-    let handler: ((event: TestEvent) => void) | null = null;
-    const subscribe = (h: (event: TestEvent) => void) => {
-      handler = h;
-      return () => {
-        handler = null;
-      };
-    };
+    const subscription = createStoredSubscription<TestEvent>();
 
     const controller = new AbortController();
-    const { iterator } = createAsyncEventIterator(subscribe, controller.signal);
+    const { iterator } = createAsyncEventIterator(
+      subscription.subscribe,
+      controller.signal
+    );
 
     const addEventDelayMs = 5;
     const removeEventDelayMs = 10;
     const typedAbortDelayMs = 15;
-    setTimeout(() => handler?.({ type: "add", id: 1 }), addEventDelayMs);
-    setTimeout(() => handler?.({ type: "remove", id: 1 }), removeEventDelayMs);
+    setTimeout(
+      () => subscription.handler?.({ type: "add", id: 1 }),
+      addEventDelayMs
+    );
+    setTimeout(
+      () => subscription.handler?.({ type: "remove", id: 1 }),
+      removeEventDelayMs
+    );
     setTimeout(() => controller.abort(), typedAbortDelayMs);
 
-    const events: TestEvent[] = [];
-    for await (const event of iterator) {
-      events.push(event);
-    }
-
-    expect(events).toEqual([
+    await expect(collectEvents(iterator)).resolves.toEqual([
       { type: "add", id: 1 },
       { type: "remove", id: 1 },
     ]);
   });
 });
+
+function createAbortableIterator() {
+  const unsubscribe = vi.fn();
+  const subscribe = (_handler: (event: string) => void) => unsubscribe;
+  const controller = new AbortController();
+  const created = createAsyncEventIterator(subscribe, controller.signal);
+  return { controller, unsubscribe, ...created };
+}
+
+function createStoredSubscription<T>() {
+  const subscription: {
+    handler: ((event: T) => void) | null;
+    clear: () => void;
+    subscribe: (handler: (event: T) => void) => () => void;
+  } = {
+    handler: null,
+    clear: () => {
+      subscription.handler = null;
+    },
+    subscribe: (handler) => {
+      subscription.handler = handler;
+      return subscription.clear;
+    },
+  };
+  return subscription;
+}
+
+async function collectEvents<T>(iterator: AsyncIterable<T>): Promise<T[]> {
+  const events: T[] = [];
+  for await (const event of iterator) {
+    events.push(event);
+  }
+  return events;
+}

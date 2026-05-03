@@ -44,6 +44,12 @@ type UpdateWorkspaceLabelInput = {
   label: string;
 };
 
+type RegistryWorkspaceEntry = {
+  registry: RegistryFile;
+  index: number;
+  workspace: WorkspaceRecord;
+};
+
 export function resolveHiveHome(): string {
   return process.env[HIVE_HOME_ENV] || join(homedir(), ".hive");
 }
@@ -223,6 +229,29 @@ function sortWorkspaces(workspaces: WorkspaceRecord[]): WorkspaceRecord[] {
   });
 }
 
+async function findRegistryWorkspace(
+  id: string
+): Promise<RegistryWorkspaceEntry | null> {
+  const registry = await readRegistryFile();
+  const index = registry.workspaces.findIndex((record) => record.id === id);
+  const workspace = index === -1 ? undefined : registry.workspaces[index];
+
+  return workspace ? { registry, index, workspace } : null;
+}
+
+async function saveRegistryWorkspace(
+  entry: RegistryWorkspaceEntry,
+  workspace: WorkspaceRecord,
+  activeWorkspaceId: string | null
+) {
+  entry.registry.workspaces[entry.index] = workspace;
+  await writeRegistryFile({
+    version: REGISTRY_VERSION,
+    workspaces: entry.registry.workspaces,
+    activeWorkspaceId,
+  });
+}
+
 export async function getWorkspaceRegistry(): Promise<WorkspaceRegistry> {
   const registry = await readRegistryFile();
   const workspaces = sortWorkspaces(registry.workspaces);
@@ -259,6 +288,16 @@ export async function getWorkspaceRegistry(): Promise<WorkspaceRegistry> {
 export async function listWorkspaces(): Promise<WorkspaceRecord[]> {
   const registry = await getWorkspaceRegistry();
   return registry.workspaces;
+}
+
+export function selectWorkspace(
+  registry: WorkspaceRegistry,
+  workspaceId?: string
+): WorkspaceRecord | undefined {
+  const selectedId = workspaceId ?? registry.activeWorkspaceId;
+  return selectedId
+    ? registry.workspaces.find((entry) => entry.id === selectedId)
+    : undefined;
 }
 
 export async function registerWorkspace(
@@ -332,66 +371,44 @@ export async function updateWorkspaceLabel({
   id,
   label,
 }: UpdateWorkspaceLabelInput): Promise<WorkspaceRecord | null> {
-  const registry = await readRegistryFile();
   const trimmedLabel = label.trim();
   if (!trimmedLabel) {
     throw new Error("Workspace label cannot be empty");
   }
 
-  const index = registry.workspaces.findIndex(
-    (workspace) => workspace.id === id
-  );
-  if (index === -1) {
-    return null;
-  }
-
-  const currentWorkspace = registry.workspaces[index];
-  if (!currentWorkspace) {
+  const entry = await findRegistryWorkspace(id);
+  if (!entry) {
     return null;
   }
 
   const updatedWorkspace: WorkspaceRecord = {
-    ...currentWorkspace,
+    ...entry.workspace,
     label: trimmedLabel,
   };
 
-  registry.workspaces[index] = updatedWorkspace;
-  await writeRegistryFile({
-    version: REGISTRY_VERSION,
-    workspaces: registry.workspaces,
-    activeWorkspaceId: registry.activeWorkspaceId ?? null,
-  });
+  await saveRegistryWorkspace(
+    entry,
+    updatedWorkspace,
+    entry.registry.activeWorkspaceId ?? null
+  );
   return updatedWorkspace;
 }
 
 export async function activateWorkspace(
   id: string
 ): Promise<WorkspaceRecord | null> {
-  const registry = await readRegistryFile();
-  const index = registry.workspaces.findIndex(
-    (workspace) => workspace.id === id
-  );
-  if (index === -1) {
-    return null;
-  }
-
-  const currentWorkspace = registry.workspaces[index];
-  if (!currentWorkspace) {
+  const entry = await findRegistryWorkspace(id);
+  if (!entry) {
     return null;
   }
 
   const now = new Date().toISOString();
   const updatedWorkspace: WorkspaceRecord = {
-    ...currentWorkspace,
+    ...entry.workspace,
     lastOpenedAt: now,
   };
 
-  registry.workspaces[index] = updatedWorkspace;
-  await writeRegistryFile({
-    version: REGISTRY_VERSION,
-    workspaces: registry.workspaces,
-    activeWorkspaceId: updatedWorkspace.id,
-  });
+  await saveRegistryWorkspace(entry, updatedWorkspace, updatedWorkspace.id);
   return updatedWorkspace;
 }
 

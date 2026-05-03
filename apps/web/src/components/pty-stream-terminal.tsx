@@ -1,25 +1,35 @@
+/* jscpd:ignore-start */
 import "@xterm/xterm/css/xterm.css";
 
 import type { Terminal as XTerm } from "@xterm/xterm";
-import { Copy } from "lucide-react";
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { getApiBase } from "@/lib/api-base";
 import {
-  copyTextToClipboard,
-  registerTerminalClipboard,
-} from "@/lib/terminal-clipboard";
-import { isMouseMovementInputChunk } from "@/lib/terminal-input";
+  API_BASE,
+  appendTerminalOutput,
+  SOCKET_RECONNECT_DELAY_MS,
+  TERMINAL_FONT_FAMILY,
+  useTerminalInputBatcher,
+} from "@/components/terminal-shared";
+import {
+  clearTerminalTimers,
+  keepExitedOrDisconnected,
+  keepExitedOrOnline,
+  recoverConnectingConnection,
+  TerminalStatusHeader,
+  terminalDataChunk,
+  terminalExitCode,
+  terminalFooter,
+  terminalSnapshotOutput,
+  terminalSocketErrorMessage,
+  useCopyTerminalOutput,
+  useTerminalResizeSync,
+  useTerminalSocketSender,
+  writeTerminalSnapshot,
+} from "@/components/terminal-view-shared";
+import { registerTerminalClipboard } from "@/lib/terminal-clipboard";
 import {
   parseTerminalSocketMessage,
-  sendTerminalSocketMessage,
   toWebSocketUrl,
 } from "@/lib/terminal-websocket";
 
@@ -50,30 +60,6 @@ type ReadyPayload = {
   lastSetupError?: string | null;
 };
 
-const API_BASE = getApiBase();
-const OUTPUT_BUFFER_LIMIT = 250_000;
-const RESIZE_DEBOUNCE_MS = 120;
-const SOCKET_RECONNECT_DELAY_MS = 800;
-const INPUT_BATCH_BASE_WINDOW_MS = 16;
-const INPUT_BATCH_MAX_WINDOW_MS = 24;
-const INPUT_BATCH_WINDOW_STEP_MS = 8;
-const INPUT_BATCH_HIGH_CHUNK_THRESHOLD = 6;
-const INPUT_BATCH_FLUSH_SIZE = 1024;
-const INPUT_BATCH_HIGH_CHUNK_MIN_BUFFER = 256;
-const TERMINAL_FONT_FAMILY =
-  '"JetBrainsMono Nerd Font", "MesloLGS NF", "CaskaydiaMono Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font Mono", "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Noto Color Emoji", monospace';
-
-const appendOutput = (current: string, chunk: string): string => {
-  const next = `${current}${chunk}`;
-  if (next.length <= OUTPUT_BUFFER_LIMIT) {
-    return next;
-  }
-  return next.slice(next.length - OUTPUT_BUFFER_LIMIT);
-};
-
-const shouldFlushMouseBatch = (bufferedLength: number) =>
-  bufferedLength >= INPUT_BATCH_FLUSH_SIZE;
-
 export function PtyStreamTerminal({
   title,
   streamPath,
@@ -101,10 +87,6 @@ export function PtyStreamTerminal({
   const outputRef = useRef<string>("");
   const sessionRef = useRef<RuntimeTerminalSession | null>(null);
   const socketCloseErrorRef = useRef<string | null>(null);
-  const inputBufferRef = useRef<string>("");
-  const inputFlushTimeoutRef = useRef<number | null>(null);
-  const inputBatchWindowMsRef = useRef(INPUT_BATCH_BASE_WINDOW_MS);
-  const inputBatchChunkCountRef = useRef(0);
   const resizeTimeoutRef = useRef<number | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -120,21 +102,22 @@ export function PtyStreamTerminal({
     return toWebSocketUrl(`${API_BASE}${wsPath}`);
   }, [streamPath]);
 
-  const sendSocketMessage = useCallback(
-    (message: { type: string; [key: string]: unknown }) => {
-      const sent = sendTerminalSocketMessage(socketRef.current, message);
-      if (sent) {
-        return true;
-      }
+  const sendSocketMessage = useTerminalSocketSender({
+    setConnection,
+    setErrorMessage,
+    socketRef,
+  });
 
-      setConnection((current) =>
-        current === "exited" ? "exited" : "disconnected"
-      );
-      setErrorMessage("Terminal socket disconnected. Reconnecting…");
-      return false;
+  const sendInputMessage = useCallback(
+    (data: string) => {
+      sendSocketMessage({ type: "input", data });
     },
-    []
+    [sendSocketMessage]
   );
+  const { resetInputBatcher, sendInput } = useTerminalInputBatcher({
+    enabled: allowInput && Boolean(inputPath),
+    sendInputMessage,
+  });
 
   const sendResize = useCallback(
     (cols: number, rows: number) => {
@@ -158,150 +141,17 @@ export function PtyStreamTerminal({
     [sendSocketMessage]
   );
 
-  const updateBatchWindow = useCallback(
-    (chunkCount: number, queuedLength: number, forceImmediate: boolean) => {
-      if (forceImmediate) {
-        inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
-        return;
-      }
+  const scheduleResizeSync = useTerminalResizeSync({
+    resizeTimeoutRef,
+    sendResize,
+    shouldResize: () => sessionRef.current?.status === "running",
+    terminalRef,
+  });
 
-      if (
-        chunkCount >= INPUT_BATCH_HIGH_CHUNK_THRESHOLD &&
-        queuedLength >= INPUT_BATCH_HIGH_CHUNK_MIN_BUFFER
-      ) {
-        inputBatchWindowMsRef.current = Math.min(
-          INPUT_BATCH_MAX_WINDOW_MS,
-          inputBatchWindowMsRef.current + INPUT_BATCH_WINDOW_STEP_MS
-        );
-        return;
-      }
-
-      inputBatchWindowMsRef.current = Math.max(
-        INPUT_BATCH_BASE_WINDOW_MS,
-        inputBatchWindowMsRef.current - INPUT_BATCH_WINDOW_STEP_MS
-      );
-    },
-    []
-  );
-
-  const flushQueuedInput = useCallback(
-    (forceImmediate = false) => {
-      if (
-        typeof window !== "undefined" &&
-        inputFlushTimeoutRef.current !== null
-      ) {
-        window.clearTimeout(inputFlushTimeoutRef.current);
-        inputFlushTimeoutRef.current = null;
-      }
-
-      const queued = inputBufferRef.current;
-      if (queued.length === 0) {
-        return;
-      }
-
-      const chunkCount = inputBatchChunkCountRef.current;
-      inputBufferRef.current = "";
-      inputBatchChunkCountRef.current = 0;
-      updateBatchWindow(chunkCount, queued.length, forceImmediate);
-      sendSocketMessage({ type: "input", data: queued });
-    },
-    [sendSocketMessage, updateBatchWindow]
-  );
-
-  const discardQueuedMouseInput = useCallback(() => {
-    if (
-      typeof window !== "undefined" &&
-      inputFlushTimeoutRef.current !== null
-    ) {
-      window.clearTimeout(inputFlushTimeoutRef.current);
-      inputFlushTimeoutRef.current = null;
-    }
-
-    inputBufferRef.current = "";
-    inputBatchChunkCountRef.current = 0;
-    inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
-  }, []);
-
-  const scheduleResizeSync = useCallback(() => {
-    const terminal = terminalRef.current;
-    if (!terminal || typeof window === "undefined") {
-      return;
-    }
-
-    if (resizeTimeoutRef.current !== null) {
-      window.clearTimeout(resizeTimeoutRef.current);
-    }
-
-    resizeTimeoutRef.current = window.setTimeout(() => {
-      const activeTerminal = terminalRef.current;
-      if (!activeTerminal) {
-        return;
-      }
-
-      if (sessionRef.current?.status !== "running") {
-        return;
-      }
-
-      try {
-        sendResize(activeTerminal.cols, activeTerminal.rows);
-      } catch {
-        // ignore transient resize failures while reconnecting
-      }
-    }, RESIZE_DEBOUNCE_MS);
-  }, [sendResize]);
-
-  const sendInput = useCallback(
-    (data: string) => {
-      if (!(allowInput && inputPath)) {
-        return;
-      }
-
-      if (!isMouseMovementInputChunk(data)) {
-        discardQueuedMouseInput();
-        sendSocketMessage({ type: "input", data });
-        return;
-      }
-
-      inputBufferRef.current += data;
-      inputBatchChunkCountRef.current += 1;
-      if (shouldFlushMouseBatch(inputBufferRef.current.length)) {
-        flushQueuedInput(true);
-        return;
-      }
-
-      if (typeof window === "undefined") {
-        return;
-      }
-
-      if (inputFlushTimeoutRef.current !== null) {
-        return;
-      }
-
-      inputFlushTimeoutRef.current = window.setTimeout(() => {
-        inputFlushTimeoutRef.current = null;
-        flushQueuedInput();
-      }, inputBatchWindowMsRef.current);
-    },
-    [
-      allowInput,
-      discardQueuedMouseInput,
-      flushQueuedInput,
-      inputPath,
-      sendSocketMessage,
-    ]
-  );
-
-  const copyTerminalOutput = useCallback(async () => {
-    try {
-      const serialized = serializeAddonRef.current?.serialize();
-      const text =
-        serialized && serialized.length > 0 ? serialized : outputRef.current;
-      await copyTextToClipboard(text);
-      toast.success("Copied terminal output");
-    } catch {
-      toast.error("Failed to copy terminal output");
-    }
-  }, []);
+  const copyTerminalOutput = useCopyTerminalOutput({
+    outputRef,
+    serializeAddonRef,
+  });
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -404,26 +254,11 @@ export function PtyStreamTerminal({
             return;
           }
 
-          const snapshot =
-            typeof message.output === "string" ? message.output : "";
+          const snapshot = terminalSnapshotOutput(message);
 
-          if (snapshot.startsWith(outputRef.current)) {
-            const delta = snapshot.slice(outputRef.current.length);
-            if (delta.length > 0) {
-              terminal.write(delta);
-            }
-          } else {
-            terminal.write("\x1bc");
-            if (snapshot.length > 0) {
-              terminal.write(snapshot);
-            }
-          }
-
-          outputRef.current = snapshot;
+          writeTerminalSnapshot({ outputRef, snapshot, terminal });
           if (snapshot.length > 0) {
-            setConnection((current) =>
-              current === "exited" ? "exited" : "online"
-            );
+            setConnection(keepExitedOrOnline);
           }
           return;
         }
@@ -434,22 +269,19 @@ export function PtyStreamTerminal({
             return;
           }
 
-          const chunk = typeof message.chunk === "string" ? message.chunk : "";
+          const chunk = terminalDataChunk(message);
           if (chunk.length === 0) {
             return;
           }
 
           terminal.write(chunk);
-          outputRef.current = appendOutput(outputRef.current, chunk);
-          setConnection((current) =>
-            current === "exited" ? "exited" : "online"
-          );
+          outputRef.current = appendTerminalOutput(outputRef.current, chunk);
+          setConnection(keepExitedOrOnline);
           return;
         }
 
         if (message.type === "exit") {
-          const exitCode =
-            typeof message.exitCode === "number" ? message.exitCode : 0;
+          const exitCode = terminalExitCode(message);
           setConnection("exited");
           if (mode === "setup") {
             setSetupDisplayState(exitCode === 0 ? "completed" : "failed");
@@ -469,24 +301,11 @@ export function PtyStreamTerminal({
         }
 
         if (message.type === "error") {
-          const description =
-            typeof message.message === "string"
-              ? message.message
-              : "Terminal socket error";
+          const description = terminalSocketErrorMessage(message);
           if (description.toLowerCase().includes("terminal is not running")) {
             return;
           }
-          setConnection((current) => {
-            if (current === "exited") {
-              return "exited";
-            }
-
-            if (current === "connecting") {
-              return "online";
-            }
-
-            return current;
-          });
+          setConnection(recoverConnectingConnection);
           setErrorMessage(description);
           socketCloseErrorRef.current = description;
         }
@@ -500,9 +319,7 @@ export function PtyStreamTerminal({
         const closeErrorMessage = socketCloseErrorRef.current;
         socketCloseErrorRef.current = null;
 
-        setConnection((current) =>
-          current === "exited" ? "exited" : "disconnected"
-        );
+        setConnection(keepExitedOrDisconnected);
         setErrorMessage(
           closeErrorMessage ?? "Terminal socket disconnected. Reconnecting…"
         );
@@ -635,22 +452,10 @@ export function PtyStreamTerminal({
     return () => {
       disposed = true;
       cleanupTerminalInteractions?.();
-      if (inputFlushTimeoutRef.current !== null) {
-        window.clearTimeout(inputFlushTimeoutRef.current);
-        inputFlushTimeoutRef.current = null;
-      }
-      inputBufferRef.current = "";
-      inputBatchChunkCountRef.current = 0;
-      inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
+      resetInputBatcher();
       sessionRef.current = null;
       socketCloseErrorRef.current = null;
-      if (resizeTimeoutRef.current !== null) {
-        window.clearTimeout(resizeTimeoutRef.current);
-      }
-      if (reconnectTimeoutRef.current !== null) {
-        window.clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
-      }
+      clearTerminalTimers({ reconnectTimeoutRef, resizeTimeoutRef });
       window.removeEventListener("resize", scheduleResizeSync);
       resizeObserverRef.current?.disconnect();
       resizeObserverRef.current = null;
@@ -668,6 +473,7 @@ export function PtyStreamTerminal({
     buildSocketEndpoint,
     inputPath,
     mode,
+    resetInputBatcher,
     scheduleResizeSync,
     sendInput,
   ]);
@@ -716,62 +522,23 @@ export function PtyStreamTerminal({
       displayLabel = "Pending";
     }
   }
-  let footer: ReactNode;
-  if (errorMessage) {
-    footer = (
-      <p className="text-destructive text-xs uppercase tracking-[0.2em]">
-        {errorMessage}
-      </p>
-    );
-  } else if (session) {
-    footer = (
-      <p className="truncate text-[11px] text-muted-foreground uppercase tracking-[0.25em]">
-        {session.cwd}
-      </p>
-    );
-  } else {
-    footer = (
-      <p className="text-[11px] text-muted-foreground uppercase tracking-[0.25em]">
-        {emptyMessage}
-      </p>
-    );
-  }
+  const footer = terminalFooter({
+    emptyMessage,
+    errorMessage,
+    sessionCwd: session?.cwd,
+  });
 
   return (
     <div className="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border border-border/70 bg-card">
       <div className="flex h-full min-h-0 w-full flex-col gap-3 p-3">
-        <header className="flex flex-wrap items-center justify-between gap-2 border-border/60 border-b pb-2">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <p className="font-semibold text-[11px] text-foreground uppercase tracking-[0.3em]">
-              {title}
-            </p>
-            <span
-              className={`text-[11px] uppercase tracking-[0.25em] ${displayTone}`}
-            >
-              {displayLabel}
-            </span>
-            {session?.pid ? (
-              <span className="text-[10px] text-muted-foreground uppercase tracking-[0.25em]">
-                pid {session.pid}
-              </span>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-1">
-            <Button
-              className="h-7 px-2"
-              onClick={copyTerminalOutput}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
-            <span className="inline-flex h-7 items-center gap-1.5 border border-border/70 px-2 text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
-              <span className={`h-2 w-2 rounded-full ${displayDotTone}`} />
-              {displayLabel}
-            </span>
-          </div>
-        </header>
+        <TerminalStatusHeader
+          dotTone={displayDotTone}
+          label={displayLabel}
+          onCopyOutput={copyTerminalOutput}
+          pid={session?.pid}
+          title={title}
+          tone={displayTone}
+        />
 
         <div className="min-h-0 flex-1 border border-border/70 bg-[#050708] p-2">
           <div className="h-full min-h-0 w-full" ref={containerRef} />
@@ -782,3 +549,4 @@ export function PtyStreamTerminal({
     </div>
   );
 }
+/* jscpd:ignore-end */

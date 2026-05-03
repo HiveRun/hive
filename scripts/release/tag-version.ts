@@ -1,30 +1,7 @@
 #!/usr/bin/env bun
 
-import { repoRoot, resolveReleaseVersion } from "./release-version";
-
-const runCapture = (cmd: string[]) => {
-  const result = Bun.spawnSync({ cmd, cwd: repoRoot });
-  if (result.exitCode !== 0) {
-    throw new Error(
-      `Command failed (${cmd.join(" ")}) with code ${result.exitCode}`
-    );
-  }
-  return new TextDecoder().decode(result.stdout).trim();
-};
-
-const run = (cmd: string[]) => {
-  const result = Bun.spawnSync({
-    cmd,
-    cwd: repoRoot,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  if (result.exitCode !== 0) {
-    throw new Error(
-      `Command failed (${cmd.join(" ")}) with code ${result.exitCode}`
-    );
-  }
-};
+import { runGit, runMain } from "./common";
+import { resolveReleaseVersion } from "./release-version";
 
 const main = async () => {
   const args = new Set(process.argv.slice(2));
@@ -39,26 +16,27 @@ const main = async () => {
   const versionSource = await resolveReleaseVersion();
 
   const tagName = `v${versionSource.version}`;
-  const existingTag = runCapture(["git", "tag", "--list", tagName]);
+  const existingTag = runGit(["git", "tag", "--list", tagName], {
+    capture: true,
+  });
   if (existingTag) {
     throw new Error(`Tag ${tagName} already exists.`);
   }
 
-  const workingTree = runCapture(["git", "status", "--porcelain"]);
+  const workingTree = runGit(["git", "status", "--porcelain"], {
+    capture: true,
+  });
   if (workingTree) {
     throw new Error(
       "Working tree is not clean. Commit or stash changes before tagging."
     );
   }
 
-  run(["git", "tag", "-a", tagName, "-m", `Release ${tagName}`]);
+  runGit(["git", "tag", "-a", tagName, "-m", `Release ${tagName}`]);
 
   console.log(`Created ${tagName}.`);
   console.log(`Version source: ${versionSource.source}`);
   console.log(`Push with: git push origin ${tagName}`);
 };
 
-await main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+await runMain(main);

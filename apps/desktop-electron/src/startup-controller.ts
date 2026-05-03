@@ -5,26 +5,11 @@ import {
   createDaemonRuntime,
   type DaemonStartupEvent,
 } from "@hive/daemon-runtime";
+import type {
+  DesktopStartupPhase,
+  DesktopStartupState,
+} from "./desktop-runtime-types";
 import { getDesktopRuntimeInfo } from "./runtime-info";
-
-type DesktopStartupPhase =
-  | "idle"
-  | "detecting-daemon"
-  | "starting-daemon"
-  | "waiting-for-api"
-  | "api-ready"
-  | "error";
-
-type DesktopStartupState = {
-  phase: DesktopStartupPhase;
-  message: string;
-  backendUrl: string;
-  healthUrl: string;
-  pid?: number | null;
-  startedAt: number;
-  updatedAt: number;
-  error?: string;
-};
 
 const DEFAULT_DAEMON_ARGS = ["--foreground"];
 const DEFAULT_STARTUP_TIMEOUT_MS = 180_000;

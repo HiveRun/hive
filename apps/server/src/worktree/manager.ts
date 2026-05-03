@@ -189,13 +189,7 @@ export type WorktreeManager = {
   removeWorktree(cellId: string): Promise<void>;
 };
 
-export type AsyncWorktreeManager = {
-  createWorktree(
-    cellId: string,
-    options?: WorktreeCreateOptions
-  ): Promise<WorktreeLocation>;
-  removeWorktree(cellId: string): Promise<void>;
-};
+export type AsyncWorktreeManager = WorktreeManager;
 
 export const toAsyncWorktreeManager = (
   manager: WorktreeManager
@@ -346,11 +340,7 @@ export function createWorktreeManager(
       stderr: "pipe",
     });
 
-    const stdoutPromise = new Response(child.stdout).text();
-    const stderrPromise = new Response(child.stderr).text();
-    const exitCode = await child.exited;
-    const stdout = (await stdoutPromise).trim();
-    const stderr = (await stderrPromise).trim();
+    const { exitCode, stderr, stdout } = await readSpawnOutput(child);
 
     if (exitCode !== 0) {
       const command = args.join(" ");
@@ -367,6 +357,28 @@ export function createWorktreeManager(
     }
 
     return stdout;
+  }
+
+  type PipedSpawnOutput = {
+    exited: Promise<number>;
+    stderr: ReadableStream<Uint8Array>;
+    stdout: ReadableStream<Uint8Array>;
+  };
+
+  async function readSpawnOutput(child: PipedSpawnOutput): Promise<{
+    exitCode: number;
+    stderr: string;
+    stdout: string;
+  }> {
+    const stdoutText = new Response(child.stdout).text();
+    const stderrText = new Response(child.stderr).text();
+    const exitCode = await child.exited;
+
+    return {
+      exitCode,
+      stderr: (await stderrText).trim(),
+      stdout: (await stdoutText).trim(),
+    };
   }
 
   async function ensureCellsDir(): Promise<void> {
@@ -670,11 +682,7 @@ export function createWorktreeManager(
       },
     });
 
-    const stdoutPromise = new Response(child.stdout).text();
-    const stderrPromise = new Response(child.stderr).text();
-    const exitCode = await child.exited;
-    const stdout = await stdoutPromise;
-    const stderr = await stderrPromise;
+    const { exitCode, stderr, stdout } = await readSpawnOutput(child);
 
     if (exitCode !== 0) {
       logWarn(
@@ -684,7 +692,7 @@ export function createWorktreeManager(
       return await listPathsWithGlobInProcess(args);
     }
 
-    if (!stdout.trim()) {
+    if (!stdout) {
       return [];
     }
 

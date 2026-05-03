@@ -24,18 +24,26 @@ type LinearIssueState = {
   color: string | null;
 };
 
-export type LinearIssue = {
-  id: string;
+type LinearIssueIdentity = Record<"id" | "identifier" | "title", string> & {
   teamId: string | null;
-  identifier: string;
-  title: string;
-  description: string | null;
-  url: string | null;
-  updatedAt: string;
-  completedAt: string | null;
-  state: LinearIssueState | null;
-  assignee: LinearUser | null;
 };
+
+type LinearIssueLinks = {
+  url: string | null;
+  description: string | null;
+};
+
+type LinearIssueLifecycle = {
+  completedAt: string | null;
+  updatedAt: string;
+};
+
+export type LinearIssue = LinearIssueIdentity &
+  LinearIssueLinks &
+  LinearIssueLifecycle & {
+    assignee: LinearUser | null;
+    state: LinearIssueState | null;
+  };
 
 type LinearStatus = {
   connected: boolean;

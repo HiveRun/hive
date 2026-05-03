@@ -30,7 +30,8 @@ describe("workspace registry", () => {
   });
 
   afterEach(async () => {
-    await rm(hiveHome, { recursive: true, force: true });
+    const testHome = hiveHome;
+    await rm(testHome, { recursive: true, force: true });
     process.env.HIVE_HOME = undefined;
   });
 

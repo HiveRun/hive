@@ -11,8 +11,12 @@ type DesktopRuntimeInfo = {
   startupMode: DesktopStartupMode;
 };
 
-const trimTrailingSlash = (value: string) =>
-  value.endsWith("/") ? value.slice(0, -1) : value;
+const trimTrailingSlash = (value: string) => {
+  if (!value.endsWith("/")) {
+    return value;
+  }
+  return value.slice(0, -1);
+};
 
 const normalizeStartupMode = (
   value: string | undefined

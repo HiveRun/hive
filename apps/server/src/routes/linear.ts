@@ -219,6 +219,33 @@ const resolveLinkedTeamId = async (db: DatabaseClient, workspaceId: string) => {
   return integration.teamId;
 };
 
+const resolveAuthorizedWorkspaceClient = async (args: {
+  db: DatabaseClient;
+  workspaceId?: string;
+  getWorkspaceContext: ResolveWorkspaceContext;
+}) => {
+  const workspaceContext = await args.getWorkspaceContext(args.workspaceId);
+  const workspaceId = workspaceContext.workspace.id;
+  const { client } = await resolveAuthorizedLinearClient({
+    db: args.db,
+    workspaceId,
+  });
+
+  return { client, workspaceId };
+};
+
+const resolveAuthorizedLinkedTeam = async (args: {
+  db: DatabaseClient;
+  workspaceId?: string;
+  getWorkspaceContext: ResolveWorkspaceContext;
+}) => {
+  const { client, workspaceId } = await resolveAuthorizedWorkspaceClient(args);
+  return {
+    client,
+    teamId: await resolveLinkedTeamId(args.db, workspaceId),
+  };
+};
+
 const handleRouteFailure = (
   set: { status?: number | string },
   error: unknown,
@@ -337,22 +364,20 @@ export function createLinearRoutes({
       async ({ body, getWorkspaceContext, set }) => {
         try {
           const workspaceContext = await getWorkspaceContext(body.workspaceId);
+          const workspaceId = workspaceContext.workspace.id;
           const { client } = await resolveAuthorizedLinearClient({
             db,
-            workspaceId: workspaceContext.workspace.id,
+            workspaceId,
           });
           const team = await fetchLinearTeam(client, body.teamId);
 
-          await setLinearLinkedTeam(db, workspaceContext.workspace.id, {
+          await setLinearLinkedTeam(db, workspaceId, {
             id: team.id,
             key: team.key ?? null,
             name: team.name,
           });
 
-          const integration = await getLinearIntegration(
-            db,
-            workspaceContext.workspace.id
-          );
+          const integration = await getLinearIntegration(db, workspaceId);
           set.status = HTTP_STATUS.OK;
           return mapLinearStatus(integration);
         } catch (error) {
@@ -377,13 +402,11 @@ export function createLinearRoutes({
       "/issues",
       async ({ query, getWorkspaceContext, set }) => {
         try {
-          const workspaceContext = await getWorkspaceContext(query.workspaceId);
-          const workspaceId = workspaceContext.workspace.id;
-          const { client } = await resolveAuthorizedLinearClient({
+          const { client, teamId } = await resolveAuthorizedLinkedTeam({
             db,
-            workspaceId,
+            workspaceId: query.workspaceId,
+            getWorkspaceContext,
           });
-          const teamId = await resolveLinkedTeamId(db, workspaceId);
           const issues = await listLinearTeamIssues({
             client,
             teamId,
@@ -419,13 +442,12 @@ export function createLinearRoutes({
       "/issues/:issueId",
       async ({ getWorkspaceContext, params, query, set }) => {
         try {
-          const workspaceContext = await getWorkspaceContext(query.workspaceId);
-          const workspaceId = workspaceContext.workspace.id;
-          const { client } = await resolveAuthorizedLinearClient({
-            db,
-            workspaceId,
-          });
-          const linkedTeamId = await resolveLinkedTeamId(db, workspaceId);
+          const { client, teamId: linkedTeamId } =
+            await resolveAuthorizedLinkedTeam({
+              db,
+              workspaceId: query.workspaceId,
+              getWorkspaceContext,
+            });
           const issue = await fetchLinearIssue(client, params.issueId);
 
           if (issue.teamId !== linkedTeamId) {

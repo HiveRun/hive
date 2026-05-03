@@ -14,6 +14,7 @@ import {
 } from "../schema/api";
 import {
   getWorkspaceRegistry,
+  selectWorkspace,
   type WorkspaceRecord,
 } from "../workspaces/registry";
 
@@ -213,15 +214,7 @@ const resolveWorkspace = async (
   workspaceId?: string
 ): Promise<WorkspaceRecord> => {
   const registry = await getWorkspaceRegistry();
-
-  let workspace: WorkspaceRecord | undefined;
-  if (workspaceId) {
-    workspace = registry.workspaces.find((entry) => entry.id === workspaceId);
-  } else if (registry.activeWorkspaceId) {
-    workspace = registry.workspaces.find(
-      (entry) => entry.id === registry.activeWorkspaceId
-    );
-  }
+  const workspace = selectWorkspace(registry, workspaceId);
 
   if (!workspace) {
     throw {

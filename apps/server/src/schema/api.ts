@@ -9,6 +9,24 @@ const CreateCellImageSchema = t.Object({
 });
 
 // Cell schemas
+const CellIdentityFields = {
+  cellId: t.String(),
+  cellName: t.Union([t.String(), t.Null()]),
+  workspaceId: t.Union([t.String(), t.Null()]),
+  templateId: t.Union([t.String(), t.Null()]),
+} as const;
+
+const RuntimeTerminalFields = {
+  sessionId: t.String(),
+  pid: t.Number(),
+  cwd: t.String(),
+  cols: t.Number(),
+  rows: t.Number(),
+  status: t.Union([t.Literal("running"), t.Literal("exited")]),
+  exitCode: t.Union([t.Number(), t.Null()]),
+  startedAt: t.String(),
+} as const;
+
 export const CellResponseSchema = t.Object({
   id: t.String(),
   name: t.String(),
@@ -94,15 +112,8 @@ export const CellServiceListResponseSchema = t.Object({
 });
 
 export const CellTerminalSessionSchema = t.Object({
-  sessionId: t.String(),
+  ...RuntimeTerminalFields,
   cellId: t.String(),
-  pid: t.Number(),
-  cwd: t.String(),
-  cols: t.Number(),
-  rows: t.Number(),
-  status: t.Union([t.Literal("running"), t.Literal("exited")]),
-  exitCode: t.Union([t.Number(), t.Null()]),
-  startedAt: t.String(),
 });
 
 export const CellTerminalInputSchema = t.Object({
@@ -119,14 +130,7 @@ export const CellTerminalActionResponseSchema = t.Object({
 });
 
 const RuntimeTerminalSessionSchema = t.Object({
-  sessionId: t.String(),
-  pid: t.Number(),
-  cwd: t.String(),
-  cols: t.Number(),
-  rows: t.Number(),
-  status: t.Union([t.Literal("running"), t.Literal("exited")]),
-  exitCode: t.Union([t.Number(), t.Null()]),
-  startedAt: t.String(),
+  ...RuntimeTerminalFields,
 });
 
 export const RuntimeTerminalResizeResponseSchema = t.Object({
@@ -140,8 +144,8 @@ const CellActivityEventSchema = t.Object({
   serviceId: t.Union([t.String(), t.Null()]),
   type: t.String(),
   source: t.Union([t.String(), t.Null()]),
-  toolName: t.Union([t.String(), t.Null()]),
   metadata: t.Any(),
+  toolName: t.Union([t.String(), t.Null()]),
   createdAt: t.String(),
 });
 
@@ -156,10 +160,7 @@ const CellTimingStatusSchema = t.Union([t.Literal("ok"), t.Literal("error")]);
 
 const CellTimingStepSchema = t.Object({
   id: t.String(),
-  cellId: t.String(),
-  cellName: t.Union([t.String(), t.Null()]),
-  workspaceId: t.Union([t.String(), t.Null()]),
-  templateId: t.Union([t.String(), t.Null()]),
+  ...CellIdentityFields,
   runId: t.String(),
   workflow: CellTimingWorkflowSchema,
   step: t.String(),
@@ -173,10 +174,7 @@ const CellTimingStepSchema = t.Object({
 
 const CellTimingRunSchema = t.Object({
   runId: t.String(),
-  cellId: t.String(),
-  cellName: t.Union([t.String(), t.Null()]),
-  workspaceId: t.Union([t.String(), t.Null()]),
-  templateId: t.Union([t.String(), t.Null()]),
+  ...CellIdentityFields,
   workflow: CellTimingWorkflowSchema,
   status: CellTimingStatusSchema,
   startedAt: t.String(),

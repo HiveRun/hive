@@ -1,3 +1,5 @@
+import { pushUnique } from "./collections";
+
 export const COMPLETION_SHELLS = ["bash", "zsh", "fish"] as const;
 export type CompletionShell = (typeof COMPLETION_SHELLS)[number];
 
@@ -9,12 +11,6 @@ type CompletionCommandModel = {
 
 const isLiteralCommandToken = (token: string) =>
   token.length > 0 && !token.startsWith("-");
-
-const pushUnique = (values: string[], value: string) => {
-  if (!values.includes(value)) {
-    values.push(value);
-  }
-};
 
 export const buildCompletionCommandModel = (
   commandPaths: readonly (readonly string[])[]

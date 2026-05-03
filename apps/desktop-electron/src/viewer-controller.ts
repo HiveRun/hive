@@ -1,26 +1,9 @@
-import {
-  BrowserView,
-  type BrowserWindow,
-  type Rectangle,
-  shell,
-} from "electron";
-
-export type ViewerBounds = Pick<Rectangle, "x" | "y" | "width" | "height">;
-
-type ViewerState = {
-  activeServiceId: string | null;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  isLoading: boolean;
-  isVisible: boolean;
-  title: string;
-  url: string | null;
-};
-
-export type ViewerServiceTab = {
-  serviceId: string;
-  rootUrl: string;
-};
+import { BrowserView, type BrowserWindow, shell } from "electron";
+import type {
+  ViewerBounds,
+  ViewerServiceTab,
+  ViewerState,
+} from "./desktop-runtime-types";
 
 type ViewerEntry = {
   rootUrl: string;
@@ -250,6 +233,19 @@ export const createViewerController = (options: {
   const getActiveEntry = () =>
     activeServiceId ? (entries.get(activeServiceId) ?? null) : null;
 
+  const loadActiveEntryUrl = async (
+    urlForEntry: (entry: ViewerEntry) => string
+  ) => {
+    const activeEntry = getActiveEntry();
+    if (!(activeServiceId && activeEntry)) {
+      return emitState();
+    }
+
+    attachServiceView(activeServiceId);
+    await loadUrlSafely(activeEntry, urlForEntry(activeEntry));
+    return emitState();
+  };
+
   const syncExistingServiceTabs = async (nextRootUrls: Map<string, string>) => {
     for (const [serviceId, entry] of entries) {
       const nextRootUrl = nextRootUrls.get(serviceId);
@@ -345,16 +341,7 @@ export const createViewerController = (options: {
       applyBounds({ height: 0, width: 0, x: 0, y: 0 });
       return emitState();
     },
-    loadURL: async (url: string) => {
-      const activeEntry = getActiveEntry();
-      if (!(activeServiceId && activeEntry)) {
-        return emitState();
-      }
-
-      attachServiceView(activeServiceId);
-      await loadUrlSafely(activeEntry, url);
-      return emitState();
-    },
+    loadURL: async (url: string) => await loadActiveEntryUrl(() => url),
     openExternal: async () => {
       const currentUrl = activeServiceId
         ? entries.get(activeServiceId)?.view.webContents.getURL()
@@ -366,16 +353,8 @@ export const createViewerController = (options: {
       await openExternalUrl(currentUrl);
       return { ok: true } as const;
     },
-    resetActiveTab: async () => {
-      const activeEntry = getActiveEntry();
-      if (!(activeServiceId && activeEntry)) {
-        return emitState();
-      }
-
-      attachServiceView(activeServiceId);
-      await loadUrlSafely(activeEntry, activeEntry.rootUrl);
-      return emitState();
-    },
+    resetActiveTab: async () =>
+      await loadActiveEntryUrl((entry) => entry.rootUrl),
     reload: () => {
       const activeView = getActiveEntry()?.view;
       if (activeView?.webContents.getURL()) {

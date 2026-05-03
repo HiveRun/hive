@@ -14,9 +14,60 @@ import { describe, expect, it, vi } from "vitest";
 const HIVE_PORT = 3000;
 const HTTP_DEFAULT_PORT = 80;
 const HTTPS_DEFAULT_PORT = 443;
+const READY_TIMEOUT_MS = 50;
+const STALE_TIMEOUT_MS = 20;
 const UNIX_HIVE_PID = 401_148;
 const WINDOWS_HIVE_PID = 8124;
 const API_LISTENING_PATTERN = /API listening on /;
+const HEALTH_URL = "http://localhost:3000/health";
+
+const hiveResponse = (payload: unknown) =>
+  new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+
+const createTempDir = (prefix: string) =>
+  mkdtempSync(join(tmpdir(), `hive-cli-${prefix}-`));
+
+const rejectedFetch = () => vi.fn().mockRejectedValue(new Error("unreachable"));
+
+const waitForHiveReady = (
+  fetchMock: (url: string, init?: RequestInit) => Promise<Response>
+) =>
+  waitForServerReady({
+    url: HEALTH_URL,
+    fetchImpl: fetchMock,
+    intervalMs: 5,
+    timeoutMs: 50,
+    isReadyResponse: async (response) =>
+      isHiveHealthResponse(await response.json()),
+  });
+
+const waitForReadyFile = (readyFilePath: string, timeoutMs: number) =>
+  waitForServerReady({
+    url: HEALTH_URL,
+    fetchImpl: rejectedFetch(),
+    intervalMs: 5,
+    timeoutMs,
+    readyFilePath,
+    readyFileContents: "1234",
+  });
+
+const findLinuxListener = (
+  runCommand: (
+    command: string,
+    args: string[]
+  ) => {
+    status: number | null;
+    stdout: string;
+  }
+) =>
+  findListeningProcessId({
+    port: HIVE_PORT,
+    platform: "linux",
+    runCommand,
+  });
 
 describe("waitForServerReady", () => {
   it("resolves when the healthcheck responds", async () => {
@@ -50,27 +101,10 @@ describe("waitForServerReady", () => {
   it("waits for a Hive-shaped health response when a validator is provided", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ status: "ok" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        })
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ service: "hive", status: "ok" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        })
-      );
+      .mockResolvedValueOnce(hiveResponse({ status: "ok" }))
+      .mockResolvedValueOnce(hiveResponse({ service: "hive", status: "ok" }));
 
-    const ready = await waitForServerReady({
-      url: "http://localhost:3000/health",
-      fetchImpl: fetchMock,
-      intervalMs: 5,
-      timeoutMs: 50,
-      isReadyResponse: async (response) =>
-        isHiveHealthResponse(await response.json()),
-    });
+    const ready = await waitForHiveReady(fetchMock);
 
     expect(ready).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -79,25 +113,13 @@ describe("waitForServerReady", () => {
   it("tries equivalent loopback hosts before timing out", async () => {
     const fetchMock = vi.fn((requestUrl: string) => {
       if (requestUrl === "http://[::1]:3000/health") {
-        return Promise.resolve(
-          new Response(JSON.stringify({ service: "hive", status: "ok" }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          })
-        );
+        return Promise.resolve(hiveResponse({ service: "hive", status: "ok" }));
       }
 
       return Promise.reject(new Error("unreachable"));
     });
 
-    const ready = await waitForServerReady({
-      url: "http://localhost:3000/health",
-      fetchImpl: fetchMock,
-      intervalMs: 5,
-      timeoutMs: 50,
-      isReadyResponse: async (response) =>
-        isHiveHealthResponse(await response.json()),
-    });
+    const ready = await waitForHiveReady(fetchMock);
 
     expect(ready).toBe(true);
     expect(fetchMock).toHaveBeenCalledWith(
@@ -115,9 +137,9 @@ describe("waitForServerReady", () => {
   });
 
   it("accepts a daemon readiness log line even before health responds", async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "hive-cli-log-"));
+    const tempDir = createTempDir("log");
     const logPath = join(tempDir, "hive.log");
-    const fetchMock = vi.fn().mockRejectedValue(new Error("unreachable"));
+    const fetchMock = rejectedFetch();
 
     setTimeout(() => {
       writeFileSync(
@@ -128,7 +150,7 @@ describe("waitForServerReady", () => {
     }, 10);
 
     const ready = await waitForServerReady({
-      url: "http://localhost:3000/health",
+      url: HEALTH_URL,
       fetchImpl: fetchMock,
       intervalMs: 5,
       timeoutMs: 50,
@@ -142,13 +164,13 @@ describe("waitForServerReady", () => {
   });
 
   it("ignores stale readiness lines before the launch offset", async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "hive-cli-log-"));
+    const tempDir = createTempDir("log");
     const logPath = join(tempDir, "hive.log");
     writeFileSync(logPath, "API listening on http://localhost:3000\n", "utf8");
 
     const ready = await waitForServerReady({
-      url: "http://localhost:3000/health",
-      fetchImpl: vi.fn().mockRejectedValue(new Error("unreachable")),
+      url: HEALTH_URL,
+      fetchImpl: rejectedFetch(),
       intervalMs: 5,
       timeoutMs: 20,
       readyLogFilePath: logPath,
@@ -161,39 +183,25 @@ describe("waitForServerReady", () => {
   });
 
   it("accepts a ready file that matches the launched pid", async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "hive-cli-ready-"));
+    const tempDir = createTempDir("ready");
     const readyFilePath = join(tempDir, "daemon-ready");
 
     setTimeout(() => {
       writeFileSync(readyFilePath, "1234\n", "utf8");
     }, 10);
 
-    const ready = await waitForServerReady({
-      url: "http://localhost:3000/health",
-      fetchImpl: vi.fn().mockRejectedValue(new Error("unreachable")),
-      intervalMs: 5,
-      timeoutMs: 50,
-      readyFilePath,
-      readyFileContents: "1234",
-    });
+    const ready = await waitForReadyFile(readyFilePath, READY_TIMEOUT_MS);
 
     expect(ready).toBe(true);
     rmSync(tempDir, { recursive: true, force: true });
   });
 
   it("ignores a ready file with the wrong pid", async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "hive-cli-ready-"));
+    const tempDir = createTempDir("ready");
     const readyFilePath = join(tempDir, "daemon-ready");
     writeFileSync(readyFilePath, "9999\n", "utf8");
 
-    const ready = await waitForServerReady({
-      url: "http://localhost:3000/health",
-      fetchImpl: vi.fn().mockRejectedValue(new Error("unreachable")),
-      intervalMs: 5,
-      timeoutMs: 20,
-      readyFilePath,
-      readyFileContents: "1234",
-    });
+    const ready = await waitForReadyFile(readyFilePath, STALE_TIMEOUT_MS);
 
     expect(ready).toBe(false);
     rmSync(tempDir, { recursive: true, force: true });
@@ -202,7 +210,7 @@ describe("waitForServerReady", () => {
 
 describe("installCompletionScript", () => {
   it("writes the script with a trailing newline", () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "hive-cli-"));
+    const tempDir = createTempDir("completion");
     const targetPath = join(tempDir, "_hive_test");
 
     const result = installCompletionScript("test-script", targetPath);
@@ -251,13 +259,7 @@ describe("findListeningProcessId", () => {
       stdout: "401148\n",
     });
 
-    expect(
-      findListeningProcessId({
-        port: HIVE_PORT,
-        platform: "linux",
-        runCommand,
-      })
-    ).toBe(UNIX_HIVE_PID);
+    expect(findLinuxListener(runCommand)).toBe(UNIX_HIVE_PID);
   });
 
   it("falls back to ss output when lsof is unavailable", () => {
@@ -273,13 +275,7 @@ describe("findListeningProcessId", () => {
       };
     });
 
-    expect(
-      findListeningProcessId({
-        port: HIVE_PORT,
-        platform: "linux",
-        runCommand,
-      })
-    ).toBe(UNIX_HIVE_PID);
+    expect(findLinuxListener(runCommand)).toBe(UNIX_HIVE_PID);
   });
 
   it("parses netstat output on windows", () => {

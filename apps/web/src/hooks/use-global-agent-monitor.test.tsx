@@ -1,9 +1,15 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import type { PropsWithChildren } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "@/queries/agents";
 import type { Cell } from "@/queries/cells";
+import {
+  createEventSourceMock,
+  createWrapper,
+  type MockEventSourceInstance,
+  makeCellFixture,
+  registerEventSourceMockLifecycle,
+} from "./event-source-test-utils";
 import { useGlobalAgentMonitor } from "./use-global-agent-monitor";
 
 const WORKSPACE_ID = "workspace-1";
@@ -12,19 +18,7 @@ const MODE_TRANSITION_LOADING_TIMEOUT_MS = 4000;
 const MODE_TRANSITION_WAIT_BUFFER_MS = 100;
 const EXTENDED_TEST_TIMEOUT_MS = 10_000;
 
-type MockEventSourceInstance = {
-  url: string;
-  closed: boolean;
-  addEventListener: (
-    event: string,
-    listener: EventListenerOrEventListenerObject
-  ) => void;
-  close: () => void;
-  emit: (event: string, data?: string) => void;
-  onerror: (() => void) | null;
-};
-
-const mockEventSourceInstances: MockEventSourceInstance[] = [];
+const eventSource = createEventSourceMock();
 
 vi.mock("@/hooks/use-active-workspace", () => ({
   useActiveWorkspace: () => ({
@@ -50,66 +44,8 @@ vi.mock("@/queries/agents", () => ({
   },
 }));
 
-function MockEventSource(url: string): MockEventSourceInstance {
-  const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
-
-  const instance: MockEventSourceInstance = {
-    url,
-    closed: false,
-    addEventListener(event, listener) {
-      const existing = listeners.get(event) ?? new Set();
-      existing.add(listener);
-      listeners.set(event, existing);
-    },
-    close() {
-      instance.closed = true;
-    },
-    emit(event, data = "{}") {
-      const message = new MessageEvent(event, { data });
-      const registered = listeners.get(event);
-      if (!registered) {
-        return;
-      }
-
-      for (const listener of registered) {
-        if (typeof listener === "function") {
-          listener(message);
-          continue;
-        }
-
-        listener.handleEvent(message);
-      }
-    },
-    onerror: null,
-  };
-
-  mockEventSourceInstances.push(instance);
-  return instance;
-}
-
-function createWrapper(queryClient: QueryClient) {
-  return ({ children }: PropsWithChildren) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
-}
-
 function makeCell(id: string): Cell {
-  return {
-    id,
-    name: `Cell ${id}`,
-    description: null,
-    templateId: "template-1",
-    workspacePath: `/tmp/${id}`,
-    workspaceId: WORKSPACE_ID,
-    workspaceRootPath: "/tmp/workspace",
-    opencodeSessionId: null,
-    opencodeCommand: null,
-    createdAt: new Date().toISOString(),
-    status: "ready",
-    lastSetupError: undefined,
-    branchName: undefined,
-    baseCommit: undefined,
-  };
+  return makeCellFixture(id, WORKSPACE_ID, { templateId: "template-1" });
 }
 
 function makeSession(cellId: string): AgentSession {
@@ -127,144 +63,93 @@ function makeSession(cellId: string): AgentSession {
   };
 }
 
-describe("useGlobalAgentMonitor", () => {
-  beforeEach(() => {
-    mockEventSourceInstances.length = 0;
-    vi.stubGlobal(
-      "EventSource",
-      MockEventSource as unknown as typeof EventSource
-    );
+async function renderMonitor(queryClient: QueryClient) {
+  renderHook(() => useGlobalAgentMonitor(), {
+    wrapper: createWrapper(queryClient),
   });
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
+  await waitFor(() => {
+    expect(eventSource.instances).toHaveLength(1);
   });
+
+  return eventSource.instances[0];
+}
+
+function emitMode(
+  stream: MockEventSourceInstance | undefined,
+  payload: Record<string, string> = { startMode: "plan", currentMode: "build" }
+) {
+  act(() => {
+    stream?.emit("mode", JSON.stringify(payload));
+  });
+}
+
+async function expectSessionUpdate(
+  queryClient: QueryClient,
+  expected: Partial<AgentSession>
+) {
+  await waitFor(() => {
+    expect(queryClient.getQueryData(["agent-session", CELL_ID])).toEqual(
+      expect.objectContaining(expected)
+    );
+  });
+}
+
+async function startBuildTransition(
+  queryClient: QueryClient,
+  payload: Record<string, string> = { startMode: "plan", currentMode: "build" }
+) {
+  const stream = await renderMonitor(queryClient);
+  emitMode(stream, payload);
+  await expectSessionUpdate(queryClient, {
+    currentMode: "build",
+    status: "starting",
+  });
+  return stream;
+}
+
+async function withBuildTransition(
+  run: (
+    queryClient: QueryClient,
+    stream: MockEventSourceInstance | undefined
+  ) => Promise<void> | void
+) {
+  const queryClient = new QueryClient();
+  const stream = await startBuildTransition(queryClient);
+  await run(queryClient, stream);
+}
+
+describe("useGlobalAgentMonitor", () => {
+  registerEventSourceMockLifecycle(eventSource);
 
   it("marks plan to build mode transitions as loading", async () => {
     const queryClient = new QueryClient();
-
-    renderHook(() => useGlobalAgentMonitor(), {
-      wrapper: createWrapper(queryClient),
+    const stream = await startBuildTransition(queryClient, {
+      startMode: "plan",
+      currentMode: "build",
+      modeUpdatedAt: "2026-04-08T00:00:00.000Z",
     });
 
-    await waitFor(() => {
-      expect(mockEventSourceInstances).toHaveLength(1);
-    });
-
-    const stream = mockEventSourceInstances[0];
     expect(stream?.url).toContain("/api/agents/sessions/session-1/events");
-
-    act(() => {
-      stream?.emit(
-        "mode",
-        JSON.stringify({
-          startMode: "plan",
-          currentMode: "build",
-          modeUpdatedAt: "2026-04-08T00:00:00.000Z",
-        })
-      );
-    });
-
-    await waitFor(() => {
-      expect(queryClient.getQueryData(["agent-session", CELL_ID])).toEqual(
-        expect.objectContaining({
-          currentMode: "build",
-          status: "starting",
-        })
-      );
-    });
   });
 
   it("clears the transient loading state when a status event arrives", async () => {
-    const queryClient = new QueryClient();
+    await withBuildTransition(async (queryClient, stream) => {
+      act(() => {
+        stream?.emit("status", JSON.stringify({ status: "completed" }));
+      });
 
-    renderHook(() => useGlobalAgentMonitor(), {
-      wrapper: createWrapper(queryClient),
-    });
-
-    await waitFor(() => {
-      expect(mockEventSourceInstances).toHaveLength(1);
-    });
-
-    const stream = mockEventSourceInstances[0];
-
-    act(() => {
-      stream?.emit(
-        "mode",
-        JSON.stringify({
-          startMode: "plan",
-          currentMode: "build",
-        })
-      );
-    });
-
-    await waitFor(() => {
-      expect(queryClient.getQueryData(["agent-session", CELL_ID])).toEqual(
-        expect.objectContaining({ status: "starting" })
-      );
-    });
-
-    act(() => {
-      stream?.emit("status", JSON.stringify({ status: "completed" }));
-    });
-
-    await waitFor(() => {
-      expect(queryClient.getQueryData(["agent-session", CELL_ID])).toEqual(
-        expect.objectContaining({ status: "completed" })
-      );
+      await expectSessionUpdate(queryClient, { status: "completed" });
     });
   });
 
   it("restores the previous status on a later non-transition mode update", async () => {
-    const queryClient = new QueryClient();
-
-    renderHook(() => useGlobalAgentMonitor(), {
-      wrapper: createWrapper(queryClient),
-    });
-
-    await waitFor(() => {
-      expect(mockEventSourceInstances).toHaveLength(1);
-    });
-
-    const stream = mockEventSourceInstances[0];
-
-    act(() => {
-      stream?.emit(
-        "mode",
-        JSON.stringify({
-          startMode: "plan",
-          currentMode: "build",
-        })
-      );
-    });
-
-    await waitFor(() => {
-      expect(queryClient.getQueryData(["agent-session", CELL_ID])).toEqual(
-        expect.objectContaining({
-          currentMode: "build",
-          status: "starting",
-        })
-      );
-    });
-
-    act(() => {
-      stream?.emit(
-        "mode",
-        JSON.stringify({
-          startMode: "plan",
-          currentMode: "plan",
-        })
-      );
-    });
-
-    await waitFor(() => {
-      expect(queryClient.getQueryData(["agent-session", CELL_ID])).toEqual(
-        expect.objectContaining({
-          currentMode: "plan",
-          status: "working",
-        })
-      );
+    await withBuildTransition(async (queryClient, stream) => {
+      emitMode(stream, { startMode: "plan", currentMode: "plan" });
+      await expectSessionUpdate(queryClient, {
+        currentMode: "plan",
+        status: "working",
+      });
     });
   });
 
@@ -272,32 +157,7 @@ describe("useGlobalAgentMonitor", () => {
     "restores the previous status if no newer status arrives",
     async () => {
       const queryClient = new QueryClient();
-
-      renderHook(() => useGlobalAgentMonitor(), {
-        wrapper: createWrapper(queryClient),
-      });
-
-      await waitFor(() => {
-        expect(mockEventSourceInstances).toHaveLength(1);
-      });
-
-      const stream = mockEventSourceInstances[0];
-
-      act(() => {
-        stream?.emit(
-          "mode",
-          JSON.stringify({
-            startMode: "plan",
-            currentMode: "build",
-          })
-        );
-      });
-
-      await waitFor(() => {
-        expect(queryClient.getQueryData(["agent-session", CELL_ID])).toEqual(
-          expect.objectContaining({ status: "starting" })
-        );
-      });
+      await startBuildTransition(queryClient);
 
       await new Promise((resolve) => {
         setTimeout(
@@ -306,52 +166,18 @@ describe("useGlobalAgentMonitor", () => {
         );
       });
 
-      await waitFor(() => {
-        expect(queryClient.getQueryData(["agent-session", CELL_ID])).toEqual(
-          expect.objectContaining({ status: "working" })
-        );
-      });
+      await expectSessionUpdate(queryClient, { status: "working" });
     },
     EXTENDED_TEST_TIMEOUT_MS
   );
 
   it("restores the previous status when the stream errors", async () => {
-    const queryClient = new QueryClient();
+    await withBuildTransition(async (queryClient, stream) => {
+      act(() => {
+        stream?.onerror?.();
+      });
 
-    renderHook(() => useGlobalAgentMonitor(), {
-      wrapper: createWrapper(queryClient),
-    });
-
-    await waitFor(() => {
-      expect(mockEventSourceInstances).toHaveLength(1);
-    });
-
-    const stream = mockEventSourceInstances[0];
-
-    act(() => {
-      stream?.emit(
-        "mode",
-        JSON.stringify({
-          startMode: "plan",
-          currentMode: "build",
-        })
-      );
-    });
-
-    await waitFor(() => {
-      expect(queryClient.getQueryData(["agent-session", CELL_ID])).toEqual(
-        expect.objectContaining({ status: "starting" })
-      );
-    });
-
-    act(() => {
-      stream?.onerror?.();
-    });
-
-    await waitFor(() => {
-      expect(queryClient.getQueryData(["agent-session", CELL_ID])).toEqual(
-        expect.objectContaining({ status: "working" })
-      );
+      await expectSessionUpdate(queryClient, { status: "working" });
     });
   });
 });

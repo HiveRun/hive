@@ -2,7 +2,8 @@
 
 import { fileURLToPath } from "node:url";
 
-import { resolveReleaseVersion } from "./release-version";
+import { runMain } from "./common";
+import { isValidSemver, resolveReleaseVersion } from "./release-version";
 
 const rootManifestPath = fileURLToPath(
   new URL("../../package.json", import.meta.url)
@@ -13,8 +14,6 @@ const desktopManifestPath = fileURLToPath(
 
 type BumpType = "major" | "minor" | "patch";
 
-const SEMVER_PATTERN =
-  /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const SEMVER_CORE_TRIPLET_PATTERN = /^(\d+)\.(\d+)\.(\d+)/;
 
 const parseArgs = () => {
@@ -36,7 +35,7 @@ const parseArgs = () => {
 };
 
 const assertSemver = (value: string, source: string) => {
-  if (!SEMVER_PATTERN.test(value)) {
+  if (!isValidSemver(value)) {
     throw new Error(`${source} is not valid semver: ${value}`);
   }
 };
@@ -142,7 +141,4 @@ const main = async () => {
   console.log(`Previous version: ${currentVersion}`);
 };
 
-await main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+await runMain(main);

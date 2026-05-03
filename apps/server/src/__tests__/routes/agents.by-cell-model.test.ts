@@ -1,9 +1,9 @@
 import type { OpencodeClient, Event as OpencodeEvent } from "@opencode-ai/sdk";
 import { Elysia } from "elysia";
 import {
-  afterEach,
-  beforeAll,
-  beforeEach,
+  afterEach as afterEachTest,
+  beforeAll as beforeAllTests,
+  beforeEach as beforeEachTest,
   describe,
   expect,
   it,
@@ -111,11 +111,11 @@ function createClientStub() {
 describe("agents by-cell model capture", () => {
   let promptSpy: ReturnType<typeof vi.fn>;
 
-  beforeAll(async () => {
+  beforeAllTests(async () => {
     await setupTestDb();
   });
 
-  beforeEach(async () => {
+  beforeEachTest(async () => {
     vi.restoreAllMocks();
     await closeAllAgentSessions();
     await testDb.delete(cellProvisioningStates);
@@ -161,7 +161,7 @@ describe("agents by-cell model capture", () => {
     });
   });
 
-  afterEach(async () => {
+  afterEachTest(async () => {
     await closeAllAgentSessions();
     resetAgentRuntimeDependencies();
   });

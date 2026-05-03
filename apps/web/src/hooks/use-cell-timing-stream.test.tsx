@@ -1,98 +1,48 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient } from "@tanstack/react-query";
 import { renderHook } from "@testing-library/react";
-import type { PropsWithChildren } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import {
+  createEventSourceMock,
+  createWrapper,
+  registerEventSourceMockLifecycle,
+} from "./event-source-test-utils";
 import { useCellTimingStream } from "./use-cell-timing-stream";
 
-type MockEventSourceInstance = {
-  url: string;
-  closed: boolean;
-  addEventListener: (
-    event: string,
-    listener: EventListenerOrEventListenerObject
-  ) => void;
-  removeEventListener: (
-    event: string,
-    listener: EventListenerOrEventListenerObject
-  ) => void;
-  close: () => void;
-  emit: (event: string, data?: string) => void;
-};
-
-const mockEventSourceInstances: MockEventSourceInstance[] = [];
+const eventSource = createEventSourceMock();
 const INVALIDATION_DEBOUNCE_MS = 350;
 
-function MockEventSource(url: string): MockEventSourceInstance {
-  const listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+function renderTimingStream(
+  options?: Parameters<typeof useCellTimingStream>[1]
+) {
+  const queryClient = new QueryClient();
+  const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
-  const instance: MockEventSourceInstance = {
-    url,
-    closed: false,
-    addEventListener(event, listener) {
-      const existing = listeners.get(event) ?? new Set();
-      existing.add(listener);
-      listeners.set(event, existing);
-    },
-    removeEventListener(event, listener) {
-      listeners.get(event)?.delete(listener);
-    },
-    close() {
-      instance.closed = true;
-    },
-    emit(event, data = "{}") {
-      const message = new MessageEvent(event, { data });
-      const registered = listeners.get(event);
-      if (!registered) {
-        return;
-      }
+  const result = renderHook(() => useCellTimingStream("cell-1", options), {
+    wrapper: createWrapper(queryClient),
+  });
 
-      for (const listener of registered) {
-        if (typeof listener === "function") {
-          listener(message);
-        } else {
-          listener.handleEvent(message);
-        }
-      }
-    },
+  return {
+    invalidateSpy,
+    stream: eventSource.instances[0],
+    unmount: result.unmount,
   };
-
-  mockEventSourceInstances.push(instance);
-  return instance;
 }
 
-function createWrapper(queryClient: QueryClient) {
-  return ({ children }: PropsWithChildren) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
+function renderCreateTimingStream() {
+  const state = renderTimingStream({ workflow: "create" });
+  if (!state.stream) {
+    throw new Error("Expected timing stream to be created");
+  }
+  return { ...state, stream: state.stream };
 }
 
 describe("useCellTimingStream", () => {
-  beforeEach(() => {
-    mockEventSourceInstances.length = 0;
-    vi.useFakeTimers();
-    vi.stubGlobal(
-      "EventSource",
-      MockEventSource as unknown as typeof EventSource
-    );
-  });
-
-  afterEach(() => {
-    vi.runOnlyPendingTimers();
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
-  });
+  registerEventSourceMockLifecycle(eventSource, { fakeTimers: true });
 
   it("subscribes to timing SSE and invalidates timing queries", async () => {
-    const queryClient = new QueryClient();
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    const { invalidateSpy, stream } = renderCreateTimingStream();
 
-    renderHook(() => useCellTimingStream("cell-1", { workflow: "create" }), {
-      wrapper: createWrapper(queryClient),
-    });
-
-    expect(mockEventSourceInstances).toHaveLength(1);
-    const stream = mockEventSourceInstances[0];
+    expect(eventSource.instances).toHaveLength(1);
     expect(stream?.url).toContain("/api/cells/cell-1/timings/stream");
     expect(stream?.url).toContain("workflow=create");
 
@@ -108,15 +58,7 @@ describe("useCellTimingStream", () => {
   });
 
   it("invalidates timing queries on snapshot events", () => {
-    const queryClient = new QueryClient();
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
-
-    renderHook(() => useCellTimingStream("cell-1", { workflow: "create" }), {
-      wrapper: createWrapper(queryClient),
-    });
-
-    const stream = mockEventSourceInstances[0];
-    expect(stream).toBeDefined();
+    const { invalidateSpy, stream } = renderCreateTimingStream();
 
     stream?.emit("snapshot", '{"timestamp":123}');
 
@@ -124,15 +66,7 @@ describe("useCellTimingStream", () => {
   });
 
   it("debounces timing-event invalidations", async () => {
-    const queryClient = new QueryClient();
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
-
-    renderHook(() => useCellTimingStream("cell-1", { workflow: "create" }), {
-      wrapper: createWrapper(queryClient),
-    });
-
-    const stream = mockEventSourceInstances[0];
-    expect(stream).toBeDefined();
+    const { invalidateSpy, stream } = renderCreateTimingStream();
 
     stream?.emit("timing", '{"step":"one"}');
     stream?.emit("timing", '{"step":"two"}');
@@ -145,24 +79,15 @@ describe("useCellTimingStream", () => {
   });
 
   it("does not subscribe when disabled", () => {
-    const queryClient = new QueryClient();
+    renderTimingStream({ enabled: false });
 
-    renderHook(() => useCellTimingStream("cell-1", { enabled: false }), {
-      wrapper: createWrapper(queryClient),
-    });
-
-    expect(mockEventSourceInstances).toHaveLength(0);
+    expect(eventSource.instances).toHaveLength(0);
   });
 
   it("closes the event source on unmount", () => {
-    const queryClient = new QueryClient();
+    const { stream, unmount } = renderTimingStream();
 
-    const { unmount } = renderHook(() => useCellTimingStream("cell-1"), {
-      wrapper: createWrapper(queryClient),
-    });
-
-    expect(mockEventSourceInstances).toHaveLength(1);
-    const stream = mockEventSourceInstances[0];
+    expect(eventSource.instances).toHaveLength(1);
     expect(stream?.closed).toBe(false);
 
     unmount();

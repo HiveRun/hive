@@ -6,10 +6,17 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  installImmediateAnimationFrameMock,
+  installResizeObserverMock,
+  workspaceListQueryResult,
+} from "../-shared/test-dom";
 
 const useQueryMock = vi.fn();
 const prefetchQueryMock = vi.fn().mockResolvedValue(undefined);
 const CHAR_COUNT_LABEL_PATTERN = /chars/i;
+const LONG_DESCRIPTION =
+  "This is a long cell description that should stay compact in the header until the user asks to see more details from the full prompt text shown in this view.";
 let currentRouteId = "/cells/$cellId/chat";
 
 type MockCell = {
@@ -24,16 +31,19 @@ let currentCell: MockCell;
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (...args: unknown[]) => useQueryMock(...args),
-  useQueryClient: () => ({
-    prefetchQuery: prefetchQueryMock,
-  }),
+  useQueryClient: () => {
+    const client = { prefetchQuery: prefetchQueryMock };
+    return client;
+  },
 }));
 
 vi.mock("@tanstack/react-router", () => ({
-  createFileRoute: () => (config: Record<string, unknown>) => ({
-    ...config,
-    useParams: () => ({ cellId: currentCell.id }),
-  }),
+  createFileRoute: () => (config: Record<string, unknown>) => {
+    const route = { ...config };
+    return Object.assign(route, {
+      useParams: () => ({ cellId: currentCell.id }),
+    });
+  },
   Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
     <a href={to}>{children}</a>
   ),
@@ -57,50 +67,19 @@ const buildCell = (overrides: Partial<MockCell> = {}): MockCell => ({
 
 describe("Cell detail route", () => {
   beforeEach(() => {
-    const noop = () => null;
-
     currentCell = buildCell();
     currentRouteId = "/cells/$cellId/chat";
     useQueryMock.mockReset();
     prefetchQueryMock.mockClear();
 
-    globalThis.ResizeObserver = class ResizeObserver {
-      disconnect = noop;
-      observe = noop;
-      unobserve = noop;
-    } as typeof ResizeObserver;
-
-    Object.defineProperty(window, "requestAnimationFrame", {
-      configurable: true,
-      value: (callback: FrameRequestCallback) => {
-        callback(0);
-        return 0;
-      },
-      writable: true,
-    });
-
-    Object.defineProperty(window, "cancelAnimationFrame", {
-      configurable: true,
-      value: vi.fn(),
-      writable: true,
-    });
+    installResizeObserverMock();
+    installImmediateAnimationFrameMock();
 
     useQueryMock.mockImplementation((options: { queryKey: unknown[] }) => {
       const [scope, key, subKey] = options.queryKey;
 
       if (scope === "workspaces") {
-        return {
-          data: {
-            workspaces: [
-              {
-                id: "workspace-1",
-                label: "Workspace One",
-              },
-            ],
-          },
-          error: null,
-          isPending: false,
-        };
+        return workspaceListQueryResult();
       }
 
       if (scope === "cells" && subKey === "timings") {
@@ -132,17 +111,7 @@ describe("Cell detail route", () => {
   });
 
   it("renders long descriptions in a prompt panel with an expand control", async () => {
-    currentRouteId = "/cells/$cellId/setup";
-    currentCell = buildCell({
-      description:
-        "This is a long cell description that should stay compact in the header until the user asks to see more details from the full prompt text shown in this view.",
-    });
-
-    render(<CellLayout />);
-
-    const expandButton = await screen.findByRole("button", {
-      name: "Expand prompt",
-    });
+    const expandButton = await renderInfoRouteWithDescription(LONG_DESCRIPTION);
     const description = screen.getByText(currentCell.description);
 
     expect(screen.getByText("Prompt")).toBeInTheDocument();
@@ -154,14 +123,7 @@ describe("Cell detail route", () => {
   });
 
   it("expands and reclamps the description when toggled", async () => {
-    currentRouteId = "/cells/$cellId/setup";
-    currentCell = buildCell({
-      description:
-        "This is a long cell description that should stay compact in the header until the user asks to see more details from the full prompt text shown in this view.",
-    });
-
-    render(<CellLayout />);
-
+    await renderInfoRouteWithDescription(LONG_DESCRIPTION);
     const description = screen.getByText(currentCell.description);
     fireEvent.click(
       await screen.findByRole("button", { name: "Expand prompt" })
@@ -235,3 +197,10 @@ describe("Cell detail route", () => {
     expect(screen.getByText("2 lines")).toBeInTheDocument();
   });
 });
+
+async function renderInfoRouteWithDescription(description: string) {
+  currentRouteId = "/cells/$cellId/setup";
+  currentCell = buildCell({ description });
+  render(<CellLayout />);
+  return await screen.findByRole("button", { name: "Expand prompt" });
+}

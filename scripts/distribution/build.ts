@@ -69,14 +69,18 @@ const buildFrontend = () =>
     },
   });
 
-const syncDesktopRendererAssets = async () => {
+const assertFrontendDist = () => {
   const frontendDist = join(repoRoot, "apps", "web", "dist");
   if (!existsSync(frontendDist)) {
     throw new Error(
       "Frontend dist directory missing. Run the web build first."
     );
   }
+  return frontendDist;
+};
 
+const syncDesktopRendererAssets = async () => {
+  const frontendDist = assertFrontendDist();
   await rm(desktopElectronPublicDir, { recursive: true, force: true });
   await cp(frontendDist, desktopElectronPublicDir, { recursive: true });
 };
@@ -263,13 +267,7 @@ const main = async () => {
   await copyFile(cliBinaryPath, binaryDestination);
   await makeExecutable(binaryDestination);
 
-  const frontendDist = join(repoRoot, "apps", "web", "dist");
-  if (!existsSync(frontendDist)) {
-    throw new Error(
-      "Frontend dist directory missing. Run the web build first."
-    );
-  }
-
+  const frontendDist = assertFrontendDist();
   await cp(frontendDist, join(releaseDir, "public"), { recursive: true });
 
   const installerScriptSource = join(repoRoot, "scripts", "install.sh");

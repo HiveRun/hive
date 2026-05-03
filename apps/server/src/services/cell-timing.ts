@@ -6,14 +6,17 @@ import type {
 export const DEFAULT_TIMING_LIMIT = 200;
 export const MAX_TIMING_LIMIT = 1000;
 
-export type CellTimingStepRecord = {
-  id: string;
+type CellTimingBaseRecord = {
   cellId: string;
   cellName: string | null;
   workspaceId: string | null;
   templateId: string | null;
   runId: string;
   workflow: CellTimingWorkflow;
+};
+
+export type CellTimingStepRecord = CellTimingBaseRecord & {
+  id: string;
   step: string;
   status: CellTimingStatus;
   durationMs: number;
@@ -23,13 +26,7 @@ export type CellTimingStepRecord = {
   createdAt: string;
 };
 
-type CellTimingRunRecord = {
-  runId: string;
-  cellId: string;
-  cellName: string | null;
-  workspaceId: string | null;
-  templateId: string | null;
-  workflow: CellTimingWorkflow;
+type CellTimingRunRecord = CellTimingBaseRecord & {
   status: CellTimingStatus;
   startedAt: string;
   finishedAt: string;
@@ -38,19 +35,11 @@ type CellTimingRunRecord = {
   attempt: number | null;
 };
 
-type CellTimingEventRow = {
-  id: string;
-  cellId: string;
-  cellName: string | null;
-  workspaceId: string | null;
-  templateId: string | null;
-  runId: string;
+type CellTimingEventRow = Omit<
+  CellTimingStepRecord,
+  "createdAt" | "metadata" | "workflow"
+> & {
   workflow: string;
-  step: string;
-  status: CellTimingStatus;
-  durationMs: number;
-  attempt: number | null;
-  error: string | null;
   metadata: unknown;
   createdAt: Date;
 };

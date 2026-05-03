@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import { wait as waitDelay } from "./runtime/wait";
 import { selectors } from "./selectors";
 
 const CELL_PATH_PATTERN = /^\/cells\/([^/]+)(?:\/.*)?$/;
@@ -38,6 +39,24 @@ type ActivityRecord = {
   type: string;
 };
 
+export type AgentSession = {
+  id: string;
+  modelId?: string;
+  modelProviderId?: string;
+  provider?: string;
+  startMode?: "plan" | "build";
+  currentMode?: "plan" | "build";
+  status: string;
+  updatedAt: string;
+};
+
+type AgentMessage = {
+  id: string;
+  role: string;
+  state?: string;
+  content: string | null;
+};
+
 type WorkspacesResponse = {
   workspaces: Array<{
     id: string;
@@ -52,6 +71,41 @@ type TemplateRecord = {
   label: string;
 };
 
+type MessagePayload = { message: string };
+
+function hasMessage(payload: unknown): payload is MessagePayload {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    "message" in payload &&
+    typeof payload.message === "string"
+  );
+}
+
+async function fetchJson<T>(url: string, errorMessage: string): Promise<T> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`${errorMessage}: ${response.status}`);
+  }
+
+  const payload = (await response.json()) as T | MessagePayload;
+  if (hasMessage(payload)) {
+    throw new Error(payload.message);
+  }
+
+  return payload;
+}
+
+export function requireApiUrl(
+  message = "HIVE_E2E_API_URL is required for E2E tests"
+) {
+  const apiUrl = process.env.HIVE_E2E_API_URL;
+  if (!apiUrl) {
+    throw new Error(message);
+  }
+  return apiUrl;
+}
+
 export async function waitForCondition(options: {
   check: () => Promise<boolean>;
   errorMessage: string;
@@ -65,7 +119,7 @@ export async function waitForCondition(options: {
     if (await options.check()) {
       return;
     }
-    await wait(intervalMs);
+    await waitDelay(intervalMs);
   }
 
   throw new Error(options.errorMessage);
@@ -85,6 +139,7 @@ export async function createCell(options: {
   name: string;
   workspaceId?: string;
   templateLabel?: string;
+  templateId?: string;
   timeoutMs?: number;
 }): Promise<string> {
   const timeoutMs = options.timeoutMs ?? CELL_CREATION_TIMEOUT_MS;
@@ -133,6 +188,7 @@ export async function createCell(options: {
       name: options.name,
       workspaceId: options.workspaceId,
       templateLabel: options.templateLabel,
+      templateId: options.templateId,
     });
 
     await options.page.goto(`/cells/${cellId}`);
@@ -144,17 +200,23 @@ export async function createCell(options: {
   }
 }
 
+export async function createCellFromHome(
+  options: Parameters<typeof createCell>[0]
+) {
+  await options.page.goto("/");
+  return await createCell(options);
+}
+
 function extractCellIdFromPath(pathname: string): string | null {
   const match = pathname.match(CELL_PATH_PATTERN);
   return match?.[1] ?? null;
 }
 
 function readPathname(url: string): string {
-  try {
+  if (URL.canParse(url)) {
     return new URL(url).pathname;
-  } catch {
-    return url;
   }
+  return url;
 }
 
 function resolveCellSubroute(pathname: string, cellId: string) {
@@ -248,10 +310,11 @@ export async function createCellViaApi(options: {
   name: string;
   workspaceId?: string;
   templateLabel?: string;
+  templateId?: string;
   startMode?: "plan" | "build";
 }): Promise<string> {
   const workspaceId = await resolveWorkspaceId(options);
-  const templateId = await resolveTemplateId(options);
+  const templateId = options.templateId ?? (await resolveTemplateId(options));
   const response = await fetch(`${options.apiUrl}/api/cells`, {
     method: "POST",
     headers: {
@@ -278,6 +341,41 @@ export async function createCellViaApi(options: {
   }
 
   return payload.id;
+}
+
+export async function createApiCellAndOpenChat(options: {
+  page: Page;
+  apiUrl: string;
+  name: string;
+  templateLabel?: string;
+  startMode?: "plan" | "build";
+  initialRouteTimeoutMs: number;
+  chatRouteTimeoutMs?: number;
+}): Promise<{ cellId: string; initialRoute: "chat" | "provisioning" }> {
+  await options.page.goto("/");
+  const cellId = await createCellViaApi({
+    apiUrl: options.apiUrl,
+    name: options.name,
+    templateLabel: options.templateLabel,
+    startMode: options.startMode,
+  });
+
+  await options.page.goto(`/cells/${cellId}/chat`);
+  const initialRoute = await waitForProvisioningOrChatRoute({
+    page: options.page,
+    cellId,
+    timeoutMs: options.initialRouteTimeoutMs,
+  });
+
+  if (options.chatRouteTimeoutMs) {
+    await waitForChatRoute({
+      page: options.page,
+      cellId,
+      timeoutMs: options.chatRouteTimeoutMs,
+    });
+  }
+
+  return { cellId, initialRoute };
 }
 
 async function resolveWorkspaceId(options: {
@@ -409,15 +507,10 @@ export async function fetchCell(
   apiUrl: string,
   cellId: string
 ): Promise<CellRecord> {
-  const response = await fetch(`${apiUrl}/api/cells/${cellId}`);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch cell ${cellId}: ${response.status}`);
-  }
-  const payload = (await response.json()) as CellRecord | { message: string };
-  if ("message" in payload) {
-    throw new Error(payload.message);
-  }
-  return payload;
+  return await fetchJson<CellRecord>(
+    `${apiUrl}/api/cells/${cellId}`,
+    `Failed to fetch cell ${cellId}`
+  );
 }
 
 async function fetchServices(
@@ -430,22 +523,10 @@ async function fetchServices(
     params.set("includeResources", "true");
   }
   const query = params.toString();
-  const response = await fetch(
-    `${apiUrl}/api/cells/${cellId}/services${query ? `?${query}` : ""}`
+  const payload = await fetchJson<{ services: ServiceRecord[] }>(
+    `${apiUrl}/api/cells/${cellId}/services${query ? `?${query}` : ""}`,
+    `Failed to fetch services for ${cellId}`
   );
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch services for ${cellId}: ${response.status}`
-    );
-  }
-
-  const payload = (await response.json()) as
-    | { services: ServiceRecord[] }
-    | { message: string };
-  if ("message" in payload) {
-    throw new Error(payload.message);
-  }
-
   return payload.services;
 }
 
@@ -453,64 +534,108 @@ export async function fetchActivity(
   apiUrl: string,
   cellId: string
 ): Promise<ActivityRecord[]> {
-  const response = await fetch(
-    `${apiUrl}/api/cells/${cellId}/activity?limit=200`
+  const payload = await fetchJson<{ events: ActivityRecord[] }>(
+    `${apiUrl}/api/cells/${cellId}/activity?limit=200`,
+    `Failed to fetch activity for ${cellId}`
   );
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch activity for ${cellId}: ${response.status}`
-    );
-  }
-
-  const payload = (await response.json()) as
-    | { events: ActivityRecord[] }
-    | { message: string };
-  if ("message" in payload) {
-    throw new Error(payload.message);
-  }
-
   return payload.events;
+}
+
+export async function waitForActivityType(options: {
+  apiUrl: string;
+  cellId: string;
+  type: string;
+  timeoutMs: number;
+  errorMessage: string;
+}): Promise<void> {
+  await waitForCondition({
+    timeoutMs: options.timeoutMs,
+    errorMessage: options.errorMessage,
+    check: async () => {
+      const events = await fetchActivity(options.apiUrl, options.cellId);
+      return events.some((event) => event.type === options.type);
+    },
+  });
 }
 
 export async function fetchWorkspaces(
   apiUrl: string
 ): Promise<WorkspacesResponse> {
-  const response = await fetch(`${apiUrl}/api/workspaces`);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch workspaces: ${response.status}`);
-  }
-
-  const payload = (await response.json()) as
-    | WorkspacesResponse
-    | { message: string };
-  if ("message" in payload) {
-    throw new Error(payload.message);
-  }
-
-  return payload;
+  return await fetchJson<WorkspacesResponse>(
+    `${apiUrl}/api/workspaces`,
+    "Failed to fetch workspaces"
+  );
 }
 
 export async function fetchWorkspaceCells(
   apiUrl: string,
   workspaceId: string
 ): Promise<CellRecord[]> {
+  const payload = await fetchJson<{ cells: CellRecord[] }>(
+    `${apiUrl}/api/cells?workspaceId=${workspaceId}`,
+    `Failed to fetch cells for workspace ${workspaceId}`
+  );
+  return payload.cells;
+}
+
+export async function fetchAgentSession(
+  apiUrl: string,
+  cellId: string
+): Promise<AgentSession | null> {
   const response = await fetch(
-    `${apiUrl}/api/cells?workspaceId=${workspaceId}`
+    `${apiUrl}/api/agents/sessions/byCell/${cellId}`
   );
   if (!response.ok) {
-    throw new Error(
-      `Failed to fetch cells for workspace ${workspaceId}: ${response.status}`
-    );
+    return null;
   }
 
-  const payload = (await response.json()) as
-    | { cells: CellRecord[] }
-    | { message: string };
-  if ("message" in payload) {
-    throw new Error(payload.message);
+  const payload = (await response.json()) as { session: AgentSession | null };
+  return payload.session;
+}
+
+export async function fetchAgentMessages(
+  apiUrl: string,
+  sessionId: string
+): Promise<AgentMessage[]> {
+  const response = await fetch(
+    `${apiUrl}/api/agents/sessions/${sessionId}/messages`
+  );
+  if (!response.ok) {
+    return [];
   }
 
-  return payload.cells;
+  const payload = (await response.json()) as { messages?: AgentMessage[] };
+  return payload.messages ?? [];
+}
+
+export async function fetchAgentMessageIds(
+  apiUrl: string,
+  sessionId: string
+): Promise<Set<string>> {
+  const messages = await fetchAgentMessages(apiUrl, sessionId);
+  return new Set(messages.map((message) => message.id));
+}
+
+export async function waitForAgentSession(options: {
+  apiUrl: string;
+  cellId: string;
+  timeoutMs: number;
+  errorMessage?: string;
+}): Promise<AgentSession> {
+  await waitForCondition({
+    check: async () =>
+      Boolean(await fetchAgentSession(options.apiUrl, options.cellId)),
+    errorMessage:
+      options.errorMessage ??
+      "Agent session was not available for the created cell",
+    timeoutMs: options.timeoutMs,
+  });
+
+  const session = await fetchAgentSession(options.apiUrl, options.cellId);
+  if (!session) {
+    throw new Error("Agent session missing after successful wait");
+  }
+  return session;
 }
 
 export async function waitForCellStatus(options: {
@@ -633,10 +758,29 @@ export async function sendTerminalCommand(
   page: Page,
   command: string
 ): Promise<void> {
-  await page.locator(selectors.terminalInputSurface).click();
-  await page.locator(selectors.terminalInputTextarea).focus();
+  await focusTerminalInput(page);
   await page.keyboard.type(command, { delay: 25 });
   await page.keyboard.press("Enter");
+}
+
+export async function focusTerminalInput(
+  page: Page,
+  timeoutMs?: number
+): Promise<void> {
+  await page.locator(selectors.terminalInputSurface).click();
+  await page.locator(selectors.terminalInputTextarea).click();
+
+  if (timeoutMs) {
+    await waitForCondition({
+      check: async () =>
+        page.evaluate(() => {
+          const active = document.activeElement;
+          return active?.classList.contains("xterm-helper-textarea") ?? false;
+        }),
+      errorMessage: "Terminal input textarea did not receive focus",
+      timeoutMs,
+    });
+  }
 }
 
 export async function sendCellTerminalCommand(
@@ -666,6 +810,40 @@ export async function sendCellTerminalCommand(
   await sendTerminalCommand(page, command);
 }
 
+export function sendChatTerminalInput(
+  apiUrl: string,
+  cellId: string,
+  data: string
+): Promise<Response> {
+  return fetch(`${apiUrl}/api/cells/${cellId}/chat/terminal/input`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ data }),
+  });
+}
+
+export async function readTerminalOutputSeq(page: Page): Promise<number> {
+  const outputSeqRaw = await page
+    .locator(selectors.terminalRoot)
+    .getAttribute("data-terminal-output-seq");
+  return Number(outputSeqRaw ?? "0");
+}
+
+export async function waitForTerminalOutputAdvance(
+  page: Page,
+  baseline: number,
+  timeoutMs: number,
+  errorMessage: string
+): Promise<void> {
+  await waitForCondition({
+    check: async () => (await readTerminalOutputSeq(page)) > baseline,
+    errorMessage,
+    timeoutMs,
+  });
+}
+
 async function maybeRecoverRouteError(page: Page): Promise<void> {
   const tryAgainButton = page.getByRole("button", { name: "Try again" });
   const isVisible = await tryAgainButton
@@ -677,11 +855,9 @@ async function maybeRecoverRouteError(page: Page): Promise<void> {
   }
 
   await tryAgainButton.click();
-  await page.waitForTimeout(POLL_INTERVAL_MS);
+  await wait(POLL_INTERVAL_MS);
 }
 
-async function wait(ms: number): Promise<void> {
-  await new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+export async function wait(ms: number): Promise<void> {
+  await waitDelay(ms);
 }

@@ -55,298 +55,206 @@ describe("Hive OpenCode tools", () => {
   });
 
   it("includes portReachable in hive services output", async () => {
-    const worktreePath = await createTempWorktree();
-    const cellId = "test-cell";
-    const hiveUrl = "http://hive.local";
+    const run = await createToolRun();
 
-    await writeHiveToolConfig({ worktreePath, cellId, hiveUrl });
+    const fetchSpy = mockFetch((url, init) => {
+      expect(url).toContain(run.servicesUrl);
+      expect(init?.signal).toBeDefined();
 
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation((input, init) => {
-        const url = resolveFetchUrl(input);
+      return Promise.resolve(
+        jsonResponse(servicesPayload({ portReachable: true }))
+      );
+    });
 
-        expect(url).toContain(`${hiveUrl}/api/cells/${cellId}/services`);
-        expect(init?.signal).toBeDefined();
-
-        const payload = {
-          services: [
-            {
-              id: "service-1",
-              name: "server",
-              type: "process",
-              status: "running",
-              port: TEST_SERVICE_PORT,
-              command: "bun run dev",
-              cwd: "/tmp",
-              env: {},
-              updatedAt: new Date().toISOString(),
-              processAlive: true,
-              portReachable: true,
-            },
-          ],
-        };
-
-        return Promise.resolve(
-          new Response(JSON.stringify(payload), {
-            status: HTTP_OK,
-            headers: { "content-type": "application/json" },
-          })
-        );
-      });
-
-    const controller = new AbortController();
-    const output = await hiveServicesTool.execute(
-      { includeLogs: false, format: "text" },
-      {
-        sessionID: "session",
-        messageID: "message",
-        agent: "test",
-        directory: worktreePath,
-        worktree: worktreePath,
-        abort: controller.signal,
-        metadata() {
-          // no-op for tests
-        },
-        ask: async () => {
-          // no-op for tests
-        },
-      }
-    );
+    const output = await executeTool(run, hiveServicesTool, {
+      includeLogs: false,
+      format: "text",
+    });
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(output).toContain("Service: server");
     expect(output).toContain("Port reachable: yes");
 
-    await fs.rm(worktreePath, { recursive: true, force: true });
+    await fs.rm(run.worktreePath, { recursive: true, force: true });
   });
 
   it("restarts all services via the Hive API", async () => {
-    const worktreePath = await createTempWorktree();
-    const cellId = "test-cell";
-    const hiveUrl = "http://hive.local";
+    const run = await createToolRun();
 
-    await writeHiveToolConfig({ worktreePath, cellId, hiveUrl });
-
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation((input, init) => {
-        const url = resolveFetchUrl(input);
-
-        const method = init?.method ?? "GET";
-
-        if (url === `${hiveUrl}/api/cells/${cellId}/services/restart`) {
-          expect(method).toBe("POST");
-          return Promise.resolve(
-            new Response(JSON.stringify({ services: [] }), {
-              status: HTTP_OK,
-              headers: { "content-type": "application/json" },
-            })
-          );
-        }
-
-        if (url === `${hiveUrl}/api/cells/${cellId}/services`) {
-          expect(method).toBe("GET");
-          const payload = {
-            services: [
-              {
-                id: "service-1",
-                name: "server",
-                type: "process",
-                status: "running",
-                port: TEST_SERVICE_PORT,
-                command: "bun run dev",
-                cwd: "/tmp",
-                env: {},
-                updatedAt: new Date().toISOString(),
-                processAlive: true,
-              },
-            ],
-          };
-          return Promise.resolve(
-            new Response(JSON.stringify(payload), {
-              status: HTTP_OK,
-              headers: { "content-type": "application/json" },
-            })
-          );
-        }
-
-        throw new Error(`Unexpected fetch: ${method} ${url}`);
-      });
-
-    const controller = new AbortController();
-    const output = await hiveRestartServicesTool.execute(
-      { confirm: true, includeLogs: false, format: "text" },
-      {
-        sessionID: "session",
-        messageID: "message",
-        agent: "test",
-        directory: worktreePath,
-        worktree: worktreePath,
-        abort: controller.signal,
-        metadata() {
-          // no-op for tests
-        },
-        ask: async () => {
-          // no-op for tests
-        },
+    const fetchSpy = mockFetch((url, init) => {
+      if (url === `${run.servicesUrl}/restart`) {
+        expectMethod(init, "POST");
+        return Promise.resolve(jsonResponse({ services: [] }));
       }
-    );
+
+      if (url === run.servicesUrl) {
+        expectMethod(init, "GET");
+        return Promise.resolve(jsonResponse(servicesPayload()));
+      }
+
+      throwUnexpectedFetch(url, init);
+    });
+
+    const output = await executeTool(run, hiveRestartServicesTool, {
+      confirm: true,
+      includeLogs: false,
+      format: "text",
+    });
 
     expect(fetchSpy).toHaveBeenCalledTimes(RESTART_ALL_FETCH_CALLS);
     expect(output).toContain("Restarted all services.");
     expect(output).toContain("Service: server");
 
-    await fs.rm(worktreePath, { recursive: true, force: true });
+    await fs.rm(run.worktreePath, { recursive: true, force: true });
   });
 
   it("restarts a single service via the Hive API", async () => {
-    const worktreePath = await createTempWorktree();
-    const cellId = "test-cell";
-    const hiveUrl = "http://hive.local";
+    const run = await createToolRun();
 
-    await writeHiveToolConfig({ worktreePath, cellId, hiveUrl });
-
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation((input, init) => {
-        const url = resolveFetchUrl(input);
-
-        const method = init?.method ?? "GET";
-
-        if (url === `${hiveUrl}/api/cells/${cellId}/services`) {
-          expect(method).toBe("GET");
-          const payload = {
-            services: [
-              {
-                id: "service-1",
-                name: "server",
-                type: "process",
-                status: "running",
-                port: TEST_SERVICE_PORT,
-                command: "bun run dev",
-                cwd: "/tmp",
-                env: {},
-                updatedAt: new Date().toISOString(),
-                processAlive: true,
-              },
-            ],
-          };
-          return Promise.resolve(
-            new Response(JSON.stringify(payload), {
-              status: HTTP_OK,
-              headers: { "content-type": "application/json" },
-            })
-          );
-        }
-
-        if (
-          url === `${hiveUrl}/api/cells/${cellId}/services/service-1/restart`
-        ) {
-          expect(method).toBe("POST");
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                id: "service-1",
-                name: "server",
-              }),
-              {
-                status: HTTP_OK,
-                headers: { "content-type": "application/json" },
-              }
-            )
-          );
-        }
-
-        throw new Error(`Unexpected fetch: ${method} ${url}`);
-      });
-
-    const controller = new AbortController();
-    const output = await hiveRestartServiceTool.execute(
-      {
-        confirm: true,
-        serviceName: "server",
-        includeLogs: false,
-        format: "text",
-      },
-      {
-        sessionID: "session",
-        messageID: "message",
-        agent: "test",
-        directory: worktreePath,
-        worktree: worktreePath,
-        abort: controller.signal,
-        metadata() {
-          // no-op for tests
-        },
-        ask: async () => {
-          // no-op for tests
-        },
+    const fetchSpy = mockFetch((url, init) => {
+      if (url === run.servicesUrl) {
+        expectMethod(init, "GET");
+        return Promise.resolve(jsonResponse(servicesPayload()));
       }
-    );
+
+      if (url === `${run.servicesUrl}/service-1/restart`) {
+        expectMethod(init, "POST");
+        return Promise.resolve(
+          jsonResponse({ id: "service-1", name: "server" })
+        );
+      }
+
+      throwUnexpectedFetch(url, init);
+    });
+
+    const output = await executeTool(run, hiveRestartServiceTool, {
+      confirm: true,
+      serviceName: "server",
+      includeLogs: false,
+      format: "text",
+    });
 
     expect(fetchSpy).toHaveBeenCalledTimes(RESTART_SINGLE_FETCH_CALLS);
     expect(output).toContain("Restarted service: server");
 
-    await fs.rm(worktreePath, { recursive: true, force: true });
+    await fs.rm(run.worktreePath, { recursive: true, force: true });
   });
 
   it("reruns setup via the Hive API", async () => {
-    const worktreePath = await createTempWorktree();
-    const cellId = "test-cell";
-    const hiveUrl = "http://hive.local";
+    const run = await createToolRun();
 
-    await writeHiveToolConfig({ worktreePath, cellId, hiveUrl });
+    const fetchSpy = mockFetch((url, init) => {
+      expect(init?.signal).toBeDefined();
 
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation((input, init) => {
-        const url = resolveFetchUrl(input);
-
-        const method = init?.method ?? "GET";
-        expect(init?.signal).toBeDefined();
-
-        if (url === `${hiveUrl}/api/cells/${cellId}/setup/retry`) {
-          expect(method).toBe("POST");
-          const payload = {
+      if (url === `${run.hiveUrl}/api/cells/${run.cellId}/setup/retry`) {
+        expectMethod(init, "POST");
+        return Promise.resolve(
+          jsonResponse({
             status: "ready",
             setupLogPath: "/tmp/setup.log",
             setupLog: "setup ok",
-          };
-          return Promise.resolve(
-            new Response(JSON.stringify(payload), {
-              status: HTTP_OK,
-              headers: { "content-type": "application/json" },
-            })
-          );
-        }
-
-        throw new Error(`Unexpected fetch: ${method} ${url}`);
-      });
-
-    const controller = new AbortController();
-    const output = await hiveRerunSetupTool.execute(
-      { confirm: true, format: "text" },
-      {
-        sessionID: "session",
-        messageID: "message",
-        agent: "test",
-        directory: worktreePath,
-        worktree: worktreePath,
-        abort: controller.signal,
-        metadata() {
-          // no-op for tests
-        },
-        ask: async () => {
-          // no-op for tests
-        },
+          })
+        );
       }
-    );
+
+      throwUnexpectedFetch(url, init);
+    });
+
+    const output = await executeTool(run, hiveRerunSetupTool, {
+      confirm: true,
+      format: "text",
+    });
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(output).toContain("Setup rerun requested.");
     expect(output).toContain("setup ok");
 
-    await fs.rm(worktreePath, { recursive: true, force: true });
+    await fs.rm(run.worktreePath, { recursive: true, force: true });
   });
 });
+
+async function createToolRun() {
+  const worktreePath = await createTempWorktree();
+  const cellId = "test-cell";
+  const hiveUrl = "http://hive.local";
+
+  await writeHiveToolConfig({ worktreePath, cellId, hiveUrl });
+
+  return {
+    worktreePath,
+    cellId,
+    hiveUrl,
+    servicesUrl: `${hiveUrl}/api/cells/${cellId}/services`,
+  };
+}
+
+function jsonResponse(payload: unknown) {
+  return new Response(JSON.stringify(payload), {
+    status: HTTP_OK,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function servicesPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    services: [
+      {
+        id: "service-1",
+        name: "server",
+        type: "process",
+        status: "running",
+        port: TEST_SERVICE_PORT,
+        command: "bun run dev",
+        cwd: "/tmp",
+        env: {},
+        updatedAt: new Date().toISOString(),
+        processAlive: true,
+        ...overrides,
+      },
+    ],
+  };
+}
+
+function mockFetch(
+  handler: (url: string, init: RequestInit | undefined) => Promise<Response>
+) {
+  return vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation((input, init) => handler(resolveFetchUrl(input), init));
+}
+
+function expectMethod(init: RequestInit | undefined, method: string) {
+  const actual = init?.method ?? "GET";
+  if (actual !== method) {
+    throw new Error(`Expected ${method} request, got ${actual}`);
+  }
+}
+
+function throwUnexpectedFetch(
+  url: string,
+  init: RequestInit | undefined
+): never {
+  throw new Error(`Unexpected fetch: ${init?.method ?? "GET"} ${url}`);
+}
+
+async function executeTool(
+  run: Awaited<ReturnType<typeof createToolRun>>,
+  tool: { execute: (input: any, context: any) => Promise<string> },
+  input: Record<string, unknown>
+) {
+  const controller = new AbortController();
+  return await tool.execute(input, {
+    sessionID: "session",
+    messageID: "message",
+    agent: "test",
+    directory: run.worktreePath,
+    worktree: run.worktreePath,
+    abort: controller.signal,
+    metadata() {
+      // no-op for tests
+    },
+    ask: async () => {
+      // no-op for tests
+    },
+  });
+}

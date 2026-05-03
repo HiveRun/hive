@@ -13,6 +13,36 @@ const CSI_TERMINATOR_RELEASE = "m";
 
 const isIntegerString = (value: string): boolean => INTEGER_RE.test(value);
 
+const parseDelimitedMouseCode = (
+  value: string,
+  start: number,
+  prefix: string,
+  end: number
+): { code: number; nextIndex: number } | null => {
+  if (end === -1) {
+    return null;
+  }
+
+  const body = value.slice(start + prefix.length, end);
+  const parts = body.split(";");
+  if (
+    parts.length !== MOUSE_PROTOCOL_PART_COUNT ||
+    !parts.every((part) => part.length > 0 && isIntegerString(part))
+  ) {
+    return null;
+  }
+
+  const codeText = parts[0];
+  if (!codeText) {
+    return null;
+  }
+
+  return {
+    code: Number.parseInt(codeText, 10),
+    nextIndex: end + 1,
+  };
+};
+
 const isMouseMovementCode = (code: number): boolean => {
   if (!Number.isFinite(code) || code < 0) {
     return false;
@@ -39,28 +69,7 @@ const parseCsiMouseCode = (
     end = Math.min(terminator, releaseTerminator);
   }
 
-  if (end === -1) {
-    return null;
-  }
-
-  const body = value.slice(start + CSI_MOUSE_PREFIX.length, end);
-  const parts = body.split(";");
-  if (
-    parts.length !== MOUSE_PROTOCOL_PART_COUNT ||
-    !parts.every((part) => part.length > 0 && isIntegerString(part))
-  ) {
-    return null;
-  }
-
-  const codeText = parts[0];
-  if (!codeText) {
-    return null;
-  }
-
-  return {
-    code: Number.parseInt(codeText, 10),
-    nextIndex: end + 1,
-  };
+  return parseDelimitedMouseCode(value, start, CSI_MOUSE_PREFIX, end);
 };
 
 const parseX10MouseCode = (
@@ -87,28 +96,7 @@ const parseUrxvtMouseCode = (
     CSI_TERMINATOR_PRESS,
     start + URXVT_MOUSE_PREFIX.length
   );
-  if (end === -1) {
-    return null;
-  }
-
-  const body = value.slice(start + URXVT_MOUSE_PREFIX.length, end);
-  const parts = body.split(";");
-  if (
-    parts.length !== MOUSE_PROTOCOL_PART_COUNT ||
-    !parts.every((part) => part.length > 0 && isIntegerString(part))
-  ) {
-    return null;
-  }
-
-  const codeText = parts[0];
-  if (!codeText) {
-    return null;
-  }
-
-  return {
-    code: Number.parseInt(codeText, 10),
-    nextIndex: end + 1,
-  };
+  return parseDelimitedMouseCode(value, start, URXVT_MOUSE_PREFIX, end);
 };
 
 export const isMouseMovementInputChunk = (value: string): boolean => {

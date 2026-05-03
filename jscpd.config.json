@@ -38,6 +38,7 @@
     "bun.lock"
   ],
   "reporters": ["json"],
+  "threshold": 0,
   "maxLines": 10000,
   "maxSize": "5mb",
   "mode": "strict",

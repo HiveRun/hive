@@ -4,6 +4,7 @@ import { ImagePlus, X } from "lucide-react";
 import {
   type ChangeEvent,
   type ClipboardEvent,
+  type ReactNode,
   useEffect,
   useMemo,
   useRef,
@@ -154,6 +155,31 @@ const validateTemplateId = (value: string) => {
     return result.error.issues[0]?.message ?? "Template is required";
   }
 };
+
+const renderFieldError = (errors: unknown[]) => {
+  const [error] = errors;
+  return error ? <p className="text-red-600 text-sm">{String(error)}</p> : null;
+};
+
+function FormFieldFrame({
+  children,
+  errors,
+  label,
+  name,
+}: {
+  children: ReactNode;
+  errors: unknown[];
+  label: string;
+  name: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={name}>{label}</Label>
+      {children}
+      {renderFieldError(errors)}
+    </div>
+  );
+}
 
 const getSpawnSourceLabel = (mode: SpawnFromMode) => {
   if (mode === "branch") {
@@ -554,8 +580,11 @@ export function CellForm({
             }}
           >
             {(field) => (
-              <div className="space-y-2">
-                <Label htmlFor={field.name}>Name</Label>
+              <FormFieldFrame
+                errors={field.state.meta.errors}
+                label="Name"
+                name={field.name}
+              >
                 <Input
                   data-testid="cell-name-input"
                   disabled={mutation.isPending}
@@ -564,12 +593,7 @@ export function CellForm({
                   placeholder="Enter cell name"
                   value={field.state.value}
                 />
-                {field.state.meta.errors.length > 0 && (
-                  <p className="text-red-600 text-sm">
-                    {field.state.meta.errors[0]}
-                  </p>
-                )}
-              </div>
+              </FormFieldFrame>
             )}
           </form.Field>
 
@@ -580,8 +604,11 @@ export function CellForm({
             }}
           >
             {(field) => (
-              <div className="space-y-2">
-                <Label htmlFor={field.name}>Description</Label>
+              <FormFieldFrame
+                errors={field.state.meta.errors}
+                label="Description"
+                name={field.name}
+              >
                 <Textarea
                   disabled={mutation.isPending}
                   id={field.name}
@@ -590,12 +617,7 @@ export function CellForm({
                   rows={3}
                   value={field.state.value}
                 />
-                {field.state.meta.errors.length > 0 && (
-                  <p className="text-red-600 text-sm">
-                    {field.state.meta.errors[0]}
-                  </p>
-                )}
-              </div>
+              </FormFieldFrame>
             )}
           </form.Field>
 
@@ -723,11 +745,7 @@ export function CellForm({
                     </SelectContent>
                   </Select>
                 </div>
-                {field.state.meta.errors.length > 0 && (
-                  <p className="text-red-600 text-sm">
-                    {field.state.meta.errors[0]}
-                  </p>
-                )}
+                {renderFieldError(field.state.meta.errors)}
               </div>
             )}
           </form.Field>

@@ -21,16 +21,14 @@ const DEFAULT_SHARED_SERVER_START_TIMEOUT_MS = 20_000;
 
 function resolveSharedServerStartTimeoutMs(): number {
   const raw = process.env.HIVE_OPENCODE_START_TIMEOUT_MS;
-  if (!raw) {
-    return DEFAULT_SHARED_SERVER_START_TIMEOUT_MS;
+  if (raw) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
   }
 
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return DEFAULT_SHARED_SERVER_START_TIMEOUT_MS;
-  }
-
-  return parsed;
+  return DEFAULT_SHARED_SERVER_START_TIMEOUT_MS;
 }
 
 async function createSharedServer(

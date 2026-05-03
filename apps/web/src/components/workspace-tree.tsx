@@ -404,6 +404,9 @@ type WorkspaceTreeContentProps = {
   expandedWorkspaceIds: Set<string>;
   workspaces: Array<{ id: string; label: string; path: string }>;
   workspacesLoading: boolean;
+} & WorkspaceSectionHandlers;
+
+type WorkspaceSectionHandlers = {
   onRequestCreateCell: (workspaceId: string) => void;
   onRequestDeleteCell: (cell: PendingCellDelete) => void;
   onToggleWorkspace: (workspaceId: string) => void;
@@ -461,10 +464,7 @@ type WorkspaceSectionProps = {
   deletingCellIds: Set<string>;
   location: { pathname: string };
   expandedWorkspaceIds: Set<string>;
-  onRequestCreateCell: (workspaceId: string) => void;
-  onRequestDeleteCell: (cell: PendingCellDelete) => void;
-  onToggleWorkspace: (workspaceId: string) => void;
-};
+} & WorkspaceSectionHandlers;
 
 function WorkspaceSection({
   workspace,

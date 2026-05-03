@@ -539,6 +539,24 @@ function WorkspaceRowStatic({
       )}
       role="presentation"
     >
+      <WorkspaceRowIdentity isActive={isActive} workspace={workspace} />
+    </div>
+  );
+}
+
+function WorkspaceRowIdentity({
+  workspace,
+  isActive,
+  children,
+}: {
+  workspace: WorkspaceSummary;
+  isActive: boolean;
+  children?: ReactNode;
+}) {
+  const Icon = isActive ? CircleCheck : Circle;
+
+  return (
+    <>
       <span
         className={cn(
           "flex size-6 items-center justify-center rounded-full border-2",
@@ -547,11 +565,7 @@ function WorkspaceRowStatic({
             : "border-border/70 text-muted-foreground"
         )}
       >
-        {isActive ? (
-          <CircleCheck className="size-3.5" />
-        ) : (
-          <Circle className="size-3.5" />
-        )}
+        <Icon className="size-3.5" />
       </span>
       <div className="min-w-0 flex-1">
         <p className="font-semibold text-foreground">
@@ -565,8 +579,9 @@ function WorkspaceRowStatic({
         <p className="truncate text-muted-foreground text-xs">
           {workspace.path}
         </p>
+        {children}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -611,38 +626,13 @@ function WorkspaceRowInteractive({
       onKeyDown={handleKeyDown}
       type="button"
     >
-      <span
-        className={cn(
-          "flex size-6 items-center justify-center rounded-full border-2",
-          isActive
-            ? "border-primary bg-primary/20 text-primary-foreground"
-            : "border-border/70 text-muted-foreground"
-        )}
-      >
-        {isActive ? (
-          <CircleCheck className="size-3.5" />
-        ) : (
-          <Circle className="size-3.5" />
-        )}
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="font-semibold text-foreground">
-          {workspace.label}
-          {isActive ? (
-            <span className="ml-2 rounded border border-primary/70 px-1 py-0.5 text-[0.65rem] text-primary uppercase tracking-[0.25em]">
-              active
-            </span>
-          ) : null}
-        </p>
-        <p className="truncate text-muted-foreground text-xs">
-          {workspace.path}
-        </p>
+      <WorkspaceRowIdentity isActive={isActive} workspace={workspace}>
         {isActive ? null : (
           <p className="text-[0.6rem] text-muted-foreground uppercase tracking-[0.3em]">
             Tap to activate
           </p>
         )}
-      </div>
+      </WorkspaceRowIdentity>
     </button>
   );
 }

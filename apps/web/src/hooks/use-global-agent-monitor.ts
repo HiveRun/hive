@@ -47,6 +47,16 @@ type PendingModeTransition = {
   fallbackStatus: string;
 };
 
+const updateSessionQuery = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  queryKey: ReturnType<typeof agentQueries.sessionByCell>["queryKey"],
+  updater: (previous: AgentSession) => AgentSession
+) => {
+  queryClient.setQueryData(queryKey, (previous: AgentSession | null) =>
+    previous ? updater(previous) : previous
+  );
+};
+
 export function useGlobalAgentMonitor() {
   const queryClient = useQueryClient();
   const { activeWorkspace } = useActiveWorkspace();
@@ -197,14 +207,10 @@ export function useGlobalAgentMonitor() {
               error?: string;
             };
 
-            queryClient.setQueryData(
+            updateSessionQuery(
+              queryClient,
               sessionQuery.queryKey,
-              (previous: AgentSession | null) => {
-                if (!previous) {
-                  return previous;
-                }
-                return { ...previous, status: payload.status };
-              }
+              (previous) => ({ ...previous, status: payload.status })
             );
 
             cancelPendingModeTransition(session.id);
@@ -233,13 +239,10 @@ export function useGlobalAgentMonitor() {
             let fallbackStatus = "working";
             let isPlanToBuildTransition = false;
 
-            queryClient.setQueryData(
+            updateSessionQuery(
+              queryClient,
               sessionQuery.queryKey,
-              (previous: AgentSession | null) => {
-                if (!previous) {
-                  return previous;
-                }
-
+              (previous) => {
                 const next = resolveModeSessionUpdate(previous, payload);
                 isPlanToBuildTransition = next.isPlanToBuildTransition;
                 fallbackStatus = next.fallbackStatus;

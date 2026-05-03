@@ -8,7 +8,11 @@ type WaitOptions = {
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_INTERVAL_MS = 500;
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+export async function wait(ms: number): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 export async function waitForCondition(
   label: string,
@@ -23,7 +27,7 @@ export async function waitForCondition(
     if (await condition()) {
       return;
     }
-    await sleep(intervalMs);
+    await wait(intervalMs);
   }
 
   throw new Error(`Timed out waiting for ${label}`);

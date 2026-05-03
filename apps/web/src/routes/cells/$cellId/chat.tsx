@@ -1,19 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { useEffect } from "react";
 import { CellTerminal } from "@/components/cell-terminal";
 import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
 import { cellQueries } from "@/queries/cells";
-
-const ignorePromiseRejection = (_error: unknown) => null;
+import {
+  CenteredCellLoading,
+  prefetchCellDetail,
+} from "../../-shared/cell-route";
 
 export const Route = createFileRoute("/cells/$cellId/chat")({
   loader: ({ context: { queryClient }, params }) => {
-    queryClient
-      .prefetchQuery(cellQueries.detail(params.cellId))
-      .catch(ignorePromiseRejection);
+    prefetchCellDetail(queryClient, params.cellId);
     return null;
   },
   component: CellChat,
@@ -91,33 +91,11 @@ function CellChat() {
   }
 
   if (cellQuery.isPending || !cellQuery.data) {
-    return (
-      <div className="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
-        <div className="flex h-full min-h-0 w-full items-center justify-center p-6">
-          <div className="flex flex-col items-center gap-3 border-2 border-border/70 bg-muted/20 px-5 py-4">
-            <Loader2 className="size-5 animate-spin text-primary" />
-            <p className="text-[11px] text-muted-foreground uppercase tracking-[0.2em]">
-              Loading chat status
-            </p>
-          </div>
-        </div>
-      </div>
-    );
+    return <CenteredCellLoading label="Loading chat status" />;
   }
 
   if (cellQuery.data.status !== "ready") {
-    return (
-      <div className="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
-        <div className="flex h-full min-h-0 w-full items-center justify-center p-6">
-          <div className="flex flex-col items-center gap-3 border-2 border-border/70 bg-muted/20 px-5 py-4">
-            <Loader2 className="size-5 animate-spin text-primary" />
-            <p className="text-[11px] text-muted-foreground uppercase tracking-[0.2em]">
-              Redirecting to provisioning
-            </p>
-          </div>
-        </div>
-      </div>
-    );
+    return <CenteredCellLoading label="Redirecting to provisioning" />;
   }
 
   return (

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
-import { createServer } from "node:net";
 import { constants as osConstants } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -14,7 +13,7 @@ import { db as defaultDb } from "../db";
 import type { Cell } from "../schema/cells";
 import type { CellService, ServiceStatus } from "../schema/services";
 import { emitServiceUpdate } from "./events";
-import { createPortManager } from "./port-manager";
+import { createPortManager, isPortFree } from "./port-manager";
 import { createServiceRepository } from "./repository";
 import {
   createServiceTerminalRuntime,
@@ -165,35 +164,6 @@ export function isProcessAlive(pid?: number | null): boolean {
   }
 }
 
-function isPortFree(port: number): Promise<boolean> {
-  const supportsIpv6 = (code: string | undefined) =>
-    code !== "EADDRNOTAVAIL" &&
-    code !== "EAFNOSUPPORT" &&
-    code !== "EPROTONOSUPPORT";
-
-  const probeHost = (host: string): Promise<boolean> =>
-    new Promise((resolvePort) => {
-      const server = createServer();
-      server.once("error", (error) => {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (host === "::1" && !supportsIpv6(code)) {
-          // IPv6 loopback isn't available on this host; don't block allocation.
-          server.close(() => resolvePort(true));
-          return;
-        }
-        server.close(() => resolvePort(false));
-      });
-      server.listen(port, host, () => {
-        server.close(() => resolvePort(true));
-      });
-    });
-
-  // Ensure the port isn't already claimed on either loopback family.
-  return Promise.all([probeHost("127.0.0.1"), probeHost("::1")]).then(
-    (results) => results.every(Boolean)
-  );
-}
-
 function resolveSignalValue(signal?: number | string): number | undefined {
   if (typeof signal === "string") {
     return SIGNAL_CODES[signal as keyof typeof SIGNAL_CODES];
@@ -218,8 +188,8 @@ export type ProcessHandle = {
   pid: number;
   kill: (signal?: number | string) => void;
   exited: Promise<number>;
-  resize?: (cols: number, rows: number) => void;
   write?: (data: string) => void;
+  resize?: (cols: number, rows: number) => void;
 };
 
 export type SpawnProcess = (options: SpawnProcessOptions) => ProcessHandle;
@@ -741,25 +711,16 @@ export function createServiceSupervisor(
             proc.kill("SIGKILL");
           }
 
-          terminalRuntime.appendSetupLine(
-            cell.id,
-            `[setup] Timed out: ${command} after ${timeoutMs}ms`
-          );
-          terminalRuntime.markSetupExit({
+          markTemplateSetupCommandFailure({
             cellId: cell.id,
-            exitCode: 124,
-            signal: null,
-          });
-          onTimingEvent?.({
-            step: `template_setup:${command}`,
-            status: "error",
+            command,
             durationMs,
+            exitCode: 124,
+            line: `[setup] Timed out: ${command} after ${timeoutMs}ms`,
             error: `Template setup command timed out after ${timeoutMs}ms`,
-            metadata: {
-              command,
-              timeoutMs,
-              templateId: template.id,
-            },
+            metadata: { timeoutMs },
+            onTimingEvent,
+            template,
           });
           throw new TemplateSetupError({
             command,
@@ -775,25 +736,16 @@ export function createServiceSupervisor(
         const exitCode = exitResult.exitCode;
         if (exitCode !== 0) {
           const durationMs = Date.now() - commandStartedAt;
-          terminalRuntime.appendSetupLine(
-            cell.id,
-            `[setup] Failed: ${command} (exit ${exitCode})`
-          );
-          terminalRuntime.markSetupExit({
+          markTemplateSetupCommandFailure({
             cellId: cell.id,
-            exitCode,
-            signal: null,
-          });
-          onTimingEvent?.({
-            step: `template_setup:${command}`,
-            status: "error",
+            command,
             durationMs,
+            exitCode,
+            line: `[setup] Failed: ${command} (exit ${exitCode})`,
             error: `Template setup command failed with exit code ${exitCode}`,
-            metadata: {
-              command,
-              exitCode,
-              templateId: template.id,
-            },
+            metadata: { exitCode },
+            onTimingEvent,
+            template,
           });
           throw new TemplateSetupError({
             command,
@@ -883,6 +835,36 @@ export function createServiceSupervisor(
       });
       throw error;
     }
+  }
+
+  function markTemplateSetupCommandFailure(args: {
+    cellId: string;
+    command: string;
+    durationMs: number;
+    exitCode: number;
+    line: string;
+    error: string;
+    metadata: Record<string, unknown>;
+    onTimingEvent?: (event: EnsureCellServicesTimingEvent) => void;
+    template: Template;
+  }) {
+    terminalRuntime.appendSetupLine(args.cellId, args.line);
+    terminalRuntime.markSetupExit({
+      cellId: args.cellId,
+      exitCode: args.exitCode,
+      signal: null,
+    });
+    args.onTimingEvent?.({
+      step: `template_setup:${args.command}`,
+      status: "error",
+      durationMs: args.durationMs,
+      error: args.error,
+      metadata: {
+        command: args.command,
+        ...args.metadata,
+        templateId: args.template.id,
+      },
+    });
   }
 
   async function ensureService(
@@ -1157,12 +1139,10 @@ export function createServiceSupervisor(
 
       handle.exited
         .then(async (code) => {
-          const active = activeServices.get(row.service.id);
-          if (!active || active.handle !== handle) {
+          if (!deleteActiveServiceHandle(row.service.id, handle)) {
             return;
           }
 
-          activeServices.delete(row.service.id);
           await repository.updateService(row.service.id, {
             status: code === 0 ? "stopped" : "error",
             pid: null,
@@ -1173,12 +1153,10 @@ export function createServiceSupervisor(
           notifyServiceUpdate(row);
         })
         .catch((error) => {
-          const active = activeServices.get(row.service.id);
-          if (!active || active.handle !== handle) {
+          if (!deleteActiveServiceHandle(row.service.id, handle)) {
             return;
           }
 
-          activeServices.delete(row.service.id);
           logger.error("Service exited with error", {
             serviceId: row.service.id,
             error: error instanceof Error ? error.message : String(error),
@@ -1198,6 +1176,19 @@ export function createServiceSupervisor(
       );
       throw error;
     }
+  }
+
+  function deleteActiveServiceHandle(
+    serviceId: string,
+    handle: ProcessHandle
+  ): boolean {
+    const active = activeServices.get(serviceId);
+    if (!active || active.handle !== handle) {
+      return false;
+    }
+
+    activeServices.delete(serviceId);
+    return true;
   }
 
   async function runServiceSetup(

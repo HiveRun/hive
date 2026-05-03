@@ -39,41 +39,9 @@ describe("agent status stream", () => {
   });
 
   it("emits initial status and forwards status updates", async () => {
-    vi.spyOn(AgentService, "fetchAgentSession").mockImplementation(
-      async (id: string) => (id === TEST_SESSION.id ? TEST_SESSION : null)
-    );
-
-    const app = new Elysia().use(agentsRoutes);
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/agents/sessions/${TEST_SESSION.id}/events`
-      )
-    );
-
-    expect(response.status).toBe(HTTP_OK);
+    const { response, reader, readChunk } =
+      await openOkStatusStream(TEST_SESSION);
     expect(response.headers.get("content-type")).toContain("text/event-stream");
-
-    const reader = response.body?.getReader();
-    expect(reader).toBeDefined();
-    if (!reader) {
-      throw new Error("Expected event stream body");
-    }
-
-    const decoder = new TextDecoder();
-    const decodeChunk = (value: unknown): string => {
-      if (typeof value === "string") {
-        return value;
-      }
-      if (value instanceof Uint8Array) {
-        return decoder.decode(value);
-      }
-      return "";
-    };
-
-    const readChunk = async () => {
-      const next = await reader.read();
-      return decodeChunk(next.value);
-    };
 
     const initial = await readChunk();
     expect(initial).toContain("event: status");
@@ -105,38 +73,10 @@ describe("agent status stream", () => {
   });
 
   it("emits working as the initial restored status", async () => {
-    vi.spyOn(AgentService, "fetchAgentSession").mockImplementation(
-      async (id: string) =>
-        id === TEST_SESSION.id ? TEST_WORKING_SESSION : null
-    );
-
-    const app = new Elysia().use(agentsRoutes);
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/agents/sessions/${TEST_SESSION.id}/events`
-      )
-    );
+    const { response, reader, readChunk } =
+      await openStatusStream(TEST_WORKING_SESSION);
 
     expect(response.status).toBe(HTTP_OK);
-
-    const reader = response.body?.getReader();
-    expect(reader).toBeDefined();
-    if (!reader) {
-      throw new Error("Expected event stream body");
-    }
-
-    const decoder = new TextDecoder();
-    const readChunk = async () => {
-      const next = await reader.read();
-      const value = next.value;
-      if (typeof value === "string") {
-        return value;
-      }
-      if (value instanceof Uint8Array) {
-        return decoder.decode(value);
-      }
-      return "";
-    };
 
     const initial = await readChunk();
 
@@ -147,40 +87,13 @@ describe("agent status stream", () => {
   });
 
   it("emits initial mode and forwards mode updates", async () => {
-    vi.spyOn(AgentService, "fetchAgentSession").mockImplementation(
-      async (id: string) =>
-        id === TEST_SESSION.id ? TEST_SESSION_WITH_MODE : null
-    );
-
-    const app = new Elysia().use(agentsRoutes);
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/agents/sessions/${TEST_SESSION.id}/events`
-      )
+    const { response, reader, readChunk } = await openStatusStream(
+      TEST_SESSION_WITH_MODE
     );
 
     expect(response.status).toBe(HTTP_OK);
-    const reader = response.body?.getReader();
-    expect(reader).toBeDefined();
-    if (!reader) {
-      throw new Error("Expected event stream body");
-    }
 
-    const decoder = new TextDecoder();
-    const readChunk = async () => {
-      const next = await reader.read();
-      const value = next.value;
-      if (typeof value === "string") {
-        return value;
-      }
-      if (value instanceof Uint8Array) {
-        return decoder.decode(value);
-      }
-      return "";
-    };
-
-    const initialStatus = await readChunk();
-    expect(initialStatus).toContain("event: status");
+    await expectInitialStatus(readChunk);
 
     const initialMode = await readChunk();
     expect(initialMode).toContain("event: mode");
@@ -201,39 +114,9 @@ describe("agent status stream", () => {
   });
 
   it("forwards input_required events from permission prompts", async () => {
-    vi.spyOn(AgentService, "fetchAgentSession").mockImplementation(
-      async (id: string) => (id === TEST_SESSION.id ? TEST_SESSION : null)
-    );
+    const { reader, readChunk } = await openOkStatusStream(TEST_SESSION);
 
-    const app = new Elysia().use(agentsRoutes);
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/agents/sessions/${TEST_SESSION.id}/events`
-      )
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const reader = response.body?.getReader();
-    expect(reader).toBeDefined();
-    if (!reader) {
-      throw new Error("Expected event stream body");
-    }
-
-    const decoder = new TextDecoder();
-    const readChunk = async () => {
-      const next = await reader.read();
-      const value = next.value;
-      if (typeof value === "string") {
-        return value;
-      }
-      if (value instanceof Uint8Array) {
-        return decoder.decode(value);
-      }
-      return "";
-    };
-
-    const initialStatus = await readChunk();
-    expect(initialStatus).toContain("event: status");
+    await expectInitialStatus(readChunk);
 
     publishAgentEvent(TEST_SESSION.id, {
       type: "permission.asked",
@@ -254,3 +137,51 @@ describe("agent status stream", () => {
     await reader.cancel();
   });
 });
+
+async function openStatusStream(session: AgentSessionRecord) {
+  vi.spyOn(AgentService, "fetchAgentSession").mockImplementation(
+    async (id: string) => (id === session.id ? session : null)
+  );
+
+  const app = new Elysia().use(agentsRoutes);
+  const response = await app.handle(
+    new Request(`http://localhost/api/agents/sessions/${session.id}/events`)
+  );
+  const reader = response.body?.getReader() as
+    | ReadableStreamDefaultReader<Uint8Array>
+    | undefined;
+  if (!reader) {
+    throw new Error("Expected event stream body");
+  }
+
+  const decoder = new TextDecoder();
+  const readChunk = async () => {
+    const next = (await reader.read()) as ReadableStreamReadResult<unknown>;
+    if (typeof next.value === "string") {
+      return next.value;
+    }
+    if (next.value instanceof Uint8Array) {
+      return decoder.decode(next.value);
+    }
+    return "";
+  };
+
+  return { response, reader, readChunk };
+}
+
+async function openOkStatusStream(session: AgentSessionRecord) {
+  const stream = await openStatusStream(session);
+  if (stream.response.status !== HTTP_OK) {
+    throw new Error(
+      `Expected status ${HTTP_OK}, got ${stream.response.status}`
+    );
+  }
+  return stream;
+}
+
+async function expectInitialStatus(readChunk: () => Promise<string>) {
+  const initialStatus = await readChunk();
+  if (!initialStatus.includes("event: status")) {
+    throw new Error(`Expected status event, got ${initialStatus}`);
+  }
+}

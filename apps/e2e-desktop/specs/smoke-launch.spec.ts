@@ -1,6 +1,6 @@
-import { createServer } from "node:net";
 import { join } from "node:path";
 import { type ElectronApplication, expect, test } from "@playwright/test";
+import { findAvailablePort } from "../../e2e/src/runtime/wait";
 import {
   launchDesktopApp,
   launchPackagedDesktopApp,
@@ -9,29 +9,6 @@ import {
 
 const ROOT_CONTENT_TIMEOUT_MS = 30_000;
 const FAKE_BACKEND_START_DELAY_MS = 1500;
-
-const findAvailablePort = async () =>
-  await new Promise<number>((resolvePort, reject) => {
-    const server = createServer();
-    server.unref();
-    server.on("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!(address && typeof address === "object" && address.port)) {
-        server.close(() => reject(new Error("Failed to allocate port")));
-        return;
-      }
-
-      const { port } = address;
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolvePort(port);
-      });
-    });
-  });
 
 const createDelayedHealthServerScript = (port: number) => `
 setTimeout(() => {

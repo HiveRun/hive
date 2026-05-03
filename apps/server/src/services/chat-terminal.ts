@@ -1,18 +1,28 @@
-import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import "../config/runtime-env";
 
-import { type IExitEvent, type IPty, spawn } from "bun-pty";
+import { type IPty, spawn } from "bun-pty";
 import type { AgentMode } from "../agents/types";
 import {
   allowsEmbeddedChatControlInput,
   mergeHiveEmbeddedBrowserSafeKeybinds,
   normalizeOpencodeKeybinds,
 } from "../opencode/browser-safe-keybinds";
+import {
+  createPtySessionController,
+  createTerminalRecordFields,
+  DEFAULT_TERMINAL_COLS,
+  DEFAULT_TERMINAL_ROWS,
+  type PtyTerminalProcess,
+  type TerminalEvent,
+  type TerminalRecordFields,
+  type TerminalSessionFields,
+  type TerminalSessionService,
+  toTerminalSession,
+  trimTerminalOutput,
+} from "./terminal-store";
 
-const DEFAULT_TERMINAL_COLS = 120;
-const DEFAULT_TERMINAL_ROWS = 36;
 const MAX_TERMINAL_BUFFER_CHARS = 2_000_000;
 const BUFFER_RETAIN_CHARS = 1_600_000;
 const TERMINAL_RESET_SEQUENCE = "\x1bc";
@@ -116,25 +126,6 @@ const HIVE_THEME_CONTENT = `${JSON.stringify(
   2
 )}\n`;
 
-function parseInlineConfig(
-  content: string | undefined
-): Record<string, unknown> {
-  if (!content) {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(content);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    // ignore malformed OPENCODE_CONFIG_CONTENT and apply Hive defaults
-  }
-
-  return {};
-}
-
 function parseJsonRecord(content: string | undefined): Record<string, unknown> {
   if (!content) {
     return {};
@@ -203,7 +194,7 @@ function createMergedInlineOpencodeConfig(
   preferredModel?: ChatTerminalModelPreference,
   startMode?: AgentMode
 ): MergedInlineOpencodeConfig {
-  const inlineConfig = parseInlineConfig(process.env.OPENCODE_CONFIG_CONTENT);
+  const inlineConfig = parseJsonRecord(process.env.OPENCODE_CONFIG_CONTENT);
   const workspaceKeybinds = readWorkspaceKeybinds(workspacePath);
   const inlineKeybinds = normalizeOpencodeKeybinds(inlineConfig.keybinds);
   const model = toOpencodeModelValue(preferredModel);
@@ -304,39 +295,15 @@ function createOpencodeThemeEnv(
   return env;
 }
 
-type ChatTerminalStatus = "running" | "exited";
-
-export type ChatTerminalSession = {
-  sessionId: string;
+export type ChatTerminalSession = TerminalSessionFields & {
   cellId: string;
-  pid: number;
-  cwd: string;
-  cols: number;
-  rows: number;
-  status: ChatTerminalStatus;
-  exitCode: number | null;
-  startedAt: string;
 };
 
-export type ChatTerminalEvent =
-  | { type: "data"; chunk: string }
-  | {
-      type: "exit";
-      exitCode: number;
-      signal: number | string | null;
-    };
+export type ChatTerminalEvent = TerminalEvent;
 
-type ChatTerminalRecord = {
-  sessionId: string;
+type ChatTerminalRecord = TerminalRecordFields & {
   cellId: string;
-  cwd: string;
   pty: IPty;
-  cols: number;
-  rows: number;
-  status: ChatTerminalStatus;
-  exitCode: number | null;
-  startedAt: Date;
-  buffer: string;
   opencodeSessionId: string;
   opencodeServerUrl: string;
   opencodeThemeMode: "dark" | "light";
@@ -345,7 +312,10 @@ type ChatTerminalRecord = {
   allowEmbeddedControlInput: boolean;
 };
 
-type ChatTerminalService = {
+type ChatTerminalService = TerminalSessionService<
+  ChatTerminalSession,
+  ChatTerminalEvent
+> & {
   ensureSession(args: {
     cellId: string;
     workspacePath: string;
@@ -355,52 +325,17 @@ type ChatTerminalService = {
     preferredModel?: ChatTerminalModelPreference;
     startMode?: AgentMode;
   }): ChatTerminalSession;
-  getSession(cellId: string): ChatTerminalSession | null;
-  readOutput(cellId: string): string;
-  subscribe(
-    cellId: string,
-    listener: (event: ChatTerminalEvent) => void
-  ): () => void;
-  write(cellId: string, data: string): void;
-  resize(cellId: string, cols: number, rows: number): void;
-  closeSession(cellId: string): void;
-  stopAll(): void;
 };
 
-const toSession = (record: ChatTerminalRecord): ChatTerminalSession => ({
-  sessionId: record.sessionId,
-  cellId: record.cellId,
-  pid: record.pty.pid,
-  cwd: record.cwd,
-  cols: record.cols,
-  rows: record.rows,
-  status: record.status,
-  exitCode: record.exitCode,
-  startedAt: record.startedAt.toISOString(),
-});
+const toSession = (record: ChatTerminalRecord): ChatTerminalSession =>
+  toTerminalSession(record, { cellId: record.cellId });
 
-const appendBuffer = (current: string, chunk: string): string => {
-  if (!chunk.length) {
-    return current;
-  }
-
-  const next = `${current}${chunk}`;
-  if (next.length <= MAX_TERMINAL_BUFFER_CHARS) {
-    return next;
-  }
-
-  const retainStart = Math.max(0, next.length - BUFFER_RETAIN_CHARS);
-  const newlineBoundary = next.indexOf("\n", retainStart);
-  const sliceStart = newlineBoundary >= 0 ? newlineBoundary + 1 : retainStart;
-  const trimmed = next.slice(sliceStart);
-
-  return `${TERMINAL_RESET_SEQUENCE}${trimmed}`;
-};
-
-const normalizeSignal = (
-  signal: IExitEvent["signal"]
-): number | string | null =>
-  typeof signal === "number" || typeof signal === "string" ? signal : null;
+const appendBuffer = (current: string, chunk: string): string =>
+  trimTerminalOutput(current, chunk, {
+    maxChars: MAX_TERMINAL_BUFFER_CHARS,
+    retainChars: BUFFER_RETAIN_CHARS,
+    resetSequence: TERMINAL_RESET_SEQUENCE,
+  });
 
 const TERMINAL_MODE_STATUS_PATTERN = /\b(Plan|Build)\b[\s\S]{0,120}OpenCode/g;
 
@@ -431,7 +366,7 @@ function schedulePlanModeSwitch(record: ChatTerminalRecord): void {
       return;
     }
 
-    const mode = extractTerminalMode(record.buffer);
+    const mode = extractTerminalMode(record.output);
     if (mode === "plan") {
       return;
     }
@@ -475,159 +410,120 @@ const createSpawnErrorMessage = (binary: string, error: unknown): string => {
   return `Failed to start OpenCode chat terminal using '${binary}'. ${reason}. Install OpenCode with '${INSTALL_HINT}' or set HIVE_OPENCODE_BIN to the executable path.`;
 };
 
-const createChatTerminalService = (): ChatTerminalService => {
-  const sessions = new Map<string, ChatTerminalRecord>();
-  const emitter = new EventEmitter();
-  emitter.setMaxListeners(0);
+type ChatTerminalEnsureArgs = Parameters<
+  ChatTerminalService["ensureSession"]
+>[0];
 
-  const closeSession = (cellId: string) => {
-    const record = sessions.get(cellId);
-    if (!record) {
-      return;
-    }
-
-    try {
-      record.pty.kill();
-    } catch {
-      // ignore kill failures on already-exited sessions
-    }
-
-    sessions.delete(cellId);
-  };
-
-  const ensureSession: ChatTerminalService["ensureSession"] = ({
-    cellId,
+const prepareChatTerminalSpawn = ({
+  workspacePath,
+  opencodeServerUrl,
+  opencodeSessionId,
+  opencodeThemeMode = DEFAULT_THEME_MODE,
+  preferredModel,
+  startMode,
+}: ChatTerminalEnsureArgs) => {
+  const normalizedStartMode = normalizeStartMode(startMode);
+  const mergedInlineConfig = createMergedInlineOpencodeConfig(
     workspacePath,
-    opencodeSessionId,
-    opencodeServerUrl,
-    opencodeThemeMode = DEFAULT_THEME_MODE,
     preferredModel,
-    startMode,
-  }) => {
-    const preferredModelValue = toOpencodeModelValue(preferredModel);
-    const normalizedStartMode = normalizeStartMode(startMode);
-    const existing = sessions.get(cellId);
-    if (
-      existing &&
-      existing.status === "running" &&
-      existing.cwd === workspacePath &&
-      existing.opencodeSessionId === opencodeSessionId &&
-      existing.opencodeServerUrl === opencodeServerUrl &&
-      existing.opencodeThemeMode === opencodeThemeMode &&
-      existing.preferredModel === preferredModelValue &&
-      existing.startMode === normalizedStartMode
-    ) {
-      return toSession(existing);
-    }
+    normalizedStartMode
+  );
 
-    if (existing) {
-      closeSession(cellId);
-    }
+  return {
+    normalizedStartMode,
+    preferredModelValue: toOpencodeModelValue(preferredModel),
+    opencodeThemeMode,
+    allowEmbeddedControlInput: mergedInlineConfig.allowEmbeddedControlInput,
+    spawnOptions: {
+      args: [
+        "attach",
+        opencodeServerUrl,
+        "--dir",
+        workspacePath,
+        "--session",
+        opencodeSessionId,
+      ],
+      env: createOpencodeThemeEnv(
+        workspacePath,
+        opencodeThemeMode,
+        mergedInlineConfig.config
+      ),
+    },
+  };
+};
 
-    const opencodeBinary = resolveOpencodeBinary();
-    const mergedInlineConfig = createMergedInlineOpencodeConfig(
-      workspacePath,
-      preferredModel,
-      normalizedStartMode
-    );
-    const opencodeThemeEnv = createOpencodeThemeEnv(
-      workspacePath,
-      opencodeThemeMode,
-      mergedInlineConfig.config
-    );
-    const allowEmbeddedControlInput =
-      mergedInlineConfig.allowEmbeddedControlInput;
-
-    let pty: IPty;
-    try {
-      pty = spawn(
-        opencodeBinary,
-        [
-          "attach",
-          opencodeServerUrl,
-          "--dir",
-          workspacePath,
-          "--session",
-          opencodeSessionId,
-        ],
-        {
+const createChatTerminalService = (): ChatTerminalService => {
+  const controller = createPtySessionController<
+    ChatTerminalEnsureArgs,
+    ChatTerminalRecord,
+    ChatTerminalSession
+  >({
+    channelForId: createChannel,
+    trimOutput: appendBuffer,
+    spawnPty: (args) => {
+      const opencodeBinary = resolveOpencodeBinary();
+      const prepared = prepareChatTerminalSpawn(args);
+      try {
+        return spawn(opencodeBinary, prepared.spawnOptions.args, {
           name: TERMINAL_NAME,
           cols: DEFAULT_TERMINAL_COLS,
           rows: DEFAULT_TERMINAL_ROWS,
-          cwd: workspacePath,
+          cwd: args.workspacePath,
           env: {
             ...process.env,
-            ...opencodeThemeEnv,
+            ...prepared.spawnOptions.env,
             TERM: TERMINAL_NAME,
             COLORTERM: process.env.COLORTERM ?? "truecolor",
           },
-        }
-      );
-    } catch (error) {
-      throw new Error(createSpawnErrorMessage(opencodeBinary, error));
-    }
-
-    const record: ChatTerminalRecord = {
-      sessionId: `chat_terminal_${crypto.randomUUID()}`,
-      cellId,
-      pty,
-      cols: DEFAULT_TERMINAL_COLS,
-      rows: DEFAULT_TERMINAL_ROWS,
-      cwd: workspacePath,
-      status: "running",
-      exitCode: null,
-      startedAt: new Date(),
-      buffer: "",
-      opencodeSessionId,
-      opencodeServerUrl,
-      opencodeThemeMode,
-      preferredModel: preferredModelValue,
-      startMode: normalizedStartMode,
-      allowEmbeddedControlInput,
-    };
-
-    pty.onData((chunk: string) => {
-      record.buffer = appendBuffer(record.buffer, chunk);
-      emitter.emit(createChannel(cellId), {
-        type: "data",
-        chunk,
-      } satisfies ChatTerminalEvent);
-    });
-
-    pty.onExit(({ exitCode, signal }: IExitEvent) => {
-      record.status = "exited";
-      record.exitCode = exitCode;
-      emitter.emit(createChannel(cellId), {
-        type: "exit",
-        exitCode,
-        signal: normalizeSignal(signal),
-      } satisfies ChatTerminalEvent);
-    });
-
-    sessions.set(cellId, record);
-    schedulePlanModeSwitch(record);
-
-    return toSession(record);
-  };
-
-  return {
-    ensureSession,
-    getSession(cellId) {
-      const record = sessions.get(cellId);
-      return record ? toSession(record) : null;
+        }) as PtyTerminalProcess;
+      } catch (error) {
+        throw new Error(createSpawnErrorMessage(opencodeBinary, error));
+      }
     },
-    readOutput(cellId) {
-      return sessions.get(cellId)?.buffer ?? "";
-    },
-    subscribe(cellId, listener) {
-      const channel = createChannel(cellId);
-      emitter.on(channel, listener);
-      return () => {
-        emitter.off(channel, listener);
+    createRecord: (args, pty) => {
+      const prepared = prepareChatTerminalSpawn(args);
+      return {
+        ...createTerminalRecordFields(
+          `chat_terminal_${crypto.randomUUID()}`,
+          args.workspacePath,
+          {
+            pid: pty.pid,
+            kill: () => pty.kill(),
+            resize: (cols, rows) => pty.resize(cols, rows),
+            write: (data) => pty.write(data),
+          }
+        ),
+        cellId: args.cellId,
+        pty: pty as IPty,
+        opencodeSessionId: args.opencodeSessionId,
+        opencodeServerUrl: args.opencodeServerUrl,
+        opencodeThemeMode: prepared.opencodeThemeMode,
+        preferredModel: prepared.preferredModelValue,
+        startMode: prepared.normalizedStartMode,
+        allowEmbeddedControlInput: prepared.allowEmbeddedControlInput,
       };
     },
+    toSession,
+    canReuse: (record, args) => {
+      const prepared = prepareChatTerminalSpawn(args);
+      return (
+        record.status === "running" &&
+        record.cwd === args.workspacePath &&
+        record.opencodeSessionId === args.opencodeSessionId &&
+        record.opencodeServerUrl === args.opencodeServerUrl &&
+        record.opencodeThemeMode === prepared.opencodeThemeMode &&
+        record.preferredModel === prepared.preferredModelValue &&
+        record.startMode === prepared.normalizedStartMode
+      );
+    },
+    onSessionStarted: schedulePlanModeSwitch,
+    runningErrorMessage: "Chat terminal session is not running",
+  });
+
+  return {
+    ...controller,
     write(cellId, data) {
-      const record = sessions.get(cellId);
+      const record = controller.sessions.get(cellId);
       if (!record || record.status !== "running") {
         throw new Error("Chat terminal session is not running");
       }
@@ -635,23 +531,7 @@ const createChatTerminalService = (): ChatTerminalService => {
       if (!record.allowEmbeddedControlInput && isEmbeddedControlInput(data)) {
         return;
       }
-
-      record.pty.write(data);
-    },
-    resize(cellId, cols, rows) {
-      const record = sessions.get(cellId);
-      if (!record || record.status !== "running") {
-        throw new Error("Chat terminal session is not running");
-      }
-      record.cols = cols;
-      record.rows = rows;
-      record.pty.resize(cols, rows);
-    },
-    closeSession,
-    stopAll() {
-      for (const cellId of [...sessions.keys()]) {
-        closeSession(cellId);
-      }
+      controller.write(cellId, data);
     },
   };
 };

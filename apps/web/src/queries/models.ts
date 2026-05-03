@@ -30,45 +30,38 @@ type ModelsQueryOptions = UseQueryOptions<
   ModelListResponse
 >;
 
+type ModelsRequest = () => Promise<{ data: unknown; error: unknown }>;
+
+const emptyModelList = (): ModelListResponse => ({
+  models: [],
+  defaults: {},
+  stickyVariants: {},
+  providers: [],
+});
+
+const fetchModelList = async (request: ModelsRequest) => {
+  const { data, error } = await request();
+  if (error) {
+    throw new Error("Failed to fetch models");
+  }
+  return (data as ModelListResponse | undefined) ?? emptyModelList();
+};
+
 export const modelQueries = {
   bySession: (sessionId: string): ModelsQueryOptions => ({
     queryKey: ["models", sessionId] as const,
-    queryFn: async (): Promise<ModelListResponse> => {
-      const { data, error } = await rpc.api.agents
-        .sessions({ id: sessionId })
-        .models.get();
-      if (error) {
-        throw new Error("Failed to fetch models");
-      }
-      const response = data as ModelListResponse | undefined;
-      return (
-        response ?? {
-          models: [],
-          defaults: {},
-          stickyVariants: {},
-          providers: [],
-        }
-      );
-    },
+    queryFn: () =>
+      fetchModelList(() =>
+        rpc.api.agents.sessions({ id: sessionId }).models.get()
+      ),
   }),
   byWorkspace: (workspaceId: string): ModelsQueryOptions => ({
     queryKey: ["models", "workspace", workspaceId] as const,
-    queryFn: async (): Promise<ModelListResponse> => {
-      const { data, error } = await rpc.api.agents.models.get({
-        query: { workspaceId },
-      });
-      if (error) {
-        throw new Error("Failed to fetch models");
-      }
-      const response = data as ModelListResponse | undefined;
-      return (
-        response ?? {
-          models: [],
-          defaults: {},
-          stickyVariants: {},
-          providers: [],
-        }
-      );
-    },
+    queryFn: () =>
+      fetchModelList(() =>
+        rpc.api.agents.models.get({
+          query: { workspaceId },
+        })
+      ),
   }),
 };

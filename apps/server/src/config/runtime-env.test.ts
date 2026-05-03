@@ -7,6 +7,36 @@ const createFileReader = (files: Record<string, string>) => ({
   readFile: (path: string) => files[path] ?? "",
 });
 
+const serializeEnvFile = (values: Record<string, string>) =>
+  Object.entries(values)
+    .map(([key, value]) => `${key}="${value}"`)
+    .join("\n");
+
+const releaseEnvFile = (values: Record<string, string> = {}) =>
+  serializeEnvFile({
+    DATABASE_URL: "/release/hive.db",
+    HIVE_MIGRATIONS_DIR: "/release/migrations",
+    HIVE_WEB_DIST: "/release/public",
+    PORT: "3000",
+    ...values,
+  });
+
+const applyTestEnv = (
+  env: Record<string, string | undefined>,
+  files: Record<string, string>,
+  isCompiledRuntime: boolean
+) => {
+  const { exists, readFile } = createFileReader(files);
+
+  applyRuntimeEnvFiles({
+    env,
+    candidateEnvFiles: Object.keys(files),
+    isCompiledRuntime,
+    exists,
+    readFile,
+  });
+};
+
 describe("applyRuntimeEnvFiles", () => {
   it("replaces stale hive-managed paths in compiled runtime", () => {
     const env: Record<string, string | undefined> = {
@@ -18,28 +48,17 @@ describe("applyRuntimeEnvFiles", () => {
       PORT: "9999",
     };
 
-    const files = {
-      "/release/hive.env": [
-        'DATABASE_URL="/release/hive.db"',
-        'HIVE_MIGRATIONS_DIR="/release/migrations"',
-        'HIVE_WEB_DIST="/release/public"',
-        'PORT="3000"',
-      ].join("\n"),
-      "/workspace/.env": [
-        'DATABASE_URL="/workspace/dev.db"',
-        'HIVE_MIGRATIONS_DIR="/workspace/migrations"',
-      ].join("\n"),
-    };
-
-    const { exists, readFile } = createFileReader(files);
-
-    applyRuntimeEnvFiles({
+    applyTestEnv(
       env,
-      candidateEnvFiles: ["/release/hive.env", "/workspace/.env"],
-      isCompiledRuntime: true,
-      exists,
-      readFile,
-    });
+      {
+        "/release/hive.env": releaseEnvFile(),
+        "/workspace/.env": serializeEnvFile({
+          DATABASE_URL: "/workspace/dev.db",
+          HIVE_MIGRATIONS_DIR: "/workspace/migrations",
+        }),
+      },
+      true
+    );
 
     expect(env.DATABASE_URL).toBe("/release/hive.db");
     expect(env.HIVE_MIGRATIONS_DIR).toBe("/release/migrations");
@@ -57,25 +76,15 @@ describe("applyRuntimeEnvFiles", () => {
       PORT: "9999",
     };
 
-    const files = {
-      "/release/hive.env": [
-        'DATABASE_URL="/release/hive.db"',
-        'HIVE_MIGRATIONS_DIR="/release/migrations"',
-        'HIVE_WEB_DIST="/release/public"',
-        'HIVE_OPENCODE_BIN="/release/opencode"',
-        'PORT="3000"',
-      ].join("\n"),
-    };
-
-    const { exists, readFile } = createFileReader(files);
-
-    applyRuntimeEnvFiles({
+    applyTestEnv(
       env,
-      candidateEnvFiles: ["/release/hive.env"],
-      isCompiledRuntime: true,
-      exists,
-      readFile,
-    });
+      {
+        "/release/hive.env": releaseEnvFile({
+          HIVE_OPENCODE_BIN: "/release/opencode",
+        }),
+      },
+      true
+    );
 
     expect(env.DATABASE_URL).toBe("/tmp/test.db");
     expect(env.HIVE_MIGRATIONS_DIR).toBe("/tmp/custom-migrations");
@@ -91,24 +100,7 @@ describe("applyRuntimeEnvFiles", () => {
       PORT: "9999",
     };
 
-    const files = {
-      "/release/hive.env": [
-        'DATABASE_URL="/release/hive.db"',
-        'HIVE_MIGRATIONS_DIR="/release/migrations"',
-        'HIVE_WEB_DIST="/release/public"',
-        'PORT="3000"',
-      ].join("\n"),
-    };
-
-    const { exists, readFile } = createFileReader(files);
-
-    applyRuntimeEnvFiles({
-      env,
-      candidateEnvFiles: ["/release/hive.env"],
-      isCompiledRuntime: false,
-      exists,
-      readFile,
-    });
+    applyTestEnv(env, { "/release/hive.env": releaseEnvFile() }, false);
 
     expect(env.DATABASE_URL).toBe("/tmp/dev.db");
     expect(env.HIVE_MIGRATIONS_DIR).toBe("/tmp/dev-migrations");
@@ -129,10 +121,10 @@ describe("applyRuntimeEnvFiles", () => {
           throw new Error("EACCES");
         }
 
-        return [
-          'DATABASE_URL="/release/hive.db"',
-          'HIVE_MIGRATIONS_DIR="/release/migrations"',
-        ].join("\n");
+        return serializeEnvFile({
+          DATABASE_URL: "/release/hive.db",
+          HIVE_MIGRATIONS_DIR: "/release/migrations",
+        });
       },
     });
 

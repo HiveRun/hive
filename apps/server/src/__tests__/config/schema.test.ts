@@ -27,6 +27,18 @@ const EXPECTED = {
   configKey: "basic",
 } as const;
 
+const createMinimalConfig = (includeOpencode: boolean) => ({
+  ...(includeOpencode ? { opencode: SAMPLE_OPENCODE_CONFIG } : {}),
+  promptSources: ["docs/prompts/**/*.md"],
+  templates: {
+    basic: {
+      id: "basic",
+      label: "Basic",
+      type: "manual" as const,
+    },
+  },
+});
+
 describe("Template Schema", () => {
   it("should validate a minimal template", () => {
     const minimalTemplate = {
@@ -96,17 +108,7 @@ describe("Template Schema", () => {
 
 describe("Hive Config Schema", () => {
   it("should validate a minimal config", () => {
-    const minimalConfig = {
-      opencode: SAMPLE_OPENCODE_CONFIG,
-      promptSources: ["docs/prompts/**/*.md"],
-      templates: {
-        basic: {
-          id: "basic",
-          label: "Basic",
-          type: "manual" as const,
-        },
-      },
-    };
+    const minimalConfig = createMinimalConfig(true);
 
     const result = hiveConfigSchema.parse(minimalConfig);
     expect(result.templates[EXPECTED.configKey]).toBeDefined();
@@ -114,16 +116,7 @@ describe("Hive Config Schema", () => {
   });
 
   it("should validate a config without opencode block", () => {
-    const configWithoutOpencode = {
-      promptSources: ["docs/prompts/**/*.md"],
-      templates: {
-        basic: {
-          id: "basic",
-          label: "Basic",
-          type: "manual" as const,
-        },
-      },
-    };
+    const configWithoutOpencode = createMinimalConfig(false);
 
     const result = hiveConfigSchema.parse(configWithoutOpencode);
     expect(result.templates.basic).toBeDefined();

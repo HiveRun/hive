@@ -1,10 +1,10 @@
-import { type Page, test } from "@playwright/test";
-import { selectors } from "../src/selectors";
+import { test } from "@playwright/test";
 import {
-  createCell,
-  ensureTerminalReady,
-  sendCellTerminalCommand,
-  waitForCondition,
+  createCellFromHome as createHomeCell,
+  readTerminalOutputSeq as readOutputSeq,
+  sendCellTerminalCommand as sendCommand,
+  waitForTerminalOutputAdvance as waitForOutput,
+  ensureTerminalReady as waitForTerminal,
 } from "../src/test-helpers";
 
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
@@ -14,50 +14,42 @@ test.describe("terminal reconnect", () => {
   test("reconnects after page refresh and still accepts input", async ({
     page,
   }) => {
-    await page.goto("/");
-
-    const cellId = await createCell({
+    const cellId = await createHomeCell({
       page,
       name: `E2E Terminal Refresh ${Date.now()}`,
     });
 
     await page.goto(`/cells/${cellId}/terminal`);
-    await ensureTerminalReady(page, {
+    await waitForTerminal(page, {
       context: "terminal before refresh",
       timeoutMs: TERMINAL_READY_TIMEOUT_MS,
     });
 
     const beforeRefresh = await readOutputSeq(page);
-    await sendCellTerminalCommand(page, "echo before-refresh");
+    await sendCommand(page, "echo before-refresh");
 
-    await waitForCondition({
-      timeoutMs: OUTPUT_TIMEOUT_MS,
-      errorMessage: "Terminal did not process input before refresh",
-      check: async () => (await readOutputSeq(page)) > beforeRefresh,
-    });
+    await waitForOutput(
+      page,
+      beforeRefresh,
+      OUTPUT_TIMEOUT_MS,
+      "Terminal did not process input before refresh"
+    );
 
     await page.reload();
 
-    await ensureTerminalReady(page, {
+    await waitForTerminal(page, {
       context: "terminal after refresh",
       timeoutMs: TERMINAL_READY_TIMEOUT_MS,
     });
 
     const afterRefresh = await readOutputSeq(page);
-    await sendCellTerminalCommand(page, "echo after-refresh");
+    await sendCommand(page, "echo after-refresh");
 
-    await waitForCondition({
-      timeoutMs: OUTPUT_TIMEOUT_MS,
-      errorMessage: "Terminal did not process input after refresh",
-      check: async () => (await readOutputSeq(page)) > afterRefresh,
-    });
+    await waitForOutput(
+      page,
+      afterRefresh,
+      OUTPUT_TIMEOUT_MS,
+      "Terminal did not process input after refresh"
+    );
   });
 });
-
-async function readOutputSeq(page: Page): Promise<number> {
-  const outputSeqRaw = await page
-    .locator(selectors.terminalRoot)
-    .getAttribute("data-terminal-output-seq");
-
-  return Number(outputSeqRaw ?? "0");
-}

@@ -19,11 +19,14 @@ type LinearStatusPayload = {
   } | null;
 };
 
-type LinearIssuePayload = {
+type LinearIssueIdentity = {
   id: string;
   teamId: string | null;
   identifier: string;
   title: string;
+};
+
+type LinearIssuePayload = LinearIssueIdentity & {
   description: string | null;
   url: string | null;
   updatedAt: string;

@@ -49,6 +49,17 @@ let statSpy: any;
 
 const createApp = () => new Elysia().use(templatesRoutes);
 
+const templateRequest = (path = "/api/templates?workspaceId=workspace-basic") =>
+  createApp().handle(new Request(`http://localhost${path}`));
+
+const parseMessage = async (response: Response) =>
+  (await response.json()) as { message: string };
+
+const readTemplateFailure = async () => {
+  const response = await templateRequest();
+  return { response, payload: await parseMessage(response) };
+};
+
 describe("templatesRoutes", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -87,10 +98,7 @@ describe("templatesRoutes", () => {
       defaultModel: agentDefaults,
     });
 
-    const app = createApp();
-    const response = await app.handle(
-      new Request("http://localhost/api/templates?workspaceId=workspace-basic")
-    );
+    const response = await templateRequest();
 
     expect(response.status).toBe(HTTP_OK);
     const payload = (await response.json()) as {
@@ -110,11 +118,8 @@ describe("templatesRoutes", () => {
   });
 
   it("returns a template by id", async () => {
-    const app = createApp();
-    const response = await app.handle(
-      new Request(
-        "http://localhost/api/templates/template-basic?workspaceId=workspace-basic"
-      )
+    const response = await templateRequest(
+      "/api/templates/template-basic?workspaceId=workspace-basic"
     );
 
     expect(response.status).toBe(HTTP_OK);
@@ -124,15 +129,12 @@ describe("templatesRoutes", () => {
   });
 
   it("returns 404 when template is missing", async () => {
-    const app = createApp();
-    const response = await app.handle(
-      new Request(
-        "http://localhost/api/templates/missing-template?workspaceId=workspace-basic"
-      )
+    const response = await templateRequest(
+      "/api/templates/missing-template?workspaceId=workspace-basic"
     );
 
     expect(response.status).toBe(HTTP_NOT_FOUND);
-    const payload = (await response.json()) as { message: string };
+    const payload = await parseMessage(response);
     expect(payload.message).toContain("Template 'missing-template' not found");
   });
 
@@ -142,15 +144,12 @@ describe("templatesRoutes", () => {
       activeWorkspaceId: workspaceRecord.id,
     });
 
-    const app = createApp();
-    const response = await app.handle(
-      new Request(
-        "http://localhost/api/templates?workspaceId=missing-workspace"
-      )
+    const response = await templateRequest(
+      "/api/templates?workspaceId=missing-workspace"
     );
 
     expect(response.status).toBe(HTTP_BAD_REQUEST);
-    const payload = (await response.json()) as { message: string };
+    const payload = await parseMessage(response);
     expect(payload.message).toContain(
       "Workspace 'missing-workspace' not found"
     );
@@ -159,13 +158,9 @@ describe("templatesRoutes", () => {
   it("returns 400 when hive config loading fails", async () => {
     loadConfigSpy.mockRejectedValueOnce(new Error("load error"));
 
-    const app = createApp();
-    const response = await app.handle(
-      new Request("http://localhost/api/templates?workspaceId=workspace-basic")
-    );
+    const { response, payload } = await readTemplateFailure();
 
     expect(response.status).toBe(HTTP_BAD_REQUEST);
-    const payload = (await response.json()) as { message: string };
     expect(payload.message).toContain("Failed to load workspace config");
   });
 
@@ -174,14 +169,10 @@ describe("templatesRoutes", () => {
       new Error("opencode missing")
     );
 
-    const app = createApp();
-    const response = await app.handle(
-      new Request("http://localhost/api/templates?workspaceId=workspace-basic")
-    );
+    const failure = await readTemplateFailure();
 
-    expect(response.status).toBe(HTTP_BAD_REQUEST);
-    const payload = (await response.json()) as { message: string };
-    expect(payload.message).toContain("OpenCode");
+    expect(failure.response.status).toBe(HTTP_BAD_REQUEST);
+    expect(failure.payload.message).toContain("OpenCode");
   });
 
   it("refreshes cached template config when hive config mtime changes", async () => {

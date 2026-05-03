@@ -1,21 +1,13 @@
 import { type Page, test } from "@playwright/test";
 import { selectors } from "../src/selectors";
 import {
-  createCellViaApi,
-  waitForChatRoute,
+  createApiCellAndOpenChat,
+  fetchAgentSession,
+  requireApiUrl,
+  sendChatTerminalInput,
+  wait,
   waitForCondition,
-  waitForProvisioningOrChatRoute,
 } from "../src/test-helpers";
-
-type AgentSession = {
-  id: string;
-  startMode?: "plan" | "build";
-  currentMode?: "plan" | "build";
-};
-
-type AgentSessionResponse = {
-  session: AgentSession | null;
-};
 
 const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
 const CHAT_ROUTE_TIMEOUT_MS = 180_000;
@@ -29,76 +21,20 @@ const MODE_TOGGLE_INPUT = "\t";
 
 test.describe("plan mode @plan-mode", () => {
   test("@plan-mode defaults new cells to plan mode", async ({ page }) => {
-    const apiUrl = process.env.HIVE_E2E_API_URL;
-    if (!apiUrl) {
-      throw new Error("HIVE_E2E_API_URL is required for E2E tests");
-    }
-
-    await page.goto("/");
-    const cellId = await createCellViaApi({
-      apiUrl,
+    await assertInitialMode({
+      page,
       name: `Plan Mode Default ${Date.now()}`,
-      templateLabel: CELL_TEMPLATE_LABEL,
+      mode: "plan",
     });
-
-    await page.goto(`/cells/${cellId}/chat`);
-
-    await waitForProvisioningOrChatRoute({
-      page,
-      cellId,
-      timeoutMs: INITIAL_ROUTE_TIMEOUT_MS,
-    });
-
-    await waitForChatRoute({
-      page,
-      cellId,
-      timeoutMs: CHAT_ROUTE_TIMEOUT_MS,
-    });
-
-    await waitForSessionMode({
-      apiUrl,
-      cellId,
-      expectedStartMode: "plan",
-      expectedCurrentMode: "plan",
-    });
-    await waitForTerminalMode({ page, expectedMode: "Plan" });
   });
 
   test("@plan-mode honors explicit build start mode", async ({ page }) => {
-    const apiUrl = process.env.HIVE_E2E_API_URL;
-    if (!apiUrl) {
-      throw new Error("HIVE_E2E_API_URL is required for E2E tests");
-    }
-
-    await page.goto("/");
-    const cellId = await createCellViaApi({
-      apiUrl,
+    await assertInitialMode({
+      page,
       name: `Build Mode Override ${Date.now()}`,
-      templateLabel: CELL_TEMPLATE_LABEL,
+      mode: "build",
       startMode: "build",
     });
-
-    await page.goto(`/cells/${cellId}/chat`);
-
-    await waitForProvisioningOrChatRoute({
-      page,
-      cellId,
-      timeoutMs: INITIAL_ROUTE_TIMEOUT_MS,
-    });
-
-    await waitForChatRoute({
-      page,
-      cellId,
-      timeoutMs: CHAT_ROUTE_TIMEOUT_MS,
-    });
-
-    await waitForSessionMode({
-      apiUrl,
-      cellId,
-      expectedStartMode: "build",
-      expectedCurrentMode: "build",
-    });
-    await waitForTerminalMode({ page, expectedMode: "Build" });
   });
 
   test("@plan-mode transitions from plan to build during chat flow", async ({
@@ -106,30 +42,11 @@ test.describe("plan mode @plan-mode", () => {
   }) => {
     test.setTimeout(PLAN_TO_BUILD_TEST_TIMEOUT_MS);
 
-    const apiUrl = process.env.HIVE_E2E_API_URL;
-    if (!apiUrl) {
-      throw new Error("HIVE_E2E_API_URL is required for E2E tests");
-    }
-
-    await page.goto("/");
-    const cellId = await createCellViaApi({
+    const apiUrl = requireApiUrl();
+    const cellId = await createPlanModeCell({
+      page,
       apiUrl,
       name: `Plan To Build ${Date.now()}`,
-      templateLabel: CELL_TEMPLATE_LABEL,
-    });
-
-    await page.goto(`/cells/${cellId}/chat`);
-
-    await waitForProvisioningOrChatRoute({
-      page,
-      cellId,
-      timeoutMs: INITIAL_ROUTE_TIMEOUT_MS,
-    });
-
-    await waitForChatRoute({
-      page,
-      cellId,
-      timeoutMs: CHAT_ROUTE_TIMEOUT_MS,
     });
 
     await waitForSessionMode({
@@ -140,11 +57,55 @@ test.describe("plan mode @plan-mode", () => {
     });
 
     await waitForTerminalMode({ page, expectedMode: "Plan" });
-    await sendChatTerminalInput(apiUrl, cellId, MODE_TOGGLE_INPUT);
+    await sendTerminalModeInput(apiUrl, cellId, MODE_TOGGLE_INPUT);
 
     await waitForTerminalMode({ page, expectedMode: "Build" });
   });
 });
+
+async function assertInitialMode(options: {
+  page: Page;
+  name: string;
+  mode: "plan" | "build";
+  startMode?: "plan" | "build";
+}) {
+  const apiUrl = requireApiUrl();
+  const cellId = await createPlanModeCell({
+    page: options.page,
+    apiUrl,
+    name: options.name,
+    startMode: options.startMode,
+  });
+
+  await waitForSessionMode({
+    apiUrl,
+    cellId,
+    expectedStartMode: options.mode,
+    expectedCurrentMode: options.mode,
+  });
+  await waitForTerminalMode({
+    page: options.page,
+    expectedMode: options.mode === "plan" ? "Plan" : "Build",
+  });
+}
+
+async function createPlanModeCell(options: {
+  page: Page;
+  apiUrl: string;
+  name: string;
+  startMode?: "plan" | "build";
+}) {
+  const result = await createApiCellAndOpenChat({
+    page: options.page,
+    apiUrl: options.apiUrl,
+    name: options.name,
+    templateLabel: CELL_TEMPLATE_LABEL,
+    startMode: options.startMode,
+    initialRouteTimeoutMs: INITIAL_ROUTE_TIMEOUT_MS,
+    chatRouteTimeoutMs: CHAT_ROUTE_TIMEOUT_MS,
+  });
+  return result.cellId;
+}
 
 async function waitForSessionMode(options: {
   apiUrl: string;
@@ -184,21 +145,6 @@ async function waitForSessionMode(options: {
   return true;
 }
 
-async function fetchAgentSession(
-  apiUrl: string,
-  cellId: string
-): Promise<AgentSession | null> {
-  const response = await fetch(
-    `${apiUrl}/api/agents/sessions/byCell/${cellId}`
-  );
-  if (!response.ok) {
-    return null;
-  }
-
-  const payload = (await response.json()) as AgentSessionResponse;
-  return payload.session;
-}
-
 async function waitForTerminalMode(options: {
   page: Page;
   expectedMode: "Plan" | "Build";
@@ -217,29 +163,14 @@ async function waitForTerminalMode(options: {
   });
 }
 
-async function sendChatTerminalInput(
+async function sendTerminalModeInput(
   apiUrl: string,
   cellId: string,
   data: string
 ): Promise<void> {
-  const response = await fetch(
-    `${apiUrl}/api/cells/${cellId}/chat/terminal/input`,
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ data }),
-    }
-  );
+  const response = await sendChatTerminalInput(apiUrl, cellId, data);
 
   if (!response.ok) {
     throw new Error(`Failed to send chat terminal input: ${response.status}`);
   }
-}
-
-async function wait(ms: number): Promise<void> {
-  await new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }

@@ -15,13 +15,38 @@ const appendTruncationLines = (lines: string[], result: SgResult): void => {
   lines.push(`Results truncated (${reason})\n`);
 };
 
-export const formatSearchResult = (result: SgResult): string => {
+const errorOrEmptyResult = (
+  result: SgResult,
+  emptyMessage: string
+): string | null => {
   if (result.error) {
     return `Error: ${result.error}`;
   }
 
   if (result.matches.length === 0) {
-    return "No matches found";
+    return emptyMessage;
+  }
+
+  return null;
+};
+
+const appendMatchLines = (
+  lines: string[],
+  result: SgResult,
+  textForMatch: (match: SgResult["matches"][number]) => string
+) => {
+  for (const match of result.matches) {
+    const loc = `${match.file}:${match.range.start.line + 1}:${match.range.start.column + 1}`;
+    lines.push(`${loc}`);
+    lines.push(`  ${textForMatch(match)}`);
+    lines.push("");
+  }
+};
+
+export const formatSearchResult = (result: SgResult): string => {
+  const readyResult = errorOrEmptyResult(result, "No matches found");
+  if (readyResult) {
+    return readyResult;
   }
 
   const lines: string[] = [];
@@ -34,12 +59,7 @@ export const formatSearchResult = (result: SgResult): string => {
       ":\n"
   );
 
-  for (const match of result.matches) {
-    const loc = `${match.file}:${match.range.start.line + 1}:${match.range.start.column + 1}`;
-    lines.push(`${loc}`);
-    lines.push(`  ${match.lines.trim()}`);
-    lines.push("");
-  }
+  appendMatchLines(lines, result, (match) => match.lines.trim());
 
   return lines.join("\n");
 };
@@ -48,12 +68,9 @@ export const formatReplaceResult = (
   result: SgResult,
   isDryRun: boolean
 ): string => {
-  if (result.error) {
-    return `Error: ${result.error}`;
-  }
-
-  if (result.matches.length === 0) {
-    return "No matches found to replace";
+  const readyResult = errorOrEmptyResult(result, "No matches found to replace");
+  if (readyResult) {
+    return readyResult;
   }
 
   const prefix = isDryRun ? "[DRY RUN] " : "";
@@ -63,12 +80,7 @@ export const formatReplaceResult = (
 
   lines.push(`${prefix}${result.matches.length} replacement(s):\n`);
 
-  for (const match of result.matches) {
-    const loc = `${match.file}:${match.range.start.line + 1}:${match.range.start.column + 1}`;
-    lines.push(`${loc}`);
-    lines.push(`  ${match.text}`);
-    lines.push("");
-  }
+  appendMatchLines(lines, result, (match) => match.text);
 
   if (isDryRun) {
     lines.push("Use dryRun=false to apply changes");

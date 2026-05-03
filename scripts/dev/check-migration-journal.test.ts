@@ -1,10 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkMigrationJournal } from "./check-migration-journal";
+import { createTempDirFixture } from "./test-temp-dir";
 
-const tempDirectories: string[] = [];
+const createTempDir = createTempDirFixture("hive-migrations-");
 const firstMigrationTimestamp = 1000;
 const secondMigrationTimestamp = 2000;
 const regressedMigrationTimestamp = 900;
@@ -22,12 +22,6 @@ const generatedTimestampBase =
 const migrationIndexWidth = 4;
 const futureRegressedTimestamp = latestTimestampBeforeKnownException - 1;
 const journalJsonIndent = 2;
-
-afterEach(() => {
-  for (const directory of tempDirectories.splice(0)) {
-    rmSync(directory, { force: true, recursive: true });
-  }
-});
 
 describe("checkMigrationJournal", () => {
   test("accepts ordered migration metadata", () => {
@@ -51,10 +45,7 @@ describe("checkMigrationJournal", () => {
   });
 
   test("allows the known shipped 0013 timestamp regression", () => {
-    const entries = Array.from(
-      { length: knownExceptionEntryCount },
-      (_, index) => generatedJournalEntry(index)
-    );
+    const entries = createKnownExceptionEntries();
 
     const migrationsDir = createMigrationsDir(entries);
 
@@ -79,10 +70,7 @@ describe("checkMigrationJournal", () => {
   });
 
   test("rejects changes to the known shipped timestamp exception", () => {
-    const entries = Array.from(
-      { length: knownExceptionEntryCount },
-      (_, index) => generatedJournalEntry(index)
-    );
+    const entries = createKnownExceptionEntries();
     entries[knownExceptionIndex] = journalEntry(
       knownExceptionIndex,
       "0013_gigantic_blonde_phantom",
@@ -112,8 +100,7 @@ describe("checkMigrationJournal", () => {
 });
 
 const createMigrationsDir = (entries: unknown[]) => {
-  const migrationsDir = mkdtempSync(join(tmpdir(), "hive-migrations-"));
-  tempDirectories.push(migrationsDir);
+  const migrationsDir = createTempDir();
 
   mkdirSync(join(migrationsDir, "meta"));
   writeFileSync(
@@ -137,6 +124,11 @@ const journalEntry = (idx: number, tag: string, when: number) => ({
   tag,
   breakpoints: true,
 });
+
+const createKnownExceptionEntries = () =>
+  Array.from({ length: knownExceptionEntryCount }, (_, index) =>
+    generatedJournalEntry(index)
+  );
 
 const generatedJournalEntry = (index: number) =>
   journalEntry(

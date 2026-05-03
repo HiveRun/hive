@@ -1,13 +1,12 @@
 #!/usr/bin/env bun
 
+import { runMain } from "./common";
 import {
+  isValidSemver,
   normalizeVersion,
   readReleaseManifestVersions,
   resolveReleaseVersion,
 } from "./release-version";
-
-const SEMVER_PATTERN =
-  /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 const parseTagArgument = () => {
   const args = process.argv.slice(2);
@@ -22,7 +21,7 @@ const parseTagArgument = () => {
   }
 
   const normalizedTag = normalizeVersion(rawTag);
-  if (!(normalizedTag && SEMVER_PATTERN.test(normalizedTag))) {
+  if (!(normalizedTag && isValidSemver(normalizedTag))) {
     throw new Error(`Invalid release tag: ${rawTag}`);
   }
 
@@ -68,7 +67,4 @@ const main = async () => {
   }
 };
 
-await main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+await runMain(main);

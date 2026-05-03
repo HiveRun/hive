@@ -1,6 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Copy } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -14,16 +13,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useServiceStream } from "@/hooks/use-service-stream";
+import {
+  formatBytes,
+  formatCpuPercent,
+  serviceStatusTone,
+} from "@/lib/resource-format";
 import { cn } from "@/lib/utils";
 import {
   type CellServiceSummary,
   cellMutations,
   cellQueries,
 } from "@/queries/cells";
-
-const BYTES_PER_UNIT = 1024;
-const ZERO_DECIMALS = 0;
-const ONE_DECIMAL = 1;
+import { CellDetailGate, CopyableDetailLabel } from "../../-shared/cell-route";
 
 export const Route = createFileRoute("/cells/$cellId/services")({
   component: CellServices,
@@ -100,26 +101,6 @@ function CellServices() {
   const isBulkActionPending =
     startAllServicesMutation.isPending || stopAllServicesMutation.isPending;
 
-  if (cellQuery.isLoading) {
-    return (
-      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground">
-        Loading cell…
-      </div>
-    );
-  }
-
-  if (cellQuery.error) {
-    const message =
-      cellQuery.error instanceof Error
-        ? cellQuery.error.message
-        : "Failed to load cell";
-    return (
-      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-destructive/50 bg-destructive/10 text-destructive">
-        {message}
-      </div>
-    );
-  }
-
   const handleStart = (service: CellServiceSummary) => {
     startServiceMutation.mutate({
       cellId,
@@ -145,23 +126,25 @@ function CellServices() {
   };
 
   return (
-    <div className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
-      <ServicesPanel
-        cellId={cellId}
-        errorMessage={streamError}
-        isBulkActionPending={isBulkActionPending}
-        isLoading={isLoading}
-        isStartingAll={startAllServicesMutation.isPending}
-        isStoppingAll={stopAllServicesMutation.isPending}
-        onStartAll={handleStartAll}
-        onStartService={handleStart}
-        onStopAll={handleStopAll}
-        onStopService={handleStop}
-        pendingStartId={pendingStartId}
-        pendingStopId={pendingStopId}
-        services={services}
-      />
-    </div>
+    <CellDetailGate errorFallback="Failed to load cell" query={cellQuery}>
+      <div className="flex h-full flex-1 overflow-hidden rounded-sm border-2 border-border bg-card">
+        <ServicesPanel
+          cellId={cellId}
+          errorMessage={streamError}
+          isBulkActionPending={isBulkActionPending}
+          isLoading={isLoading}
+          isStartingAll={startAllServicesMutation.isPending}
+          isStoppingAll={stopAllServicesMutation.isPending}
+          onStartAll={handleStartAll}
+          onStartService={handleStart}
+          onStopAll={handleStopAll}
+          onStopService={handleStop}
+          pendingStartId={pendingStartId}
+          pendingStopId={pendingStopId}
+          services={services}
+        />
+      </div>
+    </CellDetailGate>
   );
 }
 
@@ -313,6 +296,15 @@ function ServicesPanel({
   );
 }
 
+type ServiceControlProps = {
+  service: CellServiceSummary;
+  onStart: (service: CellServiceSummary) => void;
+  onStop: (service: CellServiceSummary) => void;
+  isBulkActionPending: boolean;
+  isStarting: boolean;
+  isStopping: boolean;
+};
+
 function ServiceCard({
   cellId,
   service,
@@ -321,26 +313,11 @@ function ServiceCard({
   isBulkActionPending,
   isStarting,
   isStopping,
-}: {
+}: ServiceControlProps & {
   cellId: string;
-  service: CellServiceSummary;
-  onStart: (service: CellServiceSummary) => void;
-  onStop: (service: CellServiceSummary) => void;
-  isBulkActionPending: boolean;
-  isStarting: boolean;
-  isStopping: boolean;
 }) {
   const normalizedStatus = service.status.toLowerCase();
   const isErrorState = normalizedStatus === "error";
-
-  const handleCopy = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success("Copied to clipboard");
-    } catch (_error) {
-      toast.error("Failed to copy to clipboard");
-    }
-  };
 
   return (
     <div
@@ -382,21 +359,12 @@ function ServiceCard({
 
           {service.command && (
             <>
-              <div className="flex items-center gap-1.5">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-                  Command
-                </p>
-                <Button
-                  aria-label="Copy command"
-                  className="h-5 w-5 shrink-0 p-0"
-                  onClick={() => handleCopy(service.command)}
-                  size="icon-sm"
-                  type="button"
-                  variant="ghost"
-                >
-                  <Copy className="h-3 w-3" />
-                </Button>
-              </div>
+              <CopyableDetailLabel
+                copyLabel="command"
+                copyText={service.command}
+              >
+                Command
+              </CopyableDetailLabel>
               <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-foreground">
                 {service.command}
               </pre>
@@ -405,21 +373,12 @@ function ServiceCard({
 
           {service.cwd && (
             <>
-              <div className="flex items-center gap-1.5">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-                  Working directory
-                </p>
-                <Button
-                  aria-label="Copy working directory"
-                  className="h-5 w-5 shrink-0 p-0"
-                  onClick={() => handleCopy(service.cwd)}
-                  size="icon-sm"
-                  type="button"
-                  variant="ghost"
-                >
-                  <Copy className="h-3 w-3" />
-                </Button>
-              </div>
+              <CopyableDetailLabel
+                copyLabel="working directory"
+                copyText={service.cwd}
+              >
+                Working directory
+              </CopyableDetailLabel>
               <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-foreground">
                 {service.cwd}
               </pre>
@@ -428,21 +387,9 @@ function ServiceCard({
 
           {service.port ? (
             <>
-              <div className="flex items-center gap-1.5">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-                  Port
-                </p>
-                <Button
-                  aria-label="Copy port"
-                  className="h-5 w-5 shrink-0 p-0"
-                  onClick={() => handleCopy(String(service.port))}
-                  size="icon-sm"
-                  type="button"
-                  variant="ghost"
-                >
-                  <Copy className="h-3 w-3" />
-                </Button>
-              </div>
+              <CopyableDetailLabel copyLabel="port" copyText={service.port}>
+                Port
+              </CopyableDetailLabel>
               <p className="break-all font-mono text-[11px] text-foreground">
                 {service.port}
               </p>
@@ -451,21 +398,9 @@ function ServiceCard({
 
           {service.pid ? (
             <>
-              <div className="flex items-center gap-1.5">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-                  PID
-                </p>
-                <Button
-                  aria-label="Copy PID"
-                  className="h-5 w-5 shrink-0 p-0"
-                  onClick={() => handleCopy(String(service.pid))}
-                  size="icon-sm"
-                  type="button"
-                  variant="ghost"
-                >
-                  <Copy className="h-3 w-3" />
-                </Button>
-              </div>
+              <CopyableDetailLabel copyLabel="PID" copyText={service.pid}>
+                PID
+              </CopyableDetailLabel>
               <p className="break-all font-mono text-[11px] text-foreground">
                 {service.pid}
               </p>
@@ -506,30 +441,6 @@ function ServiceCard({
   );
 }
 
-function formatCpuPercent(value: number | null | undefined): string {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    return "Unavailable";
-  }
-  return `${value.toFixed(1)}%`;
-}
-
-function formatBytes(value: number | null | undefined): string {
-  if (typeof value !== "number" || Number.isNaN(value) || value < 0) {
-    return "Unavailable";
-  }
-
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let size = value;
-  let unitIndex = 0;
-
-  while (size >= BYTES_PER_UNIT && unitIndex < units.length - 1) {
-    size /= BYTES_PER_UNIT;
-    unitIndex += 1;
-  }
-
-  return `${size.toFixed(unitIndex === 0 ? ZERO_DECIMALS : ONE_DECIMAL)} ${units[unitIndex]}`;
-}
-
 function ServiceActions({
   service,
   onStart,
@@ -537,14 +448,7 @@ function ServiceActions({
   isBulkActionPending,
   isStarting,
   isStopping,
-}: {
-  service: CellServiceSummary;
-  onStart: (service: CellServiceSummary) => void;
-  onStop: (service: CellServiceSummary) => void;
-  isBulkActionPending: boolean;
-  isStarting: boolean;
-  isStopping: boolean;
-}) {
+}: ServiceControlProps) {
   const normalizedStatus = service.status.toLowerCase();
   const isRunning = normalizedStatus === "running";
   const isTransitional =
@@ -578,19 +482,12 @@ function ServiceActions({
 }
 
 function ServiceStatusBadge({ status }: { status: string }) {
-  const normalized = status.toLowerCase();
-  const toneMap: Record<string, string> = {
-    running: "bg-primary/15 text-primary",
-    starting: "bg-secondary/20 text-secondary-foreground",
-    pending: "bg-muted text-muted-foreground",
-    error: "bg-destructive/10 text-destructive",
-    stopped: "bg-border/20 text-muted-foreground",
-  };
-  const tone = toneMap[normalized] ?? "bg-muted text-muted-foreground";
-
   return (
     <span
-      className={`rounded-sm px-3 py-1 text-xs uppercase tracking-[0.4em] ${tone}`}
+      className={cn(
+        "rounded-sm px-3 py-1 text-xs uppercase tracking-[0.4em]",
+        serviceStatusTone(status)
+      )}
     >
       {status}
     </span>

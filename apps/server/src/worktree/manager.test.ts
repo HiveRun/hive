@@ -1,4 +1,10 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir as createDir,
+  mkdtemp as createTempDir,
+  readFile as readTextFile,
+  rm as removeDir,
+  writeFile as writeTextFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -47,9 +53,9 @@ describe("createWorktreeManager include copy", () => {
   let workspacePath = "";
 
   beforeEach(async () => {
-    tempRoot = await mkdtemp(join(tmpdir(), "hive-worktree-test-"));
+    tempRoot = await createTempDir(join(tmpdir(), "hive-worktree-test-"));
     workspacePath = join(tempRoot, "workspace");
-    await mkdir(workspacePath, { recursive: true });
+    await createDir(workspacePath, { recursive: true });
 
     process.env.HIVE_HOME = join(tempRoot, "hive-home");
 
@@ -57,8 +63,16 @@ describe("createWorktreeManager include copy", () => {
     runGit(workspacePath, ["config", "user.email", "test@example.com"]);
     runGit(workspacePath, ["config", "user.name", "Test User"]);
 
-    await writeFile(join(workspacePath, ".env"), "API_KEY=secret\n", "utf8");
-    await writeFile(join(workspacePath, "README.md"), "workspace\n", "utf8");
+    await writeTextFile(
+      join(workspacePath, ".env"),
+      "API_KEY=secret\n",
+      "utf8"
+    );
+    await writeTextFile(
+      join(workspacePath, "README.md"),
+      "workspace\n",
+      "utf8"
+    );
 
     runGit(workspacePath, ["add", "."]);
     runGit(workspacePath, ["commit", "-m", "initial"]);
@@ -67,7 +81,7 @@ describe("createWorktreeManager include copy", () => {
   afterEach(async () => {
     process.env = { ...originalEnv };
     if (tempRoot) {
-      await rm(tempRoot, { recursive: true, force: true });
+      await removeDir(tempRoot, { recursive: true, force: true });
     }
   });
 
@@ -88,7 +102,7 @@ describe("createWorktreeManager include copy", () => {
       force: true,
     });
 
-    const copiedEnv = await readFile(join(location.path, ".env"), "utf8");
+    const copiedEnv = await readTextFile(join(location.path, ".env"), "utf8");
     expect(copiedEnv).toContain("API_KEY=secret");
   });
 
@@ -100,7 +114,11 @@ describe("createWorktreeManager include copy", () => {
     ]);
 
     runGit(workspacePath, ["checkout", "-b", "feature/start-point"]);
-    await writeFile(join(workspacePath, "feature.txt"), "feature\n", "utf8");
+    await writeTextFile(
+      join(workspacePath, "feature.txt"),
+      "feature\n",
+      "utf8"
+    );
     runGit(workspacePath, ["add", "feature.txt"]);
     runGit(workspacePath, ["commit", "-m", "feature commit"]);
     const featureCommit = runGitRead(workspacePath, ["rev-parse", "HEAD"]);
@@ -137,7 +155,7 @@ describe("createWorktreeManager include copy", () => {
   });
 });
 
-function runGit(cwd: string, args: string[]) {
+function executeGit(cwd: string, args: string[]) {
   const child = Bun.spawnSync({
     cmd: ["git", ...args],
     cwd,
@@ -151,22 +169,14 @@ function runGit(cwd: string, args: string[]) {
       `git ${args.join(" ")} failed with code ${child.exitCode}${stderr ? `: ${stderr}` : ""}`
     );
   }
+
+  return child;
+}
+
+function runGit(cwd: string, args: string[]) {
+  executeGit(cwd, args);
 }
 
 function runGitRead(cwd: string, args: string[]): string {
-  const child = Bun.spawnSync({
-    cmd: ["git", ...args],
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  if (child.exitCode !== 0) {
-    const stderr = child.stderr.toString().trim();
-    throw new Error(
-      `git ${args.join(" ")} failed with code ${child.exitCode}${stderr ? `: ${stderr}` : ""}`
-    );
-  }
-
-  return child.stdout.toString().trim();
+  return executeGit(cwd, args).stdout.toString().trim();
 }

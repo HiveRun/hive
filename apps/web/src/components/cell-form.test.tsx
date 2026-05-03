@@ -7,7 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ComponentProps, type ReactNode, useEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CellForm } from "./cell-form";
 
@@ -15,6 +15,7 @@ const { createCellMutationMock } = vi.hoisted(() => ({
   createCellMutationMock: vi.fn(),
 }));
 const REMOVE_BUTTON_NAME_PATTERN = /remove/i;
+const WORKSPACE_ID = "workspace-1";
 
 vi.mock("@/components/model-selector", () => ({
   ModelSelector: ({ onLoadingChange, onModelChange }: any) => {
@@ -109,19 +110,13 @@ describe("CellForm", () => {
   });
 
   it("renders the Linear prefill and source badge", async () => {
-    const { rerender } = render(
-      <TestQueryProvider>
-        <CellForm
-          initialPrefill={{
-            name: "Improve Linear integration",
-            description:
-              "Improve Linear integration\n\nUse the linked Linear issue to scope the work.",
-            sourceLabel: "ENG-42",
-          }}
-          workspaceId="workspace-1"
-        />
-      </TestQueryProvider>
-    );
+    const { rerender } = renderCellForm({
+      initialPrefill: buildPrefill(
+        "Improve Linear integration",
+        "Improve Linear integration\n\nUse the linked Linear issue to scope the work.",
+        "ENG-42"
+      ),
+    });
 
     await waitFor(() => {
       expect(screen.getByLabelText("Name")).toHaveValue(
@@ -134,18 +129,13 @@ describe("CellForm", () => {
     );
     expect(screen.getByText("Source: Linear ENG-42")).toBeInTheDocument();
 
-    rerender(
-      <TestQueryProvider>
-        <CellForm
-          initialPrefill={{
-            name: "Fix follow-up issue",
-            description:
-              "Fix follow-up issue\n\nCarry the second issue details into the form.",
-            sourceLabel: "ENG-43",
-          }}
-          workspaceId="workspace-1"
-        />
-      </TestQueryProvider>
+    rerenderCellForm(
+      rerender,
+      buildPrefill(
+        "Fix follow-up issue",
+        "Fix follow-up issue\n\nCarry the second issue details into the form.",
+        "ENG-43"
+      )
     );
 
     await waitFor(() => {
@@ -159,11 +149,7 @@ describe("CellForm", () => {
   });
 
   it("adds pasted and selected images, then removes them", async () => {
-    render(
-      <TestQueryProvider>
-        <CellForm workspaceId="workspace-1" />
-      </TestQueryProvider>
-    );
+    renderCellForm();
 
     await waitFor(() => {
       expect(screen.getByTestId("cell-image-input")).toBeInTheDocument();
@@ -237,26 +223,13 @@ describe("CellForm", () => {
     globalThis.FileReader = DeferredFileReader as unknown as typeof FileReader;
 
     try {
-      render(
-        <TestQueryProvider>
-          <CellForm workspaceId="workspace-1" />
-        </TestQueryProvider>
-      );
+      renderCellForm();
 
       await waitFor(() => {
         expect(screen.getByLabelText("Name")).toBeInTheDocument();
       });
 
-      fireEvent.change(screen.getByLabelText("Name"), {
-        target: { value: "Image Cell" },
-      });
-
-      fireEvent.click(
-        within(screen.getByTestId("template-select")).getByRole("combobox")
-      );
-      fireEvent.click(
-        await screen.findByRole("option", { name: "Template 1" })
-      );
+      await fillRequiredCellFields("Image Cell");
 
       await waitFor(() => {
         expect(screen.getByTestId("cell-submit-button")).not.toBeDisabled();
@@ -300,17 +273,9 @@ describe("CellForm", () => {
   });
 
   it("clears attached images when the form is repurposed with a new prefill", async () => {
-    const { rerender } = render(
-      <TestQueryProvider>
-        <CellForm
-          initialPrefill={{
-            name: "First issue",
-            description: "First description",
-          }}
-          workspaceId="workspace-1"
-        />
-      </TestQueryProvider>
-    );
+    const { rerender } = renderCellForm({
+      initialPrefill: buildPrefill("First issue", "First description"),
+    });
 
     await waitFor(() => {
       expect(screen.getByTestId("cell-image-input")).toBeInTheDocument();
@@ -326,16 +291,9 @@ describe("CellForm", () => {
       expect(screen.getByText("carryover.png")).toBeInTheDocument();
     });
 
-    rerender(
-      <TestQueryProvider>
-        <CellForm
-          initialPrefill={{
-            name: "Second issue",
-            description: "Second description",
-          }}
-          workspaceId="workspace-1"
-        />
-      </TestQueryProvider>
+    rerenderCellForm(
+      rerender,
+      buildPrefill("Second issue", "Second description")
     );
 
     await waitFor(() => {
@@ -344,27 +302,16 @@ describe("CellForm", () => {
   });
 
   it("submits selected images with the create payload", async () => {
-    render(
-      <TestQueryProvider>
-        <CellForm workspaceId="workspace-1" />
-      </TestQueryProvider>
-    );
+    renderCellForm();
 
     await waitFor(() => {
       expect(screen.getByLabelText("Name")).toBeInTheDocument();
     });
 
-    fireEvent.change(screen.getByLabelText("Name"), {
-      target: { value: "Image Cell" },
-    });
+    await fillRequiredCellFields("Image Cell");
     fireEvent.change(screen.getByLabelText("Description"), {
       target: { value: "Inspect this screenshot" },
     });
-
-    fireEvent.click(
-      within(screen.getByTestId("template-select")).getByRole("combobox")
-    );
-    fireEvent.click(await screen.findByRole("option", { name: "Template 1" }));
 
     const fileInput = screen.getByTestId("cell-image-input");
     const screenshot = new File(["hello"], "screenshot.png", {
@@ -392,7 +339,7 @@ describe("CellForm", () => {
       expect.objectContaining({
         name: "Image Cell",
         description: "Inspect this screenshot",
-        workspaceId: "workspace-1",
+        workspaceId: WORKSPACE_ID,
         initialPromptImages: [
           expect.objectContaining({
             filename: "screenshot.png",
@@ -404,6 +351,41 @@ describe("CellForm", () => {
     );
   });
 });
+
+type CellFormProps = ComponentProps<typeof CellForm>;
+
+function buildPrefill(
+  name: string,
+  description: string,
+  sourceLabel?: string
+): CellFormProps["initialPrefill"] {
+  return { description, name, sourceLabel };
+}
+
+function renderCellForm(props: Partial<CellFormProps> = {}) {
+  return render(<CellForm workspaceId={WORKSPACE_ID} {...props} />, {
+    wrapper: TestQueryProvider,
+  });
+}
+
+function rerenderCellForm(
+  rerender: ReturnType<typeof render>["rerender"],
+  initialPrefill: CellFormProps["initialPrefill"]
+) {
+  rerender(
+    <CellForm initialPrefill={initialPrefill} workspaceId={WORKSPACE_ID} />
+  );
+}
+
+async function fillRequiredCellFields(name: string) {
+  fireEvent.change(screen.getByLabelText("Name"), {
+    target: { value: name },
+  });
+  fireEvent.click(
+    within(screen.getByTestId("template-select")).getByRole("combobox")
+  );
+  fireEvent.click(await screen.findByRole("option", { name: "Template 1" }));
+}
 
 function TestQueryProvider({ children }: { children: ReactNode }) {
   const queryClient = new QueryClient({

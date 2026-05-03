@@ -1,7 +1,8 @@
 import { tool } from "@opencode-ai/plugin/tool";
+import type { RunOptions } from "./cli";
 import { runSg } from "./cli";
 import { CLI_LANGUAGES } from "./constants";
-import type { CliLanguage } from "./types";
+import type { CliLanguage, SgResult } from "./types";
 import { formatReplaceResult, formatSearchResult } from "./utils";
 
 const FUNCTION_PATTERN_HINT_REGEX =
@@ -13,6 +14,51 @@ const showOutputToUser = (context: unknown, output: string): void => {
   };
   ctx.metadata?.({ metadata: { output } });
 };
+
+const runTool = async (
+  context: unknown,
+  action: () => Promise<string>
+): Promise<string> => {
+  try {
+    const output = await action();
+    showOutputToUser(context, output);
+    return output;
+  } catch (error) {
+    const output = `Error: ${error instanceof Error ? error.message : String(error)}`;
+    showOutputToUser(context, output);
+    return output;
+  }
+};
+
+const commonSearchArgs = () => ({
+  lang: tool.schema.enum(CLI_LANGUAGES).describe("Target language"),
+  paths: tool.schema
+    .array(tool.schema.string())
+    .optional()
+    .describe("Paths to search"),
+  globs: tool.schema
+    .array(tool.schema.string())
+    .optional()
+    .describe("Include/exclude globs"),
+});
+
+const baseRunArgs = (args: {
+  pattern: string;
+  lang: string;
+  paths?: string[];
+  globs?: string[];
+}) => ({
+  pattern: args.pattern,
+  lang: args.lang as CliLanguage,
+  paths: args.paths,
+  globs: args.globs,
+});
+
+const executeSgTool = (
+  context: unknown,
+  options: RunOptions,
+  format: (result: SgResult) => string
+) => runTool(context, async () => format(await runSg(options)));
 
 const getEmptyResultHint = (
   pattern: string,
@@ -57,47 +103,35 @@ export const ast_grep_search = tool({
       .describe(
         "AST pattern with meta-variables ($VAR, $$$). Must be complete AST node."
       ),
-    lang: tool.schema.enum(CLI_LANGUAGES).describe("Target language"),
-    paths: tool.schema
-      .array(tool.schema.string())
-      .optional()
-      .describe("Paths to search (default: ['.'])"),
-    globs: tool.schema
-      .array(tool.schema.string())
-      .optional()
-      .describe("Include/exclude globs (prefix ! to exclude)"),
+    ...commonSearchArgs(),
     context: tool.schema
       .number()
       .optional()
       .describe("Context lines around match"),
   },
-  execute: async (args, context) => {
-    try {
-      const result = await runSg({
-        pattern: args.pattern,
-        lang: args.lang as CliLanguage,
-        paths: args.paths,
-        globs: args.globs,
+  execute: (args, context) =>
+    executeSgTool(
+      context,
+      {
+        ...baseRunArgs(args),
         context: args.context,
-      });
+      },
+      (result) => {
+        let output = formatSearchResult(result);
 
-      let output = formatSearchResult(result);
-
-      if (result.matches.length === 0 && !result.error) {
-        const hint = getEmptyResultHint(args.pattern, args.lang as CliLanguage);
-        if (hint) {
-          output += hint;
+        if (result.matches.length === 0 && !result.error) {
+          const hint = getEmptyResultHint(
+            args.pattern,
+            args.lang as CliLanguage
+          );
+          if (hint) {
+            output += hint;
+          }
         }
-      }
 
-      showOutputToUser(context, output);
-      return output;
-    } catch (error) {
-      const output = `Error: ${error instanceof Error ? error.message : String(error)}`;
-      showOutputToUser(context, output);
-      return output;
-    }
-  },
+        return output;
+      }
+    ),
 });
 
 export const ast_grep_replace = tool({
@@ -110,37 +144,20 @@ export const ast_grep_replace = tool({
     rewrite: tool.schema
       .string()
       .describe("Replacement pattern (can use $VAR from pattern)"),
-    lang: tool.schema.enum(CLI_LANGUAGES).describe("Target language"),
-    paths: tool.schema
-      .array(tool.schema.string())
-      .optional()
-      .describe("Paths to search"),
-    globs: tool.schema
-      .array(tool.schema.string())
-      .optional()
-      .describe("Include/exclude globs"),
+    ...commonSearchArgs(),
     dryRun: tool.schema
       .boolean()
       .optional()
       .describe("Preview changes without applying (default: true)"),
   },
-  execute: async (args, context) => {
-    try {
-      const result = await runSg({
-        pattern: args.pattern,
+  execute: (args, context) =>
+    executeSgTool(
+      context,
+      {
+        ...baseRunArgs(args),
         rewrite: args.rewrite,
-        lang: args.lang as CliLanguage,
-        paths: args.paths,
-        globs: args.globs,
         updateAll: args.dryRun === false,
-      });
-      const output = formatReplaceResult(result, args.dryRun !== false);
-      showOutputToUser(context, output);
-      return output;
-    } catch (error) {
-      const output = `Error: ${error instanceof Error ? error.message : String(error)}`;
-      showOutputToUser(context, output);
-      return output;
-    }
-  },
+      },
+      (result) => formatReplaceResult(result, args.dryRun !== false)
+    ),
 });

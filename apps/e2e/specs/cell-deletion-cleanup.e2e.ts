@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
-  createCell,
+  createCellFromHome,
+  requireApiUrl,
   waitForCondition,
   waitForServiceStatuses,
 } from "../src/test-helpers";
@@ -11,14 +12,8 @@ const NOT_FOUND_STATUS = 404;
 
 test.describe("cell deletion cleanup", () => {
   test("deletes cell and reaps service processes", async ({ page }) => {
-    const apiUrl = process.env.HIVE_E2E_API_URL;
-    if (!apiUrl) {
-      throw new Error("HIVE_E2E_API_URL is required for E2E tests");
-    }
-
-    await page.goto("/");
-
-    const cellId = await createCell({
+    const apiUrl = requireApiUrl();
+    const cellId = await createCellFromHome({
       page,
       name: `E2E Cleanup ${Date.now()}`,
       templateLabel: SERVICES_TEMPLATE_LABEL,

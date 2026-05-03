@@ -107,11 +107,7 @@ describe("createLinearRoutes", () => {
   });
 
   it("returns a disconnected status when no Linear record exists", async () => {
-    const response = await createApp().handle(
-      new Request(
-        `http://localhost/api/linear/status?workspaceId=${WORKSPACE.id}`
-      )
-    );
+    const response = await linearRequest("status");
 
     expect(response.status).toBe(HTTP_OK);
     expect(await response.json()).toEqual({
@@ -149,31 +145,10 @@ describe("createLinearRoutes", () => {
       } as never,
     });
 
-    const response = await createApp().handle(
-      new Request("http://localhost/api/linear/token", {
-        method: "PUT",
-        headers: JSON_HEADERS,
-        body: JSON.stringify({
-          workspaceId: WORKSPACE.id,
-          accessToken: "linear-access-token",
-        }),
-      })
-    );
+    const response = await putLinearToken("linear-access-token");
 
     expect(response.status).toBe(HTTP_OK);
-    await expect(response.json()).resolves.toEqual({
-      connected: true,
-      user: {
-        id: "linear-user-1",
-        name: "Linear User",
-        email: "linear@example.com",
-      },
-      organization: {
-        id: "linear-org-1",
-        name: "Linear Org",
-      },
-      team: null,
-    });
+    await expect(response.json()).resolves.toEqual(connectedPayload());
 
     const [integration] = await linearTestDb
       .select()
@@ -193,16 +168,7 @@ describe("createLinearRoutes", () => {
   });
 
   it("rejects empty token input after trimming", async () => {
-    const response = await createApp().handle(
-      new Request("http://localhost/api/linear/token", {
-        method: "PUT",
-        headers: JSON_HEADERS,
-        body: JSON.stringify({
-          workspaceId: WORKSPACE.id,
-          accessToken: "   ",
-        }),
-      })
-    );
+    const response = await putLinearToken("   ");
 
     expect(response.status).toBe(HTTP_BAD_REQUEST);
     await expect(response.json()).resolves.toEqual({
@@ -216,16 +182,7 @@ describe("createLinearRoutes", () => {
       status: HTTP_UNAUTHORIZED,
     });
 
-    const response = await createApp().handle(
-      new Request("http://localhost/api/linear/token", {
-        method: "PUT",
-        headers: JSON_HEADERS,
-        body: JSON.stringify({
-          workspaceId: WORKSPACE.id,
-          accessToken: "invalid-token",
-        }),
-      })
-    );
+    const response = await putLinearToken("invalid-token");
 
     expect(response.status).toBe(HTTP_UNAUTHORIZED);
     await expect(response.json()).resolves.toEqual({
@@ -239,16 +196,7 @@ describe("createLinearRoutes", () => {
       status: HTTP_FORBIDDEN,
     });
 
-    const response = await createApp().handle(
-      new Request("http://localhost/api/linear/token", {
-        method: "PUT",
-        headers: JSON_HEADERS,
-        body: JSON.stringify({
-          workspaceId: WORKSPACE.id,
-          accessToken: "forbidden-token",
-        }),
-      })
-    );
+    const response = await putLinearToken("forbidden-token");
 
     expect(response.status).toBe(HTTP_FORBIDDEN);
     await expect(response.json()).resolves.toEqual({
@@ -261,16 +209,7 @@ describe("createLinearRoutes", () => {
       new Error("boom")
     );
 
-    const response = await createApp().handle(
-      new Request("http://localhost/api/linear/token", {
-        method: "PUT",
-        headers: JSON_HEADERS,
-        body: JSON.stringify({
-          workspaceId: WORKSPACE.id,
-          accessToken: "linear-access-token",
-        }),
-      })
-    );
+    const response = await putLinearToken("linear-access-token");
 
     expect(response.status).toBe(HTTP_INTERNAL_ERROR);
     await expect(response.json()).resolves.toEqual({
@@ -288,11 +227,7 @@ describe("createLinearRoutes", () => {
       } as never,
     ]);
 
-    const response = await createApp().handle(
-      new Request(
-        `http://localhost/api/linear/teams?workspaceId=${WORKSPACE.id}`
-      )
-    );
+    const response = await linearRequest("teams");
 
     expect(response.status).toBe(HTTP_OK);
     await expect(response.json()).resolves.toEqual({
@@ -314,43 +249,16 @@ describe("createLinearRoutes", () => {
       name: "Engineering",
     } as never);
 
-    const response = await createApp().handle(
-      new Request("http://localhost/api/linear/team", {
-        method: "PUT",
-        headers: JSON_HEADERS,
-        body: JSON.stringify({
-          workspaceId: WORKSPACE.id,
-          teamId: "team-1",
-        }),
-      })
-    );
+    const response = await putLinearTeam("team-1");
 
     expect(response.status).toBe(HTTP_OK);
-    await expect(response.json()).resolves.toEqual({
-      connected: true,
-      user: {
-        id: "linear-user-1",
-        name: "Linear User",
-        email: "linear@example.com",
-      },
-      organization: {
-        id: "linear-org-1",
-        name: "Linear Org",
-      },
-      team: {
-        id: "team-1",
-        key: "ENG",
-        name: "Engineering",
-      },
-    });
+    await expect(response.json()).resolves.toEqual(
+      connectedPayload({ id: "team-1", key: "ENG", name: "Engineering" })
+    );
   });
 
   it("returns Linear issues for the linked team", async () => {
-    await insertConnectedIntegration({
-      teamId: "team-1",
-      teamKey: "ENG",
-      teamName: "Engineering",
-    });
+    await insertLinkedTeamIntegration();
     vi.spyOn(LinearClientModule, "listLinearTeamIssues").mockResolvedValue({
       nodes: [makeLinearIssue()],
       pageInfo: {
@@ -359,11 +267,7 @@ describe("createLinearRoutes", () => {
       },
     } as never);
 
-    const response = await createApp().handle(
-      new Request(
-        `http://localhost/api/linear/issues?workspaceId=${WORKSPACE.id}`
-      )
-    );
+    const response = await linearRequest("issues");
 
     expect(response.status).toBe(HTTP_OK);
     const payload = (await response.json()) as {
@@ -380,11 +284,7 @@ describe("createLinearRoutes", () => {
   });
 
   it("returns one Linear issue for the linked team", async () => {
-    await insertConnectedIntegration({
-      teamId: "team-1",
-      teamKey: "ENG",
-      teamName: "Engineering",
-    });
+    await insertLinkedTeamIntegration();
     vi.spyOn(LinearClientModule, "fetchLinearIssue").mockResolvedValue(
       makeLinearIssue({ description: "Investigate the issue details" }) as never
     );
@@ -442,6 +342,64 @@ async function insertConnectedIntegration(
     createdAt: new Date("2025-01-01T00:00:00Z"),
     updatedAt: new Date("2025-01-01T00:00:00Z"),
     ...overrides,
+  });
+}
+
+async function insertLinkedTeamIntegration() {
+  await insertConnectedIntegration({
+    teamId: "team-1",
+    teamKey: "ENG",
+    teamName: "Engineering",
+  });
+}
+
+function connectedPayload(team: Record<string, string> | null = null) {
+  return {
+    connected: true,
+    user: {
+      id: "linear-user-1",
+      name: "Linear User",
+      email: "linear@example.com",
+    },
+    organization: {
+      id: "linear-org-1",
+      name: "Linear Org",
+    },
+    team,
+  };
+}
+
+async function linearRequest(path: string, init?: RequestInit) {
+  const separator = path.includes("?") ? "&" : "?";
+  return await createApp().handle(
+    new Request(
+      `http://localhost/api/linear/${path}${separator}workspaceId=${WORKSPACE.id}`,
+      init
+    )
+  );
+}
+
+async function putLinearToken(accessToken: string) {
+  return await createApp().handle(
+    jsonRequest("token", "PUT", { workspaceId: WORKSPACE.id, accessToken })
+  );
+}
+
+async function putLinearTeam(teamId: string) {
+  return await createApp().handle(
+    jsonRequest("team", "PUT", { workspaceId: WORKSPACE.id, teamId })
+  );
+}
+
+function jsonRequest(
+  path: string,
+  method: string,
+  body: Record<string, unknown>
+) {
+  return new Request(`http://localhost/api/linear/${path}`, {
+    method,
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
   });
 }
 

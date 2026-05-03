@@ -1,6 +1,6 @@
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import type { Service } from "../config/schema";
-import { cells } from "./cells";
+import { cellIdColumn } from "./common-columns";
 
 const SERVICE_STATUSES = [
   "pending",
@@ -15,9 +15,7 @@ export type ServiceStatus = (typeof SERVICE_STATUSES)[number];
 
 export const cellServices = sqliteTable("cell_services", {
   id: text("id").primaryKey(),
-  cellId: text("cell_id")
-    .notNull()
-    .references(() => cells.id, { onDelete: "cascade" }),
+  cellId: cellIdColumn(),
   name: text("name").notNull(),
   type: text("type").notNull(),
   command: text("command").notNull(),

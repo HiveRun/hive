@@ -60,13 +60,22 @@ describe("resolveUninstallConfirmation", () => {
 });
 
 describe("resolveUninstallDataRetention", () => {
+  const resolveDataRetention = (
+    askConfirmation: () => Promise<string>,
+    overrides: Partial<Parameters<typeof resolveUninstallDataRetention>[0]> = {}
+  ) =>
+    resolveUninstallDataRetention({
+      keepDataByFlag: false,
+      shouldPrompt: false,
+      askConfirmation,
+      ...overrides,
+    });
+
   it("returns true when --keep-data is provided", async () => {
     const askConfirmation = vi.fn(async () => "n");
 
-    const result = await resolveUninstallDataRetention({
+    const result = await resolveDataRetention(askConfirmation, {
       keepDataByFlag: true,
-      shouldPrompt: false,
-      askConfirmation,
     });
 
     expect(result).toBe(true);
@@ -76,11 +85,7 @@ describe("resolveUninstallDataRetention", () => {
   it("returns false without prompt when no flag is provided", async () => {
     const askConfirmation = vi.fn(async () => "y");
 
-    const result = await resolveUninstallDataRetention({
-      keepDataByFlag: false,
-      shouldPrompt: false,
-      askConfirmation,
-    });
+    const result = await resolveDataRetention(askConfirmation);
 
     expect(result).toBe(false);
     expect(askConfirmation).not.toHaveBeenCalled();
@@ -89,10 +94,8 @@ describe("resolveUninstallDataRetention", () => {
   it("accepts interactive keep-data confirmation", async () => {
     const askConfirmation = vi.fn(async () => "y");
 
-    const result = await resolveUninstallDataRetention({
-      keepDataByFlag: false,
+    const result = await resolveDataRetention(askConfirmation, {
       shouldPrompt: true,
-      askConfirmation,
     });
 
     expect(result).toBe(true);
