@@ -1,4 +1,3 @@
-// jscpd:ignore-start
 import { Elysia } from "elysia";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { HiveConfig } from "../../config/schema";
@@ -50,13 +49,9 @@ describe("Cell routes workspace enforcement", () => {
       overrides: { resolveWorkspaceContext },
     });
 
-  beforeAll(async () => {
-    await setupTestDb();
-  });
+  beforeAll(setupTestDb);
 
-  beforeEach(async () => {
-    await testDb.delete(cells);
-  });
+  beforeEach(() => testDb.delete(cells));
 
   it("returns 400 when workspace context cannot be resolved", async () => {
     const app = new Elysia().use(
@@ -191,4 +186,3 @@ describe("Cell routes workspace enforcement", () => {
     expect(secondaryPayload.cells[0]?.id).toBe("cell-secondary");
   });
 });
-// jscpd:ignore-end

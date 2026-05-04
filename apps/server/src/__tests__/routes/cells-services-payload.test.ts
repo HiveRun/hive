@@ -1,17 +1,17 @@
-// jscpd:ignore-start
 import { createServer } from "node:net";
 
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { cells } from "../../schema/cells";
-import { cellServices } from "../../schema/services";
 import type { ChatTerminalSession } from "../../services/chat-terminal";
 import type { ProcessResourceSnapshot } from "../../services/resource-snapshot";
 import type { ServiceTerminalSession } from "../../services/service-terminal";
-import { setupTestDb, testDb } from "../test-db";
+import { setupTestDb } from "../test-db";
 import {
+  clearRouteServicesAndCells,
   createCellRouteTestApp,
   createCellRouteTestDependencies,
+  expectJsonPayload,
+  handleRouteRequest,
   seedRouteCellAndService,
 } from "./cells-route-test-helpers";
 
@@ -19,7 +19,6 @@ const TEST_WORKSPACE_ID = "test-workspace-services";
 const TEST_CELL_ID = "test-cell-services-id";
 const TEST_SERVICE_ID = "test-service-id";
 const LOG_TAIL_MAX_LINES = 200;
-const HTTP_OK = 200;
 const SMALL_OUTPUT_LINES = 50;
 const LARGE_OUTPUT_LINES = 320;
 const EXPECTED_FIRST_TAILED_LINE = 121;
@@ -104,6 +103,22 @@ function createMinimalDependencies(
     },
   });
 }
+
+const readServicesPayload = <TPayload>(
+  app: { handle: (request: Request) => Promise<Response> },
+  query = ""
+) =>
+  handleRouteRequest(app, `/api/cells/${TEST_CELL_ID}/services${query}`).then(
+    (response) => expectJsonPayload<TPayload>(response)
+  );
+
+const readFirstServicePayload = async <TService>(
+  app: { handle: (request: Request) => Promise<Response> },
+  query = ""
+) => {
+  const body = await readServicesPayload<{ services: TService[] }>(app, query);
+  return getFirstService(body.services);
+};
 
 async function insertCellAndServiceRecords(
   serviceName: string,
@@ -199,13 +214,10 @@ describe("GET /api/cells/:id/services payload", () => {
   let app: any;
   let harness: ReturnType<typeof createRuntimeHarness>;
 
-  beforeAll(async () => {
-    await setupTestDb();
-  });
+  beforeAll(setupTestDb);
 
   beforeEach(async () => {
-    await testDb.delete(cellServices);
-    await testDb.delete(cells);
+    await clearRouteServicesAndCells();
     harness = createRuntimeHarness();
     app = createCellRouteTestApp(createMinimalDependencies(harness));
   });
@@ -218,16 +230,10 @@ describe("GET /api/cells/:id/services payload", () => {
       buildLogLines(serviceName, SMALL_OUTPUT_LINES)
     );
 
-    const response = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const body = (await response.json()) as {
-      services: Array<{ logPath: string | null; recentLogs: string | null }>;
-    };
-
-    const service = getFirstService(body.services);
+    const service = await readFirstServicePayload<{
+      logPath: string | null;
+      recentLogs: string | null;
+    }>(app);
     expect(service.logPath).toBeNull();
     expect(service.recentLogs?.split("\n").length).toBe(SMALL_OUTPUT_LINES);
   });
@@ -240,16 +246,9 @@ describe("GET /api/cells/:id/services payload", () => {
       buildLogLines(serviceName, LARGE_OUTPUT_LINES)
     );
 
-    const response = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const body = (await response.json()) as {
-      services: Array<{ recentLogs: string | null }>;
-    };
-
-    const service = getFirstService(body.services);
+    const service = await readFirstServicePayload<{
+      recentLogs: string | null;
+    }>(app);
     const lines = service.recentLogs?.split("\n") ?? [];
     expect(lines.length).toBe(LOG_TAIL_MAX_LINES);
     expect(lines[0]).toBe(
@@ -265,16 +264,9 @@ describe("GET /api/cells/:id/services payload", () => {
     await insertCellAndServiceRecords(serviceName);
     harness.setServiceOutput(TEST_SERVICE_ID, "");
 
-    const response = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const body = (await response.json()) as {
-      services: Array<{ recentLogs: string | null }>;
-    };
-
-    const service = getFirstService(body.services);
+    const service = await readFirstServicePayload<{
+      recentLogs: string | null;
+    }>(app);
     expect(service.recentLogs).toBeNull();
   });
 
@@ -289,16 +281,10 @@ describe("GET /api/cells/:id/services payload", () => {
       status: "starting",
     });
 
-    const response = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const body = (await response.json()) as {
-      services: Array<{ portReachable?: boolean; port?: number }>;
-    };
-
-    const service = getFirstService(body.services);
+    const service = await readFirstServicePayload<{
+      portReachable?: boolean;
+      port?: number;
+    }>(app);
     expect(service.port).toBe(listener.port);
     expect(service.portReachable).toBe(true);
 
@@ -317,22 +303,11 @@ describe("GET /api/cells/:id/services payload", () => {
       resourceSampledAt: new Date().toISOString(),
     });
 
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/services?includeResources=true`
-      )
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const body = (await response.json()) as {
-      services: Array<{
-        cpuPercent?: number | null;
-        rssBytes?: number | null;
-        resourceSampledAt?: string;
-      }>;
-    };
-
-    const service = getFirstService(body.services);
+    const service = await readFirstServicePayload<{
+      cpuPercent?: number | null;
+      rssBytes?: number | null;
+      resourceSampledAt?: string;
+    }>(app, "?includeResources=true");
     expect(service.cpuPercent).toBe(EXPECTED_CPU_PERCENT);
     expect(service.rssBytes).toBe(EXPECTED_RSS_BYTES);
     expect(service.resourceSampledAt).toBeDefined();
@@ -344,16 +319,10 @@ describe("GET /api/cells/:id/services payload", () => {
       pid: process.pid,
     });
 
-    const response = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const body = (await response.json()) as {
-      services: Array<{ cpuPercent?: number | null; rssBytes?: number | null }>;
-    };
-
-    const service = getFirstService(body.services);
+    const service = await readFirstServicePayload<{
+      cpuPercent?: number | null;
+      rssBytes?: number | null;
+    }>(app);
     expect(service.cpuPercent).toBeUndefined();
     expect(service.rssBytes).toBeUndefined();
   });
@@ -364,25 +333,13 @@ describe("GET /api/cells/:id/services payload", () => {
       pid: 999_999,
     });
 
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/services?includeResources=true`
-      )
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const body = (await response.json()) as {
-      services: Array<{
-        cpuPercent?: number | null;
-        rssBytes?: number | null;
-        resourceUnavailableReason?: string;
-      }>;
-    };
-
-    const service = getFirstService(body.services);
+    const service = await readFirstServicePayload<{
+      cpuPercent?: number | null;
+      rssBytes?: number | null;
+      resourceUnavailableReason?: string;
+    }>(app, "?includeResources=true");
     expect(service.cpuPercent).toBeNull();
     expect(service.rssBytes).toBeNull();
     expect(service.resourceUnavailableReason).toBe("process_not_alive");
   });
 });
-// jscpd:ignore-end

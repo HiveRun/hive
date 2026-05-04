@@ -15,6 +15,26 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 const HTTP_OK_STATUS = 200;
 const NORMAL_WS_CLOSE_CODE = 1000;
 
+type MockWebSocketArgs = {
+  id: string;
+  params: { id: string; serviceId?: string };
+  query?: { themeMode?: string };
+};
+
+type MockWebSocketHandle = {
+  socket: unknown;
+  messages: Record<string, unknown>[];
+  isClosed: () => boolean;
+};
+
+type WebSocketHooks = {
+  open?: (socket: unknown) => unknown;
+  message?: (socket: unknown, message: unknown) => unknown;
+  close?: (socket: unknown, code: number, reason: string) => unknown;
+};
+
+type WebSocketRoute = { hooks?: { websocket?: WebSocketHooks } };
+
 export const createCellRouteTestApp = (dependencies: any) =>
   new Elysia().use(createCellsRoutes(dependencies));
 
@@ -24,6 +44,52 @@ export const createJsonRequest = (url: string, body: Record<string, unknown>) =>
     headers: JSON_HEADERS,
     body: JSON.stringify(body),
   });
+
+const createRouteRequest = (path: string, init?: RequestInit) =>
+  new Request(`http://localhost${path}`, init);
+
+const createPostRouteRequest = (
+  path: string,
+  body?: Record<string, unknown>,
+  init?: RequestInit
+) =>
+  createRouteRequest(path, {
+    method: "POST",
+    ...(body ? { headers: JSON_HEADERS, body: JSON.stringify(body) } : {}),
+    ...(init ?? {}),
+  });
+
+export const handleRouteRequest = (
+  app: { handle: (request: Request) => Promise<Response> },
+  path: string,
+  init?: RequestInit
+) => app.handle(createRouteRequest(path, init));
+
+export const handlePostRouteRequest = (
+  app: { handle: (request: Request) => Promise<Response> },
+  path: string,
+  body?: Record<string, unknown>,
+  init?: RequestInit
+) => app.handle(createPostRouteRequest(path, body, init));
+
+export const deleteRouteCellById = (
+  app: { handle: (request: Request) => Promise<Response> },
+  cellId: string
+) => handleRouteRequest(app, `/api/cells/${cellId}`, { method: "DELETE" });
+
+const expectResponseStatus = (response: Response, status = HTTP_OK_STATUS) => {
+  if (response.status !== status) {
+    throw new Error(`Expected status ${status}, got ${response.status}`);
+  }
+};
+
+export const expectJsonPayload = async <TPayload>(
+  response: Response,
+  status = HTTP_OK_STATUS
+) => {
+  expectResponseStatus(response, status);
+  return (await response.json()) as TPayload;
+};
 
 export const decodeEventChunk = (value: unknown): string => {
   if (typeof value === "string") {
@@ -38,7 +104,7 @@ export const decodeEventChunk = (value: unknown): string => {
   return "";
 };
 
-export const createEventStreamReader = (
+const createEventStreamReader = (
   response: Response,
   missingMessage = "Expected SSE reader"
 ) => {
@@ -57,29 +123,157 @@ export const expectEventStreamResponse = (
   response: Response,
   missingMessage?: string
 ) => {
-  if (response.status !== HTTP_OK_STATUS) {
-    throw new Error(`Expected status 200, got ${response.status}`);
-  }
+  expectResponseStatus(response);
   return createEventStreamReader(response, missingMessage);
 };
 
-export const getWebSocketHooks = (app: unknown, path: string) => {
+export const expectEventStreamHeaders = (response: Response) => {
+  expectResponseStatus(response);
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("text/event-stream")) {
+    throw new Error(`Expected event stream response, got ${contentType}`);
+  }
+};
+
+export const expectStreamEvent = async (
+  reader: { read: () => Promise<string> },
+  event: string,
+  expectedText?: string
+) => {
+  const text = await reader.read();
+  if (!text.includes(`event: ${event}`)) {
+    throw new Error(`Expected ${event} event, got ${text}`);
+  }
+  if (expectedText && !text.includes(expectedText)) {
+    throw new Error(`Expected event text ${expectedText}, got ${text}`);
+  }
+  return text;
+};
+
+export const expectReadyAndSnapshotEvents = async (reader: {
+  read: () => Promise<string>;
+}) => {
+  await expectStreamEvent(reader, "ready");
+  await expectStreamEvent(reader, "snapshot");
+};
+
+export const expectLiveDataEvent = async (args: {
+  reader: { read: () => Promise<string> };
+  emit: () => void;
+  expectedText: string;
+}) => {
+  args.emit();
+  await expectStreamEvent(args.reader, "data", args.expectedText);
+};
+
+export const expectPtyStreamData = async (args: {
+  response: Response;
+  missingMessage: string;
+  emit: () => void;
+  expectedText: string;
+}) => {
+  expectEventStreamHeaders(args.response);
+  const reader = await expectEventStreamResponse(
+    args.response,
+    args.missingMessage
+  );
+  await expectReadyAndSnapshotEvents(reader);
+  await expectLiveDataEvent({
+    reader,
+    emit: args.emit,
+    expectedText: args.expectedText,
+  });
+  await reader.cancel();
+};
+
+export const openRouteEventStream = async (
+  app: { handle: (request: Request) => Promise<Response> },
+  path: string,
+  missingMessage?: string
+) => {
+  const response = await handleRouteRequest(app, path);
+  expectEventStreamHeaders(response);
+  return createEventStreamReader(response, missingMessage);
+};
+
+export const expectResizePayload = async (
+  response: Response,
+  cols: number,
+  rows: number
+) => {
+  const payload = await expectJsonPayload<{
+    ok: boolean;
+    session: { cols: number; rows: number };
+  }>(response);
+  if (!payload.ok) {
+    throw new Error("Expected resize response ok");
+  }
+  if (payload.session.cols !== cols || payload.session.rows !== rows) {
+    throw new Error(
+      `Expected ${cols}x${rows}, got ${payload.session.cols}x${payload.session.rows}`
+    );
+  }
+};
+
+const expectPtyResizeResponse = async (args: {
+  response: Response;
+  resize: unknown;
+  cellId: string;
+  cols: number;
+  rows: number;
+}) => {
+  expectResponseStatus(args.response);
+  if (!mockWasCalledWith(args.resize, [args.cellId, args.cols, args.rows])) {
+    throw new Error(`Expected PTY resize ${args.cols}x${args.rows}`);
+  }
+  await expectResizePayload(args.response, args.cols, args.rows);
+};
+
+export const expectPtyRestartResponse = (args: {
+  response: Response;
+  closeSession: unknown;
+  ensureSession: unknown;
+  cellId: string;
+  ensureArgs: Record<string, unknown>;
+}) => {
+  expectResponseStatus(args.response);
+  if (!mockWasCalledWith(args.closeSession, [args.cellId])) {
+    throw new Error("Expected restart to close PTY session");
+  }
+  if (!mockWasCalledWithObject(args.ensureSession, args.ensureArgs)) {
+    throw new Error("Expected restart to recreate PTY session");
+  }
+};
+
+export const expectSeededPtyResize = async (args: {
+  postAction: (
+    action: "resize",
+    body: Record<string, unknown>
+  ) => Promise<{ harness: { resize: unknown }; response: Response }>;
+  cellId: string;
+  cols: number;
+  rows: number;
+}) => {
+  const result = await args.postAction("resize", {
+    cols: args.cols,
+    rows: args.rows,
+  });
+  await expectPtyResizeResponse({
+    response: result.response,
+    resize: result.harness.resize,
+    cellId: args.cellId,
+    cols: args.cols,
+    rows: args.rows,
+  });
+};
+
+const getWebSocketHooks = (app: unknown, path: string) => {
   const routes = (app as { router: { history: unknown[] } }).router.history;
   const route = routes.find(
     (entry) =>
       (entry as { method?: string }).method === "WS" &&
       (entry as { path?: string }).path === path
-  ) as
-    | {
-        hooks?: {
-          websocket?: {
-            open?: (ws: unknown) => unknown;
-            message?: (ws: unknown, message: unknown) => unknown;
-            close?: (ws: unknown, code: number, reason: string) => unknown;
-          };
-        };
-      }
-    | undefined;
+  ) as WebSocketRoute | undefined;
 
   if (!route?.hooks?.websocket) {
     throw new Error(`Websocket route not found for ${path}`);
@@ -88,11 +282,7 @@ export const getWebSocketHooks = (app: unknown, path: string) => {
   return route.hooks.websocket;
 };
 
-export const createMockWebSocket = (args: {
-  id: string;
-  params: { id: string; serviceId?: string };
-  query?: { themeMode?: string };
-}) => {
+const createMockWebSocket = (args: MockWebSocketArgs) => {
   const messages: Record<string, unknown>[] = [];
   let closed = false;
 
@@ -119,12 +309,25 @@ export const createMockWebSocket = (args: {
   };
 };
 
+export const openMockWebSocket = async (
+  args: {
+    app: unknown;
+    path: string;
+  } & MockWebSocketArgs
+) => {
+  const { app, path, ...socketArgs } = args;
+  const hooks = getWebSocketHooks(app, path);
+  const ws = createMockWebSocket(socketArgs);
+  await hooks.open?.(ws.socket);
+  return { hooks, ws };
+};
+
 const webSocketSent = (
   ws: { messages: Record<string, unknown>[] },
   predicate: (entry: Record<string, unknown>) => boolean
 ) => ws.messages.some(predicate);
 
-export const assertWebSocketMessage = (
+const assertWebSocketMessage = (
   ws: { messages: Record<string, unknown>[] },
   predicate: (entry: Record<string, unknown>) => boolean
 ) => {
@@ -133,18 +336,235 @@ export const assertWebSocketMessage = (
   }
 };
 
-export const assertWebSocketType = (
+const assertWebSocketType = (
   ws: { messages: Record<string, unknown>[] },
   type: string
 ) => assertWebSocketMessage(ws, (entry) => entry.type === type);
 
-export const sendWebSocketJson = (
-  hooks: { message?: (socket: unknown, message: unknown) => unknown },
+const expectWebSocketStartupError = (
+  ws: { messages: Record<string, unknown>[]; isClosed: () => boolean },
+  message: string
+) => {
+  assertWebSocketMessage(
+    ws,
+    (entry) => entry.type === "error" && entry.message === message
+  );
+  if (!ws.isClosed()) {
+    throw new Error("Expected websocket startup failure to close socket");
+  }
+};
+
+export const expectFailedWebSocketOpen = async (
+  args: {
+    app: unknown;
+    path: string;
+    message: string;
+  } & MockWebSocketArgs
+) => {
+  const { message, ...socketArgs } = args;
+  const { ws } = await openMockWebSocket(socketArgs);
+  expectWebSocketStartupError(ws, message);
+};
+
+const sendWebSocketJson = (
+  hooks: WebSocketHooks,
   socket: unknown,
   payload: Record<string, unknown>
 ) => hooks.message?.(socket, JSON.stringify(payload));
 
-export const closeWebSocketNormally = (
+const mockWasCalledWith = (mock: unknown, expected: unknown[]) => {
+  const calls = (mock as { mock?: { calls?: unknown[][] } }).mock?.calls ?? [];
+  return calls.some(
+    (call) => stableStringify(call) === stableStringify(expected)
+  );
+};
+
+const stableStringify = (value: unknown): string => {
+  if (!value || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>).sort(
+    ([left], [right]) => left.localeCompare(right)
+  );
+  return `{${entries
+    .map(
+      ([key, entryValue]) =>
+        `${JSON.stringify(key)}:${stableStringify(entryValue)}`
+    )
+    .join(",")}}`;
+};
+
+const mockCallCount = (mock: unknown) =>
+  (mock as { mock?: { calls?: unknown[][] } }).mock?.calls?.length ?? 0;
+
+const mockWasCalledWithObject = (
+  mock: unknown,
+  expected: Record<string, unknown>
+) => {
+  const calls = (mock as { mock?: { calls?: unknown[][] } }).mock?.calls ?? [];
+  return calls.some((call) => {
+    const actual = call[0] as Record<string, unknown> | undefined;
+    return Object.entries(expected).every(
+      ([key, value]) =>
+        stableStringify(actual?.[key]) === stableStringify(value)
+    );
+  });
+};
+
+const sendWebSocketInputAndAssert = async (args: {
+  hooks: WebSocketHooks;
+  socket: unknown;
+  write: unknown;
+  cellId: string;
+  data: string;
+}) => {
+  await sendWebSocketJson(args.hooks, args.socket, {
+    type: "input",
+    data: args.data,
+  });
+  if (!mockWasCalledWith(args.write, [args.cellId, args.data])) {
+    throw new Error(`Expected websocket input ${args.data}`);
+  }
+};
+
+const sendWebSocketResizeAndAssert = async (args: {
+  hooks: WebSocketHooks;
+  socket: unknown;
+  resize: unknown;
+  cellId: string;
+  cols: number;
+  rows: number;
+}) => {
+  await sendWebSocketJson(args.hooks, args.socket, {
+    type: "resize",
+    cols: args.cols,
+    rows: args.rows,
+  });
+  if (!mockWasCalledWith(args.resize, [args.cellId, args.cols, args.rows])) {
+    throw new Error(`Expected websocket resize ${args.cols}x${args.rows}`);
+  }
+};
+
+const sendHandleInputAndAssert = async (
+  args: {
+    hooks: WebSocketHooks;
+    ws: MockWebSocketHandle;
+    write: unknown;
+    cellId: string;
+  },
+  data: string
+) =>
+  sendWebSocketInputAndAssert({
+    hooks: args.hooks,
+    socket: args.ws.socket,
+    write: args.write,
+    cellId: args.cellId,
+    data,
+  });
+
+const expectSocketOpenAfterNormalClose = (args: {
+  hooks: WebSocketHooks;
+  ws: MockWebSocketHandle;
+}) => {
+  closeWebSocketNormally(args.hooks, args.ws.socket);
+  if (args.ws.isClosed()) {
+    throw new Error("Expected normal websocket close to keep socket open");
+  }
+};
+
+const exerciseCachedRestartWebSocket = async (args: {
+  hooks: WebSocketHooks;
+  ws: MockWebSocketHandle;
+  cellId: string;
+  deleteCell: () => Promise<void>;
+  write: unknown;
+  closeSession: unknown;
+}) => {
+  await args.deleteCell();
+  await sendHandleInputAndAssert(args, "cached\n");
+  await sendWebSocketJson(args.hooks, args.ws.socket, { type: "restart" });
+  if (!mockWasCalledWith(args.closeSession, [args.cellId])) {
+    throw new Error("Expected websocket restart to close session");
+  }
+  assertWebSocketMessage(
+    args.ws,
+    (entry) => entry.type === "snapshot" && typeof entry.output === "string"
+  );
+  expectSocketOpenAfterNormalClose(args);
+};
+
+export const exercisePtyWebSocketActions = async (args: {
+  hooks: WebSocketHooks;
+  ws: MockWebSocketHandle;
+  cellId: string;
+  input: string;
+  cols: number;
+  rows: number;
+  write: unknown;
+  resize: unknown;
+  closeSession: unknown;
+  deleteCell: () => Promise<void>;
+  invalidResize?: { cols: number; rows: number; message: string };
+}) => {
+  assertWebSocketType(args.ws, "ready");
+  await sendHandleInputAndAssert(args, args.input);
+  await sendWebSocketResizeAndAssert({
+    hooks: args.hooks,
+    socket: args.ws.socket,
+    resize: args.resize,
+    cellId: args.cellId,
+    cols: args.cols,
+    rows: args.rows,
+  });
+  if (args.invalidResize) {
+    await sendWebSocketJson(args.hooks, args.ws.socket, {
+      type: "resize",
+      cols: args.invalidResize.cols,
+      rows: args.invalidResize.rows,
+    });
+    if (mockCallCount(args.resize) !== 1) {
+      throw new Error("Expected invalid websocket resize to be rejected");
+    }
+    assertWebSocketMessage(
+      args.ws,
+      (entry) =>
+        entry.type === "error" && entry.message === args.invalidResize?.message
+    );
+  }
+  await exerciseCachedRestartWebSocket(args);
+};
+
+export const exerciseBasicTerminalWebSocket = async (args: {
+  hooks: WebSocketHooks;
+  ws: MockWebSocketHandle;
+  input: string;
+  cols: number;
+  rows: number;
+  readInputs: () => string[];
+}) => {
+  assertWebSocketType(args.ws, "ready");
+  await sendWebSocketJson(args.hooks, args.ws.socket, {
+    type: "input",
+    data: args.input,
+  });
+  if (JSON.stringify(args.readInputs()) !== JSON.stringify([args.input])) {
+    throw new Error(`Expected websocket input ${args.input}`);
+  }
+  await sendWebSocketJson(args.hooks, args.ws.socket, {
+    type: "resize",
+    cols: args.cols,
+    rows: args.rows,
+  });
+  assertWebSocketType(args.ws, "ready");
+  await sendWebSocketJson(args.hooks, args.ws.socket, { type: "ping" });
+  assertWebSocketType(args.ws, "pong");
+  expectSocketOpenAfterNormalClose(args);
+};
+
+const closeWebSocketNormally = (
   hooks: { close?: (socket: unknown, code: number, reason: string) => unknown },
   socket: unknown
 ) => hooks.close?.(socket, NORMAL_WS_CLOSE_CODE, "closed");
@@ -408,6 +828,21 @@ export const seedRouteService = async (
   });
 };
 
+export const createRouteServiceTerminalSession = (args: {
+  sessionId: string;
+  pid: number;
+  cwd?: string;
+}) => ({
+  sessionId: args.sessionId,
+  pid: args.pid,
+  cwd: args.cwd ?? DEFAULT_TEST_WORKTREE,
+  cols: 120,
+  rows: 36,
+  status: "running" as const,
+  exitCode: null,
+  startedAt: new Date().toISOString(),
+});
+
 export const seedRouteCellAndService = async (
   args: {
     cell?: Parameters<typeof seedRouteCell>[0];
@@ -417,4 +852,9 @@ export const seedRouteCellAndService = async (
   const cellId = args.cell?.id ?? args.service?.cellId ?? DEFAULT_TEST_CELL_ID;
   await seedRouteCell({ ...(args.cell ?? {}), id: cellId });
   await seedRouteService({ ...(args.service ?? {}), cellId });
+};
+
+export const clearRouteServicesAndCells = async () => {
+  await testDb.delete(cellServices);
+  await testDb.delete(cells);
 };

@@ -21,16 +21,14 @@ import {
   createCellRouteTestDependencies,
   DEFAULT_TEST_WORKSPACE_ID,
   decodeEventChunk,
+  deleteRouteCellById,
+  handleRouteRequest,
   seedRouteCell,
 } from "./cells-route-test-helpers";
 
-const TEST_WORKSPACE_ID = DEFAULT_TEST_WORKSPACE_ID;
 const TEST_CELL_ID = "test-cell-id";
 const HTTP_OK = 200;
 const HTTP_NOT_FOUND = 404;
-
-const createMinimalDependencies = () =>
-  createCellRouteTestDependencies({ cellId: TEST_CELL_ID });
 
 /**
  * Check if a 404 response is from Elysia's "route not found" vs our handler.
@@ -56,22 +54,21 @@ describe("cells route reachability", () => {
 
   beforeAll(async () => {
     await setupTestDb();
-    const routes = createCellsRoutes(createMinimalDependencies());
+    const routes = createCellsRoutes(
+      createCellRouteTestDependencies({ cellId: TEST_CELL_ID })
+    );
     app = new Elysia().use(routes);
   });
 
-  beforeEach(async () => {
-    await testDb.delete(cells);
-  });
+  beforeEach(() => testDb.delete(cells));
 
   /**
    * Routes that don't require existing resources - should return 200
    */
   it("GET /api/cells/workspace/:id/stream is reachable and returns SSE", async () => {
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/workspace/${TEST_WORKSPACE_ID}/stream`
-      )
+    const response = await handleRouteRequest(
+      app,
+      `/api/cells/workspace/${DEFAULT_TEST_WORKSPACE_ID}/stream`
     );
 
     expect(response.status).toBe(HTTP_OK);
@@ -174,9 +171,7 @@ describe("cells route reachability", () => {
 
   for (const [method, path, description] of resourceRoutes) {
     it(`${method} ${path} route is matched (${description})`, async () => {
-      const response = await app.handle(
-        new Request(`http://localhost${path}`, { method })
-      );
+      const response = await handleRouteRequest(app, path, { method });
 
       // The route should be matched (not Elysia's default NOT_FOUND)
       // It will return 404 "Cell not found" which is fine - the route was matched
@@ -195,10 +190,9 @@ describe("cells route reachability", () => {
    * /workspace/:workspaceId/stream, causing "workspace" to be matched as a cell ID.
    */
   it("SSE stream route is not shadowed by /:id route", async () => {
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/workspace/${TEST_WORKSPACE_ID}/stream`
-      )
+    const response = await handleRouteRequest(
+      app,
+      `/api/cells/workspace/${DEFAULT_TEST_WORKSPACE_ID}/stream`
     );
 
     // Should get SSE response, not a "Cell not found" from /:id handler
@@ -217,10 +211,9 @@ describe("cells route reachability", () => {
       baseCommit: "abc123",
     });
 
-    const streamResponse = await app.handle(
-      new Request(
-        `http://localhost/api/cells/workspace/${TEST_WORKSPACE_ID}/stream`
-      )
+    const streamResponse = await handleRouteRequest(
+      app,
+      `/api/cells/workspace/${DEFAULT_TEST_WORKSPACE_ID}/stream`
     );
 
     expect(streamResponse.status).toBe(HTTP_OK);
@@ -236,11 +229,7 @@ describe("cells route reachability", () => {
     expect(initialCell).toContain(TEST_CELL_ID);
     await readSseChunk(reader); // snapshot
 
-    const deleteResponse = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}`, {
-        method: "DELETE",
-      })
-    );
+    const deleteResponse = await deleteRouteCellById(app, TEST_CELL_ID);
     expect(deleteResponse.status).toBe(HTTP_OK);
 
     const removalEvent = await readSseChunk(reader);

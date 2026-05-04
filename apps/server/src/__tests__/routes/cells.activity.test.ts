@@ -1,4 +1,3 @@
-// jscpd:ignore-start
 import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { cellActivityEvents } from "../../schema/activity-events";
@@ -9,6 +8,10 @@ import { setupTestDb, testDb } from "../test-db";
 import {
   createCellRouteTestApp,
   createCellRouteTestDependencies,
+  deleteRouteCellById,
+  expectJsonPayload,
+  handlePostRouteRequest,
+  handleRouteRequest,
   seedRouteCellAndService,
 } from "./cells-route-test-helpers";
 
@@ -67,10 +70,28 @@ async function seedCellAndService() {
 const createTestApp = (overrides?: MinimalDependencyOverrides) =>
   createCellRouteTestApp(createMinimalDependencies(overrides));
 
+const callServiceAction = (
+  app: { handle: (request: Request) => Promise<Response> },
+  action: string,
+  headers?: HeadersInit
+) =>
+  handlePostRouteRequest(
+    app,
+    `/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/${action}`,
+    undefined,
+    headers ? { headers } : undefined
+  );
+
+const readActivityPayload = <TPayload>(
+  app: { handle: (request: Request) => Promise<Response> },
+  query = ""
+) =>
+  handleRouteRequest(app, `/api/cells/${TEST_CELL_ID}/activity${query}`).then(
+    (response) => expectJsonPayload<TPayload>(response)
+  );
+
 describe("Cell activity events", () => {
-  beforeAll(async () => {
-    await setupTestDb();
-  });
+  beforeAll(setupTestDb);
 
   beforeEach(async () => {
     await testDb.delete(cellTimingEvents);
@@ -84,33 +105,21 @@ describe("Cell activity events", () => {
 
     const app = createTestApp();
 
-    const stopResponse = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/stop`,
-        {
-          method: "POST",
-          headers: {
-            "x-hive-source": "opencode",
-            "x-hive-tool": "hive_restart_service",
-          },
-        }
-      )
-    );
+    const stopResponse = await callServiceAction(app, "stop", {
+      "x-hive-source": "opencode",
+      "x-hive-tool": "hive_restart_service",
+    });
 
     expect(stopResponse.status).toBe(HTTP_OK);
 
-    const activityResponse = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/activity`)
-    );
-    expect(activityResponse.status).toBe(HTTP_OK);
-    const payload = (await activityResponse.json()) as {
+    const payload = await readActivityPayload<{
       events: Array<{
         type: string;
         serviceId: string | null;
         toolName: string | null;
       }>;
       nextCursor: string | null;
-    };
+    }>(app);
 
     expect(payload.nextCursor).toBeNull();
     expect(payload.events.some((event) => event.type === "service.stop")).toBe(
@@ -129,28 +138,16 @@ describe("Cell activity events", () => {
 
     const app = createTestApp();
 
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/restart`,
-        {
-          method: "POST",
-          headers: {
-            "x-hive-source": "opencode",
-            "x-hive-tool": "hive_restart_service",
-          },
-        }
-      )
-    );
+    const response = await callServiceAction(app, "restart", {
+      "x-hive-source": "opencode",
+      "x-hive-tool": "hive_restart_service",
+    });
 
     expect(response.status).toBe(HTTP_OK);
 
-    const activityResponse = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/activity`)
-    );
-    expect(activityResponse.status).toBe(HTTP_OK);
-    const body = (await activityResponse.json()) as {
+    const body = await readActivityPayload<{
       events: Array<{ type: string; metadata: Record<string, unknown> }>;
-    };
+    }>(app);
 
     const restartEvent = body.events.find(
       (event) => event.type === "service.restart"
@@ -187,13 +184,9 @@ describe("Cell activity events", () => {
     );
     expect(cellResponse.status).toBe(HTTP_OK);
 
-    const activityResponse = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/activity`)
-    );
-    expect(activityResponse.status).toBe(HTTP_OK);
-    const payload = (await activityResponse.json()) as {
+    const payload = await readActivityPayload<{
       events: Array<{ type: string; serviceId: string | null }>;
-    };
+    }>(app);
 
     const serviceLogEvent = payload.events.find(
       (event) => event.type === "service.logs.read"
@@ -262,10 +255,9 @@ describe("Cell activity events", () => {
 
     const app = createTestApp();
 
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/timings?workflow=create&runId=${createRunId}`
-      )
+    const response = await handleRouteRequest(
+      app,
+      `/api/cells/${TEST_CELL_ID}/timings?workflow=create&runId=${createRunId}`
     );
     expect(response.status).toBe(HTTP_OK);
 
@@ -312,11 +304,7 @@ describe("Cell activity events", () => {
         Promise.reject(new Error("remove workspace failed")),
     });
 
-    const deleteResponse = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}`, {
-        method: "DELETE",
-      })
-    );
+    const deleteResponse = await deleteRouteCellById(app, TEST_CELL_ID);
     expect(deleteResponse.status).toBe(HTTP_OK);
 
     const remainingCell = await testDb
@@ -332,45 +320,26 @@ describe("Cell activity events", () => {
 
     const app = createTestApp();
 
-    await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/stop`,
-        { method: "POST" }
-      )
-    );
+    await callServiceAction(app, "stop");
 
     await new Promise((resolve) => setTimeout(resolve, 2));
 
-    await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/start`,
-        { method: "POST" }
-      )
-    );
+    await callServiceAction(app, "start");
 
-    const firstPage = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/activity?limit=1`)
-    );
-    expect(firstPage.status).toBe(HTTP_OK);
-    const firstPayload = (await firstPage.json()) as {
+    const firstPayload = await readActivityPayload<{
       events: Array<{ type: string }>;
       nextCursor: string | null;
-    };
+    }>(app, "?limit=1");
 
     expect(firstPayload.events).toHaveLength(1);
     expect(firstPayload.nextCursor).not.toBeNull();
 
-    const secondPage = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/activity?limit=1&cursor=${encodeURIComponent(
-          firstPayload.nextCursor ?? ""
-        )}`
-      )
-    );
-    expect(secondPage.status).toBe(HTTP_OK);
-    const secondPayload = (await secondPage.json()) as {
+    const secondPayload = await readActivityPayload<{
       events: Array<{ type: string }>;
-    };
+    }>(
+      app,
+      `?limit=1&cursor=${encodeURIComponent(firstPayload.nextCursor ?? "")}`
+    );
 
     expect(secondPayload.events).toHaveLength(1);
     expect(secondPayload.events[0]?.type).not.toBe(
@@ -378,4 +347,3 @@ describe("Cell activity events", () => {
     );
   });
 });
-// jscpd:ignore-end

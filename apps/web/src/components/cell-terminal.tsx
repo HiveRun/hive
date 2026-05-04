@@ -9,51 +9,36 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
+import { API_BASE } from "@/components/terminal-shared";
 import {
-  API_BASE,
-  appendTerminalOutput,
-  SOCKET_RECONNECT_DELAY_MS,
-  TERMINAL_FONT_FAMILY,
-  useTerminalInputBatcher,
-} from "@/components/terminal-shared";
-import {
-  clearTerminalTimers,
-  keepExitedOrDisconnected,
-  keepExitedOrOnline,
+  assignTerminalSocketMessageHandler,
+  BASE_TERMINAL_OPTIONS,
+  disposeTerminalRuntime,
+  handleTerminalDataMessage,
+  handleTerminalExitMessage,
+  handleTerminalSocketClose,
+  initializeTerminalInteractions,
+  loadTerminalBaseModules,
   recoverConnectingConnection,
-  TerminalStatusHeader,
-  terminalDataChunk,
-  terminalExitCode,
+  registerTerminalResizeObserver,
+  registerTerminalSelectionCopy,
+  syncTerminalSizeFromSession,
+  TerminalFrame,
+  type TerminalRuntimeSession,
+  terminalConnectionPresentation,
   terminalFooter,
-  terminalSnapshotOutput,
   terminalSocketErrorMessage,
-  useCopyTerminalOutput,
-  useTerminalResizeSync,
-  useTerminalSocketSender,
-  writeTerminalSnapshot,
+  useTerminalSocketControls,
+  writeTerminalSnapshotMessage,
 } from "@/components/terminal-view-shared";
 import { Button } from "@/components/ui/button";
-import {
-  copyTextToClipboard,
-  registerTerminalClipboard,
-} from "@/lib/terminal-clipboard";
-import {
-  parseTerminalSocketMessage,
-  toWebSocketUrl,
-} from "@/lib/terminal-websocket";
+import { copyTextToClipboard } from "@/lib/terminal-clipboard";
+import { toWebSocketUrl } from "@/lib/terminal-websocket";
 
 type ConnectionState = "connecting" | "online" | "disconnected" | "exited";
 
-type TerminalSession = {
-  sessionId: string;
+type TerminalSession = TerminalRuntimeSession & {
   cellId: string;
-  pid: number;
-  cwd: string;
-  cols: number;
-  rows: number;
-  status: "running" | "exited";
-  exitCode: number | null;
-  startedAt: string;
 };
 
 const WHEEL_LINE_UP_SEQUENCE = "\u001b\u0019";
@@ -332,47 +317,22 @@ export function CellTerminal({
     [buildTerminalEndpoint]
   );
 
-  const sendSocketMessage = useTerminalSocketSender({
+  const {
+    copyTerminalOutput,
+    flushQueuedInput,
+    resetInputBatcher,
+    scheduleResizeSync,
+    sendInput,
+    sendSocketMessage,
+  } = useTerminalSocketControls({
+    inputEnabled: true,
+    outputRef,
+    resizeTimeoutRef,
+    serializeAddonRef,
     setConnection,
     setErrorMessage,
+    setSession,
     socketRef,
-  });
-
-  const sendInputMessage = useCallback(
-    (data: string) => {
-      sendSocketMessage({ type: "input", data });
-    },
-    [sendSocketMessage]
-  );
-  const { flushQueuedInput, resetInputBatcher, sendInput } =
-    useTerminalInputBatcher({
-      enabled: true,
-      sendInputMessage,
-    });
-
-  const sendResize = useCallback(
-    (cols: number, rows: number) => {
-      const sent = sendSocketMessage({ type: "resize", cols, rows });
-      if (!sent) {
-        throw new Error("Terminal socket unavailable");
-      }
-
-      setSession((current) =>
-        current
-          ? {
-              ...current,
-              cols,
-              rows,
-            }
-          : current
-      );
-    },
-    [sendSocketMessage]
-  );
-
-  const scheduleResizeSync = useTerminalResizeSync({
-    resizeTimeoutRef,
-    sendResize,
     terminalRef,
   });
 
@@ -381,11 +341,6 @@ export function CellTerminal({
     setTerminalOutputLength(nextOutput.length);
     setTerminalOutputUpdatedAt(Date.now());
   }, []);
-
-  const copyTerminalOutput = useCopyTerminalOutput({
-    outputRef,
-    serializeAddonRef,
-  });
 
   const copyConnectCommand = useCallback(async () => {
     if (!connectCommand) {
@@ -449,151 +404,113 @@ export function CellTerminal({
       socketRef.current = socket;
       socketCloseErrorRef.current = null;
 
-      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: message handling needs full event-state matrix for terminal sync.
-      socket.onmessage = (event) => {
-        if (disposed) {
-          return;
-        }
-
-        const message = parseTerminalSocketMessage(event);
-        if (!message) {
-          return;
-        }
-
-        if (message.type === "ready") {
-          const payload = (message.session ?? null) as TerminalSession | null;
-          if (!payload) {
+      assignTerminalSocketMessageHandler({
+        isDisposed: () => disposed,
+        socket,
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: terminal event matrix is intentionally handled together.
+        onMessage: (message) => {
+          if (message.type === "ready") {
+            const payload = (message.session ?? null) as TerminalSession | null;
+            if (!payload) {
+              return;
+            }
+            setSession(payload);
+            setConnection(payload.status === "exited" ? "exited" : "online");
+            setErrorMessage(null);
+            socketCloseErrorRef.current = null;
+            if (startupReadiness === "session") {
+              setIsStartupReady(true);
+            }
+            if (restartPendingRef.current) {
+              restartPendingRef.current = false;
+              setIsRestarting(false);
+              toast.success("Terminal restarted");
+            }
+            syncTerminalSizeFromSession({
+              cols: payload.cols,
+              rows: payload.rows,
+              scheduleResizeSync,
+              terminalRef,
+            });
             return;
           }
-          setSession(payload);
-          setConnection(payload.status === "exited" ? "exited" : "online");
-          setErrorMessage(null);
-          socketCloseErrorRef.current = null;
-          if (startupReadiness === "session") {
-            setIsStartupReady(true);
-          }
-          if (restartPendingRef.current) {
-            restartPendingRef.current = false;
-            setIsRestarting(false);
-            toast.success("Terminal restarted");
-          }
-          const activeTerminal = terminalRef.current;
-          if (
-            activeTerminal &&
-            (payload.cols !== activeTerminal.cols ||
-              payload.rows !== activeTerminal.rows)
-          ) {
+
+          if (message.type === "snapshot") {
+            const snapshotResult = writeTerminalSnapshotMessage({
+              message,
+              outputRef,
+              terminalRef,
+            });
+            if (!snapshotResult) {
+              return;
+            }
+
+            if (snapshotResult.outputChanged) {
+              recordOutputActivity(snapshotResult.snapshot);
+            }
+            visibleOutputRef.current = extractVisibleText(
+              snapshotResult.snapshot
+            ).slice(-STARTUP_VISIBLE_BUFFER_LIMIT);
+            setTerminalVisibleOutputLength(visibleOutputRef.current.length);
+            updateStartupReadiness(visibleOutputRef.current);
             scheduleResizeSync();
-          }
-          return;
-        }
-
-        if (message.type === "snapshot") {
-          const terminal = terminalRef.current;
-          if (!terminal) {
             return;
           }
 
-          const snapshot = terminalSnapshotOutput(message);
-          const outputChanged = writeTerminalSnapshot({
-            outputRef,
-            snapshot,
-            terminal,
-          });
-          if (outputChanged) {
-            recordOutputActivity(snapshot);
-          }
-          visibleOutputRef.current = extractVisibleText(snapshot).slice(
-            -STARTUP_VISIBLE_BUFFER_LIMIT
-          );
-          setTerminalVisibleOutputLength(visibleOutputRef.current.length);
-          updateStartupReadiness(visibleOutputRef.current);
-          scheduleResizeSync();
-          return;
-        }
-
-        if (message.type === "data") {
-          const terminal = terminalRef.current;
-          if (!terminal) {
+          if (message.type === "data") {
+            handleTerminalDataMessage({
+              afterWrite: (result) => {
+                visibleOutputRef.current = appendVisibleBuffer(
+                  visibleOutputRef.current,
+                  result.chunk
+                );
+                setTerminalVisibleOutputLength(visibleOutputRef.current.length);
+                updateStartupReadiness(visibleOutputRef.current);
+                recordOutputActivity(result.output);
+              },
+              message,
+              outputRef,
+              setConnection,
+              terminalRef,
+            });
             return;
           }
 
-          const chunk = terminalDataChunk(message);
-          if (chunk.length === 0) {
+          if (message.type === "exit") {
+            handleTerminalExitMessage({ message, setConnection, setSession });
             return;
           }
 
-          terminal.write(chunk);
-          outputRef.current = appendTerminalOutput(outputRef.current, chunk);
-          visibleOutputRef.current = appendVisibleBuffer(
-            visibleOutputRef.current,
-            chunk
-          );
-          setTerminalVisibleOutputLength(visibleOutputRef.current.length);
-          updateStartupReadiness(visibleOutputRef.current);
-          recordOutputActivity(outputRef.current);
-          setConnection(keepExitedOrOnline);
-          return;
-        }
-
-        if (message.type === "exit") {
-          const exitCode = terminalExitCode(message);
-          setConnection("exited");
-          setSession((current) =>
-            current
-              ? {
-                  ...current,
-                  status: "exited",
-                  exitCode,
-                }
-              : current
-          );
-          return;
-        }
-
-        if (message.type === "error") {
-          const description = terminalSocketErrorMessage(message);
-          if (restartPendingRef.current) {
-            restartPendingRef.current = false;
-            setIsRestarting(false);
-            toast.error(description);
+          if (message.type === "error") {
+            const description = terminalSocketErrorMessage(message);
+            if (restartPendingRef.current) {
+              restartPendingRef.current = false;
+              setIsRestarting(false);
+              toast.error(description);
+            }
+            setConnection(recoverConnectingConnection);
+            setErrorMessage(description);
+            socketCloseErrorRef.current = description;
           }
-          setConnection(recoverConnectingConnection);
-          setErrorMessage(description);
-          socketCloseErrorRef.current = description;
-        }
-      };
+        },
+      });
 
       socket.onclose = () => {
-        if (disposed) {
-          return;
-        }
-
-        const closeErrorMessage = socketCloseErrorRef.current;
-        socketCloseErrorRef.current = null;
-
-        if (restartPendingRef.current) {
-          restartPendingRef.current = false;
-          setIsRestarting(false);
-          toast.error("Terminal restart interrupted");
-        }
-
-        setConnection(keepExitedOrDisconnected);
-        setErrorMessage(
-          closeErrorMessage ?? "Terminal socket disconnected. Reconnecting…"
-        );
-
-        if (reconnectTimeoutRef.current !== null) {
-          return;
-        }
-
-        reconnectTimeoutRef.current = window.setTimeout(() => {
-          reconnectTimeoutRef.current = null;
-          if (disposed) {
-            return;
-          }
-          connectStream();
-        }, SOCKET_RECONNECT_DELAY_MS);
+        handleTerminalSocketClose({
+          beforeReconnect: () => {
+            if (restartPendingRef.current) {
+              restartPendingRef.current = false;
+              setIsRestarting(false);
+              toast.error("Terminal restart interrupted");
+            }
+          },
+          connectStream,
+          isDisposed: () => disposed,
+          reconnectTimeoutRef,
+          setConnection,
+          setErrorMessage,
+          socketCloseErrorRef,
+        });
       };
 
       socket.onerror = () => {
@@ -602,30 +519,16 @@ export function CellTerminal({
     };
 
     const initializeTerminal = async () => {
-      const [
-        { Terminal },
-        { FitAddon },
-        { SerializeAddon },
-        { WebLinksAddon },
-      ] = await Promise.all([
-        import("@xterm/xterm"),
-        import("@xterm/addon-fit"),
-        import("@xterm/addon-serialize"),
-        import("@xterm/addon-web-links"),
-      ]);
+      const [{ Terminal }, { FitAddon }, { SerializeAddon }] =
+        await loadTerminalBaseModules();
+      const { WebLinksAddon } = await import("@xterm/addon-web-links");
 
       if (disposed || !containerRef.current) {
         return;
       }
 
       const terminal = new Terminal({
-        allowProposedApi: false,
-        cols: 120,
-        rows: 36,
-        convertEol: true,
-        cursorBlink: true,
-        fontFamily: TERMINAL_FONT_FAMILY,
-        fontSize: 13,
+        ...BASE_TERMINAL_OPTIONS,
         lineHeight: terminalLineHeight,
         scrollback:
           wheelScrollBehavior === "line-keys"
@@ -660,26 +563,21 @@ export function CellTerminal({
         sendInput(data);
       });
 
-      resizeObserverRef.current = new ResizeObserver(() => {
-        fitAddonRef.current?.fit();
-        scheduleResizeSync();
+      registerTerminalResizeObserver({
+        container: containerRef.current,
+        fitAddonRef,
+        resizeObserverRef,
+        scheduleResizeSync,
       });
-      resizeObserverRef.current.observe(containerRef.current);
 
       const cleanupWheelBridge = createWheelBridge(
         containerRef.current,
         wheelScrollBehavior,
         sendInput
       );
-      const cleanupClipboard = registerTerminalClipboard({
+      const cleanupClipboard = registerTerminalSelectionCopy({
         terminal,
         container: containerRef.current,
-        onCopySuccess: () => {
-          toast.success("Copied terminal selection");
-        },
-        onCopyError: () => {
-          toast.error("Failed to copy terminal selection");
-        },
       });
 
       window.addEventListener("resize", scheduleResizeSync);
@@ -694,33 +592,31 @@ export function CellTerminal({
 
     let cleanupTerminalInteractions: (() => void) | null = null;
 
-    initializeTerminal()
-      .then((cleanup) => {
-        cleanupTerminalInteractions = cleanup ?? null;
-      })
-      .catch((error) => {
-        setConnection("disconnected");
-        setErrorMessage(
-          error instanceof Error ? error.message : "Terminal failed"
-        );
-      });
+    initializeTerminalInteractions({
+      initializeTerminal,
+      onCleanupReady: (cleanup) => {
+        cleanupTerminalInteractions = cleanup;
+      },
+      setConnection,
+      setErrorMessage,
+    });
 
     return () => {
       disposed = true;
-      cleanupTerminalInteractions?.();
       resetInputBatcher();
       restartPendingRef.current = false;
-      socketCloseErrorRef.current = null;
-      clearTerminalTimers({ reconnectTimeoutRef, resizeTimeoutRef });
-      window.removeEventListener("resize", scheduleResizeSync);
-      resizeObserverRef.current?.disconnect();
-      resizeObserverRef.current = null;
-      socketRef.current?.close();
-      socketRef.current = null;
-      terminalRef.current?.dispose();
-      terminalRef.current = null;
-      fitAddonRef.current = null;
-      serializeAddonRef.current = null;
+      disposeTerminalRuntime({
+        cleanupTerminalInteractions,
+        fitAddonRef,
+        reconnectTimeoutRef,
+        resizeObserverRef,
+        resizeTimeoutRef,
+        scheduleResizeSync,
+        serializeAddonRef,
+        socketCloseErrorRef,
+        socketRef,
+        terminalRef,
+      });
       setIsTerminalInitialized(false);
     };
   }, [
@@ -736,34 +632,18 @@ export function CellTerminal({
     recordOutputActivity,
   ]);
 
-  const connectionLabelMap: Record<ConnectionState, string> = {
-    online: "Connected",
-    connecting: "Connecting",
-    exited: "Exited",
-    disconnected: "Disconnected",
-  };
-  const statusToneMap: Record<ConnectionState, string> = {
-    online: "text-primary",
-    connecting: "text-muted-foreground",
-    exited: "text-secondary-foreground",
-    disconnected: "text-destructive",
-  };
   const connectionDetailMap: Record<ConnectionState, string> = {
     online: `${title} stream connected`,
     connecting: `Connecting to ${title.toLowerCase()} stream`,
     exited: `${title} exited. Restart to reconnect`,
     disconnected: `${title} stream disconnected. Reconnecting`,
   };
-  const connectionDotToneMap: Record<ConnectionState, string> = {
-    online: "bg-[#2DD4BF]",
-    connecting: "animate-pulse bg-[#FFC857]",
-    exited: "bg-muted-foreground",
-    disconnected: "animate-pulse bg-[#FF5C5C]",
-  };
-  const connectionLabel = connectionLabelMap[connection];
-  const statusTone = statusToneMap[connection];
+  const {
+    dotTone: connectionDotTone,
+    label: connectionLabel,
+    tone: statusTone,
+  } = terminalConnectionPresentation(connection);
   const connectionDetail = connectionDetailMap[connection];
-  const connectionDotTone = connectionDotToneMap[connection];
   const restartActionLabel =
     connection === "disconnected" ? reconnectLabel : restartLabel;
   const terminalFrameTone =
@@ -813,80 +693,85 @@ export function CellTerminal({
     sessionCwd: session?.cwd,
   });
 
-  return (
-    <div
-      className="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-border bg-card"
-      data-terminal-error-message={errorMessage ?? ""}
-      data-terminal-output-length={String(terminalOutputLength)}
-      data-terminal-output-seq={String(terminalOutputSeq)}
-      data-terminal-output-updated-at={String(terminalOutputUpdatedAt)}
-      data-terminal-ready={terminalReady ? "true" : "false"}
-      data-terminal-visible-output-length={String(terminalVisibleOutputLength)}
-      data-testid="cell-terminal"
-    >
-      <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4">
-        <TerminalStatusHeader
-          connectionState={connection}
-          detail={connectionDetail}
-          dotTone={connectionDotTone}
-          exitCode={connection === "exited" ? session?.exitCode : undefined}
-          label={connectionLabel}
-          onCopyOutput={copyTerminalOutput}
-          pid={session?.pid}
-          restart={{
-            isPending: isRestarting,
-            label: restartActionLabel,
-            onClick: restartTerminal,
-          }}
-          title={title}
-          tone={statusTone}
-        />
-
-        {connectCommand ? (
-          <div className="flex items-center justify-between gap-2 border border-border/70 bg-background/60 px-2 py-1.5">
-            <p className="truncate font-mono text-[11px] text-muted-foreground">
-              {connectCommand}
-            </p>
-            <Button
-              className="h-6 px-2 text-[10px] uppercase tracking-[0.2em]"
-              onClick={copyConnectCommand}
-              size="sm"
-              type="button"
-              variant="secondary"
-            >
-              Copy command
-            </Button>
-          </div>
-        ) : null}
-
-        <div
-          className={`relative min-h-0 flex-1 border border-border/70 p-2 ${terminalFrameTone}`}
-        >
-          <div
-            className={`h-full min-h-0 w-full ${showLoadingOverlay ? "opacity-0" : "opacity-100"}`}
-            data-testid="cell-terminal-input"
-            ref={containerRef}
-          />
-          {showLoadingOverlay ? (
-            <div
-              className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center ${loadingBackdropTone}`}
-            >
-              {startupOverlay ? (
-                startupOverlay
-              ) : (
-                <div
-                  className={`flex items-center gap-2 border px-3 py-2 text-[11px] uppercase tracking-[0.24em] ${loadingPanelTone} ${loadingLabelTone}`}
-                >
-                  <span className="h-2 w-2 animate-pulse bg-current" />
-                  {startupMessage}
-                </div>
-              )}
-            </div>
-          ) : null}
-        </div>
-
-        {footer}
-      </div>
+  const commandBar = connectCommand ? (
+    <div className="flex items-center justify-between gap-2 border border-border/70 bg-background/60 px-2 py-1.5">
+      <p className="truncate font-mono text-[11px] text-muted-foreground">
+        {connectCommand}
+      </p>
+      <Button
+        className="h-6 px-2 text-[10px] uppercase tracking-[0.2em]"
+        onClick={copyConnectCommand}
+        size="sm"
+        type="button"
+        variant="secondary"
+      >
+        Copy command
+      </Button>
     </div>
+  ) : null;
+
+  const content = (
+    <div
+      className={`relative min-h-0 flex-1 border border-border/70 p-2 ${terminalFrameTone}`}
+    >
+      <div
+        className={`h-full min-h-0 w-full ${showLoadingOverlay ? "opacity-0" : "opacity-100"}`}
+        data-testid="cell-terminal-input"
+        ref={containerRef}
+      />
+      {showLoadingOverlay ? (
+        <div
+          className={`pointer-events-none absolute inset-0 z-20 flex items-center justify-center ${loadingBackdropTone}`}
+        >
+          {startupOverlay ? (
+            startupOverlay
+          ) : (
+            <div
+              className={`flex items-center gap-2 border px-3 py-2 text-[11px] uppercase tracking-[0.24em] ${loadingPanelTone} ${loadingLabelTone}`}
+            >
+              <span className="h-2 w-2 animate-pulse bg-current" />
+              {startupMessage}
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <TerminalFrame
+      commandBar={commandBar}
+      content={content}
+      dataAttributes={{
+        "data-terminal-error-message": errorMessage ?? "",
+        "data-terminal-output-length": String(terminalOutputLength),
+        "data-terminal-output-seq": String(terminalOutputSeq),
+        "data-terminal-output-updated-at": String(terminalOutputUpdatedAt),
+        "data-terminal-ready": terminalReady ? "true" : "false",
+        "data-terminal-visible-output-length": String(
+          terminalVisibleOutputLength
+        ),
+        "data-testid": "cell-terminal",
+      }}
+      footer={footer}
+      header={{
+        connectionState: connection,
+        detail: connectionDetail,
+        dotTone: connectionDotTone,
+        exitCode: connection === "exited" ? session?.exitCode : undefined,
+        label: connectionLabel,
+        onCopyOutput: copyTerminalOutput,
+        pid: session?.pid,
+        restart: {
+          isPending: isRestarting,
+          label: restartActionLabel,
+          onClick: restartTerminal,
+        },
+        title,
+        tone: statusTone,
+      }}
+      innerClassName="flex h-full min-h-0 w-full flex-col gap-3 p-4"
+      outerClassName="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border-2 border-border bg-card"
+    />
   );
 }

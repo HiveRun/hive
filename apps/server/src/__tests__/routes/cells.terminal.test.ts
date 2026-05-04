@@ -1,19 +1,18 @@
-// jscpd:ignore-start
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { cells } from "../../schema/cells";
 import { setupTestDb, testDb } from "../test-db";
 import {
-  assertWebSocketMessage,
-  assertWebSocketType,
-  closeWebSocketNormally,
   createCellRouteTestApp,
   createCellRouteTestDependencies,
   createCellTerminalRouteHarness,
-  createEventStreamReader,
-  createMockWebSocket,
-  getWebSocketHooks,
+  exercisePtyWebSocketActions,
+  expectFailedWebSocketOpen,
+  expectPtyRestartResponse,
+  expectPtyStreamData,
+  expectSeededPtyResize,
+  handlePostRouteRequest,
+  openMockWebSocket,
   seedRouteCell,
-  sendWebSocketJson,
 } from "./cells-route-test-helpers";
 
 const TEST_CELL_ID = "test-cell-id";
@@ -46,113 +45,77 @@ const createTerminalTestApp = (
 const seedCell = () =>
   seedRouteCell({ id: TEST_CELL_ID, name: "Terminal Cell" });
 
-describe("Cell terminal routes", () => {
-  beforeAll(async () => {
-    await setupTestDb();
-  });
+const createSeededTerminalApp = async () => {
+  await seedCell();
+  const harness = createTerminalHarness();
+  return { harness, app: createTerminalTestApp(harness) };
+};
 
-  beforeEach(async () => {
-    vi.restoreAllMocks();
-    await testDb.delete(cells);
-  });
+const postSeededTerminalAction = async (
+  action: "input" | "resize" | "restart",
+  body?: Record<string, unknown>
+) => {
+  const { harness, app } = await createSeededTerminalApp();
+  const response = await handlePostRouteRequest(
+    app,
+    `/api/cells/${TEST_CELL_ID}/terminal/${action}`,
+    body
+  );
+  return { harness, response };
+};
+
+const resetTerminalRouteState = async () => {
+  vi.restoreAllMocks();
+  await testDb.delete(cells);
+};
+
+describe("Cell terminal routes", () => {
+  beforeAll(setupTestDb);
+
+  beforeEach(resetTerminalRouteState);
 
   it("streams terminal session readiness, snapshot, and live data", async () => {
-    await seedCell();
-    const harness = createTerminalHarness();
-    const app = createTerminalTestApp(harness);
+    const { harness, app } = await createSeededTerminalApp();
 
     const response = await app.handle(
       new Request(`http://localhost/api/cells/${TEST_CELL_ID}/terminal/stream`)
     );
 
-    expect(response.status).toBe(HTTP_OK);
-    expect(response.headers.get("content-type")).toContain("text/event-stream");
-
-    const reader = await createEventStreamReader(
+    await expectPtyStreamData({
       response,
-      "Response body reader unavailable"
-    );
-    const firstText = await reader.read();
-    expect(firstText).toContain("event: ready");
-    const snapshotText = await reader.read();
-    expect(snapshotText).toContain("event: snapshot");
-
-    harness.emit({ type: "data", chunk: "echo hi\n" });
-    const dataText = await reader.read();
-    expect(dataText).toContain("event: data");
-    expect(dataText).toContain("echo hi");
-
-    await reader.cancel();
+      missingMessage: "Response body reader unavailable",
+      emit: () => harness.emit({ type: "data", chunk: "echo hi\n" }),
+      expectedText: "echo hi",
+    });
   });
 
   it("forwards terminal input to the terminal service", async () => {
-    await seedCell();
-    const harness = createTerminalHarness();
-    const app = createTerminalTestApp(harness);
-
-    const response = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/terminal/input`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data: "pwd\n" }),
-      })
-    );
+    const { harness, response } = await postSeededTerminalAction("input", {
+      data: "pwd\n",
+    });
 
     expect(response.status).toBe(HTTP_OK);
     expect(harness.write).toHaveBeenCalledWith(TEST_CELL_ID, "pwd\n");
   });
 
   it("resizes the terminal and returns updated session dimensions", async () => {
-    await seedCell();
-    const harness = createTerminalHarness();
-    const app = createTerminalTestApp(harness);
-
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/terminal/resize`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cols: RESIZED_COLS, rows: RESIZED_ROWS }),
-        }
-      )
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    expect(harness.resize).toHaveBeenCalledWith(
-      TEST_CELL_ID,
-      RESIZED_COLS,
-      RESIZED_ROWS
-    );
-
-    const payload = (await response.json()) as {
-      ok: boolean;
-      session: { cols: number; rows: number };
-    };
-    expect(payload.ok).toBe(true);
-    expect(payload.session.cols).toBe(RESIZED_COLS);
-    expect(payload.session.rows).toBe(RESIZED_ROWS);
+    await expectSeededPtyResize({
+      postAction: postSeededTerminalAction,
+      cellId: TEST_CELL_ID,
+      cols: RESIZED_COLS,
+      rows: RESIZED_ROWS,
+    });
   });
 
   it("restarts terminal sessions by closing then recreating the PTY", async () => {
-    await seedCell();
-    const harness = createTerminalHarness();
-    const app = createTerminalTestApp(harness);
+    const { harness, response } = await postSeededTerminalAction("restart");
 
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/terminal/restart`,
-        {
-          method: "POST",
-        }
-      )
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    expect(harness.closeSession).toHaveBeenCalledWith(TEST_CELL_ID);
-    expect(harness.ensureSession).toHaveBeenCalledWith({
+    expectPtyRestartResponse({
+      response,
+      closeSession: harness.closeSession,
+      ensureSession: harness.ensureSession,
       cellId: TEST_CELL_ID,
-      workspacePath: "/tmp/mock-worktree",
+      ensureArgs: { cellId: TEST_CELL_ID, workspacePath: "/tmp/mock-worktree" },
     });
 
     const closeCallOrder =
@@ -163,63 +126,31 @@ describe("Cell terminal routes", () => {
   });
 
   it("handles websocket input, resize, restart, and cached session context", async () => {
-    await seedCell();
-    const harness = createTerminalHarness();
-    const app = createTerminalTestApp(harness);
-    const hooks = getWebSocketHooks(app, "/api/cells/:id/terminal/ws");
-    const ws = createMockWebSocket({
+    const { harness, app } = await createSeededTerminalApp();
+    const { hooks, ws } = await openMockWebSocket({
+      app,
+      path: "/api/cells/:id/terminal/ws",
       id: "cell-terminal-ws-1",
       params: { id: TEST_CELL_ID },
     });
 
-    await hooks.open?.(ws.socket);
-    assertWebSocketType(ws, "ready");
-
-    await sendWebSocketJson(hooks, ws.socket, {
-      type: "input",
-      data: "ws pwd\n",
-    });
-    expect(harness.write).toHaveBeenCalledWith(TEST_CELL_ID, "ws pwd\n");
-
-    await sendWebSocketJson(hooks, ws.socket, {
-      type: "resize",
+    await exercisePtyWebSocketActions({
+      hooks,
+      ws,
+      cellId: TEST_CELL_ID,
+      input: "ws pwd\n",
       cols: RESIZED_COLS,
       rows: RESIZED_ROWS,
+      deleteCell: () => testDb.delete(cells),
+      write: harness.write,
+      resize: harness.resize,
+      closeSession: harness.closeSession,
+      invalidResize: {
+        cols: 5000,
+        rows: 2000,
+        message: "Invalid websocket message",
+      },
     });
-    expect(harness.resize).toHaveBeenCalledWith(
-      TEST_CELL_ID,
-      RESIZED_COLS,
-      RESIZED_ROWS
-    );
-
-    await sendWebSocketJson(hooks, ws.socket, {
-      type: "resize",
-      cols: 5000,
-      rows: 2000,
-    });
-    expect(harness.resize).toHaveBeenCalledTimes(1);
-    assertWebSocketMessage(
-      ws,
-      (entry) =>
-        entry.type === "error" && entry.message === "Invalid websocket message"
-    );
-
-    await testDb.delete(cells);
-    await sendWebSocketJson(hooks, ws.socket, {
-      type: "input",
-      data: "cached\n",
-    });
-    expect(harness.write).toHaveBeenCalledWith(TEST_CELL_ID, "cached\n");
-
-    await sendWebSocketJson(hooks, ws.socket, { type: "restart" });
-    expect(harness.closeSession).toHaveBeenCalledWith(TEST_CELL_ID);
-    assertWebSocketMessage(
-      ws,
-      (entry) => entry.type === "snapshot" && typeof entry.output === "string"
-    );
-
-    closeWebSocketNormally(hooks, ws.socket);
-    expect(ws.isClosed()).toBeFalsy();
   });
 
   it("surfaces websocket startup errors when terminal init fails", async () => {
@@ -229,20 +160,12 @@ describe("Cell terminal routes", () => {
       throw new Error("Terminal bootstrap failed");
     });
     const app = createTerminalTestApp(harness);
-    const hooks = getWebSocketHooks(app, "/api/cells/:id/terminal/ws");
-    const ws = createMockWebSocket({
+    await expectFailedWebSocketOpen({
+      app,
+      path: "/api/cells/:id/terminal/ws",
       id: "cell-terminal-ws-fail-1",
       params: { id: TEST_CELL_ID },
+      message: "Terminal bootstrap failed",
     });
-
-    await hooks.open?.(ws.socket);
-
-    assertWebSocketMessage(
-      ws,
-      (entry) =>
-        entry.type === "error" && entry.message === "Terminal bootstrap failed"
-    );
-    expect(ws.isClosed()).toBeTruthy();
   });
 });
-// jscpd:ignore-end
