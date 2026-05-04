@@ -75,8 +75,8 @@ const resolveStartupTimeoutMs = () => {
 const resolveSiblingCliCandidates = () => {
   const executableName = process.platform === "win32" ? "hive.exe" : "hive";
   const candidates = [
-    process.env.HIVE_DESKTOP_CLI_BINARY,
     process.env.HIVE_DESKTOP_DAEMON_COMMAND,
+    process.env.HIVE_DESKTOP_CLI_BINARY,
     join(dirname(process.execPath), executableName),
     join(process.resourcesPath, executableName),
     join(process.resourcesPath, "..", executableName),
