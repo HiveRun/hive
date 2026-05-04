@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-export type ViewportPreset = "mobile" | "tablet" | "desktop";
+type ViewportPreset = "mobile" | "tablet" | "desktop";
 
 type WebPreviewContextValue = {
   url: string | null;
@@ -75,25 +75,6 @@ export function WebPreview({
     >
       <div className="flex h-full w-full flex-col gap-4 p-4">{children}</div>
     </WebPreviewContext.Provider>
-  );
-}
-
-export function WebPreviewNavigation({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex flex-wrap items-center justify-between gap-3 rounded-sm border border-border bg-card p-2",
-        className
-      )}
-    >
-      {children}
-    </div>
   );
 }
 
@@ -225,25 +206,6 @@ export function WebPreviewBody({
         </div>
       </div>
     </div>
-  );
-}
-
-export function WebPreviewConsole({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <details
-      className={cn("mt-4 rounded-sm border border-border bg-card", className)}
-    >
-      <summary className="cursor-pointer px-3 py-2 text-muted-foreground text-xs uppercase tracking-[0.25em] hover:bg-accent">
-        Developer Console
-      </summary>
-      <div className="border-border border-t p-3">{children}</div>
-    </details>
   );
 }
 

@@ -1,6 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {
+  mkdirSync as createDirSync,
+  mkdtempSync as createTempDirSync,
+  rmSync as removeDirSync,
+  writeFileSync as writeTextFileSync,
+} from "node:fs";
+import { tmpdir as systemTmpdir } from "node:os";
+import { join as joinPath } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -33,33 +38,56 @@ const restoreWorkspaceEnv = () => {
   process.env.HIVE_WORKSPACE_ROOT = originalWorkspaceEnv;
 };
 
+const cleanupDirs = (createdDirs: string[]) => {
+  while (createdDirs.length > 0) {
+    const dir = createdDirs.pop();
+    if (dir) {
+      removeDirSync(dir, { recursive: true, force: true });
+    }
+  }
+};
+
+const restoreContextTestState = (createdDirs: string[]) => {
+  process.chdir(originalCwd);
+  restoreWorkspaceEnv();
+  cleanupDirs(createdDirs);
+};
+
+const makeTrackedTempDir = (createdDirs: string[], prefix: string) => {
+  const dir = createTempDirSync(joinPath(systemTmpdir(), prefix));
+  createdDirs.push(dir);
+  return dir;
+};
+
+const resetWorkspaceRootEnv = () => {
+  process.env.HIVE_WORKSPACE_ROOT = undefined;
+};
+
+const installContextHooks = (
+  createdDirs: string[],
+  afterRestore?: () => void
+) => {
+  beforeEach(resetWorkspaceRootEnv);
+  afterEach(() => {
+    restoreContextTestState(createdDirs);
+    afterRestore?.();
+  });
+};
+
 describe("resolveWorkspaceRoot", () => {
   const createdDirs: string[] = [];
 
-  const makeTempDir = () => {
-    const dir = mkdtempSync(join(tmpdir(), "hive-context-"));
-    createdDirs.push(dir);
-    return dir;
-  };
+  const makeTempDir = () => makeTrackedTempDir(createdDirs, "hive-context-");
 
   const writeConfig = (dir: string) => {
-    writeFileSync(join(dir, "hive.config.json"), CONFIG_CONTENT, "utf8");
+    writeTextFileSync(
+      joinPath(dir, "hive.config.json"),
+      CONFIG_CONTENT,
+      "utf8"
+    );
   };
 
-  beforeEach(() => {
-    process.env.HIVE_WORKSPACE_ROOT = undefined;
-  });
-
-  afterEach(() => {
-    process.chdir(originalCwd);
-    restoreWorkspaceEnv();
-    while (createdDirs.length > 0) {
-      const dir = createdDirs.pop();
-      if (dir) {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    }
-  });
+  installContextHooks(createdDirs);
 
   it("returns the current directory when hive.config.json is present", () => {
     const workspace = makeTempDir();
@@ -71,9 +99,7 @@ describe("resolveWorkspaceRoot", () => {
 
   it("falls back to a nested hive directory when config exists there", () => {
     const workspace = makeTempDir();
-    const nested = join(workspace, "hive");
-    mkdirSync(nested, { recursive: true });
-    writeConfig(nested);
+    const nested = createNestedHiveWorkspace(workspace, writeConfig);
     process.chdir(workspace);
 
     expect(resolveWorkspaceRoot()).toBe(nested);
@@ -81,9 +107,7 @@ describe("resolveWorkspaceRoot", () => {
 
   it("applies the nested fallback when HIVE_WORKSPACE_ROOT points to the parent", () => {
     const workspace = makeTempDir();
-    const nested = join(workspace, "hive");
-    mkdirSync(nested, { recursive: true });
-    writeConfig(nested);
+    const nested = createNestedHiveWorkspace(workspace, writeConfig);
     process.env.HIVE_WORKSPACE_ROOT = workspace;
 
     expect(resolveWorkspaceRoot()).toBe(nested);
@@ -93,11 +117,8 @@ describe("resolveWorkspaceRoot", () => {
 describe("loadHiveConfig cache invalidation", () => {
   const createdDirs: string[] = [];
 
-  const makeTempDir = () => {
-    const dir = mkdtempSync(join(tmpdir(), "hive-context-cache-"));
-    createdDirs.push(dir);
-    return dir;
-  };
+  const makeTempDir = () =>
+    makeTrackedTempDir(createdDirs, "hive-context-cache-");
 
   const writeValidConfig = (dir: string, withSetupCommand: boolean) => {
     const config = {
@@ -109,28 +130,14 @@ describe("loadHiveConfig cache invalidation", () => {
         },
       },
     };
-    writeFileSync(
-      join(dir, "hive.config.json"),
+    writeTextFileSync(
+      joinPath(dir, "hive.config.json"),
       JSON.stringify(config),
       "utf8"
     );
   };
 
-  beforeEach(() => {
-    process.env.HIVE_WORKSPACE_ROOT = undefined;
-  });
-
-  afterEach(() => {
-    process.chdir(originalCwd);
-    restoreWorkspaceEnv();
-    clearHiveConfigCache();
-    while (createdDirs.length > 0) {
-      const dir = createdDirs.pop();
-      if (dir) {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    }
-  });
+  installContextHooks(createdDirs, clearHiveConfigCache);
 
   it("reloads hive config after hive.config.json changes", async () => {
     const workspace = makeTempDir();
@@ -150,3 +157,13 @@ describe("loadHiveConfig cache invalidation", () => {
     expect(refreshedBasicTemplate?.setup).toEqual(["echo updated"]);
   });
 });
+
+const createNestedHiveWorkspace = (
+  workspace: string,
+  writeConfig: (dir: string) => void
+) => {
+  const nested = joinPath(workspace, "hive");
+  createDirSync(nested, { recursive: true });
+  writeConfig(nested);
+  return nested;
+};

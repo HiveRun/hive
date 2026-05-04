@@ -1,5 +1,9 @@
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
-import { cells } from "./cells";
+import { sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  cellIdColumn,
+  createdAtColumn,
+  metadataColumn,
+} from "./common-columns";
 import { cellServices } from "./services";
 
 export const ACTIVITY_EVENT_TYPES = [
@@ -18,20 +22,13 @@ export type ActivityEventType = (typeof ACTIVITY_EVENT_TYPES)[number];
 
 export const cellActivityEvents = sqliteTable("cell_activity_events", {
   id: text("id").primaryKey(),
-  cellId: text("cell_id")
-    .notNull()
-    .references(() => cells.id, { onDelete: "cascade" }),
+  cellId: cellIdColumn(),
   serviceId: text("service_id").references(() => cellServices.id, {
     onDelete: "cascade",
   }),
   type: text("type").$type<ActivityEventType>().notNull(),
   source: text("source"),
   toolName: text("tool_name"),
-  metadata: text("metadata", { mode: "json" })
-    .$type<Record<string, unknown>>()
-    .notNull(),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  metadata: metadataColumn(),
+  createdAt: createdAtColumn(),
 });
-
-export type CellActivityEvent = typeof cellActivityEvents.$inferSelect;
-export type NewCellActivityEvent = typeof cellActivityEvents.$inferInsert;

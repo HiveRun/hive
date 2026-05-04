@@ -17,7 +17,7 @@ const deriveKey = (secret: string) =>
 const encode = (value: Buffer) => value.toString("base64url");
 const decode = (value: string) => Buffer.from(value, "base64url");
 
-export const encryptLinearSecret = (value: string, secret: string) => {
+const encryptLinearSecret = (value: string, secret: string) => {
   const iv = randomBytes(IV_LENGTH_BYTES);
   const cipher = createCipheriv(ALGORITHM, deriveKey(secret), iv);
   const encrypted = Buffer.concat([
@@ -29,7 +29,7 @@ export const encryptLinearSecret = (value: string, secret: string) => {
   return [iv, authTag, encrypted].map(encode).join(".");
 };
 
-export const decryptLinearSecret = (value: string, secret: string) => {
+const decryptLinearSecret = (value: string, secret: string) => {
   const parts = value.split(".");
   if (parts.length !== SECRET_PART_COUNT) {
     throw new Error("Stored Linear secret is malformed");

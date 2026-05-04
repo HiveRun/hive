@@ -1,13 +1,7 @@
-import type {
-  Issue,
-  Organization,
-  Team,
-  User,
-  WorkflowState,
-} from "@linear/sdk";
+import type { Issue, Team, User, WorkflowState } from "@linear/sdk";
 import type { StoredLinearIntegration } from "./repository";
 
-export type LinearStatusPayload = {
+type LinearStatusPayload = {
   connected: boolean;
   user: {
     id: string;
@@ -25,11 +19,14 @@ export type LinearStatusPayload = {
   } | null;
 };
 
-export type LinearIssuePayload = {
+type LinearIssueIdentity = {
   id: string;
   teamId: string | null;
   identifier: string;
   title: string;
+};
+
+type LinearIssuePayload = LinearIssueIdentity & {
   description: string | null;
   url: string | null;
   updatedAt: string;
@@ -52,15 +49,10 @@ export const mapLinearTeam = (team: Team) => ({
   name: team.name,
 });
 
-export const mapLinearUser = (user: User) => ({
+const mapLinearUser = (user: User) => ({
   id: user.id,
   name: user.displayName || user.name || user.email || user.id,
   email: user.email ?? null,
-});
-
-export const mapLinearOrganization = (organization: Organization) => ({
-  id: organization.id,
-  name: organization.name,
 });
 
 const mapLinearWorkflowState = (state: WorkflowState | undefined) => {

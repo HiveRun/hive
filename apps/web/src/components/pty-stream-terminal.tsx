@@ -1,27 +1,31 @@
 import "@xterm/xterm/css/xterm.css";
 
 import type { Terminal as XTerm } from "@xterm/xterm";
-import { Copy } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { API_BASE } from "@/components/terminal-shared";
 import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { getApiBase } from "@/lib/api-base";
-import {
-  copyTextToClipboard,
-  registerTerminalClipboard,
-} from "@/lib/terminal-clipboard";
-import { isMouseMovementInputChunk } from "@/lib/terminal-input";
-import {
-  parseTerminalSocketMessage,
-  sendTerminalSocketMessage,
-  toWebSocketUrl,
-} from "@/lib/terminal-websocket";
+  assignTerminalSocketMessageHandler as assignStreamSocketMessageHandler,
+  disposeTerminalRuntime as disposeStreamRuntime,
+  handleTerminalDataMessage as handleStreamDataMessage,
+  handleTerminalExitMessage as handleStreamExitMessage,
+  handleTerminalSocketClose as handleStreamSocketClose,
+  initializeTerminalInteractions as initializeStreamInteractions,
+  keepExitedOrOnline as keepExitedOrStreaming,
+  loadTerminalBaseModules as loadStreamTerminalModules,
+  recoverConnectingConnection as recoverStreamConnection,
+  registerTerminalResizeObserver as registerStreamResizeObserver,
+  registerTerminalSelectionCopy as registerStreamSelectionCopy,
+  BASE_TERMINAL_OPTIONS as STREAM_TERMINAL_OPTIONS,
+  TerminalFrame as StreamTerminalFrame,
+  terminalConnectionPresentation as streamConnectionPresentation,
+  terminalSocketErrorMessage as streamSocketErrorMessage,
+  terminalFooter as streamTerminalFooter,
+  syncTerminalSizeFromSession as syncStreamSizeFromSession,
+  type TerminalRuntimeSession,
+  useTerminalSocketControls as useStreamSocketControls,
+  writeTerminalSnapshotMessage as writeStreamSnapshotMessage,
+} from "@/components/terminal-view-shared";
+import { toWebSocketUrl } from "@/lib/terminal-websocket";
 
 type ConnectionState =
   | "connecting"
@@ -30,16 +34,7 @@ type ConnectionState =
   | "disconnected"
   | "exited";
 
-type RuntimeTerminalSession = {
-  sessionId: string;
-  pid: number;
-  cwd: string;
-  cols: number;
-  rows: number;
-  status: "running" | "exited";
-  exitCode: number | null;
-  startedAt: string;
-};
+type RuntimeTerminalSession = TerminalRuntimeSession;
 
 type SetupTerminalState = "active" | "completed" | "failed" | "pending";
 type SetupDisplayState = SetupTerminalState | "unknown";
@@ -49,30 +44,6 @@ type ReadyPayload = {
   setupState?: SetupTerminalState;
   lastSetupError?: string | null;
 };
-
-const API_BASE = getApiBase();
-const OUTPUT_BUFFER_LIMIT = 250_000;
-const RESIZE_DEBOUNCE_MS = 120;
-const SOCKET_RECONNECT_DELAY_MS = 800;
-const INPUT_BATCH_BASE_WINDOW_MS = 16;
-const INPUT_BATCH_MAX_WINDOW_MS = 24;
-const INPUT_BATCH_WINDOW_STEP_MS = 8;
-const INPUT_BATCH_HIGH_CHUNK_THRESHOLD = 6;
-const INPUT_BATCH_FLUSH_SIZE = 1024;
-const INPUT_BATCH_HIGH_CHUNK_MIN_BUFFER = 256;
-const TERMINAL_FONT_FAMILY =
-  '"JetBrainsMono Nerd Font", "MesloLGS NF", "CaskaydiaMono Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font Mono", "Geist Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Noto Color Emoji", monospace';
-
-const appendOutput = (current: string, chunk: string): string => {
-  const next = `${current}${chunk}`;
-  if (next.length <= OUTPUT_BUFFER_LIMIT) {
-    return next;
-  }
-  return next.slice(next.length - OUTPUT_BUFFER_LIMIT);
-};
-
-const shouldFlushMouseBatch = (bufferedLength: number) =>
-  bufferedLength >= INPUT_BATCH_FLUSH_SIZE;
 
 export function PtyStreamTerminal({
   title,
@@ -91,22 +62,20 @@ export function PtyStreamTerminal({
   emptyMessage?: string;
   mode?: "generic" | "setup";
 }) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const terminalRef = useRef<XTerm | null>(null);
-  const fitAddonRef = useRef<{ fit: () => void } | null>(null);
-  const serializeAddonRef = useRef<{ serialize: () => string } | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
-  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const streamContainerRef = useRef<HTMLDivElement | null>(null);
+  const xtermRef = useRef<XTerm | null>(null);
+  const streamFitAddonRef = useRef<{ fit: () => void } | null>(null);
+  const streamSerializeAddonRef = useRef<{ serialize: () => string } | null>(
+    null
+  );
+  const streamSocketRef = useRef<WebSocket | null>(null);
+  const streamResizeObserverRef = useRef<ResizeObserver | null>(null);
+  const streamOutputRef = useRef<string>("");
+  const activeSessionRef = useRef<RuntimeTerminalSession | null>(null);
+  const streamSocketCloseErrorRef = useRef<string | null>(null);
+  const streamResizeTimeoutRef = useRef<number | null>(null);
+  const streamReconnectTimeoutRef = useRef<number | null>(null);
   const inputListenerRef = useRef<{ dispose: () => void } | null>(null);
-  const outputRef = useRef<string>("");
-  const sessionRef = useRef<RuntimeTerminalSession | null>(null);
-  const socketCloseErrorRef = useRef<string | null>(null);
-  const inputBufferRef = useRef<string>("");
-  const inputFlushTimeoutRef = useRef<number | null>(null);
-  const inputBatchWindowMsRef = useRef(INPUT_BATCH_BASE_WINDOW_MS);
-  const inputBatchChunkCountRef = useRef(0);
-  const resizeTimeoutRef = useRef<number | null>(null);
-  const reconnectTimeoutRef = useRef<number | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [session, setSession] = useState<RuntimeTerminalSession | null>(null);
@@ -120,188 +89,24 @@ export function PtyStreamTerminal({
     return toWebSocketUrl(`${API_BASE}${wsPath}`);
   }, [streamPath]);
 
-  const sendSocketMessage = useCallback(
-    (message: { type: string; [key: string]: unknown }) => {
-      const sent = sendTerminalSocketMessage(socketRef.current, message);
-      if (sent) {
-        return true;
-      }
-
-      setConnection((current) =>
-        current === "exited" ? "exited" : "disconnected"
-      );
-      setErrorMessage("Terminal socket disconnected. Reconnecting…");
-      return false;
-    },
-    []
-  );
-
-  const sendResize = useCallback(
-    (cols: number, rows: number) => {
-      const sent = sendSocketMessage({ type: "resize", cols, rows });
-      if (!sent) {
-        throw new Error("Terminal socket unavailable");
-      }
-
-      setSession((current) => {
-        const next = current
-          ? {
-              ...current,
-              cols,
-              rows,
-            }
-          : current;
-        sessionRef.current = next;
-        return next;
-      });
-    },
-    [sendSocketMessage]
-  );
-
-  const updateBatchWindow = useCallback(
-    (chunkCount: number, queuedLength: number, forceImmediate: boolean) => {
-      if (forceImmediate) {
-        inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
-        return;
-      }
-
-      if (
-        chunkCount >= INPUT_BATCH_HIGH_CHUNK_THRESHOLD &&
-        queuedLength >= INPUT_BATCH_HIGH_CHUNK_MIN_BUFFER
-      ) {
-        inputBatchWindowMsRef.current = Math.min(
-          INPUT_BATCH_MAX_WINDOW_MS,
-          inputBatchWindowMsRef.current + INPUT_BATCH_WINDOW_STEP_MS
-        );
-        return;
-      }
-
-      inputBatchWindowMsRef.current = Math.max(
-        INPUT_BATCH_BASE_WINDOW_MS,
-        inputBatchWindowMsRef.current - INPUT_BATCH_WINDOW_STEP_MS
-      );
-    },
-    []
-  );
-
-  const flushQueuedInput = useCallback(
-    (forceImmediate = false) => {
-      if (
-        typeof window !== "undefined" &&
-        inputFlushTimeoutRef.current !== null
-      ) {
-        window.clearTimeout(inputFlushTimeoutRef.current);
-        inputFlushTimeoutRef.current = null;
-      }
-
-      const queued = inputBufferRef.current;
-      if (queued.length === 0) {
-        return;
-      }
-
-      const chunkCount = inputBatchChunkCountRef.current;
-      inputBufferRef.current = "";
-      inputBatchChunkCountRef.current = 0;
-      updateBatchWindow(chunkCount, queued.length, forceImmediate);
-      sendSocketMessage({ type: "input", data: queued });
-    },
-    [sendSocketMessage, updateBatchWindow]
-  );
-
-  const discardQueuedMouseInput = useCallback(() => {
-    if (
-      typeof window !== "undefined" &&
-      inputFlushTimeoutRef.current !== null
-    ) {
-      window.clearTimeout(inputFlushTimeoutRef.current);
-      inputFlushTimeoutRef.current = null;
-    }
-
-    inputBufferRef.current = "";
-    inputBatchChunkCountRef.current = 0;
-    inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
-  }, []);
-
-  const scheduleResizeSync = useCallback(() => {
-    const terminal = terminalRef.current;
-    if (!terminal || typeof window === "undefined") {
-      return;
-    }
-
-    if (resizeTimeoutRef.current !== null) {
-      window.clearTimeout(resizeTimeoutRef.current);
-    }
-
-    resizeTimeoutRef.current = window.setTimeout(() => {
-      const activeTerminal = terminalRef.current;
-      if (!activeTerminal) {
-        return;
-      }
-
-      if (sessionRef.current?.status !== "running") {
-        return;
-      }
-
-      try {
-        sendResize(activeTerminal.cols, activeTerminal.rows);
-      } catch {
-        // ignore transient resize failures while reconnecting
-      }
-    }, RESIZE_DEBOUNCE_MS);
-  }, [sendResize]);
-
-  const sendInput = useCallback(
-    (data: string) => {
-      if (!(allowInput && inputPath)) {
-        return;
-      }
-
-      if (!isMouseMovementInputChunk(data)) {
-        discardQueuedMouseInput();
-        sendSocketMessage({ type: "input", data });
-        return;
-      }
-
-      inputBufferRef.current += data;
-      inputBatchChunkCountRef.current += 1;
-      if (shouldFlushMouseBatch(inputBufferRef.current.length)) {
-        flushQueuedInput(true);
-        return;
-      }
-
-      if (typeof window === "undefined") {
-        return;
-      }
-
-      if (inputFlushTimeoutRef.current !== null) {
-        return;
-      }
-
-      inputFlushTimeoutRef.current = window.setTimeout(() => {
-        inputFlushTimeoutRef.current = null;
-        flushQueuedInput();
-      }, inputBatchWindowMsRef.current);
-    },
-    [
-      allowInput,
-      discardQueuedMouseInput,
-      flushQueuedInput,
-      inputPath,
-      sendSocketMessage,
-    ]
-  );
-
-  const copyTerminalOutput = useCallback(async () => {
-    try {
-      const serialized = serializeAddonRef.current?.serialize();
-      const text =
-        serialized && serialized.length > 0 ? serialized : outputRef.current;
-      await copyTextToClipboard(text);
-      toast.success("Copied terminal output");
-    } catch {
-      toast.error("Failed to copy terminal output");
-    }
-  }, []);
+  const {
+    copyTerminalOutput,
+    resetInputBatcher,
+    scheduleResizeSync,
+    sendInput,
+  } = useStreamSocketControls({
+    inputEnabled: allowInput && Boolean(inputPath),
+    outputRef: streamOutputRef,
+    resizeTimeoutRef: streamResizeTimeoutRef,
+    serializeAddonRef: streamSerializeAddonRef,
+    sessionRef: activeSessionRef,
+    setConnection,
+    setErrorMessage,
+    setSession,
+    shouldResize: () => activeSessionRef.current?.status === "running",
+    socketRef: streamSocketRef,
+    terminalRef: xtermRef,
+  });
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -309,9 +114,9 @@ export function PtyStreamTerminal({
     }
 
     let disposed = false;
-    outputRef.current = "";
-    sessionRef.current = null;
-    socketCloseErrorRef.current = null;
+    streamOutputRef.current = "";
+    activeSessionRef.current = null;
+    streamSocketCloseErrorRef.current = null;
     setSession(null);
     setConnection("connecting");
     setErrorMessage(null);
@@ -319,234 +124,161 @@ export function PtyStreamTerminal({
 
     const connectStream = () => {
       const socket = new WebSocket(buildSocketEndpoint());
-      socketRef.current = socket;
-      socketCloseErrorRef.current = null;
+      streamSocketRef.current = socket;
+      streamSocketCloseErrorRef.current = null;
 
-      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: websocket messages preserve setup + terminal session state transitions.
-      socket.onmessage = (event) => {
-        if (disposed) {
-          return;
-        }
+      assignStreamSocketMessageHandler({
+        isDisposed: () => disposed,
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: setup and PTY websocket states share one ordered event matrix.
+        onMessage: (message) => {
+          if (message.type === "ready") {
+            const payload = {
+              session:
+                (message.session as
+                  | RuntimeTerminalSession
+                  | null
+                  | undefined) ?? null,
+              setupState:
+                typeof message.setupState === "string"
+                  ? (message.setupState as SetupTerminalState)
+                  : undefined,
+              lastSetupError:
+                typeof message.lastSetupError === "string"
+                  ? message.lastSetupError
+                  : null,
+            } satisfies ReadyPayload;
 
-        const message = parseTerminalSocketMessage(event);
-        if (!message) {
-          return;
-        }
+            const readySession = payload.session;
+            setSession(readySession);
+            activeSessionRef.current = readySession;
+            streamSocketCloseErrorRef.current = null;
 
-        if (message.type === "ready") {
-          const payload = {
-            session:
-              (message.session as RuntimeTerminalSession | null | undefined) ??
-              null,
-            setupState:
-              typeof message.setupState === "string"
-                ? (message.setupState as SetupTerminalState)
-                : undefined,
-            lastSetupError:
-              typeof message.lastSetupError === "string"
-                ? message.lastSetupError
-                : null,
-          } satisfies ReadyPayload;
-
-          const readySession = payload.session;
-          setSession(readySession);
-          sessionRef.current = readySession;
-          socketCloseErrorRef.current = null;
-
-          let nextState: ConnectionState;
-          if (payload.setupState === "active") {
-            nextState = "online";
-          } else if (
-            payload.setupState === "completed" ||
-            payload.setupState === "failed"
-          ) {
-            nextState = "exited";
-          } else if (payload.setupState === "pending") {
-            nextState = "idle";
-          } else if (readySession?.status === "exited") {
-            nextState = "exited";
-          } else if (readySession) {
-            nextState = "online";
-          } else {
-            nextState = "idle";
-          }
-
-          setConnection(nextState);
-
-          if (mode === "setup") {
-            if (payload.setupState) {
-              setSetupDisplayState(payload.setupState);
-            } else if (readySession?.status === "running") {
-              setSetupDisplayState("active");
+            let nextState: ConnectionState;
+            if (payload.setupState === "active") {
+              nextState = "online";
+            } else if (
+              payload.setupState === "completed" ||
+              payload.setupState === "failed"
+            ) {
+              nextState = "exited";
+            } else if (payload.setupState === "pending") {
+              nextState = "idle";
+            } else if (readySession?.status === "exited") {
+              nextState = "exited";
+            } else if (readySession) {
+              nextState = "online";
+            } else {
+              nextState = "idle";
             }
-          }
 
-          if (payload.setupState === "failed" && payload.lastSetupError) {
-            setErrorMessage(payload.lastSetupError);
-          } else {
-            setErrorMessage(null);
-          }
-          const activeTerminal = terminalRef.current;
-          if (
-            activeTerminal &&
-            readySession &&
-            (readySession.cols !== activeTerminal.cols ||
-              readySession.rows !== activeTerminal.rows)
-          ) {
-            scheduleResizeSync();
-          }
-          return;
-        }
+            setConnection(nextState);
 
-        if (message.type === "snapshot") {
-          const terminal = terminalRef.current;
-          if (!terminal) {
+            if (mode === "setup") {
+              if (payload.setupState) {
+                setSetupDisplayState(payload.setupState);
+              } else if (readySession?.status === "running") {
+                setSetupDisplayState("active");
+              }
+            }
+
+            if (payload.setupState === "failed" && payload.lastSetupError) {
+              setErrorMessage(payload.lastSetupError);
+            } else {
+              setErrorMessage(null);
+            }
+            if (readySession) {
+              syncStreamSizeFromSession({
+                cols: readySession.cols,
+                rows: readySession.rows,
+                scheduleResizeSync,
+                terminalRef: xtermRef,
+              });
+            }
             return;
           }
 
-          const snapshot =
-            typeof message.output === "string" ? message.output : "";
-
-          if (snapshot.startsWith(outputRef.current)) {
-            const delta = snapshot.slice(outputRef.current.length);
-            if (delta.length > 0) {
-              terminal.write(delta);
+          if (message.type === "snapshot") {
+            const snapshotResult = writeStreamSnapshotMessage({
+              message,
+              outputRef: streamOutputRef,
+              terminalRef: xtermRef,
+            });
+            if (!snapshotResult) {
+              return;
             }
-          } else {
-            terminal.write("\x1bc");
-            if (snapshot.length > 0) {
-              terminal.write(snapshot);
+            if (snapshotResult.snapshot.length > 0) {
+              setConnection(keepExitedOrStreaming);
             }
-          }
-
-          outputRef.current = snapshot;
-          if (snapshot.length > 0) {
-            setConnection((current) =>
-              current === "exited" ? "exited" : "online"
-            );
-          }
-          return;
-        }
-
-        if (message.type === "data") {
-          const terminal = terminalRef.current;
-          if (!terminal) {
             return;
           }
 
-          const chunk = typeof message.chunk === "string" ? message.chunk : "";
-          if (chunk.length === 0) {
+          if (message.type === "data") {
+            handleStreamDataMessage({
+              message,
+              outputRef: streamOutputRef,
+              setConnection,
+              terminalRef: xtermRef,
+            });
             return;
           }
 
-          terminal.write(chunk);
-          outputRef.current = appendOutput(outputRef.current, chunk);
-          setConnection((current) =>
-            current === "exited" ? "exited" : "online"
-          );
-          return;
-        }
-
-        if (message.type === "exit") {
-          const exitCode =
-            typeof message.exitCode === "number" ? message.exitCode : 0;
-          setConnection("exited");
-          if (mode === "setup") {
-            setSetupDisplayState(exitCode === 0 ? "completed" : "failed");
-          }
-          setSession((current) => {
-            const next: RuntimeTerminalSession | null = current
-              ? {
-                  ...current,
-                  status: "exited",
-                  exitCode,
+          if (message.type === "exit") {
+            handleStreamExitMessage({
+              afterExit: (exitCode, next) => {
+                if (mode === "setup") {
+                  setSetupDisplayState(exitCode === 0 ? "completed" : "failed");
                 }
-              : current;
-            sessionRef.current = next;
-            return next;
-          });
-          return;
-        }
-
-        if (message.type === "error") {
-          const description =
-            typeof message.message === "string"
-              ? message.message
-              : "Terminal socket error";
-          if (description.toLowerCase().includes("terminal is not running")) {
+                activeSessionRef.current = next;
+              },
+              message,
+              setConnection,
+              setSession,
+            });
             return;
           }
-          setConnection((current) => {
-            if (current === "exited") {
-              return "exited";
-            }
 
-            if (current === "connecting") {
-              return "online";
+          if (message.type === "error") {
+            const description = streamSocketErrorMessage(message);
+            if (description.toLowerCase().includes("terminal is not running")) {
+              return;
             }
-
-            return current;
-          });
-          setErrorMessage(description);
-          socketCloseErrorRef.current = description;
-        }
-      };
+            setConnection(recoverStreamConnection);
+            setErrorMessage(description);
+            streamSocketCloseErrorRef.current = description;
+          }
+        },
+        socket,
+      });
 
       socket.onclose = () => {
-        if (disposed) {
-          return;
-        }
-
-        const closeErrorMessage = socketCloseErrorRef.current;
-        socketCloseErrorRef.current = null;
-
-        setConnection((current) =>
-          current === "exited" ? "exited" : "disconnected"
-        );
-        setErrorMessage(
-          closeErrorMessage ?? "Terminal socket disconnected. Reconnecting…"
-        );
-
-        if (reconnectTimeoutRef.current !== null) {
-          return;
-        }
-
-        reconnectTimeoutRef.current = window.setTimeout(() => {
-          reconnectTimeoutRef.current = null;
-          if (disposed) {
-            return;
-          }
-
-          connectStream();
-        }, SOCKET_RECONNECT_DELAY_MS);
+        handleStreamSocketClose({
+          connectStream,
+          isDisposed: () => disposed,
+          reconnectTimeoutRef: streamReconnectTimeoutRef,
+          setConnection,
+          setErrorMessage,
+          socketCloseErrorRef: streamSocketCloseErrorRef,
+        });
       };
 
-      socket.onerror = () => {
+      socket.addEventListener("error", () => {
         socket.close();
-      };
+      });
     };
 
     const initializeTerminal = async () => {
-      const [{ Terminal }, { FitAddon }, { SerializeAddon }] =
-        await Promise.all([
-          import("@xterm/xterm"),
-          import("@xterm/addon-fit"),
-          import("@xterm/addon-serialize"),
-        ]);
+      const terminalModules = await loadStreamTerminalModules();
+      const { Terminal } = terminalModules[0];
+      const { FitAddon } = terminalModules[1];
+      const { SerializeAddon } = terminalModules[2];
 
-      if (disposed || !containerRef.current) {
+      if (disposed || !streamContainerRef.current) {
         return;
       }
 
       const terminal = new Terminal({
-        allowProposedApi: false,
-        cols: 120,
-        rows: 36,
-        convertEol: true,
-        cursorBlink: true,
+        ...STREAM_TERMINAL_OPTIONS,
         disableStdin: !(allowInput && inputPath),
-        fontFamily: TERMINAL_FONT_FAMILY,
-        fontSize: 13,
         lineHeight: 1.4,
         scrollback: 10_000,
         theme: {
@@ -578,12 +310,12 @@ export function PtyStreamTerminal({
 
       terminal.loadAddon(fitAddon);
       terminal.loadAddon(serializeAddon);
-      terminal.open(containerRef.current);
+      terminal.open(streamContainerRef.current);
       fitAddon.fit();
 
-      terminalRef.current = terminal;
-      fitAddonRef.current = fitAddon;
-      serializeAddonRef.current = serializeAddon;
+      xtermRef.current = terminal;
+      streamFitAddonRef.current = fitAddon;
+      streamSerializeAddonRef.current = serializeAddon;
 
       inputListenerRef.current?.dispose();
       inputListenerRef.current =
@@ -592,23 +324,18 @@ export function PtyStreamTerminal({
               sendInput(data);
             })
           : null;
-      const cleanupClipboard = registerTerminalClipboard({
+      const cleanupClipboard = registerStreamSelectionCopy({
         terminal,
-        container: containerRef.current,
+        container: streamContainerRef.current,
         canPaste: allowInput && Boolean(inputPath),
-        onCopySuccess: () => {
-          toast.success("Copied terminal selection");
-        },
-        onCopyError: () => {
-          toast.error("Failed to copy terminal selection");
-        },
       });
 
-      resizeObserverRef.current = new ResizeObserver(() => {
-        fitAddonRef.current?.fit();
-        scheduleResizeSync();
+      registerStreamResizeObserver({
+        container: streamContainerRef.current,
+        fitAddonRef: streamFitAddonRef,
+        resizeObserverRef: streamResizeObserverRef,
+        scheduleResizeSync,
       });
-      resizeObserverRef.current.observe(containerRef.current);
 
       window.addEventListener("resize", scheduleResizeSync);
       connectStream();
@@ -621,82 +348,51 @@ export function PtyStreamTerminal({
 
     let cleanupTerminalInteractions: (() => void) | null = null;
 
-    initializeTerminal()
-      .then((cleanup) => {
-        cleanupTerminalInteractions = cleanup ?? null;
-      })
-      .catch((error) => {
-        setConnection("disconnected");
-        setErrorMessage(
-          error instanceof Error ? error.message : "Terminal failed"
-        );
-      });
+    const storeStreamCleanup = (cleanup: (() => void) | null) => {
+      cleanupTerminalInteractions = cleanup;
+    };
+    initializeStreamInteractions({
+      setErrorMessage,
+      onCleanupReady: storeStreamCleanup,
+      setConnection,
+      initializeTerminal,
+    });
 
     return () => {
       disposed = true;
-      cleanupTerminalInteractions?.();
-      if (inputFlushTimeoutRef.current !== null) {
-        window.clearTimeout(inputFlushTimeoutRef.current);
-        inputFlushTimeoutRef.current = null;
-      }
-      inputBufferRef.current = "";
-      inputBatchChunkCountRef.current = 0;
-      inputBatchWindowMsRef.current = INPUT_BATCH_BASE_WINDOW_MS;
-      sessionRef.current = null;
-      socketCloseErrorRef.current = null;
-      if (resizeTimeoutRef.current !== null) {
-        window.clearTimeout(resizeTimeoutRef.current);
-      }
-      if (reconnectTimeoutRef.current !== null) {
-        window.clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
-      }
-      window.removeEventListener("resize", scheduleResizeSync);
-      resizeObserverRef.current?.disconnect();
-      resizeObserverRef.current = null;
-      socketRef.current?.close();
-      socketRef.current = null;
+      resetInputBatcher();
+      activeSessionRef.current = null;
+      streamSocketCloseErrorRef.current = null;
+      disposeStreamRuntime({
+        cleanupTerminalInteractions,
+        fitAddonRef: streamFitAddonRef,
+        reconnectTimeoutRef: streamReconnectTimeoutRef,
+        resizeObserverRef: streamResizeObserverRef,
+        resizeTimeoutRef: streamResizeTimeoutRef,
+        scheduleResizeSync,
+        serializeAddonRef: streamSerializeAddonRef,
+        socketCloseErrorRef: streamSocketCloseErrorRef,
+        socketRef: streamSocketRef,
+        terminalRef: xtermRef,
+      });
       inputListenerRef.current?.dispose();
       inputListenerRef.current = null;
-      terminalRef.current?.dispose();
-      terminalRef.current = null;
-      fitAddonRef.current = null;
-      serializeAddonRef.current = null;
     };
   }, [
     allowInput,
     buildSocketEndpoint,
     inputPath,
     mode,
+    resetInputBatcher,
     scheduleResizeSync,
     sendInput,
   ]);
 
-  const connectionLabelMap: Record<ConnectionState, string> = {
-    online: "Connected",
-    connecting: "Connecting",
-    idle: "Idle",
-    exited: "Exited",
-    disconnected: "Disconnected",
-  };
-  const statusToneMap: Record<ConnectionState, string> = {
-    online: "text-primary",
-    connecting: "text-muted-foreground",
-    idle: "text-muted-foreground",
-    exited: "text-secondary-foreground",
-    disconnected: "text-destructive",
-  };
-  const connectionDotToneMap: Record<ConnectionState, string> = {
-    online: "bg-[#2DD4BF]",
-    connecting: "animate-pulse bg-[#FFC857]",
-    idle: "bg-muted-foreground",
-    exited: "bg-muted-foreground",
-    disconnected: "animate-pulse bg-[#FF5C5C]",
-  };
-
-  const connectionLabel = connectionLabelMap[connection];
-  const statusTone = statusToneMap[connection];
-  const connectionDotTone = connectionDotToneMap[connection];
+  const {
+    dotTone: connectionDotTone,
+    label: connectionLabel,
+    tone: statusTone,
+  } = streamConnectionPresentation(connection);
 
   let displayLabel = connectionLabel;
   let displayTone = statusTone;
@@ -716,69 +412,30 @@ export function PtyStreamTerminal({
       displayLabel = "Pending";
     }
   }
-  let footer: ReactNode;
-  if (errorMessage) {
-    footer = (
-      <p className="text-destructive text-xs uppercase tracking-[0.2em]">
-        {errorMessage}
-      </p>
-    );
-  } else if (session) {
-    footer = (
-      <p className="truncate text-[11px] text-muted-foreground uppercase tracking-[0.25em]">
-        {session.cwd}
-      </p>
-    );
-  } else {
-    footer = (
-      <p className="text-[11px] text-muted-foreground uppercase tracking-[0.25em]">
-        {emptyMessage}
-      </p>
-    );
-  }
+  const footer = streamTerminalFooter({
+    emptyMessage,
+    errorMessage,
+    sessionCwd: session?.cwd,
+  });
 
   return (
-    <div className="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border border-border/70 bg-card">
-      <div className="flex h-full min-h-0 w-full flex-col gap-3 p-3">
-        <header className="flex flex-wrap items-center justify-between gap-2 border-border/60 border-b pb-2">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <p className="font-semibold text-[11px] text-foreground uppercase tracking-[0.3em]">
-              {title}
-            </p>
-            <span
-              className={`text-[11px] uppercase tracking-[0.25em] ${displayTone}`}
-            >
-              {displayLabel}
-            </span>
-            {session?.pid ? (
-              <span className="text-[10px] text-muted-foreground uppercase tracking-[0.25em]">
-                pid {session.pid}
-              </span>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-1">
-            <Button
-              className="h-7 px-2"
-              onClick={copyTerminalOutput}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
-            <span className="inline-flex h-7 items-center gap-1.5 border border-border/70 px-2 text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
-              <span className={`h-2 w-2 rounded-full ${displayDotTone}`} />
-              {displayLabel}
-            </span>
-          </div>
-        </header>
-
+    <StreamTerminalFrame
+      content={
         <div className="min-h-0 flex-1 border border-border/70 bg-[#050708] p-2">
-          <div className="h-full min-h-0 w-full" ref={containerRef} />
+          <div className="h-full min-h-0 w-full" ref={streamContainerRef} />
         </div>
-
-        {footer}
-      </div>
-    </div>
+      }
+      footer={footer}
+      header={{
+        dotTone: displayDotTone,
+        label: displayLabel,
+        onCopyOutput: copyTerminalOutput,
+        pid: session?.pid,
+        title,
+        tone: displayTone,
+      }}
+      innerClassName="flex h-full min-h-0 w-full flex-col gap-3 p-3"
+      outerClassName="flex h-full min-h-0 flex-1 overflow-hidden rounded-sm border border-border/70 bg-card"
+    />
   );
 }

@@ -5,26 +5,11 @@ import {
   createDaemonRuntime,
   type DaemonStartupEvent,
 } from "@hive/daemon-runtime";
+import type {
+  DesktopStartupPhase,
+  DesktopStartupState,
+} from "./desktop-runtime-types";
 import { getDesktopRuntimeInfo } from "./runtime-info";
-
-export type DesktopStartupPhase =
-  | "idle"
-  | "detecting-daemon"
-  | "starting-daemon"
-  | "waiting-for-api"
-  | "api-ready"
-  | "error";
-
-export type DesktopStartupState = {
-  phase: DesktopStartupPhase;
-  message: string;
-  backendUrl: string;
-  healthUrl: string;
-  pid?: number | null;
-  startedAt: number;
-  updatedAt: number;
-  error?: string;
-};
 
 const DEFAULT_DAEMON_ARGS = ["--foreground"];
 const DEFAULT_STARTUP_TIMEOUT_MS = 180_000;
@@ -90,8 +75,8 @@ const resolveStartupTimeoutMs = () => {
 const resolveSiblingCliCandidates = () => {
   const executableName = process.platform === "win32" ? "hive.exe" : "hive";
   const candidates = [
-    process.env.HIVE_DESKTOP_CLI_BINARY,
     process.env.HIVE_DESKTOP_DAEMON_COMMAND,
+    process.env.HIVE_DESKTOP_CLI_BINARY,
     join(dirname(process.execPath), executableName),
     join(process.resourcesPath, executableName),
     join(process.resourcesPath, "..", executableName),

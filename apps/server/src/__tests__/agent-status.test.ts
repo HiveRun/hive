@@ -19,113 +19,74 @@ describe("resolveRuntimeStatusFromEvent", () => {
   });
 
   it("returns awaiting_input for session idle events", () => {
-    const event: Event = {
-      type: "session.idle",
-      properties: { sessionID: "ses_test" },
-    } as unknown as Event;
-    expect(resolveRuntimeStatusFromEvent(event)).toEqual({
-      status: "awaiting_input",
-    });
+    assertResolvedStatus(agentEvent("session.idle"), "awaiting_input");
   });
 
   it("returns awaiting_input for session status idle updates", () => {
-    const event: Event = {
-      type: "session.status",
-      properties: { sessionID: "ses_test", status: { type: "idle" } },
-    } as unknown as Event;
-
-    expect(resolveRuntimeStatusFromEvent(event)).toEqual({
-      status: "awaiting_input",
-    });
+    assertResolvedStatus(
+      agentEvent("session.status", { status: { type: "idle" } }),
+      "awaiting_input"
+    );
   });
 
   it("returns working for session status busy updates", () => {
-    const event: Event = {
-      type: "session.status",
-      properties: { sessionID: "ses_test", status: { type: "busy" } },
-    } as unknown as Event;
-
-    expect(resolveRuntimeStatusFromEvent(event)).toEqual({
-      status: "working",
-    });
+    assertResolvedStatus(
+      agentEvent("session.status", { status: { type: "busy" } }),
+      "working"
+    );
   });
 
   it("returns awaiting_input for permission prompts", () => {
-    const event: Event = {
-      type: "permission.asked",
-      properties: {
+    assertResolvedStatus(
+      agentEvent("permission.asked", {
         id: "perm_test",
-        sessionID: "ses_test",
         permission: "plan_exit",
         patterns: ["plan_exit"],
         metadata: {},
         always: [],
-      },
-    } as unknown as Event;
-
-    expect(resolveRuntimeStatusFromEvent(event)).toEqual({
-      status: "awaiting_input",
-    });
+      }),
+      "awaiting_input"
+    );
   });
 
   it("returns working for permission replies", () => {
-    const event: Event = {
-      type: "permission.replied",
-      properties: {
-        sessionID: "ses_test",
+    assertResolvedStatus(
+      agentEvent("permission.replied", {
         permissionID: "perm_test",
         response: "once",
-      },
-    } as unknown as Event;
-
-    expect(resolveRuntimeStatusFromEvent(event)).toEqual({
-      status: "working",
-    });
+      }),
+      "working"
+    );
   });
 
   it("returns awaiting_input for plan questions", () => {
-    const event: Event = {
-      type: "question.asked",
-      properties: {
+    assertResolvedStatus(
+      agentEvent("question.asked", {
         id: "question_test",
-        sessionID: "ses_test",
         text: "Continue?",
-      },
-    } as unknown as Event;
-
-    expect(resolveRuntimeStatusFromEvent(event)).toEqual({
-      status: "awaiting_input",
-    });
+      }),
+      "awaiting_input"
+    );
   });
 
   it("returns working for answered plan questions", () => {
-    const event: Event = {
-      type: "question.replied",
-      properties: {
+    assertResolvedStatus(
+      agentEvent("question.replied", {
         id: "question_test",
-        sessionID: "ses_test",
         text: "Continue?",
         answer: "Yes",
-      },
-    } as unknown as Event;
-
-    expect(resolveRuntimeStatusFromEvent(event)).toEqual({
-      status: "working",
-    });
+      }),
+      "working"
+    );
   });
 
   it("returns awaiting_input for rejected plan questions", () => {
-    const event: Event = {
-      type: "question.rejected",
-      properties: {
+    assertResolvedStatus(
+      agentEvent("question.rejected", {
         id: "question_test",
-        sessionID: "ses_test",
-      },
-    } as unknown as Event;
-
-    expect(resolveRuntimeStatusFromEvent(event)).toEqual({
-      status: "awaiting_input",
-    });
+      }),
+      "awaiting_input"
+    );
   });
 
   it("returns error info for session errors", () => {
@@ -207,4 +168,24 @@ function buildMessageUpdatedEvent(
     type: "message.updated",
     properties: { info },
   } as unknown as Event;
+}
+
+function agentEvent(
+  type: string,
+  properties: Record<string, unknown> = {}
+): Event {
+  return {
+    type,
+    properties: { sessionID: "ses_test", ...properties },
+  } as unknown as Event;
+}
+
+function assertResolvedStatus(
+  sourceEvent: Event,
+  status: "awaiting_input" | "working"
+) {
+  const actual = resolveRuntimeStatusFromEvent(sourceEvent);
+  if (actual?.status !== status || actual.error) {
+    throw new Error(`Expected status ${status}, got ${JSON.stringify(actual)}`);
+  }
 }

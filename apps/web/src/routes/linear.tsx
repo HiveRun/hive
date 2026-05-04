@@ -39,12 +39,17 @@ import {
 import { linearIssueToCellPrefill } from "@/lib/linear-issue-cell-prefill";
 import { cn } from "@/lib/utils";
 import {
+  ensureSelectedWorkspace,
+  workspaceLoaderDeps,
+} from "@/lib/workspace-selection";
+import {
   type LinearIssue,
   type LinearTeam,
   linearMutations,
   linearQueries,
 } from "@/queries/linear";
 import { workspaceQueries } from "@/queries/workspaces";
+import { useOverflowToggle } from "./-shared/use-overflow-toggle";
 
 const linearSearchSchema = z.object({
   workspaceId: z.string().optional(),
@@ -104,29 +109,27 @@ const buildIssueSearchHaystack = (issue: LinearIssue) =>
 
 export const Route = createFileRoute("/linear")({
   validateSearch: (search) => linearSearchSchema.parse(search),
-  loaderDeps: ({ search }) => ({
-    workspaceId: search.workspaceId,
-  }),
-  loader: async ({ context: { queryClient }, deps }) => {
-    const data = await queryClient.ensureQueryData(workspaceQueries.list());
-    const requestedWorkspace = deps.workspaceId
-      ? data.workspaces.find((entry) => entry.id === deps.workspaceId)
-      : undefined;
-    const activeWorkspace = data.activeWorkspaceId
-      ? data.workspaces.find((entry) => entry.id === data.activeWorkspaceId)
-      : undefined;
-    const workspace =
-      requestedWorkspace ?? activeWorkspace ?? data.workspaces[0];
-
-    if (!workspace) {
-      throw new Error("No workspaces registered. Add one to continue.");
-    }
-
-    await queryClient.ensureQueryData(linearQueries.status(workspace.id));
-    return { workspaceId: workspace.id };
-  },
+  loaderDeps: workspaceLoaderDeps,
+  loader: loadLinearRoute,
   component: LinearRouteComponent,
 });
+
+type LinearLoaderArgs = {
+  context: { queryClient: Parameters<typeof ensureSelectedWorkspace>[0] };
+  deps: { workspaceId?: string };
+};
+
+async function loadLinearRoute({
+  context: { queryClient },
+  deps,
+}: LinearLoaderArgs) {
+  const workspace = await ensureSelectedWorkspace(
+    queryClient,
+    deps.workspaceId
+  );
+  await queryClient.ensureQueryData(linearQueries.status(workspace.id));
+  return { workspaceId: workspace.id };
+}
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: route coordinates multiple query and mutation states
 export function LinearRouteComponent() {
@@ -177,12 +180,16 @@ export function LinearRouteComponent() {
     await queryClient.invalidateQueries({ queryKey: ["linear"] });
   };
 
+  const handleLinearMutationSuccess = async (message: string) => {
+    toast.success(message);
+    await invalidateLinear();
+  };
+
   const saveToken = useMutation({
     mutationFn: linearMutations.saveToken.mutationFn,
     onSuccess: async () => {
       setAccessToken("");
-      toast.success("Saved Linear token");
-      await invalidateLinear();
+      await handleLinearMutationSuccess("Saved Linear token");
     },
     onError: (error: Error) => {
       toast.error(error.message);
@@ -191,18 +198,12 @@ export function LinearRouteComponent() {
 
   const linkTeam = useMutation({
     mutationFn: linearMutations.linkTeam.mutationFn,
-    onSuccess: async () => {
-      toast.success("Linked Linear team");
-      await invalidateLinear();
-    },
+    onSuccess: () => handleLinearMutationSuccess("Linked Linear team"),
   });
 
   const disconnect = useMutation({
     mutationFn: linearMutations.disconnect.mutationFn,
-    onSuccess: async () => {
-      toast.success("Disconnected Linear");
-      await invalidateLinear();
-    },
+    onSuccess: () => handleLinearMutationSuccess("Disconnected Linear"),
     onError: (error: Error) => {
       toast.error(error.message);
     },
@@ -815,57 +816,12 @@ function IssueRow({
   const [isExpanded, setIsExpanded] = useState(false);
   const hasDescription = Boolean(issue.description?.trim());
   const descriptionRef = useRef<HTMLParagraphElement | null>(null);
-  const [canExpand, setCanExpand] = useState(
-    Boolean(
-      issue.description &&
-        (issue.description.trim().length > ISSUE_EXPAND_FALLBACK_THRESHOLD ||
-          issue.description.includes("\n"))
-    )
-  );
-
-  useEffect(() => {
-    if (!hasDescription) {
-      setCanExpand(false);
-      return;
-    }
-
-    if (isExpanded) {
-      return;
-    }
-
-    const element = descriptionRef.current;
-    if (!element) {
-      return;
-    }
-
-    const measure = () => {
-      setCanExpand(element.scrollHeight > element.clientHeight + 1);
-    };
-
-    let frameId: number | null = null;
-
-    const runMeasure = () => {
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId);
-      }
-      frameId = window.requestAnimationFrame(() => {
-        frameId = null;
-        measure();
-      });
-    };
-
-    runMeasure();
-
-    const observer = new ResizeObserver(runMeasure);
-    observer.observe(element);
-
-    return () => {
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId);
-      }
-      observer.disconnect();
-    };
-  }, [hasDescription, isExpanded]);
+  const canExpand = useOverflowToggle({
+    canExpandFallback: canExpandIssueDescription(issue.description),
+    deps: [hasDescription, issue.description],
+    isExpanded,
+    ref: descriptionRef,
+  });
 
   const showExpandControl = hasDescription && (canExpand || isExpanded);
 
@@ -937,6 +893,14 @@ function IssueRow({
         </div>
       </div>
     </div>
+  );
+}
+
+function canExpandIssueDescription(description: string | null | undefined) {
+  const text = description?.trim();
+  return Boolean(
+    text &&
+      (text.length > ISSUE_EXPAND_FALLBACK_THRESHOLD || text.includes("\n"))
   );
 }
 

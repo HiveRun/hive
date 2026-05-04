@@ -1,19 +1,13 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, expect, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   resolveDefaultDevHiveHome,
   resolveWorkspaceRoot,
 } from "./local-hive-home";
+import { createTempDirFixture } from "./test-temp-dir";
 
-const tempDirectories: string[] = [];
-
-afterEach(() => {
-  for (const directory of tempDirectories.splice(0)) {
-    rmSync(directory, { force: true, recursive: true });
-  }
-});
+const createTempDir = createTempDirFixture("hive-local-home-");
 
 describe("local hive home helpers", () => {
   test("resolveWorkspaceRoot returns the workspace root when hive.config.json exists there", () => {
@@ -63,10 +57,4 @@ function createWorkspace() {
   const workspaceRoot = createTempDir();
   writeFileSync(join(workspaceRoot, "hive.config.json"), "{}\n");
   return workspaceRoot;
-}
-
-function createTempDir() {
-  const directory = mkdtempSync(join(tmpdir(), "hive-local-home-"));
-  tempDirectories.push(directory);
-  return directory;
 }

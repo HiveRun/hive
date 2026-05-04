@@ -1,10 +1,10 @@
-export type ResolveUninstallConfirmationOptions = {
+type ResolveUninstallConfirmationOptions = {
   confirmedByFlag: boolean;
   isInteractive: boolean;
   askConfirmation: () => Promise<string>;
 };
 
-export type ResolveUninstallDataRetentionOptions = {
+type ResolveUninstallDataRetentionOptions = {
   keepDataByFlag: boolean;
   shouldPrompt: boolean;
   askConfirmation: () => Promise<string>;

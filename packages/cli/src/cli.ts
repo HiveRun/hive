@@ -16,13 +16,24 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import {
+  DAEMON_READY_LOG_PATTERN,
+  type DaemonLaunchResult,
   ensureTrailingNewline,
-  extractPortFromUrl,
-  findListeningProcessId,
+  findHealthcheckProcessId,
+  getErrnoCode,
   installCompletionScript,
   isHiveHealthResponse,
+  isHiveReadyResponse,
+  isPidAlive,
+  launchDetachedProcessWithSpawn,
+  MANAGED_DAEMON_VERIFY_INTERVAL_MS,
+  MANAGED_DAEMON_VERIFY_TIMEOUT_MS,
+  probeJson,
+  spawnDetachedShell,
   type WaitForServerReadyConfig,
+  waitForDetachedReadyFile,
   waitForServerReady,
+  writeCurrentProcessLockFile,
 } from "@hive/daemon-runtime";
 import {
   binaryDirectory,
@@ -155,13 +166,6 @@ const trimTrailingSlash = (value: string) =>
   value.endsWith("/") ? value.slice(0, -1) : value;
 
 const HEALTHCHECK_URL = `${trimTrailingSlash(DEFAULT_API_URL)}/health`;
-const DAEMON_READY_LOG_PATTERN = /API listening on /;
-const DAEMON_PROBE_TIMEOUT_MS = 800;
-const MANAGED_DAEMON_VERIFY_TIMEOUT_MS = 5000;
-const MANAGED_DAEMON_VERIFY_INTERVAL_MS = 200;
-const DETACHED_DAEMON_READY_TIMEOUT_MS = 180_000;
-const DETACHED_DAEMON_READY_INTERVAL_MS = 500;
-const DETACHED_READY_FILE_PREWAIT_TIMEOUT_MS = 5000;
 const DAEMON_STOP_WAIT_TIMEOUT_MS = 10_000;
 const DAEMON_STOP_POLL_INTERVAL_MS = 100;
 const CF_BUNDLE_EXECUTABLE_PATTERN =
@@ -196,15 +200,6 @@ const readActivePid = (): number | null => {
   }
 };
 
-const isPidAlive = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
 const readManagedDaemonPid = () => {
   const pid = readActivePid();
   if (!pid) {
@@ -217,35 +212,6 @@ const readManagedDaemonPid = () => {
 
   cleanupPidFile();
   return null;
-};
-
-const probeJson = async (url: string) => {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), DAEMON_PROBE_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      return null;
-    }
-
-    return await response.json();
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-};
-
-const isHiveReadyResponse = async (response: Response) => {
-  try {
-    return isHiveHealthResponse(await response.json());
-  } catch {
-    return false;
-  }
 };
 
 const detectManagedDaemon = async () => {
@@ -271,8 +237,7 @@ const detectManagedDaemon = async () => {
     return null;
   }
 
-  const port = extractPortFromUrl(HEALTHCHECK_URL);
-  const listeningPid = port ? findListeningProcessId({ port }) : null;
+  const listeningPid = findHealthcheckProcessId(HEALTHCHECK_URL);
   if (listeningPid && listeningPid !== pid) {
     cleanupPidFile();
     return null;
@@ -295,9 +260,8 @@ const detectUnmanagedDaemon = async (): Promise<UnmanagedDaemon | null> => {
     return null;
   }
 
-  const port = extractPortFromUrl(HEALTHCHECK_URL);
   return {
-    pid: port ? findListeningProcessId({ port }) : null,
+    pid: findHealthcheckProcessId(HEALTHCHECK_URL),
   };
 };
 
@@ -321,29 +285,6 @@ const detectRunningDaemon = async () => {
   } as const;
 };
 
-type LaunchResult = {
-  pid: number | null;
-  logFile: string;
-  logOffset: number;
-  readyFileContents?: string;
-};
-
-const openLogStreams = (logFile: string) => ({
-  stdoutFd: openSync(logFile, "a"),
-  stderrFd: openSync(logFile, "a"),
-});
-
-const closeStream = (fd: number | null) => {
-  if (fd === null) {
-    return;
-  }
-  try {
-    closeSync(fd);
-  } catch {
-    /* ignore */
-  }
-};
-
 const persistPidFile = (pid: number | null) => {
   ensurePidDirectory();
   if (!pid) {
@@ -365,8 +306,7 @@ const persistPidFileIfAlive = (pid: number | null) => {
     return false;
   }
 
-  const port = extractPortFromUrl(HEALTHCHECK_URL);
-  const listeningPid = port ? findListeningProcessId({ port }) : null;
+  const listeningPid = findHealthcheckProcessId(HEALTHCHECK_URL);
   if (listeningPid && listeningPid !== pid) {
     return false;
   }
@@ -381,8 +321,7 @@ const persistLaunchedOrListeningDaemonPid = (pid: number | null) => {
     return true;
   }
 
-  const port = extractPortFromUrl(HEALTHCHECK_URL);
-  return persistPidFileIfAlive(port ? findListeningProcessId({ port }) : null);
+  return persistPidFileIfAlive(findHealthcheckProcessId(HEALTHCHECK_URL));
 };
 
 const cleanupReadyFile = () => {
@@ -397,36 +336,17 @@ const launchDetachedServerWithSpawn = (
   childEnv: NodeJS.ProcessEnv,
   logFile: string,
   logOffset: number
-): LaunchResult => {
-  const { stdoutFd, stderrFd } = openLogStreams(logFile);
-
-  try {
-    const child = spawn(EXECUTABLE_PATH, ["--foreground"], {
-      cwd: DETACHED_DAEMON_CWD,
-      env: childEnv,
-      detached: true,
-      stdio: ["ignore", stdoutFd, stderrFd],
-    });
-
-    closeStream(stdoutFd);
-    closeStream(stderrFd);
-
-    child.unref();
-    persistDaemonStartLock(child.pid ?? null);
-
-    return {
-      pid: child.pid ?? null,
-      logFile,
-      logOffset,
-      readyFileContents: child.pid ? String(child.pid) : undefined,
-    };
-  } catch (error) {
-    closeStream(stdoutFd);
-    closeStream(stderrFd);
-    cleanupDaemonStartLock();
-    throw error;
-  }
-};
+): DaemonLaunchResult =>
+  launchDetachedProcessWithSpawn({
+    executablePath: EXECUTABLE_PATH,
+    foregroundArgs: ["--foreground"],
+    cwd: DETACHED_DAEMON_CWD,
+    env: childEnv,
+    logFile,
+    logOffset,
+    persistStartLock: persistDaemonStartLock,
+    cleanupStartLock: cleanupDaemonStartLock,
+  });
 
 const prepareDetachedLaunch = () => {
   const logDir = resolveLogDirectory();
@@ -447,23 +367,18 @@ const prepareDetachedLaunch = () => {
   return { childEnv, logFile, logOffset };
 };
 
-const launchDetachedServer = (): LaunchResult => {
+const launchDetachedServer = (): DaemonLaunchResult => {
   const { childEnv, logFile, logOffset } = prepareDetachedLaunch();
 
   if (process.platform !== "win32") {
-    const command = 'setsid "$1" --foreground >"$2" 2>&1 < /dev/null &';
-
     try {
-      const child = spawn(
-        "sh",
-        ["-c", command, "hive-detached", EXECUTABLE_PATH, logFile],
-        {
-          cwd: DETACHED_DAEMON_CWD,
-          env: childEnv,
-          detached: true,
-          stdio: "ignore",
-        }
-      );
+      const child = spawnDetachedShell({
+        executablePath: EXECUTABLE_PATH,
+        foregroundArgs: ["--foreground"],
+        logFile,
+        cwd: DETACHED_DAEMON_CWD,
+        env: childEnv,
+      });
 
       child.unref();
       persistDaemonStartLock(child.pid ?? null);
@@ -484,45 +399,15 @@ const launchDetachedServer = (): LaunchResult => {
   return launchDetachedServerWithSpawn(childEnv, logFile, logOffset);
 };
 
-const detachedReadyFileMatchesLaunch = (launch: LaunchResult) => {
-  if (!existsSync(readyFilePath)) {
-    return false;
-  }
-
-  try {
-    const readyFileValue = readFileSync(readyFilePath, "utf8").trim();
-    return launch.readyFileContents
-      ? readyFileValue === launch.readyFileContents
-      : readyFileValue.length > 0;
-  } catch {
-    return false;
-  }
-};
-
 const waitForDetachedDaemonReady = async (
-  launch: LaunchResult,
+  launch: DaemonLaunchResult,
   config?: Omit<WaitForServerReadyConfig, "url">
-) => {
-  if (!(process.platform !== "win32" && launch.pid)) {
-    return false;
-  }
-
-  const deadline =
-    Date.now() +
-    Math.min(
-      config?.timeoutMs ?? DETACHED_DAEMON_READY_TIMEOUT_MS,
-      DETACHED_READY_FILE_PREWAIT_TIMEOUT_MS
-    );
-  while (Date.now() < deadline) {
-    if (detachedReadyFileMatchesLaunch(launch)) {
-      return true;
-    }
-
-    await sleep(DETACHED_DAEMON_READY_INTERVAL_MS);
-  }
-
-  return false;
-};
+) =>
+  await waitForDetachedReadyFile({
+    readyFilePath,
+    launch,
+    timeoutMs: config?.timeoutMs,
+  });
 
 const startDetachedManagedDaemon = async (
   config?: Omit<WaitForServerReadyConfig, "url">
@@ -657,6 +542,9 @@ const resolveLogDirectory = () =>
   process.env.HIVE_LOG_DIR ?? join(binaryDirectory, "logs");
 const resolveLogFilePath = () => join(resolveLogDirectory(), "hive.log");
 
+const failedOperationMessage = (error: unknown, fallback: string) =>
+  error instanceof Error ? error.message : fallback;
+
 const openDefaultBrowser = (url: string) => {
   const platform = process.platform;
   let command: string;
@@ -683,10 +571,7 @@ const openDefaultBrowser = (url: string) => {
   } catch (error) {
     return {
       ok: false,
-      message:
-        error instanceof Error
-          ? error.message
-          : "Failed to open default browser",
+      message: failedOperationMessage(error, "Failed to open default browser"),
     } as const;
   }
 };
@@ -699,10 +584,11 @@ const getDesktopExecutableCandidates = () => {
   }
 
   if (process.platform === "darwin") {
-    candidates.push(join(binaryDirectory, "Hive Desktop.app"));
-    candidates.push(join(binaryDirectory, "hive-desktop"));
-    candidates.push(join(binaryDirectory, "Hive.app"));
-    candidates.push(join(binaryDirectory, "hive-electron"));
+    candidates.push(
+      ...["Hive Desktop.app", "hive-desktop", "Hive.app", "hive-electron"].map(
+        (fileName) => join(binaryDirectory, fileName)
+      )
+    );
   } else if (process.platform === "win32") {
     candidates.push(join(binaryDirectory, "hive-desktop.exe"));
     candidates.push(join(binaryDirectory, "Hive Desktop.exe"));
@@ -818,10 +704,7 @@ const launchDesktopApplication = () => {
   } catch (error) {
     return {
       ok: false,
-      message:
-        error instanceof Error
-          ? error.message
-          : "Failed to launch Hive desktop",
+      message: failedOperationMessage(error, "Failed to launch Hive desktop"),
     } as const;
   }
 };
@@ -971,18 +854,7 @@ const tryAcquireDaemonStartLock = () => {
   }
 
   ensurePidDirectory();
-  try {
-    writeFileSync(resolveDaemonStartLockFilePath(), `${process.pid}\n`, {
-      flag: "wx",
-    });
-    return true;
-  } catch (error) {
-    if (getErrnoCode(error) === "EEXIST") {
-      return false;
-    }
-
-    throw error;
-  }
+  return writeCurrentProcessLockFile(resolveDaemonStartLockFilePath());
 };
 
 const ensureDesktopPidDirectory = () => {
@@ -1088,11 +960,6 @@ const UNMANAGED_DAEMON_STOP_ERROR =
 
 const sleep = (milliseconds: number) =>
   new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
-
-const getErrnoCode = (error: unknown) =>
-  error && typeof error === "object" && "code" in error
-    ? String((error as NodeJS.ErrnoException).code)
-    : null;
 
 const waitForProcessExit = async (
   pid: number,

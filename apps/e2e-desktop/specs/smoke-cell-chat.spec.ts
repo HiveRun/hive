@@ -1,9 +1,23 @@
 import { type Locator, type Page, test } from "@playwright/test";
 import {
+  fetchAgentMessageIds,
+  fetchAgentMessages,
+  fetchAgentSession,
+  type AgentSession as SessionSnapshot,
+  sendChatTerminalInput,
+  wait,
+  waitForAgentSession,
+  waitForCondition,
+} from "../../e2e/src/test-helpers";
+import {
   launchDesktopApp,
   navigateInDesktopApp,
   readDesktopDiagnostics,
 } from "./utils/desktop-app";
+import {
+  createDesktopCell,
+  resolveDesktopApiUrl,
+} from "./utils/desktop-test-helpers";
 
 const SESSION_TIMEOUT_MS = 120_000;
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
@@ -33,12 +47,24 @@ const TERMINAL_INPUT_SURFACE_SELECTOR = "[data-testid='cell-terminal-input']";
 const TERMINAL_INPUT_TEXTAREA_SELECTOR =
   "[data-testid='cell-terminal-input'] .xterm-helper-textarea";
 
+type PromptAcceptanceOptions = {
+  page: Page;
+  apiUrl: string;
+  cellId: string;
+  baselineSession: SessionSnapshot;
+  baselineMessageIds: Set<string>;
+  prompt: string;
+  timeoutMs: number;
+};
+
 test("desktop cell chat smoke creates a cell and accepts a prompt", async () => {
-  const apiUrl = resolveApiUrl();
+  const apiUrl = resolveDesktopApiUrl(
+    "HIVE_E2E_API_URL is required for desktop smoke tests"
+  );
   const { app, page } = await launchDesktopApp();
 
   try {
-    const cellId = await createCellViaApi({
+    const cellId = await createDesktopCell({
       apiUrl,
       name: `Desktop E2E Cell ${Date.now()}`,
     });
@@ -84,71 +110,17 @@ test("desktop cell chat smoke creates a cell and accepts a prompt", async () => 
   }
 });
 
-function resolveApiUrl() {
-  const apiUrl = process.env.HIVE_E2E_API_URL;
-  if (!apiUrl) {
-    throw new Error("HIVE_E2E_API_URL is required for desktop smoke tests");
-  }
-  return apiUrl;
-}
-
-async function createCellViaApi(options: { apiUrl: string; name: string }) {
-  const workspaceId = await resolveWorkspaceId(options.apiUrl);
-  const response = await fetch(`${options.apiUrl}/api/cells`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      name: options.name,
-      templateId: "e2e-template",
-      workspaceId,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to create desktop smoke cell: ${response.status}`);
-  }
-
-  const payload = await response.json();
-  if (payload?.message) {
-    throw new Error(payload.message);
-  }
-
-  if (!payload?.id) {
-    throw new Error("Desktop smoke cell response missing id");
-  }
-
-  return payload.id as string;
-}
-
-async function resolveWorkspaceId(apiUrl: string) {
-  const response = await fetch(`${apiUrl}/api/workspaces`);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch workspaces: ${response.status}`);
-  }
-
-  const payload = await response.json();
-  const activeWorkspaceId = payload?.activeWorkspaceId as string | null;
-  if (activeWorkspaceId) {
-    return activeWorkspaceId;
-  }
-
-  const firstWorkspaceId = payload?.workspaces?.[0]?.id as string | undefined;
-  if (!firstWorkspaceId) {
-    throw new Error("No workspace available for desktop smoke test");
-  }
-
-  return firstWorkspaceId;
-}
-
 async function sendPromptWithRetries(options: {
   page: Page;
   apiUrl: string;
   cellId: string;
   prompt: string;
 }) {
-  let baselineSession = await waitForSession(options.apiUrl, options.cellId);
+  let baselineSession = await waitForAgentSession({
+    apiUrl: options.apiUrl,
+    cellId: options.cellId,
+    timeoutMs: SESSION_TIMEOUT_MS,
+  });
 
   for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt += 1) {
     await ensureTerminalReady({
@@ -159,12 +131,9 @@ async function sendPromptWithRetries(options: {
       timeoutMs: TERMINAL_READY_TIMEOUT_MS,
     });
 
-    const baselineMessages = await fetchSessionMessages(
+    const baselineMessageIds = await fetchAgentMessageIds(
       options.apiUrl,
       baselineSession.id
-    );
-    const baselineMessageIds = new Set(
-      baselineMessages.map((message) => message.id)
     );
 
     await sendPromptViaApi(options.apiUrl, options.cellId, options.prompt);
@@ -195,7 +164,11 @@ async function sendPromptWithRetries(options: {
       return;
     }
 
-    baselineSession = await waitForSession(options.apiUrl, options.cellId);
+    baselineSession = await waitForAgentSession({
+      apiUrl: options.apiUrl,
+      cellId: options.cellId,
+      timeoutMs: SESSION_TIMEOUT_MS,
+    });
     await wait(SEND_RETRY_DELAY_MS);
   }
 
@@ -210,16 +183,7 @@ async function sendPromptViaApi(
   cellId: string,
   prompt: string
 ) {
-  const response = await fetch(
-    `${apiUrl}/api/cells/${cellId}/chat/terminal/input`,
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ data: `${prompt}\n` }),
-    }
-  );
+  const response = await sendChatTerminalInput(apiUrl, cellId, `${prompt}\n`);
 
   if (!response.ok) {
     throw new Error(
@@ -228,15 +192,7 @@ async function sendPromptViaApi(
   }
 }
 
-async function sendPromptViaKeyboardAndWait(options: {
-  page: Page;
-  apiUrl: string;
-  cellId: string;
-  baselineSession: SessionSnapshot;
-  baselineMessageIds: Set<string>;
-  prompt: string;
-  timeoutMs: number;
-}) {
+async function sendPromptViaKeyboardAndWait(options: PromptAcceptanceOptions) {
   await focusTerminalInput(options.page);
   await options.page.keyboard.type(options.prompt);
   await options.page.keyboard.press("Enter");
@@ -267,19 +223,14 @@ async function focusTerminalInput(page: Page) {
   );
 }
 
-async function waitForPromptAccepted(options: {
-  page: Page;
-  apiUrl: string;
-  cellId: string;
-  baselineSession: SessionSnapshot;
-  baselineMessageIds: Set<string>;
-  prompt: string;
-  timeoutMs: number;
-}) {
+async function waitForPromptAccepted(options: PromptAcceptanceOptions) {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < options.timeoutMs) {
-    const currentSession = await fetchSession(options.apiUrl, options.cellId);
+    const currentSession = await fetchAgentSession(
+      options.apiUrl,
+      options.cellId
+    );
     if (!currentSession) {
       await wait(POLL_INTERVAL_MS);
       continue;
@@ -292,7 +243,7 @@ async function waitForPromptAccepted(options: {
       return true;
     }
 
-    const messages = await fetchSessionMessages(
+    const messages = await fetchAgentMessages(
       options.apiUrl,
       currentSession.id
     );
@@ -460,67 +411,25 @@ async function evaluateTerminalReadiness(
   };
 }
 
-async function waitForSession(apiUrl: string, cellId: string) {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < SESSION_TIMEOUT_MS) {
-    const session = await fetchSession(apiUrl, cellId);
-    if (session?.id) {
-      return session;
-    }
-    await wait(POLL_INTERVAL_MS);
-  }
-
-  throw new Error(`Timed out waiting for agent session for cell ${cellId}`);
-}
-
-async function fetchSession(apiUrl: string, cellId: string) {
-  const response = await fetch(
-    `${apiUrl}/api/agents/sessions/byCell/${cellId}`
-  );
-  if (!response.ok) {
-    return null;
-  }
-
-  const payload = await response.json();
-  const session = payload?.session as SessionSnapshot | null;
-  return session ?? null;
-}
-
-async function fetchSessionMessages(apiUrl: string, sessionId: string) {
-  const response = await fetch(
-    `${apiUrl}/api/agents/sessions/${sessionId}/messages`
-  );
-  if (!response.ok) {
-    return [] as SessionMessage[];
-  }
-
-  const payload = await response.json();
-  return (payload?.messages ?? []) as SessionMessage[];
-}
-
 async function waitForProvisioningOrChatRoute(options: {
   page: Page;
   cellId: string;
   timeoutMs: number;
 }) {
-  const startedAt = Date.now();
   let resolvedRoute: "chat" | "provisioning" | null = null;
+  await waitForCondition({
+    check: () => {
+      resolvedRoute = resolveCellSubroute(
+        readPathname(options.page.url()),
+        options.cellId
+      );
+      return Promise.resolve(resolvedRoute !== null);
+    },
+    errorMessage: `Cell ${options.cellId} did not reach chat/provisioning route`,
+    timeoutMs: options.timeoutMs,
+  });
 
-  while (Date.now() - startedAt < options.timeoutMs) {
-    const path = readPathname(options.page.url());
-    resolvedRoute = resolveCellSubroute(path, options.cellId);
-    if (resolvedRoute) {
-      return resolvedRoute;
-    }
-
-    await wait(POLL_INTERVAL_MS);
-  }
-
-  const diagnostics = await readDesktopDiagnostics(options.page);
-  throw new Error(
-    `Cell ${options.cellId} did not reach chat/provisioning route. ` +
-      `${JSON.stringify(diagnostics)}`
-  );
+  return resolvedRoute;
 }
 
 async function waitForChatRoute(options: {
@@ -672,21 +581,3 @@ async function isVisible(locator: Locator) {
     return false;
   }
 }
-
-async function wait(ms: number) {
-  await new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-type SessionSnapshot = {
-  id: string;
-  updatedAt?: string;
-  status?: string;
-};
-
-type SessionMessage = {
-  id: string;
-  role: string;
-  content?: string;
-};

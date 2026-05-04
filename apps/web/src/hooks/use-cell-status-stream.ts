@@ -9,6 +9,11 @@ type CellStatusStreamOptions = {
   enabled?: boolean;
 };
 
+const updateWorkspaceCells = (
+  currentCells: Cell[] | undefined,
+  updater: (cells: Cell[]) => Cell[]
+) => (currentCells ? updater(currentCells) : currentCells);
+
 export function useCellStatusStream(
   workspaceId: string,
   options: CellStatusStreamOptions = {}
@@ -34,30 +39,27 @@ export function useCellStatusStream(
         const cellData = JSON.parse(event.data) as Cell;
         queryClient.setQueryData<Cell[]>(
           ["cells", workspaceId],
-          (currentCells) => {
-            if (!currentCells) {
-              return currentCells;
-            }
+          (currentCells) =>
+            updateWorkspaceCells(currentCells, (cells) => {
+              const existingIndex = cells.findIndex(
+                (cell) => cell.id === cellData.id
+              );
+              if (existingIndex === -1) {
+                return [...cells, cellData];
+              }
 
-            const existingIndex = currentCells.findIndex(
-              (cell) => cell.id === cellData.id
-            );
-            if (existingIndex === -1) {
-              return [...currentCells, cellData];
-            }
+              const nextCells = [...cells];
+              const existingCell = nextCells[existingIndex];
+              if (!existingCell) {
+                return cells;
+              }
 
-            const nextCells = [...currentCells];
-            const existingCell = nextCells[existingIndex];
-            if (!existingCell) {
-              return currentCells;
-            }
-
-            nextCells[existingIndex] = {
-              ...existingCell,
-              ...cellData,
-            };
-            return nextCells;
-          }
+              nextCells[existingIndex] = {
+                ...existingCell,
+                ...cellData,
+              };
+              return nextCells;
+            })
         );
         queryClient.setQueryData<Cell>(["cells", cellData.id], (currentCell) =>
           currentCell ? { ...currentCell, ...cellData } : cellData
@@ -80,13 +82,10 @@ export function useCellStatusStream(
 
         queryClient.setQueryData<Cell[]>(
           ["cells", workspaceId],
-          (currentCells) => {
-            if (!currentCells) {
-              return currentCells;
-            }
-
-            return currentCells.filter((cell) => cell.id !== payload.id);
-          }
+          (currentCells) =>
+            updateWorkspaceCells(currentCells, (cells) =>
+              cells.filter((cell) => cell.id !== payload.id)
+            )
         );
         queryClient.removeQueries({
           queryKey: ["cells", payload.id],

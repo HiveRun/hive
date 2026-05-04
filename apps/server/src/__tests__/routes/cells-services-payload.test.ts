@@ -1,21 +1,24 @@
 import { createServer } from "node:net";
 
-import { Elysia } from "elysia";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { createCellsRoutes } from "../../routes/cells";
-import { cells } from "../../schema/cells";
-import { cellServices } from "../../schema/services";
 import type { ChatTerminalSession } from "../../services/chat-terminal";
 import type { ProcessResourceSnapshot } from "../../services/resource-snapshot";
 import type { ServiceTerminalSession } from "../../services/service-terminal";
-import { setupTestDb, testDb } from "../test-db";
+import { setupTestDb } from "../test-db";
+import {
+  clearRouteServicesAndCells,
+  createCellRouteTestApp,
+  createCellRouteTestDependencies,
+  expectJsonPayload,
+  handleRouteRequest,
+  seedRouteCellAndService,
+} from "./cells-route-test-helpers";
 
 const TEST_WORKSPACE_ID = "test-workspace-services";
 const TEST_CELL_ID = "test-cell-services-id";
 const TEST_SERVICE_ID = "test-service-id";
 const LOG_TAIL_MAX_LINES = 200;
-const HTTP_OK = 200;
 const SMALL_OUTPUT_LINES = 50;
 const LARGE_OUTPUT_LINES = 320;
 const EXPECTED_FIRST_TAILED_LINE = 121;
@@ -81,79 +84,41 @@ function createRuntimeHarness() {
 function createMinimalDependencies(
   harness: ReturnType<typeof createRuntimeHarness>
 ): any {
-  const workspaceRecord = {
-    id: TEST_WORKSPACE_ID,
-    label: "Test Workspace Services",
-    path: "/tmp/test-workspace-services-root",
-    addedAt: new Date().toISOString(),
-  };
-
-  return {
-    db: testDb,
-    resolveWorkspaceContext: (() => ({
-      workspace: workspaceRecord,
-      loadConfig: () =>
-        Promise.resolve({
-          opencode: { defaultProvider: "opencode", defaultModel: "mock" },
-          promptSources: [],
-          templates: {},
-          defaults: {},
-        }),
-      createWorktreeManager: () =>
-        Promise.resolve({
-          createWorktree: () =>
-            Promise.resolve({ path: "/tmp", branch: "b", baseCommit: "c" }),
-          removeWorktree: () => Promise.resolve(),
-        }),
-      createWorktree: () =>
-        Promise.resolve({ path: "/tmp", branch: "b", baseCommit: "c" }),
-      removeWorktree: () => Promise.resolve(),
-    })) as any,
-    ensureAgentSession: () =>
-      Promise.resolve({ id: "session", cellId: TEST_CELL_ID }),
-    closeAgentSession: () => Promise.resolve(),
-    ensureServicesForCell: () => Promise.resolve(),
-    startServicesForCell: () => Promise.resolve(),
-    stopServicesForCell: () => Promise.resolve(),
-    startServiceById: () => Promise.resolve(),
-    stopServiceById: () => Promise.resolve(),
-    sendAgentMessage: () => Promise.resolve(),
-    ensureTerminalSession: () => ({
-      sessionId: "terminal-session",
-      cellId: TEST_CELL_ID,
-      pid: 123,
-      cwd: "/tmp/test-workspace-services-root",
-      cols: 120,
-      rows: 36,
-      status: "running" as const,
-      exitCode: null,
-      startedAt: new Date().toISOString(),
-    }),
-    readTerminalOutput: () => "",
-    subscribeToTerminal: () => () => 0,
-    writeTerminalInput: () => 0,
-    resizeTerminal: () => 0,
-    closeTerminalSession: () => 0,
-    getServiceTerminalSession: () => null,
-    readServiceTerminalOutput: (serviceId: string) =>
-      harness.readServiceOutput(serviceId),
-    subscribeToServiceTerminal: () => () => 0,
-    writeServiceTerminalInput: () => 0,
-    resizeServiceTerminal: () => 0,
-    clearServiceTerminal: () => 0,
-    getSetupTerminalSession: (cellId: string) =>
-      harness.getSetupSession(cellId),
-    readSetupTerminalOutput: (cellId: string) =>
-      harness.readSetupOutput(cellId),
-    subscribeToSetupTerminal: () => () => 0,
-    writeSetupTerminalInput: () => 0,
-    resizeSetupTerminal: () => 0,
-    clearSetupTerminal: () => 0,
-    getChatTerminalSession: (cellId: string) => harness.getChatSession(cellId),
-    sampleServiceResources: (pids: number[]) =>
-      Promise.resolve(harness.sampleServiceResources(pids)),
-  };
+  return createCellRouteTestDependencies({
+    cellId: TEST_CELL_ID,
+    workspaceId: TEST_WORKSPACE_ID,
+    workspacePath: "/tmp/test-workspace-services-root",
+    workspaceRootPath: "/tmp/test-workspace-services-root",
+    overrides: {
+      readServiceTerminalOutput: (serviceId: string) =>
+        harness.readServiceOutput(serviceId),
+      getSetupTerminalSession: (cellId: string) =>
+        harness.getSetupSession(cellId),
+      readSetupTerminalOutput: (cellId: string) =>
+        harness.readSetupOutput(cellId),
+      getChatTerminalSession: (cellId: string) =>
+        harness.getChatSession(cellId),
+      sampleServiceResources: (pids: number[]) =>
+        Promise.resolve(harness.sampleServiceResources(pids)),
+    },
+  });
 }
+
+const readServicesPayload = <TPayload>(
+  app: { handle: (request: Request) => Promise<Response> },
+  query = ""
+) =>
+  handleRouteRequest(app, `/api/cells/${TEST_CELL_ID}/services${query}`).then(
+    (response) => expectJsonPayload<TPayload>(response)
+  );
+
+const readFirstServicePayload = async <TService>(
+  app: { handle: (request: Request) => Promise<Response> },
+  query = ""
+) => {
+  const body = await readServicesPayload<{ services: TService[] }>(app, query);
+  return getFirstService(body.services);
+};
 
 async function insertCellAndServiceRecords(
   serviceName: string,
@@ -169,45 +134,30 @@ async function insertCellAndServiceRecords(
       | "error";
   }
 ) {
-  const now = new Date();
-
-  await testDb.insert(cells).values({
-    id: TEST_CELL_ID,
-    name: "Test Cell Services",
-    description: "Test cell for services payload validation",
-    templateId: "test-template",
-    workspaceId: TEST_WORKSPACE_ID,
-    workspaceRootPath: "/tmp/test-workspace-services-root",
-    workspacePath: "/tmp/test-workspace-services-root",
-    branchName: "test-branch",
-    baseCommit: "test-commit",
-    opencodeSessionId: null,
-    createdAt: now,
-    status: "ready",
-    lastSetupError: null,
-  });
-
-  await testDb.insert(cellServices).values({
-    id: TEST_SERVICE_ID,
-    cellId: TEST_CELL_ID,
-    name: serviceName,
-    type: "process",
-    command: "echo test",
-    cwd: "/tmp/test-workspace-services-root",
-    env: { TEST_VAR: "test" },
-    status: options?.status ?? "running",
-    port: options?.port ?? null,
-    pid: options?.pid ?? null,
-    readyTimeoutMs: null,
-    definition: {
-      type: "process",
-      run: "echo test",
-      cwd: "/tmp/test-workspace-services-root",
-      env: {},
+  await seedRouteCellAndService({
+    cell: {
+      id: TEST_CELL_ID,
+      name: "Test Cell Services",
+      description: "Test cell for services payload validation",
+      templateId: "test-template",
+      workspaceId: TEST_WORKSPACE_ID,
+      workspaceRootPath: "/tmp/test-workspace-services-root",
+      workspacePath: "/tmp/test-workspace-services-root",
+      branchName: "test-branch",
+      baseCommit: "test-commit",
     },
-    lastKnownError: null,
-    createdAt: now,
-    updatedAt: now,
+    service: {
+      id: TEST_SERVICE_ID,
+      cellId: TEST_CELL_ID,
+      name: serviceName,
+      command: "echo test",
+      cwd: "/tmp/test-workspace-services-root",
+      env: { TEST_VAR: "test" },
+      definitionEnv: {},
+      status: options?.status ?? "running",
+      port: options?.port ?? null,
+      pid: options?.pid ?? null,
+    },
   });
 }
 
@@ -264,17 +214,12 @@ describe("GET /api/cells/:id/services payload", () => {
   let app: any;
   let harness: ReturnType<typeof createRuntimeHarness>;
 
-  beforeAll(async () => {
-    await setupTestDb();
-  });
+  beforeAll(setupTestDb);
 
   beforeEach(async () => {
-    await testDb.delete(cellServices);
-    await testDb.delete(cells);
+    await clearRouteServicesAndCells();
     harness = createRuntimeHarness();
-    app = new Elysia().use(
-      createCellsRoutes(createMinimalDependencies(harness))
-    );
+    app = createCellRouteTestApp(createMinimalDependencies(harness));
   });
 
   it("returns null logPath and runtime-backed recentLogs", async () => {
@@ -285,16 +230,10 @@ describe("GET /api/cells/:id/services payload", () => {
       buildLogLines(serviceName, SMALL_OUTPUT_LINES)
     );
 
-    const response = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const body = (await response.json()) as {
-      services: Array<{ logPath: string | null; recentLogs: string | null }>;
-    };
-
-    const service = getFirstService(body.services);
+    const service = await readFirstServicePayload<{
+      logPath: string | null;
+      recentLogs: string | null;
+    }>(app);
     expect(service.logPath).toBeNull();
     expect(service.recentLogs?.split("\n").length).toBe(SMALL_OUTPUT_LINES);
   });
@@ -307,16 +246,9 @@ describe("GET /api/cells/:id/services payload", () => {
       buildLogLines(serviceName, LARGE_OUTPUT_LINES)
     );
 
-    const response = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const body = (await response.json()) as {
-      services: Array<{ recentLogs: string | null }>;
-    };
-
-    const service = getFirstService(body.services);
+    const service = await readFirstServicePayload<{
+      recentLogs: string | null;
+    }>(app);
     const lines = service.recentLogs?.split("\n") ?? [];
     expect(lines.length).toBe(LOG_TAIL_MAX_LINES);
     expect(lines[0]).toBe(
@@ -332,16 +264,9 @@ describe("GET /api/cells/:id/services payload", () => {
     await insertCellAndServiceRecords(serviceName);
     harness.setServiceOutput(TEST_SERVICE_ID, "");
 
-    const response = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const body = (await response.json()) as {
-      services: Array<{ recentLogs: string | null }>;
-    };
-
-    const service = getFirstService(body.services);
+    const service = await readFirstServicePayload<{
+      recentLogs: string | null;
+    }>(app);
     expect(service.recentLogs).toBeNull();
   });
 
@@ -356,16 +281,10 @@ describe("GET /api/cells/:id/services payload", () => {
       status: "starting",
     });
 
-    const response = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const body = (await response.json()) as {
-      services: Array<{ portReachable?: boolean; port?: number }>;
-    };
-
-    const service = getFirstService(body.services);
+    const service = await readFirstServicePayload<{
+      portReachable?: boolean;
+      port?: number;
+    }>(app);
     expect(service.port).toBe(listener.port);
     expect(service.portReachable).toBe(true);
 
@@ -384,22 +303,11 @@ describe("GET /api/cells/:id/services payload", () => {
       resourceSampledAt: new Date().toISOString(),
     });
 
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/services?includeResources=true`
-      )
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const body = (await response.json()) as {
-      services: Array<{
-        cpuPercent?: number | null;
-        rssBytes?: number | null;
-        resourceSampledAt?: string;
-      }>;
-    };
-
-    const service = getFirstService(body.services);
+    const service = await readFirstServicePayload<{
+      cpuPercent?: number | null;
+      rssBytes?: number | null;
+      resourceSampledAt?: string;
+    }>(app, "?includeResources=true");
     expect(service.cpuPercent).toBe(EXPECTED_CPU_PERCENT);
     expect(service.rssBytes).toBe(EXPECTED_RSS_BYTES);
     expect(service.resourceSampledAt).toBeDefined();
@@ -411,16 +319,10 @@ describe("GET /api/cells/:id/services payload", () => {
       pid: process.pid,
     });
 
-    const response = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`)
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const body = (await response.json()) as {
-      services: Array<{ cpuPercent?: number | null; rssBytes?: number | null }>;
-    };
-
-    const service = getFirstService(body.services);
+    const service = await readFirstServicePayload<{
+      cpuPercent?: number | null;
+      rssBytes?: number | null;
+    }>(app);
     expect(service.cpuPercent).toBeUndefined();
     expect(service.rssBytes).toBeUndefined();
   });
@@ -431,22 +333,11 @@ describe("GET /api/cells/:id/services payload", () => {
       pid: 999_999,
     });
 
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/services?includeResources=true`
-      )
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const body = (await response.json()) as {
-      services: Array<{
-        cpuPercent?: number | null;
-        rssBytes?: number | null;
-        resourceUnavailableReason?: string;
-      }>;
-    };
-
-    const service = getFirstService(body.services);
+    const service = await readFirstServicePayload<{
+      cpuPercent?: number | null;
+      rssBytes?: number | null;
+      resourceUnavailableReason?: string;
+    }>(app, "?includeResources=true");
     expect(service.cpuPercent).toBeNull();
     expect(service.rssBytes).toBeNull();
     expect(service.resourceUnavailableReason).toBe("process_not_alive");

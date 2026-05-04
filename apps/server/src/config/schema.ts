@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const processServiceSchema = z.object({
+const processServiceSchema = z.object({
   type: z.literal("process").default("process").describe("Service type"),
   run: z.string().describe("Command to run service"),
   setup: z
@@ -19,7 +19,7 @@ export const processServiceSchema = z.object({
   stop: z.string().optional().describe("Command to gracefully stop service"),
 });
 
-export const dockerServiceSchema = z.object({
+const dockerServiceSchema = z.object({
   type: z.literal("docker").describe("Service type"),
   image: z.string().describe("Docker image to use"),
   command: z.string().optional().describe("Command to override default"),
@@ -38,7 +38,7 @@ export const dockerServiceSchema = z.object({
     .describe("Milliseconds to wait for service to be ready"),
 });
 
-export const composeServiceSchema = z.object({
+const composeServiceSchema = z.object({
   type: z.literal("compose").describe("Service type"),
   file: z.string().describe("Path to docker-compose.yml"),
   services: z.array(z.string()).optional().describe("Specific services to run"),
@@ -48,7 +48,7 @@ export const composeServiceSchema = z.object({
     .describe("Environment variables"),
 });
 
-export const serviceSchema = z
+const serviceSchema = z
   .discriminatedUnion("type", [
     processServiceSchema,
     dockerServiceSchema,
@@ -146,7 +146,7 @@ const opencodeConfigSchema = z
   })
   .describe("Global OpenCode configuration shared across templates");
 
-export const defaultsSchema = z
+const defaultsSchema = z
   .object({
     templateId: z
       .string()
@@ -176,13 +176,8 @@ export const hiveConfigSchema = z
   .describe("Hive workspace configuration");
 
 export type ProcessService = z.infer<typeof processServiceSchema>;
-export type DockerService = z.infer<typeof dockerServiceSchema>;
-export type ComposeService = z.infer<typeof composeServiceSchema>;
 export type Service = z.infer<typeof serviceSchema>;
-export type TemplateAgent = z.infer<typeof templateAgentSchema>;
 export type Template = z.infer<typeof templateSchema>;
-export type OpencodeConfig = z.infer<typeof opencodeConfigSchema>;
-export type Defaults = z.infer<typeof defaultsSchema>;
 export type HiveConfig = z.infer<typeof hiveConfigSchema>;
 
 export function defineHiveConfig(config: HiveConfig): HiveConfig {

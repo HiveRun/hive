@@ -265,8 +265,7 @@ function extractDefaultModel(
 function extractAgentDefaultModel(
   config: OpencodeServerConfig & { default_agent?: unknown }
 ): DefaultModel | undefined {
-  const defaultAgentId =
-    typeof config.default_agent === "string" ? config.default_agent : undefined;
+  const defaultAgentId = readDefaultAgentId(config);
   if (!defaultAgentId) {
     return;
   }
@@ -279,11 +278,7 @@ function extractAgentDefaultModel(
   }
 
   const [providerId, modelId] = rawModel.split("/", 2);
-  const variant =
-    typeof agentConfig?.variant === "string" &&
-    agentConfig.variant.trim().length > 0
-      ? agentConfig.variant.trim()
-      : undefined;
+  const variant = normalizeNonEmptyString(agentConfig?.variant);
 
   if (modelId) {
     return {
@@ -302,16 +297,27 @@ function extractAgentDefaultModel(
 function extractDefaultVariant(
   config: OpencodeServerConfig & { default_agent?: unknown }
 ): string | undefined {
-  const defaultAgentId =
-    typeof config.default_agent === "string" ? config.default_agent : undefined;
+  const defaultAgentId = readDefaultAgentId(config);
   if (!defaultAgentId) {
     return;
   }
 
-  const variant = readAgentVariant(config, defaultAgentId);
-  return typeof variant === "string" && variant.trim().length > 0
-    ? variant.trim()
+  return normalizeNonEmptyString(readAgentVariant(config, defaultAgentId));
+}
+
+function readDefaultAgentId(config: { default_agent?: unknown }) {
+  return typeof config.default_agent === "string"
+    ? config.default_agent
     : undefined;
+}
+
+function normalizeNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function readAgentConfig(

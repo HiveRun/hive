@@ -32,13 +32,14 @@ type WorkspaceRouteResponse<T> = {
 };
 
 const formatUnknown = (cause: unknown, fallback: string) => {
-  if (cause instanceof Error) {
-    return cause.message;
+  switch (true) {
+    case cause instanceof Error:
+      return cause.message;
+    case typeof cause === "string":
+      return cause;
+    default:
+      return fallback;
   }
-  if (typeof cause === "string") {
-    return cause;
-  }
-  return fallback;
 };
 
 const toError = (status: number, message: string): WorkspaceRouteError => ({
@@ -59,6 +60,35 @@ const failure = <T>(error: WorkspaceRouteError): WorkspaceRouteResponse<T> => ({
   body: { message: error.message },
 });
 
+const failedBadRequest = <T>(
+  cause: unknown,
+  fallback: string
+): WorkspaceRouteResponse<T> =>
+  failure(toError(HTTP_STATUS.BAD_REQUEST, formatUnknown(cause, fallback)));
+
+const sendOutcome = <T>(
+  set: { status?: number | string },
+  outcome: WorkspaceRouteResponse<T>
+) => {
+  set.status = outcome.status;
+  return outcome.body;
+};
+
+const workspacePathBodySchema = (extra?: Record<string, unknown>) =>
+  t.Object({
+    path: t.String({ minLength: 1 }),
+    label: t.Optional(t.String()),
+    ...(extra ?? {}),
+  });
+
+const workspaceNotFound = <T>() =>
+  failure<T>(toError(HTTP_STATUS.NOT_FOUND, "Workspace not found"));
+
+const workspaceMutationSuccess = (
+  workspace: WorkspaceRecord | null
+): WorkspaceRouteResponse<{ workspace: WorkspaceRecord }> =>
+  workspace ? success({ workspace }) : workspaceNotFound();
+
 const safeBrowse = async (
   path?: string,
   filter?: string
@@ -67,12 +97,7 @@ const safeBrowse = async (
     const directories = await browseWorkspaceDirectories(path, filter);
     return success(directories);
   } catch (cause) {
-    return failure(
-      toError(
-        HTTP_STATUS.BAD_REQUEST,
-        formatUnknown(cause, "Failed to browse directories")
-      )
-    );
+    return failedBadRequest(cause, "Failed to browse directories");
   }
 };
 
@@ -88,12 +113,7 @@ const safeRegister = async (body: {
     );
     return success({ workspace }, HTTP_STATUS.CREATED);
   } catch (cause) {
-    return failure(
-      toError(
-        HTTP_STATUS.BAD_REQUEST,
-        formatUnknown(cause, "Failed to register workspace")
-      )
-    );
+    return failedBadRequest(cause, "Failed to register workspace");
   }
 };
 
@@ -102,18 +122,9 @@ const safeActivate = async (
 ): Promise<WorkspaceRouteResponse<{ workspace: WorkspaceRecord }>> => {
   try {
     const workspace = await activateWorkspace(id);
-    if (!workspace) {
-      return failure(toError(HTTP_STATUS.NOT_FOUND, "Workspace not found"));
-    }
-
-    return success({ workspace });
+    return workspaceMutationSuccess(workspace);
   } catch (cause) {
-    return failure(
-      toError(
-        HTTP_STATUS.BAD_REQUEST,
-        formatUnknown(cause, "Failed to activate workspace")
-      )
-    );
+    return failedBadRequest(cause, "Failed to activate workspace");
   }
 };
 
@@ -123,18 +134,9 @@ const safeUpdate = async (
 ): Promise<WorkspaceRouteResponse<{ workspace: WorkspaceRecord }>> => {
   try {
     const workspace = await updateWorkspaceLabel({ id, label });
-    if (!workspace) {
-      return failure(toError(HTTP_STATUS.NOT_FOUND, "Workspace not found"));
-    }
-
-    return success({ workspace });
+    return workspaceMutationSuccess(workspace);
   } catch (cause) {
-    return failure(
-      toError(
-        HTTP_STATUS.BAD_REQUEST,
-        formatUnknown(cause, "Failed to update workspace")
-      )
-    );
+    return failedBadRequest(cause, "Failed to update workspace");
   }
 };
 
@@ -149,12 +151,7 @@ const safeDelete = async (
 
     return success(null, HTTP_STATUS.NO_CONTENT);
   } catch (cause) {
-    return failure(
-      toError(
-        HTTP_STATUS.BAD_REQUEST,
-        formatUnknown(cause, "Failed to remove workspace")
-      )
-    );
+    return failedBadRequest(cause, "Failed to remove workspace");
   }
 };
 
@@ -169,12 +166,7 @@ const safeAutoRegister = async (body: {
 
     return success({ workspace }, HTTP_STATUS.CREATED);
   } catch (cause) {
-    return failure(
-      toError(
-        HTTP_STATUS.BAD_REQUEST,
-        formatUnknown(cause, "Failed to auto-register workspace")
-      )
-    );
+    return failedBadRequest(cause, "Failed to auto-register workspace");
   }
 };
 
@@ -235,11 +227,8 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   )
   .get(
     "/browse",
-    async ({ query, set }) => {
-      const outcome = await safeBrowse(query.path, query.filter);
-      set.status = outcome.status;
-      return outcome.body;
-    },
+    async ({ query, set }) =>
+      sendOutcome(set, await safeBrowse(query.path, query.filter)),
     {
       query: t.Object({
         path: t.Optional(t.String()),
@@ -253,17 +242,9 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   )
   .post(
     "/",
-    async ({ body, set }) => {
-      const outcome = await safeRegister(body);
-      set.status = outcome.status;
-      return outcome.body;
-    },
+    async ({ body, set }) => sendOutcome(set, await safeRegister(body)),
     {
-      body: t.Object({
-        path: t.String({ minLength: 1 }),
-        label: t.Optional(t.String()),
-        activate: t.Optional(t.Boolean()),
-      }),
+      body: workspacePathBodySchema({ activate: t.Optional(t.Boolean()) }),
       response: {
         201: WorkspaceMutationResponseSchema,
         400: ErrorSchema,
@@ -272,11 +253,7 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   )
   .post(
     "/:id/activate",
-    async ({ params, set }) => {
-      const outcome = await safeActivate(params.id);
-      set.status = outcome.status;
-      return outcome.body;
-    },
+    async ({ params, set }) => sendOutcome(set, await safeActivate(params.id)),
     {
       params: t.Object({
         id: t.String(),
@@ -290,11 +267,8 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   )
   .patch(
     "/:id",
-    async ({ params, body, set }) => {
-      const outcome = await safeUpdate(params.id, body.label);
-      set.status = outcome.status;
-      return outcome.body;
-    },
+    async ({ params, body, set }) =>
+      sendOutcome(set, await safeUpdate(params.id, body.label)),
     {
       params: t.Object({
         id: t.String(),
@@ -311,11 +285,7 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   )
   .delete(
     "/:id",
-    async ({ params, set }) => {
-      const outcome = await safeDelete(params.id);
-      set.status = outcome.status;
-      return outcome.body;
-    },
+    async ({ params, set }) => sendOutcome(set, await safeDelete(params.id)),
     {
       params: t.Object({
         id: t.String(),
@@ -329,16 +299,9 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   )
   .post(
     "/auto-register",
-    async ({ body, set }) => {
-      const outcome = await safeAutoRegister(body);
-      set.status = outcome.status;
-      return outcome.body;
-    },
+    async ({ body, set }) => sendOutcome(set, await safeAutoRegister(body)),
     {
-      body: t.Object({
-        path: t.String({ minLength: 1 }),
-        label: t.Optional(t.String()),
-      }),
+      body: workspacePathBodySchema(),
       response: {
         201: WorkspaceMutationResponseSchema,
         400: ErrorSchema,

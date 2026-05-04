@@ -1,15 +1,12 @@
-import { spawn } from "node:child_process";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolveRuntimePaths } from "./paths";
+import { runInheritedCommand } from "./process";
 
 type WorkerResolution = {
   source: "env" | "default";
   value: string;
 };
 
-const modulePath = fileURLToPath(import.meta.url);
-const moduleDir = dirname(modulePath);
-const e2eRoot = join(moduleDir, "..", "..");
+const { e2eRoot } = resolveRuntimePaths(import.meta.url);
 const FAILURE_EXIT_CODE = 1;
 const DEFAULT_FAST_WORKERS = 4;
 const DEFAULT_FAST_WORKERS_CI = 1;
@@ -23,33 +20,16 @@ async function run(): Promise<void> {
     `Running fast E2E with workers=${workerResolution.value} (source=${workerResolution.source}) video=${videoMode}\n`
   );
 
-  const exitCode = await new Promise<number>((resolve) => {
-    const child = spawn(
-      "bun",
-      ["run", "src/runtime/e2e-runner.ts", ...forwardedArgs],
-      {
-        cwd: e2eRoot,
-        env: {
-          ...process.env,
-          HIVE_E2E_VIDEO_MODE: videoMode,
-          HIVE_E2E_WORKERS: workerResolution.value,
-        },
-        stdio: "inherit",
-      }
-    );
-
-    child.on("exit", (code, signal) => {
-      if (signal) {
-        resolve(FAILURE_EXIT_CODE);
-        return;
-      }
-
-      resolve(code ?? FAILURE_EXIT_CODE);
-    });
-
-    child.on("error", () => {
-      resolve(FAILURE_EXIT_CODE);
-    });
+  const exitCode = await runInheritedCommand({
+    command: "bun",
+    args: ["run", "src/runtime/e2e-runner.ts", ...forwardedArgs],
+    cwd: e2eRoot,
+    env: {
+      ...process.env,
+      HIVE_E2E_VIDEO_MODE: videoMode,
+      HIVE_E2E_WORKERS: workerResolution.value,
+    },
+    failureExitCode: FAILURE_EXIT_CODE,
   });
 
   process.exitCode = exitCode;

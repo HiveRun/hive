@@ -21,7 +21,7 @@ export const normalizeVersion = (value: string | undefined) => {
   return value.startsWith("v") ? value.slice(1) : value;
 };
 
-const isValidSemver = (version: string) => SEMVER_PATTERN.test(version);
+export const isValidSemver = (version: string) => SEMVER_PATTERN.test(version);
 
 const readManifestVersion = async (
   manifestPath: URL

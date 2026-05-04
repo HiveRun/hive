@@ -1,49 +1,16 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type {
+  DesktopStartupState,
+  ViewerBounds,
+  ViewerServiceTab,
+  ViewerState,
+} from "./desktop-runtime-types";
 import { IPC_CHANNELS } from "./ipc-channels";
 import { getDesktopRuntimeInfo } from "./runtime-info";
 
 type NotificationInput = {
   title: string;
   body?: string;
-};
-
-type ViewerBounds = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
-type StartupState = {
-  phase:
-    | "idle"
-    | "detecting-daemon"
-    | "starting-daemon"
-    | "waiting-for-api"
-    | "api-ready"
-    | "error";
-  message: string;
-  backendUrl: string;
-  healthUrl: string;
-  pid?: number | null;
-  startedAt: number;
-  updatedAt: number;
-  error?: string;
-};
-
-type ViewerState = {
-  activeServiceId: string | null;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  isLoading: boolean;
-  isVisible: boolean;
-  title: string;
-  url: string | null;
-};
-
-type ViewerServiceTab = {
-  serviceId: string;
-  rootUrl: string;
 };
 
 const hiveDesktopBridge = {
@@ -58,8 +25,8 @@ const hiveDesktopBridge = {
     getState: async () =>
       await ipcRenderer.invoke(IPC_CHANNELS.startupGetState),
     retry: async () => await ipcRenderer.invoke(IPC_CHANNELS.startupRetry),
-    subscribe: (listener: (state: StartupState) => void) => {
-      const wrappedListener = (_event: unknown, state: StartupState) => {
+    subscribe: (listener: (state: DesktopStartupState) => void) => {
+      const wrappedListener = (_event: unknown, state: DesktopStartupState) => {
         listener(state);
       };
 

@@ -17,83 +17,18 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createCellsRoutes } from "../../routes/cells";
 import { cells } from "../../schema/cells";
 import { setupTestDb, testDb } from "../test-db";
+import {
+  createCellRouteTestDependencies,
+  DEFAULT_TEST_WORKSPACE_ID,
+  decodeEventChunk,
+  deleteRouteCellById,
+  handleRouteRequest,
+  seedRouteCell,
+} from "./cells-route-test-helpers";
 
-const TEST_WORKSPACE_ID = "test-workspace";
 const TEST_CELL_ID = "test-cell-id";
 const HTTP_OK = 200;
 const HTTP_NOT_FOUND = 404;
-
-function createMinimalDependencies(): any {
-  const workspaceRecord = {
-    id: TEST_WORKSPACE_ID,
-    label: "Test Workspace",
-    path: "/tmp/test-workspace-root",
-    addedAt: new Date().toISOString(),
-  };
-
-  return {
-    db: testDb,
-    resolveWorkspaceContext: (async () => ({
-      workspace: workspaceRecord,
-      loadConfig: async () => ({
-        opencode: { defaultProvider: "opencode", defaultModel: "mock" },
-        promptSources: [],
-        templates: {},
-        defaults: {},
-      }),
-      createWorktreeManager: async () => ({
-        createWorktree: async () => ({
-          path: "/tmp",
-          branch: "b",
-          baseCommit: "c",
-        }),
-        removeWorktree: async () => Promise.resolve(),
-      }),
-      createWorktree: async () => ({
-        path: "/tmp",
-        branch: "b",
-        baseCommit: "c",
-      }),
-      removeWorktree: async () => Promise.resolve(),
-    })) as any,
-    ensureAgentSession: async () => ({ id: "session", cellId: TEST_CELL_ID }),
-    closeAgentSession: async () => Promise.resolve(),
-    ensureServicesForCell: async () => Promise.resolve(),
-    startServiceById: async () => Promise.resolve(),
-    startServicesForCell: async () => Promise.resolve(),
-    stopServiceById: async () => Promise.resolve(),
-    stopServicesForCell: async () => Promise.resolve(),
-    sendAgentMessage: async () => Promise.resolve(),
-    ensureTerminalSession: () => ({
-      sessionId: "terminal-session",
-      cellId: TEST_CELL_ID,
-      pid: 123,
-      cwd: "/tmp/test-workspace-root",
-      cols: 120,
-      rows: 36,
-      status: "running" as const,
-      exitCode: null,
-      startedAt: new Date().toISOString(),
-    }),
-    readTerminalOutput: () => "",
-    subscribeToTerminal: () => () => 0,
-    writeTerminalInput: () => 0,
-    resizeTerminal: () => 0,
-    closeTerminalSession: () => 0,
-    getServiceTerminalSession: () => null,
-    readServiceTerminalOutput: () => "",
-    subscribeToServiceTerminal: () => () => 0,
-    writeServiceTerminalInput: () => 0,
-    resizeServiceTerminal: () => 0,
-    clearServiceTerminal: () => 0,
-    getSetupTerminalSession: () => null,
-    readSetupTerminalOutput: () => "",
-    subscribeToSetupTerminal: () => () => 0,
-    writeSetupTerminalInput: () => 0,
-    resizeSetupTerminal: () => 0,
-    clearSetupTerminal: () => 0,
-  };
-}
 
 /**
  * Check if a 404 response is from Elysia's "route not found" vs our handler.
@@ -107,16 +42,11 @@ async function isRouteNotFound(response: Response): Promise<boolean> {
   return text === "NOT_FOUND";
 }
 
-const textDecoder = new TextDecoder();
-
 async function readSseChunk(
   reader: ReadableStreamDefaultReader<Uint8Array>
 ): Promise<string> {
   const chunk = await reader.read();
-  if (!chunk.value) {
-    return "";
-  }
-  return textDecoder.decode(Buffer.from(chunk.value));
+  return decodeEventChunk(chunk.value);
 }
 
 describe("cells route reachability", () => {
@@ -124,22 +54,21 @@ describe("cells route reachability", () => {
 
   beforeAll(async () => {
     await setupTestDb();
-    const routes = createCellsRoutes(createMinimalDependencies());
+    const routes = createCellsRoutes(
+      createCellRouteTestDependencies({ cellId: TEST_CELL_ID })
+    );
     app = new Elysia().use(routes);
   });
 
-  beforeEach(async () => {
-    await testDb.delete(cells);
-  });
+  beforeEach(() => testDb.delete(cells));
 
   /**
    * Routes that don't require existing resources - should return 200
    */
   it("GET /api/cells/workspace/:id/stream is reachable and returns SSE", async () => {
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/workspace/${TEST_WORKSPACE_ID}/stream`
-      )
+    const response = await handleRouteRequest(
+      app,
+      `/api/cells/workspace/${DEFAULT_TEST_WORKSPACE_ID}/stream`
     );
 
     expect(response.status).toBe(HTTP_OK);
@@ -242,9 +171,7 @@ describe("cells route reachability", () => {
 
   for (const [method, path, description] of resourceRoutes) {
     it(`${method} ${path} route is matched (${description})`, async () => {
-      const response = await app.handle(
-        new Request(`http://localhost${path}`, { method })
-      );
+      const response = await handleRouteRequest(app, path, { method });
 
       // The route should be matched (not Elysia's default NOT_FOUND)
       // It will return 404 "Cell not found" which is fine - the route was matched
@@ -263,10 +190,9 @@ describe("cells route reachability", () => {
    * /workspace/:workspaceId/stream, causing "workspace" to be matched as a cell ID.
    */
   it("SSE stream route is not shadowed by /:id route", async () => {
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/workspace/${TEST_WORKSPACE_ID}/stream`
-      )
+    const response = await handleRouteRequest(
+      app,
+      `/api/cells/workspace/${DEFAULT_TEST_WORKSPACE_ID}/stream`
     );
 
     // Should get SSE response, not a "Cell not found" from /:id handler
@@ -275,26 +201,19 @@ describe("cells route reachability", () => {
   });
 
   it("emits cell_removed when streamed cell is deleted", async () => {
-    await testDb.insert(cells).values({
+    await seedRouteCell({
       id: TEST_CELL_ID,
       name: "Streaming Cell",
-      description: "stream",
       templateId: "template-basic",
+      description: "stream",
       workspacePath: "/tmp/test-workspace-root/.cells/test-cell-id",
-      workspaceId: TEST_WORKSPACE_ID,
-      workspaceRootPath: "/tmp/test-workspace-root",
       branchName: "cell-test-cell-id",
       baseCommit: "abc123",
-      opencodeSessionId: null,
-      createdAt: new Date(),
-      status: "ready",
-      lastSetupError: null,
     });
 
-    const streamResponse = await app.handle(
-      new Request(
-        `http://localhost/api/cells/workspace/${TEST_WORKSPACE_ID}/stream`
-      )
+    const streamResponse = await handleRouteRequest(
+      app,
+      `/api/cells/workspace/${DEFAULT_TEST_WORKSPACE_ID}/stream`
     );
 
     expect(streamResponse.status).toBe(HTTP_OK);
@@ -310,11 +229,7 @@ describe("cells route reachability", () => {
     expect(initialCell).toContain(TEST_CELL_ID);
     await readSseChunk(reader); // snapshot
 
-    const deleteResponse = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}`, {
-        method: "DELETE",
-      })
-    );
+    const deleteResponse = await deleteRouteCellById(app, TEST_CELL_ID);
     expect(deleteResponse.status).toBe(HTTP_OK);
 
     const removalEvent = await readSseChunk(reader);

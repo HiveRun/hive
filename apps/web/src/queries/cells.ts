@@ -1,6 +1,36 @@
 import { type CreateCellInput, rpc } from "@/lib/rpc";
 import { formatRpcError, formatRpcResponseError } from "@/lib/rpc-error";
 
+const addOptionalQueryParam = (
+  query: Record<string, string | number>,
+  key: string,
+  value: string | number | undefined
+) => {
+  if (value !== undefined && value !== "") {
+    query[key] = value;
+  }
+};
+
+const runServiceMutation = async ({
+  action,
+  cellId,
+  failureMessage,
+  serviceId,
+}: ServiceActionInput & {
+  action: "start" | "stop";
+  failureMessage: string;
+}) => {
+  const serviceRoute = rpc.api.cells({ id: cellId }).services({ serviceId });
+  const { data, error } =
+    action === "start"
+      ? await serviceRoute.start.post()
+      : await serviceRoute.stop.post();
+  if (error) {
+    throw new Error(formatRpcError(error, failureMessage));
+  }
+  return data;
+};
+
 export const cellQueries = {
   all: (workspaceId: string) => ({
     queryKey: ["cells", workspaceId] as const,
@@ -80,12 +110,8 @@ export const cellQueries = {
     ] as const,
     queryFn: async () => {
       const query: Record<string, string | number> = {};
-      if (typeof options.limit === "number") {
-        query.limit = options.limit;
-      }
-      if (options.cursor) {
-        query.cursor = options.cursor;
-      }
+      addOptionalQueryParam(query, "limit", options.limit);
+      addOptionalQueryParam(query, "cursor", options.cursor);
       if (options.types?.length) {
         query.types = options.types.join(",");
       }
@@ -124,15 +150,9 @@ export const cellQueries = {
     ] as const,
     queryFn: async (): Promise<CellTimingResponse> => {
       const query: Record<string, string | number> = {};
-      if (typeof options.limit === "number") {
-        query.limit = options.limit;
-      }
-      if (options.workflow) {
-        query.workflow = options.workflow;
-      }
-      if (options.runId) {
-        query.runId = options.runId;
-      }
+      addOptionalQueryParam(query, "limit", options.limit);
+      addOptionalQueryParam(query, "workflow", options.workflow);
+      addOptionalQueryParam(query, "runId", options.runId);
 
       const { data, error } = await rpc.api.cells({ id }).timings.get({
         query,
@@ -201,29 +221,21 @@ export const cellMutations = {
   },
 
   startService: {
-    mutationFn: async ({ cellId, serviceId }: ServiceActionInput) => {
-      const { data, error } = await rpc.api
-        .cells({ id: cellId })
-        .services({ serviceId })
-        .start.post();
-      if (error) {
-        throw new Error(formatRpcError(error, "Failed to start service"));
-      }
-      return data;
-    },
+    mutationFn: (input: ServiceActionInput) =>
+      runServiceMutation({
+        ...input,
+        action: "start",
+        failureMessage: "Failed to start service",
+      }),
   },
 
   stopService: {
-    mutationFn: async ({ cellId, serviceId }: ServiceActionInput) => {
-      const { data, error } = await rpc.api
-        .cells({ id: cellId })
-        .services({ serviceId })
-        .stop.post();
-      if (error) {
-        throw new Error(formatRpcError(error, "Failed to stop service"));
-      }
-      return data;
-    },
+    mutationFn: (input: ServiceActionInput) =>
+      runServiceMutation({
+        ...input,
+        action: "stop",
+        failureMessage: "Failed to stop service",
+      }),
   },
 
   startAllServices: {
@@ -336,45 +348,45 @@ export type CellServiceSummary = Awaited<
   ReturnType<ReturnType<typeof cellQueries.services>["queryFn"]>
 >[number];
 
-export type CellActivityEventListResponse = Awaited<
+type CellActivityEventListResponse = Awaited<
   ReturnType<ReturnType<typeof cellQueries.activity>["queryFn"]>
 >;
 
 export type CellActivityEvent = CellActivityEventListResponse["events"][number];
 
-export type CellTimingStatus = "ok" | "error";
-export type CellTimingWorkflow = "create";
+type CellTimingStatus = "ok" | "error";
+type CellTimingWorkflow = "create";
 
-export type CellTimingStep = {
-  id: string;
+type CellTimingTarget = {
   cellId: string;
   cellName: string | null;
   workspaceId: string | null;
   templateId: string | null;
-  runId: string;
-  workflow: CellTimingWorkflow;
-  step: string;
-  status: CellTimingStatus;
-  durationMs: number;
-  attempt: number | null;
-  error: string | null;
-  metadata: Record<string, unknown>;
-  createdAt: string;
 };
 
-export type CellTimingRun = {
+type CellTimingExecution = CellTimingTarget & {
   runId: string;
-  cellId: string;
-  cellName: string | null;
-  workspaceId: string | null;
-  templateId: string | null;
   workflow: CellTimingWorkflow;
+};
+
+export type CellTimingStep = CellTimingExecution & {
+  id: string;
+  createdAt: string;
+  metadata: Record<string, unknown>;
+  step: string;
+  error: string | null;
+  attempt: number | null;
+  durationMs: number;
+  status: CellTimingStatus;
+};
+
+type CellTimingRun = CellTimingExecution & {
+  attempt: number | null;
+  stepCount: number;
+  totalDurationMs: number;
   status: CellTimingStatus;
   startedAt: string;
   finishedAt: string;
-  totalDurationMs: number;
-  stepCount: number;
-  attempt: number | null;
 };
 
 export type CellTimingResponse = {
@@ -397,7 +409,7 @@ export type DiffFileDetail = DiffFileSummary & {
   patch?: string | null;
 };
 
-export type CellDiffResponse = {
+type CellDiffResponse = {
   mode: DiffMode;
   baseCommit?: string | null;
   headCommit?: string | null;

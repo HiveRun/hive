@@ -4,48 +4,17 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import {
+  repoRoot as distributionRoot,
+  releaseArchivePath as getReleaseArchivePath,
+  resolveSupportedArch as getSupportedArch,
+  resolveSupportedPlatform as getSupportedPlatform,
+  run as runDistributionCommand,
+} from "./common";
 
-const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
-
-const platform = (() => {
-  const raw = process.platform;
-  if (raw === "linux" || raw === "darwin") {
-    return raw;
-  }
-  throw new Error(`Unsupported platform for distribution check: ${raw}`);
-})();
-
-const arch = (() => {
-  const raw = process.arch;
-  if (raw === "x64" || raw === "arm64") {
-    return raw;
-  }
-  throw new Error(`Unsupported architecture for distribution check: ${raw}`);
-})();
-
-const releaseArchive = join(
-  repoRoot,
-  "dist",
-  "install",
-  `hive-${platform}-${arch}.tar.gz`
-);
-
-const run = (cmd: string[], env?: Record<string, string>) => {
-  const result = Bun.spawnSync({
-    cmd,
-    cwd: repoRoot,
-    env: env ? { ...process.env, ...env } : process.env,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-
-  if (result.exitCode !== 0) {
-    throw new Error(
-      `Command failed (${cmd.join(" ")}) with code ${result.exitCode}`
-    );
-  }
-};
+const platform = getSupportedPlatform("distribution check");
+const arch = getSupportedArch("distribution check");
+const releaseArchive = getReleaseArchivePath(platform, arch);
 
 const ensureDesktopArtifact = (releaseDir: string) => {
   const candidates =
@@ -72,7 +41,7 @@ const ensureDesktopArtifact = (releaseDir: string) => {
 };
 
 console.log("Building installer artifacts...");
-run(["bun", "run", "build:installer"]);
+runDistributionCommand(["bun", "run", "build:installer"]);
 
 if (!existsSync(releaseArchive)) {
   throw new Error(`Installer archive missing at ${releaseArchive}`);
@@ -92,7 +61,10 @@ try {
   };
 
   console.log("Running installer smoke check in isolated sandbox...");
-  run(["bash", join(repoRoot, "scripts", "install.sh")], installEnv);
+  runDistributionCommand(
+    ["bash", join(distributionRoot, "scripts", "install.sh")],
+    { env: installEnv }
+  );
 
   const installedBinary = join(hiveBinDir, "hive");
   if (!existsSync(installedBinary)) {
@@ -100,7 +72,7 @@ try {
   }
 
   console.log("Validating installed CLI binary...");
-  run([installedBinary, "info"], installEnv);
+  runDistributionCommand([installedBinary, "info"], { env: installEnv });
 
   const currentRelease = join(hiveHome, "current");
   ensureDesktopArtifact(currentRelease);

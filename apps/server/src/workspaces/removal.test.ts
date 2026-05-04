@@ -38,6 +38,11 @@ type RemovalTestOverrides = {
   logger?: Logger;
 };
 
+type RemovalCellFixture = {
+  cellId: string;
+  cellPath: string;
+};
+
 describe("removeWorkspaceCascade", () => {
   let hiveHome: string;
 
@@ -58,28 +63,9 @@ describe("removeWorkspaceCascade", () => {
   });
 
   it("removes cells, services, sessions, and registry entry", async () => {
-    const workspaceRoot = await createWorkspaceRoot();
-    const workspace = await registerWorkspace(
-      { path: workspaceRoot },
-      { setActive: true }
-    );
-
-    const cellId = "cell-removal-test";
-    const cellPath = join(workspaceRoot, ".hive", "cells", cellId);
-    await mkdir(cellPath, { recursive: true });
-
-    await testDb.insert(cells).values({
-      id: cellId,
+    const { workspace, cellId } = await createWorkspaceWithCell({
+      cellId: "cell-removal-test",
       name: "Removal fixture",
-      templateId: "template-a",
-      workspaceId: workspace.id,
-      workspaceRootPath: workspaceRoot,
-      workspacePath: cellPath,
-      createdAt: new Date(),
-      status: "ready",
-      description: null,
-      branchName: null,
-      baseCommit: null,
     });
 
     await testDb.insert(linearIntegrations).values({
@@ -137,29 +123,11 @@ describe("removeWorkspaceCascade", () => {
   });
 
   it("falls back to filesystem removal without warning", async () => {
-    const workspaceRoot = await createWorkspaceRoot();
-    const workspace = await registerWorkspace(
-      { path: workspaceRoot },
-      { setActive: true }
-    );
-
-    const cellId = "cell-removal-fallback";
-    const cellPath = join(workspaceRoot, ".hive", "cells", cellId);
-    await mkdir(cellPath, { recursive: true });
-
-    await testDb.insert(cells).values({
-      id: cellId,
-      name: "Removal fallback",
-      templateId: "template-a",
-      workspaceId: workspace.id,
-      workspaceRootPath: workspaceRoot,
-      workspacePath: cellPath,
-      createdAt: new Date(),
-      status: "ready",
-      description: null,
-      branchName: null,
-      baseCommit: null,
-    });
+    const { workspace, cellId, cellPath, workspaceRoot } =
+      await createWorkspaceWithCell({
+        cellId: "cell-removal-fallback",
+        name: "Removal fallback",
+      });
 
     const stopCellServices = vi.fn().mockResolvedValue(undefined);
     const closeAgentSession = vi.fn().mockResolvedValue(undefined);
@@ -200,6 +168,34 @@ async function createWorkspaceRoot(prefix = "workspace-removal-") {
   const dir = await mkdtemp(join(tmpdir(), prefix));
   await writeFile(join(dir, "hive.config.json"), HIVE_CONFIG_CONTENT);
   return dir;
+}
+
+async function createWorkspaceWithCell(
+  fixture: Omit<RemovalCellFixture, "cellPath"> & { name: string }
+) {
+  const workspaceRoot = await createWorkspaceRoot();
+  const workspace = await registerWorkspace(
+    { path: workspaceRoot },
+    { setActive: true }
+  );
+  const cellPath = join(workspaceRoot, ".hive", "cells", fixture.cellId);
+
+  await mkdir(cellPath, { recursive: true });
+  await testDb.insert(cells).values({
+    id: fixture.cellId,
+    name: fixture.name,
+    templateId: "template-a",
+    workspaceId: workspace.id,
+    workspaceRootPath: workspaceRoot,
+    workspacePath: cellPath,
+    createdAt: new Date(),
+    status: "ready",
+    description: null,
+    branchName: null,
+    baseCommit: null,
+  });
+
+  return { workspaceRoot, workspace, cellId: fixture.cellId, cellPath };
 }
 
 const runRemoval = (

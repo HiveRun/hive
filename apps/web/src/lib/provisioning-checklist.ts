@@ -1,6 +1,6 @@
 import type { CellTimingStep } from "@/queries/cells";
 
-export type ProvisioningChecklistStepKey =
+type ProvisioningChecklistStepKey =
   | "create_cell_record"
   | "create_worktree"
   | "ensure_services"
@@ -215,7 +215,7 @@ function getChecklistDetail(args: {
   return null;
 }
 
-export function toTimingTimestamp(value: unknown): number {
+function toTimingTimestamp(value: unknown): number {
   if (value instanceof Date) {
     const milliseconds = value.getTime();
     return Number.isFinite(milliseconds) ? milliseconds : 0;

@@ -20,6 +20,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDesktopViewer } from "@/hooks/use-desktop-viewer";
 import { useServiceStream } from "@/hooks/use-service-stream";
 import { type CellServiceSummary, cellQueries } from "@/queries/cells";
+import { CellDetailGate } from "../../-shared/cell-route";
 
 const BROWSER_REACHABILITY_TIMEOUT_MS = 3000;
 
@@ -37,28 +38,11 @@ function CellServiceViewer() {
   const { cellId } = Route.useParams();
   const cellQuery = useQuery(cellQueries.detail(cellId));
 
-  if (cellQuery.isLoading) {
-    return (
-      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-border bg-card text-muted-foreground">
-        Loading cell…
-      </div>
-    );
-  }
-
-  if (cellQuery.error) {
-    const message =
-      cellQuery.error instanceof Error
-        ? cellQuery.error.message
-        : "Failed to load cell";
-
-    return (
-      <div className="flex h-full flex-1 items-center justify-center rounded-sm border-2 border-destructive/50 bg-destructive/10 text-destructive">
-        {message}
-      </div>
-    );
-  }
-
-  return <CellServiceViewerLive cellId={cellId} />;
+  return (
+    <CellDetailGate errorFallback="Failed to load cell" query={cellQuery}>
+      <CellServiceViewerLive cellId={cellId} />
+    </CellDetailGate>
+  );
 }
 
 function useActiveServiceTab(services: CellServiceSummary[]) {

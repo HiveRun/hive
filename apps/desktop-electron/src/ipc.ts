@@ -33,7 +33,7 @@ const openExternal = async (window: BrowserWindow, url: string) => {
   return { ok: true } as const;
 };
 
-export const createIpcHandlers = (
+const createIpcHandlers = (
   window: BrowserWindow,
   startupController: DesktopStartupController
 ) => {
@@ -238,6 +238,3 @@ export const registerIpcHandlers = (options: {
       await requireHandlers().openExternal(url),
   };
 };
-
-export type { IpcHandlers };
-export type { ViewerBounds, ViewerState } from "./viewer-controller";

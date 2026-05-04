@@ -1,6 +1,6 @@
 import { rpc } from "@/lib/rpc";
 
-export type TemplateService = {
+type TemplateService = {
   type: string;
   run?: string;
   image?: string;
@@ -14,13 +14,13 @@ export type TemplateService = {
   readyTimeoutMs?: number;
 };
 
-export type TemplateAgentModel = {
+type TemplateAgentModel = {
   providerId: string;
   id: string;
   variant?: string;
 };
 
-export type TemplateConfig = {
+type TemplateConfig = {
   includePatterns?: string[];
   ignorePatterns?: string[];
   services?: Record<string, TemplateService>;
@@ -44,7 +44,7 @@ export type Template = {
   includeDirectories?: string[];
 };
 
-export type Defaults = {
+type Defaults = {
   templateId?: string;
   startMode?: "plan" | "build";
 };

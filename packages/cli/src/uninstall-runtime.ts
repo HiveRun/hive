@@ -4,7 +4,7 @@ import type { StopRuntimeResult } from "./uninstall";
 
 type Logger = (message: string) => void;
 
-export type BackgroundStopResult = StopRuntimeResult | "stale_pid";
+type BackgroundStopResult = StopRuntimeResult | "stale_pid";
 
 export const FOREGROUND_DAEMON_ERROR =
   "Detected a running Hive daemon without a managed PID file. Stop the foreground Hive process and retry uninstall.";

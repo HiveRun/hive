@@ -7,6 +7,7 @@ import { WorkspaceContextError } from "../../workspaces/context";
 import type { WorkspaceRecord } from "../../workspaces/registry";
 import type { WorktreeManager } from "../../worktree/manager";
 import { setupTestDb, testDb } from "../test-db";
+import { createCellRouteTestDependencies } from "./cells-route-test-helpers";
 
 const HTTP_BAD_REQUEST = 400;
 const HTTP_OK = 200;
@@ -42,55 +43,15 @@ const secondaryWorkspace: WorkspaceRecord = {
 };
 
 describe("Cell routes workspace enforcement", () => {
-  const createRouteDependencies = (resolveWorkspaceContext: any): any => ({
-    db: testDb,
-    resolveWorkspaceContext,
-    ensureAgentSession: () =>
-      Promise.resolve({ id: "session", cellId: "cell" }),
-    sendAgentMessage: () => Promise.resolve(),
-    closeAgentSession: () => Promise.resolve(),
-    ensureServicesForCell: () => Promise.resolve(),
-    startServiceById: () => Promise.resolve(),
-    startServicesForCell: () => Promise.resolve(),
-    stopServiceById: () => Promise.resolve(),
-    stopServicesForCell: () => Promise.resolve(),
-    ensureTerminalSession: () => ({
-      sessionId: "terminal-session",
+  const createRouteDependencies = (resolveWorkspaceContext: any): any =>
+    createCellRouteTestDependencies({
       cellId: "cell",
-      pid: 1,
-      cwd: "/tmp",
-      cols: 120,
-      rows: 36,
-      status: "running" as const,
-      exitCode: null,
-      startedAt: new Date().toISOString(),
-    }),
-    readTerminalOutput: () => "",
-    subscribeToTerminal: () => () => 0,
-    writeTerminalInput: () => 0,
-    resizeTerminal: () => 0,
-    closeTerminalSession: () => 0,
-    getServiceTerminalSession: () => null,
-    readServiceTerminalOutput: () => "",
-    subscribeToServiceTerminal: () => () => 0,
-    writeServiceTerminalInput: () => 0,
-    resizeServiceTerminal: () => 0,
-    clearServiceTerminal: () => 0,
-    getSetupTerminalSession: () => null,
-    readSetupTerminalOutput: () => "",
-    subscribeToSetupTerminal: () => () => 0,
-    writeSetupTerminalInput: () => 0,
-    resizeSetupTerminal: () => 0,
-    clearSetupTerminal: () => 0,
-  });
+      overrides: { resolveWorkspaceContext },
+    });
 
-  beforeAll(async () => {
-    await setupTestDb();
-  });
+  beforeAll(setupTestDb);
 
-  beforeEach(async () => {
-    await testDb.delete(cells);
-  });
+  beforeEach(() => testDb.delete(cells));
 
   it("returns 400 when workspace context cannot be resolved", async () => {
     const app = new Elysia().use(

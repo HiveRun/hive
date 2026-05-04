@@ -3,9 +3,8 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
   createCell,
-  fetchActivity,
+  waitForActivityType,
   waitForCellStatus,
-  waitForCondition,
 } from "../src/test-helpers";
 
 const SETUP_RETRY_TEMPLATE_LABEL = "E2E Setup Retry Template";
@@ -62,13 +61,12 @@ test.describe("setup retry", () => {
       });
       expect(failedCell.lastSetupError).toContain("marker missing");
 
-      await waitForCondition({
+      await waitForActivityType({
+        apiUrl,
+        cellId,
+        type: "setup.retry",
         timeoutMs: 30_000,
         errorMessage: "initial setup.retry activity event was not recorded",
-        check: async () => {
-          const events = await fetchActivity(apiUrl, cellId);
-          return events.some((event) => event.type === "setup.retry");
-        },
       });
 
       await writeFile(markerPath, "ok\n", "utf8");
@@ -85,13 +83,12 @@ test.describe("setup retry", () => {
       });
       expect(recoveredCell.lastSetupError ?? null).toBeNull();
 
-      await waitForCondition({
+      await waitForActivityType({
+        apiUrl,
+        cellId,
+        type: "setup.retry",
         timeoutMs: 30_000,
         errorMessage: "setup.retry activity event was not recorded",
-        check: async () => {
-          const events = await fetchActivity(apiUrl, cellId);
-          return events.some((event) => event.type === "setup.retry");
-        },
       });
     } finally {
       await writeFile(markerPath, "ok\n", "utf8");

@@ -20,6 +20,3 @@ export const linearIntegrations = sqliteTable("workspace_linear_integrations", {
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });
-
-export type LinearIntegration = typeof linearIntegrations.$inferSelect;
-export type NewLinearIntegration = typeof linearIntegrations.$inferInsert;

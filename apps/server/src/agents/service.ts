@@ -24,6 +24,7 @@ import {
   loadOpencodeConfig,
 } from "./opencode-config";
 import { acquireSharedOpencodeClient } from "./opencode-server";
+import { normalizeProviderDefaults } from "./provider-defaults";
 import type {
   AgentMessageRecord,
   AgentMessageState,
@@ -769,22 +770,6 @@ function buildProviderCatalogInfo(
   return { providers, defaults };
 }
 
-function normalizeProviderDefaults(value: unknown): Record<string, string> {
-  if (!value || typeof value !== "object") {
-    return {};
-  }
-
-  const defaults: Record<string, string> = {};
-  for (const [providerId, modelId] of Object.entries(
-    value as Record<string, unknown>
-  )) {
-    if (typeof modelId === "string") {
-      defaults[providerId] = modelId;
-    }
-  }
-  return defaults;
-}
-
 function findProviderById(
   providers: ProviderEntry[],
   providerId: string | undefined
@@ -1198,23 +1183,24 @@ export async function ensureAgentSession(
 export async function fetchAgentSession(
   sessionId: string
 ): Promise<AgentSessionRecord | null> {
-  try {
-    const runtime = await ensureRuntimeForSession(sessionId);
-    await synchronizeRuntimeMode(runtime);
-    await synchronizeRuntimeStatus(runtime);
-    return toSessionRecord(runtime);
-  } catch {
-    return null;
-  }
+  return await fetchSynchronizedSessionRecord(() =>
+    ensureRuntimeForSession(sessionId)
+  );
 }
 
 export async function fetchAgentSessionForCell(
   cellId: string
 ): Promise<AgentSessionRecord | null> {
+  return await fetchSynchronizedSessionRecord(() =>
+    ensureRuntimeForCell(cellId, { force: false })
+  );
+}
+
+async function fetchSynchronizedSessionRecord(
+  resolveRuntime: () => Promise<RuntimeHandle>
+): Promise<AgentSessionRecord | null> {
   try {
-    const runtime = await ensureRuntimeForCell(cellId, {
-      force: false,
-    });
+    const runtime = await resolveRuntime();
     await synchronizeRuntimeMode(runtime);
     await synchronizeRuntimeStatus(runtime);
     return toSessionRecord(runtime);
@@ -1374,19 +1360,14 @@ export async function resumeAgentSessionsOnStartup(): Promise<void> {
 }
 
 async function shouldResumeRuntime(runtime: RuntimeHandle): Promise<boolean> {
-  const query = runtime.directoryQuery.directory
-    ? { directory: runtime.directoryQuery.directory, limit: 100 }
-    : { limit: 100 };
-  const response = await runtime.client.session.messages({
-    path: { id: runtime.session.id },
-    query,
+  const messages = await fetchRuntimeMessages(runtime, {
+    requireMessages: true,
   });
-
-  if (response.error || !response.data?.length) {
+  if (!messages) {
     return Boolean(runtime.cell.resumeAgentSessionOnStartup);
   }
 
-  const lastMessage = response.data.at(-1)?.info;
+  const lastMessage = messages.at(-1)?.info;
   if (!lastMessage) {
     return Boolean(runtime.cell.resumeAgentSessionOnStartup);
   }
@@ -2095,36 +2076,20 @@ async function resolveSessionModelPreference(
   runtime: RuntimeHandle
 ): Promise<{ providerId: string; modelId: string; variant?: string } | null> {
   try {
-    const query = runtime.directoryQuery.directory
-      ? { directory: runtime.directoryQuery.directory, limit: 100 }
-      : { limit: 100 };
-    const response = await runtime.client.session.messages({
-      path: { id: runtime.session.id },
-      query,
+    const info = await findLatestMessageInfo(runtime, (message) => {
+      const modelSelection = extractMessageModelSelection(message);
+      return message.role === "user" && Boolean(modelSelection);
     });
-
-    if (response.error || !response.data) {
+    const modelSelection = info ? extractMessageModelSelection(info) : null;
+    if (!modelSelection) {
       return null;
     }
 
-    for (let index = response.data.length - 1; index >= 0; index -= 1) {
-      const entry = response.data[index];
-      if (!entry?.info) {
-        continue;
-      }
-      const info: Message = entry.info;
-      const modelSelection = extractMessageModelSelection(info);
-      if (info.role === "user" && modelSelection) {
-        return {
-          providerId: modelSelection.providerId,
-          modelId: modelSelection.modelId,
-          ...(modelSelection.variant
-            ? { variant: modelSelection.variant }
-            : {}),
-        };
-      }
-    }
-    return null;
+    return {
+      providerId: modelSelection.providerId,
+      modelId: modelSelection.modelId,
+      ...(modelSelection.variant ? { variant: modelSelection.variant } : {}),
+    };
   } catch {
     return null;
   }
@@ -2134,34 +2099,32 @@ async function resolveSessionModePreference(
   runtime: RuntimeHandle
 ): Promise<AgentMode | null> {
   try {
-    const query = runtime.directoryQuery.directory
-      ? { directory: runtime.directoryQuery.directory, limit: 100 }
-      : { limit: 100 };
-    const response = await runtime.client.session.messages({
-      path: { id: runtime.session.id },
-      query,
-    });
-
-    if (response.error || !response.data) {
-      return null;
-    }
-
-    for (let index = response.data.length - 1; index >= 0; index -= 1) {
-      const entry = response.data[index];
-      if (!entry?.info) {
-        continue;
-      }
-
-      const mode = resolveMessageMode(entry.info);
-      if (mode) {
-        return mode;
-      }
-    }
-
-    return null;
+    const info = await findLatestMessageInfo(runtime, (message) =>
+      Boolean(resolveMessageMode(message))
+    );
+    return info ? (resolveMessageMode(info) ?? null) : null;
   } catch {
     return null;
   }
+}
+
+async function findLatestMessageInfo(
+  runtime: RuntimeHandle,
+  matches: (message: Message) => boolean
+): Promise<Message | null> {
+  const messages = await fetchRuntimeMessages(runtime);
+  if (!messages) {
+    return null;
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const info = messages[index]?.info;
+    if (info && matches(info)) {
+      return info;
+    }
+  }
+
+  return null;
 }
 
 async function synchronizeRuntimeMode(runtime: RuntimeHandle): Promise<void> {
@@ -2177,19 +2140,14 @@ async function resolveSessionStatusPreference(
   runtime: RuntimeHandle
 ): Promise<AgentSessionStatus | null> {
   try {
-    const query = runtime.directoryQuery.directory
-      ? { directory: runtime.directoryQuery.directory, limit: 100 }
-      : { limit: 100 };
-    const response = await runtime.client.session.messages({
-      path: { id: runtime.session.id },
-      query,
+    const messages = await fetchRuntimeMessages(runtime, {
+      requireMessages: true,
     });
-
-    if (response.error || !response.data?.length) {
+    if (!messages) {
       return runtime.cell.resumeAgentSessionOnStartup ? "working" : null;
     }
 
-    const lastMessage = response.data.at(-1)?.info;
+    const lastMessage = messages.at(-1)?.info;
     if (!lastMessage) {
       return runtime.cell.resumeAgentSessionOnStartup ? "working" : null;
     }
@@ -2209,6 +2167,27 @@ async function resolveSessionStatusPreference(
   } catch {
     return runtime.cell.resumeAgentSessionOnStartup ? "working" : null;
   }
+}
+
+async function fetchRuntimeMessages(
+  runtime: RuntimeHandle,
+  options: { requireMessages?: boolean } = {}
+) {
+  const query = runtime.directoryQuery.directory
+    ? { directory: runtime.directoryQuery.directory, limit: 100 }
+    : { limit: 100 };
+  const response = await runtime.client.session.messages({
+    path: { id: runtime.session.id },
+    query,
+  });
+
+  if (response.error || !response.data) {
+    return null;
+  }
+
+  return options.requireMessages && response.data.length === 0
+    ? null
+    : response.data;
 }
 
 async function synchronizeRuntimeStatus(runtime: RuntimeHandle): Promise<void> {
@@ -2251,28 +2230,23 @@ async function seedSessionModelPreference(
       "Failed to persist session model"
     );
 
-    // biome-ignore lint/suspicious/noConsole: startup warning for non-fatal model seeding errors
-    console.warn("[agent] Failed to seed session model preference", {
-      cellId: runtime.cell.id,
-      sessionId: runtime.session.id,
-      providerId: runtime.providerId,
-      modelId: runtime.modelId,
-      variant: runtime.variant,
-      message,
-    });
+    logModelSeedWarning(runtime, message);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-
-    // biome-ignore lint/suspicious/noConsole: startup warning for non-fatal model seeding errors
-    console.warn("[agent] Failed to seed session model preference", {
-      cellId: runtime.cell.id,
-      sessionId: runtime.session.id,
-      providerId: runtime.providerId,
-      modelId: runtime.modelId,
-      variant: runtime.variant,
-      message,
-    });
+    logModelSeedWarning(runtime, message);
   }
+}
+
+function logModelSeedWarning(runtime: RuntimeHandle, message: string) {
+  // biome-ignore lint/suspicious/noConsole: startup warning for non-fatal model seeding errors
+  console.warn("[agent] Failed to seed session model preference", {
+    cellId: runtime.cell.id,
+    sessionId: runtime.session.id,
+    providerId: runtime.providerId,
+    modelId: runtime.modelId,
+    variant: runtime.variant,
+    message,
+  });
 }
 
 type MessageModelSelection = {
@@ -2805,21 +2779,17 @@ async function deleteRemoteOpencodeSession(args: {
 }
 
 async function getCellById(id: string): Promise<Cell | null> {
-  const { db: runtimeDb } = getAgentRuntimeDependencies();
-  const [cell] = await runtimeDb
-    .select()
-    .from(cells)
-    .where(eq(cells.id, id))
-    .limit(1);
-  return cell ?? null;
+  return await getCellWhere(eq(cells.id, id));
 }
 
 async function getCellBySessionId(sessionId: string): Promise<Cell | null> {
+  return await getCellWhere(eq(cells.opencodeSessionId, sessionId));
+}
+
+async function getCellWhere(
+  where: ReturnType<typeof eq>
+): Promise<Cell | null> {
   const { db: runtimeDb } = getAgentRuntimeDependencies();
-  const [cell] = await runtimeDb
-    .select()
-    .from(cells)
-    .where(eq(cells.opencodeSessionId, sessionId))
-    .limit(1);
+  const [cell] = await runtimeDb.select().from(cells).where(where).limit(1);
   return cell ?? null;
 }

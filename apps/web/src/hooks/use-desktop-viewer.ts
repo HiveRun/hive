@@ -1,15 +1,5 @@
 import { type RefObject, useEffect, useMemo, useState } from "react";
 
-type DesktopViewerState = {
-  activeServiceId: string | null;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  isLoading: boolean;
-  isVisible: boolean;
-  title: string;
-  url: string | null;
-};
-
 type DesktopViewerActions = {
   activateServiceTab: (serviceId: string) => Promise<DesktopViewerState>;
   goBack: () => Promise<DesktopViewerState>;
@@ -19,11 +9,6 @@ type DesktopViewerActions = {
   openExternal: () => Promise<{ ok: boolean }>;
   resetActiveTab: () => Promise<DesktopViewerState>;
   reload: () => Promise<DesktopViewerState>;
-};
-
-type DesktopViewerServiceTab = {
-  serviceId: string;
-  rootUrl: string;
 };
 
 type UseDesktopViewerOptions = {

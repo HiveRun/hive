@@ -16,7 +16,7 @@ import type { Event as OpencodeEvent, Part } from "@opencode-ai/sdk";
  * Custom session statuses that track Hive-specific workflow states.
  * These are distinct from OpenCode SDK's internal session states.
  */
-export const agentSessionStatuses = [
+const agentSessionStatuses = [
   "starting",
   "working",
   "awaiting_input",
@@ -26,13 +26,13 @@ export const agentSessionStatuses = [
 
 export type AgentSessionStatus = (typeof agentSessionStatuses)[number];
 
-export const agentModes = ["plan", "build"] as const;
+const agentModes = ["plan", "build"] as const;
 export type AgentMode = (typeof agentModes)[number];
 
 /**
  * Message roles - subset of what OpenCode supports, focused on our use cases.
  */
-export type AgentMessageRole = "user" | "assistant" | "system";
+type AgentMessageRole = "user" | "assistant" | "system";
 
 /**
  * Message states - our interpretation of OpenCode message lifecycle.
@@ -87,7 +87,7 @@ export type AgentMessageRecord = {
   errorMessage?: string | null;
 };
 
-export type AgentCompactionStats = {
+type AgentCompactionStats = {
   count: number;
   lastCompactionAt: string | null;
 };

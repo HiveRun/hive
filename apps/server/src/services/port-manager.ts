@@ -1,9 +1,7 @@
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { eq } from "drizzle-orm";
-import { db } from "../db";
-import type { CellService } from "../schema/services";
-import { cellServices } from "../schema/services";
+import { type CellService, cellServices } from "../schema/services";
 
 type DbClient = typeof import("../db").db;
 
@@ -89,7 +87,7 @@ export function createPortManager({ db: database, now }: PortManagerDeps) {
   };
 }
 
-function isPortFree(port: number): Promise<boolean> {
+export function isPortFree(port: number): Promise<boolean> {
   const supportsIpv6 = (code: string | undefined) =>
     code !== "EADDRNOTAVAIL" &&
     code !== "EAFNOSUPPORT" &&
@@ -152,17 +150,3 @@ async function terminatePid(pid: number): Promise<void> {
     /* ignore cleanup errors */
   }
 }
-
-export type PortManagerService = {
-  readonly ensureServicePort: (service: CellService) => Promise<number>;
-  readonly rememberSpecificPort: (serviceId: string, port: number) => void;
-  readonly releasePortFor: (serviceId: string) => void;
-  readonly findFreePort: () => Promise<number>;
-};
-
-export const portManager: PortManagerService = createPortManager({
-  db,
-  now: () => new Date(),
-});
-
-export const PortManagerService = portManager;

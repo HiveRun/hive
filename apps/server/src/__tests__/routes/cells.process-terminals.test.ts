@@ -1,16 +1,26 @@
-import { Elysia } from "elysia";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { createCellsRoutes } from "../../routes/cells";
-import { cells } from "../../schema/cells";
-import { cellServices } from "../../schema/services";
 import type {
   ServiceTerminalEvent,
   ServiceTerminalSession,
 } from "../../services/service-terminal";
-import { setupTestDb, testDb } from "../test-db";
+import { setupTestDb } from "../test-db";
+import {
+  clearRouteServicesAndCells,
+  createCellRouteTestApp,
+  createCellRouteTestDependencies,
+  createRouteServiceTerminalSession,
+  exerciseBasicTerminalWebSocket,
+  expectLiveDataEvent,
+  expectReadyAndSnapshotEvents,
+  expectResizePayload,
+  handlePostRouteRequest,
+  openMockWebSocket,
+  openRouteEventStream,
+  seedRouteCell,
+  seedRouteService,
+} from "./cells-route-test-helpers";
 
-const TEST_WORKSPACE_ID = "test-workspace";
 const TEST_CELL_ID = "test-cell-id";
 const TEST_SERVICE_ID = "test-service-id";
 const HTTP_OK = 200;
@@ -20,33 +30,19 @@ const SERVICE_RESIZE_COLS = 132;
 const SERVICE_RESIZE_ROWS = 44;
 const SETUP_INPUT = "echo setup\n";
 const SERVICE_INPUT = "echo service\n";
-const NORMAL_WS_CLOSE_CODE = 1000;
 
 const createTerminalHarness = () => {
   const setupListeners = new Set<(event: ServiceTerminalEvent) => void>();
   const serviceListeners = new Set<(event: ServiceTerminalEvent) => void>();
 
-  let setupSession: ServiceTerminalSession | null = {
-    sessionId: "setup-session",
-    pid: 111,
-    cwd: "/tmp/mock-worktree",
-    cols: 120,
-    rows: 36,
-    status: "running",
-    exitCode: null,
-    startedAt: new Date().toISOString(),
-  };
+  let setupSession: ServiceTerminalSession | null =
+    createRouteServiceTerminalSession({ sessionId: "setup-session", pid: 111 });
 
-  let serviceSession: ServiceTerminalSession | null = {
-    sessionId: "service-session",
-    pid: 222,
-    cwd: "/tmp/mock-worktree",
-    cols: 120,
-    rows: 36,
-    status: "running",
-    exitCode: null,
-    startedAt: new Date().toISOString(),
-  };
+  let serviceSession: ServiceTerminalSession | null =
+    createRouteServiceTerminalSession({
+      sessionId: "service-session",
+      pid: 222,
+    });
 
   let setupOutput = "setup snapshot\n";
   let serviceOutput = "service snapshot\n";
@@ -117,454 +113,195 @@ const createTerminalHarness = () => {
 
 const createDependencies = (
   harness: ReturnType<typeof createTerminalHarness>
-): any => {
-  const workspaceRecord = {
-    id: TEST_WORKSPACE_ID,
-    label: "Test Workspace",
-    path: "/tmp/test-workspace-root",
-    addedAt: new Date().toISOString(),
-  };
-
-  return {
-    db: testDb,
-    resolveWorkspaceContext: (async () => ({
-      workspace: workspaceRecord,
-      loadConfig: async () => ({
-        opencode: { defaultProvider: "opencode", defaultModel: "mock" },
-        promptSources: [],
-        templates: {},
-        defaults: {},
-      }),
-      createWorktreeManager: async () => ({
-        createWorktree: async () => ({
-          path: "/tmp",
-          branch: "b",
-          baseCommit: "c",
-        }),
-        removeWorktree: async () => Promise.resolve(),
-      }),
-      createWorktree: async () => ({
-        path: "/tmp",
-        branch: "b",
-        baseCommit: "c",
-      }),
-      removeWorktree: () => Promise.resolve(),
-    })) as any,
-    ensureAgentSession: async () => ({ id: "session", cellId: TEST_CELL_ID }),
-    closeAgentSession: () => Promise.resolve(),
-    ensureServicesForCell: () => Promise.resolve(),
-    startServicesForCell: () => Promise.resolve(),
-    stopServicesForCell: () => Promise.resolve(),
-    startServiceById: () => Promise.resolve(),
-    stopServiceById: () => Promise.resolve(),
-    sendAgentMessage: () => Promise.resolve(),
-    ensureTerminalSession: () => ({
-      sessionId: "cell-session",
-      cellId: TEST_CELL_ID,
-      pid: 123,
-      cwd: "/tmp/mock-worktree",
-      cols: 120,
-      rows: 36,
-      status: "running" as const,
-      exitCode: null,
-      startedAt: new Date().toISOString(),
-    }),
-    readTerminalOutput: () => "",
-    subscribeToTerminal: () => () => 0,
-    writeTerminalInput: () => 0,
-    resizeTerminal: () => 0,
-    closeTerminalSession: () => 0,
-    getServiceTerminalSession: () => harness.getServiceSession(),
-    readServiceTerminalOutput: () => harness.readServiceOutput(),
-    subscribeToServiceTerminal: (
-      _serviceId: string,
-      listener: (event: ServiceTerminalEvent) => void
-    ) => harness.subscribeService(listener),
-    writeServiceTerminalInput: (_serviceId: string, data: string) =>
-      harness.writeService(data),
-    resizeServiceTerminal: (_serviceId: string, cols: number, rows: number) =>
-      harness.resizeService(cols, rows),
-    clearServiceTerminal: () => 0,
-    getSetupTerminalSession: () => harness.getSetupSession(),
-    readSetupTerminalOutput: () => harness.readSetupOutput(),
-    subscribeToSetupTerminal: (
-      _cellId: string,
-      listener: (event: ServiceTerminalEvent) => void
-    ) => harness.subscribeSetup(listener),
-    writeSetupTerminalInput: (_cellId: string, data: string) =>
-      harness.writeSetup(data),
-    resizeSetupTerminal: (_cellId: string, cols: number, rows: number) =>
-      harness.resizeSetup(cols, rows),
-    clearSetupTerminal: () => 0,
-  };
-};
-
-const seedData = async () => {
-  const now = new Date();
-  await testDb.insert(cells).values({
-    id: TEST_CELL_ID,
-    name: "Terminal Cell",
-    description: null,
-    templateId: "template",
-    workspacePath: "/tmp/mock-worktree",
-    workspaceId: TEST_WORKSPACE_ID,
-    workspaceRootPath: "/tmp/test-workspace-root",
-    opencodeSessionId: null,
-    createdAt: now,
-    status: "ready",
-    lastSetupError: null,
-    branchName: null,
-    baseCommit: null,
-    resumeAgentSessionOnStartup: false,
+): any =>
+  createCellRouteTestDependencies({
+    cellId: TEST_CELL_ID,
+    overrides: {
+      getServiceTerminalSession: () => harness.getServiceSession(),
+      readServiceTerminalOutput: () => harness.readServiceOutput(),
+      subscribeToServiceTerminal: (
+        _serviceId: string,
+        listener: (event: ServiceTerminalEvent) => void
+      ) => harness.subscribeService(listener),
+      writeServiceTerminalInput: (_serviceId: string, data: string) =>
+        harness.writeService(data),
+      resizeServiceTerminal: (_serviceId: string, cols: number, rows: number) =>
+        harness.resizeService(cols, rows),
+      clearServiceTerminal: () => 0,
+      getSetupTerminalSession: () => harness.getSetupSession(),
+      readSetupTerminalOutput: () => harness.readSetupOutput(),
+      subscribeToSetupTerminal: (
+        _cellId: string,
+        listener: (event: ServiceTerminalEvent) => void
+      ) => harness.subscribeSetup(listener),
+      writeSetupTerminalInput: (_cellId: string, data: string) =>
+        harness.writeSetup(data),
+      resizeSetupTerminal: (_cellId: string, cols: number, rows: number) =>
+        harness.resizeSetup(cols, rows),
+    },
   });
 
-  await testDb.insert(cellServices).values({
+const createTerminalTestApp = (
+  harness: ReturnType<typeof createTerminalHarness>
+) => createCellRouteTestApp(createDependencies(harness));
+
+const seedData = async () => {
+  await seedRouteCell({ id: TEST_CELL_ID, name: "Terminal Cell" });
+  await seedRouteService({
     id: TEST_SERVICE_ID,
     cellId: TEST_CELL_ID,
     name: "web",
-    type: "process",
     command: "bun run dev",
     cwd: "/tmp/mock-worktree",
-    env: {},
     status: "running",
-    port: null,
     pid: 222,
-    readyTimeoutMs: null,
-    definition: {
-      type: "process",
-      run: "bun run dev",
-      cwd: "/tmp/mock-worktree",
-      env: {},
-    },
-    lastKnownError: null,
-    createdAt: now,
-    updatedAt: now,
   });
 };
 
-const decodeChunk = (value: unknown): string => {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value instanceof Uint8Array) {
-    return new TextDecoder().decode(value);
-  }
-  if (value instanceof ArrayBuffer) {
-    return new TextDecoder().decode(new Uint8Array(value));
-  }
-  return "";
+const openTerminalStream = async (app: any, path: string) =>
+  openRouteEventStream(app, path);
+
+const terminalPath = (kind: "setup" | "service", action: string) =>
+  kind === "setup"
+    ? `/api/cells/${TEST_CELL_ID}/setup/terminal/${action}`
+    : `/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/terminal/${action}`;
+
+const createSeededTerminalContext = async () => {
+  await seedData();
+  const harness = createTerminalHarness();
+  return { harness, app: createTerminalTestApp(harness) };
 };
 
-const getWebSocketHooks = (app: unknown, path: string) => {
-  const routes = (app as { router: { history: unknown[] } }).router.history;
-  const route = routes.find(
-    (entry) =>
-      (entry as { method?: string }).method === "WS" &&
-      (entry as { path?: string }).path === path
-  ) as
-    | {
-        hooks?: {
-          websocket?: {
-            open?: (ws: unknown) => unknown;
-            message?: (ws: unknown, message: unknown) => unknown;
-            close?: (ws: unknown, code: number, reason: string) => unknown;
-          };
+const postTerminalAction = async (
+  kind: "setup" | "service",
+  action: "resize" | "input",
+  body: Record<string, unknown>
+) => {
+  const { harness, app } = await createSeededTerminalContext();
+  const response = await handlePostRouteRequest(
+    app,
+    terminalPath(kind, action),
+    body
+  );
+  return { harness, response };
+};
+
+const openTerminalWebSocket = async (kind: "setup" | "service") => {
+  const { harness, app } = await createSeededTerminalContext();
+  const socketArgs =
+    kind === "setup"
+      ? {
+          path: "/api/cells/:id/setup/terminal/ws",
+          id: "setup-terminal-ws-1",
+          params: { id: TEST_CELL_ID },
+        }
+      : {
+          path: "/api/cells/:id/services/:serviceId/terminal/ws",
+          id: "service-terminal-ws-1",
+          params: { id: TEST_CELL_ID, serviceId: TEST_SERVICE_ID },
         };
-      }
-    | undefined;
-
-  if (!route?.hooks?.websocket) {
-    throw new Error(`Websocket route not found for ${path}`);
-  }
-
-  return route.hooks.websocket;
+  const socket = await openMockWebSocket({ app, ...socketArgs });
+  return { harness, ...socket };
 };
 
-const createMockWebSocket = (args: {
-  id: string;
-  params: { id: string; serviceId?: string };
-}) => {
-  const messages: Record<string, unknown>[] = [];
-  let closed = false;
+const expectTerminalStream = async (
+  kind: "setup" | "service",
+  event: { chunk: string; expectedText: string }
+) => {
+  const { harness, app } = await createSeededTerminalContext();
+  const reader = await openTerminalStream(app, terminalPath(kind, "stream"));
 
-  const socket = {
-    id: args.id,
-    data: {
-      params: args.params,
-    },
-    send(payload: unknown) {
-      if (payload && typeof payload === "object") {
-        messages.push(payload as Record<string, unknown>);
-      }
-    },
-    close() {
-      closed = true;
-    },
-  };
+  await expectReadyAndSnapshotEvents(reader);
+  await expectLiveDataEvent({
+    reader,
+    emit: () =>
+      kind === "setup"
+        ? harness.emitSetup({ type: "data", chunk: event.chunk })
+        : harness.emitService({ type: "data", chunk: event.chunk }),
+    expectedText: event.expectedText,
+  });
+  await reader.cancel();
+};
 
-  return {
-    socket,
-    messages,
-    isClosed: () => closed,
-  };
+const expectTerminalWebSocket = async (kind: "setup" | "service") => {
+  const { harness, hooks, ws } = await openTerminalWebSocket(kind);
+  await exerciseBasicTerminalWebSocket({
+    hooks,
+    ws,
+    input: kind === "setup" ? SETUP_INPUT : SERVICE_INPUT,
+    cols: kind === "setup" ? SETUP_RESIZE_COLS : SERVICE_RESIZE_COLS,
+    rows: kind === "setup" ? SETUP_RESIZE_ROWS : SERVICE_RESIZE_ROWS,
+    readInputs:
+      kind === "setup" ? harness.getSetupInputs : harness.getServiceInputs,
+  });
 };
 
 describe("service/setup terminal routes", () => {
-  beforeAll(async () => {
-    await setupTestDb();
-  });
+  beforeAll(setupTestDb);
 
-  beforeEach(async () => {
-    await testDb.delete(cellServices);
-    await testDb.delete(cells);
-  });
+  beforeEach(clearRouteServicesAndCells);
 
   it("streams setup terminal readiness, snapshot, and data", async () => {
-    await seedData();
-    const harness = createTerminalHarness();
-    const app = new Elysia().use(
-      createCellsRoutes(createDependencies(harness))
-    );
-
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/setup/terminal/stream`
-      )
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error("Expected SSE reader");
-    }
-
-    const readyText = decodeChunk((await reader.read()).value);
-    expect(readyText).toContain("event: ready");
-    const snapshotText = decodeChunk((await reader.read()).value);
-    expect(snapshotText).toContain("event: snapshot");
-
-    harness.emitSetup({ type: "data", chunk: "setup chunk\n" });
-    const dataText = decodeChunk((await reader.read()).value);
-    expect(dataText).toContain("event: data");
-    expect(dataText).toContain("setup chunk");
-
-    await reader.cancel();
+    await expectTerminalStream("setup", {
+      chunk: "setup chunk\n",
+      expectedText: "setup chunk",
+    });
   });
 
   it("streams service terminal readiness, snapshot, and data", async () => {
-    await seedData();
-    const harness = createTerminalHarness();
-    const app = new Elysia().use(
-      createCellsRoutes(createDependencies(harness))
-    );
-
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/terminal/stream`
-      )
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error("Expected SSE reader");
-    }
-
-    const readyText = decodeChunk((await reader.read()).value);
-    expect(readyText).toContain("event: ready");
-    const snapshotText = decodeChunk((await reader.read()).value);
-    expect(snapshotText).toContain("event: snapshot");
-
-    harness.emitService({ type: "data", chunk: "service chunk\n" });
-    const dataText = decodeChunk((await reader.read()).value);
-    expect(dataText).toContain("event: data");
-    expect(dataText).toContain("service chunk");
-
-    await reader.cancel();
+    await expectTerminalStream("service", {
+      chunk: "service chunk\n",
+      expectedText: "service chunk",
+    });
   });
 
   it("resizes setup terminal session", async () => {
-    await seedData();
-    const harness = createTerminalHarness();
-    const app = new Elysia().use(
-      createCellsRoutes(createDependencies(harness))
-    );
-
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/setup/terminal/resize`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            cols: SETUP_RESIZE_COLS,
-            rows: SETUP_RESIZE_ROWS,
-          }),
-        }
-      )
-    );
+    const { response } = await postTerminalAction("setup", "resize", {
+      cols: SETUP_RESIZE_COLS,
+      rows: SETUP_RESIZE_ROWS,
+    });
 
     expect(response.status).toBe(HTTP_OK);
-    const payload = (await response.json()) as {
-      ok: boolean;
-      session: { cols: number; rows: number };
-    };
-    expect(payload.ok).toBe(true);
-    expect(payload.session.cols).toBe(SETUP_RESIZE_COLS);
-    expect(payload.session.rows).toBe(SETUP_RESIZE_ROWS);
+    await expectResizePayload(response, SETUP_RESIZE_COLS, SETUP_RESIZE_ROWS);
   });
 
   it("writes setup terminal input", async () => {
-    await seedData();
-    const harness = createTerminalHarness();
-    const app = new Elysia().use(
-      createCellsRoutes(createDependencies(harness))
-    );
-
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/setup/terminal/input`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ data: SETUP_INPUT }),
-        }
-      )
-    );
+    const { harness, response } = await postTerminalAction("setup", "input", {
+      data: SETUP_INPUT,
+    });
 
     expect(response.status).toBe(HTTP_OK);
     expect(harness.getSetupInputs()).toEqual([SETUP_INPUT]);
   });
 
   it("resizes service terminal session", async () => {
-    await seedData();
-    const harness = createTerminalHarness();
-    const app = new Elysia().use(
-      createCellsRoutes(createDependencies(harness))
-    );
-
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/terminal/resize`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            cols: SERVICE_RESIZE_COLS,
-            rows: SERVICE_RESIZE_ROWS,
-          }),
-        }
-      )
-    );
+    const { response } = await postTerminalAction("service", "resize", {
+      cols: SERVICE_RESIZE_COLS,
+      rows: SERVICE_RESIZE_ROWS,
+    });
 
     expect(response.status).toBe(HTTP_OK);
-    const payload = (await response.json()) as {
-      ok: boolean;
-      session: { cols: number; rows: number };
-    };
-    expect(payload.ok).toBe(true);
-    expect(payload.session.cols).toBe(SERVICE_RESIZE_COLS);
-    expect(payload.session.rows).toBe(SERVICE_RESIZE_ROWS);
+    await expectResizePayload(
+      response,
+      SERVICE_RESIZE_COLS,
+      SERVICE_RESIZE_ROWS
+    );
   });
 
   it("writes service terminal input", async () => {
-    await seedData();
-    const harness = createTerminalHarness();
-    const app = new Elysia().use(
-      createCellsRoutes(createDependencies(harness))
-    );
-
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/terminal/input`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ data: SERVICE_INPUT }),
-        }
-      )
-    );
+    const { harness, response } = await postTerminalAction("service", "input", {
+      data: SERVICE_INPUT,
+    });
 
     expect(response.status).toBe(HTTP_OK);
     expect(harness.getServiceInputs()).toEqual([SERVICE_INPUT]);
   });
 
   it("handles setup terminal websocket messages", async () => {
-    await seedData();
-    const harness = createTerminalHarness();
-    const app = new Elysia().use(
-      createCellsRoutes(createDependencies(harness))
-    );
-    const hooks = getWebSocketHooks(app, "/api/cells/:id/setup/terminal/ws");
-    const ws = createMockWebSocket({
-      id: "setup-terminal-ws-1",
-      params: { id: TEST_CELL_ID },
-    });
-
-    await hooks.open?.(ws.socket);
-    expect(ws.messages.some((entry) => entry.type === "ready")).toBeTruthy();
-
-    hooks.message?.(
-      ws.socket,
-      JSON.stringify({ type: "input", data: SETUP_INPUT })
-    );
-    expect(harness.getSetupInputs()).toEqual([SETUP_INPUT]);
-
-    hooks.message?.(
-      ws.socket,
-      JSON.stringify({
-        type: "resize",
-        cols: SETUP_RESIZE_COLS,
-        rows: SETUP_RESIZE_ROWS,
-      })
-    );
-    expect(ws.messages.some((entry) => entry.type === "ready")).toBeTruthy();
-
-    hooks.message?.(ws.socket, JSON.stringify({ type: "ping" }));
-    expect(ws.messages.some((entry) => entry.type === "pong")).toBeTruthy();
-
-    hooks.close?.(ws.socket, NORMAL_WS_CLOSE_CODE, "closed");
-    expect(ws.isClosed()).toBeFalsy();
+    await expectTerminalWebSocket("setup");
   });
 
   it("handles service terminal websocket messages", async () => {
-    await seedData();
-    const harness = createTerminalHarness();
-    const app = new Elysia().use(
-      createCellsRoutes(createDependencies(harness))
-    );
-    const hooks = getWebSocketHooks(
-      app,
-      "/api/cells/:id/services/:serviceId/terminal/ws"
-    );
-    const ws = createMockWebSocket({
-      id: "service-terminal-ws-1",
-      params: { id: TEST_CELL_ID, serviceId: TEST_SERVICE_ID },
-    });
-
-    await hooks.open?.(ws.socket);
-    expect(ws.messages.some((entry) => entry.type === "ready")).toBeTruthy();
-
-    hooks.message?.(
-      ws.socket,
-      JSON.stringify({ type: "input", data: SERVICE_INPUT })
-    );
-    expect(harness.getServiceInputs()).toEqual([SERVICE_INPUT]);
-
-    hooks.message?.(
-      ws.socket,
-      JSON.stringify({
-        type: "resize",
-        cols: SERVICE_RESIZE_COLS,
-        rows: SERVICE_RESIZE_ROWS,
-      })
-    );
-    expect(ws.messages.some((entry) => entry.type === "ready")).toBeTruthy();
-
-    hooks.message?.(ws.socket, JSON.stringify({ type: "ping" }));
-    expect(ws.messages.some((entry) => entry.type === "pong")).toBeTruthy();
-
-    hooks.close?.(ws.socket, NORMAL_WS_CLOSE_CODE, "closed");
-    expect(ws.isClosed()).toBeFalsy();
+    await expectTerminalWebSocket("service");
   });
 });

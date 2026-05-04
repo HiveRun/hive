@@ -1,64 +1,24 @@
 import { renderHook } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import {
+  createEventSourceMock,
+  registerEventSourceMockLifecycle,
+} from "./event-source-test-utils";
 import { useServiceStream } from "./use-service-stream";
 
-type MockEventSourceInstance = {
-  url: string;
-  closed: boolean;
-  addEventListener: (
-    event: string,
-    listener: EventListenerOrEventListenerObject
-  ) => void;
-  removeEventListener: (
-    event: string,
-    listener: EventListenerOrEventListenerObject
-  ) => void;
-  close: () => void;
-};
-
-const mockEventSourceInstances: MockEventSourceInstance[] = [];
-
-function MockEventSource(url: string): MockEventSourceInstance {
-  const instance: MockEventSourceInstance = {
-    url,
-    closed: false,
-    addEventListener() {
-      return;
-    },
-    removeEventListener() {
-      return;
-    },
-    close() {
-      instance.closed = true;
-    },
-  };
-
-  mockEventSourceInstances.push(instance);
-  return instance;
-}
+const eventSource = createEventSourceMock();
 
 describe("useServiceStream", () => {
-  beforeEach(() => {
-    mockEventSourceInstances.length = 0;
-    vi.stubGlobal(
-      "EventSource",
-      MockEventSource as unknown as typeof EventSource
-    );
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
-  });
+  registerEventSourceMockLifecycle(eventSource);
 
   it("does not include includeResources query by default", () => {
     renderHook(() => useServiceStream("cell-1", { enabled: true }));
 
-    expect(mockEventSourceInstances).toHaveLength(1);
-    expect(mockEventSourceInstances[0]?.url).toContain(
+    expect(eventSource.instances).toHaveLength(1);
+    expect(eventSource.instances[0]?.url).toContain(
       "/api/cells/cell-1/services/stream"
     );
-    expect(mockEventSourceInstances[0]?.url).not.toContain("includeResources");
+    expect(eventSource.instances[0]?.url).not.toContain("includeResources");
   });
 
   it("includes includeResources query when enabled", () => {
@@ -66,8 +26,8 @@ describe("useServiceStream", () => {
       useServiceStream("cell-1", { enabled: true, includeResources: true })
     );
 
-    expect(mockEventSourceInstances).toHaveLength(1);
-    expect(mockEventSourceInstances[0]?.url).toContain(
+    expect(eventSource.instances).toHaveLength(1);
+    expect(eventSource.instances[0]?.url).toContain(
       "/api/cells/cell-1/services/stream?includeResources=true"
     );
   });

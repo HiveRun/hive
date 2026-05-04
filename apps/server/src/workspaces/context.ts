@@ -8,7 +8,7 @@ import {
   type WorktreeManager,
 } from "../worktree/manager";
 import type { WorkspaceRecord } from "./registry";
-import { getWorkspaceRegistry } from "./registry";
+import { getWorkspaceRegistry, selectWorkspace } from "./registry";
 
 export type WorkspaceRuntimeContext = {
   workspace: WorkspaceRecord;
@@ -39,15 +39,7 @@ export const resolveWorkspaceContext: ResolveWorkspaceContext = async (
   workspaceId?: string
 ) => {
   const registry = await getWorkspaceRegistry();
-
-  let workspace: WorkspaceRecord | undefined;
-  if (workspaceId) {
-    workspace = registry.workspaces.find((entry) => entry.id === workspaceId);
-  } else if (registry.activeWorkspaceId) {
-    workspace = registry.workspaces.find(
-      (entry) => entry.id === registry.activeWorkspaceId
-    );
-  }
+  const workspace = selectWorkspace(registry, workspaceId);
 
   if (!workspace) {
     throw new WorkspaceContextError(

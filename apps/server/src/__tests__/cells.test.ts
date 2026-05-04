@@ -24,18 +24,40 @@ describe("Cells CRUD Operations", () => {
     workspaceRootPath: resolveWorkspaceRoot(),
   };
 
+  const createCellInput = (
+    overrides: Partial<typeof cells.$inferInsert> & { id: string; name: string }
+  ) => ({
+    templateId: "basic",
+    workspacePath: `/tmp/${overrides.id}`,
+    createdAt: new Date(),
+    status: "ready" as const,
+    ...workspaceFields,
+    ...overrides,
+  });
+
+  const insertCell = async (
+    overrides: Partial<typeof cells.$inferInsert> & { id: string; name: string }
+  ) => {
+    const [created] = await testDb
+      .insert(cells)
+      .values(createCellInput(overrides))
+      .returning();
+
+    if (!created) {
+      throw new Error("Insert did not return cell");
+    }
+
+    return created;
+  };
+
   describe("Create", () => {
     it("should create a cell with valid data", async () => {
-      const newCell = {
+      const newCell = createCellInput({
         id: "test-cell-1",
         name: "Test Cell",
         description: "A test cell",
-        templateId: "basic",
         workspacePath: "/tmp/test-worktree-1",
-        createdAt: new Date(),
-        status: "ready",
-        ...workspaceFields,
-      };
+      });
 
       const [created] = await testDb.insert(cells).values(newCell).returning();
 
@@ -53,22 +75,11 @@ describe("Cells CRUD Operations", () => {
     });
 
     it("should create a cell without description", async () => {
-      const newCell = {
+      const created = await insertCell({
         id: "test-cell-2",
         name: "Minimal Cell",
-        templateId: "basic",
         workspacePath: "/tmp/test-worktree-2",
-        createdAt: new Date(),
-        status: "ready",
-        ...workspaceFields,
-      };
-
-      const [created] = await testDb.insert(cells).values(newCell).returning();
-
-      expect(created).toBeDefined();
-      if (!created) {
-        throw new Error("Insert did not return cell");
-      }
+      });
 
       expect(created.description).toBeNull();
     });
@@ -78,26 +89,19 @@ describe("Cells CRUD Operations", () => {
     beforeEach(async () => {
       // Insert test data
       await testDb.insert(cells).values([
-        {
+        createCellInput({
           id: "cell-1",
           name: "First Cell",
           description: "First test cell",
-          templateId: "basic",
           workspacePath: "/tmp/test-worktree-1",
-          createdAt: new Date(),
-          status: "ready",
-          ...workspaceFields,
-        },
-        {
+        }),
+        createCellInput({
           id: "cell-2",
           name: "Second Cell",
           description: "Second test cell",
           templateId: "web-api",
           workspacePath: "/tmp/test-worktree-2",
-          createdAt: new Date(),
-          status: "ready",
-          ...workspaceFields,
-        },
+        }),
       ]);
     });
 
@@ -145,22 +149,11 @@ describe("Cells CRUD Operations", () => {
     let cellId: string;
 
     beforeEach(async () => {
-      const [created] = await testDb
-        .insert(cells)
-        .values({
-          id: "cell-to-delete",
-          name: "To Delete",
-          templateId: "basic",
-          workspacePath: "/tmp/test-worktree-delete",
-          createdAt: new Date(),
-          status: "ready",
-          ...workspaceFields,
-        })
-        .returning();
-
-      if (!created) {
-        throw new Error("Failed to insert cell for delete tests");
-      }
+      const created = await insertCell({
+        id: "cell-to-delete",
+        name: "To Delete",
+        workspacePath: "/tmp/test-worktree-delete",
+      });
 
       cellId = created.id;
     });

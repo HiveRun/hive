@@ -3,11 +3,13 @@ import { selectors } from "../src/selectors";
 import {
   createCell,
   ensureTerminalReady,
+  readTerminalOutputSeq,
   sendCellTerminalCommand,
-  waitForCondition,
+  waitForTerminalOutputAdvance,
 } from "../src/test-helpers";
 
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
+const OUTPUT_TIMEOUT_MS = 30_000;
 
 test.describe("terminal route", () => {
   test("opens terminal route, accepts input, and recovers after restart", async ({
@@ -36,21 +38,19 @@ test.describe("terminal route", () => {
       page.locator(selectors.terminalConnectionBadge)
     ).toHaveAttribute("data-connection-state", "online");
 
-    const baseline = await readTerminalMetrics(page);
+    const baseline = await readTerminalOutputSeq(page);
     const firstToken = `HIVE_TERMINAL_E2E_${Date.now()}`;
 
     await sendCellTerminalCommand(page, `echo ${firstToken}`);
 
-    await waitForCondition({
-      timeoutMs: 30_000,
-      errorMessage: "Terminal did not process first command",
-      check: async () => {
-        const metrics = await readTerminalMetrics(page);
-        return metrics.outputSeq > baseline.outputSeq;
-      },
-    });
+    await waitForTerminalOutputAdvance(
+      page,
+      baseline,
+      OUTPUT_TIMEOUT_MS,
+      "Terminal did not process first command"
+    );
 
-    const afterFirstCommand = await readTerminalMetrics(page);
+    const afterFirstCommand = await readTerminalOutputSeq(page);
     const pasteToken = `HIVE_TERMINAL_PASTE_${Date.now()}`;
 
     await page.evaluate(async (text) => {
@@ -60,14 +60,12 @@ test.describe("terminal route", () => {
     await page.keyboard.press("Control+Shift+V");
     await page.keyboard.press("Enter");
 
-    await waitForCondition({
-      timeoutMs: 30_000,
-      errorMessage: "Terminal did not process pasted command",
-      check: async () => {
-        const metrics = await readTerminalMetrics(page);
-        return metrics.outputSeq > afterFirstCommand.outputSeq;
-      },
-    });
+    await waitForTerminalOutputAdvance(
+      page,
+      afterFirstCommand,
+      OUTPUT_TIMEOUT_MS,
+      "Terminal did not process pasted command"
+    );
 
     await expect
       .poll(async () => readTerminalText(page), {
@@ -75,17 +73,15 @@ test.describe("terminal route", () => {
       })
       .toContain(pasteToken);
 
-    const afterPasteCommand = await readTerminalMetrics(page);
+    const afterPasteCommand = await readTerminalOutputSeq(page);
 
     await sendCellTerminalCommand(page, "pwd");
-    await waitForCondition({
-      timeoutMs: 30_000,
-      errorMessage: "Terminal did not process second command",
-      check: async () => {
-        const metrics = await readTerminalMetrics(page);
-        return metrics.outputSeq > afterPasteCommand.outputSeq;
-      },
-    });
+    await waitForTerminalOutputAdvance(
+      page,
+      afterPasteCommand,
+      OUTPUT_TIMEOUT_MS,
+      "Terminal did not process second command"
+    );
 
     await page.locator(selectors.terminalRestartButton).click();
     await ensureTerminalReady(page, {
@@ -93,30 +89,18 @@ test.describe("terminal route", () => {
       timeoutMs: TERMINAL_READY_TIMEOUT_MS,
     });
 
-    const postRestartBaseline = await readTerminalMetrics(page);
+    const postRestartBaseline = await readTerminalOutputSeq(page);
     const secondToken = `HIVE_TERMINAL_RESTART_${Date.now()}`;
     await sendCellTerminalCommand(page, `echo ${secondToken}`);
 
-    await waitForCondition({
-      timeoutMs: 30_000,
-      errorMessage: "Terminal did not recover after restart",
-      check: async () => {
-        const metrics = await readTerminalMetrics(page);
-        return metrics.outputSeq > postRestartBaseline.outputSeq;
-      },
-    });
+    await waitForTerminalOutputAdvance(
+      page,
+      postRestartBaseline,
+      OUTPUT_TIMEOUT_MS,
+      "Terminal did not recover after restart"
+    );
   });
 });
-
-async function readTerminalMetrics(page: Page): Promise<{ outputSeq: number }> {
-  const outputSeqRaw = await page
-    .locator(selectors.terminalRoot)
-    .getAttribute("data-terminal-output-seq");
-
-  return {
-    outputSeq: Number(outputSeqRaw ?? "0"),
-  };
-}
 
 async function readTerminalText(page: Page): Promise<string> {
   return (

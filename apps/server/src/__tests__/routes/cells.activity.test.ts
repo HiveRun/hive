@@ -1,12 +1,19 @@
 import { eq } from "drizzle-orm";
-import { Elysia } from "elysia";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createCellsRoutes } from "../../routes/cells";
 import { cellActivityEvents } from "../../schema/activity-events";
 import { cells } from "../../schema/cells";
 import { cellServices } from "../../schema/services";
 import { cellTimingEvents } from "../../schema/timing-events";
 import { setupTestDb, testDb } from "../test-db";
+import {
+  createCellRouteTestApp,
+  createCellRouteTestDependencies,
+  deleteRouteCellById,
+  expectJsonPayload,
+  handlePostRouteRequest,
+  handleRouteRequest,
+  seedRouteCellAndService,
+} from "./cells-route-test-helpers";
 
 const TEST_WORKSPACE_ID = "test-workspace";
 const TEST_CELL_ID = "test-cell-id";
@@ -28,127 +35,63 @@ type MinimalDependencyOverrides = {
 function createMinimalDependencies(
   overrides: MinimalDependencyOverrides = {}
 ): any {
-  const workspaceRecord = {
-    id: TEST_WORKSPACE_ID,
-    label: "Test Workspace",
-    path: "/tmp/test-workspace-root",
-    addedAt: new Date().toISOString(),
-  };
-
-  return {
-    db: testDb,
-    resolveWorkspaceContext: (async () => ({
-      workspace: workspaceRecord,
-      loadConfig: async () => ({
-        opencode: { defaultProvider: "opencode", defaultModel: "mock" },
-        promptSources: [],
-        templates: {},
-        defaults: {},
-      }),
-      createWorktreeManager: async () => ({
-        createWorktree: async () => ({
-          path: "/tmp",
-          branch: "b",
-          baseCommit: "c",
-        }),
-        removeWorktree: (...args: unknown[]) =>
-          overrides.removeWorktree?.(...args) ?? Promise.resolve(),
-      }),
-      createWorktree: async () => ({
-        path: "/tmp",
-        branch: "b",
-        baseCommit: "c",
-      }),
+  return createCellRouteTestDependencies({
+    cellId: TEST_CELL_ID,
+    workspaceId: TEST_WORKSPACE_ID,
+    overrides: {
+      closeAgentSession: (...args: unknown[]) =>
+        overrides.closeAgentSession?.(...args) ?? Promise.resolve(),
+      stopServicesForCell: (...args: unknown[]) =>
+        overrides.stopServicesForCell?.(...args) ?? Promise.resolve(),
       removeWorktree: (...args: unknown[]) =>
         overrides.removeWorktree?.(...args) ?? Promise.resolve(),
-    })) as any,
-    ensureAgentSession: async () => ({ id: "session", cellId: TEST_CELL_ID }),
-    closeAgentSession: (...args: unknown[]) =>
-      overrides.closeAgentSession?.(...args) ?? Promise.resolve(),
-    ensureServicesForCell: () => Promise.resolve(),
-    startServicesForCell: () => Promise.resolve(),
-    stopServicesForCell: (...args: unknown[]) =>
-      overrides.stopServicesForCell?.(...args) ?? Promise.resolve(),
-    startServiceById: () => Promise.resolve(),
-    stopServiceById: () => Promise.resolve(),
-    sendAgentMessage: () => Promise.resolve(),
-    ensureTerminalSession: () => ({
-      sessionId: "terminal-session",
-      cellId: TEST_CELL_ID,
-      pid: 123,
-      cwd: "/tmp/mock-worktree",
-      cols: 120,
-      rows: 36,
-      status: "running" as const,
-      exitCode: null,
-      startedAt: new Date().toISOString(),
-    }),
-    readTerminalOutput: () => "",
-    subscribeToTerminal: () => () => 0,
-    writeTerminalInput: () => 0,
-    resizeTerminal: () => 0,
-    closeTerminalSession: () => 0,
-    getServiceTerminalSession: () => null,
-    readServiceTerminalOutput: () => "",
-    subscribeToServiceTerminal: () => () => 0,
-    writeServiceTerminalInput: () => 0,
-    resizeServiceTerminal: () => 0,
-    clearServiceTerminal: () => 0,
-    getSetupTerminalSession: () => null,
-    readSetupTerminalOutput: () => "",
-    subscribeToSetupTerminal: () => () => 0,
-    writeSetupTerminalInput: () => 0,
-    resizeSetupTerminal: () => 0,
-    clearSetupTerminal: () => 0,
-  };
+    },
+  });
 }
 
 async function seedCellAndService() {
-  await testDb.insert(cells).values({
-    id: TEST_CELL_ID,
-    name: "Test Cell",
-    description: null,
-    templateId: "template",
-    workspacePath: "/tmp/mock-worktree",
-    workspaceId: TEST_WORKSPACE_ID,
-    workspaceRootPath: "/tmp/test-workspace-root",
-    opencodeSessionId: null,
-    createdAt: new Date(),
-    status: "ready",
-    lastSetupError: null,
-    branchName: null,
-    baseCommit: null,
-    resumeAgentSessionOnStartup: false,
-  });
-
-  await testDb.insert(cellServices).values({
-    id: TEST_SERVICE_ID,
-    cellId: TEST_CELL_ID,
-    name: "server",
-    type: "process",
-    command: "bun run dev",
-    cwd: "/tmp/mock-worktree",
-    env: {},
-    status: "running",
-    port: 39_993,
-    pid: null,
-    readyTimeoutMs: null,
-    definition: {
-      type: "process",
-      cwd: "/tmp/mock-worktree",
-      env: {},
-      run: "bun run dev",
+  await seedRouteCellAndService({
+    cell: {
+      id: TEST_CELL_ID,
+      name: "Test Cell",
+      workspaceId: TEST_WORKSPACE_ID,
     },
-    lastKnownError: null,
-    createdAt: new Date(),
-    updatedAt: new Date(),
+    service: {
+      id: TEST_SERVICE_ID,
+      cellId: TEST_CELL_ID,
+      name: "server",
+      command: "bun run dev",
+      status: "running",
+      port: 39_993,
+    },
   });
 }
 
+const createTestApp = (overrides?: MinimalDependencyOverrides) =>
+  createCellRouteTestApp(createMinimalDependencies(overrides));
+
+const callServiceAction = (
+  app: { handle: (request: Request) => Promise<Response> },
+  action: string,
+  headers?: HeadersInit
+) =>
+  handlePostRouteRequest(
+    app,
+    `/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/${action}`,
+    undefined,
+    headers ? { headers } : undefined
+  );
+
+const readActivityPayload = <TPayload>(
+  app: { handle: (request: Request) => Promise<Response> },
+  query = ""
+) =>
+  handleRouteRequest(app, `/api/cells/${TEST_CELL_ID}/activity${query}`).then(
+    (response) => expectJsonPayload<TPayload>(response)
+  );
+
 describe("Cell activity events", () => {
-  beforeAll(async () => {
-    await setupTestDb();
-  });
+  beforeAll(setupTestDb);
 
   beforeEach(async () => {
     await testDb.delete(cellTimingEvents);
@@ -160,36 +103,23 @@ describe("Cell activity events", () => {
   it("records service lifecycle events and exposes them via /activity", async () => {
     await seedCellAndService();
 
-    const routes = createCellsRoutes(createMinimalDependencies());
-    const app = new Elysia().use(routes);
+    const app = createTestApp();
 
-    const stopResponse = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/stop`,
-        {
-          method: "POST",
-          headers: {
-            "x-hive-source": "opencode",
-            "x-hive-tool": "hive_restart_service",
-          },
-        }
-      )
-    );
+    const stopResponse = await callServiceAction(app, "stop", {
+      "x-hive-source": "opencode",
+      "x-hive-tool": "hive_restart_service",
+    });
 
     expect(stopResponse.status).toBe(HTTP_OK);
 
-    const activityResponse = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/activity`)
-    );
-    expect(activityResponse.status).toBe(HTTP_OK);
-    const payload = (await activityResponse.json()) as {
+    const payload = await readActivityPayload<{
       events: Array<{
         type: string;
         serviceId: string | null;
         toolName: string | null;
       }>;
       nextCursor: string | null;
-    };
+    }>(app);
 
     expect(payload.nextCursor).toBeNull();
     expect(payload.events.some((event) => event.type === "service.stop")).toBe(
@@ -206,31 +136,18 @@ describe("Cell activity events", () => {
   it("records restart events", async () => {
     await seedCellAndService();
 
-    const routes = createCellsRoutes(createMinimalDependencies());
-    const app = new Elysia().use(routes);
+    const app = createTestApp();
 
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/restart`,
-        {
-          method: "POST",
-          headers: {
-            "x-hive-source": "opencode",
-            "x-hive-tool": "hive_restart_service",
-          },
-        }
-      )
-    );
+    const response = await callServiceAction(app, "restart", {
+      "x-hive-source": "opencode",
+      "x-hive-tool": "hive_restart_service",
+    });
 
     expect(response.status).toBe(HTTP_OK);
 
-    const activityResponse = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/activity`)
-    );
-    expect(activityResponse.status).toBe(HTTP_OK);
-    const body = (await activityResponse.json()) as {
+    const body = await readActivityPayload<{
       events: Array<{ type: string; metadata: Record<string, unknown> }>;
-    };
+    }>(app);
 
     const restartEvent = body.events.find(
       (event) => event.type === "service.restart"
@@ -242,8 +159,7 @@ describe("Cell activity events", () => {
   it("records log reads only when audit headers are present", async () => {
     await seedCellAndService();
 
-    const routes = createCellsRoutes(createMinimalDependencies());
-    const app = new Elysia().use(routes);
+    const app = createTestApp();
 
     const servicesResponse = await app.handle(
       new Request(`http://localhost/api/cells/${TEST_CELL_ID}/services`, {
@@ -268,13 +184,9 @@ describe("Cell activity events", () => {
     );
     expect(cellResponse.status).toBe(HTTP_OK);
 
-    const activityResponse = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/activity`)
-    );
-    expect(activityResponse.status).toBe(HTTP_OK);
-    const payload = (await activityResponse.json()) as {
+    const payload = await readActivityPayload<{
       events: Array<{ type: string; serviceId: string | null }>;
-    };
+    }>(app);
 
     const serviceLogEvent = payload.events.find(
       (event) => event.type === "service.logs.read"
@@ -341,13 +253,11 @@ describe("Cell activity events", () => {
       },
     ]);
 
-    const routes = createCellsRoutes(createMinimalDependencies());
-    const app = new Elysia().use(routes);
+    const app = createTestApp();
 
-    const response = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/timings?workflow=create&runId=${createRunId}`
-      )
+    const response = await handleRouteRequest(
+      app,
+      `/api/cells/${TEST_CELL_ID}/timings?workflow=create&runId=${createRunId}`
     );
     expect(response.status).toBe(HTTP_OK);
 
@@ -385,23 +295,16 @@ describe("Cell activity events", () => {
   it("continues cell deletion when cleanup steps fail", async () => {
     await seedCellAndService();
 
-    const routes = createCellsRoutes(
-      createMinimalDependencies({
-        closeAgentSession: () =>
-          Promise.reject(new Error("close session failed")),
-        stopServicesForCell: () =>
-          Promise.reject(new Error("stop services failed")),
-        removeWorktree: () =>
-          Promise.reject(new Error("remove workspace failed")),
-      })
-    );
-    const app = new Elysia().use(routes);
+    const app = createTestApp({
+      closeAgentSession: () =>
+        Promise.reject(new Error("close session failed")),
+      stopServicesForCell: () =>
+        Promise.reject(new Error("stop services failed")),
+      removeWorktree: () =>
+        Promise.reject(new Error("remove workspace failed")),
+    });
 
-    const deleteResponse = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}`, {
-        method: "DELETE",
-      })
-    );
+    const deleteResponse = await deleteRouteCellById(app, TEST_CELL_ID);
     expect(deleteResponse.status).toBe(HTTP_OK);
 
     const remainingCell = await testDb
@@ -415,48 +318,28 @@ describe("Cell activity events", () => {
   it("paginates activity events with cursors", async () => {
     await seedCellAndService();
 
-    const routes = createCellsRoutes(createMinimalDependencies());
-    const app = new Elysia().use(routes);
+    const app = createTestApp();
 
-    await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/stop`,
-        { method: "POST" }
-      )
-    );
+    await callServiceAction(app, "stop");
 
     await new Promise((resolve) => setTimeout(resolve, 2));
 
-    await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/start`,
-        { method: "POST" }
-      )
-    );
+    await callServiceAction(app, "start");
 
-    const firstPage = await app.handle(
-      new Request(`http://localhost/api/cells/${TEST_CELL_ID}/activity?limit=1`)
-    );
-    expect(firstPage.status).toBe(HTTP_OK);
-    const firstPayload = (await firstPage.json()) as {
+    const firstPayload = await readActivityPayload<{
       events: Array<{ type: string }>;
       nextCursor: string | null;
-    };
+    }>(app, "?limit=1");
 
     expect(firstPayload.events).toHaveLength(1);
     expect(firstPayload.nextCursor).not.toBeNull();
 
-    const secondPage = await app.handle(
-      new Request(
-        `http://localhost/api/cells/${TEST_CELL_ID}/activity?limit=1&cursor=${encodeURIComponent(
-          firstPayload.nextCursor ?? ""
-        )}`
-      )
-    );
-    expect(secondPage.status).toBe(HTTP_OK);
-    const secondPayload = (await secondPage.json()) as {
+    const secondPayload = await readActivityPayload<{
       events: Array<{ type: string }>;
-    };
+    }>(
+      app,
+      `?limit=1&cursor=${encodeURIComponent(firstPayload.nextCursor ?? "")}`
+    );
 
     expect(secondPayload.events).toHaveLength(1);
     expect(secondPayload.events[0]?.type).not.toBe(

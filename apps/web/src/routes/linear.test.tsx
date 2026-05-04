@@ -6,6 +6,11 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  installPointerCaptureMocks,
+  installResizeObserverMock,
+  workspaceListQueryResult,
+} from "./-shared/test-dom";
 
 const navigateMock = vi.fn();
 const invalidateQueriesMock = vi.fn().mockResolvedValue(undefined);
@@ -24,12 +29,12 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("@tanstack/react-router", () => ({
-  createFileRoute: () => (config: Record<string, unknown>) => ({
-    ...config,
-    useNavigate: () => navigateMock,
-    useSearch: () => ({ workspaceId: "workspace-1" }),
-    useLoaderData: () => ({ workspaceId: "workspace-1" }),
-  }),
+  createFileRoute: () => (config: Record<string, unknown>) =>
+    Object.assign(config, {
+      useNavigate: () => navigateMock,
+      useSearch: () => ({ workspaceId: "workspace-1" }),
+      useLoaderData: () => ({ workspaceId: "workspace-1" }),
+    }),
   useNavigate: () => navigateMock,
   Link: ({
     children,
@@ -93,16 +98,8 @@ describe("Linear route", () => {
   });
 
   beforeEach(() => {
-    const noop = () => null;
-    globalThis.ResizeObserver = class ResizeObserver {
-      disconnect = noop;
-      observe = noop;
-      unobserve = noop;
-    } as typeof ResizeObserver;
-
-    Element.prototype.hasPointerCapture ??= () => false;
-    Element.prototype.releasePointerCapture ??= noop;
-    Element.prototype.setPointerCapture ??= noop;
+    installResizeObserverMock();
+    installPointerCaptureMocks();
 
     navigateMock.mockReset();
     invalidateQueriesMock.mockClear();
@@ -132,17 +129,7 @@ describe("Linear route", () => {
       const [scope, kind] = options.queryKey;
 
       if (scope === "workspaces") {
-        return {
-          data: {
-            workspaces: [
-              {
-                id: "workspace-1",
-                label: "Workspace One",
-                path: "/tmp/workspace-one",
-              },
-            ],
-          },
-        };
+        return workspaceListQueryResult();
       }
 
       if (scope === "linear" && kind === "status") {
@@ -296,25 +283,19 @@ describe("Linear route", () => {
       throw new Error("Expected the issue filter input to be rendered");
     }
 
-    fireEvent.change(filterInput, {
-      target: { value: "Searchable description" },
-    });
+    setIssueFilter(filterInput, "Searchable description");
 
     expect(
       screen.getAllByText("Improve Linear integration").length
     ).toBeGreaterThan(0);
 
-    fireEvent.change(filterInput, {
-      target: { value: "https://linear.app/hiverun/issue/ENG-42" },
-    });
+    setIssueFilter(filterInput, "https://linear.app/hiverun/issue/ENG-42");
 
     expect(
       screen.getAllByText("Improve Linear integration").length
     ).toBeGreaterThan(0);
 
-    fireEvent.change(filterInput, {
-      target: { value: "does-not-match" },
-    });
+    setIssueFilter(filterInput, "does-not-match");
 
     expect(
       screen.getByText(
@@ -394,3 +375,7 @@ describe("Linear route", () => {
     expect(screen.getAllByText("Linked Team").length).toBeGreaterThan(0);
   });
 });
+
+function setIssueFilter(input: HTMLElement, value: string) {
+  fireEvent.change(input, { target: { value } });
+}

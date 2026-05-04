@@ -56,10 +56,7 @@ afterEach(async () => {
 
 describe("loadOpencodeConfig", () => {
   it("adds Hive browser-safe keybind defaults when no workspace config exists", async () => {
-    const workspace = await createWorkspace();
-
-    const loaded = await loadOpencodeConfig(workspace);
-    const loadedConfig = loaded.config as Record<string, unknown>;
+    const loadedConfig = await loadWorkspaceConfig();
 
     expect(readKeybind(loadedConfig, "leader")).toBe("ctrl+x");
     expect(readKeybind(loadedConfig, "app_exit")).toBe(
@@ -81,16 +78,12 @@ describe("loadOpencodeConfig", () => {
   });
 
   it("preserves workspace keybind overrides and appends Hive aliases", async () => {
-    const workspace = await createWorkspace();
-    await writeWorkspaceOpencodeConfig(workspace, {
+    const loadedConfig = await loadWorkspaceConfig({
       keybinds: {
         leader: "ctrl+g",
         command_list: "ctrl+space",
       },
     });
-
-    const loaded = await loadOpencodeConfig(workspace);
-    const loadedConfig = loaded.config as Record<string, unknown>;
 
     expect(readKeybind(loadedConfig, "command_list")).toBe(
       "ctrl+space,<leader>p"
@@ -101,30 +94,22 @@ describe("loadOpencodeConfig", () => {
   });
 
   it("respects explicit none values in workspace keybinds", async () => {
-    const workspace = await createWorkspace();
-    await writeWorkspaceOpencodeConfig(workspace, {
+    const loadedConfig = await loadWorkspaceConfig({
       keybinds: {
         variant_cycle: "none",
       },
     });
 
-    const loaded = await loadOpencodeConfig(workspace);
-    const loadedConfig = loaded.config as Record<string, unknown>;
-
     expect(readKeybind(loadedConfig, "variant_cycle")).toBe("none");
   });
 
   it("keeps unrelated workspace keybinds and fills missing Hive aliases", async () => {
-    const workspace = await createWorkspace();
-    await writeWorkspaceOpencodeConfig(workspace, {
+    const loadedConfig = await loadWorkspaceConfig({
       keybinds: {
         tips_toggle: "none",
       },
       theme: "custom-workspace-theme",
     });
-
-    const loaded = await loadOpencodeConfig(workspace);
-    const loadedConfig = loaded.config as Record<string, unknown>;
 
     expect(readKeybind(loadedConfig, "tips_toggle")).toBe("none");
     expect(readKeybind(loadedConfig, "model_favorite_toggle")).toBe(
@@ -135,13 +120,9 @@ describe("loadOpencodeConfig", () => {
   });
 
   it("appends Hive instructions once when workspace config already includes them", async () => {
-    const workspace = await createWorkspace();
-    await writeWorkspaceOpencodeConfig(workspace, {
+    const loadedConfig = await loadWorkspaceConfig({
       instructions: [".hive/instructions.md", "docs/custom.md"],
     });
-
-    const loaded = await loadOpencodeConfig(workspace);
-    const loadedConfig = loaded.config as Record<string, unknown>;
     expect(loadedConfig.instructions).toEqual([
       ".hive/instructions.md",
       "docs/custom.md",
@@ -151,74 +132,38 @@ describe("loadOpencodeConfig", () => {
 
 describe("loadEffectiveOpencodeDefaults", () => {
   it("reads the effective default model from OpenCode config", async () => {
-    const client: any = {
-      config: {
-        get: async () => ({
-          data: {
-            model: "openai/gpt-5.4-xhigh",
-            default_agent: "plan",
-            agent: {
-              plan: {
-                variant: "high",
-              },
-            },
+    await expectDefaults(
+      {
+        model: "openai/gpt-5.4-xhigh",
+        default_agent: "plan",
+        agent: {
+          plan: {
+            variant: "high",
           },
-        }),
+        },
       },
-    };
-
-    const defaults = await loadEffectiveOpencodeDefaults("/tmp/workspace", {
-      client,
-    });
-
-    expect(defaults).toEqual({
-      defaultModel: {
-        providerId: "openai",
-        modelId: "gpt-5.4-xhigh",
-        variant: "high",
-      },
-      startMode: "plan",
-    });
+      { modelId: "gpt-5.4-xhigh", startMode: "plan", variant: "high" }
+    );
   });
 
   it("prefers the active agent model and variant over the root model", async () => {
-    const client: any = {
-      config: {
-        get: async () => ({
-          data: {
-            model: "openai/gpt-5.4",
-            default_agent: "build",
-            agent: {
-              build: {
-                model: "openai/gpt-5.5",
-                variant: "xhigh",
-              },
-            },
+    await expectDefaults(
+      {
+        model: "openai/gpt-5.4",
+        default_agent: "build",
+        agent: {
+          build: {
+            model: "openai/gpt-5.5",
+            variant: "xhigh",
           },
-        }),
+        },
       },
-    };
-
-    const defaults = await loadEffectiveOpencodeDefaults("/tmp/workspace", {
-      client,
-    });
-
-    expect(defaults).toEqual({
-      defaultModel: {
-        providerId: "openai",
-        modelId: "gpt-5.5",
-        variant: "xhigh",
-      },
-      startMode: "build",
-    });
+      { modelId: "gpt-5.5", startMode: "build", variant: "xhigh" }
+    );
   });
 
   it("returns an empty object when OpenCode exposes no model or start mode", async () => {
-    const client: any = {
-      config: {
-        get: async () => ({ data: {} }),
-      },
-    };
+    const client = makeOpencodeClient({});
 
     const defaults = await loadEffectiveOpencodeDefaults("/tmp/workspace", {
       client,
@@ -227,3 +172,46 @@ describe("loadEffectiveOpencodeDefaults", () => {
     expect(defaults).toEqual({});
   });
 });
+
+async function loadWorkspaceConfig(config?: Record<string, unknown>) {
+  const workspace = await createWorkspace();
+  if (config) {
+    await writeWorkspaceOpencodeConfig(workspace, config);
+  }
+
+  const loaded = await loadOpencodeConfig(workspace);
+  return loaded.config as Record<string, unknown>;
+}
+
+function makeOpencodeClient(data: Record<string, unknown>) {
+  return {
+    config: {
+      get: async () => ({ data }),
+    },
+  } as any;
+}
+
+async function expectDefaults(
+  data: Record<string, unknown>,
+  expected: { modelId: string; startMode: string; variant: string }
+) {
+  const defaults = await loadEffectiveOpencodeDefaults("/tmp/workspace", {
+    client: makeOpencodeClient(data),
+  });
+
+  const actual = defaults as {
+    defaultModel?: { providerId?: string; modelId?: string; variant?: string };
+    startMode?: string;
+  };
+
+  if (
+    actual.defaultModel?.providerId !== "openai" ||
+    actual.defaultModel.modelId !== expected.modelId ||
+    actual.defaultModel.variant !== expected.variant ||
+    actual.startMode !== expected.startMode
+  ) {
+    throw new Error(
+      `Expected defaults for ${expected.modelId}/${expected.variant}/${expected.startMode}, got ${JSON.stringify(defaults)}`
+    );
+  }
+}

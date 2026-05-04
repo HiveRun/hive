@@ -6,7 +6,7 @@ type DatabaseClient = DatabaseServiceType["db"];
 
 export type StoredLinearIntegration = typeof linearIntegrations.$inferSelect;
 
-export type UpsertLinearConnectionInput = {
+type UpsertLinearConnectionInput = {
   workspaceId: string;
   accessToken: string;
   refreshToken: string | null;
@@ -80,33 +80,6 @@ export const upsertLinearConnection = async (
     });
 
   return await getLinearIntegration(db, input.workspaceId);
-};
-
-export const updateLinearTokens = async (
-  db: DatabaseClient,
-  workspaceId: string,
-  input: Pick<
-    UpsertLinearConnectionInput,
-    | "accessToken"
-    | "refreshToken"
-    | "accessTokenExpiresAt"
-    | "tokenType"
-    | "scope"
-  >
-) => {
-  await db
-    .update(linearIntegrations)
-    .set({
-      accessToken: input.accessToken,
-      refreshToken: input.refreshToken,
-      accessTokenExpiresAt: input.accessTokenExpiresAt,
-      tokenType: input.tokenType,
-      scope: input.scope,
-      updatedAt: new Date(),
-    })
-    .where(eq(linearIntegrations.workspaceId, workspaceId));
-
-  return await getLinearIntegration(db, workspaceId);
 };
 
 export const setLinearLinkedTeam = async (

@@ -15,6 +15,10 @@ import {
   TemplateSetupError,
 } from "../../services/supervisor";
 import { setupTestDb, testDb } from "../test-db";
+import {
+  createCellRouteTestDependencies,
+  createJsonRequest,
+} from "./cells-route-test-helpers";
 
 const templateId = "failing-template";
 const workspacePath = "/tmp/mock-worktree";
@@ -39,9 +43,21 @@ const TEST_INITIAL_PROMPT_FILE_PART = {
   url: `data:${TEST_INITIAL_PROMPT_IMAGE.mimeType};base64,${TEST_INITIAL_PROMPT_IMAGE.base64Data}`,
 };
 
-const JSON_HEADERS = {
-  "Content-Type": "application/json",
-};
+const defaultCreateBody = (
+  name: string,
+  values: Record<string, unknown> = {}
+) => ({
+  name,
+  templateId,
+  workspaceId: "test-workspace",
+  ...values,
+});
+
+const mockWorktree = () => ({
+  path: workspacePath,
+  branch: "cell-branch",
+  baseCommit: "abc123",
+});
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -95,11 +111,7 @@ async function waitForTimingStep(cellId: string, step: string) {
 }
 
 function makeJsonPostRequest(url: string, body: Record<string, unknown>) {
-  return new Request(url, {
-    method: "POST",
-    headers: JSON_HEADERS,
-    body: JSON.stringify(body),
-  });
+  return createJsonRequest(url, body);
 }
 
 function postCreateCell(
@@ -217,6 +229,11 @@ type DependencyFactoryOptions = {
   ) => void;
   hiveConfigOverride?: HiveConfig;
 };
+type AgentSessionOverrides = {
+  modelId?: string;
+  providerId?: string;
+  startMode?: "plan" | "build";
+};
 
 let removeWorktreeCalls = 0;
 
@@ -235,11 +252,7 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
     cellId: string,
     createOptions?: Parameters<CreateWorktreeFn>[1]
   ) =>
-    Promise.resolve({
-      path: workspacePath,
-      branch: "cell-branch",
-      baseCommit: "abc123",
-    }).then((defaultWorktree) => {
+    Promise.resolve(mockWorktree()).then((defaultWorktree) => {
       if (options.createWorktree) {
         return options.createWorktree(cellId, createOptions);
       }
@@ -254,106 +267,94 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
   const sendAgentMessageImpl =
     options.sendAgentMessage ?? vi.fn<SendAgentMessageFn>().mockResolvedValue();
 
-  return {
-    db: testDb,
-    resolveWorkspaceContext: (async () => ({
-      workspace: workspaceRecord,
-      loadConfig: loadWorkspaceConfig,
-      createWorktreeManager: async () => ({
+  return createCellRouteTestDependencies({
+    cellId: "cell",
+    workspacePath,
+    overrides: {
+      resolveWorkspaceContext: (async () => ({
+        workspace: workspaceRecord,
+        loadConfig: loadWorkspaceConfig,
+        createWorktreeManager: async () => ({
+          createWorktree: (
+            cellId: string,
+            createOptions?: Parameters<CreateWorktreeFn>[1]
+          ) => buildWorktree(cellId, createOptions),
+          removeWorktree: (_cellId: string) => removeWorktreeCall(),
+        }),
         createWorktree: (
           cellId: string,
           createOptions?: Parameters<CreateWorktreeFn>[1]
         ) => buildWorktree(cellId, createOptions),
         removeWorktree: (_cellId: string) => removeWorktreeCall(),
-      }),
-      createWorktree: (
-        cellId: string,
-        createOptions?: Parameters<CreateWorktreeFn>[1]
-      ) => buildWorktree(cellId, createOptions),
-      removeWorktree: (_cellId: string) => removeWorktreeCall(),
-    })) as any,
+      })) as any,
 
-    ensureAgentSession: (
-      cellId: string,
-      overrides?: {
-        modelId?: string;
-        providerId?: string;
-        startMode?: "plan" | "build";
-      }
-    ) =>
-      Promise.resolve().then(() => {
-        const session: AgentSessionRecord = {
-          id: `session-${cellId}`,
-          cellId,
-          templateId,
-          provider: "opencode",
-          status: "awaiting_input",
-          workspacePath,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        options.onEnsureAgentSession?.(cellId, session.id, overrides);
-        return session;
-      }),
-    closeAgentSession: async (_cellId: string) => Promise.resolve(),
-    ensureServicesForCell: (_args: any) => {
-      if (options.ensureServicesForCell) {
-        return options.ensureServicesForCell(_args);
-      }
-      if (options.setupError) {
-        throw {
-          _tag: "ServiceSupervisorError",
-          cause: options.setupError,
-        } as ServiceSupervisorError;
-      }
-      return Promise.resolve();
+      ensureAgentSession: (
+        cellId: string,
+        overrides?: {
+          modelId?: string;
+          providerId?: string;
+          startMode?: "plan" | "build";
+        }
+      ) =>
+        Promise.resolve().then(() => {
+          const session: AgentSessionRecord = {
+            id: `session-${cellId}`,
+            cellId,
+            templateId,
+            provider: "opencode",
+            status: "awaiting_input",
+            workspacePath,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          options.onEnsureAgentSession?.(cellId, session.id, overrides);
+          return session;
+        }),
+      closeAgentSession: async (_cellId: string) => Promise.resolve(),
+      ensureServicesForCell: (_args: any) => {
+        if (options.ensureServicesForCell) {
+          return options.ensureServicesForCell(_args);
+        }
+        if (options.setupError) {
+          throw {
+            _tag: "ServiceSupervisorError",
+            cause: options.setupError,
+          } as ServiceSupervisorError;
+        }
+        return Promise.resolve();
+      },
+      startServicesForCell: async (_cellId: string) => Promise.resolve(),
+      stopServicesForCell: (
+        _cellId: string,
+        _options?: { releasePorts?: boolean }
+      ) => Promise.resolve(),
+      startServiceById: (_serviceId: string) => Promise.resolve(),
+      stopServiceById: (
+        _serviceId: string,
+        _options?: { releasePorts?: boolean }
+      ) => Promise.resolve(),
+      sendAgentMessage: (sessionId: string, content: string) =>
+        sendAgentMessageImpl(sessionId, content),
     },
-    startServicesForCell: async (_cellId: string) => Promise.resolve(),
-    stopServicesForCell: (
-      _cellId: string,
-      _options?: { releasePorts?: boolean }
-    ) => Promise.resolve(),
-    startServiceById: (_serviceId: string) => Promise.resolve(),
-    stopServiceById: (
-      _serviceId: string,
-      _options?: { releasePorts?: boolean }
-    ) => Promise.resolve(),
-    sendAgentMessage: (sessionId: string, content: string) =>
-      sendAgentMessageImpl(sessionId, content),
-    ensureTerminalSession: ({ cellId }) => ({
-      sessionId: `terminal-${cellId}`,
-      cellId,
-      pid: 123,
-      cwd: workspacePath,
-      cols: 120,
-      rows: 36,
-      status: "running" as const,
-      exitCode: null,
-      startedAt: new Date().toISOString(),
-    }),
-    readTerminalOutput: () => "",
-    subscribeToTerminal: () => () => 0,
-    writeTerminalInput: () => 0,
-    resizeTerminal: () => 0,
-    closeTerminalSession: () => 0,
-    getServiceTerminalSession: () => null,
-    readServiceTerminalOutput: () => "",
-    subscribeToServiceTerminal: () => () => 0,
-    writeServiceTerminalInput: () => 0,
-    resizeServiceTerminal: () => 0,
-    clearServiceTerminal: () => 0,
-    getSetupTerminalSession: () => null,
-    readSetupTerminalOutput: () => "",
-    subscribeToSetupTerminal: () => () => 0,
-    writeSetupTerminalInput: () => 0,
-    resizeSetupTerminal: () => 0,
-    clearSetupTerminal: () => 0,
-  };
+  });
 }
 
 function createTestApp(options: DependencyFactoryOptions = {}) {
   return new Elysia().use(createCellsRoutes(createDependencies(options)));
 }
+
+const createAgentOverrideCapture = (
+  options: Omit<DependencyFactoryOptions, "onEnsureAgentSession"> = {}
+) => {
+  let captured: AgentSessionOverrides | undefined;
+  const app = createTestApp({
+    ...options,
+    onEnsureAgentSession: (_cellId, _sessionId, overrides) => {
+      captured = overrides;
+    },
+  });
+  return { app, read: () => captured };
+};
 
 async function createCellAndExpectSpawning(args: {
   app: Elysia;
@@ -378,6 +379,86 @@ async function createCellAndExpectSpawning(args: {
 
   return payload;
 }
+
+async function createCellAndWaitReady(args: {
+  app: Elysia;
+  body: Record<string, unknown>;
+}) {
+  const payload = await createCellAndExpectSpawning(args);
+  await waitForCellStatus(payload.id, "ready");
+  return payload;
+}
+
+async function createPromptDispatchScenario(body: Record<string, unknown>) {
+  const sendAgentMessage = vi
+    .fn<SendAgentMessageFn>()
+    .mockResolvedValue(undefined);
+  let capturedSessionId: string | null = null;
+  const app = createTestApp({
+    sendAgentMessage,
+    onEnsureAgentSession: (_cellId, sessionId) => {
+      capturedSessionId = sessionId;
+    },
+  });
+
+  await createCellAndWaitReady({ app, body });
+  await waitForCondition(() => Boolean(capturedSessionId));
+  await waitForCondition(() => sendAgentMessage.mock.calls.length === 1);
+
+  return { sendAgentMessage, capturedSessionId };
+}
+
+async function captureCreateWorktreeStartPoint(body: Record<string, unknown>) {
+  let capturedWorktreeOptions: Parameters<CreateWorktreeFn>[1] | undefined;
+  const app = createTestApp({
+    createWorktree: (_cellId, createOptions) => {
+      capturedWorktreeOptions = createOptions;
+      return Promise.resolve(mockWorktree());
+    },
+  });
+
+  await createCellAndWaitReady({ app, body });
+  await waitForCondition(() => Boolean(capturedWorktreeOptions));
+  return capturedWorktreeOptions?.startPoint;
+}
+
+async function retryProvisioningAndWait(args: {
+  cellId: string;
+  cell: Parameters<typeof insertCellRow>[0];
+  provisioning?: Parameters<typeof insertProvisioningStateRow>[1];
+  sendAgentMessage?: SendAgentMessageFn;
+}) {
+  const sendAgentMessage =
+    args.sendAgentMessage ?? vi.fn<SendAgentMessageFn>().mockResolvedValue();
+  const app = createTestApp({ sendAgentMessage });
+  await insertCellRow(args.cell);
+  await insertProvisioningStateRow(args.cellId, args.provisioning ?? {});
+
+  const retryResponse = await postSetupRetry(app, args.cellId);
+  if (retryResponse.status !== OK_STATUS) {
+    throw new Error(
+      `Expected status ${OK_STATUS}, got ${retryResponse.status}`
+    );
+  }
+  await waitForCellStatus(args.cellId, "ready");
+  return sendAgentMessage;
+}
+
+const retryCellValues = (
+  cellId: string,
+  values: Partial<typeof cells.$inferInsert>
+) => ({
+  id: cellId,
+  opencodeSessionId: null,
+  status: "error" as const,
+  lastSetupError: "setup failed",
+  ...values,
+});
+
+const retryPromptCall = (cellId: string, parts: unknown[]) => [
+  `session-${cellId}`,
+  { parts },
+];
 
 describe("POST /api/cells", () => {
   beforeAll(async () => {
@@ -407,11 +488,7 @@ describe("POST /api/cells", () => {
 
     const payload = await createCellAndExpectSpawning({
       app,
-      body: {
-        name: "Broken Cell",
-        templateId,
-        workspaceId: "test-workspace",
-      },
+      body: defaultCreateBody("Broken Cell"),
     });
 
     expect(payload.lastSetupError).toBeUndefined();
@@ -430,31 +507,12 @@ describe("POST /api/cells", () => {
   });
 
   it("sends the cell title and description as the first agent prompt", async () => {
-    const sendAgentMessage = vi
-      .fn<SendAgentMessageFn>()
-      .mockResolvedValue(undefined);
-    let capturedSessionId: string | null = null;
-
-    const app = createTestApp({
-      sendAgentMessage,
-      onEnsureAgentSession: (_cellId, sessionId) => {
-        capturedSessionId = sessionId;
-      },
-    });
-
-    const payload = await createCellAndExpectSpawning({
-      app,
-      body: {
-        name: "Autostart Cell",
-        templateId,
-        workspaceId: "test-workspace",
-        description: "  Fix the failing specs in apps/web  ",
-      },
-    });
-
-    await waitForCellStatus(payload.id, "ready");
-    await waitForCondition(() => Boolean(capturedSessionId));
-    await waitForCondition(() => sendAgentMessage.mock.calls.length === 1);
+    const { sendAgentMessage, capturedSessionId } =
+      await createPromptDispatchScenario(
+        defaultCreateBody("Autostart Cell", {
+          description: "  Fix the failing specs in apps/web  ",
+        })
+      );
 
     expect(capturedSessionId).toBeTruthy();
     expect(sendAgentMessage).toHaveBeenCalledWith(capturedSessionId, {
@@ -468,31 +526,12 @@ describe("POST /api/cells", () => {
   });
 
   it("sends image-only initial prompts", async () => {
-    const sendAgentMessage = vi
-      .fn<SendAgentMessageFn>()
-      .mockResolvedValue(undefined);
-    let capturedSessionId: string | null = null;
-
-    const app = createTestApp({
-      sendAgentMessage,
-      onEnsureAgentSession: (_cellId, sessionId) => {
-        capturedSessionId = sessionId;
-      },
-    });
-
-    const payload = await createCellAndExpectSpawning({
-      app,
-      body: {
-        name: "Prompt With Image",
-        templateId,
-        workspaceId: "test-workspace",
-        initialPromptImages: [TEST_INITIAL_PROMPT_IMAGE],
-      },
-    });
-
-    await waitForCellStatus(payload.id, "ready");
-    await waitForCondition(() => Boolean(capturedSessionId));
-    await waitForCondition(() => sendAgentMessage.mock.calls.length === 1);
+    const { sendAgentMessage, capturedSessionId } =
+      await createPromptDispatchScenario(
+        defaultCreateBody("Prompt With Image", {
+          initialPromptImages: [TEST_INITIAL_PROMPT_IMAGE],
+        })
+      );
 
     expect(sendAgentMessage).toHaveBeenCalledWith(capturedSessionId, {
       parts: [TEST_INITIAL_PROMPT_FILE_PART],
@@ -500,32 +539,13 @@ describe("POST /api/cells", () => {
   });
 
   it("sends text and image parts together in the initial prompt", async () => {
-    const sendAgentMessage = vi
-      .fn<SendAgentMessageFn>()
-      .mockResolvedValue(undefined);
-    let capturedSessionId: string | null = null;
-
-    const app = createTestApp({
-      sendAgentMessage,
-      onEnsureAgentSession: (_cellId, sessionId) => {
-        capturedSessionId = sessionId;
-      },
-    });
-
-    const payload = await createCellAndExpectSpawning({
-      app,
-      body: {
-        name: "Prompt With Image",
-        templateId,
-        workspaceId: "test-workspace",
-        description: "Inspect this screenshot",
-        initialPromptImages: [TEST_INITIAL_PROMPT_IMAGE],
-      },
-    });
-
-    await waitForCellStatus(payload.id, "ready");
-    await waitForCondition(() => Boolean(capturedSessionId));
-    await waitForCondition(() => sendAgentMessage.mock.calls.length === 1);
+    const { sendAgentMessage, capturedSessionId } =
+      await createPromptDispatchScenario(
+        defaultCreateBody("Prompt With Image", {
+          description: "Inspect this screenshot",
+          initialPromptImages: [TEST_INITIAL_PROMPT_IMAGE],
+        })
+      );
 
     expect(sendAgentMessage).toHaveBeenCalledWith(capturedSessionId, {
       parts: [
@@ -553,12 +573,9 @@ describe("POST /api/cells", () => {
 
     const payload = await createCellAndExpectSpawning({
       app,
-      body: {
-        name: "Slow Prompt Dispatch",
-        templateId,
-        workspaceId: "test-workspace",
+      body: defaultCreateBody("Slow Prompt Dispatch", {
         description: "Investigate startup reliability",
-      },
+      }),
     });
 
     await waitForCellStatus(
@@ -575,31 +592,20 @@ describe("POST /api/cells", () => {
   });
 
   it("passes selected model overrides to agent provisioning", async () => {
-    let capturedOverrides:
-      | { modelId?: string; providerId?: string; startMode?: "plan" | "build" }
-      | undefined;
-
-    const app = createTestApp({
-      onEnsureAgentSession: (_cellId, _sessionId, overrides) => {
-        capturedOverrides = overrides;
-      },
-    });
+    const capture = createAgentOverrideCapture();
 
     const payload = await createCellAndExpectSpawning({
-      app,
-      body: {
-        name: "Model Override",
-        templateId,
-        workspaceId: "test-workspace",
+      app: capture.app,
+      body: defaultCreateBody("Model Override", {
         modelId: "custom-model",
         providerId: "zen",
-      },
+      }),
     });
 
     await waitForCellStatus(payload.id, "ready");
-    await waitForCondition(() => Boolean(capturedOverrides));
+    await waitForCondition(() => Boolean(capture.read()));
 
-    expect(capturedOverrides).toEqual({
+    expect(capture.read()).toEqual({
       modelId: "custom-model",
       providerId: "zen",
       startMode: "plan",
@@ -607,66 +613,28 @@ describe("POST /api/cells", () => {
   });
 
   it("passes branch spawn source to worktree creation", async () => {
-    let capturedWorktreeOptions: Parameters<CreateWorktreeFn>[1] | undefined;
-
-    const app = createTestApp({
-      createWorktree: (_cellId, createOptions) => {
-        capturedWorktreeOptions = createOptions;
-        return Promise.resolve({
-          path: workspacePath,
-          branch: "cell-branch",
-          baseCommit: "abc123",
-        });
-      },
-    });
-
-    const payload = await createCellAndExpectSpawning({
-      app,
-      body: {
-        name: "Spawn From Branch",
-        templateId,
-        workspaceId: "test-workspace",
+    const startPoint = await captureCreateWorktreeStartPoint(
+      defaultCreateBody("Spawn From Branch", {
         spawnFromMode: "branch",
         spawnFromValue: "feature/my-work",
-      },
-    });
+      })
+    );
 
-    await waitForCellStatus(payload.id, "ready");
-    await waitForCondition(() => Boolean(capturedWorktreeOptions));
-    expect(capturedWorktreeOptions?.startPoint).toEqual({
+    expect(startPoint).toEqual({
       mode: "branch",
       value: "feature/my-work",
     });
   });
 
   it("passes GitHub PR spawn source to worktree creation", async () => {
-    let capturedWorktreeOptions: Parameters<CreateWorktreeFn>[1] | undefined;
-
-    const app = createTestApp({
-      createWorktree: (_cellId, createOptions) => {
-        capturedWorktreeOptions = createOptions;
-        return Promise.resolve({
-          path: workspacePath,
-          branch: "cell-branch",
-          baseCommit: "abc123",
-        });
-      },
-    });
-
-    const payload = await createCellAndExpectSpawning({
-      app,
-      body: {
-        name: "Spawn From PR",
-        templateId,
-        workspaceId: "test-workspace",
+    const startPoint = await captureCreateWorktreeStartPoint(
+      defaultCreateBody("Spawn From PR", {
         spawnFromMode: "pr",
         spawnFromValue: `https://github.com/acme/repo/pull/${TEST_PR_NUMBER}`,
-      },
-    });
+      })
+    );
 
-    await waitForCellStatus(payload.id, "ready");
-    await waitForCondition(() => Boolean(capturedWorktreeOptions));
-    expect(capturedWorktreeOptions?.startPoint).toEqual({
+    expect(startPoint).toEqual({
       mode: "pr",
       value: `https://github.com/acme/repo/pull/${TEST_PR_NUMBER}`,
     });
@@ -675,13 +643,13 @@ describe("POST /api/cells", () => {
   it("returns 400 when branch spawn source is missing value", async () => {
     const app = createTestApp();
 
-    const response = await postCreateCell(app, {
-      name: "Missing Branch Value",
-      templateId,
-      workspaceId: "test-workspace",
-      spawnFromMode: "branch",
-      spawnFromValue: "   ",
-    });
+    const response = await postCreateCell(
+      app,
+      defaultCreateBody("Missing Branch Value", {
+        spawnFromMode: "branch",
+        spawnFromValue: "   ",
+      })
+    );
 
     expect(response.status).toBe(BAD_REQUEST_STATUS);
     expect((await response.json()) as { message: string }).toEqual({
@@ -690,11 +658,7 @@ describe("POST /api/cells", () => {
   });
 
   it("applies defaults.startMode when create request omits start mode", async () => {
-    let capturedOverrides:
-      | { modelId?: string; providerId?: string; startMode?: "plan" | "build" }
-      | undefined;
-
-    const app = createTestApp({
+    const capture = createAgentOverrideCapture({
       hiveConfigOverride: {
         ...hiveConfig,
         opencode: {
@@ -706,24 +670,16 @@ describe("POST /api/cells", () => {
           startMode: "build",
         },
       },
-      onEnsureAgentSession: (_cellId, _sessionId, overrides) => {
-        capturedOverrides = overrides;
-      },
     });
 
-    const payload = await createCellAndExpectSpawning({
-      app,
-      body: {
-        name: "Defaults Start Mode",
-        templateId,
-        workspaceId: "test-workspace",
-      },
+    await createCellAndWaitReady({
+      app: capture.app,
+      body: defaultCreateBody("Defaults Start Mode"),
     });
 
-    await waitForCellStatus(payload.id, "ready");
-    await waitForCondition(() => Boolean(capturedOverrides));
+    await waitForCondition(() => Boolean(capture.read()));
 
-    expect(capturedOverrides).toEqual({
+    expect(capture.read()).toEqual({
       startMode: "build",
     });
   });
@@ -740,13 +696,10 @@ describe("POST /api/cells", () => {
 
     const payload = await createCellAndExpectSpawning({
       app,
-      body: {
-        name: "Invalid Model Override",
-        templateId,
-        workspaceId: "test-workspace",
+      body: defaultCreateBody("Invalid Model Override", {
         modelId: "gpt-5.2-xhigh",
         providerId: "opencode",
-      },
+      }),
     });
 
     const erroredRow = await waitForCellStatus(payload.id, "error");
@@ -762,12 +715,9 @@ describe("POST /api/cells", () => {
 
     const payload = await createCellAndExpectSpawning({
       app,
-      body: {
-        name: "Blank Description",
-        templateId,
-        workspaceId: "test-workspace",
+      body: defaultCreateBody("Blank Description", {
         description: "   ",
-      },
+      }),
     });
 
     await waitForCellStatus(payload.id, "ready");
@@ -777,18 +727,18 @@ describe("POST /api/cells", () => {
   it("rejects invalid initial prompt images", async () => {
     const app = createTestApp();
 
-    const response = await postCreateCell(app, {
-      name: "Invalid Image",
-      templateId,
-      workspaceId: "test-workspace",
-      initialPromptImages: [
-        {
-          filename: "notes.txt",
-          mimeType: "text/plain",
-          base64Data: "aGVsbG8=",
-        },
-      ],
-    });
+    const response = await postCreateCell(
+      app,
+      defaultCreateBody("Invalid Image", {
+        initialPromptImages: [
+          {
+            filename: "notes.txt",
+            mimeType: "text/plain",
+            base64Data: "aGVsbG8=",
+          },
+        ],
+      })
+    );
 
     expect(response.status).toBe(BAD_REQUEST_STATUS);
   });
@@ -796,18 +746,18 @@ describe("POST /api/cells", () => {
   it("rejects malformed base64 image payloads", async () => {
     const app = createTestApp();
 
-    const response = await postCreateCell(app, {
-      name: "Broken Base64 Image",
-      templateId,
-      workspaceId: "test-workspace",
-      initialPromptImages: [
-        {
-          filename: "broken.png",
-          mimeType: "image/png",
-          base64Data: "abcde",
-        },
-      ],
-    });
+    const response = await postCreateCell(
+      app,
+      defaultCreateBody("Broken Base64 Image", {
+        initialPromptImages: [
+          {
+            filename: "broken.png",
+            mimeType: "image/png",
+            base64Data: "abcde",
+          },
+        ],
+      })
+    );
 
     expect(response.status).toBe(BAD_REQUEST_STATUS);
   });
@@ -832,22 +782,14 @@ describe("POST /api/cells", () => {
         durationMs: 15,
       });
 
-      return {
-        path: workspacePath,
-        branch: "cell-branch",
-        baseCommit: "abc123",
-      };
+      return mockWorktree();
     };
 
     const app = createTestApp({ createWorktree });
 
     const payload = await createCellAndExpectSpawning({
       app,
-      body: {
-        name: "Streaming Worktree Timing",
-        templateId,
-        workspaceId: "test-workspace",
-      },
+      body: defaultCreateBody("Streaming Worktree Timing"),
     });
 
     await waitForTimingStep(
@@ -883,11 +825,7 @@ describe("POST /api/cells", () => {
         releaseWorktree = resolve;
       });
 
-      return {
-        path: workspacePath,
-        branch: "cell-branch",
-        baseCommit: "abc123",
-      };
+      return mockWorktree();
     };
     const ensureServicesForCell = vi.fn(async () => Promise.resolve());
 
@@ -898,11 +836,7 @@ describe("POST /api/cells", () => {
 
     const payload = await createCellAndExpectSpawning({
       app,
-      body: {
-        name: "Cancel During Delete",
-        templateId,
-        workspaceId: "test-workspace",
-      },
+      body: defaultCreateBody("Cancel During Delete"),
     });
 
     const deleteResponse = await deleteCellById(app, payload.id);
@@ -955,75 +889,43 @@ describe("POST /api/cells/:id/setup/retry", () => {
   });
 
   it("sends the initial prompt on retry when no prior session exists", async () => {
-    const sendAgentMessage = vi
-      .fn<SendAgentMessageFn>()
-      .mockResolvedValue(undefined);
-    const app = createTestApp({ sendAgentMessage });
     const cellId = "retry-no-session-cell";
-
-    await insertCellRow({
-      id: cellId,
-      name: "Retry No Session",
-      description: "Send this after retry",
-      opencodeSessionId: null,
-      status: "error",
-      lastSetupError: "setup failed",
+    const sendAgentMessage = await retryProvisioningAndWait({
+      cellId,
+      cell: retryCellValues(cellId, {
+        name: "Retry No Session",
+        description: "Send this after retry",
+      }),
+      provisioning: { attemptCount: 1 },
     });
 
-    await insertProvisioningStateRow(cellId, {
-      attemptCount: 1,
-    });
-
-    const retryResponse = await postSetupRetry(app, cellId);
-    expect(retryResponse.status).toBe(OK_STATUS);
-
-    await waitForCellStatus(cellId, "ready");
-    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
-    expect(sendAgentMessage).toHaveBeenCalledWith(`session-${cellId}`, {
-      parts: [
-        {
-          type: "text",
-          text: "Retry No Session\n\nSend this after retry",
-        },
-      ],
-    });
+    expect(sendAgentMessage.mock.calls).toEqual([
+      retryPromptCall(cellId, [
+        { type: "text", text: "Retry No Session\n\nSend this after retry" },
+      ]),
+    ]);
   });
 
   it("resends stored initial prompt images on retry when no prior session exists", async () => {
-    const sendAgentMessage = vi
-      .fn<SendAgentMessageFn>()
-      .mockResolvedValue(undefined);
-    const app = createTestApp({ sendAgentMessage });
     const cellId = "retry-image-cell";
-
-    await insertCellRow({
-      id: cellId,
-      name: "Retry Image Cell",
-      description: "Use the screenshot",
-      opencodeSessionId: null,
-      status: "error",
-      lastSetupError: "setup failed",
+    const sendAgentMessage = await retryProvisioningAndWait({
+      cellId,
+      cell: retryCellValues(cellId, {
+        name: "Retry Image Cell",
+        description: "Use the screenshot",
+      }),
+      provisioning: {
+        attemptCount: 1,
+        initialPromptImagesJson: JSON.stringify([TEST_INITIAL_PROMPT_IMAGE]),
+      },
     });
 
-    await insertProvisioningStateRow(cellId, {
-      attemptCount: 1,
-      initialPromptImagesJson: JSON.stringify([TEST_INITIAL_PROMPT_IMAGE]),
-    });
-
-    const retryResponse = await postSetupRetry(app, cellId);
-    expect(retryResponse.status).toBe(OK_STATUS);
-
-    await waitForCellStatus(cellId, "ready");
-    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
-    expect(sendAgentMessage).toHaveBeenCalledWith(`session-${cellId}`, {
-      parts: [
-        {
-          type: "text",
-          text: "Retry Image Cell\n\nUse the screenshot",
-        },
+    expect(sendAgentMessage.mock.calls).toEqual([
+      retryPromptCall(cellId, [
+        { type: "text", text: "Retry Image Cell\n\nUse the screenshot" },
         TEST_INITIAL_PROMPT_FILE_PART,
-      ],
-    });
+      ]),
+    ]);
   });
 
   it("returns 409 when the cell is being deleted", async () => {

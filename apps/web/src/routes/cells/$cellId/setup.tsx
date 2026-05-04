@@ -1,10 +1,9 @@
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Copy } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { PtyStreamTerminal } from "@/components/pty-stream-terminal";
-import { Button } from "@/components/ui/button";
+import { Button as ActionButton } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -17,6 +16,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import type { Cell, CellActivityEvent } from "@/queries/cells";
 import { cellMutations, cellQueries } from "@/queries/cells";
 import { templateQueries } from "@/queries/templates";
+import { CopyableDetailLabel } from "../../-shared/cell-route";
 
 export const Route = createFileRoute("/cells/$cellId/setup")({
   component: CellSetupPanel,
@@ -181,14 +181,14 @@ function CellActivityPanel({ cellId }: { cellId: string }) {
         </div>
 
         <Dialog onOpenChange={setIsDialogOpen} open={isDialogOpen}>
-          <Button
+          <ActionButton
             onClick={() => setIsDialogOpen(true)}
             size="sm"
             type="button"
             variant="outline"
           >
             View
-          </Button>
+          </ActionButton>
           <DialogContent className="max-w-3xl rounded-sm border-2 border-border bg-card p-4 shadow-[2px_2px_0_rgba(0,0,0,0.6)] sm:p-6">
             <DialogHeader>
               <DialogTitle className="text-foreground uppercase tracking-[0.25em]">
@@ -207,7 +207,7 @@ function CellActivityPanel({ cellId }: { cellId: string }) {
                   {events.length} event{events.length === 1 ? "" : "s"}
                 </p>
                 <div className="flex items-center gap-2">
-                  <Button
+                  <ActionButton
                     disabled={!hasNext || activityQuery.isFetchingNextPage}
                     onClick={() => activityQuery.fetchNextPage()}
                     size="sm"
@@ -217,8 +217,8 @@ function CellActivityPanel({ cellId }: { cellId: string }) {
                     {activityQuery.isFetchingNextPage
                       ? "Loading…"
                       : "Load more"}
-                  </Button>
-                  <Button
+                  </ActionButton>
+                  <ActionButton
                     disabled={isBusy}
                     onClick={() => activityQuery.refetch()}
                     size="sm"
@@ -226,20 +226,20 @@ function CellActivityPanel({ cellId }: { cellId: string }) {
                     variant="ghost"
                   >
                     Refresh
-                  </Button>
+                  </ActionButton>
                 </div>
               </div>
             </div>
 
             <DialogFooter>
-              <Button
+              <ActionButton
                 disabled={isBusy}
                 onClick={() => setIsDialogOpen(false)}
                 type="button"
                 variant="outline"
               >
                 Close
-              </Button>
+              </ActionButton>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -419,7 +419,7 @@ function SetupLogPanel({
         <h3 className="font-semibold text-base text-foreground uppercase tracking-[0.25em]">
           Setup logs
         </h3>
-        <Button
+        <ActionButton
           disabled={isRetrying}
           onClick={onRetry}
           size="sm"
@@ -427,7 +427,7 @@ function SetupLogPanel({
           variant="secondary"
         >
           {isRetrying ? "Retrying…" : "Retry"}
-        </Button>
+        </ActionButton>
       </div>
       <p className="text-muted-foreground text-xs">
         Last updated {lastUpdatedLabel ?? "just now"}.
@@ -451,33 +451,12 @@ type CellInfoSectionProps = {
 };
 
 function CellInfoSection({ cell, templateLabel }: CellInfoSectionProps) {
-  const handleCopy = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success("Copied to clipboard");
-    } catch (_error) {
-      toast.error("Failed to copy to clipboard");
-    }
-  };
-
   return (
     <section className="grid gap-2.5 border border-border/70 bg-muted/10 p-3 text-xs">
       <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
-        <div className="flex items-center gap-1.5">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-            ID
-          </p>
-          <Button
-            aria-label="Copy cell ID"
-            className="h-5 w-5 shrink-0 p-0"
-            onClick={() => handleCopy(cell.id)}
-            size="icon-sm"
-            type="button"
-            variant="ghost"
-          >
-            <Copy className="h-3 w-3" />
-          </Button>
-        </div>
+        <CopyableDetailLabel copyLabel="cell ID" copyText={cell.id}>
+          ID
+        </CopyableDetailLabel>
         <p className="break-all font-mono text-[11px] text-foreground">
           {cell.id}
         </p>
@@ -493,21 +472,12 @@ function CellInfoSection({ cell, templateLabel }: CellInfoSectionProps) {
 
         {cell.workspacePath && (
           <>
-            <div className="flex items-center gap-1.5">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-                Workspace path
-              </p>
-              <Button
-                aria-label="Copy workspace path"
-                className="h-5 w-5 shrink-0 p-0"
-                onClick={() => handleCopy(cell.workspacePath)}
-                size="icon-sm"
-                type="button"
-                variant="ghost"
-              >
-                <Copy className="h-3 w-3" />
-              </Button>
-            </div>
+            <CopyableDetailLabel
+              copyLabel="workspace path"
+              copyText={cell.workspacePath}
+            >
+              Workspace path
+            </CopyableDetailLabel>
             <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-foreground">
               {cell.workspacePath}
             </pre>
@@ -516,24 +486,12 @@ function CellInfoSection({ cell, templateLabel }: CellInfoSectionProps) {
 
         {cell.opencodeCommand && (
           <>
-            <div className="flex items-center gap-1.5">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-                OpenCode command
-              </p>
-              <Button
-                aria-label="Copy OpenCode command"
-                className="h-5 w-5 shrink-0 p-0"
-                disabled={!cell.opencodeCommand}
-                onClick={() =>
-                  cell.opencodeCommand && handleCopy(cell.opencodeCommand)
-                }
-                size="icon-sm"
-                type="button"
-                variant="ghost"
-              >
-                <Copy className="h-3 w-3" />
-              </Button>
-            </div>
+            <CopyableDetailLabel
+              copyLabel="OpenCode command"
+              copyText={cell.opencodeCommand}
+            >
+              OpenCode command
+            </CopyableDetailLabel>
             <div className="space-y-0.5">
               <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-foreground">
                 {cell.opencodeCommand}
@@ -544,22 +502,12 @@ function CellInfoSection({ cell, templateLabel }: CellInfoSectionProps) {
 
         {cell.branchName && (
           <>
-            <div className="flex items-center gap-1.5">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-                Branch
-              </p>
-              <Button
-                aria-label="Copy branch name"
-                className="h-5 w-5 shrink-0 p-0"
-                disabled={!cell.branchName}
-                onClick={() => cell.branchName && handleCopy(cell.branchName)}
-                size="icon-sm"
-                type="button"
-                variant="ghost"
-              >
-                <Copy className="h-3 w-3" />
-              </Button>
-            </div>
+            <CopyableDetailLabel
+              copyLabel="branch name"
+              copyText={cell.branchName}
+            >
+              Branch
+            </CopyableDetailLabel>
             <p className="break-all font-mono text-[11px] text-foreground">
               {cell.branchName}
             </p>
@@ -568,22 +516,12 @@ function CellInfoSection({ cell, templateLabel }: CellInfoSectionProps) {
 
         {cell.baseCommit && (
           <>
-            <div className="flex items-center gap-1.5">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-                Base commit
-              </p>
-              <Button
-                aria-label="Copy base commit"
-                className="h-5 w-5 shrink-0 p-0"
-                disabled={!cell.baseCommit}
-                onClick={() => cell.baseCommit && handleCopy(cell.baseCommit)}
-                size="icon-sm"
-                type="button"
-                variant="ghost"
-              >
-                <Copy className="h-3 w-3" />
-              </Button>
-            </div>
+            <CopyableDetailLabel
+              copyLabel="base commit"
+              copyText={cell.baseCommit}
+            >
+              Base commit
+            </CopyableDetailLabel>
             <p className="break-all font-mono text-[11px] text-foreground">
               {cell.baseCommit}
             </p>

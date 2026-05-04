@@ -1,11 +1,13 @@
 import { expect, type Page, test } from "@playwright/test";
 import { selectors } from "../src/selectors";
 import {
-  createCell,
-  ensureTerminalReady,
-  sendTerminalCommand,
-  waitForChatRoute,
-  waitForCondition,
+  createCell as createChatCell,
+  readTerminalOutputSeq as readOutputSeq,
+  sendTerminalCommand as sendCommand,
+  waitForChatRoute as waitForChat,
+  waitForTerminalOutputAdvance as waitForOutput,
+  ensureTerminalReady as waitForTerminal,
+  waitForCondition as waitUntil,
 } from "../src/test-helpers";
 
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
@@ -18,18 +20,18 @@ test.describe("chat terminal recovery", () => {
   test("recovers from a terminated chat terminal process", async ({ page }) => {
     await page.goto("/");
 
-    const cellId = await createCell({
+    const cellId = await createChatCell({
       page,
       name: `E2E Chat Recovery ${Date.now()}`,
     });
 
     await page.goto(`/cells/${cellId}/chat`);
-    await waitForChatRoute({
+    await waitForChat({
       page,
       cellId,
       timeoutMs: CHAT_ROUTE_TIMEOUT_MS,
     });
-    await ensureTerminalReady(page, {
+    await waitForTerminal(page, {
       context: "chat terminal initial load",
       timeoutMs: TERMINAL_READY_TIMEOUT_MS,
     });
@@ -37,7 +39,7 @@ test.describe("chat terminal recovery", () => {
     const pid = await readTerminalPid(page);
     process.kill(pid, "SIGKILL");
 
-    await waitForCondition({
+    await waitUntil({
       timeoutMs: CONNECTION_TRANSITION_TIMEOUT_MS,
       errorMessage:
         "Chat terminal did not report exited/disconnected after kill",
@@ -50,19 +52,20 @@ test.describe("chat terminal recovery", () => {
     });
 
     await page.locator(selectors.terminalRestartButton).click();
-    await ensureTerminalReady(page, {
+    await waitForTerminal(page, {
       context: "chat terminal after restart",
       timeoutMs: TERMINAL_READY_TIMEOUT_MS,
     });
 
     const beforePrompt = await readOutputSeq(page);
-    await sendTerminalCommand(page, `E2E recovery token ${Date.now()}`);
+    await sendCommand(page, `E2E recovery token ${Date.now()}`);
 
-    await waitForCondition({
-      timeoutMs: POST_RESTART_INPUT_TIMEOUT_MS,
-      errorMessage: "Chat terminal did not accept input after restart",
-      check: async () => (await readOutputSeq(page)) > beforePrompt,
-    });
+    await waitForOutput(
+      page,
+      beforePrompt,
+      POST_RESTART_INPUT_TIMEOUT_MS,
+      "Chat terminal did not accept input after restart"
+    );
 
     await expect(
       page.locator(selectors.terminalConnectionBadge)
@@ -78,12 +81,4 @@ async function readTerminalPid(page: Page): Promise<number> {
   }
 
   return Number(match[1]);
-}
-
-async function readOutputSeq(page: Page): Promise<number> {
-  const outputSeqRaw = await page
-    .locator(selectors.terminalRoot)
-    .getAttribute("data-terminal-output-seq");
-
-  return Number(outputSeqRaw ?? "0");
 }

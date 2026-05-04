@@ -451,13 +451,16 @@ function FileTreeList({
   );
 }
 
-type DirectoryNodeProps = {
-  node: Extract<FileTreeNode, { type: "dir" }>;
+type FileTreeSelectionProps = {
   depth: number;
-  expandedDirs: Set<string>;
-  onToggleDir: (path: string) => void;
   onSelectFile: (path: string) => void;
   selectedFile: string | null;
+};
+
+type DirectoryNodeProps = FileTreeSelectionProps & {
+  node: Extract<FileTreeNode, { type: "dir" }>;
+  expandedDirs: Set<string>;
+  onToggleDir: (path: string) => void;
 };
 
 function DirectoryNode({
@@ -511,11 +514,8 @@ function DirectoryNode({
   );
 }
 
-type FileNodeProps = {
+type FileNodeProps = FileTreeSelectionProps & {
   node: Extract<FileTreeNode, { type: "file" }>;
-  depth: number;
-  onSelectFile: (path: string) => void;
-  selectedFile: string | null;
 };
 
 function FileNode({ node, depth, onSelectFile, selectedFile }: FileNodeProps) {

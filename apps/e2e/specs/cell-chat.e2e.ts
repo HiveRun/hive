@@ -1,34 +1,19 @@
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
-import { selectors } from "../src/selectors";
 import {
-  createCellViaApi,
+  type AgentSession,
+  createApiCellAndOpenChat,
+  ensureTerminalReady,
+  fetchAgentMessageIds,
+  fetchAgentMessages,
+  fetchAgentSession,
+  focusTerminalInput,
+  requireApiUrl,
+  sendChatTerminalInput,
+  wait,
+  waitForAgentSession,
   waitForChatRoute,
-  waitForProvisioningOrChatRoute,
+  waitForCondition,
 } from "../src/test-helpers";
-
-type AgentSession = {
-  id: string;
-  modelId?: string;
-  modelProviderId?: string;
-  provider?: string;
-  status: string;
-  updatedAt: string;
-};
-
-type AgentSessionResponse = {
-  session: AgentSession | null;
-};
-
-type AgentMessage = {
-  id: string;
-  role: string;
-  state: string;
-  content: string | null;
-};
-
-type AgentMessageListResponse = {
-  messages: AgentMessage[];
-};
 
 const INITIAL_ROUTE_TIMEOUT_MS = 45_000;
 const CHAT_ROUTE_TIMEOUT_MS = 180_000;
@@ -36,13 +21,10 @@ const TERMINAL_READY_TIMEOUT_MS = 120_000;
 const TERMINAL_INPUT_READY_TIMEOUT_MS = 30_000;
 const SESSION_UPDATE_TIMEOUT_MS = 120_000;
 const SEND_ATTEMPTS = 3;
-const MAX_TERMINAL_RESTARTS = 2;
 const SEND_ATTEMPT_TIMEOUT_MS = 20_000;
 const SEND_API_TIMEOUT_MS = 8000;
 const SEND_RETRY_DELAY_MS = 1000;
 const POST_RESPONSE_VIDEO_SETTLE_MS = 500;
-const POLL_INTERVAL_MS = 500;
-const TERMINAL_RECOVERY_WAIT_MS = 750;
 const TERMINAL_INPUT_FOCUS_TIMEOUT_MS = 10_000;
 const CELL_TEMPLATE_LABEL = "E2E Template";
 const EXPECTED_MODEL_ID = "big-pickle";
@@ -53,24 +35,14 @@ test.describe("cell chat flow", () => {
   test("creates a cell and sends a chat message", async ({
     page,
   }, testInfo) => {
-    const apiUrl = process.env.HIVE_E2E_API_URL;
-    if (!apiUrl) {
-      throw new Error("HIVE_E2E_API_URL is required for E2E tests");
-    }
+    const apiUrl = requireApiUrl();
 
-    await page.goto("/");
-    const cellId = await createCellViaApi({
+    const { cellId, initialRoute } = await createApiCellAndOpenChat({
+      page,
       apiUrl,
       name: `E2E Cell ${Date.now()}`,
       templateLabel: CELL_TEMPLATE_LABEL,
-    });
-
-    await page.goto(`/cells/${cellId}/chat`);
-
-    const initialRoute = await waitForProvisioningOrChatRoute({
-      page,
-      cellId,
-      timeoutMs: INITIAL_ROUTE_TIMEOUT_MS,
+      initialRouteTimeoutMs: INITIAL_ROUTE_TIMEOUT_MS,
     });
     if (initialRoute === "provisioning") {
       await expect(page.getByText(PROVISIONING_TIMELINE_TEXT)).toBeVisible();
@@ -114,52 +86,17 @@ test.describe("cell chat flow", () => {
   });
 });
 
-async function waitForAgentSession(
-  apiUrl: string,
-  cellId: string
-): Promise<AgentSession> {
-  await waitForCondition({
-    check: async () => {
-      const session = await fetchAgentSession(apiUrl, cellId);
-      return Boolean(session);
-    },
-    errorMessage: "Agent session was not available for the created cell",
-    timeoutMs: SESSION_UPDATE_TIMEOUT_MS,
-  });
-
-  const session = await fetchAgentSession(apiUrl, cellId);
-  if (!session) {
-    throw new Error("Agent session missing after successful wait");
-  }
-
-  return session;
-}
-
-async function fetchAgentSession(
-  apiUrl: string,
-  cellId: string
-): Promise<AgentSession | null> {
-  const response = await fetch(
-    `${apiUrl}/api/agents/sessions/byCell/${cellId}`
-  );
-  if (!response.ok) {
-    return null;
-  }
-
-  const payload = (await response.json()) as AgentSessionResponse;
-  return payload.session;
-}
-
 async function sendPromptWithRetries(options: {
   apiUrl: string;
   cellId: string;
   page: Page;
   prompt: string;
 }): Promise<void> {
-  let baselineSession = await waitForAgentSession(
-    options.apiUrl,
-    options.cellId
-  );
+  let baselineSession = await waitForAgentSession({
+    apiUrl: options.apiUrl,
+    cellId: options.cellId,
+    timeoutMs: SESSION_UPDATE_TIMEOUT_MS,
+  });
 
   for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt += 1) {
     await ensureTerminalReady(options.page, {
@@ -167,12 +104,9 @@ async function sendPromptWithRetries(options: {
       timeoutMs: TERMINAL_INPUT_READY_TIMEOUT_MS,
     });
 
-    const baselineMessages = await fetchAgentMessages(
+    const baselineMessageIds = await fetchAgentMessageIds(
       options.apiUrl,
       baselineSession.id
-    );
-    const baselineMessageIds = new Set(
-      baselineMessages.map((message) => message.id)
     );
 
     await sendPrompt(options);
@@ -206,7 +140,11 @@ async function sendPromptWithRetries(options: {
       return;
     }
 
-    baselineSession = await waitForAgentSession(options.apiUrl, options.cellId);
+    baselineSession = await waitForAgentSession({
+      apiUrl: options.apiUrl,
+      cellId: options.cellId,
+      timeoutMs: SESSION_UPDATE_TIMEOUT_MS,
+    });
     await wait(SEND_RETRY_DELAY_MS);
   }
 
@@ -223,7 +161,7 @@ async function waitForPromptAcceptedViaKeyboard(options: {
   page: Page;
   prompt: string;
 }): Promise<boolean> {
-  await focusTerminalInput(options.page);
+  await focusTerminalInput(options.page, TERMINAL_INPUT_FOCUS_TIMEOUT_MS);
   await options.page.keyboard.type(options.prompt, { delay: 25 });
   await options.page.keyboard.press("Enter");
 
@@ -295,21 +233,6 @@ async function waitForPromptAccepted(options: {
   }
 }
 
-async function fetchAgentMessages(
-  apiUrl: string,
-  sessionId: string
-): Promise<AgentMessage[]> {
-  const response = await fetch(
-    `${apiUrl}/api/agents/sessions/${sessionId}/messages`
-  );
-  if (!response.ok) {
-    return [];
-  }
-
-  const payload = (await response.json()) as AgentMessageListResponse;
-  return payload.messages;
-}
-
 async function assertSessionModelSelection(options: {
   apiUrl: string;
   cellId: string;
@@ -346,136 +269,19 @@ async function sendPrompt(options: {
   page: Page;
   prompt: string;
 }): Promise<void> {
-  const response = await fetch(
-    `${options.apiUrl}/api/cells/${options.cellId}/chat/terminal/input`,
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ data: `${options.prompt}\r` }),
-    }
+  const response = await sendChatTerminalInput(
+    options.apiUrl,
+    options.cellId,
+    `${options.prompt}\r`
   );
 
   if (response.ok) {
     return;
   }
 
-  await focusTerminalInput(options.page);
+  await focusTerminalInput(options.page, TERMINAL_INPUT_FOCUS_TIMEOUT_MS);
   await options.page.keyboard.type(options.prompt, { delay: 25 });
   await options.page.keyboard.press("Enter");
-}
-
-async function focusTerminalInput(page: Page): Promise<void> {
-  await page.locator(selectors.terminalInputSurface).click();
-  await page.locator(selectors.terminalInputTextarea).click();
-
-  await waitForCondition({
-    check: async () =>
-      page.evaluate(() => {
-        const active = document.activeElement;
-        return active?.classList.contains("xterm-helper-textarea") ?? false;
-      }),
-    errorMessage: "Terminal input textarea did not receive focus",
-    timeoutMs: TERMINAL_INPUT_FOCUS_TIMEOUT_MS,
-  });
-}
-
-type TerminalProbe = {
-  state: string;
-  exitCode: string;
-  errorMessage: string;
-};
-
-function resolvePathname(rawUrl: string): string {
-  try {
-    return new URL(rawUrl).pathname;
-  } catch {
-    return rawUrl;
-  }
-}
-
-async function probeTerminalState(page: Page): Promise<TerminalProbe> {
-  const badge = page.locator(selectors.terminalConnectionBadge).first();
-  const terminalRoot = page.locator(selectors.terminalRoot).first();
-  const [badgeCount, terminalRootCount] = await Promise.all([
-    badge.count(),
-    terminalRoot.count(),
-  ]);
-
-  if (badgeCount === 0 || terminalRootCount === 0) {
-    return {
-      state: "missing-terminal-shell",
-      exitCode: "",
-      errorMessage: "",
-    };
-  }
-
-  try {
-    const [state, exitCode, exitSignal] = await Promise.all([
-      badge.getAttribute("data-connection-state", { timeout: 1000 }),
-      badge.getAttribute("data-exit-code", { timeout: 1000 }),
-      terminalRoot.getAttribute("data-terminal-error-message", {
-        timeout: 1000,
-      }),
-    ]);
-
-    return {
-      state: state ?? "unknown",
-      exitCode: exitCode ?? "",
-      errorMessage: exitSignal ?? "",
-    };
-  } catch {
-    return {
-      state: "terminal-shell-transitioning",
-      exitCode: "",
-      errorMessage: "",
-    };
-  }
-}
-
-async function ensureTerminalReady(
-  page: Page,
-  options: {
-    context: string;
-    timeoutMs: number;
-  }
-): Promise<void> {
-  let restartCount = 0;
-  let lastState = "unknown";
-  let lastExitCode = "";
-  let lastErrorMessage = "";
-  let lastPath = "";
-
-  await waitForCondition({
-    check: async () => {
-      lastPath = resolvePathname(page.url());
-      const probe = await probeTerminalState(page);
-      lastState = probe.state;
-      lastExitCode = probe.exitCode;
-      lastErrorMessage = probe.errorMessage;
-
-      if (lastState === "online") {
-        return page.locator(selectors.terminalInputTextarea).isVisible();
-      }
-
-      if (lastState === "exited" || lastState === "disconnected") {
-        if (restartCount >= MAX_TERMINAL_RESTARTS) {
-          throw new Error(
-            `Terminal remained ${lastState} during ${options.context}. path=${lastPath || "n/a"} exitCode=${lastExitCode || "n/a"} error=${lastErrorMessage || "n/a"}`
-          );
-        }
-
-        await page.locator(selectors.terminalRestartButton).click();
-        restartCount += 1;
-        await page.waitForTimeout(TERMINAL_RECOVERY_WAIT_MS);
-      }
-
-      return false;
-    },
-    errorMessage: `Terminal not ready during ${options.context}. path=${lastPath || "n/a"} lastState=${lastState} exitCode=${lastExitCode || "n/a"} error=${lastErrorMessage || "n/a"} restarts=${String(restartCount)}`,
-    timeoutMs: options.timeoutMs,
-  });
 }
 
 async function attachFinalStateScreenshot(options: {
@@ -494,30 +300,5 @@ async function captureFinalVideoFrame(page: Page): Promise<void> {
   await page.evaluate(() => {
     const terminal = document.querySelector('[data-testid="cell-terminal"]');
     terminal?.setAttribute("data-e2e-final-frame", String(Date.now()));
-  });
-}
-
-async function waitForCondition(options: {
-  check: () => Promise<boolean>;
-  errorMessage: string;
-  timeoutMs: number;
-  intervalMs?: number;
-}): Promise<void> {
-  const startedAt = Date.now();
-  const intervalMs = options.intervalMs ?? POLL_INTERVAL_MS;
-
-  while (Date.now() - startedAt < options.timeoutMs) {
-    if (await options.check()) {
-      return;
-    }
-    await wait(intervalMs);
-  }
-
-  throw new Error(options.errorMessage);
-}
-
-async function wait(ms: number): Promise<void> {
-  await new Promise((resolve) => {
-    setTimeout(resolve, ms);
   });
 }

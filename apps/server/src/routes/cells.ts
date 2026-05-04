@@ -170,7 +170,7 @@ const createWorktreeManagerFetcher = (
   };
 };
 
-export type CellRouteDependencies = {
+type CellRouteDependencies = {
   db: DatabaseClient;
   resolveWorkspaceContext: WorkspaceContextResolverLike;
   ensureAgentSession: AgentRuntimeService["ensureAgentSession"];
@@ -506,6 +506,20 @@ type ServiceRow = {
   cell: typeof cells.$inferSelect;
 };
 
+type RouteSet = {
+  status?: number | string;
+};
+
+type RouteLog = {
+  error: (payload: unknown, message: string) => void;
+};
+
+type MessageResponse = {
+  message: string;
+};
+
+type MaybePromise<T> = T | Promise<T>;
+
 const HTTP_STATUS = {
   OK: 200,
   CREATED: 201,
@@ -519,6 +533,234 @@ const ErrorResponseSchema = t.Object({
   message: t.String(),
   details: t.Optional(t.String()),
 });
+const MessageResponseSchema = t.Object({ message: t.String() });
+const CellIdParamsSchema = t.Object({ id: t.String() });
+const CellServiceParamsSchema = t.Object({
+  id: t.String(),
+  serviceId: t.String(),
+});
+const RuntimeTerminalResizeOkResponseSchema = t.Object({
+  ok: t.Boolean(),
+  session: CellTerminalSessionSchema,
+});
+const TerminalErrorResponses = {
+  404: MessageResponseSchema,
+  409: MessageResponseSchema,
+  500: MessageResponseSchema,
+};
+const CellTerminalStreamErrorResponses = {
+  404: MessageResponseSchema,
+  500: MessageResponseSchema,
+};
+const StandardCellErrorResponses = {
+  400: MessageResponseSchema,
+  404: MessageResponseSchema,
+};
+const DeleteCellErrorResponses = {
+  404: MessageResponseSchema,
+  500: ErrorResponseSchema,
+};
+const ServiceListRouteOptions = {
+  params: CellIdParamsSchema,
+  response: {
+    200: CellServiceListResponseSchema,
+    ...StandardCellErrorResponses,
+  },
+};
+const ServiceActionRouteOptions = {
+  params: CellServiceParamsSchema,
+  response: {
+    200: CellServiceSchema,
+    ...StandardCellErrorResponses,
+  },
+};
+const CellTerminalInputRouteOptions = {
+  params: CellIdParamsSchema,
+  body: CellTerminalInputSchema,
+  response: {
+    200: CellTerminalActionResponseSchema,
+    404: MessageResponseSchema,
+    500: MessageResponseSchema,
+  },
+};
+const RuntimeTerminalInputRouteOptions = {
+  params: CellIdParamsSchema,
+  body: CellTerminalInputSchema,
+  response: {
+    200: CellTerminalActionResponseSchema,
+    ...TerminalErrorResponses,
+  },
+};
+const CellTerminalResizeRouteOptions = {
+  params: CellIdParamsSchema,
+  body: CellTerminalResizeSchema,
+  response: {
+    200: RuntimeTerminalResizeOkResponseSchema,
+    404: MessageResponseSchema,
+    500: MessageResponseSchema,
+  },
+};
+const RuntimeTerminalResizeRouteOptions = {
+  params: CellIdParamsSchema,
+  body: CellTerminalResizeSchema,
+  response: {
+    200: RuntimeTerminalResizeResponseSchema,
+    ...TerminalErrorResponses,
+  },
+};
+const ServiceTerminalInputRouteOptions = {
+  params: CellServiceParamsSchema,
+  body: CellTerminalInputSchema,
+  response: {
+    200: CellTerminalActionResponseSchema,
+    ...TerminalErrorResponses,
+  },
+};
+const ServiceTerminalResizeRouteOptions = {
+  params: CellServiceParamsSchema,
+  body: CellTerminalResizeSchema,
+  response: {
+    200: RuntimeTerminalResizeResponseSchema,
+    ...TerminalErrorResponses,
+  },
+};
+async function withCellRoute<T>(args: {
+  deps: CellRouteDependencies;
+  cellId: string;
+  set: RouteSet;
+  run: (cell: typeof cells.$inferSelect) => MaybePromise<T>;
+}): Promise<T | MessageResponse> {
+  const cell = await loadCellById(args.deps.db, args.cellId);
+  if (!cell) {
+    args.set.status = HTTP_STATUS.NOT_FOUND;
+    return { message: "Cell not found" };
+  }
+
+  return await args.run(cell);
+}
+
+async function withServiceRoute<T>(args: {
+  deps: CellRouteDependencies;
+  cellId: string;
+  serviceId: string;
+  set: RouteSet;
+  run: (row: ServiceRow) => MaybePromise<T>;
+}): Promise<T | MessageResponse> {
+  const row = await fetchServiceRow(args.deps.db, args.cellId, args.serviceId);
+  if (!row) {
+    args.set.status = HTTP_STATUS.NOT_FOUND;
+    return { message: "Service not found" };
+  }
+
+  return await args.run(row);
+}
+
+async function serializeServicesForCell(
+  deps: CellRouteDependencies,
+  database: DatabaseClient,
+  cellId: string
+): Promise<CellServiceListResponse> {
+  const rows = await fetchServiceRows(database, cellId);
+  const services = await Promise.all(
+    rows.map((row) => serializeService(deps, database, row))
+  );
+  return { services };
+}
+
+async function runCellServicesAction(args: {
+  deps: CellRouteDependencies;
+  cellId: string;
+  set: RouteSet;
+  request: Request;
+  type: ActivityEventType;
+  action: () => MaybePromise<void>;
+}): Promise<CellServiceListResponse | MessageResponse> {
+  return await withCellRoute({
+    deps: args.deps,
+    cellId: args.cellId,
+    set: args.set,
+    run: async () => {
+      const audit = readHiveAuditHeaders(args.request);
+      await insertCellActivityEvent({
+        database: args.deps.db,
+        cellId: args.cellId,
+        type: args.type,
+        source: audit.source,
+        toolName: audit.toolName,
+        metadata: {},
+      });
+
+      await args.action();
+      return await serializeServicesForCell(
+        args.deps,
+        args.deps.db,
+        args.cellId
+      );
+    },
+  });
+}
+
+async function runSingleServiceAction(args: {
+  deps: CellRouteDependencies;
+  cellId: string;
+  serviceId: string;
+  set: RouteSet;
+  request: Request;
+  type: ActivityEventType;
+  metadata?: (row: ServiceRow) => Record<string, unknown>;
+  action: (serviceId: string) => MaybePromise<void>;
+}): Promise<CellServiceResponse | MessageResponse> {
+  return await withServiceRoute({
+    deps: args.deps,
+    cellId: args.cellId,
+    serviceId: args.serviceId,
+    set: args.set,
+    run: async (row) => {
+      const audit = readHiveAuditHeaders(args.request);
+      await insertCellActivityEvent({
+        database: args.deps.db,
+        cellId: args.cellId,
+        serviceId: args.serviceId,
+        type: args.type,
+        source: audit.source,
+        toolName: audit.toolName,
+        metadata: args.metadata?.(row) ?? {},
+      });
+
+      await args.action(args.serviceId);
+      const updated = await fetchServiceRow(
+        args.deps.db,
+        args.cellId,
+        args.serviceId
+      );
+      if (!updated) {
+        args.set.status = HTTP_STATUS.NOT_FOUND;
+        return { message: "Service not found" } satisfies MessageResponse;
+      }
+
+      return await serializeService(args.deps, args.deps.db, updated);
+    },
+  });
+}
+
+async function updateCellStatusAndEmit(args: {
+  database: DatabaseClient;
+  cell: typeof cells.$inferSelect;
+  status: CellStatus;
+  lastSetupError: string | null;
+}) {
+  await args.database
+    .update(cells)
+    .set({ status: args.status, lastSetupError: args.lastSetupError })
+    .where(eq(cells.id, args.cell.id));
+
+  emitCellStatusUpdate({
+    workspaceId: args.cell.workspaceId,
+    cellId: args.cell.id,
+    status: args.status,
+    lastSetupError: args.lastSetupError,
+  });
+}
 
 const LOG_TAIL_MAX_LINES = 200;
 const LOG_TAIL_API_MAX_LINES = 2000;
@@ -579,12 +821,10 @@ const LOGGER_CONFIG = {
   autoLogging: false,
 } as const;
 
-function buildServiceUrl(port?: number | null) {
-  if (typeof port !== "number") {
-    return null;
-  }
-  return `${DEFAULT_SERVICE_PROTOCOL}://${DEFAULT_SERVICE_HOST}:${port}`;
-}
+const buildServiceUrl = (port?: number | null) =>
+  typeof port === "number"
+    ? `${DEFAULT_SERVICE_PROTOCOL}://${DEFAULT_SERVICE_HOST}:${port}`
+    : null;
 
 function isPortActive(port?: number | null): Promise<boolean> {
   if (!port) {
@@ -818,11 +1058,13 @@ const parseTerminalWsMessage = (raw: unknown): TerminalWsMessage | null => {
 };
 
 function normalizeStartMode(value: string | undefined): AgentMode | undefined {
-  if (value === "plan" || value === "build") {
-    return value;
+  switch (value) {
+    case "plan":
+    case "build":
+      return value;
+    default:
+      return;
   }
-
-  return;
 }
 
 function normalizeSpawnFromMode(
@@ -959,6 +1201,80 @@ function isCellReadyForChat(cell: typeof cells.$inferSelect): boolean {
   return cell.status === "ready";
 }
 
+async function withChatTerminalRoute<T>(args: {
+  deps: CellRouteDependencies;
+  cellId: string;
+  themeMode: OpencodeThemeMode;
+  set: RouteSet;
+  log: RouteLog;
+  errorMessage: string;
+  run: (
+    cell: typeof cells.$inferSelect,
+    prepared: Awaited<ReturnType<typeof ensureChatTerminalSessionForCell>>
+  ) => MaybePromise<T>;
+}): Promise<T | MessageResponse> {
+  return await withSafeCellRoute({
+    deps: args.deps,
+    cellId: args.cellId,
+    set: args.set,
+    log: args.log,
+    errorMessage: args.errorMessage,
+    run: async (cell) => {
+      if (!isCellReadyForChat(cell)) {
+        args.set.status = HTTP_STATUS.CONFLICT;
+        return {
+          message: "Chat terminal is unavailable until provisioning completes",
+        } satisfies MessageResponse;
+      }
+
+      const prepared = await ensureChatTerminalSessionForCell(
+        args.deps,
+        cell,
+        args.themeMode
+      );
+      return await args.run(cell, prepared);
+    },
+  });
+}
+
+function withSafeCellRoute<T>(args: {
+  deps: CellRouteDependencies;
+  cellId: string;
+  set: RouteSet;
+  log: RouteLog;
+  errorMessage: string;
+  run: (cell: typeof cells.$inferSelect) => MaybePromise<T>;
+}): Promise<T | MessageResponse> {
+  return withCellRoute({
+    cellId: args.cellId,
+    deps: args.deps,
+    run: (cell) => runSafeCellHandler(args, cell),
+    set: args.set,
+  });
+}
+
+async function runSafeCellHandler<T>(
+  args: {
+    set: RouteSet;
+    log: RouteLog;
+    errorMessage: string;
+    run: (cell: typeof cells.$inferSelect) => MaybePromise<T>;
+  },
+  cell: typeof cells.$inferSelect
+): Promise<T | MessageResponse> {
+  try {
+    return await args.run(cell);
+  } catch (error) {
+    args.set.status = HTTP_STATUS.INTERNAL_ERROR;
+    args.log.error({ error, cellId: cell.id }, args.errorMessage);
+    return {
+      message: error instanceof Error ? error.message : args.errorMessage,
+    } satisfies MessageResponse;
+  }
+}
+
+const withCellTerminalRoute = withSafeCellRoute;
+
 type TerminalRouteSocketContext = {
   params: {
     id: string;
@@ -975,6 +1291,17 @@ type TerminalRouteSocket = {
   send: (message: unknown) => unknown;
   close: () => void;
 };
+
+type TerminalStreamEvent =
+  | {
+      type: "data";
+      chunk: string;
+    }
+  | {
+      type: "exit";
+      exitCode: number | null;
+      signal: string | number | null;
+    };
 
 type SetupTerminalWsState = {
   kind: "setup";
@@ -1009,8 +1336,126 @@ type TerminalWsState =
   | CellTerminalWsState
   | ChatTerminalWsState;
 
+type TerminalWsActions<Kind extends TerminalWsState["kind"]> = {
+  input: (
+    state: Extract<TerminalWsState, { kind: Kind }>,
+    data: string
+  ) => MaybePromise<void>;
+  resize: (
+    state: Extract<TerminalWsState, { kind: Kind }>,
+    cols: number,
+    rows: number
+  ) => MaybePromise<void>;
+  restart?: (
+    state: Extract<TerminalWsState, { kind: Kind }>
+  ) => MaybePromise<void>;
+};
+
+type TerminalSessionLike = { status: string };
+
 const sendWsError = (ws: TerminalRouteSocket, message: string) => {
   ws.send({ type: "error", message });
+};
+
+const sendWsErrorAndClose = (ws: TerminalRouteSocket, message: string) => {
+  sendWsError(ws, message);
+  ws.close();
+};
+
+async function loadCellForWs(
+  deps: CellRouteDependencies,
+  ws: TerminalRouteSocket
+): Promise<typeof cells.$inferSelect | null> {
+  const cell = await loadCellById(deps.db, ws.data.params.id);
+  if (!cell) {
+    sendWsErrorAndClose(ws, "Cell not found");
+    return null;
+  }
+
+  return cell;
+}
+
+async function loadServiceRowForWs(
+  deps: CellRouteDependencies,
+  ws: TerminalRouteSocket
+): Promise<ServiceRow | null> {
+  const row = await fetchServiceRow(
+    deps.db,
+    ws.data.params.id,
+    ws.data.params.serviceId ?? ""
+  );
+  if (!row) {
+    sendWsErrorAndClose(ws, "Service not found");
+    return null;
+  }
+
+  return row;
+}
+
+async function* createTerminalEventStream(args: {
+  readyData: unknown;
+  initialOutput: string;
+  iterator: AsyncIterable<TerminalStreamEvent>;
+  cleanup: () => void;
+}) {
+  try {
+    yield sse({ event: "ready", data: args.readyData });
+
+    if (args.initialOutput.length > 0) {
+      yield sse({ event: "snapshot", data: { output: args.initialOutput } });
+    }
+
+    for await (const event of args.iterator) {
+      if (event.type === "data") {
+        yield sse({ event: "data", data: { chunk: event.chunk } });
+        continue;
+      }
+
+      yield sse({
+        event: "exit",
+        data: {
+          exitCode: event.exitCode,
+          signal: event.signal,
+        },
+      });
+    }
+  } finally {
+    args.cleanup();
+  }
+}
+
+const createSessionTerminalEventStream = (args: {
+  session: unknown;
+  initialOutput: string;
+  iterator: AsyncIterable<TerminalStreamEvent>;
+  cleanup: () => void;
+}) =>
+  createTerminalEventStream({
+    readyData: args.session,
+    initialOutput: args.initialOutput,
+    iterator: args.iterator,
+    cleanup: args.cleanup,
+  });
+
+const forwardTerminalEventToWs = (
+  ws: TerminalRouteSocket,
+  event: TerminalStreamEvent
+) => {
+  if (event.type === "data") {
+    ws.send({ type: "data", chunk: event.chunk });
+    return;
+  }
+
+  ws.send({ type: "exit", exitCode: event.exitCode, signal: event.signal });
+};
+
+const sendTerminalSnapshotToWs = (
+  ws: TerminalRouteSocket,
+  initialOutput: string
+) => {
+  if (initialOutput.length > 0) {
+    ws.send({ type: "snapshot", output: initialOutput });
+  }
 };
 
 const handleSetupTerminalWsInput = (args: {
@@ -1108,6 +1553,78 @@ const handleCellTerminalWsResize = (args: {
   });
 };
 
+const terminalActionFailure = (error: unknown, fallback: string) => ({
+  message: error instanceof Error ? error.message : fallback,
+});
+
+function handleTerminalActionError(args: {
+  error: unknown;
+  set: RouteSet;
+  log: RouteLog;
+  logContext: Record<string, unknown>;
+  errorMessage: string;
+}) {
+  args.set.status = HTTP_STATUS.INTERNAL_ERROR;
+  args.log.error({ error: args.error, ...args.logContext }, args.errorMessage);
+  return terminalActionFailure(args.error, args.errorMessage);
+}
+
+function runTerminalInputAction(args: {
+  set: RouteSet;
+  log: RouteLog;
+  logContext: Record<string, unknown>;
+  unavailableMessage: string;
+  errorMessage: string;
+  getSession: () => TerminalSessionLike | null;
+  write: () => void;
+}) {
+  const session = args.getSession();
+  if (!session || session.status !== "running") {
+    args.set.status = HTTP_STATUS.CONFLICT;
+    return { message: args.unavailableMessage } satisfies MessageResponse;
+  }
+
+  try {
+    args.write();
+    return { ok: true };
+  } catch (error) {
+    return handleTerminalActionError({ ...args, error });
+  }
+}
+
+function runEnsuredTerminalAction<Session, Response>(args: {
+  ensureSession: () => Session;
+  action: (session: Session) => void;
+  buildResponse: (session: Session) => Response;
+}): Response {
+  const session = args.ensureSession();
+  args.action(session);
+  return args.buildResponse(session);
+}
+
+function runTerminalResizeAction<Session>(args: {
+  set: RouteSet;
+  log: RouteLog;
+  logContext: Record<string, unknown>;
+  unavailableMessage: string;
+  errorMessage: string;
+  resize: () => void;
+  getSession: () => Session | null;
+}) {
+  try {
+    args.resize();
+    const session = args.getSession();
+    if (!session) {
+      args.set.status = HTTP_STATUS.CONFLICT;
+      return { message: args.unavailableMessage } satisfies MessageResponse;
+    }
+
+    return { ok: true, session };
+  } catch (error) {
+    return handleTerminalActionError({ ...args, error });
+  }
+}
+
 type ErrorPayload = {
   message: string;
   details?: string;
@@ -1161,11 +1678,393 @@ export function createCellsRoutes(
     return state as Extract<TerminalWsState, { kind: Kind }>;
   };
 
+  const handleTerminalWsMessage = async <Kind extends TerminalWsState["kind"]>(
+    ws: TerminalRouteSocket,
+    rawMessage: unknown,
+    kind: Kind,
+    handler: (
+      state: Extract<TerminalWsState, { kind: Kind }>,
+      message: TerminalWsMessage
+    ) => void | Promise<void>
+  ) => {
+    const message = parseTerminalWsMessage(rawMessage);
+    if (!message) {
+      sendWsError(ws, "Invalid websocket message");
+      return;
+    }
+
+    const state = getWsState(ws.id, kind);
+    if (!state) {
+      sendWsError(ws, "Terminal websocket session is unavailable");
+      ws.close();
+      return;
+    }
+
+    try {
+      await handler(state, message);
+    } catch (error) {
+      sendWsError(
+        ws,
+        error instanceof Error
+          ? error.message
+          : "Failed to process terminal websocket message"
+      );
+    }
+  };
+
+  const handleTerminalWsControlMessage = async <
+    Kind extends TerminalWsState["kind"],
+  >(
+    ws: TerminalRouteSocket,
+    rawMessage: unknown,
+    kind: Kind,
+    actions: TerminalWsActions<Kind>
+  ) => {
+    await handleTerminalWsMessage(
+      ws,
+      rawMessage,
+      kind,
+      async (state, message) => {
+        if (message.type === "ping") {
+          ws.send({ type: "pong" });
+          return;
+        }
+
+        if (message.type === "input") {
+          await actions.input(state, message.data);
+          return;
+        }
+
+        if (message.type === "resize") {
+          await actions.resize(state, message.cols, message.rows);
+          return;
+        }
+
+        if (actions.restart) {
+          await actions.restart(state);
+          return;
+        }
+
+        sendWsError(ws, "Restart is unsupported");
+      }
+    );
+  };
+
+  const withResolvedCellRoute = async <T>(args: {
+    cellId: string;
+    set: RouteSet;
+    run: (
+      cell: typeof cells.$inferSelect,
+      deps: CellRouteDependencies
+    ) => MaybePromise<T>;
+  }) => {
+    const deps = await resolveDeps();
+    return withCellRoute({
+      cellId: args.cellId,
+      deps,
+      run(cell) {
+        return args.run(cell, deps);
+      },
+      set: args.set,
+    });
+  };
+
+  const withResolvedServiceRoute = async <T>(args: {
+    cellId: string;
+    serviceId: string;
+    set: RouteSet;
+    run: (row: ServiceRow, deps: CellRouteDependencies) => MaybePromise<T>;
+  }) => {
+    const deps = await resolveDeps();
+    return await withServiceRoute({
+      deps,
+      cellId: args.cellId,
+      serviceId: args.serviceId,
+      set: args.set,
+      run: (row) => args.run(row, deps),
+    });
+  };
+
+  const withResolvedCellTerminalRoute = async <T>(args: {
+    cellId: string;
+    set: RouteSet;
+    log: RouteLog;
+    errorMessage: string;
+    run: (
+      cell: typeof cells.$inferSelect,
+      deps: CellRouteDependencies
+    ) => MaybePromise<T>;
+  }) => {
+    const runtimeDeps = await resolveDeps();
+    return withCellTerminalRoute({
+      cellId: args.cellId,
+      deps: runtimeDeps,
+      errorMessage: args.errorMessage,
+      log: args.log,
+      run(cell) {
+        return args.run(cell, runtimeDeps);
+      },
+      set: args.set,
+    });
+  };
+
+  const withResolvedChatTerminalRoute = async <T>(args: {
+    cellId: string;
+    themeMode: OpencodeThemeMode;
+    set: RouteSet;
+    log: RouteLog;
+    errorMessage: string;
+    run: (
+      cell: typeof cells.$inferSelect,
+      prepared: Awaited<ReturnType<typeof ensureChatTerminalSessionForCell>>,
+      deps: CellRouteDependencies
+    ) => MaybePromise<T>;
+  }) => {
+    const deps = await resolveDeps();
+    return await withChatTerminalRoute({
+      deps,
+      cellId: args.cellId,
+      themeMode: args.themeMode,
+      set: args.set,
+      log: args.log,
+      errorMessage: args.errorMessage,
+      run: (cell, prepared) => args.run(cell, prepared, deps),
+    });
+  };
+
+  const runResolvedCellServicesAction = async (args: {
+    cellId: string;
+    set: RouteSet;
+    request: Request;
+    type: ActivityEventType;
+    action: (deps: CellRouteDependencies) => MaybePromise<void>;
+  }) => {
+    const deps = await resolveDeps();
+    return await runCellServicesAction({
+      deps,
+      cellId: args.cellId,
+      set: args.set,
+      request: args.request,
+      type: args.type,
+      action: () => args.action(deps),
+    });
+  };
+
+  const runResolvedSingleServiceAction = async (args: {
+    cellId: string;
+    serviceId: string;
+    set: RouteSet;
+    request: Request;
+    type: ActivityEventType;
+    metadata?: (row: ServiceRow) => Record<string, unknown>;
+    action: (
+      deps: CellRouteDependencies,
+      serviceId: string
+    ) => MaybePromise<void>;
+  }) => {
+    const deps = await resolveDeps();
+    return await runSingleServiceAction({
+      deps,
+      cellId: args.cellId,
+      serviceId: args.serviceId,
+      set: args.set,
+      request: args.request,
+      type: args.type,
+      metadata: args.metadata,
+      action: (serviceId) => args.action(deps, serviceId),
+    });
+  };
+
+  const openTerminalWs = (args: {
+    ws: TerminalRouteSocket;
+    unsubscribe: () => void;
+    state: TerminalWsState;
+    readyPayload: Record<string, unknown>;
+    initialOutput: string;
+  }) => {
+    registerWsCleanup(args.ws.id, args.unsubscribe);
+    setWsState(args.ws.id, args.state);
+    args.ws.send({ type: "ready", ...args.readyPayload });
+    sendTerminalSnapshotToWs(args.ws, args.initialOutput);
+  };
+
   const runWsCleanup = (socketId: string) => {
     const cleanup = wsCleanupById.get(socketId);
     cleanup?.();
     wsCleanupById.delete(socketId);
     wsStateById.delete(socketId);
+  };
+
+  const openSetupTerminalSocket = async (ws: TerminalRouteSocket) => {
+    const deps = await resolveDeps();
+    const cell = await loadCellForWs(deps, ws);
+    if (!cell) {
+      return;
+    }
+
+    const session = deps.getSetupTerminalSession(cell.id);
+    const setupState = deriveSetupTerminalState(cell, session);
+    openTerminalWs({
+      ws,
+      unsubscribe: deps.subscribeToSetupTerminal(cell.id, (event) => {
+        forwardTerminalEventToWs(ws, event);
+      }),
+      state: { kind: "setup", deps, cellId: cell.id },
+      readyPayload: {
+        session,
+        setupState,
+        lastSetupError: cell.lastSetupError,
+      },
+      initialOutput: deps.readSetupTerminalOutput(cell.id),
+    });
+  };
+
+  const openServiceTerminalSocket = async (ws: TerminalRouteSocket) => {
+    const deps = await resolveDeps();
+    const row = await loadServiceRowForWs(deps, ws);
+    if (!row) {
+      return;
+    }
+
+    openTerminalWs({
+      ws,
+      unsubscribe: deps.subscribeToServiceTerminal(row.service.id, (event) => {
+        forwardTerminalEventToWs(ws, event);
+      }),
+      state: { kind: "service", deps, serviceId: row.service.id },
+      readyPayload: { session: deps.getServiceTerminalSession(row.service.id) },
+      initialOutput: deps.readServiceTerminalOutput(row.service.id),
+    });
+  };
+
+  const openCellTerminalSocket = async (ws: TerminalRouteSocket) => {
+    const terminalDeps = await resolveDeps();
+    const cell = await loadCellForWs(terminalDeps, ws);
+    if (cell === null) {
+      return;
+    }
+
+    let session: CellTerminalSession;
+    try {
+      session = terminalDeps.ensureTerminalSession({
+        cellId: cell.id,
+        workspacePath: cell.workspacePath,
+      });
+    } catch (error) {
+      sendWsErrorAndClose(
+        ws,
+        error instanceof Error
+          ? error.message
+          : "Failed to initialize terminal session"
+      );
+      return;
+    }
+
+    openTerminalWs({
+      ws,
+      unsubscribe: terminalDeps.subscribeToTerminal(cell.id, (event) => {
+        forwardTerminalEventToWs(ws, event);
+      }),
+      state: {
+        kind: "cell",
+        deps: terminalDeps,
+        cellId: cell.id,
+        workspacePath: cell.workspacePath,
+      },
+      readyPayload: { session },
+      initialOutput: terminalDeps.readTerminalOutput(cell.id),
+    });
+  };
+
+  const resolveDeletionRuntime = async () => {
+    const deps = await resolveDeps();
+    return {
+      database: deps.db,
+      resolveWorkspaceCtx: deps.resolveWorkspaceContext,
+      closeSession: deps.closeAgentSession,
+      stopCellServicesFn: deps.stopServicesForCell,
+      closeTerminalSession: deps.closeTerminalSession,
+      closeChatTerminalSession: deps.closeChatTerminalSession,
+      clearSetupTerminal: deps.clearSetupTerminal,
+    };
+  };
+
+  const handleSetupTerminalSocketMessage = (
+    ws: TerminalRouteSocket,
+    rawMessage: unknown
+  ) =>
+    handleTerminalWsControlMessage(ws, rawMessage, "setup", {
+      input: (state, data) =>
+        handleSetupTerminalWsInput({
+          deps: state.deps,
+          ws,
+          cellId: state.cellId,
+          data,
+        }),
+      resize: (state, cols, rows) =>
+        handleSetupTerminalWsResize({
+          deps: state.deps,
+          ws,
+          cellId: state.cellId,
+          cols,
+          rows,
+        }),
+    });
+
+  const handleServiceTerminalSocketMessage = (
+    ws: TerminalRouteSocket,
+    rawMessage: unknown
+  ) =>
+    handleTerminalWsControlMessage(ws, rawMessage, "service", {
+      input: (state, data) =>
+        handleServiceTerminalWsInput({
+          deps: state.deps,
+          ws,
+          serviceId: state.serviceId,
+          data,
+        }),
+      resize: (state, cols, rows) =>
+        handleServiceTerminalWsResize({
+          deps: state.deps,
+          ws,
+          serviceId: state.serviceId,
+          cols,
+          rows,
+        }),
+    });
+
+  const restartChatTerminalSocket = async (
+    ws: TerminalRouteSocket,
+    state: ChatTerminalWsState
+  ) => {
+    state.chatTerminal.closeChatTerminalSession(state.cell.id);
+    const restarted = await ensureChatTerminalSessionForCell(
+      state.deps,
+      state.cell,
+      state.themeMode
+    );
+    setWsState(ws.id, { ...state, chatTerminal: restarted.chatTerminal });
+    ws.send({ type: "ready", session: restarted.session });
+    ws.send({
+      type: "snapshot",
+      output: restarted.chatTerminal.readChatTerminalOutput(state.cell.id),
+    });
+  };
+
+  const restartCellTerminalSocket = (
+    ws: TerminalRouteSocket,
+    state: CellTerminalWsState
+  ) => {
+    state.deps.closeTerminalSession(state.cellId);
+    const session = state.deps.ensureTerminalSession({
+      workspacePath: state.workspacePath,
+      cellId: state.cellId,
+    });
+    ws.send({ type: "ready", session });
+    ws.send({
+      type: "snapshot",
+      output: state.deps.readTerminalOutput(state.cellId),
+    });
   };
 
   return new Elysia({ prefix: "/api/cells" })
@@ -1232,14 +2131,9 @@ export function createCellsRoutes(
             })) ??
             null;
 
-          await deps.db
-            .update(cells)
-            .set({ status: "spawning", lastSetupError: null })
-            .where(eq(cells.id, cell.id));
-
-          emitCellStatusUpdate({
-            workspaceId: cell.workspaceId,
-            cellId: cell.id,
+          await updateCellStatusAndEmit({
+            database: deps.db,
+            cell,
             status: "spawning",
             lastSetupError: null,
           });
@@ -1272,14 +2166,9 @@ export function createCellsRoutes(
         } catch (error) {
           const payload = buildCellCreationErrorPayload(error);
           const lastSetupError = deriveSetupErrorDetails(payload);
-          await deps.db
-            .update(cells)
-            .set({ status: "error", lastSetupError })
-            .where(eq(cells.id, cell.id));
-
-          emitCellStatusUpdate({
-            workspaceId: cell.workspaceId,
-            cellId: cell.id,
+          await updateCellStatusAndEmit({
+            database: deps.db,
+            cell,
             status: "error",
             lastSetupError,
           });
@@ -1306,7 +2195,7 @@ export function createCellsRoutes(
         } satisfies CellResponse;
       },
       {
-        params: t.Object({ id: t.String() }),
+        params: CellIdParamsSchema,
         response: {
           200: CellResponseSchema,
           400: ErrorResponseSchema,
@@ -1413,7 +2302,7 @@ export function createCellsRoutes(
         params: t.Object({ workspaceId: t.String() }),
         response: {
           200: t.Any(),
-          404: t.Object({ message: t.String() }),
+          404: MessageResponseSchema,
         },
       }
     )
@@ -1482,104 +2371,102 @@ export function createCellsRoutes(
       async ({ params, query, set, request }) => {
         const deps = await resolveDeps();
         const { db: database } = deps;
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
+        return await withCellRoute({
+          deps,
+          cellId: params.id,
+          set,
+          run: async () => {
+            const logOptions: LogTailOptions = {
+              lines: query.logLines,
+              offset: query.logOffset,
+            };
+            const includeResources = query.includeResources ?? false;
 
-        const logOptions: LogTailOptions = {
-          lines: query.logLines,
-          offset: query.logOffset,
-        };
-        const includeResources = query.includeResources ?? false;
+            const rows = await fetchServiceRows(database, params.id);
+            const resourcesByPid = includeResources
+              ? await sampleServiceResources(deps, rows)
+              : new Map<number, ProcessResourceSnapshot>();
+            const services = await Promise.all(
+              rows.map((row) =>
+                serializeService(deps, database, row, {
+                  logOptions,
+                  includeResources,
+                  resourcesByPid,
+                })
+              )
+            );
 
-        const rows = await fetchServiceRows(database, params.id);
-        const resourcesByPid = includeResources
-          ? await sampleServiceResources(deps, rows)
-          : new Map<number, ProcessResourceSnapshot>();
-        const services = await Promise.all(
-          rows.map((row) =>
-            serializeService(deps, database, row, {
-              logOptions,
-              includeResources,
-              resourcesByPid,
-            })
-          )
-        );
+            const audit = readHiveAuditHeaders(request);
+            if (audit.auditEvent === "service.logs.read" && audit.serviceName) {
+              const matchedRow = rows.find(
+                (row) => row.service.name === audit.serviceName
+              );
+              await insertCellActivityEvent({
+                database,
+                cellId: params.id,
+                serviceId: matchedRow?.service.id ?? null,
+                type: "service.logs.read",
+                source: audit.source,
+                toolName: audit.toolName,
+                metadata: {
+                  serviceName: audit.serviceName,
+                  logLines: query.logLines,
+                  logOffset: query.logOffset,
+                },
+              });
+            }
 
-        const audit = readHiveAuditHeaders(request);
-        if (audit.auditEvent === "service.logs.read" && audit.serviceName) {
-          const matchedRow = rows.find(
-            (row) => row.service.name === audit.serviceName
-          );
-          await insertCellActivityEvent({
-            database,
-            cellId: params.id,
-            serviceId: matchedRow?.service.id ?? null,
-            type: "service.logs.read",
-            source: audit.source,
-            toolName: audit.toolName,
-            metadata: {
-              serviceName: audit.serviceName,
-              logLines: query.logLines,
-              logOffset: query.logOffset,
-            },
-          });
-        }
-
-        return { services } satisfies CellServiceListResponse;
+            return { services } satisfies CellServiceListResponse;
+          },
+        });
       },
       {
-        params: t.Object({ id: t.String() }),
+        params: CellIdParamsSchema,
         query: ServiceLogQuerySchema,
         response: {
           200: CellServiceListResponseSchema,
-          400: t.Object({ message: t.String() }),
-          404: t.Object({ message: t.String() }),
+          ...StandardCellErrorResponses,
         },
       }
     )
 
     .get(
       "/:id/activity",
-      async ({ params, query, set }) => {
-        const { db: database } = await resolveDeps();
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return {
-            message: "Cell not found",
-          } satisfies { message: string };
-        }
-
-        const limit = normalizeActivityLimit(query.limit);
-        const types = normalizeActivityTypes(query.types);
-
-        let cursor: { createdAt: Date; id: string } | null = null;
-        if (query.cursor) {
-          try {
-            cursor = parseActivityCursor(query.cursor);
-          } catch {
-            set.status = HTTP_STATUS.BAD_REQUEST;
-            return {
-              message: "Invalid cursor",
-            } satisfies { message: string };
-          }
-        }
-
-        const page = await fetchCellActivityPage({
-          database,
+      async ({ params, query, set }) =>
+        await withResolvedCellRoute({
           cellId: params.id,
-          limit,
-          types,
-          cursor,
-        });
+          set,
+          run: async (_cell, deps) => {
+            const { db: database } = deps;
 
-        return page satisfies CellActivityEventListResponse;
-      },
+            const limit = normalizeActivityLimit(query.limit);
+            const types = normalizeActivityTypes(query.types);
+
+            let cursor: { createdAt: Date; id: string } | null = null;
+            if (query.cursor) {
+              try {
+                cursor = parseActivityCursor(query.cursor);
+              } catch {
+                set.status = HTTP_STATUS.BAD_REQUEST;
+                return {
+                  message: "Invalid cursor",
+                } satisfies { message: string };
+              }
+            }
+
+            const page = await fetchCellActivityPage({
+              database,
+              cellId: params.id,
+              limit,
+              types,
+              cursor,
+            });
+
+            return page satisfies CellActivityEventListResponse;
+          },
+        }),
       {
-        params: t.Object({ id: t.String() }),
+        params: CellIdParamsSchema,
         query: t.Object({
           limit: t.Optional(
             t.Number({
@@ -1599,8 +2486,7 @@ export function createCellsRoutes(
         }),
         response: {
           200: CellActivityEventListResponseSchema,
-          400: t.Object({ message: t.String() }),
-          404: t.Object({ message: t.String() }),
+          ...StandardCellErrorResponses,
         },
       }
     )
@@ -1630,7 +2516,7 @@ export function createCellsRoutes(
         return toTimingListResponse(steps, limit);
       },
       {
-        params: t.Object({ id: t.String() }),
+        params: CellIdParamsSchema,
         query: t.Object({
           limit: t.Optional(
             t.Number({
@@ -1644,180 +2530,195 @@ export function createCellsRoutes(
         }),
         response: {
           200: CellTimingListResponseSchema,
-          404: t.Object({ message: t.String() }),
+          404: MessageResponseSchema,
         },
       }
     )
     .get(
       "/:id/timings/stream",
-      async ({ params, query, request, set }) => {
-        const { db: database } = await resolveDeps();
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
+      async ({ params, query, request, set }) =>
+        await withResolvedCellRoute({
+          cellId: params.id,
+          set,
+          run: () => {
+            const workflow = normalizeTimingWorkflow(query.workflow);
+            const { iterator, cleanup } =
+              createAsyncEventIterator<CellTimingEvent>(
+                (listener) => subscribeToCellTimingEvents(params.id, listener),
+                request.signal
+              );
 
-        const workflow = normalizeTimingWorkflow(query.workflow);
-        const { iterator, cleanup } = createAsyncEventIterator<CellTimingEvent>(
-          (listener) => subscribeToCellTimingEvents(params.id, listener),
-          request.signal
-        );
+            async function* stream() {
+              try {
+                yield sse({ event: "ready", data: { timestamp: Date.now() } });
+                yield sse({
+                  event: "snapshot",
+                  data: { timestamp: Date.now() },
+                });
 
-        async function* stream() {
-          try {
-            yield sse({ event: "ready", data: { timestamp: Date.now() } });
-            yield sse({ event: "snapshot", data: { timestamp: Date.now() } });
+                for await (const event of iterator) {
+                  if (workflow && event.workflow !== workflow) {
+                    continue;
+                  }
 
-            for await (const event of iterator) {
-              if (workflow && event.workflow !== workflow) {
-                continue;
+                  yield sse({ event: "timing", data: event });
+                }
+              } finally {
+                cleanup();
               }
-
-              yield sse({ event: "timing", data: event });
             }
-          } finally {
-            cleanup();
-          }
-        }
 
-        return stream();
-      },
+            return stream();
+          },
+        }),
       {
-        params: t.Object({ id: t.String() }),
+        params: CellIdParamsSchema,
         query: t.Object({
           workflow: t.Optional(t.Literal("create")),
         }),
         response: {
           200: t.Any(),
-          404: t.Object({ message: t.String() }),
+          404: MessageResponseSchema,
         },
       }
     )
     .get(
       "/:id/services/stream",
       async ({ params, query, set, log }) => {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
         const includeResources = query.includeResources ?? false;
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
+        return await withResolvedCellRoute({
+          cellId: params.id,
+          set,
+          run: (_cell, deps) => {
+            const { db: database } = deps;
 
-        const encoder = new TextEncoder();
-        let cleanup: (() => void) | undefined;
+            const encoder = new TextEncoder();
+            let cleanup: (() => void) | undefined;
 
-        const body = new ReadableStream<Uint8Array>({
-          start(controller) {
-            const sendEvent = (event: string, data: string) => {
-              controller.enqueue(encoder.encode(`event: ${event}\n`));
-              controller.enqueue(encoder.encode(`data: ${data}\n\n`));
-            };
+            const body = new ReadableStream<Uint8Array>({
+              start(controller) {
+                const sendEvent = (event: string, data: string) => {
+                  controller.enqueue(encoder.encode(`event: ${event}\n`));
+                  controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+                };
 
-            const pushSnapshot = async (serviceId: string) => {
-              try {
-                const row = await fetchServiceRow(
-                  database,
+                const pushSnapshot = async (serviceId: string) => {
+                  try {
+                    const row = await fetchServiceRow(
+                      database,
+                      params.id,
+                      serviceId
+                    );
+                    if (!row) {
+                      return;
+                    }
+                    const resourcesByPid = includeResources
+                      ? await sampleServiceResources(deps, [row])
+                      : new Map<number, ProcessResourceSnapshot>();
+                    const payload = await serializeService(
+                      deps,
+                      database,
+                      row,
+                      {
+                        includeResources,
+                        resourcesByPid,
+                      }
+                    );
+                    sendEvent("service", JSON.stringify(payload));
+                  } catch (error) {
+                    log.error(
+                      { error, serviceId },
+                      "Failed to stream service update"
+                    );
+                  }
+                };
+
+                const unsubscribe = subscribeToServiceEvents(
                   params.id,
-                  serviceId
+                  (event) => {
+                    pushSnapshot(event.serviceId).catch(() => {
+                      /* errors already logged inside pushSnapshot */
+                    });
+                  }
                 );
-                if (!row) {
-                  return;
-                }
-                const resourcesByPid = includeResources
-                  ? await sampleServiceResources(deps, [row])
-                  : new Map<number, ProcessResourceSnapshot>();
-                const payload = await serializeService(deps, database, row, {
-                  includeResources,
-                  resourcesByPid,
-                });
-                sendEvent("service", JSON.stringify(payload));
-              } catch (error) {
-                log.error(
-                  { error, serviceId },
-                  "Failed to stream service update"
-                );
-              }
-            };
 
-            const unsubscribe = subscribeToServiceEvents(params.id, (event) => {
-              pushSnapshot(event.serviceId).catch(() => {
-                /* errors already logged inside pushSnapshot */
-              });
+                const heartbeat = setInterval(() => {
+                  sendEvent("heartbeat", JSON.stringify(Date.now()));
+                }, SSE_HEARTBEAT_INTERVAL_MS);
+
+                sendEvent("ready", JSON.stringify({ timestamp: Date.now() }));
+
+                const pushAllSnapshots = async () => {
+                  try {
+                    const rows = await fetchServiceRows(database, params.id);
+                    const resourcesByPid = includeResources
+                      ? await sampleServiceResources(deps, rows)
+                      : new Map<number, ProcessResourceSnapshot>();
+                    for (const row of rows) {
+                      const payload = await serializeService(
+                        deps,
+                        database,
+                        row,
+                        {
+                          includeResources,
+                          resourcesByPid,
+                        }
+                      );
+                      sendEvent("service", JSON.stringify(payload));
+                    }
+                    sendEvent(
+                      "snapshot",
+                      JSON.stringify({ timestamp: Date.now() })
+                    );
+                  } catch (error) {
+                    log.error({ error }, "Failed to stream service snapshot");
+                  }
+                };
+
+                let pushAllSnapshotsInFlight: Promise<void> | null = null;
+                const pushAllSnapshotsWithGuard = () => {
+                  if (pushAllSnapshotsInFlight) {
+                    return;
+                  }
+
+                  pushAllSnapshotsInFlight = pushAllSnapshots().finally(() => {
+                    pushAllSnapshotsInFlight = null;
+                  });
+                };
+
+                pushAllSnapshotsWithGuard();
+
+                const resourcesInterval = includeResources
+                  ? setInterval(() => {
+                      pushAllSnapshotsWithGuard();
+                    }, SERVICES_RESOURCE_REFRESH_INTERVAL_MS)
+                  : null;
+
+                cleanup = () => {
+                  unsubscribe();
+                  clearInterval(heartbeat);
+                  if (resourcesInterval) {
+                    clearInterval(resourcesInterval);
+                  }
+                };
+              },
+              cancel() {
+                cleanup?.();
+              },
             });
 
-            const heartbeat = setInterval(() => {
-              sendEvent("heartbeat", JSON.stringify(Date.now()));
-            }, SSE_HEARTBEAT_INTERVAL_MS);
-
-            sendEvent("ready", JSON.stringify({ timestamp: Date.now() }));
-
-            const pushAllSnapshots = async () => {
-              try {
-                const rows = await fetchServiceRows(database, params.id);
-                const resourcesByPid = includeResources
-                  ? await sampleServiceResources(deps, rows)
-                  : new Map<number, ProcessResourceSnapshot>();
-                for (const row of rows) {
-                  const payload = await serializeService(deps, database, row, {
-                    includeResources,
-                    resourcesByPid,
-                  });
-                  sendEvent("service", JSON.stringify(payload));
-                }
-                sendEvent(
-                  "snapshot",
-                  JSON.stringify({ timestamp: Date.now() })
-                );
-              } catch (error) {
-                log.error({ error }, "Failed to stream service snapshot");
-              }
-            };
-
-            let pushAllSnapshotsInFlight: Promise<void> | null = null;
-            const pushAllSnapshotsWithGuard = () => {
-              if (pushAllSnapshotsInFlight) {
-                return;
-              }
-
-              pushAllSnapshotsInFlight = pushAllSnapshots().finally(() => {
-                pushAllSnapshotsInFlight = null;
-              });
-            };
-
-            pushAllSnapshotsWithGuard();
-
-            const resourcesInterval = includeResources
-              ? setInterval(() => {
-                  pushAllSnapshotsWithGuard();
-                }, SERVICES_RESOURCE_REFRESH_INTERVAL_MS)
-              : null;
-
-            cleanup = () => {
-              unsubscribe();
-              clearInterval(heartbeat);
-              if (resourcesInterval) {
-                clearInterval(resourcesInterval);
-              }
-            };
-          },
-          cancel() {
-            cleanup?.();
-          },
-        });
-
-        return new Response(body, {
-          headers: {
-            "Cache-Control": "no-cache",
-            "Content-Type": "text/event-stream",
-            Connection: "keep-alive",
+            return new Response(body, {
+              headers: {
+                "Cache-Control": "no-cache",
+                "Content-Type": "text/event-stream",
+                Connection: "keep-alive",
+              },
+            });
           },
         });
       },
       {
-        params: t.Object({ id: t.String() }),
+        params: CellIdParamsSchema,
         query: t.Object({
           includeResources: t.Optional(t.Boolean()),
         }),
@@ -1826,176 +2727,49 @@ export function createCellsRoutes(
 
     .get(
       "/:id/setup/terminal/stream",
-      async ({ params, set, request }) => {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
+      async ({ params, set, request }) =>
+        await withResolvedCellRoute({
+          cellId: params.id,
+          set,
+          run: (cell, deps) => {
+            const session = deps.getSetupTerminalSession(cell.id);
+            const setupState = deriveSetupTerminalState(cell, session);
+            const initialOutput = deps.readSetupTerminalOutput(cell.id);
+            const { iterator, cleanup } =
+              createAsyncEventIterator<ServiceTerminalEvent>(
+                (listener) => deps.subscribeToSetupTerminal(cell.id, listener),
+                request.signal
+              );
 
-        const resolvedCell = cell;
-
-        const session = deps.getSetupTerminalSession(resolvedCell.id);
-        const setupState = deriveSetupTerminalState(resolvedCell, session);
-        const initialOutput = deps.readSetupTerminalOutput(resolvedCell.id);
-        const { iterator, cleanup } =
-          createAsyncEventIterator<ServiceTerminalEvent>(
-            (listener) =>
-              deps.subscribeToSetupTerminal(resolvedCell.id, listener),
-            request.signal
-          );
-
-        async function* stream() {
-          try {
-            yield sse({
-              event: "ready",
-              data: {
+            return createTerminalEventStream({
+              readyData: {
                 session,
                 setupState,
-                lastSetupError: resolvedCell.lastSetupError,
+                lastSetupError: cell.lastSetupError,
               },
+              initialOutput,
+              iterator,
+              cleanup,
             });
-
-            if (initialOutput.length > 0) {
-              yield sse({
-                event: "snapshot",
-                data: { output: initialOutput },
-              });
-            }
-
-            for await (const event of iterator) {
-              if (event.type === "data") {
-                yield sse({ event: "data", data: { chunk: event.chunk } });
-                continue;
-              }
-
-              yield sse({
-                event: "exit",
-                data: {
-                  exitCode: event.exitCode,
-                  signal: event.signal,
-                },
-              });
-            }
-          } finally {
-            cleanup();
-          }
-        }
-
-        return stream();
-      },
+          },
+        }),
       {
-        params: t.Object({ id: t.String() }),
+        params: CellIdParamsSchema,
         response: {
           200: t.Any(),
-          404: t.Object({ message: t.String() }),
+          404: MessageResponseSchema,
         },
       }
     )
 
     .ws("/:id/setup/terminal/ws", {
-      params: t.Object({ id: t.String() }),
+      params: CellIdParamsSchema,
       body: t.Any(),
       async open(ws) {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
-        const cell = await loadCellById(database, ws.data.params.id);
-        if (!cell) {
-          ws.send({ type: "error", message: "Cell not found" });
-          ws.close();
-          return;
-        }
-
-        const session = deps.getSetupTerminalSession(cell.id);
-        const setupState = deriveSetupTerminalState(cell, session);
-        const initialOutput = deps.readSetupTerminalOutput(cell.id);
-        const unsubscribe = deps.subscribeToSetupTerminal(cell.id, (event) => {
-          if (event.type === "data") {
-            ws.send({ type: "data", chunk: event.chunk });
-            return;
-          }
-
-          ws.send({
-            type: "exit",
-            exitCode: event.exitCode,
-            signal: event.signal,
-          });
-        });
-
-        registerWsCleanup(ws.id, unsubscribe);
-        setWsState(ws.id, {
-          kind: "setup",
-          deps,
-          cellId: cell.id,
-        });
-
-        ws.send({
-          type: "ready",
-          session,
-          setupState,
-          lastSetupError: cell.lastSetupError,
-        });
-
-        if (initialOutput.length > 0) {
-          ws.send({ type: "snapshot", output: initialOutput });
-        }
+        await openSetupTerminalSocket(ws);
       },
-      message(ws, rawMessage) {
-        const message = parseTerminalWsMessage(rawMessage);
-        if (!message) {
-          ws.send({ type: "error", message: "Invalid websocket message" });
-          return;
-        }
-
-        const state = getWsState(ws.id, "setup");
-        if (!state) {
-          ws.send({
-            type: "error",
-            message: "Terminal websocket session is unavailable",
-          });
-          ws.close();
-          return;
-        }
-
-        try {
-          switch (message.type) {
-            case "ping":
-              ws.send({ type: "pong" });
-              return;
-            case "input":
-              handleSetupTerminalWsInput({
-                deps: state.deps,
-                ws,
-                cellId: state.cellId,
-                data: message.data,
-              });
-              return;
-            case "resize":
-              handleSetupTerminalWsResize({
-                deps: state.deps,
-                ws,
-                cellId: state.cellId,
-                cols: message.cols,
-                rows: message.rows,
-              });
-              return;
-            case "restart":
-              ws.send({ type: "error", message: "Restart is unsupported" });
-              return;
-            default:
-              ws.send({ type: "error", message: "Unsupported message" });
-          }
-        } catch (error) {
-          ws.send({
-            type: "error",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to process terminal websocket message",
-          });
-        }
+      async message(ws, rawMessage) {
+        await handleSetupTerminalSocketMessage(ws, rawMessage);
       },
       close(ws) {
         runWsCleanup(ws.id);
@@ -2004,99 +2778,47 @@ export function createCellsRoutes(
 
     .post(
       "/:id/setup/terminal/resize",
-      async ({ params, body, set, log }) => {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
-
-        try {
-          deps.resizeSetupTerminal(cell.id, body.cols, body.rows);
-          const session = deps.getSetupTerminalSession(cell.id);
-          if (!session) {
-            set.status = HTTP_STATUS.CONFLICT;
-            return {
-              message: "Setup terminal session not available",
-            } satisfies { message: string };
-          }
-          return {
-            ok: true,
-            session,
-          };
-        } catch (error) {
-          set.status = HTTP_STATUS.INTERNAL_ERROR;
-          log.error(
-            { error, cellId: cell.id },
-            "Failed to resize setup terminal session"
-          );
-          return {
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to resize setup terminal session",
-          } satisfies { message: string };
-        }
-      },
+      async ({ params, body, set, log }) =>
+        await withResolvedCellRoute({
+          cellId: params.id,
+          set,
+          run: (cell, deps) =>
+            runTerminalResizeAction({
+              set,
+              log,
+              logContext: { cellId: cell.id },
+              unavailableMessage: "Setup terminal session not available",
+              errorMessage: "Failed to resize setup terminal session",
+              resize: () =>
+                deps.resizeSetupTerminal(cell.id, body.cols, body.rows),
+              getSession: () => deps.getSetupTerminalSession(cell.id),
+            }),
+        }),
       {
-        params: t.Object({ id: t.String() }),
-        body: CellTerminalResizeSchema,
-        response: {
-          200: RuntimeTerminalResizeResponseSchema,
-          404: t.Object({ message: t.String() }),
-          409: t.Object({ message: t.String() }),
-          500: t.Object({ message: t.String() }),
-        },
+        ...RuntimeTerminalResizeRouteOptions,
       }
     )
 
     .post(
       "/:id/setup/terminal/input",
-      async ({ params, body, set, log }) => {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
-
-        const session = deps.getSetupTerminalSession(cell.id);
-        if (!session || session.status !== "running") {
-          set.status = HTTP_STATUS.CONFLICT;
-          return {
-            message: "Setup terminal session not available",
-          } satisfies { message: string };
-        }
-
-        try {
-          deps.writeSetupTerminalInput(cell.id, body.data);
-          return { ok: true };
-        } catch (error) {
-          set.status = HTTP_STATUS.INTERNAL_ERROR;
-          log.error(
-            { error, cellId: cell.id },
-            "Failed to write to setup terminal session"
-          );
-          return {
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to write to setup terminal session",
-          } satisfies { message: string };
-        }
+      async function writeSetupTerminalRoute({ params, body, set, log }) {
+        return await withResolvedCellRoute({
+          run: (cell, deps) =>
+            runTerminalInputAction({
+              getSession: () => deps.getSetupTerminalSession(cell.id),
+              write: () => deps.writeSetupTerminalInput(cell.id, body.data),
+              unavailableMessage: "Setup terminal session not available",
+              errorMessage: "Failed to write to setup terminal session",
+              logContext: { cellId: cell.id },
+              set,
+              log,
+            }),
+          cellId: params.id,
+          set,
+        });
       },
       {
-        params: t.Object({ id: t.String() }),
-        body: CellTerminalInputSchema,
-        response: {
-          200: CellTerminalActionResponseSchema,
-          404: t.Object({ message: t.String() }),
-          409: t.Object({ message: t.String() }),
-          500: t.Object({ message: t.String() }),
-        },
+        ...RuntimeTerminalInputRouteOptions,
       }
     )
 
@@ -2124,145 +2846,30 @@ export function createCellsRoutes(
             request.signal
           );
 
-        async function* stream() {
-          try {
-            yield sse({ event: "ready", data: { session } });
-
-            if (initialOutput.length > 0) {
-              yield sse({ event: "snapshot", data: { output: initialOutput } });
-            }
-
-            for await (const event of iterator) {
-              if (event.type === "data") {
-                yield sse({ event: "data", data: { chunk: event.chunk } });
-                continue;
-              }
-
-              yield sse({
-                event: "exit",
-                data: {
-                  exitCode: event.exitCode,
-                  signal: event.signal,
-                },
-              });
-            }
-          } finally {
-            cleanup();
-          }
-        }
-
-        return stream();
+        return createTerminalEventStream({
+          readyData: { session },
+          initialOutput,
+          iterator,
+          cleanup,
+        });
       },
       {
-        params: t.Object({ id: t.String(), serviceId: t.String() }),
+        params: CellServiceParamsSchema,
         response: {
           200: t.Any(),
-          404: t.Object({ message: t.String() }),
+          404: MessageResponseSchema,
         },
       }
     )
 
     .ws("/:id/services/:serviceId/terminal/ws", {
-      params: t.Object({ id: t.String(), serviceId: t.String() }),
+      params: CellServiceParamsSchema,
       body: t.Any(),
       async open(ws) {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
-        const row = await fetchServiceRow(
-          database,
-          ws.data.params.id,
-          ws.data.params.serviceId
-        );
-        if (!row) {
-          ws.send({ type: "error", message: "Service not found" });
-          ws.close();
-          return;
-        }
-
-        const session = deps.getServiceTerminalSession(row.service.id);
-        const initialOutput = deps.readServiceTerminalOutput(row.service.id);
-        const unsubscribe = deps.subscribeToServiceTerminal(
-          row.service.id,
-          (event) => {
-            if (event.type === "data") {
-              ws.send({ type: "data", chunk: event.chunk });
-              return;
-            }
-
-            ws.send({
-              type: "exit",
-              exitCode: event.exitCode,
-              signal: event.signal,
-            });
-          }
-        );
-
-        registerWsCleanup(ws.id, unsubscribe);
-        setWsState(ws.id, {
-          kind: "service",
-          deps,
-          serviceId: row.service.id,
-        });
-
-        ws.send({ type: "ready", session });
-        if (initialOutput.length > 0) {
-          ws.send({ type: "snapshot", output: initialOutput });
-        }
+        await openServiceTerminalSocket(ws);
       },
-      message(ws, rawMessage) {
-        const message = parseTerminalWsMessage(rawMessage);
-        if (!message) {
-          ws.send({ type: "error", message: "Invalid websocket message" });
-          return;
-        }
-
-        const state = getWsState(ws.id, "service");
-        if (!state) {
-          ws.send({
-            type: "error",
-            message: "Terminal websocket session is unavailable",
-          });
-          ws.close();
-          return;
-        }
-
-        try {
-          switch (message.type) {
-            case "ping":
-              ws.send({ type: "pong" });
-              return;
-            case "input":
-              handleServiceTerminalWsInput({
-                deps: state.deps,
-                ws,
-                serviceId: state.serviceId,
-                data: message.data,
-              });
-              return;
-            case "resize":
-              handleServiceTerminalWsResize({
-                deps: state.deps,
-                ws,
-                serviceId: state.serviceId,
-                cols: message.cols,
-                rows: message.rows,
-              });
-              return;
-            case "restart":
-              ws.send({ type: "error", message: "Restart is unsupported" });
-              return;
-            default:
-              ws.send({ type: "error", message: "Unsupported message" });
-          }
-        } catch (error) {
-          ws.send({
-            type: "error",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to process terminal websocket message",
-          });
-        }
+      async message(ws, rawMessage) {
+        await handleServiceTerminalSocketMessage(ws, rawMessage);
       },
       close(ws) {
         runWsCleanup(ws.id);
@@ -2271,108 +2878,54 @@ export function createCellsRoutes(
 
     .post(
       "/:id/services/:serviceId/terminal/input",
-      async ({ params, body, set, log }) => {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
-        const row = await fetchServiceRow(
-          database,
-          params.id,
-          params.serviceId
-        );
-        if (!row) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" } satisfies { message: string };
-        }
-
-        const session = deps.getServiceTerminalSession(row.service.id);
-        if (!session || session.status !== "running") {
-          set.status = HTTP_STATUS.CONFLICT;
-          return {
-            message: "Service terminal session not available",
-          } satisfies { message: string };
-        }
-
-        try {
-          deps.writeServiceTerminalInput(row.service.id, body.data);
-          return { ok: true };
-        } catch (error) {
-          set.status = HTTP_STATUS.INTERNAL_ERROR;
-          log.error(
-            { error, serviceId: row.service.id },
-            "Failed to write to service terminal session"
-          );
-          return {
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to write to service terminal session",
-          } satisfies { message: string };
-        }
-      },
+      async ({ params, body, set, log }) =>
+        await withResolvedServiceRoute({
+          cellId: params.id,
+          serviceId: params.serviceId,
+          set,
+          run: (row, deps) =>
+            runTerminalInputAction({
+              set,
+              log,
+              logContext: { serviceId: row.service.id },
+              unavailableMessage: "Service terminal session not available",
+              errorMessage: "Failed to write to service terminal session",
+              getSession: () => deps.getServiceTerminalSession(row.service.id),
+              write: () =>
+                deps.writeServiceTerminalInput(row.service.id, body.data),
+            }),
+        }),
       {
-        params: t.Object({ id: t.String(), serviceId: t.String() }),
-        body: CellTerminalInputSchema,
-        response: {
-          200: CellTerminalActionResponseSchema,
-          404: t.Object({ message: t.String() }),
-          409: t.Object({ message: t.String() }),
-          500: t.Object({ message: t.String() }),
-        },
+        ...ServiceTerminalInputRouteOptions,
       }
     )
 
     .post(
       "/:id/services/:serviceId/terminal/resize",
-      async ({ params, body, set, log }) => {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
-        const row = await fetchServiceRow(
-          database,
-          params.id,
-          params.serviceId
-        );
-        if (!row) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" } satisfies { message: string };
-        }
-
-        try {
-          deps.resizeServiceTerminal(row.service.id, body.cols, body.rows);
-          const session = deps.getServiceTerminalSession(row.service.id);
-          if (!session) {
-            set.status = HTTP_STATUS.CONFLICT;
-            return {
-              message: "Service terminal session not available",
-            } satisfies { message: string };
-          }
-
-          return {
-            ok: true,
-            session,
-          };
-        } catch (error) {
-          set.status = HTTP_STATUS.INTERNAL_ERROR;
-          log.error(
-            { error, serviceId: row.service.id },
-            "Failed to resize service terminal session"
-          );
-          return {
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to resize service terminal session",
-          } satisfies { message: string };
-        }
+      async function resizeServiceTerminalRoute({ params, body, set, log }) {
+        return await withResolvedServiceRoute({
+          run: (row, deps) =>
+            runTerminalResizeAction({
+              resize: () =>
+                deps.resizeServiceTerminal(
+                  row.service.id,
+                  body.cols,
+                  body.rows
+                ),
+              getSession: () => deps.getServiceTerminalSession(row.service.id),
+              logContext: { serviceId: row.service.id },
+              unavailableMessage: "Service terminal session not available",
+              errorMessage: "Failed to resize service terminal session",
+              set,
+              log,
+            }),
+          cellId: params.id,
+          serviceId: params.serviceId,
+          set,
+        });
       },
       {
-        params: t.Object({ id: t.String(), serviceId: t.String() }),
-        body: CellTerminalResizeSchema,
-        response: {
-          200: RuntimeTerminalResizeResponseSchema,
-          404: t.Object({ message: t.String() }),
-          409: t.Object({ message: t.String() }),
-          500: t.Object({ message: t.String() }),
-        },
+        ...ServiceTerminalResizeRouteOptions,
       }
     )
 
@@ -2428,71 +2981,39 @@ export function createCellsRoutes(
             request.signal
           );
 
-        async function* stream() {
-          try {
-            yield sse({ event: "ready", data: session });
-
-            if (initialOutput.length > 0) {
-              yield sse({
-                event: "snapshot",
-                data: { output: initialOutput },
-              });
-            }
-
-            for await (const event of iterator) {
-              if (event.type === "data") {
-                yield sse({ event: "data", data: { chunk: event.chunk } });
-                continue;
-              }
-
-              yield sse({
-                event: "exit",
-                data: {
-                  exitCode: event.exitCode,
-                  signal: event.signal,
-                },
-              });
-            }
-          } finally {
-            cleanup();
-          }
-        }
-
-        return stream();
+        return createTerminalEventStream({
+          readyData: session,
+          initialOutput,
+          iterator,
+          cleanup,
+        });
       },
       {
-        params: t.Object({ id: t.String() }),
+        params: CellIdParamsSchema,
         query: ChatThemeModeQuerySchema,
         response: {
           200: t.Any(),
-          404: t.Object({ message: t.String() }),
-          409: t.Object({ message: t.String() }),
-          500: t.Object({ message: t.String() }),
+          ...TerminalErrorResponses,
         },
       }
     )
 
     .ws("/:id/chat/terminal/ws", {
-      params: t.Object({ id: t.String() }),
+      params: CellIdParamsSchema,
       query: ChatThemeModeQuerySchema,
       body: t.Any(),
       async open(ws) {
         const deps = await resolveDeps();
-        const { db: database } = deps;
-        const cell = await loadCellById(database, ws.data.params.id);
+        const cell = await loadCellForWs(deps, ws);
         if (!cell) {
-          ws.send({ type: "error", message: "Cell not found" });
-          ws.close();
           return;
         }
 
         if (!isCellReadyForChat(cell)) {
-          ws.send({
-            type: "error",
-            message:
-              "Chat terminal is unavailable until provisioning completes",
-          });
-          ws.close();
+          sendWsErrorAndClose(
+            ws,
+            "Chat terminal is unavailable until provisioning completes"
+          );
           return;
         }
 
@@ -2507,14 +3028,12 @@ export function createCellsRoutes(
             themeMode
           );
         } catch (error) {
-          ws.send({
-            type: "error",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to initialize chat terminal",
-          });
-          ws.close();
+          sendWsErrorAndClose(
+            ws,
+            error instanceof Error
+              ? error.message
+              : "Failed to initialize chat terminal"
+          );
           return;
         }
 
@@ -2524,113 +3043,41 @@ export function createCellsRoutes(
         const unsubscribe = prepared.chatTerminal.subscribeToChatTerminal(
           cell.id,
           (event) => {
-            if (event.type === "data") {
-              ws.send({ type: "data", chunk: event.chunk });
-              return;
-            }
-
-            ws.send({
-              type: "exit",
-              exitCode: event.exitCode,
-              signal: event.signal,
-            });
+            forwardTerminalEventToWs(ws, event);
           }
         );
 
-        registerWsCleanup(ws.id, unsubscribe);
-        setWsState(ws.id, {
-          kind: "chat",
-          deps,
-          cell,
-          themeMode,
-          chatTerminal: prepared.chatTerminal,
+        openTerminalWs({
+          ws,
+          unsubscribe,
+          state: {
+            kind: "chat",
+            deps,
+            cell,
+            themeMode,
+            chatTerminal: prepared.chatTerminal,
+          },
+          readyPayload: { session: prepared.session },
+          initialOutput,
         });
-
-        ws.send({ type: "ready", session: prepared.session });
-        if (initialOutput.length > 0) {
-          ws.send({ type: "snapshot", output: initialOutput });
-        }
       },
       async message(ws, rawMessage) {
-        const message = parseTerminalWsMessage(rawMessage);
-        if (!message) {
-          ws.send({ type: "error", message: "Invalid websocket message" });
-          return;
-        }
-
-        const state = getWsState(ws.id, "chat");
-        if (!state) {
-          ws.send({
-            type: "error",
-            message: "Terminal websocket session is unavailable",
-          });
-          ws.close();
-          return;
-        }
-
-        try {
-          switch (message.type) {
-            case "ping":
-              ws.send({ type: "pong" });
-              return;
-            case "input":
-              state.chatTerminal.writeChatTerminalInput(
-                state.cell.id,
-                message.data
-              );
-              return;
-            case "resize": {
-              state.chatTerminal.resizeChatTerminal(
-                state.cell.id,
-                message.cols,
-                message.rows
-              );
-              const resizedSession = state.chatTerminal.getChatTerminalSession(
-                state.cell.id
-              );
-              if (!resizedSession) {
-                ws.send({
-                  type: "error",
-                  message: "Chat terminal session not available",
-                });
-                return;
-              }
-              ws.send({
-                type: "ready",
-                session: resizedSession,
-              });
+        await handleTerminalWsControlMessage(ws, rawMessage, "chat", {
+          input: (state, data) =>
+            state.chatTerminal.writeChatTerminalInput(state.cell.id, data),
+          resize: (state, cols, rows) => {
+            state.chatTerminal.resizeChatTerminal(state.cell.id, cols, rows);
+            const resizedSession = state.chatTerminal.getChatTerminalSession(
+              state.cell.id
+            );
+            if (!resizedSession) {
+              sendWsError(ws, "Chat terminal session not available");
               return;
             }
-            case "restart": {
-              state.chatTerminal.closeChatTerminalSession(state.cell.id);
-              const restarted = await ensureChatTerminalSessionForCell(
-                state.deps,
-                state.cell,
-                state.themeMode
-              );
-              const output = restarted.chatTerminal.readChatTerminalOutput(
-                state.cell.id
-              );
-              setWsState(ws.id, {
-                ...state,
-                chatTerminal: restarted.chatTerminal,
-              });
-              ws.send({ type: "ready", session: restarted.session });
-              ws.send({ type: "snapshot", output });
-              return;
-            }
-            default:
-              ws.send({ type: "error", message: "Unsupported message" });
-          }
-        } catch (error) {
-          ws.send({
-            type: "error",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to process terminal websocket message",
-          });
-        }
+            ws.send({ type: "ready", session: resizedSession });
+          },
+          restart: (state) => restartChatTerminalSocket(ws, state),
+        });
       },
       close(ws) {
         runWsCleanup(ws.id);
@@ -2639,376 +3086,169 @@ export function createCellsRoutes(
 
     .post(
       "/:id/chat/terminal/input",
-      async ({ params, query, body, set, log }) => {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
-
-        try {
-          if (!isCellReadyForChat(cell)) {
-            set.status = HTTP_STATUS.CONFLICT;
-            return {
-              message:
-                "Chat terminal is unavailable until provisioning completes",
-            } satisfies { message: string };
-          }
-
-          const themeMode = normalizeOpencodeThemeMode(query.themeMode);
-          const { chatTerminal } = await ensureChatTerminalSessionForCell(
-            deps,
-            cell,
-            themeMode
-          );
-          chatTerminal.writeChatTerminalInput(cell.id, body.data);
-          return { ok: true };
-        } catch (error) {
-          set.status = HTTP_STATUS.INTERNAL_ERROR;
-          log.error(
-            { error, cellId: cell.id },
-            "Failed to write to chat terminal session"
-          );
-          return {
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to write to chat terminal session",
-          } satisfies { message: string };
-        }
-      },
+      async ({ params, query, body, set, log }) =>
+        await withResolvedChatTerminalRoute({
+          cellId: params.id,
+          themeMode: normalizeOpencodeThemeMode(query.themeMode),
+          set,
+          log,
+          errorMessage: "Failed to write to chat terminal session",
+          run: (cell, { chatTerminal }) =>
+            runEnsuredTerminalAction({
+              ensureSession: () => cell,
+              action: () =>
+                chatTerminal.writeChatTerminalInput(cell.id, body.data),
+              buildResponse: () => ({ ok: true }),
+            }),
+        }),
       {
-        params: t.Object({ id: t.String() }),
+        params: CellIdParamsSchema,
         query: ChatThemeModeQuerySchema,
         body: CellTerminalInputSchema,
         response: {
           200: CellTerminalActionResponseSchema,
-          404: t.Object({ message: t.String() }),
-          409: t.Object({ message: t.String() }),
-          500: t.Object({ message: t.String() }),
+          ...TerminalErrorResponses,
         },
       }
     )
 
     .post(
       "/:id/chat/terminal/resize",
-      async ({ params, query, body, set, log }) => {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
-
-        try {
-          if (!isCellReadyForChat(cell)) {
-            set.status = HTTP_STATUS.CONFLICT;
-            return {
-              message:
-                "Chat terminal is unavailable until provisioning completes",
-            } satisfies { message: string };
-          }
-
-          const themeMode = normalizeOpencodeThemeMode(query.themeMode);
-          const { session, chatTerminal } =
-            await ensureChatTerminalSessionForCell(deps, cell, themeMode);
-          chatTerminal.resizeChatTerminal(cell.id, body.cols, body.rows);
-          return {
-            ok: true,
-            session: {
-              ...session,
-              cols: body.cols,
-              rows: body.rows,
-            },
-          };
-        } catch (error) {
-          set.status = HTTP_STATUS.INTERNAL_ERROR;
-          log.error(
-            { error, cellId: cell.id },
-            "Failed to resize chat terminal session"
-          );
-          return {
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to resize chat terminal session",
-          } satisfies { message: string };
-        }
+      async function resizeChatTerminalRoute({
+        params,
+        query,
+        body,
+        set,
+        log,
+      }) {
+        return await withResolvedChatTerminalRoute({
+          run: (cell, { session, chatTerminal }) =>
+            runEnsuredTerminalAction({
+              action: () =>
+                chatTerminal.resizeChatTerminal(cell.id, body.cols, body.rows),
+              ensureSession: () => session,
+              buildResponse: (currentSession) => ({
+                ok: true,
+                session: {
+                  ...currentSession,
+                  cols: body.cols,
+                  rows: body.rows,
+                },
+              }),
+            }),
+          errorMessage: "Failed to resize chat terminal session",
+          themeMode: normalizeOpencodeThemeMode(query.themeMode),
+          cellId: params.id,
+          set,
+          log,
+        });
       },
       {
-        params: t.Object({ id: t.String() }),
+        params: CellIdParamsSchema,
         query: ChatThemeModeQuerySchema,
         body: CellTerminalResizeSchema,
         response: {
-          200: t.Object({
-            ok: t.Boolean(),
-            session: CellTerminalSessionSchema,
-          }),
-          404: t.Object({ message: t.String() }),
-          409: t.Object({ message: t.String() }),
-          500: t.Object({ message: t.String() }),
+          200: RuntimeTerminalResizeOkResponseSchema,
+          ...TerminalErrorResponses,
         },
       }
     )
 
     .post(
       "/:id/chat/terminal/restart",
-      async ({ params, query, set, log }) => {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
-
-        try {
-          if (!isCellReadyForChat(cell)) {
-            set.status = HTTP_STATUS.CONFLICT;
-            return {
-              message:
-                "Chat terminal is unavailable until provisioning completes",
-            } satisfies { message: string };
-          }
-
-          const chatTerminal = getChatTerminalDependencies(deps);
-          chatTerminal.closeChatTerminalSession(cell.id);
-          const themeMode = normalizeOpencodeThemeMode(query.themeMode);
-          const { session } = await ensureChatTerminalSessionForCell(
-            deps,
-            cell,
-            themeMode
-          );
-          return session;
-        } catch (error) {
-          set.status = HTTP_STATUS.INTERNAL_ERROR;
-          log.error(
-            { error, cellId: cell.id },
-            "Failed to restart chat terminal session"
-          );
-          return {
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to restart chat terminal session",
-          } satisfies { message: string };
-        }
+      async function restartChatTerminalRoute({ params, query, set, log }) {
+        const requestedThemeMode = normalizeOpencodeThemeMode(query.themeMode);
+        return await withResolvedChatTerminalRoute({
+          run: async (cell, _prepared, deps) => {
+            const chatTerminal = getChatTerminalDependencies(deps);
+            chatTerminal.closeChatTerminalSession(cell.id);
+            const { session } = await ensureChatTerminalSessionForCell(
+              deps,
+              cell,
+              requestedThemeMode
+            );
+            return session;
+          },
+          cellId: params.id,
+          themeMode: requestedThemeMode,
+          errorMessage: "Failed to restart chat terminal session",
+          set,
+          log,
+        });
       },
       {
-        params: t.Object({ id: t.String() }),
+        params: CellIdParamsSchema,
         query: ChatThemeModeQuerySchema,
         response: {
           200: CellTerminalSessionSchema,
-          404: t.Object({ message: t.String() }),
-          409: t.Object({ message: t.String() }),
-          500: t.Object({ message: t.String() }),
+          ...TerminalErrorResponses,
         },
       }
     )
 
     .get(
       "/:id/terminal/stream",
-      async ({ params, set, request, log }) => {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
+      async ({ params, set, request, log }) =>
+        await withResolvedCellTerminalRoute({
+          cellId: params.id,
+          set,
+          log,
+          errorMessage: "Failed to initialize terminal session",
+          run: (cell, deps) => {
+            const session = deps.ensureTerminalSession({
+              cellId: cell.id,
+              workspacePath: cell.workspacePath,
+            });
 
-        let session: CellTerminalSession;
-        try {
-          session = deps.ensureTerminalSession({
-            cellId: cell.id,
-            workspacePath: cell.workspacePath,
-          });
-        } catch (error) {
-          set.status = HTTP_STATUS.INTERNAL_ERROR;
-          log.error(
-            { error, cellId: cell.id },
-            "Failed to initialize cell terminal session"
-          );
-          return {
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to initialize terminal session",
-          } satisfies { message: string };
-        }
+            const initialOutput = deps.readTerminalOutput(cell.id);
+            const { iterator, cleanup } =
+              createAsyncEventIterator<CellTerminalEvent>(
+                (listener) => deps.subscribeToTerminal(cell.id, listener),
+                request.signal
+              );
 
-        const initialOutput = deps.readTerminalOutput(cell.id);
-        const { iterator, cleanup } =
-          createAsyncEventIterator<CellTerminalEvent>(
-            (listener) => deps.subscribeToTerminal(cell.id, listener),
-            request.signal
-          );
-
-        async function* stream() {
-          try {
-            yield sse({ event: "ready", data: session });
-
-            if (initialOutput.length > 0) {
-              yield sse({
-                event: "snapshot",
-                data: { output: initialOutput },
-              });
-            }
-
-            for await (const event of iterator) {
-              if (event.type === "data") {
-                yield sse({ event: "data", data: { chunk: event.chunk } });
-                continue;
-              }
-
-              yield sse({
-                event: "exit",
-                data: {
-                  exitCode: event.exitCode,
-                  signal: event.signal,
-                },
-              });
-            }
-          } finally {
-            cleanup();
-          }
-        }
-
-        return stream();
-      },
+            return createSessionTerminalEventStream({
+              session,
+              cleanup,
+              initialOutput,
+              iterator,
+            });
+          },
+        }),
       {
-        params: t.Object({ id: t.String() }),
+        params: CellIdParamsSchema,
         response: {
           200: t.Any(),
-          404: t.Object({ message: t.String() }),
-          500: t.Object({ message: t.String() }),
+          ...CellTerminalStreamErrorResponses,
         },
       }
     )
 
     .ws("/:id/terminal/ws", {
-      params: t.Object({ id: t.String() }),
+      params: CellIdParamsSchema,
       body: t.Any(),
       async open(ws) {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
-        const cell = await loadCellById(database, ws.data.params.id);
-        if (!cell) {
-          ws.send({ type: "error", message: "Cell not found" });
-          ws.close();
-          return;
-        }
-
-        let session: CellTerminalSession;
-        try {
-          session = deps.ensureTerminalSession({
-            cellId: cell.id,
-            workspacePath: cell.workspacePath,
-          });
-        } catch (error) {
-          ws.send({
-            type: "error",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to initialize terminal session",
-          });
-          ws.close();
-          return;
-        }
-
-        const initialOutput = deps.readTerminalOutput(cell.id);
-        const unsubscribe = deps.subscribeToTerminal(cell.id, (event) => {
-          if (event.type === "data") {
-            ws.send({ type: "data", chunk: event.chunk });
-            return;
-          }
-
-          ws.send({
-            type: "exit",
-            exitCode: event.exitCode,
-            signal: event.signal,
-          });
-        });
-
-        registerWsCleanup(ws.id, unsubscribe);
-        setWsState(ws.id, {
-          kind: "cell",
-          deps,
-          cellId: cell.id,
-          workspacePath: cell.workspacePath,
-        });
-
-        ws.send({ type: "ready", session });
-        if (initialOutput.length > 0) {
-          ws.send({ type: "snapshot", output: initialOutput });
-        }
+        await openCellTerminalSocket(ws);
       },
-      message(ws, rawMessage) {
-        const message = parseTerminalWsMessage(rawMessage);
-        if (!message) {
-          ws.send({ type: "error", message: "Invalid websocket message" });
-          return;
-        }
-
-        const state = getWsState(ws.id, "cell");
-        if (!state) {
-          ws.send({
-            type: "error",
-            message: "Terminal websocket session is unavailable",
-          });
-          ws.close();
-          return;
-        }
-
-        try {
-          switch (message.type) {
-            case "ping":
-              ws.send({ type: "pong" });
-              return;
-            case "input":
-              handleCellTerminalWsInput({
-                deps: state.deps,
-                cellId: state.cellId,
-                data: message.data,
-              });
-              return;
-            case "resize":
-              handleCellTerminalWsResize({
-                deps: state.deps,
-                ws,
-                cellId: state.cellId,
-                workspacePath: state.workspacePath,
-                cols: message.cols,
-                rows: message.rows,
-              });
-              return;
-            case "restart": {
-              state.deps.closeTerminalSession(state.cellId);
-              const session = state.deps.ensureTerminalSession({
-                cellId: state.cellId,
-                workspacePath: state.workspacePath,
-              });
-              const output = state.deps.readTerminalOutput(state.cellId);
-              ws.send({ type: "ready", session });
-              ws.send({ type: "snapshot", output });
-              return;
-            }
-            default:
-              ws.send({ type: "error", message: "Unsupported message" });
-          }
-        } catch (error) {
-          ws.send({
-            type: "error",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to process terminal websocket message",
-          });
-        }
+      async message(ws, rawMessage) {
+        await handleTerminalWsControlMessage(ws, rawMessage, "cell", {
+          input: (state, data) =>
+            handleCellTerminalWsInput({
+              deps: state.deps,
+              cellId: state.cellId,
+              data,
+            }),
+          resize: (state, cols, rows) =>
+            handleCellTerminalWsResize({
+              deps: state.deps,
+              ws,
+              cellId: state.cellId,
+              workspacePath: state.workspacePath,
+              cols,
+              rows,
+            }),
+          restart: (state) => restartCellTerminalSocket(ws, state),
+        });
       },
       close(ws) {
         runWsCleanup(ws.id);
@@ -3017,255 +3257,152 @@ export function createCellsRoutes(
 
     .post(
       "/:id/terminal/input",
-      async ({ params, body, set, log }) => {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
-
-        try {
-          deps.ensureTerminalSession({
-            cellId: cell.id,
-            workspacePath: cell.workspacePath,
-          });
-          deps.writeTerminalInput(cell.id, body.data);
-          return { ok: true };
-        } catch (error) {
-          set.status = HTTP_STATUS.INTERNAL_ERROR;
-          log.error(
-            { error, cellId: cell.id },
-            "Failed to write to terminal session"
-          );
-          return {
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to write to terminal session",
-          } satisfies { message: string };
-        }
-      },
+      async ({ params, body, set, log }) =>
+        await withResolvedCellTerminalRoute({
+          cellId: params.id,
+          set,
+          log,
+          errorMessage: "Failed to write to terminal session",
+          run: (cell, deps) =>
+            runEnsuredTerminalAction({
+              ensureSession: () =>
+                deps.ensureTerminalSession({
+                  cellId: cell.id,
+                  workspacePath: cell.workspacePath,
+                }),
+              action: () => deps.writeTerminalInput(cell.id, body.data),
+              buildResponse: () => ({ ok: true }),
+            }),
+        }),
       {
-        params: t.Object({ id: t.String() }),
-        body: CellTerminalInputSchema,
-        response: {
-          200: CellTerminalActionResponseSchema,
-          404: t.Object({ message: t.String() }),
-          500: t.Object({ message: t.String() }),
-        },
+        ...CellTerminalInputRouteOptions,
       }
     )
 
     .post(
       "/:id/terminal/resize",
-      async ({ params, body, set, log }) => {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
-
-        try {
-          const session = deps.ensureTerminalSession({
-            cellId: cell.id,
-            workspacePath: cell.workspacePath,
-          });
-          deps.resizeTerminal(cell.id, body.cols, body.rows);
-          return {
-            ok: true,
-            session: {
-              ...session,
-              cols: body.cols,
-              rows: body.rows,
-            },
-          };
-        } catch (error) {
-          set.status = HTTP_STATUS.INTERNAL_ERROR;
-          log.error(
-            { error, cellId: cell.id },
-            "Failed to resize terminal session"
-          );
-          return {
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to resize terminal session",
-          } satisfies { message: string };
-        }
+      async function resizeCellTerminalRoute({ params, body, set, log }) {
+        return await withResolvedCellTerminalRoute({
+          run: (cell, deps) =>
+            runEnsuredTerminalAction({
+              action: () => deps.resizeTerminal(cell.id, body.cols, body.rows),
+              ensureSession: () =>
+                deps.ensureTerminalSession({
+                  workspacePath: cell.workspacePath,
+                  cellId: cell.id,
+                }),
+              buildResponse: (session) => ({
+                ok: true,
+                session: {
+                  ...session,
+                  cols: body.cols,
+                  rows: body.rows,
+                },
+              }),
+            }),
+          cellId: params.id,
+          errorMessage: "Failed to resize terminal session",
+          set,
+          log,
+        });
       },
       {
-        params: t.Object({ id: t.String() }),
-        body: CellTerminalResizeSchema,
-        response: {
-          200: t.Object({
-            ok: t.Boolean(),
-            session: CellTerminalSessionSchema,
-          }),
-          404: t.Object({ message: t.String() }),
-          500: t.Object({ message: t.String() }),
-        },
+        ...CellTerminalResizeRouteOptions,
       }
     )
 
     .post(
       "/:id/terminal/restart",
-      async ({ params, set, log }) => {
-        const deps = await resolveDeps();
-        const { db: database } = deps;
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
-
-        try {
-          deps.closeTerminalSession(cell.id);
-          const session = deps.ensureTerminalSession({
-            cellId: cell.id,
-            workspacePath: cell.workspacePath,
-          });
-          return session;
-        } catch (error) {
-          set.status = HTTP_STATUS.INTERNAL_ERROR;
-          log.error(
-            { error, cellId: cell.id },
-            "Failed to restart terminal session"
-          );
-          return {
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to restart terminal session",
-          } satisfies { message: string };
-        }
-      },
+      async ({ params, set, log }) =>
+        await withResolvedCellTerminalRoute({
+          cellId: params.id,
+          set,
+          log,
+          errorMessage: "Failed to restart terminal session",
+          run: (cell, deps) => {
+            deps.closeTerminalSession(cell.id);
+            const session = deps.ensureTerminalSession({
+              cellId: cell.id,
+              workspacePath: cell.workspacePath,
+            });
+            return session;
+          },
+        }),
       {
-        params: t.Object({ id: t.String() }),
+        params: CellIdParamsSchema,
         response: {
           200: CellTerminalSessionSchema,
-          404: t.Object({ message: t.String() }),
-          500: t.Object({ message: t.String() }),
+          404: MessageResponseSchema,
+          500: MessageResponseSchema,
         },
       }
     )
 
     .post(
       "/:id/services/start",
-      async ({ params, set, request }) => {
-        const deps = await resolveDeps();
-        const { db: database, startServicesForCell } = deps;
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
-
-        const audit = readHiveAuditHeaders(request);
-        await insertCellActivityEvent({
-          database,
+      async ({ params, set, request }) =>
+        await runResolvedCellServicesAction({
           cellId: params.id,
+          set,
+          request,
           type: "services.start",
-          source: audit.source,
-          toolName: audit.toolName,
-          metadata: {},
-        });
-
-        await startServicesForCell(params.id);
-        const rows = await fetchServiceRows(database, params.id);
-        const services = await Promise.all(
-          rows.map((row) => serializeService(deps, database, row))
-        );
-
-        return { services } satisfies CellServiceListResponse;
-      },
+          action: (deps) => deps.startServicesForCell(params.id),
+        }),
       {
-        params: t.Object({ id: t.String() }),
-        response: {
-          200: CellServiceListResponseSchema,
-          400: t.Object({ message: t.String() }),
-          404: t.Object({ message: t.String() }),
-        },
+        ...ServiceListRouteOptions,
       }
     )
 
     .post(
       "/:id/services/stop",
-      async ({ params, set, request }) => {
-        const deps = await resolveDeps();
-        const { db: database, stopServicesForCell } = deps;
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
-
-        const audit = readHiveAuditHeaders(request);
-        await insertCellActivityEvent({
-          database,
+      async ({ params, set, request }) =>
+        await runResolvedCellServicesAction({
           cellId: params.id,
+          set,
+          request,
           type: "services.stop",
-          source: audit.source,
-          toolName: audit.toolName,
-          metadata: {},
-        });
-
-        await stopServicesForCell(params.id);
-        const rows = await fetchServiceRows(database, params.id);
-        const services = await Promise.all(
-          rows.map((row) => serializeService(deps, database, row))
-        );
-
-        return { services } satisfies CellServiceListResponse;
-      },
+          action: (deps) => deps.stopServicesForCell(params.id),
+        }),
       {
-        params: t.Object({ id: t.String() }),
-        response: {
-          200: CellServiceListResponseSchema,
-          400: t.Object({ message: t.String() }),
-          404: t.Object({ message: t.String() }),
-        },
+        ...ServiceListRouteOptions,
       }
     )
 
     .get(
       "/:id/diff",
-      async ({ params, query, set }) => {
-        const { db: database } = await resolveDeps();
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
+      async ({ params, query, set }) =>
+        await withResolvedCellRoute({
+          cellId: params.id,
+          set,
+          run: async (cell) => {
+            const parsed = parseDiffRequest(cell, query);
+            if (!parsed.ok) {
+              set.status = parsed.status;
+              return { message: parsed.message } satisfies { message: string };
+            }
 
-        const parsed = parseDiffRequest(cell, query);
-        if (!parsed.ok) {
-          set.status = parsed.status;
-          return { message: parsed.message } satisfies { message: string };
-        }
-
-        try {
-          const diff = await buildCellDiffPayload(cell, parsed.value);
-          return diff satisfies CellDiffResponse;
-        } catch (error) {
-          set.status = HTTP_STATUS.INTERNAL_ERROR;
-          return {
-            message:
-              error instanceof Error ? error.message : "Failed to compute diff",
-          } satisfies { message: string };
-        }
-      },
+            try {
+              const diff = await buildCellDiffPayload(cell, parsed.value);
+              return diff satisfies CellDiffResponse;
+            } catch (error) {
+              set.status = HTTP_STATUS.INTERNAL_ERROR;
+              return {
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "Failed to compute diff",
+              } satisfies { message: string };
+            }
+          },
+        }),
       {
-        params: t.Object({ id: t.String() }),
+        params: CellIdParamsSchema,
         query: DiffQuerySchema,
         response: {
           200: CellDiffResponseSchema,
-          400: t.Object({ message: t.String() }),
-          409: t.Object({ message: t.String() }),
-          404: t.Object({ message: t.String() }),
+          400: MessageResponseSchema,
+          409: MessageResponseSchema,
+          404: MessageResponseSchema,
         },
       }
     )
@@ -3273,213 +3410,72 @@ export function createCellsRoutes(
     .post(
       "/:id/services/:serviceId/start",
 
-      async ({ params, set, request }) => {
-        const deps = await resolveDeps();
-        const { db: database, startServiceById: startService } = deps;
-
-        const row = await fetchServiceRow(
-          database,
-          params.id,
-          params.serviceId
-        );
-        if (!row) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" } satisfies {
-            message: string;
-          };
-        }
-
-        const audit = readHiveAuditHeaders(request);
-        await insertCellActivityEvent({
-          database,
+      async ({ params, set, request }) =>
+        await runResolvedSingleServiceAction({
           cellId: params.id,
           serviceId: params.serviceId,
+          set,
+          request,
           type: "service.start",
-          source: audit.source,
-          toolName: audit.toolName,
-          metadata: {},
-        });
-
-        await startService(params.serviceId);
-        const updated = await fetchServiceRow(
-          database,
-          params.id,
-          params.serviceId
-        );
-        if (!updated) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" } satisfies {
-            message: string;
-          };
-        }
-
-        const serialized = await serializeService(deps, database, updated);
-        return serialized satisfies CellServiceResponse;
-      },
+          action: (deps, serviceId) => deps.startServiceById(serviceId),
+        }),
       {
-        params: t.Object({ id: t.String(), serviceId: t.String() }),
-        response: {
-          200: CellServiceSchema,
-          400: t.Object({ message: t.String() }),
-          404: t.Object({ message: t.String() }),
-        },
+        ...ServiceActionRouteOptions,
       }
     )
     .post(
       "/:id/services/:serviceId/stop",
-      async ({ params, set, request }) => {
-        const deps = await resolveDeps();
-        const { db: database, stopServiceById: stopService } = deps;
-
-        const row = await fetchServiceRow(
-          database,
-          params.id,
-          params.serviceId
-        );
-        if (!row) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" } satisfies {
-            message: string;
-          };
-        }
-
-        const audit = readHiveAuditHeaders(request);
-        await insertCellActivityEvent({
-          database,
-          cellId: params.id,
-          serviceId: params.serviceId,
+      async function stopSingleServiceRoute({ params, set, request }) {
+        return await runResolvedSingleServiceAction({
+          action: (deps, serviceId) => deps.stopServiceById(serviceId),
           type: "service.stop",
-          source: audit.source,
-          toolName: audit.toolName,
-          metadata: {},
+          request,
+          set,
+          serviceId: params.serviceId,
+          cellId: params.id,
         });
-
-        await stopService(params.serviceId);
-        const updated = await fetchServiceRow(
-          database,
-          params.id,
-          params.serviceId
-        );
-        if (!updated) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" } satisfies {
-            message: string;
-          };
-        }
-
-        const serialized = await serializeService(deps, database, updated);
-        return serialized satisfies CellServiceResponse;
       },
       {
-        params: t.Object({ id: t.String(), serviceId: t.String() }),
-        response: {
-          200: CellServiceSchema,
-          400: t.Object({ message: t.String() }),
-          404: t.Object({ message: t.String() }),
-        },
+        ...ServiceActionRouteOptions,
       }
     )
 
     .post(
       "/:id/services/restart",
-      async ({ params, set, request }) => {
-        const deps = await resolveDeps();
-        const {
-          db: database,
-          startServicesForCell,
-          stopServicesForCell,
-        } = deps;
-        const cell = await loadCellById(database, params.id);
-        if (!cell) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Cell not found" } satisfies { message: string };
-        }
-
-        const audit = readHiveAuditHeaders(request);
-        await insertCellActivityEvent({
-          database,
+      async ({ params, set, request }) =>
+        await runResolvedCellServicesAction({
           cellId: params.id,
+          set,
+          request,
           type: "services.restart",
-          source: audit.source,
-          toolName: audit.toolName,
-          metadata: {},
-        });
-
-        await stopServicesForCell(params.id);
-        await startServicesForCell(params.id);
-
-        const rows = await fetchServiceRows(database, params.id);
-        const services = await Promise.all(
-          rows.map((row) => serializeService(deps, database, row))
-        );
-        return { services } satisfies CellServiceListResponse;
-      },
+          action: async (deps) => {
+            await deps.stopServicesForCell(params.id);
+            await deps.startServicesForCell(params.id);
+          },
+        }),
       {
-        params: t.Object({ id: t.String() }),
-        response: {
-          200: CellServiceListResponseSchema,
-          400: t.Object({ message: t.String() }),
-          404: t.Object({ message: t.String() }),
-        },
+        ...ServiceListRouteOptions,
       }
     )
 
     .post(
       "/:id/services/:serviceId/restart",
-      async ({ params, set, request }) => {
-        const deps = await resolveDeps();
-        const {
-          db: database,
-          startServiceById: startService,
-          stopServiceById: stopService,
-        } = deps;
-
-        const row = await fetchServiceRow(
-          database,
-          params.id,
-          params.serviceId
-        );
-        if (!row) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" } satisfies { message: string };
-        }
-
-        const audit = readHiveAuditHeaders(request);
-        await insertCellActivityEvent({
-          database,
-          cellId: params.id,
-          serviceId: params.serviceId,
-          type: "service.restart",
-          source: audit.source,
-          toolName: audit.toolName,
-          metadata: {
-            serviceName: row.service.name,
+      async function restartSingleServiceRoute({ params, set, request }) {
+        return await runResolvedSingleServiceAction({
+          action: async (deps, serviceId) => {
+            await deps.stopServiceById(serviceId);
+            await deps.startServiceById(serviceId);
           },
+          metadata: (row) => ({ serviceName: row.service.name }),
+          type: "service.restart",
+          request,
+          serviceId: params.serviceId,
+          cellId: params.id,
+          set,
         });
-
-        await stopService(params.serviceId);
-        await startService(params.serviceId);
-
-        const updated = await fetchServiceRow(
-          database,
-          params.id,
-          params.serviceId
-        );
-        if (!updated) {
-          set.status = HTTP_STATUS.NOT_FOUND;
-          return { message: "Service not found" } satisfies { message: string };
-        }
-
-        const serialized = await serializeService(deps, database, updated);
-        return serialized satisfies CellServiceResponse;
       },
       {
-        params: t.Object({ id: t.String(), serviceId: t.String() }),
-        response: {
-          200: CellServiceSchema,
-          400: t.Object({ message: t.String() }),
-          404: t.Object({ message: t.String() }),
-        },
+        ...ServiceActionRouteOptions,
       }
     )
     .post(
@@ -3532,16 +3528,15 @@ export function createCellsRoutes(
       "/",
       async ({ body, set, log }) => {
         try {
-          const deps = await resolveDeps();
           const {
-            db: database,
-            resolveWorkspaceContext: resolveWorkspaceCtx,
-            closeAgentSession: closeSession,
-            stopServicesForCell: stopCellServicesFn,
+            database,
+            resolveWorkspaceCtx,
+            closeSession,
+            stopCellServicesFn,
             closeTerminalSession,
             closeChatTerminalSession,
             clearSetupTerminal,
-          } = deps;
+          } = await resolveDeletionRuntime();
 
           const uniqueIds = [...new Set(body.ids)];
 
@@ -3614,13 +3609,8 @@ export function createCellsRoutes(
           200: t.Object({
             deletedIds: t.Array(t.String()),
           }),
-          400: t.Object({
-            message: t.String(),
-          }),
-          404: t.Object({
-            message: t.String(),
-          }),
-          500: ErrorResponseSchema,
+          400: MessageResponseSchema,
+          ...DeleteCellErrorResponses,
         },
       }
     )
@@ -3628,16 +3618,8 @@ export function createCellsRoutes(
       "/:id",
       async ({ params, set, log }) => {
         try {
-          const deps = await resolveDeps();
-          const {
-            db: database,
-            resolveWorkspaceContext: resolveWorkspaceCtx,
-            closeAgentSession: closeSession,
-            stopServicesForCell: stopCellServicesFn,
-            closeTerminalSession,
-            closeChatTerminalSession,
-            clearSetupTerminal,
-          } = deps;
+          const deleteRuntime = await resolveDeletionRuntime();
+          const database = deleteRuntime.database;
 
           const cell = await loadCellById(database, params.id);
           if (!cell) {
@@ -3646,7 +3628,7 @@ export function createCellsRoutes(
           }
 
           const workspaceManager = await resolveWorkspaceContextFromDeps(
-            resolveWorkspaceCtx,
+            deleteRuntime.resolveWorkspaceCtx,
             cell.workspaceId
           );
           const worktreeService = toAsyncWorktreeManager(
@@ -3654,15 +3636,15 @@ export function createCellsRoutes(
           );
 
           await deleteCellWithLifecycle({
-            database,
-            cell,
-            closeSession,
-            closeTerminalSession,
-            closeChatTerminalSession,
-            clearSetupTerminal,
-            stopCellServices: stopCellServicesFn,
             getWorktreeService: async () => worktreeService,
             log,
+            cell,
+            database,
+            stopCellServices: deleteRuntime.stopCellServicesFn,
+            clearSetupTerminal: deleteRuntime.clearSetupTerminal,
+            closeChatTerminalSession: deleteRuntime.closeChatTerminalSession,
+            closeTerminalSession: deleteRuntime.closeTerminalSession,
+            closeSession: deleteRuntime.closeSession,
           });
 
           return { message: "Cell deleted successfully" };
@@ -3677,17 +3659,12 @@ export function createCellsRoutes(
         }
       },
       {
-        params: t.Object({
-          id: t.String(),
-        }),
+        params: CellIdParamsSchema,
         response: {
           200: t.Object({
             message: t.String(),
           }),
-          404: t.Object({
-            message: t.String(),
-          }),
-          500: ErrorResponseSchema,
+          ...DeleteCellErrorResponses,
         },
       }
     );
@@ -3702,15 +3679,18 @@ type CellCreationResult = {
 
 type CellCreationPayload = ReturnType<typeof cellToResponse> | ErrorPayload;
 
-type CellCreationArgs = {
-  body: Static<typeof CreateCellSchema>;
+type ProvisionRuntimeDeps = {
   database: DatabaseClient;
   ensureSession: CellRouteDependencies["ensureAgentSession"];
   sendAgentMessage: CellRouteDependencies["sendAgentMessage"];
   ensureServices: CellRouteDependencies["ensureServicesForCell"];
   stopCellServices: CellRouteDependencies["stopServicesForCell"];
-  workspaceContext: WorkspaceRuntimeContext;
   log: LoggerLike;
+};
+
+type CellCreationArgs = ProvisionRuntimeDeps & {
+  body: Static<typeof CreateCellSchema>;
+  workspaceContext: WorkspaceRuntimeContext;
 };
 
 async function handleCellCreationRequest(
@@ -3857,17 +3837,11 @@ async function handleCellCreationRequest(
   }
 }
 
-type ProvisionContext = {
+type ProvisionContext = ProvisionRuntimeDeps & {
   body: Static<typeof CreateCellSchema>;
   template: Template;
-  database: DatabaseClient;
-  ensureSession: CellRouteDependencies["ensureAgentSession"];
-  sendAgentMessage: CellRouteDependencies["sendAgentMessage"];
-  ensureServices: CellRouteDependencies["ensureServicesForCell"];
-  stopCellServices: CellRouteDependencies["stopServicesForCell"];
   getWorktreeService: () => Promise<AsyncWorktreeManager>;
   workspace: WorkspaceRecord;
-  log: LoggerLike;
   state: CellProvisionState;
 };
 
@@ -3915,18 +3889,47 @@ type RunProvisionPhase = <T>(
   action: () => Promise<T>
 ) => Promise<T>;
 
-function createProvisionContext(args: {
-  body: Static<typeof CreateCellSchema>;
-  template: Template;
-  database: DatabaseClient;
-  ensureSession: CellRouteDependencies["ensureAgentSession"];
-  sendAgentMessage: CellRouteDependencies["sendAgentMessage"];
-  ensureServices: CellRouteDependencies["ensureServicesForCell"];
-  stopCellServices: CellRouteDependencies["stopServicesForCell"];
-  getWorktreeService: () => Promise<AsyncWorktreeManager>;
-  workspace: WorkspaceRecord;
-  log: LoggerLike;
-}): ProvisionContext {
+type ProvisionTimingEventInput = {
+  step: string;
+  status: CellTimingStatus;
+  durationMs: number;
+  attempt: number | null;
+  error?: string | null;
+  extraMetadata?: Record<string, unknown>;
+  createdAt?: Date;
+};
+
+async function insertProvisionTimingEvent(
+  context: ProvisionContext,
+  event: ProvisionTimingEventInput
+) {
+  await insertCellTimingEvent({
+    database: context.database,
+    log: context.log,
+    cellId: context.state.cellId,
+    cellName: context.state.createdCell?.name ?? context.body.name,
+    workflow: "create",
+    runId: context.state.timingRunId,
+    step: event.step,
+    status: event.status,
+    durationMs: event.durationMs,
+    attempt: event.attempt,
+    error: event.error,
+    templateId: context.template.id,
+    workspaceId: context.workspace.id,
+    extraMetadata: event.extraMetadata,
+    createdAt: event.createdAt,
+  });
+}
+
+function createProvisionContext(
+  args: ProvisionRuntimeDeps & {
+    body: Static<typeof CreateCellSchema>;
+    template: Template;
+    getWorktreeService: () => Promise<AsyncWorktreeManager>;
+    workspace: WorkspaceRecord;
+  }
+): ProvisionContext {
   return {
     ...args,
     state: {
@@ -3945,19 +3948,15 @@ function createProvisionContext(args: {
   };
 }
 
-function createExistingProvisionContext(args: {
-  cell: typeof cells.$inferSelect;
-  provisioningState: CellProvisioningState | null;
-  body: Static<typeof CreateCellSchema>;
-  template: Template;
-  database: DatabaseClient;
-  ensureSession: CellRouteDependencies["ensureAgentSession"];
-  sendAgentMessage: CellRouteDependencies["sendAgentMessage"];
-  ensureServices: CellRouteDependencies["ensureServicesForCell"];
-  stopCellServices: CellRouteDependencies["stopServicesForCell"];
-  workspaceContext: WorkspaceRuntimeContext;
-  log: LoggerLike;
-}) {
+function createExistingProvisionContext(
+  args: {
+    cell: typeof cells.$inferSelect;
+    provisioningState: CellProvisioningState | null;
+    body: Static<typeof CreateCellSchema>;
+    template: Template;
+    workspaceContext: WorkspaceRuntimeContext;
+  } & ProvisionRuntimeDeps
+): ProvisionContext {
   return {
     body: args.body,
     template: args.template,
@@ -4196,11 +4195,8 @@ async function runCreateWorktreePhase(args: {
   context: ProvisionContext;
   runPhase: RunProvisionPhase;
   attempt: number | null;
-  database: DatabaseClient;
-  template: Template;
-  body: Static<typeof CreateCellSchema>;
 }) {
-  const { context, runPhase, attempt, database, template, body } = args;
+  const { context, runPhase, attempt } = args;
   const { state } = context;
 
   await assertCellStillExists(context, "create_worktree");
@@ -4215,19 +4211,11 @@ async function runCreateWorktreePhase(args: {
     event: CapturedWorktreeCreateTimingEvent
   ) => {
     worktreeTimingWrites.push(
-      insertCellTimingEvent({
-        database,
-        log: context.log,
-        cellId: state.cellId,
-        cellName: state.createdCell?.name ?? body.name,
-        workflow: "create",
-        runId: state.timingRunId,
+      insertProvisionTimingEvent(context, {
         step: `create_worktree:${event.step}`,
         status: "ok",
         durationMs: event.durationMs,
         attempt,
-        templateId: template.id,
-        workspaceId: context.workspace.id,
         extraMetadata: event.metadata,
         createdAt: event.capturedAt,
       })
@@ -4291,20 +4279,12 @@ async function finalizeCellProvisioning(
       const durationMs = Date.now() - startedAt;
       phaseDurations[phase] = durationMs;
 
-      await insertCellTimingEvent({
-        database,
-        log: context.log,
-        cellId: state.cellId,
-        cellName: state.createdCell?.name ?? body.name,
-        workflow: "create",
-        runId: state.timingRunId,
+      await insertProvisionTimingEvent(context, {
         step: phase,
         status: phaseStatus,
         durationMs,
         attempt,
         error: phaseError,
-        templateId: template.id,
-        workspaceId: context.workspace.id,
       });
 
       context.log.info?.(
@@ -4324,9 +4304,6 @@ async function finalizeCellProvisioning(
     context,
     runPhase,
     attempt,
-    database,
-    template,
-    body,
   });
 
   if (!state.createdCell) {
@@ -4354,20 +4331,12 @@ async function finalizeCellProvisioning(
     );
   } finally {
     for (const event of ensureServicesTimingEvents) {
-      await insertCellTimingEvent({
-        database,
-        log: context.log,
-        cellId: state.cellId,
-        cellName: state.createdCell?.name ?? body.name,
-        workflow: "create",
-        runId: state.timingRunId,
+      await insertProvisionTimingEvent(context, {
         step: `ensure_services:${event.step}`,
         status: event.status,
         durationMs: event.durationMs,
         attempt,
         error: event.error ?? null,
-        templateId: template.id,
-        workspaceId: context.workspace.id,
         extraMetadata: event.metadata,
         createdAt: event.capturedAt,
       });
@@ -4444,19 +4413,11 @@ async function finalizeCellProvisioning(
     "Cell provisioning completed"
   );
 
-  await insertCellTimingEvent({
-    database,
-    log: context.log,
-    cellId: state.cellId,
-    cellName: state.createdCell?.name ?? body.name,
-    workflow: "create",
-    runId: state.timingRunId,
+  await insertProvisionTimingEvent(context, {
     step: "total",
     status: "ok",
     durationMs: Date.now() - provisioningStartedAt,
     attempt,
-    templateId: template.id,
-    workspaceId: context.workspace.id,
     extraMetadata: {
       phaseDurations,
     },
@@ -4545,20 +4506,12 @@ async function recoverCellCreationFailure(
   const payload = buildCellCreationErrorPayload(error);
   const preserveResources = shouldPreserveCellWorkspace(error);
 
-  await insertCellTimingEvent({
-    database: context.database,
-    log: context.log,
-    cellId: context.state.cellId,
-    cellName: context.state.createdCell?.name ?? context.body.name,
-    workflow: "create",
-    runId: context.state.timingRunId,
+  await insertProvisionTimingEvent(context, {
     step: "create_request_failure",
     status: "error",
     durationMs: 0,
     error: payload.message,
     attempt: context.state.provisioningState?.attemptCount ?? null,
-    templateId: context.template.id,
-    workspaceId: context.workspace.id,
   });
 
   if (
@@ -4959,9 +4912,9 @@ function dispatchInitialPromptInBackground(args: {
 }
 
 type LoggerLike = {
-  info?: (obj: Record<string, unknown>, message?: string) => void;
-  warn: (obj: Record<string, unknown>, message?: string) => void;
-  error: (obj: Record<string, unknown> | Error, message?: string) => void;
+  info?(obj: Record<string, unknown>, message?: string): void;
+  warn(obj: Record<string, unknown>, message?: string): void;
+  error(obj: Record<string, unknown> | Error, message?: string): void;
 };
 
 const backgroundProvisioningLogger: LoggerLike = {
@@ -5137,9 +5090,7 @@ const reviveTemplateSetupError = (
   }
 
   if (
-    error &&
-    typeof error === "object" &&
-    (error as { name?: string }).name === "TemplateSetupError" &&
+    isNamedErrorLike(error, "TemplateSetupError") &&
     typeof (error as { command?: unknown }).command === "string" &&
     typeof (error as { templateId?: unknown }).templateId === "string" &&
     typeof (error as { workspacePath?: unknown }).workspacePath === "string"
@@ -5167,6 +5118,13 @@ const reviveTemplateSetupError = (
   return null;
 };
 
+const isNamedErrorLike = (error: unknown, name: string) =>
+  Boolean(
+    error &&
+      typeof error === "object" &&
+      (error as { name?: string }).name === name
+  );
+
 const reviveCommandExecutionError = (
   error: unknown
 ): CommandExecutionError | null => {
@@ -5175,9 +5133,7 @@ const reviveCommandExecutionError = (
   }
 
   if (
-    error &&
-    typeof error === "object" &&
-    (error as { name?: string }).name === "CommandExecutionError" &&
+    isNamedErrorLike(error, "CommandExecutionError") &&
     typeof (error as { command?: unknown }).command === "string" &&
     typeof (error as { cwd?: unknown }).cwd === "string" &&
     typeof (error as { exitCode?: unknown }).exitCode === "number"
@@ -5364,13 +5320,11 @@ async function loadCellById(
   database: DatabaseClient,
   cellId: string
 ): Promise<typeof cells.$inferSelect | null> {
-  const [cell] = await database
-    .select()
-    .from(cells)
-    .where(eq(cells.id, cellId))
-    .limit(1);
-
-  return cell ?? null;
+  return (
+    (await database.query.cells.findFirst({
+      where: eq(cells.id, cellId),
+    })) ?? null
+  );
 }
 
 function resolveSetupRetryCell(

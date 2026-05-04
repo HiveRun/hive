@@ -78,7 +78,7 @@ const REFLINK_UNSUPPORTED_ERROR_CODES = new Set([
 type CopyOptions = NonNullable<Parameters<typeof cp>[2]>;
 type CopyStrategy = "reflink" | "copy";
 
-export type WorktreeInfo = {
+type WorktreeInfo = {
   id: string;
   path: string;
   branch: string;
@@ -110,7 +110,7 @@ export type WorktreeLocation = {
   baseCommit: string;
 };
 
-export type WorktreeErrorKind =
+type WorktreeErrorKind =
   | "git"
   | "filesystem"
   | "conflict"
@@ -133,17 +133,6 @@ export function describeWorktreeError(error: WorktreeManagerError) {
     context: error.context,
     cause: error.cause?.message ?? null,
   };
-}
-
-export function worktreeErrorToError(error: WorktreeManagerError): Error {
-  const contextSuffix = error.context
-    ? ` ${JSON.stringify(error.context)}`
-    : "";
-  const formatted = new Error(`${error.message}${contextSuffix}`);
-  if (error.cause) {
-    (formatted as Error & { cause?: Error }).cause = error.cause;
-  }
-  return formatted;
 }
 
 function isWorktreeManagerError(value: unknown): value is WorktreeManagerError {
@@ -200,13 +189,7 @@ export type WorktreeManager = {
   removeWorktree(cellId: string): Promise<void>;
 };
 
-export type AsyncWorktreeManager = {
-  createWorktree(
-    cellId: string,
-    options?: WorktreeCreateOptions
-  ): Promise<WorktreeLocation>;
-  removeWorktree(cellId: string): Promise<void>;
-};
+export type AsyncWorktreeManager = WorktreeManager;
 
 export const toAsyncWorktreeManager = (
   manager: WorktreeManager
@@ -357,11 +340,7 @@ export function createWorktreeManager(
       stderr: "pipe",
     });
 
-    const stdoutPromise = new Response(child.stdout).text();
-    const stderrPromise = new Response(child.stderr).text();
-    const exitCode = await child.exited;
-    const stdout = (await stdoutPromise).trim();
-    const stderr = (await stderrPromise).trim();
+    const { exitCode, stderr, stdout } = await readSpawnOutput(child);
 
     if (exitCode !== 0) {
       const command = args.join(" ");
@@ -378,6 +357,28 @@ export function createWorktreeManager(
     }
 
     return stdout;
+  }
+
+  type PipedSpawnOutput = {
+    exited: Promise<number>;
+    stderr: ReadableStream<Uint8Array>;
+    stdout: ReadableStream<Uint8Array>;
+  };
+
+  async function readSpawnOutput(child: PipedSpawnOutput): Promise<{
+    exitCode: number;
+    stderr: string;
+    stdout: string;
+  }> {
+    const stdoutText = new Response(child.stdout).text();
+    const stderrText = new Response(child.stderr).text();
+    const exitCode = await child.exited;
+
+    return {
+      exitCode,
+      stderr: (await stderrText).trim(),
+      stdout: (await stdoutText).trim(),
+    };
   }
 
   async function ensureCellsDir(): Promise<void> {
@@ -681,11 +682,7 @@ export function createWorktreeManager(
       },
     });
 
-    const stdoutPromise = new Response(child.stdout).text();
-    const stderrPromise = new Response(child.stderr).text();
-    const exitCode = await child.exited;
-    const stdout = await stdoutPromise;
-    const stderr = await stderrPromise;
+    const { exitCode, stderr, stdout } = await readSpawnOutput(child);
 
     if (exitCode !== 0) {
       logWarn(
@@ -695,7 +692,7 @@ export function createWorktreeManager(
       return await listPathsWithGlobInProcess(args);
     }
 
-    if (!stdout.trim()) {
+    if (!stdout) {
       return [];
     }
 
@@ -1531,7 +1528,7 @@ export function createWorktreeManager(
   };
 }
 
-export type WorktreeManagerInitError = {
+type WorktreeManagerInitError = {
   readonly _tag: "WorktreeManagerInitError";
   readonly workspacePath: string;
   readonly cause: unknown;

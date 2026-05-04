@@ -11,6 +11,24 @@ import {
 
 const HIVE_PORT = 3000;
 const UNIX_HIVE_PID = 401_148;
+const HEALTHCHECK = "http://localhost:3000/health";
+
+const waitForHiveHealth = (
+  fetchImpl: (url: string, init?: RequestInit) => Promise<Response>
+) =>
+  waitForServerReady({
+    fetchImpl,
+    intervalMs: 5,
+    timeoutMs: 50,
+    url: HEALTHCHECK,
+    isReadyResponse: async (response) =>
+      isHiveHealthResponse(await response.json()),
+  });
+
+const createReadyFileFixture = () => {
+  const directory = mkdtempSync(join(tmpdir(), "hive-daemon-ready-"));
+  return { directory, file: join(directory, "daemon-ready") };
+};
 
 describe("daemon runtime utilities", () => {
   it("waits for a Hive-shaped health response", async () => {
@@ -19,38 +37,30 @@ describe("daemon runtime utilities", () => {
       .mockResolvedValueOnce(Response.json({ status: "ok" }))
       .mockResolvedValueOnce(Response.json({ service: "hive", status: "ok" }));
 
-    const ready = await waitForServerReady({
-      fetchImpl: fetchMock,
-      intervalMs: 5,
-      isReadyResponse: async (response) =>
-        isHiveHealthResponse(await response.json()),
-      timeoutMs: 50,
-      url: "http://localhost:3000/health",
-    });
+    const ready = await waitForHiveHealth(fetchMock);
 
     expect(ready).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("accepts a ready file that matches the launched process", async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "hive-daemon-ready-"));
-    const readyFilePath = join(tempDir, "daemon-ready");
+    const readyFile = createReadyFileFixture();
 
     setTimeout(() => {
-      writeFileSync(readyFilePath, "1234\n", "utf8");
+      writeFileSync(readyFile.file, "1234\n", "utf8");
     }, 10);
 
     const ready = await waitForServerReady({
       fetchImpl: vi.fn().mockRejectedValue(new Error("unreachable")),
       intervalMs: 5,
       readyFileContents: "1234",
-      readyFilePath,
+      readyFilePath: readyFile.file,
       timeoutMs: 50,
-      url: "http://localhost:3000/health",
+      url: HEALTHCHECK,
     });
 
     expect(ready).toBe(true);
-    rmSync(tempDir, { recursive: true, force: true });
+    rmSync(readyFile.directory, { recursive: true, force: true });
   });
 
   it("finds unix listening process ids from lsof output", () => {

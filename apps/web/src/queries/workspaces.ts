@@ -9,7 +9,7 @@ export type WorkspaceSummary = {
   lastOpenedAt?: string | null;
 };
 
-export type WorkspaceListResponse = {
+type WorkspaceListResponse = {
   workspaces: WorkspaceSummary[];
   activeWorkspaceId?: string | null;
 };
@@ -20,23 +20,23 @@ export type WorkspaceBrowseEntry = {
   hasConfig: boolean;
 };
 
-export type WorkspaceBrowseResponse = {
+type WorkspaceBrowseResponse = {
   path: string;
   parentPath?: string | null;
   directories: WorkspaceBrowseEntry[];
 };
 
-export type RegisterWorkspaceInput = {
+type RegisterWorkspaceInput = {
   path: string;
   label?: string;
   activate?: boolean;
 };
 
-export type ActivateWorkspaceInput = {
+type ActivateWorkspaceInput = {
   id: string;
 };
 
-export type RemoveWorkspaceInput = {
+type RemoveWorkspaceInput = {
   id: string;
 };
 

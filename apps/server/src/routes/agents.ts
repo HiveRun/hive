@@ -1,6 +1,7 @@
 import { Elysia, sse, t } from "elysia";
 import { subscribeAgentEvents } from "../agents/events";
 import { loadOpencodeModelPreferences } from "../agents/opencode-config";
+import { normalizeProviderDefaults } from "../agents/provider-defaults";
 import {
   fetchAgentMessages,
   fetchAgentSession,
@@ -14,6 +15,7 @@ import {
   AgentMessageListResponseSchema,
   AgentSessionByCellResponseSchema,
 } from "../schema/api";
+import { createAsyncEventIterator } from "../services/async-iterator";
 import { createWorkspaceContextPlugin } from "../workspaces/plugin";
 
 const HTTP_STATUS = {
@@ -22,7 +24,54 @@ const HTTP_STATUS = {
   BAD_REQUEST: 400,
 } as const;
 
+const ProviderModelResponseSchema = t.Object({
+  id: t.String(),
+  name: t.String(),
+  provider: t.String(),
+  variants: t.Array(t.Object({ id: t.String() })),
+});
+
+const ProviderSummaryResponseSchema = t.Object({
+  id: t.String(),
+  name: t.Optional(t.String()),
+});
+
+const ProviderCatalogResponseSchema = t.Object({
+  models: t.Array(ProviderModelResponseSchema),
+  defaults: t.Record(t.String(), t.String()),
+  stickyVariants: t.Record(t.String(), t.String()),
+  providers: t.Array(ProviderSummaryResponseSchema),
+});
+
+const ProviderCatalogErrorResponseSchema = t.Composite([
+  ProviderCatalogResponseSchema,
+  t.Object({ message: t.String() }),
+]);
+
+const MessageResponseSchema = t.Object({ message: t.String() });
+
+const ProviderCatalogRouteResponseSchema = {
+  200: ProviderCatalogResponseSchema,
+  400: ProviderCatalogErrorResponseSchema,
+} as const;
+
+const SessionRouteErrorResponseSchema = {
+  400: MessageResponseSchema,
+  404: MessageResponseSchema,
+} as const;
+
+const MODEL_LIST_ERROR_MESSAGE = "Failed to list models";
+
 type AgentRouteError = { status: number; message: string };
+
+type ResponseStatusSetter = { status?: number | string };
+
+type InputRequiredProperties = {
+  id?: string;
+  sessionID?: string;
+  permission?: string;
+  questions?: Array<{ question?: string }>;
+};
 
 type WorkspaceContextFetcher = (workspaceId?: string) => Promise<{
   workspace: { path: string };
@@ -143,6 +192,35 @@ const asAgentRouteError = (
   return mapAgentError(fallbackMessage, error);
 };
 
+const setResponseStatus = (set: ResponseStatusSetter, status: number) => {
+  set.status = status;
+};
+
+const providerRouteErrorPayload = (
+  set: ResponseStatusSetter,
+  error: unknown
+) => {
+  const routeError = asAgentRouteError(error, MODEL_LIST_ERROR_MESSAGE);
+  setResponseStatus(set, routeError.status);
+  return emptyProviderPayload(routeError.message);
+};
+
+const messageRouteErrorPayload = (
+  set: ResponseStatusSetter,
+  error: unknown,
+  fallbackMessage: string
+) => {
+  const routeError = asAgentRouteError(error, fallbackMessage);
+  setResponseStatus(set, routeError.status);
+  return { message: routeError.message };
+};
+
+const fetchSessionProviderPayload = async (id: string) => {
+  const session = await fetchSessionOrThrow(id, MODEL_LIST_ERROR_MESSAGE);
+  const catalog = await fetchProviderCatalogForWorkspace(session.workspacePath);
+  return await providerPayload(catalog);
+};
+
 export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .use(createWorkspaceContextPlugin())
   .get(
@@ -153,123 +231,33 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
           getWorkspaceContext,
           query.workspaceId
         );
-        set.status = HTTP_STATUS.OK;
+        setResponseStatus(set, HTTP_STATUS.OK);
         return await providerPayload(catalog);
       } catch (error) {
-        const routeError = asAgentRouteError(error, "Failed to list models");
-        set.status = routeError.status;
-        return emptyProviderPayload(routeError.message);
+        return providerRouteErrorPayload(set, error);
       }
     },
     {
       query: t.Object({
         workspaceId: t.Optional(t.String()),
       }),
-      response: {
-        200: t.Object({
-          models: t.Array(
-            t.Object({
-              id: t.String(),
-              name: t.String(),
-              provider: t.String(),
-              variants: t.Array(
-                t.Object({
-                  id: t.String(),
-                })
-              ),
-            })
-          ),
-          defaults: t.Record(t.String(), t.String()),
-          stickyVariants: t.Record(t.String(), t.String()),
-          providers: t.Array(
-            t.Object({ id: t.String(), name: t.Optional(t.String()) })
-          ),
-        }),
-        400: t.Object({
-          models: t.Array(
-            t.Object({
-              id: t.String(),
-              name: t.String(),
-              provider: t.String(),
-              variants: t.Array(
-                t.Object({
-                  id: t.String(),
-                })
-              ),
-            })
-          ),
-          defaults: t.Record(t.String(), t.String()),
-          stickyVariants: t.Record(t.String(), t.String()),
-          providers: t.Array(
-            t.Object({ id: t.String(), name: t.Optional(t.String()) })
-          ),
-          message: t.String(),
-        }),
-      },
+      response: ProviderCatalogRouteResponseSchema,
     }
   )
   .get(
     "/sessions/:id/models",
     async ({ params, set }) => {
       try {
-        const session = await fetchSessionOrThrow(
-          params.id,
-          "Failed to list models"
-        );
-        const catalog = await fetchProviderCatalogForWorkspace(
-          session.workspacePath
-        );
-        set.status = HTTP_STATUS.OK;
-        return await providerPayload(catalog);
+        const payload = await fetchSessionProviderPayload(params.id);
+        setResponseStatus(set, HTTP_STATUS.OK);
+        return payload;
       } catch (error) {
-        const routeError = asAgentRouteError(error, "Failed to list models");
-        set.status = routeError.status;
-        return emptyProviderPayload(routeError.message);
+        return providerRouteErrorPayload(set, error);
       }
     },
     {
       params: t.Object({ id: t.String() }),
-      response: {
-        200: t.Object({
-          models: t.Array(
-            t.Object({
-              id: t.String(),
-              name: t.String(),
-              provider: t.String(),
-              variants: t.Array(
-                t.Object({
-                  id: t.String(),
-                })
-              ),
-            })
-          ),
-          defaults: t.Record(t.String(), t.String()),
-          stickyVariants: t.Record(t.String(), t.String()),
-          providers: t.Array(
-            t.Object({ id: t.String(), name: t.Optional(t.String()) })
-          ),
-        }),
-        400: t.Object({
-          models: t.Array(
-            t.Object({
-              id: t.String(),
-              name: t.String(),
-              provider: t.String(),
-              variants: t.Array(
-                t.Object({
-                  id: t.String(),
-                })
-              ),
-            })
-          ),
-          defaults: t.Record(t.String(), t.String()),
-          stickyVariants: t.Record(t.String(), t.String()),
-          providers: t.Array(
-            t.Object({ id: t.String(), name: t.Optional(t.String()) })
-          ),
-          message: t.String(),
-        }),
-      },
+      response: ProviderCatalogRouteResponseSchema,
     }
   )
   .get(
@@ -281,20 +269,17 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
           "Failed to fetch session"
         );
         const messages = await fetchAgentMessages(session.id);
-        set.status = HTTP_STATUS.OK;
+        setResponseStatus(set, HTTP_STATUS.OK);
         return { messages };
       } catch (error) {
-        const routeError = asAgentRouteError(error, "Failed to fetch messages");
-        set.status = routeError.status;
-        return { message: routeError.message };
+        return messageRouteErrorPayload(set, error, "Failed to fetch messages");
       }
     },
     {
       params: t.Object({ id: t.String() }),
       response: {
         200: AgentMessageListResponseSchema,
-        400: t.Object({ message: t.String() }),
-        404: t.Object({ message: t.String() }),
+        ...SessionRouteErrorResponseSchema,
       },
     }
   )
@@ -303,20 +288,17 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     async ({ params, set }) => {
       try {
         const session = await fetchAgentSessionForCell(params.cellId);
-        set.status = HTTP_STATUS.OK;
+        setResponseStatus(set, HTTP_STATUS.OK);
         return { session: session ? formatSession(session) : null };
       } catch (error) {
-        const routeError = asAgentRouteError(error, "Failed to fetch session");
-        set.status = routeError.status;
-        return { message: routeError.message };
+        return messageRouteErrorPayload(set, error, "Failed to fetch session");
       }
     },
     {
       params: t.Object({ cellId: t.String() }),
       response: {
         200: AgentSessionByCellResponseSchema,
-        400: t.Object({ message: t.String() }),
-        404: t.Object({ message: t.String() }),
+        ...SessionRouteErrorResponseSchema,
       },
     }
   )
@@ -330,12 +312,10 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
           "Failed to fetch session"
         );
       } catch (error) {
-        const routeError = asAgentRouteError(error, "Failed to fetch session");
-        set.status = routeError.status;
-        return { message: routeError.message };
+        return messageRouteErrorPayload(set, error, "Failed to fetch session");
       }
 
-      set.status = HTTP_STATUS.OK;
+      setResponseStatus(set, HTTP_STATUS.OK);
 
       const { iterator } = createEventIterator(params.id, request.signal);
 
@@ -360,8 +340,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
       params: t.Object({ id: t.String() }),
       response: {
         200: t.Any(),
-        400: t.Object({ message: t.String() }),
-        404: t.Object({ message: t.String() }),
+        ...SessionRouteErrorResponseSchema,
       },
     }
   );
@@ -422,22 +401,6 @@ function flattenProviderModels(providers: ProviderEntry[]) {
   return models;
 }
 
-function normalizeProviderDefaults(value: unknown): Record<string, string> {
-  if (!value || typeof value !== "object") {
-    return {};
-  }
-
-  const defaults: Record<string, string> = {};
-  for (const [providerId, modelId] of Object.entries(
-    value as Record<string, unknown>
-  )) {
-    if (typeof modelId === "string") {
-      defaults[providerId] = modelId;
-    }
-  }
-  return defaults;
-}
-
 function formatInitialModeSseEvent(session: AgentSessionRecord) {
   if (!(session.startMode && session.currentMode)) {
     return null;
@@ -455,53 +418,46 @@ function formatInitialModeSseEvent(session: AgentSessionRecord) {
   });
 }
 
+function formatInputRequiredPropertiesSseEvent(
+  properties: InputRequiredProperties | undefined,
+  title: string,
+  kind: "permission" | "question"
+) {
+  return sse({
+    event: "input_required",
+    data: {
+      sessionId: properties?.sessionID ?? "",
+      permissionId: properties?.id ?? "",
+      title,
+      kind,
+    },
+  });
+}
+
 function formatInputRequiredSseEvent(event: AgentStreamEvent) {
   const rawType = (event as { type: string }).type;
 
   if (rawType === "permission.asked" || rawType === "permission.updated") {
-    const properties = (
-      event as {
-        properties?: {
-          sessionID?: string;
-          id?: string;
-          permission?: string;
-        };
-      }
-    ).properties;
-    return sse({
-      event: "input_required",
-      data: {
-        sessionId: properties?.sessionID ?? "",
-        permissionId: properties?.id ?? "",
-        title: properties?.permission ?? "Input required",
-        kind: "permission",
-      },
-    });
+    const properties = (event as { properties?: InputRequiredProperties })
+      .properties;
+    return formatInputRequiredPropertiesSseEvent(
+      properties,
+      properties?.permission ?? "Input required",
+      "permission"
+    );
   }
 
   if (rawType === "question.asked") {
-    const properties = (
-      event as {
-        properties?: {
-          id?: string;
-          sessionID?: string;
-          questions?: Array<{ question?: string }>;
-        };
-      }
-    ).properties;
+    const properties = (event as { properties?: InputRequiredProperties })
+      .properties;
     const firstQuestion = properties?.questions?.[0]?.question;
-    return sse({
-      event: "input_required",
-      data: {
-        sessionId: properties?.sessionID ?? "",
-        permissionId: properties?.id ?? "",
-        title:
-          typeof firstQuestion === "string" && firstQuestion.length > 0
-            ? firstQuestion
-            : "Input required",
-        kind: "question",
-      },
-    });
+    return formatInputRequiredPropertiesSseEvent(
+      properties,
+      typeof firstQuestion === "string" && firstQuestion.length > 0
+        ? firstQuestion
+        : "Input required",
+      "question"
+    );
   }
 
   return null;
@@ -559,63 +515,8 @@ function formatSession(session: AgentSessionRecord) {
 }
 
 function createEventIterator(sessionId: string, signal: AbortSignal) {
-  const queue: AgentStreamEvent[] = [];
-  let resolver: ((value: AgentStreamEvent | null) => void) | null = null;
-  let finished = false;
-
-  const unsubscribe = subscribeAgentEvents(sessionId, (event) => {
-    if (resolver) {
-      resolver(event);
-      resolver = null;
-    } else {
-      queue.push(event);
-    }
-  });
-
-  const cleanup = () => {
-    if (finished) {
-      return;
-    }
-    finished = true;
-    unsubscribe();
-    signal.removeEventListener("abort", cleanup);
-    if (resolver) {
-      resolver(null);
-      resolver = null;
-    }
-  };
-
-  signal.addEventListener("abort", cleanup, { once: true });
-
-  const iterator = {
-    async *[Symbol.asyncIterator]() {
-      try {
-        while (!finished) {
-          if (queue.length) {
-            const queued = queue.shift();
-            if (queued) {
-              yield queued;
-              continue;
-            }
-          }
-
-          const nextEvent = await new Promise<AgentStreamEvent | null>(
-            (resolve) => {
-              resolver = resolve;
-            }
-          );
-
-          if (!nextEvent) {
-            break;
-          }
-
-          yield nextEvent;
-        }
-      } finally {
-        cleanup();
-      }
-    },
-  } satisfies AsyncIterable<AgentStreamEvent>;
-
-  return { iterator, cleanup };
+  return createAsyncEventIterator<AgentStreamEvent>(
+    (handler) => subscribeAgentEvents(sessionId, handler),
+    signal
+  );
 }

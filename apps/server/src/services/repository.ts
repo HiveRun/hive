@@ -1,5 +1,4 @@
 import { and, eq } from "drizzle-orm";
-import { db } from "../db";
 import type { Cell } from "../schema/cells";
 import { cells } from "../schema/cells";
 import type { CellService } from "../schema/services";
@@ -122,31 +121,3 @@ function mapRow(row: { cell_services: CellService; cells: Cell }): ServiceRow {
     cell: row.cells,
   };
 }
-
-export type ServiceRepositoryService = {
-  readonly findByCellAndName: (
-    cellId: string,
-    serviceName: string
-  ) => Promise<CellService | undefined>;
-  readonly insertService: (
-    cell: Cell,
-    data: Omit<CellService, "id" | "cellId" | "createdAt" | "updatedAt"> & {
-      id: string;
-    }
-  ) => Promise<CellService | undefined>;
-  readonly updateService: (
-    serviceId: string,
-    update: Partial<CellService>
-  ) => Promise<CellService | undefined>;
-  readonly markError: (serviceId: string, message: string) => Promise<void>;
-  readonly fetchServiceRowById: (
-    serviceId: string
-  ) => Promise<ServiceRow | undefined>;
-  readonly fetchServicesForCell: (cellId: string) => Promise<ServiceRow[]>;
-  readonly fetchAllServices: () => Promise<ServiceRow[]>;
-};
-
-export const serviceRepository: ServiceRepositoryService =
-  createServiceRepository(db, () => new Date());
-
-export const ServiceRepository = serviceRepository;

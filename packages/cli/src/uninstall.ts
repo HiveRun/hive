@@ -10,12 +10,13 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
+import { pushUnique } from "./collections";
 
 export type StopRuntimeResult = "failed" | "not_running" | "stopped";
 
 type Logger = (message: string) => void;
 
-export type UninstallHiveOptions = {
+type UninstallHiveOptions = {
   confirm: boolean;
   preserveData?: boolean;
   hiveHome: string;
@@ -152,12 +153,6 @@ const removeHiveHomeDirectory = ({
   return 0;
 };
 
-const pushUnique = (values: string[], value: string) => {
-  if (!values.includes(value)) {
-    values.push(value);
-  }
-};
-
 const collectManagedBinDirs = (
   hiveHome: string,
   hiveBinDir: string | undefined
@@ -206,15 +201,21 @@ const removeManagedBinaries = (
   }
 };
 
-const removeLinesFromFile = (filePath: string, lineToRemove: string) => {
+const readTextFileIfPresent = (filePath: string) => {
   if (!existsSync(filePath)) {
-    return false;
+    return null;
   }
 
-  let source = "";
   try {
-    source = readFileSync(filePath, "utf8");
+    return readFileSync(filePath, "utf8");
   } catch {
+    return null;
+  }
+};
+
+const removeLinesFromFile = (filePath: string, lineToRemove: string) => {
+  const source = readTextFileIfPresent(filePath);
+  if (source === null) {
     return false;
   }
 
@@ -252,14 +253,8 @@ const removeLinesFromFile = (filePath: string, lineToRemove: string) => {
 };
 
 const removeManagedCompletionScript = (filePath: string) => {
-  if (!existsSync(filePath)) {
-    return false;
-  }
-
-  let source = "";
-  try {
-    source = readFileSync(filePath, "utf8");
-  } catch {
+  const source = readTextFileIfPresent(filePath);
+  if (source === null) {
     return false;
   }
 

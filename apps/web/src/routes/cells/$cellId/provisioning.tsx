@@ -1,33 +1,34 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { toast } from "sonner";
 import { ProvisioningChecklistPanel } from "@/components/provisioning-checklist-panel";
 import { Button } from "@/components/ui/button";
 import { useCellStatusStream } from "@/hooks/use-cell-status-stream";
 import { useCellTimingStream } from "@/hooks/use-cell-timing-stream";
-import { buildProvisioningChecklist } from "@/lib/provisioning-checklist";
 import {
   resolveProvisioningStatusMessage,
   shouldPollProvisioningStatus,
   shouldStreamProvisioningTimeline,
 } from "@/lib/provisioning-route-state";
 import { cellMutations, cellQueries } from "@/queries/cells";
+import {
+  ignoreRoutePromiseRejection,
+  prefetchCellDetail,
+  useCreateProvisioningChecklist,
+} from "../../-shared/cell-route";
 
 const PROVISIONING_POLL_MS = 1500;
-const ignorePromiseRejection = (_error: unknown) => null;
 
 export const Route = createFileRoute("/cells/$cellId/provisioning")({
   loader: ({ context: { queryClient }, params }) => {
-    queryClient
-      .prefetchQuery(cellQueries.detail(params.cellId))
-      .catch(ignorePromiseRejection);
+    prefetchCellDetail(queryClient, params.cellId);
     queryClient
       .prefetchQuery(
         cellQueries.timings(params.cellId, { workflow: "create", limit: 300 })
       )
-      .catch(ignorePromiseRejection);
+      .catch(ignoreRoutePromiseRejection);
     return null;
   },
   component: CellProvisioningRoute,
@@ -54,29 +55,15 @@ function CellProvisioningRoute() {
     ...cellQueries.timings(cellId, { workflow: "create", limit: 300 }),
     enabled: Boolean(cellQuery.data),
   });
-  const activeRunId = timingsQuery.data?.runs[0]?.runId;
-  const activeRunSteps = useMemo(() => {
-    if (!activeRunId) {
-      return [];
-    }
-
-    return (timingsQuery.data?.steps ?? []).filter(
-      (step) => step.runId === activeRunId
-    );
-  }, [activeRunId, timingsQuery.data?.steps]);
-  const checklist = useMemo(
-    () =>
-      buildProvisioningChecklist({
-        cellStatus: cellQuery.data?.status,
-        steps: activeRunSteps,
-      }),
-    [activeRunSteps, cellQuery.data?.status]
-  );
+  const checklist = useCreateProvisioningChecklist({
+    cellStatus: cellQuery.data?.status,
+    timings: timingsQuery.data,
+  });
   const retryMutation = useMutation({
     mutationFn: cellMutations.retrySetup.mutationFn,
     onSuccess: () => {
       toast.success("Provisioning retry started");
-      cellQuery.refetch().then(undefined, ignorePromiseRejection);
+      cellQuery.refetch().then(undefined, ignoreRoutePromiseRejection);
     },
     onError: (error) => {
       const message =
@@ -94,7 +81,7 @@ function CellProvisioningRoute() {
       to: "/cells/$cellId/chat",
       params: { cellId },
       replace: true,
-    }).then(undefined, ignorePromiseRejection);
+    }).then(undefined, ignoreRoutePromiseRejection);
   }, [cellId, cellQuery.data?.status, navigate]);
 
   const cell = cellQuery.data;

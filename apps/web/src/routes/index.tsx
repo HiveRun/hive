@@ -3,6 +3,11 @@ import { createFileRoute, Link, useRouterState } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  formatBytes,
+  formatCpuPercent,
+  serviceStatusTone,
+} from "@/lib/resource-format";
 import { cn } from "@/lib/utils";
 import {
   type CellServiceSummary,
@@ -11,10 +16,6 @@ import {
 } from "@/queries/cells";
 import { type TemplatesResponse, templateQueries } from "@/queries/templates";
 import { workspaceQueries } from "@/queries/workspaces";
-
-const BYTES_PER_UNIT = 1024;
-const ZERO_DECIMALS = 0;
-const ONE_DECIMAL = 1;
 
 type CellSummary = Awaited<
   ReturnType<ReturnType<typeof cellQueries.all>["queryFn"]>
@@ -368,42 +369,12 @@ function ServicesSummary({
   );
 }
 
-function formatCpuPercent(value: number): string {
-  return `${value.toFixed(1)}%`;
-}
-
-function formatBytes(value: number): string {
-  if (!Number.isFinite(value) || value < 0) {
-    return "Unavailable";
-  }
-
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let size = value;
-  let unitIndex = 0;
-
-  while (size >= BYTES_PER_UNIT && unitIndex < units.length - 1) {
-    size /= BYTES_PER_UNIT;
-    unitIndex += 1;
-  }
-
-  return `${size.toFixed(unitIndex === 0 ? ZERO_DECIMALS : ONE_DECIMAL)} ${units[unitIndex]}`;
-}
-
 function ServiceStatusPill({ status }: { status: string }) {
-  const normalized = status.toLowerCase();
-  const toneMap: Record<string, string> = {
-    running: "bg-primary/15 text-primary",
-    starting: "bg-secondary/20 text-secondary-foreground",
-    pending: "bg-muted text-muted-foreground",
-    needs_resume: "bg-secondary/20 text-secondary-foreground",
-    error: "bg-destructive/10 text-destructive",
-    stopped: "bg-border/20 text-muted-foreground",
-  };
   return (
     <span
       className={cn(
         "rounded-sm px-2 py-0.5 text-[10px] uppercase tracking-[0.3em]",
-        toneMap[normalized] ?? "bg-muted text-muted-foreground"
+        serviceStatusTone(status)
       )}
     >
       {status}
