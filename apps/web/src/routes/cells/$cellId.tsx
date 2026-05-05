@@ -273,20 +273,22 @@ export function CellLayout() {
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 lg:p-6">
         <section className="w-full shrink-0 border-2 border-border bg-card px-4 py-3 text-muted-foreground text-sm">
           <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-col gap-1">
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+              <div className="flex min-w-0 flex-1 basis-64 flex-col gap-1">
                 {titlePrefix ? (
-                  <div className="flex items-center gap-2 text-[0.65rem] text-muted-foreground uppercase tracking-[0.22em]">
-                    <span>Workspace</span>
-                    <span className="h-3 w-px bg-border/60" />
-                    <span className="text-primary">{titlePrefix}</span>
+                  <div className="flex min-w-0 max-w-full items-center gap-2 text-[0.65rem] text-muted-foreground uppercase tracking-[0.22em]">
+                    <span className="shrink-0">Workspace</span>
+                    <span className="h-3 w-px shrink-0 bg-border/60" />
+                    <span className="min-w-0 truncate text-primary">
+                      {titlePrefix}
+                    </span>
                   </div>
                 ) : null}
-                <h1 className="font-semibold text-2xl text-foreground tracking-wide">
+                <h1 className="line-clamp-2 min-w-0 break-words font-semibold text-2xl text-foreground tracking-wide">
                   {cell.name}
                 </h1>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex w-full min-w-0 max-w-full flex-wrap gap-2 md:w-auto md:shrink-0">
                 {navItems.map((item) => (
                   <Link key={item.routeId} params={{ cellId }} to={item.to}>
                     <Button

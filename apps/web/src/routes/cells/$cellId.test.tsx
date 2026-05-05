@@ -17,6 +17,15 @@ const prefetchQueryMock = vi.fn().mockResolvedValue(undefined);
 const CHAR_COUNT_LABEL_PATTERN = /chars/i;
 const LONG_DESCRIPTION =
   "This is a long cell description that should stay compact in the header until the user asks to see more details from the full prompt text shown in this view.";
+const LONG_CELL_NAME_TOKEN = LONG_DESCRIPTION.split(" ").join("");
+const LONG_CELL_NAME = `Long description cell ${LONG_CELL_NAME_TOKEN}${LONG_CELL_NAME_TOKEN}`;
+const DEFAULT_WORKSPACE_LABEL = "Workspace One";
+const LONG_WORKSPACE_LABEL = `Workspace ${LONG_CELL_NAME_TOKEN}${LONG_CELL_NAME_TOKEN}`;
+const COLLAPSED_DESCRIPTION_CLASSES = [
+  "line-clamp-4",
+  "break-words",
+  "whitespace-pre-wrap",
+];
 let currentRouteId = "/cells/$cellId/chat";
 
 type MockCell = {
@@ -28,6 +37,7 @@ type MockCell = {
 };
 
 let currentCell: MockCell;
+let currentWorkspaceLabel = DEFAULT_WORKSPACE_LABEL;
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (...args: unknown[]) => useQueryMock(...args),
@@ -65,10 +75,26 @@ const buildCell = (overrides: Partial<MockCell> = {}): MockCell => ({
   ...overrides,
 });
 
+const buildWorkspaceQueryResult = () => {
+  const result = workspaceListQueryResult();
+  return {
+    ...result,
+    data: {
+      ...result.data,
+      workspaces: result.data.workspaces.map((workspace) =>
+        workspace.id === "workspace-1"
+          ? { ...workspace, label: currentWorkspaceLabel }
+          : workspace
+      ),
+    },
+  };
+};
+
 describe("Cell detail route", () => {
   beforeEach(() => {
     currentCell = buildCell();
     currentRouteId = "/cells/$cellId/chat";
+    currentWorkspaceLabel = DEFAULT_WORKSPACE_LABEL;
     useQueryMock.mockReset();
     prefetchQueryMock.mockClear();
 
@@ -79,7 +105,7 @@ describe("Cell detail route", () => {
       const [scope, key, subKey] = options.queryKey;
 
       if (scope === "workspaces") {
-        return workspaceListQueryResult();
+        return buildWorkspaceQueryResult();
       }
 
       if (scope === "cells" && subKey === "timings") {
@@ -117,9 +143,50 @@ describe("Cell detail route", () => {
     expect(screen.getByText("Prompt")).toBeInTheDocument();
     expect(screen.getByText(CHAR_COUNT_LABEL_PATTERN)).toBeInTheDocument();
     expect(expandButton).toBeInTheDocument();
-    expect(description).toHaveClass("line-clamp-4");
-    expect(description).toHaveClass("break-words");
-    expect(description).toHaveClass("whitespace-pre-wrap");
+    expect(description).toHaveClass(...COLLAPSED_DESCRIPTION_CLASSES);
+  });
+
+  it("keeps long cell names from crowding navigation controls", async () => {
+    currentRouteId = "/cells/$cellId/setup";
+    currentWorkspaceLabel = LONG_WORKSPACE_LABEL;
+    currentCell = buildCell({
+      description: LONG_DESCRIPTION,
+      name: LONG_CELL_NAME,
+    });
+
+    render(<CellLayout />);
+
+    const title = await screen.findByRole("heading", {
+      name: currentCell.name,
+    });
+    const titleColumn = title.parentElement;
+    const titleRow = titleColumn?.parentElement;
+    const description = screen.getByText(currentCell.description);
+    const workspaceLabel = screen.getByText(currentWorkspaceLabel);
+    const navGroup = screen
+      .getByRole("button", { name: "Chat" })
+      .closest("div");
+
+    expect(title).toHaveClass("min-w-0");
+    expect(title).toHaveClass("break-words");
+    expect(title).toHaveClass("line-clamp-2");
+    expect(titleColumn).toHaveClass("min-w-0");
+    expect(titleColumn).toHaveClass("flex-1");
+    expect(titleColumn).toHaveClass("basis-64");
+    expect(titleRow).toHaveClass("min-w-0");
+    expect(workspaceLabel).toHaveClass("truncate");
+    expect(workspaceLabel.parentElement).toHaveClass("min-w-0");
+    expect(workspaceLabel.parentElement).toHaveClass("max-w-full");
+    expect(navGroup).toHaveClass("w-full");
+    expect(navGroup).toHaveClass("max-w-full");
+    expect(navGroup).toHaveClass("md:w-auto");
+    expect(navGroup).toHaveClass("md:shrink-0");
+    expect(screen.getByRole("button", { name: "Info" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Services" })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
+    expect(description).toHaveClass(...COLLAPSED_DESCRIPTION_CLASSES);
   });
 
   it("expands and reclamps the description when toggled", async () => {
