@@ -41,8 +41,15 @@ type ServiceQueryState = {
   isError: boolean;
 };
 
+type AgentSessionQueryState = {
+  session?: AgentSession | null;
+  isLoading: boolean;
+  isError: boolean;
+};
+
 type HomeCell = {
   agentSession?: AgentSession | null;
+  agentSessionState?: AgentSessionQueryState;
   cell: CellSummary;
   servicesState?: ServiceQueryState;
   templateLabel?: string;
@@ -184,11 +191,15 @@ function HiveOverview() {
     ),
   });
 
-  const agentSessionByCellId = new Map<string, AgentSession | null>();
+  const agentSessionStateByCellId = new Map<string, AgentSessionQueryState>();
   allCells.forEach((cell, index) => {
     const query = agentSessionQueries[index];
-    if (query?.data !== undefined) {
-      agentSessionByCellId.set(cell.id, query.data);
+    if (query) {
+      agentSessionStateByCellId.set(cell.id, {
+        session: query.data,
+        isLoading: query.isLoading,
+        isError: query.isError,
+      });
     }
   });
 
@@ -225,7 +236,7 @@ function HiveOverview() {
   }
 
   const homeCells = buildHomeCells({
-    agentSessionByCellId,
+    agentSessionStateByCellId,
     cellsByWorkspace,
     servicesByCellId,
     templatesByWorkspace,
@@ -264,7 +275,6 @@ function HiveOverview() {
 
         {hasCells ? (
           <RunningCellsPanel
-            homeCells={homeCells}
             pathname={routerState.pathname}
             runningCells={runningCells}
           />
@@ -304,6 +314,7 @@ function readyCellQuery<TData>(
     enabled: cell.status === "ready",
     queryFn: config.queryFn,
     queryKey: config.queryKey,
+    refetchInterval: READY_CELL_STALE_TIME_MS,
     staleTime: READY_CELL_STALE_TIME_MS,
   };
 }
@@ -316,6 +327,44 @@ function SwarmHero({
   serviceStats: ServiceStats;
 }) {
   const runtimeSegments = getRuntimeSegments(runtimeSummary);
+  const heroMetrics = [
+    runtimeSummary.working > 0
+      ? {
+          icon: <PlayCircle className="size-4" />,
+          label: "Working sessions",
+          value: runtimeSummary.working.toString(),
+        }
+      : null,
+    runtimeSummary.idle > 0
+      ? {
+          icon: <PauseCircle className="size-4" />,
+          label: "Idle / waiting",
+          value: runtimeSummary.idle.toString(),
+        }
+      : null,
+    runtimeSummary.error > 0
+      ? {
+          icon: <Activity className="size-4" />,
+          label: "Runtime errors",
+          value: runtimeSummary.error.toString(),
+        }
+      : null,
+    serviceStats.error > 0
+      ? {
+          icon: <Activity className="size-4" />,
+          label: "Service errors",
+          value: serviceStats.error.toString(),
+        }
+      : null,
+    serviceStats.peakCpuPercent > 0
+      ? {
+          icon: <Cpu className="size-4" />,
+          label: "Peak CPU",
+          value: formatCpuPercent(serviceStats.peakCpuPercent),
+        }
+      : null,
+  ].filter((metric) => metric !== null);
+
   return (
     <section className="relative overflow-hidden border-2 border-border bg-card shadow-[6px_6px_0_rgba(0,0,0,0.38)]">
       <div
@@ -342,28 +391,18 @@ function SwarmHero({
             </p>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricSlab
-              icon={<PlayCircle className="size-4" />}
-              label="Working sessions"
-              value={runtimeSummary.working.toString()}
-            />
-            <MetricSlab
-              icon={<PauseCircle className="size-4" />}
-              label="Idle / waiting"
-              value={runtimeSummary.idle.toString()}
-            />
-            <MetricSlab
-              icon={<Activity className="size-4" />}
-              label="Service errors"
-              value={serviceStats.error.toString()}
-            />
-            <MetricSlab
-              icon={<Cpu className="size-4" />}
-              label="Peak CPU"
-              value={formatCpuPercent(serviceStats.peakCpuPercent)}
-            />
-          </div>
+          {heroMetrics.length > 0 ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {heroMetrics.map((metric) => (
+                <MetricSlab
+                  icon={metric.icon}
+                  key={metric.label}
+                  label={metric.label}
+                  value={metric.value}
+                />
+              ))}
+            </div>
+          ) : null}
         </div>
 
         <div className="relative min-h-[260px] border-2 border-border bg-background/70 p-4 shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.22)]">
@@ -387,22 +426,24 @@ function SwarmHero({
                 total={runtimeSummary.total}
               />
               <div className="grid gap-3 sm:grid-cols-2">
-                {runtimeSegments.map((segment) => (
-                  <div
-                    className="border-2 border-border bg-card/70 p-3"
-                    key={segment.label}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-[0.26em]">
-                        {segment.label}
-                      </span>
-                      <span className="font-mono font-semibold text-foreground text-xl">
-                        {segment.count}
-                      </span>
+                {runtimeSegments
+                  .filter((segment) => segment.count > 0)
+                  .map((segment) => (
+                    <div
+                      className="border-2 border-border bg-card/70 p-3"
+                      key={segment.label}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[10px] text-muted-foreground uppercase tracking-[0.26em]">
+                          {segment.label}
+                        </span>
+                        <span className="font-mono font-semibold text-foreground text-xl">
+                          {segment.count}
+                        </span>
+                      </div>
+                      <div className={cn("mt-3 h-1.5", segment.className)} />
                     </div>
-                    <div className={cn("mt-3 h-1.5", segment.className)} />
-                  </div>
-                ))}
+                  ))}
               </div>
               <p className="font-mono text-[11px] text-muted-foreground uppercase tracking-[0.18em]">
                 Idle means awaiting input, completed, or ready with no active
@@ -467,13 +508,15 @@ function RuntimeStatusPanel({
       <CardContent className="space-y-5 p-5">
         <StackedStateBar segments={segments} total={runtimeSummary.total} />
         <div className="grid grid-cols-2 gap-3">
-          {segments.map((segment) => (
-            <SignalStat
-              key={segment.label}
-              label={segment.label}
-              value={segment.count.toString()}
-            />
-          ))}
+          {segments
+            .filter((segment) => segment.count > 0)
+            .map((segment) => (
+              <SignalStat
+                key={segment.label}
+                label={segment.label}
+                value={segment.count.toString()}
+              />
+            ))}
         </div>
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
@@ -574,6 +617,12 @@ function getRuntimeRow(homeCell: HomeCell) {
 
 function getRuntimeReason(homeCell: HomeCell, state: RuntimeState) {
   const session = homeCell.agentSession;
+  if (homeCell.agentSessionState?.isError) {
+    return "agent session unavailable";
+  }
+  if (homeCell.agentSessionState?.isLoading) {
+    return "loading agent session";
+  }
   if (!session) {
     return homeCell.cell.status === "ready"
       ? "ready, no agent session"
@@ -740,7 +789,21 @@ function ServiceSignalStrip({ serviceStats }: { serviceStats: ServiceStats }) {
       count: serviceStats.error,
       label: "Error",
     },
-  ];
+  ].filter((segment) => segment.count > 0);
+  const resourceStats = [
+    serviceStats.peakCpuPercent > 0
+      ? {
+          label: "Peak CPU",
+          value: formatCpuPercent(serviceStats.peakCpuPercent),
+        }
+      : null,
+    serviceStats.totalRssBytes > 0
+      ? {
+          label: "Total RSS",
+          value: formatBytes(serviceStats.totalRssBytes),
+        }
+      : null,
+  ].filter((stat) => stat !== null);
 
   return (
     <Card className="border-2 border-border bg-card shadow-[5px_5px_0_rgba(0,0,0,0.35)]">
@@ -753,16 +816,17 @@ function ServiceSignalStrip({ serviceStats }: { serviceStats: ServiceStats }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-5 p-5">
-        <div className="grid grid-cols-2 gap-3">
-          <SignalStat
-            label="Peak CPU"
-            value={formatCpuPercent(serviceStats.peakCpuPercent)}
-          />
-          <SignalStat
-            label="Total RSS"
-            value={formatBytes(serviceStats.totalRssBytes)}
-          />
-        </div>
+        {resourceStats.length > 0 ? (
+          <div className="grid grid-cols-2 gap-3">
+            {resourceStats.map((stat) => (
+              <SignalStat
+                key={stat.label}
+                label={stat.label}
+                value={stat.value}
+              />
+            ))}
+          </div>
+        ) : null}
         <div className="space-y-3">
           {segments.map((segment) => (
             <div className="space-y-1" key={segment.label}>
@@ -803,15 +867,17 @@ function SignalStat({ label, value }: { label: string; value: string }) {
 }
 
 function RunningCellsPanel({
-  homeCells,
   pathname,
   runningCells,
 }: {
-  homeCells: HomeCell[];
   pathname: string;
   runningCells: HomeCell[];
 }) {
-  const cellsToShow = runningCells.length > 0 ? runningCells : homeCells;
+  if (runningCells.length === 0) {
+    return null;
+  }
+
+  const cellsToShow = runningCells;
 
   return (
     <Card className="border-2 border-border bg-card shadow-[5px_5px_0_rgba(0,0,0,0.35)]">
@@ -831,75 +897,67 @@ function RunningCellsPanel({
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        {homeCells.length === 0 ? (
-          <div className="p-5">
-            <EmptyTelemetry message="No cells available yet." />
-          </div>
-        ) : (
-          <div className="divide-y divide-border/70">
-            {cellsToShow.map((homeCell) => {
-              const isActive = pathname.startsWith(
-                `/cells/${homeCell.cell.id}`
-              );
-              return (
-                <div
-                  className={cn(
-                    "grid grid-cols-1 gap-4 p-4 md:grid-cols-[minmax(220px,1.15fr)_minmax(180px,0.7fr)_minmax(260px,1fr)]",
-                    isActive &&
-                      "bg-primary/5 shadow-[inset_4px_0_0_0_hsl(var(--primary))]"
-                  )}
-                  key={homeCell.cell.id}
-                >
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <Link
-                        className="min-w-0 truncate font-semibold text-foreground hover:text-primary"
-                        params={{ cellId: homeCell.cell.id }}
-                        search={{ workspaceId: homeCell.cell.workspaceId }}
-                        to="/cells/$cellId/chat"
-                      >
-                        {homeCell.cell.name}
-                      </Link>
-                      <StatusBadge status={homeCell.cell.status} />
-                      {homeCell.agentSession ? (
-                        <AgentModeBadge session={homeCell.agentSession} />
-                      ) : null}
-                    </div>
-                    <p className="mt-2 line-clamp-2 text-muted-foreground text-sm">
-                      {homeCell.cell.description || "No description."}
-                    </p>
+        <div className="divide-y divide-border/70">
+          {cellsToShow.map((homeCell) => {
+            const isActive = pathname.startsWith(`/cells/${homeCell.cell.id}`);
+            return (
+              <div
+                className={cn(
+                  "grid grid-cols-1 gap-4 p-4 md:grid-cols-[minmax(220px,1.15fr)_minmax(180px,0.7fr)_minmax(260px,1fr)]",
+                  isActive &&
+                    "bg-primary/5 shadow-[inset_4px_0_0_0_hsl(var(--primary))]"
+                )}
+                key={homeCell.cell.id}
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Link
+                      className="min-w-0 truncate font-semibold text-foreground hover:text-primary"
+                      params={{ cellId: homeCell.cell.id }}
+                      search={{ workspaceId: homeCell.cell.workspaceId }}
+                      to="/cells/$cellId/chat"
+                    >
+                      {homeCell.cell.name}
+                    </Link>
+                    <StatusBadge status={homeCell.cell.status} />
+                    {homeCell.agentSession ? (
+                      <AgentModeBadge session={homeCell.agentSession} />
+                    ) : null}
                   </div>
+                  <p className="mt-2 line-clamp-2 text-muted-foreground text-sm">
+                    {homeCell.cell.description || "No description."}
+                  </p>
+                </div>
 
-                  <div className="min-w-0">
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-                      Workspace / template
-                    </div>
-                    <div className="mt-2 truncate font-mono text-[11px] text-foreground">
-                      {homeCell.workspace.label}
-                    </div>
-                    <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
-                      {homeCell.templateLabel ?? "No template"}
-                    </div>
+                <div className="min-w-0">
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                    Workspace / template
                   </div>
-
-                  <div className="min-w-0">
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
-                      Services
-                    </div>
-                    <div className="mt-2">
-                      <ServicesSummary
-                        cellStatus={homeCell.cell.status}
-                        services={homeCell.servicesState?.services}
-                        servicesError={homeCell.servicesState?.isError}
-                        servicesLoading={homeCell.servicesState?.isLoading}
-                      />
-                    </div>
+                  <div className="mt-2 truncate font-mono text-[11px] text-foreground">
+                    {homeCell.workspace.label}
+                  </div>
+                  <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
+                    {homeCell.templateLabel ?? "No template"}
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
+
+                <div className="min-w-0">
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                    Services
+                  </div>
+                  <div className="mt-2">
+                    <ServicesSummary
+                      cellStatus={homeCell.cell.status}
+                      services={homeCell.servicesState?.services}
+                      servicesError={homeCell.servicesState?.isError}
+                      servicesLoading={homeCell.servicesState?.isLoading}
+                    />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </CardContent>
     </Card>
   );
@@ -930,13 +988,13 @@ function EmptyTelemetry({ message }: { message: string }) {
 }
 
 function buildHomeCells({
-  agentSessionByCellId,
+  agentSessionStateByCellId,
   cellsByWorkspace,
   servicesByCellId,
   templatesByWorkspace,
   workspaces,
 }: {
-  agentSessionByCellId: Map<string, AgentSession | null>;
+  agentSessionStateByCellId: Map<string, AgentSessionQueryState>;
   cellsByWorkspace: Map<string, CellSummary[]>;
   servicesByCellId: Map<string, ServiceQueryState>;
   templatesByWorkspace: Map<string, TemplatesResponse>;
@@ -944,16 +1002,20 @@ function buildHomeCells({
 }): HomeCell[] {
   return workspaces.flatMap((workspace) => {
     const cells = cellsByWorkspace.get(workspace.id) ?? [];
-    return cells.map((cell) => ({
-      agentSession: agentSessionByCellId.get(cell.id),
-      cell,
-      servicesState: servicesByCellId.get(cell.id),
-      templateLabel: getTemplateLabel(
-        templatesByWorkspace.get(workspace.id),
-        cell.templateId
-      ),
-      workspace,
-    }));
+    return cells.map((cell) => {
+      const agentSessionState = agentSessionStateByCellId.get(cell.id);
+      return {
+        agentSession: agentSessionState?.session,
+        agentSessionState,
+        cell,
+        servicesState: servicesByCellId.get(cell.id),
+        templateLabel: getTemplateLabel(
+          templatesByWorkspace.get(workspace.id),
+          cell.templateId
+        ),
+        workspace,
+      };
+    });
   });
 }
 
@@ -1062,6 +1124,7 @@ function getRuntimeSummary(homeCells: HomeCell[]): RuntimeSummary {
 function getRuntimeState(homeCell: HomeCell): RuntimeState {
   if (
     homeCell.cell.status === "error" ||
+    homeCell.agentSessionState?.isError ||
     homeCell.agentSession?.status === "error"
   ) {
     return "error";
