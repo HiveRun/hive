@@ -1,5 +1,9 @@
+import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import { useState } from "react";
 
+import { CellCreationSheet } from "@/components/cell-creation-sheet";
+import { CommandMenu } from "@/components/command-menu";
 import { MainSidebar } from "@/components/main-sidebar";
 import { ModeToggle } from "@/components/mode-toggle";
 import {
@@ -7,15 +11,72 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import { WorkspaceManagementSheet } from "@/components/workspace-management-sheet";
+import { workspaceQueries } from "@/queries/workspaces";
 
 type MainLayoutProps = {
   children: ReactNode;
 };
 
 export function MainLayout({ children }: MainLayoutProps) {
+  const workspaceQuery = useQuery(workspaceQueries.list());
+  const [workspaceSheetOpen, setWorkspaceSheetOpen] = useState(false);
+  const [workspaceSheetSection, setWorkspaceSheetSection] = useState<
+    "register" | "list"
+  >("list");
+  const [cellCreateWorkspaceId, setCellCreateWorkspaceId] = useState<
+    string | null
+  >(null);
+  const workspaces = workspaceQuery.data?.workspaces ?? [];
+  const activeWorkspaceId = workspaceQuery.data?.activeWorkspaceId ?? undefined;
+  const selectedCreateWorkspace = workspaces.find(
+    (workspace) => workspace.id === cellCreateWorkspaceId
+  );
+
+  const openWorkspaceSheet = (section: "register" | "list") => {
+    setWorkspaceSheetSection(section);
+    setWorkspaceSheetOpen(true);
+  };
+
+  const openCellCreation = (workspaceId?: string) => {
+    const targetWorkspaceId =
+      workspaceId ?? activeWorkspaceId ?? workspaces[0]?.id;
+    if (!targetWorkspaceId) {
+      openWorkspaceSheet("register");
+      return;
+    }
+    setCellCreateWorkspaceId(targetWorkspaceId);
+  };
+
   return (
     <SidebarProvider className="relative h-full bg-background text-foreground transition-colors">
-      <MainSidebar />
+      <CommandMenu
+        onCreateCell={openCellCreation}
+        onManageWorkspaces={() => openWorkspaceSheet("list")}
+        onRegisterWorkspace={() => openWorkspaceSheet("register")}
+      />
+      {cellCreateWorkspaceId ? (
+        <CellCreationSheet
+          onOpenChange={(open) => {
+            if (!open) {
+              setCellCreateWorkspaceId(null);
+            }
+          }}
+          open={cellCreateWorkspaceId !== null}
+          workspaceId={cellCreateWorkspaceId}
+          workspaceLabel={selectedCreateWorkspace?.label}
+        />
+      ) : null}
+      <WorkspaceManagementSheet
+        defaultRegisterOpen={workspaceSheetSection === "register"}
+        onOpenChange={setWorkspaceSheetOpen}
+        open={workspaceSheetOpen}
+        section={workspaceSheetSection}
+      />
+      <MainSidebar
+        onManageWorkspaces={() => openWorkspaceSheet("list")}
+        onRegisterWorkspace={() => openWorkspaceSheet("register")}
+      />
       <SidebarInset className="relative flex h-full flex-col overflow-hidden bg-transparent">
         <div
           aria-hidden
