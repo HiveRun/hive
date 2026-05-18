@@ -701,6 +701,15 @@ const resolveCellId = (
   return typeof cellId === "string" ? cellId : undefined;
 };
 
+const resolveWorkspaceIdFromSearch = (search: unknown) => {
+  if (!search || typeof search !== "object") {
+    return;
+  }
+
+  const workspaceId = (search as { workspaceId?: unknown }).workspaceId;
+  return typeof workspaceId === "string" ? workspaceId : undefined;
+};
+
 const buildNavigationCommands = (args: {
   fallbackWorkspaceId?: string;
   navigate: NavigateFunction;
@@ -709,6 +718,7 @@ const buildNavigationCommands = (args: {
   onRegisterWorkspace: () => void;
   pathname: string;
   runCommand: RunCommand;
+  workspaceContextId?: string;
   workspaces: WorkspaceSummary[];
 }): CommandAction[] => {
   const {
@@ -719,6 +729,7 @@ const buildNavigationCommands = (args: {
     onRegisterWorkspace,
     pathname,
     runCommand,
+    workspaceContextId,
     workspaces,
   } = args;
   const isCellCreationRoute = pathname === "/cells/new";
@@ -751,7 +762,18 @@ const buildNavigationCommands = (args: {
       basePriority: PROVISIONING_COMMAND.basePriority,
       current: pathname.startsWith("/linear"),
       keywords: ["issues", "tickets", "integration"],
-      onSelect: () => runCommand(() => navigate({ to: "/linear" })),
+      onSelect: () =>
+        runCommand(() => {
+          if (workspaceContextId) {
+            navigate({
+              to: "/linear",
+              search: { workspaceId: workspaceContextId },
+            });
+            return;
+          }
+
+          navigate({ to: "/linear" });
+        }),
     },
     {
       id: "action-create-cell",
@@ -939,15 +961,15 @@ const buildCellPageCommands = (
 };
 
 const buildWorkspaceCommands = (args: {
-  activeWorkspaceId?: string;
+  workspaceContextId?: string;
   onCreateCell: (workspaceId?: string) => void;
   runCommand: RunCommand;
   workspaces: WorkspaceSummary[];
 }): CommandAction[] => {
-  const { activeWorkspaceId, onCreateCell, runCommand, workspaces } = args;
+  const { workspaceContextId, onCreateCell, runCommand, workspaces } = args;
 
   return workspaces.map((workspace) => {
-    const isActiveWorkspace = workspace.id === activeWorkspaceId;
+    const isActiveWorkspace = workspace.id === workspaceContextId;
     return {
       id: `create-cell-${workspace.id}`,
       label: `Create Cell in ${workspace.label}`,
@@ -1039,6 +1061,7 @@ export function CommandMenu({
         routeId: match.routeId,
       })),
       pathname: state.location.pathname,
+      search: state.location.search,
     }),
   });
   const activeRouteId = routerState.matches.at(-1)?.routeId;
@@ -1047,7 +1070,9 @@ export function CommandMenu({
   const workspaceQuery = useQuery(workspaceQueries.list());
   const workspaces = workspaceQuery.data?.workspaces ?? [];
   const activeWorkspaceId = workspaceQuery.data?.activeWorkspaceId ?? undefined;
-  const fallbackWorkspaceId = activeWorkspaceId ?? workspaces[0]?.id;
+  const workspaceIdFromSearch = resolveWorkspaceIdFromSearch(
+    routerState.search
+  );
 
   const cellListQueries = useQueries({
     queries: workspaces.map((workspace) =>
@@ -1061,6 +1086,9 @@ export function CommandMenu({
   const currentCell = allCells.find(
     ({ cell }) => cell.id === currentCellId
   )?.cell;
+  const workspaceContextId =
+    workspaceIdFromSearch ?? currentCell?.workspaceId ?? activeWorkspaceId;
+  const fallbackWorkspaceId = workspaceContextId ?? workspaces[0]?.id;
 
   const runCommand = useCallback(
     (action: () => void) => {
@@ -1082,6 +1110,7 @@ export function CommandMenu({
           onRegisterWorkspace,
           pathname: routerState.pathname,
           runCommand,
+          workspaceContextId,
           workspaces,
         }),
         ...buildCellTabCommands({
@@ -1104,7 +1133,7 @@ export function CommandMenu({
           runCommand,
         }),
         ...buildWorkspaceCommands({
-          activeWorkspaceId,
+          workspaceContextId: fallbackWorkspaceId,
           onCreateCell,
           runCommand,
           workspaces,
@@ -1113,7 +1142,6 @@ export function CommandMenu({
       ]),
     [
       activeRouteId,
-      activeWorkspaceId,
       allCells,
       currentCell,
       currentCellId,
@@ -1126,6 +1154,7 @@ export function CommandMenu({
       runCommand,
       setTheme,
       theme,
+      workspaceContextId,
       workspaces,
     ]
   );
@@ -1221,6 +1250,31 @@ export function CommandMenu({
     },
     [selectedCommandValue, setSelection, visibleCommands]
   );
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const selectedCommandIsVisible = visibleCommands.some(
+      (command) => getCommandValue(command) === selectedCommandValue
+    );
+    if (selectedCommandIsVisible || visibleCommands.length === 0) {
+      return;
+    }
+
+    const bestCommandValue = selectBestCommand(searchValue);
+    if (bestCommandValue && bestCommandValue !== selectedCommandValue) {
+      setSelection(bestCommandValue);
+    }
+  }, [
+    open,
+    searchValue,
+    selectBestCommand,
+    selectedCommandValue,
+    setSelection,
+    visibleCommands,
+  ]);
 
   const drillIntoSelectedCommand = useCallback(() => {
     if (!selectedCommand?.children) {

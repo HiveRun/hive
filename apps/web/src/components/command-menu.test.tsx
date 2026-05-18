@@ -20,6 +20,7 @@ const useQueriesMock = vi.fn();
 let currentPathname = "/";
 let currentRouteId = "/";
 let currentCellId: string | undefined;
+let currentSearch: { workspaceId?: string } = {};
 let currentTheme: "dark" | "light" | "system" = "system";
 
 const workspaces = [
@@ -62,6 +63,8 @@ const cellsByWorkspace = new Map([
   ],
 ]);
 
+let queriedCellsByWorkspace = cellsByWorkspace;
+
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (...args: unknown[]) => useQueryMock(...args),
   useQueries: (...args: unknown[]) => useQueriesMock(...args),
@@ -71,7 +74,7 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
   useRouterState: (options?: {
     select?: (state: {
-      location: { pathname: string };
+      location: { pathname: string; search: { workspaceId?: string } };
       matches: Array<{ params: { cellId?: string }; routeId: string }>;
     }) => unknown;
   }) => {
@@ -82,7 +85,10 @@ vi.mock("@tanstack/react-router", () => ({
           { params: { cellId: currentCellId }, routeId: currentRouteId },
         ]
       : [{ params: {}, routeId: currentRouteId }];
-    const state = { location: { pathname: currentPathname }, matches };
+    const state = {
+      location: { pathname: currentPathname, search: currentSearch },
+      matches,
+    };
     return options?.select ? options.select(state) : state;
   },
 }));
@@ -137,6 +143,24 @@ const pressCommandInputKey = (key: string) =>
     { key }
   );
 
+const clickLinearCommand = () =>
+  fireEvent.click(screen.getByTestId("command-menu-item-nav-linear"));
+
+const linearNavigationForWorkspace = (workspaceId: string) => ({
+  to: "/linear",
+  search: { workspaceId },
+});
+
+const cellNavigation = (args: {
+  cellId: string;
+  to: string;
+  workspaceId: string;
+}) => ({
+  to: args.to,
+  params: { cellId: args.cellId },
+  search: { workspaceId: args.workspaceId },
+});
+
 describe("CommandMenu", () => {
   beforeEach(() => {
     installResizeObserverMock();
@@ -145,7 +169,9 @@ describe("CommandMenu", () => {
     currentPathname = "/";
     currentRouteId = "/";
     currentCellId = undefined;
+    currentSearch = {};
     currentTheme = "system";
+    queriedCellsByWorkspace = cellsByWorkspace;
     navigateMock.mockReset();
     setThemeMock.mockReset();
     useQueryMock.mockReset();
@@ -160,7 +186,7 @@ describe("CommandMenu", () => {
       queries.map((query) => {
         const queryKey = (query as { queryKey: unknown[] }).queryKey;
         const workspaceId = queryKey[1] as string;
-        return { data: cellsByWorkspace.get(workspaceId) ?? [] };
+        return { data: queriedCellsByWorkspace.get(workspaceId) ?? [] };
       })
     );
   });
@@ -265,10 +291,24 @@ describe("CommandMenu", () => {
     renderCommandMenu();
     openCommandMenu();
 
-    fireEvent.click(screen.getByTestId("command-menu-item-nav-linear"));
+    clickLinearCommand();
 
-    expect(navigateMock).toHaveBeenCalledWith({ to: "/linear" });
+    expect(navigateMock).toHaveBeenCalledWith(
+      linearNavigationForWorkspace("workspace-1")
+    );
     expect(screen.queryByTestId("command-menu")).not.toBeInTheDocument();
+  });
+
+  it("preserves workspace search context when navigating to Linear", () => {
+    currentSearch = { workspaceId: "workspace-2" };
+    renderCommandMenu();
+    openCommandMenu();
+
+    clickLinearCommand();
+
+    expect(navigateMock).toHaveBeenCalledWith(
+      linearNavigationForWorkspace("workspace-2")
+    );
   });
 
   it("runs safe action callbacks and closes the menu", () => {
@@ -287,6 +327,16 @@ describe("CommandMenu", () => {
 
     expect(callbacks.onRegisterWorkspace).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId("command-menu")).not.toBeInTheDocument();
+  });
+
+  it("uses workspace search context for Create Cell", () => {
+    currentSearch = { workspaceId: "workspace-2" };
+    const callbacks = renderCommandMenu();
+    openCommandMenu();
+
+    fireEvent.click(screen.getByTestId("command-menu-item-action-create-cell"));
+
+    expect(callbacks.onCreateCell).toHaveBeenCalledWith("workspace-2");
   });
 
   it("marks the active top-level route as current", () => {
@@ -440,11 +490,13 @@ describe("CommandMenu", () => {
 
     pressCommandInputKey("Enter");
 
-    expect(navigateMock).toHaveBeenCalledWith({
-      to: "/cells/$cellId/chat",
-      params: { cellId: "cell-1" },
-      search: { workspaceId: "workspace-1" },
-    });
+    expect(navigateMock).toHaveBeenCalledWith(
+      cellNavigation({
+        cellId: "cell-1",
+        to: "/cells/$cellId/chat",
+        workspaceId: "workspace-1",
+      })
+    );
   });
 
   it("moves selection to the best command when searching", async () => {
@@ -464,6 +516,50 @@ describe("CommandMenu", () => {
     expect(
       screen.queryByTestId("command-menu-item-nav-overview")
     ).not.toBeInTheDocument();
+  });
+
+  it("selects the best command when async cell results arrive", async () => {
+    queriedCellsByWorkspace = new Map([
+      ["workspace-1", []],
+      ["workspace-2", []],
+    ]);
+    const callbacks = {
+      onCreateCell: vi.fn(),
+      onManageWorkspaces: vi.fn(),
+      onRegisterWorkspace: vi.fn(),
+    };
+    const { rerender } = render(<CommandMenu {...callbacks} />);
+    openCommandMenu();
+    const input = screen.getByPlaceholderText(
+      "Search commands, cells, workspaces..."
+    );
+
+    fireEvent.input(input, { target: { value: "shell command" } });
+    expect(
+      screen.queryByTestId(
+        "command-menu-item-cell-page-cell-1-/cells/$cellId/terminal"
+      )
+    ).not.toBeInTheDocument();
+
+    queriedCellsByWorkspace = cellsByWorkspace;
+    rerender(<CommandMenu {...callbacks} />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId(
+          "command-menu-item-cell-page-cell-1-/cells/$cellId/terminal"
+        )
+      ).toHaveAttribute("aria-selected", "true");
+    });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(navigateMock).toHaveBeenCalledWith(
+      cellNavigation({
+        cellId: "cell-1",
+        to: "/cells/$cellId/terminal",
+        workspaceId: "workspace-1",
+      })
+    );
   });
 
   it("supports fuzzy command search", () => {
@@ -538,11 +634,13 @@ describe("CommandMenu", () => {
     ).toHaveAttribute("aria-selected", "true");
     fireEvent.keyDown(input, { key: "Enter" });
 
-    expect(navigateMock).toHaveBeenCalledWith({
-      to: "/cells/$cellId/provisioning",
-      params: { cellId: "cell-2" },
-      search: { workspaceId: "workspace-2" },
-    });
+    expect(navigateMock).toHaveBeenCalledWith(
+      cellNavigation({
+        cellId: "cell-2",
+        to: "/cells/$cellId/provisioning",
+        workspaceId: "workspace-2",
+      })
+    );
   });
 
   it("shows specific cell page commands from non-cell routes while searching", () => {
@@ -561,11 +659,13 @@ describe("CommandMenu", () => {
 
     fireEvent.click(screen.getByText("Command Cell: Terminal"));
 
-    expect(navigateMock).toHaveBeenCalledWith({
-      to: "/cells/$cellId/terminal",
-      params: { cellId: "cell-1" },
-      search: { workspaceId: "workspace-1" },
-    });
+    expect(navigateMock.mock.lastCall?.[0]).toEqual(
+      cellNavigation({
+        cellId: "cell-1",
+        to: "/cells/$cellId/terminal",
+        workspaceId: "workspace-1",
+      })
+    );
   });
 
   it("matches cell page commands when search terms are reversed", () => {
