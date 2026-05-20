@@ -6,6 +6,7 @@ type TerminalClipboardOptions = {
   canPaste?: boolean;
   onCopySuccess?: () => void;
   onCopyError?: () => void;
+  onKeyDown?: (event: KeyboardEvent) => boolean | undefined;
 };
 
 const isCtrlShiftClipboardModifier = (event: KeyboardEvent) =>
@@ -15,6 +16,9 @@ const isExplicitCopyShortcut = (event: KeyboardEvent) => {
   const key = event.key.toLowerCase();
   return key === "c" && isCtrlShiftClipboardModifier(event);
 };
+
+export const formatBracketedPaste = (text: string) =>
+  `\x1b[200~${text.replace(/\r\n/g, "\n").replace(/\r/g, "\n")}\x1b[201~`;
 
 export async function copyTextToClipboard(text: string): Promise<void> {
   if (!navigator?.clipboard?.writeText) {
@@ -61,7 +65,7 @@ export function registerTerminalClipboard(options: TerminalClipboardOptions) {
       return;
     }
 
-    terminal.paste(text);
+    terminal.paste(formatBracketedPaste(text));
   };
 
   terminal.attachCustomKeyEventHandler((event) => {
@@ -75,6 +79,12 @@ export function registerTerminalClipboard(options: TerminalClipboardOptions) {
         return true;
       }
 
+      event.preventDefault();
+      event.stopPropagation();
+      return false;
+    }
+
+    if (options.onKeyDown?.(event) === false) {
       event.preventDefault();
       event.stopPropagation();
       return false;

@@ -33,6 +33,7 @@ import {
 } from "@/components/terminal-view-shared";
 import { Button } from "@/components/ui/button";
 import { copyTextToClipboard } from "@/lib/terminal-clipboard";
+import { getModifiedEnterInput } from "@/lib/terminal-keyboard";
 import { toWebSocketUrl } from "@/lib/terminal-websocket";
 
 type ConnectionState = "connecting" | "online" | "disconnected" | "exited";
@@ -48,6 +49,7 @@ const KEY_SCROLLED_TERMINAL_SCROLLBACK_LINES = 0;
 const STARTUP_VISIBLE_BUFFER_LIMIT = 8192;
 const STARTUP_FALLBACK_VISIBLE_LENGTH = 48;
 const STARTUP_FALLBACK_READY_DELAY_MS = 2500;
+const CHAT_TERMINAL_ENDPOINT_BASE = "chat/terminal";
 const ASCII_NULL_CODE = 0x00;
 const ASCII_ESCAPE_CODE = 0x1b;
 const ASCII_BELL_CODE = 0x07;
@@ -578,6 +580,18 @@ export function CellTerminal({
       const cleanupClipboard = registerTerminalSelectionCopy({
         terminal,
         container: containerRef.current,
+        onKeyDown:
+          endpointBase === CHAT_TERMINAL_ENDPOINT_BASE
+            ? (event) => {
+                const input = getModifiedEnterInput(event);
+                if (!input) {
+                  return true;
+                }
+
+                sendInput(input);
+                return false;
+              }
+            : undefined,
       });
 
       window.addEventListener("resize", scheduleResizeSync);
@@ -621,6 +635,7 @@ export function CellTerminal({
     };
   }, [
     buildTerminalSocketEndpoint,
+    endpointBase,
     resetInputBatcher,
     scheduleResizeSync,
     sendInput,
