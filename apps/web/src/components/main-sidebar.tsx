@@ -1,7 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { Home, Minus, Plus, Ticket } from "lucide-react";
 import type { ComponentProps } from "react";
-import { useState } from "react";
 import { ModeToggle } from "@/components/mode-toggle";
 import {
   Sidebar,
@@ -22,21 +21,24 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { WorkspaceManagementSheet } from "@/components/workspace-management-sheet";
 import { WorkspaceTree } from "@/components/workspace-tree";
 import { cn } from "@/lib/utils";
 
-type MainSidebarProps = ComponentProps<typeof Sidebar>;
+type MainSidebarProps = ComponentProps<typeof Sidebar> & {
+  onManageWorkspaces: () => void;
+  onRegisterWorkspace: () => void;
+};
 
-export function MainSidebar({ className, ...props }: MainSidebarProps) {
+export function MainSidebar({
+  className,
+  onManageWorkspaces,
+  onRegisterWorkspace,
+  ...props
+}: MainSidebarProps) {
   const { state: sidebarState } = useSidebar();
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
-  const [workspaceSheetOpen, setWorkspaceSheetOpen] = useState(false);
-  const [sheetDefaultSection, setSheetDefaultSection] = useState<
-    "register" | "list"
-  >("list");
 
   return (
     <Sidebar
@@ -113,10 +115,7 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
               <button
                 aria-label="Register new workspace"
                 className="flex size-5 items-center justify-center rounded border-2 border-border transition-none hover:border-primary hover:bg-primary/10"
-                onClick={() => {
-                  setSheetDefaultSection("register");
-                  setWorkspaceSheetOpen(true);
-                }}
+                onClick={onRegisterWorkspace}
                 type="button"
               >
                 <Plus className="size-4" />
@@ -124,21 +123,12 @@ export function MainSidebar({ className, ...props }: MainSidebarProps) {
               <button
                 aria-label="Manage workspaces"
                 className="flex size-5 items-center justify-center rounded border-2 border-border transition-none hover:border-primary hover:bg-primary/10"
-                onClick={() => {
-                  setSheetDefaultSection("list");
-                  setWorkspaceSheetOpen(true);
-                }}
+                onClick={onManageWorkspaces}
                 type="button"
               >
                 <Minus className="size-4" />
               </button>
             </div>
-            <WorkspaceManagementSheet
-              defaultRegisterOpen={sheetDefaultSection === "register"}
-              onOpenChange={setWorkspaceSheetOpen}
-              open={workspaceSheetOpen}
-              section={sheetDefaultSection}
-            />
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <WorkspaceTree collapsed={sidebarState === "collapsed"} />

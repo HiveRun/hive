@@ -16,4 +16,7 @@ export const selectors = {
   terminalInputSurface: '[data-testid="cell-terminal-input"]',
   terminalInputTextarea:
     '[data-testid="cell-terminal-input"] .xterm-helper-textarea',
+  commandMenu: '[data-testid="command-menu"]',
+  commandMenuSearchInput:
+    '[data-testid="command-menu"] input[placeholder="Search commands, cells, workspaces..."]',
 } as const;

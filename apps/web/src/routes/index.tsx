@@ -22,18 +22,11 @@ import { type AgentSession, agentQueries } from "@/queries/agents";
 import {
   type CellServiceSummary,
   type CellStatus,
+  type CellSummary,
   cellQueries,
 } from "@/queries/cells";
 import { type TemplatesResponse, templateQueries } from "@/queries/templates";
-import { workspaceQueries } from "@/queries/workspaces";
-
-type CellSummary = Awaited<
-  ReturnType<ReturnType<typeof cellQueries.all>["queryFn"]>
->[number];
-
-type WorkspaceSummary = Awaited<
-  ReturnType<ReturnType<typeof workspaceQueries.list>["queryFn"]>
->["workspaces"][number];
+import { type WorkspaceSummary, workspaceQueries } from "@/queries/workspaces";
 
 type ServiceQueryState = {
   services?: CellServiceSummary[];

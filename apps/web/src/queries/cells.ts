@@ -344,6 +344,10 @@ export type Cell = Awaited<
   setupLogPath?: string | null;
 };
 
+export type CellSummary = Awaited<
+  ReturnType<ReturnType<typeof cellQueries.all>["queryFn"]>
+>[number];
+
 export type CellServiceSummary = Awaited<
   ReturnType<ReturnType<typeof cellQueries.services>["queryFn"]>
 >[number];
