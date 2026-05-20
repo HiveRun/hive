@@ -36,22 +36,14 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
-import { cellQueries } from "@/queries/cells";
-import { workspaceQueries } from "@/queries/workspaces";
+import { type CellSummary, cellQueries } from "@/queries/cells";
+import { type WorkspaceSummary, workspaceQueries } from "@/queries/workspaces";
 
 type CommandMenuProps = {
   onCreateCell: (workspaceId?: string) => void;
   onManageWorkspaces: () => void;
   onRegisterWorkspace: () => void;
 };
-
-type CellSummary = Awaited<
-  ReturnType<ReturnType<typeof cellQueries.all>["queryFn"]>
->[number];
-
-type WorkspaceSummary = Awaited<
-  ReturnType<ReturnType<typeof workspaceQueries.list>["queryFn"]>
->["workspaces"][number];
 
 type CellCommandEntry = {
   cell: CellSummary;

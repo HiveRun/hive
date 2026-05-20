@@ -12,14 +12,11 @@ import { cn } from "@/lib/utils";
 import {
   type CellServiceSummary,
   type CellStatus,
+  type CellSummary,
   cellQueries,
 } from "@/queries/cells";
 import { type TemplatesResponse, templateQueries } from "@/queries/templates";
 import { workspaceQueries } from "@/queries/workspaces";
-
-type CellSummary = Awaited<
-  ReturnType<ReturnType<typeof cellQueries.all>["queryFn"]>
->[number];
 
 export const Route = createFileRoute("/")({
   loader: ({ context: { queryClient } }) => {
