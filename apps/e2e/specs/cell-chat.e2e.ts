@@ -67,6 +67,14 @@ test.describe("cell chat flow", () => {
     });
 
     const prompt = `E2E token ${Date.now()}`;
+    const multilinePrompt = `E2E multiline first ${Date.now()}\nE2E multiline second ${Date.now()}`;
+
+    await sendMultilinePromptViaKeyboard({
+      apiUrl,
+      cellId,
+      page,
+      prompt: multilinePrompt,
+    });
 
     await sendPromptWithRetries({
       apiUrl,
@@ -151,6 +159,68 @@ async function sendPromptWithRetries(options: {
   throw new Error(
     "Prompt was not accepted after sending chat input across retries"
   );
+}
+
+async function sendMultilinePromptViaKeyboard(options: {
+  apiUrl: string;
+  cellId: string;
+  page: Page;
+  prompt: string;
+}): Promise<void> {
+  const baselineSession = await waitForAgentSession({
+    apiUrl: options.apiUrl,
+    cellId: options.cellId,
+    timeoutMs: SESSION_UPDATE_TIMEOUT_MS,
+  });
+  const baselineMessageIds = await fetchAgentMessageIds(
+    options.apiUrl,
+    baselineSession.id
+  );
+  const [firstLine = "", secondLine = ""] = options.prompt.split("\n");
+
+  await ensureTerminalReady(options.page, {
+    context: "before multiline prompt send",
+    timeoutMs: TERMINAL_INPUT_READY_TIMEOUT_MS,
+  });
+  await focusTerminalInput(options.page, TERMINAL_INPUT_FOCUS_TIMEOUT_MS);
+  await options.page.keyboard.type(firstLine, { delay: 25 });
+  await options.page.keyboard.press("Shift+Enter");
+  await options.page.keyboard.type(secondLine, { delay: 25 });
+  await options.page.keyboard.press("Enter");
+
+  await waitForUserMessageAccepted({
+    apiUrl: options.apiUrl,
+    baselineMessageIds,
+    sessionId: baselineSession.id,
+    prompt: options.prompt,
+    timeoutMs: SEND_ATTEMPT_TIMEOUT_MS,
+  });
+}
+
+async function waitForUserMessageAccepted(options: {
+  apiUrl: string;
+  baselineMessageIds: ReadonlySet<string>;
+  sessionId: string;
+  prompt: string;
+  timeoutMs: number;
+}): Promise<void> {
+  await waitForCondition({
+    check: async () => {
+      const messages = await fetchAgentMessages(
+        options.apiUrl,
+        options.sessionId
+      );
+      return messages.some(
+        (message) =>
+          !options.baselineMessageIds.has(message.id) &&
+          message.role === "user" &&
+          Boolean(message.content?.includes(options.prompt))
+      );
+    },
+    errorMessage: "Multiline prompt did not create one matching user message",
+    intervalMs: 1000,
+    timeoutMs: options.timeoutMs,
+  });
 }
 
 async function waitForPromptAcceptedViaKeyboard(options: {

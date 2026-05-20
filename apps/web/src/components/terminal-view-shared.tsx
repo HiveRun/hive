@@ -490,16 +490,19 @@ export const registerTerminalResizeObserver = ({
 export const registerTerminalSelectionCopy = ({
   canPaste,
   container,
+  onKeyDown,
   terminal,
 }: {
   canPaste?: boolean;
   container: HTMLElement;
+  onKeyDown?: (event: KeyboardEvent) => boolean | undefined;
   terminal: XTerm;
 }) =>
   registerTerminalClipboard({
     terminal,
     container,
     canPaste,
+    onKeyDown,
     onCopySuccess: () => {
       toast.success("Copied terminal selection");
     },
