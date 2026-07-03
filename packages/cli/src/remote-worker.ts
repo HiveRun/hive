@@ -1,4 +1,3 @@
-const DEFAULT_SSH_PORT = 22;
 const DEFAULT_WORKSPACE_ROOT = "~/.hive/workspaces";
 const MIN_PORT = 1;
 const MAX_PORT = 65_535;
@@ -9,6 +8,7 @@ const REMOTE_DOCTOR_REQUIRED_TOOLS = ["git", "bun", "opencode"] as const;
 
 export type RemoteDoctorOptions = {
   identityFile?: string | null;
+  knownHostsFile?: string | null;
   port?: string | null;
   target?: string | null;
   workspaceRoot?: string | null;
@@ -16,7 +16,8 @@ export type RemoteDoctorOptions = {
 
 type RemoteDoctorConfig = {
   identityFile?: string;
-  port: number;
+  knownHostsFile?: string;
+  port?: number;
   target: string;
   workspaceRoot: string;
 };
@@ -35,6 +36,16 @@ type ResolveRemoteDoctorConfigResult =
   | {
       ok: true;
       config: RemoteDoctorConfig;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+type NormalizeOptionalValueResult =
+  | {
+      ok: true;
+      value?: string;
     }
   | {
       ok: false;
@@ -66,6 +77,23 @@ const validateNoLineBreaks = (value: string, label: string) => {
   return null;
 };
 
+const normalizeOptionalValueWithoutLineBreaks = (
+  value: string | null | undefined,
+  label: string
+): NormalizeOptionalValueResult => {
+  const normalized = normalizeRequiredValue(value);
+  if (!normalized) {
+    return { ok: true };
+  }
+
+  const error = validateNoLineBreaks(normalized, label);
+  if (error) {
+    return { ok: false, message: error };
+  }
+
+  return { ok: true, value: normalized };
+};
+
 export const quoteRemoteShellValue = (value: string) =>
   `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -86,11 +114,13 @@ export const resolveRemoteDoctorConfig = (
   }
 
   const portValue = normalizeRequiredValue(options.port);
-  const portResult = portValue
-    ? parsePort(portValue, "SSH port")
-    : { ok: true as const, port: DEFAULT_SSH_PORT };
-  if (!portResult.ok) {
-    return portResult;
+  let port: number | undefined;
+  if (portValue) {
+    const portResult = parsePort(portValue, "SSH port");
+    if (!portResult.ok) {
+      return portResult;
+    }
+    port = portResult.port;
   }
 
   const workspaceRoot =
@@ -103,22 +133,32 @@ export const resolveRemoteDoctorConfig = (
     return { ok: false, message: workspaceRootError };
   }
 
-  const identityFile = normalizeRequiredValue(options.identityFile);
-  if (identityFile) {
-    const identityFileError = validateNoLineBreaks(
-      identityFile,
-      "Identity file"
-    );
-    if (identityFileError) {
-      return { ok: false, message: identityFileError };
-    }
+  const identityFileResult = normalizeOptionalValueWithoutLineBreaks(
+    options.identityFile,
+    "Identity file"
+  );
+  if (!identityFileResult.ok) {
+    return identityFileResult;
+  }
+
+  const knownHostsFileResult = normalizeOptionalValueWithoutLineBreaks(
+    options.knownHostsFile,
+    "Known hosts file"
+  );
+  if (!knownHostsFileResult.ok) {
+    return knownHostsFileResult;
   }
 
   return {
     ok: true,
     config: {
-      ...(identityFile ? { identityFile } : {}),
-      port: portResult.port,
+      ...(identityFileResult.value
+        ? { identityFile: identityFileResult.value }
+        : {}),
+      ...(knownHostsFileResult.value
+        ? { knownHostsFile: knownHostsFileResult.value }
+        : {}),
+      ...(port ? { port } : {}),
       target,
       workspaceRoot,
     },
@@ -126,15 +166,19 @@ export const resolveRemoteDoctorConfig = (
 };
 
 export const buildRemoteDoctorSshArgs = (config: RemoteDoctorConfig) => {
-  const args = [
-    "-T",
-    "-o",
-    "BatchMode=no",
-    "-o",
-    "ConnectTimeout=10",
-    "-p",
-    String(config.port),
-  ];
+  const args = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"];
+
+  if (config.knownHostsFile) {
+    args.push("-o", `UserKnownHostsFile=${config.knownHostsFile}`);
+  }
+
+  if (config.identityFile) {
+    args.push("-o", "IdentitiesOnly=yes");
+  }
+
+  if (config.port) {
+    args.push("-p", String(config.port));
+  }
 
   if (config.identityFile) {
     args.push("-i", config.identityFile);
@@ -158,7 +202,7 @@ workspace_root="\${HIVE_REMOTE_WORKSPACE_ROOT:-${DEFAULT_WORKSPACE_ROOT}}"
 
 case "$workspace_root" in
   "~") workspace_root="$HOME" ;;
-  "~/"*) workspace_root="$HOME/\${workspace_root#~/}" ;;
+  "~/"*) workspace_root="$HOME/\${workspace_root#\\~/}" ;;
 esac
 
 printf 'Hive remote doctor\n'

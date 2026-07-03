@@ -1869,6 +1869,10 @@ class RemoteDoctorCommand extends Command {
     description: "SSH identity file passed to ssh -i",
   });
 
+  sshKnownHosts = Option.String("--ssh-known-hosts", {
+    description: "Known hosts file passed to ssh UserKnownHostsFile",
+  });
+
   workspaceRoot = Option.String("--workspace-root", {
     description: "Remote workspace root to inspect",
   });
@@ -1878,6 +1882,7 @@ class RemoteDoctorCommand extends Command {
       () =>
         remoteDoctorCommand({
           identityFile: this.sshIdentity,
+          knownHostsFile: this.sshKnownHosts,
           port: this.sshPort,
           target: this.target,
           workspaceRoot: this.workspaceRoot,

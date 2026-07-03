@@ -12,7 +12,6 @@ describe("resolveRemoteDoctorConfig", () => {
     expect(resolveRemoteDoctorConfig({ target: "gpu-box" })).toEqual({
       ok: true,
       config: {
-        port: 22,
         target: "gpu-box",
         workspaceRoot: "~/.hive/workspaces",
       },
@@ -23,6 +22,7 @@ describe("resolveRemoteDoctorConfig", () => {
     expect(
       resolveRemoteDoctorConfig({
         identityFile: " ~/.ssh/id_ed25519 ",
+        knownHostsFile: " ~/.ssh/known_hosts ",
         port: " 2222 ",
         target: " user@example.com ",
         workspaceRoot: " ~/hive-workspaces ",
@@ -31,6 +31,7 @@ describe("resolveRemoteDoctorConfig", () => {
       ok: true,
       config: {
         identityFile: "~/.ssh/id_ed25519",
+        knownHostsFile: "~/.ssh/known_hosts",
         port: 2222,
         target: "user@example.com",
         workspaceRoot: "~/hive-workspaces",
@@ -75,6 +76,18 @@ describe("resolveRemoteDoctorConfig", () => {
       message: "Workspace root must not contain line breaks.",
     });
   });
+
+  it("rejects line breaks in known hosts paths", () => {
+    expect(
+      resolveRemoteDoctorConfig({
+        knownHostsFile: "~/.ssh/known\nhosts",
+        target: "gpu-box",
+      })
+    ).toEqual({
+      ok: false,
+      message: "Known hosts file must not contain line breaks.",
+    });
+  });
 });
 
 describe("quoteRemoteShellValue", () => {
@@ -86,10 +99,28 @@ describe("quoteRemoteShellValue", () => {
 });
 
 describe("buildRemoteDoctorSshArgs", () => {
+  it("does not override OpenSSH config alias ports by default", () => {
+    expect(
+      buildRemoteDoctorSshArgs({
+        target: "gpu-box",
+        workspaceRoot: "~/.hive/workspaces",
+      })
+    ).toEqual([
+      "-T",
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ConnectTimeout=10",
+      "gpu-box",
+      "HIVE_REMOTE_WORKSPACE_ROOT='~/.hive/workspaces' sh -s",
+    ]);
+  });
+
   it("builds a conservative SSH command", () => {
     expect(
       buildRemoteDoctorSshArgs({
         identityFile: "~/.ssh/id_ed25519",
+        knownHostsFile: "~/.ssh/known_hosts",
         port: 2222,
         target: "gpu-box",
         workspaceRoot: "~/Hive's Workspaces",
@@ -97,9 +128,13 @@ describe("buildRemoteDoctorSshArgs", () => {
     ).toEqual([
       "-T",
       "-o",
-      "BatchMode=no",
+      "BatchMode=yes",
       "-o",
       "ConnectTimeout=10",
+      "-o",
+      "UserKnownHostsFile=~/.ssh/known_hosts",
+      "-o",
+      "IdentitiesOnly=yes",
       "-p",
       "2222",
       "-i",
@@ -121,7 +156,7 @@ describe("buildRemoteDoctorScript", () => {
     const tildeExpansionSnippet = [
       'workspace_root="$HOME/',
       "$",
-      '{workspace_root#~/}"',
+      '{workspace_root#\\~/}"',
     ].join("");
     expect(script).toContain(tildeExpansionSnippet);
   });
