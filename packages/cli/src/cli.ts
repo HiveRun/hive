@@ -52,6 +52,12 @@ import {
   type CompletionShell,
   renderCompletionScript,
 } from "./completions";
+import {
+  buildRemoteDoctorScript,
+  buildRemoteDoctorSshArgs,
+  type RemoteDoctorOptions,
+  resolveRemoteDoctorConfig,
+} from "./remote-worker";
 import { uninstallHive } from "./uninstall";
 import {
   resolveUninstallConfirmation,
@@ -1582,6 +1588,47 @@ const completionsInstallCommand = (
   return 0;
 };
 
+const remoteDoctorCommand = (options: RemoteDoctorOptions) => {
+  const configResult = resolveRemoteDoctorConfig(options);
+  if (!configResult.ok) {
+    logError(configResult.message);
+    return 1;
+  }
+
+  const { config } = configResult;
+  logInfo(`Inspecting SSH remote target ${config.target}.`);
+
+  const result = spawnSync("ssh", buildRemoteDoctorSshArgs(config), {
+    encoding: "utf8",
+    input: buildRemoteDoctorScript(),
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  if (result.error) {
+    logError(failedOperationMessage(result.error, "Failed to start ssh"));
+    return 1;
+  }
+
+  const stdout = String(result.stdout ?? "");
+  const stderr = String(result.stderr ?? "");
+  if (stdout) {
+    process.stdout.write(ensureTrailingNewline(stdout));
+  }
+  if (stderr) {
+    process.stderr.write(ensureTrailingNewline(stderr));
+  }
+
+  if (result.status === 0) {
+    logSuccess("Remote target is ready for Hive worker bootstrap.");
+    return 0;
+  }
+
+  logError(
+    `Remote doctor failed with exit code ${result.status ?? "unknown"}.`
+  );
+  return 1;
+};
+
 const runCommand = async (
   operation: () => number | Promise<number>,
   label: string
@@ -1793,6 +1840,53 @@ class CompletionsInstallCommand extends Command {
   }
 }
 
+class RemoteDoctorCommand extends Command {
+  static override paths = [["remote", "doctor"]];
+  static override usage = Command.Usage({
+    category: "Remote",
+    description: "Check an SSH target for Hive remote worker readiness.",
+    details:
+      "Runs a read-only SSH diagnostic that checks connectivity, required remote tools, and workspace root readiness. It does not upload env files or install the remote worker.",
+    examples: [
+      ["Check an OpenSSH config alias", "hive remote doctor gpu-box"],
+      [
+        "Check a custom SSH port",
+        "hive remote doctor user@example.com --ssh-port 2222",
+      ],
+    ],
+  });
+
+  target = Option.String({
+    name: "target",
+    required: true,
+  });
+
+  sshPort = Option.String("--ssh-port", {
+    description: "SSH server port",
+  });
+
+  sshIdentity = Option.String("--ssh-identity", {
+    description: "SSH identity file passed to ssh -i",
+  });
+
+  workspaceRoot = Option.String("--workspace-root", {
+    description: "Remote workspace root to inspect",
+  });
+
+  override execute() {
+    return runCommand(
+      () =>
+        remoteDoctorCommand({
+          identityFile: this.sshIdentity,
+          port: this.sshPort,
+          target: this.target,
+          workspaceRoot: this.workspaceRoot,
+        }),
+      "remote doctor"
+    );
+  }
+}
+
 const registeredCommandClasses = [
   StartCommand,
   StopCommand,
@@ -1804,6 +1898,7 @@ const registeredCommandClasses = [
   InfoCommand,
   CompletionsCommand,
   CompletionsInstallCommand,
+  RemoteDoctorCommand,
   Builtins.HelpCommand,
   Builtins.VersionCommand,
 ];
