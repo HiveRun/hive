@@ -52,6 +52,22 @@ import {
   type CompletionShell,
   renderCompletionScript,
 } from "./completions";
+import {
+  activateInstanceProfile,
+  addInstanceProfile,
+  getInstanceRegistry,
+  type HiveInstanceProfile,
+  isLocalInstanceProfile,
+  removeInstanceProfile,
+  resolveInstanceConfigPath,
+  resolveInstanceProfile,
+} from "./instance-config";
+import {
+  buildInstanceDoctorScript,
+  buildInstanceDoctorSshArgs,
+  type InstanceDoctorOptions,
+  resolveInstanceDoctorConfig,
+} from "./instance-doctor";
 import { uninstallHive } from "./uninstall";
 import {
   resolveUninstallConfirmation,
@@ -120,6 +136,15 @@ const printSummary = (title: string, rows: [string, string][]) => {
 const resolveHiveHomePath = () =>
   process.env.HIVE_HOME ?? join(homedir(), ".hive");
 
+const resolveInstanceStoreOptions = () => ({
+  configPath: resolveInstanceConfigPath(resolveHiveHomePath()),
+  localApiUrl: DEFAULT_API_URL,
+  localWebUrl: DEFAULT_WEB_URL,
+});
+
+const resolveActiveInstanceProfile = () =>
+  resolveInstanceProfile(resolveInstanceStoreOptions()).profile;
+
 const resolveDesktopPidFilePath = () =>
   process.env.HIVE_DESKTOP_PID_FILE ??
   join(resolveHiveHomePath(), "desktop.pid");
@@ -168,6 +193,7 @@ const trimTrailingSlash = (value: string) =>
 const HEALTHCHECK_URL = `${trimTrailingSlash(DEFAULT_API_URL)}/health`;
 const DAEMON_STOP_WAIT_TIMEOUT_MS = 10_000;
 const DAEMON_STOP_POLL_INTERVAL_MS = 100;
+const INSTANCE_LIST_NAME_WIDTH = 16;
 const CF_BUNDLE_EXECUTABLE_PATTERN =
   /<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/;
 const EXECUTABLE_PATH =
@@ -632,6 +658,10 @@ const resolveMacAppExecutable = (appPath: string) => {
 
 const resolveDesktopLaunchEnv = () => {
   const rendererPath = join(binaryDirectory, "public", "index.html");
+  const activeInstance = resolveActiveInstanceProfile();
+  const isLocalInstance = isLocalInstanceProfile(activeInstance);
+  const backendUrl = activeInstance.apiUrl;
+  const healthUrl = `${trimTrailingSlash(activeInstance.apiUrl)}/health`;
 
   return {
     ...process.env,
@@ -646,9 +676,13 @@ const resolveDesktopLaunchEnv = () => {
     HIVE_DESKTOP_DAEMON_CWD:
       process.env.HIVE_DESKTOP_DAEMON_CWD ?? DETACHED_DAEMON_CWD,
     HIVE_DESKTOP_BACKEND_URL:
-      process.env.HIVE_DESKTOP_BACKEND_URL ?? DEFAULT_API_URL,
-    HIVE_DESKTOP_HEALTH_URL:
-      process.env.HIVE_DESKTOP_HEALTH_URL ?? HEALTHCHECK_URL,
+      process.env.HIVE_DESKTOP_BACKEND_URL ?? backendUrl,
+    HIVE_DESKTOP_HEALTH_URL: process.env.HIVE_DESKTOP_HEALTH_URL ?? healthUrl,
+    HIVE_DESKTOP_INSTANCE_NAME:
+      process.env.HIVE_DESKTOP_INSTANCE_NAME ?? activeInstance.name,
+    HIVE_DESKTOP_STARTUP_MODE:
+      process.env.HIVE_DESKTOP_STARTUP_MODE ??
+      (isLocalInstance ? "starting" : "remote-client"),
     HIVE_WORKSPACE_ROOT: resolveWorkspaceRootEnv(),
     ...(existsSync(rendererPath) && !process.env.HIVE_DESKTOP_RENDERER_PATH
       ? { HIVE_DESKTOP_RENDERER_PATH: rendererPath }
@@ -1481,6 +1515,20 @@ const stopCommand = async () => {
 };
 
 const webCommand = async () => {
+  const activeInstance = resolveActiveInstanceProfile();
+  if (!isLocalInstanceProfile(activeInstance)) {
+    const result = openDefaultBrowser(activeInstance.webUrl);
+    if (!result.ok) {
+      logError(`Failed to open browser: ${result.message}`);
+      return 1;
+    }
+
+    logSuccess(
+      `Opened ${activeInstance.name} (${activeInstance.webUrl}) in your default browser.`
+    );
+    return 0;
+  }
+
   const ready = await ensureDaemonRunning();
   if (!ready) {
     return 1;
@@ -1515,6 +1563,7 @@ const infoCommand = async () => {
   const logDir = resolveLogDirectory();
   const logFile = resolveLogFilePath();
   const daemonStatus = await describeDaemonStatus();
+  const activeInstance = resolveActiveInstanceProfile();
   const summaryRows: [string, string][] = [
     ["Version", CLI_VERSION],
     ["Hive home", hiveHome],
@@ -1524,6 +1573,7 @@ const infoCommand = async () => {
     ["Log file", logFile],
     ["PID file", pidFilePath],
     ["Daemon", daemonStatus],
+    ["Active instance", `${activeInstance.name} (${activeInstance.apiUrl})`],
     ["Default UI", DEFAULT_WEB_URL],
   ];
 
@@ -1579,6 +1629,124 @@ const completionsInstallCommand = (
 
   logSuccess(`Installed hive completions for ${normalized} at ${result.path}`);
   logInfo("Restart your shell to load them.");
+  return 0;
+};
+
+const instanceDoctorCommand = (options: InstanceDoctorOptions) => {
+  const configResult = resolveInstanceDoctorConfig(options);
+  if (!configResult.ok) {
+    logError(configResult.message);
+    return 1;
+  }
+
+  const { config } = configResult;
+  logInfo(`Inspecting Hive instance host ${config.target}.`);
+
+  const result = spawnSync("ssh", buildInstanceDoctorSshArgs(config), {
+    encoding: "utf8",
+    input: buildInstanceDoctorScript(),
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  if (result.error) {
+    logError(failedOperationMessage(result.error, "Failed to start ssh"));
+    return 1;
+  }
+
+  const stdout = String(result.stdout ?? "");
+  const stderr = String(result.stderr ?? "");
+  if (stdout) {
+    process.stdout.write(ensureTrailingNewline(stdout));
+  }
+  if (stderr) {
+    process.stderr.write(ensureTrailingNewline(stderr));
+  }
+
+  if (result.status === 0) {
+    logSuccess("Host is ready for Hive instance bootstrap.");
+    return 0;
+  }
+
+  logError(
+    `Instance doctor failed with exit code ${result.status ?? "unknown"}.`
+  );
+  return 1;
+};
+
+const formatInstanceProfile = (
+  profile: HiveInstanceProfile,
+  activeName: string
+) => {
+  const marker = profile.name === activeName ? "*" : " ";
+  const target =
+    profile.webUrl === profile.apiUrl
+      ? profile.apiUrl
+      : `${profile.apiUrl} (${profile.webUrl})`;
+  return `${marker} ${profile.name.padEnd(INSTANCE_LIST_NAME_WIDTH)} ${target}`;
+};
+
+const instanceListCommand = () => {
+  const registry = getInstanceRegistry(resolveInstanceStoreOptions());
+  process.stdout.write(`${pc.bold("Hive instances")}\n`);
+  for (const profile of registry.profiles) {
+    process.stdout.write(
+      `${formatInstanceProfile(profile, registry.activeName)}\n`
+    );
+  }
+  process.stdout.write(`\nActive instance: ${registry.activeName}\n`);
+  return 0;
+};
+
+const instanceAddCommand = (input: {
+  apiUrl: string;
+  name: string;
+  setActive?: boolean;
+  tokenEnv?: string;
+  webUrl?: string;
+}) => {
+  const profile = addInstanceProfile(resolveInstanceStoreOptions(), input);
+  logSuccess(`Saved Hive instance ${profile.name} (${profile.apiUrl}).`);
+  if (input.setActive) {
+    logInfo(`Active instance is now ${profile.name}.`);
+  }
+  return 0;
+};
+
+const instanceUseCommand = (name: string) => {
+  const profile = activateInstanceProfile(resolveInstanceStoreOptions(), name);
+  logSuccess(
+    `Active Hive instance is now ${profile.name} (${profile.apiUrl}).`
+  );
+  return 0;
+};
+
+const instanceRemoveCommand = (name: string) => {
+  const removed = removeInstanceProfile(resolveInstanceStoreOptions(), name);
+  if (!removed) {
+    logError(`Hive instance "${name}" was not found.`);
+    return 1;
+  }
+
+  logSuccess(`Removed Hive instance ${name}.`);
+  return 0;
+};
+
+const instanceOpenCommand = async (name?: string) => {
+  const { profile } = resolveInstanceProfile(
+    resolveInstanceStoreOptions(),
+    name
+  );
+  if (isLocalInstanceProfile(profile)) {
+    return await webCommand();
+  }
+
+  const result = openDefaultBrowser(profile.webUrl);
+  if (!result.ok) {
+    logError(`Failed to open browser: ${result.message}`);
+    return 1;
+  }
+
+  logSuccess(`Opened ${profile.name} (${profile.webUrl}).`);
   return 0;
 };
 
@@ -1793,6 +1961,172 @@ class CompletionsInstallCommand extends Command {
   }
 }
 
+class InstanceDoctorCommand extends Command {
+  static override paths = [["instance", "doctor"]];
+  static override usage = Command.Usage({
+    category: "Instance",
+    description: "Check an SSH host for Hive instance readiness.",
+    details:
+      "Runs a read-only SSH diagnostic that checks connectivity, required host tools, and instance root readiness. It does not upload env files or install Hive.",
+    examples: [
+      ["Check an OpenSSH config alias", "hive instance doctor gpu-box"],
+      [
+        "Check a custom SSH port",
+        "hive instance doctor user@example.com --ssh-port 2222",
+      ],
+    ],
+  });
+
+  target = Option.String({
+    name: "target",
+    required: true,
+  });
+
+  sshPort = Option.String("--ssh-port", {
+    description: "SSH server port",
+  });
+
+  sshIdentity = Option.String("--ssh-identity", {
+    description: "SSH identity file passed to ssh -i",
+  });
+
+  sshKnownHosts = Option.String("--ssh-known-hosts", {
+    description: "Known hosts file passed to ssh UserKnownHostsFile",
+  });
+
+  instanceRoot = Option.String("--instance-root", {
+    description: "Remote Hive instance root to inspect",
+  });
+
+  override execute() {
+    return runCommand(
+      () =>
+        instanceDoctorCommand({
+          identityFile: this.sshIdentity,
+          instanceRoot: this.instanceRoot,
+          knownHostsFile: this.sshKnownHosts,
+          port: this.sshPort,
+          target: this.target,
+        }),
+      "instance doctor"
+    );
+  }
+}
+
+class InstanceListCommand extends Command {
+  static override paths = [["instance", "list"]];
+  static override usage = Command.Usage({
+    category: "Instance",
+    description: "List local Hive client instance profiles.",
+    examples: [["List instances", "hive instance list"]],
+  });
+
+  override execute() {
+    return runCommand(() => instanceListCommand(), "instance list");
+  }
+}
+
+class InstanceAddCommand extends Command {
+  static override paths = [["instance", "add"]];
+  static override usage = Command.Usage({
+    category: "Instance",
+    description: "Add or update a Hive instance profile.",
+    details:
+      "Stores the instance URL in your local Hive config. Use --token-env to reference an environment variable; token values are not written to the profile.",
+    examples: [
+      [
+        "Add company instance",
+        "hive instance add company https://hive.example.com --use",
+      ],
+      [
+        "Add separate web URL",
+        "hive instance add company https://api.hive.example.com --web-url https://hive.example.com",
+      ],
+    ],
+  });
+
+  name = Option.String({ name: "name", required: true });
+
+  apiUrl = Option.String({ name: "apiUrl", required: true });
+
+  webUrl = Option.String("--web-url", {
+    description: "Browser URL to open for this instance",
+  });
+
+  tokenEnv = Option.String("--token-env", {
+    description: "Environment variable name containing a future auth token",
+  });
+
+  setActive = Option.Boolean("--use", {
+    description: "Make this instance active after saving it",
+  });
+
+  override execute() {
+    return runCommand(
+      () =>
+        instanceAddCommand({
+          apiUrl: this.apiUrl,
+          name: this.name,
+          setActive: Boolean(this.setActive),
+          tokenEnv: this.tokenEnv,
+          webUrl: this.webUrl,
+        }),
+      "instance add"
+    );
+  }
+}
+
+class InstanceUseCommand extends Command {
+  static override paths = [["instance", "use"]];
+  static override usage = Command.Usage({
+    category: "Instance",
+    description: "Select the active Hive instance for client commands.",
+    examples: [["Use company instance", "hive instance use company"]],
+  });
+
+  name = Option.String({ name: "name", required: true });
+
+  override execute() {
+    return runCommand(() => instanceUseCommand(this.name), "instance use");
+  }
+}
+
+class InstanceRemoveCommand extends Command {
+  static override paths = [["instance", "remove"]];
+  static override usage = Command.Usage({
+    category: "Instance",
+    description: "Remove a Hive instance profile.",
+    examples: [["Remove company instance", "hive instance remove company"]],
+  });
+
+  instanceName = Option.String({ name: "name", required: true });
+
+  override execute() {
+    return runCommand(
+      () => instanceRemoveCommand(this.instanceName),
+      "instance remove"
+    );
+  }
+}
+
+class InstanceOpenCommand extends Command {
+  static override paths = [["instance", "open"]];
+  static override usage = Command.Usage({
+    category: "Instance",
+    description: "Open an instance in your default browser.",
+    examples: [
+      ["Open active instance", "hive instance open"],
+      ["Open company instance", "hive instance open company"],
+    ],
+  });
+
+  name = Option.String({ name: "name", required: false });
+
+  override execute() {
+    return runCommand(() => instanceOpenCommand(this.name), "instance open");
+  }
+}
+
 const registeredCommandClasses = [
   StartCommand,
   StopCommand,
@@ -1804,6 +2138,12 @@ const registeredCommandClasses = [
   InfoCommand,
   CompletionsCommand,
   CompletionsInstallCommand,
+  InstanceListCommand,
+  InstanceAddCommand,
+  InstanceUseCommand,
+  InstanceRemoveCommand,
+  InstanceOpenCommand,
+  InstanceDoctorCommand,
   Builtins.HelpCommand,
   Builtins.VersionCommand,
 ];

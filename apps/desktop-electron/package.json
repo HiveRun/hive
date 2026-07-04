@@ -9,6 +9,8 @@
     "build": "tsdown",
     "prepare:renderer": "bun run scripts/prepare-renderer.ts",
     "start": "bun run build && electron dist/main.js",
+    "test": "vitest",
+    "test:run": "vitest run",
     "package": "bun run build && bun run prepare:renderer && electron-builder --config electron-builder.yml --publish never"
   },
   "dependencies": {
@@ -18,6 +20,7 @@
     "electron": "^37.2.3",
     "electron-builder": "^26.0.12",
     "tsdown": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "^4.0.3"
   }
 }

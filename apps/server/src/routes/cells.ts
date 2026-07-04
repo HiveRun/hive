@@ -96,6 +96,10 @@ import type {
   ServiceTerminalEvent,
   ServiceTerminalSession,
 } from "../services/service-terminal";
+import {
+  buildServiceRuntimeUrl,
+  buildServiceUrls,
+} from "../services/service-urls";
 import type {
   EnsureCellServicesTimingEvent,
   ServiceSupervisorError,
@@ -624,6 +628,65 @@ const ServiceTerminalResizeRouteOptions = {
     ...TerminalErrorResponses,
   },
 };
+
+const HOP_BY_HOP_PROXY_HEADERS = [
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+] as const;
+const TRAILING_SLASH_PATTERN = /\/$/;
+
+const removeHopByHopHeaders = (headers: Headers) => {
+  for (const header of HOP_BY_HOP_PROXY_HEADERS) {
+    headers.delete(header);
+  }
+};
+
+const buildProxyTargetUrl = (
+  runtimeUrl: string,
+  path: string,
+  request: Request
+) => {
+  const sourceUrl = new URL(request.url);
+  const targetUrl = new URL(
+    `${runtimeUrl.replace(TRAILING_SLASH_PATTERN, "")}/${path}`
+  );
+  targetUrl.search = sourceUrl.search;
+  return targetUrl;
+};
+
+const proxyServiceRequest = async (args: {
+  request: Request;
+  row: ServiceRow;
+  path: string;
+}): Promise<Response | MessageResponse> => {
+  const runtimeUrl = buildServiceRuntimeUrl(args.row.service.port);
+  if (!runtimeUrl) {
+    return { message: "Service does not expose a port" };
+  }
+
+  const upstream = await fetch(
+    buildProxyTargetUrl(runtimeUrl, args.path, args.request),
+    {
+      headers: args.request.headers,
+      method: args.request.method,
+      redirect: "manual",
+    }
+  );
+  const headers = new Headers(upstream.headers);
+  removeHopByHopHeaders(headers);
+
+  return new Response(args.request.method === "HEAD" ? null : upstream.body, {
+    headers,
+    status: upstream.status,
+    statusText: upstream.statusText,
+  });
+};
 async function withCellRoute<T>(args: {
   deps: CellRouteDependencies;
   cellId: string;
@@ -774,8 +837,6 @@ const TERMINAL_RESIZE_MIN_ROWS = 5;
 const TERMINAL_RESIZE_MAX_ROWS = 200;
 const MAX_PROVISIONING_ATTEMPTS = 3;
 const INITIAL_PROMPT_BACKGROUND_WARN_TIMEOUT_MS = 3000;
-const DEFAULT_SERVICE_HOST = process.env.SERVICE_HOST ?? "localhost";
-const DEFAULT_SERVICE_PROTOCOL = process.env.SERVICE_PROTOCOL ?? "http";
 type OpencodeThemeMode = "dark" | "light";
 const ChatThemeModeQuerySchema = t.Object({
   themeMode: t.Optional(t.Union([t.Literal("dark"), t.Literal("light")])),
@@ -820,11 +881,6 @@ const LOGGER_CONFIG = {
   level: process.env.LOG_LEVEL || "info",
   autoLogging: false,
 } as const;
-
-const buildServiceUrl = (port?: number | null) =>
-  typeof port === "number"
-    ? `${DEFAULT_SERVICE_PROTOCOL}://${DEFAULT_SERVICE_HOST}:${port}`
-    : null;
 
 function isPortActive(port?: number | null): Promise<boolean> {
   if (!port) {
@@ -2426,6 +2482,28 @@ export function createCellsRoutes(
         response: {
           200: CellServiceListResponseSchema,
           ...StandardCellErrorResponses,
+        },
+      }
+    )
+
+    .all(
+      "/:id/services/:serviceId/proxy/*",
+      async ({ params, request, set }) =>
+        await withResolvedServiceRoute({
+          cellId: params.id,
+          serviceId: params.serviceId,
+          set,
+          run: async (row) =>
+            await proxyServiceRequest({
+              path: params["*"] ?? "",
+              request,
+              row,
+            }),
+        }),
+      {
+        response: {
+          400: MessageResponseSchema,
+          404: MessageResponseSchema,
         },
       }
     )
@@ -5528,7 +5606,11 @@ async function serializeService(
     typeof service.port === "number"
       ? await isPortActive(service.port)
       : undefined;
-  const serviceUrl = buildServiceUrl(service.port);
+  const serviceUrls = buildServiceUrls({
+    cellId: row.cell.id,
+    serviceId: service.id,
+    port: service.port,
+  });
 
   let derivedStatus = service.status;
   let derivedLastKnownError = service.lastKnownError;
@@ -5607,7 +5689,10 @@ async function serializeService(
     type: service.type,
     status: derivedStatus,
     ...(service.port != null ? { port: service.port } : {}),
-    ...(serviceUrl ? { url: serviceUrl } : {}),
+    ...(serviceUrls.runtimeUrl ? { url: serviceUrls.runtimeUrl } : {}),
+    ...(serviceUrls.runtimeUrl ? { runtimeUrl: serviceUrls.runtimeUrl } : {}),
+    ...(serviceUrls.directUrl ? { directUrl: serviceUrls.directUrl } : {}),
+    ...(serviceUrls.browserUrl ? { browserUrl: serviceUrls.browserUrl } : {}),
     ...(derivedPid != null ? { pid: derivedPid } : {}),
     command: service.command,
     cwd: service.cwd,

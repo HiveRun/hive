@@ -1,3 +1,4 @@
+import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:net";
 
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -24,6 +25,8 @@ const LARGE_OUTPUT_LINES = 320;
 const EXPECTED_FIRST_TAILED_LINE = 121;
 const EXPECTED_CPU_PERCENT = 12.3;
 const EXPECTED_RSS_BYTES = 34_560_000;
+const HTTP_OK_STATUS = 200;
+const TEST_PUBLIC_API_URL = "https://hive.example.test";
 
 const getFirstService = <T>(services: T[]): T => {
   const first = services[0];
@@ -210,6 +213,33 @@ function createIpv6LoopbackListener(): Promise<
   });
 }
 
+function createProxyTargetServer(): Promise<{
+  port: number;
+  close: () => Promise<void>;
+}> {
+  return new Promise((resolve) => {
+    const server = createHttpServer((request, response) => {
+      response.setHeader("content-type", "text/plain");
+      response.end(`proxied:${request.url ?? "/"}`);
+    });
+
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Expected proxy target server port");
+      }
+
+      resolve({
+        port: address.port,
+        close: () =>
+          new Promise<void>((resolveClose) => {
+            server.close(() => resolveClose());
+          }),
+      });
+    });
+  });
+}
+
 describe("GET /api/cells/:id/services payload", () => {
   let app: any;
   let harness: ReturnType<typeof createRuntimeHarness>;
@@ -289,6 +319,56 @@ describe("GET /api/cells/:id/services payload", () => {
     expect(service.portReachable).toBe(true);
 
     await listener.close();
+  });
+
+  it("returns separated service runtime and browser urls", async () => {
+    const previousPublicApiUrl = process.env.HIVE_PUBLIC_API_URL;
+    process.env.HIVE_PUBLIC_API_URL = TEST_PUBLIC_API_URL;
+    try {
+      await insertCellAndServiceRecords("web", {
+        port: 4321,
+        status: "running",
+      });
+
+      const service = await readFirstServicePayload<{
+        browserUrl?: string;
+        directUrl?: string;
+        runtimeUrl?: string;
+        url?: string;
+      }>(app);
+      expect(service.url).toBe("http://localhost:4321");
+      expect(service.runtimeUrl).toBe("http://localhost:4321");
+      expect(service.directUrl).toBe("http://localhost:4321");
+      expect(service.browserUrl).toBe(
+        `${TEST_PUBLIC_API_URL}/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/proxy/`
+      );
+    } finally {
+      if (previousPublicApiUrl === undefined) {
+        process.env.HIVE_PUBLIC_API_URL = undefined;
+      } else {
+        process.env.HIVE_PUBLIC_API_URL = previousPublicApiUrl;
+      }
+    }
+  });
+
+  it("proxies service browser requests to the runtime port", async () => {
+    const target = await createProxyTargetServer();
+    try {
+      await insertCellAndServiceRecords("web", {
+        port: target.port,
+        status: "running",
+      });
+
+      const response = await handleRouteRequest(
+        app,
+        `/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/proxy/assets/app.js?cache=1`
+      );
+
+      expect(response.status).toBe(HTTP_OK_STATUS);
+      expect(await response.text()).toBe("proxied:/assets/app.js?cache=1");
+    } finally {
+      await target.close();
+    }
   });
 
   it("returns resource snapshots when includeResources=true", async () => {

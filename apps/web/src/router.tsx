@@ -8,6 +8,7 @@ import ErrorPage from "./components/error";
 import { GlobalAgentMonitor } from "./components/global-agent-monitor";
 import Loader from "./components/loader";
 import { ThemeProvider } from "./components/theme-provider";
+import { getApiBase } from "./lib/api-base";
 import { createIDBPersister } from "./lib/query-persister";
 import "./index.css";
 import { routeTree } from "./routeTree.gen";
@@ -15,7 +16,7 @@ import { routeTree } from "./routeTree.gen";
 const ONE_MINUTE_IN_MS = 60_000;
 const ONE_DAY_IN_MS = 86_400_000;
 const QUERY_CACHE_STORAGE_KEY = "hive.react-query-cache";
-const QUERY_CACHE_BUSTER = "hive-web-cache-v1";
+const QUERY_CACHE_BUSTER = `hive-web-cache-v1:${getApiBase()}`;
 
 const shouldPersistQuery = (query: {
   state: { status: string };

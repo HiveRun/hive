@@ -8,6 +8,7 @@ import {
   PauseCircle,
   PlayCircle,
   RadioTower,
+  Server,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +26,7 @@ import {
   type CellSummary,
   cellQueries,
 } from "@/queries/cells";
+import { type InstanceOverview, instanceQueries } from "@/queries/instance";
 import { type TemplatesResponse, templateQueries } from "@/queries/templates";
 import { type WorkspaceSummary, workspaceQueries } from "@/queries/workspaces";
 
@@ -78,6 +80,10 @@ const HOURS_PER_DAY = 24;
 
 export const Route = createFileRoute("/")({
   loader: ({ context: { queryClient } }) => {
+    queryClient.prefetchQuery(instanceQueries.overview()).catch(() => {
+      // non-blocking prefetch; overview component handles fetch errors
+    });
+
     queryClient
       .fetchQuery(workspaceQueries.list())
       .then((workspaceData) => {
@@ -99,6 +105,7 @@ function HiveOverview() {
   const routerState = useRouterState({
     select: (state) => ({ pathname: state.location.pathname }),
   });
+  const instanceQuery = useQuery(instanceQueries.overview());
   const workspaceQuery = useQuery(workspaceQueries.list());
   const workspaces = workspaceQuery.data?.workspaces ?? [];
   const [now, setNow] = useState<number | null>(null);
@@ -245,6 +252,7 @@ function HiveOverview() {
     <main className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-background/45">
       <div className="flex min-h-full w-full flex-1 flex-col gap-5 p-4 sm:p-6 xl:p-8">
         <SwarmHero
+          instanceOverview={instanceQuery.data}
           runtimeSummary={runtimeSummary}
           serviceStats={serviceStats}
         />
@@ -313,9 +321,11 @@ function readyCellQuery<TData>(
 }
 
 function SwarmHero({
+  instanceOverview,
   runtimeSummary,
   serviceStats,
 }: {
+  instanceOverview?: InstanceOverview;
   runtimeSummary: RuntimeSummary;
   serviceStats: ServiceStats;
 }) {
@@ -356,6 +366,13 @@ function SwarmHero({
           value: formatCpuPercent(serviceStats.peakCpuPercent),
         }
       : null,
+    instanceOverview
+      ? {
+          icon: <Server className="size-4" />,
+          label: "Instance services",
+          value: instanceOverview.services.total.toString(),
+        }
+      : null,
   ].filter((metric) => metric !== null);
 
   return (
@@ -382,6 +399,25 @@ function SwarmHero({
               Current runtime state across cells, agent sessions, services, and
               resource pressure. Built for deciding what needs attention now.
             </p>
+            {instanceOverview ? (
+              <div className="mt-5 flex flex-wrap items-center gap-2 border-2 border-border bg-background/70 p-3 font-mono text-[11px] uppercase tracking-[0.18em]">
+                <Badge className="rounded-sm" variant="outline">
+                  Instance
+                </Badge>
+                <span className="text-foreground">
+                  {instanceOverview.instance.name}
+                </span>
+                <span className="text-muted-foreground">
+                  {instanceOverview.instance.mode}
+                </span>
+                <span className="text-muted-foreground">
+                  {instanceOverview.workspaces.total} workspaces
+                </span>
+                <span className="truncate text-muted-foreground">
+                  {instanceOverview.instance.apiBaseUrl}
+                </span>
+              </div>
+            ) : null}
           </div>
 
           {heroMetrics.length > 0 ? (

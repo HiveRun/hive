@@ -1,6 +1,6 @@
 const DEFAULT_BACKEND_URL = "http://localhost:3000";
 
-type DesktopStartupMode = "starting" | "reconnecting";
+type DesktopStartupMode = "starting" | "reconnecting" | "remote-client";
 
 type DesktopRuntimeInfo = {
   runtime: "electron";
@@ -8,6 +8,7 @@ type DesktopRuntimeInfo = {
   platform: NodeJS.Platform;
   backendUrl: string;
   healthUrl: string;
+  instanceName?: string;
   startupMode: DesktopStartupMode;
 };
 
@@ -23,6 +24,10 @@ const normalizeStartupMode = (
 ): DesktopStartupMode => {
   if (value === "reconnecting") {
     return "reconnecting";
+  }
+
+  if (value === "remote-client") {
+    return "remote-client";
   }
 
   return "starting";
@@ -45,6 +50,9 @@ export const getDesktopRuntimeInfo = (): DesktopRuntimeInfo => {
     backendUrl,
     healthUrl:
       process.env.HIVE_DESKTOP_HEALTH_URL?.trim() || `${backendUrl}/health`,
+    ...(process.env.HIVE_DESKTOP_INSTANCE_NAME?.trim()
+      ? { instanceName: process.env.HIVE_DESKTOP_INSTANCE_NAME.trim() }
+      : {}),
     startupMode: normalizeStartupMode(process.env.HIVE_DESKTOP_STARTUP_MODE),
   };
 };

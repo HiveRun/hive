@@ -7,6 +7,7 @@
     "dev": "bun run --hot src/index.ts",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:e2e:instance-doctor": "vitest run --config vitest.instance-e2e.config.ts",
     "compile": "bun build --compile --minify --sourcemap ./src/index.ts --outfile hive"
   },
   "dependencies": {

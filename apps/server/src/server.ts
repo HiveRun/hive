@@ -29,6 +29,7 @@ import { DatabaseService } from "./db";
 import { repairLegacyMigrationGaps } from "./legacy-migration-repairs";
 import { agentsRoutes } from "./routes/agents";
 import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
+import { instanceRoutes } from "./routes/instance";
 import { linearRoutes } from "./routes/linear";
 import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
@@ -275,6 +276,7 @@ const createApp = () =>
       message: "Hello from Elysia!",
       timestamp: Date.now(),
     }))
+    .use(instanceRoutes)
     .use(linearRoutes)
     .use(templatesRoutes)
     .use(workspacesRoutes)

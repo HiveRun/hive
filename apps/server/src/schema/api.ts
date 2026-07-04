@@ -57,6 +57,9 @@ export const CellServiceSchema = t.Object({
   status: t.String(),
   port: t.Optional(t.Number()),
   url: t.Optional(t.String()),
+  runtimeUrl: t.Optional(t.String()),
+  directUrl: t.Optional(t.String()),
+  browserUrl: t.Optional(t.String()),
   pid: t.Optional(t.Number()),
   command: t.String(),
   cwd: t.String(),
@@ -111,6 +114,53 @@ export const CellServiceListResponseSchema = t.Object({
   services: t.Array(CellServiceSchema),
 });
 
+const InstanceModeSchema = t.Union([t.Literal("local"), t.Literal("shared")]);
+
+export const InstanceResponseSchema = t.Object({
+  id: t.String(),
+  name: t.String(),
+  mode: InstanceModeSchema,
+  rootPath: t.String(),
+  apiBaseUrl: t.String(),
+  pid: t.Number(),
+  version: t.String(),
+  createdAt: t.String(),
+  updatedAt: t.String(),
+});
+
+const ActivityEventBaseFields = {
+  id: t.String(),
+  cellId: t.String(),
+  serviceId: t.Union([t.String(), t.Null()]),
+  type: t.String(),
+  source: t.Union([t.String(), t.Null()]),
+  toolName: t.Union([t.String(), t.Null()]),
+  createdAt: t.String(),
+} as const;
+
+const InstanceRecentActivitySchema = t.Object({
+  ...ActivityEventBaseFields,
+});
+
+export const InstanceOverviewResponseSchema = t.Object({
+  instance: InstanceResponseSchema,
+  workspaces: t.Object({
+    total: t.Number(),
+    activeWorkspaceId: t.Union([t.String(), t.Null()]),
+  }),
+  cells: t.Object({
+    total: t.Number(),
+    byStatus: t.Record(t.String(), t.Number()),
+  }),
+  services: t.Object({
+    total: t.Number(),
+    byStatus: t.Record(t.String(), t.Number()),
+  }),
+  activity: t.Object({
+    recent: t.Array(InstanceRecentActivitySchema),
+  }),
+});
+
 export const CellTerminalSessionSchema = t.Object({
   ...RuntimeTerminalFields,
   cellId: t.String(),
@@ -139,14 +189,8 @@ export const RuntimeTerminalResizeResponseSchema = t.Object({
 });
 
 const CellActivityEventSchema = t.Object({
-  id: t.String(),
-  cellId: t.String(),
-  serviceId: t.Union([t.String(), t.Null()]),
-  type: t.String(),
-  source: t.Union([t.String(), t.Null()]),
+  ...ActivityEventBaseFields,
   metadata: t.Any(),
-  toolName: t.Union([t.String(), t.Null()]),
-  createdAt: t.String(),
 });
 
 export const CellActivityEventListResponseSchema = t.Object({
