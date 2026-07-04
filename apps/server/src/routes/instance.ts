@@ -5,7 +5,11 @@ import {
   type DatabaseService as DatabaseServiceType,
 } from "../db";
 import { getHiveInstanceMetadata } from "../instance/metadata";
-import { resolvePublicApiBaseUrl } from "../instance/public-url";
+import { privateRemoteAccessWarning } from "../instance/mode";
+import {
+  resolvePublicApiBaseUrl,
+  resolvePublicWebBaseUrl,
+} from "../instance/public-url";
 import { cellActivityEvents } from "../schema/activity-events";
 import {
   InstanceOverviewResponseSchema,
@@ -29,13 +33,43 @@ const buildStatusCounts = (records: Array<{ status: string }>) => {
   return byStatus;
 };
 
+const resolveDeploymentKind = () => {
+  const configured = process.env.HIVE_DEPLOYMENT_KIND;
+  if (configured === "docker-compose") {
+    return "docker-compose";
+  }
+  if (configured === "local") {
+    return "local";
+  }
+  return "unknown";
+};
+
 const toInstanceResponse = async () => {
   const metadata = await getHiveInstanceMetadata();
+  const isPrivateRemote = metadata.mode === "private-remote";
+  const capabilities = {
+    access: {
+      assumption: isPrivateRemote ? "private-network" : "local",
+    },
+    auth: {
+      mode: "none",
+    },
+    deployment: {
+      kind: isPrivateRemote ? resolveDeploymentKind() : "local",
+    },
+    desktopRemoteClient: true,
+    publicInternetSafe: false,
+    serviceProxy: "partial",
+  } as const;
+
   return {
     ...metadata,
     apiBaseUrl: resolvePublicApiBaseUrl(),
+    capabilities,
     pid: process.pid,
     version: process.env.HIVE_VERSION ?? "dev",
+    warnings: isPrivateRemote ? [privateRemoteAccessWarning()] : [],
+    webBaseUrl: resolvePublicWebBaseUrl(),
   };
 };
 

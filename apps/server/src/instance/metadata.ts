@@ -2,11 +2,10 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { resolveHiveHome } from "../workspaces/registry";
+import { type HiveInstanceMode, normalizeHiveInstanceMode } from "./mode";
 
 const INSTANCE_FILE_NAME = "instance.json";
 const INSTANCE_METADATA_VERSION = 1;
-
-type HiveInstanceMode = "local" | "shared";
 
 type HiveInstanceMetadata = {
   id: string;
@@ -30,11 +29,8 @@ const readErrorCode = (error: unknown) => {
   return typeof code === "string" ? code : null;
 };
 
-const normalizeInstanceMode = (value: string | undefined): HiveInstanceMode =>
-  value === "shared" ? "shared" : "local";
-
 const defaultInstanceName = (mode: HiveInstanceMode) =>
-  mode === "shared" ? "Shared Hive" : "Local Hive";
+  mode === "private-remote" ? "Private Remote Hive" : "Local Hive";
 
 const resolveInstanceMetadataPath = () =>
   process.env.HIVE_INSTANCE_METADATA_FILE ??
@@ -48,7 +44,7 @@ function sanitizePersistedMetadata(
     return null;
   }
 
-  const mode = normalizeInstanceMode(parsed.mode);
+  const mode = normalizeHiveInstanceMode(parsed.mode);
   const name =
     process.env.HIVE_INSTANCE_NAME?.trim() ||
     parsed.name?.trim() ||
@@ -109,7 +105,7 @@ export async function getHiveInstanceMetadata(): Promise<HiveInstanceMetadata> {
   }
 
   const now = new Date().toISOString();
-  const mode = normalizeInstanceMode(process.env.HIVE_INSTANCE_MODE);
+  const mode = normalizeHiveInstanceMode(process.env.HIVE_INSTANCE_MODE);
   const metadata: HiveInstanceMetadata = {
     id: randomUUID(),
     name: process.env.HIVE_INSTANCE_NAME?.trim() || defaultInstanceName(mode),

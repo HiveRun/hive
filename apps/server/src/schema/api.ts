@@ -114,7 +114,29 @@ export const CellServiceListResponseSchema = t.Object({
   services: t.Array(CellServiceSchema),
 });
 
-const InstanceModeSchema = t.Union([t.Literal("local"), t.Literal("shared")]);
+const InstanceModeSchema = t.Union([
+  t.Literal("local"),
+  t.Literal("private-remote"),
+]);
+
+const InstanceCapabilitiesSchema = t.Object({
+  auth: t.Object({
+    mode: t.Literal("none"),
+  }),
+  access: t.Object({
+    assumption: t.Union([t.Literal("local"), t.Literal("private-network")]),
+  }),
+  deployment: t.Object({
+    kind: t.Union([
+      t.Literal("local"),
+      t.Literal("docker-compose"),
+      t.Literal("unknown"),
+    ]),
+  }),
+  desktopRemoteClient: t.Boolean(),
+  publicInternetSafe: t.Boolean(),
+  serviceProxy: t.Union([t.Literal("path"), t.Literal("partial")]),
+});
 
 export const InstanceResponseSchema = t.Object({
   id: t.String(),
@@ -122,8 +144,11 @@ export const InstanceResponseSchema = t.Object({
   mode: InstanceModeSchema,
   rootPath: t.String(),
   apiBaseUrl: t.String(),
+  webBaseUrl: t.String(),
+  capabilities: InstanceCapabilitiesSchema,
   pid: t.Number(),
   version: t.String(),
+  warnings: t.Array(t.String()),
   createdAt: t.String(),
   updatedAt: t.String(),
 });

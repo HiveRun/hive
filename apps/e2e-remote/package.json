@@ -1,0 +1,11 @@
+{
+  "name": "@hive/e2e-remote",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:e2e": "bun run src/runtime/remote-compose-runner.ts"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
+}

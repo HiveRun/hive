@@ -639,12 +639,30 @@ const HOP_BY_HOP_PROXY_HEADERS = [
   "transfer-encoding",
   "upgrade",
 ] as const;
+const SENSITIVE_PROXY_REQUEST_HEADERS = [
+  "authorization",
+  "cookie",
+  "cf-access-client-id",
+  "cf-access-client-secret",
+] as const;
 const TRAILING_SLASH_PATTERN = /\/$/;
+const LEADING_SLASH_PATTERN = /^\//;
+const PROXY_ROUTE_SEGMENT = "/proxy/";
 
 const removeHopByHopHeaders = (headers: Headers) => {
   for (const header of HOP_BY_HOP_PROXY_HEADERS) {
     headers.delete(header);
   }
+};
+
+const buildProxyRequestHeaders = (request: Request) => {
+  const headers = new Headers(request.headers);
+  removeHopByHopHeaders(headers);
+  for (const header of SENSITIVE_PROXY_REQUEST_HEADERS) {
+    headers.delete(header);
+  }
+  headers.delete("host");
+  return headers;
 };
 
 const buildProxyTargetUrl = (
@@ -660,26 +678,96 @@ const buildProxyTargetUrl = (
   return targetUrl;
 };
 
+const encodeParsedProxyBody = (body: unknown) => {
+  if (body === undefined || body === null) {
+    return;
+  }
+  if (typeof body === "string") {
+    return body;
+  }
+  if (body instanceof ArrayBuffer || body instanceof Blob) {
+    return body;
+  }
+  if (body instanceof FormData) {
+    return body;
+  }
+  return JSON.stringify(body);
+};
+
+const buildProxyRequestBody = (request: Request, parsedBody?: unknown) => {
+  if (request.method === "GET" || request.method === "HEAD") {
+    return;
+  }
+
+  if (request.bodyUsed) {
+    return encodeParsedProxyBody(parsedBody);
+  }
+
+  return request.clone().arrayBuffer();
+};
+
+const rewriteProxyLocationHeader = (args: {
+  headers: Headers;
+  request: Request;
+  runtimeUrl: string;
+}) => {
+  const location = args.headers.get("location");
+  if (!location) {
+    return;
+  }
+
+  const sourceUrl = new URL(args.request.url);
+  const proxySegmentIndex = sourceUrl.pathname.indexOf(PROXY_ROUTE_SEGMENT);
+  if (proxySegmentIndex === -1) {
+    return;
+  }
+
+  const proxyRoot = sourceUrl.pathname.slice(
+    0,
+    proxySegmentIndex + PROXY_ROUTE_SEGMENT.length
+  );
+  const runtime = new URL(args.runtimeUrl);
+  const target = new URL(location, runtime);
+  if (target.origin !== runtime.origin) {
+    return;
+  }
+
+  args.headers.set(
+    "location",
+    `${sourceUrl.origin}${proxyRoot}${target.pathname.replace(LEADING_SLASH_PATTERN, "")}${target.search}${target.hash}`
+  );
+};
+
 const proxyServiceRequest = async (args: {
   request: Request;
   row: ServiceRow;
   path: string;
+  parsedBody?: unknown;
 }): Promise<Response | MessageResponse> => {
   const runtimeUrl = buildServiceRuntimeUrl(args.row.service.port);
   if (!runtimeUrl) {
     return { message: "Service does not expose a port" };
   }
 
+  const body = await buildProxyRequestBody(args.request, args.parsedBody);
+  const upstreamRequestInit: RequestInit = {
+    headers: buildProxyRequestHeaders(args.request),
+    method: args.request.method,
+    redirect: "manual",
+    ...(body ? { body } : {}),
+  };
   const upstream = await fetch(
     buildProxyTargetUrl(runtimeUrl, args.path, args.request),
-    {
-      headers: args.request.headers,
-      method: args.request.method,
-      redirect: "manual",
-    }
+    upstreamRequestInit
   );
   const headers = new Headers(upstream.headers);
   removeHopByHopHeaders(headers);
+  headers.delete("set-cookie");
+  rewriteProxyLocationHeader({
+    headers,
+    request: args.request,
+    runtimeUrl,
+  });
 
   return new Response(args.request.method === "HEAD" ? null : upstream.body, {
     headers,
@@ -2488,7 +2576,7 @@ export function createCellsRoutes(
 
     .all(
       "/:id/services/:serviceId/proxy/*",
-      async ({ params, request, set }) =>
+      async ({ body, params, request, set }) =>
         await withResolvedServiceRoute({
           cellId: params.id,
           serviceId: params.serviceId,
@@ -2496,11 +2584,13 @@ export function createCellsRoutes(
           run: async (row) =>
             await proxyServiceRequest({
               path: params["*"] ?? "",
+              parsedBody: body,
               request,
               row,
             }),
         }),
       {
+        body: t.Optional(t.Any()),
         response: {
           400: MessageResponseSchema,
           404: MessageResponseSchema,

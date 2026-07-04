@@ -37,6 +37,7 @@
     "test:e2e:report:serve": "bun run --cwd apps/e2e report:e2e:serve",
     "test:e2e:desktop": "bun run --cwd apps/e2e-desktop test:e2e",
     "test:e2e:desktop:spec": "bun run --cwd apps/e2e-desktop test:e2e -- --spec",
+    "test:e2e:remote": "bun run --cwd apps/e2e-remote test:e2e",
     "ab:shot": "bash scripts/agent-browser.sh shot",
     "ab:record:start": "bash scripts/agent-browser.sh record-start",
     "ab:record:stop": "bash scripts/agent-browser.sh record-stop",

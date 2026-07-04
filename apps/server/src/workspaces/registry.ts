@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 
 import { findConfigPath, PREFERRED_CONFIG_FILENAME } from "../config/files";
+import { assertWorkspacePathAllowed } from "../instance/mode";
 
 const REGISTRY_FILE_NAME = "workspaces.json";
 const HIVE_HOME_ENV = "HIVE_HOME";
@@ -82,6 +83,7 @@ function normalizePath(path: string): string {
 
 async function validateWorkspaceDirectory(path: string): Promise<string> {
   const absolutePath = normalizePath(path);
+  assertWorkspacePathAllowed(absolutePath);
   let stats: Awaited<ReturnType<typeof stat>>;
 
   try {

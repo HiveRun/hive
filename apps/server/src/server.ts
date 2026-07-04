@@ -4,9 +4,10 @@ import {
   mkdirSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { logger } from "@bogeychan/elysia-logger";
@@ -26,6 +27,11 @@ import {
 } from "./agents/service";
 import { resolveWorkspaceRoot } from "./config/context";
 import { DatabaseService } from "./db";
+import {
+  assertPrivateRemoteAccessAcknowledged,
+  isPrivateRemoteInstance,
+  privateRemoteAccessWarning,
+} from "./instance/mode";
 import { repairLegacyMigrationGaps } from "./legacy-migration-repairs";
 import { agentsRoutes } from "./routes/agents";
 import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
@@ -46,6 +52,7 @@ const DEFAULT_SERVER_PORT = 3000;
 const DEFAULT_HOSTNAME = "localhost";
 const STARTUP_RECOVERY_DELAY_MS = 1000;
 const NANOSECONDS_PER_MILLISECOND = 1_000_000;
+const HTTP_NOT_FOUND_STATUS = 404;
 const PORT = Number(process.env.PORT ?? DEFAULT_SERVER_PORT);
 const HOSTNAME = process.env.HOST ?? process.env.HOSTNAME ?? DEFAULT_HOSTNAME;
 
@@ -130,6 +137,7 @@ export const DEFAULT_API_URL = `http://${formatHostForLocalUrl(HOSTNAME)}:${DEFA
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 export const binaryDirectory = dirname(resolvedExecPath);
 const forcedMigrationsDirectory = process.env.HIVE_MIGRATIONS_DIR;
+const forcedWebDistDirectory = process.env.HIVE_WEB_DIST;
 const hiveHome = resolveHiveHome();
 export const pidFilePath =
   process.env.HIVE_PID_FILE ?? join(hiveHome, "hive.pid");
@@ -199,6 +207,107 @@ const resolveMigrationsDirectory = () => {
   throw new Error(
     `Can't find migrations directory. Checked: ${candidates.join(", ")}`
   );
+};
+
+const resolveWebDistDirectory = () => {
+  const candidates = [
+    forcedWebDistDirectory,
+    join(binaryDirectory, "public"),
+    join(moduleDir, "public"),
+  ].filter((dir): dir is string => Boolean(dir));
+
+  return (
+    candidates.find((directory) => existsSync(join(directory, "index.html"))) ??
+    null
+  );
+};
+
+const isPathInsideRoot = (root: string, path: string) =>
+  path === root || path.startsWith(`${root}${sep}`);
+
+const resolveStaticFilePath = (webDistDirectory: string, pathname: string) => {
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(pathname);
+  } catch {
+    return null;
+  }
+
+  const relativePath =
+    decodedPath === "/" ? "index.html" : decodedPath.slice(1);
+  const candidatePath = resolve(webDistDirectory, relativePath);
+  const resolvedWebDist = resolve(webDistDirectory);
+  if (!isPathInsideRoot(resolvedWebDist, candidatePath)) {
+    return null;
+  }
+
+  if (!existsSync(candidatePath)) {
+    return null;
+  }
+
+  try {
+    if (statSync(candidatePath).isDirectory()) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  return candidatePath;
+};
+
+const shouldServeIndexFallback = (request: Request, pathname: string) => {
+  if (extname(pathname)) {
+    return false;
+  }
+
+  const accept = request.headers.get("accept") ?? "";
+  return accept.includes("text/html") || accept.includes("*/*");
+};
+
+const serveStaticWebRequest = async ({
+  request,
+  set,
+}: {
+  request: Request;
+  set: { status?: number | string };
+}) => {
+  const url = new URL(request.url);
+  if (url.pathname === "/health" || url.pathname.startsWith("/api/")) {
+    set.status = HTTP_NOT_FOUND_STATUS;
+    return "Not found";
+  }
+
+  const webDistDirectory = resolveWebDistDirectory();
+  if (!webDistDirectory) {
+    if (url.pathname === "/") {
+      return "OK";
+    }
+    set.status = HTTP_NOT_FOUND_STATUS;
+    return "Not found";
+  }
+
+  const filePath = resolveStaticFilePath(webDistDirectory, url.pathname);
+  const resolvedPath =
+    filePath ??
+    (shouldServeIndexFallback(request, url.pathname)
+      ? join(webDistDirectory, "index.html")
+      : null);
+
+  if (!resolvedPath) {
+    set.status = HTTP_NOT_FOUND_STATUS;
+    return "Not found";
+  }
+
+  const file = Bun.file(resolvedPath);
+  if (!(await file.exists())) {
+    set.status = HTTP_NOT_FOUND_STATUS;
+    return "Not found";
+  }
+
+  return new Response(file, {
+    headers: file.type ? { "content-type": file.type } : undefined,
+  });
 };
 
 const runMigrations = async (): Promise<void> => {
@@ -281,7 +390,9 @@ const createApp = () =>
     .use(templatesRoutes)
     .use(workspacesRoutes)
     .use(cellsRoutes)
-    .use(agentsRoutes);
+    .use(agentsRoutes)
+    .get("/", serveStaticWebRequest)
+    .get("/*", serveStaticWebRequest);
 
 export type App = ReturnType<typeof createApp>;
 
@@ -442,6 +553,10 @@ const runStartupRecoveryTask = async (
 };
 
 const bootstrapServerCore = async (workspaceRoot: string): Promise<void> => {
+  assertPrivateRemoteAccessAcknowledged();
+  if (isPrivateRemoteInstance()) {
+    process.stderr.write(`${privateRemoteAccessWarning()}\n`);
+  }
   await timeStartupStep("database migrations", runMigrations);
   await timeStartupStep("workspace registration", async () => {
     await registerWorkspace(workspaceRoot);
@@ -477,8 +592,6 @@ export const startServer = async () => {
   const serverStartTime = process.hrtime.bigint();
   const app = createApp();
   cleanupReadyFile();
-
-  app.get("/", () => "OK");
 
   const workspaceRoot = resolveWorkspaceRoot();
 

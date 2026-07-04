@@ -3,6 +3,10 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { hasConfigFile } from "../config/files";
+import {
+  assertWorkspacePathAllowed,
+  isWorkspacePathAllowed,
+} from "../instance/mode";
 import { isCellWorkspacePath } from "./registry";
 
 type WorkspaceDirectoryEntry = {
@@ -35,6 +39,7 @@ export async function browseWorkspaceDirectories(
   filter?: string
 ): Promise<WorkspaceBrowseResult> {
   const targetPath = normalizeBrowsePath(path);
+  assertWorkspacePathAllowed(targetPath);
   const targetStats = await stat(targetPath);
   if (!targetStats.isDirectory()) {
     throw new Error(`Path is not a directory: ${targetPath}`);
@@ -76,7 +81,7 @@ export async function browseWorkspaceDirectories(
     if (parent === targetPath) {
       return null;
     }
-    return parent;
+    return isWorkspacePathAllowed(parent) ? parent : null;
   })();
 
   return {

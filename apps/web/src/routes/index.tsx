@@ -330,6 +330,7 @@ function SwarmHero({
   serviceStats: ServiceStats;
 }) {
   const runtimeSegments = getRuntimeSegments(runtimeSummary);
+  const instanceWarnings = instanceOverview?.instance.warnings ?? [];
   const heroMetrics = [
     runtimeSummary.working > 0
       ? {
@@ -400,23 +401,30 @@ function SwarmHero({
               resource pressure. Built for deciding what needs attention now.
             </p>
             {instanceOverview ? (
-              <div className="mt-5 flex flex-wrap items-center gap-2 border-2 border-border bg-background/70 p-3 font-mono text-[11px] uppercase tracking-[0.18em]">
-                <Badge className="rounded-sm" variant="outline">
-                  Instance
-                </Badge>
-                <span className="text-foreground">
-                  {instanceOverview.instance.name}
-                </span>
-                <span className="text-muted-foreground">
-                  {instanceOverview.instance.mode}
-                </span>
-                <span className="text-muted-foreground">
-                  {instanceOverview.workspaces.total} workspaces
-                </span>
-                <span className="truncate text-muted-foreground">
-                  {instanceOverview.instance.apiBaseUrl}
-                </span>
-              </div>
+              <>
+                <div className="mt-5 flex flex-wrap items-center gap-2 border-2 border-border bg-background/70 p-3 font-mono text-[11px] uppercase tracking-[0.18em]">
+                  <Badge className="rounded-sm" variant="outline">
+                    Instance
+                  </Badge>
+                  <span className="text-foreground">
+                    {instanceOverview.instance.name}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {instanceOverview.instance.mode}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {instanceOverview.workspaces.total} workspaces
+                  </span>
+                  <span className="truncate text-muted-foreground">
+                    {instanceOverview.instance.apiBaseUrl}
+                  </span>
+                </div>
+                {instanceWarnings.length > 0 ? (
+                  <div className="mt-3 border-2 border-primary/70 bg-primary/10 p-3 text-primary text-xs leading-5">
+                    {instanceWarnings[0]}
+                  </div>
+                ) : null}
+              </>
             ) : null}
           </div>
 

@@ -145,6 +145,9 @@ const resolveInstanceStoreOptions = () => ({
 const resolveActiveInstanceProfile = () =>
   resolveInstanceProfile(resolveInstanceStoreOptions()).profile;
 
+const resolveNamedInstanceProfile = (name?: string) =>
+  resolveInstanceProfile(resolveInstanceStoreOptions(), name).profile;
+
 const resolveDesktopPidFilePath = () =>
   process.env.HIVE_DESKTOP_PID_FILE ??
   join(resolveHiveHomePath(), "desktop.pid");
@@ -656,12 +659,15 @@ const resolveMacAppExecutable = (appPath: string) => {
   }
 };
 
-const resolveDesktopLaunchEnv = () => {
+const resolveDesktopLaunchEnv = (
+  options: { instanceName?: string; remoteRenderer?: boolean } = {}
+) => {
   const rendererPath = join(binaryDirectory, "public", "index.html");
-  const activeInstance = resolveActiveInstanceProfile();
+  const activeInstance = resolveNamedInstanceProfile(options.instanceName);
   const isLocalInstance = isLocalInstanceProfile(activeInstance);
   const backendUrl = activeInstance.apiUrl;
   const healthUrl = `${trimTrailingSlash(activeInstance.apiUrl)}/health`;
+  const useRemoteRenderer = options.remoteRenderer && !isLocalInstance;
 
   return {
     ...process.env,
@@ -684,13 +690,20 @@ const resolveDesktopLaunchEnv = () => {
       process.env.HIVE_DESKTOP_STARTUP_MODE ??
       (isLocalInstance ? "starting" : "remote-client"),
     HIVE_WORKSPACE_ROOT: resolveWorkspaceRootEnv(),
-    ...(existsSync(rendererPath) && !process.env.HIVE_DESKTOP_RENDERER_PATH
+    ...(useRemoteRenderer && !process.env.HIVE_DESKTOP_URL
+      ? { HIVE_DESKTOP_URL: activeInstance.webUrl }
+      : {}),
+    ...(existsSync(rendererPath) &&
+    !useRemoteRenderer &&
+    !process.env.HIVE_DESKTOP_RENDERER_PATH
       ? { HIVE_DESKTOP_RENDERER_PATH: rendererPath }
       : {}),
   };
 };
 
-const launchDesktopApplication = () => {
+const launchDesktopApplication = (
+  options: { instanceName?: string; remoteRenderer?: boolean } = {}
+) => {
   const target = getDesktopExecutableCandidates().find(
     (candidate) => candidate && existsSync(candidate)
   );
@@ -731,7 +744,7 @@ const launchDesktopApplication = () => {
 
     const child = spawn(command, args, {
       ...spawnOptions,
-      env: resolveDesktopLaunchEnv(),
+      env: resolveDesktopLaunchEnv(options),
     });
     child.unref();
     return { ok: true, path: target, pid: child.pid ?? null } as const;
@@ -1514,8 +1527,8 @@ const stopCommand = async () => {
   return result === "failed" || startupResult === "failed" ? 1 : 0;
 };
 
-const webCommand = async () => {
-  const activeInstance = resolveActiveInstanceProfile();
+const webCommand = async (instanceName?: string) => {
+  const activeInstance = resolveNamedInstanceProfile(instanceName);
   if (!isLocalInstanceProfile(activeInstance)) {
     const result = openDefaultBrowser(activeInstance.webUrl);
     if (!result.ok) {
@@ -1544,8 +1557,10 @@ const webCommand = async () => {
   return 0;
 };
 
-const desktopCommand = () => {
-  const result = launchDesktopApplication();
+const desktopCommand = (
+  options: { instanceName?: string; remoteRenderer?: boolean } = {}
+) => {
+  const result = launchDesktopApplication(options);
   if (!result.ok) {
     if (result.message) {
       logError(`Failed to launch Hive desktop: ${result.message}`);
@@ -1750,6 +1765,55 @@ const instanceOpenCommand = async (name?: string) => {
   return 0;
 };
 
+const instanceStatusCommand = async (name?: string) => {
+  const { profile } = resolveInstanceProfile(
+    resolveInstanceStoreOptions(),
+    name
+  );
+  const healthUrl = `${trimTrailingSlash(profile.apiUrl)}/health`;
+
+  const healthResponse = await fetch(healthUrl).catch((error: unknown) => {
+    throw new Error(
+      `Failed to reach health endpoint: ${error instanceof Error ? error.message : String(error)}`
+    );
+  });
+  if (!healthResponse.ok) {
+    throw new Error(
+      `Health endpoint returned ${healthResponse.status} ${healthResponse.statusText}`
+    );
+  }
+
+  const instanceResponse = await fetch(
+    `${trimTrailingSlash(profile.apiUrl)}/api/instance`
+  ).catch((error: unknown) => {
+    throw new Error(
+      `Failed to load instance metadata: ${error instanceof Error ? error.message : String(error)}`
+    );
+  });
+  if (!instanceResponse.ok) {
+    throw new Error(
+      `Instance metadata returned ${instanceResponse.status} ${instanceResponse.statusText}`
+    );
+  }
+
+  const metadata = (await instanceResponse.json()) as {
+    mode?: string;
+    name?: string;
+    warnings?: string[];
+  };
+  printSummary("Hive instance status", [
+    ["Profile", profile.name],
+    ["API", profile.apiUrl],
+    ["Health", "ok"],
+    ["Instance", metadata.name ?? "unknown"],
+    ["Mode", metadata.mode ?? "unknown"],
+  ]);
+  for (const warning of metadata.warnings ?? []) {
+    logInfo(warning);
+  }
+  return 0;
+};
+
 const runCommand = async (
   operation: () => number | Promise<number>,
   label: string
@@ -1825,11 +1889,18 @@ class WebCommand extends Command {
     description: "Open the Hive UI in your default browser.",
     details:
       "Starts the daemon if necessary and launches the configured web UI URL.",
-    examples: [["Start server and open browser", "hive web"]],
+    examples: [
+      ["Start server and open browser", "hive web"],
+      ["Open private remote instance", "hive web --instance vps"],
+    ],
+  });
+
+  instanceName = Option.String("--instance", {
+    description: "Instance profile to open without changing the active profile",
   });
 
   override execute() {
-    return runCommand(() => webCommand(), "web");
+    return runCommand(() => webCommand(this.instanceName), "web");
   }
 }
 
@@ -1840,11 +1911,35 @@ class DesktopCommand extends Command {
     description: "Launch the Hive desktop application.",
     details:
       "Starts the daemon if needed and opens the packaged desktop UI. Set HIVE_ELECTRON_BINARY to override the desktop executable path.",
-    examples: [["Open desktop UI", "hive desktop"]],
+    examples: [
+      ["Open desktop UI", "hive desktop"],
+      ["Open private remote instance", "hive desktop --instance vps"],
+      [
+        "Open remote web renderer for external access login",
+        "hive desktop --instance vps --remote-renderer",
+      ],
+    ],
+  });
+
+  instanceName = Option.String("--instance", {
+    description:
+      "Instance profile to connect without changing the active profile",
+  });
+
+  remoteRenderer = Option.Boolean("--remote-renderer", {
+    description:
+      "Load the selected instance web URL in Desktop instead of the bundled renderer",
   });
 
   override execute() {
-    return runCommand(() => desktopCommand(), "desktop");
+    return runCommand(
+      () =>
+        desktopCommand({
+          instanceName: this.instanceName,
+          remoteRenderer: Boolean(this.remoteRenderer),
+        }),
+      "desktop"
+    );
   }
 }
 
@@ -2032,15 +2127,15 @@ class InstanceAddCommand extends Command {
     category: "Instance",
     description: "Add or update a Hive instance profile.",
     details:
-      "Stores the instance URL in your local Hive config. Use --token-env to reference an environment variable; token values are not written to the profile.",
+      "Stores the instance URL in your local Hive config. Use --token-env only as a reserved future auth reference; token values are not written to the profile and are not sent to Hive today.",
     examples: [
       [
-        "Add company instance",
-        "hive instance add company https://hive.example.com --use",
+        "Add private remote instance",
+        "hive instance add vps https://hive.example.com --use",
       ],
       [
         "Add separate web URL",
-        "hive instance add company https://api.hive.example.com --web-url https://hive.example.com",
+        "hive instance add vps https://api.hive.example.com --web-url https://hive.example.com",
       ],
     ],
   });
@@ -2081,7 +2176,7 @@ class InstanceUseCommand extends Command {
   static override usage = Command.Usage({
     category: "Instance",
     description: "Select the active Hive instance for client commands.",
-    examples: [["Use company instance", "hive instance use company"]],
+    examples: [["Use private remote instance", "hive instance use vps"]],
   });
 
   name = Option.String({ name: "name", required: true });
@@ -2096,7 +2191,7 @@ class InstanceRemoveCommand extends Command {
   static override usage = Command.Usage({
     category: "Instance",
     description: "Remove a Hive instance profile.",
-    examples: [["Remove company instance", "hive instance remove company"]],
+    examples: [["Remove private remote instance", "hive instance remove vps"]],
   });
 
   instanceName = Option.String({ name: "name", required: true });
@@ -2116,7 +2211,7 @@ class InstanceOpenCommand extends Command {
     description: "Open an instance in your default browser.",
     examples: [
       ["Open active instance", "hive instance open"],
-      ["Open company instance", "hive instance open company"],
+      ["Open private remote instance", "hive instance open vps"],
     ],
   });
 
@@ -2124,6 +2219,25 @@ class InstanceOpenCommand extends Command {
 
   override execute() {
     return runCommand(() => instanceOpenCommand(this.name), "instance open");
+  }
+}
+
+class InstanceStatusCommand extends Command {
+  static override paths = [["instance", "status"]];
+  static override usage = Command.Usage({
+    category: "Instance",
+    description: "Check health and metadata for a Hive instance profile.",
+    examples: [
+      ["Check active instance", "hive instance status"],
+      ["Probe private remote health", "hive instance status vps"],
+    ],
+  });
+
+  profileName = Option.String({ name: "name", required: false });
+
+  override execute() {
+    const operation = () => instanceStatusCommand(this.profileName);
+    return runCommand(operation, "instance status");
   }
 }
 
@@ -2143,6 +2257,7 @@ const registeredCommandClasses = [
   InstanceUseCommand,
   InstanceRemoveCommand,
   InstanceOpenCommand,
+  InstanceStatusCommand,
   InstanceDoctorCommand,
   Builtins.HelpCommand,
   Builtins.VersionCommand,

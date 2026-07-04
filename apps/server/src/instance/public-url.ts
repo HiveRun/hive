@@ -30,3 +30,14 @@ export const resolvePublicApiBaseUrl = () => {
   const port = process.env.PORT ?? DEFAULT_SERVER_PORT;
   return `http://${formatHostForUrl(hostname)}:${port}`;
 };
+
+export const resolvePublicWebBaseUrl = () => {
+  const configured =
+    process.env.HIVE_PUBLIC_WEB_URL?.trim() ||
+    process.env.PUBLIC_WEB_URL?.trim();
+  if (configured) {
+    return trimTrailingSlash(configured);
+  }
+
+  return resolvePublicApiBaseUrl();
+};

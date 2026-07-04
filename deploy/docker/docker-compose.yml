@@ -1,0 +1,34 @@
+services:
+  hive:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: ghcr.io/hiverun/hive:local
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      HIVE_INSTANCE_NAME: ${HIVE_INSTANCE_NAME:-Private Remote Hive}
+      HIVE_HOME: /home/hive/.hive
+      HIVE_INSTANCE_MODE: private-remote
+      HIVE_DEPLOYMENT_KIND: docker-compose
+      HIVE_REMOTE_ACCESS_ACK: private-network-only
+      HIVE_ALLOWED_WORKSPACE_ROOTS: /workspaces
+      HIVE_BROWSE_ROOT: /workspaces
+      HIVE_INTERNAL_API_URL: http://127.0.0.1:3000
+      HIVE_PUBLIC_API_URL: ${HIVE_PUBLIC_API_URL:-http://127.0.0.1:3000}
+      HIVE_PUBLIC_WEB_URL: ${HIVE_PUBLIC_WEB_URL:-http://127.0.0.1:3000}
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATABASE_URL: /home/hive/.hive/state/hive.db
+    volumes:
+      - hive-home:/home/hive/.hive
+      - hive-workspaces:/workspaces
+      - ${HIVE_OPENCODE_CONFIG_DIR:-./opencode}:/home/hive/.config/opencode:ro
+    ports:
+      - "127.0.0.1:${HIVE_LOCAL_PORT:-3000}:3000"
+
+volumes:
+  hive-home:
+  hive-workspaces:

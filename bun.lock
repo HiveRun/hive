@@ -52,6 +52,12 @@
         "typescript": "catalog:",
       },
     },
+    "apps/e2e-remote": {
+      "name": "@hive/e2e-remote",
+      "devDependencies": {
+        "typescript": "catalog:",
+      },
+    },
     "apps/server": {
       "name": "@hive/server",
       "dependencies": {
@@ -457,6 +463,8 @@
     "@hive/e2e": ["@hive/e2e@workspace:apps/e2e"],
 
     "@hive/e2e-desktop": ["@hive/e2e-desktop@workspace:apps/e2e-desktop"],
+
+    "@hive/e2e-remote": ["@hive/e2e-remote@workspace:apps/e2e-remote"],
 
     "@hive/server": ["@hive/server@workspace:apps/server"],
 
