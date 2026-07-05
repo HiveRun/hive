@@ -329,6 +329,21 @@ const loadCachedOpencodeDefaults = async (
   return value;
 };
 
+const loadOptionalOpencodeDefaults = async (
+  workspacePath: string
+): Promise<EffectiveOpencodeDefaults> => {
+  try {
+    return await loadCachedOpencodeDefaults(workspacePath);
+  } catch (cause) {
+    logTemplatesWarning(
+      `Failed to load effective OpenCode defaults for workspace '${workspacePath}'; using Hive template defaults: ${formatUnknown(
+        cause
+      )}`
+    );
+    return {};
+  }
+};
+
 const listTemplates = async (
   workspaceId?: string
 ): Promise<TemplateListResponse> => {
@@ -338,7 +353,7 @@ const listTemplates = async (
     templateToResponse(id, template)
   );
 
-  const opencodeDefaults = await loadCachedOpencodeDefaults(workspacePath);
+  const opencodeDefaults = await loadOptionalOpencodeDefaults(workspacePath);
   const agentDefaults = opencodeDefaults.defaultModel;
   const mergedStartMode = normalizeStartMode(opencodeDefaults.startMode);
   const defaultStartMode =

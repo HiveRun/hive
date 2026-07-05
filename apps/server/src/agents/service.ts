@@ -1612,8 +1612,11 @@ async function ensureRuntimeForCell(
   const { hiveConfig, template } = await hydrateInstructionsForCell(deps, cell);
 
   const agentConfig = resolveTemplateAgentConfig(template);
-  const effectiveOpencodeDefaults =
-    await deps.loadEffectiveOpencodeDefaults(workspaceRootPath);
+  const effectiveOpencodeDefaults = await deps
+    .loadEffectiveOpencodeDefaults(workspaceRootPath)
+    .catch(
+      (): Awaited<ReturnType<typeof loadEffectiveOpencodeDefaults>> => ({})
+    );
   const defaultOpencodeModel = effectiveOpencodeDefaults.defaultModel;
   const configDefaultProvider = hiveConfig.opencode?.defaultProvider;
   const configDefaultModel = hiveConfig.opencode?.defaultModel;
