@@ -1,13 +1,6 @@
 import "dotenv/config";
-import {
-  existsSync,
-  mkdirSync,
-  realpathSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { basename, dirname, extname, join, resolve, sep } from "node:path";
+import { existsSync, statSync } from "node:fs";
+import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { logger } from "@bogeychan/elysia-logger";
@@ -39,34 +32,39 @@ import { instanceRoutes } from "./routes/instance";
 import { linearRoutes } from "./routes/linear";
 import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
+import {
+  markDaemonReady,
+  binaryDirectory as runtimeBinaryDirectory,
+  cleanupPidFile as runtimeCleanupPidFile,
+  cleanupReadyFile as runtimeCleanupReadyFile,
+  DEFAULT_API_PORT as runtimeDefaultApiPort,
+  DEFAULT_API_URL as runtimeDefaultApiUrl,
+  DEFAULT_WEB_PORT as runtimeDefaultWebPort,
+  DEFAULT_WEB_URL as runtimeDefaultWebUrl,
+  pidFilePath as runtimePidFilePath,
+  readyFilePath as runtimeReadyFilePath,
+  serverHostname,
+  serverPort,
+} from "./runtime";
 import { cells } from "./schema/cells";
 import { chatTerminalService } from "./services/chat-terminal";
 import { ServiceSupervisorService } from "./services/supervisor";
 import { cellTerminalService } from "./services/terminal";
-import {
-  ensureWorkspaceRegistered,
-  resolveHiveHome,
-} from "./workspaces/registry";
+import { ensureWorkspaceRegistered } from "./workspaces/registry";
 
-const DEFAULT_SERVER_PORT = 3000;
-const DEFAULT_HOSTNAME = "localhost";
+export const DEFAULT_API_PORT = runtimeDefaultApiPort;
+export const DEFAULT_API_URL = runtimeDefaultApiUrl;
+export const DEFAULT_WEB_PORT = runtimeDefaultWebPort;
+export const DEFAULT_WEB_URL = runtimeDefaultWebUrl;
+export const pidFilePath = runtimePidFilePath;
+export const readyFilePath = runtimeReadyFilePath;
+export const binaryDirectory = runtimeBinaryDirectory;
+export const cleanupPidFile = () => runtimeCleanupPidFile();
+export const cleanupReadyFile = () => runtimeCleanupReadyFile();
+
 const STARTUP_RECOVERY_DELAY_MS = 1000;
 const NANOSECONDS_PER_MILLISECOND = 1_000_000;
 const HTTP_NOT_FOUND_STATUS = 404;
-const PORT = Number(process.env.PORT ?? DEFAULT_SERVER_PORT);
-const HOSTNAME = process.env.HOST ?? process.env.HOSTNAME ?? DEFAULT_HOSTNAME;
-
-function formatHostForLocalUrl(hostname: string) {
-  if (hostname === "0.0.0.0") {
-    return "127.0.0.1";
-  }
-
-  if (hostname === "::") {
-    return "[::1]";
-  }
-
-  return hostname.includes(":") ? `[${hostname}]` : hostname;
-}
 
 const SILENCE_TERMINAL_TRAFFIC_LOGS =
   process.env.HIVE_LOG_TERMINAL_TRAFFIC !== "1";
@@ -126,30 +124,13 @@ function shouldIgnoreAutoRequestLog(ctx: {
   return false;
 }
 
-const resolvedExecPath =
-  realpathSync.native?.(process.execPath) ?? realpathSync(process.execPath);
-const runtimeExecutable = basename(resolvedExecPath).toLowerCase();
-const isBunRuntime = runtimeExecutable.startsWith("bun");
-const isCompiledRuntime = !isBunRuntime;
-export const DEFAULT_API_PORT = String(PORT);
-export const DEFAULT_API_URL = `http://${formatHostForLocalUrl(HOSTNAME)}:${DEFAULT_API_PORT}`;
-
 const moduleDir = dirname(fileURLToPath(import.meta.url));
-export const binaryDirectory = dirname(resolvedExecPath);
 const forcedMigrationsDirectory = process.env.HIVE_MIGRATIONS_DIR;
 const forcedWebDistDirectory = process.env.HIVE_WEB_DIST;
-const hiveHome = resolveHiveHome();
-export const pidFilePath =
-  process.env.HIVE_PID_FILE ?? join(hiveHome, "hive.pid");
-export const readyFilePath =
-  process.env.HIVE_READY_FILE ?? join(hiveHome, "daemon-ready");
-export const DEFAULT_WEB_PORT =
-  process.env.WEB_PORT ?? (isCompiledRuntime ? String(PORT) : "3001");
 const DEFAULT_CORS_ORIGINS = [
   `http://localhost:${DEFAULT_WEB_PORT}`,
   `http://127.0.0.1:${DEFAULT_WEB_PORT}`,
 ];
-export const DEFAULT_WEB_URL = `http://localhost:${DEFAULT_WEB_PORT}`;
 //
 const resolvedCorsOrigins = (
   process.env.CORS_ORIGINS ||
@@ -335,31 +316,6 @@ const runMigrations = async (): Promise<void> => {
 const startOpencodeServer = async (workspaceRoot: string): Promise<void> => {
   const config = await loadOpencodeConfig(workspaceRoot);
   await startSharedOpencodeServer(config);
-};
-
-export const cleanupPidFile = () => {
-  try {
-    rmSync(pidFilePath);
-  } catch {
-    /* ignore pid file cleanup errors */
-  }
-};
-
-export const cleanupReadyFile = () => {
-  try {
-    rmSync(readyFilePath);
-  } catch {
-    /* ignore ready file cleanup errors */
-  }
-};
-
-const markDaemonReady = () => {
-  try {
-    mkdirSync(dirname(readyFilePath), { recursive: true });
-    writeFileSync(readyFilePath, `${process.pid}\n`, "utf8");
-  } catch {
-    /* ignore ready file write errors */
-  }
 };
 
 const createApp = () =>
@@ -615,22 +571,22 @@ export const startServer = async () => {
 
   try {
     app.listen({
-      port: PORT,
-      hostname: HOSTNAME,
+      port: serverPort,
+      hostname: serverHostname,
       reusePort: false,
     });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : JSON.stringify(error);
     process.stderr.write(
-      `Failed to bind API port ${PORT}: ${message}. Is another process using this port?\n`
+      `Failed to bind API port ${serverPort}: ${message}. Is another process using this port?\n`
     );
     cleanupPidFile();
     process.exit(1);
   }
 
-  const boundPort = app.server?.port ?? PORT;
-  const boundHostname = app.server?.hostname ?? HOSTNAME;
+  const boundPort = app.server?.port ?? serverPort;
+  const boundHostname = app.server?.hostname ?? serverHostname;
   process.stderr.write(
     `API listening on http://${boundHostname}:${boundPort}\n`
   );

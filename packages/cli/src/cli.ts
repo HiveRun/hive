@@ -42,8 +42,7 @@ import {
   DEFAULT_WEB_URL,
   pidFilePath,
   readyFilePath,
-  startServer,
-} from "@hive/server";
+} from "@hive/server/runtime";
 import { Builtins, Cli, Command, Option } from "clipanion";
 import pc from "picocolors";
 import {
@@ -603,6 +602,11 @@ const openDefaultBrowser = (url: string) => {
       message: failedOperationMessage(error, "Failed to open default browser"),
     } as const;
   }
+};
+
+const startLocalServer = async () => {
+  const { startServer } = await import("@hive/server");
+  await startServer();
 };
 
 const getDesktopExecutableCandidates = () => {
@@ -1509,7 +1513,7 @@ const bootstrap = async (options?: { forceForeground?: boolean }) => {
     process.env.HIVE_WORKSPACE_ROOT = process.cwd();
   }
 
-  await startServer();
+  await startLocalServer();
   return new Promise<never>(() => {
     /* Keep process alive while server runs in foreground */
   });

@@ -1,17 +1,35 @@
+# syntax=docker/dockerfile:1.7
+
 FROM oven/bun:1.3.5-debian AS build
 
 WORKDIR /src
 
 COPY package.json bun.lock turbo.json ./
 COPY tsconfig.json tsconfig.base.json ./
+RUN mkdir -p \
+  apps/desktop-electron \
+  apps/e2e \
+  apps/e2e-desktop \
+  apps/e2e-remote \
+  apps/server \
+  apps/web \
+  packages/cli \
+  packages/daemon-runtime
+COPY apps/desktop-electron/package.json ./apps/desktop-electron/package.json
+COPY apps/e2e/package.json ./apps/e2e/package.json
+COPY apps/e2e-desktop/package.json ./apps/e2e-desktop/package.json
+COPY apps/e2e-remote/package.json ./apps/e2e-remote/package.json
+COPY apps/server/package.json ./apps/server/package.json
+COPY apps/web/package.json ./apps/web/package.json
+COPY packages/cli/package.json ./packages/cli/package.json
+COPY packages/daemon-runtime/package.json ./packages/daemon-runtime/package.json
+RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile
 COPY apps ./apps
 COPY packages ./packages
 COPY scripts ./scripts
 COPY README.md ./README.md
 COPY .ruler ./.ruler
 COPY AGENTS.md ./AGENTS.md
-
-RUN bun install --frozen-lockfile
 RUN mkdir -p packages/cli/node_modules \
   && rm -rf packages/cli/node_modules/clipanion packages/cli/node_modules/dotenv packages/cli/node_modules/picocolors \
   && ln -s ../../../node_modules/clipanion packages/cli/node_modules/clipanion \
@@ -40,6 +58,7 @@ RUN apt-get update \
     curl \
     git \
     openssh-client \
+    python3 \
     unzip \
   && rm -rf /var/lib/apt/lists/*
 
@@ -57,7 +76,7 @@ RUN ln -s /opt/hive/current/hive /usr/local/bin/hive \
 USER hive
 WORKDIR /workspaces
 
-RUN curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path || true
+RUN curl --connect-timeout 10 --max-time 120 -fsSL https://opencode.ai/install | bash -s -- --no-modify-path || true
 
 ENV PATH=/home/hive/.opencode/bin:${PATH} \
     HIVE_WEB_DIST=/opt/hive/current/public \

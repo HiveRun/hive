@@ -6,6 +6,10 @@
     ".": {
       "types": "./src/server.ts",
       "default": "./src/server.ts"
+    },
+    "./runtime": {
+      "types": "./src/runtime.ts",
+      "default": "./src/runtime.ts"
     }
   },
   "scripts": {
