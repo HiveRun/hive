@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { cellActivityEvents } from "../../schema/activity-events";
 import { cells } from "../../schema/cells";
 import { cellServices } from "../../schema/services";
@@ -19,6 +19,7 @@ const TEST_WORKSPACE_ID = "test-workspace";
 const TEST_CELL_ID = "test-cell-id";
 const TEST_SERVICE_ID = "service-1";
 const HTTP_OK = 200;
+const HTTP_INTERNAL_ERROR = 500;
 const TIMING_CREATE_STEP_OFFSET_MS = 2000;
 const TIMING_CREATE_TOTAL_OFFSET_MS = 1800;
 const TIMING_CREATE_STEP_DURATION_MS = 1250;
@@ -30,6 +31,7 @@ type MinimalDependencyOverrides = {
   closeAgentSession?: (...args: unknown[]) => Promise<void>;
   stopServicesForCell?: (...args: unknown[]) => Promise<void>;
   removeWorktree?: (...args: unknown[]) => Promise<void>;
+  runCellTeardown?: (...args: unknown[]) => Promise<void>;
 };
 
 function createMinimalDependencies(
@@ -45,6 +47,8 @@ function createMinimalDependencies(
         overrides.stopServicesForCell?.(...args) ?? Promise.resolve(),
       removeWorktree: (...args: unknown[]) =>
         overrides.removeWorktree?.(...args) ?? Promise.resolve(),
+      runCellTeardown: (...args: unknown[]) =>
+        overrides.runCellTeardown?.(...args) ?? Promise.resolve(),
     },
   });
 }
@@ -292,27 +296,32 @@ describe("Cell activity events", () => {
     );
   });
 
-  it("continues cell deletion when cleanup steps fail", async () => {
+  it("blocks destructive deletion when service cleanup fails", async () => {
     await seedCellAndService();
+    const removeWorktree = vi.fn(() => Promise.resolve());
+    const runCellTeardown = vi.fn(() => Promise.resolve());
 
     const app = createTestApp({
       closeAgentSession: () =>
         Promise.reject(new Error("close session failed")),
       stopServicesForCell: () =>
         Promise.reject(new Error("stop services failed")),
-      removeWorktree: () =>
-        Promise.reject(new Error("remove workspace failed")),
+      removeWorktree,
+      runCellTeardown,
     });
 
     const deleteResponse = await deleteRouteCellById(app, TEST_CELL_ID);
-    expect(deleteResponse.status).toBe(HTTP_OK);
+    expect(deleteResponse.status).toBe(HTTP_INTERNAL_ERROR);
 
-    const remainingCell = await testDb
-      .select({ id: cells.id })
+    const [remainingCell] = await testDb
+      .select()
       .from(cells)
       .where(eq(cells.id, TEST_CELL_ID))
       .limit(1);
-    expect(remainingCell).toHaveLength(0);
+    expect(remainingCell?.status).toBe("error");
+    expect(remainingCell?.lastSetupError).toContain("stop services failed");
+    expect(runCellTeardown).not.toHaveBeenCalled();
+    expect(removeWorktree).not.toHaveBeenCalled();
   });
 
   it("paginates activity events with cursors", async () => {

@@ -19,6 +19,7 @@ export async function setupTestDb() {
       // Historical migrations still create these tables before the new drop migration removes them.
       sqlite.exec("DROP TABLE IF EXISTS cell_resource_rollups;");
       sqlite.exec("DROP TABLE IF EXISTS cell_resource_history;");
+      sqlite.exec("DROP TABLE IF EXISTS cell_service_ports;");
       sqlite.exec("DROP TABLE IF EXISTS cell_services;");
       sqlite.exec("DROP TABLE IF EXISTS cell_provisioning_state;");
       sqlite.exec("DROP TABLE IF EXISTS cells;");

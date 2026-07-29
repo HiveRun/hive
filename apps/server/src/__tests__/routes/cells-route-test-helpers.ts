@@ -2,7 +2,7 @@ import { Elysia } from "elysia";
 import { vi } from "vitest";
 import { createCellsRoutes } from "../../routes/cells";
 import { cells } from "../../schema/cells";
-import { cellServices } from "../../schema/services";
+import { cellServicePorts, cellServices } from "../../schema/services";
 import type { ChatTerminalEvent } from "../../services/chat-terminal";
 import type { CellTerminalEvent } from "../../services/terminal";
 import { testDb } from "../test-db";
@@ -76,6 +76,73 @@ export const deleteRouteCellById = (
   app: { handle: (request: Request) => Promise<Response> },
   cellId: string
 ) => handleRouteRequest(app, `/api/cells/${cellId}`, { method: "DELETE" });
+
+const createDeferredSignal = () => {
+  let resolvePromise!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: resolvePromise };
+};
+
+export const createResolvedCleanupMocks = () => ({
+  runCellTeardown: vi.fn(() => Promise.resolve()),
+  removeWorktree: vi.fn(() => Promise.resolve()),
+});
+
+export const createBlockedServiceStop = () => {
+  const released = createDeferredSignal();
+  const started = createDeferredSignal();
+  const stop = vi.fn(async () => {
+    started.resolve();
+    await released.promise;
+  });
+  return { released, started, stop };
+};
+
+const assertTerminalEnvironment = (
+  environment: Record<string, string> | undefined,
+  cellId: string,
+  expectedPorts: Record<string, string>
+) => {
+  if (!environment) {
+    throw new Error("Expected terminal environment");
+  }
+  const expected = {
+    HIVE_CELL_ID: cellId,
+    HIVE_BROWSE_ROOT: DEFAULT_TEST_WORKTREE,
+    ...expectedPorts,
+  };
+  for (const [key, value] of Object.entries(expected)) {
+    if (environment?.[key] !== value) {
+      throw new Error(`Expected terminal environment ${key}=${value}`);
+    }
+  }
+  if (
+    !environment.HIVE_CELL_RUNTIME_DIR?.includes(`/runtime/cells/${cellId}`)
+  ) {
+    throw new Error("Expected cell runtime directory in terminal environment");
+  }
+  if (
+    !environment.HIVE_CELL_ARTIFACTS_DIR?.includes(`/artifacts/cells/${cellId}`)
+  ) {
+    throw new Error(
+      "Expected cell artifacts directory in terminal environment"
+    );
+  }
+};
+
+export const assertTerminalStreamEnvironment = async (
+  app: { handle: (request: Request) => Promise<Response> },
+  path: string,
+  getEnvironment: () => Record<string, string> | undefined,
+  expected: { cellId: string; ports: Record<string, string> }
+) => {
+  const response = await handleRouteRequest(app, path);
+  expectResponseStatus(response);
+  assertTerminalEnvironment(getEnvironment(), expected.cellId, expected.ports);
+  await response.body?.cancel();
+};
 
 const expectResponseStatus = (response: Response, status = HTTP_OK_STATUS) => {
   if (response.status !== status) {
@@ -626,6 +693,7 @@ export const createCellRouteTestDependencies = (
     ensureServicesForCell: async () => Promise.resolve(),
     startServicesForCell: async () => Promise.resolve(),
     stopServicesForCell: async () => Promise.resolve(),
+    runCellTeardown: async () => Promise.resolve(),
     startServiceById: async () => Promise.resolve(),
     stopServiceById: async () => Promise.resolve(),
     sendAgentMessage: async () => Promise.resolve(),
@@ -683,7 +751,14 @@ const createPtyRouteHarness = <TEvent extends { type: string }>(args: {
   };
 
   const ensureSession = vi.fn(
-    ({ cellId, workspacePath }: { cellId: string; workspacePath: string }) => {
+    ({
+      cellId,
+      workspacePath,
+    }: {
+      cellId: string;
+      workspacePath: string;
+      environment: Record<string, string>;
+    }) => {
       sequence += 1;
       session = {
         ...session,
@@ -828,6 +903,23 @@ export const seedRouteService = async (
   });
 };
 
+export const seedRouteServicePort = async (args: {
+  serviceId?: string;
+  name: string;
+  port: number;
+  primary?: boolean;
+}) => {
+  const now = new Date();
+  await testDb.insert(cellServicePorts).values({
+    serviceId: args.serviceId ?? "test-service-id",
+    name: args.name,
+    port: args.port,
+    primary: args.primary ?? false,
+    createdAt: now,
+    updatedAt: now,
+  });
+};
+
 export const createRouteServiceTerminalSession = (args: {
   sessionId: string;
   pid: number;
@@ -855,6 +947,20 @@ export const seedRouteCellAndService = async (
 };
 
 export const clearRouteServicesAndCells = async () => {
+  await testDb.delete(cellServicePorts);
   await testDb.delete(cellServices);
   await testDb.delete(cells);
+};
+
+export const ptyRouteTestHelpers = {
+  exercisePtyWebSocketActions,
+  expectFailedWebSocketOpen,
+  expectPtyRestartResponse,
+  expectPtyStreamData,
+  expectSeededPtyResize,
+  handlePostRouteRequest,
+  openMockWebSocket,
+  seedRouteCell,
+  seedRouteService,
+  seedRouteServicePort,
 };

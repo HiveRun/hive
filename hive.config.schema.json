@@ -68,10 +68,12 @@
             "description": "Services required by this template",
             "type": "object",
             "propertyNames": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$"
             },
             "additionalProperties": {
-              "description": "Supported service definitions",
+              "description": "Service definitions; only process services are executable",
               "oneOf": [
                 {
                   "type": "object",
@@ -107,9 +109,128 @@
                         "type": "string"
                       }
                     },
+                    "ports": {
+                      "description": "Named ports allocated for the service",
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[A-Za-z0-9_-]+$"
+                      },
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "primary": {
+                            "description": "Use as the compatibility port",
+                            "type": "boolean"
+                          },
+                          "protocol": {
+                            "description": "How clients should connect to the port (defaults to http)",
+                            "type": "string",
+                            "enum": ["http", "https", "tcp"]
+                          }
+                        },
+                        "additionalProperties": false,
+                        "description": "Named port definition"
+                      }
+                    },
+                    "dependsOn": {
+                      "description": "Services that must be ready before this service starts",
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "readiness": {
+                      "description": "Readiness probe run after process spawn",
+                      "type": "object",
+                      "properties": {
+                        "checks": {
+                          "description": "Checks that must all pass before the service is ready",
+                          "minItems": 1,
+                          "type": "array",
+                          "items": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "const": "tcp",
+                                    "description": "Readiness probe type"
+                                  },
+                                  "port": {
+                                    "description": "Named service port to probe",
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "pattern": "^[A-Za-z0-9_-]+$"
+                                  },
+                                  "host": {
+                                    "description": "Probe host (defaults to 127.0.0.1)",
+                                    "type": "string",
+                                    "minLength": 1
+                                  }
+                                },
+                                "required": ["type", "port"],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "const": "http",
+                                    "description": "Readiness probe type"
+                                  },
+                                  "port": {
+                                    "description": "Named service port to probe",
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "pattern": "^[A-Za-z0-9_-]+$"
+                                  },
+                                  "host": {
+                                    "description": "Probe host (defaults to 127.0.0.1)",
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "path": {
+                                    "description": "HTTP path to probe (defaults to /)",
+                                    "type": "string",
+                                    "pattern": "^\\/.*"
+                                  },
+                                  "method": {
+                                    "type": "string",
+                                    "enum": ["GET", "HEAD"],
+                                    "description": "HTTP readiness method"
+                                  },
+                                  "protocol": {
+                                    "type": "string",
+                                    "enum": ["http", "https"],
+                                    "description": "HTTP readiness protocol"
+                                  }
+                                },
+                                "required": ["type", "port"],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "intervalMs": {
+                          "description": "Milliseconds between readiness attempts",
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": ["checks"],
+                      "additionalProperties": false
+                    },
                     "readyTimeoutMs": {
-                      "description": "Milliseconds to wait for service to be ready",
-                      "type": "number"
+                      "description": "Readiness deadline in milliseconds",
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
                     },
                     "stop": {
                       "description": "Command to gracefully stop service",
@@ -124,7 +245,7 @@
                   "type": "object",
                   "properties": {
                     "type": {
-                      "description": "Service type",
+                      "description": "Reserved service type; execution is not implemented",
                       "type": "string",
                       "const": "docker"
                     },
@@ -173,7 +294,7 @@
                   "type": "object",
                   "properties": {
                     "type": {
-                      "description": "Service type",
+                      "description": "Reserved service type; execution is not implemented",
                       "type": "string",
                       "const": "compose"
                     },
@@ -274,7 +395,7 @@
             "additionalProperties": false
           },
           "teardown": {
-            "description": "Cleanup commands on cell stop",
+            "description": "Cleanup commands on cell deletion or provisioning rollback",
             "type": "array",
             "items": {
               "type": "string"

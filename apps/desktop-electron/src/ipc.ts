@@ -4,10 +4,12 @@ import {
   Notification,
   shell,
 } from "electron";
+import type { ViewerBounds, ViewerServiceTab } from "./desktop-runtime-types";
 import { IPC_CHANNELS } from "./ipc-channels";
+import { isTrustedIpcSender } from "./ipc-trust";
+import type { MediaPermissionController } from "./media-permissions";
 import { getDesktopRuntimeInfo } from "./runtime-info";
 import type { DesktopStartupController } from "./startup-controller";
-import type { ViewerBounds, ViewerServiceTab } from "./viewer-controller";
 import { createViewerController } from "./viewer-controller";
 
 type NotifyInput = {
@@ -35,7 +37,8 @@ const openExternal = async (window: BrowserWindow, url: string) => {
 
 const createIpcHandlers = (
   window: BrowserWindow,
-  startupController: DesktopStartupController
+  startupController: DesktopStartupController,
+  mediaPermissions: MediaPermissionController
 ) => {
   let viewer: ReturnType<typeof createViewerController> | null = null;
   const unsubscribeStartup = startupController.subscribe((state) => {
@@ -67,6 +70,7 @@ const createIpcHandlers = (
           /* ignore teardown races while the window is closing */
         }
       },
+      mediaPermissions,
       window,
     });
 
@@ -142,6 +146,7 @@ const createIpcHandlers = (
 
 export const registerIpcHandlers = (options: {
   ipcMain: IpcMain;
+  mediaPermissions: MediaPermissionController;
   startupController: DesktopStartupController;
 }) => {
   let activeWindow: BrowserWindow | null = null;
@@ -155,6 +160,29 @@ export const registerIpcHandlers = (options: {
     return activeHandlers;
   };
 
+  const requireTrustedHandlers = (event: Electron.IpcMainInvokeEvent) => {
+    if (
+      !isTrustedIpcSender({
+        activeContents: activeWindow?.webContents ?? null,
+        isTrusted: options.mediaPermissions.isTrustedRenderer,
+        sender: event.sender,
+      })
+    ) {
+      throw new Error("IPC request rejected from untrusted sender");
+    }
+
+    return requireHandlers();
+  };
+
+  const handle = (
+    channel: string,
+    listener: (handlers: IpcHandlers, args: unknown[]) => unknown
+  ) => {
+    options.ipcMain.handle(channel, (event, ...args) =>
+      listener(requireTrustedHandlers(event), args)
+    );
+  };
+
   const attachWindow = (window: BrowserWindow) => {
     if (activeWindow === window && activeHandlers) {
       return activeHandlers;
@@ -162,7 +190,11 @@ export const registerIpcHandlers = (options: {
 
     activeHandlers?.viewer.destroy();
     activeWindow = window;
-    activeHandlers = createIpcHandlers(window, options.startupController);
+    activeHandlers = createIpcHandlers(
+      window,
+      options.startupController,
+      options.mediaPermissions
+    );
 
     return activeHandlers;
   };
@@ -177,58 +209,44 @@ export const registerIpcHandlers = (options: {
     activeWindow = null;
   };
 
-  options.ipcMain.handle(IPC_CHANNELS.getRuntimeInfo, () =>
-    requireHandlers().getRuntimeInfo()
+  handle(IPC_CHANNELS.getRuntimeInfo, (handlers) => handlers.getRuntimeInfo());
+  handle(IPC_CHANNELS.notify, (handlers, [payload]) =>
+    handlers.notify(payload as NotifyInput)
   );
-  options.ipcMain.handle(IPC_CHANNELS.notify, (_event, payload) =>
-    requireHandlers().notify(payload as NotifyInput)
+  handle(IPC_CHANNELS.openExternal, (handlers, [url]) =>
+    handlers.openExternal(url as string)
   );
-  options.ipcMain.handle(IPC_CHANNELS.openExternal, (_event, url) =>
-    requireHandlers().openExternal(url as string)
+  handle(IPC_CHANNELS.startupGetState, (handlers) =>
+    handlers.startupGetState()
   );
-  options.ipcMain.handle(IPC_CHANNELS.startupGetState, () =>
-    requireHandlers().startupGetState()
+  handle(IPC_CHANNELS.startupRetry, (handlers) => handlers.startupRetry());
+  handle(IPC_CHANNELS.viewerGetState, (handlers) => handlers.viewerGetState());
+  handle(IPC_CHANNELS.viewerActivateServiceTab, (handlers, [serviceId]) =>
+    handlers.viewerActivateServiceTab(serviceId as string)
   );
-  options.ipcMain.handle(IPC_CHANNELS.startupRetry, () =>
-    requireHandlers().startupRetry()
+  handle(IPC_CHANNELS.viewerShow, (handlers, [bounds]) =>
+    handlers.viewerShow(bounds as ViewerBounds)
   );
-  options.ipcMain.handle(IPC_CHANNELS.viewerGetState, () =>
-    requireHandlers().viewerGetState()
+  handle(IPC_CHANNELS.viewerHide, (handlers) => handlers.viewerHide());
+  handle(IPC_CHANNELS.viewerSetBounds, (handlers, [bounds]) =>
+    handlers.viewerSetBounds(bounds as ViewerBounds)
   );
-  options.ipcMain.handle(
-    IPC_CHANNELS.viewerActivateServiceTab,
-    (_event, serviceId) =>
-      requireHandlers().viewerActivateServiceTab(serviceId as string)
+  handle(IPC_CHANNELS.viewerNavigate, (handlers, [url]) =>
+    handlers.viewerNavigate(url as string)
   );
-  options.ipcMain.handle(IPC_CHANNELS.viewerShow, (_event, bounds) =>
-    requireHandlers().viewerShow(bounds as ViewerBounds)
+  handle(IPC_CHANNELS.viewerGoBack, (handlers) => handlers.viewerGoBack());
+  handle(IPC_CHANNELS.viewerGoForward, (handlers) =>
+    handlers.viewerGoForward()
   );
-  options.ipcMain.handle(IPC_CHANNELS.viewerHide, () =>
-    requireHandlers().viewerHide()
+  handle(IPC_CHANNELS.viewerResetActiveTab, (handlers) =>
+    handlers.viewerResetActiveTab()
   );
-  options.ipcMain.handle(IPC_CHANNELS.viewerSetBounds, (_event, bounds) =>
-    requireHandlers().viewerSetBounds(bounds as ViewerBounds)
+  handle(IPC_CHANNELS.viewerReload, (handlers) => handlers.viewerReload());
+  handle(IPC_CHANNELS.viewerOpenExternal, (handlers) =>
+    handlers.viewerOpenExternal()
   );
-  options.ipcMain.handle(IPC_CHANNELS.viewerNavigate, (_event, url) =>
-    requireHandlers().viewerNavigate(url as string)
-  );
-  options.ipcMain.handle(IPC_CHANNELS.viewerGoBack, () =>
-    requireHandlers().viewerGoBack()
-  );
-  options.ipcMain.handle(IPC_CHANNELS.viewerGoForward, () =>
-    requireHandlers().viewerGoForward()
-  );
-  options.ipcMain.handle(IPC_CHANNELS.viewerResetActiveTab, () =>
-    requireHandlers().viewerResetActiveTab()
-  );
-  options.ipcMain.handle(IPC_CHANNELS.viewerReload, () =>
-    requireHandlers().viewerReload()
-  );
-  options.ipcMain.handle(IPC_CHANNELS.viewerOpenExternal, () =>
-    requireHandlers().viewerOpenExternal()
-  );
-  options.ipcMain.handle(IPC_CHANNELS.viewerSyncServiceTabs, (_event, tabs) =>
-    requireHandlers().viewerSyncServiceTabs(tabs as ViewerServiceTab[])
+  handle(IPC_CHANNELS.viewerSyncServiceTabs, (handlers, [tabs]) =>
+    handlers.viewerSyncServiceTabs(tabs as ViewerServiceTab[])
   );
 
   return {

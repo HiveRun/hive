@@ -1,4 +1,3 @@
-import { rm } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import {
   type AgentRuntimeService,
@@ -6,12 +5,15 @@ import {
 } from "../agents/service";
 import { DatabaseService } from "../db";
 import { type LoggerService as Logger, LoggerService } from "../logger";
-import { cells } from "../schema/cells";
+import { type Cell, cells } from "../schema/cells";
 import { linearIntegrations } from "../schema/linear-integrations";
+import { deleteCellWithLifecycle } from "../services/cell-delete-lifecycle";
+import { chatTerminalService } from "../services/chat-terminal";
 import {
   type ServiceSupervisorService as ServiceSupervisorApi,
   ServiceSupervisorService,
 } from "../services/supervisor";
+import { cellTerminalService } from "../services/terminal";
 import {
   type WorktreeManagerService,
   worktreeManagerService,
@@ -28,10 +30,7 @@ type WorkspaceRemovalResult = {
   deletedCellIds: string[];
 };
 
-type WorkspaceCellRow = {
-  id: string;
-  workspacePath: string | null;
-};
+type WorkspaceCellRow = Cell;
 
 type WorkspaceRemovalDependencies = {
   db: typeof DatabaseService.db;
@@ -39,6 +38,8 @@ type WorkspaceRemovalDependencies = {
   supervisor: ServiceSupervisorApi;
   agentRuntime: AgentRuntimeService;
   worktreeManager: WorktreeManagerService;
+  closeTerminalSession: (cellId: string) => void;
+  closeChatTerminalSession: (cellId: string) => void;
   resolveWorkspaceContext: (
     workspaceId: string
   ) => Promise<WorkspaceRuntimeContext>;
@@ -51,6 +52,8 @@ const defaultDependencies = (): WorkspaceRemovalDependencies => ({
   supervisor: ServiceSupervisorService,
   agentRuntime: agentRuntimeService,
   worktreeManager: worktreeManagerService,
+  closeTerminalSession: cellTerminalService.closeSession,
+  closeChatTerminalSession: chatTerminalService.closeSession,
   resolveWorkspaceContext,
   removeWorkspace,
 });
@@ -78,35 +81,26 @@ export async function removeWorkspaceCascade(
   const deletedCellIds: string[] = [];
 
   for (const cell of workspaceCells) {
-    await deps.agentRuntime.closeAgentSession(cell.id).catch((cause: unknown) =>
-      logWarning(deps.logger, "Failed to close agent session", {
-        cellId: cell.id,
-        error: formatError(cause),
-      })
-    );
-
-    await deps.supervisor
-      .stopCellServices(cell.id, { releasePorts: true })
-      .catch((cause: unknown) =>
-        logWarning(deps.logger, "Failed to stop cell services", {
-          cellId: cell.id,
-          error: formatError(cause),
-        })
-      );
-
-    await cleanupCellWorkspace({
-      workspaceRootPath: context.workspace.path,
-      cellWorkspacePath: cell.workspacePath,
-      cellId: cell.id,
-      worktreeManager: deps.worktreeManager,
-      logger: deps.logger,
+    await deleteCellWithLifecycle({
+      database: deps.db,
+      cell,
+      closeSession: deps.agentRuntime.closeAgentSession,
+      closeTerminalSession: deps.closeTerminalSession,
+      closeChatTerminalSession: deps.closeChatTerminalSession,
+      clearSetupTerminal: deps.supervisor.clearSetupTerminal,
+      stopCellServices: deps.supervisor.stopCellServices,
+      runCellTeardown: deps.supervisor.runCellTeardown,
+      getWorktreeService: async () => ({
+        createWorktree: () =>
+          Promise.reject(
+            new Error("Workspace deletion cannot create worktrees")
+          ),
+        removeWorktree: (cellId) =>
+          deps.worktreeManager.removeWorktree(context.workspace.path, cellId),
+      }),
+      log: createLifecycleLogger(deps.logger),
     });
-
     deletedCellIds.push(cell.id);
-  }
-
-  if (deletedCellIds.length > 0) {
-    await deleteCellsForWorkspace(deps.db, workspaceId);
   }
 
   await deleteLinearIntegrationForWorkspace(deps.db, workspaceId);
@@ -125,17 +119,7 @@ const fetchCellsForWorkspace = async (
   db: typeof DatabaseService.db,
   workspaceId: string
 ): Promise<WorkspaceCellRow[]> =>
-  await db
-    .select({ id: cells.id, workspacePath: cells.workspacePath })
-    .from(cells)
-    .where(eq(cells.workspaceId, workspaceId));
-
-const deleteCellsForWorkspace = async (
-  db: typeof DatabaseService.db,
-  workspaceId: string
-): Promise<void> => {
-  await db.delete(cells).where(eq(cells.workspaceId, workspaceId));
-};
+  await db.select().from(cells).where(eq(cells.workspaceId, workspaceId));
 
 const deleteLinearIntegrationForWorkspace = async (
   db: typeof DatabaseService.db,
@@ -146,75 +130,23 @@ const deleteLinearIntegrationForWorkspace = async (
     .where(eq(linearIntegrations.workspaceId, workspaceId));
 };
 
-type CleanupArgs = {
-  workspaceRootPath: string;
-  cellWorkspacePath: string | null;
-  cellId: string;
-  worktreeManager: WorktreeManagerService;
-  logger: Logger;
-};
-
-const cleanupCellWorkspace = async ({
-  workspaceRootPath,
-  cellWorkspacePath,
-  cellId,
-  worktreeManager,
-  logger,
-}: CleanupArgs): Promise<void> => {
-  try {
-    await worktreeManager.removeWorktree(workspaceRootPath, cellId);
-  } catch (worktreeError) {
-    await fallbackWorkspaceRemoval({
-      cellWorkspacePath,
-      cellId,
-      worktreeError,
-      logger,
-    });
-  }
-};
-
-type FallbackArgs = {
-  cellWorkspacePath: string | null;
-  cellId: string;
-  worktreeError: unknown;
-  logger: Logger;
-};
-
-const fallbackWorkspaceRemoval = async ({
-  cellWorkspacePath,
-  cellId,
-  worktreeError,
-  logger,
-}: FallbackArgs): Promise<void> => {
-  if (!cellWorkspacePath?.trim()) {
-    logWarning(logger, "Worktree removal failed with no workspace path", {
-      cellId,
-      error: formatError(worktreeError),
-    });
-    return;
-  }
-
-  try {
-    await rm(cellWorkspacePath, { recursive: true, force: true });
-    logger.debug("Removed workspace directory after git cleanup failure", {
-      cellId,
-      workspacePath: cellWorkspacePath,
-    });
-  } catch (fsError) {
-    logWarning(logger, "Failed to remove workspace directory", {
-      cellId,
-      workspacePath: cellWorkspacePath,
-      worktreeError: formatError(worktreeError),
-      error: formatError(fsError),
-    });
-  }
-};
-
 const logWarning = (
   logger: Logger,
   message: string,
   context?: Record<string, unknown>
 ) => logger.warn(message, context);
+
+const createLifecycleLogger = (logger: Logger) => ({
+  info: (context: Record<string, unknown>, message?: string) =>
+    logger.info(message ?? "Cell deletion lifecycle", context),
+  warn: (context: Record<string, unknown>, message?: string) =>
+    logger.warn(message ?? "Cell deletion lifecycle warning", context),
+  error: (context: Record<string, unknown> | Error, message?: string) =>
+    logger.error(
+      message ?? "Cell deletion lifecycle error",
+      context instanceof Error ? { error: context.message } : context
+    ),
+});
 
 const formatError = (error: unknown): string => {
   if (error instanceof Error) {
@@ -227,6 +159,9 @@ const formatError = (error: unknown): string => {
     typeof (error as { message?: unknown }).message === "string"
   ) {
     return (error as { message: string }).message;
+  }
+  if (error && typeof error === "object" && "cause" in error) {
+    return formatError((error as { cause: unknown }).cause);
   }
   return String(error);
 };

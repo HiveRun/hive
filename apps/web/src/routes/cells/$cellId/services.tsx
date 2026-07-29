@@ -24,7 +24,11 @@ import {
   cellMutations,
   cellQueries,
 } from "@/queries/cells";
-import { CellDetailGate, CopyableDetailLabel } from "../../-shared/cell-route";
+import {
+  CellDetailGate,
+  CopyableDetailLabel,
+  CopyIconButton,
+} from "../../-shared/cell-route";
 
 export const Route = createFileRoute("/cells/$cellId/services")({
   component: CellServices,
@@ -148,7 +152,7 @@ function CellServices() {
   );
 }
 
-function ServicesPanel({
+export function ServicesPanel({
   cellId,
   services,
   isLoading,
@@ -255,18 +259,24 @@ function ServicesPanel({
               <SelectValue placeholder="Select a service" />
             </SelectTrigger>
             <SelectContent>
-              {services.map((service) => (
-                <SelectItem key={service.id} value={service.id}>
-                  <div className="flex flex-col">
-                    <span>{service.name}</span>
-                    {service.port && (
-                      <span className="text-muted-foreground text-xs">
-                        Port: {service.port}
-                      </span>
-                    )}
-                  </div>
-                </SelectItem>
-              ))}
+              {services.map((service) => {
+                const primaryPort =
+                  service.ports?.find((port) => port.primary)?.port ??
+                  service.port;
+
+                return (
+                  <SelectItem key={service.id} value={service.id}>
+                    <div className="flex flex-col">
+                      <span>{service.name}</span>
+                      {primaryPort != null ? (
+                        <span className="text-muted-foreground text-xs">
+                          Primary port: {primaryPort}
+                        </span>
+                      ) : null}
+                    </div>
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         )}
@@ -318,6 +328,19 @@ function ServiceCard({
 }) {
   const normalizedStatus = service.status.toLowerCase();
   const isErrorState = normalizedStatus === "error";
+  let servicePorts = service.ports ?? [];
+  if (servicePorts.length === 0 && service.port != null) {
+    servicePorts = [
+      {
+        name: "default",
+        port: service.port,
+        primary: true,
+        protocol: resolveLegacyServiceProtocol(service.url),
+        ...(service.url ? { url: service.url } : {}),
+        portReachable: service.portReachable ?? false,
+      },
+    ];
+  }
 
   return (
     <div
@@ -385,14 +408,20 @@ function ServiceCard({
             </>
           )}
 
-          {service.port ? (
+          {servicePorts.length > 0 ? (
             <>
-              <CopyableDetailLabel copyLabel="port" copyText={service.port}>
-                Port
-              </CopyableDetailLabel>
-              <p className="break-all font-mono text-[11px] text-foreground">
-                {service.port}
+              <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                Ports
               </p>
+              <div className="grid min-w-0 gap-2">
+                {servicePorts.map((port) => (
+                  <ServicePortDetail
+                    key={port.name}
+                    port={port}
+                    reachability={port.portReachable}
+                  />
+                ))}
+              </div>
             </>
           ) : null}
 
@@ -437,6 +466,81 @@ function ServiceCard({
         streamPath={`/api/cells/${cellId}/services/${service.id}/terminal/stream`}
         title="Service Terminal"
       />
+    </div>
+  );
+}
+
+function resolveLegacyServiceProtocol(
+  url: string | undefined
+): "http" | "https" {
+  if (!url) {
+    return "http";
+  }
+
+  try {
+    return new URL(url).protocol === "https:" ? "https" : "http";
+  } catch {
+    return "http";
+  }
+}
+
+function ServicePortDetail({
+  port,
+  reachability,
+}: {
+  port: CellServiceSummary["ports"][number];
+  reachability?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "grid min-w-0 gap-2 border border-border/70 border-l-2 bg-background/30 p-2.5",
+        port.primary ? "border-l-primary" : "border-l-border"
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="font-semibold text-[11px] text-foreground uppercase tracking-[0.16em]">
+          {port.name}
+        </p>
+        <span className="border border-border/70 px-1.5 py-0.5 text-[9px] text-muted-foreground uppercase tracking-[0.18em]">
+          {port.protocol}
+        </span>
+        {port.primary ? (
+          <span className="border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[9px] text-primary uppercase tracking-[0.18em]">
+            Primary
+          </span>
+        ) : null}
+        {typeof reachability === "boolean" ? (
+          <span
+            className={cn(
+              "border px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em]",
+              reachability
+                ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-500"
+                : "border-destructive/50 bg-destructive/10 text-destructive"
+            )}
+          >
+            {reachability ? "Reachable" : "Unreachable"}
+          </span>
+        ) : null}
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-[9px] text-muted-foreground uppercase tracking-[0.2em]">
+          Port
+        </span>
+        <code className="text-[11px] text-foreground">{port.port}</code>
+        <CopyIconButton label={`${port.name} port`} text={port.port} />
+      </div>
+      {port.url ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="text-[9px] text-muted-foreground uppercase tracking-[0.2em]">
+            URL
+          </span>
+          <code className="min-w-0 break-all text-[11px] text-foreground">
+            {port.url}
+          </code>
+          <CopyIconButton label={`${port.name} URL`} text={port.url} />
+        </div>
+      ) : null}
     </div>
   );
 }

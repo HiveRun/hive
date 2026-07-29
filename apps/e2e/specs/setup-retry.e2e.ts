@@ -1,8 +1,9 @@
-import { access, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
   createCell,
+  fileExists,
   waitForActivityType,
   waitForCellStatus,
 } from "../src/test-helpers";
@@ -95,15 +96,6 @@ test.describe("setup retry", () => {
     }
   });
 });
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function retrySetup(apiUrl: string, cellId: string): Promise<Response> {
   return fetch(`${apiUrl}/api/cells/${cellId}/setup/retry`, {

@@ -10,6 +10,10 @@ import {
   normalizeOpencodeKeybinds,
 } from "../opencode/browser-safe-keybinds";
 import {
+  areCellEnvironmentsEqual,
+  ensureCellEnvironment,
+} from "./cell-environment";
+import {
   createPtySessionController,
   createTerminalRecordFields,
   DEFAULT_TERMINAL_COLS,
@@ -310,6 +314,7 @@ type ChatTerminalRecord = TerminalRecordFields & {
   preferredModel?: string;
   startMode?: AgentMode;
   allowEmbeddedControlInput: boolean;
+  environment: Record<string, string>;
 };
 
 type ChatTerminalService = TerminalSessionService<
@@ -324,6 +329,7 @@ type ChatTerminalService = TerminalSessionService<
     opencodeThemeMode?: "dark" | "light";
     preferredModel?: ChatTerminalModelPreference;
     startMode?: AgentMode;
+    environment: Record<string, string>;
   }): ChatTerminalSession;
 };
 
@@ -463,6 +469,7 @@ const createChatTerminalService = (): ChatTerminalService => {
     spawnPty: (args) => {
       const opencodeBinary = resolveOpencodeBinary();
       const prepared = prepareChatTerminalSpawn(args);
+      ensureCellEnvironment(args.cellId, args.workspacePath);
       try {
         return spawn(opencodeBinary, prepared.spawnOptions.args, {
           name: TERMINAL_NAME,
@@ -472,6 +479,7 @@ const createChatTerminalService = (): ChatTerminalService => {
           env: {
             ...process.env,
             ...prepared.spawnOptions.env,
+            ...args.environment,
             TERM: TERMINAL_NAME,
             COLORTERM: process.env.COLORTERM ?? "truecolor",
           },
@@ -501,6 +509,7 @@ const createChatTerminalService = (): ChatTerminalService => {
         preferredModel: prepared.preferredModelValue,
         startMode: prepared.normalizedStartMode,
         allowEmbeddedControlInput: prepared.allowEmbeddedControlInput,
+        environment: args.environment,
       };
     },
     toSession,
@@ -513,7 +522,8 @@ const createChatTerminalService = (): ChatTerminalService => {
         record.opencodeServerUrl === args.opencodeServerUrl &&
         record.opencodeThemeMode === prepared.opencodeThemeMode &&
         record.preferredModel === prepared.preferredModelValue &&
-        record.startMode === prepared.normalizedStartMode
+        record.startMode === prepared.normalizedStartMode &&
+        areCellEnvironmentsEqual(record.environment, args.environment)
       );
     },
     onSessionStarted: schedulePlanModeSwitch,

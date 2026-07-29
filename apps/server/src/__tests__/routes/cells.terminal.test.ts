@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { cells } from "../../schema/cells";
 import { setupTestDb, testDb } from "../test-db";
 import {
+  assertTerminalStreamEnvironment,
   createCellRouteTestApp,
   createCellRouteTestDependencies,
   createCellTerminalRouteHarness,
@@ -13,6 +14,8 @@ import {
   handlePostRouteRequest,
   openMockWebSocket,
   seedRouteCell,
+  seedRouteService,
+  seedRouteServicePort,
 } from "./cells-route-test-helpers";
 
 const TEST_CELL_ID = "test-cell-id";
@@ -20,6 +23,11 @@ const HTTP_OK = 200;
 const RESIZED_COLS = 140;
 const RESIZED_ROWS = 48;
 const FIRST_CALL_INDEX = 0;
+const TERMINAL_PORT_ENVIRONMENT = {
+  API_PORT: "43101",
+  API_RPC_PORT: "43101",
+  API_METRICS_PORT: "43102",
+};
 const createTerminalHarness = () =>
   createCellTerminalRouteHarness(TEST_CELL_ID);
 
@@ -87,6 +95,35 @@ describe("Cell terminal routes", () => {
       emit: () => harness.emit({ type: "data", chunk: "echo hi\n" }),
       expectedText: "echo hi",
     });
+  });
+
+  it("passes durable cell paths and persisted named ports to terminals", async () => {
+    await seedCell();
+    await seedRouteService({
+      id: "terminal-api-service",
+      cellId: TEST_CELL_ID,
+      name: "api",
+    });
+    await seedRouteServicePort({
+      serviceId: "terminal-api-service",
+      name: "rpc",
+      port: 43_101,
+      primary: true,
+    });
+    await seedRouteServicePort({
+      serviceId: "terminal-api-service",
+      name: "metrics",
+      port: 43_102,
+    });
+    const harness = createTerminalHarness();
+    const app = createTerminalTestApp(harness);
+
+    await assertTerminalStreamEnvironment(
+      app,
+      `/api/cells/${TEST_CELL_ID}/terminal/stream`,
+      () => harness.ensureSession.mock.calls[0]?.[0]?.environment,
+      { cellId: TEST_CELL_ID, ports: TERMINAL_PORT_ENVIRONMENT }
+    );
   });
 
   it("forwards terminal input to the terminal service", async () => {

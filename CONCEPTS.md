@@ -24,6 +24,8 @@ A **cell** is an isolated development environment within a workspace. Each cell 
 - An **AI agent session** (powered by OpenCode)
 - Zero or more **services** (databases, dev servers, etc.)
 - Isolated **terminals** for command execution
+- Durable runtime state at `$HIVE_HOME/runtime/cells/<cell-id>/`
+- Preserved artifacts at `$HIVE_HOME/artifacts/cells/<cell-id>/`
 
 Cells allow multiple agents to work on the same codebase simultaneously without stepping on each other's changes.
 
@@ -44,6 +46,7 @@ A **template** defines how cells are created. Templates specify:
 - **Agent config**: Which AI provider/model to use
 - **Environment**: Environment variables for services
 - **Prompts**: Agent briefing files
+- **Teardown commands**: Cleanup run only during deletion or destructive provisioning rollback
 
 ```json
 {
@@ -53,31 +56,53 @@ A **template** defines how cells are created. Templates specify:
       "label": "Development",
       "type": "manual",
       "services": {
-        "db": { "type": "process", "run": "postgres" },
-        "web": { "type": "process", "run": "npm run dev" }
+        "db": {
+          "type": "process",
+          "run": "postgres",
+          "ports": {
+            "postgres": { "primary": true, "protocol": "tcp" }
+          },
+          "readiness": {
+            "checks": [{ "type": "tcp", "port": "postgres" }]
+          }
+        },
+        "web": {
+          "type": "process",
+          "run": "npm run dev -- --port $PORT",
+          "dependsOn": ["db"]
+        }
       },
       "setup": ["npm install", "npm run db:migrate"],
+      "teardown": ["npm run dev:teardown"],
       "agent": { "providerId": "anthropic", "modelId": "claude-sonnet-4-20250514" }
     }
   }
 }
 ```
 
+Template setup, teardown, services, cell terminals, and OpenCode chat terminals receive `HIVE_CELL_ID`, `HIVE_HOME`, `HIVE_BROWSE_ROOT`, `HIVE_CELL_RUNTIME_DIR`, and `HIVE_CELL_ARTIFACTS_DIR`. They also receive persisted service port variables such as `WEB_PORT` and `WEB_METRICS_PORT`.
+
+Teardown commands run sequentially after services stop and before the worktree is removed, with `HIVE_TEARDOWN_REASON` set to `delete` or `provisioning_rollback`. Each command has a 300-second timeout by default; set `HIVE_TEMPLATE_TEARDOWN_COMMAND_TIMEOUT_MS` to override it. Deletion removes the cell runtime directory after teardown succeeds but preserves the artifacts directory.
+
 ### Service
 
-A **service** is a process managed by Hive within a cell. Services can be:
+A **service** is a process managed by Hive within a cell. Process services are supported today; Docker and Compose definitions are reserved for future executors and fail provisioning explicitly.
 
 | Type | Description | Example |
 |------|-------------|---------|
 | `process` | Direct command execution | `npm run dev` |
-| `docker` | Docker container | PostgreSQL in a container |
-| `compose` | Docker Compose stack | Full microservices environment |
+| `docker` | Reserved, not yet executable | PostgreSQL in a container |
+| `compose` | Reserved, not yet executable | Full microservices environment |
 
 Hive handles:
 - Automatic port allocation
+- Multiple persisted named ports with `http`, `https`, or `tcp` intent
+- Explicit dependency ordering and TCP/HTTP readiness checks
 - Process lifecycle (start/stop/restart)
 - Log aggregation
 - Health monitoring
+
+Port references such as `$PORT:api` and `${PORT:api:metrics}` make allocated ports available to commands and environment values; they do not imply startup dependencies. Use `dependsOn` when one service must be ready before another starts.
 
 ### Agent Session
 

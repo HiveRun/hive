@@ -6,8 +6,9 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resolveWorkspaceRoot } from "../../config/context";
+import type { ProcessService, Template } from "../../config/schema";
 import { cells } from "../../schema/cells";
-import { cellServices } from "../../schema/services";
+import { cellServicePorts, cellServices } from "../../schema/services";
 import { createServiceTerminalRuntime } from "../../services/service-terminal";
 import type {
   ProcessHandle,
@@ -30,6 +31,13 @@ const silentLogger = {
   },
 };
 
+const EXPECTED_NAMED_PORT_CLAIMS = 3;
+const EXPECTED_PRIMARY_PORT_CLAIMS = 2;
+const REUSED_SERVICE_PID = 4343;
+const READINESS_SUCCESS_TIMEOUT_MS = 500;
+const bracedPortReference = (suffix = "") => ["$", `{PORT${suffix}}`].join("");
+const originalHiveHome = process.env.HIVE_HOME;
+
 type FakeProcess = {
   options: SpawnProcessOptions;
   handle: ProcessHandle;
@@ -44,15 +52,20 @@ describe("service supervisor", () => {
   let workspaceDirs: string[] = [];
 
   beforeEach(async () => {
+    await testDb.delete(cellServicePorts);
     await testDb.delete(cellServices);
     await testDb.delete(cells);
     workspaceDirs = [];
+    const hiveHome = await mkdtemp(join(tmpdir(), "hive-services-home-"));
+    workspaceDirs.push(hiveHome);
+    process.env.HIVE_HOME = hiveHome;
   });
 
   afterEach(async () => {
     for (const dir of workspaceDirs) {
       await rm(dir, { recursive: true, force: true });
     }
+    process.env.HIVE_HOME = originalHiveHome;
   });
 
   it("starts process services with assigned ports and env", async () => {
@@ -76,6 +89,15 @@ describe("service supervisor", () => {
     expect(call.options.env.NODE_ENV).toBe("test");
     expect(call.options.env.WEB_PORT).toBeDefined();
     expect(call.options.env.PORT).toBe(call.options.env.WEB_PORT);
+    expect(call.options.env.HIVE_CELL_ID).toBe(cell.id);
+    expect(call.options.env.HIVE_BROWSE_ROOT).toBe(workspace);
+    expect(call.options.env.HIVE_HOME).toBe(join(workspace, ".hive", "home"));
+    expect(call.options.env.HIVE_CELL_RUNTIME_DIR).toContain(
+      `/runtime/cells/${cell.id}`
+    );
+    expect(call.options.env.HIVE_CELL_ARTIFACTS_DIR).toContain(
+      `/artifacts/cells/${cell.id}`
+    );
 
     const [service] = await testDb.select().from(cellServices);
     expect(service?.status).toBe("running");
@@ -224,6 +246,60 @@ describe("service supervisor", () => {
     await stopHarness(harness);
   });
 
+  it("skips dependent restarts after dependency readiness fails", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-bootstrap-dependency");
+    const databaseDefinition = serviceDefinition({
+      run: "start-database",
+      readiness: { checks: [{ type: "tcp", port: "default" }] },
+      readyTimeoutMs: 10,
+    });
+    const apiDefinition = serviceDefinition({
+      run: "start-api",
+      dependsOn: ["database"],
+    });
+    const workerDefinition = serviceDefinition({ run: "start-worker" });
+
+    await insertServiceRecord(workspace, cell.id, {
+      id: "svc-bootstrap-database",
+      name: "database",
+      command: databaseDefinition.run,
+      definition: databaseDefinition,
+      status: "needs_resume",
+    });
+    await insertServiceRecord(workspace, cell.id, {
+      id: "svc-bootstrap-api",
+      name: "api",
+      command: apiDefinition.run,
+      definition: apiDefinition,
+      status: "needs_resume",
+    });
+    await insertServiceRecord(workspace, cell.id, {
+      id: "svc-bootstrap-worker",
+      name: "worker",
+      command: workerDefinition.run,
+      definition: workerDefinition,
+      status: "needs_resume",
+    });
+
+    const harness = createHarness();
+    await harness.supervisor.bootstrap();
+
+    expect(harness.processes.map((process) => process.options.command)).toEqual(
+      ["start-database", "start-worker"]
+    );
+    const [api] = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.id, "svc-bootstrap-api"));
+    expect(api?.status).toBe("error");
+    expect(api?.lastKnownError).toContain(
+      "Dependencies failed during restart: database"
+    );
+
+    await stopHarness(harness);
+  });
+
   it("restarts services after Hive shutdown stopAll", async () => {
     const workspace = await createWorkspaceDir();
     const cell = await insertCell(workspace, "template-shutdown-restart");
@@ -262,6 +338,45 @@ describe("service supervisor", () => {
     );
 
     await stopHarness(restartHarness);
+  });
+
+  it("prevents in-flight and later starts once shutdown begins", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-shutdown-barrier");
+    const harness = createHarness();
+    const ensurePromise = ensureProcessServices({
+      harness,
+      cell,
+      templateId: "template-shutdown-barrier",
+      setup: ["hold-setup"],
+    });
+    const setupProcess = await harness.firstSpawned;
+    expect(setupProcess.options.command).toBe("hold-setup");
+
+    const stopPromise = harness.supervisor.stopAll();
+    setupProcess.exit(0);
+
+    await expect(ensurePromise).rejects.toThrow(
+      "Service supervisor is shutting down"
+    );
+    await stopPromise;
+    expect(harness.processes).toHaveLength(1);
+
+    const service = await getOnlyService(cell.id);
+    await expect(
+      harness.supervisor.startCellService(service.id)
+    ).rejects.toThrow("Service supervisor is shutting down");
+    await expect(
+      ensureProcessServices({
+        harness,
+        cell,
+        templateId: "template-shutdown-barrier",
+      })
+    ).rejects.toThrow("Service supervisor is shutting down");
+    await expect(harness.supervisor.bootstrap()).rejects.toThrow(
+      "Service supervisor is shutting down"
+    );
+    expect(harness.processes).toHaveLength(1);
   });
 
   it("does not restart manually stopped services during bootstrap", async () => {
@@ -384,26 +499,39 @@ describe("service supervisor", () => {
   });
 
   it("signals process groups when stopping by pid", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-stop-group");
-
     const pid = 4242;
-
-    await insertServiceRecord(workspace, cell.id, {
-      id: "svc-stop-group",
-      status: "running",
-      pid,
-    });
+    await seedPersistedProcessService("svc-stop-group", pid, "owned-instance");
 
     const calls: Array<{ pid: number; signal?: NodeJS.Signals | number }> = [];
+    let leaderAlive = true;
+    let groupAlive = true;
     const originalKill = process.kill;
     process.kill = ((target: number, signal?: NodeJS.Signals | number) => {
       calls.push({ pid: target, signal });
+      if (signal === 0) {
+        if (
+          (target === pid && leaderAlive) ||
+          (target === -pid && groupAlive)
+        ) {
+          return true as never;
+        }
+        throw Object.assign(new Error("process missing"), { code: "ESRCH" });
+      }
+      if (target === -pid && signal === "SIGTERM") {
+        leaderAlive = false;
+      }
+      if (target === -pid && signal === "SIGKILL") {
+        groupAlive = false;
+      }
       return true as never;
     }) as typeof process.kill;
 
     try {
-      const harness = createHarness();
+      const harness = createHarness({
+        readProcessEnvironment: async () => ({
+          HIVE_SERVICE_INSTANCE_ID: "owned-instance",
+        }),
+      });
       await harness.supervisor.stopCellService("svc-stop-group");
     } finally {
       process.kill = originalKill;
@@ -417,16 +545,101 @@ describe("service supervisor", () => {
     ).toBe(true);
   });
 
+  it("does not signal a persisted pid with a mismatched process identity", async () => {
+    await seedPersistedProcessService(
+      "svc-stop-reused-pid",
+      REUSED_SERVICE_PID
+    );
+    let killCalls = 0;
+    const processKill = (() => {
+      killCalls += 1;
+      return true as never;
+    }) as unknown as typeof process.kill;
+    await withProcessKillMock(processKill, () =>
+      stopPersistedService("svc-stop-reused-pid", {
+        HIVE_SERVICE_INSTANCE_ID: "different-instance",
+      })
+    );
+
+    expect(killCalls).toBe(0);
+  });
+
+  it("blocks stopping a live persisted pid when identity is unverifiable", async () => {
+    const pid = 4444;
+    const serviceId = "svc-stop-unverifiable-pid";
+    await seedPersistedProcessService(serviceId, pid);
+    const signals: Array<number | string | undefined> = [];
+    await withProcessKillMock(
+      (_target: number, signal?: number | string) => {
+        signals.push(signal);
+        if (signal === 0) {
+          return true as never;
+        }
+        throw new Error("unexpected signal");
+      },
+      async () => {
+        await expect(stopPersistedService(serviceId, null)).rejects.toThrow(
+          "process identity cannot be verified"
+        );
+      }
+    );
+
+    expect(signals).toEqual([0]);
+    const [service] = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.id, serviceId));
+    expect(service?.status).toBe("running");
+    expect(service?.pid).toBe(pid);
+  });
+
+  it("kills a surviving process group after the PTY leader exits", async () => {
+    let groupAlive = true;
+    const signals: Array<number | string | undefined> = [];
+    const { cell, harness } = await createStartedHarness(
+      "template-active-group",
+      undefined,
+      {
+        processKill: (signal, exit) => {
+          signals.push(signal);
+          if (signal === "SIGTERM") {
+            exit(0);
+          } else if (signal === "SIGKILL") {
+            groupAlive = false;
+          }
+        },
+      }
+    );
+    const service = await getOnlyService(cell.id);
+    const pid = harness.processes[0]?.handle.pid;
+    if (!pid) {
+      throw new Error("Expected active service pid");
+    }
+    const originalKill = process.kill;
+    process.kill = ((target: number, signal?: NodeJS.Signals | number) => {
+      if (target === -pid && signal === 0 && groupAlive) {
+        return true as never;
+      }
+      throw Object.assign(new Error("process missing"), { code: "ESRCH" });
+    }) as typeof process.kill;
+
+    try {
+      await harness.supervisor.stopCellService(service.id);
+    } finally {
+      process.kill = originalKill;
+    }
+
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(groupAlive).toBe(false);
+  });
+
   it("restarts a stopped service even when its previous port is occupied", async () => {
     const workspace = await createWorkspaceDir();
     const cell = await insertCell(workspace, "template-port-collision");
     const occupiedPort = await allocateFreePort();
 
     const listener = createServer();
-    await new Promise<void>((resolve, reject) => {
-      listener.once("error", reject);
-      listener.listen(occupiedPort, "127.0.0.1", () => resolve());
-    });
+    await listenOnPort(listener, occupiedPort);
 
     await insertServiceRecord(workspace, cell.id, {
       id: "svc-port-collision",
@@ -462,6 +675,532 @@ describe("service supervisor", () => {
     }
   });
 
+  it("allocates named ports and interpolates legacy and named references", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-named-ports");
+    const harness = createHarness();
+
+    await ensureProcessServices({
+      harness,
+      cell,
+      templateId: "template-named-ports",
+      services: {
+        web: serviceDefinition({
+          ports: {
+            http: { primary: true },
+            metrics: {},
+          },
+          env: {
+            SELF: "$PORT",
+            SELF_BRACED: bracedPortReference(),
+            API: "$PORT:api",
+            API_BRACED: bracedPortReference(":api"),
+            METRICS: "$PORT:web:metrics",
+            METRICS_BRACED: bracedPortReference(":web:metrics"),
+          },
+        }),
+        api: serviceDefinition({
+          run: "bun run api",
+          ports: { rpc: { primary: true } },
+        }),
+      },
+    });
+
+    const web = harness.processes.find(
+      (process) => process.options.command === "bun run dev"
+    );
+    if (!web) {
+      throw new Error("Expected web process");
+    }
+    expect(web.options.env.PORT).toBe(web.options.env.WEB_HTTP_PORT);
+    expect(web.options.env.SERVICE_PORT).toBe(web.options.env.WEB_PORT);
+    expect(web.options.env.SELF).toBe(web.options.env.WEB_HTTP_PORT);
+    expect(web.options.env.SELF_BRACED).toBe(web.options.env.WEB_HTTP_PORT);
+    expect(web.options.env.API).toBe(web.options.env.API_RPC_PORT);
+    expect(web.options.env.API_BRACED).toBe(web.options.env.API_RPC_PORT);
+    expect(web.options.env.METRICS).toBe(web.options.env.WEB_METRICS_PORT);
+    expect(web.options.env.METRICS_BRACED).toBe(
+      web.options.env.WEB_METRICS_PORT
+    );
+
+    const claims = await testDb.select().from(cellServicePorts);
+    expect(claims).toHaveLength(EXPECTED_NAMED_PORT_CLAIMS);
+    expect(claims.filter((claim) => claim.primary)).toHaveLength(
+      EXPECTED_PRIMARY_PORT_CLAIMS
+    );
+
+    await stopCellHarness(harness, cell.id);
+  });
+
+  it("does not reconcile changed port definitions over a live process", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-live-definition");
+    const harness = createHarness();
+    const initialTemplate: Template = {
+      id: "template-live-definition",
+      label: "Template",
+      type: "manual",
+      services: {
+        web: serviceDefinition({ ports: { http: { primary: true } } }),
+      },
+    };
+    await harness.supervisor.ensureCellServices({
+      cell,
+      template: initialTemplate,
+    });
+    await harness.supervisor.ensureCellServices({
+      cell,
+      template: initialTemplate,
+    });
+    expect(harness.processes).toHaveLength(1);
+    const claimsBefore = await testDb.select().from(cellServicePorts);
+
+    await expect(
+      harness.supervisor.ensureCellServices({
+        cell,
+        template: {
+          ...initialTemplate,
+          services: {
+            web: serviceDefinition({
+              ports: {
+                http: { primary: true },
+                metrics: { protocol: "tcp" },
+              },
+            }),
+          },
+        },
+      })
+    ).rejects.toThrow(
+      'Cannot update service "web" while it is running; stop it before retrying setup'
+    );
+
+    expect(await testDb.select().from(cellServicePorts)).toEqual(claimsBefore);
+    expect(harness.processes).toHaveLength(1);
+    await stopCellHarness(harness, cell.id);
+  });
+
+  it("serializes single-service stop and start operations", async () => {
+    let releaseStop: () => void = () => 0;
+    let stopStarted: () => void = () => 0;
+    const stopStartedPromise = new Promise<void>((resolve) => {
+      stopStarted = resolve;
+    });
+    const stopBlocked = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    const harness = createHarness({
+      runCommand: async (command) => {
+        if (command === "stop-web") {
+          stopStarted();
+          await stopBlocked;
+        }
+      },
+    });
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-serialized-actions");
+    await ensureProcessServices({
+      harness,
+      cell,
+      templateId: "template-serialized-actions",
+      services: { web: serviceDefinition({ stop: "stop-web" }) },
+    });
+    const service = await getOnlyService(cell.id);
+
+    const stopping = harness.supervisor.stopCellService(service.id);
+    await stopStartedPromise;
+    const starting = harness.supervisor.startCellService(service.id);
+    await Promise.resolve();
+    expect(harness.processes).toHaveLength(1);
+
+    releaseStop();
+    await stopping;
+    await starting;
+    expect(harness.processes).toHaveLength(2);
+    await stopCellHarness(harness, cell.id);
+  });
+
+  it("does not start queued or provisioning services after deletion begins", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-deleting-start");
+    await insertServiceRecord(workspace, cell.id, {
+      id: "svc-deleting-start",
+      status: "stopped",
+    });
+    await testDb
+      .update(cells)
+      .set({ status: "deleting" })
+      .where(eq(cells.id, cell.id));
+    const harness = createHarness();
+
+    await expect(
+      harness.supervisor.startCellService("svc-deleting-start")
+    ).rejects.toThrow("is being deleted");
+    await expect(
+      harness.supervisor.ensureCellServices({
+        cell,
+        template: {
+          id: "template-deleting-start",
+          label: "Template",
+          type: "manual",
+          services: { web: serviceDefinition() },
+        },
+      })
+    ).rejects.toThrow("is being deleted");
+    expect(harness.processes).toHaveLength(0);
+  });
+
+  it("interpolates named port references in stop commands", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-stop-ports");
+    const harness = createHarness();
+    await ensureProcessServices({
+      harness,
+      cell,
+      templateId: "template-stop-ports",
+      services: {
+        web: serviceDefinition({
+          ports: { http: { primary: true }, metrics: {} },
+          stop: "stop-web $PORT:web:metrics",
+        }),
+      },
+    });
+    const process = firstProcess(harness, "Expected web process");
+
+    await harness.supervisor.stopCellServices(cell.id);
+
+    expect(harness.runCommandCalls).toContain(
+      `stop-web ${process.options.env.WEB_METRICS_PORT}`
+    );
+  });
+
+  it("bounds a hanging stop command and leaves the service stopped", async () => {
+    const previousTimeout = process.env.HIVE_SERVICE_STOP_COMMAND_TIMEOUT_MS;
+    process.env.HIVE_SERVICE_STOP_COMMAND_TIMEOUT_MS = "5";
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-stop-timeout");
+    const harness = createHarness({ useDefaultRunCommand: true });
+    try {
+      await ensureProcessServices({
+        harness,
+        cell,
+        templateId: "template-stop-timeout",
+        services: { web: serviceDefinition({ stop: "stop-hang" }) },
+      });
+
+      await expect(
+        harness.supervisor.stopCellServices(cell.id)
+      ).rejects.toThrow("timed out after 5ms");
+      expect((await getOnlyService(cell.id)).status).toBe("stopped");
+    } finally {
+      process.env.HIVE_SERVICE_STOP_COMMAND_TIMEOUT_MS = previousTimeout;
+      await harness.supervisor.stopCellServices(cell.id, {
+        releasePorts: true,
+      });
+      await waitForProcesses(harness);
+    }
+  });
+
+  it("retains legacy primary aliases for implicit default ports", async () => {
+    const { cell, harness } = await createStartedHarness(
+      "template-legacy-port"
+    );
+    const process = firstProcess(harness, "Expected legacy service process");
+
+    expect(process.options.env.PORT).toBe(process.options.env.WEB_PORT);
+    expect(process.options.env.WEB_DEFAULT_PORT).toBe(
+      process.options.env.WEB_PORT
+    );
+    const [claim] = await testDb.select().from(cellServicePorts);
+    expect(claim).toMatchObject({ name: "default", primary: true });
+
+    await stopCellHarness(harness, cell.id);
+  });
+
+  it("makes allocated service ports available to template setup", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-setup-ports");
+    const harness = createHarness();
+
+    await ensureProcessServices({
+      harness,
+      cell,
+      templateId: "template-setup-ports",
+      setup: ["echo template-setup"],
+      services: {
+        web: serviceDefinition({
+          ports: { http: { primary: true } },
+        }),
+      },
+    });
+
+    expect(harness.processes[0]?.options.env.WEB_PORT).toBeDefined();
+    expect(harness.processes[0]?.options.env.WEB_HTTP_PORT).toBe(
+      harness.processes[0]?.options.env.WEB_PORT
+    );
+    expect(harness.processes[0]?.options.env.HIVE_CELL_RUNTIME_DIR).toContain(
+      `/runtime/cells/${cell.id}`
+    );
+    expect(harness.processes[0]?.options.env.HIVE_CELL_ARTIFACTS_DIR).toContain(
+      `/artifacts/cells/${cell.id}`
+    );
+    await stopCellHarness(harness, cell.id);
+  });
+
+  it("runs teardown commands sequentially with durable env and persisted named ports", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-teardown");
+    const harness = createHarness();
+    const template: Template = {
+      id: "template-teardown",
+      label: "Template",
+      type: "manual",
+      env: {
+        METRICS_URL: `http://localhost:${bracedPortReference(":web:metrics")}`,
+      },
+      teardown: [
+        `cleanup-one ${bracedPortReference(":web:http")}`,
+        "cleanup-two $PORT:web:metrics",
+      ],
+      services: {
+        web: serviceDefinition({
+          ports: { http: { primary: true }, metrics: {} },
+        }),
+      },
+    };
+
+    await harness.supervisor.ensureCellServices({ cell, template });
+    await harness.supervisor.stopCellServices(cell.id, { releasePorts: true });
+    const processCountBeforeTeardown = harness.processes.length;
+
+    await harness.supervisor.runCellTeardown({
+      cell,
+      template,
+      reason: "delete",
+    });
+
+    const teardownProcesses = harness.processes.slice(
+      processCountBeforeTeardown
+    );
+    expect(teardownProcesses.map((process) => process.options.command)).toEqual(
+      [
+        `cleanup-one ${teardownProcesses[0]?.options.env.WEB_HTTP_PORT}`,
+        `cleanup-two ${teardownProcesses[0]?.options.env.WEB_METRICS_PORT}`,
+      ]
+    );
+    const environment = teardownProcesses[0]?.options.env;
+    expect(environment?.HIVE_CELL_ID).toBe(cell.id);
+    expect(environment?.HIVE_HOME).toBe(join(workspace, ".hive", "home"));
+    expect(environment?.HIVE_BROWSE_ROOT).toBe(workspace);
+    expect(environment?.HIVE_CELL_RUNTIME_DIR).toBe(
+      join(process.env.HIVE_HOME ?? "", "runtime", "cells", cell.id)
+    );
+    expect(environment?.HIVE_CELL_ARTIFACTS_DIR).toBe(
+      join(process.env.HIVE_HOME ?? "", "artifacts", "cells", cell.id)
+    );
+    expect(environment?.HIVE_TEARDOWN_REASON).toBe("delete");
+    expect(environment?.WEB_PORT).toBe(environment?.WEB_HTTP_PORT);
+    expect(environment?.METRICS_URL).toBe(
+      `http://localhost:${environment?.WEB_METRICS_PORT}`
+    );
+  });
+
+  it("does not run template teardown during stop or daemon shutdown", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-no-stop-teardown");
+    const harness = createHarness();
+    const template: Template = {
+      id: "template-no-stop-teardown",
+      label: "Template",
+      type: "manual",
+      teardown: ["cleanup-never"],
+      services: { web: serviceDefinition() },
+    };
+
+    await harness.supervisor.ensureCellServices({ cell, template });
+    await harness.supervisor.stopCellServices(cell.id);
+    await harness.supervisor.stopAll();
+
+    expect(
+      harness.processes.some((process) =>
+        process.options.command.startsWith("cleanup-")
+      )
+    ).toBe(false);
+  });
+
+  it("applies the configurable teardown command timeout", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-teardown-timeout");
+    const harness = createHarness({ autoExitTeardown: false });
+    const previousTimeout =
+      process.env.HIVE_TEMPLATE_TEARDOWN_COMMAND_TIMEOUT_MS;
+    process.env.HIVE_TEMPLATE_TEARDOWN_COMMAND_TIMEOUT_MS = "5";
+
+    try {
+      await expect(
+        harness.supervisor.runCellTeardown({
+          cell,
+          template: {
+            id: "template-teardown-timeout",
+            label: "Template",
+            type: "manual",
+            teardown: ["cleanup-hang"],
+          },
+          reason: "provisioning_rollback",
+        })
+      ).rejects.toThrow("timed out after 5ms");
+    } finally {
+      process.env.HIVE_TEMPLATE_TEARDOWN_COMMAND_TIMEOUT_MS = previousTimeout;
+    }
+  });
+
+  it("starts dependencies first and bulk stops in reverse order", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-dependencies");
+    const harness = createHarness();
+
+    await ensureProcessServices({
+      harness,
+      cell,
+      templateId: "template-dependencies",
+      services: {
+        web: serviceDefinition({
+          run: "start-web",
+          stop: "stop-web",
+          dependsOn: ["db"],
+        }),
+        db: serviceDefinition({ run: "start-db", stop: "stop-db" }),
+      },
+    });
+
+    expect(harness.processes.map((process) => process.options.command)).toEqual(
+      ["start-db", "start-web"]
+    );
+    await harness.supervisor.stopCellServices(cell.id);
+    expect(harness.runCommandCalls).toEqual(["stop-web", "stop-db"]);
+  });
+
+  it("starts the dependency closure when a single service is started", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-dependency-closure");
+    const harness = createHarness();
+
+    await ensureProcessServices({
+      harness,
+      cell,
+      templateId: "template-dependency-closure",
+      services: {
+        web: serviceDefinition({ run: "start-web", dependsOn: ["api"] }),
+        api: serviceDefinition({ run: "start-api", dependsOn: ["db"] }),
+        db: serviceDefinition({ run: "start-db" }),
+      },
+    });
+    await harness.supervisor.stopCellServices(cell.id);
+    const startingCount = harness.processes.length;
+    const rows = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+    const web = rows.find((service) => service.name === "web");
+    if (!web) {
+      throw new Error("Expected web service");
+    }
+
+    await harness.supervisor.startCellService(web.id);
+
+    expect(
+      harness.processes
+        .slice(startingCount)
+        .map((process) => process.options.command)
+    ).toEqual(["start-db", "start-api", "start-web"]);
+    await stopCellHarness(harness, cell.id);
+  });
+
+  it("rejects unsupported services before template setup", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-docker");
+    const harness = createHarness();
+    const template = {
+      id: "template-docker",
+      label: "Docker",
+      type: "manual",
+      setup: ["echo template-setup"],
+      services: {
+        db: { type: "docker", image: "postgres:17" },
+      },
+    } as const;
+
+    await expect(
+      harness.supervisor.ensureCellServices({
+        cell,
+        template: template as unknown as Template,
+      })
+    ).rejects.toThrow('Unsupported service type "docker" for service "db"');
+    expect(harness.processes).toHaveLength(0);
+    expect(await testDb.select().from(cellServices)).toHaveLength(0);
+  });
+
+  it("marks a service error when readiness reaches its deadline", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-readiness-timeout");
+    const harness = createHarness();
+
+    await expect(
+      ensureProcessServices({
+        harness,
+        cell,
+        templateId: "template-readiness-timeout",
+        services: {
+          web: serviceDefinition({
+            readiness: {
+              checks: [{ type: "tcp", port: "default" }],
+              intervalMs: 5,
+            },
+            readyTimeoutMs: 30,
+          }),
+        },
+      })
+    ).rejects.toThrow("readiness timed out after 30ms");
+
+    const service = await getOnlyService(cell.id);
+    expect(service.status).toBe("error");
+    expect(service.pid).toBeNull();
+    expect(service.lastKnownError).toContain("readiness timed out after 30ms");
+  });
+
+  it("marks a spawned process running only after readiness succeeds", async () => {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, "template-readiness-success");
+    const harness = createHarness();
+    const starting = ensureProcessServices({
+      harness,
+      cell,
+      templateId: "template-readiness-success",
+      services: {
+        web: serviceDefinition({
+          readiness: {
+            checks: [{ type: "tcp", port: "default" }],
+            intervalMs: 5,
+          },
+          readyTimeoutMs: READINESS_SUCCESS_TIMEOUT_MS,
+        }),
+      },
+    });
+    const spawned = await harness.firstSpawned;
+    const whileWaiting = await getOnlyService(cell.id);
+    expect(whileWaiting.status).toBe("starting");
+
+    const listener = createServer();
+    await listenOnPort(listener, Number(spawned.options.env.PORT));
+    try {
+      await starting;
+      const ready = await getOnlyService(cell.id);
+      expect(ready.status).toBe("running");
+    } finally {
+      await stopCellHarness(harness, cell.id);
+      await new Promise<void>((resolve) => listener.close(() => resolve()));
+    }
+  });
+
   async function insertCell(workspacePath: string, templateId: string) {
     const [cell] = await testDb
       .insert(cells)
@@ -488,12 +1227,8 @@ describe("service supervisor", () => {
   }
 
   function serviceDefinition(
-    overrides: Partial<{
-      run: string;
-      cwd: string;
-      env: Record<string, string>;
-    }> = {}
-  ) {
+    overrides: Partial<Omit<ProcessService, "type">> = {}
+  ): ProcessService {
     return {
       type: "process" as const,
       run: "bun run dev",
@@ -529,11 +1264,12 @@ describe("service supervisor", () => {
 
   async function createStartedHarness(
     templateId: string,
-    services?: Record<string, ReturnType<typeof serviceDefinition>>
+    services?: Record<string, ReturnType<typeof serviceDefinition>>,
+    harnessOptions?: Parameters<typeof createHarness>[0]
   ) {
     const workspace = await createWorkspaceDir();
     const cell = await insertCell(workspace, templateId);
-    const harness = createHarness();
+    const harness = createHarness(harnessOptions);
 
     await ensureProcessServices({ harness, cell, templateId, services });
     return { workspace, cell, harness };
@@ -577,6 +1313,44 @@ describe("service supervisor", () => {
     });
   }
 
+  async function seedPersistedProcessService(
+    serviceId: string,
+    pid: number,
+    instanceId = "expected-instance"
+  ) {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell(workspace, `template-${serviceId}`);
+    await insertServiceRecord(workspace, cell.id, {
+      id: serviceId,
+      status: "running",
+      pid,
+      env: { HIVE_SERVICE_INSTANCE_ID: instanceId },
+    });
+  }
+
+  async function withProcessKillMock(
+    mock: typeof process.kill,
+    action: () => Promise<void>
+  ): Promise<void> {
+    const originalKill = process.kill;
+    process.kill = mock;
+    try {
+      await action();
+    } finally {
+      process.kill = originalKill;
+    }
+  }
+
+  async function stopPersistedService(
+    serviceId: string,
+    environment: Record<string, string> | null
+  ): Promise<void> {
+    const harness = createHarness({
+      readProcessEnvironment: async () => environment,
+    });
+    await harness.supervisor.stopCellService(serviceId);
+  }
+
   async function stopHarness(harness: ReturnType<typeof createHarness>) {
     await harness.supervisor.stopAll();
     await waitForProcesses(harness);
@@ -605,9 +1379,27 @@ describe("service supervisor", () => {
     return call;
   }
 
-  function createHarness() {
+  function createHarness(
+    harnessOptions: {
+      autoExitTeardown?: boolean;
+      processKill?: (
+        signal: number | string | undefined,
+        exit: (code: number) => void,
+        pid: number
+      ) => void;
+      runCommand?: RunCommand;
+      useDefaultRunCommand?: boolean;
+      readProcessEnvironment?: (
+        pid: number
+      ) => Promise<Record<string, string> | null>;
+    } = {}
+  ) {
     const processes: FakeProcess[] = [];
     const runCommandCalls: string[] = [];
+    let resolveFirstSpawned!: (process: FakeProcess) => void;
+    const firstSpawned = new Promise<FakeProcess>((resolveSpawned) => {
+      resolveFirstSpawned = resolveSpawned;
+    });
     let pidCounter = 10_000;
     let clock = Date.now();
     const terminalRuntime = createServiceTerminalRuntime();
@@ -620,12 +1412,24 @@ describe("service supervisor", () => {
 
       const handle: ProcessHandle = {
         pid: pidCounter++,
-        kill: () => exit(0),
+        kill: (signal) => {
+          if (harnessOptions.processKill) {
+            harnessOptions.processKill(signal, exit, handle.pid);
+            return;
+          }
+          exit(0);
+        },
         exited,
       };
 
-      processes.push({ options, exit, handle });
-      if (options.command.includes("template-setup")) {
+      const process = { options, exit, handle };
+      processes.push(process);
+      resolveFirstSpawned(process);
+      if (
+        options.command.includes("template-setup") ||
+        (options.command.startsWith("cleanup-") &&
+          harnessOptions.autoExitTeardown !== false)
+      ) {
         queueMicrotask(() => {
           options.onData?.("template setup complete\n");
           options.onExit?.({ exitCode: 0, signal: null });
@@ -639,21 +1443,30 @@ describe("service supervisor", () => {
       return handle;
     };
 
-    const runCommand: RunCommand = (command) => {
+    const runCommand: RunCommand = (command, options) => {
       runCommandCalls.push(command);
-      return Promise.resolve();
+      return harnessOptions.runCommand?.(command, options) ?? Promise.resolve();
     };
 
     const supervisor = createServiceSupervisor({
       db: testDb,
       spawnProcess,
-      runCommand,
+      ...(harnessOptions.useDefaultRunCommand ? {} : { runCommand }),
       now: () => new Date(clock++),
       logger: silentLogger,
       terminalRuntime,
+      ...(harnessOptions.readProcessEnvironment
+        ? { readProcessEnvironment: harnessOptions.readProcessEnvironment }
+        : {}),
     });
 
-    return { supervisor, processes, runCommandCalls, terminalRuntime };
+    return {
+      supervisor,
+      processes,
+      runCommandCalls,
+      terminalRuntime,
+      firstSpawned,
+    };
   }
 
   async function createWorkspaceDir() {
@@ -673,6 +1486,16 @@ describe("service supervisor", () => {
         const port = address && typeof address === "object" ? address.port : 0;
         server.close(() => resolvePort(port));
       });
+    });
+  }
+
+  function listenOnPort(
+    server: ReturnType<typeof createServer>,
+    port: number
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(port, "127.0.0.1", resolve);
     });
   }
 });

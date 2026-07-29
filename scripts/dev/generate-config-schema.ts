@@ -29,12 +29,31 @@ const descriptionMap: Record<string, string> = {
   "templates/*/services/*/setup": "Setup commands before main command",
   "templates/*/services/*/cwd": "Working directory for service",
   "templates/*/services/*/env": "Environment variables",
-  "templates/*/services/*/readyTimeoutMs":
-    "Milliseconds to wait for service readiness",
+  "templates/*/services/*/ports": "Named ports allocated for the service",
+  "templates/*/services/*/ports/*": "Named port definition",
+  "templates/*/services/*/ports/*/primary":
+    "Use as the compatibility primary port",
+  "templates/*/services/*/ports/*/protocol":
+    "How clients should connect to the port (defaults to http)",
+  "templates/*/services/*/dependsOn":
+    "Services that must be ready before this service starts",
+  "templates/*/services/*/readiness": "Readiness probe after process spawn",
+  "templates/*/services/*/readiness/checks":
+    "Checks that must all pass before the service is ready",
+  "templates/*/services/*/readiness/checks/[]/type": "Readiness probe type",
+  "templates/*/services/*/readiness/checks/[]/port":
+    "Named service port to probe",
+  "templates/*/services/*/readiness/checks/[]/host": "Readiness probe host",
+  "templates/*/services/*/readiness/intervalMs":
+    "Milliseconds between readiness probes",
+  "templates/*/services/*/readiness/checks/[]/path": "HTTP readiness path",
+  "templates/*/services/*/readiness/checks/[]/method": "HTTP readiness method",
+  "templates/*/services/*/readiness/checks/[]/protocol":
+    "HTTP readiness protocol",
+  "templates/*/services/*/readyTimeoutMs": "Readiness deadline in milliseconds",
   "templates/*/services/*/stop": "Graceful stop command",
   "templates/*/services/*/image": "Docker image to use",
   "templates/*/services/*/command": "Command to override default",
-  "templates/*/services/*/ports": "Port mappings (e.g., '3000:3000')",
   "templates/*/services/*/volumes": "Volume mappings",
   "templates/*/services/*/file": "Path to docker-compose.yml",
   "templates/*/services/*/services": "Specific services to run",
@@ -49,7 +68,8 @@ const descriptionMap: Record<string, string> = {
   "templates/*/agent/modelId": "Model identifier within the provider",
   "templates/*/agent/variant": "Deprecated: model variant identifier",
   "templates/*/agent/agentId": "Agent preset identifier",
-  "templates/*/teardown": "Cleanup commands on cell stop",
+  "templates/*/teardown":
+    "Cleanup commands on cell deletion or provisioning rollback",
   "templates/*/includePatterns":
     "Patterns to include from gitignored files for worktree copying (e.g., '.env', '*.local')",
   "templates/*/ignorePatterns":

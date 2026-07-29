@@ -56,6 +56,7 @@ const createDesktopRuntimeEnv = (
     ? { HIVE_DESKTOP_DAEMON_ARGS: JSON.stringify(options.daemonArgs) }
     : {}),
   ...(options.daemonCwd ? { HIVE_DESKTOP_DAEMON_CWD: options.daemonCwd } : {}),
+  ...(options.desktopUrl ? { HIVE_DESKTOP_URL: options.desktopUrl } : {}),
   ...(options.preserveDaemonEnv
     ? { HIVE_DESKTOP_PRESERVE_DAEMON_ENV: "1" }
     : {}),
@@ -77,6 +78,8 @@ type LaunchDesktopAppOptions = {
   daemonArgs?: string[];
   daemonCommand?: string;
   daemonCwd?: string;
+  desktopUrl?: string;
+  fakeMediaDevices?: boolean;
   preserveDaemonEnv?: boolean;
   startupMode?: "starting" | "reconnecting";
   startupTimeoutMs?: number;
@@ -100,7 +103,12 @@ export const launchDesktopApp = async (
 
   const app = await electron.launch({
     executablePath: electronPath as unknown as string,
-    args: [mainEntry],
+    args: [
+      mainEntry,
+      ...(options.fakeMediaDevices
+        ? ["--use-fake-device-for-media-stream"]
+        : []),
+    ],
     env: {
       ...createDesktopRuntimeEnv(apiUrl, options),
       HIVE_DESKTOP_RENDERER_PATH: rendererEntry,
@@ -123,6 +131,9 @@ export const launchPackagedDesktopApp = async (
 
   const app = await electron.launch({
     executablePath,
+    args: options.fakeMediaDevices
+      ? ["--use-fake-device-for-media-stream"]
+      : [],
     env: createDesktopRuntimeEnv(resolveApiUrl(options.apiUrl), options),
   });
 

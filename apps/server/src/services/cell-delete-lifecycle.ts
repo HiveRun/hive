@@ -3,13 +3,17 @@ import { promises as fs } from "node:fs";
 import { eq } from "drizzle-orm";
 
 import type { DatabaseService as DatabaseServiceType } from "../db";
-import { type CellStatus, cells } from "../schema/cells";
+import { type Cell, type CellStatus, cells } from "../schema/cells";
 import {
   type AsyncWorktreeManager,
   describeWorktreeError,
   type WorktreeManagerError,
 } from "../worktree/manager";
+import { runWithCellCleanupLock } from "./cell-cleanup-lock";
+import { removeCellRuntimeDir } from "./cell-environment";
+import { loadCellById } from "./cell-runtime-guard";
 import { emitCellStatusUpdate } from "./events";
+import type { TemplateTeardownReason } from "./supervisor";
 
 type DatabaseClient = DatabaseServiceType["db"];
 
@@ -19,10 +23,7 @@ type DeleteLifecycleLogger = {
   error: (obj: Record<string, unknown> | Error, message?: string) => void;
 };
 
-type CellDeleteRecord = Pick<
-  typeof cells.$inferSelect,
-  "id" | "name" | "templateId" | "workspaceId" | "workspacePath" | "status"
->;
+type CellDeleteRecord = Cell;
 
 type CellWorkspaceRecord = Pick<
   typeof cells.$inferSelect,
@@ -42,13 +43,17 @@ type DeleteLifecycleArgs = {
       releasePorts: boolean;
     }
   ) => Promise<unknown>;
+  runCellTeardown: (args: {
+    cell: CellDeleteRecord;
+    reason: TemplateTeardownReason;
+  }) => Promise<unknown>;
   getWorktreeService: (workspaceId: string) => Promise<AsyncWorktreeManager>;
   log: DeleteLifecycleLogger;
 };
 
 const DELETE_CLOSE_AGENT_SESSION_TIMEOUT_MS = 15_000;
 const DELETE_CLOSE_TERMINALS_TIMEOUT_MS = 5000;
-const DELETE_STOP_SERVICES_TIMEOUT_MS = 30_000;
+const DELETE_REMOVE_RUNTIME_TIMEOUT_MS = 30_000;
 const DELETE_REMOVE_WORKSPACE_TIMEOUT_MS = 120_000;
 const DELETE_REMOVE_RECORD_TIMEOUT_MS = 10_000;
 
@@ -136,17 +141,36 @@ async function restoreCellStatusAfterDeleteFailure(args: {
   });
 }
 
-async function loadCellById(
-  database: DatabaseClient,
-  cellId: string
-): Promise<typeof cells.$inferSelect | null> {
-  const [cell] = await database
-    .select()
-    .from(cells)
-    .where(eq(cells.id, cellId))
-    .limit(1);
+async function markCellDeletionFailure(args: {
+  database: DatabaseClient;
+  cellId: string;
+  workspaceId: string;
+  error: unknown;
+  label: string;
+}): Promise<Error> {
+  const reason = formatLifecycleError(args.error);
+  const lastSetupError = `${args.label} failed during cell deletion: ${reason}`;
+  await args.database
+    .update(cells)
+    .set({ status: "error", lastSetupError })
+    .where(eq(cells.id, args.cellId));
+  emitCellStatusUpdate({
+    cellId: args.cellId,
+    workspaceId: args.workspaceId,
+    status: "error",
+    lastSetupError,
+  });
+  return new Error(lastSetupError);
+}
 
-  return cell ?? null;
+function formatLifecycleError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (error && typeof error === "object" && "cause" in error) {
+    return formatLifecycleError((error as { cause: unknown }).cause);
+  }
+  return String(error);
 }
 
 export async function removeCellWorkspace(
@@ -186,7 +210,11 @@ export async function removeCellWorkspace(
   }
 }
 
-async function deleteCellWithTiming(args: DeleteLifecycleArgs) {
+async function deleteCellWithTiming(
+  args: DeleteLifecycleArgs,
+  onStopFailure: (error: unknown) => Promise<Error>,
+  onTeardownFailure: (error: unknown) => Promise<Error>
+) {
   const runStep = async <T>(params: {
     step: string;
     action: () => Promise<T> | T;
@@ -234,12 +262,28 @@ async function deleteCellWithTiming(args: DeleteLifecycleArgs) {
     warnMessage: "Failed to close terminal sessions before cell removal",
   });
 
+  try {
+    await runStep({
+      step: "stop_services",
+      action: () => args.stopCellServices(args.cell.id, { releasePorts: true }),
+    });
+  } catch (error) {
+    throw await onStopFailure(error);
+  }
+
+  try {
+    await runStep({
+      step: "template_teardown",
+      action: () => args.runCellTeardown({ cell: args.cell, reason: "delete" }),
+    });
+  } catch (error) {
+    throw await onTeardownFailure(error);
+  }
+
   await runStep({
-    step: "stop_services",
-    action: () => args.stopCellServices(args.cell.id, { releasePorts: true }),
-    timeoutMs: DELETE_STOP_SERVICES_TIMEOUT_MS,
-    continueOnError: true,
-    warnMessage: "Failed to stop services before cell removal",
+    step: "remove_runtime_directory",
+    action: () => removeCellRuntimeDir(args.cell.id),
+    timeoutMs: DELETE_REMOVE_RUNTIME_TIMEOUT_MS,
   });
 
   await runStep({
@@ -265,7 +309,21 @@ async function deleteCellWithTiming(args: DeleteLifecycleArgs) {
 export async function deleteCellWithLifecycle(
   args: DeleteLifecycleArgs
 ): Promise<void> {
+  await runWithCellCleanupLock(args.cell.id, async () => {
+    const currentCell = await loadCellById(args.database, args.cell.id);
+    if (!currentCell) {
+      return;
+    }
+
+    await deleteCellWithLifecycleUnlocked({ ...args, cell: currentCell });
+  });
+}
+
+async function deleteCellWithLifecycleUnlocked(
+  args: DeleteLifecycleArgs
+): Promise<void> {
   const previousStatus = args.cell.status as CellStatus;
+  let lifecycleFailurePersisted = false;
 
   if (previousStatus !== "deleting") {
     await markCellDeletionStarted({
@@ -275,9 +333,27 @@ export async function deleteCellWithLifecycle(
     });
   }
 
+  const persistLifecycleFailure = (label: string) => async (error: unknown) => {
+    lifecycleFailurePersisted = true;
+    return await markCellDeletionFailure({
+      database: args.database,
+      cellId: args.cell.id,
+      workspaceId: args.cell.workspaceId,
+      error,
+      label,
+    });
+  };
+
   try {
-    await deleteCellWithTiming(args);
+    await deleteCellWithTiming(
+      args,
+      persistLifecycleFailure("Service stop"),
+      persistLifecycleFailure("Template teardown")
+    );
   } catch (error) {
+    if (lifecycleFailurePersisted) {
+      throw error;
+    }
     const restoreStatus =
       previousStatus === "deleting" ? "error" : previousStatus;
     await restoreCellStatusAfterDeleteFailure({

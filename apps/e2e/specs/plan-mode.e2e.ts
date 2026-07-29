@@ -2,9 +2,10 @@ import { type Page, test } from "@playwright/test";
 import { selectors } from "../src/selectors";
 import {
   createApiCellAndOpenChat,
+  ensureTerminalReady,
   fetchAgentSession,
+  focusTerminalInput,
   requireApiUrl,
-  sendChatTerminalInput,
   wait,
   waitForCondition,
 } from "../src/test-helpers";
@@ -14,10 +15,10 @@ const CHAT_ROUTE_TIMEOUT_MS = 180_000;
 const SESSION_MODE_TIMEOUT_MS = 120_000;
 const PLAN_TO_BUILD_TEST_TIMEOUT_MS = 300_000;
 const MODE_POLL_INTERVAL_MS = 500;
+const TERMINAL_READY_TIMEOUT_MS = 120_000;
+const TERMINAL_INPUT_FOCUS_TIMEOUT_MS = 10_000;
 const CELL_TEMPLATE_LABEL = "E2E Template";
-const TERMINAL_MODE_OPEN_CODE_PATTERN =
-  /\b(Plan|Build)\b(?:\s*[·•])?\s+Big Pickle\s+OpenCode/gi;
-const MODE_TOGGLE_INPUT = "\t";
+const TERMINAL_MODE_PATTERN = /\b(Plan|Build)\b\s*[·•]/gi;
 
 test.describe("plan mode @plan-mode", () => {
   test("@plan-mode defaults new cells to plan mode", async ({ page }) => {
@@ -57,8 +58,7 @@ test.describe("plan mode @plan-mode", () => {
     });
 
     await waitForTerminalMode({ page, expectedMode: "Plan" });
-    await sendTerminalModeInput(apiUrl, cellId, MODE_TOGGLE_INPUT);
-
+    await sendTerminalModeInput(page);
     await waitForTerminalMode({ page, expectedMode: "Build" });
   });
 });
@@ -153,24 +153,22 @@ async function waitForTerminalMode(options: {
     timeoutMs: SESSION_MODE_TIMEOUT_MS,
     errorMessage: `Terminal did not show ${options.expectedMode} mode`,
     check: async () => {
-      const content =
-        (await options.page.locator(selectors.terminalRoot).textContent()) ??
-        "";
-      const normalized = content.replace(/\s+/g, " ");
-      const matches = [...normalized.matchAll(TERMINAL_MODE_OPEN_CODE_PATTERN)];
+      const rows = await options.page
+        .locator(`${selectors.terminalRoot} .xterm-rows > div`)
+        .allTextContents();
+      const matches = rows.flatMap((row) => [
+        ...row.replace(/\s+/g, " ").matchAll(TERMINAL_MODE_PATTERN),
+      ]);
       return matches.at(-1)?.[1] === options.expectedMode;
     },
   });
 }
 
-async function sendTerminalModeInput(
-  apiUrl: string,
-  cellId: string,
-  data: string
-): Promise<void> {
-  const response = await sendChatTerminalInput(apiUrl, cellId, data);
-
-  if (!response.ok) {
-    throw new Error(`Failed to send chat terminal input: ${response.status}`);
-  }
+async function sendTerminalModeInput(page: Page): Promise<void> {
+  await ensureTerminalReady(page, {
+    context: "before mode toggle",
+    timeoutMs: TERMINAL_READY_TIMEOUT_MS,
+  });
+  await focusTerminalInput(page, TERMINAL_INPUT_FOCUS_TIMEOUT_MS);
+  await page.keyboard.press("Tab");
 }

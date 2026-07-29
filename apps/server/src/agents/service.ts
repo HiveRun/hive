@@ -18,6 +18,9 @@ import { db } from "../db";
 import { cellProvisioningStates } from "../schema/cell-provisioning";
 import { type Cell, cells } from "../schema/cells";
 import { type CellService, cellServices } from "../schema/services";
+import { runWithCellCleanupLock } from "../services/cell-cleanup-lock";
+import { resolveCellEnvironment } from "../services/cell-environment";
+import { requireCellAvailableForRuntime } from "../services/cell-runtime-guard";
 import { publishAgentEvent } from "./events";
 import {
   loadEffectiveOpencodeDefaults,
@@ -179,13 +182,15 @@ function buildEnvironmentVariableLines(
   context: HiveSessionInstructionsContext
 ): string[] {
   const { cell, services } = context;
-  const hiveHome = join(cell.workspacePath, ".hive", "home");
+  const cellEnvironment = resolveCellEnvironment(cell.id, cell.workspacePath);
 
   const lines = [
     "## Hive-Generated Environment Variables",
     `- HIVE_CELL_ID=${cell.id}`,
-    `- HIVE_HOME=${hiveHome}`,
+    `- HIVE_HOME=${cellEnvironment.HIVE_HOME}`,
     `- HIVE_BROWSE_ROOT=${cell.workspacePath}`,
+    `- HIVE_CELL_RUNTIME_DIR=${cellEnvironment.HIVE_CELL_RUNTIME_DIR}`,
+    `- HIVE_CELL_ARTIFACTS_DIR=${cellEnvironment.HIVE_CELL_ARTIFACTS_DIR}`,
     `- SERVICE_HOST=${DEFAULT_SERVICE_HOST}`,
     `- SERVICE_PROTOCOL=${DEFAULT_SERVICE_PROTOCOL}`,
     "",
@@ -1544,14 +1549,6 @@ function getExistingRuntimeForCell(
   return runtimeRegistry.get(currentSessionId) ?? null;
 }
 
-async function loadCellForRuntime(cellId: string): Promise<Cell> {
-  const cell = await getCellById(cellId);
-  if (!cell) {
-    throw new Error("Cell not found");
-  }
-  return cell;
-}
-
 function loadHiveConfigForWorkspace(
   deps: AgentRuntimeDependencies,
   workspaceRootPath: string
@@ -1599,14 +1596,23 @@ async function ensureRuntimeForCell(
   cellId: string,
   options?: EnsureAgentSessionOptions
 ): Promise<RuntimeHandle> {
+  return await runWithCellCleanupLock(cellId, async () =>
+    ensureRuntimeForCellUnlocked(cellId, options)
+  );
+}
+
+async function ensureRuntimeForCellUnlocked(
+  cellId: string,
+  options?: EnsureAgentSessionOptions
+): Promise<RuntimeHandle> {
   const deps = getAgentRuntimeDependencies();
+  const cell = await requireCellAvailableForRuntime(deps.db, cellId);
   const activeRuntime = getExistingRuntimeForCell(cellId, options);
   if (activeRuntime) {
     await hydrateInstructionsForCell(deps, activeRuntime.cell);
     return activeRuntime;
   }
 
-  const cell = await loadCellForRuntime(cellId);
   const workspaceRootPath = cell.workspaceRootPath || cell.workspacePath;
 
   const { hiveConfig, template } = await hydrateInstructionsForCell(deps, cell);

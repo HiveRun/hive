@@ -11,6 +11,17 @@
       "https://skills.sh/vercel-labs/agent-skills/web-design-guidelines"
     ]
   },
+  "references": {
+    "calibrate": {
+      "path": "../calibrate",
+      "description": "Calibrate application repository; use for cross-repository development and architecture context"
+    }
+  },
+  "permission": {
+    "external_directory": {
+      "~/dev/projects/calibrate/**": "allow"
+    }
+  },
   "mcp": {
     "linear": {
       "type": "local",

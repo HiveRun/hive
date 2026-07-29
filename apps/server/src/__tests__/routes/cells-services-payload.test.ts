@@ -1,11 +1,12 @@
 import { createServer } from "node:net";
 
+import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-
+import { cellServicePorts, cellServices } from "../../schema/services";
 import type { ChatTerminalSession } from "../../services/chat-terminal";
 import type { ProcessResourceSnapshot } from "../../services/resource-snapshot";
 import type { ServiceTerminalSession } from "../../services/service-terminal";
-import { setupTestDb } from "../test-db";
+import { setupTestDb, testDb } from "../test-db";
 import {
   clearRouteServicesAndCells,
   createCellRouteTestApp,
@@ -289,6 +290,94 @@ describe("GET /api/cells/:id/services payload", () => {
     expect(service.portReachable).toBe(true);
 
     await listener.close();
+  });
+
+  it("returns normalized ports while retaining the primary scalar aliases", async () => {
+    const primaryPort = 43_101;
+    const metricsPort = 43_102;
+    const securePort = 43_103;
+    await insertCellAndServiceRecords("server", { port: primaryPort });
+    await testDb
+      .update(cellServices)
+      .set({
+        definition: {
+          type: "process",
+          run: "echo test",
+          ports: {
+            http: { primary: true },
+            metrics: { protocol: "tcp" },
+            secure: { protocol: "https" },
+          },
+        },
+      })
+      .where(eq(cellServices.id, TEST_SERVICE_ID));
+    const now = new Date();
+    await testDb.insert(cellServicePorts).values([
+      {
+        serviceId: TEST_SERVICE_ID,
+        name: "http",
+        port: primaryPort,
+        primary: true,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        serviceId: TEST_SERVICE_ID,
+        name: "metrics",
+        port: metricsPort,
+        primary: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        serviceId: TEST_SERVICE_ID,
+        name: "secure",
+        port: securePort,
+        primary: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+
+    const service = await readFirstServicePayload<{
+      port: number;
+      url: string;
+      ports: Array<{
+        name: string;
+        port: number;
+        primary: boolean;
+        protocol: "http" | "https" | "tcp";
+        url?: string;
+        portReachable: boolean;
+      }>;
+    }>(app);
+    expect(service.port).toBe(primaryPort);
+    expect(service.url).toContain(String(primaryPort));
+    expect(service.ports).toEqual([
+      {
+        name: "http",
+        port: primaryPort,
+        primary: true,
+        protocol: "http",
+        url: `http://localhost:${primaryPort}`,
+        portReachable: false,
+      },
+      {
+        name: "metrics",
+        port: metricsPort,
+        primary: false,
+        protocol: "tcp",
+        portReachable: false,
+      },
+      {
+        name: "secure",
+        port: securePort,
+        primary: false,
+        protocol: "https",
+        url: `https://localhost:${securePort}`,
+        portReachable: false,
+      },
+    ]);
   });
 
   it("returns resource snapshots when includeResources=true", async () => {

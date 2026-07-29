@@ -32,7 +32,6 @@ import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
 import { linearRoutes } from "./routes/linear";
 import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
-import { cells } from "./schema/cells";
 import { chatTerminalService } from "./services/chat-terminal";
 import { ServiceSupervisorService } from "./services/supervisor";
 import { cellTerminalService } from "./services/terminal";
@@ -379,25 +378,6 @@ const resumeProvisioning = async (): Promise<void> => {
   await resumeSpawningCells();
 };
 
-const startAllServices = async (): Promise<void> => {
-  const allCells = await DatabaseService.db.select().from(cells);
-  if (allCells.length === 0) {
-    return;
-  }
-
-  for (const cell of allCells) {
-    try {
-      await ServiceSupervisorService.startCellServices(cell.id);
-    } catch (failure) {
-      process.stderr.write(
-        `Failed to start services for cell ${cell.id}: ${
-          failure instanceof Error ? failure.message : String(failure)
-        }\n`
-      );
-    }
-  }
-};
-
 const resumeAgentSessions = async (): Promise<void> => {
   await resumeAgentSessionsOnStartup();
 };
@@ -455,10 +435,6 @@ const runStartupRecoveryTasks = async (): Promise<void> => {
     {
       label: "resume cell provisioning",
       run: resumeProvisioning,
-    },
-    {
-      label: "start services",
-      run: startAllServices,
     },
     {
       label: "resume agent sessions",

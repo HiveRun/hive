@@ -112,12 +112,177 @@ export async function readDesktopBrowserView(app: ElectronApplication) {
     const bounds = view.getBounds();
     return {
       height: bounds.height,
+      id: view.webContents.id,
       url: view.webContents.getURL(),
       width: bounds.width,
       x: bounds.x,
       y: bounds.y,
     };
   });
+}
+
+export async function expectWebContentsDestroyed(
+  app: ElectronApplication,
+  webContentsId: number
+) {
+  await expect
+    .poll(
+      async () =>
+        await app.evaluate(({ webContents }, targetId) => {
+          const contents = webContents.fromId(targetId);
+          return !contents || contents.isDestroyed();
+        }, webContentsId),
+      { timeout: 15_000 }
+    )
+    .toBe(true);
+}
+
+export async function readDesktopBrowserViewCount(app: ElectronApplication) {
+  return await app.evaluate(
+    ({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0]?.getBrowserViews().length ?? 0
+  );
+}
+
+async function executeInDesktopBrowserView<Result>(
+  app: ElectronApplication,
+  source: string
+): Promise<Result> {
+  return (await app.evaluate(async ({ BrowserWindow }, script) => {
+    const view = BrowserWindow.getAllWindows()[0]?.getBrowserViews()[0];
+    if (!view) {
+      throw new Error("No desktop browser view is attached");
+    }
+    return await view.webContents.executeJavaScript(script, true);
+  }, source)) as Result;
+}
+
+export async function requestDesktopBrowserViewMedia(
+  app: ElectronApplication,
+  constraints: { audio?: boolean; video?: boolean }
+) {
+  return await executeInDesktopBrowserView<{
+    errorName: string | null;
+    granted: boolean;
+  }>(
+    app,
+    `(async () => {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia(${JSON.stringify(constraints)});
+            for (const track of stream.getTracks()) track.stop();
+            return { granted: true, errorName: null };
+          } catch (error) {
+            return { granted: false, errorName: error?.name ?? "Error" };
+          }
+        })()`
+  );
+}
+
+export async function startDesktopBrowserViewAudioCapture(
+  app: ElectronApplication
+) {
+  return await executeInDesktopBrowserView<{
+    granted: boolean;
+    trackState: string | null;
+  }>(
+    app,
+    `(async () => {
+        try {
+          window.__hiveTestAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          return {
+            granted: true,
+            trackState: window.__hiveTestAudioStream.getAudioTracks()[0]?.readyState ?? null,
+          };
+        } catch (error) {
+          return { granted: false, trackState: error?.name ?? "Error" };
+        }
+      })()`
+  );
+}
+
+export async function requestDesktopBrowserViewClipboard(
+  app: ElectronApplication
+) {
+  return await executeInDesktopBrowserView<{
+    errorName: string | null;
+    granted: boolean;
+  }>(
+    app,
+    `(async () => {
+        try {
+          await navigator.clipboard.writeText("viewer-clipboard");
+          return { granted: true, errorName: null };
+        } catch (error) {
+          return { granted: false, errorName: error?.name ?? "Error" };
+        }
+      })()`
+  );
+}
+
+export async function syncDesktopViewerServiceTab(
+  page: Page,
+  rootUrl: string,
+  serviceId: string
+) {
+  await page.evaluate(
+    async (target) => {
+      await window.hiveDesktop?.viewer.syncServiceTabs([target]);
+    },
+    { rootUrl, serviceId }
+  );
+}
+
+export async function requestUnownedLoopbackMedia(
+  app: ElectronApplication,
+  url: string
+) {
+  return await app.evaluate(async ({ BrowserWindow }, viewerUrl) => {
+    const window = new BrowserWindow({ show: false });
+    try {
+      await window.loadURL(viewerUrl);
+      return (await window.webContents.executeJavaScript(
+        `(async () => {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            for (const track of stream.getTracks()) track.stop();
+            return { granted: true, errorName: null };
+          } catch (error) {
+            return { granted: false, errorName: error?.name ?? "Error" };
+          }
+        })()`,
+        true
+      )) as { errorName: string | null; granted: boolean };
+    } finally {
+      window.destroy();
+    }
+  }, url);
+}
+
+export async function requestMainRendererMedia(
+  page: Page,
+  constraints: { audio?: boolean; video?: boolean }
+) {
+  return await page.evaluate(async (mediaConstraints) => {
+    try {
+      const stream =
+        await navigator.mediaDevices.getUserMedia(mediaConstraints);
+      for (const track of stream.getTracks()) {
+        track.stop();
+      }
+      return { granted: true, errorName: null };
+    } catch (error) {
+      return {
+        granted: false,
+        errorName: error instanceof Error ? error.name : "Error",
+      };
+    }
+  }, constraints);
+}
+
+export async function writeMainRendererClipboard(page: Page, text: string) {
+  await page.evaluate(async (clipboardText) => {
+    await navigator.clipboard.writeText(clipboardText);
+  }, text);
 }
 
 export async function expectBrowserView(
@@ -127,6 +292,17 @@ export async function expectBrowserView(
   await expect
     .poll(async () => await readDesktopBrowserView(app), { timeout: 15_000 })
     .toMatchObject(expect.objectContaining(expected));
+}
+
+export async function expectBrowserViewCount(
+  app: ElectronApplication,
+  expected: number
+) {
+  await expect
+    .poll(async () => await readDesktopBrowserViewCount(app), {
+      timeout: 15_000,
+    })
+    .toBe(expected);
 }
 
 export async function openDesktopChatRoute(page: Page, cellId: string) {

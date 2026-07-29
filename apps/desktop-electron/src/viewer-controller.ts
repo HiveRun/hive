@@ -4,6 +4,7 @@ import type {
   ViewerServiceTab,
   ViewerState,
 } from "./desktop-runtime-types";
+import type { MediaPermissionController } from "./media-permissions";
 
 type ViewerEntry = {
   rootUrl: string;
@@ -27,10 +28,12 @@ type ViewerController = {
 };
 
 export const createViewerController = (options: {
+  mediaPermissions: MediaPermissionController;
   onStateChange: (state: ViewerState) => void;
   window: BrowserWindow;
 }): ViewerController => {
   const entries = new Map<string, ViewerEntry>();
+  let serviceRootUrls = new Map<string, string>();
   let activeServiceId: string | null = null;
   let attachedServiceId: string | null = null;
   let disposed = false;
@@ -110,6 +113,9 @@ export const createViewerController = (options: {
 
     try {
       options.window.removeBrowserView(entry.view);
+      if (options.window.isFocused()) {
+        options.window.webContents.focus();
+      }
     } catch {
       /* ignore detach failures while Electron destroys the view */
     }
@@ -189,6 +195,7 @@ export const createViewerController = (options: {
       view,
     };
 
+    options.mediaPermissions.registerViewer(view.webContents, rootUrl);
     view.webContents.setWindowOpenHandler(handleWindowOpen);
     view.webContents.on("did-start-loading", () =>
       emitStateForService(serviceId)
@@ -204,6 +211,10 @@ export const createViewerController = (options: {
       emitStateForService(serviceId)
     );
     view.webContents.on("destroyed", () => {
+      if (entries.get(serviceId) !== entry) {
+        return;
+      }
+
       if (attachedServiceId === serviceId) {
         attachedServiceId = null;
         visible = false;
@@ -246,33 +257,11 @@ export const createViewerController = (options: {
     return emitState();
   };
 
-  const syncExistingServiceTabs = async (nextRootUrls: Map<string, string>) => {
+  const syncExistingServiceTabs = (nextRootUrls: Map<string, string>) => {
     for (const [serviceId, entry] of entries) {
       const nextRootUrl = nextRootUrls.get(serviceId);
-      if (!nextRootUrl) {
+      if (!nextRootUrl || nextRootUrl !== entry.rootUrl) {
         closeEntry(serviceId);
-        continue;
-      }
-
-      const previousRootUrl = entry.rootUrl;
-      entry.rootUrl = nextRootUrl;
-
-      if (entry.view.webContents.isDestroyed()) {
-        continue;
-      }
-
-      const currentUrl = entry.view.webContents.getURL();
-      const rootUrlChanged = nextRootUrl !== previousRootUrl;
-      if (rootUrlChanged && (!currentUrl || currentUrl === previousRootUrl)) {
-        await loadUrlSafely(entry, nextRootUrl);
-      }
-    }
-  };
-
-  const createMissingServiceTabs = (nextRootUrls: Map<string, string>) => {
-    for (const [serviceId, rootUrl] of nextRootUrls) {
-      if (!entries.has(serviceId)) {
-        createEntry(serviceId, rootUrl);
       }
     }
   };
@@ -288,23 +277,38 @@ export const createViewerController = (options: {
     }
 
     entries.delete(serviceId);
+    options.mediaPermissions.unregisterViewer(entry.view.webContents);
     if (!entry.view.webContents.isDestroyed()) {
       try {
-        entry.view.webContents.destroy();
+        entry.view.webContents.close();
       } catch {
         /* ignore destroy failures during teardown */
       }
     }
   };
 
+  const closeAllEntries = () => {
+    activeServiceId = null;
+    for (const serviceId of [...entries.keys()]) {
+      closeEntry(serviceId);
+    }
+  };
+
   return {
     activateServiceTab: async (serviceId: string) => {
-      const entry = entries.get(serviceId);
-      if (!entry) {
+      const rootUrl = serviceRootUrls.get(serviceId);
+      if (!rootUrl) {
         throw new Error(`Unknown viewer service tab: ${serviceId}`);
       }
 
-      activeServiceId = serviceId;
+      if (activeServiceId !== serviceId) {
+        const previousServiceId = activeServiceId;
+        activeServiceId = serviceId;
+        if (previousServiceId) {
+          closeEntry(previousServiceId);
+        }
+      }
+      const entry = entries.get(serviceId) ?? createEntry(serviceId, rootUrl);
       attachServiceView(serviceId);
       await loadRootUrlIfNeeded(entry);
       return emitState();
@@ -339,6 +343,8 @@ export const createViewerController = (options: {
     },
     hide: () => {
       applyBounds({ height: 0, width: 0, x: 0, y: 0 });
+      detachAttachedView();
+      closeAllEntries();
       return emitState();
     },
     loadURL: async (url: string) => await loadActiveEntryUrl(() => url),
@@ -365,6 +371,10 @@ export const createViewerController = (options: {
     },
     setBounds: (bounds: ViewerBounds) => {
       applyBounds(bounds);
+      if (bounds.width <= 0 || bounds.height <= 0) {
+        detachAttachedView();
+        closeAllEntries();
+      }
       return emitState();
     },
     show: (bounds: ViewerBounds) => {
@@ -374,19 +384,19 @@ export const createViewerController = (options: {
       applyBounds(bounds);
       return emitState();
     },
-    syncServiceTabs: async (tabs: ViewerServiceTab[]) => {
+    syncServiceTabs: (tabs: ViewerServiceTab[]) => {
       const nextRootUrls = new Map(
         tabs.map((tab) => [tab.serviceId, tab.rootUrl] as const)
       );
 
-      await syncExistingServiceTabs(nextRootUrls);
-      createMissingServiceTabs(nextRootUrls);
+      syncExistingServiceTabs(nextRootUrls);
+      serviceRootUrls = nextRootUrls;
 
       if (activeServiceId && !nextRootUrls.has(activeServiceId)) {
         activeServiceId = tabs[0]?.serviceId ?? null;
       }
 
-      return emitState();
+      return Promise.resolve(emitState());
     },
   };
 };

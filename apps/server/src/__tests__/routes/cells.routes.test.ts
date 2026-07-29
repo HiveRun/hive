@@ -12,8 +12,9 @@
  * We test for route matching by checking that we get our handler's response,
  * not Elysia's default "NOT_FOUND".
  */
+import { eq } from "drizzle-orm";
 import { Elysia } from "elysia";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCellsRoutes } from "../../routes/cells";
 import { cells } from "../../schema/cells";
 import { setupTestDb, testDb } from "../test-db";
@@ -24,11 +25,13 @@ import {
   deleteRouteCellById,
   handleRouteRequest,
   seedRouteCell,
+  seedRouteService,
 } from "./cells-route-test-helpers";
 
 const TEST_CELL_ID = "test-cell-id";
 const HTTP_OK = 200;
 const HTTP_NOT_FOUND = 404;
+const HTTP_CONFLICT = 409;
 
 /**
  * Check if a 404 response is from Elysia's "route not found" vs our handler.
@@ -60,7 +63,9 @@ describe("cells route reachability", () => {
     app = new Elysia().use(routes);
   });
 
-  beforeEach(() => testDb.delete(cells));
+  beforeEach(async () => {
+    await testDb.delete(cells);
+  });
 
   /**
    * Routes that don't require existing resources - should return 200
@@ -198,6 +203,44 @@ describe("cells route reachability", () => {
     // Should get SSE response, not a "Cell not found" from /:id handler
     expect(response.status).toBe(HTTP_OK);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
+  });
+
+  it("rejects service starts and restarts while a cell is deleting", async () => {
+    const startServicesForCell = vi.fn(() => Promise.resolve());
+    const startServiceById = vi.fn(() => Promise.resolve());
+    const deletingApp = new Elysia().use(
+      createCellsRoutes(
+        createCellRouteTestDependencies({
+          cellId: TEST_CELL_ID,
+          overrides: { startServicesForCell, startServiceById },
+        })
+      )
+    );
+    await seedRouteCell({
+      id: TEST_CELL_ID,
+      name: "Deleting cell",
+    });
+    await testDb
+      .update(cells)
+      .set({ status: "deleting" })
+      .where(eq(cells.id, TEST_CELL_ID));
+    await seedRouteService({ cellId: TEST_CELL_ID });
+
+    const bulkResponse = await handleRouteRequest(
+      deletingApp,
+      `/api/cells/${TEST_CELL_ID}/services/start`,
+      { method: "POST" }
+    );
+    const singleResponse = await handleRouteRequest(
+      deletingApp,
+      `/api/cells/${TEST_CELL_ID}/services/test-service-id/start`,
+      { method: "POST" }
+    );
+
+    expect(bulkResponse.status).toBe(HTTP_CONFLICT);
+    expect(singleResponse.status).toBe(HTTP_CONFLICT);
+    expect(startServicesForCell).not.toHaveBeenCalled();
+    expect(startServiceById).not.toHaveBeenCalled();
   });
 
   it("emits cell_removed when streamed cell is deleted", async () => {

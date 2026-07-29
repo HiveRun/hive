@@ -10,7 +10,8 @@ import { getSharedOpencodeServerBaseUrl } from "../agents/opencode-server";
 import type { AgentPromptInput, AgentRuntimeService } from "../agents/service";
 import { agentRuntimeService } from "../agents/service";
 import type { AgentMode } from "../agents/types";
-import type { Template } from "../config/schema";
+import type { ProcessService, Template } from "../config/schema";
+import { resolveServicePortProtocol } from "../config/service-graph";
 import {
   DatabaseService,
   type DatabaseService as DatabaseServiceType,
@@ -42,7 +43,7 @@ import {
   cellProvisioningStates,
 } from "../schema/cell-provisioning";
 import { type CellStatus, cells, type NewCell } from "../schema/cells";
-import { cellServices } from "../schema/services";
+import { cellServicePorts, cellServices } from "../schema/services";
 import {
   type CellTimingStatus,
   type CellTimingWorkflow,
@@ -57,10 +58,17 @@ import {
   normalizeActivityTypes,
   parseActivityCursor,
 } from "../services/cell-activity";
+import { runWithCellCleanupLock } from "../services/cell-cleanup-lock";
 import {
   deleteCellWithLifecycle,
   removeCellWorkspace,
 } from "../services/cell-delete-lifecycle";
+import {
+  buildPersistedCellPortEnvironment,
+  removeCellRuntimeDir,
+  resolveCellEnvironment,
+} from "../services/cell-environment";
+import { requireCellAvailableForRuntime } from "../services/cell-runtime-guard";
 import {
   buildTimingRuns,
   type CellTimingStepRecord,
@@ -181,9 +189,11 @@ type CellRouteDependencies = {
   startServicesForCell: ServiceSupervisorServiceType["startCellServices"];
   stopServiceById: ServiceSupervisorServiceType["stopCellService"];
   stopServicesForCell: ServiceSupervisorServiceType["stopCellServices"];
+  runCellTeardown: ServiceSupervisorServiceType["runCellTeardown"];
   ensureTerminalSession: (args: {
     cellId: string;
     workspacePath: string;
+    environment: Record<string, string>;
   }) => CellTerminalSession;
   getTerminalSession?: (cellId: string) => CellTerminalSession | null;
   readTerminalOutput: (cellId: string) => string;
@@ -202,6 +212,7 @@ type CellRouteDependencies = {
     opencodeThemeMode?: OpencodeThemeMode;
     preferredModel?: { providerId: string; modelId: string; variant?: string };
     startMode?: AgentMode;
+    environment: Record<string, string>;
   }) => ChatTerminalSession;
   getChatTerminalSession?: (cellId: string) => ChatTerminalSession | null;
   readChatTerminalOutput?: (cellId: string) => string;
@@ -252,6 +263,7 @@ const dependencyKeys: Array<keyof CellRouteDependencies> = [
   "startServicesForCell",
   "stopServiceById",
   "stopServicesForCell",
+  "runCellTeardown",
   "ensureTerminalSession",
   "readTerminalOutput",
   "subscribeToTerminal",
@@ -293,6 +305,7 @@ const buildDefaultCellDependencies = (): CellRouteDependencies => {
     startServicesForCell: supervisor.startCellServices,
     stopServiceById: supervisor.stopCellService,
     stopServicesForCell: supervisor.stopCellServices,
+    runCellTeardown: supervisor.runCellTeardown,
     ensureTerminalSession: terminal.ensureSession,
     getTerminalSession: terminal.getSession,
     readTerminalOutput: terminal.readOutput,
@@ -565,6 +578,7 @@ const ServiceListRouteOptions = {
   response: {
     200: CellServiceListResponseSchema,
     ...StandardCellErrorResponses,
+    409: MessageResponseSchema,
   },
 };
 const ServiceActionRouteOptions = {
@@ -572,6 +586,7 @@ const ServiceActionRouteOptions = {
   response: {
     200: CellServiceSchema,
     ...StandardCellErrorResponses,
+    409: MessageResponseSchema,
   },
 };
 const CellTerminalInputRouteOptions = {
@@ -667,6 +682,34 @@ async function serializeServicesForCell(
   return { services };
 }
 
+function rejectDeletingCell(status: string, set: RouteSet) {
+  if (status !== "deleting") {
+    return null;
+  }
+  set.status = HTTP_STATUS.CONFLICT;
+  return { message: "Cell is being deleted" } satisfies MessageResponse;
+}
+
+async function recordServiceActivity(args: {
+  deps: CellRouteDependencies;
+  cellId: string;
+  request: Request;
+  type: ActivityEventType;
+  serviceId?: string;
+  metadata?: Record<string, unknown>;
+}) {
+  const audit = readHiveAuditHeaders(args.request);
+  await insertCellActivityEvent({
+    database: args.deps.db,
+    cellId: args.cellId,
+    serviceId: args.serviceId,
+    type: args.type,
+    source: audit.source,
+    toolName: audit.toolName,
+    metadata: args.metadata ?? {},
+  });
+}
+
 async function runCellServicesAction(args: {
   deps: CellRouteDependencies;
   cellId: string;
@@ -679,16 +722,12 @@ async function runCellServicesAction(args: {
     deps: args.deps,
     cellId: args.cellId,
     set: args.set,
-    run: async () => {
-      const audit = readHiveAuditHeaders(args.request);
-      await insertCellActivityEvent({
-        database: args.deps.db,
-        cellId: args.cellId,
-        type: args.type,
-        source: audit.source,
-        toolName: audit.toolName,
-        metadata: {},
-      });
+    run: async (cell) => {
+      const deletionConflict = rejectDeletingCell(cell.status, args.set);
+      if (deletionConflict) {
+        return deletionConflict;
+      }
+      await recordServiceActivity(args);
 
       await args.action();
       return await serializeServicesForCell(
@@ -716,14 +755,13 @@ async function runSingleServiceAction(args: {
     serviceId: args.serviceId,
     set: args.set,
     run: async (row) => {
-      const audit = readHiveAuditHeaders(args.request);
-      await insertCellActivityEvent({
-        database: args.deps.db,
-        cellId: args.cellId,
+      const deletionConflict = rejectDeletingCell(row.cell.status, args.set);
+      if (deletionConflict) {
+        return deletionConflict;
+      }
+      await recordServiceActivity({
+        ...args,
         serviceId: args.serviceId,
-        type: args.type,
-        source: audit.source,
-        toolName: audit.toolName,
         metadata: args.metadata?.(row) ?? {},
       });
 
@@ -775,7 +813,8 @@ const TERMINAL_RESIZE_MAX_ROWS = 200;
 const MAX_PROVISIONING_ATTEMPTS = 3;
 const INITIAL_PROMPT_BACKGROUND_WARN_TIMEOUT_MS = 3000;
 const DEFAULT_SERVICE_HOST = process.env.SERVICE_HOST ?? "localhost";
-const DEFAULT_SERVICE_PROTOCOL = process.env.SERVICE_PROTOCOL ?? "http";
+const DEFAULT_SERVICE_PROTOCOL =
+  process.env.SERVICE_PROTOCOL === "https" ? "https" : "http";
 type OpencodeThemeMode = "dark" | "light";
 const ChatThemeModeQuerySchema = t.Object({
   themeMode: t.Optional(t.Union([t.Literal("dark"), t.Literal("light")])),
@@ -821,9 +860,12 @@ const LOGGER_CONFIG = {
   autoLogging: false,
 } as const;
 
-const buildServiceUrl = (port?: number | null) =>
-  typeof port === "number"
-    ? `${DEFAULT_SERVICE_PROTOCOL}://${DEFAULT_SERVICE_HOST}:${port}`
+const buildServiceUrl = (
+  port?: number | null,
+  protocol: "http" | "https" | "tcp" = DEFAULT_SERVICE_PROTOCOL
+) =>
+  typeof port === "number" && protocol !== "tcp"
+    ? `${protocol}://${DEFAULT_SERVICE_HOST}:${port}`
     : null;
 
 function isPortActive(port?: number | null): Promise<boolean> {
@@ -1159,14 +1201,6 @@ async function ensureChatTerminalSessionForCell(
   }
 
   const chatTerminal = getChatTerminalDependencies(deps);
-  const existingSession = chatTerminal.getChatTerminalSession(cell.id);
-  if (existingSession?.status === "running") {
-    return {
-      session: existingSession,
-      chatTerminal,
-    };
-  }
-
   const agentSession = await deps.ensureAgentSession(cell.id);
   const preferredProviderId =
     agentSession.modelProviderId ?? agentSession.provider;
@@ -1181,20 +1215,63 @@ async function ensureChatTerminalSessionForCell(
             : {}),
         }
       : undefined;
-  const session = chatTerminal.ensureChatTerminalSession({
-    cellId: cell.id,
-    workspacePath: cell.workspacePath,
-    opencodeSessionId: agentSession.id,
-    opencodeServerUrl: serverUrl,
-    opencodeThemeMode: themeMode,
-    preferredModel,
-    ...(startMode ? { startMode } : {}),
+  const session = await runWithCellCleanupLock(cell.id, async () => {
+    const currentCell = await requireCellAvailableForRuntime(deps.db, cell.id);
+    const environment = await resolveCellTerminalEnvironment(
+      deps.db,
+      currentCell
+    );
+    return chatTerminal.ensureChatTerminalSession({
+      cellId: currentCell.id,
+      workspacePath: currentCell.workspacePath,
+      opencodeSessionId: agentSession.id,
+      opencodeServerUrl: serverUrl,
+      opencodeThemeMode: themeMode,
+      preferredModel,
+      environment,
+      ...(startMode ? { startMode } : {}),
+    });
   });
 
   return {
     session,
     chatTerminal,
   };
+}
+
+async function resolveCellTerminalEnvironment(
+  database: DatabaseClient,
+  cell: typeof cells.$inferSelect
+): Promise<Record<string, string>> {
+  const persistedPorts = await database
+    .select({
+      serviceName: cellServices.name,
+      portName: cellServicePorts.name,
+      port: cellServicePorts.port,
+      primary: cellServicePorts.primary,
+    })
+    .from(cellServicePorts)
+    .innerJoin(cellServices, eq(cellServices.id, cellServicePorts.serviceId))
+    .where(eq(cellServices.cellId, cell.id));
+
+  return {
+    ...resolveCellEnvironment(cell.id, cell.workspacePath),
+    ...buildPersistedCellPortEnvironment(persistedPorts),
+  };
+}
+
+async function ensureCellTerminalSessionForCell(
+  deps: CellRouteDependencies,
+  cell: typeof cells.$inferSelect
+): Promise<CellTerminalSession> {
+  return await runWithCellCleanupLock(cell.id, async () => {
+    const currentCell = await requireCellAvailableForRuntime(deps.db, cell.id);
+    return deps.ensureTerminalSession({
+      cellId: currentCell.id,
+      workspacePath: currentCell.workspacePath,
+      environment: await resolveCellTerminalEnvironment(deps.db, currentCell),
+    });
+  });
 }
 
 function isCellReadyForChat(cell: typeof cells.$inferSelect): boolean {
@@ -1318,8 +1395,7 @@ type ServiceTerminalWsState = {
 type CellTerminalWsState = {
   kind: "cell";
   deps: CellRouteDependencies;
-  cellId: string;
-  workspacePath: string;
+  cell: typeof cells.$inferSelect;
 };
 
 type ChatTerminalWsState = {
@@ -1529,20 +1605,16 @@ const handleCellTerminalWsInput = (args: {
   deps.writeTerminalInput(cellId, data);
 };
 
-const handleCellTerminalWsResize = (args: {
+const handleCellTerminalWsResize = async (args: {
   deps: CellRouteDependencies;
   ws: TerminalRouteSocket;
-  cellId: string;
-  workspacePath: string;
+  cell: typeof cells.$inferSelect;
   cols: number;
   rows: number;
 }) => {
-  const { deps, ws, cellId, workspacePath, cols, rows } = args;
-  const session = deps.ensureTerminalSession({
-    cellId,
-    workspacePath,
-  });
-  deps.resizeTerminal(cellId, cols, rows);
+  const { deps, ws, cell, cols, rows } = args;
+  const session = await ensureCellTerminalSessionForCell(deps, cell);
+  deps.resizeTerminal(cell.id, cols, rows);
   ws.send({
     type: "ready",
     session: {
@@ -1600,6 +1672,28 @@ function runEnsuredTerminalAction<Session, Response>(args: {
   const session = args.ensureSession();
   args.action(session);
   return args.buildResponse(session);
+}
+
+function buildTerminalResizeResponse<Session>(
+  session: Session,
+  cols: number,
+  rows: number
+) {
+  return { ok: true, session: { ...session, cols, rows } };
+}
+
+function resizeEnsuredTerminal<Session>(args: {
+  session: Session;
+  resize: () => void;
+  cols: number;
+  rows: number;
+}) {
+  return runEnsuredTerminalAction({
+    action: args.resize,
+    ensureSession: () => args.session,
+    buildResponse: (currentSession) =>
+      buildTerminalResizeResponse(currentSession, args.cols, args.rows),
+  });
 }
 
 function runTerminalResizeAction<Session>(args: {
@@ -1946,10 +2040,7 @@ export function createCellsRoutes(
 
     let session: CellTerminalSession;
     try {
-      session = terminalDeps.ensureTerminalSession({
-        cellId: cell.id,
-        workspacePath: cell.workspacePath,
-      });
+      session = await ensureCellTerminalSessionForCell(terminalDeps, cell);
     } catch (error) {
       sendWsErrorAndClose(
         ws,
@@ -1968,8 +2059,7 @@ export function createCellsRoutes(
       state: {
         kind: "cell",
         deps: terminalDeps,
-        cellId: cell.id,
-        workspacePath: cell.workspacePath,
+        cell,
       },
       readyPayload: { session },
       initialOutput: terminalDeps.readTerminalOutput(cell.id),
@@ -1986,6 +2076,7 @@ export function createCellsRoutes(
       closeTerminalSession: deps.closeTerminalSession,
       closeChatTerminalSession: deps.closeChatTerminalSession,
       clearSetupTerminal: deps.clearSetupTerminal,
+      runCellTeardown: deps.runCellTeardown,
     };
   };
 
@@ -2051,19 +2142,19 @@ export function createCellsRoutes(
     });
   };
 
-  const restartCellTerminalSocket = (
+  const restartCellTerminalSocket = async (
     ws: TerminalRouteSocket,
     state: CellTerminalWsState
   ) => {
-    state.deps.closeTerminalSession(state.cellId);
-    const session = state.deps.ensureTerminalSession({
-      workspacePath: state.workspacePath,
-      cellId: state.cellId,
-    });
+    state.deps.closeTerminalSession(state.cell.id);
+    const session = await ensureCellTerminalSessionForCell(
+      state.deps,
+      state.cell
+    );
     ws.send({ type: "ready", session });
     ws.send({
       type: "snapshot",
-      output: state.deps.readTerminalOutput(state.cellId),
+      output: state.deps.readTerminalOutput(state.cell.id),
     });
   };
 
@@ -2152,6 +2243,7 @@ export function createCellsRoutes(
             sendAgentMessage: deps.sendAgentMessage,
             ensureServices: deps.ensureServicesForCell,
             stopCellServices: deps.stopServicesForCell,
+            runCellTeardown: deps.runCellTeardown,
             workspaceContext,
             log: backgroundProvisioningLogger,
           });
@@ -3123,18 +3215,12 @@ export function createCellsRoutes(
       }) {
         return await withResolvedChatTerminalRoute({
           run: (cell, { session, chatTerminal }) =>
-            runEnsuredTerminalAction({
-              action: () =>
+            resizeEnsuredTerminal({
+              session,
+              resize: () =>
                 chatTerminal.resizeChatTerminal(cell.id, body.cols, body.rows),
-              ensureSession: () => session,
-              buildResponse: (currentSession) => ({
-                ok: true,
-                session: {
-                  ...currentSession,
-                  cols: body.cols,
-                  rows: body.rows,
-                },
-              }),
+              cols: body.cols,
+              rows: body.rows,
             }),
           errorMessage: "Failed to resize chat terminal session",
           themeMode: normalizeOpencodeThemeMode(query.themeMode),
@@ -3194,11 +3280,8 @@ export function createCellsRoutes(
           set,
           log,
           errorMessage: "Failed to initialize terminal session",
-          run: (cell, deps) => {
-            const session = deps.ensureTerminalSession({
-              cellId: cell.id,
-              workspacePath: cell.workspacePath,
-            });
+          run: async (cell, deps) => {
+            const session = await ensureCellTerminalSessionForCell(deps, cell);
 
             const initialOutput = deps.readTerminalOutput(cell.id);
             const { iterator, cleanup } =
@@ -3235,15 +3318,14 @@ export function createCellsRoutes(
           input: (state, data) =>
             handleCellTerminalWsInput({
               deps: state.deps,
-              cellId: state.cellId,
+              cellId: state.cell.id,
               data,
             }),
           resize: (state, cols, rows) =>
             handleCellTerminalWsResize({
               deps: state.deps,
               ws,
-              cellId: state.cellId,
-              workspacePath: state.workspacePath,
+              cell: state.cell,
               cols,
               rows,
             }),
@@ -3263,16 +3345,14 @@ export function createCellsRoutes(
           set,
           log,
           errorMessage: "Failed to write to terminal session",
-          run: (cell, deps) =>
-            runEnsuredTerminalAction({
-              ensureSession: () =>
-                deps.ensureTerminalSession({
-                  cellId: cell.id,
-                  workspacePath: cell.workspacePath,
-                }),
+          run: async (cell, deps) => {
+            const session = await ensureCellTerminalSessionForCell(deps, cell);
+            return runEnsuredTerminalAction({
+              ensureSession: () => session,
               action: () => deps.writeTerminalInput(cell.id, body.data),
               buildResponse: () => ({ ok: true }),
-            }),
+            });
+          },
         }),
       {
         ...CellTerminalInputRouteOptions,
@@ -3283,23 +3363,15 @@ export function createCellsRoutes(
       "/:id/terminal/resize",
       async function resizeCellTerminalRoute({ params, body, set, log }) {
         return await withResolvedCellTerminalRoute({
-          run: (cell, deps) =>
-            runEnsuredTerminalAction({
-              action: () => deps.resizeTerminal(cell.id, body.cols, body.rows),
-              ensureSession: () =>
-                deps.ensureTerminalSession({
-                  workspacePath: cell.workspacePath,
-                  cellId: cell.id,
-                }),
-              buildResponse: (session) => ({
-                ok: true,
-                session: {
-                  ...session,
-                  cols: body.cols,
-                  rows: body.rows,
-                },
-              }),
-            }),
+          run: async (cell, deps) => {
+            const session = await ensureCellTerminalSessionForCell(deps, cell);
+            return resizeEnsuredTerminal({
+              session,
+              resize: () => deps.resizeTerminal(cell.id, body.cols, body.rows),
+              cols: body.cols,
+              rows: body.rows,
+            });
+          },
           cellId: params.id,
           errorMessage: "Failed to resize terminal session",
           set,
@@ -3319,13 +3391,9 @@ export function createCellsRoutes(
           set,
           log,
           errorMessage: "Failed to restart terminal session",
-          run: (cell, deps) => {
+          run: async (cell, deps) => {
             deps.closeTerminalSession(cell.id);
-            const session = deps.ensureTerminalSession({
-              cellId: cell.id,
-              workspacePath: cell.workspacePath,
-            });
-            return session;
+            return await ensureCellTerminalSessionForCell(deps, cell);
           },
         }),
       {
@@ -3489,6 +3557,7 @@ export function createCellsRoutes(
             sendAgentMessage: sendMessage,
             ensureServicesForCell: ensureServices,
             stopServicesForCell: stopCellServicesFn,
+            runCellTeardown,
           } = deps;
 
           const workspaceContext = await getWorkspaceContext(body.workspaceId);
@@ -3499,6 +3568,7 @@ export function createCellsRoutes(
             sendAgentMessage: sendMessage,
             ensureServices,
             stopCellServices: stopCellServicesFn,
+            runCellTeardown,
             workspaceContext,
             log,
           });
@@ -3536,19 +3606,13 @@ export function createCellsRoutes(
             closeTerminalSession,
             closeChatTerminalSession,
             clearSetupTerminal,
+            runCellTeardown,
           } = await resolveDeletionRuntime();
 
           const uniqueIds = [...new Set(body.ids)];
 
           const cellsToDelete = await database
-            .select({
-              id: cells.id,
-              name: cells.name,
-              templateId: cells.templateId,
-              workspacePath: cells.workspacePath,
-              workspaceId: cells.workspaceId,
-              status: cells.status,
-            })
+            .select()
             .from(cells)
             .where(inArray(cells.id, uniqueIds));
 
@@ -3572,6 +3636,7 @@ export function createCellsRoutes(
                 closeChatTerminalSession,
                 clearSetupTerminal,
                 stopCellServices: stopCellServicesFn,
+                runCellTeardown,
                 getWorktreeService: fetchManager,
                 log,
               });
@@ -3641,6 +3706,7 @@ export function createCellsRoutes(
             cell,
             database,
             stopCellServices: deleteRuntime.stopCellServicesFn,
+            runCellTeardown: deleteRuntime.runCellTeardown,
             clearSetupTerminal: deleteRuntime.clearSetupTerminal,
             closeChatTerminalSession: deleteRuntime.closeChatTerminalSession,
             closeTerminalSession: deleteRuntime.closeTerminalSession,
@@ -3655,7 +3721,12 @@ export function createCellsRoutes(
             log.error({ error }, "Failed to delete cell");
           }
           set.status = HTTP_STATUS.INTERNAL_ERROR;
-          return { message: "Failed to delete cell" };
+          return {
+            message:
+              error instanceof Error
+                ? `Failed to delete cell: ${error.message}`
+                : "Failed to delete cell",
+          };
         }
       },
       {
@@ -3685,6 +3756,7 @@ type ProvisionRuntimeDeps = {
   sendAgentMessage: CellRouteDependencies["sendAgentMessage"];
   ensureServices: CellRouteDependencies["ensureServicesForCell"];
   stopCellServices: CellRouteDependencies["stopServicesForCell"];
+  runCellTeardown: CellRouteDependencies["runCellTeardown"];
   log: LoggerLike;
 };
 
@@ -3703,6 +3775,7 @@ async function handleCellCreationRequest(
     sendAgentMessage: dispatchAgentMessage,
     ensureServices,
     stopCellServices,
+    runCellTeardown,
     workspaceContext,
     log,
   } = args;
@@ -3744,6 +3817,7 @@ async function handleCellCreationRequest(
     sendAgentMessage: dispatchAgentMessage,
     ensureServices,
     stopCellServices,
+    runCellTeardown,
     getWorktreeService: async () => worktreeService,
     workspace: workspaceContext.workspace,
     log,
@@ -3965,6 +4039,7 @@ function createExistingProvisionContext(
     sendAgentMessage: args.sendAgentMessage,
     ensureServices: args.ensureServices,
     stopCellServices: args.stopCellServices,
+    runCellTeardown: args.runCellTeardown,
     getWorktreeService: async () =>
       toAsyncWorktreeManager(
         await args.workspaceContext.createWorktreeManager()
@@ -4075,65 +4150,64 @@ async function ensureCellWorktree(
   onTimingEvent?: (event: CapturedWorktreeCreateTimingEvent) => void
 ): Promise<void> {
   const { body, database, state } = context;
+  await runWithCellCleanupLock(state.cellId, async () => {
+    await assertCellStillExists(context, "create_worktree");
+    if (state.worktreeCreated && state.workspacePath && state.baseCommit) {
+      return;
+    }
 
-  if (state.worktreeCreated && state.workspacePath && state.baseCommit) {
-    return;
-  }
+    const worktreeService = await context.getWorktreeService();
+    let worktree: { path: string; branch: string; baseCommit: string };
+    try {
+      worktree = await worktreeService.createWorktree(state.cellId, {
+        templateId: body.templateId,
+        force: true,
+        startPoint: resolveWorktreeStartPoint(body),
+        onTimingEvent: (event) => {
+          onTimingEvent?.({
+            ...event,
+            capturedAt: new Date(),
+          });
+        },
+      });
+    } catch (error) {
+      const details =
+        error && typeof error === "object" && "kind" in error
+          ? describeWorktreeError(error as WorktreeManagerError)
+          : error;
+      context.log.error(
+        {
+          error: details,
+          cellId: state.cellId,
+        },
+        "Failed to create git worktree"
+      );
+      throw error;
+    }
 
-  const worktreeService = await context.getWorktreeService();
+    state.worktreeCreated = true;
+    state.workspacePath = worktree.path;
+    state.branchName = worktree.branch;
+    state.baseCommit = worktree.baseCommit;
 
-  let worktree: { path: string; branch: string; baseCommit: string };
-  try {
-    worktree = await worktreeService.createWorktree(state.cellId, {
-      templateId: body.templateId,
-      force: true,
-      startPoint: resolveWorktreeStartPoint(body),
-      onTimingEvent: (event) => {
-        onTimingEvent?.({
-          ...event,
-          capturedAt: new Date(),
-        });
-      },
-    });
-  } catch (error) {
-    const details =
-      error && typeof error === "object" && "kind" in error
-        ? describeWorktreeError(error as WorktreeManagerError)
-        : error;
-    context.log.error(
-      {
-        error: details,
-        cellId: state.cellId,
-      },
-      "Failed to create git worktree"
-    );
-    throw error;
-  }
+    await database
+      .update(cells)
+      .set({
+        workspacePath: worktree.path,
+        branchName: worktree.branch,
+        baseCommit: worktree.baseCommit,
+      })
+      .where(eq(cells.id, state.cellId));
 
-  state.worktreeCreated = true;
-  state.workspacePath = worktree.path;
-  state.branchName = worktree.branch;
-  state.baseCommit = worktree.baseCommit;
-
-  await database
-    .update(cells)
-    .set({
-      workspacePath: worktree.path,
-      branchName: worktree.branch,
-      baseCommit: worktree.baseCommit,
-    })
-    .where(eq(cells.id, state.cellId));
-
-  if (state.createdCell) {
-    state.createdCell = {
-      ...state.createdCell,
-      workspacePath: worktree.path,
-      branchName: worktree.branch,
-      baseCommit: worktree.baseCommit,
-    };
-  }
-
-  return;
+    if (state.createdCell) {
+      state.createdCell = {
+        ...state.createdCell,
+        workspacePath: worktree.path,
+        branchName: worktree.branch,
+        baseCommit: worktree.baseCommit,
+      };
+    }
+  });
 }
 
 function startProvisioningWorkflow(context: ProvisionContext) {
@@ -4385,9 +4459,16 @@ async function finalizeCellProvisioning(
     });
   }
 
-  const finishedAt = await runPhase("mark_ready", async () =>
-    updateCellProvisioningStatus(database, state.cellId, "ready")
-  );
+  const finishedAt = await runPhase("mark_ready", async () => {
+    const updated = await markCellReadyIfSpawning(database, state.cellId);
+    if (!updated) {
+      await assertCellStillExists(context, "mark_ready");
+      throw new Error(
+        `${PROVISIONING_CANCELLED_MESSAGE} (phase: mark_ready, reason: status_changed)`
+      );
+    }
+    return updated;
+  });
 
   state.createdCell = {
     ...state.createdCell,
@@ -4568,15 +4649,123 @@ async function cleanupProvisionResources(
   context: ProvisionContext,
   options: { preserveRecord?: boolean; preserveWorktree?: boolean } = {}
 ) {
+  await runWithCellCleanupLock(context.state.cellId, async () => {
+    if (!(await refreshProvisionCleanupState(context))) {
+      return;
+    }
+
+    try {
+      await cleanupProvisionResourcesUnlocked(context, options);
+    } catch (error) {
+      await markProvisionCleanupFailure(context, error);
+      throw error;
+    }
+  });
+}
+
+async function cleanupProvisionResourcesUnlocked(
+  context: ProvisionContext,
+  options: { preserveRecord?: boolean; preserveWorktree?: boolean }
+) {
   await stopServicesIfStarted(context);
 
   if (!options.preserveWorktree) {
+    let cleanupError: unknown;
+    try {
+      await runProvisioningRollbackTeardown(context);
+    } catch (error) {
+      cleanupError = error;
+    }
+    try {
+      await removeCellRuntimeDir(context.state.cellId);
+    } catch (error) {
+      cleanupError ??= error;
+    }
+    if (cleanupError) {
+      throw cleanupError;
+    }
     await removeWorktreeIfCreated(context);
   }
 
   if (!options.preserveRecord) {
     await deleteCellRecordIfCreated(context);
   }
+}
+
+async function refreshProvisionCleanupState(
+  context: ProvisionContext
+): Promise<boolean> {
+  if (!context.state.recordCreated) {
+    return true;
+  }
+
+  const [currentCell] = await context.database
+    .select()
+    .from(cells)
+    .where(eq(cells.id, context.state.cellId))
+    .limit(1);
+  if (!currentCell) {
+    context.state.recordCreated = false;
+    context.state.createdCell = null;
+    context.state.worktreeCreated = false;
+    context.state.workspacePath = null;
+    return false;
+  }
+
+  context.state.createdCell = currentCell;
+  context.state.workspacePath = currentCell.workspacePath;
+  context.state.baseCommit = currentCell.baseCommit;
+  context.state.worktreeCreated = Boolean(
+    currentCell.workspacePath && currentCell.baseCommit
+  );
+  return true;
+}
+
+async function markProvisionCleanupFailure(
+  context: ProvisionContext,
+  error: unknown
+): Promise<void> {
+  if (!context.state.recordCreated) {
+    return;
+  }
+
+  const lastSetupError = `Provisioning cleanup failed: ${
+    error instanceof Error ? error.message : String(error)
+  }`;
+  try {
+    await updateCellProvisioningStatus(
+      context.database,
+      context.state.cellId,
+      "error",
+      lastSetupError
+    );
+    if (context.state.createdCell) {
+      context.state.createdCell = {
+        ...context.state.createdCell,
+        status: "error",
+        lastSetupError,
+      };
+    }
+  } catch (statusError) {
+    context.log.warn(
+      { statusError, cleanupError: error },
+      "Failed to persist cell provisioning cleanup failure"
+    );
+  }
+}
+
+async function runProvisioningRollbackTeardown(
+  context: ProvisionContext
+): Promise<void> {
+  if (!(context.state.worktreeCreated && context.state.createdCell)) {
+    return;
+  }
+
+  await context.runCellTeardown({
+    cell: context.state.createdCell,
+    template: context.template,
+    reason: "provisioning_rollback",
+  });
 }
 
 async function resolveProvisioningCancellationReason(
@@ -4619,22 +4808,14 @@ async function assertCellStillExists(
 }
 
 async function stopServicesIfStarted(context: ProvisionContext) {
-  if (!context.state.servicesStarted) {
+  if (!(context.state.servicesStarted || context.state.worktreeCreated)) {
     return;
   }
 
-  try {
-    await context.stopCellServices(context.state.cellId, {
-      releasePorts: true,
-    });
-  } catch (cleanupError) {
-    context.log.warn(
-      { cleanupError },
-      "Failed to stop services during cell creation cleanup"
-    );
-  } finally {
-    context.state.servicesStarted = false;
-  }
+  await context.stopCellServices(context.state.cellId, {
+    releasePorts: true,
+  });
+  context.state.servicesStarted = false;
 }
 
 async function removeWorktreeIfCreated(context: ProvisionContext) {
@@ -4973,6 +5154,7 @@ const resumeSingleCell = async (
       sendAgentMessage: deps.sendAgentMessage,
       ensureServices: deps.ensureServicesForCell,
       stopCellServices: deps.stopServicesForCell,
+      runCellTeardown: deps.runCellTeardown,
       workspaceContext,
       log: backgroundProvisioningLogger,
     });
@@ -5010,14 +5192,7 @@ const resumePendingCells = async (deps: CellRouteDependencies) => {
 
 const resumeDeletingCells = async (deps: CellRouteDependencies) => {
   const deletingCells = await deps.db
-    .select({
-      id: cells.id,
-      name: cells.name,
-      templateId: cells.templateId,
-      workspacePath: cells.workspacePath,
-      workspaceId: cells.workspaceId,
-      status: cells.status,
-    })
+    .select()
     .from(cells)
     .where(eq(cells.status, "deleting"));
 
@@ -5039,6 +5214,7 @@ const resumeDeletingCells = async (deps: CellRouteDependencies) => {
         closeChatTerminalSession: deps.closeChatTerminalSession,
         clearSetupTerminal: deps.clearSetupTerminal,
         stopCellServices: deps.stopServicesForCell,
+        runCellTeardown: deps.runCellTeardown,
         getWorktreeService: fetchManager,
         log: backgroundProvisioningLogger,
       });
@@ -5179,10 +5355,15 @@ async function updateCellProvisioningStatus(
 ): Promise<Date | null> {
   const finished = status === "ready" || status === "error";
   const finishedAt = finished ? new Date() : null;
-  await database
+  const [updated] = await database
     .update(cells)
     .set({ status, lastSetupError: lastSetupError ?? null })
-    .where(eq(cells.id, cellId));
+    .where(eq(cells.id, cellId))
+    .returning({ workspaceId: cells.workspaceId });
+
+  if (!updated) {
+    return null;
+  }
 
   if (finishedAt) {
     await database
@@ -5191,20 +5372,40 @@ async function updateCellProvisioningStatus(
       .where(eq(cellProvisioningStates.cellId, cellId));
   }
 
-  const cell = await database.query.cells.findFirst({
-    where: eq(cells.id, cellId),
-    columns: { workspaceId: true },
+  emitCellStatusUpdate({
+    workspaceId: updated.workspaceId,
+    cellId,
+    status,
+    lastSetupError,
   });
 
-  if (cell) {
-    emitCellStatusUpdate({
-      workspaceId: cell.workspaceId,
-      cellId,
-      status,
-      lastSetupError,
-    });
+  return finishedAt;
+}
+
+async function markCellReadyIfSpawning(
+  database: DatabaseClient,
+  cellId: string
+): Promise<Date | null> {
+  const finishedAt = new Date();
+  const [updated] = await database
+    .update(cells)
+    .set({ status: "ready", lastSetupError: null })
+    .where(and(eq(cells.id, cellId), eq(cells.status, "spawning")))
+    .returning({ workspaceId: cells.workspaceId });
+  if (!updated) {
+    return null;
   }
 
+  await database
+    .update(cellProvisioningStates)
+    .set({ finishedAt })
+    .where(eq(cellProvisioningStates.cellId, cellId));
+  emitCellStatusUpdate({
+    workspaceId: updated.workspaceId,
+    cellId,
+    status: "ready",
+    lastSetupError: null,
+  });
   return finishedAt;
 }
 
@@ -5524,11 +5725,59 @@ async function serializeService(
   const runtimeSession = deps.getServiceTerminalSession(service.id);
   const processAlive =
     runtimeSession?.status === "running" || isProcessAlive(service.pid);
-  const portReachable =
-    typeof service.port === "number"
-      ? await isPortActive(service.port)
-      : undefined;
-  const serviceUrl = buildServiceUrl(service.port);
+  const persistedPorts = await database
+    .select()
+    .from(cellServicePorts)
+    .where(eq(cellServicePorts.serviceId, service.id));
+  const processDefinition =
+    service.definition.type === "process"
+      ? (service.definition as ProcessService)
+      : null;
+  const protocolForPort = (portName: string) =>
+    resolveServicePortProtocol(
+      processDefinition ?? {},
+      portName,
+      DEFAULT_SERVICE_PROTOCOL
+    );
+  let normalizedPorts = (
+    await Promise.all(
+      persistedPorts.map(async (claim) => ({
+        name: claim.name,
+        port: claim.port,
+        primary: claim.primary,
+        protocol: protocolForPort(claim.name),
+        url:
+          buildServiceUrl(claim.port, protocolForPort(claim.name)) ?? undefined,
+        portReachable: await isPortActive(claim.port),
+      }))
+    )
+  ).sort(
+    (left, right) =>
+      Number(right.primary) - Number(left.primary) ||
+      left.name.localeCompare(right.name)
+  );
+  if (normalizedPorts.length === 0 && service.port != null) {
+    normalizedPorts = [
+      {
+        name: "default",
+        port: service.port,
+        primary: true,
+        protocol: protocolForPort("default"),
+        url:
+          buildServiceUrl(service.port, protocolForPort("default")) ??
+          undefined,
+        portReachable: await isPortActive(service.port),
+      },
+    ];
+  }
+  const primaryPort =
+    normalizedPorts.find((claim) => claim.primary)?.port ?? service.port;
+  const primaryProtocol =
+    normalizedPorts.find((claim) => claim.primary)?.protocol ?? "http";
+  const portReachable = normalizedPorts.find(
+    (claim) => claim.port === primaryPort
+  )?.portReachable;
+  const serviceUrl = buildServiceUrl(primaryPort, primaryProtocol);
 
   let derivedStatus = service.status;
   let derivedLastKnownError = service.lastKnownError;
@@ -5606,8 +5855,9 @@ async function serializeService(
     name: service.name,
     type: service.type,
     status: derivedStatus,
-    ...(service.port != null ? { port: service.port } : {}),
+    ...(primaryPort != null ? { port: primaryPort } : {}),
     ...(serviceUrl ? { url: serviceUrl } : {}),
+    ports: normalizedPorts,
     ...(derivedPid != null ? { pid: derivedPid } : {}),
     command: service.command,
     cwd: service.cwd,

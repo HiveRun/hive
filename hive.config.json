@@ -18,6 +18,16 @@
             "NODE_ENV": "development",
             "VITE_API_URL": "http://localhost:$PORT:server"
           },
+          "dependsOn": ["server"],
+          "readiness": {
+            "checks": [
+              {
+                "type": "http",
+                "port": "default",
+                "path": "/"
+              }
+            ]
+          },
           "readyTimeoutMs": 3000
         },
         "server": {
@@ -27,6 +37,15 @@
           "env": {
             "DATABASE_URL": "local.db",
             "CORS_ORIGIN": "http://localhost:$PORT:web,http://127.0.0.1:$PORT:web"
+          },
+          "readiness": {
+            "checks": [
+              {
+                "type": "http",
+                "port": "default",
+                "path": "/"
+              }
+            ]
           },
           "readyTimeoutMs": 5000
         }

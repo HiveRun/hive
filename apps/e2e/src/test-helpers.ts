@@ -1,3 +1,4 @@
+import { access } from "node:fs/promises";
 import { expect, type Page } from "@playwright/test";
 import { wait as waitDelay } from "./runtime/wait";
 import { selectors } from "./selectors";
@@ -23,12 +24,24 @@ type CellRecord = {
   lastSetupError?: string | null;
 };
 
+type ServicePortRecord = {
+  name: string;
+  port: number;
+  primary: boolean;
+  protocol: "http" | "https" | "tcp";
+  url?: string;
+  portReachable: boolean;
+};
+
 type ServiceRecord = {
   id: string;
   name: string;
   status: string;
   pid?: number;
   port?: number;
+  url?: string;
+  ports: ServicePortRecord[];
+  env: Record<string, string>;
   cpuPercent?: number | null;
   rssBytes?: number | null;
   resourceUnavailableReason?: string;
@@ -205,6 +218,41 @@ export async function createCellFromHome(
 ) {
   await options.page.goto("/");
   return await createCell(options);
+}
+
+export const createRunningServicesCell = async (
+  page: Page,
+  apiUrl: string,
+  options: {
+    name: string;
+    errorMessage: string;
+    predicate: (services: ServiceRecord[]) => boolean;
+    timeoutMs?: number;
+  }
+) => {
+  const cellId = await createCellFromHome({
+    page,
+    name: options.name,
+    templateLabel: "E2E Services Template",
+  });
+  await page.goto(`/cells/${cellId}/services`);
+  const services = await waitForServiceStatuses({
+    apiUrl,
+    cellId,
+    timeoutMs: options.timeoutMs,
+    errorMessage: options.errorMessage,
+    predicate: options.predicate,
+  });
+  return { cellId, services };
+};
+
+export async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function extractCellIdFromPath(pathname: string): string | null {
@@ -737,7 +785,7 @@ export async function ensureTerminalReady(
         return page.locator(selectors.terminalInputTextarea).isVisible();
       }
 
-      if (state === "exited" || state === "disconnected") {
+      if (state === "exited") {
         if (restartCount >= MAX_TERMINAL_RESTARTS) {
           throw new Error(
             `Terminal remained ${state} during ${options.context}. exitCode=${lastExitCode || "n/a"}`

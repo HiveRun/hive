@@ -1,23 +1,41 @@
 import { expect, test } from "@playwright/test";
 import { createCellFromHome } from "../src/test-helpers";
 
+const LOOPBACK_VIEWER_URL_PATTERN = /^http:\/\/localhost:/;
+
 test.describe("viewer route in web runtime", () => {
-  test("shows a desktop-only message instead of embedding a preview", async ({
+  test("embeds reachable loopback services in a restricted iframe", async ({
     page,
   }) => {
     const cellId = await createCellFromHome({
       page,
       name: `Viewer Web Fallback ${Date.now()}`,
-      templateId: "viewer-template",
+      templateLabel: "Viewer Template",
     });
 
     await page.goto(`/cells/${cellId}/viewer`);
 
     await expect(page.getByTestId("cell-viewer-route")).toBeVisible();
-    await expect(page.getByTestId("viewer-desktop-only-message")).toBeVisible();
+    const iframe = page.getByTestId("web-iframe-preview");
+    await expect(iframe).toBeVisible();
+    await expect(iframe).toHaveAttribute(
+      "sandbox",
+      "allow-same-origin allow-scripts"
+    );
+    await expect(iframe).toHaveAttribute("allow", "microphone");
+    await expect(iframe).toHaveAttribute("referrerpolicy", "no-referrer");
+    await expect(iframe).toHaveAttribute("src", LOOPBACK_VIEWER_URL_PATTERN);
+    await expect(iframe.contentFrame().getByRole("heading")).toHaveText(
+      "Viewer Web"
+    );
     await expect(
-      page.getByText("Browser preview now uses Electron directly.")
-    ).toBeVisible();
+      page.getByTestId("viewer-service-tab-web-browser")
+    ).toContainText("browser / http");
+
+    await page.getByTestId("viewer-service-tab-docs").click();
+    await expect(iframe.contentFrame().getByRole("heading")).toHaveText(
+      "Viewer Docs"
+    );
 
     const viewerRoute = page.getByTestId("cell-viewer-route");
 

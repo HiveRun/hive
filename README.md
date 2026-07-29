@@ -235,6 +235,59 @@ Override `HIVE_DESKTOP_URL` if your web dev server uses a different URL.
 - Web: [http://localhost:3001](http://localhost:3001)
 - API: [http://localhost:3000](http://localhost:3000)
 
+### Isolated service orchestration
+
+Process services can declare multiple persisted named ports, explicit readiness dependencies, and teardown commands. Existing one-port services remain valid and receive the implicit primary port named `default`.
+
+```json
+{
+  "templates": {
+    "full-stack": {
+      "id": "full-stack",
+      "label": "Full Stack",
+      "type": "manual",
+      "services": {
+        "api": {
+          "type": "process",
+          "run": "bun run dev -- --port $PORT",
+          "ports": {
+            "http": { "primary": true, "protocol": "http" },
+            "metrics": { "protocol": "tcp" }
+          },
+          "env": {
+            "METRICS_PORT": "${PORT:api:metrics}"
+          },
+          "dependsOn": ["database"],
+          "readiness": {
+            "checks": [
+              { "type": "http", "port": "http", "path": "/health" }
+            ]
+          },
+          "readyTimeoutMs": 30000
+        },
+        "database": {
+          "type": "process",
+          "run": "start-local-database --port $PORT",
+          "ports": {
+            "postgres": { "primary": true, "protocol": "tcp" }
+          },
+          "readiness": {
+            "checks": [{ "type": "tcp", "port": "postgres" }]
+          }
+        }
+      },
+      "teardown": ["bun run dev:teardown"]
+    }
+  }
+}
+```
+
+Port references allocate and interpolate addresses but do not create startup dependencies. Use `dependsOn` when readiness ordering matters. Hive starts dependencies first, waits for every configured readiness check, and stops bulk service sets in reverse order.
+
+Setup, services, cell terminals, chat terminals, and teardown receive `HIVE_CELL_ID`, `HIVE_CELL_RUNTIME_DIR`, `HIVE_CELL_ARTIFACTS_DIR`, cell-local `HIVE_HOME`, and named variables such as `API_HTTP_PORT`. Teardown runs only during cell deletion or destructive provisioning rollback. Successful deletion removes runtime data and preserves artifacts.
+
+Docker and Compose configuration shapes remain reserved but are not executable yet; Hive now fails these definitions explicitly rather than silently skipping them.
+
 
 
 
