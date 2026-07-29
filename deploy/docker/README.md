@@ -4,6 +4,25 @@ This stack runs a private remote Hive Instance. Hive has no built-in authenticat
 
 ## Quick Start
 
+For local smoke testing from this repo, use the one-command helper. It starts
+Docker Compose on [http://127.0.0.1:3100](http://127.0.0.1:3100), seeds and
+registers `/workspaces/local-smoke`, verifies templates load, and prints next
+steps:
+
+```bash
+bun run dev:remote
+```
+
+Useful variants:
+
+```bash
+bun run dev:remote -- --no-build  # reuse the current local image
+bun run dev:remote -- --reset     # recreate local smoke volumes
+bun run dev:remote:down           # stop and delete local smoke state
+```
+
+Manual deployment path:
+
 ```bash
 cp deploy/docker/.env.example deploy/docker/.env
 $EDITOR deploy/docker/.env
