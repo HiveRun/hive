@@ -27,8 +27,16 @@ export function resolveHiveServerUrl(): string {
     return process.env.HIVE_URL;
   }
 
+  if (process.env.HIVE_INTERNAL_API_URL) {
+    return process.env.HIVE_INTERNAL_API_URL;
+  }
+
   const port = process.env.PORT ?? "3000";
-  const hostname = process.env.HOST ?? process.env.HOSTNAME ?? "localhost";
+  const configuredHostname = process.env.HOST ?? process.env.HOSTNAME;
+  const hostname =
+    configuredHostname === "0.0.0.0" || configuredHostname === "::"
+      ? "localhost"
+      : (configuredHostname ?? "localhost");
   const protocol = process.env.HIVE_PROTOCOL ?? "http";
 
   return `${protocol}://${hostname}:${port}`;

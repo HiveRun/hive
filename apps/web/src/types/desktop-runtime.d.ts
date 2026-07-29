@@ -14,7 +14,8 @@ declare global {
     platform: string;
     backendUrl: string;
     healthUrl: string;
-    startupMode: "starting" | "reconnecting";
+    instanceName?: string;
+    startupMode: "starting" | "reconnecting" | "remote-client";
   };
 
   type DesktopStartupPhase =
@@ -22,6 +23,7 @@ declare global {
     | "detecting-daemon"
     | "starting-daemon"
     | "waiting-for-api"
+    | "remote-client"
     | "api-ready"
     | "error";
 

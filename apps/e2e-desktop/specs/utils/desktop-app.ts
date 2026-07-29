@@ -78,7 +78,7 @@ type LaunchDesktopAppOptions = {
   daemonCommand?: string;
   daemonCwd?: string;
   preserveDaemonEnv?: boolean;
-  startupMode?: "starting" | "reconnecting";
+  startupMode?: "starting" | "reconnecting" | "remote-client";
   startupTimeoutMs?: number;
   useShellDetach?: boolean;
 };

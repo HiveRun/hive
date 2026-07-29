@@ -5,6 +5,7 @@ export type DesktopStartupPhase =
   | "detecting-daemon"
   | "starting-daemon"
   | "waiting-for-api"
+  | "remote-client"
   | "api-ready"
   | "error";
 

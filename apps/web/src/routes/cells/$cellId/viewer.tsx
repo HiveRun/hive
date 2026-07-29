@@ -95,8 +95,12 @@ function useActiveServiceTab(services: CellServiceSummary[]) {
 
 function isPreviewableService(
   service: CellServiceSummary
-): service is CellServiceSummary & { port: number; url: string } {
-  return service.port != null && typeof service.url === "string";
+): service is CellServiceSummary & { port: number } {
+  return service.port != null && getServiceBrowserUrl(service) !== null;
+}
+
+function getServiceBrowserUrl(service: CellServiceSummary): string | null {
+  return service.browserUrl ?? service.url ?? null;
 }
 
 function useBrowserReachability({
@@ -256,13 +260,13 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
   const serviceTabs = useMemo(
     () =>
       previewableServices.map((service) => ({
-        rootUrl: service.url,
+        rootUrl: getServiceBrowserUrl(service) ?? "",
         serviceId: service.id,
       })),
     [previewableServices]
   );
 
-  const previewUrl = activeService?.url ?? null;
+  const previewUrl = activeService ? getServiceBrowserUrl(activeService) : null;
 
   const browserReachability = useBrowserReachability({
     viewerUrl: previewUrl,
@@ -311,7 +315,7 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
   } = useViewerControls({
     actions,
     activeServiceIdRef,
-    activeServiceUrl: activeService?.url ?? null,
+    activeServiceUrl: previewUrl,
     displayUrl,
     isDesktopRuntime,
     state,
@@ -365,7 +369,7 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
                   <RefreshCw className="h-3.5 w-3.5" />
                 </WebPreviewNavigationButton>
                 <WebPreviewNavigationButton
-                  disabled={!activeService?.url}
+                  disabled={!previewUrl}
                   onClick={handleReset}
                   tooltip="Reset to service root"
                 >

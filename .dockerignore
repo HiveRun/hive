@@ -1,0 +1,14 @@
+.git
+.hive
+.opencode/state
+.opencode/themes
+apps/*/dist
+apps/*/dist-electron
+apps/*/node_modules
+apps/*/test-results
+apps/*/reports
+coverage
+dist
+node_modules
+report
+tmp

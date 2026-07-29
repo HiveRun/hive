@@ -42,6 +42,12 @@ const workspaceRecord: WorkspaceRegistry.WorkspaceRecord = {
   addedAt: new Date("2024-01-01T00:00:00Z").toISOString(),
 };
 
+type TemplateListTestPayload = {
+  defaults: Record<string, string>;
+  agentDefaults?: unknown;
+  templates: Array<{ id: string }>;
+};
+
 let getWorkspaceRegistrySpy: any;
 let loadConfigSpy: any;
 let loadEffectiveOpencodeDefaultsSpy: any;
@@ -54,6 +60,9 @@ const templateRequest = (path = "/api/templates?workspaceId=workspace-basic") =>
 
 const parseMessage = async (response: Response) =>
   (await response.json()) as { message: string };
+
+const parseTemplateList = async (response: Response) =>
+  (await response.json()) as TemplateListTestPayload;
 
 const readTemplateFailure = async () => {
   const response = await templateRequest();
@@ -100,19 +109,23 @@ describe("templatesRoutes", () => {
 
     const response = await templateRequest();
 
-    expect(response.status).toBe(HTTP_OK);
-    const payload = (await response.json()) as {
-      templates: Array<{ id: string }>;
-      defaults: Record<string, string>;
-      agentDefaults?: typeof agentDefaults;
-    };
-    expect(payload.templates).toHaveLength(1);
-    expect(payload.templates[0]?.id).toBe("template-basic");
-    expect(payload.defaults).toEqual({
-      ...baseHiveConfig.defaults,
-      startMode: "plan",
+    const payload = await parseTemplateList(response);
+    expect({
+      status: response.status,
+      templateCount: payload.templates.length,
+      firstTemplateId: payload.templates[0]?.id,
+      defaults: payload.defaults,
+      agentDefaults: payload.agentDefaults,
+    }).toEqual({
+      status: HTTP_OK,
+      templateCount: 1,
+      firstTemplateId: "template-basic",
+      defaults: {
+        ...baseHiveConfig.defaults,
+        startMode: "plan",
+      },
+      agentDefaults,
     });
-    expect(payload.agentDefaults).toEqual(agentDefaults);
     expect(getWorkspaceRegistrySpy).toHaveBeenCalled();
     expect(loadConfigSpy).toHaveBeenCalledWith(workspacePath);
   });
@@ -164,15 +177,28 @@ describe("templatesRoutes", () => {
     expect(payload.message).toContain("Failed to load workspace config");
   });
 
-  it("returns 400 when OpenCode config cannot be read", async () => {
+  it("falls back to Hive defaults when OpenCode defaults cannot be read", async () => {
     loadEffectiveOpencodeDefaultsSpy.mockRejectedValue(
       new Error("opencode missing")
     );
 
-    const failure = await readTemplateFailure();
+    const response = await templateRequest();
 
-    expect(failure.response.status).toBe(HTTP_BAD_REQUEST);
-    expect(failure.payload.message).toContain("OpenCode");
+    const payload = await parseTemplateList(response);
+    expect({
+      status: response.status,
+      listedTemplateIds: payload.templates.map((template) => template.id),
+      defaults: payload.defaults,
+      hasAgentDefaults: "agentDefaults" in payload,
+    }).toEqual({
+      status: HTTP_OK,
+      listedTemplateIds: ["template-basic"],
+      defaults: {
+        ...baseHiveConfig.defaults,
+        startMode: "plan",
+      },
+      hasAgentDefaults: false,
+    });
   });
 
   it("refreshes cached template config when hive config mtime changes", async () => {

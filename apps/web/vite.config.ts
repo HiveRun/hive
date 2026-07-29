@@ -16,14 +16,12 @@ const fallbackApiServerPort =
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const requiredApiUrl = env.VITE_API_URL?.trim();
+  const configuredApiUrl = env.VITE_API_URL?.trim();
   const buildBase = env.VITE_APP_BASE?.trim() || "/";
-
-  if (!requiredApiUrl || requiredApiUrl === "undefined") {
-    throw new Error(
-      "VITE_API_URL is required. Set it before running dev/build (e.g. http://localhost:3000)."
-    );
-  }
+  const proxyTarget =
+    configuredApiUrl && configuredApiUrl !== "undefined"
+      ? configuredApiUrl
+      : `http://localhost:${fallbackApiServerPort}`;
 
   return {
     base: buildBase,
@@ -52,7 +50,7 @@ export default defineConfig(({ mode }) => {
       port: devServerPort,
       proxy: {
         "/api": {
-          target: requiredApiUrl ?? `http://localhost:${fallbackApiServerPort}`,
+          target: proxyTarget,
           changeOrigin: true,
         },
       },

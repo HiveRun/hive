@@ -1,3 +1,4 @@
+import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:net";
 
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -24,6 +25,9 @@ const LARGE_OUTPUT_LINES = 320;
 const EXPECTED_FIRST_TAILED_LINE = 121;
 const EXPECTED_CPU_PERCENT = 12.3;
 const EXPECTED_RSS_BYTES = 34_560_000;
+const HTTP_OK_STATUS = 200;
+const HTTP_FOUND_STATUS = 302;
+const TEST_PUBLIC_API_URL = "https://hive.example.test";
 
 const getFirstService = <T>(services: T[]): T => {
   const first = services[0];
@@ -210,6 +214,72 @@ function createIpv6LoopbackListener(): Promise<
   });
 }
 
+type ProxyTargetServer = {
+  close: () => Promise<void>;
+  port: number;
+};
+
+function createProxyTargetServer(
+  options: { redirectPath?: string } = {}
+): Promise<ProxyTargetServer> {
+  return new Promise((resolve) => {
+    const server = createHttpServer((request, response) => {
+      if (options.redirectPath) {
+        response.statusCode = HTTP_FOUND_STATUS;
+        response.setHeader("location", options.redirectPath);
+        response.end();
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk) => {
+        chunks.push(Buffer.from(chunk));
+      });
+      request.on("end", () => {
+        const body = Buffer.concat(chunks).toString("utf8");
+        const cookie = request.headers.cookie ?? "none";
+        const authorization = request.headers.authorization ?? "none";
+        const cfAccessClientId =
+          request.headers["cf-access-client-id"] ?? "none";
+        response.setHeader("content-type", "text/plain");
+        response.end(
+          `proxied:${request.method}:${request.url ?? "/"}:body=${body}:cookie=${cookie}:authorization=${authorization}:cf=${cfAccessClientId}`
+        );
+      });
+    });
+
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Expected proxy target server port");
+      }
+
+      resolve({
+        port: address.port,
+        close: () =>
+          new Promise<void>((resolveClose) => {
+            server.close(() => resolveClose());
+          }),
+      });
+    });
+  });
+}
+
+const insertRunningProxyService = (port: number) =>
+  insertCellAndServiceRecords("web", { port, status: "running" });
+
+const withProxyTarget = async <T>(
+  callback: (target: ProxyTargetServer) => Promise<T>,
+  options: { redirectPath?: string } = {}
+) => {
+  const target = await createProxyTargetServer(options);
+  try {
+    return await callback(target);
+  } finally {
+    await target.close();
+  }
+};
+
 describe("GET /api/cells/:id/services payload", () => {
   let app: any;
   let harness: ReturnType<typeof createRuntimeHarness>;
@@ -289,6 +359,98 @@ describe("GET /api/cells/:id/services payload", () => {
     expect(service.portReachable).toBe(true);
 
     await listener.close();
+  });
+
+  it("returns separated service runtime and browser urls", async () => {
+    const previousPublicApiUrl = process.env.HIVE_PUBLIC_API_URL;
+    process.env.HIVE_PUBLIC_API_URL = TEST_PUBLIC_API_URL;
+    try {
+      await insertCellAndServiceRecords("web", {
+        port: 4321,
+        status: "running",
+      });
+
+      const service = await readFirstServicePayload<{
+        browserUrl?: string;
+        directUrl?: string;
+        runtimeUrl?: string;
+        url?: string;
+      }>(app);
+      expect(service.url).toBe("http://localhost:4321");
+      expect(service.runtimeUrl).toBe("http://localhost:4321");
+      expect(service.directUrl).toBe("http://localhost:4321");
+      expect(service.browserUrl).toBe(
+        `${TEST_PUBLIC_API_URL}/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/proxy/`
+      );
+    } finally {
+      if (previousPublicApiUrl === undefined) {
+        process.env.HIVE_PUBLIC_API_URL = undefined;
+      } else {
+        process.env.HIVE_PUBLIC_API_URL = previousPublicApiUrl;
+      }
+    }
+  });
+
+  it("proxies service browser requests to the runtime port", async () => {
+    await withProxyTarget(async (target) => {
+      await insertRunningProxyService(target.port);
+      const response = await handleRouteRequest(
+        app,
+        `/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/proxy/assets/app.js?cache=1`
+      );
+
+      expect(response.status).toBe(HTTP_OK_STATUS);
+      expect(await response.text()).toBe(
+        "proxied:GET:/assets/app.js?cache=1:body=:cookie=none:authorization=none:cf=none"
+      );
+    });
+  });
+
+  it("proxies service request bodies and strips sensitive client headers", async () => {
+    const target = await createProxyTargetServer();
+    try {
+      await insertRunningProxyService(target.port);
+      const response = await handleRouteRequest(
+        app,
+        `/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/proxy/form`,
+        {
+          body: "payload=1",
+          headers: {
+            authorization: "Bearer secret",
+            cookie: "session=secret",
+            "cf-access-client-id": "secret-id",
+            "content-type": "text/plain",
+          },
+          method: "POST",
+        }
+      );
+
+      const text = await response.text();
+      expect({ status: response.status, text }).toEqual({
+        status: HTTP_OK_STATUS,
+        text: "proxied:POST:/form:body=payload=1:cookie=none:authorization=none:cf=none",
+      });
+    } finally {
+      await target.close();
+    }
+  });
+
+  it("rewrites runtime redirects through the service proxy", async () => {
+    await withProxyTarget(
+      async (target) => {
+        await insertRunningProxyService(target.port);
+        const response = await handleRouteRequest(
+          app,
+          `/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/proxy/start`
+        );
+
+        expect(response.status).toBe(HTTP_FOUND_STATUS);
+        expect(response.headers.get("location")).toBe(
+          `http://localhost/api/cells/${TEST_CELL_ID}/services/${TEST_SERVICE_ID}/proxy/next`
+        );
+      },
+      { redirectPath: "/next" }
+    );
   });
 
   it("returns resource snapshots when includeResources=true", async () => {

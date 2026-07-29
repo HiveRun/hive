@@ -96,6 +96,10 @@ import type {
   ServiceTerminalEvent,
   ServiceTerminalSession,
 } from "../services/service-terminal";
+import {
+  buildServiceRuntimeUrl,
+  buildServiceUrls,
+} from "../services/service-urls";
 import type {
   EnsureCellServicesTimingEvent,
   ServiceSupervisorError,
@@ -624,6 +628,153 @@ const ServiceTerminalResizeRouteOptions = {
     ...TerminalErrorResponses,
   },
 };
+
+const HOP_BY_HOP_PROXY_HEADERS = [
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+] as const;
+const SENSITIVE_PROXY_REQUEST_HEADERS = [
+  "authorization",
+  "cookie",
+  "cf-access-client-id",
+  "cf-access-client-secret",
+] as const;
+const TRAILING_SLASH_PATTERN = /\/$/;
+const LEADING_SLASH_PATTERN = /^\//;
+const PROXY_ROUTE_SEGMENT = "/proxy/";
+
+const removeHopByHopHeaders = (headers: Headers) => {
+  for (const header of HOP_BY_HOP_PROXY_HEADERS) {
+    headers.delete(header);
+  }
+};
+
+const buildProxyRequestHeaders = (request: Request) => {
+  const headers = new Headers(request.headers);
+  removeHopByHopHeaders(headers);
+  for (const header of SENSITIVE_PROXY_REQUEST_HEADERS) {
+    headers.delete(header);
+  }
+  headers.delete("host");
+  return headers;
+};
+
+const buildProxyTargetUrl = (
+  runtimeUrl: string,
+  path: string,
+  request: Request
+) => {
+  const sourceUrl = new URL(request.url);
+  const targetUrl = new URL(
+    `${runtimeUrl.replace(TRAILING_SLASH_PATTERN, "")}/${path}`
+  );
+  targetUrl.search = sourceUrl.search;
+  return targetUrl;
+};
+
+const encodeParsedProxyBody = (body: unknown) => {
+  if (body === undefined || body === null) {
+    return;
+  }
+  if (typeof body === "string") {
+    return body;
+  }
+  if (body instanceof ArrayBuffer || body instanceof Blob) {
+    return body;
+  }
+  if (body instanceof FormData) {
+    return body;
+  }
+  return JSON.stringify(body);
+};
+
+const buildProxyRequestBody = (request: Request, parsedBody?: unknown) => {
+  if (request.method === "GET" || request.method === "HEAD") {
+    return;
+  }
+
+  if (request.bodyUsed) {
+    return encodeParsedProxyBody(parsedBody);
+  }
+
+  return request.clone().arrayBuffer();
+};
+
+const rewriteProxyLocationHeader = (args: {
+  headers: Headers;
+  request: Request;
+  runtimeUrl: string;
+}) => {
+  const location = args.headers.get("location");
+  if (!location) {
+    return;
+  }
+
+  const sourceUrl = new URL(args.request.url);
+  const proxySegmentIndex = sourceUrl.pathname.indexOf(PROXY_ROUTE_SEGMENT);
+  if (proxySegmentIndex === -1) {
+    return;
+  }
+
+  const proxyRoot = sourceUrl.pathname.slice(
+    0,
+    proxySegmentIndex + PROXY_ROUTE_SEGMENT.length
+  );
+  const runtime = new URL(args.runtimeUrl);
+  const target = new URL(location, runtime);
+  if (target.origin !== runtime.origin) {
+    return;
+  }
+
+  args.headers.set(
+    "location",
+    `${sourceUrl.origin}${proxyRoot}${target.pathname.replace(LEADING_SLASH_PATTERN, "")}${target.search}${target.hash}`
+  );
+};
+
+const proxyServiceRequest = async (args: {
+  request: Request;
+  row: ServiceRow;
+  path: string;
+  parsedBody?: unknown;
+}): Promise<Response | MessageResponse> => {
+  const runtimeUrl = buildServiceRuntimeUrl(args.row.service.port);
+  if (!runtimeUrl) {
+    return { message: "Service does not expose a port" };
+  }
+
+  const body = await buildProxyRequestBody(args.request, args.parsedBody);
+  const upstreamRequestInit: RequestInit = {
+    headers: buildProxyRequestHeaders(args.request),
+    method: args.request.method,
+    redirect: "manual",
+    ...(body ? { body } : {}),
+  };
+  const upstream = await fetch(
+    buildProxyTargetUrl(runtimeUrl, args.path, args.request),
+    upstreamRequestInit
+  );
+  const headers = new Headers(upstream.headers);
+  removeHopByHopHeaders(headers);
+  headers.delete("set-cookie");
+  rewriteProxyLocationHeader({
+    headers,
+    request: args.request,
+    runtimeUrl,
+  });
+
+  return new Response(args.request.method === "HEAD" ? null : upstream.body, {
+    headers,
+    status: upstream.status,
+    statusText: upstream.statusText,
+  });
+};
 async function withCellRoute<T>(args: {
   deps: CellRouteDependencies;
   cellId: string;
@@ -774,8 +925,6 @@ const TERMINAL_RESIZE_MIN_ROWS = 5;
 const TERMINAL_RESIZE_MAX_ROWS = 200;
 const MAX_PROVISIONING_ATTEMPTS = 3;
 const INITIAL_PROMPT_BACKGROUND_WARN_TIMEOUT_MS = 3000;
-const DEFAULT_SERVICE_HOST = process.env.SERVICE_HOST ?? "localhost";
-const DEFAULT_SERVICE_PROTOCOL = process.env.SERVICE_PROTOCOL ?? "http";
 type OpencodeThemeMode = "dark" | "light";
 const ChatThemeModeQuerySchema = t.Object({
   themeMode: t.Optional(t.Union([t.Literal("dark"), t.Literal("light")])),
@@ -820,11 +969,6 @@ const LOGGER_CONFIG = {
   level: process.env.LOG_LEVEL || "info",
   autoLogging: false,
 } as const;
-
-const buildServiceUrl = (port?: number | null) =>
-  typeof port === "number"
-    ? `${DEFAULT_SERVICE_PROTOCOL}://${DEFAULT_SERVICE_HOST}:${port}`
-    : null;
 
 function isPortActive(port?: number | null): Promise<boolean> {
   if (!port) {
@@ -2426,6 +2570,30 @@ export function createCellsRoutes(
         response: {
           200: CellServiceListResponseSchema,
           ...StandardCellErrorResponses,
+        },
+      }
+    )
+
+    .all(
+      "/:id/services/:serviceId/proxy/*",
+      async ({ body, params, request, set }) =>
+        await withResolvedServiceRoute({
+          cellId: params.id,
+          serviceId: params.serviceId,
+          set,
+          run: async (row) =>
+            await proxyServiceRequest({
+              path: params["*"] ?? "",
+              parsedBody: body,
+              request,
+              row,
+            }),
+        }),
+      {
+        body: t.Optional(t.Any()),
+        response: {
+          400: MessageResponseSchema,
+          404: MessageResponseSchema,
         },
       }
     )
@@ -5528,7 +5696,11 @@ async function serializeService(
     typeof service.port === "number"
       ? await isPortActive(service.port)
       : undefined;
-  const serviceUrl = buildServiceUrl(service.port);
+  const serviceUrls = buildServiceUrls({
+    cellId: row.cell.id,
+    serviceId: service.id,
+    port: service.port,
+  });
 
   let derivedStatus = service.status;
   let derivedLastKnownError = service.lastKnownError;
@@ -5607,7 +5779,10 @@ async function serializeService(
     type: service.type,
     status: derivedStatus,
     ...(service.port != null ? { port: service.port } : {}),
-    ...(serviceUrl ? { url: serviceUrl } : {}),
+    ...(serviceUrls.runtimeUrl ? { url: serviceUrls.runtimeUrl } : {}),
+    ...(serviceUrls.runtimeUrl ? { runtimeUrl: serviceUrls.runtimeUrl } : {}),
+    ...(serviceUrls.directUrl ? { directUrl: serviceUrls.directUrl } : {}),
+    ...(serviceUrls.browserUrl ? { browserUrl: serviceUrls.browserUrl } : {}),
     ...(derivedPid != null ? { pid: derivedPid } : {}),
     command: service.command,
     cwd: service.cwd,

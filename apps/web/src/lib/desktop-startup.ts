@@ -35,7 +35,7 @@ type DesktopStartupSnapshot = {
   phase: DesktopStartupPhase;
   backendUrl?: string;
   healthUrl?: string;
-  startupMode?: "starting" | "reconnecting";
+  startupMode?: "starting" | "reconnecting" | "remote-client";
   message: string;
   attempt: number;
   startedAt: number;
@@ -46,14 +46,14 @@ function createInitialSnapshot(): DesktopStartupSnapshot {
   const startupMode = runtimeInfo?.startupMode ?? "starting";
 
   return {
-    phase: startupMode === "reconnecting" ? "connecting" : "starting-daemon",
+    phase: startupMode === "starting" ? "starting-daemon" : "connecting",
     backendUrl: runtimeInfo?.backendUrl,
     healthUrl: runtimeInfo?.healthUrl,
     startupMode,
     message:
-      startupMode === "reconnecting"
-        ? "Reconnecting to Hive"
-        : "Starting Hive daemon",
+      startupMode === "starting"
+        ? "Starting Hive daemon"
+        : "Connecting to Hive instance",
     attempt: 0,
     startedAt: Date.now(),
   };

@@ -4,6 +4,8 @@ import { dirname, join, resolve } from "node:path";
 import {
   createDaemonRuntime,
   type DaemonStartupEvent,
+  isHiveReadyResponse,
+  waitForServerReady,
 } from "@hive/daemon-runtime";
 import type {
   DesktopStartupPhase,
@@ -25,6 +27,13 @@ const DESKTOP_DAEMON_ENV_STRIP_KEYS = [
 ] as const;
 
 const moduleDir = import.meta.dirname;
+
+type DesktopRuntimeInfo = ReturnType<typeof getDesktopRuntimeInfo>;
+
+type DesktopStartupControllerDependencies = {
+  createDaemonRuntime?: typeof createDaemonRuntime;
+  waitForServerReady?: typeof waitForServerReady;
+};
 
 const resolveHiveHomePath = () =>
   process.env.HIVE_HOME ?? join(homedir(), ".hive");
@@ -125,7 +134,11 @@ const mapDaemonPhase = (
   return "error";
 };
 
-export const createDesktopStartupController = () => {
+export const createDesktopStartupController = (
+  dependencies: DesktopStartupControllerDependencies = {}
+) => {
+  const createRuntime = dependencies.createDaemonRuntime ?? createDaemonRuntime;
+  const waitForApiReady = dependencies.waitForServerReady ?? waitForServerReady;
   const listeners = new Set<(nextState: DesktopStartupState) => void>();
   let startupPromise: Promise<void> | null = null;
   let currentState = createInitialState();
@@ -154,6 +167,70 @@ export const createDesktopStartupController = () => {
     });
   };
 
+  const connectRemoteClient = async (runtimeInfo: DesktopRuntimeInfo) => {
+    updateState({
+      phase: "remote-client",
+      message: `Connecting to ${runtimeInfo.instanceName ?? "Hive instance"}`,
+    });
+
+    const ready = await waitForApiReady({
+      intervalMs: DEFAULT_STARTUP_INTERVAL_MS,
+      isReadyResponse: isHiveReadyResponse,
+      timeoutMs: resolveStartupTimeoutMs(),
+      url: runtimeInfo.healthUrl,
+    });
+
+    updateState(
+      ready
+        ? {
+            phase: "api-ready",
+            message: `Connected to ${runtimeInfo.instanceName ?? "Hive instance"}`,
+          }
+        : {
+            phase: "error",
+            message: "Hive instance did not become ready",
+          }
+    );
+  };
+
+  const ensureLocalDaemon = async (runtimeInfo: DesktopRuntimeInfo) => {
+    const daemonCommand = resolveDaemonCommand();
+
+    const runtime = createRuntime({
+      detachedCwd:
+        process.env.HIVE_DESKTOP_DAEMON_CWD ??
+        (daemonCommand ? dirname(daemonCommand) : process.cwd()),
+      env: process.env,
+      envStripKeys:
+        process.env.HIVE_DESKTOP_PRESERVE_DAEMON_ENV === "1"
+          ? []
+          : DESKTOP_DAEMON_ENV_STRIP_KEYS,
+      executablePath: daemonCommand ?? "",
+      foregroundArgs: resolveDaemonArgs(),
+      healthcheckUrl: runtimeInfo.healthUrl,
+      hiveHome: resolveHiveHomePath(),
+      logFilePath: join(resolveLogDirectory(), "hive.log"),
+      onStatus: applyDaemonEvent,
+      pidFilePath: resolvePidFilePath(),
+      readyFilePath: resolveReadyFilePath(),
+      startLockFilePath: resolveStartLockFilePath(),
+      useShellDetach: process.env.HIVE_DESKTOP_DAEMON_USE_SHELL_DETACH !== "0",
+      workspaceRoot: resolveWorkspaceRoot(),
+    });
+
+    const ready = await runtime.ensureRunning({
+      intervalMs: DEFAULT_STARTUP_INTERVAL_MS,
+      timeoutMs: resolveStartupTimeoutMs(),
+    });
+
+    if (!ready) {
+      updateState({
+        phase: "error",
+        message: "Hive daemon did not become ready",
+      });
+    }
+  };
+
   const start = async () => {
     if (startupPromise) {
       return await startupPromise;
@@ -172,42 +249,12 @@ export const createDesktopStartupController = () => {
       };
       notify();
 
-      const daemonCommand = resolveDaemonCommand();
-
-      const runtime = createDaemonRuntime({
-        detachedCwd:
-          process.env.HIVE_DESKTOP_DAEMON_CWD ??
-          (daemonCommand ? dirname(daemonCommand) : process.cwd()),
-        env: process.env,
-        envStripKeys:
-          process.env.HIVE_DESKTOP_PRESERVE_DAEMON_ENV === "1"
-            ? []
-            : DESKTOP_DAEMON_ENV_STRIP_KEYS,
-        executablePath: daemonCommand ?? "",
-        foregroundArgs: resolveDaemonArgs(),
-        healthcheckUrl: runtimeInfo.healthUrl,
-        hiveHome: resolveHiveHomePath(),
-        logFilePath: join(resolveLogDirectory(), "hive.log"),
-        onStatus: applyDaemonEvent,
-        pidFilePath: resolvePidFilePath(),
-        readyFilePath: resolveReadyFilePath(),
-        startLockFilePath: resolveStartLockFilePath(),
-        useShellDetach:
-          process.env.HIVE_DESKTOP_DAEMON_USE_SHELL_DETACH !== "0",
-        workspaceRoot: resolveWorkspaceRoot(),
-      });
-
-      const ready = await runtime.ensureRunning({
-        intervalMs: DEFAULT_STARTUP_INTERVAL_MS,
-        timeoutMs: resolveStartupTimeoutMs(),
-      });
-
-      if (!ready) {
-        updateState({
-          phase: "error",
-          message: "Hive daemon did not become ready",
-        });
+      if (runtimeInfo.startupMode === "remote-client") {
+        await connectRemoteClient(runtimeInfo);
+        return;
       }
+
+      await ensureLocalDaemon(runtimeInfo);
     })().finally(() => {
       startupPromise = null;
     });

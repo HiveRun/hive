@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { captureEnv, setEnv } from "../__tests__/env-test-helpers";
 import {
   activateWorkspace,
   ensureWorkspaceRegistered,
@@ -23,16 +24,21 @@ async function createWorkspaceRoot(prefix = "hive-workspace-") {
 
 describe("workspace registry", () => {
   let hiveHome: string;
+  let restoreEnv: () => void;
 
   beforeEach(async () => {
     hiveHome = await mkdtemp(join(tmpdir(), "hive-home-"));
-    process.env.HIVE_HOME = hiveHome;
+    restoreEnv = captureEnv([
+      "HIVE_ALLOWED_WORKSPACE_ROOTS",
+      "HIVE_HOME",
+      "HIVE_INSTANCE_MODE",
+    ]);
+    setEnv("HIVE_HOME", hiveHome);
   });
 
   afterEach(async () => {
-    const testHome = hiveHome;
-    await rm(testHome, { recursive: true, force: true });
-    process.env.HIVE_HOME = undefined;
+    await rm(hiveHome, { recursive: true, force: true });
+    restoreEnv();
   });
 
   test("registerWorkspace adds a new workspace and lists it", async () => {
@@ -162,5 +168,27 @@ describe("workspace registry", () => {
 
     const registry = await getWorkspaceRegistry();
     expect(registry.activeWorkspaceId).toBe(workspace.id);
+  });
+
+  test("private remote mode restricts workspace registration to allowed roots", async () => {
+    const allowedRoot = await mkdtemp(join(tmpdir(), "allowed-workspaces-"));
+    const allowedWorkspace = join(allowedRoot, "project");
+    await mkdir(allowedWorkspace, { recursive: true });
+    await writeFile(
+      join(allowedWorkspace, "hive.config.json"),
+      WORKSPACE_FILE_CONTENT
+    );
+    const outsideWorkspace = await createWorkspaceRoot("outside-workspace-");
+
+    setEnv("HIVE_INSTANCE_MODE", "private-remote");
+    setEnv("HIVE_ALLOWED_WORKSPACE_ROOTS", allowedRoot);
+
+    const registered = await registerWorkspace({ path: allowedWorkspace });
+    expect(registered.path).toBe(allowedWorkspace);
+    await expect(registerWorkspace({ path: outsideWorkspace })).rejects.toThrow(
+      "outside allowed remote roots"
+    );
+
+    await rm(allowedRoot, { recursive: true, force: true });
   });
 });
