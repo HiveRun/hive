@@ -62,42 +62,24 @@ function runDeleteStepWithTimeout<T>(args: {
   timeoutMs: number;
   action: () => Promise<T> | T;
 }): Promise<T> {
-  return new Promise((resolve, reject) => {
-    let completed = false;
-    const actionPromise = Promise.resolve().then(args.action);
-    const timeoutError = new Error(
-      `Delete step '${args.step}' timed out after ${args.timeoutMs}ms`
-    );
-
-    const timer = setTimeout(() => {
-      if (completed) {
-        return;
-      }
-
-      completed = true;
-      reject(timeoutError);
-    }, args.timeoutMs);
-
-    actionPromise.then(
-      (result) => {
-        if (completed) {
-          return;
-        }
-
-        completed = true;
-        clearTimeout(timer);
-        resolve(result);
-      },
-      (error) => {
-        if (completed) {
-          return;
-        }
-
-        completed = true;
-        clearTimeout(timer);
-        reject(error);
-      }
-    );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    Promise.resolve().then(args.action),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new Error(
+              `Delete step '${args.step}' timed out after ${args.timeoutMs}ms`
+            )
+          ),
+        args.timeoutMs
+      );
+    }),
+  ]).finally(() => {
+    if (timer) {
+      clearTimeout(timer);
+    }
   });
 }
 
@@ -212,8 +194,7 @@ export async function removeCellWorkspace(
 
 async function deleteCellWithTiming(
   args: DeleteLifecycleArgs,
-  onStopFailure: (error: unknown) => Promise<Error>,
-  onTeardownFailure: (error: unknown) => Promise<Error>
+  onFailure: (label: string, error: unknown) => Promise<Error>
 ) {
   const runStep = async <T>(params: {
     step: string;
@@ -221,6 +202,7 @@ async function deleteCellWithTiming(
     timeoutMs?: number;
     continueOnError?: boolean;
     warnMessage?: string;
+    failureLabel?: string;
   }): Promise<T | undefined> => {
     try {
       return typeof params.timeoutMs === "number"
@@ -235,6 +217,9 @@ async function deleteCellWithTiming(
         args.log.warn({ error, cellId: args.cell.id }, params.warnMessage);
       }
 
+      if (params.failureLabel) {
+        throw await onFailure(params.failureLabel, error);
+      }
       if (!params.continueOnError) {
         throw error;
       }
@@ -262,23 +247,17 @@ async function deleteCellWithTiming(
     warnMessage: "Failed to close terminal sessions before cell removal",
   });
 
-  try {
-    await runStep({
-      step: "stop_services",
-      action: () => args.stopCellServices(args.cell.id, { releasePorts: true }),
-    });
-  } catch (error) {
-    throw await onStopFailure(error);
-  }
+  await runStep({
+    step: "stop_services",
+    action: () => args.stopCellServices(args.cell.id, { releasePorts: true }),
+    failureLabel: "Service stop",
+  });
 
-  try {
-    await runStep({
-      step: "template_teardown",
-      action: () => args.runCellTeardown({ cell: args.cell, reason: "delete" }),
-    });
-  } catch (error) {
-    throw await onTeardownFailure(error);
-  }
+  await runStep({
+    step: "template_teardown",
+    action: () => args.runCellTeardown({ cell: args.cell, reason: "delete" }),
+    failureLabel: "Template teardown",
+  });
 
   await runStep({
     step: "remove_runtime_directory",
@@ -333,7 +312,7 @@ async function deleteCellWithLifecycleUnlocked(
     });
   }
 
-  const persistLifecycleFailure = (label: string) => async (error: unknown) => {
+  const persistLifecycleFailure = async (label: string, error: unknown) => {
     lifecycleFailurePersisted = true;
     return await markCellDeletionFailure({
       database: args.database,
@@ -345,11 +324,7 @@ async function deleteCellWithLifecycleUnlocked(
   };
 
   try {
-    await deleteCellWithTiming(
-      args,
-      persistLifecycleFailure("Service stop"),
-      persistLifecycleFailure("Template teardown")
-    );
+    await deleteCellWithTiming(args, persistLifecycleFailure);
   } catch (error) {
     if (lifecycleFailurePersisted) {
       throw error;

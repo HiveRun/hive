@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 import {
   createCell,
   fileExists,
-  waitForActivityType,
+  waitForActivityTypes,
   waitForCellStatus,
 } from "../src/test-helpers";
 
@@ -62,10 +62,10 @@ test.describe("setup retry", () => {
       });
       expect(failedCell.lastSetupError).toContain("marker missing");
 
-      await waitForActivityType({
+      await waitForActivityTypes({
         apiUrl,
         cellId,
-        type: "setup.retry",
+        types: ["setup.retry"],
         timeoutMs: 30_000,
         errorMessage: "initial setup.retry activity event was not recorded",
       });
@@ -84,10 +84,10 @@ test.describe("setup retry", () => {
       });
       expect(recoveredCell.lastSetupError ?? null).toBeNull();
 
-      await waitForActivityType({
+      await waitForActivityTypes({
         apiUrl,
         cellId,
-        type: "setup.retry",
+        types: ["setup.retry"],
         timeoutMs: 30_000,
         errorMessage: "setup.retry activity event was not recorded",
       });

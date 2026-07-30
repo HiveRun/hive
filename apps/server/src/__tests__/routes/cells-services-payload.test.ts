@@ -1,19 +1,18 @@
 import { createServer } from "node:net";
 
-import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { cellServicePorts, cellServices } from "../../schema/services";
+import type { ProcessService } from "../../config/schema";
 import type { ChatTerminalSession } from "../../services/chat-terminal";
 import type { ProcessResourceSnapshot } from "../../services/resource-snapshot";
 import type { ServiceTerminalSession } from "../../services/service-terminal";
-import { setupTestDb, testDb } from "../test-db";
+import { setupTestDb } from "../test-db";
 import {
   clearRouteServicesAndCells,
   createCellRouteTestApp,
   createCellRouteTestDependencies,
   expectJsonPayload,
   handleRouteRequest,
-  seedRouteCellAndService,
+  seedRouteCellAndServiceWithPorts,
 } from "./cells-route-test-helpers";
 
 const TEST_WORKSPACE_ID = "test-workspace-services";
@@ -133,9 +132,11 @@ async function insertCellAndServiceRecords(
       | "needs_resume"
       | "stopped"
       | "error";
+    definition?: Partial<Omit<ProcessService, "type">>;
+    ports?: Array<{ name: string; port: number; primary?: boolean }>;
   }
 ) {
-  await seedRouteCellAndService({
+  await seedRouteCellAndServiceWithPorts({
     cell: {
       id: TEST_CELL_ID,
       name: "Test Cell Services",
@@ -154,11 +155,12 @@ async function insertCellAndServiceRecords(
       command: "echo test",
       cwd: "/tmp/test-workspace-services-root",
       env: { TEST_VAR: "test" },
-      definitionEnv: {},
+      definition: { env: {}, ...options?.definition },
       status: options?.status ?? "running",
       port: options?.port ?? null,
       pid: options?.pid ?? null,
     },
+    ports: options?.ports ?? [],
   });
 }
 
@@ -296,48 +298,21 @@ describe("GET /api/cells/:id/services payload", () => {
     const primaryPort = 43_101;
     const metricsPort = 43_102;
     const securePort = 43_103;
-    await insertCellAndServiceRecords("server", { port: primaryPort });
-    await testDb
-      .update(cellServices)
-      .set({
-        definition: {
-          type: "process",
-          run: "echo test",
-          ports: {
-            http: { primary: true },
-            metrics: { protocol: "tcp" },
-            secure: { protocol: "https" },
-          },
+    await insertCellAndServiceRecords("server", {
+      port: primaryPort,
+      definition: {
+        ports: {
+          http: { primary: true },
+          metrics: { protocol: "tcp" },
+          secure: { protocol: "https" },
         },
-      })
-      .where(eq(cellServices.id, TEST_SERVICE_ID));
-    const now = new Date();
-    await testDb.insert(cellServicePorts).values([
-      {
-        serviceId: TEST_SERVICE_ID,
-        name: "http",
-        port: primaryPort,
-        primary: true,
-        createdAt: now,
-        updatedAt: now,
       },
-      {
-        serviceId: TEST_SERVICE_ID,
-        name: "metrics",
-        port: metricsPort,
-        primary: false,
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        serviceId: TEST_SERVICE_ID,
-        name: "secure",
-        port: securePort,
-        primary: false,
-        createdAt: now,
-        updatedAt: now,
-      },
-    ]);
+      ports: [
+        { name: "http", port: primaryPort, primary: true },
+        { name: "metrics", port: metricsPort },
+        { name: "secure", port: securePort },
+      ],
+    });
 
     const service = await readFirstServicePayload<{
       port: number;

@@ -260,9 +260,9 @@ export function ServicesPanel({
             </SelectTrigger>
             <SelectContent>
               {services.map((service) => {
-                const primaryPort =
-                  service.ports?.find((port) => port.primary)?.port ??
-                  service.port;
+                const primaryPort = service.ports.find(
+                  (port) => port.primary
+                )?.port;
 
                 return (
                   <SelectItem key={service.id} value={service.id}>
@@ -328,19 +328,6 @@ function ServiceCard({
 }) {
   const normalizedStatus = service.status.toLowerCase();
   const isErrorState = normalizedStatus === "error";
-  let servicePorts = service.ports ?? [];
-  if (servicePorts.length === 0 && service.port != null) {
-    servicePorts = [
-      {
-        name: "default",
-        port: service.port,
-        primary: true,
-        protocol: resolveLegacyServiceProtocol(service.url),
-        ...(service.url ? { url: service.url } : {}),
-        portReachable: service.portReachable ?? false,
-      },
-    ];
-  }
 
   return (
     <div
@@ -408,18 +395,14 @@ function ServiceCard({
             </>
           )}
 
-          {servicePorts.length > 0 ? (
+          {service.ports.length > 0 ? (
             <>
               <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
                 Ports
               </p>
               <div className="grid min-w-0 gap-2">
-                {servicePorts.map((port) => (
-                  <ServicePortDetail
-                    key={port.name}
-                    port={port}
-                    reachability={port.portReachable}
-                  />
+                {service.ports.map((port) => (
+                  <ServicePortDetail key={port.name} port={port} />
                 ))}
               </div>
             </>
@@ -470,26 +453,10 @@ function ServiceCard({
   );
 }
 
-function resolveLegacyServiceProtocol(
-  url: string | undefined
-): "http" | "https" {
-  if (!url) {
-    return "http";
-  }
-
-  try {
-    return new URL(url).protocol === "https:" ? "https" : "http";
-  } catch {
-    return "http";
-  }
-}
-
 function ServicePortDetail({
   port,
-  reachability,
 }: {
   port: CellServiceSummary["ports"][number];
-  reachability?: boolean;
 }) {
   return (
     <div
@@ -510,18 +477,16 @@ function ServicePortDetail({
             Primary
           </span>
         ) : null}
-        {typeof reachability === "boolean" ? (
-          <span
-            className={cn(
-              "border px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em]",
-              reachability
-                ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-500"
-                : "border-destructive/50 bg-destructive/10 text-destructive"
-            )}
-          >
-            {reachability ? "Reachable" : "Unreachable"}
-          </span>
-        ) : null}
+        <span
+          className={cn(
+            "border px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em]",
+            port.portReachable
+              ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-500"
+              : "border-destructive/50 bg-destructive/10 text-destructive"
+          )}
+        >
+          {port.portReachable ? "Reachable" : "Unreachable"}
+        </span>
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
         <span className="text-[9px] text-muted-foreground uppercase tracking-[0.2em]">

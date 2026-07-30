@@ -1,6 +1,5 @@
 import type {
   MediaAccessPermissionRequest,
-  PermissionCheckHandlerHandlerDetails,
   PermissionRequest,
   Session,
   WebContents,
@@ -13,11 +12,8 @@ const TRUSTED_RENDERER_PERMISSIONS = new Set([
 ]);
 
 const parseUrl = (value: string | undefined) => {
-  if (!value) {
-    return null;
-  }
   try {
-    return new URL(value);
+    return value ? new URL(value) : null;
   } catch {
     return null;
   }
@@ -44,14 +40,12 @@ type TrustedRendererRegistration = {
 
 const isAllowedLoopbackUrl = (value: string | undefined) => {
   const url = parseUrl(value);
-  if (!url) {
-    return false;
-  }
-  return (
-    (url.protocol === "http:" || url.protocol === "https:") &&
-    ALLOWED_MEDIA_HOSTNAMES.has(url.hostname) &&
-    !url.username &&
-    !url.password
+  return Boolean(
+    url &&
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      ALLOWED_MEDIA_HOSTNAMES.has(url.hostname) &&
+      !url.username &&
+      !url.password
   );
 };
 
@@ -87,69 +81,70 @@ export const isWithinTrustedRendererScope = (
   value: string | undefined
 ) => {
   const candidate = resolveTrustedRendererScope(value);
-  return Boolean(
-    candidate &&
-      candidate.kind === scope.kind &&
-      candidate.value === scope.value
-  );
+  return candidate?.kind === scope.kind && candidate.value === scope.value;
 };
 
 export const installMediaPermissionHandlers = (session: Session) => {
-  const trustedRenderers = new Map<number, TrustedRendererRegistration>();
-  const viewerOrigins = new Map<number, string>();
+  const trustedRenderers = new WeakMap<
+    WebContents,
+    TrustedRendererRegistration
+  >();
+  const viewerOrigins = new WeakMap<WebContents, string>();
+  const hasOrigin = (url: string | undefined, origin: string) =>
+    isAllowedLoopbackUrl(url) && resolveOrigin(url) === origin;
 
-  const hasRegisteredOrigin = (
-    registrations: Map<number, string>,
+  const isAllowedViewerRequest = (
     contents: WebContents | null,
-    requestingUrl?: string
+    ...requestUrls: (string | undefined)[]
   ) => {
     if (!contents) {
       return false;
     }
 
-    const registeredOrigin = registrations.get(contents.id);
+    const registeredOrigin = viewerOrigins.get(contents);
     return Boolean(
       registeredOrigin &&
-        resolveOrigin(contents.getURL()) === registeredOrigin &&
-        (!requestingUrl || resolveOrigin(requestingUrl) === registeredOrigin)
+        hasOrigin(contents.getURL(), registeredOrigin) &&
+        requestUrls.every(
+          (url) => url === undefined || hasOrigin(url, registeredOrigin)
+        )
     );
   };
 
-  const isAllowedViewerContents = (
-    contents: WebContents | null,
-    requestingUrl?: string
-  ) =>
-    hasRegisteredOrigin(viewerOrigins, contents, requestingUrl) &&
-    isAllowedLoopbackUrl(contents?.getURL()) &&
-    (!requestingUrl || isAllowedLoopbackUrl(requestingUrl));
-
   const isTrustedRenderer = (contents: WebContents | null) =>
-    Boolean(contents && trustedRenderers.get(contents.id)?.active);
+    Boolean(contents && trustedRenderers.get(contents)?.active);
 
-  const isAllowedCheck = (
+  const isAllowedTrustedPermission = (
     contents: WebContents | null,
     permission: string,
-    requestingOrigin: string,
-    details: PermissionCheckHandlerHandlerDetails
+    isMainFrame: boolean
   ) =>
-    permission === "media" &&
-    details.mediaType === "audio" &&
-    isAllowedViewerContents(contents, details.requestingUrl) &&
-    isAllowedLoopbackUrl(requestingOrigin) &&
-    isAllowedLoopbackUrl(details.securityOrigin ?? requestingOrigin) &&
-    resolveOrigin(requestingOrigin) === viewerOrigins.get(contents?.id ?? -1);
+    isTrustedRendererPermissionAllowed({
+      isMainFrame,
+      isTrustedRenderer: isTrustedRenderer(contents),
+      permission,
+    });
 
   session.setPermissionCheckHandler(
     (contents, permission, requestingOrigin, details) => {
       if (permission === "media") {
-        return isAllowedCheck(contents, permission, requestingOrigin, details);
+        return (
+          Boolean(requestingOrigin) &&
+          details.mediaType === "audio" &&
+          isAllowedViewerRequest(
+            contents,
+            requestingOrigin,
+            details.requestingUrl,
+            details.securityOrigin ?? requestingOrigin
+          )
+        );
       }
 
-      return isTrustedRendererPermissionAllowed({
-        isMainFrame: details.isMainFrame,
-        isTrustedRenderer: isTrustedRenderer(contents),
+      return isAllowedTrustedPermission(
+        contents,
         permission,
-      });
+        details.isMainFrame
+      );
     }
   );
 
@@ -158,42 +153,41 @@ export const installMediaPermissionHandlers = (session: Session) => {
       if (permission !== "media") {
         const requestDetails = details as PermissionRequest;
         callback(
-          isTrustedRendererPermissionAllowed({
-            isMainFrame: requestDetails.isMainFrame,
-            isTrustedRenderer: isTrustedRenderer(contents),
+          isAllowedTrustedPermission(
+            contents,
             permission,
-          })
+            requestDetails.isMainFrame
+          )
         );
         return;
       }
 
       const mediaDetails = details as MediaAccessPermissionRequest;
       const mediaTypes = mediaDetails.mediaTypes ?? [];
-      const registeredOrigin = viewerOrigins.get(contents.id);
       const securityOrigin =
         mediaDetails.securityOrigin ?? mediaDetails.requestingUrl;
-      const requestAllowed =
-        mediaTypes.length > 0 &&
-        mediaTypes.every((mediaType) => mediaType === "audio") &&
-        isAllowedViewerContents(contents, mediaDetails.requestingUrl) &&
-        isAllowedLoopbackUrl(securityOrigin) &&
-        resolveOrigin(securityOrigin) === registeredOrigin;
-
-      callback(requestAllowed);
+      callback(
+        Boolean(securityOrigin) &&
+          mediaTypes.length > 0 &&
+          mediaTypes.every((mediaType) => mediaType === "audio") &&
+          isAllowedViewerRequest(
+            contents,
+            mediaDetails.requestingUrl,
+            securityOrigin
+          )
+      );
     }
   );
 
-  session.setDisplayMediaRequestHandler((_request, callback) => {
-    callback({});
-  });
+  session.setDisplayMediaRequestHandler((_request, callback) => callback({}));
 
   return {
     activateTrustedRenderer: (contents: WebContents, url: string) => {
-      const registration = trustedRenderers.get(contents.id);
+      const registration = trustedRenderers.get(contents);
       if (
         !(registration && isWithinTrustedRendererScope(registration.scope, url))
       ) {
-        trustedRenderers.delete(contents.id);
+        trustedRenderers.delete(contents);
         return false;
       }
       registration.active = true;
@@ -201,7 +195,7 @@ export const installMediaPermissionHandlers = (session: Session) => {
     },
     isTrustedRenderer,
     isTrustedRendererUrl: (contents: WebContents, url: string) => {
-      const registration = trustedRenderers.get(contents.id);
+      const registration = trustedRenderers.get(contents);
       return Boolean(
         registration && isWithinTrustedRendererScope(registration.scope, url)
       );
@@ -211,27 +205,20 @@ export const installMediaPermissionHandlers = (session: Session) => {
       if (!scope) {
         throw new Error("Trusted renderer URL must be file, HTTP, or HTTPS");
       }
-      trustedRenderers.set(contents.id, { active: false, scope });
-      contents.once("destroyed", () => {
-        trustedRenderers.delete(contents.id);
-      });
+      trustedRenderers.set(contents, { active: false, scope });
+      contents.once("destroyed", () => trustedRenderers.delete(contents));
     },
     registerViewer: (contents: WebContents, rootUrl: string) => {
-      viewerOrigins.delete(contents.id);
+      viewerOrigins.delete(contents);
       const origin = resolveOrigin(rootUrl);
       if (!(origin && isAllowedLoopbackUrl(rootUrl))) {
         return;
       }
-      viewerOrigins.set(contents.id, origin);
-      contents.once("destroyed", () => {
-        viewerOrigins.delete(contents.id);
-      });
+      viewerOrigins.set(contents, origin);
+      contents.once("destroyed", () => viewerOrigins.delete(contents));
     },
     unregisterViewer: (contents: WebContents) => {
-      viewerOrigins.delete(contents.id);
-    },
-    unregisterTrustedRenderer: (contents: WebContents) => {
-      trustedRenderers.delete(contents.id);
+      viewerOrigins.delete(contents);
     },
   };
 };

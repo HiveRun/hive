@@ -68,7 +68,10 @@ import {
   removeCellRuntimeDir,
   resolveCellEnvironment,
 } from "../services/cell-environment";
-import { requireCellAvailableForRuntime } from "../services/cell-runtime-guard";
+import {
+  loadCellById,
+  requireCellAvailableForRuntime,
+} from "../services/cell-runtime-guard";
 import {
   buildTimingRuns,
   type CellTimingStepRecord,
@@ -359,6 +362,16 @@ const resolveCellRouteDependencies = (() => {
     return loadBase().then((base) => ({ ...base, ...overrides }));
   };
 })();
+
+const buildDeletionDependencies = (deps: CellRouteDependencies) => ({
+  database: deps.db,
+  closeSession: deps.closeAgentSession,
+  closeTerminalSession: deps.closeTerminalSession,
+  closeChatTerminalSession: deps.closeChatTerminalSession,
+  clearSetupTerminal: deps.clearSetupTerminal,
+  stopCellServices: deps.stopServicesForCell,
+  runCellTeardown: deps.runCellTeardown,
+});
 
 type CellServiceListResponse = Static<typeof CellServiceListResponseSchema>;
 type CellDiffResponse = Static<typeof CellDiffResponseSchema>;
@@ -1664,36 +1677,12 @@ function runTerminalInputAction(args: {
   }
 }
 
-function runEnsuredTerminalAction<Session, Response>(args: {
-  ensureSession: () => Session;
-  action: (session: Session) => void;
-  buildResponse: (session: Session) => Response;
-}): Response {
-  const session = args.ensureSession();
-  args.action(session);
-  return args.buildResponse(session);
-}
-
 function buildTerminalResizeResponse<Session>(
   session: Session,
   cols: number,
   rows: number
 ) {
   return { ok: true, session: { ...session, cols, rows } };
-}
-
-function resizeEnsuredTerminal<Session>(args: {
-  session: Session;
-  resize: () => void;
-  cols: number;
-  rows: number;
-}) {
-  return runEnsuredTerminalAction({
-    action: args.resize,
-    ensureSession: () => args.session,
-    buildResponse: (currentSession) =>
-      buildTerminalResizeResponse(currentSession, args.cols, args.rows),
-  });
 }
 
 function runTerminalResizeAction<Session>(args: {
@@ -2069,14 +2058,8 @@ export function createCellsRoutes(
   const resolveDeletionRuntime = async () => {
     const deps = await resolveDeps();
     return {
-      database: deps.db,
-      resolveWorkspaceCtx: deps.resolveWorkspaceContext,
-      closeSession: deps.closeAgentSession,
-      stopCellServicesFn: deps.stopServicesForCell,
-      closeTerminalSession: deps.closeTerminalSession,
-      closeChatTerminalSession: deps.closeChatTerminalSession,
-      clearSetupTerminal: deps.clearSetupTerminal,
-      runCellTeardown: deps.runCellTeardown,
+      deletionDependencies: buildDeletionDependencies(deps),
+      resolveWorkspace: deps.resolveWorkspaceContext,
     };
   };
 
@@ -3185,13 +3168,10 @@ export function createCellsRoutes(
           set,
           log,
           errorMessage: "Failed to write to chat terminal session",
-          run: (cell, { chatTerminal }) =>
-            runEnsuredTerminalAction({
-              ensureSession: () => cell,
-              action: () =>
-                chatTerminal.writeChatTerminalInput(cell.id, body.data),
-              buildResponse: () => ({ ok: true }),
-            }),
+          run: (cell, { chatTerminal }) => {
+            chatTerminal.writeChatTerminalInput(cell.id, body.data);
+            return { ok: true };
+          },
         }),
       {
         params: CellIdParamsSchema,
@@ -3214,14 +3194,10 @@ export function createCellsRoutes(
         log,
       }) {
         return await withResolvedChatTerminalRoute({
-          run: (cell, { session, chatTerminal }) =>
-            resizeEnsuredTerminal({
-              session,
-              resize: () =>
-                chatTerminal.resizeChatTerminal(cell.id, body.cols, body.rows),
-              cols: body.cols,
-              rows: body.rows,
-            }),
+          run: (cell, { session, chatTerminal }) => {
+            chatTerminal.resizeChatTerminal(cell.id, body.cols, body.rows);
+            return buildTerminalResizeResponse(session, body.cols, body.rows);
+          },
           errorMessage: "Failed to resize chat terminal session",
           themeMode: normalizeOpencodeThemeMode(query.themeMode),
           cellId: params.id,
@@ -3346,12 +3322,9 @@ export function createCellsRoutes(
           log,
           errorMessage: "Failed to write to terminal session",
           run: async (cell, deps) => {
-            const session = await ensureCellTerminalSessionForCell(deps, cell);
-            return runEnsuredTerminalAction({
-              ensureSession: () => session,
-              action: () => deps.writeTerminalInput(cell.id, body.data),
-              buildResponse: () => ({ ok: true }),
-            });
+            await ensureCellTerminalSessionForCell(deps, cell);
+            deps.writeTerminalInput(cell.id, body.data);
+            return { ok: true };
           },
         }),
       {
@@ -3365,12 +3338,8 @@ export function createCellsRoutes(
         return await withResolvedCellTerminalRoute({
           run: async (cell, deps) => {
             const session = await ensureCellTerminalSessionForCell(deps, cell);
-            return resizeEnsuredTerminal({
-              session,
-              resize: () => deps.resizeTerminal(cell.id, body.cols, body.rows),
-              cols: body.cols,
-              rows: body.rows,
-            });
+            deps.resizeTerminal(cell.id, body.cols, body.rows);
+            return buildTerminalResizeResponse(session, body.cols, body.rows);
           },
           cellId: params.id,
           errorMessage: "Failed to resize terminal session",
@@ -3598,20 +3567,12 @@ export function createCellsRoutes(
       "/",
       async ({ body, set, log }) => {
         try {
-          const {
-            database,
-            resolveWorkspaceCtx,
-            closeSession,
-            stopCellServicesFn,
-            closeTerminalSession,
-            closeChatTerminalSession,
-            clearSetupTerminal,
-            runCellTeardown,
-          } = await resolveDeletionRuntime();
+          const { resolveWorkspace, deletionDependencies } =
+            await resolveDeletionRuntime();
 
           const uniqueIds = [...new Set(body.ids)];
 
-          const cellsToDelete = await database
+          const cellsToDelete = await deletionDependencies.database
             .select()
             .from(cells)
             .where(inArray(cells.id, uniqueIds));
@@ -3621,22 +3582,15 @@ export function createCellsRoutes(
             return { message: "No cells found for provided ids" };
           }
 
-          const fetchManager =
-            createWorktreeManagerFetcher(resolveWorkspaceCtx);
+          const fetchManager = createWorktreeManagerFetcher(resolveWorkspace);
 
           const deletedIds: string[] = [];
 
           for (const cell of cellsToDelete) {
             try {
               await deleteCellWithLifecycle({
-                database,
+                ...deletionDependencies,
                 cell,
-                closeSession,
-                closeTerminalSession,
-                closeChatTerminalSession,
-                clearSetupTerminal,
-                stopCellServices: stopCellServicesFn,
-                runCellTeardown,
                 getWorktreeService: fetchManager,
                 log,
               });
@@ -3683,17 +3637,20 @@ export function createCellsRoutes(
       "/:id",
       async ({ params, set, log }) => {
         try {
-          const deleteRuntime = await resolveDeletionRuntime();
-          const database = deleteRuntime.database;
+          const { resolveWorkspace, deletionDependencies } =
+            await resolveDeletionRuntime();
 
-          const cell = await loadCellById(database, params.id);
+          const cell = await loadCellById(
+            deletionDependencies.database,
+            params.id
+          );
           if (!cell) {
             set.status = HTTP_STATUS.NOT_FOUND;
             return { message: "Cell not found" };
           }
 
           const workspaceManager = await resolveWorkspaceContextFromDeps(
-            deleteRuntime.resolveWorkspaceCtx,
+            resolveWorkspace,
             cell.workspaceId
           );
           const worktreeService = toAsyncWorktreeManager(
@@ -3701,16 +3658,10 @@ export function createCellsRoutes(
           );
 
           await deleteCellWithLifecycle({
+            ...deletionDependencies,
             getWorktreeService: async () => worktreeService,
             log,
             cell,
-            database,
-            stopCellServices: deleteRuntime.stopCellServicesFn,
-            runCellTeardown: deleteRuntime.runCellTeardown,
-            clearSetupTerminal: deleteRuntime.clearSetupTerminal,
-            closeChatTerminalSession: deleteRuntime.closeChatTerminalSession,
-            closeTerminalSession: deleteRuntime.closeTerminalSession,
-            closeSession: deleteRuntime.closeSession,
           });
 
           return { message: "Cell deleted successfully" };
@@ -4460,7 +4411,12 @@ async function finalizeCellProvisioning(
   }
 
   const finishedAt = await runPhase("mark_ready", async () => {
-    const updated = await markCellReadyIfSpawning(database, state.cellId);
+    const updated = await updateCellProvisioningStatus(
+      database,
+      state.cellId,
+      "ready",
+      { lastSetupError: null, expectedStatus: "spawning" }
+    );
     if (!updated) {
       await assertCellStillExists(context, "mark_ready");
       throw new Error(
@@ -4535,7 +4491,7 @@ async function handleDeferredProvisionFailure(
     context.database,
     context.state.cellId,
     "error",
-    lastSetupError
+    { lastSetupError }
   );
 
   if (context.state.createdCell) {
@@ -4606,7 +4562,7 @@ async function recoverCellCreationFailure(
       context.database,
       context.state.cellId,
       "error",
-      lastSetupError
+      { lastSetupError }
     );
 
     await cleanupProvisionResources(context, {
@@ -4737,7 +4693,7 @@ async function markProvisionCleanupFailure(
       context.database,
       context.state.cellId,
       "error",
-      lastSetupError
+      { lastSetupError }
     );
     if (context.state.createdCell) {
       context.state.createdCell = {
@@ -5118,12 +5074,9 @@ const resumeSingleCell = async (
   try {
     const attemptCount = provisioningState?.attemptCount ?? 0;
     if (attemptCount >= MAX_PROVISIONING_ATTEMPTS) {
-      await updateCellProvisioningStatus(
-        deps.db,
-        cell.id,
-        "error",
-        `${PROVISIONING_INTERRUPTED_MESSAGE}\nRetry limit exceeded.`
-      );
+      await updateCellProvisioningStatus(deps.db, cell.id, "error", {
+        lastSetupError: `${PROVISIONING_INTERRUPTED_MESSAGE}\nRetry limit exceeded.`,
+      });
       return;
     }
 
@@ -5135,12 +5088,9 @@ const resumeSingleCell = async (
 
     const template = hiveConfig.templates[cell.templateId];
     if (!template) {
-      await updateCellProvisioningStatus(
-        deps.db,
-        cell.id,
-        "error",
-        `${PROVISIONING_INTERRUPTED_MESSAGE}\nTemplate ${cell.templateId} no longer exists.`
-      );
+      await updateCellProvisioningStatus(deps.db, cell.id, "error", {
+        lastSetupError: `${PROVISIONING_INTERRUPTED_MESSAGE}\nTemplate ${cell.templateId} no longer exists.`,
+      });
       return;
     }
 
@@ -5161,14 +5111,11 @@ const resumeSingleCell = async (
 
     startProvisioningWorkflow(context);
   } catch (error) {
-    await updateCellProvisioningStatus(
-      deps.db,
-      cell.id,
-      "error",
-      `${PROVISIONING_INTERRUPTED_MESSAGE}\n${
+    await updateCellProvisioningStatus(deps.db, cell.id, "error", {
+      lastSetupError: `${PROVISIONING_INTERRUPTED_MESSAGE}\n${
         error instanceof Error ? error.message : String(error)
-      }`
-    );
+      }`,
+    });
   }
 };
 
@@ -5207,14 +5154,8 @@ const resumeDeletingCells = async (deps: CellRouteDependencies) => {
   for (const cell of deletingCells) {
     try {
       await deleteCellWithLifecycle({
-        database: deps.db,
+        ...buildDeletionDependencies(deps),
         cell,
-        closeSession: deps.closeAgentSession,
-        closeTerminalSession: deps.closeTerminalSession,
-        closeChatTerminalSession: deps.closeChatTerminalSession,
-        clearSetupTerminal: deps.clearSetupTerminal,
-        stopCellServices: deps.stopServicesForCell,
-        runCellTeardown: deps.runCellTeardown,
         getWorktreeService: fetchManager,
         log: backgroundProvisioningLogger,
       });
@@ -5351,14 +5292,24 @@ async function updateCellProvisioningStatus(
   database: DatabaseClient,
   cellId: string,
   status: CellStatus,
-  lastSetupError?: string | null
+  options: {
+    lastSetupError?: string | null;
+    expectedStatus?: CellStatus;
+  } = {}
 ): Promise<Date | null> {
   const finished = status === "ready" || status === "error";
   const finishedAt = finished ? new Date() : null;
   const [updated] = await database
     .update(cells)
-    .set({ status, lastSetupError: lastSetupError ?? null })
-    .where(eq(cells.id, cellId))
+    .set({ status, lastSetupError: options.lastSetupError ?? null })
+    .where(
+      and(
+        eq(cells.id, cellId),
+        options.expectedStatus
+          ? eq(cells.status, options.expectedStatus)
+          : undefined
+      )
+    )
     .returning({ workspaceId: cells.workspaceId });
 
   if (!updated) {
@@ -5376,36 +5327,9 @@ async function updateCellProvisioningStatus(
     workspaceId: updated.workspaceId,
     cellId,
     status,
-    lastSetupError,
+    lastSetupError: options.lastSetupError,
   });
 
-  return finishedAt;
-}
-
-async function markCellReadyIfSpawning(
-  database: DatabaseClient,
-  cellId: string
-): Promise<Date | null> {
-  const finishedAt = new Date();
-  const [updated] = await database
-    .update(cells)
-    .set({ status: "ready", lastSetupError: null })
-    .where(and(eq(cells.id, cellId), eq(cells.status, "spawning")))
-    .returning({ workspaceId: cells.workspaceId });
-  if (!updated) {
-    return null;
-  }
-
-  await database
-    .update(cellProvisioningStates)
-    .set({ finishedAt })
-    .where(eq(cellProvisioningStates.cellId, cellId));
-  emitCellStatusUpdate({
-    workspaceId: updated.workspaceId,
-    cellId,
-    status: "ready",
-    lastSetupError: null,
-  });
   return finishedAt;
 }
 
@@ -5515,17 +5439,6 @@ function formatStackTrace(error?: Error): string | undefined {
   }
 
   return error.stack ?? error.message;
-}
-
-async function loadCellById(
-  database: DatabaseClient,
-  cellId: string
-): Promise<typeof cells.$inferSelect | null> {
-  return (
-    (await database.query.cells.findFirst({
-      where: eq(cells.id, cellId),
-    })) ?? null
-  );
 }
 
 function resolveSetupRetryCell(
@@ -5739,37 +5652,31 @@ async function serializeService(
       portName,
       DEFAULT_SERVICE_PROTOCOL
     );
-  let normalizedPorts = (
+  const legacyPortClaims =
+    service.port == null
+      ? []
+      : [{ name: "default", port: service.port, primary: true }];
+  const portClaims =
+    persistedPorts.length > 0 ? persistedPorts : legacyPortClaims;
+  const normalizedPorts = (
     await Promise.all(
-      persistedPorts.map(async (claim) => ({
-        name: claim.name,
-        port: claim.port,
-        primary: claim.primary,
-        protocol: protocolForPort(claim.name),
-        url:
-          buildServiceUrl(claim.port, protocolForPort(claim.name)) ?? undefined,
-        portReachable: await isPortActive(claim.port),
-      }))
+      portClaims.map(async (claim) => {
+        const protocol = protocolForPort(claim.name);
+        return {
+          name: claim.name,
+          port: claim.port,
+          primary: claim.primary,
+          protocol,
+          url: buildServiceUrl(claim.port, protocol) ?? undefined,
+          portReachable: await isPortActive(claim.port),
+        };
+      })
     )
   ).sort(
     (left, right) =>
       Number(right.primary) - Number(left.primary) ||
       left.name.localeCompare(right.name)
   );
-  if (normalizedPorts.length === 0 && service.port != null) {
-    normalizedPorts = [
-      {
-        name: "default",
-        port: service.port,
-        primary: true,
-        protocol: protocolForPort("default"),
-        url:
-          buildServiceUrl(service.port, protocolForPort("default")) ??
-          undefined,
-        portReachable: await isPortActive(service.port),
-      },
-    ];
-  }
   const primaryPort =
     normalizedPorts.find((claim) => claim.primary)?.port ?? service.port;
   const primaryProtocol =

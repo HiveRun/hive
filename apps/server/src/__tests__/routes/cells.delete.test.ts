@@ -39,6 +39,24 @@ const createDeleteTestApp = (overrides: Record<string, unknown>) =>
     createCellRouteTestDependencies({ cellId: CELL_ID, overrides })
   );
 
+const seedDeleteCell = async (name: string, withArtifacts = false) => {
+  await seedRouteCell({ id: CELL_ID, name });
+  const environment = ensureCellEnvironment(CELL_ID, "/tmp/mock-worktree");
+  if (withArtifacts) {
+    await Promise.all([
+      writeFile(
+        join(environment.HIVE_CELL_RUNTIME_DIR, "runtime.txt"),
+        "runtime"
+      ),
+      writeFile(
+        join(environment.HIVE_CELL_ARTIFACTS_DIR, "artifact.txt"),
+        "artifact"
+      ),
+    ]);
+  }
+  return environment;
+};
+
 describe("cell deletion teardown lifecycle", () => {
   let hiveHome: string;
 
@@ -56,16 +74,7 @@ describe("cell deletion teardown lifecycle", () => {
   });
 
   it("retains a failed cell and retries teardown before destructive removal", async () => {
-    await seedRouteCell({ id: CELL_ID, name: "Delete teardown" });
-    const environment = ensureCellEnvironment(CELL_ID, "/tmp/mock-worktree");
-    await writeFile(
-      join(environment.HIVE_CELL_RUNTIME_DIR, "runtime.txt"),
-      "runtime"
-    );
-    await writeFile(
-      join(environment.HIVE_CELL_ARTIFACTS_DIR, "artifact.txt"),
-      "artifact"
-    );
+    const environment = await seedDeleteCell("Delete teardown", true);
 
     const order: string[] = [];
     const stopServicesForCell = vi.fn(() => {
@@ -101,7 +110,7 @@ describe("cell deletion teardown lifecycle", () => {
     await access(environment.HIVE_CELL_RUNTIME_DIR);
 
     const retained = await loadDeleteCell();
-    expect(retained?.status).toBe("error");
+    expect(retained).toMatchObject({ status: "error" });
     expect(retained?.lastSetupError).toContain("cleanup database unavailable");
 
     const retriedDelete = await deleteRouteCellById(app, CELL_ID);
@@ -124,12 +133,15 @@ describe("cell deletion teardown lifecycle", () => {
   });
 
   it("does not run teardown or remove resources after service stop fails", async () => {
-    await seedRouteCell({ id: CELL_ID, name: "Delete stop failure" });
-    const environment = ensureCellEnvironment(CELL_ID, "/tmp/mock-worktree");
+    const environment = await seedDeleteCell("Delete stop failure");
     const { runCellTeardown, removeWorktree } = createResolvedCleanupMocks();
+    const closeAgentSession = vi.fn(() =>
+      Promise.reject(new Error("close session failed"))
+    );
     const app = createDeleteTestApp({
       stopServicesForCell: () =>
         Promise.reject(new Error("service stop timed out")),
+      closeAgentSession,
       runCellTeardown,
       removeWorktree,
     });
@@ -137,16 +149,17 @@ describe("cell deletion teardown lifecycle", () => {
     const response = await deleteRouteCellById(app, CELL_ID);
 
     expect(response.status).toBe(HTTP_INTERNAL_ERROR);
+    expect(closeAgentSession).toHaveBeenCalledWith(CELL_ID);
     expect(runCellTeardown).not.toHaveBeenCalled();
     expect(removeWorktree).not.toHaveBeenCalled();
     await access(environment.HIVE_CELL_RUNTIME_DIR);
     const retained = await loadDeleteCell();
-    expect(retained?.status).toBe("error");
+    expect(retained).toMatchObject({ status: "error" });
     expect(retained?.lastSetupError).toContain("service stop timed out");
   });
 
   it("serializes concurrent deletion lifecycles for the same cell", async () => {
-    await seedRouteCell({ id: CELL_ID, name: "Concurrent delete" });
+    await seedDeleteCell("Concurrent delete");
     const blockedStop = createBlockedServiceStop();
     const stopServicesForCell = blockedStop.stop;
     const { runCellTeardown, removeWorktree } = createResolvedCleanupMocks();

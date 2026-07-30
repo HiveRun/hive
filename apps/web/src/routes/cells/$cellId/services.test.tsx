@@ -1,10 +1,9 @@
 import {
-  cleanup as cleanupRenderedServices,
-  fireEvent as fireServiceEvent,
-  render as renderServicesPanel,
-  screen as serviceScreen,
-  waitFor as waitForServiceUi,
-  within as withinServiceElement,
+  cleanup as cleanupDom,
+  screen as page,
+  render as renderUi,
+  waitFor as waitUntil,
+  within as withinElement,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CellServiceSummary } from "@/queries/cells";
@@ -50,7 +49,7 @@ const buildService = (
   }) as CellServiceSummary;
 
 const renderServices = (services: CellServiceSummary[]) =>
-  renderServicesPanel(
+  renderUi(
     <ServicesPanel
       cellId="cell-1"
       isBulkActionPending={false}
@@ -65,16 +64,6 @@ const renderServices = (services: CellServiceSummary[]) =>
     />
   );
 
-const renderLegacyService = (options: {
-  port: number;
-  portReachable: boolean;
-  url: string;
-}) => {
-  const { ports: _ports, ...legacyService } = buildService(options);
-  renderServices([legacyService as unknown as CellServiceSummary]);
-  return serviceScreen.getByRole("combobox");
-};
-
 describe("service port presentation", () => {
   beforeEach(() => {
     clipboardWriteText.mockClear();
@@ -84,13 +73,11 @@ describe("service port presentation", () => {
     });
   });
 
-  afterEach(cleanupRenderedServices);
+  afterEach(cleanupDom);
 
   it("renders every named port while the selector summarizes only the primary", async () => {
     renderServices([
       buildService({
-        port: 43_101,
-        portReachable: true,
         ports: [
           {
             name: "http",
@@ -108,79 +95,36 @@ describe("service port presentation", () => {
             portReachable: false,
           },
         ],
-        url: "http://localhost:43101",
       }),
     ]);
 
-    const selector = serviceScreen.getByRole("combobox");
-    await waitForServiceUi(() => {
+    const selector = page.getByRole("combobox");
+    await waitUntil(() => {
       expect(selector).toHaveTextContent("Primary port: 43101");
     });
     expect(
-      withinServiceElement(selector).queryByText("43102")
+      withinElement(selector).queryByText("43102")
     ).not.toBeInTheDocument();
 
-    expect(serviceScreen.getAllByText("http")).toHaveLength(2);
-    expect(serviceScreen.getByText("metrics")).toBeInTheDocument();
-    expect(serviceScreen.getByText("tcp")).toBeInTheDocument();
-    expect(serviceScreen.getByText("Primary")).toBeInTheDocument();
-    expect(serviceScreen.getByText("Reachable")).toBeInTheDocument();
-    expect(serviceScreen.getByText("Unreachable")).toBeInTheDocument();
+    expect(page.getAllByText("http")).toHaveLength(2);
+    expect(page.getByText("metrics")).toBeInTheDocument();
+    expect(page.getByText("tcp")).toBeInTheDocument();
+    expect(page.getByText("Primary")).toBeInTheDocument();
+    expect(page.getByText("Reachable")).toBeInTheDocument();
+    expect(page.getByText("Unreachable")).toBeInTheDocument();
     expect(
-      serviceScreen.getByRole("button", { name: "Copy http port" })
+      page.getByRole("button", { name: "Copy http port" })
     ).toBeInTheDocument();
     expect(
-      serviceScreen.getByRole("button", { name: "Copy http URL" })
+      page.getByRole("button", { name: "Copy http URL" })
     ).toBeInTheDocument();
     expect(
-      serviceScreen.queryByRole("button", { name: "Copy metrics URL" })
+      page.queryByRole("button", { name: "Copy metrics URL" })
     ).not.toBeInTheDocument();
 
-    fireServiceEvent.click(
-      serviceScreen.getByRole("button", { name: "Copy http URL" })
-    );
-    await waitForServiceUi(() => {
+    page.getByRole("button", { name: "Copy http URL" }).click();
+    await waitUntil(() => {
       expect(clipboardWriteText).toHaveBeenCalledWith("http://localhost:43101");
     });
-  });
-
-  it("falls back to the legacy scalar port and URL", async () => {
-    const selector = renderLegacyService({
-      port: 3000,
-      portReachable: false,
-      url: "http://localhost:3000",
-    });
-
-    await waitForServiceUi(() => {
-      expect(selector).toHaveTextContent("Primary port: 3000");
-    });
-    expect(serviceScreen.getByText("default")).toBeInTheDocument();
-    expect(serviceScreen.getByText("Primary")).toBeInTheDocument();
-    expect(serviceScreen.getByText("Unreachable")).toBeInTheDocument();
-    expect(
-      serviceScreen.getByText("http://localhost:3000")
-    ).toBeInTheDocument();
-    expect(
-      serviceScreen.getByRole("button", { name: "Copy default port" })
-    ).toBeInTheDocument();
-    expect(
-      serviceScreen.getByRole("button", { name: "Copy default URL" })
-    ).toBeInTheDocument();
-  });
-
-  it("derives HTTPS for a legacy scalar URL", async () => {
-    const selector = renderLegacyService({
-      port: 9443,
-      portReachable: true,
-      url: "https://localhost:9443",
-    });
-
-    await waitForServiceUi(() => {
-      expect(selector).toHaveTextContent("Primary port: 9443");
-    });
-    expect(serviceScreen.getByText("https")).toBeInTheDocument();
-    expect(
-      serviceScreen.getByText("https://localhost:9443")
-    ).toBeInTheDocument();
   });
 });

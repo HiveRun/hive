@@ -10,11 +10,11 @@ import {
 import { cells } from "../../schema/cells";
 import { setupTestDb, testDb } from "../test-db";
 import {
-  assertTerminalStreamEnvironment,
   createCellRouteTestApp as createChatRouteTestApp,
   createCellRouteTestDependencies as createChatRouteTestDependencies,
   createChatTerminalRouteHarness,
   ptyRouteTestHelpers,
+  readTerminalStreamEnvironment,
 } from "./cells-route-test-helpers";
 
 const TEST_CELL_ID = "test-chat-cell-id";
@@ -139,31 +139,26 @@ describe("Cell chat terminal routes", () => {
   });
 
   it("passes durable cell paths and persisted named ports to OpenCode", async () => {
-    await seedCell();
-    await pty.seedRouteService({
-      id: "chat-web-service",
-      cellId: TEST_CELL_ID,
-      name: "web-app",
-    });
-    await pty.seedRouteServicePort({
-      serviceId: "chat-web-service",
-      name: "http",
-      port: 43_201,
-      primary: true,
-    });
-    await pty.seedRouteServicePort({
-      serviceId: "chat-web-service",
-      name: "metrics",
-      port: 43_202,
+    await pty.seedRouteCellAndServiceWithPorts({
+      cell: { id: TEST_CELL_ID, name: "Chat Terminal Cell" },
+      service: { id: "chat-web-service", name: "web-app" },
+      ports: [
+        { name: "http", port: 43_201, primary: true },
+        { name: "metrics", port: 43_202 },
+      ],
     });
     const harness = createChatTerminalHarness();
     const app = createChatTerminalTestApp(harness);
 
-    await assertTerminalStreamEnvironment(
+    const environment = await readTerminalStreamEnvironment(
       app,
       `/api/cells/${TEST_CELL_ID}/chat/terminal/stream`,
-      () => harness.ensureSession.mock.calls[0]?.[0]?.environment,
-      { cellId: TEST_CELL_ID, ports: CHAT_PORT_ENVIRONMENT }
+      () => harness.ensureSession.mock.calls[0]?.[0]?.environment
+    );
+    pty.expectTerminalEnvironment(
+      environment,
+      TEST_CELL_ID,
+      CHAT_PORT_ENVIRONMENT
     );
   });
 

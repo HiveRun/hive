@@ -1,3 +1,5 @@
+import type { CellServiceSummary } from "@/queries/cells";
+
 export type BrowserViewerAvailability =
   | "checking"
   | "empty"
@@ -11,39 +13,17 @@ export type BrowserViewerTarget = {
   label: string;
   port: number;
   portName: string;
-  portReachable: boolean | null;
-  primary: boolean;
+  portReachable: boolean;
   protocol: "http" | "https";
-  serviceId: string;
-  serviceName: string;
   status: string;
   testId: string;
   url: string;
 };
 
-type ViewerPortInput = {
-  name: string;
-  port: number;
-  portReachable: boolean;
-  primary: boolean;
-  protocol: "http" | "https" | "tcp";
-  url?: string;
-};
-
-type ViewerServiceInput = {
-  id: string;
-  name: string;
-  port?: number;
-  portReachable?: boolean;
-  ports?: ViewerPortInput[];
-  status: string;
-  url?: string;
-};
-
-type BrowserPort = ViewerPortInput & {
-  protocol: "http" | "https";
-  url: string;
-};
+type ViewerService = Pick<
+  CellServiceSummary,
+  "id" | "name" | "ports" | "status" | "url"
+>;
 
 const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -69,110 +49,58 @@ export function resolveLoopbackHttpViewerUrl(value: string | null) {
   }
 }
 
-export function resolveBrowserViewerAvailability(options: {
-  hasService: boolean;
-  reachability: boolean | null;
-  serviceStatus: string | undefined;
-  viewerUrl: string | null;
-}): BrowserViewerAvailability {
-  if (!options.hasService) {
+export function resolveViewerAvailability(
+  target: BrowserViewerTarget | undefined,
+  reachability: boolean | null = target?.portReachable ?? null
+): BrowserViewerAvailability {
+  if (!target) {
     return "empty";
   }
 
-  if (!resolveLoopbackHttpViewerUrl(options.viewerUrl)) {
+  if (!resolveLoopbackHttpViewerUrl(target.url)) {
     return "unsupported";
   }
 
-  if (options.serviceStatus?.toLowerCase() !== "running") {
+  if (target.status.toLowerCase() !== "running") {
     return "not-running";
   }
 
-  if (options.reachability === false) {
+  if (reachability === false) {
     return "unreachable";
   }
 
-  if (options.reachability === true) {
+  if (reachability === true) {
     return "ready";
   }
 
   return "checking";
 }
 
-export function resolveNativeViewerAvailability(
-  target: BrowserViewerTarget | undefined
-): BrowserViewerAvailability {
-  return resolveBrowserViewerAvailability({
-    hasService: Boolean(target),
-    reachability: target?.portReachable ?? null,
-    serviceStatus: target?.status,
-    viewerUrl: target?.url ?? null,
-  });
-}
-
 export function resolveBrowserViewerTargets(
-  services: ViewerServiceInput[]
+  services: ViewerService[]
 ): BrowserViewerTarget[] {
   return services.flatMap((service): BrowserViewerTarget[] => {
-    const namedBrowserPorts = (service.ports ?? []).flatMap(
-      (port): BrowserPort[] => {
-        if (port.protocol === "tcp") {
-          return [];
-        }
-        const url = port.url ?? (port.primary ? service.url : undefined);
-        return url ? [{ ...port, protocol: port.protocol, url }] : [];
+    const namedBrowserPorts = service.ports.flatMap((port) => {
+      if (port.protocol === "tcp") {
+        return [];
       }
-    );
-    if (namedBrowserPorts.length > 0) {
-      return namedBrowserPorts.map((port) => ({
-        id: port.primary ? service.id : `${service.id}:${port.name}`,
-        label: service.name,
-        port: port.port,
-        portName: port.name,
-        portReachable: port.portReachable,
-        primary: port.primary,
-        protocol: port.protocol,
-        serviceId: service.id,
-        serviceName: service.name,
-        status: service.status,
-        testId:
-          port.primary && namedBrowserPorts.length === 1
-            ? service.name
-            : `${service.name}-${port.name}`,
-        url: port.url,
-      }));
-    }
+      const url = port.url ?? (port.primary ? service.url : undefined);
+      return url ? [{ ...port, protocol: port.protocol, url }] : [];
+    });
 
-    if (
-      (service.ports?.length ?? 0) > 0 ||
-      service.port == null ||
-      typeof service.url !== "string"
-    ) {
-      return [];
-    }
-
-    return [
-      {
-        id: service.id,
-        label: service.name,
-        port: service.port,
-        portName: "default",
-        portReachable: service.portReachable ?? null,
-        primary: true,
-        protocol: resolveHttpProtocol(service.url),
-        serviceId: service.id,
-        serviceName: service.name,
-        status: service.status,
-        testId: service.name,
-        url: service.url,
-      },
-    ];
+    return namedBrowserPorts.map((port) => ({
+      id: port.primary ? service.id : `${service.id}:${port.name}`,
+      label: service.name,
+      port: port.port,
+      portName: port.name,
+      portReachable: port.portReachable,
+      protocol: port.protocol,
+      status: service.status,
+      testId:
+        port.primary && namedBrowserPorts.length === 1
+          ? service.name
+          : `${service.name}-${port.name}`,
+      url: port.url,
+    }));
   });
-}
-
-function resolveHttpProtocol(value: string): "http" | "https" {
-  try {
-    return new URL(value).protocol === "https:" ? "https" : "http";
-  } catch {
-    return "http";
-  }
 }

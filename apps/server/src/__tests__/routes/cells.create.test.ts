@@ -18,7 +18,7 @@ import {
   CommandExecutionError,
   TemplateSetupError,
 } from "../../services/supervisor";
-import { setupTestDb, testDb } from "../test-db";
+import { createDeferred, setupTestDb, testDb } from "../test-db";
 import {
   createCellRouteTestDependencies,
   createJsonRequest,
@@ -65,17 +65,18 @@ const mockWorktree = () => ({
 
 const createDeferredWorktree = (onCreated?: () => void) => {
   let started = false;
-  let release!: () => void;
-  const released = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const deferred = createDeferred();
   const createWorktree: CreateWorktreeFn = async () => {
     started = true;
-    await released;
+    await deferred.promise;
     onCreated?.();
     return mockWorktree();
   };
-  return { createWorktree, hasStarted: () => started, release };
+  return {
+    createWorktree,
+    hasStarted: () => started,
+    release: deferred.resolve,
+  };
 };
 
 const restoreHiveHome = async (
@@ -602,15 +603,10 @@ describe("POST /api/cells", () => {
   });
 
   it("continues provisioning when the initial prompt is slow", async () => {
-    let releasePrompt = () => {
-      // replaced once deferred prompt is created
-    };
-    const sendAgentMessage = vi.fn<SendAgentMessageFn>().mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          releasePrompt = resolve;
-        })
-    );
+    const prompt = createDeferred();
+    const sendAgentMessage = vi
+      .fn<SendAgentMessageFn>()
+      .mockImplementation(() => prompt.promise);
 
     const app = createTestApp({ sendAgentMessage });
 
@@ -631,7 +627,7 @@ describe("POST /api/cells", () => {
     expect(markReadyStep.status).toBe("ok");
     expect(sendAgentMessage).toHaveBeenCalledTimes(1);
 
-    releasePrompt();
+    prompt.resolve();
   });
 
   it("passes selected model overrides to agent provisioning", async () => {
@@ -806,9 +802,7 @@ describe("POST /api/cells", () => {
   });
 
   it("persists create_worktree timing sub-steps while provisioning is still running", async () => {
-    let releaseWorktree = () => {
-      // replaced when deferred worktree promise is created
-    };
+    const worktree = createDeferred();
 
     const createWorktree: CreateWorktreeFn = async (_cellId, createOptions) => {
       createOptions?.onTimingEvent?.({
@@ -816,9 +810,7 @@ describe("POST /api/cells", () => {
         durationMs: 0,
       });
 
-      await new Promise<void>((resolve) => {
-        releaseWorktree = resolve;
-      });
+      await worktree.promise;
 
       createOptions?.onTimingEvent?.({
         step: "include_copy_glob_match",
@@ -850,7 +842,7 @@ describe("POST /api/cells", () => {
       )
     ).toBe(false);
 
-    releaseWorktree();
+    worktree.resolve();
 
     await waitForTimingStep(
       payload.id,
@@ -1112,13 +1104,9 @@ describe("POST /api/cells/:id/setup/retry", () => {
   });
 
   it("returns 409 when a retry is already in progress", async () => {
-    let releaseEnsureServices = () => {
-      // replaced below once the deferred promise is created
-    };
+    const ensureServices = createDeferred();
     const ensureServicesForCell = vi.fn(async () => {
-      await new Promise<void>((resolve) => {
-        releaseEnsureServices = resolve;
-      });
+      await ensureServices.promise;
     });
 
     const app = createTestApp({ ensureServicesForCell });
@@ -1144,7 +1132,7 @@ describe("POST /api/cells/:id/setup/retry", () => {
       message: "Provisioning retry already in progress",
     });
 
-    releaseEnsureServices();
+    ensureServices.resolve();
 
     const firstRetryResponse = await firstRetryPromise;
     expect(firstRetryResponse.status).toBe(OK_STATUS);

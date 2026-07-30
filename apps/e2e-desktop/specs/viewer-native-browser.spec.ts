@@ -1,6 +1,11 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { expect, test } from "@playwright/test";
+import {
+  type ElectronApplication,
+  expect,
+  type Page,
+  test,
+} from "@playwright/test";
 import { launchDesktopApp, navigateInDesktopApp } from "./utils/desktop-app";
 import {
   createDesktopCell,
@@ -22,6 +27,44 @@ import {
 
 const VIEWER_STATE_TIMEOUT_MS = 15_000;
 
+const expectPermissionDenied = (
+  request: Promise<{ errorName: string | null; granted: boolean }>
+) =>
+  expect(request).resolves.toEqual({
+    errorName: "NotAllowedError",
+    granted: false,
+  });
+
+const expectFullscreen = (page: Page) =>
+  expect
+    .poll(() => page.evaluate(() => Boolean(document.fullscreenElement)))
+    .toBe(true);
+
+const activateSyncedBrowserView = async (
+  app: ElectronApplication,
+  page: Page,
+  rootUrl: string,
+  options: { previousId?: number; serviceId?: string } = {}
+) => {
+  const { previousId, serviceId = "web" } = options;
+  await syncDesktopViewerServiceTab(page, rootUrl, serviceId);
+  await expectBrowserViewCount(app, 0);
+  if (previousId !== undefined) {
+    await expectWebContentsDestroyed(app, previousId);
+  }
+  await page.evaluate(
+    (id) => window.hiveDesktop?.viewer.activateServiceTab(id),
+    serviceId
+  );
+  await expectBrowserView(app, { url: rootUrl });
+  await expectBrowserViewCount(app, 1);
+
+  const nextId = (await readDesktopBrowserView(app))?.id;
+  expect(nextId).toEqual(expect.any(Number));
+  expect(nextId).not.toBe(previousId);
+  return nextId as number;
+};
+
 test("loopback Hive renderer retains trusted UI permissions without microphone access", async () => {
   const rendererServer = createServer((_request, response) => {
     response.setHeader("content-type", "text/html");
@@ -41,22 +84,14 @@ test("loopback Hive renderer retains trusted UI permissions without microphone a
       fakeMediaDevices: true,
     });
     try {
-      await expect(
+      await expectPermissionDenied(
         requestMainRendererMedia(page, { audio: true })
-      ).resolves.toMatchObject({
-        errorName: "NotAllowedError",
-        granted: false,
-      });
+      );
       await expect(
         writeMainRendererClipboard(page, "hive-loopback-clipboard")
       ).resolves.toBeUndefined();
       await page.locator("#fullscreen").click();
-      await expect
-        .poll(
-          async () =>
-            await page.evaluate(() => Boolean(document.fullscreenElement))
-        )
-        .toBe(true);
+      await expectFullscreen(page);
     } finally {
       await app.close();
     }
@@ -101,12 +136,9 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
         { timeout: VIEWER_STATE_TIMEOUT_MS }
       )
       .toBe(true);
-    await expect(
+    await expectPermissionDenied(
       requestMainRendererMedia(page, { audio: true })
-    ).resolves.toMatchObject({
-      errorName: "NotAllowedError",
-      granted: false,
-    });
+    );
     await expect(
       writeMainRendererClipboard(page, "hive-desktop-clipboard")
     ).resolves.toBeUndefined();
@@ -124,10 +156,9 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
       width: expect.any(Number),
     });
 
-    const webRootUrl = (await readDesktopBrowserView(app))?.url;
-    expect(webRootUrl).toBeTruthy();
-
     const activeView = await readDesktopBrowserView(app);
+    const webRootUrl = activeView?.url;
+    expect(webRootUrl).toBeTruthy();
     expect(activeView?.width ?? 0).toBeGreaterThan(0);
     expect(activeView?.height ?? 0).toBeGreaterThan(0);
     const webContentsId = activeView?.id;
@@ -138,28 +169,16 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
       granted: true,
       trackState: "live",
     });
-    await expect(
+    await expectPermissionDenied(
       requestDesktopBrowserViewMedia(app, { video: true })
-    ).resolves.toMatchObject({
-      errorName: "NotAllowedError",
-      granted: false,
-    });
-    await expect(
+    );
+    await expectPermissionDenied(
       requestDesktopBrowserViewMedia(app, { audio: true, video: true })
-    ).resolves.toMatchObject({
-      errorName: "NotAllowedError",
-      granted: false,
-    });
-    await expect(
+    );
+    await expectPermissionDenied(
       requestUnownedLoopbackMedia(app, webRootUrl as string)
-    ).resolves.toMatchObject({
-      errorName: "NotAllowedError",
-      granted: false,
-    });
-    await expect(requestDesktopBrowserViewClipboard(app)).resolves.toEqual({
-      errorName: "NotAllowedError",
-      granted: false,
-    });
+    );
+    await expectPermissionDenied(requestDesktopBrowserViewClipboard(app));
 
     await docsTab.click();
 
@@ -169,66 +188,47 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
       url: expect.stringContaining("localhost"),
     });
 
-    const docsRootUrl = (await readDesktopBrowserView(app))?.url;
-    const docsWebContentsId = (await readDesktopBrowserView(app))?.id;
+    const docsView = await readDesktopBrowserView(app);
+    const docsRootUrl = docsView?.url;
+    const docsWebContentsId = docsView?.id;
     expect(docsRootUrl).toBeTruthy();
     expect(docsWebContentsId).toEqual(expect.any(Number));
     expect(docsRootUrl).not.toBe(webRootUrl);
     await expectBrowserViewCount(app, 1);
 
-    await syncDesktopViewerServiceTab(page, webRootUrl as string, "web");
-    await expectBrowserViewCount(app, 0);
-    await expectWebContentsDestroyed(app, docsWebContentsId as number);
-
-    await page.evaluate(async () => {
-      await window.hiveDesktop?.viewer.activateServiceTab("web");
-    });
-
-    await expectBrowserView(app, { url: webRootUrl });
-    const recreatedWebContentsId = (await readDesktopBrowserView(app))?.id;
-    expect(recreatedWebContentsId).toEqual(expect.any(Number));
+    const recreatedWebContentsId = await activateSyncedBrowserView(
+      app,
+      page,
+      webRootUrl as string,
+      { previousId: docsWebContentsId }
+    );
     expect(recreatedWebContentsId).not.toBe(webContentsId);
 
     await page.getByLabel("Fullscreen").click();
-    await expect
-      .poll(
-        async () =>
-          await page.evaluate(() => Boolean(document.fullscreenElement))
-      )
-      .toBe(true);
+    await expectFullscreen(page);
     await page.evaluate(async () => await document.exitFullscreen());
 
     await expect(startDesktopBrowserViewAudioCapture(app)).resolves.toEqual({
       granted: true,
       trackState: "live",
     });
-    await syncDesktopViewerServiceTab(page, docsRootUrl as string, "web");
-    await expectBrowserViewCount(app, 0);
-    await expectWebContentsDestroyed(app, recreatedWebContentsId as number);
-    await page.evaluate(async () => {
-      await window.hiveDesktop?.viewer.activateServiceTab("web");
-    });
-    await expectBrowserView(app, { url: docsRootUrl });
-    const changedRootWebContentsId = (await readDesktopBrowserView(app))?.id;
-    expect(changedRootWebContentsId).toEqual(expect.any(Number));
-    expect(changedRootWebContentsId).not.toBe(recreatedWebContentsId);
+    const changedRootWebContentsId = await activateSyncedBrowserView(
+      app,
+      page,
+      docsRootUrl as string,
+      { previousId: recreatedWebContentsId }
+    );
 
     await syncDesktopViewerServiceTab(page, "data:text/html,invalid", "web");
     await expectBrowserViewCount(app, 0);
     await expectWebContentsDestroyed(app, changedRootWebContentsId as number);
 
-    await syncDesktopViewerServiceTab(
+    const namedPortWebContentsId = await activateSyncedBrowserView(
+      app,
       page,
       webRootUrl as string,
-      "service-api:admin"
+      { serviceId: "service-api:admin" }
     );
-    await expectWebContentsDestroyed(app, recreatedWebContentsId as number);
-    await page.evaluate(async () => {
-      await window.hiveDesktop?.viewer.activateServiceTab("service-api:admin");
-    });
-    await expectBrowserView(app, { url: webRootUrl });
-    const namedPortWebContentsId = (await readDesktopBrowserView(app))?.id;
-    expect(namedPortWebContentsId).toEqual(expect.any(Number));
 
     await navigateInDesktopApp(page, "/");
 

@@ -3,22 +3,22 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
   createRunningServicesCell,
-  fetchActivity,
   requireApiUrl,
-  waitForCondition,
+  requireCellPaths,
+  waitForActivityTypes,
   waitForServiceStatuses as waitForStatuses,
 } from "../src/test-helpers";
 
-const EXPECTED_SERVICE_COUNT = 3;
 const API_OPTION_PATTERN = /api/i;
-
-function requireHiveHome(): string {
-  const hiveHome = process.env.HIVE_E2E_HIVE_HOME;
-  if (!hiveHome) {
-    throw new Error("HIVE_E2E_HIVE_HOME is required for service E2E tests");
-  }
-  return hiveHome;
-}
+const EXPECTED_SERVICE_PORTS = {
+  database: [{ name: "postgres", primary: true, protocol: "tcp" }],
+  api: [
+    { name: "http", primary: true, protocol: "http" },
+    { name: "metrics", primary: false, protocol: "tcp" },
+  ],
+  worker: [{ name: "control", primary: true, protocol: "tcp" }],
+} as const;
+const EXPECTED_SERVICE_COUNT = Object.keys(EXPECTED_SERVICE_PORTS).length;
 
 test.describe("service controls", () => {
   test("starts and stops services from the services panel", async ({
@@ -26,15 +26,7 @@ test.describe("service controls", () => {
   }) => {
     const apiUrl = requireApiUrl();
     const { cellId, services: runningServices } =
-      await createRunningServicesCell(page, apiUrl, {
-        name: `E2E Services ${Date.now()}`,
-        errorMessage: "Services did not become running after creation",
-        predicate: (services) =>
-          services.length === EXPECTED_SERVICE_COUNT &&
-          services.every(
-            (service) => service.status.toLowerCase() === "running"
-          ),
-      });
+      await createRunningServicesCell(page, apiUrl);
 
     const servicesByName = new Map(
       runningServices.map((service) => [service.name, service])
@@ -42,36 +34,15 @@ test.describe("service controls", () => {
     const database = servicesByName.get("database");
     const api = servicesByName.get("api");
     const worker = servicesByName.get("worker");
-    expect(database?.ports).toEqual([
-      expect.objectContaining({
-        name: "postgres",
-        primary: true,
-        protocol: "tcp",
-        portReachable: true,
-      }),
-    ]);
-    expect(api?.ports).toEqual([
-      expect.objectContaining({
-        name: "http",
-        primary: true,
-        protocol: "http",
-        portReachable: true,
-      }),
-      expect.objectContaining({
-        name: "metrics",
-        primary: false,
-        protocol: "tcp",
-        portReachable: true,
-      }),
-    ]);
-    expect(worker?.ports).toEqual([
-      expect.objectContaining({
-        name: "control",
-        primary: true,
-        protocol: "tcp",
-        portReachable: true,
-      }),
-    ]);
+    for (const [serviceName, expectedPorts] of Object.entries(
+      EXPECTED_SERVICE_PORTS
+    )) {
+      expect(servicesByName.get(serviceName)?.ports, serviceName).toEqual(
+        expectedPorts.map((port) =>
+          expect.objectContaining({ ...port, portReachable: true })
+        )
+      );
+    }
 
     const allocatedPorts = runningServices.flatMap((service) =>
       service.ports.map((port) => port.port)
@@ -86,29 +57,32 @@ test.describe("service controls", () => {
     await expect(page.getByLabel("http URL")).toBeVisible();
     await expect(page.getByLabel("metrics port")).toBeVisible();
 
-    const runtimeDir = join(requireHiveHome(), "runtime", "cells", cellId);
-    const [databaseMarker, apiMarker, workerMarker] = await Promise.all([
-      readJson(join(runtimeDir, "database-ready.json")),
-      readJson(join(runtimeDir, "api-ready.json")),
-      readJson(join(runtimeDir, "worker-ready.json")),
-    ]);
-    expect(databaseMarker).toMatchObject({
-      port: database?.env.DATABASE_PORT,
-      namedPort: database?.env.DATABASE_POSTGRES_PORT,
-      runtimeDir,
-    });
-    expect(apiMarker).toMatchObject({
-      databasePort: database?.env.DATABASE_POSTGRES_PORT,
-      httpPort: api?.env.API_HTTP_PORT,
-      primaryPort: api?.env.API_PORT,
-      metricsPort: api?.env.API_METRICS_PORT,
-      runtimeDir,
-      artifactsDir: join(requireHiveHome(), "artifacts", "cells", cellId),
-    });
-    expect(workerMarker).toMatchObject({
-      apiPort: api?.env.API_HTTP_PORT,
-      controlPort: worker?.env.WORKER_CONTROL_PORT,
-    });
+    const { artifactsDir, runtimeDir } = requireCellPaths(cellId);
+    const expectedMarkers = {
+      "database-ready.json": {
+        namedPort: database?.env.DATABASE_POSTGRES_PORT,
+        port: database?.env.DATABASE_PORT,
+        runtimeDir,
+      },
+      "api-ready.json": {
+        artifactsDir,
+        databasePort: database?.env.DATABASE_POSTGRES_PORT,
+        httpPort: api?.env.API_HTTP_PORT,
+        metricsPort: api?.env.API_METRICS_PORT,
+        primaryPort: api?.env.API_PORT,
+        runtimeDir,
+      },
+      "worker-ready.json": {
+        apiPort: api?.env.API_HTTP_PORT,
+        controlPort: worker?.env.WORKER_CONTROL_PORT,
+      },
+    };
+    for (const [fileName, expectedMarker] of Object.entries(expectedMarkers)) {
+      expect(
+        await readJson(join(runtimeDir, fileName)),
+        fileName
+      ).toMatchObject(expectedMarker);
+    }
 
     await waitForStatuses({
       apiUrl,
@@ -147,22 +121,18 @@ test.describe("service controls", () => {
         ),
     });
 
-    await waitForCondition({
+    const expectedActivityTypes = ["services.stop", "services.start"];
+    const events = await waitForActivityTypes({
+      apiUrl,
+      cellId,
+      types: expectedActivityTypes,
       timeoutMs: 30_000,
       errorMessage: "Expected service activity events were not recorded",
-      check: async () => {
-        const events = await fetchActivity(apiUrl, cellId);
-        const eventTypes = new Set(events.map((event) => event.type));
-        return (
-          eventTypes.has("services.stop") && eventTypes.has("services.start")
-        );
-      },
     });
-
-    const events = await fetchActivity(apiUrl, cellId);
     const eventTypes = new Set(events.map((event) => event.type));
-    expect(eventTypes.has("services.stop")).toBe(true);
-    expect(eventTypes.has("services.start")).toBe(true);
+    for (const type of expectedActivityTypes) {
+      expect(eventTypes.has(type), type).toBe(true);
+    }
   });
 });
 

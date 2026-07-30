@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   defineHiveConfig,
   hiveConfigSchema,
+  type ProcessService,
+  type Template,
   templateSchema,
 } from "../../config/schema";
 
-// Shared test data
 const SHARED_INPUTS = {
   commonServiceConfig: {
     type: "process" as const,
@@ -19,7 +20,6 @@ const SAMPLE_OPENCODE_CONFIG = {
   defaultModel: "big-pickle",
 } as const;
 
-// Expected output constants
 const EXPECTED = {
   templateType: "manual",
   serviceType: "process",
@@ -37,6 +37,19 @@ const createMinimalConfig = (includeOpencode: boolean) => ({
       type: "manual" as const,
     },
   },
+});
+
+const processService = (
+  overrides: Partial<Omit<ProcessService, "type">> = {}
+): ProcessService => ({ type: "process", run: "bun run dev", ...overrides });
+
+const template = (
+  overrides: Partial<Omit<Template, "id" | "label" | "type">> = {}
+): Template => ({
+  id: "services",
+  label: "Services",
+  type: "manual",
+  ...overrides,
 });
 
 describe("Template Schema", () => {
@@ -70,38 +83,33 @@ describe("Template Schema", () => {
   });
 
   it("validates named ports, dependencies, and readiness references", () => {
-    const result = templateSchema.parse({
-      id: "services",
-      label: "Services",
-      type: "manual",
-      services: {
-        api: {
-          type: "process",
-          run: "bun run api",
-          ports: {
-            http: { primary: true },
-            metrics: { protocol: "tcp" },
-          },
-          dependsOn: ["db"],
-          readiness: {
-            checks: [
-              {
-                type: "http",
-                port: "http",
-                path: "/health",
-              },
-              { type: "tcp", port: "metrics" },
-            ],
-            intervalMs: 25,
-          },
-          readyTimeoutMs: 2000,
+    const result = templateSchema.parse(
+      template({
+        services: {
+          api: processService({
+            run: "bun run api",
+            ports: {
+              http: { primary: true },
+              metrics: { protocol: "tcp" },
+            },
+            dependsOn: ["db"],
+            readiness: {
+              checks: [
+                {
+                  type: "http",
+                  port: "http",
+                  path: "/health",
+                },
+                { type: "tcp", port: "metrics" },
+              ],
+              intervalMs: 25,
+            },
+            readyTimeoutMs: 2000,
+          }),
+          db: processService({ run: "bun run db" }),
         },
-        db: {
-          type: "process",
-          run: "bun run db",
-        },
-      },
-    });
+      })
+    );
 
     expect(result.services?.api).toMatchObject({
       dependsOn: ["db"],
@@ -115,136 +123,27 @@ describe("Template Schema", () => {
     });
   });
 
-  it.each([
-    {
-      name: "empty named ports",
-      services: {
-        api: { type: "process", run: "api", ports: {} },
-      },
-      message: "ports must define at least one named port",
-    },
-    {
-      name: "missing primary named port",
-      services: {
-        api: {
-          type: "process",
-          run: "api",
-          ports: { http: {}, metrics: {} },
+  it("surfaces service graph validation issues", () => {
+    const result = templateSchema.safeParse(
+      template({
+        services: {
+          api: processService({
+            ports: { http: { primary: true } },
+            readiness: { checks: [{ type: "tcp", port: "metrics" }] },
+          }),
         },
-      },
-      message: "ports must mark exactly one port as primary",
-    },
-    {
-      name: "multiple primary named ports",
-      services: {
-        api: {
-          type: "process",
-          run: "api",
-          ports: {
-            http: { primary: true },
-            metrics: { primary: true },
-          },
-        },
-      },
-      message: "ports must mark exactly one port as primary",
-    },
-    {
-      name: "unknown dependency",
-      services: {
-        api: { type: "process", run: "api", dependsOn: ["db"] },
-      },
-      message: 'depends on unknown service "db"',
-    },
-    {
-      name: "self dependency",
-      services: {
-        api: { type: "process", run: "api", dependsOn: ["api"] },
-      },
-      message: "cannot depend on itself",
-    },
-    {
-      name: "dependency cycle",
-      services: {
-        api: { type: "process", run: "api", dependsOn: ["web"] },
-        web: { type: "process", run: "web", dependsOn: ["api"] },
-      },
-      message: "Service dependency cycle: api -> web -> api",
-    },
-    {
-      name: "colliding service environment names",
-      services: {
-        "api-worker": { type: "process", run: "api-one" },
-        api_worker: { type: "process", run: "api-two" },
-      },
-      message: "produce the same environment prefix",
-    },
-    {
-      name: "colliding port environment names",
-      services: {
-        api: {
-          type: "process",
-          run: "api",
-          ports: {
-            "admin-http": { primary: true },
-            admin_http: {},
-          },
-        },
-      },
-      message: "produce the same environment key",
-    },
-    {
-      name: "service name outside interpolation grammar",
-      services: {
-        "api.v1": { type: "process", run: "api" },
-      },
-      message: "Invalid key in record",
-    },
-    {
-      name: "cross-service generated environment key collision",
-      services: {
-        api: {
-          type: "process",
-          run: "api",
-          ports: { http: { primary: true } },
-        },
-        api_http: { type: "process", run: "api-http" },
-      },
-      message: 'Generated environment key "API_HTTP_PORT" collides',
-    },
-    {
-      name: "built-in service port alias collision",
-      services: {
-        service: { type: "process", run: "service" },
-      },
-      message: 'Generated environment key "SERVICE_PORT" collides',
-    },
-    {
-      name: "unknown readiness port",
-      services: {
-        api: {
-          type: "process",
-          run: "api",
-          ports: { http: { primary: true } },
-          readiness: {
-            checks: [{ type: "tcp", port: "metrics" }],
-          },
-        },
-      },
-      message: 'readiness references unknown port "metrics"',
-    },
-  ])("rejects $name", ({ services, message }) => {
-    const result = templateSchema.safeParse({
-      id: "invalid-services",
-      label: "Invalid services",
-      type: "manual",
-      services,
-    });
+      })
+    );
+    const invalidName = templateSchema.safeParse(
+      template({ services: { "api.v1": processService() } })
+    );
 
     expect(result.success).toBe(false);
+    expect(invalidName.success).toBe(false);
     if (!result.success) {
       expect(
         result.error.issues.map((issue) => issue.message).join("\n")
-      ).toContain(message);
+      ).toContain('readiness references unknown port "metrics"');
     }
   });
 

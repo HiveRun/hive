@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ProcessService } from "./schema";
 import {
   collectServiceGraphIssues,
   DEFAULT_SERVICE_PORT_NAME,
@@ -15,6 +16,14 @@ const hasEnvironmentCollision = (
   collectServiceGraphIssues(services).some((issue) =>
     issue.message.includes(message)
   );
+
+const processService = (
+  overrides: Partial<Omit<ProcessService, "type" | "run">> = {}
+): ProcessService => ({ type: "process", run: "test", ...overrides });
+
+const graphIssueMessages = (
+  services: Parameters<typeof collectServiceGraphIssues>[0]
+) => collectServiceGraphIssues(services).map((issue) => issue.message);
 
 describe("service graph", () => {
   it("provides an implicit primary port for legacy services", () => {
@@ -70,12 +79,74 @@ describe("service graph", () => {
   });
 
   it("reports dependency cycles with their path", () => {
-    expect(() =>
-      topologicallySortServiceNames({
-        web: { dependsOn: ["api"] },
-        api: { dependsOn: ["web"] },
-      })
-    ).toThrow("Service dependency cycle: web -> api -> web");
+    const services = {
+      web: processService({ dependsOn: ["api"] }),
+      api: processService({ dependsOn: ["web"] }),
+    };
+    const message = "Service dependency cycle: web -> api -> web";
+
+    expect(() => topologicallySortServiceNames(services)).toThrow(message);
+    expect(graphIssueMessages(services)).toContain(message);
+  });
+
+  it.each([
+    [
+      "empty named ports",
+      { api: processService({ ports: {} }) },
+      "ports must define at least one named port",
+    ],
+    [
+      "missing primary named port",
+      { api: processService({ ports: { http: {}, metrics: {} } }) },
+      "ports must mark exactly one port as primary",
+    ],
+    [
+      "multiple primary named ports",
+      {
+        api: processService({
+          ports: { http: { primary: true }, metrics: { primary: true } },
+        }),
+      },
+      "ports must mark exactly one port as primary",
+    ],
+    [
+      "unknown dependencies",
+      { api: processService({ dependsOn: ["db"] }) },
+      'depends on unknown service "db"',
+    ],
+    [
+      "self dependencies",
+      { api: processService({ dependsOn: ["api"] }) },
+      "cannot depend on itself",
+    ],
+    [
+      "service environment prefixes",
+      { "api-worker": processService(), api_worker: processService() },
+      "produce the same environment prefix",
+    ],
+    [
+      "port environment keys",
+      {
+        api: processService({
+          ports: { "admin-http": { primary: true }, admin_http: {} },
+        }),
+      },
+      "produce the same environment key",
+    ],
+    [
+      "unknown readiness ports",
+      {
+        api: processService({
+          ports: { http: { primary: true } },
+          readiness: { checks: [{ type: "tcp", port: "metrics" }] },
+        }),
+      },
+      'readiness references unknown port "metrics"',
+    ],
+  ])("reports %s", (_name, services, message) => {
+    expect(graphIssueMessages(services)).toEqual(
+      expect.arrayContaining([expect.stringContaining(message)])
+    );
   });
 
   it("detects collisions across primary and named port environment keys", () => {

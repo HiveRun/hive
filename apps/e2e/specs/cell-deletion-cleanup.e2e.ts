@@ -1,10 +1,11 @@
 import { readFile as readArtifactFile } from "node:fs/promises";
-import { join as joinPath } from "node:path";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
   createRunningServicesCell,
   fileExists,
   requireApiUrl,
+  requireCellPaths,
   waitForCondition,
 } from "../src/test-helpers";
 
@@ -28,12 +29,6 @@ test.describe("cell deletion cleanup", () => {
       await createRunningServicesCell(page, apiUrl, {
         name: `E2E Cleanup ${Date.now()}`,
         timeoutMs: 120_000,
-        errorMessage: "Services did not become running before delete",
-        predicate: (services) =>
-          services.length > 0 &&
-          services.some(
-            (service) => service.status.toLowerCase() === "running"
-          ),
       });
 
     const runningPids = runningServices
@@ -47,23 +42,23 @@ test.describe("cell deletion cleanup", () => {
     });
     expect(deleteResponse.ok).toBe(true);
 
-    await waitForCondition({
-      timeoutMs: DELETE_PROPAGATION_TIMEOUT_MS,
-      errorMessage: "Cell record still exists after deletion",
-      check: async () => {
-        const response = await fetch(`${apiUrl}/api/cells/${cellId}`);
-        return response.status === NOT_FOUND_STATUS;
-      },
-    });
-
-    await waitForCondition({
-      timeoutMs: DELETE_PROPAGATION_TIMEOUT_MS,
-      errorMessage: "Service endpoint still returns data after cell deletion",
-      check: async () => {
-        const response = await fetch(`${apiUrl}/api/cells/${cellId}/services`);
-        return response.status === NOT_FOUND_STATUS;
-      },
-    });
+    const deletedEndpoints = [
+      [
+        `${apiUrl}/api/cells/${cellId}`,
+        "Cell record still exists after deletion",
+      ],
+      [
+        `${apiUrl}/api/cells/${cellId}/services`,
+        "Service endpoint still returns data after cell deletion",
+      ],
+    ] as const;
+    for (const [url, errorMessage] of deletedEndpoints) {
+      await waitForCondition({
+        timeoutMs: DELETE_PROPAGATION_TIMEOUT_MS,
+        errorMessage,
+        check: async () => (await fetch(url)).status === NOT_FOUND_STATUS,
+      });
+    }
 
     await waitForCondition({
       timeoutMs: DELETE_PROPAGATION_TIMEOUT_MS,
@@ -72,17 +67,12 @@ test.describe("cell deletion cleanup", () => {
         Promise.resolve(runningPids.every((pid) => !isPidAlive(pid))),
     });
 
-    const hiveHome = process.env.HIVE_E2E_HIVE_HOME;
-    if (!hiveHome) {
-      throw new Error("HIVE_E2E_HIVE_HOME is required for deletion E2E tests");
-    }
-    const runtimeDir = joinPath(hiveHome, "runtime", "cells", cellId);
-    const artifactsDir = joinPath(hiveHome, "artifacts", "cells", cellId);
+    const { artifactsDir, runtimeDir } = requireCellPaths(cellId);
     expect(await fileExists(runtimeDir)).toBe(false);
     expect(await fileExists(artifactsDir)).toBe(true);
 
     const teardownLines = (
-      await readArtifactFile(joinPath(artifactsDir, "teardown.json"), "utf8")
+      await readArtifactFile(join(artifactsDir, "teardown.json"), "utf8")
     ).split("\n");
     expect(teardownLines[1]).toBe("complete");
     const teardown = JSON.parse(teardownLines[0] ?? "") as TeardownRecord;

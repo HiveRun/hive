@@ -3,38 +3,19 @@ import { isTrustedIpcSender } from "./ipc-trust";
 
 describe("IPC sender trust", () => {
   const activeContents = { id: 1 };
+  const trusted = () => true;
 
   it("accepts only the active trusted main contents", () => {
-    expect(
-      isTrustedIpcSender({
-        activeContents,
-        isTrusted: () => true,
-        sender: activeContents,
-      })
-    ).toBe(true);
+    expect(isTrustedIpcSender(activeContents, activeContents, trusted)).toBe(
+      true
+    );
   });
 
   it("rejects stale, arbitrary, and untrusted contents", () => {
+    expect(isTrustedIpcSender(activeContents, { id: 1 }, trusted)).toBe(false);
     expect(
-      isTrustedIpcSender({
-        activeContents,
-        isTrusted: () => true,
-        sender: { id: 1 },
-      })
+      isTrustedIpcSender(activeContents, activeContents, () => false)
     ).toBe(false);
-    expect(
-      isTrustedIpcSender({
-        activeContents,
-        isTrusted: () => false,
-        sender: activeContents,
-      })
-    ).toBe(false);
-    expect(
-      isTrustedIpcSender({
-        activeContents: null,
-        isTrusted: () => true,
-        sender: activeContents,
-      })
-    ).toBe(false);
+    expect(isTrustedIpcSender(null, activeContents, trusted)).toBe(false);
   });
 });

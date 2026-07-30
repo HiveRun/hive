@@ -121,3 +121,40 @@ describe("trusted renderer non-media permissions", () => {
     }
   );
 });
+
+describe("viewer media permissions", () => {
+  it("rejects an empty media security origin", () => {
+    const setPermissionCheckHandler = vi.fn();
+    const session = {
+      setDisplayMediaRequestHandler: vi.fn(),
+      setPermissionCheckHandler,
+      setPermissionRequestHandler: vi.fn(),
+    } as unknown as Session;
+    const viewerUrl = "http://127.0.0.1:4173/";
+    const contents = {
+      getURL: () => viewerUrl,
+      once: () => contents,
+    } as unknown as WebContents;
+    const controller = installMediaPermissionHandlers(session);
+    controller.registerViewer(contents, viewerUrl);
+
+    type PermissionCheckHandler = Parameters<
+      Session["setPermissionCheckHandler"]
+    >[0];
+    const handler = setPermissionCheckHandler.mock.calls[0]?.[0] as
+      | PermissionCheckHandler
+      | undefined;
+    if (!handler) {
+      throw new Error("Permission check handler was not installed");
+    }
+
+    expect(
+      handler(contents, "media", viewerUrl, {
+        isMainFrame: true,
+        mediaType: "audio",
+        requestingUrl: viewerUrl,
+        securityOrigin: "",
+      })
+    ).toBe(false);
+  });
+});

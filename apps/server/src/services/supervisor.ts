@@ -100,42 +100,29 @@ function resolveServiceStopCommandTimeoutMs(): number {
   );
 }
 
-function runWithCellLock(cellId: string, action: () => Promise<void>) {
-  const current = cellServiceLocks.get(cellId) ?? Promise.resolve();
+function runWithLock(
+  locks: Map<string, Promise<void>>,
+  key: string,
+  action: () => Promise<void>
+) {
+  const current = locks.get(key) ?? Promise.resolve();
   const next = current.catch(() => null).then(action);
-  cellServiceLocks.set(cellId, next);
-  next.then(
-    () => {
-      if (cellServiceLocks.get(cellId) === next) {
-        cellServiceLocks.delete(cellId);
-      }
-    },
-    () => {
-      if (cellServiceLocks.get(cellId) === next) {
-        cellServiceLocks.delete(cellId);
-      }
+  locks.set(key, next);
+  const cleanup = () => {
+    if (locks.get(key) === next) {
+      locks.delete(key);
     }
-  );
+  };
+  next.then(cleanup, cleanup);
   return next;
 }
 
+function runWithCellLock(cellId: string, action: () => Promise<void>) {
+  return runWithLock(cellServiceLocks, cellId, action);
+}
+
 function runWithServiceLock(serviceId: string, action: () => Promise<void>) {
-  const current = serviceStartLocks.get(serviceId) ?? Promise.resolve();
-  const next = current.catch(() => null).then(action);
-  serviceStartLocks.set(serviceId, next);
-  next.then(
-    () => {
-      if (serviceStartLocks.get(serviceId) === next) {
-        serviceStartLocks.delete(serviceId);
-      }
-    },
-    () => {
-      if (serviceStartLocks.get(serviceId) === next) {
-        serviceStartLocks.delete(serviceId);
-      }
-    }
-  );
-  return next;
+  return runWithLock(serviceStartLocks, serviceId, action);
 }
 
 export class CommandExecutionError extends Error {

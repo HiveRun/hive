@@ -95,7 +95,6 @@ const createMainWindow = async (
   window.webContents.on("will-redirect", guardNavigation);
   window.webContents.on("did-navigate", (_event, url) => {
     if (!mediaPermissions.activateTrustedRenderer(window.webContents, url)) {
-      mediaPermissions.unregisterTrustedRenderer(window.webContents);
       ipcRegistry.detachWindow(window);
     }
   });

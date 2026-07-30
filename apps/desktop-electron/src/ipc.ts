@@ -77,72 +77,78 @@ const createIpcHandlers = (
     return viewer;
   };
 
-  const getRuntimeInfo = () => getDesktopRuntimeInfo();
-
-  const notify = (input: NotifyInput) => {
-    if (!Notification.isSupported()) {
-      return { delivered: false } as const;
-    }
-
-    const notification = new Notification({
-      title: input.title,
-      body: input.body,
-    });
-    notification.show();
-
-    return { delivered: true } as const;
-  };
-
-  const viewerGetState = () => getViewer().getState();
-  const startupGetState = () => startupController.getState();
-  const startupRetry = async () => {
-    await startupController.retry();
-    return startupController.getState();
-  };
-  const viewerActivateServiceTab = async (serviceId: string) =>
-    await getViewer().activateServiceTab(serviceId);
-  const viewerShow = (bounds: ViewerBounds) => getViewer().show(bounds);
-  const viewerHide = () => getViewer().hide();
-  const viewerSetBounds = (bounds: ViewerBounds) =>
-    getViewer().setBounds(bounds);
-  const viewerNavigate = async (url: string) => await getViewer().loadURL(url);
-  const viewerGoBack = () => getViewer().goBack();
-  const viewerGoForward = () => getViewer().goForward();
-  const viewerResetActiveTab = async () => await getViewer().resetActiveTab();
-  const viewerReload = () => getViewer().reload();
-  const viewerOpenExternal = async () => await getViewer().openExternal();
-  const viewerSyncServiceTabs = async (tabs: ViewerServiceTab[]) =>
-    await getViewer().syncServiceTabs(tabs);
-  const appOpenExternal = async (url: string) =>
-    await openExternal(window, url);
-
   return {
-    getRuntimeInfo,
-    notify,
-    openExternal: appOpenExternal,
-    startupGetState,
-    startupRetry,
-    viewer: {
-      destroy: () => {
-        unsubscribeStartup();
-        viewer?.destroy();
-        viewer = null;
-      },
+    destroy: () => {
+      unsubscribeStartup();
+      viewer?.destroy();
+      viewer = null;
     },
-    viewerActivateServiceTab,
-    viewerGetState,
-    viewerGoBack,
-    viewerGoForward,
-    viewerHide,
-    viewerNavigate,
-    viewerOpenExternal,
-    viewerResetActiveTab,
-    viewerReload,
-    viewerSetBounds,
-    viewerShow,
-    viewerSyncServiceTabs,
+    getRuntimeInfo: getDesktopRuntimeInfo,
+    notify: (input: NotifyInput) => {
+      if (!Notification.isSupported()) {
+        return { delivered: false } as const;
+      }
+
+      new Notification({ title: input.title, body: input.body }).show();
+      return { delivered: true } as const;
+    },
+    openExternal: (url: string) => openExternal(window, url),
+    startupGetState: () => startupController.getState(),
+    startupRetry: async () => {
+      await startupController.retry();
+      return startupController.getState();
+    },
+    viewerActivateServiceTab: (serviceId: string) =>
+      getViewer().activateServiceTab(serviceId),
+    viewerGetState: () => getViewer().getState(),
+    viewerGoBack: () => getViewer().goBack(),
+    viewerGoForward: () => getViewer().goForward(),
+    viewerHide: () => getViewer().hide(),
+    viewerNavigate: (url: string) => getViewer().loadURL(url),
+    viewerOpenExternal: () => getViewer().openExternal(),
+    viewerResetActiveTab: () => getViewer().resetActiveTab(),
+    viewerReload: () => getViewer().reload(),
+    viewerSetBounds: (bounds: ViewerBounds) => getViewer().setBounds(bounds),
+    viewerShow: (bounds: ViewerBounds) => getViewer().show(bounds),
+    viewerSyncServiceTabs: (tabs: ViewerServiceTab[]) =>
+      getViewer().syncServiceTabs(tabs),
   };
 };
+
+type IpcListener = (handlers: IpcHandlers, args: unknown[]) => unknown;
+type IpcRequestChannel = (typeof IPC_CHANNELS)[Exclude<
+  keyof typeof IPC_CHANNELS,
+  "startupStateChanged" | "viewerStateChanged"
+>];
+
+const IPC_LISTENERS = {
+  [IPC_CHANNELS.getRuntimeInfo]: (handlers) => handlers.getRuntimeInfo(),
+  [IPC_CHANNELS.notify]: (handlers, [payload]) =>
+    handlers.notify(payload as NotifyInput),
+  [IPC_CHANNELS.openExternal]: (handlers, [url]) =>
+    handlers.openExternal(url as string),
+  [IPC_CHANNELS.startupGetState]: (handlers) => handlers.startupGetState(),
+  [IPC_CHANNELS.startupRetry]: (handlers) => handlers.startupRetry(),
+  [IPC_CHANNELS.viewerActivateServiceTab]: (handlers, [serviceId]) =>
+    handlers.viewerActivateServiceTab(serviceId as string),
+  [IPC_CHANNELS.viewerGetState]: (handlers) => handlers.viewerGetState(),
+  [IPC_CHANNELS.viewerGoBack]: (handlers) => handlers.viewerGoBack(),
+  [IPC_CHANNELS.viewerGoForward]: (handlers) => handlers.viewerGoForward(),
+  [IPC_CHANNELS.viewerHide]: (handlers) => handlers.viewerHide(),
+  [IPC_CHANNELS.viewerNavigate]: (handlers, [url]) =>
+    handlers.viewerNavigate(url as string),
+  [IPC_CHANNELS.viewerOpenExternal]: (handlers) =>
+    handlers.viewerOpenExternal(),
+  [IPC_CHANNELS.viewerResetActiveTab]: (handlers) =>
+    handlers.viewerResetActiveTab(),
+  [IPC_CHANNELS.viewerReload]: (handlers) => handlers.viewerReload(),
+  [IPC_CHANNELS.viewerSetBounds]: (handlers, [bounds]) =>
+    handlers.viewerSetBounds(bounds as ViewerBounds),
+  [IPC_CHANNELS.viewerShow]: (handlers, [bounds]) =>
+    handlers.viewerShow(bounds as ViewerBounds),
+  [IPC_CHANNELS.viewerSyncServiceTabs]: (handlers, [tabs]) =>
+    handlers.viewerSyncServiceTabs(tabs as ViewerServiceTab[]),
+} satisfies Record<IpcRequestChannel, IpcListener>;
 
 export const registerIpcHandlers = (options: {
   ipcMain: IpcMain;
@@ -162,11 +168,11 @@ export const registerIpcHandlers = (options: {
 
   const requireTrustedHandlers = (event: Electron.IpcMainInvokeEvent) => {
     if (
-      !isTrustedIpcSender({
-        activeContents: activeWindow?.webContents ?? null,
-        isTrusted: options.mediaPermissions.isTrustedRenderer,
-        sender: event.sender,
-      })
+      !isTrustedIpcSender(
+        activeWindow?.webContents ?? null,
+        event.sender,
+        options.mediaPermissions.isTrustedRenderer
+      )
     ) {
       throw new Error("IPC request rejected from untrusted sender");
     }
@@ -174,21 +180,18 @@ export const registerIpcHandlers = (options: {
     return requireHandlers();
   };
 
-  const handle = (
-    channel: string,
-    listener: (handlers: IpcHandlers, args: unknown[]) => unknown
-  ) => {
+  for (const [channel, listener] of Object.entries(IPC_LISTENERS)) {
     options.ipcMain.handle(channel, (event, ...args) =>
       listener(requireTrustedHandlers(event), args)
     );
-  };
+  }
 
   const attachWindow = (window: BrowserWindow) => {
     if (activeWindow === window && activeHandlers) {
       return activeHandlers;
     }
 
-    activeHandlers?.viewer.destroy();
+    activeHandlers?.destroy();
     activeWindow = window;
     activeHandlers = createIpcHandlers(
       window,
@@ -204,50 +207,10 @@ export const registerIpcHandlers = (options: {
       return;
     }
 
-    activeHandlers?.viewer.destroy();
+    activeHandlers?.destroy();
     activeHandlers = null;
     activeWindow = null;
   };
-
-  handle(IPC_CHANNELS.getRuntimeInfo, (handlers) => handlers.getRuntimeInfo());
-  handle(IPC_CHANNELS.notify, (handlers, [payload]) =>
-    handlers.notify(payload as NotifyInput)
-  );
-  handle(IPC_CHANNELS.openExternal, (handlers, [url]) =>
-    handlers.openExternal(url as string)
-  );
-  handle(IPC_CHANNELS.startupGetState, (handlers) =>
-    handlers.startupGetState()
-  );
-  handle(IPC_CHANNELS.startupRetry, (handlers) => handlers.startupRetry());
-  handle(IPC_CHANNELS.viewerGetState, (handlers) => handlers.viewerGetState());
-  handle(IPC_CHANNELS.viewerActivateServiceTab, (handlers, [serviceId]) =>
-    handlers.viewerActivateServiceTab(serviceId as string)
-  );
-  handle(IPC_CHANNELS.viewerShow, (handlers, [bounds]) =>
-    handlers.viewerShow(bounds as ViewerBounds)
-  );
-  handle(IPC_CHANNELS.viewerHide, (handlers) => handlers.viewerHide());
-  handle(IPC_CHANNELS.viewerSetBounds, (handlers, [bounds]) =>
-    handlers.viewerSetBounds(bounds as ViewerBounds)
-  );
-  handle(IPC_CHANNELS.viewerNavigate, (handlers, [url]) =>
-    handlers.viewerNavigate(url as string)
-  );
-  handle(IPC_CHANNELS.viewerGoBack, (handlers) => handlers.viewerGoBack());
-  handle(IPC_CHANNELS.viewerGoForward, (handlers) =>
-    handlers.viewerGoForward()
-  );
-  handle(IPC_CHANNELS.viewerResetActiveTab, (handlers) =>
-    handlers.viewerResetActiveTab()
-  );
-  handle(IPC_CHANNELS.viewerReload, (handlers) => handlers.viewerReload());
-  handle(IPC_CHANNELS.viewerOpenExternal, (handlers) =>
-    handlers.viewerOpenExternal()
-  );
-  handle(IPC_CHANNELS.viewerSyncServiceTabs, (handlers, [tabs]) =>
-    handlers.viewerSyncServiceTabs(tabs as ViewerServiceTab[])
-  );
 
   return {
     attachWindow,

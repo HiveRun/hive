@@ -17,7 +17,7 @@ import type {
   SpawnProcessOptions,
 } from "../../services/supervisor";
 import { createServiceSupervisor } from "../../services/supervisor";
-import { setupTestDb, testDb } from "../test-db";
+import { createDeferred, setupTestDb, testDb } from "../test-db";
 
 const silentLogger = {
   info() {
@@ -69,17 +69,11 @@ describe("service supervisor", () => {
   });
 
   it("starts process services with assigned ports and env", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-web");
-
-    const harness = createHarness();
-
-    await ensureProcessServices({
-      harness,
-      cell,
+    const { workspace, cell, harness } = await createScenario({
       templateId: "template-web",
-      services: {
-        web: serviceDefinition({ env: { NODE_ENV: "test" } }),
+      start: true,
+      template: {
+        services: { web: serviceDefinition({ env: { NODE_ENV: "test" } }) },
       },
     });
 
@@ -107,7 +101,10 @@ describe("service supervisor", () => {
   });
 
   it("captures runtime output in service terminal buffers", async () => {
-    const { cell, harness } = await createStartedHarness("template-web");
+    const { cell, harness } = await createScenario({
+      templateId: "template-web",
+      start: true,
+    });
 
     const service = await getOnlyService(cell.id);
 
@@ -116,8 +113,10 @@ describe("service supervisor", () => {
   });
 
   it("does not start duplicate services when pid is alive", async () => {
-    const { cell, harness } = await createStartedHarness("template-dup", {
-      server: serviceDefinition(),
+    const { cell, harness, template } = await createScenario({
+      templateId: "template-dup",
+      start: true,
+      template: { services: { server: serviceDefinition() } },
     });
 
     const service = await getOnlyService(cell.id);
@@ -134,14 +133,7 @@ describe("service supervisor", () => {
       throw new Error("unexpected kill");
     }) as unknown as typeof process.kill;
 
-    await ensureProcessServices({
-      harness,
-      cell,
-      templateId: "template-dup",
-      services: {
-        server: serviceDefinition(),
-      },
-    });
+    await harness.supervisor.ensureCellServices({ cell, template });
 
     process.kill = originalKill;
 
@@ -149,7 +141,10 @@ describe("service supervisor", () => {
   });
 
   it("does not start duplicate services on concurrent start", async () => {
-    const { cell, harness } = await createStartedHarness("template-concurrent");
+    const { cell, harness } = await createScenario({
+      templateId: "template-concurrent",
+      start: true,
+    });
 
     const service = await getOnlyService(cell.id);
 
@@ -168,16 +163,10 @@ describe("service supervisor", () => {
   });
 
   it("runs template setup commands before starting services", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-setup");
-
-    const harness = createHarness();
-
-    await ensureProcessServices({
-      harness,
-      cell,
+    const { harness } = await createScenario({
       templateId: "template-setup",
-      setup: ["echo template-setup"],
+      start: true,
+      template: { setup: ["echo template-setup"] },
     });
 
     expect(harness.processes).toHaveLength(2);
@@ -188,7 +177,10 @@ describe("service supervisor", () => {
   });
 
   it("can stop and restart a single service", async () => {
-    const { cell, harness } = await createStartedHarness("template-restart");
+    const { cell, harness } = await createScenario({
+      templateId: "template-restart",
+      start: true,
+    });
 
     const service = await getOnlyService(cell.id);
 
@@ -214,18 +206,14 @@ describe("service supervisor", () => {
   });
 
   it("restores persisted services during bootstrap", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-bootstrap");
-
     const persistedPort = await allocateFreePort();
-
-    await insertServiceRecord(workspace, cell.id, {
-      id: "svc-bootstrap",
-      status: "running",
-      port: persistedPort,
+    const { harness } = await createScenario({
+      templateId: "template-bootstrap",
+      serviceRecords: [
+        { id: "svc-bootstrap", status: "running", port: persistedPort },
+      ],
     });
 
-    const harness = createHarness();
     await harness.supervisor.bootstrap();
 
     expect(harness.processes).toHaveLength(1);
@@ -247,8 +235,6 @@ describe("service supervisor", () => {
   });
 
   it("skips dependent restarts after dependency readiness fails", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-bootstrap-dependency");
     const databaseDefinition = serviceDefinition({
       run: "start-database",
       readiness: { checks: [{ type: "tcp", port: "default" }] },
@@ -259,30 +245,33 @@ describe("service supervisor", () => {
       dependsOn: ["database"],
     });
     const workerDefinition = serviceDefinition({ run: "start-worker" });
+    const { harness } = await createScenario({
+      templateId: "template-bootstrap-dependency",
+      serviceRecords: [
+        {
+          id: "svc-bootstrap-database",
+          name: "database",
+          command: databaseDefinition.run,
+          definition: databaseDefinition,
+          status: "needs_resume",
+        },
+        {
+          id: "svc-bootstrap-api",
+          name: "api",
+          command: apiDefinition.run,
+          definition: apiDefinition,
+          status: "needs_resume",
+        },
+        {
+          id: "svc-bootstrap-worker",
+          name: "worker",
+          command: workerDefinition.run,
+          definition: workerDefinition,
+          status: "needs_resume",
+        },
+      ],
+    });
 
-    await insertServiceRecord(workspace, cell.id, {
-      id: "svc-bootstrap-database",
-      name: "database",
-      command: databaseDefinition.run,
-      definition: databaseDefinition,
-      status: "needs_resume",
-    });
-    await insertServiceRecord(workspace, cell.id, {
-      id: "svc-bootstrap-api",
-      name: "api",
-      command: apiDefinition.run,
-      definition: apiDefinition,
-      status: "needs_resume",
-    });
-    await insertServiceRecord(workspace, cell.id, {
-      id: "svc-bootstrap-worker",
-      name: "worker",
-      command: workerDefinition.run,
-      definition: workerDefinition,
-      status: "needs_resume",
-    });
-
-    const harness = createHarness();
     await harness.supervisor.bootstrap();
 
     expect(harness.processes.map((process) => process.options.command)).toEqual(
@@ -301,15 +290,9 @@ describe("service supervisor", () => {
   });
 
   it("restarts services after Hive shutdown stopAll", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-shutdown-restart");
-
-    const initialHarness = createHarness();
-
-    await ensureProcessServices({
-      harness: initialHarness,
-      cell,
+    const { cell, harness: initialHarness } = await createScenario({
       templateId: "template-shutdown-restart",
+      start: true,
     });
 
     await stopHarness(initialHarness);
@@ -341,14 +324,13 @@ describe("service supervisor", () => {
   });
 
   it("prevents in-flight and later starts once shutdown begins", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-shutdown-barrier");
-    const harness = createHarness();
-    const ensurePromise = ensureProcessServices({
-      harness,
-      cell,
+    const { cell, harness, template } = await createScenario({
       templateId: "template-shutdown-barrier",
-      setup: ["hold-setup"],
+      template: { setup: ["hold-setup"] },
+    });
+    const ensurePromise = harness.supervisor.ensureCellServices({
+      cell,
+      template,
     });
     const setupProcess = await harness.firstSpawned;
     expect(setupProcess.options.command).toBe("hold-setup");
@@ -367,11 +349,7 @@ describe("service supervisor", () => {
       harness.supervisor.startCellService(service.id)
     ).rejects.toThrow("Service supervisor is shutting down");
     await expect(
-      ensureProcessServices({
-        harness,
-        cell,
-        templateId: "template-shutdown-barrier",
-      })
+      harness.supervisor.ensureCellServices({ cell, template })
     ).rejects.toThrow("Service supervisor is shutting down");
     await expect(harness.supervisor.bootstrap()).rejects.toThrow(
       "Service supervisor is shutting down"
@@ -380,9 +358,10 @@ describe("service supervisor", () => {
   });
 
   it("does not restart manually stopped services during bootstrap", async () => {
-    const { cell, harness: initialHarness } = await createStartedHarness(
-      "template-manual-stop"
-    );
+    const { cell, harness: initialHarness } = await createScenario({
+      templateId: "template-manual-stop",
+      start: true,
+    });
 
     const service = await getOnlyService(cell.id);
 
@@ -403,18 +382,14 @@ describe("service supervisor", () => {
   });
 
   it("restarts only shutdown-marked services after mixed stop states", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-mixed-resume");
-
-    const initialHarness = createHarness();
-
-    await ensureProcessServices({
-      harness: initialHarness,
-      cell,
+    const { cell, harness: initialHarness } = await createScenario({
       templateId: "template-mixed-resume",
-      services: {
-        web: serviceDefinition(),
-        worker: serviceDefinition({ run: "bun run worker" }),
+      start: true,
+      template: {
+        services: {
+          web: serviceDefinition(),
+          worker: serviceDefinition({ run: "bun run worker" }),
+        },
       },
     });
 
@@ -469,18 +444,10 @@ describe("service supervisor", () => {
   });
 
   it("stops running services and clears pid", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-stop");
-
-    const harness = createHarness();
-
-    await ensureProcessServices({
-      harness,
-      cell,
+    const { cell, harness } = await createScenario({
       templateId: "template-stop",
-      services: {
-        server: serviceDefinition(),
-      },
+      start: true,
+      template: { services: { server: serviceDefinition() } },
     });
 
     await harness.supervisor.stopCellServices(cell.id, {
@@ -596,10 +563,10 @@ describe("service supervisor", () => {
   it("kills a surviving process group after the PTY leader exits", async () => {
     let groupAlive = true;
     const signals: Array<number | string | undefined> = [];
-    const { cell, harness } = await createStartedHarness(
-      "template-active-group",
-      undefined,
-      {
+    const { cell, harness } = await createScenario({
+      templateId: "template-active-group",
+      start: true,
+      harnessOptions: {
         processKill: (signal, exit) => {
           signals.push(signal);
           if (signal === "SIGTERM") {
@@ -608,8 +575,8 @@ describe("service supervisor", () => {
             groupAlive = false;
           }
         },
-      }
-    );
+      },
+    });
     const service = await getOnlyService(cell.id);
     const pid = harness.processes[0]?.handle.pid;
     if (!pid) {
@@ -634,20 +601,17 @@ describe("service supervisor", () => {
   });
 
   it("restarts a stopped service even when its previous port is occupied", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-port-collision");
     const occupiedPort = await allocateFreePort();
 
     const listener = createServer();
     await listenOnPort(listener, occupiedPort);
 
-    await insertServiceRecord(workspace, cell.id, {
-      id: "svc-port-collision",
-      status: "stopped",
-      port: occupiedPort,
+    const { harness } = await createScenario({
+      templateId: "template-port-collision",
+      serviceRecords: [
+        { id: "svc-port-collision", status: "stopped", port: occupiedPort },
+      ],
     });
-
-    const harness = createHarness();
 
     try {
       await harness.supervisor.startCellService("svc-port-collision");
@@ -676,33 +640,27 @@ describe("service supervisor", () => {
   });
 
   it("allocates named ports and interpolates legacy and named references", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-named-ports");
-    const harness = createHarness();
-
-    await ensureProcessServices({
-      harness,
-      cell,
+    const { cell, harness } = await createScenario({
       templateId: "template-named-ports",
-      services: {
-        web: serviceDefinition({
-          ports: {
-            http: { primary: true },
-            metrics: {},
-          },
-          env: {
-            SELF: "$PORT",
-            SELF_BRACED: bracedPortReference(),
-            API: "$PORT:api",
-            API_BRACED: bracedPortReference(":api"),
-            METRICS: "$PORT:web:metrics",
-            METRICS_BRACED: bracedPortReference(":web:metrics"),
-          },
-        }),
-        api: serviceDefinition({
-          run: "bun run api",
-          ports: { rpc: { primary: true } },
-        }),
+      start: true,
+      template: {
+        services: {
+          web: serviceDefinition({
+            ports: { http: { primary: true }, metrics: {} },
+            env: {
+              SELF: "$PORT",
+              SELF_BRACED: bracedPortReference(),
+              API: "$PORT:api",
+              API_BRACED: bracedPortReference(":api"),
+              METRICS: "$PORT:web:metrics",
+              METRICS_BRACED: bracedPortReference(":web:metrics"),
+            },
+          }),
+          api: serviceDefinition({
+            run: "bun run api",
+            ports: { rpc: { primary: true } },
+          }),
+        },
       },
     });
 
@@ -733,17 +691,11 @@ describe("service supervisor", () => {
   });
 
   it("does not reconcile changed port definitions over a live process", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-live-definition");
-    const harness = createHarness();
-    const initialTemplate: Template = {
-      id: "template-live-definition",
-      label: "Template",
-      type: "manual",
-      services: {
-        web: serviceDefinition({ ports: { http: { primary: true } } }),
-      },
-    };
+    const { cell, harness, template } = await createScenario({
+      templateId: "template-live-definition",
+      template: webServiceTemplate({ ports: { http: { primary: true } } }),
+    });
+    const initialTemplate = template;
     await harness.supervisor.ensureCellServices({
       cell,
       template: initialTemplate,
@@ -780,39 +732,32 @@ describe("service supervisor", () => {
   });
 
   it("serializes single-service stop and start operations", async () => {
-    let releaseStop: () => void = () => 0;
-    let stopStarted: () => void = () => 0;
-    const stopStartedPromise = new Promise<void>((resolve) => {
-      stopStarted = resolve;
-    });
-    const stopBlocked = new Promise<void>((resolve) => {
-      releaseStop = resolve;
-    });
-    const harness = createHarness({
-      runCommand: async (command) => {
-        if (command === "stop-web") {
-          stopStarted();
-          await stopBlocked;
-        }
-      },
-    });
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-serialized-actions");
-    await ensureProcessServices({
-      harness,
-      cell,
+    const stopStarted = createDeferred();
+    const stopBlocked = createDeferred();
+    const { cell, harness } = await createScenario({
       templateId: "template-serialized-actions",
-      services: { web: serviceDefinition({ stop: "stop-web" }) },
+      start: true,
+      template: {
+        services: { web: serviceDefinition({ stop: "stop-web" }) },
+      },
+      harnessOptions: {
+        runCommand: async (command) => {
+          if (command === "stop-web") {
+            stopStarted.resolve();
+            await stopBlocked.promise;
+          }
+        },
+      },
     });
     const service = await getOnlyService(cell.id);
 
     const stopping = harness.supervisor.stopCellService(service.id);
-    await stopStartedPromise;
+    await stopStarted.promise;
     const starting = harness.supervisor.startCellService(service.id);
     await Promise.resolve();
     expect(harness.processes).toHaveLength(1);
 
-    releaseStop();
+    stopBlocked.resolve();
     await stopping;
     await starting;
     expect(harness.processes).toHaveLength(2);
@@ -820,17 +765,11 @@ describe("service supervisor", () => {
   });
 
   it("does not start queued or provisioning services after deletion begins", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-deleting-start");
-    await insertServiceRecord(workspace, cell.id, {
-      id: "svc-deleting-start",
-      status: "stopped",
+    const { cell, harness, template } = await createScenario({
+      templateId: "template-deleting-start",
+      cell: { status: "deleting" },
+      serviceRecords: [{ id: "svc-deleting-start", status: "stopped" }],
     });
-    await testDb
-      .update(cells)
-      .set({ status: "deleting" })
-      .where(eq(cells.id, cell.id));
-    const harness = createHarness();
 
     await expect(
       harness.supervisor.startCellService("svc-deleting-start")
@@ -838,31 +777,20 @@ describe("service supervisor", () => {
     await expect(
       harness.supervisor.ensureCellServices({
         cell,
-        template: {
-          id: "template-deleting-start",
-          label: "Template",
-          type: "manual",
-          services: { web: serviceDefinition() },
-        },
+        template,
       })
     ).rejects.toThrow("is being deleted");
     expect(harness.processes).toHaveLength(0);
   });
 
   it("interpolates named port references in stop commands", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-stop-ports");
-    const harness = createHarness();
-    await ensureProcessServices({
-      harness,
-      cell,
+    const { cell, harness } = await createScenario({
       templateId: "template-stop-ports",
-      services: {
-        web: serviceDefinition({
-          ports: { http: { primary: true }, metrics: {} },
-          stop: "stop-web $PORT:web:metrics",
-        }),
-      },
+      start: true,
+      template: webServiceTemplate({
+        ports: { http: { primary: true }, metrics: {} },
+        stop: "stop-web $PORT:web:metrics",
+      }),
     });
     const process = firstProcess(harness, "Expected web process");
 
@@ -876,15 +804,16 @@ describe("service supervisor", () => {
   it("bounds a hanging stop command and leaves the service stopped", async () => {
     const previousTimeout = process.env.HIVE_SERVICE_STOP_COMMAND_TIMEOUT_MS;
     process.env.HIVE_SERVICE_STOP_COMMAND_TIMEOUT_MS = "5";
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-stop-timeout");
-    const harness = createHarness({ useDefaultRunCommand: true });
+    const { cell, harness } = await createScenario({
+      templateId: "template-stop-timeout",
+      harnessOptions: { useDefaultRunCommand: true },
+    });
     try {
-      await ensureProcessServices({
-        harness,
+      await harness.supervisor.ensureCellServices({
         cell,
-        templateId: "template-stop-timeout",
-        services: { web: serviceDefinition({ stop: "stop-hang" }) },
+        template: templateDefinition("template-stop-timeout", {
+          services: { web: serviceDefinition({ stop: "stop-hang" }) },
+        }),
       });
 
       await expect(
@@ -901,9 +830,10 @@ describe("service supervisor", () => {
   });
 
   it("retains legacy primary aliases for implicit default ports", async () => {
-    const { cell, harness } = await createStartedHarness(
-      "template-legacy-port"
-    );
+    const { cell, harness } = await createScenario({
+      templateId: "template-legacy-port",
+      start: true,
+    });
     const process = firstProcess(harness, "Expected legacy service process");
 
     expect(process.options.env.PORT).toBe(process.options.env.WEB_PORT);
@@ -917,19 +847,12 @@ describe("service supervisor", () => {
   });
 
   it("makes allocated service ports available to template setup", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-setup-ports");
-    const harness = createHarness();
-
-    await ensureProcessServices({
-      harness,
-      cell,
+    const { cell, harness } = await createScenario({
       templateId: "template-setup-ports",
-      setup: ["echo template-setup"],
-      services: {
-        web: serviceDefinition({
-          ports: { http: { primary: true } },
-        }),
+      start: true,
+      template: {
+        setup: ["echo template-setup"],
+        ...webServiceTemplate({ ports: { http: { primary: true } } }),
       },
     });
 
@@ -947,26 +870,23 @@ describe("service supervisor", () => {
   });
 
   it("runs teardown commands sequentially with durable env and persisted named ports", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-teardown");
-    const harness = createHarness();
-    const template: Template = {
-      id: "template-teardown",
-      label: "Template",
-      type: "manual",
-      env: {
-        METRICS_URL: `http://localhost:${bracedPortReference(":web:metrics")}`,
+    const { workspace, cell, harness, template } = await createScenario({
+      templateId: "template-teardown",
+      template: {
+        env: {
+          METRICS_URL: `http://localhost:${bracedPortReference(":web:metrics")}`,
+        },
+        teardown: [
+          `cleanup-one ${bracedPortReference(":web:http")}`,
+          "cleanup-two $PORT:web:metrics",
+        ],
+        services: {
+          web: serviceDefinition({
+            ports: { http: { primary: true }, metrics: {} },
+          }),
+        },
       },
-      teardown: [
-        `cleanup-one ${bracedPortReference(":web:http")}`,
-        "cleanup-two $PORT:web:metrics",
-      ],
-      services: {
-        web: serviceDefinition({
-          ports: { http: { primary: true }, metrics: {} },
-        }),
-      },
-    };
+    });
 
     await harness.supervisor.ensureCellServices({ cell, template });
     await harness.supervisor.stopCellServices(cell.id, { releasePorts: true });
@@ -1005,16 +925,10 @@ describe("service supervisor", () => {
   });
 
   it("does not run template teardown during stop or daemon shutdown", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-no-stop-teardown");
-    const harness = createHarness();
-    const template: Template = {
-      id: "template-no-stop-teardown",
-      label: "Template",
-      type: "manual",
-      teardown: ["cleanup-never"],
-      services: { web: serviceDefinition() },
-    };
+    const { cell, harness, template } = await createScenario({
+      templateId: "template-no-stop-teardown",
+      template: { teardown: ["cleanup-never"] },
+    });
 
     await harness.supervisor.ensureCellServices({ cell, template });
     await harness.supervisor.stopCellServices(cell.id);
@@ -1028,9 +942,10 @@ describe("service supervisor", () => {
   });
 
   it("applies the configurable teardown command timeout", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-teardown-timeout");
-    const harness = createHarness({ autoExitTeardown: false });
+    const { cell, harness } = await createScenario({
+      templateId: "template-teardown-timeout",
+      harnessOptions: { autoExitTeardown: false },
+    });
     const previousTimeout =
       process.env.HIVE_TEMPLATE_TEARDOWN_COMMAND_TIMEOUT_MS;
     process.env.HIVE_TEMPLATE_TEARDOWN_COMMAND_TIMEOUT_MS = "5";
@@ -1039,12 +954,9 @@ describe("service supervisor", () => {
       await expect(
         harness.supervisor.runCellTeardown({
           cell,
-          template: {
-            id: "template-teardown-timeout",
-            label: "Template",
-            type: "manual",
+          template: templateDefinition("template-teardown-timeout", {
             teardown: ["cleanup-hang"],
-          },
+          }),
           reason: "provisioning_rollback",
         })
       ).rejects.toThrow("timed out after 5ms");
@@ -1054,21 +966,18 @@ describe("service supervisor", () => {
   });
 
   it("starts dependencies first and bulk stops in reverse order", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-dependencies");
-    const harness = createHarness();
-
-    await ensureProcessServices({
-      harness,
-      cell,
+    const { cell, harness } = await createScenario({
       templateId: "template-dependencies",
-      services: {
-        web: serviceDefinition({
-          run: "start-web",
-          stop: "stop-web",
-          dependsOn: ["db"],
-        }),
-        db: serviceDefinition({ run: "start-db", stop: "stop-db" }),
+      start: true,
+      template: {
+        services: {
+          web: serviceDefinition({
+            run: "start-web",
+            stop: "stop-web",
+            dependsOn: ["db"],
+          }),
+          db: serviceDefinition({ run: "start-db", stop: "stop-db" }),
+        },
       },
     });
 
@@ -1080,18 +989,15 @@ describe("service supervisor", () => {
   });
 
   it("starts the dependency closure when a single service is started", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-dependency-closure");
-    const harness = createHarness();
-
-    await ensureProcessServices({
-      harness,
-      cell,
+    const { cell, harness } = await createScenario({
       templateId: "template-dependency-closure",
-      services: {
-        web: serviceDefinition({ run: "start-web", dependsOn: ["api"] }),
-        api: serviceDefinition({ run: "start-api", dependsOn: ["db"] }),
-        db: serviceDefinition({ run: "start-db" }),
+      start: true,
+      template: {
+        services: {
+          web: serviceDefinition({ run: "start-web", dependsOn: ["api"] }),
+          api: serviceDefinition({ run: "start-api", dependsOn: ["db"] }),
+          db: serviceDefinition({ run: "start-db" }),
+        },
       },
     });
     await harness.supervisor.stopCellServices(cell.id);
@@ -1116,9 +1022,9 @@ describe("service supervisor", () => {
   });
 
   it("rejects unsupported services before template setup", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-docker");
-    const harness = createHarness();
+    const { cell, harness } = await createScenario({
+      templateId: "template-docker",
+    });
     const template = {
       id: "template-docker",
       label: "Docker",
@@ -1140,24 +1046,24 @@ describe("service supervisor", () => {
   });
 
   it("marks a service error when readiness reaches its deadline", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-readiness-timeout");
-    const harness = createHarness();
+    const { cell, harness } = await createScenario({
+      templateId: "template-readiness-timeout",
+    });
 
     await expect(
-      ensureProcessServices({
-        harness,
+      harness.supervisor.ensureCellServices({
         cell,
-        templateId: "template-readiness-timeout",
-        services: {
-          web: serviceDefinition({
-            readiness: {
-              checks: [{ type: "tcp", port: "default" }],
-              intervalMs: 5,
-            },
-            readyTimeoutMs: 30,
-          }),
-        },
+        template: templateDefinition("template-readiness-timeout", {
+          services: {
+            web: serviceDefinition({
+              readiness: {
+                checks: [{ type: "tcp", port: "default" }],
+                intervalMs: 5,
+              },
+              readyTimeoutMs: 30,
+            }),
+          },
+        }),
       })
     ).rejects.toThrow("readiness timed out after 30ms");
 
@@ -1168,22 +1074,22 @@ describe("service supervisor", () => {
   });
 
   it("marks a spawned process running only after readiness succeeds", async () => {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, "template-readiness-success");
-    const harness = createHarness();
-    const starting = ensureProcessServices({
-      harness,
-      cell,
+    const { cell, harness } = await createScenario({
       templateId: "template-readiness-success",
-      services: {
-        web: serviceDefinition({
-          readiness: {
-            checks: [{ type: "tcp", port: "default" }],
-            intervalMs: 5,
-          },
-          readyTimeoutMs: READINESS_SUCCESS_TIMEOUT_MS,
-        }),
-      },
+    });
+    const starting = harness.supervisor.ensureCellServices({
+      cell,
+      template: templateDefinition("template-readiness-success", {
+        services: {
+          web: serviceDefinition({
+            readiness: {
+              checks: [{ type: "tcp", port: "default" }],
+              intervalMs: 5,
+            },
+            readyTimeoutMs: READINESS_SUCCESS_TIMEOUT_MS,
+          }),
+        },
+      }),
     });
     const spawned = await harness.firstSpawned;
     const whileWaiting = await getOnlyService(cell.id);
@@ -1201,21 +1107,26 @@ describe("service supervisor", () => {
     }
   });
 
-  async function insertCell(workspacePath: string, templateId: string) {
+  async function insertCell(options: {
+    workspacePath: string;
+    templateId: string;
+    overrides?: Partial<typeof cells.$inferInsert>;
+  }) {
     const [cell] = await testDb
       .insert(cells)
       .values({
         id: randomUUID(),
-        name: `Cell-${templateId}`,
-        templateId,
-        workspacePath,
-        workspaceId: `workspace-${templateId}`,
+        name: `Cell-${options.templateId}`,
+        templateId: options.templateId,
+        workspacePath: options.workspacePath,
+        workspaceId: `workspace-${options.templateId}`,
         workspaceRootPath: resolveWorkspaceRoot(),
         description: null,
         opencodeSessionId: null,
         createdAt: new Date(),
         status: "ready",
         lastSetupError: null,
+        ...options.overrides,
       })
       .returning();
 
@@ -1237,42 +1148,55 @@ describe("service supervisor", () => {
     };
   }
 
-  async function ensureProcessServices({
-    harness,
-    cell,
-    templateId,
-    services = { web: serviceDefinition() },
-    setup,
-  }: {
-    harness: ReturnType<typeof createHarness>;
-    cell: Awaited<ReturnType<typeof insertCell>>;
-    templateId: string;
-    services?: Record<string, ReturnType<typeof serviceDefinition>>;
-    setup?: string[];
-  }) {
-    await harness.supervisor.ensureCellServices({
-      cell,
-      template: {
-        id: templateId,
-        label: "Template",
-        type: "manual",
-        setup,
-        services,
-      },
-    });
+  function templateDefinition(
+    templateId: string,
+    overrides: Partial<Omit<Template, "id" | "label" | "type">> = {}
+  ): Template {
+    return {
+      id: templateId,
+      label: "Template",
+      type: "manual",
+      services: { web: serviceDefinition() },
+      ...overrides,
+    };
   }
 
-  async function createStartedHarness(
-    templateId: string,
-    services?: Record<string, ReturnType<typeof serviceDefinition>>,
-    harnessOptions?: Parameters<typeof createHarness>[0]
-  ) {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, templateId);
-    const harness = createHarness(harnessOptions);
+  function webServiceTemplate(service: Partial<Omit<ProcessService, "type">>) {
+    return { services: { web: serviceDefinition(service) } };
+  }
 
-    await ensureProcessServices({ harness, cell, templateId, services });
-    return { workspace, cell, harness };
+  async function createScenario(options: {
+    templateId: string;
+    start?: boolean;
+    template?: Partial<Omit<Template, "id" | "label" | "type">>;
+    harnessOptions?: Parameters<typeof createHarness>[0];
+    serviceRecords?: Partial<typeof cellServices.$inferInsert>[];
+    cell?: Partial<typeof cells.$inferInsert>;
+  }) {
+    const workspace = await createWorkspaceDir();
+    const cell = await insertCell({
+      workspacePath: workspace,
+      templateId: options.templateId,
+      overrides: options.cell,
+    });
+    const harness = createHarness(options.harnessOptions);
+    const template = templateDefinition(options.templateId, options.template);
+
+    if (options.serviceRecords?.length) {
+      await testDb.insert(cellServices).values(
+        options.serviceRecords.map((overrides) =>
+          serviceRecordDefinition({
+            workspace,
+            cellId: cell.id,
+            overrides,
+          })
+        )
+      );
+    }
+    if (options.start) {
+      await harness.supervisor.ensureCellServices({ cell, template });
+    }
+    return { workspace, cell, harness, template };
   }
 
   async function getOnlyService(cellId: string) {
@@ -1288,19 +1212,19 @@ describe("service supervisor", () => {
     return service;
   }
 
-  async function insertServiceRecord(
-    workspace: string,
-    cellId: string,
-    overrides: Partial<typeof cellServices.$inferInsert>
-  ) {
+  function serviceRecordDefinition(options: {
+    workspace: string;
+    cellId: string;
+    overrides?: Partial<typeof cellServices.$inferInsert>;
+  }): typeof cellServices.$inferInsert {
     const definition = serviceDefinition({ env: {} });
-    await testDb.insert(cellServices).values({
+    return {
       id: "svc-test",
-      cellId,
+      cellId: options.cellId,
       name: "web",
       type: "process",
       command: definition.run,
-      cwd: workspace,
+      cwd: options.workspace,
       env: {},
       status: "running",
       port: null,
@@ -1309,8 +1233,8 @@ describe("service supervisor", () => {
       definition,
       createdAt: new Date(),
       updatedAt: new Date(),
-      ...overrides,
-    });
+      ...options.overrides,
+    };
   }
 
   async function seedPersistedProcessService(
@@ -1318,13 +1242,16 @@ describe("service supervisor", () => {
     pid: number,
     instanceId = "expected-instance"
   ) {
-    const workspace = await createWorkspaceDir();
-    const cell = await insertCell(workspace, `template-${serviceId}`);
-    await insertServiceRecord(workspace, cell.id, {
-      id: serviceId,
-      status: "running",
-      pid,
-      env: { HIVE_SERVICE_INSTANCE_ID: instanceId },
+    await createScenario({
+      templateId: `template-${serviceId}`,
+      serviceRecords: [
+        {
+          id: serviceId,
+          status: "running",
+          pid,
+          env: { HIVE_SERVICE_INSTANCE_ID: instanceId },
+        },
+      ],
     });
   }
 
@@ -1396,35 +1323,29 @@ describe("service supervisor", () => {
   ) {
     const processes: FakeProcess[] = [];
     const runCommandCalls: string[] = [];
-    let resolveFirstSpawned!: (process: FakeProcess) => void;
-    const firstSpawned = new Promise<FakeProcess>((resolveSpawned) => {
-      resolveFirstSpawned = resolveSpawned;
-    });
+    const firstSpawned = createDeferred<FakeProcess>();
     let pidCounter = 10_000;
     let clock = Date.now();
     const terminalRuntime = createServiceTerminalRuntime();
 
     const spawnProcess: SpawnProcess = (options) => {
-      let exit!: (code: number) => void;
-      const exited = new Promise<number>((resolveExit) => {
-        exit = resolveExit;
-      });
+      const exited = createDeferred<number>();
 
       const handle: ProcessHandle = {
         pid: pidCounter++,
         kill: (signal) => {
           if (harnessOptions.processKill) {
-            harnessOptions.processKill(signal, exit, handle.pid);
+            harnessOptions.processKill(signal, exited.resolve, handle.pid);
             return;
           }
-          exit(0);
+          exited.resolve(0);
         },
-        exited,
+        exited: exited.promise,
       };
 
-      const process = { options, exit, handle };
+      const process = { options, exit: exited.resolve, handle };
       processes.push(process);
-      resolveFirstSpawned(process);
+      firstSpawned.resolve(process);
       if (
         options.command.includes("template-setup") ||
         (options.command.startsWith("cleanup-") &&
@@ -1433,7 +1354,7 @@ describe("service supervisor", () => {
         queueMicrotask(() => {
           options.onData?.("template setup complete\n");
           options.onExit?.({ exitCode: 0, signal: null });
-          exit(0);
+          exited.resolve(0);
         });
       } else {
         queueMicrotask(() => {
@@ -1465,7 +1386,7 @@ describe("service supervisor", () => {
       processes,
       runCommandCalls,
       terminalRuntime,
-      firstSpawned,
+      firstSpawned: firstSpawned.promise,
     };
   }
 

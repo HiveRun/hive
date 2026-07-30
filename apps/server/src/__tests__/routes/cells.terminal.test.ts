@@ -2,7 +2,6 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { cells } from "../../schema/cells";
 import { setupTestDb, testDb } from "../test-db";
 import {
-  assertTerminalStreamEnvironment,
   createCellRouteTestApp,
   createCellRouteTestDependencies,
   createCellTerminalRouteHarness,
@@ -11,11 +10,12 @@ import {
   expectPtyRestartResponse,
   expectPtyStreamData,
   expectSeededPtyResize,
+  expectTerminalEnvironment,
   handlePostRouteRequest,
   openMockWebSocket,
+  readTerminalStreamEnvironment,
   seedRouteCell,
-  seedRouteService,
-  seedRouteServicePort,
+  seedRouteCellAndServiceWithPorts,
 } from "./cells-route-test-helpers";
 
 const TEST_CELL_ID = "test-cell-id";
@@ -98,31 +98,26 @@ describe("Cell terminal routes", () => {
   });
 
   it("passes durable cell paths and persisted named ports to terminals", async () => {
-    await seedCell();
-    await seedRouteService({
-      id: "terminal-api-service",
-      cellId: TEST_CELL_ID,
-      name: "api",
-    });
-    await seedRouteServicePort({
-      serviceId: "terminal-api-service",
-      name: "rpc",
-      port: 43_101,
-      primary: true,
-    });
-    await seedRouteServicePort({
-      serviceId: "terminal-api-service",
-      name: "metrics",
-      port: 43_102,
+    await seedRouteCellAndServiceWithPorts({
+      cell: { id: TEST_CELL_ID, name: "Terminal Cell" },
+      service: { id: "terminal-api-service", name: "api" },
+      ports: [
+        { name: "rpc", port: 43_101, primary: true },
+        { name: "metrics", port: 43_102 },
+      ],
     });
     const harness = createTerminalHarness();
     const app = createTerminalTestApp(harness);
 
-    await assertTerminalStreamEnvironment(
+    const environment = await readTerminalStreamEnvironment(
       app,
       `/api/cells/${TEST_CELL_ID}/terminal/stream`,
-      () => harness.ensureSession.mock.calls[0]?.[0]?.environment,
-      { cellId: TEST_CELL_ID, ports: TERMINAL_PORT_ENVIRONMENT }
+      () => harness.ensureSession.mock.calls[0]?.[0]?.environment
+    );
+    expectTerminalEnvironment(
+      environment,
+      TEST_CELL_ID,
+      TERMINAL_PORT_ENVIRONMENT
     );
   });
 

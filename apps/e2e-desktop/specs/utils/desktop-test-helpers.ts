@@ -137,13 +137,6 @@ export async function expectWebContentsDestroyed(
     .toBe(true);
 }
 
-export async function readDesktopBrowserViewCount(app: ElectronApplication) {
-  return await app.evaluate(
-    ({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0]?.getBrowserViews().length ?? 0
-  );
-}
-
 async function executeInDesktopBrowserView<Result>(
   app: ElectronApplication,
   source: string
@@ -299,9 +292,14 @@ export async function expectBrowserViewCount(
   expected: number
 ) {
   await expect
-    .poll(async () => await readDesktopBrowserViewCount(app), {
-      timeout: 15_000,
-    })
+    .poll(
+      async () =>
+        await app.evaluate(
+          ({ BrowserWindow }) =>
+            BrowserWindow.getAllWindows()[0]?.getBrowserViews().length ?? 0
+        ),
+      { timeout: 15_000 }
+    )
     .toBe(expected);
 }
 
