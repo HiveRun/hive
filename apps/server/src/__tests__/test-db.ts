@@ -37,6 +37,7 @@ export async function setupTestDb() {
       const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
       const migrationsFolder = join(packageRoot, "src", "migrations");
       await migrate(testDb, { migrationsFolder });
+      sqlite.exec("PRAGMA foreign_keys = ON;");
     })();
   }
 

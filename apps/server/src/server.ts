@@ -210,6 +210,7 @@ const runMigrations = async (): Promise<void> => {
 
     const migrationsFolder = resolveMigrationsDirectory();
     await migrate(DatabaseService.db, { migrationsFolder });
+    DatabaseService.db.$client.exec("PRAGMA foreign_keys = ON;");
     process.stderr.write("Database migrations applied.\n");
   } catch (error) {
     process.stderr.write(

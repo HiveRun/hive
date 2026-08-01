@@ -13,6 +13,7 @@ import {
   vi,
 } from "vitest";
 import { cells } from "../../schema/cells";
+import { cellServicePorts, cellServices } from "../../schema/services";
 import { deleteCellWithLifecycle } from "../../services/cell-delete-lifecycle";
 import { ensureCellEnvironment } from "../../services/cell-environment";
 import { requireCellAvailableForRuntime } from "../../services/cell-runtime-guard";
@@ -25,6 +26,7 @@ import {
   createResolvedCleanupMocks,
   deleteRouteCellById,
   seedRouteCell,
+  seedRouteCellAndServiceWithPorts,
 } from "./cells-route-test-helpers";
 
 const CELL_ID = "delete-teardown-cell";
@@ -142,6 +144,31 @@ describe("cell deletion teardown lifecycle", () => {
     ).toHaveLength(0);
     await expect(access(environment.HIVE_CELL_RUNTIME_DIR)).rejects.toThrow();
     await access(environment.HIVE_CELL_ARTIFACTS_DIR);
+  });
+
+  it("cascades persisted service and port rows when deleting a cell", async () => {
+    await seedRouteCellAndServiceWithPorts({
+      cell: { id: CELL_ID, name: "Delete service records" },
+      service: { cellId: CELL_ID, id: "delete-service" },
+      ports: [{ name: "http", port: 31_337, primary: true }],
+    });
+    const app = createDeleteTestApp(createResolvedCleanupMocks());
+
+    const response = await deleteRouteCellById(app, CELL_ID);
+
+    expect(response.status).toBe(HTTP_OK);
+    expect(
+      await testDb
+        .select()
+        .from(cellServices)
+        .where(eq(cellServices.cellId, CELL_ID))
+    ).toHaveLength(0);
+    expect(
+      await testDb
+        .select()
+        .from(cellServicePorts)
+        .where(eq(cellServicePorts.serviceId, "delete-service"))
+    ).toHaveLength(0);
   });
 
   it("does not run teardown or remove resources after service stop fails", async () => {

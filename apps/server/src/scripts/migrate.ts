@@ -20,6 +20,7 @@ async function runMigrations() {
   }
 
   await migrate(db, { migrationsFolder });
+  sqlite.exec("PRAGMA foreign_keys = ON;");
   console.log("✅ Database migrations complete");
   sqlite.close();
 }
