@@ -8,6 +8,7 @@ const cellStatusValues = [
   "deleting",
 ] as const;
 export type CellStatus = (typeof cellStatusValues)[number];
+type CellDeletionPhase = "teardown_complete" | `teardown:${string}:${number}`;
 
 export const cells = sqliteTable("cells", {
   id: text("id").primaryKey(),
@@ -26,6 +27,7 @@ export const cells = sqliteTable("cells", {
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   status: text("status").notNull().default("ready"),
   lastSetupError: text("last_setup_error"),
+  deletionPhase: text("deletion_phase").$type<CellDeletionPhase>(),
   branchName: text("branch_name"),
   baseCommit: text("base_commit"),
 });

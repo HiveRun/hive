@@ -35,6 +35,8 @@ const EXPECTED_NAMED_PORT_CLAIMS = 3;
 const EXPECTED_PRIMARY_PORT_CLAIMS = 2;
 const REUSED_SERVICE_PID = 4343;
 const READINESS_SUCCESS_TIMEOUT_MS = 500;
+const PERSISTED_MONITOR_SETTLE_MS = 150;
+const SERVICE_STATUS_POLL_INTERVAL_MS = 5;
 const bracedPortReference = (suffix = "") => ["$", `{PORT${suffix}}`].join("");
 const originalHiveHome = process.env.HIVE_HOME;
 
@@ -176,6 +178,116 @@ describe("service supervisor", () => {
     expect(harness.processes[1]?.options.command).toBe("bun run dev");
   });
 
+  it("cancels an in-flight service setup before waiting for the cell lock", async () => {
+    const { cell, harness, starting, spawned } = await startPendingScenario({
+      templateId: "template-service-setup-cancel",
+      template: webServiceTemplate({ setup: ["prepare-web"] }),
+    });
+    expect(spawned.options.command).toBe("prepare-web");
+
+    const stopping = harness.supervisor.stopCellServices(cell.id);
+
+    await expect(starting).rejects.toThrow("setup cancelled");
+    await stopping;
+    expect((await getOnlyService(cell.id)).status).toBe("stopped");
+    expect(harness.processes).toHaveLength(1);
+  });
+
+  it("bounds a hanging service setup command", async () => {
+    const previousTimeout = process.env.HIVE_SERVICE_SETUP_COMMAND_TIMEOUT_MS;
+    process.env.HIVE_SERVICE_SETUP_COMMAND_TIMEOUT_MS = "5";
+    const { cell, harness, template } = await createScenario({
+      templateId: "template-service-setup-timeout",
+      template: {
+        services: {
+          web: serviceDefinition({ setup: ["prepare-web"] }),
+        },
+      },
+    });
+    try {
+      await expect(
+        harness.supervisor.ensureCellServices({ cell, template })
+      ).rejects.toThrow("setup command timed out after 5ms");
+      expect((await getOnlyService(cell.id)).status).toBe("error");
+    } finally {
+      process.env.HIVE_SERVICE_SETUP_COMMAND_TIMEOUT_MS = previousTimeout;
+    }
+  });
+
+  it("cancels an in-flight service setup during daemon shutdown", async () => {
+    const { cell, harness, starting } = await startPendingScenario({
+      templateId: "template-service-setup-shutdown",
+      template: webServiceTemplate({ setup: ["prepare-web"] }),
+    });
+
+    const stopping = harness.supervisor.stopAll();
+
+    await expect(starting).rejects.toThrow("setup cancelled");
+    await stopping;
+    expect((await getOnlyService(cell.id)).status).toBe("needs_resume");
+  });
+
+  it("cancels template setup before waiting for the cell lock", async () => {
+    const { cell, harness, starting, spawned } = await startPendingScenario({
+      templateId: "template-setup-cancel",
+      template: { setup: ["prepare-template"] },
+    });
+    expect(spawned.options.command).toBe("prepare-template");
+
+    const stopping = harness.supervisor.stopCellServices(cell.id);
+
+    await expect(starting).rejects.toThrow("Template setup");
+    await stopping;
+    expect(harness.processes).toHaveLength(1);
+    expect((await getOnlyService(cell.id)).status).toBe("stopped");
+  });
+
+  it("cancels readiness before waiting for the cell lock", async () => {
+    const { cell, harness, starting } = await startPendingScenario({
+      templateId: "template-readiness-cancel",
+      template: webServiceTemplate({
+        ...tcpReadinessService({ readyTimeoutMs: 30_000 }),
+      }),
+    });
+
+    const stopping = harness.supervisor.stopCellServices(cell.id);
+
+    await expect(starting).rejects.toThrow();
+    await stopping;
+    expect((await getOnlyService(cell.id)).status).toBe("stopped");
+  });
+
+  it("continues shutdown for sibling services after cancelling setup", async () => {
+    const { cell, harness, template } = await createScenario({
+      templateId: "template-shutdown-siblings",
+      template: {
+        services: {
+          web: serviceDefinition(),
+          worker: serviceDefinition({
+            run: "run-worker",
+            setup: ["prepare-worker"],
+          }),
+        },
+      },
+    });
+    const starting = harness.supervisor.ensureCellServices({ cell, template });
+    await waitForSpawnedCommand(harness, "prepare-worker");
+
+    const stopping = harness.supervisor.stopAll();
+
+    await expect(starting).rejects.toThrow("setup cancelled");
+    await stopping;
+    const services = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+    expect(services.map((service) => service.status)).toEqual([
+      "needs_resume",
+      "needs_resume",
+    ]);
+    await expect(harness.processes[0]?.handle.exited).resolves.toBe(0);
+  });
+
   it("can stop and restart a single service", async () => {
     const { cell, harness } = await createScenario({
       templateId: "template-restart",
@@ -232,6 +344,259 @@ describe("service supervisor", () => {
     expect(terminalSession?.pid).toBe(call.handle.pid);
 
     await stopHarness(harness);
+  });
+
+  it("waits for an owned persisted starting process before marking it running", async () => {
+    const pid = 4545;
+    const port = await allocateFreePort();
+    let observedInstanceId = "persisted-instance";
+    const { harness } = await createPersistedStartingScenario({
+      templateId: "template-bootstrap-persisted-starting",
+      serviceId: "svc-bootstrap-persisted-starting",
+      pid,
+      port,
+      readInstanceId: () => observedInstanceId,
+    });
+    let alive = true;
+    let stopCalls = 0;
+    const processKill = createPersistedProcessKillMock(
+      pid,
+      () => alive,
+      () => {
+        stopCalls += 1;
+        alive = false;
+      }
+    );
+
+    const listener = createServer();
+    try {
+      await withProcessKillMock(processKill, async () => {
+        const bootstrapping = harness.supervisor.bootstrap();
+        await Promise.resolve();
+        expect(
+          (await getOnlyServiceById("svc-bootstrap-persisted-starting")).status
+        ).toBe("starting");
+        await listenOnPort(listener, port);
+        await bootstrapping;
+
+        expect(harness.processes).toHaveLength(0);
+        expect(
+          (await getOnlyServiceById("svc-bootstrap-persisted-starting")).status
+        ).toBe("running");
+
+        observedInstanceId = "reused-instance";
+        await waitForServiceStatus("svc-bootstrap-persisted-starting", "error");
+        await harness.supervisor.stopCellService(
+          "svc-bootstrap-persisted-starting"
+        );
+        expect(stopCalls).toBe(0);
+      });
+    } finally {
+      await closeServer(listener);
+    }
+  });
+
+  it("does not overwrite stopped state when persisted readiness is cancelled", async () => {
+    const pid = 4747;
+    const port = await allocateFreePort();
+    const { cell, harness } = await createPersistedStartingScenario({
+      templateId: "template-bootstrap-persisted-stop",
+      serviceId: "svc-bootstrap-persisted-stop",
+      pid,
+      port,
+    });
+    await withStoppablePersistedProcess(pid, async () => {
+      const bootstrapping = harness.supervisor.bootstrap();
+      await Promise.resolve();
+      const stopping = harness.supervisor.stopCellServices(cell.id);
+      await Promise.all([bootstrapping, stopping]);
+      expect(
+        (await getOnlyServiceById("svc-bootstrap-persisted-stop")).status
+      ).toBe("stopped");
+    });
+  });
+
+  it("does not signal a reused pid while cancelling persisted readiness", async () => {
+    const pid = 4848;
+    const port = await allocateFreePort();
+    let observedInstanceId = "persisted-instance";
+    const { harness } = await createPersistedStartingScenario({
+      templateId: "template-bootstrap-persisted-reused",
+      serviceId: "svc-bootstrap-persisted-reused",
+      pid,
+      port,
+      readInstanceId: () => observedInstanceId,
+    });
+    let stopCalls = 0;
+    await withProcessKillMock(
+      createPersistedProcessKillMock(
+        pid,
+        () => true,
+        () => {
+          stopCalls += 1;
+        }
+      ),
+      async () => {
+        const bootstrapping = harness.supervisor.bootstrap();
+        await Promise.resolve();
+        observedInstanceId = "reused-instance";
+        const stopping = harness.supervisor.stopCellService(
+          "svc-bootstrap-persisted-reused"
+        );
+        await Promise.all([bootstrapping, stopping]);
+        expect(stopCalls).toBe(0);
+        expect(
+          (await getOnlyServiceById("svc-bootstrap-persisted-reused")).status
+        ).toBe("stopped");
+      }
+    );
+  });
+
+  it("tracks an adopted process group after its leader exits", async () => {
+    const pid = 4949;
+    await seedPersistedProcessService(
+      "svc-bootstrap-persisted-group",
+      pid,
+      "persisted-instance"
+    );
+    const harness = createHarness({
+      readProcessEnvironment: async () => ({
+        HIVE_SERVICE_INSTANCE_ID: "persisted-instance",
+      }),
+    });
+    let leaderAlive = true;
+    let groupAlive = true;
+    const signals: Array<number | string | undefined> = [];
+    await withProcessKillMock(
+      createProcessGroupKillMock({
+        pid,
+        isLeaderAlive: () => leaderAlive,
+        isGroupAlive: () => groupAlive,
+        onSignal: (_target, signal) => {
+          signals.push(signal);
+          leaderAlive = false;
+          groupAlive = false;
+        },
+      }),
+      async () => {
+        await harness.supervisor.bootstrap();
+        leaderAlive = false;
+        await new Promise((resolve) =>
+          setTimeout(resolve, PERSISTED_MONITOR_SETTLE_MS)
+        );
+        expect(
+          (await getOnlyServiceById("svc-bootstrap-persisted-group")).status
+        ).toBe("running");
+
+        await harness.supervisor.stopCellService(
+          "svc-bootstrap-persisted-group"
+        );
+        expect(signals).toContain("SIGTERM");
+        expect(
+          (await getOnlyServiceById("svc-bootstrap-persisted-group")).status
+        ).toBe("stopped");
+      }
+    );
+  });
+
+  it("keeps an adopted process tracked when identity becomes unverifiable", async () => {
+    const pid = 5050;
+    await seedPersistedProcessService(
+      "svc-bootstrap-persisted-unverifiable",
+      pid,
+      "persisted-instance"
+    );
+    let environmentReadable = true;
+    const harness = createHarness({
+      readProcessEnvironment: async () =>
+        environmentReadable
+          ? { HIVE_SERVICE_INSTANCE_ID: "persisted-instance" }
+          : null,
+    });
+    let alive = true;
+    let stopCalls = 0;
+    await withProcessKillMock(
+      createPersistedProcessKillMock(
+        pid,
+        () => alive,
+        () => {
+          stopCalls += 1;
+          alive = false;
+        }
+      ),
+      async () => {
+        await harness.supervisor.bootstrap();
+        environmentReadable = false;
+        await expect(
+          harness.supervisor.stopCellService(
+            "svc-bootstrap-persisted-unverifiable"
+          )
+        ).rejects.toThrow("process identity cannot be verified");
+        expect(stopCalls).toBe(0);
+        expect(
+          (await getOnlyServiceById("svc-bootstrap-persisted-unverifiable"))
+            .status
+        ).toBe("running");
+
+        environmentReadable = true;
+        await harness.supervisor.stopCellService(
+          "svc-bootstrap-persisted-unverifiable"
+        );
+      }
+    );
+  });
+
+  it("does not restart dependents until an owned persisted dependency is ready", async () => {
+    const pid = 4646;
+    const port = await allocateFreePort();
+    const databaseDefinition = tcpReadinessService({
+      run: "start-database",
+      readyTimeoutMs: 20,
+    });
+    const apiDefinition = serviceDefinition({
+      run: "start-api",
+      dependsOn: ["database"],
+    });
+    const { harness } = await createScenario({
+      templateId: "template-bootstrap-persisted-dependency",
+      harnessOptions: {
+        readProcessEnvironment: async () => ({
+          HIVE_SERVICE_INSTANCE_ID: "persisted-instance",
+        }),
+      },
+      serviceRecords: [
+        {
+          id: "svc-bootstrap-persisted-database",
+          name: "database",
+          command: databaseDefinition.run,
+          definition: databaseDefinition,
+          status: "starting",
+          pid,
+          port,
+          env: { HIVE_SERVICE_INSTANCE_ID: "persisted-instance" },
+        },
+        {
+          id: "svc-bootstrap-persisted-api",
+          name: "api",
+          command: apiDefinition.run,
+          definition: apiDefinition,
+          status: "needs_resume",
+        },
+      ],
+    });
+    await withStoppablePersistedProcess(pid, () =>
+      harness.supervisor.bootstrap()
+    );
+
+    expect(harness.processes).toHaveLength(0);
+    expect(
+      (await getOnlyServiceById("svc-bootstrap-persisted-database")).status
+    ).toBe("error");
+    const api = await getOnlyServiceById("svc-bootstrap-persisted-api");
+    expect(api.status).toBe("error");
+    expect(api.lastKnownError).toContain(
+      "Dependencies failed during restart: database"
+    );
   });
 
   it("skips dependent restarts after dependency readiness fails", async () => {
@@ -338,9 +703,7 @@ describe("service supervisor", () => {
     const stopPromise = harness.supervisor.stopAll();
     setupProcess.exit(0);
 
-    await expect(ensurePromise).rejects.toThrow(
-      "Service supervisor is shutting down"
-    );
+    await expect(ensurePromise).rejects.toThrow("cancelled");
     await stopPromise;
     expect(harness.processes).toHaveLength(1);
 
@@ -472,37 +835,31 @@ describe("service supervisor", () => {
     const calls: Array<{ pid: number; signal?: NodeJS.Signals | number }> = [];
     let leaderAlive = true;
     let groupAlive = true;
-    const originalKill = process.kill;
-    process.kill = ((target: number, signal?: NodeJS.Signals | number) => {
-      calls.push({ pid: target, signal });
-      if (signal === 0) {
-        if (
-          (target === pid && leaderAlive) ||
-          (target === -pid && groupAlive)
-        ) {
-          return true as never;
-        }
-        throw Object.assign(new Error("process missing"), { code: "ESRCH" });
+    await withProcessKillMock(
+      createProcessGroupKillMock({
+        pid,
+        isLeaderAlive: () => leaderAlive,
+        isGroupAlive: () => groupAlive,
+        onSignal: (target, signal) => {
+          calls.push({ pid: target, signal });
+          if (target === -pid && signal === "SIGTERM") {
+            leaderAlive = false;
+          }
+          if (target === -pid && signal === "SIGKILL") {
+            groupAlive = false;
+          }
+        },
+        onProbe: (target, signal) => calls.push({ pid: target, signal }),
+      }),
+      async () => {
+        const harness = createHarness({
+          readProcessEnvironment: async () => ({
+            HIVE_SERVICE_INSTANCE_ID: "owned-instance",
+          }),
+        });
+        await harness.supervisor.stopCellService("svc-stop-group");
       }
-      if (target === -pid && signal === "SIGTERM") {
-        leaderAlive = false;
-      }
-      if (target === -pid && signal === "SIGKILL") {
-        groupAlive = false;
-      }
-      return true as never;
-    }) as typeof process.kill;
-
-    try {
-      const harness = createHarness({
-        readProcessEnvironment: async () => ({
-          HIVE_SERVICE_INSTANCE_ID: "owned-instance",
-        }),
-      });
-      await harness.supervisor.stopCellService("svc-stop-group");
-    } finally {
-      process.kill = originalKill;
-    }
+    );
 
     expect(
       calls.some((call) => call.pid === -pid && call.signal === "SIGTERM")
@@ -582,19 +939,17 @@ describe("service supervisor", () => {
     if (!pid) {
       throw new Error("Expected active service pid");
     }
-    const originalKill = process.kill;
-    process.kill = ((target: number, signal?: NodeJS.Signals | number) => {
-      if (target === -pid && signal === 0 && groupAlive) {
-        return true as never;
-      }
-      throw Object.assign(new Error("process missing"), { code: "ESRCH" });
-    }) as typeof process.kill;
-
-    try {
-      await harness.supervisor.stopCellService(service.id);
-    } finally {
-      process.kill = originalKill;
-    }
+    await withProcessKillMock(
+      createProcessGroupKillMock({
+        pid,
+        isLeaderAlive: () => false,
+        isGroupAlive: () => groupAlive,
+        onSignal: () => {
+          throw new Error("Unexpected direct process signal");
+        },
+      }),
+      () => harness.supervisor.stopCellService(service.id)
+    );
 
     expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
     expect(groupAlive).toBe(false);
@@ -635,8 +990,31 @@ describe("service supervisor", () => {
       await harness.supervisor.stopCellService("svc-port-collision");
       await waitForProcesses(harness);
     } finally {
-      await new Promise<void>((resolve) => listener.close(() => resolve()));
+      await closeServer(listener);
     }
+  });
+
+  it("restarts a service when its persisted pid belongs to another process", async () => {
+    const occupiedPort = await allocateFreePort();
+    const listener = createServer();
+    await listenOnPort(listener, occupiedPort);
+    const { harness } = await createReusedPidScenario({
+      templateId: "template-reused-start-pid",
+      serviceId: "svc-reused-start-pid",
+      port: occupiedPort,
+    });
+
+    try {
+      await withProcessKillMock(createReusedPidKillMock(), async () => {
+        await harness.supervisor.startCellService("svc-reused-start-pid");
+        const service = await getOnlyServiceById("svc-reused-start-pid");
+        expect(service.pid).toBe(harness.processes[0]?.handle.pid);
+        expect(service.port).not.toBe(occupiedPort);
+      });
+    } finally {
+      await closeServer(listener);
+    }
+    await harness.supervisor.stopCellService("svc-reused-start-pid");
   });
 
   it("allocates named ports and interpolates legacy and named references", async () => {
@@ -728,6 +1106,39 @@ describe("service supervisor", () => {
 
     expect(await testDb.select().from(cellServicePorts)).toEqual(claimsBefore);
     expect(harness.processes).toHaveLength(1);
+    await stopCellHarness(harness, cell.id);
+  });
+
+  it("updates a changed definition when the persisted pid was reused", async () => {
+    const previousDefinition = serviceDefinition({
+      ports: { http: { primary: true } },
+    });
+    const { cell, harness, template } = await createReusedPidScenario({
+      templateId: "template-reused-definition-pid",
+      serviceId: "svc-reused-definition-pid",
+      definition: previousDefinition,
+      template: webServiceTemplate({
+        ports: {
+          http: { primary: true },
+          metrics: { protocol: "tcp" },
+        },
+      }),
+    });
+
+    await withProcessKillMock(createReusedPidKillMock(), () =>
+      harness.supervisor.ensureCellServices({ cell, template })
+    );
+
+    expect(harness.processes).toHaveLength(1);
+    expect((await getOnlyServiceById("svc-reused-definition-pid")).pid).toBe(
+      harness.processes[0]?.handle.pid
+    );
+    expect(
+      await testDb
+        .select()
+        .from(cellServicePorts)
+        .where(eq(cellServicePorts.serviceId, "svc-reused-definition-pid"))
+    ).toHaveLength(2);
     await stopCellHarness(harness, cell.id);
   });
 
@@ -924,6 +1335,48 @@ describe("service supervisor", () => {
     );
   });
 
+  it("resumes teardown after the last completed command", async () => {
+    let cleanupTwoRuns = 0;
+    const { cell, harness, template } = await createScenario({
+      templateId: "template-teardown-resume",
+      template: {
+        teardown: ["cleanup-one", "cleanup-two"],
+      },
+      harnessOptions: {
+        exitCodeForCommand: (command) => {
+          if (command === "cleanup-one") {
+            return 0;
+          }
+          if (command === "cleanup-two") {
+            cleanupTwoRuns += 1;
+            return cleanupTwoRuns === 1 ? 1 : 0;
+          }
+        },
+      },
+    });
+    await harness.supervisor.ensureCellServices({ cell, template });
+    await harness.supervisor.stopCellServices(cell.id);
+
+    await expect(
+      harness.supervisor.runCellTeardown({
+        cell,
+        template,
+        reason: "delete",
+      })
+    ).rejects.toThrow("cleanup-two");
+    await harness.supervisor.runCellTeardown({
+      cell,
+      template,
+      reason: "delete",
+    });
+
+    expect(
+      harness.processes
+        .map((process) => process.options.command)
+        .filter((command) => command.startsWith("cleanup-"))
+    ).toEqual(["cleanup-one", "cleanup-two", "cleanup-two"]);
+  });
+
   it("does not run template teardown during stop or daemon shutdown", async () => {
     const { cell, harness, template } = await createScenario({
       templateId: "template-no-stop-teardown",
@@ -1103,7 +1556,7 @@ describe("service supervisor", () => {
       expect(ready.status).toBe("running");
     } finally {
       await stopCellHarness(harness, cell.id);
-      await new Promise<void>((resolve) => listener.close(() => resolve()));
+      await closeServer(listener);
     }
   });
 
@@ -1146,6 +1599,19 @@ describe("service supervisor", () => {
       cwd: ".",
       ...overrides,
     };
+  }
+
+  function tcpReadinessService(
+    overrides: Partial<Omit<ProcessService, "type">> = {}
+  ): ProcessService {
+    return serviceDefinition({
+      readiness: {
+        checks: [{ type: "tcp", port: "default" }],
+        intervalMs: 5,
+      },
+      readyTimeoutMs: READINESS_SUCCESS_TIMEOUT_MS,
+      ...overrides,
+    });
   }
 
   function templateDefinition(
@@ -1199,6 +1665,88 @@ describe("service supervisor", () => {
     return { workspace, cell, harness, template };
   }
 
+  async function startPendingScenario(
+    options: Parameters<typeof createScenario>[0]
+  ) {
+    const scenario = await createScenario(options);
+    const starting = scenario.harness.supervisor.ensureCellServices({
+      cell: scenario.cell,
+      template: scenario.template,
+    });
+    const spawned = await scenario.harness.firstSpawned;
+    return { ...scenario, spawned, starting };
+  }
+
+  async function createPersistedStartingScenario(args: {
+    templateId: string;
+    serviceId: string;
+    pid: number;
+    port: number;
+    definition?: ProcessService;
+    readInstanceId?: () => string;
+  }) {
+    const definition = args.definition ?? tcpReadinessService();
+    return await createScenario({
+      templateId: args.templateId,
+      harnessOptions: {
+        readProcessEnvironment: async () => ({
+          HIVE_SERVICE_INSTANCE_ID:
+            args.readInstanceId?.() ?? "persisted-instance",
+        }),
+      },
+      serviceRecords: [
+        {
+          id: args.serviceId,
+          status: "starting",
+          pid: args.pid,
+          port: args.port,
+          env: { HIVE_SERVICE_INSTANCE_ID: "persisted-instance" },
+          definition,
+        },
+      ],
+    });
+  }
+
+  async function createReusedPidScenario(args: {
+    templateId: string;
+    serviceId: string;
+    port?: number;
+    definition?: ProcessService;
+    template?: Partial<Omit<Template, "id" | "label" | "type">>;
+  }) {
+    const definition = args.definition ?? serviceDefinition();
+    return await createScenario({
+      templateId: args.templateId,
+      template: args.template,
+      harnessOptions: {
+        readProcessEnvironment: async () => ({
+          HIVE_SERVICE_INSTANCE_ID: "different-instance",
+        }),
+      },
+      serviceRecords: [
+        {
+          id: args.serviceId,
+          status: "needs_resume",
+          pid: REUSED_SERVICE_PID,
+          port: args.port,
+          env: { HIVE_SERVICE_INSTANCE_ID: "expected-instance" },
+          command: definition.run,
+          definition,
+        },
+      ],
+    });
+  }
+
+  function createReusedPidKillMock(): typeof process.kill {
+    return createPersistedProcessKillMock(
+      REUSED_SERVICE_PID,
+      () => true,
+      () => {
+        throw new Error("Reused process must not be stopped");
+      }
+    );
+  }
+
   async function getOnlyService(cellId: string) {
     const [service] = await testDb
       .select()
@@ -1210,6 +1758,55 @@ describe("service supervisor", () => {
     }
 
     return service;
+  }
+
+  async function getOnlyServiceById(serviceId: string) {
+    const [service] = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.id, serviceId));
+    if (!service) {
+      throw new Error(`Expected service ${serviceId}`);
+    }
+    return service;
+  }
+
+  async function waitForServiceStatus(
+    serviceId: string,
+    status: typeof cellServices.$inferSelect.status
+  ): Promise<void> {
+    const deadline = Date.now() + READINESS_SUCCESS_TIMEOUT_MS;
+    while ((await getOnlyServiceById(serviceId)).status !== status) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Timed out waiting for service ${serviceId} to ${status}`
+        );
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, SERVICE_STATUS_POLL_INTERVAL_MS)
+      );
+    }
+  }
+
+  async function waitForSpawnedCommand(
+    harness: ReturnType<typeof createHarness>,
+    command: string
+  ): Promise<FakeProcess> {
+    const deadline = Date.now() + READINESS_SUCCESS_TIMEOUT_MS;
+    while (true) {
+      const process = harness.processes.find(
+        (candidate) => candidate.options.command === command
+      );
+      if (process) {
+        return process;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting for command ${command}`);
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, SERVICE_STATUS_POLL_INTERVAL_MS)
+      );
+    }
   }
 
   function serviceRecordDefinition(options: {
@@ -1255,17 +1852,79 @@ describe("service supervisor", () => {
     });
   }
 
-  async function withProcessKillMock(
+  async function withProcessKillMock<Result>(
     mock: typeof process.kill,
-    action: () => Promise<void>
-  ): Promise<void> {
+    action: () => Promise<Result>
+  ): Promise<Result> {
     const originalKill = process.kill;
     process.kill = mock;
     try {
-      await action();
+      return await action();
     } finally {
       process.kill = originalKill;
     }
+  }
+
+  async function withStoppablePersistedProcess<Result>(
+    pid: number,
+    action: () => Promise<Result>
+  ): Promise<Result> {
+    let alive = true;
+    return await withProcessKillMock(
+      createPersistedProcessKillMock(
+        pid,
+        () => alive,
+        () => {
+          alive = false;
+        }
+      ),
+      action
+    );
+  }
+
+  function createProcessGroupKillMock(args: {
+    pid: number;
+    isLeaderAlive: () => boolean;
+    isGroupAlive: () => boolean;
+    onProbe?: (target: number, signal: 0) => void;
+    onSignal: (target: number, signal?: number | NodeJS.Signals) => void;
+  }): typeof process.kill {
+    return ((target: number, signal?: number | NodeJS.Signals) => {
+      if (signal === 0) {
+        args.onProbe?.(target, signal);
+        if (
+          (target === args.pid && args.isLeaderAlive()) ||
+          (target === -args.pid && args.isGroupAlive())
+        ) {
+          return true as never;
+        }
+        throwProcessMissing();
+      }
+      args.onSignal(target, signal);
+      return true as never;
+    }) as typeof process.kill;
+  }
+
+  function throwProcessMissing(): never {
+    throw Object.assign(new Error("process missing"), { code: "ESRCH" });
+  }
+
+  function createPersistedProcessKillMock(
+    pid: number,
+    isAlive: () => boolean,
+    stop: () => void
+  ): typeof process.kill {
+    return createProcessGroupKillMock({
+      pid,
+      isLeaderAlive: isAlive,
+      isGroupAlive: isAlive,
+      onSignal: (target) => {
+        if (target !== pid && target !== -pid) {
+          throwProcessMissing();
+        }
+        stop();
+      },
+    });
   }
 
   async function stopPersistedService(
@@ -1309,6 +1968,7 @@ describe("service supervisor", () => {
   function createHarness(
     harnessOptions: {
       autoExitTeardown?: boolean;
+      exitCodeForCommand?: (command: string) => number | undefined;
       processKill?: (
         signal: number | string | undefined,
         exit: (code: number) => void,
@@ -1346,7 +2006,15 @@ describe("service supervisor", () => {
       const process = { options, exit: exited.resolve, handle };
       processes.push(process);
       firstSpawned.resolve(process);
-      if (
+      const configuredExitCode = harnessOptions.exitCodeForCommand?.(
+        options.command
+      );
+      if (configuredExitCode !== undefined) {
+        queueMicrotask(() => {
+          options.onExit?.({ exitCode: configuredExitCode, signal: null });
+          exited.resolve(configuredExitCode);
+        });
+      } else if (
         options.command.includes("template-setup") ||
         (options.command.startsWith("cleanup-") &&
           harnessOptions.autoExitTeardown !== false)
@@ -1418,5 +2086,9 @@ describe("service supervisor", () => {
       server.once("error", reject);
       server.listen(port, "127.0.0.1", resolve);
     });
+  }
+
+  function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
+    return new Promise((resolve) => server.close(() => resolve()));
   }
 });

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { constants as osConstants } from "node:os";
@@ -56,9 +56,12 @@ const serviceStartLocks = new Map<string, Promise<void>>();
 const STOP_TIMEOUT_MS = 2000;
 const FORCE_KILL_DELAY_MS = 250;
 const PROCESS_EXIT_POLL_INTERVAL_MS = 25;
+const PERSISTED_PROCESS_POLL_INTERVAL_MS = 100;
 const DEFAULT_TEMPLATE_SETUP_COMMAND_TIMEOUT_MS = 300_000;
 const DEFAULT_TEMPLATE_TEARDOWN_COMMAND_TIMEOUT_MS = 300_000;
+const DEFAULT_SERVICE_SETUP_COMMAND_TIMEOUT_MS = 300_000;
 const DEFAULT_SERVICE_STOP_COMMAND_TIMEOUT_MS = 30_000;
+const TEARDOWN_FINGERPRINT_LENGTH = 16;
 const DEFAULT_SHELL = process.env.SHELL || "/bin/bash";
 const TERMINAL_NAME = "xterm-256color";
 const DEFAULT_TERMINAL_COLS = 120;
@@ -97,6 +100,13 @@ function resolveServiceStopCommandTimeoutMs(): number {
   return resolvePositiveTimeout(
     "HIVE_SERVICE_STOP_COMMAND_TIMEOUT_MS",
     DEFAULT_SERVICE_STOP_COMMAND_TIMEOUT_MS
+  );
+}
+
+function resolveServiceSetupCommandTimeoutMs(): number {
+  return resolvePositiveTimeout(
+    "HIVE_SERVICE_SETUP_COMMAND_TIMEOUT_MS",
+    DEFAULT_SERVICE_SETUP_COMMAND_TIMEOUT_MS
   );
 }
 
@@ -193,6 +203,34 @@ export function isProcessAlive(pid?: number | null): boolean {
   } catch (error) {
     return isPermissionError(error);
   }
+}
+
+function createPersistedProcessHandle(
+  pid: number,
+  isStillOwned: () => Promise<boolean>
+): ProcessHandle {
+  return {
+    pid,
+    exited: (async () => {
+      while (isProcessAlive(pid)) {
+        if (!(await isStillOwned())) {
+          return -1;
+        }
+        await delay(PERSISTED_PROCESS_POLL_INTERVAL_MS);
+      }
+      while (isProcessGroupAlive(pid)) {
+        await delay(PERSISTED_PROCESS_POLL_INTERVAL_MS);
+      }
+      return -1;
+    })(),
+    kill: (signal = "SIGTERM") => {
+      try {
+        process.kill(-pid, signal as NodeJS.Signals);
+      } catch {
+        process.kill(pid, signal as NodeJS.Signals);
+      }
+    },
+  };
 }
 
 function isProcessGroupAlive(pid: number): boolean {
@@ -379,6 +417,7 @@ type ServiceRow = {
 
 type ActiveServiceHandle = {
   handle: ProcessHandle;
+  persisted?: boolean;
 };
 
 type PersistedProcessIdentity =
@@ -596,6 +635,14 @@ export function createServiceSupervisor(
     overrides.readProcessEnvironment ?? readDefaultProcessEnvironment;
 
   const activeServices = new Map<string, ActiveServiceHandle>();
+  const activeServiceStarts = new Map<string, ProcessHandle>();
+  const activeServiceSetups = new Map<string, ActiveServiceHandle>();
+  const retainedServiceSetups = new Map<string, ProcessHandle>();
+  const activePersistedRecoveries = new Map<string, ActiveServiceHandle>();
+  const activeTemplateSetups = new Map<string, ProcessHandle>();
+  const cancelledTemplateSetups = new WeakSet<ProcessHandle>();
+  const cellsStopping = new Set<string>();
+  const servicesStopping = new Set<string>();
   const repository = createServiceRepository(db, now);
   const portManager = createPortManager({ db, now });
   const templateCache = new Map<string, Map<string, Template | undefined>>();
@@ -628,24 +675,33 @@ export function createServiceSupervisor(
     requireStartableSupervisor();
     const grouped = groupServicesByCell(await repository.fetchAllServices());
 
-    for (const { cell, rows: cellRows } of grouped.values()) {
-      if (cell.status === "deleting" || cell.status === "error") {
-        continue;
-      }
-      const templateEnv = await loadTemplateEnvironment(cell);
-      const portMap = await buildPortMap(cellRows);
+    for (const { cell } of grouped.values()) {
+      await runWithCellLock(cell.id, async () => {
+        const cellRows = await repository.fetchServicesForCell(cell.id);
+        const currentCell = cellRows[0]?.cell;
+        if (
+          !currentCell ||
+          currentCell.status === "deleting" ||
+          currentCell.status === "error"
+        ) {
+          return;
+        }
+        const templateEnv = await loadTemplateEnvironment(currentCell);
+        const portMap = await buildPortMap(cellRows);
 
-      await restartServicesForCell({
-        rows: cellRows,
-        portMap,
-        templateEnv,
+        await restartServicesForCell({
+          rows: cellRows,
+          portMap,
+          templateEnv,
+        });
       });
     }
   }
 
   async function shouldSkipRestart(
     row: ServiceRow,
-    requiredAsDependency: boolean
+    requiredAsDependency: boolean,
+    portMap: CellPortMap
   ): Promise<boolean> {
     if (
       !(requiredAsDependency || AUTO_RESTART_STATUSES.has(row.service.status))
@@ -653,7 +709,7 @@ export function createServiceSupervisor(
       return true;
     }
 
-    if (await retainPersistedProcessDuringRestart(row)) {
+    if (await retainPersistedProcessDuringRestart(row, portMap)) {
       return true;
     }
 
@@ -670,7 +726,8 @@ export function createServiceSupervisor(
   }
 
   async function retainPersistedProcessDuringRestart(
-    row: ServiceRow
+    row: ServiceRow,
+    portMap: CellPortMap
   ): Promise<boolean> {
     if (!row.service.pid) {
       return false;
@@ -678,6 +735,7 @@ export function createServiceSupervisor(
 
     const identity = await resolvePersistedProcessIdentity(row);
     if (identity === "owned") {
+      await adoptPersistedProcess(row, portMap);
       return true;
     }
     if (identity === "unverifiable") {
@@ -691,6 +749,208 @@ export function createServiceSupervisor(
 
     await normalizeServiceForRestart(row);
     return false;
+  }
+
+  async function adoptPersistedProcess(
+    row: ServiceRow,
+    portMap: CellPortMap
+  ): Promise<void> {
+    const pid = row.service.pid;
+    if (!pid || activeServices.has(row.service.id)) {
+      return;
+    }
+    const instanceId = row.service.env[SERVICE_INSTANCE_ENV_KEY];
+    const handle = createPersistedProcessHandle(pid, async () => {
+      const environment = await readProcessEnvironment(pid);
+      return (
+        environment === null ||
+        Boolean(
+          instanceId && environment[SERVICE_INSTANCE_ENV_KEY] === instanceId
+        )
+      );
+    });
+    activeServices.set(row.service.id, { handle, persisted: true });
+    observePersistedProcessExit(row, handle);
+
+    if (row.service.status === "running") {
+      return;
+    }
+    activePersistedRecoveries.set(row.service.id, { handle, persisted: true });
+
+    try {
+      rejectCancelledPersistedRecovery(row, handle);
+      await waitForPersistedProcessReadiness(row, handle, portMap);
+      rejectCancelledPersistedRecovery(row, handle);
+      await repository.updateService(row.service.id, {
+        status: "running",
+        pid,
+        lastKnownError: null,
+      });
+      rejectCancelledPersistedRecovery(row, handle);
+      activePersistedRecoveries.delete(row.service.id);
+      row.service.status = "running";
+      notifyServiceUpdate(row);
+    } catch (error) {
+      await handlePersistedRecoveryFailure(row, handle, error);
+      throw error;
+    }
+  }
+
+  async function handlePersistedRecoveryFailure(
+    row: ServiceRow,
+    handle: ProcessHandle,
+    error: unknown
+  ): Promise<void> {
+    if (isServiceStopRequested(row)) {
+      await cancelPersistedRecoveries([row.service.id]);
+      return;
+    }
+    if (activePersistedRecoveries.get(row.service.id)?.handle !== handle) {
+      return;
+    }
+    await terminateFailedPersistedRecovery(row, handle, error);
+  }
+
+  async function terminateFailedPersistedRecovery(
+    row: ServiceRow,
+    handle: ProcessHandle,
+    error: unknown
+  ): Promise<void> {
+    let shouldTerminate: boolean;
+    try {
+      shouldTerminate = await shouldTerminatePersistedHandle(row, handle);
+    } catch (identityError) {
+      await persistFailedRecoveryTermination({
+        row,
+        handle,
+        error,
+        terminationError: identityError,
+      });
+      throw identityError;
+    }
+    if (!shouldTerminate) {
+      forgetPersistedTracking(row.service.id, handle);
+      await markServiceError(row.service.id, row.cell.id, formatError(error));
+      return;
+    }
+    activePersistedRecoveries.delete(row.service.id);
+    const active = activeServices.get(row.service.id);
+    if (active?.handle === handle) {
+      activeServices.delete(row.service.id);
+    }
+    try {
+      await terminateHandle(handle);
+    } catch (terminationError) {
+      await persistFailedRecoveryTermination({
+        row,
+        handle,
+        error,
+        terminationError,
+        active,
+      });
+      throw terminationError;
+    }
+    await markServiceError(row.service.id, row.cell.id, formatError(error));
+  }
+
+  function formatError(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  function isServiceStopRequested(row: ServiceRow): boolean {
+    return (
+      shuttingDown ||
+      cellsStopping.has(row.cell.id) ||
+      servicesStopping.has(row.service.id)
+    );
+  }
+
+  async function persistFailedRecoveryTermination(args: {
+    row: ServiceRow;
+    handle: ProcessHandle;
+    error: unknown;
+    terminationError: unknown;
+    active?: ActiveServiceHandle;
+  }): Promise<void> {
+    const { row, handle, error, terminationError } = args;
+    const active = args.active ?? activeServices.get(row.service.id);
+    activePersistedRecoveries.set(row.service.id, {
+      handle,
+      persisted: true,
+    });
+    if (active?.handle === handle) {
+      activeServices.set(row.service.id, active);
+    }
+    await repository.updateService(row.service.id, {
+      status: "error",
+      pid: handle.pid,
+      lastKnownError: `${formatError(error)}; failed to terminate persisted process: ${formatError(terminationError)}`,
+    });
+    notifyServiceUpdate(row);
+  }
+
+  function rejectCancelledPersistedRecovery(
+    row: ServiceRow,
+    handle: ProcessHandle
+  ): void {
+    if (
+      isServiceStopRequested(row) ||
+      activePersistedRecoveries.get(row.service.id)?.handle !== handle ||
+      activeServices.get(row.service.id)?.handle !== handle
+    ) {
+      throw new Error(`Service "${row.service.name}" recovery cancelled`);
+    }
+  }
+
+  async function waitForPersistedProcessReadiness(
+    row: ServiceRow,
+    handle: ProcessHandle,
+    portMap: CellPortMap
+  ): Promise<void> {
+    const definition = row.service.definition as ProcessService;
+    if (!definition.readiness) {
+      return;
+    }
+    const allocation = portMap.get(row.service.name);
+    if (!allocation) {
+      throw new Error(
+        `Service "${row.service.name}" has no persisted port allocation`
+      );
+    }
+    await waitForServiceReadiness({
+      serviceName: row.service.name,
+      readiness: definition.readiness,
+      ports: allocation.ports,
+      processExited: handle.exited,
+      timeoutMs: definition.readyTimeoutMs,
+    });
+  }
+
+  function observePersistedProcessExit(
+    row: ServiceRow,
+    handle: ProcessHandle
+  ): void {
+    handle.exited
+      .then(async () => {
+        if (!deleteActiveServiceHandle(row.service.id, handle)) {
+          return;
+        }
+        activePersistedRecoveries.delete(row.service.id);
+        if (isServiceStopRequested(row)) {
+          return;
+        }
+        await markServiceError(
+          row.service.id,
+          row.cell.id,
+          `Persisted process ${handle.pid} exited`
+        );
+      })
+      .catch((error) => {
+        logger.error("Persisted service exit monitor failed", {
+          serviceId: row.service.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
   }
 
   async function normalizeServiceForRestart(row: ServiceRow): Promise<void> {
@@ -735,23 +995,46 @@ export function createServiceSupervisor(
       const requiredAsDependency = !AUTO_RESTART_STATUSES.has(
         row.service.status
       );
-      if (await shouldSkipRestart(row, requiredAsDependency)) {
-        continue;
+      const restarted = await restartServiceDuringBootstrap({
+        row,
+        requiredAsDependency,
+        portMap,
+        templateEnv,
+      });
+      if (!restarted) {
+        failedServiceNames.add(row.service.name);
       }
+    }
+  }
 
-      await startService(row, undefined, templateEnv, portMap).catch(
-        (error) => {
-          if (shuttingDown) {
-            throw error;
-          }
-          failedServiceNames.add(row.service.name);
-          logger.error("Failed to restart service", {
-            serviceId: row.service.id,
-            cellId: row.cell.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      );
+  async function restartServiceDuringBootstrap(args: {
+    row: ServiceRow;
+    requiredAsDependency: boolean;
+    portMap: CellPortMap;
+    templateEnv: Record<string, string>;
+  }): Promise<boolean> {
+    try {
+      if (
+        await shouldSkipRestart(
+          args.row,
+          args.requiredAsDependency,
+          args.portMap
+        )
+      ) {
+        return true;
+      }
+      await startService(args.row, undefined, args.templateEnv, args.portMap);
+      return true;
+    } catch (error) {
+      if (shuttingDown) {
+        throw error;
+      }
+      logger.error("Failed to restart service", {
+        serviceId: args.row.service.id,
+        cellId: args.row.cell.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
     }
   }
 
@@ -819,55 +1102,98 @@ export function createServiceSupervisor(
     template?: Template;
     reason: TemplateTeardownReason;
   }): Promise<void> {
-    return runWithCellLock(args.cell.id, async () => {
-      const template =
-        args.template ??
-        (await loadTemplateCached(
-          args.cell.templateId,
-          args.cell.workspaceRootPath ?? args.cell.workspacePath
-        ));
-      if (!template?.teardown?.length) {
-        return;
-      }
-      if (
-        args.cell.status === "spawning" &&
-        !args.cell.baseCommit &&
-        !existsSync(args.cell.workspacePath)
-      ) {
-        return;
-      }
+    return runWithCellLock(args.cell.id, () => runCellTeardownUnlocked(args));
+  }
 
-      const rows = await repository.fetchServicesForCell(args.cell.id);
-      const portMap = await buildPersistedPortMap(rows);
-      const environment = interpolatePorts(
-        {
-          ...(template.env ?? {}),
-          ...buildBaseEnv({ serviceName: template.id, cell: args.cell }),
-          ...buildSharedPortEnv(portMap),
-          HIVE_MAIN_REPO:
-            args.cell.workspaceRootPath ?? args.cell.workspacePath,
-          HIVE_TEARDOWN_REASON: args.reason,
-        },
-        portMap,
-        template.id
-      );
-      const timeoutMs = resolveTemplateTeardownCommandTimeoutMs();
+  async function runCellTeardownUnlocked(args: {
+    cell: Cell;
+    template?: Template;
+    reason: TemplateTeardownReason;
+  }): Promise<void> {
+    const template =
+      args.template ??
+      (await loadTemplateCached(
+        args.cell.templateId,
+        args.cell.workspaceRootPath ?? args.cell.workspacePath
+      ));
+    if (!template?.teardown?.length) {
+      return;
+    }
+    if (
+      args.cell.status === "spawning" &&
+      !args.cell.baseCommit &&
+      !existsSync(args.cell.workspacePath)
+    ) {
+      return;
+    }
 
-      for (const rawCommand of template.teardown) {
-        const command = interpolatePortReferences(
-          rawCommand,
-          portMap,
-          template.id
-        );
-        await runTemplateTeardownCommand({
-          cell: args.cell,
-          command,
-          environment,
-          template,
-          timeoutMs,
-        });
+    const rows = await repository.fetchServicesForCell(args.cell.id);
+    const portMap = await buildPersistedPortMap(rows);
+    const environment = interpolatePorts(
+      {
+        ...(template.env ?? {}),
+        ...buildBaseEnv({ serviceName: template.id, cell: args.cell }),
+        ...buildSharedPortEnv(portMap),
+        HIVE_MAIN_REPO: args.cell.workspaceRootPath ?? args.cell.workspacePath,
+        HIVE_TEARDOWN_REASON: args.reason,
+      },
+      portMap,
+      template.id
+    );
+    const timeoutMs = resolveTemplateTeardownCommandTimeoutMs();
+    const commands = template.teardown.map((rawCommand) =>
+      interpolatePortReferences(rawCommand, portMap, template.id)
+    );
+    const fingerprint = createHash("sha256")
+      .update(
+        JSON.stringify({
+          commands,
+          environment: Object.fromEntries(
+            Object.entries(environment).sort(([left], [right]) =>
+              left.localeCompare(right)
+            )
+          ),
+          reason: args.reason,
+          templateId: template.id,
+        })
+      )
+      .digest("hex")
+      .slice(0, TEARDOWN_FINGERPRINT_LENGTH);
+    const completedCommands = resolveCompletedTeardownCommands(
+      args.cell.deletionPhase,
+      fingerprint
+    );
+
+    for (const [index, command] of commands.entries()) {
+      if (index < completedCommands) {
+        continue;
       }
-    });
+      await runTemplateTeardownCommand({
+        cell: args.cell,
+        command,
+        environment,
+        template,
+        timeoutMs,
+      });
+      const deletionPhase = `teardown:${fingerprint}:${index + 1}` as const;
+      await db
+        .update(cells)
+        .set({ deletionPhase })
+        .where(eq(cells.id, args.cell.id));
+      args.cell.deletionPhase = deletionPhase;
+    }
+  }
+
+  function resolveCompletedTeardownCommands(
+    phase: Cell["deletionPhase"],
+    fingerprint: string
+  ): number {
+    const prefix = `teardown:${fingerprint}:`;
+    if (!phase?.startsWith(prefix)) {
+      return 0;
+    }
+    const completed = Number.parseInt(phase.slice(prefix.length), 10);
+    return Number.isSafeInteger(completed) && completed >= 0 ? completed : 0;
   }
 
   async function runTemplateTeardownCommand(args: {
@@ -1046,6 +1372,8 @@ export function createServiceSupervisor(
           env,
           onData: (chunk) => terminalRuntime.appendSetupOutput(cell.id, chunk),
         });
+        activeTemplateSetups.set(cell.id, proc);
+        observeTemplateSetupExit(cell.id, proc);
 
         terminalRuntime.attachSetupProcess({
           cellId: cell.id,
@@ -1075,10 +1403,14 @@ export function createServiceSupervisor(
         if (timeoutHandle) {
           clearTimeout(timeoutHandle);
         }
+        if (cancelledTemplateSetups.has(proc)) {
+          throw new Error(`Template setup for cell "${cell.id}" cancelled`);
+        }
 
         if (exitResult.type === "timeout") {
           const durationMs = Date.now() - commandStartedAt;
           await terminateProcessHandle(proc);
+          deleteTrackedHandle(activeTemplateSetups, cell.id, proc);
 
           markTemplateSetupCommandFailure({
             cellId: cell.id,
@@ -1102,6 +1434,7 @@ export function createServiceSupervisor(
           });
         }
 
+        deleteTrackedHandle(activeTemplateSetups, cell.id, proc);
         const exitCode = exitResult.exitCode;
         if (exitCode !== 0) {
           const durationMs = Date.now() - commandStartedAt;
@@ -1236,18 +1569,30 @@ export function createServiceSupervisor(
     });
   }
 
-  function assertServiceDefinitionCanUpdate(
+  async function assertServiceDefinitionCanUpdate(
     record: CellService,
+    cell: Cell,
     serviceName: string
-  ): void {
-    if (
-      activeServices.has(record.id) ||
-      (record.pid != null && isProcessAlive(record.pid))
-    ) {
+  ): Promise<void> {
+    if (activeServices.has(record.id)) {
       throw new Error(
         `Cannot update service "${serviceName}" while it is running; stop it before retrying setup`
       );
     }
+    if (!record.pid) {
+      return;
+    }
+    const row = { service: record, cell };
+    const identity = await resolvePersistedProcessIdentity(row);
+    if (identity === "owned") {
+      throw new Error(
+        `Cannot update service "${serviceName}" while it is running; stop it before retrying setup`
+      );
+    }
+    if (identity === "unverifiable") {
+      throw new Error(persistedIdentityError(row));
+    }
+    await clearStalePersistedPid(row);
   }
 
   async function ensureService(
@@ -1265,7 +1610,7 @@ export function createServiceSupervisor(
         resolvedCwd
       );
       if (shouldUpdate) {
-        assertServiceDefinitionCanUpdate(record, name);
+        await assertServiceDefinitionCanUpdate(record, cell, name);
         record =
           (await repository.updateService(record.id, {
             command: definition.run,
@@ -1327,51 +1672,61 @@ export function createServiceSupervisor(
     }
   }
 
-  function stopCellServices(
+  async function stopCellServices(
     cellId: string,
     options?: { releasePorts?: boolean }
   ): Promise<void> {
-    return runWithCellLock(cellId, async () => {
-      const rows = await repository.fetchServicesForCell(cellId);
-      const portMap = await buildPersistedPortMap(rows);
-      let firstError: unknown;
-
-      for (const row of sortServiceRows(rows, true)) {
-        try {
-          await stopService(
-            row,
-            options?.releasePorts ?? false,
-            "stopped",
-            portMap
-          );
-        } catch (error) {
-          firstError ??= error;
-        }
-      }
-      if (firstError) {
-        throw firstError;
-      }
-    });
-  }
-
-  async function stopAll(): Promise<void> {
-    shuttingDown = true;
-    const grouped = groupServicesByCell(await repository.fetchAllServices());
-    let firstError: unknown;
-
-    for (const { rows } of grouped.values()) {
-      await runWithCellLock(rows[0]?.cell.id ?? "", async () => {
+    cellsStopping.add(cellId);
+    try {
+      const pendingRows = await repository.fetchServicesForCell(cellId);
+      await cancelCellPreLockProcesses(
+        cellId,
+        pendingRows.map((row) => row.service.id)
+      );
+      await runWithCellLock(cellId, async () => {
+        const rows = await repository.fetchServicesForCell(cellId);
         const portMap = await buildPersistedPortMap(rows);
+        let firstError: unknown;
+
         for (const row of sortServiceRows(rows, true)) {
-          const statusAfterStop =
-            row.service.status === "stopped" ? "stopped" : "needs_resume";
           try {
-            await stopService(row, true, statusAfterStop, portMap);
+            await stopService(
+              row,
+              options?.releasePorts ?? false,
+              "stopped",
+              portMap
+            );
           } catch (error) {
             firstError ??= error;
           }
         }
+        if (firstError) {
+          throw firstError;
+        }
       });
+    } finally {
+      cellsStopping.delete(cellId);
+    }
+  }
+
+  async function stopAll(): Promise<void> {
+    shuttingDown = true;
+    let firstError = await collectFirstError(undefined, () =>
+      cancelTemplateSetups([...activeTemplateSetups.keys()])
+    );
+    firstError = await collectFirstError(firstError, () =>
+      cancelPreLockProcesses([
+        ...activeServiceStarts.keys(),
+        ...activeServiceSetups.keys(),
+        ...activePersistedRecoveries.keys(),
+      ])
+    );
+    const grouped = groupServicesByCell(await repository.fetchAllServices());
+
+    for (const { rows } of grouped.values()) {
+      firstError = await collectFirstError(firstError, () =>
+        stopShutdownGroup(rows)
+      );
     }
 
     terminalRuntime.stopAll();
@@ -1380,24 +1735,52 @@ export function createServiceSupervisor(
     }
   }
 
+  async function collectFirstError(
+    current: unknown,
+    action: () => Promise<unknown>
+  ): Promise<unknown> {
+    try {
+      await action();
+      return current;
+    } catch (error) {
+      return current ?? error;
+    }
+  }
+
+  async function stopShutdownGroup(rows: ServiceRow[]): Promise<void> {
+    const cellId = rows[0]?.cell.id;
+    if (!cellId) {
+      return;
+    }
+    if (activeTemplateSetups.has(cellId)) {
+      const error = await stopRowsForShutdownUnlocked(rows);
+      if (error) {
+        throw error;
+      }
+      return;
+    }
+    await stopRowsForShutdown(cellId, rows);
+  }
+
   async function shouldSkipStartService(row: ServiceRow): Promise<boolean> {
-    if (row.service.pid && isProcessAlive(row.service.pid)) {
+    if (
+      activeServiceSetups.has(row.service.id) ||
+      retainedServiceSetups.has(row.service.id)
+    ) {
       return true;
     }
-
-    if (await hasOccupiedServicePort(row)) {
-      const status = row.service.status;
-      if (
-        status === "running" ||
-        status === "starting" ||
-        status === "needs_resume"
-      ) {
-        return true;
-      }
-    }
-
     if (activeServices.has(row.service.id)) {
       return true;
+    }
+    if (row.service.pid) {
+      const identity = await resolvePersistedProcessIdentity(row);
+      if (identity === "owned") {
+        return true;
+      }
+      if (identity === "unverifiable") {
+        throw new Error(persistedIdentityError(row));
+      }
+      await clearStalePersistedPid(row);
     }
 
     return false;
@@ -1576,6 +1959,7 @@ export function createServiceSupervisor(
       });
 
       activeServices.set(row.service.id, { handle });
+      activeServiceStarts.set(row.service.id, handle);
       row.service.env = processEnvironment;
 
       await repository.updateService(row.service.id, {
@@ -1589,7 +1973,7 @@ export function createServiceSupervisor(
       let startupComplete = false;
       handle.exited
         .then(async (code) => {
-          if (!deleteActiveServiceHandle(row.service.id, handle)) {
+          if (!clearActiveServiceProcess(row.service.id, handle)) {
             return;
           }
 
@@ -1605,7 +1989,7 @@ export function createServiceSupervisor(
           notifyServiceUpdate(row);
         })
         .catch((error) => {
-          if (!deleteActiveServiceHandle(row.service.id, handle)) {
+          if (!clearActiveServiceProcess(row.service.id, handle)) {
             return;
           }
 
@@ -1632,12 +2016,14 @@ export function createServiceSupervisor(
       });
       requireActiveServiceHandle(row, handle);
       startupComplete = true;
+      deleteTrackedHandle(activeServiceStarts, row.service.id, handle);
       notifyServiceUpdate(row);
     } catch (error) {
       const active = activeServices.get(row.service.id);
       if (active) {
         await terminateHandle(active.handle);
         activeServices.delete(row.service.id);
+        deleteTrackedHandle(activeServiceStarts, row.service.id, active.handle);
       }
       terminalRuntime.markServiceExit({
         serviceId: row.service.id,
@@ -1663,6 +2049,17 @@ export function createServiceSupervisor(
     }
 
     activeServices.delete(serviceId);
+    return true;
+  }
+
+  function clearActiveServiceProcess(
+    serviceId: string,
+    handle: ProcessHandle
+  ): boolean {
+    if (!deleteActiveServiceHandle(serviceId, handle)) {
+      return false;
+    }
+    deleteTrackedHandle(activeServiceStarts, serviceId, handle);
     return true;
   }
 
@@ -1701,12 +2098,7 @@ export function createServiceSupervisor(
         row.service.id,
         `[service:${row.service.name}] setup: ${setupCommand}\n`
       );
-      await runCommand(setupCommand, {
-        cwd,
-        env,
-        onData: (chunk) =>
-          terminalRuntime.appendServiceOutput(row.service.id, chunk),
-      });
+      await runServiceSetupCommand({ row, command: setupCommand, cwd, env });
       logger.info("Service setup command completed", {
         serviceId: row.service.id,
         serviceName: row.service.name,
@@ -1714,6 +2106,356 @@ export function createServiceSupervisor(
         command: setupCommand,
         durationMs: Date.now() - startedAt,
       });
+    }
+  }
+
+  async function runServiceSetupCommand(args: {
+    row: ServiceRow;
+    command: string;
+    cwd: string;
+    env: Record<string, string>;
+  }): Promise<void> {
+    const handle = spawnProcess({
+      command: args.command,
+      cwd: args.cwd,
+      env: args.env,
+      onData: (chunk) =>
+        terminalRuntime.appendServiceOutput(args.row.service.id, chunk),
+    });
+    activeServiceSetups.set(args.row.service.id, { handle });
+    if (isServiceStopRequested(args.row)) {
+      await terminateTrackedServiceSetup(args.row.service.id, handle);
+      throw new Error(`Service "${args.row.service.name}" setup cancelled`);
+    }
+    const timeoutMs = resolveServiceSetupCommandTimeoutMs();
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const result = await Promise.race([
+        handle.exited.then((exitCode) => ({
+          type: "exit" as const,
+          exitCode,
+        })),
+        new Promise<{ type: "timeout" }>((resolveTimeout) => {
+          timeoutHandle = setTimeout(
+            () => resolveTimeout({ type: "timeout" }),
+            timeoutMs
+          );
+        }),
+      ]);
+      requireActiveServiceSetup(args.row, handle);
+      if (result.type === "timeout") {
+        await terminateTrackedServiceSetup(args.row.service.id, handle);
+        throw new Error(
+          `Service "${args.row.service.name}" setup command timed out after ${timeoutMs}ms`
+        );
+      }
+      if (result.exitCode !== 0) {
+        throw new CommandExecutionError({
+          command: args.command,
+          cwd: args.cwd,
+          exitCode: result.exitCode,
+        });
+      }
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+      clearServiceSetupTracking(args.row.service.id, handle);
+    }
+  }
+
+  async function terminateTrackedServiceSetup(
+    serviceId: string,
+    handle: ProcessHandle
+  ): Promise<void> {
+    try {
+      await terminateProcessHandle(handle);
+    } catch (error) {
+      retainServiceSetup(serviceId, handle);
+      throw error;
+    }
+    if (activeServiceSetups.get(serviceId)?.handle === handle) {
+      activeServiceSetups.delete(serviceId);
+    }
+    if (retainedServiceSetups.get(serviceId) === handle) {
+      retainedServiceSetups.delete(serviceId);
+    }
+  }
+
+  function requireActiveServiceSetup(
+    row: ServiceRow,
+    handle: ProcessHandle
+  ): void {
+    const cancelled =
+      activeServiceSetups.get(row.service.id)?.handle !== handle ||
+      retainedServiceSetups.get(row.service.id) === handle ||
+      isServiceStopRequested(row);
+    if (cancelled) {
+      throw new Error(`Service "${row.service.name}" setup cancelled`);
+    }
+  }
+
+  function clearServiceSetupTracking(
+    serviceId: string,
+    handle: ProcessHandle
+  ): void {
+    if (
+      retainedServiceSetups.get(serviceId) !== handle &&
+      activeServiceSetups.get(serviceId)?.handle === handle
+    ) {
+      activeServiceSetups.delete(serviceId);
+    }
+  }
+
+  function retainServiceSetup(serviceId: string, handle: ProcessHandle): void {
+    if (retainedServiceSetups.get(serviceId) === handle) {
+      return;
+    }
+    retainedServiceSetups.set(serviceId, handle);
+    const clearAfterProcessGroupExit = async () => {
+      await waitForTrackedProcessGroupExit(handle);
+      if (retainedServiceSetups.get(serviceId) === handle) {
+        retainedServiceSetups.delete(serviceId);
+      }
+      if (activeServiceSetups.get(serviceId)?.handle === handle) {
+        activeServiceSetups.delete(serviceId);
+      }
+    };
+    clearAfterProcessGroupExit().catch((error) => {
+      logger.error("Retained service setup exit monitor failed", {
+        serviceId,
+        error: formatError(error),
+      });
+    });
+  }
+
+  async function cancelServiceSetups(serviceIds: string[]): Promise<void> {
+    await runAllCollectingFirstError(serviceIds, cancelServiceSetup);
+  }
+
+  async function cancelServiceSetup(serviceId: string): Promise<void> {
+    const active = activeServiceSetups.get(serviceId);
+    if (!active) {
+      return;
+    }
+    try {
+      await terminateProcessHandle(active.handle);
+    } catch (error) {
+      retainServiceSetup(serviceId, active.handle);
+      throw error;
+    }
+    if (activeServiceSetups.get(serviceId)?.handle === active.handle) {
+      activeServiceSetups.delete(serviceId);
+    }
+    if (retainedServiceSetups.get(serviceId) === active.handle) {
+      retainedServiceSetups.delete(serviceId);
+    }
+  }
+
+  async function cancelPersistedRecoveries(
+    serviceIds: string[]
+  ): Promise<void> {
+    await runAllCollectingFirstError(serviceIds, cancelPersistedRecovery);
+  }
+
+  async function cancelPersistedRecovery(serviceId: string): Promise<void> {
+    const recovery = activePersistedRecoveries.get(serviceId);
+    if (!recovery) {
+      return;
+    }
+    const row = await repository.fetchServiceRowById(serviceId);
+    if (
+      !(row && (await shouldTerminatePersistedHandle(row, recovery.handle)))
+    ) {
+      forgetPersistedTracking(serviceId, recovery.handle);
+      return;
+    }
+    await terminateTrackedPersistedRecovery(serviceId, recovery);
+  }
+
+  async function shouldTerminatePersistedHandle(
+    row: ServiceRow,
+    handle: ProcessHandle
+  ): Promise<boolean> {
+    const identity = await resolvePersistedProcessIdentity(row);
+    if (identity === "unverifiable") {
+      throw new Error(persistedIdentityError(row));
+    }
+    return (
+      identity === "owned" ||
+      (identity === "exited" && isProcessGroupAlive(handle.pid))
+    );
+  }
+
+  function persistedIdentityError(row: ServiceRow): string {
+    return `Cannot safely stop service "${row.service.name}" because persisted PID ${row.service.pid} is still running but its process identity cannot be verified`;
+  }
+
+  function forgetPersistedTracking(
+    serviceId: string,
+    handle: ProcessHandle
+  ): void {
+    activePersistedRecoveries.delete(serviceId);
+    if (activeServices.get(serviceId)?.handle === handle) {
+      activeServices.delete(serviceId);
+    }
+  }
+
+  async function terminateTrackedPersistedRecovery(
+    serviceId: string,
+    recovery: ActiveServiceHandle
+  ): Promise<void> {
+    activePersistedRecoveries.delete(serviceId);
+    const active = activeServices.get(serviceId);
+    if (active?.handle === recovery.handle) {
+      activeServices.delete(serviceId);
+    }
+    try {
+      await terminateProcessHandle(recovery.handle);
+    } catch (error) {
+      activePersistedRecoveries.set(serviceId, recovery);
+      if (active?.handle === recovery.handle) {
+        activeServices.set(serviceId, active);
+      }
+      throw error;
+    }
+  }
+
+  async function cancelPreLockProcesses(serviceIds: string[]): Promise<void> {
+    await runAllCollectingFirstError(
+      [cancelServiceStarts, cancelServiceSetups, cancelPersistedRecoveries],
+      (cancel) => cancel(serviceIds)
+    );
+  }
+
+  async function cancelCellPreLockProcesses(
+    cellId: string,
+    serviceIds: string[]
+  ): Promise<void> {
+    await runAllCollectingFirstError(
+      [
+        () => cancelTemplateSetup(cellId),
+        () => cancelPreLockProcesses(serviceIds),
+      ],
+      (cancel) => cancel()
+    );
+  }
+
+  async function cancelTemplateSetups(cellIds: string[]): Promise<void> {
+    await runAllCollectingFirstError(cellIds, cancelTemplateSetup);
+  }
+
+  async function cancelTemplateSetup(cellId: string): Promise<void> {
+    const handle = activeTemplateSetups.get(cellId);
+    if (!handle) {
+      return;
+    }
+    cancelledTemplateSetups.add(handle);
+    await terminateProcessHandle(handle);
+    deleteTrackedHandle(activeTemplateSetups, cellId, handle);
+  }
+
+  function observeTemplateSetupExit(
+    cellId: string,
+    handle: ProcessHandle
+  ): void {
+    const clearAfterProcessGroupExit = async () => {
+      await waitForTrackedProcessGroupExit(handle);
+      deleteTrackedHandle(activeTemplateSetups, cellId, handle);
+    };
+    clearAfterProcessGroupExit().catch((error) => {
+      logger.error("Template setup exit monitor failed", {
+        cellId,
+        error: formatError(error),
+      });
+    });
+  }
+
+  async function cancelServiceStarts(serviceIds: string[]): Promise<void> {
+    await runAllCollectingFirstError(serviceIds, async (serviceId) => {
+      const handle = activeServiceStarts.get(serviceId);
+      if (!handle) {
+        return;
+      }
+      await terminateProcessHandle(handle);
+      deleteTrackedHandle(activeServiceStarts, serviceId, handle);
+      if (activeServices.get(serviceId)?.handle === handle) {
+        activeServices.delete(serviceId);
+      }
+    });
+  }
+
+  async function runAllCollectingFirstError<Item>(
+    items: Iterable<Item>,
+    action: (item: Item) => Promise<unknown>
+  ): Promise<void> {
+    let firstError: unknown;
+    for (const item of items) {
+      firstError = await collectFirstError(firstError, () => action(item));
+    }
+    if (firstError) {
+      throw firstError;
+    }
+  }
+
+  async function waitForTrackedProcessGroupExit(
+    handle: ProcessHandle
+  ): Promise<void> {
+    await handle.exited.catch(() => -1);
+    while (isProcessGroupAlive(handle.pid)) {
+      await delay(PROCESS_EXIT_POLL_INTERVAL_MS);
+    }
+  }
+
+  function hasUnterminatedPreLockProcess(serviceId: string): boolean {
+    return (
+      activeServiceStarts.has(serviceId) ||
+      activeServiceSetups.has(serviceId) ||
+      retainedServiceSetups.has(serviceId) ||
+      activePersistedRecoveries.has(serviceId)
+    );
+  }
+
+  async function stopRowsForShutdown(
+    cellId: string,
+    rows: ServiceRow[]
+  ): Promise<void> {
+    let firstError: unknown;
+    await runWithCellLock(cellId, async () => {
+      firstError = await stopRowsForShutdownUnlocked(rows);
+    });
+    if (firstError) {
+      throw firstError;
+    }
+  }
+
+  async function stopRowsForShutdownUnlocked(
+    rows: ServiceRow[]
+  ): Promise<unknown> {
+    let firstError: unknown;
+    const portMap = await buildPersistedPortMap(rows);
+    for (const row of sortServiceRows(rows, true)) {
+      if (hasUnterminatedPreLockProcess(row.service.id)) {
+        continue;
+      }
+      const statusAfterStop =
+        row.service.status === "stopped" ? "stopped" : "needs_resume";
+      try {
+        await stopService(row, true, statusAfterStop, portMap);
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+    return firstError;
+  }
+
+  function deleteTrackedHandle(
+    handles: Map<string, ProcessHandle>,
+    id: string,
+    handle: ProcessHandle
+  ): void {
+    if (handles.get(id) === handle) {
+      handles.delete(id);
     }
   }
 
@@ -1824,24 +2566,39 @@ export function createServiceSupervisor(
     active: ActiveServiceHandle | undefined
   ): Promise<void> {
     if (active) {
-      await terminateHandle(active.handle);
+      await terminateActiveServiceProcess(row, active);
+      return;
+    }
+
+    await terminatePersistedServicePid(row);
+  }
+
+  async function terminateActiveServiceProcess(
+    row: ServiceRow,
+    active: ActiveServiceHandle
+  ): Promise<void> {
+    if (
+      active.persisted &&
+      !(await shouldTerminatePersistedHandle(row, active.handle))
+    ) {
       activeServices.delete(row.service.id);
       return;
     }
+    await terminateHandle(active.handle);
+    activeServices.delete(row.service.id);
+  }
 
-    if (!row.service.pid) {
+  async function terminatePersistedServicePid(row: ServiceRow): Promise<void> {
+    const persisted = await inspectPersistedServicePid(row);
+    if (!persisted) {
       return;
     }
-
-    const identity = await resolvePersistedProcessIdentity(row);
-    if (identity === "owned") {
-      await terminatePid(row.service.pid);
+    if (persisted.identity === "owned") {
+      await terminatePid(persisted.pid);
       return;
     }
-    if (identity === "unverifiable") {
-      throw new Error(
-        `Cannot safely stop service "${row.service.name}" because persisted PID ${row.service.pid} is still running but its process identity cannot be verified`
-      );
+    if (persisted.identity === "unverifiable") {
+      throw new Error(persistedIdentityError(row));
     }
   }
 
@@ -1849,6 +2606,7 @@ export function createServiceSupervisor(
     const ports: CellPortMap = new Map();
 
     for (const row of rows) {
+      await normalizePersistedPidForPortAllocation(row);
       const definition = row.service.definition as ProcessService;
       if (definition.type !== "process") {
         throw new Error(
@@ -1864,6 +2622,33 @@ export function createServiceSupervisor(
     }
 
     return ports;
+  }
+
+  async function normalizePersistedPidForPortAllocation(
+    row: ServiceRow
+  ): Promise<void> {
+    const persisted = await inspectPersistedServicePid(row);
+    if (
+      persisted &&
+      (persisted.identity === "different" || persisted.identity === "exited")
+    ) {
+      await clearStalePersistedPid(row);
+    }
+  }
+
+  async function inspectPersistedServicePid(
+    row: ServiceRow
+  ): Promise<{ identity: PersistedProcessIdentity; pid: number } | null> {
+    const pid = row.service.pid;
+    if (!pid) {
+      return null;
+    }
+    return { identity: await resolvePersistedProcessIdentity(row), pid };
+  }
+
+  async function clearStalePersistedPid(row: ServiceRow): Promise<void> {
+    await repository.updateService(row.service.id, { pid: null });
+    row.service.pid = null;
   }
 
   async function buildPersistedPortMap(
@@ -1968,19 +2753,25 @@ export function createServiceSupervisor(
       return;
     }
 
-    await runWithCellLock(row.cell.id, async () => {
-      const currentRow = await repository.fetchServiceRowById(serviceId);
-      if (!currentRow) {
-        return;
-      }
-      const siblings = await repository.fetchServicesForCell(row.cell.id);
-      await stopService(
-        currentRow,
-        options?.releasePorts ?? false,
-        "stopped",
-        await buildPersistedPortMap(siblings)
-      );
-    });
+    servicesStopping.add(serviceId);
+    try {
+      await cancelPreLockProcesses([serviceId]);
+      await runWithCellLock(row.cell.id, async () => {
+        const currentRow = await repository.fetchServiceRowById(serviceId);
+        if (!currentRow) {
+          return;
+        }
+        const siblings = await repository.fetchServicesForCell(row.cell.id);
+        await stopService(
+          currentRow,
+          options?.releasePorts ?? false,
+          "stopped",
+          await buildPersistedPortMap(siblings)
+        );
+      });
+    } finally {
+      servicesStopping.delete(serviceId);
+    }
   }
 
   return {

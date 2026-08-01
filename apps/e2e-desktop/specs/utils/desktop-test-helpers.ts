@@ -193,6 +193,36 @@ export async function startDesktopBrowserViewAudioCapture(
   );
 }
 
+export async function approveDesktopMicrophonePrompts(
+  app: ElectronApplication
+) {
+  await app.evaluate(({ dialog }) => {
+    const state = globalThis as typeof globalThis & {
+      __hiveMicrophonePromptCount?: number;
+    };
+    state.__hiveMicrophonePromptCount = 0;
+    Object.defineProperty(dialog, "showMessageBox", {
+      configurable: true,
+      value: () => {
+        state.__hiveMicrophonePromptCount =
+          (state.__hiveMicrophonePromptCount ?? 0) + 1;
+        return Promise.resolve({ checkboxChecked: false, response: 1 });
+      },
+    });
+  });
+}
+
+export async function readDesktopMicrophonePromptCount(
+  app: ElectronApplication
+) {
+  return await app.evaluate(() => {
+    const state = globalThis as typeof globalThis & {
+      __hiveMicrophonePromptCount?: number;
+    };
+    return state.__hiveMicrophonePromptCount ?? 0;
+  });
+}
+
 export async function requestDesktopBrowserViewClipboard(
   app: ElectronApplication
 ) {

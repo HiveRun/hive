@@ -13,7 +13,10 @@ import {
   vi,
 } from "vitest";
 import { cells } from "../../schema/cells";
+import { deleteCellWithLifecycle } from "../../services/cell-delete-lifecycle";
 import { ensureCellEnvironment } from "../../services/cell-environment";
+import { requireCellAvailableForRuntime } from "../../services/cell-runtime-guard";
+import type { AsyncWorktreeManager } from "../../worktree/manager";
 import { setupTestDb, testDb } from "../test-db";
 import {
   createBlockedServiceStop,
@@ -55,6 +58,15 @@ const seedDeleteCell = async (name: string, withArtifacts = false) => {
     ]);
   }
   return environment;
+};
+
+const seedAndLoadDeleteCell = async (name: string) => {
+  await seedDeleteCell(name);
+  const cell = await loadDeleteCell();
+  if (!cell) {
+    throw new Error("Expected seeded cell");
+  }
+  return cell;
 };
 
 describe("cell deletion teardown lifecycle", () => {
@@ -156,6 +168,90 @@ describe("cell deletion teardown lifecycle", () => {
     const retained = await loadDeleteCell();
     expect(retained).toMatchObject({ status: "error" });
     expect(retained?.lastSetupError).toContain("service stop timed out");
+  });
+
+  it("does not repeat completed teardown after later cleanup fails", async () => {
+    const cell = await seedAndLoadDeleteCell("Delete checkpoint");
+    const runCellTeardown = vi.fn(() => Promise.resolve());
+    const removeRuntimeDirectory = vi
+      .fn<(cellId: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("runtime directory busy"))
+      .mockResolvedValue(undefined);
+    const removeWorktree = vi.fn(() => Promise.resolve());
+    const lifecycle = {
+      database: testDb,
+      cell,
+      closeSession: () => Promise.resolve(),
+      closeTerminalSession: vi.fn(),
+      clearSetupTerminal: vi.fn(),
+      stopCellServices: () => Promise.resolve(),
+      runCellTeardown,
+      removeRuntimeDirectory,
+      getWorktreeService: () =>
+        Promise.resolve({ removeWorktree } as unknown as AsyncWorktreeManager),
+      log: {
+        warn: vi.fn(),
+        error: vi.fn(),
+      },
+    };
+
+    await expect(deleteCellWithLifecycle(lifecycle)).rejects.toThrow(
+      "runtime directory busy"
+    );
+    expect(await loadDeleteCell()).toMatchObject({
+      deletionPhase: "teardown_complete",
+      status: "deleting",
+    });
+    await expect(
+      requireCellAvailableForRuntime(testDb, CELL_ID)
+    ).rejects.toThrow("Cell is being deleted");
+
+    await deleteCellWithLifecycle(lifecycle);
+
+    expect(runCellTeardown).toHaveBeenCalledOnce();
+    expect(removeRuntimeDirectory).toHaveBeenCalledTimes(2);
+    expect(removeWorktree).toHaveBeenCalledOnce();
+    expect(await loadDeleteCell()).toBeUndefined();
+  });
+
+  it("keeps a cell unavailable after partial teardown fails", async () => {
+    const cell = await seedAndLoadDeleteCell("Partial teardown");
+    const runCellTeardown = vi.fn(
+      async ({ cell: deletingCell }: { cell: typeof cell }) => {
+        const deletionPhase = "teardown:fingerprint:1" as const;
+        await testDb
+          .update(cells)
+          .set({ deletionPhase })
+          .where(eq(cells.id, deletingCell.id));
+        deletingCell.deletionPhase = deletionPhase;
+        throw new Error("second cleanup failed");
+      }
+    );
+
+    await expect(
+      deleteCellWithLifecycle({
+        database: testDb,
+        cell,
+        closeSession: vi.fn(),
+        closeTerminalSession: vi.fn(),
+        clearSetupTerminal: vi.fn(),
+        stopCellServices: () => Promise.resolve(),
+        runCellTeardown,
+        getWorktreeService: () => Promise.resolve({} as AsyncWorktreeManager),
+        log: {
+          warn: vi.fn(),
+          error: vi.fn(),
+        },
+      })
+    ).rejects.toThrow("second cleanup failed");
+
+    expect(await loadDeleteCell()).toMatchObject({
+      deletionPhase: "teardown:fingerprint:1",
+      status: "deleting",
+    });
+    await expect(
+      requireCellAvailableForRuntime(testDb, CELL_ID)
+    ).rejects.toThrow("Cell is being deleted");
   });
 
   it("serializes concurrent deletion lifecycles for the same cell", async () => {

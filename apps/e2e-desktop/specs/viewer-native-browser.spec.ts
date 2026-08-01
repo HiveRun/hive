@@ -8,11 +8,13 @@ import {
 } from "@playwright/test";
 import { launchDesktopApp, navigateInDesktopApp } from "./utils/desktop-app";
 import {
+  approveDesktopMicrophonePrompts,
   createDesktopCell,
   expectBrowserView,
   expectBrowserViewCount,
   expectWebContentsDestroyed,
   readDesktopBrowserView,
+  readDesktopMicrophonePromptCount,
   requestDesktopBrowserViewClipboard,
   requestDesktopBrowserViewMedia,
   requestMainRendererMedia,
@@ -39,6 +41,19 @@ const expectFullscreen = (page: Page) =>
   expect
     .poll(() => page.evaluate(() => Boolean(document.fullscreenElement)))
     .toBe(true);
+
+const expectDesktopAudioCaptureGranted = async (
+  app: ElectronApplication,
+  expectedPromptCount: number
+) => {
+  await expect(startDesktopBrowserViewAudioCapture(app)).resolves.toEqual({
+    granted: true,
+    trackState: "live",
+  });
+  await expect
+    .poll(() => readDesktopMicrophonePromptCount(app))
+    .toBe(expectedPromptCount);
+};
 
 const activateSyncedBrowserView = async (
   app: ElectronApplication,
@@ -165,10 +180,8 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
     expect(webContentsId).toEqual(expect.any(Number));
     await expectBrowserViewCount(app, 1);
 
-    await expect(startDesktopBrowserViewAudioCapture(app)).resolves.toEqual({
-      granted: true,
-      trackState: "live",
-    });
+    await approveDesktopMicrophonePrompts(app);
+    await expectDesktopAudioCaptureGranted(app, 1);
     await expectPermissionDenied(
       requestDesktopBrowserViewMedia(app, { video: true })
     );
@@ -208,10 +221,7 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
     await expectFullscreen(page);
     await page.evaluate(async () => await document.exitFullscreen());
 
-    await expect(startDesktopBrowserViewAudioCapture(app)).resolves.toEqual({
-      granted: true,
-      trackState: "live",
-    });
+    await expectDesktopAudioCaptureGranted(app, 2);
     const changedRootWebContentsId = await activateSyncedBrowserView(
       app,
       page,

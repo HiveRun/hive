@@ -12,7 +12,7 @@ import {
 import { runWithCellCleanupLock } from "./cell-cleanup-lock";
 import { removeCellRuntimeDir } from "./cell-environment";
 import { loadCellById } from "./cell-runtime-guard";
-import { emitCellStatusUpdate } from "./events";
+import { updateCellStatusAndEmit } from "./cell-status";
 import type { TemplateTeardownReason } from "./supervisor";
 
 type DatabaseClient = DatabaseServiceType["db"];
@@ -48,6 +48,7 @@ type DeleteLifecycleArgs = {
     reason: TemplateTeardownReason;
   }) => Promise<unknown>;
   getWorktreeService: (workspaceId: string) => Promise<AsyncWorktreeManager>;
+  removeRuntimeDirectory?: (cellId: string) => Promise<void>;
   log: DeleteLifecycleLogger;
 };
 
@@ -62,24 +63,18 @@ function runDeleteStepWithTimeout<T>(args: {
   timeoutMs: number;
   action: () => Promise<T> | T;
 }): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  return Promise.race([
-    Promise.resolve().then(args.action),
-    new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () =>
-          reject(
-            new Error(
-              `Delete step '${args.step}' timed out after ${args.timeoutMs}ms`
-            )
-          ),
-        args.timeoutMs
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(
+        new Error(
+          `Delete step '${args.step}' timed out after ${args.timeoutMs}ms`
+        )
       );
-    }),
-  ]).finally(() => {
-    if (timer) {
-      clearTimeout(timer);
-    }
+    }, args.timeoutMs);
+    Promise.resolve()
+      .then(args.action)
+      .then(resolve, reject)
+      .finally(() => clearTimeout(timer));
   });
 }
 
@@ -88,15 +83,10 @@ async function markCellDeletionStarted(args: {
   cellId: string;
   workspaceId: string;
 }) {
-  await args.database
-    .update(cells)
-    .set({ status: "deleting" })
-    .where(eq(cells.id, args.cellId));
-  emitCellStatusUpdate({
-    cellId: args.cellId,
-    workspaceId: args.workspaceId,
+  await updateCellStatusAndEmit({
+    database: args.database,
+    cell: { id: args.cellId, workspaceId: args.workspaceId },
     status: "deleting",
-    lastSetupError: undefined,
   });
 }
 
@@ -111,13 +101,9 @@ async function restoreCellStatusAfterDeleteFailure(args: {
     return;
   }
 
-  await args.database
-    .update(cells)
-    .set({ status: args.previousStatus })
-    .where(eq(cells.id, args.cellId));
-  emitCellStatusUpdate({
-    cellId: args.cellId,
-    workspaceId: args.workspaceId,
+  await updateCellStatusAndEmit({
+    database: args.database,
+    cell: { id: args.cellId, workspaceId: args.workspaceId },
     status: args.previousStatus,
     lastSetupError: existing.lastSetupError ?? undefined,
   });
@@ -129,20 +115,42 @@ async function markCellDeletionFailure(args: {
   workspaceId: string;
   error: unknown;
   label: string;
+  status?: "deleting" | "error";
 }): Promise<Error> {
   const reason = formatLifecycleError(args.error);
   const lastSetupError = `${args.label} failed during cell deletion: ${reason}`;
-  await args.database
-    .update(cells)
-    .set({ status: "error", lastSetupError })
-    .where(eq(cells.id, args.cellId));
-  emitCellStatusUpdate({
-    cellId: args.cellId,
-    workspaceId: args.workspaceId,
-    status: "error",
+  await updateCellStatusAndEmit({
+    database: args.database,
+    cell: { id: args.cellId, workspaceId: args.workspaceId },
+    status: args.status ?? "error",
     lastSetupError,
   });
   return new Error(lastSetupError);
+}
+
+async function markCellTeardownComplete(args: {
+  database: DatabaseClient;
+  cell: CellDeleteRecord;
+}) {
+  await args.database
+    .update(cells)
+    .set({ deletionPhase: "teardown_complete" })
+    .where(eq(cells.id, args.cell.id));
+  args.cell.deletionPhase = "teardown_complete";
+}
+
+async function keepCellDeletionInProgress(args: {
+  database: DatabaseClient;
+  cell: CellDeleteRecord;
+  error: unknown;
+}) {
+  const lastSetupError = formatLifecycleError(args.error);
+  await updateCellStatusAndEmit({
+    database: args.database,
+    cell: args.cell,
+    status: "deleting",
+    lastSetupError,
+  });
 }
 
 function formatLifecycleError(error: unknown): string {
@@ -253,15 +261,24 @@ async function deleteCellWithTiming(
     failureLabel: "Service stop",
   });
 
-  await runStep({
-    step: "template_teardown",
-    action: () => args.runCellTeardown({ cell: args.cell, reason: "delete" }),
-    failureLabel: "Template teardown",
-  });
+  if (args.cell.deletionPhase !== "teardown_complete") {
+    await runStep({
+      step: "template_teardown",
+      action: async () => {
+        await args.runCellTeardown({ cell: args.cell, reason: "delete" });
+        await markCellTeardownComplete({
+          database: args.database,
+          cell: args.cell,
+        });
+      },
+      failureLabel: "Template teardown",
+    });
+  }
 
   await runStep({
     step: "remove_runtime_directory",
-    action: () => removeCellRuntimeDir(args.cell.id),
+    action: () =>
+      (args.removeRuntimeDirectory ?? removeCellRuntimeDir)(args.cell.id),
     timeoutMs: DELETE_REMOVE_RUNTIME_TIMEOUT_MS,
   });
 
@@ -320,12 +337,23 @@ async function deleteCellWithLifecycleUnlocked(
       workspaceId: args.cell.workspaceId,
       error,
       label,
+      status: args.cell.deletionPhase ? "deleting" : "error",
     });
   };
 
   try {
     await deleteCellWithTiming(args, persistLifecycleFailure);
   } catch (error) {
+    if (args.cell.deletionPhase) {
+      if (!lifecycleFailurePersisted) {
+        await keepCellDeletionInProgress({
+          database: args.database,
+          cell: args.cell,
+          error,
+        });
+      }
+      throw error;
+    }
     if (lifecycleFailurePersisted) {
       throw error;
     }

@@ -1,0 +1,1 @@
+ALTER TABLE `cells` ADD `deletion_phase` text;

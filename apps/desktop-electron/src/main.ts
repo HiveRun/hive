@@ -1,7 +1,14 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { app, BrowserWindow, ipcMain, session } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  session,
+  systemPreferences,
+} from "electron";
 import { registerIpcHandlers } from "./ipc";
 import {
   installMediaPermissionHandlers,
@@ -52,6 +59,32 @@ const resolveRendererEntry = () => {
   ];
 
   return candidates.find((entry) => existsSync(entry)) ?? null;
+};
+
+const requestViewerMicrophoneAccess = async (origin: string) => {
+  const window =
+    BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  if (!window) {
+    return false;
+  }
+
+  const result = await dialog.showMessageBox(window, {
+    buttons: ["Deny", "Allow microphone"],
+    cancelId: 0,
+    defaultId: 0,
+    detail: `The cell service at ${origin} is requesting access to your microphone.`,
+    message: "Allow microphone access?",
+    noLink: true,
+    title: "Hive Desktop",
+    type: "question",
+  });
+  if (result.response !== 1) {
+    return false;
+  }
+
+  return process.platform !== "darwin"
+    ? true
+    : await systemPreferences.askForMediaAccess("microphone");
 };
 
 type IpcRegistry = ReturnType<typeof registerIpcHandlers>;
@@ -119,7 +152,8 @@ const createMainWindow = async (
 const bootstrap = async () => {
   await app.whenReady();
   const mediaPermissions = installMediaPermissionHandlers(
-    session.defaultSession
+    session.defaultSession,
+    { requestViewerMicrophoneAccess }
   );
   const startupController = createDesktopStartupController();
   const ipcRegistry = registerIpcHandlers({

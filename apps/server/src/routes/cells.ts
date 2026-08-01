@@ -72,6 +72,7 @@ import {
   loadCellById,
   requireCellAvailableForRuntime,
 } from "../services/cell-runtime-guard";
+import { updateCellStatusAndEmit } from "../services/cell-status";
 import {
   buildTimingRuns,
   type CellTimingStepRecord,
@@ -791,25 +792,6 @@ async function runSingleServiceAction(args: {
 
       return await serializeService(args.deps, args.deps.db, updated);
     },
-  });
-}
-
-async function updateCellStatusAndEmit(args: {
-  database: DatabaseClient;
-  cell: typeof cells.$inferSelect;
-  status: CellStatus;
-  lastSetupError: string | null;
-}) {
-  await args.database
-    .update(cells)
-    .set({ status: args.status, lastSetupError: args.lastSetupError })
-    .where(eq(cells.id, args.cell.id));
-
-  emitCellStatusUpdate({
-    workspaceId: args.cell.workspaceId,
-    cellId: args.cell.id,
-    status: args.status,
-    lastSetupError: args.lastSetupError,
   });
 }
 

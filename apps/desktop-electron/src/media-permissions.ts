@@ -84,12 +84,23 @@ export const isWithinTrustedRendererScope = (
   return candidate?.kind === scope.kind && candidate.value === scope.value;
 };
 
-export const installMediaPermissionHandlers = (session: Session) => {
+export const installMediaPermissionHandlers = (
+  session: Session,
+  options: {
+    requestViewerMicrophoneAccess?: (origin: string) => Promise<boolean>;
+  } = {}
+) => {
   const trustedRenderers = new WeakMap<
     WebContents,
     TrustedRendererRegistration
   >();
   const viewerOrigins = new WeakMap<WebContents, string>();
+  const viewerRegistrations = new WeakMap<WebContents, object>();
+  const approvedMicrophoneViewers = new WeakSet<WebContents>();
+  const pendingMicrophoneRequests = new WeakMap<
+    WebContents,
+    Promise<boolean>
+  >();
   const hasOrigin = (url: string | undefined, origin: string) =>
     isAllowedLoopbackUrl(url) && resolveOrigin(url) === origin;
 
@@ -131,6 +142,7 @@ export const installMediaPermissionHandlers = (session: Session) => {
         return (
           Boolean(requestingOrigin) &&
           details.mediaType === "audio" &&
+          Boolean(contents && approvedMicrophoneViewers.has(contents)) &&
           isAllowedViewerRequest(
             contents,
             requestingOrigin,
@@ -166,16 +178,54 @@ export const installMediaPermissionHandlers = (session: Session) => {
       const mediaTypes = mediaDetails.mediaTypes ?? [];
       const securityOrigin =
         mediaDetails.securityOrigin ?? mediaDetails.requestingUrl;
-      callback(
+      const isAllowedAudioRequest =
         Boolean(securityOrigin) &&
-          mediaTypes.length > 0 &&
-          mediaTypes.every((mediaType) => mediaType === "audio") &&
+        mediaTypes.length > 0 &&
+        mediaTypes.every((mediaType) => mediaType === "audio") &&
+        isAllowedViewerRequest(
+          contents,
+          mediaDetails.requestingUrl,
+          securityOrigin
+        );
+      if (!(isAllowedAudioRequest && securityOrigin)) {
+        callback(false);
+        return;
+      }
+
+      if (approvedMicrophoneViewers.has(contents)) {
+        callback(true);
+        return;
+      }
+
+      const registration = viewerRegistrations.get(contents);
+      if (!registration) {
+        callback(false);
+        return;
+      }
+      let request = pendingMicrophoneRequests.get(contents);
+      if (!request) {
+        request = Promise.resolve(
+          options.requestViewerMicrophoneAccess?.(securityOrigin) ?? false
+        ).catch(() => false);
+        pendingMicrophoneRequests.set(contents, request);
+      }
+
+      request.then((approved) => {
+        if (pendingMicrophoneRequests.get(contents) === request) {
+          pendingMicrophoneRequests.delete(contents);
+        }
+        const stillAllowed =
+          viewerRegistrations.get(contents) === registration &&
           isAllowedViewerRequest(
             contents,
             mediaDetails.requestingUrl,
             securityOrigin
-          )
-      );
+          );
+        if (approved && stillAllowed) {
+          approvedMicrophoneViewers.add(contents);
+        }
+        callback(approved && stillAllowed);
+      });
     }
   );
 
@@ -210,15 +260,27 @@ export const installMediaPermissionHandlers = (session: Session) => {
     },
     registerViewer: (contents: WebContents, rootUrl: string) => {
       viewerOrigins.delete(contents);
+      viewerRegistrations.delete(contents);
+      approvedMicrophoneViewers.delete(contents);
+      pendingMicrophoneRequests.delete(contents);
       const origin = resolveOrigin(rootUrl);
       if (!(origin && isAllowedLoopbackUrl(rootUrl))) {
         return;
       }
       viewerOrigins.set(contents, origin);
-      contents.once("destroyed", () => viewerOrigins.delete(contents));
+      viewerRegistrations.set(contents, {});
+      contents.once("destroyed", () => {
+        viewerOrigins.delete(contents);
+        viewerRegistrations.delete(contents);
+        approvedMicrophoneViewers.delete(contents);
+        pendingMicrophoneRequests.delete(contents);
+      });
     },
     unregisterViewer: (contents: WebContents) => {
       viewerOrigins.delete(contents);
+      viewerRegistrations.delete(contents);
+      approvedMicrophoneViewers.delete(contents);
+      pendingMicrophoneRequests.delete(contents);
     },
   };
 };
