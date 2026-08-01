@@ -11,7 +11,10 @@ import type { AgentPromptInput, AgentRuntimeService } from "../agents/service";
 import { agentRuntimeService } from "../agents/service";
 import type { AgentMode } from "../agents/types";
 import type { ProcessService, Template } from "../config/schema";
-import { resolveServicePortProtocol } from "../config/service-graph";
+import {
+  resolveServicePortProtocol,
+  resolveServicePortViewer,
+} from "../config/service-graph";
 import {
   DatabaseService,
   type DatabaseService as DatabaseServiceType,
@@ -5649,6 +5652,7 @@ async function serializeService(
           port: claim.port,
           primary: claim.primary,
           protocol,
+          viewer: resolveServicePortViewer(processDefinition ?? {}, claim.name),
           url: buildServiceUrl(claim.port, protocol) ?? undefined,
           portReachable: await isPortActive(claim.port),
         };

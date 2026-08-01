@@ -7,8 +7,18 @@ import { cellServicePorts, cellServices } from "../schema/services";
 import { createPortManager } from "./port-manager";
 
 const NAMED_HTTP_PORTS = [
-  { name: "http", primary: true, protocol: "http" as const },
-  { name: "metrics", primary: false, protocol: "http" as const },
+  {
+    name: "http",
+    primary: true,
+    protocol: "http" as const,
+    viewer: true,
+  },
+  {
+    name: "metrics",
+    primary: false,
+    protocol: "http" as const,
+    viewer: true,
+  },
 ];
 
 describe("port manager", () => {

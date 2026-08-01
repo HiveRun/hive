@@ -256,7 +256,11 @@ Process services can declare multiple persisted named ports, explicit readiness 
           "type": "process",
           "run": "bun run dev -- --port $PORT",
           "ports": {
-            "http": { "primary": true, "protocol": "http" },
+            "http": {
+              "primary": true,
+              "protocol": "http",
+              "viewer": true
+            },
             "metrics": { "protocol": "tcp" }
           },
           "env": {
@@ -288,6 +292,8 @@ Process services can declare multiple persisted named ports, explicit readiness 
 ```
 
 Port references allocate and interpolate addresses but do not create startup dependencies. Use `dependsOn` when readiness ordering matters. Hive starts dependencies first, waits for every configured readiness check, and stops bulk service sets in reverse order.
+
+HTTP and HTTPS ports appear in the cell viewer by default. Set `"viewer": false` on internal APIs, workers, or other browser-incompatible ports to keep them available without creating a viewer tab. TCP ports never create viewer tabs.
 
 Setup, services, cell terminals, chat terminals, and teardown receive `HIVE_CELL_ID`, `HIVE_CELL_RUNTIME_DIR`, `HIVE_CELL_ARTIFACTS_DIR`, cell-local `HIVE_HOME`, and named variables such as `API_HTTP_PORT`. Teardown runs only during cell deletion or destructive provisioning rollback. Successful deletion removes runtime data and preserves artifacts.
 

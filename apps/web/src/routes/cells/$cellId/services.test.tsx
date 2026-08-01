@@ -85,6 +85,7 @@ describe("service port presentation", () => {
             primary: true,
             protocol: "http",
             url: "http://localhost:43101",
+            viewer: true,
             portReachable: true,
           },
           {
@@ -92,6 +93,7 @@ describe("service port presentation", () => {
             port: 43_102,
             primary: false,
             protocol: "tcp",
+            viewer: false,
             portReachable: false,
           },
         ],

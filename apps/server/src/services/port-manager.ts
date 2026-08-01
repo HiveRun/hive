@@ -159,6 +159,7 @@ export function createPortManager({ db: database, now }: PortManagerDeps) {
               name: DEFAULT_SERVICE_PORT_NAME,
               primary: true,
               protocol: "http" as const,
+              viewer: true,
             },
           ];
     const allocation = await ensureServicePorts(service, definitions);

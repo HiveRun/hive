@@ -35,6 +35,8 @@ const descriptionMap: Record<string, string> = {
     "Use as the compatibility primary port",
   "templates/*/services/*/ports/*/protocol":
     "How clients should connect to the port (defaults to http)",
+  "templates/*/services/*/ports/*/viewer":
+    "Show this HTTP or HTTPS port in the browser viewer (defaults to true)",
   "templates/*/services/*/dependsOn":
     "Services that must be ready before this service starts",
   "templates/*/services/*/readiness": "Readiness probe after process spawn",

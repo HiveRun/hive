@@ -302,7 +302,7 @@ describe("GET /api/cells/:id/services payload", () => {
       port: primaryPort,
       definition: {
         ports: {
-          http: { primary: true },
+          http: { primary: true, viewer: false },
           metrics: { protocol: "tcp" },
           secure: { protocol: "https" },
         },
@@ -322,6 +322,7 @@ describe("GET /api/cells/:id/services payload", () => {
         port: number;
         primary: boolean;
         protocol: "http" | "https" | "tcp";
+        viewer: boolean;
         url?: string;
         portReachable: boolean;
       }>;
@@ -334,6 +335,7 @@ describe("GET /api/cells/:id/services payload", () => {
         port: primaryPort,
         primary: true,
         protocol: "http",
+        viewer: false,
         url: `http://localhost:${primaryPort}`,
         portReachable: false,
       },
@@ -342,6 +344,7 @@ describe("GET /api/cells/:id/services payload", () => {
         port: metricsPort,
         primary: false,
         protocol: "tcp",
+        viewer: false,
         portReachable: false,
       },
       {
@@ -349,6 +352,7 @@ describe("GET /api/cells/:id/services payload", () => {
         port: securePort,
         primary: false,
         protocol: "https",
+        viewer: true,
         url: `https://localhost:${securePort}`,
         portReachable: false,
       },

@@ -26,6 +26,12 @@ const processServicePortsSchema = z
         .enum(["http", "https", "tcp"])
         .optional()
         .describe("How clients should connect to the port (defaults to http)"),
+      viewer: z
+        .boolean()
+        .optional()
+        .describe(
+          "Show this HTTP or HTTPS port in the browser viewer (defaults to true)"
+        ),
     })
   )
   .refine((ports) => Object.keys(ports).length > 0, {

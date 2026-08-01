@@ -81,7 +81,7 @@ export function resolveBrowserViewerTargets(
 ): BrowserViewerTarget[] {
   return services.flatMap((service): BrowserViewerTarget[] => {
     const namedBrowserPorts = service.ports.flatMap((port) => {
-      if (port.protocol === "tcp") {
+      if (port.protocol === "tcp" || !port.viewer) {
         return [];
       }
       const url = port.url ?? (port.primary ? service.url : undefined);

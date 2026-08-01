@@ -8,6 +8,7 @@ const RESERVED_GENERATED_ENVIRONMENT_KEYS = new Map([
 type PortDefinition = {
   primary?: boolean;
   protocol?: "http" | "https" | "tcp";
+  viewer?: boolean;
 };
 
 type ServiceDefinition = {
@@ -21,6 +22,7 @@ export type NamedPortDefinition = {
   name: string;
   primary: boolean;
   protocol: "http" | "https" | "tcp";
+  viewer: boolean;
 };
 
 type ServiceGraphIssue = {
@@ -38,18 +40,27 @@ export function resolveNamedPortDefinitions(
   const entries = Object.entries(definition.ports ?? {});
   if (entries.length === 0) {
     return [
-      { name: DEFAULT_SERVICE_PORT_NAME, primary: true, protocol: "http" },
+      {
+        name: DEFAULT_SERVICE_PORT_NAME,
+        primary: true,
+        protocol: "http",
+        viewer: true,
+      },
     ];
   }
 
   const configuredPrimary = entries.find(([, port]) => port.primary)?.[0];
   const primaryName = configuredPrimary ?? entries[0]?.[0];
 
-  return entries.map(([name, portDefinition]) => ({
-    name,
-    primary: name === primaryName,
-    protocol: portDefinition.protocol ?? "http",
-  }));
+  return entries.map(([name, portDefinition]) => {
+    const protocol = portDefinition.protocol ?? "http";
+    return {
+      name,
+      primary: name === primaryName,
+      protocol,
+      viewer: protocol !== "tcp" && (portDefinition.viewer ?? true),
+    };
+  });
 }
 
 export function resolveServicePortProtocol(
@@ -65,6 +76,17 @@ export function resolveServicePortProtocol(
     resolveNamedPortDefinitions(definition).find(
       (port) => port.name === portName
     )?.protocol ?? "http"
+  );
+}
+
+export function resolveServicePortViewer(
+  definition: Pick<ServiceDefinition, "ports">,
+  portName: string
+): boolean {
+  return (
+    resolveNamedPortDefinitions(definition).find(
+      (port) => port.name === portName
+    )?.viewer ?? true
   );
 }
 

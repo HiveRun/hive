@@ -85,6 +85,7 @@ describe("resolveBrowserViewerTargets", () => {
             portReachable: true,
             primary: true,
             protocol: "tcp",
+            viewer: true,
           },
           {
             name: "admin",
@@ -92,6 +93,7 @@ describe("resolveBrowserViewerTargets", () => {
             portReachable: true,
             primary: false,
             protocol: "http",
+            viewer: true,
             url: "http://localhost:43102/",
           },
         ],
@@ -107,6 +109,7 @@ describe("resolveBrowserViewerTargets", () => {
             portReachable: true,
             primary: true,
             protocol: "http",
+            viewer: true,
             url: "http://localhost:3000/",
           },
           {
@@ -115,6 +118,7 @@ describe("resolveBrowserViewerTargets", () => {
             portReachable: false,
             primary: false,
             protocol: "https",
+            viewer: true,
             url: "https://localhost:3443/",
           },
         ],
@@ -131,10 +135,28 @@ describe("resolveBrowserViewerTargets", () => {
             portReachable: true,
             primary: true,
             protocol: "http",
+            viewer: true,
           },
         ],
         status: "running",
         url: "http://localhost:4173/",
+      },
+      {
+        id: "service-internal",
+        name: "internal",
+        ports: [
+          {
+            name: "http",
+            port: 4000,
+            portReachable: true,
+            primary: true,
+            protocol: "http",
+            url: "http://localhost:4000/",
+            viewer: false,
+          },
+        ],
+        status: "running",
+        url: "http://localhost:4000/",
       },
     ]);
 

@@ -171,7 +171,7 @@ export function useBrowserReachability({
     );
 
     fetch(requestUrl, {
-      method: "HEAD",
+      method: "GET",
       mode: "no-cors",
       signal: controller.signal,
     })
@@ -408,7 +408,7 @@ function ViewerSurface({
   if (availability === "ready" && url) {
     return (
       <iframe
-        allow="microphone"
+        allow="autoplay; microphone"
         className="h-full min-h-[320px] w-full border-0 bg-background"
         data-testid="web-iframe-preview"
         referrerPolicy="no-referrer"

@@ -67,6 +67,7 @@ export const CellServiceSchema = t.Object({
         t.Literal("https"),
         t.Literal("tcp"),
       ]),
+      viewer: t.Boolean(),
       url: t.Optional(t.String()),
       portReachable: t.Boolean(),
     })

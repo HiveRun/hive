@@ -6,6 +6,7 @@ import {
   getServiceDependencyClosure,
   resolveNamedPortDefinitions,
   resolveServicePortProtocol,
+  resolveServicePortViewer,
   topologicallySortServiceNames,
 } from "./service-graph";
 
@@ -32,6 +33,7 @@ describe("service graph", () => {
         name: DEFAULT_SERVICE_PORT_NAME,
         primary: true,
         protocol: "http",
+        viewer: true,
       },
     ]);
     expect(resolveServicePortProtocol({}, "default", "https")).toBe("https");
@@ -55,6 +57,25 @@ describe("service graph", () => {
     expect(resolveServicePortProtocol(definition, "secure", "http")).toBe(
       "https"
     );
+    expect(resolveServicePortViewer(definition, "http")).toBe(true);
+  });
+
+  it("resolves explicit browser viewer eligibility", () => {
+    const definition = {
+      ports: {
+        api: { primary: true, viewer: false },
+        admin: { viewer: true },
+      },
+    };
+
+    expect(resolveServicePortViewer(definition, "api")).toBe(false);
+    expect(resolveServicePortViewer(definition, "admin")).toBe(true);
+    expect(
+      resolveServicePortViewer(
+        { ports: { postgres: { primary: true, protocol: "tcp" } } },
+        "postgres"
+      )
+    ).toBe(false);
   });
 
   it("sorts dependencies before dependents deterministically", () => {

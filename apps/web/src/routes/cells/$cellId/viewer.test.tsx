@@ -26,6 +26,11 @@ describe("useBrowserReachability", () => {
     );
 
     await waitFor(() => expect(result.current).toBe(true));
+    expect(fetchMock).toHaveBeenLastCalledWith(VIEWER_URL, {
+      method: "GET",
+      mode: "no-cors",
+      signal: expect.any(AbortSignal),
+    });
     rerender({ status: "stopped" });
     await waitFor(() => expect(result.current).toBeNull());
 

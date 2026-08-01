@@ -22,7 +22,7 @@ test.describe("viewer route in web runtime", () => {
       "sandbox",
       "allow-same-origin allow-scripts"
     );
-    await expect(iframe).toHaveAttribute("allow", "microphone");
+    await expect(iframe).toHaveAttribute("allow", "autoplay; microphone");
     await expect(iframe).toHaveAttribute("referrerpolicy", "no-referrer");
     await expect(iframe).toHaveAttribute("src", LOOPBACK_VIEWER_URL_PATTERN);
     await expect(iframe.contentFrame().getByRole("heading")).toHaveText(

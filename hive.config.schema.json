@@ -128,6 +128,10 @@
                             "description": "How clients should connect to the port (defaults to http)",
                             "type": "string",
                             "enum": ["http", "https", "tcp"]
+                          },
+                          "viewer": {
+                            "description": "Show this HTTP or HTTPS port in the browser viewer (defaults to true)",
+                            "type": "boolean"
                           }
                         },
                         "additionalProperties": false,
