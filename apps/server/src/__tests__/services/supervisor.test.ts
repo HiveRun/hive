@@ -292,6 +292,9 @@ describe("service supervisor", () => {
     const { cell, harness } = await createScenario({
       templateId: "template-restart",
       start: true,
+      harnessOptions: {
+        processKill: (_signal, exit) => exit(1),
+      },
     });
 
     const service = await getOnlyService(cell.id);
@@ -305,6 +308,7 @@ describe("service supervisor", () => {
       .from(cellServices)
       .where(eq(cellServices.id, service.id));
     expect(stopped?.status).toBe("stopped");
+    expect(stopped?.lastKnownError).toBeNull();
 
     await harness.supervisor.startCellService(service.id);
 

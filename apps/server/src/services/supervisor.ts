@@ -2535,6 +2535,7 @@ export function createServiceSupervisor(
     await repository.updateService(row.service.id, {
       status: statusAfterStop,
       pid: null,
+      lastKnownError: null,
     });
 
     terminalRuntime.markServiceExit({
