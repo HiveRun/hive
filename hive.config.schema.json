@@ -120,6 +120,12 @@
                       "additionalProperties": {
                         "type": "object",
                         "properties": {
+                          "port": {
+                            "description": "Bind this exact host port instead of allocating one",
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 65535
+                          },
                           "primary": {
                             "description": "Use as the compatibility port",
                             "type": "boolean"

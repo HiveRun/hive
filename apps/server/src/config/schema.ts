@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { collectServiceGraphIssues } from "./service-graph";
 
+const MAX_TCP_PORT = 65_535;
+
 const servicePortNameSchema = z
   .string()
   .min(1)
@@ -21,6 +23,13 @@ const processServicePortsSchema = z
   .record(
     servicePortNameSchema,
     z.object({
+      port: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_TCP_PORT)
+        .optional()
+        .describe("Bind this exact host port instead of allocating one"),
       primary: z.boolean().optional().describe("Use as the compatibility port"),
       protocol: z
         .enum(["http", "https", "tcp"])

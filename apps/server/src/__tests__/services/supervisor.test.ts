@@ -350,6 +350,48 @@ describe("service supervisor", () => {
     await stopHarness(harness);
   });
 
+  it("marks an occupied fixed port as a bootstrap error", async () => {
+    const occupiedPort = await allocateFreePort();
+    const listener = createServer();
+    await listenOnPort(listener, occupiedPort);
+    const definition = serviceDefinition({
+      ports: { http: { port: occupiedPort, primary: true } },
+    });
+    const { cell, harness } = await createScenario({
+      templateId: "template-bootstrap-fixed-port",
+      serviceRecords: [
+        {
+          id: "svc-bootstrap-fixed-port",
+          status: "needs_resume",
+          port: occupiedPort,
+          definition,
+        },
+      ],
+    });
+    const now = new Date();
+    await testDb.insert(cellServicePorts).values({
+      serviceId: "svc-bootstrap-fixed-port",
+      name: "http",
+      port: occupiedPort,
+      primary: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    try {
+      await harness.supervisor.bootstrap();
+
+      expect(harness.processes).toHaveLength(0);
+      const service = await getOnlyService(cell.id);
+      expect(service.status).toBe("error");
+      expect(service.lastKnownError).toContain(
+        `requires host port ${occupiedPort}, but it is unavailable`
+      );
+    } finally {
+      await closeServer(listener);
+    }
+  });
+
   it("waits for an owned persisted starting process before marking it running", async () => {
     const pid = 4545;
     const port = await allocateFreePort();

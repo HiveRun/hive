@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
+import { createServer } from "node:net";
 import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { setupTestDb, testDb } from "../__tests__/test-db";
@@ -21,6 +23,19 @@ const NAMED_HTTP_PORTS = [
   },
 ];
 
+const createTestPortManager = () =>
+  createPortManager({ db: testDb, now: () => new Date() });
+
+const exactViewerPort = (port: number) => [
+  {
+    name: "viewer",
+    port,
+    primary: true,
+    protocol: "http" as const,
+    viewer: true,
+  },
+];
+
 describe("port manager", () => {
   beforeAll(setupTestDb);
 
@@ -32,10 +47,7 @@ describe("port manager", () => {
 
   it("persists, reuses, and releases every named claim", async () => {
     const service = await insertService();
-    const firstManager = createPortManager({
-      db: testDb,
-      now: () => new Date(),
-    });
+    const firstManager = createTestPortManager();
     const first = await firstManager.ensureServicePorts(
       service,
       NAMED_HTTP_PORTS
@@ -62,10 +74,7 @@ describe("port manager", () => {
     firstManager.releasePortFor(service.id);
     expect(firstManager.getServicePorts(service.id)).toBeUndefined();
 
-    const restartManager = createPortManager({
-      db: testDb,
-      now: () => new Date(),
-    });
+    const restartManager = createTestPortManager();
     const restarted = await restartManager.ensureServicePorts(
       persistedService ?? service,
       NAMED_HTTP_PORTS
@@ -81,10 +90,7 @@ describe("port manager", () => {
   it("serializes concurrent multi-service allocations", async () => {
     const firstService = await insertService("first");
     const secondService = await insertService("second");
-    const manager = createPortManager({
-      db: testDb,
-      now: () => new Date(),
-    });
+    const manager = createTestPortManager();
     const allocations = await Promise.all([
       manager.ensureServicePorts(firstService, NAMED_HTTP_PORTS),
       manager.ensureServicePorts(secondService, NAMED_HTTP_PORTS),
@@ -94,6 +100,65 @@ describe("port manager", () => {
     ]);
 
     expect(new Set(allocatedPorts).size).toBe(allocatedPorts.length);
+  });
+
+  it("allocates an exact configured host port", async () => {
+    const service = await insertService();
+    const manager = createTestPortManager();
+    const fixedPort = await manager.findFreePort();
+    const allocation = await manager.ensureServicePorts(
+      service,
+      exactViewerPort(fixedPort)
+    );
+
+    expect(allocation.ports.get("viewer")).toBe(fixedPort);
+  });
+
+  it("rejects an unavailable exact host port", async () => {
+    const firstService = await insertService("first");
+    const secondService = await insertService("second");
+    const manager = createTestPortManager();
+    const fixedPort = await manager.findFreePort();
+    const definitions = exactViewerPort(fixedPort);
+    await manager.ensureServicePorts(firstService, definitions);
+
+    await expect(
+      manager.ensureServicePorts(secondService, definitions)
+    ).rejects.toThrow(`requires host port ${fixedPort}, but it is unavailable`);
+  });
+
+  it("retains a persisted exact port claim while the host port is occupied", async () => {
+    const service = await insertService();
+    const firstManager = createTestPortManager();
+    const fixedPort = await firstManager.findFreePort();
+    const definitions = exactViewerPort(fixedPort);
+    await firstManager.ensureServicePorts(service, definitions);
+
+    const listener = createServer();
+    listener.listen(fixedPort, "127.0.0.1");
+    await once(listener, "listening");
+
+    try {
+      const restartManager = createTestPortManager();
+      const restarted = await restartManager.ensureServicePorts(
+        service,
+        definitions
+      );
+
+      expect(restarted.ports.get("viewer")).toBe(fixedPort);
+      await expect(
+        restartManager.assertFixedPortsAvailable(
+          service,
+          definitions,
+          restarted
+        )
+      ).rejects.toThrow(
+        `requires host port ${fixedPort}, but it is unavailable`
+      );
+    } finally {
+      listener.close();
+      await once(listener, "close");
+    }
   });
 });
 

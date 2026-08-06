@@ -713,7 +713,10 @@ export function createServiceSupervisor(
       return true;
     }
 
-    if (await hasOccupiedServicePort(row)) {
+    if (
+      (await hasOccupiedServicePort(row)) &&
+      !hasFixedPrimaryServicePort(row)
+    ) {
       logger.warn("Skipping service restart because port is already in use", {
         serviceId: row.service.id,
         cellId: row.cell.id,
@@ -1793,6 +1796,16 @@ export function createServiceSupervisor(
     );
   }
 
+  function hasFixedPrimaryServicePort(row: ServiceRow): boolean {
+    const definition = row.service.definition as ProcessService;
+    return (
+      definition.type === "process" &&
+      resolveNamedPortDefinitions(definition).some(
+        (port) => port.primary && port.port != null
+      )
+    );
+  }
+
   async function startService(
     row: ServiceRow,
     definitionOverride?: ProcessService,
@@ -1913,6 +1926,11 @@ export function createServiceSupervisor(
     portMap,
   }: ServiceProcessOptions) {
     try {
+      await portManager.assertFixedPortsAvailable(
+        row.service,
+        resolveNamedPortDefinitions(definition),
+        allocation
+      );
       const processEnvironment = {
         ...env,
         [SERVICE_INSTANCE_ENV_KEY]: randomUUID(),

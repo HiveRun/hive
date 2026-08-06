@@ -6,6 +6,7 @@ const RESERVED_GENERATED_ENVIRONMENT_KEYS = new Map([
 ]);
 
 type PortDefinition = {
+  port?: number;
   primary?: boolean;
   protocol?: "http" | "https" | "tcp";
   viewer?: boolean;
@@ -20,6 +21,7 @@ type ServiceDefinition = {
 
 export type NamedPortDefinition = {
   name: string;
+  port?: number;
   primary: boolean;
   protocol: "http" | "https" | "tcp";
   viewer: boolean;
@@ -56,6 +58,7 @@ export function resolveNamedPortDefinitions(
     const protocol = portDefinition.protocol ?? "http";
     return {
       name,
+      ...(portDefinition.port == null ? {} : { port: portDefinition.port }),
       primary: name === primaryName,
       protocol,
       viewer: protocol !== "tcp" && (portDefinition.viewer ?? true),
@@ -96,6 +99,7 @@ export function collectServiceGraphIssues(
   const issues = [
     ...collectServiceNameIssues(services),
     ...collectGeneratedEnvironmentKeyIssues(services),
+    ...collectFixedPortIssues(services),
     ...Object.entries(services).flatMap(([serviceName, definition]) => [
       ...collectPortDefinitionIssues(serviceName, definition),
       ...collectDependencyIssues(serviceName, definition, services),
@@ -114,6 +118,36 @@ export function collectServiceGraphIssues(
     }
   }
 
+  return issues;
+}
+
+function collectFixedPortIssues(
+  services: Record<string, ServiceDefinition>
+): ServiceGraphIssue[] {
+  const owners = new Map<number, { portName: string; serviceName: string }>();
+  const issues: ServiceGraphIssue[] = [];
+  for (const [serviceName, definition] of Object.entries(services)) {
+    if (definition.type !== "process") {
+      continue;
+    }
+    for (const [portName, portDefinition] of Object.entries(
+      definition.ports ?? {}
+    )) {
+      const port = portDefinition.port;
+      if (port == null) {
+        continue;
+      }
+      const existing = owners.get(port);
+      if (existing) {
+        issues.push({
+          message: `Exact host port ${port} is requested by service "${existing.serviceName}" port "${existing.portName}" and service "${serviceName}" port "${portName}"`,
+          path: ["services", serviceName, "ports", portName, "port"],
+        });
+      } else {
+        owners.set(port, { portName, serviceName });
+      }
+    }
+  }
   return issues;
 }
 

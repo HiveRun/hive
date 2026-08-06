@@ -60,6 +60,24 @@ describe("service graph", () => {
     expect(resolveServicePortViewer(definition, "http")).toBe(true);
   });
 
+  it("preserves exact host port requests", () => {
+    expect(
+      resolveNamedPortDefinitions({
+        ports: {
+          viewer: { port: 42_861, primary: true },
+        },
+      })
+    ).toEqual([
+      {
+        name: "viewer",
+        port: 42_861,
+        primary: true,
+        protocol: "http",
+        viewer: true,
+      },
+    ]);
+  });
+
   it("resolves explicit browser viewer eligibility", () => {
     const definition = {
       ports: {
@@ -163,6 +181,18 @@ describe("service graph", () => {
         }),
       },
       'readiness references unknown port "metrics"',
+    ],
+    [
+      "duplicate exact host ports",
+      {
+        api: processService({
+          ports: { http: { port: 42_861, primary: true } },
+        }),
+        web: processService({
+          ports: { http: { port: 42_861, primary: true } },
+        }),
+      },
+      "Exact host port 42861 is requested by",
     ],
   ])("reports %s", (_name, services, message) => {
     expect(graphIssueMessages(services)).toEqual(

@@ -170,7 +170,11 @@ export function createPortManager({ db: database, now }: PortManagerDeps) {
     return port;
   }
 
-  async function canReusePort(port: number, service: CellService) {
+  async function canReusePort(
+    port: number,
+    service: CellService,
+    allowLiveProcessReuse = true
+  ) {
     const owner = persistedPortOwners.get(port);
     if (owner && owner !== service.id) {
       return false;
@@ -178,7 +182,7 @@ export function createPortManager({ db: database, now }: PortManagerDeps) {
     if (reservedPorts.has(port)) {
       return false;
     }
-    if (service.pid && isPidAlive(service.pid)) {
+    if (allowLiveProcessReuse && service.pid && isPidAlive(service.pid)) {
       return true;
     }
     return await isPortFree(port);
@@ -191,6 +195,22 @@ export function createPortManager({ db: database, now }: PortManagerDeps) {
     primaryName: string;
     service: CellService;
   }): Promise<number> {
+    const fixedPort = args.definition.port;
+    if (fixedPort != null) {
+      const isPersistedClaim =
+        args.persistedByName.get(args.definition.name) === fixedPort &&
+        persistedPortOwners.get(fixedPort) === args.service.id;
+      if (
+        !allocatedHasPort(args.allocated, fixedPort) &&
+        (isPersistedClaim ||
+          (await canReusePort(fixedPort, args.service, false)))
+      ) {
+        return fixedPort;
+      }
+      throw new Error(
+        `Service "${args.service.name}" port "${args.definition.name}" requires host port ${fixedPort}, but it is unavailable`
+      );
+    }
     const candidate =
       args.persistedByName.get(args.definition.name) ??
       (args.definition.name === args.primaryName
@@ -211,6 +231,24 @@ export function createPortManager({ db: database, now }: PortManagerDeps) {
       await loadPersistedClaims(true);
       return await findFreePortUnlocked();
     });
+  }
+
+  async function assertFixedPortsAvailable(
+    service: CellService,
+    definitions: NamedPortDefinition[],
+    allocation: ServicePortAllocation
+  ): Promise<void> {
+    for (const definition of definitions) {
+      if (definition.port == null) {
+        continue;
+      }
+      const port = allocation.ports.get(definition.name);
+      if (port == null || !(await isPortFree(port))) {
+        throw new Error(
+          `Service "${service.name}" port "${definition.name}" requires host port ${definition.port}, but it is unavailable`
+        );
+      }
+    }
   }
 
   async function findFreePortUnlocked(excluded = new Set<number>()) {
@@ -245,6 +283,7 @@ export function createPortManager({ db: database, now }: PortManagerDeps) {
   return {
     ensureServicePort,
     ensureServicePorts,
+    assertFixedPortsAvailable,
     rememberSpecificPort,
     rememberServicePorts,
     releasePortFor,

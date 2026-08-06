@@ -31,6 +31,8 @@ const descriptionMap: Record<string, string> = {
   "templates/*/services/*/env": "Environment variables",
   "templates/*/services/*/ports": "Named ports allocated for the service",
   "templates/*/services/*/ports/*": "Named port definition",
+  "templates/*/services/*/ports/*/port":
+    "Exact host port to bind instead of allocating one dynamically",
   "templates/*/services/*/ports/*/primary":
     "Use as the compatibility primary port",
   "templates/*/services/*/ports/*/protocol":

@@ -295,6 +295,8 @@ Port references allocate and interpolate addresses but do not create startup dep
 
 HTTP and HTTPS ports appear in the cell viewer by default. Set `"viewer": false` on internal APIs, workers, or other browser-incompatible ports to keep them available without creating a viewer tab. TCP ports never create viewer tabs.
 
+Set `"port": 42861` on a named port only when the service requires a stable browser origin or an externally fixed port. Exact ports fail provisioning when unavailable rather than silently moving to another origin.
+
 Setup, services, cell terminals, chat terminals, and teardown receive `HIVE_CELL_ID`, `HIVE_CELL_RUNTIME_DIR`, `HIVE_CELL_ARTIFACTS_DIR`, cell-local `HIVE_HOME`, and named variables such as `API_HTTP_PORT`. Teardown runs only during cell deletion or destructive provisioning rollback. Successful deletion removes runtime data and preserves artifacts.
 
 Docker and Compose configuration shapes remain reserved but are not executable yet; Hive now fails these definitions explicitly rather than silently skipping them.
