@@ -102,6 +102,27 @@ describe("service supervisor", () => {
     await stopCellHarness(harness, cell.id);
   });
 
+  it("rejects service starts when the working directory is missing", async () => {
+    const scenario = await createScenario({
+      templateId: "template-missing-cwd",
+      template: webServiceTemplate({ cwd: "missing" }),
+    });
+
+    await expect(
+      scenario.harness.supervisor.ensureCellServices({
+        cell: scenario.cell,
+        template: scenario.template,
+      })
+    ).rejects.toThrow("Service working directory not found");
+
+    const service = await getOnlyService(scenario.cell.id);
+    expect(service.status).toBe("error");
+    expect(service.lastKnownError).toContain(
+      "Service working directory not found"
+    );
+    expect(scenario.harness.processes).toHaveLength(0);
+  });
+
   it("captures runtime output in service terminal buffers", async () => {
     const { cell, harness } = await createScenario({
       templateId: "template-web",
@@ -643,6 +664,56 @@ describe("service supervisor", () => {
     expect(api.lastKnownError).toContain(
       "Dependencies failed during restart: database"
     );
+  });
+
+  it("marks queued dependents as starting during bootstrap", async () => {
+    const port = await allocateFreePort();
+    const databaseDefinition = tcpReadinessService({
+      run: "start-database",
+      readyTimeoutMs: 1000,
+    });
+    const apiDefinition = serviceDefinition({
+      run: "start-api",
+      dependsOn: ["database"],
+    });
+    const { cell, harness } = await createScenario({
+      templateId: "template-bootstrap-queued-dependent",
+      serviceRecords: [
+        {
+          id: "svc-bootstrap-queued-database",
+          name: "database",
+          command: databaseDefinition.run,
+          definition: databaseDefinition,
+          status: "needs_resume",
+          port,
+        },
+        {
+          id: "svc-bootstrap-queued-api",
+          name: "api",
+          command: apiDefinition.run,
+          definition: apiDefinition,
+          status: "running",
+          pid: 99_999,
+        },
+      ],
+    });
+    const listener = createServer();
+
+    try {
+      const bootstrapping = harness.supervisor.bootstrap();
+      await harness.firstSpawned;
+
+      const queued = await getOnlyServiceById("svc-bootstrap-queued-api");
+      expect(queued.status).toBe("starting");
+      expect(queued.lastKnownError).toBeNull();
+
+      await listenOnPort(listener, port);
+      await bootstrapping;
+      expect(harness.processes).toHaveLength(2);
+    } finally {
+      await closeServer(listener);
+      await stopCellHarness(harness, cell.id);
+    }
   });
 
   it("skips dependent restarts after dependency readiness fails", async () => {

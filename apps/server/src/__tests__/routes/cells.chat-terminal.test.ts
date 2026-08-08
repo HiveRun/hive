@@ -138,6 +138,22 @@ describe("Cell chat terminal routes", () => {
     });
   });
 
+  it("streams replacement chat sessions with the chat contract", async () => {
+    const { harness, app } = await createSeededChatTerminalApp();
+    const session = pty.createRouteCellTerminalSession({
+      cellId: TEST_CELL_ID,
+      sessionId: "replacement-chat-terminal",
+      pid: 10_001,
+    });
+
+    await pty.expectBareReplacementTerminalStream({
+      app,
+      path: `/api/cells/${TEST_CELL_ID}/chat/terminal/stream`,
+      session,
+      emit: () => harness.emit({ type: "session", session }),
+    });
+  });
+
   it("passes durable cell paths and persisted named ports to OpenCode", async () => {
     await pty.seedRouteCellAndServiceWithPorts({
       cell: { id: TEST_CELL_ID, name: "Chat Terminal Cell" },

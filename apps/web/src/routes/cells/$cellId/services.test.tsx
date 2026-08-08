@@ -129,4 +129,34 @@ describe("service port presentation", () => {
       expect(clipboardWriteText).toHaveBeenCalledWith("http://localhost:43101");
     });
   });
+
+  it("keeps startup output ahead of port details and surfaces the last error", async () => {
+    renderServices([
+      buildService({
+        lastKnownError: "Emulator did not become ready",
+        ports: [
+          {
+            name: "http",
+            port: 43_101,
+            primary: true,
+            protocol: "http",
+            viewer: true,
+            portReachable: false,
+          },
+        ],
+        status: "error",
+      }),
+    ]);
+
+    const terminal = page.getByText("Service terminal");
+    const port = page.getByText("43101");
+    await waitUntil(() => {
+      expect(terminal.compareDocumentPosition(port)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING
+      );
+    });
+    expect(
+      page.getByText("Last error: Emulator did not become ready")
+    ).toBeInTheDocument();
+  });
 });

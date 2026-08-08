@@ -218,6 +218,25 @@ export const expectLiveDataEvent = async (args: {
   await expectStreamEvent(args.reader, "data", args.expectedText);
 };
 
+const expectBareReplacementSessionEvent = async (args: {
+  reader: { read: () => Promise<string> };
+  emit: () => void;
+  session: { cellId: string; sessionId: string };
+}) => {
+  args.emit();
+  const event = await expectStreamEvent(
+    args.reader,
+    "ready",
+    args.session.sessionId
+  );
+  if (!event.includes(`"cellId":"${args.session.cellId}"`)) {
+    throw new Error(`Expected replacement session cell ID, got ${event}`);
+  }
+  if (event.includes('"session":{')) {
+    throw new Error(`Expected a bare replacement session, got ${event}`);
+  }
+};
+
 export const expectPtyStreamData = async (args: {
   response: Response;
   missingMessage: string;
@@ -246,6 +265,22 @@ export const openRouteEventStream = async (
   const response = await handleRouteRequest(app, path);
   expectEventStreamHeaders(response);
   return createEventStreamReader(response, missingMessage);
+};
+
+export const expectBareReplacementTerminalStream = async (args: {
+  app: { handle: (request: Request) => Promise<Response> };
+  path: string;
+  emit: () => void;
+  session: { cellId: string; sessionId: string };
+}) => {
+  const reader = await openRouteEventStream(args.app, args.path);
+  await expectReadyAndSnapshotEvents(reader);
+  await expectBareReplacementSessionEvent({
+    reader,
+    emit: args.emit,
+    session: args.session,
+  });
+  await reader.cancel();
 };
 
 export const expectResizePayload = async (
@@ -904,6 +939,15 @@ export const createRouteServiceTerminalSession = (args: {
   startedAt: new Date().toISOString(),
 });
 
+export const createRouteCellTerminalSession = (args: {
+  cellId: string;
+  sessionId: string;
+  pid: number;
+}) => ({
+  ...createRouteServiceTerminalSession(args),
+  cellId: args.cellId,
+});
+
 export const seedRouteCellAndService = async (
   args: {
     cell?: Parameters<typeof seedRouteCell>[0];
@@ -949,14 +993,18 @@ export const clearRouteServicesAndCells = async () => {
 };
 
 export const ptyRouteTestHelpers = {
+  createRouteCellTerminalSession,
   exercisePtyWebSocketActions,
+  expectBareReplacementTerminalStream,
   expectFailedWebSocketOpen,
+  expectReadyAndSnapshotEvents,
   expectTerminalEnvironment,
   expectPtyRestartResponse,
   expectPtyStreamData,
   expectSeededPtyResize,
   handlePostRouteRequest,
   openMockWebSocket,
+  openRouteEventStream,
   seedRouteCell,
   seedRouteService,
   seedRouteCellAndServiceWithPorts,

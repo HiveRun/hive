@@ -219,7 +219,15 @@ const hiveConfig: HiveConfig = {
 };
 
 type SendAgentMessageFn = (sessionId: string, content: string) => Promise<void>;
-type EnsureServicesForCellFn = (args: unknown) => Promise<void>;
+type EnsureServicesForCellFn = (args: {
+  onTimingEvent?: (event: {
+    step: string;
+    status: "error" | "ok";
+    durationMs: number;
+    error?: string;
+    metadata?: Record<string, unknown>;
+  }) => void;
+}) => Promise<void>;
 type CreateWorktreeFn = (
   cellId: string,
   options?: {
@@ -848,6 +856,34 @@ describe("POST /api/cells", () => {
       payload.id,
       "create_worktree:include_copy_glob_match"
     );
+    await waitForCellStatus(payload.id, "ready");
+  });
+
+  it("persists ensure_services timing sub-steps while provisioning is still running", async () => {
+    const services = createDeferred();
+    const ensureServicesForCell: EnsureServicesForCellFn = async (args) => {
+      args.onTimingEvent?.({
+        step: "setup_command_1",
+        status: "ok",
+        durationMs: 15,
+      });
+      await services.promise;
+    };
+    const app = createTestApp({ ensureServicesForCell });
+
+    const payload = await createCellAndExpectSpawning({
+      app,
+      body: defaultCreateBody("Streaming Service Timing"),
+    });
+
+    await waitForTimingStep(payload.id, "ensure_services:setup_command_1");
+    const spawningCell = await testDb.query.cells.findFirst({
+      where: eq(cells.id, payload.id),
+    });
+    expect(spawningCell?.status).toBe("spawning");
+
+    services.resolve();
+
     await waitForCellStatus(payload.id, "ready");
   });
 

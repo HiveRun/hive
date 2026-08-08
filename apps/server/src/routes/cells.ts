@@ -596,6 +596,7 @@ const ServiceListRouteOptions = {
     200: CellServiceListResponseSchema,
     ...StandardCellErrorResponses,
     409: MessageResponseSchema,
+    500: MessageResponseSchema,
   },
 };
 const ServiceActionRouteOptions = {
@@ -604,6 +605,7 @@ const ServiceActionRouteOptions = {
     200: CellServiceSchema,
     ...StandardCellErrorResponses,
     409: MessageResponseSchema,
+    500: MessageResponseSchema,
   },
 };
 const CellTerminalInputRouteOptions = {
@@ -707,6 +709,32 @@ function rejectDeletingCell(status: string, set: RouteSet) {
   return { message: "Cell is being deleted" } satisfies MessageResponse;
 }
 
+const isServiceSupervisorError = (
+  error: unknown
+): error is ServiceSupervisorError =>
+  typeof error === "object" &&
+  error !== null &&
+  (error as { _tag?: string })._tag === "ServiceSupervisorError";
+
+const unwrapSupervisorError = (error: unknown): unknown => {
+  if (isServiceSupervisorError(error)) {
+    return error.cause;
+  }
+
+  if (error instanceof Error) {
+    try {
+      const parsed = JSON.parse(error.message);
+      if (isServiceSupervisorError(parsed)) {
+        return parsed.cause;
+      }
+    } catch {
+      // no-op
+    }
+  }
+
+  return error;
+};
+
 async function recordServiceActivity(args: {
   deps: CellRouteDependencies;
   cellId: string;
@@ -727,13 +755,117 @@ async function recordServiceActivity(args: {
   });
 }
 
+async function runOrDispatchServiceAction(args: {
+  action: () => MaybePromise<void>;
+  queueKey: string;
+  queueAction?: boolean;
+  waitForAction?: boolean;
+  log: RouteLog;
+  logContext: Record<string, unknown>;
+  errorMessage: string;
+}): Promise<void> {
+  const action = args.queueAction
+    ? (
+        cellServiceActionQueues
+          .get(args.queueKey)
+          ?.catch(() => Promise.resolve()) ?? Promise.resolve()
+      ).then(args.action)
+    : Promise.resolve().then(args.action);
+  if (args.queueAction) {
+    cellServiceActionQueues.set(args.queueKey, action);
+    const clearQueue = () => {
+      if (cellServiceActionQueues.get(args.queueKey) === action) {
+        cellServiceActionQueues.delete(args.queueKey);
+      }
+    };
+    action.then(clearQueue, clearQueue);
+  }
+  if (args.waitForAction !== false) {
+    await action;
+    return;
+  }
+  action.catch((error) => {
+    args.log.error({ error, ...args.logContext }, args.errorMessage);
+  });
+}
+
+function handleRouteActionError(args: {
+  error: unknown;
+  set: RouteSet;
+  log: RouteLog;
+  logContext: Record<string, unknown>;
+  errorMessage: string;
+}) {
+  const error = unwrapSupervisorError(args.error);
+  args.set.status = HTTP_STATUS.INTERNAL_ERROR;
+  args.log.error({ error: args.error, ...args.logContext }, args.errorMessage);
+  return {
+    message: error instanceof Error ? error.message : args.errorMessage,
+  } satisfies MessageResponse;
+}
+
+async function runServiceAction(args: {
+  action: () => MaybePromise<void>;
+  route: {
+    cellId: string;
+    queueAction?: boolean;
+    waitForAction?: boolean;
+    set: RouteSet;
+    log: RouteLog;
+  };
+  logContext: Record<string, unknown>;
+  errorMessage: string;
+  backgroundErrorMessage: string;
+}): Promise<MessageResponse | null> {
+  try {
+    await runOrDispatchServiceAction({
+      action: args.action,
+      queueKey: args.route.cellId,
+      queueAction: args.route.queueAction,
+      waitForAction: args.route.waitForAction,
+      log: args.route.log,
+      logContext: args.logContext,
+      errorMessage: args.backgroundErrorMessage,
+    });
+    return null;
+  } catch (error) {
+    return handleRouteActionError({
+      error,
+      set: args.route.set,
+      log: args.route.log,
+      logContext: args.logContext,
+      errorMessage: args.errorMessage,
+    });
+  }
+}
+
+const serviceActionQueueState = globalThis as typeof globalThis & {
+  __hiveCellServiceActionQueues?: Map<string, Promise<void>>;
+};
+const cellServiceActionQueues =
+  serviceActionQueueState.__hiveCellServiceActionQueues ??
+  new Map<string, Promise<void>>();
+serviceActionQueueState.__hiveCellServiceActionQueues = cellServiceActionQueues;
+
+type ResolvedCellServiceAction = (
+  deps: CellRouteDependencies
+) => MaybePromise<void>;
+
+type ResolvedSingleServiceAction = (
+  deps: CellRouteDependencies,
+  serviceId: string
+) => MaybePromise<void>;
+
 async function runCellServicesAction(args: {
   deps: CellRouteDependencies;
   cellId: string;
   set: RouteSet;
+  log: RouteLog;
   request: Request;
   type: ActivityEventType;
   action: () => MaybePromise<void>;
+  queueAction?: boolean;
+  waitForAction?: boolean;
 }): Promise<CellServiceListResponse | MessageResponse> {
   return await withCellRoute({
     deps: args.deps,
@@ -745,8 +877,18 @@ async function runCellServicesAction(args: {
         return deletionConflict;
       }
       await recordServiceActivity(args);
+      const logContext = { cellId: args.cellId, type: args.type };
 
-      await args.action();
+      const actionError = await runServiceAction({
+        action: args.action,
+        route: args,
+        logContext,
+        errorMessage: "Cell service action failed",
+        backgroundErrorMessage: "Background cell service action failed",
+      });
+      if (actionError) {
+        return actionError;
+      }
       return await serializeServicesForCell(
         args.deps,
         args.deps.db,
@@ -761,10 +903,13 @@ async function runSingleServiceAction(args: {
   cellId: string;
   serviceId: string;
   set: RouteSet;
+  log: RouteLog;
   request: Request;
   type: ActivityEventType;
   metadata?: (row: ServiceRow) => Record<string, unknown>;
   action: (serviceId: string) => MaybePromise<void>;
+  queueAction?: boolean;
+  waitForAction?: boolean;
 }): Promise<CellServiceResponse | MessageResponse> {
   return await withServiceRoute({
     deps: args.deps,
@@ -781,8 +926,22 @@ async function runSingleServiceAction(args: {
         serviceId: args.serviceId,
         metadata: args.metadata?.(row) ?? {},
       });
+      const logContext = {
+        cellId: args.cellId,
+        serviceId: args.serviceId,
+        type: args.type,
+      };
 
-      await args.action(args.serviceId);
+      const actionError = await runServiceAction({
+        action: () => args.action(args.serviceId),
+        route: args,
+        logContext,
+        errorMessage: "Service action failed",
+        backgroundErrorMessage: "Background service action failed",
+      });
+      if (actionError) {
+        return actionError;
+      }
       const updated = await fetchServiceRow(
         args.deps.db,
         args.cellId,
@@ -1373,6 +1532,10 @@ type TerminalStreamEvent =
       chunk: string;
     }
   | {
+      type: "session";
+      session: ServiceTerminalSession;
+    }
+  | {
       type: "exit";
       exitCode: number | null;
       signal: string | number | null;
@@ -1468,6 +1631,7 @@ async function loadServiceRowForWs(
 
 async function* createTerminalEventStream(args: {
   readyData: unknown;
+  sessionReadyData?: (session: ServiceTerminalSession) => unknown;
   initialOutput: string;
   iterator: AsyncIterable<TerminalStreamEvent>;
   cleanup: () => void;
@@ -1480,6 +1644,13 @@ async function* createTerminalEventStream(args: {
     }
 
     for await (const event of args.iterator) {
+      if (event.type === "session") {
+        yield sse({
+          event: "ready",
+          data: args.sessionReadyData?.(event.session) ?? event.session,
+        });
+        continue;
+      }
       if (event.type === "data") {
         yield sse({ event: "data", data: { chunk: event.chunk } });
         continue;
@@ -1511,10 +1682,18 @@ const createSessionTerminalEventStream = (args: {
     cleanup: args.cleanup,
   });
 
+const wrappedTerminalSessionReadyData = (session: ServiceTerminalSession) => ({
+  session,
+});
+
 const forwardTerminalEventToWs = (
   ws: TerminalRouteSocket,
   event: TerminalStreamEvent
 ) => {
+  if (event.type === "session") {
+    ws.send({ type: "ready", session: event.session });
+    return;
+  }
   if (event.type === "data") {
     ws.send({ type: "data", chunk: event.chunk });
     return;
@@ -1623,22 +1802,6 @@ const handleCellTerminalWsResize = async (args: {
   });
 };
 
-const terminalActionFailure = (error: unknown, fallback: string) => ({
-  message: error instanceof Error ? error.message : fallback,
-});
-
-function handleTerminalActionError(args: {
-  error: unknown;
-  set: RouteSet;
-  log: RouteLog;
-  logContext: Record<string, unknown>;
-  errorMessage: string;
-}) {
-  args.set.status = HTTP_STATUS.INTERNAL_ERROR;
-  args.log.error({ error: args.error, ...args.logContext }, args.errorMessage);
-  return terminalActionFailure(args.error, args.errorMessage);
-}
-
 function runTerminalInputAction(args: {
   set: RouteSet;
   log: RouteLog;
@@ -1658,7 +1821,7 @@ function runTerminalInputAction(args: {
     args.write();
     return { ok: true };
   } catch (error) {
-    return handleTerminalActionError({ ...args, error });
+    return handleRouteActionError({ ...args, error });
   }
 }
 
@@ -1689,7 +1852,7 @@ function runTerminalResizeAction<Session>(args: {
 
     return { ok: true, session };
   } catch (error) {
-    return handleTerminalActionError({ ...args, error });
+    return handleRouteActionError({ ...args, error });
   }
 }
 
@@ -1900,48 +2063,89 @@ export function createCellsRoutes(
     });
   };
 
+  const withResolvedServiceAction = async <T>(
+    run: (deps: CellRouteDependencies) => MaybePromise<T>
+  ): Promise<T> => {
+    const deps = await resolveDeps();
+    return await run(deps);
+  };
+
   const runResolvedCellServicesAction = async (args: {
     cellId: string;
     set: RouteSet;
+    log: RouteLog;
     request: Request;
     type: ActivityEventType;
-    action: (deps: CellRouteDependencies) => MaybePromise<void>;
-  }) => {
-    const deps = await resolveDeps();
-    return await runCellServicesAction({
-      deps,
-      cellId: args.cellId,
-      set: args.set,
-      request: args.request,
-      type: args.type,
-      action: () => args.action(deps),
+    action: ResolvedCellServiceAction;
+    queueAction?: boolean;
+    waitForAction?: boolean;
+  }) =>
+    await withResolvedServiceAction(async (deps) =>
+      runCellServicesAction({
+        deps,
+        cellId: args.cellId,
+        set: args.set,
+        log: args.log,
+        request: args.request,
+        type: args.type,
+        action: () => args.action(deps),
+        queueAction: args.queueAction,
+        waitForAction: args.waitForAction,
+      })
+    );
+
+  const handleBulkServiceRoute = async (
+    context: {
+      params: { id: string };
+      set: RouteSet;
+      request: Request;
+      log: RouteLog;
+    },
+    action: {
+      type: ActivityEventType;
+      run: ResolvedCellServiceAction;
+      queueAction?: boolean;
+      waitForAction?: boolean;
+    }
+  ) =>
+    await runResolvedCellServicesAction({
+      cellId: context.params.id,
+      set: context.set,
+      log: context.log,
+      request: context.request,
+      type: action.type,
+      action: action.run,
+      queueAction: action.queueAction,
+      waitForAction: action.waitForAction,
     });
-  };
 
   const runResolvedSingleServiceAction = async (args: {
     cellId: string;
     serviceId: string;
     set: RouteSet;
+    log: RouteLog;
     request: Request;
     type: ActivityEventType;
     metadata?: (row: ServiceRow) => Record<string, unknown>;
-    action: (
-      deps: CellRouteDependencies,
-      serviceId: string
-    ) => MaybePromise<void>;
-  }) => {
-    const deps = await resolveDeps();
-    return await runSingleServiceAction({
-      deps,
-      cellId: args.cellId,
-      serviceId: args.serviceId,
-      set: args.set,
-      request: args.request,
-      type: args.type,
-      metadata: args.metadata,
-      action: (serviceId) => args.action(deps, serviceId),
-    });
-  };
+    action: ResolvedSingleServiceAction;
+    queueAction?: boolean;
+    waitForAction?: boolean;
+  }) =>
+    await withResolvedServiceAction(async (deps) =>
+      runSingleServiceAction({
+        deps,
+        cellId: args.cellId,
+        serviceId: args.serviceId,
+        set: args.set,
+        log: args.log,
+        request: args.request,
+        type: args.type,
+        metadata: args.metadata,
+        action: (serviceId) => args.action(deps, serviceId),
+        queueAction: args.queueAction,
+        waitForAction: args.waitForAction,
+      })
+    );
 
   const openTerminalWs = (args: {
     ws: TerminalRouteSocket;
@@ -2810,6 +3014,7 @@ export function createCellsRoutes(
               initialOutput,
               iterator,
               cleanup,
+              sessionReadyData: wrappedTerminalSessionReadyData,
             });
           },
         }),
@@ -2911,6 +3116,7 @@ export function createCellsRoutes(
           initialOutput,
           iterator,
           cleanup,
+          sessionReadyData: wrappedTerminalSessionReadyData,
         });
       },
       {
@@ -3362,13 +3568,11 @@ export function createCellsRoutes(
 
     .post(
       "/:id/services/start",
-      async ({ params, set, request }) =>
-        await runResolvedCellServicesAction({
-          cellId: params.id,
-          set,
-          request,
+      async (context) =>
+        await handleBulkServiceRoute(context, {
           type: "services.start",
-          action: (deps) => deps.startServicesForCell(params.id),
+          run: (deps) => deps.startServicesForCell(context.params.id),
+          queueAction: true,
         }),
       {
         ...ServiceListRouteOptions,
@@ -3377,13 +3581,11 @@ export function createCellsRoutes(
 
     .post(
       "/:id/services/stop",
-      async ({ params, set, request }) =>
-        await runResolvedCellServicesAction({
-          cellId: params.id,
-          set,
-          request,
+      async (context) =>
+        await handleBulkServiceRoute(context, {
           type: "services.stop",
-          action: (deps) => deps.stopServicesForCell(params.id),
+          run: (deps) => deps.stopServicesForCell(context.params.id),
+          queueAction: true,
         }),
       {
         ...ServiceListRouteOptions,
@@ -3432,14 +3634,16 @@ export function createCellsRoutes(
     .post(
       "/:id/services/:serviceId/start",
 
-      async ({ params, set, request }) =>
+      async ({ params, set, request, log }) =>
         await runResolvedSingleServiceAction({
           cellId: params.id,
           serviceId: params.serviceId,
           set,
+          log,
           request,
           type: "service.start",
           action: (deps, serviceId) => deps.startServiceById(serviceId),
+          queueAction: true,
         }),
       {
         ...ServiceActionRouteOptions,
@@ -3447,12 +3651,14 @@ export function createCellsRoutes(
     )
     .post(
       "/:id/services/:serviceId/stop",
-      async function stopSingleServiceRoute({ params, set, request }) {
+      async function stopSingleServiceRoute({ params, set, request, log }) {
         return await runResolvedSingleServiceAction({
           action: (deps, serviceId) => deps.stopServiceById(serviceId),
           type: "service.stop",
           request,
           set,
+          log,
+          queueAction: true,
           serviceId: params.serviceId,
           cellId: params.id,
         });
@@ -3464,16 +3670,14 @@ export function createCellsRoutes(
 
     .post(
       "/:id/services/restart",
-      async ({ params, set, request }) =>
-        await runResolvedCellServicesAction({
-          cellId: params.id,
-          set,
-          request,
+      async (context) =>
+        await handleBulkServiceRoute(context, {
           type: "services.restart",
-          action: async (deps) => {
-            await deps.stopServicesForCell(params.id);
-            await deps.startServicesForCell(params.id);
+          run: async (deps) => {
+            await deps.stopServicesForCell(context.params.id);
+            await deps.startServicesForCell(context.params.id);
           },
+          queueAction: true,
         }),
       {
         ...ServiceListRouteOptions,
@@ -3482,7 +3686,7 @@ export function createCellsRoutes(
 
     .post(
       "/:id/services/:serviceId/restart",
-      async function restartSingleServiceRoute({ params, set, request }) {
+      async function restartSingleServiceRoute({ params, set, request, log }) {
         return await runResolvedSingleServiceAction({
           action: async (deps, serviceId) => {
             await deps.stopServiceById(serviceId);
@@ -3494,6 +3698,8 @@ export function createCellsRoutes(
           serviceId: params.serviceId,
           cellId: params.id,
           set,
+          log,
+          queueAction: true,
         });
       },
       {
@@ -4237,14 +4443,26 @@ async function runCreateWorktreePhase(args: {
       await ensureCellWorktree(context, persistWorktreeTimingEvent);
     });
   } finally {
-    const settledWrites = await Promise.allSettled(worktreeTimingWrites);
-    for (const write of settledWrites) {
-      if (write.status === "rejected") {
-        context.log.warn(
-          { error: write.reason, cellId: state.cellId },
-          "Failed to persist create_worktree timing sub-step"
-        );
-      }
+    await settleProvisionTimingWrites({
+      context,
+      writes: worktreeTimingWrites,
+      phase: "create_worktree",
+    });
+  }
+}
+
+async function settleProvisionTimingWrites(args: {
+  context: ProvisionContext;
+  writes: Promise<void>[];
+  phase: "create_worktree" | "ensure_services";
+}) {
+  const settledWrites = await Promise.allSettled(args.writes);
+  for (const write of settledWrites) {
+    if (write.status === "rejected") {
+      args.context.log.warn(
+        { error: write.reason, cellId: args.context.state.cellId },
+        `Failed to persist ${args.phase} timing sub-step`
+      );
     }
   }
 }
@@ -4322,35 +4540,38 @@ async function finalizeCellProvisioning(
   const createdCell: NonNullable<CellProvisionState["createdCell"]> =
     state.createdCell;
 
-  const ensureServicesTimingEvents: Array<
-    EnsureCellServicesTimingEvent & { capturedAt: Date }
-  > = [];
+  const ensureServicesTimingWrites: Promise<void>[] = [];
 
-  try {
-    await runPhase("ensure_services", async () =>
-      ensureServices({
-        cell: createdCell,
-        template,
-        onTimingEvent: (event) => {
-          ensureServicesTimingEvents.push({
-            ...event,
-            capturedAt: new Date(),
-          });
-        },
-      })
-    );
-  } finally {
-    for (const event of ensureServicesTimingEvents) {
-      await insertProvisionTimingEvent(context, {
+  const persistEnsureServicesTimingEvent = (
+    event: EnsureCellServicesTimingEvent
+  ) => {
+    ensureServicesTimingWrites.push(
+      insertProvisionTimingEvent(context, {
         step: `ensure_services:${event.step}`,
         status: event.status,
         durationMs: event.durationMs,
         attempt,
         error: event.error ?? null,
         extraMetadata: event.metadata,
-        createdAt: event.capturedAt,
-      });
-    }
+        createdAt: new Date(),
+      })
+    );
+  };
+
+  try {
+    await runPhase("ensure_services", async () =>
+      ensureServices({
+        cell: createdCell,
+        template,
+        onTimingEvent: persistEnsureServicesTimingEvent,
+      })
+    );
+  } finally {
+    await settleProvisionTimingWrites({
+      context,
+      writes: ensureServicesTimingWrites,
+      phase: "ensure_services",
+    });
   }
 
   state.servicesStarted = true;
@@ -5157,32 +5378,6 @@ export async function resumeSpawningCells(
   await resumePendingCells(deps);
   await resumeDeletingCells(deps);
 }
-
-const isServiceSupervisorError = (
-  error: unknown
-): error is ServiceSupervisorError =>
-  typeof error === "object" &&
-  error !== null &&
-  (error as { _tag?: string })._tag === "ServiceSupervisorError";
-
-const unwrapSupervisorError = (error: unknown): unknown => {
-  if (isServiceSupervisorError(error)) {
-    return error.cause;
-  }
-
-  if (error instanceof Error) {
-    try {
-      const parsed = JSON.parse(error.message);
-      if (isServiceSupervisorError(parsed)) {
-        return parsed.cause;
-      }
-    } catch {
-      // no-op
-    }
-  }
-
-  return error;
-};
 
 const reviveTemplateSetupError = (
   error: unknown

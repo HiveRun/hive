@@ -5,6 +5,7 @@ import {
   type TerminalProcessControls,
   type TerminalRecordFields,
   type TerminalSessionFields,
+  toTerminalSession,
   trimTerminalOutput,
 } from "./terminal-store";
 
@@ -86,13 +87,21 @@ const buildRecord = (
   );
 
 export const createServiceTerminalRuntime = (): ServiceTerminalRuntime => {
-  const serviceRecords = createTerminalStore<TerminalRecord>({
+  const serviceRecords = createTerminalStore<
+    TerminalRecord,
+    ServiceTerminalSession
+  >({
     channelForId: createServiceChannel,
     trimOutput: appendOutput,
+    toSession: toTerminalSession,
   });
-  const setupRecords = createTerminalStore<TerminalRecord>({
+  const setupRecords = createTerminalStore<
+    TerminalRecord,
+    ServiceTerminalSession
+  >({
     channelForId: createSetupChannel,
     trimOutput: appendOutput,
+    toSession: toTerminalSession,
   });
 
   return {

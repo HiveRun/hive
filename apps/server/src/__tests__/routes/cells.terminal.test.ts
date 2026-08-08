@@ -5,7 +5,9 @@ import {
   createCellRouteTestApp,
   createCellRouteTestDependencies,
   createCellTerminalRouteHarness,
+  createRouteCellTerminalSession,
   exercisePtyWebSocketActions,
+  expectBareReplacementTerminalStream,
   expectFailedWebSocketOpen,
   expectPtyRestartResponse,
   expectPtyStreamData,
@@ -94,6 +96,22 @@ describe("Cell terminal routes", () => {
       missingMessage: "Response body reader unavailable",
       emit: () => harness.emit({ type: "data", chunk: "echo hi\n" }),
       expectedText: "echo hi",
+    });
+  });
+
+  it("streams replacement terminal sessions with the cell contract", async () => {
+    const { harness, app } = await createSeededTerminalApp();
+    const session = createRouteCellTerminalSession({
+      cellId: TEST_CELL_ID,
+      sessionId: "replacement-cell-terminal",
+      pid: 5678,
+    });
+
+    await expectBareReplacementTerminalStream({
+      app,
+      path: `/api/cells/${TEST_CELL_ID}/terminal/stream`,
+      session,
+      emit: () => harness.emit({ type: "session", session }),
     });
   });
 

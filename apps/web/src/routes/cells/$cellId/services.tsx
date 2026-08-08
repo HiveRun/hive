@@ -104,6 +104,10 @@ function CellServices() {
     : undefined;
   const isBulkActionPending =
     startAllServicesMutation.isPending || stopAllServicesMutation.isPending;
+  const hasStartingServices = services.some((service) => {
+    const status = service.status.toLowerCase();
+    return status === "starting" || status === "pending";
+  });
 
   const handleStart = (service: CellServiceSummary) => {
     startServiceMutation.mutate({
@@ -137,7 +141,9 @@ function CellServices() {
           errorMessage={streamError}
           isBulkActionPending={isBulkActionPending}
           isLoading={isLoading}
-          isStartingAll={startAllServicesMutation.isPending}
+          isStartingAll={
+            startAllServicesMutation.isPending || hasStartingServices
+          }
           isStoppingAll={stopAllServicesMutation.isPending}
           onStartAll={handleStartAll}
           onStartService={handleStart}
@@ -332,21 +338,21 @@ function ServiceCard({
   return (
     <div
       className={cn(
-        "flex min-h-0 flex-1 flex-col gap-3 overflow-hidden border border-border bg-card p-4",
+        "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden border border-border bg-card p-4",
         isErrorState
           ? "border-destructive shadow-[0_0_0_2px_color-mix(in_oklch,var(--color-destructive)_35%,transparent)]"
           : "border-border/60"
       )}
       style={{ containerType: "inline-size" }}
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-1 items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <p className="font-semibold text-base text-foreground uppercase tracking-[0.15em]">
+      <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:flex-wrap">
+        <div className="flex w-full min-w-0 flex-1 flex-wrap items-start gap-3 sm:w-auto">
+          <div className="min-w-32 flex-1">
+            <p className="break-words font-semibold text-base text-foreground uppercase tracking-[0.15em]">
               {service.name}
             </p>
           </div>
-          <div className="flex min-h-[1.75rem] items-center">
+          <div className="flex min-h-[1.75rem] shrink-0 items-center">
             <ServiceStatusBadge status={service.status} />
           </div>
         </div>
@@ -357,6 +363,22 @@ function ServiceCard({
           onStart={onStart}
           onStop={onStop}
           service={service}
+        />
+      </div>
+
+      {service.lastKnownError ? (
+        <div className="border border-destructive/50 bg-destructive/10 px-3 py-2 text-destructive text-xs">
+          Last error: {service.lastKnownError}
+        </div>
+      ) : null}
+      <div className="min-h-[16rem] flex-1 overflow-hidden border border-border/70 bg-background/30">
+        <PtyStreamTerminal
+          allowInput
+          emptyMessage="No service output yet."
+          inputPath={`/api/cells/${cellId}/services/${service.id}/terminal/input`}
+          resizePath={`/api/cells/${cellId}/services/${service.id}/terminal/resize`}
+          streamPath={`/api/cells/${cellId}/services/${service.id}/terminal/stream`}
+          title="Service Terminal"
         />
       </div>
 
@@ -400,7 +422,7 @@ function ServiceCard({
               <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
                 Ports
               </p>
-              <div className="grid min-w-0 gap-2">
+              <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-3">
                 {service.ports.map((port) => (
                   <ServicePortDetail key={port.name} port={port} />
                 ))}
@@ -434,21 +456,6 @@ function ServiceCard({
           </p>
         </div>
       </div>
-      {isErrorState ? null : (
-        <div className="min-h-[1.25rem] text-destructive text-xs">
-          {service.lastKnownError
-            ? `Last error: ${service.lastKnownError}`
-            : " "}
-        </div>
-      )}
-      <PtyStreamTerminal
-        allowInput
-        emptyMessage="No service output yet."
-        inputPath={`/api/cells/${cellId}/services/${service.id}/terminal/input`}
-        resizePath={`/api/cells/${cellId}/services/${service.id}/terminal/resize`}
-        streamPath={`/api/cells/${cellId}/services/${service.id}/terminal/stream`}
-        title="Service Terminal"
-      />
     </div>
   );
 }
@@ -543,7 +550,9 @@ function ServiceActions({
           type="button"
           variant="secondary"
         >
-          {isStarting ? "Starting..." : "Start"}
+          {isStarting || normalizedStatus === "starting"
+            ? "Starting..."
+            : "Start"}
         </Button>
       )}
     </div>
