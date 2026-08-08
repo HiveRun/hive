@@ -974,6 +974,46 @@ export function createServiceSupervisor(
     row.service.status = "needs_resume";
   }
 
+  async function markServicesQueuedForRestart(
+    rows: ServiceRow[],
+    namesToRestart: Set<string>
+  ): Promise<Map<string, Pick<CellService, "status" | "lastKnownError">>> {
+    const previousStates = new Map<
+      string,
+      Pick<CellService, "status" | "lastKnownError">
+    >();
+    for (const row of rows) {
+      if (!namesToRestart.has(row.service.name)) {
+        continue;
+      }
+      previousStates.set(row.service.id, {
+        status: row.service.status,
+        lastKnownError: row.service.lastKnownError,
+      });
+      await repository.updateService(row.service.id, {
+        status: "starting",
+        lastKnownError: null,
+      });
+      row.service.status = "starting";
+      row.service.lastKnownError = null;
+      notifyServiceUpdate(row);
+    }
+    return previousStates;
+  }
+
+  async function restoreSkippedServiceState(
+    row: ServiceRow,
+    previousState: Pick<CellService, "status" | "lastKnownError"> | undefined
+  ): Promise<void> {
+    if (!previousState || row.service.status !== "starting") {
+      return;
+    }
+    await repository.updateService(row.service.id, previousState);
+    row.service.status = previousState.status;
+    row.service.lastKnownError = previousState.lastKnownError;
+    notifyServiceUpdate(row);
+  }
+
   async function restartServicesForCell(args: {
     rows: ServiceRow[];
     portMap: CellPortMap;
@@ -982,6 +1022,10 @@ export function createServiceSupervisor(
     const { rows, portMap, templateEnv } = args;
     const namesToRestart = resolveRestartServiceNames(rows);
     const failedServiceNames = new Set<string>();
+    const previousStates = await markServicesQueuedForRestart(
+      rows,
+      namesToRestart
+    );
 
     for (const row of sortServiceRows(rows)) {
       if (!namesToRestart.has(row.service.name)) {
@@ -1008,6 +1052,7 @@ export function createServiceSupervisor(
         requiredAsDependency,
         portMap,
         templateEnv,
+        previousState: previousStates.get(row.service.id),
       });
       if (!restarted) {
         failedServiceNames.add(row.service.name);
@@ -1020,6 +1065,7 @@ export function createServiceSupervisor(
     requiredAsDependency: boolean;
     portMap: CellPortMap;
     templateEnv: Record<string, string>;
+    previousState?: Pick<CellService, "status" | "lastKnownError">;
   }): Promise<boolean> {
     try {
       if (
@@ -1029,6 +1075,7 @@ export function createServiceSupervisor(
           args.portMap
         )
       ) {
+        await restoreSkippedServiceState(args.row, args.previousState);
         return true;
       }
       await startService(args.row, undefined, args.templateEnv, {
@@ -1949,9 +1996,7 @@ export function createServiceSupervisor(
         definition.cwd
       );
 
-      if (!(await ensureServiceDirectory(serviceRow, cwd))) {
-        return;
-      }
+      await ensureServiceDirectory(serviceRow, cwd);
       requireServiceStartNotCancelled(serviceRow, signal);
 
       const resolvedPortMap = new Map(portLookup ?? []);
@@ -2010,21 +2055,18 @@ export function createServiceSupervisor(
 
   async function ensureServiceDirectory(row: ServiceRow, cwd: string) {
     if (existsSync(cwd)) {
-      return true;
+      return;
     }
 
-    await markServiceError(
-      row.service.id,
-      row.cell.id,
-      "Service working directory not found"
-    );
+    const message = `Service working directory not found: ${cwd}`;
+    await markServiceError(row.service.id, row.cell.id, message);
 
     logger.error("Service directory missing", {
       serviceId: row.service.id,
       cwd,
     });
 
-    return false;
+    throw new Error(message);
   }
 
   async function runServiceProcess({

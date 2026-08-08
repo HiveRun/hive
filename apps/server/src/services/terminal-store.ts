@@ -5,8 +5,9 @@ export const DEFAULT_TERMINAL_ROWS = 36;
 
 type TerminalStatus = "running" | "exited";
 
-export type TerminalEvent =
+export type TerminalEvent<Session = TerminalSessionFields> =
   | { type: "data"; chunk: string }
+  | { type: "session"; session: Session }
   | {
       type: "exit";
       exitCode: number;
@@ -53,9 +54,10 @@ export type TerminalSessionService<Session, Event> = {
   stopAll(): void;
 };
 
-type TerminalStoreOptions = {
+type TerminalStoreOptions<RecordType, Session> = {
   channelForId: (id: string) => string;
   trimOutput: (current: string, chunk: string) => string;
+  toSession: (record: RecordType) => Session;
 };
 
 export const toTerminalSession = <Extra extends object = Record<never, never>>(
@@ -129,10 +131,14 @@ export const createTerminalRecordFields = (
   write: process.write,
 });
 
-export const createTerminalStore = <RecordType extends TerminalRecordFields>({
+export const createTerminalStore = <
+  RecordType extends TerminalRecordFields,
+  Session,
+>({
   channelForId,
   trimOutput,
-}: TerminalStoreOptions) => {
+  toSession,
+}: TerminalStoreOptions<RecordType, Session>) => {
   const records = new Map<string, RecordType>();
   const emitter = new EventEmitter();
   emitter.setMaxListeners(0);
@@ -149,7 +155,7 @@ export const createTerminalStore = <RecordType extends TerminalRecordFields>({
     }
   };
 
-  const emit = (id: string, event: TerminalEvent): void => {
+  const emit = (id: string, event: TerminalEvent<Session>): void => {
     emitter.emit(channelForId(id), event);
   };
 
@@ -157,6 +163,7 @@ export const createTerminalStore = <RecordType extends TerminalRecordFields>({
     records,
     set(id: string, record: RecordType) {
       records.set(id, record);
+      emit(id, { type: "session", session: toSession(record) });
     },
     get(id: string): RecordType | undefined {
       return records.get(id);
@@ -182,7 +189,7 @@ export const createTerminalStore = <RecordType extends TerminalRecordFields>({
     },
     subscribe(
       id: string,
-      listener: (event: TerminalEvent) => void
+      listener: (event: TerminalEvent<Session>) => void
     ): () => void {
       const channel = channelForId(id);
       emitter.on(channel, listener);
@@ -267,9 +274,10 @@ export const createPtySessionController = <
   onSessionStarted,
   runningErrorMessage,
 }: PtySessionControllerOptions<Args, RecordType, Session>) => {
-  const sessions = createTerminalStore<RecordType>({
+  const sessions = createTerminalStore<RecordType, Session>({
     channelForId,
     trimOutput,
+    toSession,
   });
   const closeSession = (cellId: string) => {
     sessions.close(cellId);
@@ -312,7 +320,7 @@ export const createPtySessionController = <
     },
     subscribe(
       cellId: string,
-      listener: (event: TerminalEvent) => void
+      listener: (event: TerminalEvent<Session>) => void
     ): () => void {
       return sessions.subscribe(cellId, listener);
     },

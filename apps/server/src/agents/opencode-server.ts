@@ -14,8 +14,19 @@ type SharedOpencodeServerHandle = {
   configDetails?: string;
 };
 
-let sharedHandle: SharedOpencodeServerHandle | null = null;
-let startPromise: Promise<SharedOpencodeServerHandle> | null = null;
+type SharedOpencodeServerState = {
+  handle: SharedOpencodeServerHandle | null;
+  startPromise: Promise<SharedOpencodeServerHandle> | null;
+};
+
+const globalState = globalThis as typeof globalThis & {
+  __hiveSharedOpencodeServerState?: SharedOpencodeServerState;
+};
+const sharedState = globalState.__hiveSharedOpencodeServerState ?? {
+  handle: null,
+  startPromise: null,
+};
+globalState.__hiveSharedOpencodeServerState = sharedState;
 
 const DEFAULT_SHARED_SERVER_START_TIMEOUT_MS = 20_000;
 
@@ -32,7 +43,8 @@ function resolveSharedServerStartTimeoutMs(): number {
 }
 
 async function createSharedServer(
-  config: LoadedOpencodeConfig
+  config: LoadedOpencodeConfig,
+  port: number
 ): Promise<SharedOpencodeServerHandle> {
   const sourceLabel = config.source ?? "default";
   const detailSuffix = config.details ? ` (${config.details})` : "";
@@ -48,7 +60,7 @@ async function createSharedServer(
 
   const server = await createOpencodeServer({
     hostname: "127.0.0.1",
-    port: 0,
+    port,
     timeout: startupTimeoutMs,
     config: config.config,
   });
@@ -63,7 +75,7 @@ async function createSharedServer(
     configDetails: config.details,
   };
 
-  sharedHandle = handle;
+  sharedState.handle = handle;
   return handle;
 }
 
@@ -84,34 +96,37 @@ function logProviderCatalog(config: OpencodeServerConfig | undefined): void {
 }
 
 export async function startSharedOpencodeServer(
-  config: LoadedOpencodeConfig
+  config: LoadedOpencodeConfig,
+  options: { port: number }
 ): Promise<void> {
-  if (sharedHandle) {
+  if (sharedState.handle) {
     return;
   }
 
-  if (!startPromise) {
-    startPromise = createSharedServer(config).catch((error) => {
-      startPromise = null;
-      throw error;
-    });
+  if (!sharedState.startPromise) {
+    sharedState.startPromise = createSharedServer(config, options.port).catch(
+      (error) => {
+        sharedState.startPromise = null;
+        throw error;
+      }
+    );
   }
 
-  await startPromise;
+  await sharedState.startPromise;
 }
 
 function getSharedHandle(): Promise<SharedOpencodeServerHandle> {
-  if (sharedHandle) {
-    return Promise.resolve(sharedHandle);
+  if (sharedState.handle) {
+    return Promise.resolve(sharedState.handle);
   }
 
-  if (!startPromise) {
+  if (!sharedState.startPromise) {
     return Promise.reject(
       new Error("Shared OpenCode server has not been started")
     );
   }
 
-  return startPromise;
+  return sharedState.startPromise;
 }
 
 export async function acquireSharedOpencodeClient() {
@@ -120,16 +135,18 @@ export async function acquireSharedOpencodeClient() {
 }
 
 export function getSharedOpencodeServerBaseUrl(): string | null {
-  return sharedHandle?.baseUrl ?? null;
+  return sharedState.handle?.baseUrl ?? null;
 }
 
 export async function stopSharedOpencodeServer(): Promise<void> {
   const handle =
-    sharedHandle ??
-    (startPromise ? await startPromise.catch(() => null) : null);
+    sharedState.handle ??
+    (sharedState.startPromise
+      ? await sharedState.startPromise.catch(() => null)
+      : null);
 
-  sharedHandle = null;
-  startPromise = null;
+  sharedState.handle = null;
+  sharedState.startPromise = null;
 
   if (!handle) {
     return;

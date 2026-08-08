@@ -31,7 +31,7 @@ export type CellTerminalSession = TerminalSessionFields & {
   cellId: string;
 };
 
-export type CellTerminalEvent = TerminalEvent;
+export type CellTerminalEvent = TerminalEvent<CellTerminalSession>;
 
 type CellTerminalRecord = TerminalRecordFields & {
   cellId: string;

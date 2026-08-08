@@ -303,7 +303,7 @@ export type ChatTerminalSession = TerminalSessionFields & {
   cellId: string;
 };
 
-export type ChatTerminalEvent = TerminalEvent;
+export type ChatTerminalEvent = TerminalEvent<ChatTerminalSession>;
 
 type ChatTerminalRecord = TerminalRecordFields & {
   cellId: string;

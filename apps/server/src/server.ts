@@ -33,6 +33,7 @@ import { linearRoutes } from "./routes/linear";
 import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
 import { chatTerminalService } from "./services/chat-terminal";
+import { createPortManager } from "./services/port-manager";
 import { ServiceSupervisorService } from "./services/supervisor";
 import { cellTerminalService } from "./services/terminal";
 import {
@@ -224,7 +225,12 @@ const runMigrations = async (): Promise<void> => {
 
 const startOpencodeServer = async (workspaceRoot: string): Promise<void> => {
   const config = await loadOpencodeConfig(workspaceRoot);
-  await startSharedOpencodeServer(config);
+  const portManager = createPortManager({
+    db: DatabaseService.db,
+    now: () => new Date(),
+  });
+  const port = await portManager.findFreePort();
+  await startSharedOpencodeServer(config, { port });
 };
 
 export const cleanupPidFile = () => {
@@ -428,11 +434,14 @@ const bootstrapServerCore = async (workspaceRoot: string): Promise<void> => {
   await timeStartupStep("shared OpenCode bootstrap", async () => {
     await startOpencodeServer(workspaceRoot);
   });
-  await timeStartupStep("service supervisor bootstrap", bootstrapSupervisor);
 };
 
 const runStartupRecoveryTasks = async (): Promise<void> => {
   const tasks: StartupRecoveryTask[] = [
+    {
+      label: "service supervisor bootstrap",
+      run: bootstrapSupervisor,
+    },
     {
       label: "resume cell provisioning",
       run: resumeProvisioning,
