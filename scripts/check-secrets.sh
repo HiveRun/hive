@@ -19,13 +19,14 @@ FOUND_SECRETS=false
 
 for pattern in "${PATTERNS[@]}"; do
     # Search in staged files only, excluding lockfiles and package integrity hashes
-    if git diff --cached --name-only \
+    matches="$(git diff --cached --name-only \
         | grep -v -E "\.(lock|sum)$|package-lock\.json$|yarn\.lock$|bun\.lock$|routeTree\.gen\.ts$|skills-lock\.json$|^\.agents/skills/agent-browser/references/commands\.md$" \
-        | xargs grep -l -E -i "$pattern" 2>/dev/null; then
+        | xargs grep -n -H -E -i "$pattern" 2>/dev/null \
+        | grep -v -E '\.patch:[0-9]+:index [0-9a-f]{40,64}\.\.[0-9a-f]{40,64} [0-9]{6}$' \
+        || true)"
+    if [ -n "$matches" ]; then
         echo "⚠️  Potential secret found matching pattern: $pattern"
-        git diff --cached --name-only \
-            | grep -v -E "\.(lock|sum)$|package-lock\.json$|yarn\.lock$|bun\.lock$|routeTree\.gen\.ts$|skills-lock\.json$|^\.agents/skills/agent-browser/references/commands\.md$" \
-            | xargs grep -n -E -i "$pattern" 2>/dev/null
+        printf '%s\n' "$matches"
         FOUND_SECRETS=true
     fi
 done

@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "outDir": "node_modules/.cache/android-runtime-tsbuild",
+    "target": "ES2023",
+    "types": ["bun", "vitest"]
+  },
+  "include": ["src", "e2e"],
+  "exclude": ["src/viewer-server.ts"]
+}

@@ -16,7 +16,10 @@ import type {
   SpawnProcess,
   SpawnProcessOptions,
 } from "../../services/supervisor";
-import { createServiceSupervisor } from "../../services/supervisor";
+import {
+  createServiceSupervisor,
+  SERVICE_STOP_GRACE_PERIOD_MS,
+} from "../../services/supervisor";
 import { createDeferred, setupTestDb, testDb } from "../test-db";
 
 const silentLogger = {
@@ -37,6 +40,8 @@ const REUSED_SERVICE_PID = 4343;
 const READINESS_SUCCESS_TIMEOUT_MS = 500;
 const PERSISTED_MONITOR_SETTLE_MS = 150;
 const SERVICE_STATUS_POLL_INTERVAL_MS = 5;
+const EXPECTED_SERVICE_STOP_GRACE_PERIOD_MS = 15_000;
+const HIVE_CLI_SOURCE_PATH_PATTERN = /packages\/cli\/src\/index\.ts$/;
 const bracedPortReference = (suffix = "") => ["$", `{PORT${suffix}}`].join("");
 const originalHiveHome = process.env.HIVE_HOME;
 
@@ -75,7 +80,12 @@ describe("service supervisor", () => {
       templateId: "template-web",
       start: true,
       template: {
-        services: { web: serviceDefinition({ env: { NODE_ENV: "test" } }) },
+        env: { HIVE_CLI_BIN: "/workspace/hive" },
+        services: {
+          web: serviceDefinition({
+            env: { HIVE_CLI_BIN: "/service/hive", NODE_ENV: "test" },
+          }),
+        },
       },
     });
 
@@ -86,6 +96,7 @@ describe("service supervisor", () => {
     expect(call.options.env.WEB_PORT).toBeDefined();
     expect(call.options.env.PORT).toBe(call.options.env.WEB_PORT);
     expect(call.options.env.HIVE_CELL_ID).toBe(cell.id);
+    expect(call.options.env.HIVE_CLI_BIN).toMatch(HIVE_CLI_SOURCE_PATH_PATTERN);
     expect(call.options.env.HIVE_BROWSE_ROOT).toBe(workspace);
     expect(call.options.env.HIVE_HOME).toBe(join(workspace, ".hive", "home"));
     expect(call.options.env.HIVE_CELL_RUNTIME_DIR).toContain(
@@ -902,6 +913,7 @@ describe("service supervisor", () => {
           readProcessEnvironment: async () => ({
             HIVE_SERVICE_INSTANCE_ID: "owned-instance",
           }),
+          stopTimeoutMs: 5,
         });
         await harness.supervisor.stopCellService("svc-stop-group");
       }
@@ -999,6 +1011,29 @@ describe("service supervisor", () => {
 
     expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
     expect(groupAlive).toBe(false);
+  });
+
+  it("defaults to a 15-second graceful stop before escalation", async () => {
+    const signals: Array<number | string | undefined> = [];
+    const { cell, harness } = await createScenario({
+      templateId: "template-graceful-stop-deadline",
+      start: true,
+      harnessOptions: {
+        stopTimeoutMs: 5,
+        processKill: (signal, exit) => {
+          signals.push(signal);
+          if (signal === "SIGKILL") {
+            exit(1);
+          }
+        },
+      },
+    });
+
+    expect(SERVICE_STOP_GRACE_PERIOD_MS).toBe(
+      EXPECTED_SERVICE_STOP_GRACE_PERIOD_MS
+    );
+    await harness.supervisor.stopCellServices(cell.id);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
   });
 
   it("restarts a stopped service even when its previous port is occupied", async () => {
@@ -1485,6 +1520,88 @@ describe("service supervisor", () => {
     );
     await harness.supervisor.stopCellServices(cell.id);
     expect(harness.runCommandCalls).toEqual(["stop-web", "stop-db"]);
+  });
+
+  it("starts independent services concurrently and preserves rollback order", async () => {
+    const { cell, harness, template } = await createScenario({
+      templateId: "template-dependency-waves",
+      template: {
+        services: {
+          db: serviceDefinition({
+            run: "start-db",
+            setup: ["prepare-db"],
+            stop: "stop-db",
+          }),
+          worker: serviceDefinition({
+            run: "start-worker",
+            setup: ["prepare-worker"],
+            stop: "stop-worker",
+          }),
+          app: serviceDefinition({
+            run: "start-app",
+            setup: ["prepare-app"],
+            dependsOn: ["db", "worker"],
+          }),
+        },
+      },
+    });
+
+    const starting = harness.supervisor.ensureCellServices({ cell, template });
+    const [dbSetup, workerSetup] = await Promise.all([
+      waitForSpawnedCommand(harness, "prepare-db"),
+      waitForSpawnedCommand(harness, "prepare-worker"),
+    ]);
+    expect(harness.processes.map((process) => process.options.command)).toEqual(
+      ["prepare-db", "prepare-worker"]
+    );
+
+    dbSetup.exit(0);
+    workerSetup.exit(0);
+    const appSetup = await waitForSpawnedCommand(harness, "prepare-app");
+    expect(
+      harness.processes.some(
+        (process) => process.options.command === "start-db"
+      )
+    ).toBe(true);
+    expect(
+      harness.processes.some(
+        (process) => process.options.command === "start-worker"
+      )
+    ).toBe(true);
+    appSetup.exit(1);
+
+    await expect(starting).rejects.toThrow('Command "prepare-app" failed');
+    await harness.supervisor.stopCellServices(cell.id);
+    expect(harness.runCommandCalls).toEqual(["stop-worker", "stop-db"]);
+  });
+
+  it("cancels sibling readiness when a concurrent service fails", async () => {
+    const { cell, harness, template } = await createScenario({
+      templateId: "template-failed-service-wave",
+      template: {
+        services: {
+          failing: serviceDefinition({
+            run: "run-failing",
+            setup: ["prepare-failing"],
+          }),
+          waiting: tcpReadinessService({
+            run: "run-waiting",
+            readyTimeoutMs: 30_000,
+          }),
+        },
+      },
+    });
+
+    const starting = harness.supervisor.ensureCellServices({ cell, template });
+    const [failingSetup, waitingProcess] = await Promise.all([
+      waitForSpawnedCommand(harness, "prepare-failing"),
+      waitForSpawnedCommand(harness, "run-waiting"),
+    ]);
+
+    failingSetup.exit(1);
+
+    await expect(starting).rejects.toThrow('Command "prepare-failing" failed');
+    await expect(waitingProcess.handle.exited).resolves.toBe(0);
   });
 
   it("starts the dependency closure when a single service is started", async () => {
@@ -2025,6 +2142,7 @@ describe("service supervisor", () => {
       readProcessEnvironment?: (
         pid: number
       ) => Promise<Record<string, string> | null>;
+      stopTimeoutMs?: number;
     } = {}
   ) {
     const processes: FakeProcess[] = [];
@@ -2092,6 +2210,9 @@ describe("service supervisor", () => {
       terminalRuntime,
       ...(harnessOptions.readProcessEnvironment
         ? { readProcessEnvironment: harnessOptions.readProcessEnvironment }
+        : {}),
+      ...(harnessOptions.stopTimeoutMs
+        ? { stopTimeoutMs: harnessOptions.stopTimeoutMs }
         : {}),
     });
 

@@ -87,6 +87,12 @@ Environment variables:
 - The SQLite database defaults to `~/.hive/state/hive.db`; set `DATABASE_URL` if you need a different location.
 - High-frequency transport/polling request logs are muted by default to keep runtime logs readable. Re-enable per category with `HIVE_LOG_TERMINAL_TRAFFIC=1`, `HIVE_LOG_POLLING_TRAFFIC=1`, or `HIVE_LOG_OPTIONS_REQUESTS=1`.
 
+#### Android runtime support
+
+Hive Android emulator and viewer services require a Linux or macOS host with the Android SDK installed. Android commands fail immediately on Windows rather than starting a partial runtime.
+
+Host playback of emulator audio is Linux-only and requires PipeWire's `pw-cat`. The viewer still provides video and controls on macOS, but it does not play emulator audio through the host.
+
 #### OpenCode keybinds in Hive
 
 Hive applies browser-safe aliases for conflict-prone shortcuts in embedded chat terminals (web + desktop runtimes):
@@ -293,6 +299,41 @@ HTTP and HTTPS ports appear in the cell viewer by default. Set `"viewer": false`
 Set `"port": 42861` on a named port only when the service requires a stable browser origin or an externally fixed port. Exact ports fail provisioning when unavailable rather than silently moving to another origin.
 
 Setup, services, cell terminals, chat terminals, and teardown receive `HIVE_CELL_ID`, `HIVE_CELL_RUNTIME_DIR`, `HIVE_CELL_ARTIFACTS_DIR`, cell-local `HIVE_HOME`, and named variables such as `API_HTTP_PORT`. Teardown runs only during cell deletion or destructive provisioning rollback. Successful deletion removes runtime data and preserves artifacts.
+
+Hive also injects `HIVE_CLI_BIN`, the absolute path to the exact source or installed Hive executable managing the cell. Templates can use it to start Hive-owned runtime providers without relying on the shell's `PATH` or another installed Hive version. The Android provider keeps product commands in the workspace while Hive owns the emulator lease, cell-local AVD, gRPC endpoint, viewer, and browser microphone bridge:
+
+```json
+{
+  "services": {
+    "app": {
+      "type": "process",
+      "run": "\"$HIVE_CLI_BIN\" android emulator --grpc-port \"$APP_ANDROID_GRPC_PORT\" -- bun run android:cell",
+      "ports": {
+        "http": { "primary": true, "protocol": "http" },
+        "android-grpc": { "protocol": "tcp", "viewer": false }
+      }
+    },
+    "android": {
+      "type": "process",
+      "run": "\"$HIVE_CLI_BIN\" android viewer --port \"$PORT\" --grpc-port \"${PORT:app:android-grpc}\"",
+      "ports": {
+        "viewer": {
+          "primary": true,
+          "port": 42861,
+          "protocol": "http",
+          "viewer": true
+        }
+      },
+      "readiness": {
+        "checks": [{ "type": "http", "port": "viewer", "path": "/api/health" }]
+      },
+      "readyTimeoutMs": 360000
+    }
+  }
+}
+```
+
+Independent services start concurrently; `dependsOn` edges create readiness waves. The Android viewer can therefore wait for the emulator while the product service performs a cold build. Android runtime support is intentionally limited to Linux and macOS. Browser microphone injection is available on both; host playback of emulator output currently requires Linux and `pw-cat`.
 
 Docker and Compose configuration shapes remain reserved but are not executable yet; Hive now fails these definitions explicitly rather than silently skipping them.
 

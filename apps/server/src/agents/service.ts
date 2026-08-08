@@ -187,6 +187,7 @@ function buildEnvironmentVariableLines(
   const lines = [
     "## Hive-Generated Environment Variables",
     `- HIVE_CELL_ID=${cell.id}`,
+    `- HIVE_CLI_BIN=${cellEnvironment.HIVE_CLI_BIN}`,
     `- HIVE_HOME=${cellEnvironment.HIVE_HOME}`,
     `- HIVE_BROWSE_ROOT=${cell.workspacePath}`,
     `- HIVE_CELL_RUNTIME_DIR=${cellEnvironment.HIVE_CELL_RUNTIME_DIR}`,

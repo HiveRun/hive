@@ -1,0 +1,29 @@
+{
+  "name": "@hive/android-runtime",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": {
+      "types": "./src/command.ts",
+      "default": "./src/command.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "check": "biome check --write .",
+    "check-types": "tsc -p tsconfig.json --noEmit",
+    "compile:viewer": "bun build --compile --minify --sourcemap ./src/viewer-server.ts --outfile hive-android-viewer-server",
+    "test": "vitest",
+    "test:e2e:browser-microphone": "bun e2e/browser-microphone.ts",
+    "test:run": "vitest run"
+  },
+  "dependencies": {
+    "stream-droid": "0.5.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.1",
+    "@types/bun": "^1.2.6",
+    "typescript": "catalog:",
+    "vitest": "^4.0.3"
+  }
+}
