@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -21,6 +21,11 @@ type AcquireAndroidLeaseOptions = {
   recoverStaleOwner?: (owner: AndroidLeaseOwner) => Promise<void>;
 };
 
+type AcquireAndroidRuntimeLeaseOptions = AcquireAndroidLeaseOptions & {
+  getLegacyProcessFingerprint?: (pid: number) => string | null;
+  legacyLeasePath?: string;
+};
+
 const RECOVERY_WAIT_TIMEOUT_MS = 45_000;
 const RECOVERY_POLL_INTERVAL_MS = 25;
 
@@ -29,6 +34,11 @@ export const defaultAndroidLeasePath = join(
   ".hive",
   "runtime",
   "android"
+);
+
+export const defaultLegacyAndroidLeasePath = join(
+  tmpdir(),
+  `calibrate-hive-android-${process.getuid?.() ?? "user"}`
 );
 
 const hasErrorCode = (error: unknown, code: string): boolean =>
@@ -83,6 +93,14 @@ const readLinuxProcessStartTime = (pid: number): string | null => {
   }
 };
 
+const readPsProcessStartTime = (pid: number): string | null => {
+  const result = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+    encoding: "utf8",
+    env: { ...process.env, LANG: "C", LC_ALL: "C", TZ: "UTC" },
+  });
+  return result.status === 0 ? result.stdout.trim() || null : null;
+};
+
 export const getAndroidProcessFingerprint = (pid: number): string | null => {
   if (process.platform === "linux") {
     const fingerprint = readLinuxProcessStartTime(pid);
@@ -90,11 +108,7 @@ export const getAndroidProcessFingerprint = (pid: number): string | null => {
       return fingerprint;
     }
   }
-  const result = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
-    encoding: "utf8",
-    env: { ...process.env, LANG: "C", LC_ALL: "C", TZ: "UTC" },
-  });
-  const startTime = result.status === 0 ? result.stdout.trim() : "";
+  const startTime = readPsProcessStartTime(pid);
   return startTime ? `ps-lstart:${startTime}` : null;
 };
 
@@ -197,4 +211,28 @@ export async function acquireAndroidLease({
       await rm(leasePath, { force: true, recursive: true });
     }
   };
+}
+
+export async function acquireAndroidRuntimeLease({
+  getLegacyProcessFingerprint:
+    readLegacyProcessFingerprint = readPsProcessStartTime,
+  legacyLeasePath = defaultLegacyAndroidLeasePath,
+  ...options
+}: AcquireAndroidRuntimeLeaseOptions): Promise<() => Promise<void>> {
+  // Keep the former Calibrate lease during migration so old and new cells
+  // cannot concurrently claim the reserved emulator.
+  const releaseLegacyLease = await acquireAndroidLease({
+    ...options,
+    getProcessFingerprint: readLegacyProcessFingerprint,
+    leasePath: legacyLeasePath,
+  });
+  try {
+    const releaseLease = await acquireAndroidLease(options);
+    return async () => {
+      await Promise.all([releaseLease(), releaseLegacyLease()]);
+    };
+  } catch (error) {
+    await releaseLegacyLease();
+    throw error;
+  }
 }

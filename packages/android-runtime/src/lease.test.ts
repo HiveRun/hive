@@ -5,9 +5,12 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   acquireAndroidLease,
+  acquireAndroidRuntimeLease,
   defaultAndroidLeasePath,
+  defaultLegacyAndroidLeasePath,
   getAndroidProcessFingerprint,
   isAndroidLeaseOwnerAlive,
+  readAndroidLeaseOwner,
 } from "./lease";
 
 const LINUX_FINGERPRINT_PATTERN = /^linux-proc:/;
@@ -41,11 +44,49 @@ describe("Android emulator lease", () => {
 
   it("uses a user-owned host-global lease and a stable process-start fingerprint", () => {
     expect(defaultAndroidLeasePath).toBe(`${homedir()}/.hive/runtime/android`);
+    expect(defaultLegacyAndroidLeasePath).toContain(
+      `calibrate-hive-android-${process.getuid?.() ?? "user"}`
+    );
     expect(getAndroidProcessFingerprint(process.pid)).toMatch(
       process.platform === "linux"
         ? LINUX_FINGERPRINT_PATTERN
         : POSIX_FINGERPRINT_PATTERN
     );
+  });
+
+  it("holds the legacy and current leases during migration", async () => {
+    const leasePath = await createLeasePath();
+    const legacyLeasePath = await createLeasePath();
+    const release = await acquireAndroidRuntimeLease({
+      cellId: "cell-a",
+      getLegacyProcessFingerprint: () => "legacy-start",
+      getProcessFingerprint: () => "current-start",
+      isProcessAlive: () => true,
+      leasePath,
+      legacyLeasePath,
+    });
+
+    try {
+      await expect(
+        acquireAndroidRuntimeLease({
+          cellId: "cell-b",
+          getLegacyProcessFingerprint: () => "legacy-start",
+          getProcessFingerprint: () => "current-start",
+          isProcessAlive: () => true,
+          leasePath,
+          legacyLeasePath,
+        })
+      ).rejects.toThrow("already owned by Hive cell cell-a");
+      expect((await readAndroidLeaseOwner(leasePath))?.cellId).toBe("cell-a");
+      expect((await readAndroidLeaseOwner(legacyLeasePath))?.cellId).toBe(
+        "cell-a"
+      );
+    } finally {
+      await release();
+    }
+
+    expect(await readAndroidLeaseOwner(leasePath)).toBeNull();
+    expect(await readAndroidLeaseOwner(legacyLeasePath)).toBeNull();
   });
 
   it("prevents concurrent cells from owning the emulator", async () => {

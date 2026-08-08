@@ -1,6 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { cleanupAndroidEmulator, cleanupAndroidSession } from "./emulator";
+import {
+  assertAndroidStartupActive,
+  cleanupAndroidEmulator,
+  cleanupAndroidSession,
+} from "./emulator";
+
+describe("Android emulator startup", () => {
+  it("stops startup after shutdown begins", () => {
+    expect(() => assertAndroidStartupActive(true)).toThrow(
+      "Hive Android startup was interrupted."
+    );
+    expect(() => assertAndroidStartupActive(false)).not.toThrow();
+  });
+});
 
 describe("Android emulator cleanup", () => {
   it("falls back to process termination when graceful shutdown fails", async () => {

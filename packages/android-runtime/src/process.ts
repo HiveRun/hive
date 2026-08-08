@@ -1,6 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 
 type ForwardedChildOptions = {
+  onSignal?: (signal: NodeJS.Signals) => void;
   processGroup?: boolean;
   shutdownTimeoutMs?: number;
 };
@@ -118,6 +119,7 @@ export const terminateChild = async (
 export const forwardSignalsToChildren = (
   getChildren: () => ChildProcess[],
   {
+    onSignal,
     processGroup = false,
     shutdownTimeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS,
   }: ForwardedChildOptions = {}
@@ -126,6 +128,7 @@ export const forwardSignalsToChildren = (
   let forceTimer: ReturnType<typeof setTimeout> | undefined;
   for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"] as const) {
     const handler = () => {
+      onSignal?.(signal);
       for (const child of getChildren()) {
         signalChild(child, signal, processGroup);
       }

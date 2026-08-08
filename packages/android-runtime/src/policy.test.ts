@@ -4,13 +4,16 @@ import {
   buildAndroidEmulatorArgs,
   createAndroidSdkEnvironment,
   getHiveAndroidAbi,
+  getHiveAndroidDeviceStartTimeoutMs,
   getHiveAndroidSystemImage,
+  HIVE_ANDROID_DEVICE_START_TIMEOUT_MS,
   resolveAndroidGraphics,
   resolveAndroidRuntimeDirectory,
   resolveAndroidSdkPath,
 } from "./policy";
 
 const SYSTEM_PATH_SUFFIX_PATTERN = /\/usr\/bin$/;
+const CUSTOM_DEVICE_START_TIMEOUT_MS = 450_000;
 
 describe("Android runtime policy", () => {
   it("resolves configured and standard Android SDK paths", () => {
@@ -63,6 +66,21 @@ describe("Android runtime policy", () => {
       "system-images;android-34;google_apis;arm64-v8a"
     );
     expect(() => getHiveAndroidAbi("ia32")).toThrow("does not support ia32");
+  });
+
+  it("preserves the configurable Hive Android startup timeout", () => {
+    expect(
+      getHiveAndroidDeviceStartTimeoutMs({
+        HIVE_ANDROID_DEVICE_START_TIMEOUT_MS: String(
+          CUSTOM_DEVICE_START_TIMEOUT_MS
+        ),
+      })
+    ).toBe(CUSTOM_DEVICE_START_TIMEOUT_MS);
+    expect(
+      getHiveAndroidDeviceStartTimeoutMs({
+        HIVE_ANDROID_DEVICE_START_TIMEOUT_MS: "invalid",
+      })
+    ).toBe(HIVE_ANDROID_DEVICE_START_TIMEOUT_MS);
   });
 
   it("builds fixed serial, headless, snapshot-free, token gRPC arguments", () => {

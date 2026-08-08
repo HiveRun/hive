@@ -11,16 +11,16 @@ import {
   waitForAndroidDevice,
   waitForAndroidDeviceToStop,
 } from "./android-device";
-import { acquireAndroidLease } from "./lease";
+import { acquireAndroidRuntimeLease } from "./lease";
 import {
   buildAndroidEmulatorArgs,
   createAndroidSdkEnvironment,
   getHiveAndroidAbi,
+  getHiveAndroidDeviceStartTimeoutMs,
   getHiveAndroidSystemImage,
   HIVE_ANDROID_AVD_NAME,
   HIVE_ANDROID_DEFAULT_SERIAL,
   HIVE_ANDROID_DEVICE_PROFILE,
-  HIVE_ANDROID_DEVICE_START_TIMEOUT_MS,
   resolveAndroidGraphics,
   resolveAndroidRuntimeDirectory,
 } from "./policy";
@@ -228,6 +228,12 @@ type AndroidCleanupTask = {
   run: () => Promise<void>;
 };
 
+export const assertAndroidStartupActive = (shuttingDown: boolean): void => {
+  if (shuttingDown) {
+    throw new Error("Hive Android startup was interrupted.");
+  }
+};
+
 export const cleanupAndroidEmulator = async (options: {
   isDevicePresent: () => boolean;
   stopExpected?: () => Promise<void>;
@@ -299,7 +305,7 @@ export async function runAndroidEmulator(options: {
     throw new Error("Hive Android emulation is only available inside a cell.");
   }
 
-  const releaseLease = await acquireAndroidLease({
+  const releaseLease = await acquireAndroidRuntimeLease({
     cellId,
     recoverStaleOwner: () => stopExpectedEmulator(paths, env),
   });
@@ -310,13 +316,18 @@ export async function runAndroidEmulator(options: {
   let productProcess: ChildProcess | undefined;
   let productExit: Promise<number> | undefined;
   let mayStopEmulator = false;
+  let shuttingDown = false;
   const removeSignalHandlers = forwardSignalsToChildren(() => children, {
+    onSignal: () => {
+      shuttingDown = true;
+    },
     processGroup: childProcessGroup,
   });
 
   try {
     await stopExpectedEmulator(paths, env);
     mayStopEmulator = true;
+    assertAndroidStartupActive(shuttingDown);
     const connectedSerials = getAttachedAndroidDevices(paths.adb, env);
     const emulatorArgs = buildAndroidEmulatorArgs({
       connectedSerials,
@@ -336,7 +347,7 @@ export async function runAndroidEmulator(options: {
     await waitForAndroidDevice(paths.adb, HIVE_ANDROID_DEFAULT_SERIAL, env, {
       hasStartupEnded: () =>
         emulatorProcess ? hasChildExited(emulatorProcess) : true,
-      timeoutMs: HIVE_ANDROID_DEVICE_START_TIMEOUT_MS,
+      timeoutMs: getHiveAndroidDeviceStartTimeoutMs(env),
     });
     const avdName = getRunningAndroidAvdName(
       paths.adb,
@@ -348,6 +359,7 @@ export async function runAndroidEmulator(options: {
         `Reserved Hive serial ${HIVE_ANDROID_DEFAULT_SERIAL} started unexpected AVD ${avdName}.`
       );
     }
+    assertAndroidStartupActive(shuttingDown);
 
     productProcess = spawn(productCommand, productArgs, {
       cwd: process.cwd(),

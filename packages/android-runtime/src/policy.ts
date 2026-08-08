@@ -126,6 +126,15 @@ export const getHiveAndroidAbi = (
   throw new Error(`Hive Android does not support ${architecture} hosts.`);
 };
 
+export const getHiveAndroidDeviceStartTimeoutMs = (
+  env: Record<string, string | undefined> = process.env
+): number => {
+  const configured = Number(env.HIVE_ANDROID_DEVICE_START_TIMEOUT_MS);
+  return Number.isSafeInteger(configured) && configured > 0
+    ? configured
+    : HIVE_ANDROID_DEVICE_START_TIMEOUT_MS;
+};
+
 export const getHiveAndroidSystemImage = (
   architecture: NodeJS.Architecture = process.arch
 ): string =>
