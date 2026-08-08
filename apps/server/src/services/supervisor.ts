@@ -1961,6 +1961,7 @@ export function createServiceSupervisor(
         port,
         templateEnv,
         serviceEnv: definition.env ?? {},
+        audio: definition.audio,
         cell: serviceRow.cell,
         portMap: resolvedPortMap,
       });
@@ -3190,6 +3191,7 @@ function buildServiceEnv({
   port,
   templateEnv,
   serviceEnv,
+  audio,
   cell,
   portMap,
 }: {
@@ -3197,6 +3199,7 @@ function buildServiceEnv({
   port: number;
   templateEnv: Record<string, string>;
   serviceEnv: Record<string, string>;
+  audio: ProcessService["audio"];
   cell: Cell;
   portMap?: CellPortMap;
 }): Record<string, string> {
@@ -3213,6 +3216,8 @@ function buildServiceEnv({
     PORT: portString,
     SERVICE_PORT: portString,
     [`${upper}_PORT`]: portString,
+    HIVE_SERVICE_AUDIO_INPUT: audio?.input === true ? "1" : "0",
+    HIVE_SERVICE_AUDIO_OUTPUT: audio?.output === false ? "0" : "1",
     FORCE_COLOR: "1",
   };
 

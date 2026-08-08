@@ -42,6 +42,9 @@ const EXECUTABLE_MODE = 0o755;
 const OWNERSHIP_POLL_INTERVAL_MS = 100;
 const noopAsync = (): Promise<void> => Promise.resolve();
 
+export const serviceAudioOutputEnabled = (env: NodeJS.ProcessEnv): boolean =>
+  env.HIVE_SERVICE_AUDIO_OUTPUT !== "0";
+
 export const buildAndroidViewerArgs = (
   serial: string,
   port: number
@@ -527,10 +530,12 @@ export const runAndroidViewer = async (options: {
     if (ownershipChanged) {
       throw new Error(`Hive Android viewer lost ownership of ${serial}.`);
     }
-    stopAudioPlayback = startAndroidAudioPlayback(
-      grpcEndpoint,
-      isolatedAndroidEnv
-    );
+    if (serviceAudioOutputEnabled(androidEnv)) {
+      stopAudioPlayback = startAndroidAudioPlayback(
+        grpcEndpoint,
+        isolatedAndroidEnv
+      );
+    }
     child = spawn(
       viewerLayout.executable,
       buildAndroidViewerArgs(serial, options.port),

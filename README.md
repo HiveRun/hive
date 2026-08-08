@@ -91,7 +91,7 @@ Environment variables:
 
 Hive Android emulator and viewer services require a Linux or macOS host with the Android SDK installed. Android commands fail immediately on Windows rather than starting a partial runtime.
 
-Host playback of emulator audio is Linux-only and requires PipeWire's `pw-cat`. The viewer still provides video and controls on macOS, but it does not play emulator audio through the host.
+Host playback of emulator audio is Linux-only and requires PipeWire's `pw-cat`. Browser microphone injection is supported on Linux and macOS when the viewer service enables audio input. It starts and stops automatically with guest `AudioRecord` capture after the browser or OS grants microphone permission.
 
 #### OpenCode keybinds in Hive
 
@@ -316,6 +316,7 @@ Hive also injects `HIVE_CLI_BIN`, the absolute path to the exact source or insta
     "android": {
       "type": "process",
       "run": "\"$HIVE_CLI_BIN\" android viewer --port \"$PORT\" --grpc-port \"${PORT:app:android-grpc}\"",
+      "audio": { "input": true, "output": true },
       "ports": {
         "viewer": {
           "primary": true,
@@ -333,7 +334,7 @@ Hive also injects `HIVE_CLI_BIN`, the absolute path to the exact source or insta
 }
 ```
 
-Independent services start concurrently; `dependsOn` edges create readiness waves. The Android viewer can therefore wait for the emulator while the product service performs a cold build. Android runtime support is intentionally limited to Linux and macOS. Browser microphone injection is available on both; host playback of emulator output currently requires Linux and `pw-cat`.
+Independent services start concurrently; `dependsOn` edges create readiness waves. The Android viewer can therefore wait for the emulator while the product service performs a cold build. Process service audio output defaults to enabled, while input defaults to disabled and must be explicitly enabled with `"audio": { "input": true }`. Android microphone forwarding follows active guest capture automatically; there is no Hive microphone toggle. Android runtime support is intentionally limited to Linux and macOS. Browser microphone injection is available on both; host playback of emulator output currently requires Linux and `pw-cat`.
 
 Docker and Compose configuration shapes remain reserved but are not executable yet; Hive now fails these definitions explicitly rather than silently skipping them.
 

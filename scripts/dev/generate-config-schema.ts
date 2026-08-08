@@ -29,6 +29,11 @@ const descriptionMap: Record<string, string> = {
   "templates/*/services/*/setup": "Setup commands before main command",
   "templates/*/services/*/cwd": "Working directory for service",
   "templates/*/services/*/env": "Environment variables",
+  "templates/*/services/*/audio": "Host audio access for the service",
+  "templates/*/services/*/audio/input":
+    "Allow the service to receive host audio (defaults to false)",
+  "templates/*/services/*/audio/output":
+    "Allow the service to play audio on the host (defaults to true)",
   "templates/*/services/*/ports": "Named ports allocated for the service",
   "templates/*/services/*/ports/*": "Named port definition",
   "templates/*/services/*/ports/*/port":

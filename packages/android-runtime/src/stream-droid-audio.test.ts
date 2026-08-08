@@ -5,6 +5,7 @@ import {
   createPacedAudioInjection,
   microphoneCaptureIsRunning,
   originsMatch,
+  serviceAudioInputEnabled,
 } from "stream-droid/src/wsServer.ts";
 import { expect, test } from "vitest";
 
@@ -100,4 +101,14 @@ Events log: recording activity received by AudioService
 AudioDeviceBroker:`)
   ).toBe(false);
   expect(microphoneCaptureIsRunning("riid 143; active? true\n")).toBe(false);
+});
+
+test("requires service audio input to be explicitly enabled", () => {
+  expect(serviceAudioInputEnabled({})).toBe(false);
+  expect(serviceAudioInputEnabled({ HIVE_SERVICE_AUDIO_INPUT: "0" })).toBe(
+    false
+  );
+  expect(serviceAudioInputEnabled({ HIVE_SERVICE_AUDIO_INPUT: "1" })).toBe(
+    true
+  );
 });

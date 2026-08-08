@@ -92,6 +92,17 @@ const processReadinessSchema = z.object({
     .describe("Milliseconds between readiness attempts"),
 });
 
+const processServiceAudioSchema = z.object({
+  input: z
+    .boolean()
+    .optional()
+    .describe("Allow the service to receive host audio (defaults to false)"),
+  output: z
+    .boolean()
+    .optional()
+    .describe("Allow the service to play audio on the host (defaults to true)"),
+});
+
 const processServiceSchema = z.object({
   type: z.literal("process").default("process").describe("Service type"),
   run: z.string().describe("Command to run service"),
@@ -104,6 +115,9 @@ const processServiceSchema = z.object({
     .record(z.string(), z.string())
     .optional()
     .describe("Environment variables"),
+  audio: processServiceAudioSchema
+    .optional()
+    .describe("Host audio access for the service"),
   ports: processServicePortsSchema
     .optional()
     .describe("Named ports allocated for the service"),

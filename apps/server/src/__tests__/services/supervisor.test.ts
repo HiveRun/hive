@@ -83,7 +83,13 @@ describe("service supervisor", () => {
         env: { HIVE_CLI_BIN: "/workspace/hive" },
         services: {
           web: serviceDefinition({
-            env: { HIVE_CLI_BIN: "/service/hive", NODE_ENV: "test" },
+            audio: { input: true, output: false },
+            env: {
+              HIVE_CLI_BIN: "/service/hive",
+              HIVE_SERVICE_AUDIO_INPUT: "0",
+              HIVE_SERVICE_AUDIO_OUTPUT: "1",
+              NODE_ENV: "test",
+            },
           }),
         },
       },
@@ -98,6 +104,8 @@ describe("service supervisor", () => {
     expect(call.options.env.HIVE_CELL_ID).toBe(cell.id);
     expect(call.options.env.HIVE_CLI_BIN).toMatch(HIVE_CLI_SOURCE_PATH_PATTERN);
     expect(call.options.env.HIVE_BROWSE_ROOT).toBe(workspace);
+    expect(call.options.env.HIVE_SERVICE_AUDIO_INPUT).toBe("1");
+    expect(call.options.env.HIVE_SERVICE_AUDIO_OUTPUT).toBe("0");
     expect(call.options.env.HIVE_HOME).toBe(join(workspace, ".hive", "home"));
     expect(call.options.env.HIVE_CELL_RUNTIME_DIR).toContain(
       `/runtime/cells/${cell.id}`
@@ -109,6 +117,19 @@ describe("service supervisor", () => {
     const [service] = await testDb.select().from(cellServices);
     expect(service?.status).toBe("running");
     expect(typeof service?.port).toBe("number");
+
+    await stopCellHarness(harness, cell.id);
+  });
+
+  it("defaults service audio input off and output on", async () => {
+    const { cell, harness } = await createScenario({
+      templateId: "template-audio-defaults",
+      start: true,
+    });
+
+    const call = firstProcess(harness, "Expected process to be recorded");
+    expect(call.options.env.HIVE_SERVICE_AUDIO_INPUT).toBe("0");
+    expect(call.options.env.HIVE_SERVICE_AUDIO_OUTPUT).toBe("1");
 
     await stopCellHarness(harness, cell.id);
   });

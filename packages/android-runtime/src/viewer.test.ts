@@ -18,6 +18,7 @@ import {
   buildAndroidViewerArgs,
   prepareIsolatedAndroidTools,
   resolveViewerRuntimeLayout,
+  serviceAudioOutputEnabled,
 } from "./viewer";
 
 const EXECUTABLE_MODE = 0o755;
@@ -44,6 +45,16 @@ describe("Android viewer runtime", () => {
       "127.0.0.1",
       "--headless",
     ]);
+  });
+
+  it("enables service audio output by default and honors an explicit disable", () => {
+    expect(serviceAudioOutputEnabled({})).toBe(true);
+    expect(serviceAudioOutputEnabled({ HIVE_SERVICE_AUDIO_OUTPUT: "1" })).toBe(
+      true
+    );
+    expect(serviceAudioOutputEnabled({ HIVE_SERVICE_AUDIO_OUTPUT: "0" })).toBe(
+      false
+    );
   });
 
   it("resolves source and compiled viewer assets next to their runtimes", () => {

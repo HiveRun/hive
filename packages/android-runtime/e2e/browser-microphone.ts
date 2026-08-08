@@ -26,6 +26,8 @@ const packageName = "com.hiverun.audioe2e";
 const sampleRate = 48_000;
 const toneFrequency = 997;
 const audioFrameMilliseconds = 20;
+const audioSendDurationMilliseconds = 4250;
+const audioSpanToleranceMilliseconds = 200;
 const recordingPath = `/sdcard/Android/data/${packageName}/files/capture.pcm`;
 const androidHome =
   process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT ?? "";
@@ -556,6 +558,7 @@ const main = async (): Promise<void> => {
         env: {
           ...process.env,
           HIVE_ANDROID_STREAM_DROID_STRICT_PORT: "1",
+          HIVE_SERVICE_AUDIO_INPUT: "1",
         },
         stdio: ["ignore", "pipe", "pipe"],
       }
@@ -589,25 +592,58 @@ const main = async (): Promise<void> => {
           (window as Window & { hiveGetUserMediaCalls?: number })
             .hiveGetUserMediaCalls ?? 0
       );
-    await page.goto(`${viewerUrl}/?serial=${encodeURIComponent(serial)}`);
-    await page.evaluate(() => {
+    await page.addInitScript(() => {
       const mediaDevices = navigator.mediaDevices;
       const getUserMedia = mediaDevices.getUserMedia.bind(mediaDevices);
-      Object.assign(window, { hiveGetUserMediaCalls: 0 });
-      mediaDevices.getUserMedia = (...args) => {
+      const sendWebSocket = WebSocket.prototype.send;
+      Object.assign(window, {
+        hiveActiveMicrophoneTracks: 0,
+        hiveGetUserMediaCalls: 0,
+        hiveMicrophoneFrames: 0,
+      });
+      WebSocket.prototype.send = function send(
+        this: WebSocket,
+        data: string | ArrayBufferLike | Blob | ArrayBufferView
+      ) {
+        if (data instanceof ArrayBuffer) {
+          Object.assign(window, {
+            hiveMicrophoneFrames:
+              ((window as Window & { hiveMicrophoneFrames?: number })
+                .hiveMicrophoneFrames ?? 0) + 1,
+          });
+        }
+        sendWebSocket.call(this, data);
+      };
+      mediaDevices.getUserMedia = async (...args) => {
         Object.assign(window, {
           hiveGetUserMediaCalls:
             ((window as Window & { hiveGetUserMediaCalls?: number })
               .hiveGetUserMediaCalls ?? 0) + 1,
         });
-        return getUserMedia(...args);
+        const stream = await getUserMedia(...args);
+        for (const track of stream.getAudioTracks()) {
+          const stop = track.stop.bind(track);
+          Object.assign(window, {
+            hiveActiveMicrophoneTracks:
+              ((window as Window & { hiveActiveMicrophoneTracks?: number })
+                .hiveActiveMicrophoneTracks ?? 0) + 1,
+          });
+          track.stop = () => {
+            Object.assign(window, {
+              hiveActiveMicrophoneTracks:
+                ((
+                  window as Window & {
+                    hiveActiveMicrophoneTracks?: number;
+                  }
+                ).hiveActiveMicrophoneTracks ?? 1) - 1,
+            });
+            stop();
+          };
+        }
+        return stream;
       };
     });
-    const startMicrophone = page.getByRole("button", {
-      name: "Use browser microphone",
-    });
-    await startMicrophone.waitFor({ state: "visible" });
-    await startMicrophone.click();
+    await page.goto(`${viewerUrl}/?serial=${encodeURIComponent(serial)}`);
     await page.waitForTimeout(100);
     const permissionRequestsBeforeGuestCapture =
       await readPermissionRequestCount();
@@ -619,21 +655,28 @@ const main = async (): Promise<void> => {
     await adb("shell", "am", "start", "-n", `${packageName}/.MainActivity`);
     await waitForRecorder();
     const recorderReadyAt = Date.now();
-    await page
-      .getByRole("button", { name: "Stop browser microphone" })
-      .waitFor({ state: "visible", timeout: 15_000 });
+    await page.waitForFunction(
+      () =>
+        (window as Window & { hiveGetUserMediaCalls?: number })
+          .hiveGetUserMediaCalls === 1,
+      undefined,
+      { timeout: 15_000 }
+    );
     const permissionRequestCount = await readPermissionRequestCount();
     if (permissionRequestCount !== 1) {
       throw new Error(
         `Expected one browser microphone permission request, received ${permissionRequestCount}.`
       );
     }
+    await page.waitForFunction(
+      () =>
+        ((window as Window & { hiveMicrophoneFrames?: number })
+          .hiveMicrophoneFrames ?? 0) > 0,
+      undefined,
+      { timeout: 15_000 }
+    );
     const microphoneLiveAt = Date.now();
-    await page.waitForTimeout(4000);
-    await page.getByRole("button", { name: "Stop browser microphone" }).click();
-    await page
-      .getByRole("button", { name: "Use browser microphone" })
-      .waitFor({ state: "visible" });
+    await page.waitForTimeout(audioSendDurationMilliseconds);
 
     await adb(
       "shell",
@@ -643,6 +686,13 @@ const main = async (): Promise<void> => {
       `${packageName}.STOP`,
       "-n",
       `${packageName}/.MainActivity`
+    );
+    await page.waitForFunction(
+      () =>
+        (window as Window & { hiveActiveMicrophoneTracks?: number })
+          .hiveActiveMicrophoneTracks === 0,
+      undefined,
+      { timeout: 15_000 }
     );
     await sleep(500);
     await adb("pull", recordingPath, guestPcmPath);
@@ -665,7 +715,10 @@ const main = async (): Promise<void> => {
         `Guest microphone delivered only ${result.activeDurationMs}ms of the 4000ms browser tone.`
       );
     }
-    if (result.activeSpanMs > 4200) {
+    if (
+      result.activeSpanMs >
+      audioSendDurationMilliseconds + audioSpanToleranceMilliseconds
+    ) {
       throw new Error(
         `Guest microphone tone stretched to ${result.activeSpanMs}ms, indicating queued audio.`
       );

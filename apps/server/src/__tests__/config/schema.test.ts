@@ -82,6 +82,22 @@ describe("Template Schema", () => {
     expect(result.services?.api?.type).toBe(EXPECTED.serviceType);
   });
 
+  it("validates directional service audio access", () => {
+    const result = templateSchema.parse(
+      template({
+        services: {
+          android: processService({
+            audio: { input: true, output: false },
+          }),
+        },
+      })
+    );
+
+    expect(result.services?.android).toMatchObject({
+      audio: { input: true, output: false },
+    });
+  });
+
   it("validates named ports, dependencies, and readiness references", () => {
     const result = templateSchema.parse(
       template({
