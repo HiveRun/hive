@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1508,6 +1508,113 @@ describe("service supervisor", () => {
     );
   });
 
+  async function runTeardownScenario(args: {
+    templateId: string;
+    command: string;
+    directory: string;
+    baseCommit?: string;
+    prepare?: (workspacePath: string) => Promise<void>;
+  }): Promise<boolean> {
+    const { workspace, cell, harness, template } = await createScenario({
+      templateId: args.templateId,
+      template: { teardown: [args.command] },
+      cell: args.baseCommit ? { baseCommit: args.baseCommit } : undefined,
+    });
+    cell.workspacePath = join(workspace, args.directory);
+    await args.prepare?.(cell.workspacePath);
+
+    await harness.supervisor.runCellTeardown({
+      cell,
+      template,
+      reason: "delete",
+    });
+
+    return harness.processes.some(
+      (process) => process.options.command === args.command
+    );
+  }
+
+  it("skips teardown when the cell workspace has only runtime artifacts", async () => {
+    expect(
+      await runTeardownScenario({
+        templateId: "template-teardown-runtime-only",
+        command: "cleanup-never",
+        directory: "runtime-only-workspace",
+        prepare: async (workspacePath) => {
+          await mkdir(join(workspacePath, ".hive"), { recursive: true });
+        },
+      })
+    ).toBe(false);
+  });
+
+  it("skips teardown when the cell workspace is already missing", async () => {
+    expect(
+      await runTeardownScenario({
+        templateId: "template-teardown-missing-workspace",
+        command: "cleanup-never",
+        directory: "missing-cell-workspace",
+      })
+    ).toBe(false);
+  });
+
+  it("skips teardown when an incomplete workspace has only git metadata", async () => {
+    expect(
+      await runTeardownScenario({
+        templateId: "template-teardown-git-metadata-only",
+        command: "cleanup-never",
+        directory: "git-metadata-only",
+        prepare: async (workspacePath) => {
+          await mkdir(workspacePath);
+          await writeFile(join(workspacePath, ".git"), "gitdir: missing");
+        },
+      })
+    ).toBe(false);
+  });
+
+  it("runs teardown for a provisioned empty workspace", async () => {
+    expect(
+      await runTeardownScenario({
+        templateId: "template-teardown-empty-workspace",
+        command: "cleanup-empty-workspace",
+        directory: "empty-workspace",
+        baseCommit: "base-commit",
+        prepare: async (workspacePath) => {
+          await mkdir(workspacePath);
+          await writeFile(join(workspacePath, ".git"), "gitdir: valid");
+        },
+      })
+    ).toBe(true);
+  });
+
+  it("runs teardown for a nonempty workspace without git metadata", async () => {
+    expect(
+      await runTeardownScenario({
+        templateId: "template-teardown-without-git",
+        command: "cleanup-without-git",
+        directory: "workspace-without-git",
+        prepare: async (workspacePath) => {
+          await mkdir(workspacePath);
+          await writeFile(join(workspacePath, "package.json"), "{}");
+        },
+      })
+    ).toBe(true);
+  });
+
+  it("treats intentional OpenCode plugins as workspace source", async () => {
+    expect(
+      await runTeardownScenario({
+        templateId: "template-teardown-opencode-plugin",
+        command: "cleanup-opencode-plugin",
+        directory: "workspace-with-opencode-plugin",
+        prepare: async (workspacePath) => {
+          await mkdir(join(workspacePath, ".opencode", "plugin"), {
+            recursive: true,
+          });
+        },
+      })
+    ).toBe(true);
+  });
+
   it("resumes teardown after the last completed command", async () => {
     let cleanupTwoRuns = 0;
     const { cell, harness, template } = await createScenario({
@@ -2319,6 +2426,8 @@ describe("service supervisor", () => {
 
   async function createWorkspaceDir() {
     const dir = await mkdtemp(join(tmpdir(), "hive-services-"));
+    await mkdir(join(dir, ".git"));
+    await writeFile(join(dir, "package.json"), "{}");
     workspaceDirs.push(dir);
     return dir;
   }

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { constants as osConstants } from "node:os";
 import { resolve as resolvePath } from "node:path";
@@ -49,6 +49,40 @@ const AUTO_RESTART_STATUSES: ReadonlySet<ServiceStatus> = new Set([
   "running",
   "needs_resume",
 ]);
+const CELL_WORKSPACE_RUNTIME_ENTRIES = new Set([".git", ".hive"]);
+const OPENCODE_RUNTIME_ENTRIES = new Set(["state", "themes", "tools"]);
+
+function readWorkspaceEntries(workspacePath: string): string[] {
+  try {
+    return readdirSync(workspacePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+}
+
+function cellWorkspaceHasSource(
+  workspacePath: string,
+  baseCommit: string | null
+): boolean {
+  const entries = readWorkspaceEntries(workspacePath);
+  if (baseCommit && entries.includes(".git")) {
+    return true;
+  }
+  return entries.some((entry) => {
+    if (CELL_WORKSPACE_RUNTIME_ENTRIES.has(entry)) {
+      return false;
+    }
+    if (entry !== ".opencode") {
+      return true;
+    }
+    return readWorkspaceEntries(resolvePath(workspacePath, entry)).some(
+      (opencodeEntry) => !OPENCODE_RUNTIME_ENTRIES.has(opencodeEntry)
+    );
+  });
+}
 
 const cellServiceLocks = new Map<string, Promise<void>>();
 const serviceStartLocks = new Map<string, Promise<void>>();
@@ -1193,10 +1227,15 @@ export function createServiceSupervisor(
       return;
     }
     if (
-      args.cell.status === "spawning" &&
-      !args.cell.baseCommit &&
-      !existsSync(args.cell.workspacePath)
+      !cellWorkspaceHasSource(args.cell.workspacePath, args.cell.baseCommit)
     ) {
+      logger.warn(
+        "Skipping template teardown because cell workspace source is missing",
+        {
+          cellId: args.cell.id,
+          workspacePath: args.cell.workspacePath,
+        }
+      );
       return;
     }
 

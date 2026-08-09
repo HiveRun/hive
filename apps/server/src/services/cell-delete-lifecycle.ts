@@ -1,9 +1,11 @@
 import { promises as fs } from "node:fs";
+import { basename, dirname, resolve as resolvePath } from "node:path";
 
 import { eq } from "drizzle-orm";
 
 import type { DatabaseService as DatabaseServiceType } from "../db";
 import { type Cell, type CellStatus, cells } from "../schema/cells";
+import { resolveCellsRoot } from "../workspaces/registry";
 import {
   type AsyncWorktreeManager,
   describeWorktreeError,
@@ -27,7 +29,7 @@ type CellDeleteRecord = Cell;
 
 type CellWorkspaceRecord = Pick<
   typeof cells.$inferSelect,
-  "id" | "workspacePath"
+  "id" | "workspacePath" | "workspaceRootPath"
 >;
 
 type DeleteLifecycleArgs = {
@@ -164,30 +166,69 @@ function formatLifecycleError(error: unknown): string {
 }
 
 export async function removeCellWorkspace(
-  worktreeService: AsyncWorktreeManager,
+  worktreeService: AsyncWorktreeManager | null,
   cell: CellWorkspaceRecord,
   log: DeleteLifecycleLogger
 ) {
-  try {
-    await worktreeService.removeWorktree(cell.id);
-    return;
-  } catch (error) {
-    const worktreeError = error as WorktreeManagerError;
-    log.warn(
-      {
-        error: describeWorktreeError(worktreeError),
-        cellId: cell.id,
-      },
-      "Failed to remove git worktree, attempting filesystem cleanup"
-    );
+  if (worktreeService) {
+    try {
+      await worktreeService.removeWorktree(cell.id);
+      return;
+    } catch (error) {
+      const worktreeError = error as WorktreeManagerError;
+      log.warn(
+        {
+          error: describeWorktreeError(worktreeError),
+          cellId: cell.id,
+        },
+        "Failed to remove git worktree, attempting filesystem cleanup"
+      );
+    }
   }
 
   if (!cell.workspacePath) {
     return;
   }
 
+  const workspacePath = resolvePath(cell.workspacePath);
   try {
-    await fs.rm(cell.workspacePath, { recursive: true, force: true });
+    await fs.lstat(workspacePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  const cellsRoot = resolvePath(resolveCellsRoot());
+  const workspaceCellsRoot = resolvePath(
+    cell.workspaceRootPath,
+    ".hive",
+    "cells"
+  );
+  const allowedCellsRoot = [cellsRoot, workspaceCellsRoot].find(
+    (root) => workspacePath === resolvePath(root, cell.id)
+  );
+  if (!allowedCellsRoot) {
+    throw new Error(
+      `Refusing to remove unsafe cell workspace path: ${cell.workspacePath}`
+    );
+  }
+
+  const [realWorkspaceParent, realCellsRoot] = await Promise.all([
+    fs.realpath(dirname(workspacePath)),
+    fs.realpath(allowedCellsRoot),
+  ]);
+  if (
+    realWorkspaceParent !== realCellsRoot ||
+    basename(workspacePath) !== cell.id
+  ) {
+    throw new Error(
+      `Refusing to remove unsafe cell workspace path: ${cell.workspacePath}`
+    );
+  }
+
+  try {
+    await fs.rm(workspacePath, { recursive: true, force: true });
   } catch (filesystemError) {
     log.warn(
       {
@@ -197,6 +238,7 @@ export async function removeCellWorkspace(
       },
       "Failed to remove cell workspace directory"
     );
+    throw filesystemError;
   }
 }
 
@@ -285,14 +327,19 @@ async function deleteCellWithTiming(
   await runStep({
     step: "remove_workspace",
     action: async () => {
-      const worktreeService = await args.getWorktreeService(
-        args.cell.workspaceId
-      );
+      const worktreeService = await args
+        .getWorktreeService(args.cell.workspaceId)
+        .catch((error) => {
+          args.log.warn(
+            { error, cellId: args.cell.id },
+            "Failed to resolve worktree manager, attempting filesystem cleanup"
+          );
+          return null;
+        });
       await removeCellWorkspace(worktreeService, args.cell, args.log);
     },
     timeoutMs: DELETE_REMOVE_WORKSPACE_TIMEOUT_MS,
-    continueOnError: true,
-    warnMessage: "Failed to remove cell workspace during deletion",
+    failureLabel: "Workspace removal",
   });
 
   await runStep({

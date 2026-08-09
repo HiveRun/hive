@@ -42,7 +42,7 @@ export const hiveConfigDefaults: HiveConfig = {
           cwd: "./apps/web",
           env: {
             NODE_ENV: "development",
-            VITE_API_URL: "http://localhost:$PORT:server",
+            VITE_API_URL: "http://127.0.0.1:$PORT:server",
           },
           dependsOn: ["server"],
           readiness: {
