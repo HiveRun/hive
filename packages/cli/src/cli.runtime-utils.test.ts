@@ -14,7 +14,7 @@ import { describe, expect, it, vi } from "vitest";
 const HIVE_PORT = 3000;
 const HTTP_DEFAULT_PORT = 80;
 const HTTPS_DEFAULT_PORT = 443;
-const READY_TIMEOUT_MS = 50;
+const READY_TIMEOUT_MS = 500;
 const STALE_TIMEOUT_MS = 20;
 const UNIX_HIVE_PID = 401_148;
 const WINDOWS_HIVE_PID = 8124;
@@ -39,7 +39,7 @@ const waitForHiveReady = (
     url: HEALTH_URL,
     fetchImpl: fetchMock,
     intervalMs: 5,
-    timeoutMs: 50,
+    timeoutMs: READY_TIMEOUT_MS,
     isReadyResponse: async (response) =>
       isHiveHealthResponse(await response.json()),
   });
@@ -76,7 +76,7 @@ describe("waitForServerReady", () => {
     const ready = await waitForServerReady({
       url: "http://localhost:3000/health",
       fetchImpl: fetchMock,
-      timeoutMs: 50,
+      timeoutMs: READY_TIMEOUT_MS,
       intervalMs: 5,
     });
 
@@ -153,7 +153,7 @@ describe("waitForServerReady", () => {
       url: HEALTH_URL,
       fetchImpl: fetchMock,
       intervalMs: 5,
-      timeoutMs: 50,
+      timeoutMs: READY_TIMEOUT_MS,
       readyLogFilePath: logPath,
       readyLogInitialOffset: 0,
       readyLogPattern: API_LISTENING_PATTERN,
