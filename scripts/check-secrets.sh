@@ -22,7 +22,7 @@ for pattern in "${PATTERNS[@]}"; do
     matches="$(git diff --cached --name-only \
         | grep -v -E "\.(lock|sum)$|package-lock\.json$|yarn\.lock$|bun\.lock$|routeTree\.gen\.ts$|skills-lock\.json$|^\.agents/skills/agent-browser/references/commands\.md$" \
         | xargs grep -n -H -E -i "$pattern" 2>/dev/null \
-        | grep -v -E '\.patch:[0-9]+:index [0-9a-f]{40,64}\.\.[0-9a-f]{40,64} [0-9]{6}$' \
+        | grep -v -E '\.patch:[0-9]+:index [0-9a-f]{40,64}\.\.[0-9a-f]{40,64}( [0-9]{6})?$' \
         || true)"
     if [ -n "$matches" ]; then
         echo "⚠️  Potential secret found matching pattern: $pattern"

@@ -6031,6 +6031,7 @@ async function serializeService(
     logPath: null,
     lastKnownError: derivedLastKnownError,
     env: service.env,
+    audio: processDefinition?.audio,
     updatedAt: service.updatedAt.toISOString(),
     recentLogs: logResult.content,
     totalLogLines: logResult.totalLines,

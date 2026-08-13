@@ -10,6 +10,7 @@ import {
   resolveAndroidGraphics,
   resolveAndroidRuntimeDirectory,
   resolveAndroidSdkPath,
+  resolveHiveAndroidAvdName,
 } from "./policy";
 
 const SYSTEM_PATH_SUFFIX_PATTERN = /\/usr\/bin$/;
@@ -68,6 +69,10 @@ describe("Android runtime policy", () => {
     expect(() => getHiveAndroidAbi("ia32")).toThrow("does not support ia32");
   });
 
+  it("uses a deterministic cell-specific AVD name", () => {
+    expect(resolveHiveAndroidAvdName("cell:a/b")).toBe("Hive_Pixel_7_cell_a_b");
+  });
+
   it("preserves the configurable Hive Android startup timeout", () => {
     expect(
       getHiveAndroidDeviceStartTimeoutMs({
@@ -83,9 +88,10 @@ describe("Android runtime policy", () => {
     ).toBe(HIVE_ANDROID_DEVICE_START_TIMEOUT_MS);
   });
 
-  it("builds fixed serial, headless, snapshot-free, token gRPC arguments", () => {
+  it("builds isolated, headless, snapshot-free, token gRPC arguments", () => {
     const args = buildAndroidEmulatorArgs({
-      connectedSerials: [],
+      avdName: "Hive_Pixel_7",
+      consolePort: 5556,
       gpuMode: "host",
       grpcPort: 8558,
     });
@@ -94,7 +100,7 @@ describe("Android runtime policy", () => {
       "-avd",
       "Hive_Pixel_7",
       "-port",
-      "5580",
+      "5556",
       "-netdelay",
       "none",
       "-netspeed",
@@ -113,13 +119,7 @@ describe("Android runtime policy", () => {
       "8558",
       "-grpc-use-token",
     ]);
-    expect(
-      buildAndroidEmulatorArgs({
-        connectedSerials: ["emulator-5554"],
-        gpuMode: "auto",
-        grpcPort: 8558,
-      })
-    ).toContain("-read-only");
+    expect(args).not.toContain("-read-only");
   });
 
   it("uses host graphics and the user Pulse runtime when available", () => {

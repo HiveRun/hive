@@ -327,14 +327,7 @@ async function terminateProcessHandle(
     // Continue to process-group verification and forced termination.
   }
 
-  const leaderExited = await Promise.race([
-    handle.exited.then(
-      () => true,
-      () => true
-    ),
-    delay(timeoutMs).then(() => false),
-  ]);
-  if (leaderExited && !isProcessGroupAlive(handle.pid)) {
+  if (await waitForHandleAndGroupExit(handle, timeoutMs)) {
     return;
   }
 

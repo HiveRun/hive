@@ -16,7 +16,7 @@ test("formats the first emulator microphone packet", () => {
       samplingRate: 48_000,
       channels: 0,
       format: 1,
-      mode: 1,
+      mode: 0,
     },
     timestamp: 123,
     audio: pcm,

@@ -18,22 +18,37 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
-import { microphoneCaptureIsRunning } from "stream-droid/src/wsServer.ts";
 
 import { terminateChild, waitForChildExit } from "../src/process";
 
-const packageName = "com.hiverun.audioe2e";
-const sampleRate = 48_000;
-const toneFrequency = 997;
+export const audioRecorderPackageName = "com.hiverun.audioe2e";
+export const androidAudioSampleRate = 48_000;
+export const browserToneFrequency = 997;
+export const microphoneSpeechPilotFrequency = 1500;
+export const outputSpeechPilotFrequency = 2300;
 const audioFrameMilliseconds = 20;
-const audioSendDurationMilliseconds = 4250;
+export const audioSendDurationMilliseconds = 6000;
 const audioSpanToleranceMilliseconds = 200;
-const recordingPath = `/sdcard/Android/data/${packageName}/files/capture.pcm`;
+export const guestRecordingPath = `/sdcard/Android/data/${audioRecorderPackageName}/files/capture.pcm`;
+export const guestPlaybackCompletePath = `/sdcard/Android/data/${audioRecorderPackageName}/files/playback.done`;
+export const guestPlaybackStartedPath = `/sdcard/Android/data/${audioRecorderPackageName}/files/playback.started`;
+export const guestPlaybackPath = `/sdcard/Android/data/${audioRecorderPackageName}/files/playback.pcm`;
+export const guestPlaybackSourcePath = `/sdcard/Android/data/${audioRecorderPackageName}/files/playback-source.pcm`;
 const androidHome =
   process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT ?? "";
-const serial = process.env.ANDROID_SERIAL ?? "";
-const packageRoot = path.resolve(import.meta.dir, "..");
+const packageRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  ".."
+);
 const repoRoot = path.resolve(packageRoot, "../..");
+const RECORD_ACTIVITY_MONITOR_PATTERN =
+  /RecordActivityMonitor[\s\S]*?(?=\nAudioDeviceBroker:|$)/;
+const ACTIVE_RECORDING_PATTERN = /^riid\s+\d+;\s+active\?\s+true$/m;
+
+const microphoneCaptureIsRunning = (status: string): boolean => {
+  const monitor = status.match(RECORD_ACTIVITY_MONITOR_PATTERN)?.[0];
+  return monitor ? ACTIVE_RECORDING_PATTERN.test(monitor) : false;
+};
 
 type RunOptions = {
   cwd?: string;
@@ -92,8 +107,10 @@ const run = async (
     });
   });
 
-const adb = (...args: string[]): Promise<string> =>
-  run("adb", ["-s", serial, ...args]);
+const getAndroidSerial = () => process.env.ANDROID_SERIAL?.trim() ?? "";
+
+export const adb = (...args: string[]): Promise<string> =>
+  run("adb", ["-s", getAndroidSerial(), ...args]);
 
 const reservePort = (): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -110,8 +127,8 @@ const reservePort = (): Promise<number> =>
     });
   });
 
-const createToneWav = (seconds: number): Buffer => {
-  const frames = sampleRate * seconds;
+export const createToneWav = (seconds: number): Buffer => {
+  const frames = androidAudioSampleRate * seconds;
   const pcmBytes = frames * 2;
   const wav = Buffer.alloc(44 + pcmBytes);
   wav.write("RIFF", 0);
@@ -120,14 +137,16 @@ const createToneWav = (seconds: number): Buffer => {
   wav.writeUInt32LE(16, 16);
   wav.writeUInt16LE(1, 20);
   wav.writeUInt16LE(1, 22);
-  wav.writeUInt32LE(sampleRate, 24);
-  wav.writeUInt32LE(sampleRate * 2, 28);
+  wav.writeUInt32LE(androidAudioSampleRate, 24);
+  wav.writeUInt32LE(androidAudioSampleRate * 2, 28);
   wav.writeUInt16LE(2, 32);
   wav.writeUInt16LE(16, 34);
   wav.write("data", 36);
   wav.writeUInt32LE(pcmBytes, 40);
   for (let frame = 0; frame < frames; frame += 1) {
-    const sample = Math.sin((2 * Math.PI * toneFrequency * frame) / sampleRate);
+    const sample = Math.sin(
+      (2 * Math.PI * browserToneFrequency * frame) / androidAudioSampleRate
+    );
     wav.writeInt16LE(Math.round(sample * 20_000), 44 + frame * 2);
   }
   return wav;
@@ -136,6 +155,7 @@ const createToneWav = (seconds: number): Buffer => {
 const manifest = `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.hiverun.audioe2e">
   <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
   <application android:theme="@android:style/Theme.Material.Light.NoActionBar">
     <activity
       android:name=".MainActivity"
@@ -154,18 +174,24 @@ const activitySource = `package com.hiverun.audioe2e;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.media.AudioManager;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
+import android.media.AudioAttributes;
+import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.os.Bundle;
 import android.widget.TextView;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 
 public final class MainActivity extends Activity {
   private static final String STOP_ACTION = "com.hiverun.audioe2e.STOP";
+  private static final String PLAYBACK_ACTION = "com.hiverun.audioe2e.PLAYBACK";
   private AudioRecord audioRecord;
   private Thread captureThread;
   private volatile boolean recording;
@@ -189,6 +215,12 @@ public final class MainActivity extends Activity {
     if (STOP_ACTION.equals(intent.getAction())) {
       stopCapture();
       finish();
+    } else if (PLAYBACK_ACTION.equals(intent.getAction())) {
+      stopCapture();
+      new Thread(() -> {
+        playCapture();
+        runOnUiThread(this::finish);
+      }, "audio-e2e-playback").start();
     }
   }
 
@@ -246,6 +278,72 @@ public final class MainActivity extends Activity {
     audioRecord.release();
   }
 
+  private void playCapture() {
+    File input = new File(getExternalFilesDir(null), "playback-source.pcm");
+    File playback = new File(getExternalFilesDir(null), "playback.pcm");
+    File started = new File(getExternalFilesDir(null), "playback.started");
+    File complete = new File(getExternalFilesDir(null), "playback.done");
+    AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+    audioManager.setStreamVolume(
+      AudioManager.STREAM_MUSIC,
+      audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
+      0
+    );
+    int playbackMinimum = AudioTrack.getMinBufferSize(
+      48000,
+      AudioFormat.CHANNEL_OUT_MONO,
+      AudioFormat.ENCODING_PCM_16BIT
+    );
+    AudioTrack track = new AudioTrack.Builder()
+      .setAudioAttributes(
+        new AudioAttributes.Builder()
+          .setUsage(AudioAttributes.USAGE_MEDIA)
+          .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+          .build()
+      )
+      .setAudioFormat(
+        new AudioFormat.Builder()
+          .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+          .setSampleRate(48000)
+          .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+          .build()
+      )
+      .setBufferSizeInBytes(Math.max(playbackMinimum * 2, 8192))
+      .setTransferMode(AudioTrack.MODE_STREAM)
+      .build();
+    track.setVolume(1.0f);
+    byte[] buffer = new byte[1920];
+    boolean startedPlayback = false;
+    try (
+      FileInputStream stream = new FileInputStream(input);
+      FileOutputStream playbackStream = new FileOutputStream(playback, false)
+    ) {
+      track.play();
+      int count;
+      while ((count = stream.read(buffer)) > 0) {
+        int offset = 0;
+        while (offset < count) {
+          int written = track.write(buffer, offset, count - offset);
+          if (written <= 0) {
+            throw new RuntimeException("AudioTrack rejected playback with code " + written);
+          }
+          playbackStream.write(buffer, offset, written);
+          offset += written;
+          if (!startedPlayback) {
+            started.createNewFile();
+            startedPlayback = true;
+          }
+        }
+      }
+      track.stop();
+      complete.createNewFile();
+    } catch (Exception error) {
+      throw new RuntimeException(error);
+    } finally {
+      track.release();
+    }
+  }
+
   @Override
   public void onDestroy() {
     stopCapture();
@@ -272,7 +370,7 @@ const latestAndroidComponent = async (
   return latest;
 };
 
-const buildRecorderApk = async (directory: string): Promise<string> => {
+export const buildRecorderApk = async (directory: string): Promise<string> => {
   const buildToolsRoot = path.join(androidHome, "build-tools");
   const platformRoot = path.join(androidHome, "platforms");
   const buildToolsVersion = await latestAndroidComponent(buildToolsRoot);
@@ -399,7 +497,7 @@ const waitForViewer = async (
   );
 };
 
-const waitForRecorder = async (): Promise<void> => {
+export const waitForRecorder = async (): Promise<void> => {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     if (microphoneCaptureIsRunning(await adb("shell", "dumpsys", "audio"))) {
@@ -410,8 +508,37 @@ const waitForRecorder = async (): Promise<void> => {
   throw new Error("Android AudioRecord consumer did not become active.");
 };
 
-const analyzePcm = (
-  pcm: Buffer
+const analyzePcmFrame = (
+  pcm: Buffer,
+  frameIndex: number,
+  frameSamples: number,
+  toneFrequency: number
+): { rms: number; toneRatio: number } => {
+  let energy = 0;
+  let sine = 0;
+  let cosine = 0;
+  for (let sampleIndex = 0; sampleIndex < frameSamples; sampleIndex += 1) {
+    const byteOffset = (frameIndex * frameSamples + sampleIndex) * 2;
+    const sample = pcm.readInt16LE(byteOffset) / 32_768;
+    const phase =
+      (2 * Math.PI * toneFrequency * sampleIndex) / androidAudioSampleRate;
+    energy += sample * sample;
+    sine += sample * Math.sin(phase);
+    cosine += sample * Math.cos(phase);
+  }
+  const rms = Math.sqrt(energy / frameSamples);
+  const toneAmplitude =
+    (2 * Math.sqrt(sine * sine + cosine * cosine)) / frameSamples;
+  return {
+    rms,
+    toneRatio: rms === 0 ? 0 : toneAmplitude / (rms * Math.SQRT2),
+  };
+};
+
+export const analyzePcm = (
+  pcm: Buffer,
+  toneFrequency = browserToneFrequency,
+  activeRmsThreshold = 0.02
 ): {
   activeDurationMs: number;
   activeSpanMs: number;
@@ -420,21 +547,16 @@ const analyzePcm = (
   rms: number;
   toneRatio: number;
 } => {
-  const frameSamples = (sampleRate * audioFrameMilliseconds) / 1000;
-  if (pcm.length < sampleRate * 2) {
+  const frameSamples = (androidAudioSampleRate * audioFrameMilliseconds) / 1000;
+  if (pcm.length < androidAudioSampleRate * 2) {
     throw new Error(`Guest capture was too short (${pcm.length} bytes).`);
   }
   const frameCount = Math.floor(pcm.length / 2 / frameSamples);
-  const activeFrames: boolean[] = [];
+  const frames: Array<{ rms: number; toneRatio: number }> = [];
   for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
-    let energy = 0;
-    for (let sampleIndex = 0; sampleIndex < frameSamples; sampleIndex += 1) {
-      const byteOffset = (frameIndex * frameSamples + sampleIndex) * 2;
-      const sample = pcm.readInt16LE(byteOffset) / 32_768;
-      energy += sample * sample;
-    }
-    activeFrames.push(Math.sqrt(energy / frameSamples) >= 0.02);
+    frames.push(analyzePcmFrame(pcm, frameIndex, frameSamples, toneFrequency));
   }
+  const activeFrames = frames.map((frame) => frame.rms >= activeRmsThreshold);
   const firstActiveFrame = activeFrames.indexOf(true);
   const lastActiveFrame = activeFrames.lastIndexOf(true);
   if (firstActiveFrame === -1 || lastActiveFrame === -1) {
@@ -449,11 +571,13 @@ const analyzePcm = (
   }
 
   let activeFrameCount = 0;
+  let toneRatioTotal = 0;
   let silentRun = 0;
   let longestSilentRun = 0;
   for (let index = firstActiveFrame; index <= lastActiveFrame; index += 1) {
     if (activeFrames[index]) {
       activeFrameCount += 1;
+      toneRatioTotal += frames[index]?.toneRatio ?? 0;
       silentRun = 0;
     } else {
       silentRun += 1;
@@ -464,18 +588,11 @@ const analyzePcm = (
   const firstSample = firstActiveFrame * frameSamples;
   const sampleCount = (lastActiveFrame - firstActiveFrame + 1) * frameSamples;
   let energy = 0;
-  let sine = 0;
-  let cosine = 0;
   for (let index = 0; index < sampleCount; index += 1) {
     const sample = pcm.readInt16LE((firstSample + index) * 2) / 32_768;
-    const phase = (2 * Math.PI * toneFrequency * index) / sampleRate;
     energy += sample * sample;
-    sine += sample * Math.sin(phase);
-    cosine += sample * Math.cos(phase);
   }
   const rms = Math.sqrt(energy / sampleCount);
-  const toneAmplitude =
-    (2 * Math.sqrt(sine * sine + cosine * cosine)) / sampleCount;
   return {
     activeDurationMs: activeFrameCount * audioFrameMilliseconds,
     activeSpanMs:
@@ -483,12 +600,13 @@ const analyzePcm = (
     firstActiveMs: firstActiveFrame * audioFrameMilliseconds,
     longestDropoutMs: longestSilentRun * audioFrameMilliseconds,
     rms,
-    toneRatio: rms === 0 ? 0 : toneAmplitude / (rms * Math.SQRT2),
+    toneRatio: toneRatioTotal / activeFrameCount,
   };
 };
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: The single E2E lifecycle keeps emulator mutations inside one cleanup boundary.
 const main = async (): Promise<void> => {
+  const serial = getAndroidSerial();
   if (!androidHome) {
     throw new Error("ANDROID_HOME or ANDROID_SDK_ROOT is required.");
   }
@@ -533,10 +651,10 @@ const main = async (): Promise<void> => {
       "shell",
       "pm",
       "grant",
-      packageName,
+      audioRecorderPackageName,
       "android.permission.RECORD_AUDIO"
     );
-    await adb("shell", "rm", "-f", recordingPath);
+    await adb("shell", "rm", "-f", guestRecordingPath);
 
     viewer = spawn(
       process.execPath,
@@ -599,6 +717,7 @@ const main = async (): Promise<void> => {
       Object.assign(window, {
         hiveActiveMicrophoneTracks: 0,
         hiveGetUserMediaCalls: 0,
+        hiveGetUserMediaConstraints: [],
         hiveMicrophoneFrames: 0,
       });
       WebSocket.prototype.send = function send(
@@ -615,11 +734,23 @@ const main = async (): Promise<void> => {
         sendWebSocket.call(this, data);
       };
       mediaDevices.getUserMedia = async (...args) => {
+        const callCount =
+          ((window as Window & { hiveGetUserMediaCalls?: number })
+            .hiveGetUserMediaCalls ?? 0) + 1;
         Object.assign(window, {
-          hiveGetUserMediaCalls:
-            ((window as Window & { hiveGetUserMediaCalls?: number })
-              .hiveGetUserMediaCalls ?? 0) + 1,
+          hiveGetUserMediaCalls: callCount,
+          hiveGetUserMediaConstraints: [
+            ...((
+              window as Window & {
+                hiveGetUserMediaConstraints?: MediaStreamConstraints[];
+              }
+            ).hiveGetUserMediaConstraints ?? []),
+            args[0],
+          ],
         });
+        if (callCount === 1) {
+          throw new DOMException("Requested device not found", "NotFoundError");
+        }
         const stream = await getUserMedia(...args);
         for (const track of stream.getAudioTracks()) {
           const stop = track.stop.bind(track);
@@ -652,41 +783,69 @@ const main = async (): Promise<void> => {
         "Browser microphone permission was requested before Android started recording."
       );
     }
-    await adb("shell", "am", "start", "-n", `${packageName}/.MainActivity`);
+    await adb(
+      "shell",
+      "am",
+      "start",
+      "-n",
+      `${audioRecorderPackageName}/.MainActivity`
+    );
     await waitForRecorder();
     const recorderReadyAt = Date.now();
     await page.waitForFunction(
       () =>
         (window as Window & { hiveGetUserMediaCalls?: number })
-          .hiveGetUserMediaCalls === 1,
+          .hiveGetUserMediaCalls === 2,
       undefined,
       { timeout: 15_000 }
     );
     const permissionRequestCount = await readPermissionRequestCount();
-    if (permissionRequestCount !== 1) {
+    if (permissionRequestCount !== 2) {
       throw new Error(
-        `Expected one browser microphone permission request, received ${permissionRequestCount}.`
+        `Expected constrained and fallback microphone requests, received ${permissionRequestCount}.`
       );
     }
-    await page.waitForFunction(
-      () =>
-        ((window as Window & { hiveMicrophoneFrames?: number })
-          .hiveMicrophoneFrames ?? 0) > 0,
-      undefined,
-      { timeout: 15_000 }
-    );
+    const fallbackConstraintsAreRelaxed = await page.evaluate(() => {
+      const constraints = (
+        window as Window & {
+          hiveGetUserMediaConstraints?: MediaStreamConstraints[];
+        }
+      ).hiveGetUserMediaConstraints?.[1];
+      const audio = constraints?.audio;
+      return (
+        typeof audio === "object" &&
+        audio !== null &&
+        audio.autoGainControl === false &&
+        audio.echoCancellation === false &&
+        audio.noiseSuppression === false &&
+        !("channelCount" in audio) &&
+        !("sampleRate" in audio)
+      );
+    });
+    if (!fallbackConstraintsAreRelaxed) {
+      throw new Error(
+        "Fallback microphone request did not relax only channel and sample-rate constraints."
+      );
+    }
+    await page
+      .waitForFunction(
+        () =>
+          ((window as Window & { hiveMicrophoneFrames?: number })
+            .hiveMicrophoneFrames ?? 0) > 0,
+        undefined,
+        { timeout: 15_000 }
+      )
+      .catch(async (error) => {
+        throw new Error(
+          `Browser microphone produced no frames. Viewer text: ${await page.locator("body").innerText()}\nViewer output:\n${viewerOutput}`,
+          { cause: error }
+        );
+      });
     const microphoneLiveAt = Date.now();
     await page.waitForTimeout(audioSendDurationMilliseconds);
 
-    await adb(
-      "shell",
-      "am",
-      "start",
-      "-a",
-      `${packageName}.STOP`,
-      "-n",
-      `${packageName}/.MainActivity`
-    );
+    const guestCaptureStoppedAt = Date.now();
+    await adb("shell", "am", "force-stop", audioRecorderPackageName);
     await page.waitForFunction(
       () =>
         (window as Window & { hiveActiveMicrophoneTracks?: number })
@@ -694,10 +853,21 @@ const main = async (): Promise<void> => {
       undefined,
       { timeout: 15_000 }
     );
+    const browserTrackCleanupMs = Date.now() - guestCaptureStoppedAt;
+    if (browserTrackCleanupMs > 1500) {
+      throw new Error(
+        `Browser microphone track took ${browserTrackCleanupMs}ms to stop after guest capture ended.`
+      );
+    }
     await sleep(500);
-    await adb("pull", recordingPath, guestPcmPath);
+    await adb("pull", guestRecordingPath, guestPcmPath);
     const pcm = await readFile(guestPcmPath);
     const result = analyzePcm(pcm);
+    const startupLatencyMs =
+      result.firstActiveMs - (microphoneLiveAt - recorderReadyAt);
+    console.log(
+      `Browser microphone reached Android: ${pcm.length} bytes, ${result.activeDurationMs}ms active over ${result.activeSpanMs}ms, startup latency ${startupLatencyMs}ms, track cleanup ${browserTrackCleanupMs}ms, longest dropout ${result.longestDropoutMs}ms, RMS ${result.rms.toFixed(4)}, ${browserToneFrequency} Hz ratio ${result.toneRatio.toFixed(3)}`
+    );
     if (result.rms < 0.02) {
       throw new Error(
         `Guest microphone capture was effectively silent (RMS ${result.rms.toFixed(4)}).`
@@ -705,11 +875,9 @@ const main = async (): Promise<void> => {
     }
     if (result.toneRatio < 0.5) {
       throw new Error(
-        `Guest capture did not contain the ${toneFrequency} Hz browser tone (ratio ${result.toneRatio.toFixed(3)}).`
+        `Guest capture did not contain the ${browserToneFrequency} Hz browser tone (ratio ${result.toneRatio.toFixed(3)}).`
       );
     }
-    const startupLatencyMs =
-      result.firstActiveMs - (microphoneLiveAt - recorderReadyAt);
     if (result.activeDurationMs < 3800) {
       throw new Error(
         `Guest microphone delivered only ${result.activeDurationMs}ms of the 4000ms browser tone.`
@@ -733,9 +901,6 @@ const main = async (): Promise<void> => {
         `Guest microphone started ${startupLatencyMs}ms after browser capture became live.`
       );
     }
-    console.log(
-      `Browser microphone reached Android: ${pcm.length} bytes, ${result.activeDurationMs}ms active over ${result.activeSpanMs}ms, startup latency ${startupLatencyMs}ms, longest dropout ${result.longestDropoutMs}ms, RMS ${result.rms.toFixed(4)}, ${toneFrequency} Hz ratio ${result.toneRatio.toFixed(3)}`
-    );
   } finally {
     await browser?.close().catch(() => {
       /* Cleanup is best-effort after the E2E result is known. */
@@ -745,10 +910,12 @@ const main = async (): Promise<void> => {
         /* Cleanup is best-effort after the E2E result is known. */
       });
     }
-    await adb("shell", "am", "force-stop", packageName).catch(() => {
-      /* The helper may not have reached installation. */
-    });
-    await adb("uninstall", packageName).catch(() => {
+    await adb("shell", "am", "force-stop", audioRecorderPackageName).catch(
+      () => {
+        /* The helper may not have reached installation. */
+      }
+    );
+    await adb("uninstall", audioRecorderPackageName).catch(() => {
       /* The helper may not have reached installation. */
     });
     if (process.env.HIVE_E2E_KEEP_ARTIFACTS === "1") {
@@ -759,4 +926,6 @@ const main = async (): Promise<void> => {
   }
 };
 
-await main();
+if (import.meta.main) {
+  await main();
+}

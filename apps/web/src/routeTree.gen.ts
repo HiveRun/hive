@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as LinearRouteImport } from './routes/linear'
 import { Route as CellsRouteImport } from './routes/cells'
 import { Route as IndexRouteImport } from './routes/index'
@@ -22,6 +23,11 @@ import { Route as CellsCellIdProvisioningRouteImport } from './routes/cells/$cel
 import { Route as CellsCellIdDiffRouteImport } from './routes/cells/$cellId/diff'
 import { Route as CellsCellIdChatRouteImport } from './routes/cells/$cellId/chat'
 
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LinearRoute = LinearRouteImport.update({
   id: '/linear',
   path: '/linear',
@@ -87,6 +93,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/cells': typeof CellsRouteWithChildren
   '/linear': typeof LinearRoute
+  '/settings': typeof SettingsRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
   '/cells/new': typeof CellsNewRoute
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
@@ -101,6 +108,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/cells': typeof CellsRouteWithChildren
   '/linear': typeof LinearRoute
+  '/settings': typeof SettingsRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
   '/cells/new': typeof CellsNewRoute
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
@@ -116,6 +124,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/cells': typeof CellsRouteWithChildren
   '/linear': typeof LinearRoute
+  '/settings': typeof SettingsRoute
   '/cells/$cellId': typeof CellsCellIdRouteWithChildren
   '/cells/new': typeof CellsNewRoute
   '/cells/$cellId/chat': typeof CellsCellIdChatRoute
@@ -132,6 +141,7 @@ export interface FileRouteTypes {
     | '/'
     | '/cells'
     | '/linear'
+    | '/settings'
     | '/cells/$cellId'
     | '/cells/new'
     | '/cells/$cellId/chat'
@@ -146,6 +156,7 @@ export interface FileRouteTypes {
     | '/'
     | '/cells'
     | '/linear'
+    | '/settings'
     | '/cells/$cellId'
     | '/cells/new'
     | '/cells/$cellId/chat'
@@ -160,6 +171,7 @@ export interface FileRouteTypes {
     | '/'
     | '/cells'
     | '/linear'
+    | '/settings'
     | '/cells/$cellId'
     | '/cells/new'
     | '/cells/$cellId/chat'
@@ -175,10 +187,18 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CellsRoute: typeof CellsRouteWithChildren
   LinearRoute: typeof LinearRoute
+  SettingsRoute: typeof SettingsRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/linear': {
       id: '/linear'
       path: '/linear'
@@ -306,6 +326,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CellsRoute: CellsRouteWithChildren,
   LinearRoute: LinearRoute,
+  SettingsRoute: SettingsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

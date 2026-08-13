@@ -398,6 +398,36 @@ Install Playwright browsers on fresh environments or after Playwright upgrades:
 bun -C apps/e2e run install:browsers
 ```
 
+The production Android microphone test requires `ffmpeg` with `flite`,
+`drawtext`, H.264, and AAC support, plus an Android SDK on Linux or macOS. It
+injects a Calibrate interview response into the microphone, records the PCM
+received by Android, plays a distinct Calibrate coaching prompt through
+`AudioTrack`, captures the emulator's rendered gRPC audio stream, and combines
+both paths into a concise evidence video:
+
+```bash
+bun run test:e2e:android-service-audio
+```
+
+The trimmed MP4 is written to
+`apps/e2e/reports/latest/android-service-audio-evidence.mp4`. Microphone input
+uses a female voice in the left channel; rendered emulator output uses a
+different male voice in the right channel. On-screen banners identify each path
+and whether the chapter was captured before or after service restart. The test
+also verifies the complete payload accepted by `AudioTrack` before validating
+the encoded MP4 channels. The original full-length silent Playwright recording
+remains under `test-results/`.
+
+Local reruns reuse the production assembly only when its source fingerprint is
+unchanged; CI always rebuilds. Set `HIVE_E2E_REUSE_BUILD=0` to force a local
+rebuild. Per-phase durations are written to
+`apps/e2e/reports/latest/e2e-phase-timings.json`.
+
+This hardware-backed suite is intentionally not part of `check:commit`,
+`check:push`, or Husky because it requires Android/KVM and takes several
+minutes. CI runs it as a dedicated gate on merge queue, `main`, and manual
+dispatch, and uploads `apps/e2e/reports/latest` even when the test fails.
+
 Notes:
 - The E2E harness creates a dedicated temp workspace and SQLite database per run.
 - Local dev DB/state are not reused.
@@ -481,6 +511,7 @@ Notes:
 - `Workflow Lint` runs `actionlint`; `Quality Checks` runs `bun run check:commit`.
 - `E2E Runtime Suite` runs `bun run test:e2e` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), caches Playwright/OpenCode artifacts, and uploads reports from `apps/e2e/reports/latest`.
 - `Desktop Electron Smoke Suite` runs `bun run test:e2e:desktop` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), executes under `xvfb-run`, and uploads reports from `apps/e2e-desktop/reports/latest`.
+- `Android Service Audio E2E` runs `bun run test:e2e:android-service-audio` on merge queue, `main` pushes, and manual dispatch, provisions the Android SDK/KVM and ffmpeg, and uploads the evidence MP4 plus reports.
 - `Release` is a manual-dispatch workflow that bumps version + commits + tags in one run.
 - `Release Publish` builds installer artifacts on `v*` tags and publishes GitHub Releases.
 - `Security Audit` runs a strict `bun audit --audit-level high` job in non-blocking mode for visibility while dependency remediation is in progress.

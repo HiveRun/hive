@@ -24,6 +24,7 @@ import {
   markAgentSessionsForResume,
   resumeAgentSessionsOnStartup,
 } from "./agents/service";
+import { createBundledWebHandler } from "./bundled-web";
 import { resolveWorkspaceRoot } from "./config/context";
 import { DatabaseService } from "./db";
 import { repairLegacyMigrationGaps } from "./legacy-migration-repairs";
@@ -563,7 +564,16 @@ const startServerGeneration = async () => {
     cleanupReadyFile();
   }
 
-  app.get("/", () => "OK");
+  const webDist = process.env.HIVE_WEB_DIST ?? join(binaryDirectory, "public");
+  const bundledWebHandler = isCompiledRuntime
+    ? createBundledWebHandler(webDist)
+    : undefined;
+  if (bundledWebHandler) {
+    app.get("/", ({ request }) => bundledWebHandler(request));
+    app.get("/*", ({ request }) => bundledWebHandler(request));
+  } else {
+    app.get("/", () => "OK");
+  }
 
   const workspaceRoot = resolveWorkspaceRoot();
   await bootstrapServer(workspaceRoot, portReservation);

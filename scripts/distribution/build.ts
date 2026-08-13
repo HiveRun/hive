@@ -77,6 +77,7 @@ const buildFrontend = () =>
     env: {
       ...process.env,
       VITE_APP_BASE: "./",
+      VITE_API_URL: "same-origin",
     },
   });
 

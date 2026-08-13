@@ -4,6 +4,7 @@ import { expect, test } from "@playwright/test";
 import {
   createCellViaApi,
   createRunningServicesCell,
+  readServicePortAssignments,
   requireApiUrl,
   requireCellPaths,
   waitForActivityTypes,
@@ -126,8 +127,8 @@ test.describe("service controls", () => {
             service.ports.every((port) => port.portReachable)
         ),
     });
-    expect(readServicePorts(restartedServices)).toEqual(
-      readServicePorts(runningServices)
+    expect(readServicePortAssignments(restartedServices)).toEqual(
+      readServicePortAssignments(runningServices)
     );
 
     const expectedActivityTypes = ["services.stop", "services.start"];
@@ -172,7 +173,7 @@ test.describe("service controls", () => {
       )
     );
 
-    const portAssignments = servicesByCell.map(readServicePorts);
+    const portAssignments = servicesByCell.map(readServicePortAssignments);
     for (const assignments of portAssignments) {
       expect(assignments.map(({ name }) => name)).toEqual(EXPECTED_NAMED_PORTS);
     }
@@ -182,19 +183,6 @@ test.describe("service controls", () => {
     expect(new Set(allocatedPorts).size).toBe(allocatedPorts.length);
   });
 });
-
-function readServicePorts(
-  services: Awaited<ReturnType<typeof waitForStatuses>>
-) {
-  return services
-    .flatMap((service) =>
-      service.ports.map((port) => ({
-        name: `${service.name}:${port.name}`,
-        port: port.port,
-      }))
-    )
-    .sort((left, right) => left.name.localeCompare(right.name));
-}
 
 async function readJson(path: string): Promise<Record<string, string>> {
   return JSON.parse(await readFile(path, "utf8")) as Record<string, string>;

@@ -6,6 +6,7 @@ type FixtureWorkspaceOptions = {
   workspaceRoot: string;
   readmeTitle: string;
   commitMessage: string;
+  includeAndroidTemplate?: boolean;
   includeServicesTemplate?: boolean;
   includeSetupRetryTemplate?: boolean;
 };
@@ -95,6 +96,43 @@ const createServicesTemplate = () => ({
   },
 });
 
+const createAndroidTemplate = () => ({
+  id: "android-audio-e2e-template",
+  label: "Android Audio E2E Template",
+  type: "manual",
+  services: {
+    "android-app": {
+      type: "process",
+      run: `"$HIVE_CLI_BIN" android emulator --grpc-port "$ANDROID_APP_ANDROID_GRPC_PORT" -- ${asBunCommand(
+        'Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.PORT), fetch() { return new Response("ready"); } });'
+      )}`,
+      ports: {
+        control: { primary: true, protocol: "http", viewer: false },
+        "android-grpc": { protocol: "tcp", viewer: false },
+      },
+      readiness: {
+        checks: [{ type: "http", port: "control", path: "/" }],
+      },
+      readyTimeoutMs: 360_000,
+    },
+    android: {
+      type: "process",
+      run: `HIVE_ANDROID_AUDIO_CAPTURE_PATH="$HIVE_CELL_ARTIFACTS_DIR/emulator-output-stereo.pcm" "$HIVE_CLI_BIN" android viewer --port "$PORT" --grpc-port "${portReference(
+        "android-app:android-grpc"
+      )}"`,
+      audio: { input: true, output: true },
+      dependsOn: ["android-app"],
+      ports: {
+        viewer: { primary: true, protocol: "http", viewer: true },
+      },
+      readiness: {
+        checks: [{ type: "http", port: "viewer", path: "/api/health" }],
+      },
+      readyTimeoutMs: 360_000,
+    },
+  },
+});
+
 export async function createFixtureWorkspace(
   options: FixtureWorkspaceOptions
 ): Promise<void> {
@@ -121,6 +159,11 @@ export async function createFixtureWorkspace(
       ...(options.includeServicesTemplate
         ? {
             "e2e-services-template": createServicesTemplate(),
+          }
+        : {}),
+      ...(options.includeAndroidTemplate
+        ? {
+            "android-audio-e2e-template": createAndroidTemplate(),
           }
         : {}),
       "viewer-template": {

@@ -9,6 +9,7 @@ export type BrowserViewerAvailability =
   | "unsupported";
 
 export type BrowserViewerTarget = {
+  audioInput: boolean;
   id: string;
   label: string;
   port: number;
@@ -22,7 +23,7 @@ export type BrowserViewerTarget = {
 
 type ViewerService = Pick<
   CellServiceSummary,
-  "id" | "name" | "ports" | "status" | "url"
+  "audio" | "id" | "name" | "ports" | "status" | "url"
 >;
 
 const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -89,6 +90,7 @@ export function resolveBrowserViewerTargets(
     });
 
     return namedBrowserPorts.map((port) => ({
+      audioInput: service.audio?.input === true,
       id: port.primary ? service.id : `${service.id}:${port.name}`,
       label: service.name,
       port: port.port,

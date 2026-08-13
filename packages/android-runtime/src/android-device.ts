@@ -46,7 +46,7 @@ export const parseConnectedAndroidDevices = (output: string): string[] =>
     .map(([serial]) => serial)
     .filter((serial): serial is string => Boolean(serial));
 
-const parseAttachedAndroidDevices = (output: string): string[] =>
+export const parseAttachedAndroidDevices = (output: string): string[] =>
   output
     .split(LINE_BREAK_PATTERN)
     .slice(1)
@@ -74,12 +74,6 @@ export const isAndroidDeviceReady = (
   );
   return !result.error && result.status === 0 && result.stdout.trim() === "1";
 };
-
-export const getAttachedAndroidDevices = (
-  adbPath: string,
-  env: NodeJS.ProcessEnv
-): string[] =>
-  parseAttachedAndroidDevices(readAndroidDevicesOutput(adbPath, env));
 
 export const isAndroidDevicePresent = (
   adbPath: string,

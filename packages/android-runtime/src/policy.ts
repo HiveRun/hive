@@ -2,11 +2,12 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { delimiter, join } from "node:path";
 
-export const HIVE_ANDROID_AVD_NAME = "Hive_Pixel_7";
-export const HIVE_ANDROID_DEFAULT_SERIAL = "emulator-5580";
-const HIVE_ANDROID_EMULATOR_PORT = "5580";
+const HIVE_ANDROID_AVD_NAME = "Hive_Pixel_7";
 export const HIVE_ANDROID_DEVICE_PROFILE = "pixel_7";
 export const HIVE_ANDROID_DEVICE_START_TIMEOUT_MS = 300_000;
+
+export const resolveHiveAndroidAvdName = (cellId: string): string =>
+  `${HIVE_ANDROID_AVD_NAME}_${cellId.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}`;
 
 type AndroidSdkEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -114,6 +115,15 @@ export const createAndroidSdkEnvironment = (
   };
 };
 
+export const sanitizeAdbServerEnvironment = (
+  environment: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv => ({
+  ...environment,
+  ADB_SERVER_SOCKET: undefined,
+  ANDROID_ADB_SERVER_ADDRESS: undefined,
+  ANDROID_ADB_SERVER_PORT: undefined,
+});
+
 export const getHiveAndroidAbi = (
   architecture: NodeJS.Architecture = process.arch
 ): "arm64-v8a" | "x86_64" => {
@@ -141,41 +151,33 @@ export const getHiveAndroidSystemImage = (
   `system-images;android-34;google_apis;${getHiveAndroidAbi(architecture)}`;
 
 export const buildAndroidEmulatorArgs = (options: {
-  connectedSerials: string[];
+  avdName: string;
+  consolePort: number;
   gpuMode: string;
   grpcPort: number;
-}): string[] => {
-  const args = [
-    "-avd",
-    HIVE_ANDROID_AVD_NAME,
-    "-port",
-    HIVE_ANDROID_EMULATOR_PORT,
-    "-netdelay",
-    "none",
-    "-netspeed",
-    "full",
-    "-gpu",
-    options.gpuMode,
-    "-no-snapshot-load",
-    "-no-snapshot-save",
-    "-no-boot-anim",
-    "-qt-hide-window",
-    "-skin",
-    "720x1600",
-    "-prop",
-    "qemu.sf.lcd_density=280",
-    "-grpc",
-    String(options.grpcPort),
-    "-grpc-use-token",
-  ];
-  if (
-    !options.connectedSerials.includes(HIVE_ANDROID_DEFAULT_SERIAL) &&
-    options.connectedSerials.some((serial) => serial.startsWith("emulator-"))
-  ) {
-    args.push("-read-only");
-  }
-  return args;
-};
+}): string[] => [
+  "-avd",
+  options.avdName,
+  "-port",
+  String(options.consolePort),
+  "-netdelay",
+  "none",
+  "-netspeed",
+  "full",
+  "-gpu",
+  options.gpuMode,
+  "-no-snapshot-load",
+  "-no-snapshot-save",
+  "-no-boot-anim",
+  "-qt-hide-window",
+  "-skin",
+  "720x1600",
+  "-prop",
+  "qemu.sf.lcd_density=280",
+  "-grpc",
+  String(options.grpcPort),
+  "-grpc-use-token",
+];
 
 export const resolveAndroidRuntimeDirectory = (
   env: AndroidSdkEnvironment,

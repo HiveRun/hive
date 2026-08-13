@@ -79,6 +79,12 @@ export const CellServiceSchema = t.Object({
   lastKnownError: t.Union([t.String(), t.Null()]),
   updatedAt: t.String(),
   env: t.Record(t.String(), t.String()),
+  audio: t.Optional(
+    t.Object({
+      input: t.Optional(t.Boolean()),
+      output: t.Optional(t.Boolean()),
+    })
+  ),
   recentLogs: t.Union([t.String(), t.Null()]),
   totalLogLines: t.Union([t.Number(), t.Null()]),
   hasMoreLogs: t.Boolean(),

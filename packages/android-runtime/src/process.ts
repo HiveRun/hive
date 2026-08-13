@@ -31,12 +31,31 @@ const waitForExit = async (
 const isChildRunning = (child: ChildProcess): boolean =>
   child.exitCode === null && child.signalCode === null;
 
-const isProcessGroupRunning = (pid: number): boolean => {
+export const isProcessGroupRunning = (pid: number): boolean => {
   try {
     process.kill(-pid, 0);
     return true;
   } catch (error) {
     return error instanceof Error && "code" in error && error.code === "EPERM";
+  }
+};
+
+export const terminateProcessGroup = async (
+  pid: number,
+  shutdownTimeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS
+): Promise<void> => {
+  if (!Number.isSafeInteger(pid) || pid <= 1 || pid === process.pid) {
+    throw new Error(`Refusing to terminate invalid process group ${pid}.`);
+  }
+  if (!isProcessGroupRunning(pid)) {
+    return;
+  }
+  process.kill(-pid, "SIGTERM");
+  if (!(await waitForProcessGroupExit(pid, shutdownTimeoutMs))) {
+    process.kill(-pid, "SIGKILL");
+    if (!(await waitForProcessGroupExit(pid, shutdownTimeoutMs))) {
+      throw new Error(`Process group ${pid} did not stop.`);
+    }
   }
 };
 

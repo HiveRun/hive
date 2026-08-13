@@ -403,6 +403,36 @@ Install Playwright browsers on fresh environments or after Playwright upgrades:
 bun -C apps/e2e run install:browsers
 ```
 
+The production Android microphone test requires `ffmpeg` with `flite`,
+`drawtext`, H.264, and AAC support, plus an Android SDK on Linux or macOS. It
+injects a Calibrate interview response into the microphone, records the PCM
+received by Android, plays a distinct Calibrate coaching prompt through
+`AudioTrack`, captures the emulator's rendered gRPC audio stream, and combines
+both paths into a concise evidence video:
+
+```bash
+bun run test:e2e:android-service-audio
+```
+
+The trimmed MP4 is written to
+`apps/e2e/reports/latest/android-service-audio-evidence.mp4`. Microphone input
+uses a female voice in the left channel; rendered emulator output uses a
+different male voice in the right channel. On-screen banners identify each path
+and whether the chapter was captured before or after service restart. The test
+also verifies the complete payload accepted by `AudioTrack` before validating
+the encoded MP4 channels. The original full-length silent Playwright recording
+remains under `test-results/`.
+
+Local reruns reuse the production assembly only when its source fingerprint is
+unchanged; CI always rebuilds. Set `HIVE_E2E_REUSE_BUILD=0` to force a local
+rebuild. Per-phase durations are written to
+`apps/e2e/reports/latest/e2e-phase-timings.json`.
+
+This hardware-backed suite is intentionally not part of `check:commit`,
+`check:push`, or Husky because it requires Android/KVM and takes several
+minutes. CI runs it as a dedicated gate on merge queue, `main`, and manual
+dispatch, and uploads `apps/e2e/reports/latest` even when the test fails.
+
 Notes:
 - The E2E harness creates a dedicated temp workspace and SQLite database per run.
 - Local dev DB/state are not reused.
@@ -486,6 +516,7 @@ Notes:
 - `Workflow Lint` runs `actionlint`; `Quality Checks` runs `bun run check:commit`.
 - `E2E Runtime Suite` runs `bun run test:e2e` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), caches Playwright/OpenCode artifacts, and uploads reports from `apps/e2e/reports/latest`.
 - `Desktop Electron Smoke Suite` runs `bun run test:e2e:desktop` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), executes under `xvfb-run`, and uploads reports from `apps/e2e-desktop/reports/latest`.
+- `Android Service Audio E2E` runs `bun run test:e2e:android-service-audio` on merge queue, `main` pushes, and manual dispatch, provisions the Android SDK/KVM and ffmpeg, and uploads the evidence MP4 plus reports.
 - `Release` is a manual-dispatch workflow that bumps version + commits + tags in one run.
 - `Release Publish` builds installer artifacts on `v*` tags and publishes GitHub Releases.
 - `Security Audit` runs a strict `bun audit --audit-level high` job in non-blocking mode for visibility while dependency remediation is in progress.
@@ -613,8 +644,13 @@ If you add new tooling that writes important gitignored files, extend `.ignore` 
   - `README.md` - Project overview and getting started
   When you need context, prioritize these markdown sources over external knowledge bases.
 - `AGENTS.md` is a committed generated artifact for OpenCode. After changing `README.md` or `.ruler/prompts/*.md`, run `bun run ruler:apply` and commit the regenerated `AGENTS.md`.
-- Before pushing, run `bun run check:push` (lint, types, unit tests, build).
+- Before pushing, run `bun run check:push` (lint, types, unit tests, build). Expensive hardware/runtime E2E suites remain explicit commands rather than commit hooks.
 - Use `bun run test:e2e:fast` while iterating on cell lifecycle, terminal handling, service orchestration, or workspace management, then run the default `bun run test:e2e` before creating a PR.
+- For Android emulator, viewer, or audio changes, run `bun run test:e2e:android-service-audio` on a capable host before declaring completion. This validates the packaged release, both audio directions, restart behavior, cleanup, and the evidence MP4.
+- Do not stop at unit tests when behavior crosses compiled, packaged, browser, Electron, process, or device boundaries. Exercise the shipped boundary that can differ from source development.
+- Treat failed verification as new evidence: inspect logs/artifacts, fix the root cause, rerun the exact failure, then rerun adjacent lifecycle paths such as restart, repeat execution, cache reuse, and cleanup.
+- Adversarially review wrappers around shared host resources. Test option aliases, alternate argument forms, global commands, stale ownership, and teardown races instead of validating only the happy-path command shape.
+- Keep working autonomously through production-only failures when the next diagnostic step is available. Stop only for destructive choices, missing credentials/hardware, or genuinely ambiguous product decisions.
 - For `apps/e2e` changes, prefer deterministic checks (session/message metadata + UI confirmation) instead of fixed sleeps.
 - Keep E2E fixtures/config in sync with runtime defaults (provider/model IDs, template labels) so test behavior matches production paths.
 - Treat `.hive/` and generated `.opencode/state/`, `.opencode/themes/`, and `.opencode/tools/` paths as runtime artifacts that should not be committed. Keep `.opencode/tools/` available for spawned-cell copies so OpenCode tools can propagate, and keep `opencode.json` plus intentional source under `.opencode/plugin/` trackable.
@@ -853,6 +889,23 @@ Keep amber against near-black for brand contrast; dilute only inside large gradi
 - Materials: obsidian slabs, molten amber, carbon fiber, pollen dust, radio stack schematics
 
 Use this document whenever designing or reviewing UI. If pixels drift from these rules, update the theme or adjust the spec here first so humans and agents remain aligned.
+
+
+
+<!-- Source: .ruler/prompts/execution-discipline.md -->
+
+# Execution Discipline
+
+- Translate substantial requests into explicit acceptance criteria before implementation. Keep every criterion open until it has fresh evidence or a clearly reported blocker.
+- Do not declare work complete because the code compiles, unit tests pass, or the happy path works. Verify the highest-risk shipped boundary affected by the change: compiled binary, installer, browser, Electron, process lifecycle, network, or device.
+- Never silently reduce scope to get a green result. Do not replace a packaged/runtime test with a dev server, mock the boundary under test, weaken assertions, remove coverage, skip cleanup, or substitute a partial workaround for the requested behavior.
+- Do not add retries, sleeps, broad catches, fallback paths, or compatibility layers merely to hide a failure. Use them only when the product requirement calls for them and the underlying failure mode is understood.
+- Treat each failed verification as diagnostic evidence. Read the complete error, inspect logs/screenshots/video/traces and persisted state, identify the violated invariant, fix the root cause, and rerun the exact failing path.
+- After fixing a lifecycle or shared-resource failure, test the adjacent adversarial paths: immediate repeat, restart, cancellation, stale state, alternate argument forms, concurrent ownership, and cleanup. A single successful run is not enough when delayed teardown can affect the next run.
+- Prefer the smallest correct production fix, but do not confuse small with incomplete. A workaround is acceptable only when the user explicitly accepts the limitation and it is documented with a follow-up.
+- Request an independent code review after substantial or security-sensitive changes. Investigate concrete findings rather than dismissing them because the main test already passes.
+- Before the final response, run fresh verification for the completed source state, inspect the resulting artifacts, and confirm no owned processes, emulators, ports, or temporary resources leaked.
+- If credentials, hardware, destructive approval, or an ambiguous product decision truly blocks completion, stop and report the exact blocker, attempted diagnostics, current state, and next executable step. Never present blocked or partially verified work as done.
 
 
 
@@ -1283,6 +1336,7 @@ bun run test:e2e:fast:spec specs/cell-chat.e2e.ts
 - For layout/scroll/overflow fixes, always validate the actual rendered page in the affected viewport and runtime. Confirm the intended container scrolls and that surrounding panes do not accidentally overflow.
 - Use headless mode by default; only use headed mode for manual login/2FA/CAPTCHA or explicit live walkthrough requests.
 - Include verification evidence in your final response (key observed behavior and/or captured artifacts).
+- Android emulator/viewer/audio changes require `bun run test:e2e:android-service-audio` on a Linux/macOS host with the documented Android SDK and ffmpeg prerequisites. It is intentionally excluded from commit hooks and runs as a dedicated CI gate on merge queue, `main`, and manual dispatch.
 - If pre-push fails on the known flaky backend spec (`apps/server/src/__tests__/routes/cells.create.test.ts`), run `bun -C apps/server run test -- src/__tests__/routes/cells.create.test.ts -t "returns detailed payload when template setup fails"` once, then rerun `bun run check:push`.
 - Never commit `test.fixme`, `test.skip`, `it.skip`, or `describe.skip`. `bun run check:no-disabled-tests` enforces this; if coverage cannot be made reliable, fix the harness or remove the test instead of disabling it.
 

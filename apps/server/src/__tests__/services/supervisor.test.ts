@@ -1067,17 +1067,36 @@ describe("service supervisor", () => {
     expect(service?.pid).toBe(pid);
   });
 
-  it("kills a surviving process group after the PTY leader exits", async () => {
+  it.each([
+    {
+      cleanupDelayMs: null,
+      expectedSignals: ["SIGTERM", "SIGKILL"],
+      label: "kills a surviving process group",
+      stopTimeoutMs: 5,
+    },
+    {
+      cleanupDelayMs: 10,
+      expectedSignals: ["SIGTERM"],
+      label: "lets descendants finish cleanup",
+      stopTimeoutMs: 100,
+    },
+  ])("$label after the PTY leader exits", async (scenario) => {
     let groupAlive = true;
     const signals: Array<number | string | undefined> = [];
     const { cell, harness } = await createScenario({
-      templateId: "template-active-group",
+      templateId: `template-process-group-${scenario.stopTimeoutMs}`,
       start: true,
       harnessOptions: {
+        stopTimeoutMs: scenario.stopTimeoutMs,
         processKill: (signal, exit) => {
           signals.push(signal);
           if (signal === "SIGTERM") {
             exit(0);
+            if (scenario.cleanupDelayMs !== null) {
+              setTimeout(() => {
+                groupAlive = false;
+              }, scenario.cleanupDelayMs);
+            }
           } else if (signal === "SIGKILL") {
             groupAlive = false;
           }
@@ -1101,7 +1120,7 @@ describe("service supervisor", () => {
       () => harness.supervisor.stopCellService(service.id)
     );
 
-    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(signals).toEqual(scenario.expectedSignals);
     expect(groupAlive).toBe(false);
   });
 

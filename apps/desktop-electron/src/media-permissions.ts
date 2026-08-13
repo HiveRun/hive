@@ -87,7 +87,7 @@ export const isWithinTrustedRendererScope = (
 export const installMediaPermissionHandlers = (
   session: Session,
   options: {
-    requestViewerMicrophoneAccess?: (origin: string) => Promise<boolean>;
+    requestMicrophoneAccess?: (origin: string) => Promise<boolean>;
   } = {}
 ) => {
   const trustedRenderers = new WeakMap<
@@ -96,7 +96,7 @@ export const installMediaPermissionHandlers = (
   >();
   const viewerOrigins = new WeakMap<WebContents, string>();
   const viewerRegistrations = new WeakMap<WebContents, object>();
-  const approvedMicrophoneViewers = new WeakSet<WebContents>();
+  const approvedMicrophoneContents = new WeakSet<WebContents>();
   const pendingMicrophoneRequests = new WeakMap<
     WebContents,
     Promise<boolean>
@@ -125,6 +125,20 @@ export const installMediaPermissionHandlers = (
   const isTrustedRenderer = (contents: WebContents | null) =>
     Boolean(contents && trustedRenderers.get(contents)?.active);
 
+  const isAllowedTrustedMediaRequest = (
+    contents: WebContents | null,
+    isMainFrame: boolean,
+    mediaTypes: readonly string[]
+  ) => {
+    const registration = contents ? trustedRenderers.get(contents) : undefined;
+    return Boolean(
+      isMainFrame &&
+        registration?.active &&
+        mediaTypes.length > 0 &&
+        mediaTypes.every((mediaType) => mediaType === "audio")
+    );
+  };
+
   const isAllowedTrustedPermission = (
     contents: WebContents | null,
     permission: string,
@@ -139,10 +153,20 @@ export const installMediaPermissionHandlers = (
   session.setPermissionCheckHandler(
     (contents, permission, requestingOrigin, details) => {
       if (permission === "media") {
+        if (
+          Boolean(contents && approvedMicrophoneContents.has(contents)) &&
+          isAllowedTrustedMediaRequest(
+            contents,
+            details.isMainFrame,
+            details.mediaType ? [details.mediaType] : []
+          )
+        ) {
+          return true;
+        }
         return (
           Boolean(requestingOrigin) &&
           details.mediaType === "audio" &&
-          Boolean(contents && approvedMicrophoneViewers.has(contents)) &&
+          Boolean(contents && approvedMicrophoneContents.has(contents)) &&
           isAllowedViewerRequest(
             contents,
             requestingOrigin,
@@ -160,6 +184,108 @@ export const installMediaPermissionHandlers = (
     }
   );
 
+  const requestMicrophoneApproval = (
+    contents: WebContents,
+    origin: string | undefined,
+    isStillAllowed: () => boolean,
+    callback: (permissionGranted: boolean) => void
+  ) => {
+    if (!origin) {
+      callback(false);
+      return;
+    }
+    if (approvedMicrophoneContents.has(contents)) {
+      callback(isStillAllowed());
+      return;
+    }
+
+    let request = pendingMicrophoneRequests.get(contents);
+    if (!request) {
+      request = Promise.resolve(
+        options.requestMicrophoneAccess?.(origin) ?? false
+      ).catch(() => false);
+      pendingMicrophoneRequests.set(contents, request);
+    }
+
+    request.then((approved) => {
+      if (pendingMicrophoneRequests.get(contents) === request) {
+        pendingMicrophoneRequests.delete(contents);
+      }
+      const stillAllowed = isStillAllowed();
+      if (approved && stillAllowed) {
+        approvedMicrophoneContents.add(contents);
+      }
+      callback(approved && stillAllowed);
+    });
+  };
+
+  const handleMediaPermissionRequest = (
+    contents: WebContents,
+    callback: (permissionGranted: boolean) => void,
+    mediaDetails: MediaAccessPermissionRequest
+  ) => {
+    const mediaTypes = mediaDetails.mediaTypes ?? [];
+    const securityOrigin =
+      mediaDetails.securityOrigin ?? mediaDetails.requestingUrl;
+    if (
+      isAllowedTrustedMediaRequest(
+        contents,
+        mediaDetails.isMainFrame,
+        mediaTypes
+      )
+    ) {
+      const registration = trustedRenderers.get(contents);
+      if (!registration) {
+        callback(false);
+        return;
+      }
+      requestMicrophoneApproval(
+        contents,
+        securityOrigin,
+        () =>
+          trustedRenderers.get(contents) === registration &&
+          isAllowedTrustedMediaRequest(
+            contents,
+            mediaDetails.isMainFrame,
+            mediaTypes
+          ),
+        callback
+      );
+      return;
+    }
+    const isAllowedAudioRequest =
+      Boolean(securityOrigin) &&
+      mediaTypes.length > 0 &&
+      mediaTypes.every((mediaType) => mediaType === "audio") &&
+      isAllowedViewerRequest(
+        contents,
+        mediaDetails.requestingUrl,
+        securityOrigin
+      );
+    if (!(isAllowedAudioRequest && securityOrigin)) {
+      callback(false);
+      return;
+    }
+
+    const registration = viewerRegistrations.get(contents);
+    if (!registration) {
+      callback(false);
+      return;
+    }
+    requestMicrophoneApproval(
+      contents,
+      securityOrigin,
+      () =>
+        viewerRegistrations.get(contents) === registration &&
+        isAllowedViewerRequest(
+          contents,
+          mediaDetails.requestingUrl,
+          securityOrigin
+        ),
+      callback
+    );
+  };
+
   session.setPermissionRequestHandler(
     (contents, permission, callback, details) => {
       if (permission !== "media") {
@@ -174,58 +300,11 @@ export const installMediaPermissionHandlers = (
         return;
       }
 
-      const mediaDetails = details as MediaAccessPermissionRequest;
-      const mediaTypes = mediaDetails.mediaTypes ?? [];
-      const securityOrigin =
-        mediaDetails.securityOrigin ?? mediaDetails.requestingUrl;
-      const isAllowedAudioRequest =
-        Boolean(securityOrigin) &&
-        mediaTypes.length > 0 &&
-        mediaTypes.every((mediaType) => mediaType === "audio") &&
-        isAllowedViewerRequest(
-          contents,
-          mediaDetails.requestingUrl,
-          securityOrigin
-        );
-      if (!(isAllowedAudioRequest && securityOrigin)) {
-        callback(false);
-        return;
-      }
-
-      if (approvedMicrophoneViewers.has(contents)) {
-        callback(true);
-        return;
-      }
-
-      const registration = viewerRegistrations.get(contents);
-      if (!registration) {
-        callback(false);
-        return;
-      }
-      let request = pendingMicrophoneRequests.get(contents);
-      if (!request) {
-        request = Promise.resolve(
-          options.requestViewerMicrophoneAccess?.(securityOrigin) ?? false
-        ).catch(() => false);
-        pendingMicrophoneRequests.set(contents, request);
-      }
-
-      request.then((approved) => {
-        if (pendingMicrophoneRequests.get(contents) === request) {
-          pendingMicrophoneRequests.delete(contents);
-        }
-        const stillAllowed =
-          viewerRegistrations.get(contents) === registration &&
-          isAllowedViewerRequest(
-            contents,
-            mediaDetails.requestingUrl,
-            securityOrigin
-          );
-        if (approved && stillAllowed) {
-          approvedMicrophoneViewers.add(contents);
-        }
-        callback(approved && stillAllowed);
-      });
+      handleMediaPermissionRequest(
+        contents,
+        callback,
+        details as MediaAccessPermissionRequest
+      );
     }
   );
 
@@ -238,6 +317,8 @@ export const installMediaPermissionHandlers = (
         !(registration && isWithinTrustedRendererScope(registration.scope, url))
       ) {
         trustedRenderers.delete(contents);
+        approvedMicrophoneContents.delete(contents);
+        pendingMicrophoneRequests.delete(contents);
         return false;
       }
       registration.active = true;
@@ -255,13 +336,19 @@ export const installMediaPermissionHandlers = (
       if (!scope) {
         throw new Error("Trusted renderer URL must be file, HTTP, or HTTPS");
       }
+      approvedMicrophoneContents.delete(contents);
+      pendingMicrophoneRequests.delete(contents);
       trustedRenderers.set(contents, { active: false, scope });
-      contents.once("destroyed", () => trustedRenderers.delete(contents));
+      contents.once("destroyed", () => {
+        trustedRenderers.delete(contents);
+        approvedMicrophoneContents.delete(contents);
+        pendingMicrophoneRequests.delete(contents);
+      });
     },
     registerViewer: (contents: WebContents, rootUrl: string) => {
       viewerOrigins.delete(contents);
       viewerRegistrations.delete(contents);
-      approvedMicrophoneViewers.delete(contents);
+      approvedMicrophoneContents.delete(contents);
       pendingMicrophoneRequests.delete(contents);
       const origin = resolveOrigin(rootUrl);
       if (!(origin && isAllowedLoopbackUrl(rootUrl))) {
@@ -272,14 +359,14 @@ export const installMediaPermissionHandlers = (
       contents.once("destroyed", () => {
         viewerOrigins.delete(contents);
         viewerRegistrations.delete(contents);
-        approvedMicrophoneViewers.delete(contents);
+        approvedMicrophoneContents.delete(contents);
         pendingMicrophoneRequests.delete(contents);
       });
     },
     unregisterViewer: (contents: WebContents) => {
       viewerOrigins.delete(contents);
       viewerRegistrations.delete(contents);
-      approvedMicrophoneViewers.delete(contents);
+      approvedMicrophoneContents.delete(contents);
       pendingMicrophoneRequests.delete(contents);
     },
   };

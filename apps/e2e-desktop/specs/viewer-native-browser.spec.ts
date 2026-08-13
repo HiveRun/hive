@@ -80,7 +80,7 @@ const activateSyncedBrowserView = async (
   return nextId as number;
 };
 
-test("loopback Hive renderer retains trusted UI permissions without microphone access", async () => {
+test("loopback Hive renderer retains trusted UI and microphone permissions", async () => {
   const rendererServer = createServer((_request, response) => {
     response.setHeader("content-type", "text/html");
     response.end(
@@ -99,14 +99,19 @@ test("loopback Hive renderer retains trusted UI permissions without microphone a
       fakeMediaDevices: true,
     });
     try {
-      await expectPermissionDenied(
+      await approveDesktopMicrophonePrompts(app);
+      await expect(
         requestMainRendererMedia(page, { audio: true })
-      );
+      ).resolves.toEqual({
+        errorName: null,
+        granted: true,
+      });
       await expect(
         writeMainRendererClipboard(page, "hive-loopback-clipboard")
       ).resolves.toBeUndefined();
       await page.locator("#fullscreen").click();
       await expectFullscreen(page);
+      await expect.poll(() => readDesktopMicrophonePromptCount(app)).toBe(1);
     } finally {
       await app.close();
     }
@@ -151,9 +156,13 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
         { timeout: VIEWER_STATE_TIMEOUT_MS }
       )
       .toBe(true);
-    await expectPermissionDenied(
+    await approveDesktopMicrophonePrompts(app);
+    await expect(
       requestMainRendererMedia(page, { audio: true })
-    );
+    ).resolves.toEqual({
+      errorName: null,
+      granted: true,
+    });
     await expect(
       writeMainRendererClipboard(page, "hive-desktop-clipboard")
     ).resolves.toBeUndefined();
