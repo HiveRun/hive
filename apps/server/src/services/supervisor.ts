@@ -463,6 +463,7 @@ type ServiceProcessOptions = {
   cwd: string;
   command: string;
   allocation: ServicePortAllocation;
+  onStarted?: () => void;
   portMap: CellPortMap;
   signal?: AbortSignal;
 };
@@ -1181,13 +1182,14 @@ export function createServiceSupervisor(
             const { row, definition } = entry;
             return {
               serviceId: row.service.id,
-              run: (signal) =>
+              run: (signal, onStarted) =>
                 startOrFail({
                   row,
                   definition,
                   templateEnv,
                   portMap,
                   onTimingEvent,
+                  onStarted,
                   signal,
                 }),
             };
@@ -1367,47 +1369,147 @@ export function createServiceSupervisor(
     return prepared;
   }
 
+  type ServiceWaveStart = {
+    serviceId: string;
+    run: (signal: AbortSignal, onStarted: () => void) => Promise<boolean>;
+  };
+
+  type ServiceWaveFailure = {
+    cancellation?: Promise<void>;
+    cancellationError?: unknown;
+    firstFailure?: unknown;
+  };
+
+  async function runServiceWaveMember(args: {
+    completedWaveStarts: Set<string>;
+    controller: AbortController;
+    failure: ServiceWaveFailure;
+    serviceIds: string[];
+    start: ServiceWaveStart;
+  }): Promise<void> {
+    const { completedWaveStarts, controller, failure, serviceIds, start } =
+      args;
+    try {
+      await start.run(controller.signal, () =>
+        completedWaveStarts.add(start.serviceId)
+      );
+    } catch (error) {
+      if (!failure.cancellation) {
+        completedWaveStarts.delete(start.serviceId);
+        failure.firstFailure = error;
+        controller.abort();
+        failure.cancellation = cancelPreLockProcesses(serviceIds).catch(
+          (siblingCancellationError) => {
+            failure.cancellationError = siblingCancellationError;
+            logger.error("Failed to cancel sibling service starts", {
+              error: formatError(siblingCancellationError),
+              serviceIds,
+            });
+          }
+        );
+      }
+      await failure.cancellation;
+      throw error;
+    }
+  }
+
+  async function throwServiceWaveFailure(args: {
+    completedWaveStarts: Set<string>;
+    failure: ServiceWaveFailure;
+  }): Promise<never> {
+    const { completedWaveStarts, failure } = args;
+    let rollbackError: unknown;
+    try {
+      await rollbackCompletedWaveStarts(completedWaveStarts);
+    } catch (error) {
+      rollbackError = error;
+    }
+    if (
+      failure.cancellationError !== undefined ||
+      rollbackError !== undefined
+    ) {
+      throw new Error(
+        [
+          `Service start wave failed: ${formatError(failure.firstFailure)}`,
+          failure.cancellationError === undefined
+            ? null
+            : `sibling cancellation failed: ${formatError(failure.cancellationError)}`,
+          rollbackError === undefined
+            ? null
+            : `sibling rollback failed: ${formatError(rollbackError)}`,
+        ]
+          .filter(Boolean)
+          .join("; ")
+      );
+    }
+    throw failure.firstFailure;
+  }
+
   async function runServiceStartWave(
-    starts: Array<{
-      serviceId: string;
-      run: (signal: AbortSignal) => Promise<void>;
-    }>
+    starts: ServiceWaveStart[]
   ): Promise<void> {
-    let firstFailure: unknown;
-    let cancellation: Promise<void> | undefined;
     const controller = new AbortController();
+    const completedWaveStarts = new Set<string>();
+    const failure: ServiceWaveFailure = {};
     const serviceIds = starts.map((start) => start.serviceId);
     const results = await Promise.allSettled(
-      starts.map(async (start) => {
-        try {
-          await start.run(controller.signal);
-        } catch (error) {
-          if (!cancellation) {
-            firstFailure = error;
-            controller.abort();
-            cancellation = cancelPreLockProcesses(serviceIds).catch(
-              (cancellationError) => {
-                logger.error("Failed to cancel sibling service starts", {
-                  error: formatError(cancellationError),
-                  serviceIds,
-                });
-              }
-            );
-          }
-          await cancellation;
-          throw error;
-        }
-      })
+      starts.map((start) =>
+        runServiceWaveMember({
+          completedWaveStarts,
+          controller,
+          failure,
+          serviceIds,
+          start,
+        })
+      )
     );
-    if (firstFailure !== undefined) {
-      throw firstFailure;
+    if (failure.firstFailure !== undefined) {
+      await throwServiceWaveFailure({ completedWaveStarts, failure });
     }
-    const failure = results.find(
+    const rejectedResult = results.find(
       (result): result is PromiseRejectedResult => result.status === "rejected"
     );
-    if (failure) {
-      throw failure.reason;
+    if (rejectedResult) {
+      throw rejectedResult.reason;
     }
+  }
+
+  async function rollbackCompletedWaveStarts(
+    serviceIds: Set<string>
+  ): Promise<void> {
+    if (serviceIds.size === 0) {
+      return;
+    }
+    const firstServiceId = serviceIds.values().next().value;
+    if (!firstServiceId) {
+      return;
+    }
+    const firstRow = await repository.fetchServiceRowById(firstServiceId);
+    if (!firstRow) {
+      return;
+    }
+    if (shuttingDown || cellsStopping.has(firstRow.cell.id)) {
+      return;
+    }
+    const rows = await repository.fetchServicesForCell(firstRow.cell.id);
+    const portMap = await buildPersistedPortMap(rows);
+    await runAllCollectingFirstError(
+      sortServiceRows(
+        rows.filter(
+          (row) =>
+            serviceIds.has(row.service.id) &&
+            !servicesStopping.has(row.service.id)
+        ),
+        true
+      ),
+      (row) =>
+        stopService(row, {
+          forceStopCommand: true,
+          portMap,
+          releasePort: false,
+          statusAfterStop: "stopped",
+        })
+    );
   }
 
   async function startOrFail(args: {
@@ -1416,13 +1518,22 @@ export function createServiceSupervisor(
     templateEnv: Record<string, string>;
     portMap: CellPortMap;
     onTimingEvent?: (event: EnsureCellServicesTimingEvent) => void;
+    onStarted?: () => void;
     signal?: AbortSignal;
   }) {
-    const { row, definition, templateEnv, portMap, onTimingEvent, signal } =
-      args;
+    const {
+      row,
+      definition,
+      templateEnv,
+      portMap,
+      onTimingEvent,
+      onStarted,
+      signal,
+    } = args;
     const startedAt = Date.now();
     try {
-      await startService(row, definition, templateEnv, {
+      const started = await startService(row, definition, templateEnv, {
+        onStarted,
         portLookup: portMap,
         signal,
       });
@@ -1442,6 +1553,7 @@ export function createServiceSupervisor(
           serviceName: row.service.name,
         },
       });
+      return started;
     } catch (error) {
       const durationMs = Date.now() - startedAt;
       logger.error("Failed to start service", {
@@ -1837,8 +1949,9 @@ export function createServiceSupervisor(
           }
           return {
             serviceId: row.service.id,
-            run: (signal) =>
+            run: (signal, onStarted) =>
               startService(row, undefined, templateEnv, {
+                onStarted,
                 portLookup: portMap,
                 signal,
               }),
@@ -1866,12 +1979,10 @@ export function createServiceSupervisor(
 
         for (const row of sortServiceRows(rows, true)) {
           try {
-            await stopService(
-              row,
-              options?.releasePorts ?? false,
-              "stopped",
-              portMap
-            );
+            await stopService(row, {
+              portMap,
+              releasePort: options?.releasePorts ?? false,
+            });
           } catch (error) {
             firstError ??= error;
           }
@@ -1983,7 +2094,7 @@ export function createServiceSupervisor(
     row: ServiceRow,
     signal?: AbortSignal
   ): void {
-    if (signal?.aborted) {
+    if (signal?.aborted || servicesStopping.has(row.service.id)) {
       throw new Error(`Service "${row.service.name}" startup cancelled`);
     }
   }
@@ -1992,10 +2103,15 @@ export function createServiceSupervisor(
     row: ServiceRow,
     definitionOverride?: ProcessService,
     templateEnv: Record<string, string> = {},
-    options?: { portLookup?: CellPortMap; signal?: AbortSignal }
-  ): Promise<void> {
+    options?: {
+      onStarted?: () => void;
+      portLookup?: CellPortMap;
+      signal?: AbortSignal;
+    }
+  ): Promise<boolean> {
     const portLookup = options?.portLookup;
     const signal = options?.signal;
+    let started = false;
     await runWithServiceLock(row.service.id, async () => {
       requireStartableSupervisor();
       requireServiceStartNotCancelled(row, signal);
@@ -2064,10 +2180,13 @@ export function createServiceSupervisor(
           serviceRow.service.name
         ),
         allocation,
+        onStarted: options?.onStarted,
         portMap: resolvedPortMap,
         signal,
       });
+      started = true;
     });
+    return started;
   }
 
   async function prepareServicePorts(
@@ -2108,6 +2227,7 @@ export function createServiceSupervisor(
     cwd,
     command,
     allocation,
+    onStarted,
     portMap,
     signal: startSignal,
   }: ServiceProcessOptions) {
@@ -2173,6 +2293,7 @@ export function createServiceSupervisor(
 
       activeServices.set(row.service.id, { handle });
       activeServiceStarts.set(row.service.id, handle);
+      onStarted?.();
       row.service.env = processEnvironment;
 
       await repository.updateService(row.service.id, {
@@ -2234,9 +2355,26 @@ export function createServiceSupervisor(
     } catch (error) {
       const active = activeServices.get(row.service.id);
       if (active) {
-        await terminateHandle(active.handle);
-        activeServices.delete(row.service.id);
-        deleteTrackedHandle(activeServiceStarts, row.service.id, active.handle);
+        try {
+          await terminateHandle(active.handle);
+          activeServices.delete(row.service.id);
+          deleteTrackedHandle(
+            activeServiceStarts,
+            row.service.id,
+            active.handle
+          );
+        } catch (terminationError) {
+          const combinedError = new Error(
+            `${formatError(error)}; failed to terminate service process: ${formatError(terminationError)}`
+          );
+          await repository.updateService(row.service.id, {
+            status: "error",
+            pid: active.handle.pid,
+            lastKnownError: combinedError.message,
+          });
+          notifyServiceUpdate(row);
+          throw combinedError;
+        }
       }
       terminalRuntime.markServiceExit({
         serviceId: row.service.id,
@@ -2664,7 +2802,11 @@ export function createServiceSupervisor(
       const statusAfterStop =
         row.service.status === "stopped" ? "stopped" : "needs_resume";
       try {
-        await stopService(row, true, statusAfterStop, portMap);
+        await stopService(row, {
+          portMap,
+          releasePort: true,
+          statusAfterStop,
+        });
       } catch (error) {
         firstError ??= error;
       }
@@ -2702,10 +2844,11 @@ export function createServiceSupervisor(
     cwd: string;
     env: Record<string, string>;
     portMap: CellPortMap;
+    force?: boolean;
   }): Promise<unknown> {
     if (
       !(
-        shouldRunStopCommand(args.row, args.active) &&
+        (args.force || shouldRunStopCommand(args.row, args.active)) &&
         args.definition?.type === "process" &&
         args.definition.stop
       )
@@ -2735,10 +2878,19 @@ export function createServiceSupervisor(
 
   async function stopService(
     row: ServiceRow,
-    releasePort: boolean,
-    statusAfterStop: ServiceStatus = "stopped",
-    portMap: CellPortMap = new Map()
+    options: {
+      forceStopCommand?: boolean;
+      portMap?: CellPortMap;
+      releasePort: boolean;
+      statusAfterStop?: ServiceStatus;
+    }
   ): Promise<void> {
+    const {
+      forceStopCommand = false,
+      portMap = new Map(),
+      releasePort,
+      statusAfterStop = "stopped",
+    } = options;
     const definition = row.service.definition as ProcessService | null;
     const env = row.service.env;
     const cwd = resolveServiceCwd(row.cell.workspacePath, definition?.cwd);
@@ -2751,6 +2903,7 @@ export function createServiceSupervisor(
       cwd,
       env,
       portMap,
+      force: forceStopCommand,
     });
 
     await terminateServiceProcess(row, active);
@@ -2980,6 +3133,9 @@ export function createServiceSupervisor(
     }
 
     servicesStopping.add(serviceId);
+    const forceStopCommand =
+      row.service.status === "starting" ||
+      hasUnterminatedPreLockProcess(serviceId);
     try {
       await cancelPreLockProcesses([serviceId]);
       await runWithCellLock(row.cell.id, async () => {
@@ -2988,12 +3144,11 @@ export function createServiceSupervisor(
           return;
         }
         const siblings = await repository.fetchServicesForCell(row.cell.id);
-        await stopService(
-          currentRow,
-          options?.releasePorts ?? false,
-          "stopped",
-          await buildPersistedPortMap(siblings)
-        );
+        await stopService(currentRow, {
+          forceStopCommand,
+          portMap: await buildPersistedPortMap(siblings),
+          releasePort: options?.releasePorts ?? false,
+        });
       });
     } finally {
       servicesStopping.delete(serviceId);

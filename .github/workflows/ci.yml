@@ -364,7 +364,9 @@ jobs:
       - name: Install Android and media dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg zip
+          sudo apt-get install -y ffmpeg pipewire-bin zip
+          command -v pw-cat
+          pw-cat --version
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager \
             "platform-tools" \

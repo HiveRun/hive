@@ -25,6 +25,7 @@ const requireInstalledHandler = <Handler>(
 };
 
 const createPermissionHarness = (options: {
+  audioInputEnabled?: boolean;
   rendererUrl: string;
   rendererType: "trusted" | "viewer";
   requestMicrophoneAccess?: (origin: string) => Promise<boolean>;
@@ -44,7 +45,11 @@ const createPermissionHarness = (options: {
     requestMicrophoneAccess: options.requestMicrophoneAccess,
   });
   if (options.rendererType === "viewer") {
-    controller.registerViewer(contents, options.rendererUrl);
+    controller.registerViewer(
+      contents,
+      options.rendererUrl,
+      options.audioInputEnabled ?? true
+    );
   } else {
     controller.registerTrustedRenderer(contents, options.rendererUrl);
     controller.activateTrustedRenderer(contents, options.rendererUrl);
@@ -68,10 +73,12 @@ const createPermissionHarness = (options: {
 };
 
 const createViewerPermissionHarness = (options: {
+  audioInputEnabled?: boolean;
   viewerUrl: string;
   requestViewerMicrophoneAccess?: (origin: string) => Promise<boolean>;
 }) =>
   createPermissionHarness({
+    audioInputEnabled: options.audioInputEnabled,
     rendererType: "viewer",
     rendererUrl: options.viewerUrl,
     requestMicrophoneAccess: options.requestViewerMicrophoneAccess,
@@ -107,6 +114,27 @@ const requestAudioPermissionAndFlush = async (
   requestAudioPermission(options);
   await Promise.resolve();
   await Promise.resolve();
+};
+
+const viewerAudioCheckDetails = (viewerUrl: string) => ({
+  isMainFrame: true,
+  mediaType: "audio" as const,
+  requestingUrl: viewerUrl,
+  securityOrigin: new URL(viewerUrl).origin,
+});
+
+const createViewerAudioHarness = (audioInputEnabled = true) => {
+  const requestViewerMicrophoneAccess = vi.fn().mockResolvedValue(true);
+  const viewerUrl = "http://127.0.0.1:4173/";
+  return {
+    ...createViewerPermissionHarness({
+      audioInputEnabled,
+      viewerUrl,
+      requestViewerMicrophoneAccess,
+    }),
+    requestViewerMicrophoneAccess,
+    viewerUrl,
+  };
 };
 
 const checkAudioPermission = (
@@ -320,6 +348,36 @@ describe("trusted renderer media permissions", () => {
 });
 
 describe("viewer media permissions", () => {
+  it("denies audio-input-disabled viewers without requesting approval", async () => {
+    const {
+      checkHandler,
+      contents,
+      requestHandler,
+      requestViewerMicrophoneAccess,
+      viewerUrl,
+    } = createViewerAudioHarness(false);
+    const callback = vi.fn();
+
+    await requestAudioPermissionAndFlush({
+      callback,
+      contents,
+      handler: requestHandler,
+      requestingUrl: viewerUrl,
+      securityOrigin: new URL(viewerUrl).origin,
+    });
+
+    expect(callback).toHaveBeenCalledWith(false);
+    expect(requestViewerMicrophoneAccess).not.toHaveBeenCalled();
+    expect(
+      checkHandler(
+        contents,
+        "media",
+        new URL(viewerUrl).origin,
+        viewerAudioCheckDetails(viewerUrl)
+      )
+    ).toBe(false);
+  });
+
   it("rejects an empty media security origin", () => {
     const viewerUrl = "http://127.0.0.1:4173/";
     const { checkHandler, contents } = createViewerPermissionHarness({
@@ -337,19 +395,14 @@ describe("viewer media permissions", () => {
   });
 
   it("requires approval before granting viewer microphone access", async () => {
-    const requestViewerMicrophoneAccess = vi.fn().mockResolvedValue(true);
-    const viewerUrl = "http://127.0.0.1:4173/";
-    const { checkHandler, contents, requestHandler } =
-      createViewerPermissionHarness({
-        viewerUrl,
-        requestViewerMicrophoneAccess,
-      });
-    const checkDetails = {
-      isMainFrame: true,
-      mediaType: "audio" as const,
-      requestingUrl: viewerUrl,
-      securityOrigin: new URL(viewerUrl).origin,
-    };
+    const {
+      checkHandler,
+      contents,
+      requestHandler,
+      requestViewerMicrophoneAccess,
+      viewerUrl,
+    } = createViewerAudioHarness();
+    const checkDetails = viewerAudioCheckDetails(viewerUrl);
     expect(
       checkHandler(contents, "media", new URL(viewerUrl).origin, checkDetails)
     ).toBe(false);
@@ -407,7 +460,7 @@ describe("viewer media permissions", () => {
     });
 
     controller.unregisterViewer(contents);
-    controller.registerViewer(contents, viewerUrl);
+    controller.registerViewer(contents, viewerUrl, true);
     resolveAccess?.(true);
     await Promise.resolve();
     await Promise.resolve();

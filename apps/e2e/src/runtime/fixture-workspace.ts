@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runCommand } from "./process";
 
@@ -11,12 +11,15 @@ type FixtureWorkspaceOptions = {
   includeSetupRetryTemplate?: boolean;
 };
 
+const EXECUTABLE_MODE = 0o755;
+
 const createViewerService = (title: string) => ({
   type: "process",
   run: `bun -e "Bun.serve({ port: Number(process.env.PORT), fetch() { return new Response('<title>${title}</title><h1>${title}</h1>', { headers: { 'content-type': 'text/html' } }); } });"`,
 });
 
 const createNamedViewerService = (title: string) => ({
+  audio: { input: true },
   type: "process",
   run: `bun -e "Bun.serve({ port: Number(process.env.PORT), fetch() { return new Response('control'); } }); Bun.serve({ port: Number(process.env.WEB_BROWSER_PORT), fetch() { return new Response('<title>${title}</title><h1>${title}</h1>', { headers: { 'content-type': 'text/html' } }); } });"`,
   ports: {
@@ -96,7 +99,7 @@ const createServicesTemplate = () => ({
   },
 });
 
-const createAndroidTemplate = () => ({
+const createAndroidTemplate = (pwCatPath: string) => ({
   id: "android-audio-e2e-template",
   label: "Android Audio E2E Template",
   type: "manual",
@@ -122,6 +125,7 @@ const createAndroidTemplate = () => ({
       )}"`,
       audio: { input: true, output: true },
       dependsOn: ["android-app"],
+      env: { HIVE_ANDROID_PW_CAT_BIN: pwCatPath },
       ports: {
         viewer: { primary: true, protocol: "http", viewer: true },
       },
@@ -137,6 +141,8 @@ export async function createFixtureWorkspace(
   options: FixtureWorkspaceOptions
 ): Promise<void> {
   await mkdir(options.workspaceRoot, { recursive: true });
+  const e2eBinDir = join(options.workspaceRoot, ".hive-e2e", "bin");
+  const pwCatPath = join(e2eBinDir, "pw-cat");
 
   const hiveConfig = {
     opencode: {
@@ -163,7 +169,7 @@ export async function createFixtureWorkspace(
         : {}),
       ...(options.includeAndroidTemplate
         ? {
-            "android-audio-e2e-template": createAndroidTemplate(),
+            "android-audio-e2e-template": createAndroidTemplate(pwCatPath),
           }
         : {}),
       "viewer-template": {
@@ -214,6 +220,43 @@ export async function createFixtureWorkspace(
       "ok\n",
       "utf8"
     );
+  }
+
+  if (options.includeAndroidTemplate) {
+    await mkdir(e2eBinDir, { recursive: true });
+    await writeFile(
+      pwCatPath,
+      `#!/bin/sh
+if [ "$#" -eq 1 ] && [ "$1" = "--version" ]; then
+  printf '%s\\n' 'pw-cat hive-e2e-shim'
+  exit 0
+fi
+expected='--playback --raw --format s16 --rate 48000 --channels 2 --latency 40ms -'
+if [ "$*" != "$expected" ]; then
+  printf 'Unexpected pw-cat arguments: %s\\n' "$*" >&2
+  exit 64
+fi
+if [ -z "$HIVE_CELL_ARTIFACTS_DIR" ]; then
+  printf '%s\\n' 'HIVE_CELL_ARTIFACTS_DIR is required' >&2
+  exit 64
+fi
+journal="$HIVE_CELL_ARTIFACTS_DIR/pw-cat-events.jsonl"
+pcm="$HIVE_CELL_ARTIFACTS_DIR/pw-cat-$$.pcm"
+record() {
+  bytes=$(wc -c < "$pcm" 2>/dev/null || printf '0')
+  printf '{"event":"%s","pid":%s,"pcmPath":"%s","bytes":%s}\\n' "$1" "$$" "$pcm" "$bytes" >> "$journal"
+}
+cleanup() {
+  record exit
+}
+trap cleanup EXIT
+trap 'exit 0' TERM INT
+record start
+tee "$pcm" >/dev/null
+`,
+      "utf8"
+    );
+    await chmod(pwCatPath, EXECUTABLE_MODE);
   }
 
   await runCommand("git", ["init"], {

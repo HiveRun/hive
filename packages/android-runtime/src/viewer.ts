@@ -180,7 +180,8 @@ const startPwCatPlayback = (
     ...env,
     XDG_RUNTIME_DIR: runtimeDirectory,
   };
-  const pwCatCheck = spawnSync("pw-cat", ["--version"], {
+  const pwCatBinary = env.HIVE_ANDROID_PW_CAT_BIN?.trim() || "pw-cat";
+  const pwCatCheck = spawnSync(pwCatBinary, ["--version"], {
     encoding: "utf8",
     env: audioEnvironment,
   });
@@ -191,7 +192,7 @@ const startPwCatPlayback = (
     return;
   }
   return spawn(
-    "pw-cat",
+    pwCatBinary,
     [
       "--playback",
       "--raw",

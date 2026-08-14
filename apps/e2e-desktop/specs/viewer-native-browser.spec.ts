@@ -59,10 +59,14 @@ const activateSyncedBrowserView = async (
   app: ElectronApplication,
   page: Page,
   rootUrl: string,
-  options: { previousId?: number; serviceId?: string } = {}
+  options: {
+    audioInput?: boolean;
+    previousId?: number;
+    serviceId?: string;
+  } = {}
 ) => {
-  const { previousId, serviceId = "web" } = options;
-  await syncDesktopViewerServiceTab(page, rootUrl, serviceId);
+  const { audioInput = true, previousId, serviceId = "web" } = options;
+  await syncDesktopViewerServiceTab(page, rootUrl, serviceId, audioInput);
   await expectBrowserViewCount(app, 0);
   if (previousId !== undefined) {
     await expectWebContentsDestroyed(app, previousId);
@@ -231,11 +235,22 @@ test("desktop viewer route mounts and unmounts a native browser view", async () 
     await page.evaluate(async () => await document.exitFullscreen());
 
     await expectDesktopAudioCaptureGranted(app, 2);
+    const disabledAudioWebContentsId = await activateSyncedBrowserView(
+      app,
+      page,
+      webRootUrl as string,
+      { audioInput: false, previousId: recreatedWebContentsId }
+    );
+    await expect(startDesktopBrowserViewAudioCapture(app)).resolves.toEqual({
+      granted: false,
+      trackState: "NotAllowedError",
+    });
+    await expect.poll(() => readDesktopMicrophonePromptCount(app)).toBe(2);
     const changedRootWebContentsId = await activateSyncedBrowserView(
       app,
       page,
       docsRootUrl as string,
-      { previousId: recreatedWebContentsId }
+      { previousId: disabledAudioWebContentsId }
     );
 
     await syncDesktopViewerServiceTab(page, "data:text/html,invalid", "web");

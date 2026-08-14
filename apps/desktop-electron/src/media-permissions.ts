@@ -345,11 +345,18 @@ export const installMediaPermissionHandlers = (
         pendingMicrophoneRequests.delete(contents);
       });
     },
-    registerViewer: (contents: WebContents, rootUrl: string) => {
+    registerViewer: (
+      contents: WebContents,
+      rootUrl: string,
+      audioInputEnabled: boolean
+    ) => {
       viewerOrigins.delete(contents);
       viewerRegistrations.delete(contents);
       approvedMicrophoneContents.delete(contents);
       pendingMicrophoneRequests.delete(contents);
+      if (!audioInputEnabled) {
+        return;
+      }
       const origin = resolveOrigin(rootUrl);
       if (!(origin && isAllowedLoopbackUrl(rootUrl))) {
         return;

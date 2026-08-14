@@ -245,13 +245,14 @@ export async function requestDesktopBrowserViewClipboard(
 export async function syncDesktopViewerServiceTab(
   page: Page,
   rootUrl: string,
-  serviceId: string
+  serviceId: string,
+  audioInput = true
 ) {
   await page.evaluate(
     async (target) => {
       await window.hiveDesktop?.viewer.syncServiceTabs([target]);
     },
-    { rootUrl, serviceId }
+    { audioInput, rootUrl, serviceId }
   );
 }
 

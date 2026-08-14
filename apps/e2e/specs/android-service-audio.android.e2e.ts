@@ -57,7 +57,15 @@ const EVIDENCE_LEAD_IN_MS = 1000;
 const PCM_BYTES_PER_SAMPLE = 2;
 const MILLISECONDS_PER_SECOND = 1000;
 const EMULATOR_OUTPUT_CAPTURE_FILENAME = "emulator-output-stereo.pcm";
+const PW_CAT_EVENTS_FILENAME = "pw-cat-events.jsonl";
 const STEREO_FRAME_BYTES = 4;
+
+type PwCatEvent = {
+  bytes: number;
+  event: "start" | "exit";
+  pcmPath: string;
+  pid: number;
+};
 
 test.describe("production Android service audio", () => {
   test("forwards browser microphone audio before and after a service restart", async ({
@@ -95,11 +103,14 @@ test.describe("production Android service audio", () => {
         templateLabel: ANDROID_TEMPLATE_LABEL,
       });
       cellIds.add(cellId);
+      const cellArtifactsDir = requireCellPaths(cellId).artifactsDir;
       const emulatorOutputCapturePath = join(
-        requireCellPaths(cellId).artifactsDir,
+        cellArtifactsDir,
         EMULATOR_OUTPUT_CAPTURE_FILENAME
       );
+      const pwCatEventsPath = join(cellArtifactsDir, PW_CAT_EVENTS_FILENAME);
       const initialServices = await waitForAndroidServices(apiUrl, cellId);
+      const initialPwCat = await startHostPlaybackProbe(pwCatEventsPath);
       const initialAndroidLease = await waitForAndroidLease(cellId);
       process.env.ANDROID_SERIAL = initialAndroidLease.owner.serial;
       ownedSerials.add(initialAndroidLease.owner.serial);
@@ -213,6 +224,7 @@ test.describe("production Android service audio", () => {
         artifactsDir,
         emulatorOutputCapturePath,
         frame: firstViewer.frame,
+        hostPlaybackCapturePath: initialPwCat?.pcmPath,
         label: "before-restart",
         onMicrophoneCaptured: () =>
           endFallbackMicrophoneTrack(page, firstViewer.frame),
@@ -222,6 +234,10 @@ test.describe("production Android service audio", () => {
       });
       assertPcmMetrics(beforeCapture.microphoneMetrics, "guest microphone");
       assertPcmMetrics(beforeCapture.outputMetrics, "rendered emulator output");
+      assertHostPlaybackMetrics(
+        beforeCapture.hostPlaybackMetrics,
+        "host pw-cat playback"
+      );
       const initialAndroidService = initialServices.find(
         (service) => service.name === "android"
       );
@@ -241,8 +257,13 @@ test.describe("production Android service audio", () => {
         .toBe(true);
       const restartResponse = await restartResponsePromise;
       expect(restartResponse.ok).toBe(true);
+      await stopHostPlaybackProbe(pwCatEventsPath, initialPwCat);
 
       const restartedServices = await waitForAndroidServices(apiUrl, cellId);
+      const restartedPwCat = await restartHostPlaybackProbe(
+        pwCatEventsPath,
+        initialPwCat
+      );
       const restartedAndroidLease = await waitForAndroidLease(cellId);
       process.env.ANDROID_SERIAL = restartedAndroidLease.owner.serial;
       ownedSerials.add(restartedAndroidLease.owner.serial);
@@ -278,6 +299,7 @@ test.describe("production Android service audio", () => {
         artifactsDir,
         emulatorOutputCapturePath,
         frame: secondViewer.frame,
+        hostPlaybackCapturePath: restartedPwCat?.pcmPath,
         label: "after-restart",
         page,
         outputSpeechSource,
@@ -285,6 +307,10 @@ test.describe("production Android service audio", () => {
       });
       assertPcmMetrics(afterCapture.microphoneMetrics, "guest microphone");
       assertPcmMetrics(afterCapture.outputMetrics, "rendered emulator output");
+      assertHostPlaybackMetrics(
+        afterCapture.hostPlaybackMetrics,
+        "restarted host pw-cat playback"
+      );
 
       const audioVideoMetadata = {
         segments: [beforeCapture.videoSegment, afterCapture.videoSegment],
@@ -308,6 +334,7 @@ test.describe("production Android service audio", () => {
         method: "DELETE",
       });
       expect(deleteResponse.ok, "Android E2E cell cleanup").toBe(true);
+      await stopHostPlaybackProbe(pwCatEventsPath, restartedPwCat);
       cellIds.delete(cellId);
       cellId = null;
     } finally {
@@ -508,6 +535,7 @@ async function captureGuestAudio(options: {
   artifactsDir: string;
   emulatorOutputCapturePath: string;
   frame: Frame;
+  hostPlaybackCapturePath?: string;
   label: string;
   onMicrophoneCaptured?: () => Promise<void>;
   outputSpeechSource: Buffer;
@@ -518,6 +546,7 @@ async function captureGuestAudio(options: {
     artifactsDir,
     emulatorOutputCapturePath,
     frame,
+    hostPlaybackCapturePath,
     label,
     onMicrophoneCaptured,
     outputSpeechSource,
@@ -548,6 +577,7 @@ async function captureGuestAudio(options: {
   let outputCaptureStartedAt = 0;
   let playbackCompleted = false;
   let outputCaptureStartBytes = 0;
+  let hostPlaybackStartBytes = 0;
   try {
     await adb(
       "shell",
@@ -573,6 +603,9 @@ async function captureGuestAudio(options: {
     captureWindowMs = monotonicEpochMs() - captureStartedAt;
     await onMicrophoneCaptured?.();
     outputCaptureStartBytes = await fileSize(emulatorOutputCapturePath);
+    hostPlaybackStartBytes = hostPlaybackCapturePath
+      ? await fileSize(hostPlaybackCapturePath)
+      : 0;
     outputCaptureStartedAt = monotonicEpochMs();
     await adb(
       "shell",
@@ -608,6 +641,12 @@ async function captureGuestAudio(options: {
     capturePath: emulatorOutputCapturePath,
     startBytes: outputCaptureStartBytes,
   });
+  const hostPlaybackPcmBuffer = hostPlaybackCapturePath
+    ? await waitForEmulatorOutput({
+        capturePath: hostPlaybackCapturePath,
+        startBytes: hostPlaybackStartBytes,
+      })
+    : null;
   await writeFile(outputPath, outputPcmBuffer);
   const microphonePcmBuffer = await readFile(microphonePath);
   const acceptedOutputBuffer = await readFile(acceptedOutputPath);
@@ -657,6 +696,27 @@ async function captureGuestAudio(options: {
         MILLISECONDS_PER_SECOND +
       AUDIO_SPAN_TOLERANCE_MS,
   };
+  const hostPlaybackMetrics = hostPlaybackPcmBuffer
+    ? {
+        ...analyzePcm(
+          hostPlaybackPcmBuffer,
+          outputSpeechPilotFrequency,
+          SPEECH_ACTIVE_RMS
+        ),
+        alternatePilotRatio: analyzePcm(
+          hostPlaybackPcmBuffer,
+          microphoneSpeechPilotFrequency,
+          SPEECH_ACTIVE_RMS
+        ).toneRatio,
+        captureWindowMs,
+        maximumSpanMs:
+          (outputSpeechSource.length /
+            PCM_BYTES_PER_SAMPLE /
+            androidAudioSampleRate) *
+            MILLISECONDS_PER_SECOND +
+          AUDIO_SPAN_TOLERANCE_MS,
+      }
+    : null;
   const microphoneOffsetMs = Math.max(
     0,
     Math.round(
@@ -671,6 +731,7 @@ async function captureGuestAudio(options: {
     acceptedOutputDigest,
     microphoneDigest,
     microphoneMetrics,
+    hostPlaybackMetrics,
     outputDigest,
     outputMetrics,
     videoSegment: {
@@ -694,6 +755,101 @@ async function captureGuestAudio(options: {
       ),
     },
   };
+}
+
+async function readPwCatEvents(path: string): Promise<PwCatEvent[]> {
+  const contents = await readFile(path, "utf8").catch(() => "");
+  return contents
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as PwCatEvent);
+}
+
+async function startHostPlaybackProbe(path: string) {
+  if (process.platform !== "linux") {
+    return null;
+  }
+  const event = await waitForPwCatStart(path);
+  expect(isProcessAlive(event.pid)).toBe(true);
+  return event;
+}
+
+async function restartHostPlaybackProbe(
+  path: string,
+  previous: PwCatEvent | null
+) {
+  if (!previous) {
+    return null;
+  }
+  const event = await waitForPwCatStart(path, previous.pid);
+  expect(event.pid).not.toBe(previous.pid);
+  expect(isProcessAlive(event.pid)).toBe(true);
+  return event;
+}
+
+async function stopHostPlaybackProbe(path: string, event: PwCatEvent | null) {
+  if (event) {
+    await waitForPwCatExit(path, event.pid);
+  }
+}
+
+function assertHostPlaybackMetrics(
+  metrics:
+    | (ReturnType<typeof analyzePcm> & {
+        alternatePilotRatio: number;
+        captureWindowMs: number;
+        maximumSpanMs: number;
+      })
+    | null,
+  label: string
+) {
+  if (process.platform === "linux") {
+    if (!metrics) {
+      throw new Error(`${label} metrics were not captured`);
+    }
+    assertPcmMetrics(metrics, label);
+  }
+}
+
+async function waitForPwCatStart(path: string, previousPid?: number) {
+  let event: PwCatEvent | undefined;
+  await waitForCondition({
+    check: async () => {
+      event = (await readPwCatEvents(path)).find(
+        (candidate) =>
+          candidate.event === "start" && candidate.pid !== previousPid
+      );
+      return Boolean(event && isProcessAlive(event.pid));
+    },
+    errorMessage: "pw-cat playback process did not start",
+    intervalMs: PLAYBACK_STARTED_POLL_INTERVAL_MS,
+    timeoutMs: PLAYBACK_READY_TIMEOUT_MS,
+  });
+  if (!event) {
+    throw new Error("pw-cat playback start event was not recorded");
+  }
+  return event;
+}
+
+async function waitForPwCatExit(path: string, pid: number) {
+  await waitForCondition({
+    check: async () =>
+      (await readPwCatEvents(path)).some(
+        (event) => event.event === "exit" && event.pid === pid
+      ) && !isProcessAlive(pid),
+    errorMessage: `pw-cat playback process ${pid} survived service cleanup`,
+    intervalMs: PLAYBACK_STARTED_POLL_INTERVAL_MS,
+    timeoutMs: PLAYBACK_READY_TIMEOUT_MS,
+  });
+}
+
+function isProcessAlive(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const pcmDigest = (pcm: Buffer) =>

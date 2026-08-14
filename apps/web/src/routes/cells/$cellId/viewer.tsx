@@ -258,7 +258,9 @@ function resolveDesktopServiceTabs(
 ) {
   return targets.flatMap((target) => {
     const rootUrl = resolvePreferredViewerUrl(target, preferredAudioInput);
-    return rootUrl ? [{ rootUrl, serviceId: target.id }] : [];
+    return rootUrl
+      ? [{ audioInput: target.audioInput, rootUrl, serviceId: target.id }]
+      : [];
   });
 }
 
@@ -508,7 +510,7 @@ function ViewerSurface({
   if (availability === "ready" && url) {
     return (
       <iframe
-        allow="autoplay; microphone"
+        allow={target?.audioInput ? "autoplay; microphone" : "autoplay"}
         className="h-full min-h-[320px] w-full border-0 bg-background"
         data-testid="web-iframe-preview"
         referrerPolicy="no-referrer"

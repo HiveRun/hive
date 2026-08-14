@@ -36,6 +36,7 @@ test.describe("viewer route in web runtime", () => {
     await expect(iframe.contentFrame().getByRole("heading")).toHaveText(
       "Viewer Docs"
     );
+    await expect(iframe).toHaveAttribute("allow", "autoplay");
 
     const viewerRoute = page.getByTestId("cell-viewer-route");
 
