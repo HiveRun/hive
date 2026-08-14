@@ -44,6 +44,7 @@ const repoRoot = path.resolve(packageRoot, "../..");
 const RECORD_ACTIVITY_MONITOR_PATTERN =
   /RecordActivityMonitor[\s\S]*?(?=\nAudioDeviceBroker:|$)/;
 const ACTIVE_RECORDING_PATTERN = /^riid\s+\d+;\s+active\?\s+true$/m;
+const STABLE_ANDROID_PLATFORM_PATTERN = /^android-\d+$/;
 
 const microphoneCaptureIsRunning = (status: string): boolean => {
   const monitor = status.match(RECORD_ACTIVITY_MONITOR_PATTERN)?.[0];
@@ -352,18 +353,30 @@ public final class MainActivity extends Activity {
 }
 `;
 
-const latestAndroidComponent = async (
-  directory: string,
-  prefix = ""
-): Promise<string> => {
+const sortAndroidVersions = (versions: string[]): string[] =>
+  versions.sort((left, right) =>
+    left.localeCompare(right, undefined, { numeric: true })
+  );
+
+export const selectLatestStableAndroidPlatform = (
+  platforms: string[]
+): string => {
+  const latest = sortAndroidVersions(
+    platforms.filter((platform) =>
+      STABLE_ANDROID_PLATFORM_PATTERN.test(platform)
+    )
+  ).at(-1);
+  if (!latest) {
+    throw new Error("No stable Android SDK platform found.");
+  }
+  return latest;
+};
+
+const latestAndroidComponent = async (directory: string): Promise<string> => {
   const entries = await readdir(directory, { withFileTypes: true });
-  const versions = entries
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith(prefix))
-    .map((entry) => entry.name)
-    .sort((left, right) =>
-      left.localeCompare(right, undefined, { numeric: true })
-    );
-  const latest = versions.at(-1);
+  const latest = sortAndroidVersions(
+    entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
+  ).at(-1);
   if (!latest) {
     throw new Error(`No Android SDK component found in ${directory}.`);
   }
@@ -374,9 +387,11 @@ export const buildRecorderApk = async (directory: string): Promise<string> => {
   const buildToolsRoot = path.join(androidHome, "build-tools");
   const platformRoot = path.join(androidHome, "platforms");
   const buildToolsVersion = await latestAndroidComponent(buildToolsRoot);
-  const platformVersion = await latestAndroidComponent(
-    platformRoot,
-    "android-"
+  const platformEntries = await readdir(platformRoot, { withFileTypes: true });
+  const platformVersion = selectLatestStableAndroidPlatform(
+    platformEntries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
   );
   const targetApi = platformVersion.slice("android-".length);
   const buildTools = path.join(buildToolsRoot, buildToolsVersion);
