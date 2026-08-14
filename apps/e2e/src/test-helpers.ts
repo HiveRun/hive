@@ -13,6 +13,7 @@ const MAX_TERMINAL_RESTARTS = 2;
 const CELL_CREATION_TIMEOUT_MS = 120_000;
 const CELL_FORM_VISIBLE_TIMEOUT_MS = 30_000;
 const FORM_VISIBILITY_PROBE_TIMEOUT_MS = 1000;
+const SERVICE_DIAGNOSTIC_LOG_LENGTH = 2000;
 const DEFAULT_CELL_STATUS_TIMEOUT_MS = 120_000;
 const DEFAULT_SERVICE_STATUS_TIMEOUT_MS = 90_000;
 const DEFAULT_RUNNING_SERVICE_COUNT = 3;
@@ -47,9 +48,12 @@ type ServiceRecord = {
   ports: ServicePortRecord[];
   env: Record<string, string>;
   cpuPercent?: number | null;
+  recentLogs?: string | null;
   rssBytes?: number | null;
   resourceUnavailableReason?: string;
 };
+
+type ServiceDiagnostic = Pick<ServiceRecord, "lastKnownError" | "recentLogs">;
 
 type ActivityRecord = {
   id: string;
@@ -755,33 +759,110 @@ export async function waitForServiceStatuses(options: {
 }): Promise<ServiceRecord[]> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_SERVICE_STATUS_TIMEOUT_MS;
   let latest: ServiceRecord[] = [];
+  let latestCell: CellRecord | null = null;
+  const retainedDiagnostics = new Map<string, ServiceDiagnostic>();
 
   try {
     await waitForCondition({
       timeoutMs,
       errorMessage: options.errorMessage,
       check: async () => {
-        latest = await fetchServices(options.apiUrl, options.cellId, {
-          includeResources: options.includeResources,
-        });
+        [latest, latestCell] = await Promise.all([
+          fetchServices(options.apiUrl, options.cellId, {
+            includeResources: options.includeResources,
+          }),
+          fetchCell(options.apiUrl, options.cellId),
+        ]);
+        retainServiceDiagnostics(retainedDiagnostics, latest);
+        if (latestCell.status === "error") {
+          throw new Error(latestCell.lastSetupError ?? "Cell setup failed");
+        }
         return options.predicate(latest);
       },
     });
-  } catch {
-    const statusSnapshot = latest
-      .map(
-        (service) =>
-          `${service.name}:${service.status}${
-            service.lastKnownError ? ` (${service.lastKnownError})` : ""
-          }`
-      )
-      .join(", ");
+  } catch (error) {
+    const cellDiagnostic = latestCell
+      ? { cell: latestCell, error: null }
+      : await fetchCellDiagnostic(options.apiUrl, options.cellId);
+    const statusSnapshot = formatServiceDiagnostics(
+      latest,
+      retainedDiagnostics
+    );
+    const cellSnapshot = formatCellDiagnostic(cellDiagnostic);
+    const cause = error instanceof Error ? error.message : String(error);
+    const causeSnapshot =
+      cause === options.errorMessage ? "" : ` Cause: ${cause}.`;
     throw new Error(
-      `${options.errorMessage}. Latest statuses: ${statusSnapshot || "none"}`
+      `${options.errorMessage}.${causeSnapshot} Latest statuses: ${statusSnapshot || "none"}.${cellSnapshot}`
     );
   }
 
   return latest;
+}
+
+function retainServiceDiagnostics(
+  retained: Map<string, ServiceDiagnostic>,
+  services: ServiceRecord[]
+): void {
+  for (const service of services) {
+    const previous = retained.get(service.id);
+    retained.set(service.id, {
+      lastKnownError:
+        service.lastKnownError ?? previous?.lastKnownError ?? null,
+      recentLogs: service.recentLogs?.trim()
+        ? service.recentLogs
+        : previous?.recentLogs,
+    });
+  }
+}
+
+function formatServiceDiagnostics(
+  services: ServiceRecord[],
+  retained: Map<string, ServiceDiagnostic>
+): string {
+  return services
+    .map((service) => {
+      const diagnostics = retained.get(service.id) ?? service;
+      const recentOutput = diagnostics.recentLogs
+        ?.trim()
+        .slice(-SERVICE_DIAGNOSTIC_LOG_LENGTH);
+      const details = [
+        diagnostics.lastKnownError,
+        recentOutput ? `recent output: ${recentOutput}` : null,
+      ].filter(Boolean);
+      return `${service.name}:${service.status}${
+        details.length > 0 ? ` (${details.join("; ")})` : ""
+      }`;
+    })
+    .join(", ");
+}
+
+async function fetchCellDiagnostic(
+  apiUrl: string,
+  cellId: string
+): Promise<{ cell: CellRecord | null; error: string | null }> {
+  try {
+    return { cell: await fetchCell(apiUrl, cellId), error: null };
+  } catch (error) {
+    return {
+      cell: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function formatCellDiagnostic(diagnostic: {
+  cell: CellRecord | null;
+  error: string | null;
+}): string {
+  if (!diagnostic.cell) {
+    return ` Cell status unavailable${
+      diagnostic.error ? ` (${diagnostic.error})` : ""
+    }.`;
+  }
+  return ` Cell status: ${diagnostic.cell.status}${
+    diagnostic.cell.lastSetupError ? ` (${diagnostic.cell.lastSetupError})` : ""
+  }.`;
 }
 
 export async function ensureTerminalReady(

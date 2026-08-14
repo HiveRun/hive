@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import { prepareAndroidAudioVideoMux } from "../../../../packages/android-runtime/e2e/audio-video";
 import {
@@ -22,7 +22,7 @@ import {
   stopManagedProcesses,
   terminateProcessIds,
 } from "./process";
-import { createRuntimeContext } from "./runtime-context";
+import { createRuntimeContext, type RuntimeContext } from "./runtime-context";
 import { startCompiledWebE2eServer, startWebE2eServer } from "./server";
 import { waitForHttpOk } from "./wait";
 
@@ -248,6 +248,7 @@ async function run() {
       join(context.artifactsDir, "e2e-phase-timings.json"),
       JSON.stringify(phaseTimings, null, 2)
     );
+    await preserveFailureRuntimeLogs({ context, runSucceeded });
 
     await finishRuntimeRun({
       artifactsDir: context.artifactsDir,
@@ -258,6 +259,26 @@ async function run() {
       runArtifactsLabel: "E2E run artifacts",
       stableArtifactsDir,
     });
+  }
+}
+
+async function preserveFailureRuntimeLogs(options: {
+  context: RuntimeContext;
+  runSucceeded: boolean;
+}): Promise<void> {
+  if (options.runSucceeded) {
+    return;
+  }
+  try {
+    await cp(
+      options.context.logsDir,
+      join(options.context.artifactsDir, "runtime-logs"),
+      { recursive: true }
+    );
+  } catch (error) {
+    process.stderr.write(
+      `Failed to preserve E2E runtime logs: ${error instanceof Error ? error.message : String(error)}\n`
+    );
   }
 }
 
