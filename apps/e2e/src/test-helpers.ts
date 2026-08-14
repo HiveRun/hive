@@ -38,6 +38,7 @@ type ServicePortRecord = {
 type ServiceRecord = {
   audio?: { input?: boolean; output?: boolean };
   id: string;
+  lastKnownError?: string | null;
   name: string;
   status: string;
   pid?: number;
@@ -768,7 +769,12 @@ export async function waitForServiceStatuses(options: {
     });
   } catch {
     const statusSnapshot = latest
-      .map((service) => `${service.name}:${service.status}`)
+      .map(
+        (service) =>
+          `${service.name}:${service.status}${
+            service.lastKnownError ? ` (${service.lastKnownError})` : ""
+          }`
+      )
       .join(", ");
     throw new Error(
       `${options.errorMessage}. Latest statuses: ${statusSnapshot || "none"}`

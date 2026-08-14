@@ -12,6 +12,8 @@ const FAST_WORKER_MIN = 2;
 const FAST_WORKER_MAX = 4;
 const DEFAULT_TEST_TIMEOUT_MS = 180_000;
 const ANDROID_TEST_TIMEOUT_MS = 1_200_000;
+const DEFAULT_VIEWPORT = { width: 1600, height: 900 };
+const ANDROID_VIEWPORT = { width: 1280, height: 720 };
 const workers = resolveWorkerCount({
   configuredValue: process.env.HIVE_E2E_WORKERS,
   isCi: Boolean(process.env.CI),
@@ -57,9 +59,9 @@ export default defineConfig({
     trace: "retain-on-failure",
     video: {
       mode: videoMode,
-      size: { width: 1280, height: 720 },
+      size: isAndroidE2e ? ANDROID_VIEWPORT : DEFAULT_VIEWPORT,
     },
-    viewport: { width: 1280, height: 720 },
+    viewport: isAndroidE2e ? ANDROID_VIEWPORT : DEFAULT_VIEWPORT,
   },
   projects: [
     {
