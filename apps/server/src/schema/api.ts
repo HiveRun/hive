@@ -57,6 +57,21 @@ export const CellServiceSchema = t.Object({
   status: t.String(),
   port: t.Optional(t.Number()),
   url: t.Optional(t.String()),
+  ports: t.Array(
+    t.Object({
+      name: t.String(),
+      port: t.Number(),
+      primary: t.Boolean(),
+      protocol: t.Union([
+        t.Literal("http"),
+        t.Literal("https"),
+        t.Literal("tcp"),
+      ]),
+      viewer: t.Boolean(),
+      url: t.Optional(t.String()),
+      portReachable: t.Boolean(),
+    })
+  ),
   pid: t.Optional(t.Number()),
   command: t.String(),
   cwd: t.String(),

@@ -24,7 +24,11 @@ import {
   cellMutations,
   cellQueries,
 } from "@/queries/cells";
-import { CellDetailGate, CopyableDetailLabel } from "../../-shared/cell-route";
+import {
+  CellDetailGate,
+  CopyableDetailLabel,
+  CopyIconButton,
+} from "../../-shared/cell-route";
 
 export const Route = createFileRoute("/cells/$cellId/services")({
   component: CellServices,
@@ -100,6 +104,10 @@ function CellServices() {
     : undefined;
   const isBulkActionPending =
     startAllServicesMutation.isPending || stopAllServicesMutation.isPending;
+  const hasStartingServices = services.some((service) => {
+    const status = service.status.toLowerCase();
+    return status === "starting" || status === "pending";
+  });
 
   const handleStart = (service: CellServiceSummary) => {
     startServiceMutation.mutate({
@@ -133,7 +141,9 @@ function CellServices() {
           errorMessage={streamError}
           isBulkActionPending={isBulkActionPending}
           isLoading={isLoading}
-          isStartingAll={startAllServicesMutation.isPending}
+          isStartingAll={
+            startAllServicesMutation.isPending || hasStartingServices
+          }
           isStoppingAll={stopAllServicesMutation.isPending}
           onStartAll={handleStartAll}
           onStartService={handleStart}
@@ -148,7 +158,7 @@ function CellServices() {
   );
 }
 
-function ServicesPanel({
+export function ServicesPanel({
   cellId,
   services,
   isLoading,
@@ -255,18 +265,24 @@ function ServicesPanel({
               <SelectValue placeholder="Select a service" />
             </SelectTrigger>
             <SelectContent>
-              {services.map((service) => (
-                <SelectItem key={service.id} value={service.id}>
-                  <div className="flex flex-col">
-                    <span>{service.name}</span>
-                    {service.port && (
-                      <span className="text-muted-foreground text-xs">
-                        Port: {service.port}
-                      </span>
-                    )}
-                  </div>
-                </SelectItem>
-              ))}
+              {services.map((service) => {
+                const primaryPort = service.ports.find(
+                  (port) => port.primary
+                )?.port;
+
+                return (
+                  <SelectItem key={service.id} value={service.id}>
+                    <div className="flex flex-col">
+                      <span>{service.name}</span>
+                      {primaryPort != null ? (
+                        <span className="text-muted-foreground text-xs">
+                          Primary port: {primaryPort}
+                        </span>
+                      ) : null}
+                    </div>
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         )}
@@ -322,21 +338,21 @@ function ServiceCard({
   return (
     <div
       className={cn(
-        "flex min-h-0 flex-1 flex-col gap-3 overflow-hidden border border-border bg-card p-4",
+        "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden border border-border bg-card p-4",
         isErrorState
           ? "border-destructive shadow-[0_0_0_2px_color-mix(in_oklch,var(--color-destructive)_35%,transparent)]"
           : "border-border/60"
       )}
       style={{ containerType: "inline-size" }}
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-1 items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <p className="font-semibold text-base text-foreground uppercase tracking-[0.15em]">
+      <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:flex-wrap">
+        <div className="flex w-full min-w-0 flex-1 flex-wrap items-start gap-3 sm:w-auto">
+          <div className="min-w-32 flex-1">
+            <p className="break-words font-semibold text-base text-foreground uppercase tracking-[0.15em]">
               {service.name}
             </p>
           </div>
-          <div className="flex min-h-[1.75rem] items-center">
+          <div className="flex min-h-[1.75rem] shrink-0 items-center">
             <ServiceStatusBadge status={service.status} />
           </div>
         </div>
@@ -347,6 +363,22 @@ function ServiceCard({
           onStart={onStart}
           onStop={onStop}
           service={service}
+        />
+      </div>
+
+      {service.lastKnownError ? (
+        <div className="border border-destructive/50 bg-destructive/10 px-3 py-2 text-destructive text-xs">
+          Last error: {service.lastKnownError}
+        </div>
+      ) : null}
+      <div className="min-h-[16rem] flex-1 overflow-hidden border border-border/70 bg-background/30">
+        <PtyStreamTerminal
+          allowInput
+          emptyMessage="No service output yet."
+          inputPath={`/api/cells/${cellId}/services/${service.id}/terminal/input`}
+          resizePath={`/api/cells/${cellId}/services/${service.id}/terminal/resize`}
+          streamPath={`/api/cells/${cellId}/services/${service.id}/terminal/stream`}
+          title="Service Terminal"
         />
       </div>
 
@@ -385,14 +417,16 @@ function ServiceCard({
             </>
           )}
 
-          {service.port ? (
+          {service.ports.length > 0 ? (
             <>
-              <CopyableDetailLabel copyLabel="port" copyText={service.port}>
-                Port
-              </CopyableDetailLabel>
-              <p className="break-all font-mono text-[11px] text-foreground">
-                {service.port}
+              <p className="text-[10px] text-muted-foreground uppercase tracking-[0.3em]">
+                Ports
               </p>
+              <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                {service.ports.map((port) => (
+                  <ServicePortDetail key={port.name} port={port} />
+                ))}
+              </div>
             </>
           ) : null}
 
@@ -422,21 +456,63 @@ function ServiceCard({
           </p>
         </div>
       </div>
-      {isErrorState ? null : (
-        <div className="min-h-[1.25rem] text-destructive text-xs">
-          {service.lastKnownError
-            ? `Last error: ${service.lastKnownError}`
-            : " "}
-        </div>
+    </div>
+  );
+}
+
+function ServicePortDetail({
+  port,
+}: {
+  port: CellServiceSummary["ports"][number];
+}) {
+  return (
+    <div
+      className={cn(
+        "grid min-w-0 gap-2 border border-border/70 border-l-2 bg-background/30 p-2.5",
+        port.primary ? "border-l-primary" : "border-l-border"
       )}
-      <PtyStreamTerminal
-        allowInput
-        emptyMessage="No service output yet."
-        inputPath={`/api/cells/${cellId}/services/${service.id}/terminal/input`}
-        resizePath={`/api/cells/${cellId}/services/${service.id}/terminal/resize`}
-        streamPath={`/api/cells/${cellId}/services/${service.id}/terminal/stream`}
-        title="Service Terminal"
-      />
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="font-semibold text-[11px] text-foreground uppercase tracking-[0.16em]">
+          {port.name}
+        </p>
+        <span className="border border-border/70 px-1.5 py-0.5 text-[9px] text-muted-foreground uppercase tracking-[0.18em]">
+          {port.protocol}
+        </span>
+        {port.primary ? (
+          <span className="border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[9px] text-primary uppercase tracking-[0.18em]">
+            Primary
+          </span>
+        ) : null}
+        <span
+          className={cn(
+            "border px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em]",
+            port.portReachable
+              ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-500"
+              : "border-destructive/50 bg-destructive/10 text-destructive"
+          )}
+        >
+          {port.portReachable ? "Reachable" : "Unreachable"}
+        </span>
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-[9px] text-muted-foreground uppercase tracking-[0.2em]">
+          Port
+        </span>
+        <code className="text-[11px] text-foreground">{port.port}</code>
+        <CopyIconButton label={`${port.name} port`} text={port.port} />
+      </div>
+      {port.url ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="text-[9px] text-muted-foreground uppercase tracking-[0.2em]">
+            URL
+          </span>
+          <code className="min-w-0 break-all text-[11px] text-foreground">
+            {port.url}
+          </code>
+          <CopyIconButton label={`${port.name} URL`} text={port.url} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -474,7 +550,9 @@ function ServiceActions({
           type="button"
           variant="secondary"
         >
-          {isStarting ? "Starting..." : "Start"}
+          {isStarting || normalizedStatus === "starting"
+            ? "Starting..."
+            : "Start"}
         </Button>
       )}
     </div>

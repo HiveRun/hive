@@ -1,3 +1,5 @@
+import { access } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { wait as waitDelay } from "./runtime/wait";
 import { selectors } from "./selectors";
@@ -13,6 +15,7 @@ const CELL_FORM_VISIBLE_TIMEOUT_MS = 30_000;
 const FORM_VISIBILITY_PROBE_TIMEOUT_MS = 1000;
 const DEFAULT_CELL_STATUS_TIMEOUT_MS = 120_000;
 const DEFAULT_SERVICE_STATUS_TIMEOUT_MS = 90_000;
+const DEFAULT_RUNNING_SERVICE_COUNT = 3;
 const DEFAULT_ROUTE_TIMEOUT_MS = 180_000;
 const INITIAL_CHAT_ROUTE_TIMEOUT_MS = 45_000;
 
@@ -23,12 +26,24 @@ type CellRecord = {
   lastSetupError?: string | null;
 };
 
+type ServicePortRecord = {
+  name: string;
+  port: number;
+  primary: boolean;
+  protocol: "http" | "https" | "tcp";
+  url?: string;
+  portReachable: boolean;
+};
+
 type ServiceRecord = {
   id: string;
   name: string;
   status: string;
   pid?: number;
   port?: number;
+  url?: string;
+  ports: ServicePortRecord[];
+  env: Record<string, string>;
   cpuPercent?: number | null;
   rssBytes?: number | null;
   resourceUnavailableReason?: string;
@@ -104,6 +119,17 @@ export function requireApiUrl(
     throw new Error(message);
   }
   return apiUrl;
+}
+
+export function requireCellPaths(cellId: string) {
+  const hiveHome = process.env.HIVE_E2E_HIVE_HOME;
+  if (!hiveHome) {
+    throw new Error("HIVE_E2E_HIVE_HOME is required for E2E tests");
+  }
+  return {
+    artifactsDir: join(hiveHome, "artifacts", "cells", cellId),
+    runtimeDir: join(hiveHome, "runtime", "cells", cellId),
+  };
 }
 
 export async function waitForCondition(options: {
@@ -205,6 +231,46 @@ export async function createCellFromHome(
 ) {
   await options.page.goto("/");
   return await createCell(options);
+}
+
+export const createRunningServicesCell = async (
+  page: Page,
+  apiUrl: string,
+  options: {
+    name?: string;
+    errorMessage?: string;
+    predicate?: (services: ServiceRecord[]) => boolean;
+    timeoutMs?: number;
+  } = {}
+) => {
+  const cellId = await createCellFromHome({
+    page,
+    name: options.name ?? `E2E Services ${Date.now()}`,
+    templateLabel: "E2E Services Template",
+  });
+  await page.goto(`/cells/${cellId}/services`);
+  const services = await waitForServiceStatuses({
+    apiUrl,
+    cellId,
+    timeoutMs: options.timeoutMs,
+    errorMessage:
+      options.errorMessage ?? "Three services did not become running",
+    predicate:
+      options.predicate ??
+      ((records) =>
+        records.length === DEFAULT_RUNNING_SERVICE_COUNT &&
+        records.every((service) => service.status.toLowerCase() === "running")),
+  });
+  return { cellId, services };
+};
+
+export async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function extractCellIdFromPath(pathname: string): string | null {
@@ -530,7 +596,7 @@ async function fetchServices(
   return payload.services;
 }
 
-export async function fetchActivity(
+async function fetchActivity(
   apiUrl: string,
   cellId: string
 ): Promise<ActivityRecord[]> {
@@ -541,21 +607,24 @@ export async function fetchActivity(
   return payload.events;
 }
 
-export async function waitForActivityType(options: {
+export async function waitForActivityTypes(options: {
   apiUrl: string;
   cellId: string;
-  type: string;
+  types: readonly string[];
   timeoutMs: number;
   errorMessage: string;
-}): Promise<void> {
+}): Promise<ActivityRecord[]> {
+  let latest: ActivityRecord[] = [];
   await waitForCondition({
     timeoutMs: options.timeoutMs,
     errorMessage: options.errorMessage,
     check: async () => {
-      const events = await fetchActivity(options.apiUrl, options.cellId);
-      return events.some((event) => event.type === options.type);
+      latest = await fetchActivity(options.apiUrl, options.cellId);
+      const eventTypes = new Set(latest.map((event) => event.type));
+      return options.types.every((type) => eventTypes.has(type));
     },
   });
+  return latest;
 }
 
 export async function fetchWorkspaces(
@@ -737,7 +806,7 @@ export async function ensureTerminalReady(
         return page.locator(selectors.terminalInputTextarea).isVisible();
       }
 
-      if (state === "exited" || state === "disconnected") {
+      if (state === "exited") {
         if (restartCount >= MAX_TERMINAL_RESTARTS) {
           throw new Error(
             `Terminal remained ${state} during ${options.context}. exitCode=${lastExitCode || "n/a"}`

@@ -1,6 +1,5 @@
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import {
-  type AgentSession,
   createApiCellAndOpenChat,
   ensureTerminalReady,
   fetchAgentMessageIds,
@@ -8,8 +7,6 @@ import {
   fetchAgentSession,
   focusTerminalInput,
   requireApiUrl,
-  sendChatTerminalInput,
-  wait,
   waitForAgentSession,
   waitForChatRoute,
   waitForCondition,
@@ -20,10 +17,7 @@ const CHAT_ROUTE_TIMEOUT_MS = 180_000;
 const TERMINAL_READY_TIMEOUT_MS = 120_000;
 const TERMINAL_INPUT_READY_TIMEOUT_MS = 30_000;
 const SESSION_UPDATE_TIMEOUT_MS = 120_000;
-const SEND_ATTEMPTS = 3;
 const SEND_ATTEMPT_TIMEOUT_MS = 20_000;
-const SEND_API_TIMEOUT_MS = 8000;
-const SEND_RETRY_DELAY_MS = 1000;
 const POST_RESPONSE_VIDEO_SETTLE_MS = 500;
 const TERMINAL_INPUT_FOCUS_TIMEOUT_MS = 10_000;
 const CELL_TEMPLATE_LABEL = "E2E Template";
@@ -66,8 +60,8 @@ test.describe("cell chat flow", () => {
       expectedProviderId: EXPECTED_MODEL_PROVIDER_ID,
     });
 
-    const prompt = `E2E token ${Date.now()}`;
-    const multilinePrompt = `E2E multiline first ${Date.now()}\nE2E multiline second ${Date.now()}`;
+    const token = Date.now();
+    const multilinePrompt = `E2E accepted message ${token}.\nSecond line marker E2E_MULTILINE_${token}.`;
 
     await sendMultilinePromptViaKeyboard({
       apiUrl,
@@ -76,12 +70,6 @@ test.describe("cell chat flow", () => {
       prompt: multilinePrompt,
     });
 
-    await sendPromptWithRetries({
-      apiUrl,
-      cellId,
-      page,
-      prompt,
-    });
     await assertSessionModelSelection({
       apiUrl,
       cellId,
@@ -93,73 +81,6 @@ test.describe("cell chat flow", () => {
     await captureFinalVideoFrame(page);
   });
 });
-
-async function sendPromptWithRetries(options: {
-  apiUrl: string;
-  cellId: string;
-  page: Page;
-  prompt: string;
-}): Promise<void> {
-  let baselineSession = await waitForAgentSession({
-    apiUrl: options.apiUrl,
-    cellId: options.cellId,
-    timeoutMs: SESSION_UPDATE_TIMEOUT_MS,
-  });
-
-  for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt += 1) {
-    await ensureTerminalReady(options.page, {
-      context: `send attempt ${String(attempt)}`,
-      timeoutMs: TERMINAL_INPUT_READY_TIMEOUT_MS,
-    });
-
-    const baselineMessageIds = await fetchAgentMessageIds(
-      options.apiUrl,
-      baselineSession.id
-    );
-
-    await sendPrompt(options);
-
-    const acceptedAfterApiWrite = await waitForPromptAccepted({
-      apiUrl: options.apiUrl,
-      baselineMessageIds,
-      baselineSession,
-      cellId: options.cellId,
-      prompt: options.prompt,
-      timeoutMs: SEND_API_TIMEOUT_MS,
-    });
-
-    const promptAccepted = acceptedAfterApiWrite
-      ? true
-      : await waitForPromptAcceptedViaKeyboard({
-          apiUrl: options.apiUrl,
-          baselineMessageIds,
-          baselineSession,
-          cellId: options.cellId,
-          page: options.page,
-          prompt: options.prompt,
-        });
-
-    if (promptAccepted) {
-      await ensureTerminalReady(options.page, {
-        context: "after prompt send",
-        timeoutMs: TERMINAL_INPUT_READY_TIMEOUT_MS,
-      });
-      await options.page.waitForTimeout(POST_RESPONSE_VIDEO_SETTLE_MS);
-      return;
-    }
-
-    baselineSession = await waitForAgentSession({
-      apiUrl: options.apiUrl,
-      cellId: options.cellId,
-      timeoutMs: SESSION_UPDATE_TIMEOUT_MS,
-    });
-    await wait(SEND_RETRY_DELAY_MS);
-  }
-
-  throw new Error(
-    "Prompt was not accepted after sending chat input across retries"
-  );
-}
 
 async function sendMultilinePromptViaKeyboard(options: {
   apiUrl: string;
@@ -195,6 +116,7 @@ async function sendMultilinePromptViaKeyboard(options: {
     prompt: options.prompt,
     timeoutMs: SEND_ATTEMPT_TIMEOUT_MS,
   });
+  await options.page.waitForTimeout(POST_RESPONSE_VIDEO_SETTLE_MS);
 }
 
 async function waitForUserMessageAccepted(options: {
@@ -221,86 +143,6 @@ async function waitForUserMessageAccepted(options: {
     intervalMs: 1000,
     timeoutMs: options.timeoutMs,
   });
-}
-
-async function waitForPromptAcceptedViaKeyboard(options: {
-  apiUrl: string;
-  baselineMessageIds: ReadonlySet<string>;
-  baselineSession: AgentSession;
-  cellId: string;
-  page: Page;
-  prompt: string;
-}): Promise<boolean> {
-  await focusTerminalInput(options.page, TERMINAL_INPUT_FOCUS_TIMEOUT_MS);
-  await options.page.keyboard.type(options.prompt, { delay: 25 });
-  await options.page.keyboard.press("Enter");
-
-  return await waitForPromptAccepted({
-    apiUrl: options.apiUrl,
-    baselineMessageIds: options.baselineMessageIds,
-    baselineSession: options.baselineSession,
-    cellId: options.cellId,
-    prompt: options.prompt,
-    timeoutMs: SEND_ATTEMPT_TIMEOUT_MS - SEND_API_TIMEOUT_MS,
-  });
-}
-
-async function waitForPromptAccepted(options: {
-  apiUrl: string;
-  baselineMessageIds: ReadonlySet<string>;
-  baselineSession: AgentSession;
-  cellId: string;
-  prompt: string;
-  timeoutMs: number;
-}): Promise<boolean> {
-  let promptAccepted = false;
-
-  try {
-    await waitForCondition({
-      check: async () => {
-        const currentSession = await fetchAgentSession(
-          options.apiUrl,
-          options.cellId
-        );
-        if (!currentSession) {
-          return false;
-        }
-
-        const sessionChanged =
-          currentSession.updatedAt !== options.baselineSession.updatedAt ||
-          currentSession.status !== options.baselineSession.status;
-
-        if (sessionChanged) {
-          promptAccepted = true;
-          return true;
-        }
-
-        const messages = await fetchAgentMessages(
-          options.apiUrl,
-          currentSession.id
-        );
-        const userMessageAccepted = messages.some(
-          (message) =>
-            !options.baselineMessageIds.has(message.id) &&
-            message.role === "user" &&
-            Boolean(message.content?.includes(options.prompt))
-        );
-
-        if (userMessageAccepted) {
-          promptAccepted = true;
-        }
-
-        return userMessageAccepted;
-      },
-      errorMessage: "Prompt did not create a user message or change session",
-      intervalMs: 1000,
-      timeoutMs: options.timeoutMs,
-    });
-
-    return promptAccepted;
-  } catch {
-    return false;
-  }
 }
 
 async function assertSessionModelSelection(options: {
@@ -331,27 +173,6 @@ async function assertSessionModelSelection(options: {
     errorMessage: `Agent session model mismatch. expected=${options.expectedProviderId}/${options.expectedModelId} observed=${observedProviderId}/${observedModelId}`,
     timeoutMs: SESSION_UPDATE_TIMEOUT_MS,
   });
-}
-
-async function sendPrompt(options: {
-  apiUrl: string;
-  cellId: string;
-  page: Page;
-  prompt: string;
-}): Promise<void> {
-  const response = await sendChatTerminalInput(
-    options.apiUrl,
-    options.cellId,
-    `${options.prompt}\r`
-  );
-
-  if (response.ok) {
-    return;
-  }
-
-  await focusTerminalInput(options.page, TERMINAL_INPUT_FOCUS_TIMEOUT_MS);
-  await options.page.keyboard.type(options.prompt, { delay: 25 });
-  await options.page.keyboard.press("Enter");
 }
 
 async function attachFinalStateScreenshot(options: {

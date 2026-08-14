@@ -14,6 +14,7 @@ import {
   expectLiveDataEvent,
   expectReadyAndSnapshotEvents,
   expectResizePayload,
+  expectStreamEvent,
   handlePostRouteRequest,
   openMockWebSocket,
   openRouteEventStream,
@@ -30,6 +31,12 @@ const SERVICE_RESIZE_COLS = 132;
 const SERVICE_RESIZE_ROWS = 44;
 const SETUP_INPUT = "echo setup\n";
 const SERVICE_INPUT = "echo service\n";
+
+const createReplacementServiceSession = () =>
+  createRouteServiceTerminalSession({
+    sessionId: "replacement-service-session",
+    pid: 333,
+  });
 
 const createTerminalHarness = () => {
   const setupListeners = new Set<(event: ServiceTerminalEvent) => void>();
@@ -303,5 +310,34 @@ describe("service/setup terminal routes", () => {
 
   it("handles service terminal websocket messages", async () => {
     await expectTerminalWebSocket("service");
+  });
+
+  it("forwards replacement service terminal sessions", async () => {
+    const { harness, ws } = await openTerminalWebSocket("service");
+    const session = createReplacementServiceSession();
+
+    harness.emitService({ type: "session", session });
+
+    expect(ws.messages).toContainEqual({ type: "ready", session });
+  });
+
+  it("streams replacement service terminal sessions", async () => {
+    const { harness, app } = await createSeededTerminalContext();
+    const reader = await openTerminalStream(
+      app,
+      terminalPath("service", "stream")
+    );
+    await expectReadyAndSnapshotEvents(reader);
+    const session = createReplacementServiceSession();
+
+    harness.emitService({ type: "session", session });
+
+    const event = await expectStreamEvent(
+      reader,
+      "ready",
+      "replacement-service-session"
+    );
+    expect(event).toContain('"session":{');
+    await reader.cancel();
   });
 });

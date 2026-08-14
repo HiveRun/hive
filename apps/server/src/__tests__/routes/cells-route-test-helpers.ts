@@ -1,11 +1,12 @@
 import { Elysia } from "elysia";
 import { vi } from "vitest";
+import type { ProcessService } from "../../config/schema";
 import { createCellsRoutes } from "../../routes/cells";
 import { cells } from "../../schema/cells";
-import { cellServices } from "../../schema/services";
+import { cellServicePorts, cellServices } from "../../schema/services";
 import type { ChatTerminalEvent } from "../../services/chat-terminal";
 import type { CellTerminalEvent } from "../../services/terminal";
-import { testDb } from "../test-db";
+import { createDeferred, testDb } from "../test-db";
 
 export const DEFAULT_TEST_WORKSPACE_ID = "test-workspace";
 const DEFAULT_TEST_CELL_ID = "test-cell-id";
@@ -76,6 +77,57 @@ export const deleteRouteCellById = (
   app: { handle: (request: Request) => Promise<Response> },
   cellId: string
 ) => handleRouteRequest(app, `/api/cells/${cellId}`, { method: "DELETE" });
+
+export const createResolvedCleanupMocks = () => ({
+  runCellTeardown: vi.fn(() => Promise.resolve()),
+  removeWorktree: vi.fn(() => Promise.resolve()),
+});
+
+export const createBlockedServiceStop = () => {
+  const released = createDeferred();
+  const started = createDeferred();
+  const stop = vi.fn(async () => {
+    started.resolve();
+    await released.promise;
+  });
+  return { released, started, stop };
+};
+
+export const readTerminalStreamEnvironment = async (
+  app: { handle: (request: Request) => Promise<Response> },
+  path: string,
+  getEnvironment: () => Record<string, string> | undefined
+) => {
+  const response = await handleRouteRequest(app, path);
+  expectResponseStatus(response);
+  await response.body?.cancel();
+  return getEnvironment();
+};
+
+export const expectTerminalEnvironment = (
+  environment: Record<string, string> | undefined,
+  cellId: string,
+  expected: Record<string, string>
+) => {
+  const expectedEnvironment = {
+    HIVE_CELL_ID: cellId,
+    HIVE_BROWSE_ROOT: DEFAULT_TEST_WORKTREE,
+    ...expected,
+  };
+  for (const [key, value] of Object.entries(expectedEnvironment)) {
+    if (environment?.[key] !== value) {
+      throw new Error(`Expected ${key}=${value}, got ${environment?.[key]}`);
+    }
+  }
+  for (const [key, suffix] of [
+    ["HIVE_CELL_RUNTIME_DIR", `/runtime/cells/${cellId}`],
+    ["HIVE_CELL_ARTIFACTS_DIR", `/artifacts/cells/${cellId}`],
+  ] as const) {
+    if (!environment?.[key]?.includes(suffix)) {
+      throw new Error(`Expected ${key} to include ${suffix}`);
+    }
+  }
+};
 
 const expectResponseStatus = (response: Response, status = HTTP_OK_STATUS) => {
   if (response.status !== status) {
@@ -166,6 +218,25 @@ export const expectLiveDataEvent = async (args: {
   await expectStreamEvent(args.reader, "data", args.expectedText);
 };
 
+const expectBareReplacementSessionEvent = async (args: {
+  reader: { read: () => Promise<string> };
+  emit: () => void;
+  session: { cellId: string; sessionId: string };
+}) => {
+  args.emit();
+  const event = await expectStreamEvent(
+    args.reader,
+    "ready",
+    args.session.sessionId
+  );
+  if (!event.includes(`"cellId":"${args.session.cellId}"`)) {
+    throw new Error(`Expected replacement session cell ID, got ${event}`);
+  }
+  if (event.includes('"session":{')) {
+    throw new Error(`Expected a bare replacement session, got ${event}`);
+  }
+};
+
 export const expectPtyStreamData = async (args: {
   response: Response;
   missingMessage: string;
@@ -194,6 +265,22 @@ export const openRouteEventStream = async (
   const response = await handleRouteRequest(app, path);
   expectEventStreamHeaders(response);
   return createEventStreamReader(response, missingMessage);
+};
+
+export const expectBareReplacementTerminalStream = async (args: {
+  app: { handle: (request: Request) => Promise<Response> };
+  path: string;
+  emit: () => void;
+  session: { cellId: string; sessionId: string };
+}) => {
+  const reader = await openRouteEventStream(args.app, args.path);
+  await expectReadyAndSnapshotEvents(reader);
+  await expectBareReplacementSessionEvent({
+    reader,
+    emit: args.emit,
+    session: args.session,
+  });
+  await reader.cancel();
 };
 
 export const expectResizePayload = async (
@@ -626,6 +713,7 @@ export const createCellRouteTestDependencies = (
     ensureServicesForCell: async () => Promise.resolve(),
     startServicesForCell: async () => Promise.resolve(),
     stopServicesForCell: async () => Promise.resolve(),
+    runCellTeardown: async () => Promise.resolve(),
     startServiceById: async () => Promise.resolve(),
     stopServiceById: async () => Promise.resolve(),
     sendAgentMessage: async () => Promise.resolve(),
@@ -683,7 +771,14 @@ const createPtyRouteHarness = <TEvent extends { type: string }>(args: {
   };
 
   const ensureSession = vi.fn(
-    ({ cellId, workspacePath }: { cellId: string; workspacePath: string }) => {
+    ({
+      cellId,
+      workspacePath,
+    }: {
+      cellId: string;
+      workspacePath: string;
+      environment: Record<string, string>;
+    }) => {
       sequence += 1;
       session = {
         ...session,
@@ -783,7 +878,7 @@ export const seedRouteService = async (
     command?: string;
     cwd?: string;
     env?: Record<string, string>;
-    definitionEnv?: Record<string, string>;
+    definition?: Partial<Omit<ProcessService, "type">>;
     status?:
       | "pending"
       | "starting"
@@ -820,7 +915,8 @@ export const seedRouteService = async (
       type: args.type ?? "process",
       run: command,
       cwd,
-      env: args.definitionEnv ?? env,
+      env,
+      ...args.definition,
     },
     lastKnownError: null,
     createdAt: now,
@@ -843,6 +939,15 @@ export const createRouteServiceTerminalSession = (args: {
   startedAt: new Date().toISOString(),
 });
 
+export const createRouteCellTerminalSession = (args: {
+  cellId: string;
+  sessionId: string;
+  pid: number;
+}) => ({
+  ...createRouteServiceTerminalSession(args),
+  cellId: args.cellId,
+});
+
 export const seedRouteCellAndService = async (
   args: {
     cell?: Parameters<typeof seedRouteCell>[0];
@@ -854,7 +959,53 @@ export const seedRouteCellAndService = async (
   await seedRouteService({ ...(args.service ?? {}), cellId });
 };
 
+type RouteServicePortFixture = Pick<
+  typeof cellServicePorts.$inferInsert,
+  "name" | "port"
+> &
+  Partial<Pick<typeof cellServicePorts.$inferInsert, "primary">>;
+
+export const seedRouteCellAndServiceWithPorts = async (args: {
+  cell?: Parameters<typeof seedRouteCell>[0];
+  service?: Parameters<typeof seedRouteService>[0];
+  ports: RouteServicePortFixture[];
+}) => {
+  await seedRouteCellAndService(args);
+  const serviceId = args.service?.id ?? "test-service-id";
+  const now = new Date();
+  if (args.ports.length) {
+    await testDb.insert(cellServicePorts).values(
+      args.ports.map((port) => ({
+        ...port,
+        serviceId,
+        primary: port.primary ?? false,
+        createdAt: now,
+        updatedAt: now,
+      }))
+    );
+  }
+};
+
 export const clearRouteServicesAndCells = async () => {
+  await testDb.delete(cellServicePorts);
   await testDb.delete(cellServices);
   await testDb.delete(cells);
+};
+
+export const ptyRouteTestHelpers = {
+  createRouteCellTerminalSession,
+  exercisePtyWebSocketActions,
+  expectBareReplacementTerminalStream,
+  expectFailedWebSocketOpen,
+  expectReadyAndSnapshotEvents,
+  expectTerminalEnvironment,
+  expectPtyRestartResponse,
+  expectPtyStreamData,
+  expectSeededPtyResize,
+  handlePostRouteRequest,
+  openMockWebSocket,
+  openRouteEventStream,
+  seedRouteCell,
+  seedRouteService,
+  seedRouteCellAndServiceWithPorts,
 };

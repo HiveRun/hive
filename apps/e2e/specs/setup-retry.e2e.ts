@@ -1,9 +1,10 @@
-import { access, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
   createCell,
-  waitForActivityType,
+  fileExists,
+  waitForActivityTypes,
   waitForCellStatus,
 } from "../src/test-helpers";
 
@@ -61,10 +62,10 @@ test.describe("setup retry", () => {
       });
       expect(failedCell.lastSetupError).toContain("marker missing");
 
-      await waitForActivityType({
+      await waitForActivityTypes({
         apiUrl,
         cellId,
-        type: "setup.retry",
+        types: ["setup.retry"],
         timeoutMs: 30_000,
         errorMessage: "initial setup.retry activity event was not recorded",
       });
@@ -83,10 +84,10 @@ test.describe("setup retry", () => {
       });
       expect(recoveredCell.lastSetupError ?? null).toBeNull();
 
-      await waitForActivityType({
+      await waitForActivityTypes({
         apiUrl,
         cellId,
-        type: "setup.retry",
+        types: ["setup.retry"],
         timeoutMs: 30_000,
         errorMessage: "setup.retry activity event was not recorded",
       });
@@ -95,15 +96,6 @@ test.describe("setup retry", () => {
     }
   });
 });
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function retrySetup(apiUrl: string, cellId: string): Promise<Response> {
   return fetch(`${apiUrl}/api/cells/${cellId}/setup/retry`, {

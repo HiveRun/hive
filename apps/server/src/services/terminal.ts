@@ -1,4 +1,8 @@
 import { spawn } from "bun-pty";
+import {
+  areCellEnvironmentsEqual,
+  ensureCellEnvironment,
+} from "./cell-environment";
 import type {
   PtyTerminalProcess,
   TerminalEvent,
@@ -27,10 +31,11 @@ export type CellTerminalSession = TerminalSessionFields & {
   cellId: string;
 };
 
-export type CellTerminalEvent = TerminalEvent;
+export type CellTerminalEvent = TerminalEvent<CellTerminalSession>;
 
 type CellTerminalRecord = TerminalRecordFields & {
   cellId: string;
+  environment: Record<string, string>;
 };
 
 type CellTerminalService = TerminalSessionService<
@@ -40,6 +45,7 @@ type CellTerminalService = TerminalSessionService<
   ensureSession(args: {
     cellId: string;
     workspacePath: string;
+    environment: Record<string, string>;
   }): CellTerminalSession;
 };
 
@@ -53,24 +59,31 @@ const createChannel = (cellId: string): string => `cell:${cellId}`;
 
 const createCellTerminalService = (): CellTerminalService =>
   createPtySessionController<
-    { cellId: string; workspacePath: string },
+    {
+      cellId: string;
+      workspacePath: string;
+      environment: Record<string, string>;
+    },
     CellTerminalRecord,
     CellTerminalSession
   >({
     channelForId: createChannel,
     trimOutput: appendBuffer,
-    spawnPty: ({ workspacePath }) =>
-      spawn(DEFAULT_SHELL, [], {
+    spawnPty: ({ cellId, workspacePath, environment }) => {
+      ensureCellEnvironment(cellId, workspacePath);
+      return spawn(DEFAULT_SHELL, [], {
         name: TERMINAL_NAME,
         cols: DEFAULT_TERMINAL_COLS,
         rows: DEFAULT_TERMINAL_ROWS,
         cwd: workspacePath,
         env: {
           ...process.env,
+          ...environment,
           TERM: TERMINAL_NAME,
         },
-      }) as PtyTerminalProcess,
-    createRecord: ({ cellId, workspacePath }, pty) => ({
+      }) as PtyTerminalProcess;
+    },
+    createRecord: ({ cellId, workspacePath, environment }, pty) => ({
       ...createTerminalRecordFields(
         `terminal_${crypto.randomUUID()}`,
         workspacePath,
@@ -82,8 +95,13 @@ const createCellTerminalService = (): CellTerminalService =>
         }
       ),
       cellId,
+      environment,
     }),
     toSession,
+    canReuse: (record, args) =>
+      record.status === "running" &&
+      record.cwd === args.workspacePath &&
+      areCellEnvironmentsEqual(record.environment, args.environment),
     runningErrorMessage: "Terminal session is not running",
   }) satisfies CellTerminalService;
 

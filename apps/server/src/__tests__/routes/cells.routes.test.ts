@@ -12,11 +12,12 @@
  * We test for route matching by checking that we get our handler's response,
  * not Elysia's default "NOT_FOUND".
  */
+import { eq } from "drizzle-orm";
 import { Elysia } from "elysia";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCellsRoutes } from "../../routes/cells";
 import { cells } from "../../schema/cells";
-import { setupTestDb, testDb } from "../test-db";
+import { createDeferred, setupTestDb, testDb } from "../test-db";
 import {
   createCellRouteTestDependencies,
   DEFAULT_TEST_WORKSPACE_ID,
@@ -24,11 +25,14 @@ import {
   deleteRouteCellById,
   handleRouteRequest,
   seedRouteCell,
+  seedRouteService,
 } from "./cells-route-test-helpers";
 
 const TEST_CELL_ID = "test-cell-id";
 const HTTP_OK = 200;
 const HTTP_NOT_FOUND = 404;
+const HTTP_CONFLICT = 409;
+const HTTP_INTERNAL_ERROR = 500;
 
 /**
  * Check if a 404 response is from Elysia's "route not found" vs our handler.
@@ -60,7 +64,29 @@ describe("cells route reachability", () => {
     app = new Elysia().use(routes);
   });
 
-  beforeEach(() => testDb.delete(cells));
+  beforeEach(async () => {
+    await testDb.delete(cells);
+  });
+
+  const requestFailingServiceAction = async (args: {
+    error: unknown;
+    path: string;
+  }) => {
+    const failureApp = new Elysia().use(
+      createCellsRoutes(
+        createCellRouteTestDependencies({
+          cellId: TEST_CELL_ID,
+          overrides: {
+            startServicesForCell: () => Promise.reject(args.error),
+            startServiceById: () => Promise.reject(args.error),
+          },
+        })
+      )
+    );
+    await seedRouteCell({ id: TEST_CELL_ID, name: "Failing service cell" });
+    await seedRouteService({ cellId: TEST_CELL_ID });
+    return await handleRouteRequest(failureApp, args.path, { method: "POST" });
+  };
 
   /**
    * Routes that don't require existing resources - should return 200
@@ -198,6 +224,185 @@ describe("cells route reachability", () => {
     // Should get SSE response, not a "Cell not found" from /:id handler
     expect(response.status).toBe(HTTP_OK);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
+  });
+
+  it("rejects service starts and restarts while a cell is deleting", async () => {
+    const startServicesForCell = vi.fn(() => Promise.resolve());
+    const startServiceById = vi.fn(() => Promise.resolve());
+    const deletingApp = new Elysia().use(
+      createCellsRoutes(
+        createCellRouteTestDependencies({
+          cellId: TEST_CELL_ID,
+          overrides: { startServicesForCell, startServiceById },
+        })
+      )
+    );
+    await seedRouteCell({
+      id: TEST_CELL_ID,
+      name: "Deleting cell",
+    });
+    await testDb
+      .update(cells)
+      .set({ status: "deleting" })
+      .where(eq(cells.id, TEST_CELL_ID));
+    await seedRouteService({ cellId: TEST_CELL_ID });
+
+    const bulkResponse = await handleRouteRequest(
+      deletingApp,
+      `/api/cells/${TEST_CELL_ID}/services/start`,
+      { method: "POST" }
+    );
+    const singleResponse = await handleRouteRequest(
+      deletingApp,
+      `/api/cells/${TEST_CELL_ID}/services/test-service-id/start`,
+      { method: "POST" }
+    );
+
+    expect(bulkResponse.status).toBe(HTTP_CONFLICT);
+    expect(singleResponse.status).toBe(HTTP_CONFLICT);
+    expect(startServicesForCell).not.toHaveBeenCalled();
+    expect(startServiceById).not.toHaveBeenCalled();
+  });
+
+  it("waits for service starts to complete", async () => {
+    const readiness = createDeferred();
+    const startInvoked = createDeferred();
+    const startServicesForCell = vi.fn(() => {
+      startInvoked.resolve();
+      return readiness.promise;
+    });
+    const startingApp = new Elysia().use(
+      createCellsRoutes(
+        createCellRouteTestDependencies({
+          cellId: TEST_CELL_ID,
+          overrides: { startServicesForCell },
+        })
+      )
+    );
+    await seedRouteCell({ id: TEST_CELL_ID, name: "Starting cell" });
+    await seedRouteService({ cellId: TEST_CELL_ID });
+
+    let responseSettled = false;
+    const responsePromise = handleRouteRequest(
+      startingApp,
+      `/api/cells/${TEST_CELL_ID}/services/start`,
+      { method: "POST" }
+    ).then((routeResponse) => {
+      responseSettled = true;
+      return routeResponse;
+    });
+
+    await startInvoked.promise;
+    expect(responseSettled).toBe(false);
+
+    readiness.resolve();
+    const response = await responsePromise;
+
+    expect(response.status).toBe(HTTP_OK);
+    expect(startServicesForCell).toHaveBeenCalledWith(TEST_CELL_ID);
+  });
+
+  it("preserves restart, stop, and start invocation order", async () => {
+    const restartStopStarted = createDeferred();
+    const releaseRestartStop = createDeferred();
+    const operations: string[] = [];
+    let stopCalls = 0;
+    const stopServicesForCell = vi.fn(async () => {
+      stopCalls += 1;
+      operations.push("stop");
+      if (stopCalls === 1) {
+        restartStopStarted.resolve();
+        await releaseRestartStop.promise;
+      }
+    });
+    const startServicesForCell = vi.fn(() => {
+      operations.push("start");
+      return Promise.resolve();
+    });
+    const actionApp = new Elysia().use(
+      createCellsRoutes(
+        createCellRouteTestDependencies({
+          cellId: TEST_CELL_ID,
+          overrides: { startServicesForCell, stopServicesForCell },
+        })
+      )
+    );
+    await seedRouteCell({ id: TEST_CELL_ID, name: "Restarting cell" });
+    await seedRouteService({ cellId: TEST_CELL_ID });
+
+    const restartResponsePromise = handleRouteRequest(
+      actionApp,
+      `/api/cells/${TEST_CELL_ID}/services/restart`,
+      { method: "POST" }
+    );
+    await restartStopStarted.promise;
+
+    const stopResponsePromise = handleRouteRequest(
+      actionApp,
+      `/api/cells/${TEST_CELL_ID}/services/stop`,
+      { method: "POST" }
+    );
+    const startResponsePromise = handleRouteRequest(
+      actionApp,
+      `/api/cells/${TEST_CELL_ID}/services/start`,
+      { method: "POST" }
+    );
+    await Promise.resolve();
+    expect(stopServicesForCell).toHaveBeenCalledOnce();
+    expect(startServicesForCell).not.toHaveBeenCalled();
+
+    releaseRestartStop.resolve();
+    const [restartResponse, stopResponse, startResponse] = await Promise.all([
+      restartResponsePromise,
+      stopResponsePromise,
+      startResponsePromise,
+    ]);
+
+    expect(restartResponse.status).toBe(HTTP_OK);
+    expect(stopResponse.status).toBe(HTTP_OK);
+    expect(startResponse.status).toBe(HTTP_OK);
+    expect(stopServicesForCell).toHaveBeenCalledTimes(2);
+    expect(startServicesForCell).toHaveBeenCalledTimes(2);
+    expect(operations).toEqual(["stop", "start", "stop", "start"]);
+  });
+
+  it.each([
+    ["bulk start", `/api/cells/${TEST_CELL_ID}/services/start`],
+    ["bulk restart", `/api/cells/${TEST_CELL_ID}/services/restart`],
+    [
+      "single start",
+      `/api/cells/${TEST_CELL_ID}/services/test-service-id/start`,
+    ],
+    [
+      "single restart",
+      `/api/cells/${TEST_CELL_ID}/services/test-service-id/restart`,
+    ],
+  ])("reports %s execution failures", async (_description, path) => {
+    const executionError = new Error("service execution failed");
+    const response = await requestFailingServiceAction({
+      error: executionError,
+      path,
+    });
+
+    expect(response.status).toBe(HTTP_INTERNAL_ERROR);
+    expect(await response.json()).toEqual({
+      message: "service execution failed",
+    });
+  });
+
+  it("reports the cause of wrapped supervisor failures", async () => {
+    const response = await requestFailingServiceAction({
+      error: {
+        _tag: "ServiceSupervisorError",
+        cause: new Error("readiness check timed out"),
+      },
+      path: `/api/cells/${TEST_CELL_ID}/services/start`,
+    });
+
+    expect(response.status).toBe(HTTP_INTERNAL_ERROR);
+    expect(await response.json()).toEqual({
+      message: "readiness check timed out",
+    });
   });
 
   it("emits cell_removed when streamed cell is deleted", async () => {

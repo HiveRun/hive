@@ -14,6 +14,8 @@ linux:
   executableName: hive-desktop
 mac:
   icon: resources/icon.icns
+  extendInfo:
+    NSMicrophoneUsageDescription: Hive uses your microphone only after you allow access for a cell service.
   target:
     - zip
 win:

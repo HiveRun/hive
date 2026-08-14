@@ -1,4 +1,10 @@
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  integer,
+  primaryKey,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 import type { Service } from "../config/schema";
 import { cellIdColumn } from "./common-columns";
 
@@ -31,4 +37,25 @@ export const cellServices = sqliteTable("cell_services", {
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });
 
+export const cellServicePorts = sqliteTable(
+  "cell_service_ports",
+  {
+    serviceId: text("service_id")
+      .notNull()
+      .references(() => cellServices.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    port: integer("port").notNull(),
+    primary: integer("is_primary", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.serviceId, table.name] }),
+    uniqueIndex("cell_service_ports_port_unique").on(table.port),
+  ]
+);
+
 export type CellService = typeof cellServices.$inferSelect;
+export type CellServicePort = typeof cellServicePorts.$inferSelect;

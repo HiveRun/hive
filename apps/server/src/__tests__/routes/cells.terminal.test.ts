@@ -5,14 +5,19 @@ import {
   createCellRouteTestApp,
   createCellRouteTestDependencies,
   createCellTerminalRouteHarness,
+  createRouteCellTerminalSession,
   exercisePtyWebSocketActions,
+  expectBareReplacementTerminalStream,
   expectFailedWebSocketOpen,
   expectPtyRestartResponse,
   expectPtyStreamData,
   expectSeededPtyResize,
+  expectTerminalEnvironment,
   handlePostRouteRequest,
   openMockWebSocket,
+  readTerminalStreamEnvironment,
   seedRouteCell,
+  seedRouteCellAndServiceWithPorts,
 } from "./cells-route-test-helpers";
 
 const TEST_CELL_ID = "test-cell-id";
@@ -20,6 +25,11 @@ const HTTP_OK = 200;
 const RESIZED_COLS = 140;
 const RESIZED_ROWS = 48;
 const FIRST_CALL_INDEX = 0;
+const TERMINAL_PORT_ENVIRONMENT = {
+  API_PORT: "43101",
+  API_RPC_PORT: "43101",
+  API_METRICS_PORT: "43102",
+};
 const createTerminalHarness = () =>
   createCellTerminalRouteHarness(TEST_CELL_ID);
 
@@ -87,6 +97,46 @@ describe("Cell terminal routes", () => {
       emit: () => harness.emit({ type: "data", chunk: "echo hi\n" }),
       expectedText: "echo hi",
     });
+  });
+
+  it("streams replacement terminal sessions with the cell contract", async () => {
+    const { harness, app } = await createSeededTerminalApp();
+    const session = createRouteCellTerminalSession({
+      cellId: TEST_CELL_ID,
+      sessionId: "replacement-cell-terminal",
+      pid: 5678,
+    });
+
+    await expectBareReplacementTerminalStream({
+      app,
+      path: `/api/cells/${TEST_CELL_ID}/terminal/stream`,
+      session,
+      emit: () => harness.emit({ type: "session", session }),
+    });
+  });
+
+  it("passes durable cell paths and persisted named ports to terminals", async () => {
+    await seedRouteCellAndServiceWithPorts({
+      cell: { id: TEST_CELL_ID, name: "Terminal Cell" },
+      service: { id: "terminal-api-service", name: "api" },
+      ports: [
+        { name: "rpc", port: 43_101, primary: true },
+        { name: "metrics", port: 43_102 },
+      ],
+    });
+    const harness = createTerminalHarness();
+    const app = createTerminalTestApp(harness);
+
+    const environment = await readTerminalStreamEnvironment(
+      app,
+      `/api/cells/${TEST_CELL_ID}/terminal/stream`,
+      () => harness.ensureSession.mock.calls[0]?.[0]?.environment
+    );
+    expectTerminalEnvironment(
+      environment,
+      TEST_CELL_ID,
+      TERMINAL_PORT_ENVIRONMENT
+    );
   });
 
   it("forwards terminal input to the terminal service", async () => {

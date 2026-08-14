@@ -8,7 +8,7 @@ import {
   RefreshCw,
   RotateCcw,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   WebPreview,
   WebPreviewBody,
@@ -19,7 +19,14 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDesktopViewer } from "@/hooks/use-desktop-viewer";
 import { useServiceStream } from "@/hooks/use-service-stream";
-import { type CellServiceSummary, cellQueries } from "@/queries/cells";
+import {
+  type BrowserViewerAvailability,
+  type BrowserViewerTarget,
+  resolveBrowserViewerTargets,
+  resolveLoopbackHttpViewerUrl,
+  resolveViewerAvailability,
+} from "@/lib/viewer-url";
+import { cellQueries } from "@/queries/cells";
 import { CellDetailGate } from "../../-shared/cell-route";
 
 const BROWSER_REACHABILITY_TIMEOUT_MS = 3000;
@@ -29,6 +36,56 @@ const viewportOptions = [
   { id: "tablet", label: "Tablet" },
   { id: "desktop", label: "Laptop" },
 ] as const;
+
+type DesktopViewer = NonNullable<Window["hiveDesktop"]>["viewer"];
+
+function runForActiveServiceTab(
+  viewer: DesktopViewer | null,
+  serviceId: string | null,
+  callback: (activeViewer: DesktopViewer) => Promise<unknown>
+) {
+  if (!(viewer && serviceId)) {
+    return;
+  }
+
+  viewer
+    .activateServiceTab(serviceId)
+    .then(() => callback(viewer))
+    .catch(() => {
+      /* ignore transient tab action failures */
+    });
+}
+
+function navigateViewer(
+  viewer: DesktopViewer | null,
+  serviceId: string | null,
+  enabled: boolean,
+  url: string | null
+) {
+  if (!(enabled && url)) {
+    return;
+  }
+
+  runForActiveServiceTab(viewer, serviceId, (activeViewer) =>
+    activeViewer.navigate(url)
+  );
+}
+
+function requestViewerFullscreen() {
+  document.documentElement.requestFullscreen?.().catch(() => {
+    /* ignore fullscreen failures */
+  });
+}
+
+function resolveDisplayUrl(
+  state: DesktopViewerState,
+  activeServiceId: string | null,
+  fallbackUrl: string | null
+) {
+  return state.activeServiceId === activeServiceId
+    ? (state.url ?? fallbackUrl)
+    : fallbackUrl;
+}
 
 export const Route = createFileRoute("/cells/$cellId/viewer")({
   component: CellServiceViewer,
@@ -45,24 +102,11 @@ function CellServiceViewer() {
   );
 }
 
-function useActiveServiceTab(services: CellServiceSummary[]) {
+function useActiveServiceTab(services: BrowserViewerTarget[]) {
   const [activeServiceId, setActiveServiceId] = useState<string | null>(null);
   const activeServiceIdRef = useRef<string | null>(null);
 
-  const setActiveServiceIdImmediate = useCallback(
-    (nextServiceId: string | null) => {
-      activeServiceIdRef.current = nextServiceId;
-      setActiveServiceId(nextServiceId);
-    },
-    []
-  );
-
   useEffect(() => {
-    if (!services.length) {
-      setActiveServiceIdImmediate(null);
-      return;
-    }
-
     if (
       activeServiceId &&
       services.some((service) => service.id === activeServiceId)
@@ -70,16 +114,15 @@ function useActiveServiceTab(services: CellServiceSummary[]) {
       return;
     }
 
-    const fallback =
-      services.find(
-        (service) =>
-          service.port != null && service.status.toLowerCase() === "running"
-      ) ??
-      services.find((service) => service.port != null) ??
-      null;
-
-    setActiveServiceIdImmediate(fallback?.id ?? null);
-  }, [activeServiceId, services, setActiveServiceIdImmediate]);
+    const fallbackId =
+      (
+        services.find(
+          (service) => service.status.toLowerCase() === "running"
+        ) ?? services[0]
+      )?.id ?? null;
+    activeServiceIdRef.current = fallbackId;
+    setActiveServiceId(fallbackId);
+  }, [activeServiceId, services]);
 
   const activeService = services.find(
     (service) => service.id === activeServiceId
@@ -89,31 +132,30 @@ function useActiveServiceTab(services: CellServiceSummary[]) {
     activeService,
     activeServiceId,
     activeServiceIdRef,
-    setActiveServiceId: setActiveServiceIdImmediate,
+    selectService: (serviceId: string) => {
+      activeServiceIdRef.current = serviceId;
+      setActiveServiceId(serviceId);
+    },
   };
 }
 
-function isPreviewableService(
-  service: CellServiceSummary
-): service is CellServiceSummary & { port: number; url: string } {
-  return service.port != null && typeof service.url === "string";
-}
-
-function useBrowserReachability({
+export function useBrowserReachability({
   viewerUrl,
   serviceStatus,
 }: {
   viewerUrl: string | null;
   serviceStatus: string | undefined;
 }) {
-  const [browserReachability, setBrowserReachability] = useState<
-    boolean | null
-  >(null);
+  const requestUrl =
+    viewerUrl && serviceStatus?.toLowerCase() === "running" ? viewerUrl : null;
+  const [result, setResult] = useState<{
+    reachability: boolean;
+    url: string;
+  } | null>(null);
 
   useEffect(() => {
-    setBrowserReachability(null);
-
-    if (!viewerUrl || serviceStatus?.toLowerCase() !== "running") {
+    if (!requestUrl) {
+      setResult(null);
       return;
     }
 
@@ -122,119 +164,39 @@ function useBrowserReachability({
     }
 
     const controller = new AbortController();
+    let cancelled = false;
     const timeout = window.setTimeout(
       () => controller.abort(),
       BROWSER_REACHABILITY_TIMEOUT_MS
     );
 
-    fetch(viewerUrl, {
-      method: "HEAD",
+    fetch(requestUrl, {
+      method: "GET",
       mode: "no-cors",
       signal: controller.signal,
     })
-      .then(() => setBrowserReachability(true))
-      .catch(() => setBrowserReachability(false))
+      .then(() => {
+        if (!cancelled) {
+          setResult({ reachability: true, url: requestUrl });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setResult({ reachability: false, url: requestUrl });
+        }
+      })
       .finally(() => {
         window.clearTimeout(timeout);
       });
 
     return () => {
+      cancelled = true;
       controller.abort();
       window.clearTimeout(timeout);
     };
-  }, [serviceStatus, viewerUrl]);
+  }, [requestUrl]);
 
-  return browserReachability;
-}
-
-function useViewerControls({
-  actions,
-  activeServiceIdRef,
-  activeServiceUrl,
-  displayUrl,
-  isDesktopRuntime,
-  state,
-}: {
-  actions: ReturnType<typeof useDesktopViewer>["actions"];
-  activeServiceIdRef: { current: string | null };
-  activeServiceUrl: string | null;
-  displayUrl: string | null;
-  isDesktopRuntime: boolean;
-  state: ReturnType<typeof useDesktopViewer>["state"];
-}) {
-  const hasViewerUrl = displayUrl !== null;
-
-  const runForActiveServiceTab = (
-    callback: (serviceId: string) => Promise<unknown>
-  ) => {
-    const serviceId = activeServiceIdRef.current;
-    if (!(actions && serviceId)) {
-      return;
-    }
-
-    actions
-      .activateServiceTab(serviceId)
-      .then(() => callback(serviceId))
-      .catch(() => {
-        /* ignore transient tab action failures */
-      });
-  };
-
-  const disabledControls = {
-    back: isDesktopRuntime && hasViewerUrl ? !state.canGoBack : true,
-    forward: isDesktopRuntime && hasViewerUrl ? !state.canGoForward : true,
-    maximize: !(isDesktopRuntime && hasViewerUrl),
-    openExternal: !(isDesktopRuntime && hasViewerUrl),
-    refresh: !(isDesktopRuntime && hasViewerUrl),
-    reset: !(isDesktopRuntime && activeServiceUrl),
-  };
-
-  const handleRefresh = () => {
-    runForActiveServiceTab(() => actions?.reload() ?? Promise.resolve());
-  };
-
-  const handleBack = () => {
-    runForActiveServiceTab(() => actions?.goBack() ?? Promise.resolve());
-  };
-
-  const handleForward = () => {
-    runForActiveServiceTab(() => actions?.goForward() ?? Promise.resolve());
-  };
-
-  const handleOpenExternal = () => {
-    runForActiveServiceTab(() => actions?.openExternal() ?? Promise.resolve());
-  };
-
-  const handleMaximize = () => {
-    document.documentElement.requestFullscreen?.().catch(() => {
-      /* ignore fullscreen failures */
-    });
-  };
-
-  const handleReset = () => {
-    runForActiveServiceTab(
-      () => actions?.resetActiveTab() ?? Promise.resolve()
-    );
-  };
-
-  const handleNavigate = (url: string | null) => {
-    if (!(isDesktopRuntime && url && activeServiceIdRef.current)) {
-      return;
-    }
-
-    runForActiveServiceTab(() => actions?.navigate(url) ?? Promise.resolve());
-  };
-
-  return {
-    disabledControls,
-    handleBack,
-    handleForward,
-    handleMaximize,
-    handleNavigate,
-    handleOpenExternal,
-    handleRefresh,
-    handleReset,
-  };
+  return result?.url === requestUrl ? result.reachability : null;
 }
 
 function CellServiceViewerLive({ cellId }: { cellId: string }) {
@@ -242,80 +204,54 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
     enabled: true,
   });
 
-  const previewableServices = useMemo(
-    () => services.filter(isPreviewableService),
+  const viewerTargets = useMemo(
+    () => resolveBrowserViewerTargets(services),
     [services]
   );
-  const {
-    activeService,
-    activeServiceId,
-    activeServiceIdRef,
-    setActiveServiceId,
-  } = useActiveServiceTab(previewableServices);
+  const { activeService, activeServiceId, activeServiceIdRef, selectService } =
+    useActiveServiceTab(viewerTargets);
 
   const serviceTabs = useMemo(
     () =>
-      previewableServices.map((service) => ({
-        rootUrl: service.url,
-        serviceId: service.id,
-      })),
-    [previewableServices]
+      viewerTargets.flatMap((target) => {
+        const rootUrl = resolveLoopbackHttpViewerUrl(target.url);
+        return rootUrl ? [{ rootUrl, serviceId: target.id }] : [];
+      }),
+    [viewerTargets]
   );
 
   const previewUrl = activeService?.url ?? null;
+  const browserViewerUrl = resolveLoopbackHttpViewerUrl(previewUrl);
+  const nativeViewerAvailability = resolveViewerAvailability(activeService);
+  const nativeViewerReady = nativeViewerAvailability === "ready";
+  const nativeActiveServiceId = nativeViewerReady ? activeServiceId : null;
 
-  const browserReachability = useBrowserReachability({
-    viewerUrl: previewUrl,
-    serviceStatus: activeService?.status,
-  });
-
-  const resolvedReachability =
-    browserReachability ?? activeService?.portReachable ?? null;
   const previewContainerRef = useRef<HTMLDivElement | null>(null);
   const { actions, isSupported, state } = useDesktopViewer(
     previewContainerRef,
     {
-      activeServiceId,
-      enabled: previewableServices.length > 0,
+      activeServiceId: nativeActiveServiceId,
+      enabled: nativeViewerReady,
       serviceTabs,
     }
   );
 
-  const isDesktopRuntime = isSupported;
-
-  useEffect(() => {
-    if (!isDesktopRuntime) {
-      return;
-    }
-
-    return () => {
-      actions?.hide().catch(() => {
-        /* ignore teardown failures */
-      });
-    };
-  }, [actions, isDesktopRuntime]);
-
-  const displayUrl =
-    state.activeServiceId === activeServiceId
-      ? (state.url ?? previewUrl)
-      : previewUrl;
-  const {
-    disabledControls,
-    handleBack,
-    handleForward,
-    handleMaximize,
-    handleNavigate,
-    handleOpenExternal,
-    handleRefresh,
-    handleReset,
-  } = useViewerControls({
-    actions,
-    activeServiceIdRef,
-    activeServiceUrl: activeService?.url ?? null,
-    displayUrl,
-    isDesktopRuntime,
-    state,
+  const browserReachability = useBrowserReachability({
+    viewerUrl: isSupported ? null : browserViewerUrl,
+    serviceStatus: activeService?.status,
   });
+  const resolvedReachability = isSupported
+    ? (activeService?.portReachable ?? null)
+    : browserReachability;
+  const viewerAvailability = resolveViewerAvailability(
+    activeService,
+    resolvedReachability
+  );
+  const displayUrl = resolveDisplayUrl(state, activeServiceId, previewUrl);
+  const controlsEnabled = Boolean(actions && nativeViewerReady && displayUrl);
+  const runViewerAction = (
+    callback: (viewer: DesktopViewer) => Promise<unknown>
+  ) => runForActiveServiceTab(actions, activeServiceIdRef.current, callback);
 
   return (
     <div
@@ -325,8 +261,19 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
       <div className="flex h-full w-full flex-col gap-4 p-4">
         <WebPreview
           error={error ?? undefined}
-          isLoading={isLoading || state.isLoading}
-          onUrlChange={handleNavigate}
+          isLoading={
+            isLoading ||
+            state.isLoading ||
+            (!isSupported && viewerAvailability === "checking")
+          }
+          onUrlChange={(url) =>
+            navigateViewer(
+              actions,
+              activeServiceIdRef.current,
+              nativeViewerReady,
+              url
+            )
+          }
           url={displayUrl}
         >
           <div className="flex flex-col gap-3 rounded-sm border-2 border-border bg-card p-3">
@@ -336,37 +283,41 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
               </span>
               <ServiceTabs
                 activeServiceId={activeServiceId}
-                onValueChange={setActiveServiceId}
-                services={previewableServices}
+                onValueChange={selectService}
+                services={viewerTargets}
               />
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3 border-border border-t pt-3">
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                 <WebPreviewNavigationButton
-                  disabled={disabledControls.back}
-                  onClick={handleBack}
+                  disabled={!(controlsEnabled && state.canGoBack)}
+                  onClick={() => runViewerAction((viewer) => viewer.goBack())}
                   tooltip="Back"
                 >
                   <ArrowLeft className="h-3.5 w-3.5" />
                 </WebPreviewNavigationButton>
                 <WebPreviewNavigationButton
-                  disabled={disabledControls.forward}
-                  onClick={handleForward}
+                  disabled={!(controlsEnabled && state.canGoForward)}
+                  onClick={() =>
+                    runViewerAction((viewer) => viewer.goForward())
+                  }
                   tooltip="Forward"
                 >
                   <ArrowRight className="h-3.5 w-3.5" />
                 </WebPreviewNavigationButton>
                 <WebPreviewNavigationButton
-                  disabled={disabledControls.refresh}
-                  onClick={handleRefresh}
+                  disabled={!controlsEnabled}
+                  onClick={() => runViewerAction((viewer) => viewer.reload())}
                   tooltip="Refresh"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
                 </WebPreviewNavigationButton>
                 <WebPreviewNavigationButton
-                  disabled={!activeService?.url}
-                  onClick={handleReset}
+                  disabled={!controlsEnabled}
+                  onClick={() =>
+                    runViewerAction((viewer) => viewer.resetActiveTab())
+                  }
                   tooltip="Reset to service root"
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
@@ -379,15 +330,17 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
 
                 <div className="flex flex-wrap items-center gap-2">
                   <WebPreviewNavigationButton
-                    disabled={disabledControls.openExternal}
-                    onClick={handleOpenExternal}
+                    disabled={!controlsEnabled}
+                    onClick={() =>
+                      runViewerAction((viewer) => viewer.openExternal())
+                    }
                     tooltip="Open externally"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
                   </WebPreviewNavigationButton>
                   <WebPreviewNavigationButton
-                    disabled={disabledControls.maximize}
-                    onClick={handleMaximize}
+                    disabled={!controlsEnabled}
+                    onClick={requestViewerFullscreen}
                     tooltip="Fullscreen"
                   >
                     <Maximize2 className="h-3.5 w-3.5" />
@@ -405,33 +358,68 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
           <div className="contents">
             <WebPreviewBody
               emptyState={
-                isDesktopRuntime ? undefined : <DesktopOnlyViewerMessage />
+                <BrowserViewerState availability={viewerAvailability} />
               }
               previewRef={
-                isDesktopRuntime && activeServiceId
+                isSupported && nativeActiveServiceId
                   ? previewContainerRef
                   : undefined
               }
             >
-              {isDesktopRuntime && activeServiceId ? (
-                <div
-                  className="h-full min-h-[320px] w-full bg-background"
-                  data-testid="native-web-preview"
-                  title={
-                    activeService
-                      ? `Service ${activeService.name} viewer`
-                      : "Web preview"
-                  }
-                />
-              ) : (
-                <DesktopOnlyViewerMessage />
-              )}
+              <ViewerSurface
+                availability={viewerAvailability}
+                isNative={Boolean(isSupported && nativeActiveServiceId)}
+                target={activeService}
+                url={browserViewerUrl}
+              />
             </WebPreviewBody>
           </div>
         </WebPreview>
       </div>
     </div>
   );
+}
+
+function ViewerSurface({
+  availability,
+  isNative,
+  target,
+  url,
+}: {
+  availability: BrowserViewerAvailability;
+  isNative: boolean;
+  target: BrowserViewerTarget | undefined;
+  url: string | null;
+}) {
+  const title = target
+    ? `Service ${target.label} ${target.portName} viewer`
+    : "Web preview";
+
+  if (isNative) {
+    return (
+      <div
+        className="h-full min-h-[320px] w-full bg-background"
+        data-testid="native-web-preview"
+        title={title}
+      />
+    );
+  }
+
+  if (availability === "ready" && url) {
+    return (
+      <iframe
+        allow="autoplay; microphone"
+        className="h-full min-h-[320px] w-full border-0 bg-background"
+        data-testid="web-iframe-preview"
+        referrerPolicy="no-referrer"
+        sandbox="allow-same-origin allow-scripts"
+        src={url}
+        title={title}
+      />
+    );
+  }
+
+  return <BrowserViewerState availability={availability} />;
 }
 
 function ServiceTabs({
@@ -441,7 +429,7 @@ function ServiceTabs({
 }: {
   activeServiceId: string | null;
   onValueChange: (value: string) => void;
-  services: CellServiceSummary[];
+  services: BrowserViewerTarget[];
 }) {
   return (
     <Tabs onValueChange={onValueChange} value={activeServiceId ?? undefined}>
@@ -449,15 +437,15 @@ function ServiceTabs({
         {services.map((service) => (
           <TabsTrigger
             className="min-w-[118px] flex-col items-start gap-0 rounded-sm border-border/60 px-3 py-2 text-left data-[state=active]:border-border data-[state=active]:bg-card"
-            data-testid={`viewer-service-tab-${service.name}`}
+            data-testid={`viewer-service-tab-${service.testId}`}
             key={service.id}
             value={service.id}
           >
             <span className="font-semibold text-[12px] text-foreground uppercase tracking-[0.2em]">
-              {service.name}
+              {service.label}
             </span>
             <span className="text-[10px] text-muted-foreground">
-              Port {service.port}
+              {service.portName} / {service.protocol} / Port {service.port}
             </span>
           </TabsTrigger>
         ))}
@@ -466,20 +454,49 @@ function ServiceTabs({
   );
 }
 
-function DesktopOnlyViewerMessage() {
+function BrowserViewerState({
+  availability,
+}: {
+  availability: BrowserViewerAvailability;
+}) {
+  const content: Record<
+    Exclude<BrowserViewerAvailability, "ready">,
+    { message: string; title: string }
+  > = {
+    checking: {
+      title: "Checking service",
+      message: "Hive is verifying that this loopback service is reachable.",
+    },
+    empty: {
+      title: "No browser service",
+      message: "Start a service with a browser URL to open it in this viewer.",
+    },
+    "not-running": {
+      title: "Service offline",
+      message: "Start this service before opening its browser viewer.",
+    },
+    unreachable: {
+      title: "Service unreachable",
+      message: "The browser could not connect to this loopback service.",
+    },
+    unsupported: {
+      title: "Preview unavailable",
+      message: "Hive only embeds loopback HTTP or HTTPS service URLs.",
+    },
+  };
+  const state =
+    availability === "ready" ? content.checking : content[availability];
+
   return (
     <div
       className="flex h-full min-h-[320px] w-full items-center justify-center bg-background px-6 text-center"
-      data-testid="viewer-desktop-only-message"
+      data-testid={`viewer-${availability}-message`}
     >
       <div className="flex max-w-md flex-col gap-3 text-muted-foreground text-sm">
         <p className="font-semibold text-foreground text-sm uppercase tracking-[0.2em]">
-          Hive Desktop required
+          {state.title}
         </p>
-        <p>
-          Browser preview now uses Electron directly. Open this cell in Hive
-          Desktop to inspect services without iframe focus and history quirks.
-        </p>
+        <p>{state.message}</p>
       </div>
     </div>
   );

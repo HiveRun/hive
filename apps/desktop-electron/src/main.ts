@@ -1,14 +1,28 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { app, BrowserWindow, ipcMain } from "electron";
+import { pathToFileURL } from "node:url";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  session,
+  systemPreferences,
+} from "electron";
 import { registerIpcHandlers } from "./ipc";
+import {
+  installMediaPermissionHandlers,
+  type MediaPermissionController,
+} from "./media-permissions";
 import { createDesktopStartupController } from "./startup-controller";
 
 const DEFAULT_WINDOW_WIDTH = 1400;
 const DEFAULT_WINDOW_HEIGHT = 900;
 const moduleDir = import.meta.dirname;
 
-app.commandLine.appendSwitch("disable-gpu");
+if (process.env.HIVE_DISABLE_GPU === "1") {
+  app.commandLine.appendSwitch("disable-gpu");
+}
 
 const resolveWindowIcon = () => {
   const configuredPath = process.env.HIVE_DESKTOP_ICON_PATH;
@@ -47,9 +61,38 @@ const resolveRendererEntry = () => {
   return candidates.find((entry) => existsSync(entry)) ?? null;
 };
 
+const requestViewerMicrophoneAccess = async (origin: string) => {
+  const window =
+    BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  if (!window) {
+    return false;
+  }
+
+  const result = await dialog.showMessageBox(window, {
+    buttons: ["Deny", "Allow microphone"],
+    cancelId: 0,
+    defaultId: 0,
+    detail: `The cell service at ${origin} is requesting access to your microphone.`,
+    message: "Allow microphone access?",
+    noLink: true,
+    title: "Hive Desktop",
+    type: "question",
+  });
+  if (result.response !== 1) {
+    return false;
+  }
+
+  return process.platform !== "darwin"
+    ? true
+    : await systemPreferences.askForMediaAccess("microphone");
+};
+
 type IpcRegistry = ReturnType<typeof registerIpcHandlers>;
 
-const createMainWindow = async (ipcRegistry: IpcRegistry) => {
+const createMainWindow = async (
+  ipcRegistry: IpcRegistry,
+  mediaPermissions: MediaPermissionController
+) => {
   const window = new BrowserWindow({
     width: DEFAULT_WINDOW_WIDTH,
     height: DEFAULT_WINDOW_HEIGHT,
@@ -61,6 +104,32 @@ const createMainWindow = async (ipcRegistry: IpcRegistry) => {
       sandbox: false,
     },
     title: "Hive Desktop",
+  });
+
+  const desktopUrl = process.env.HIVE_DESKTOP_URL;
+  const rendererEntry = desktopUrl ? null : resolveRendererEntry();
+  if (!(desktopUrl || rendererEntry)) {
+    throw new Error(
+      "Unable to resolve renderer entrypoint. Set HIVE_DESKTOP_RENDERER_PATH to apps/web/dist/index.html."
+    );
+  }
+  const rendererUrl = desktopUrl ?? pathToFileURL(rendererEntry as string).href;
+
+  mediaPermissions.registerTrustedRenderer(window.webContents, rendererUrl);
+  const guardNavigation = (
+    event: { preventDefault: () => void },
+    url: string
+  ) => {
+    if (!mediaPermissions.isTrustedRendererUrl(window.webContents, url)) {
+      event.preventDefault();
+    }
+  };
+  window.webContents.on("will-navigate", guardNavigation);
+  window.webContents.on("will-redirect", guardNavigation);
+  window.webContents.on("did-navigate", (_event, url) => {
+    if (!mediaPermissions.activateTrustedRenderer(window.webContents, url)) {
+      ipcRegistry.detachWindow(window);
+    }
   });
 
   ipcRegistry.attachWindow(window);
@@ -76,36 +145,31 @@ const createMainWindow = async (ipcRegistry: IpcRegistry) => {
     ipcRegistry.detachWindow(window);
   });
 
-  const desktopUrl = process.env.HIVE_DESKTOP_URL;
-  if (desktopUrl) {
-    await window.loadURL(desktopUrl);
-    return window;
-  }
-
-  const rendererEntry = resolveRendererEntry();
-  if (!rendererEntry) {
-    throw new Error(
-      "Unable to resolve renderer entrypoint. Set HIVE_DESKTOP_RENDERER_PATH to apps/web/dist/index.html."
-    );
-  }
-
-  await window.loadFile(rendererEntry);
+  await window.loadURL(rendererUrl);
   return window;
 };
 
 const bootstrap = async () => {
   await app.whenReady();
+  const mediaPermissions = installMediaPermissionHandlers(
+    session.defaultSession,
+    { requestViewerMicrophoneAccess }
+  );
   const startupController = createDesktopStartupController();
-  const ipcRegistry = registerIpcHandlers({ ipcMain, startupController });
+  const ipcRegistry = registerIpcHandlers({
+    ipcMain,
+    mediaPermissions,
+    startupController,
+  });
   startupController.start().catch((error) => {
     process.stderr.write(`Desktop startup failed: ${String(error)}\n`);
   });
 
-  await createMainWindow(ipcRegistry);
+  await createMainWindow(ipcRegistry, mediaPermissions);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow(ipcRegistry).catch((error) => {
+      createMainWindow(ipcRegistry, mediaPermissions).catch((error) => {
         process.stderr.write(
           `Failed to create desktop window: ${String(error)}\n`
         );

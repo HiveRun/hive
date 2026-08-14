@@ -21,6 +21,14 @@ type HiveService = {
   status: string;
   port?: number;
   url?: string;
+  ports?: Array<{
+    name: string;
+    port: number;
+    primary: boolean;
+    protocol: "http" | "https" | "tcp";
+    url?: string;
+    portReachable: boolean;
+  }>;
   pid?: number;
   command: string;
   cwd: string;

@@ -1,15 +1,4 @@
-import { type RefObject, useEffect, useMemo, useState } from "react";
-
-type DesktopViewerActions = {
-  activateServiceTab: (serviceId: string) => Promise<DesktopViewerState>;
-  goBack: () => Promise<DesktopViewerState>;
-  goForward: () => Promise<DesktopViewerState>;
-  hide: () => Promise<DesktopViewerState>;
-  navigate: (url: string) => Promise<DesktopViewerState>;
-  openExternal: () => Promise<{ ok: boolean }>;
-  resetActiveTab: () => Promise<DesktopViewerState>;
-  reload: () => Promise<DesktopViewerState>;
-};
+import { type RefObject, useEffect, useState } from "react";
 
 type UseDesktopViewerOptions = {
   activeServiceId: string | null;
@@ -27,12 +16,12 @@ const EMPTY_VIEWER_STATE: DesktopViewerState = {
   url: null,
 };
 
-function getDesktopBridge() {
+function getDesktopViewer() {
   if (typeof window === "undefined") {
     return null;
   }
 
-  return window.hiveDesktop ?? null;
+  return window.hiveDesktop?.viewer ?? null;
 }
 
 function readBounds(element: HTMLElement) {
@@ -54,9 +43,7 @@ export function useDesktopViewer(
   containerRef: RefObject<HTMLElement | null>,
   options: UseDesktopViewerOptions
 ) {
-  const desktop = getDesktopBridge();
-  const viewer = desktop?.viewer;
-  const isSupported = Boolean(viewer);
+  const viewer = getDesktopViewer();
   const [state, setState] = useState<DesktopViewerState>(EMPTY_VIEWER_STATE);
 
   useEffect(() => {
@@ -96,27 +83,38 @@ export function useDesktopViewer(
       return;
     }
 
-    viewer.syncServiceTabs(options.serviceTabs).catch(() => {
-      /* ignore service sync failures during transient updates */
-    });
-  }, [options.serviceTabs, viewer]);
+    let cancelled = false;
+    viewer
+      .syncServiceTabs(options.serviceTabs)
+      .then(() => {
+        if (cancelled) {
+          return;
+        }
+        if (options.enabled && options.activeServiceId) {
+          return viewer.activateServiceTab(options.activeServiceId);
+        }
+        return viewer.hide();
+      })
+      .catch(() => {
+        /* ignore viewer sync failures during transient updates */
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [options.activeServiceId, options.enabled, options.serviceTabs, viewer]);
 
   useEffect(() => {
     if (!viewer) {
       return;
     }
 
-    if (!(options.enabled && options.activeServiceId)) {
-      viewer.hide().catch(() => {
-        /* ignore hide failures during teardown */
+    return () => {
+      viewer.syncServiceTabs([]).catch(() => {
+        /* ignore service release failures during teardown */
       });
-      return;
-    }
-
-    viewer.activateServiceTab(options.activeServiceId).catch(() => {
-      /* ignore activation failures during rapid service churn */
-    });
-  }, [options.activeServiceId, options.enabled, viewer]);
+    };
+  }, [viewer]);
 
   useEffect(() => {
     if (!viewer) {
@@ -128,8 +126,10 @@ export function useDesktopViewer(
       return;
     }
 
+    let hidden = false;
     const hideViewer = () => {
-      viewer.setBounds({ height: 0, width: 0, x: 0, y: 0 }).catch(() => {
+      hidden = true;
+      viewer.hide().catch(() => {
         /* ignore hide failures during teardown */
       });
     };
@@ -139,13 +139,26 @@ export function useDesktopViewer(
       return;
     }
 
+    const activeServiceId = options.activeServiceId;
     let frameHandle = 0;
 
     const sendBounds = () => {
       frameHandle = 0;
-      viewer.setBounds(readBounds(element)).catch(() => {
-        /* ignore transient layout sync failures */
-      });
+      const bounds = readBounds(element);
+      if (bounds.width <= 0 || bounds.height <= 0) {
+        hideViewer();
+        return;
+      }
+
+      const activate = hidden
+        ? viewer.activateServiceTab(activeServiceId)
+        : Promise.resolve();
+      hidden = false;
+      activate
+        .then(() => viewer.setBounds(bounds))
+        .catch(() => {
+          /* ignore transient layout sync failures */
+        });
     };
 
     const scheduleBoundsSync = () => {
@@ -174,27 +187,9 @@ export function useDesktopViewer(
     };
   }, [containerRef, options.activeServiceId, options.enabled, viewer]);
 
-  const actions = useMemo<DesktopViewerActions | null>(() => {
-    if (!viewer) {
-      return null;
-    }
-
-    return {
-      activateServiceTab: (serviceId: string) =>
-        viewer.activateServiceTab(serviceId),
-      goBack: () => viewer.goBack(),
-      goForward: () => viewer.goForward(),
-      hide: () => viewer.hide(),
-      navigate: (url: string) => viewer.navigate(url),
-      openExternal: () => viewer.openExternal(),
-      resetActiveTab: () => viewer.resetActiveTab(),
-      reload: () => viewer.reload(),
-    };
-  }, [viewer]);
-
   return {
-    actions,
-    isSupported,
+    actions: viewer,
+    isSupported: Boolean(viewer),
     state,
   };
 }

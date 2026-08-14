@@ -44,12 +44,19 @@ export const hiveConfigDefaults: HiveConfig = {
             NODE_ENV: "development",
             VITE_API_URL: "http://localhost:$PORT:server",
           },
+          dependsOn: ["server"],
+          readiness: {
+            checks: [{ type: "http", port: "default", path: "/" }],
+          },
           readyTimeoutMs: 3000,
         },
         server: {
           type: "process",
           run: "bun run dev",
           cwd: "./apps/server",
+          readiness: {
+            checks: [{ type: "http", port: "default", path: "/" }],
+          },
           readyTimeoutMs: 5000,
           env: {
             DATABASE_URL: "local.db",

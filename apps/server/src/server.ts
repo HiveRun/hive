@@ -32,8 +32,8 @@ import { cellsRoutes, resumeSpawningCells } from "./routes/cells";
 import { linearRoutes } from "./routes/linear";
 import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
-import { cells } from "./schema/cells";
 import { chatTerminalService } from "./services/chat-terminal";
+import { createPortManager } from "./services/port-manager";
 import { ServiceSupervisorService } from "./services/supervisor";
 import { cellTerminalService } from "./services/terminal";
 import {
@@ -211,6 +211,7 @@ const runMigrations = async (): Promise<void> => {
 
     const migrationsFolder = resolveMigrationsDirectory();
     await migrate(DatabaseService.db, { migrationsFolder });
+    DatabaseService.db.$client.exec("PRAGMA foreign_keys = ON;");
     process.stderr.write("Database migrations applied.\n");
   } catch (error) {
     process.stderr.write(
@@ -224,7 +225,12 @@ const runMigrations = async (): Promise<void> => {
 
 const startOpencodeServer = async (workspaceRoot: string): Promise<void> => {
   const config = await loadOpencodeConfig(workspaceRoot);
-  await startSharedOpencodeServer(config);
+  const portManager = createPortManager({
+    db: DatabaseService.db,
+    now: () => new Date(),
+  });
+  const port = await portManager.findFreePort();
+  await startSharedOpencodeServer(config, { port });
 };
 
 export const cleanupPidFile = () => {
@@ -379,25 +385,6 @@ const resumeProvisioning = async (): Promise<void> => {
   await resumeSpawningCells();
 };
 
-const startAllServices = async (): Promise<void> => {
-  const allCells = await DatabaseService.db.select().from(cells);
-  if (allCells.length === 0) {
-    return;
-  }
-
-  for (const cell of allCells) {
-    try {
-      await ServiceSupervisorService.startCellServices(cell.id);
-    } catch (failure) {
-      process.stderr.write(
-        `Failed to start services for cell ${cell.id}: ${
-          failure instanceof Error ? failure.message : String(failure)
-        }\n`
-      );
-    }
-  }
-};
-
 const resumeAgentSessions = async (): Promise<void> => {
   await resumeAgentSessionsOnStartup();
 };
@@ -447,18 +434,17 @@ const bootstrapServerCore = async (workspaceRoot: string): Promise<void> => {
   await timeStartupStep("shared OpenCode bootstrap", async () => {
     await startOpencodeServer(workspaceRoot);
   });
-  await timeStartupStep("service supervisor bootstrap", bootstrapSupervisor);
 };
 
 const runStartupRecoveryTasks = async (): Promise<void> => {
   const tasks: StartupRecoveryTask[] = [
     {
-      label: "resume cell provisioning",
-      run: resumeProvisioning,
+      label: "service supervisor bootstrap",
+      run: bootstrapSupervisor,
     },
     {
-      label: "start services",
-      run: startAllServices,
+      label: "resume cell provisioning",
+      run: resumeProvisioning,
     },
     {
       label: "resume agent sessions",

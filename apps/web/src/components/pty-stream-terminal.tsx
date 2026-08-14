@@ -81,6 +81,10 @@ export function PtyStreamTerminal({
   const [session, setSession] = useState<RuntimeTerminalSession | null>(null);
   const [setupDisplayState, setSetupDisplayState] =
     useState<SetupDisplayState>("unknown");
+  const shouldResize = useCallback(
+    () => activeSessionRef.current?.status === "running",
+    []
+  );
 
   const buildSocketEndpoint = useCallback(() => {
     const wsPath = streamPath.endsWith("/stream")
@@ -103,7 +107,7 @@ export function PtyStreamTerminal({
     setConnection,
     setErrorMessage,
     setSession,
-    shouldResize: () => activeSessionRef.current?.status === "running",
+    shouldResize,
     socketRef: streamSocketRef,
     terminalRef: xtermRef,
   });

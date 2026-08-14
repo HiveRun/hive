@@ -40,13 +40,34 @@
           "type": "process",
           "run": "bun run dev",
           "cwd": "./apps/server",
+          "ports": {
+            "http": {
+              "primary": true,
+              "protocol": "http",
+              "viewer": true
+            },
+            "metrics": {
+              "protocol": "tcp"
+            }
+          },
           "env": {
             "NODE_ENV": "development",
-            "DATABASE_URL": "./dev.db"
+            "DATABASE_URL": "./dev.db",
+            "METRICS_PORT": "${PORT:api:metrics}"
+          },
+          "readiness": {
+            "checks": [
+              {
+                "type": "http",
+                "port": "http",
+                "path": "/health"
+              }
+            ]
           },
           "readyTimeoutMs": 5000
         }
-      }
+      },
+      "teardown": ["bun run dev:teardown"]
     }
   }
 }

@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   defineHiveConfig,
   hiveConfigSchema,
+  type ProcessService,
+  type Template,
   templateSchema,
 } from "../../config/schema";
 
-// Shared test data
 const SHARED_INPUTS = {
   commonServiceConfig: {
     type: "process" as const,
@@ -19,7 +20,6 @@ const SAMPLE_OPENCODE_CONFIG = {
   defaultModel: "big-pickle",
 } as const;
 
-// Expected output constants
 const EXPECTED = {
   templateType: "manual",
   serviceType: "process",
@@ -37,6 +37,19 @@ const createMinimalConfig = (includeOpencode: boolean) => ({
       type: "manual" as const,
     },
   },
+});
+
+const processService = (
+  overrides: Partial<Omit<ProcessService, "type">> = {}
+): ProcessService => ({ type: "process", run: "bun run dev", ...overrides });
+
+const template = (
+  overrides: Partial<Omit<Template, "id" | "label" | "type">> = {}
+): Template => ({
+  id: "services",
+  label: "Services",
+  type: "manual",
+  ...overrides,
 });
 
 describe("Template Schema", () => {
@@ -67,6 +80,71 @@ describe("Template Schema", () => {
 
     const result = templateSchema.parse(templateWithServices);
     expect(result.services?.api?.type).toBe(EXPECTED.serviceType);
+  });
+
+  it("validates named ports, dependencies, and readiness references", () => {
+    const result = templateSchema.parse(
+      template({
+        services: {
+          api: processService({
+            run: "bun run api",
+            ports: {
+              http: { primary: true },
+              metrics: { protocol: "tcp" },
+            },
+            dependsOn: ["db"],
+            readiness: {
+              checks: [
+                {
+                  type: "http",
+                  port: "http",
+                  path: "/health",
+                },
+                { type: "tcp", port: "metrics" },
+              ],
+              intervalMs: 25,
+            },
+            readyTimeoutMs: 2000,
+          }),
+          db: processService({ run: "bun run db" }),
+        },
+      })
+    );
+
+    expect(result.services?.api).toMatchObject({
+      dependsOn: ["db"],
+      ports: { http: { primary: true }, metrics: { protocol: "tcp" } },
+      readiness: {
+        checks: [
+          { type: "http", port: "http" },
+          { type: "tcp", port: "metrics" },
+        ],
+      },
+    });
+  });
+
+  it("surfaces service graph validation issues", () => {
+    const result = templateSchema.safeParse(
+      template({
+        services: {
+          api: processService({
+            ports: { http: { primary: true } },
+            readiness: { checks: [{ type: "tcp", port: "metrics" }] },
+          }),
+        },
+      })
+    );
+    const invalidName = templateSchema.safeParse(
+      template({ services: { "api.v1": processService() } })
+    );
+
+    expect(result.success).toBe(false);
+    expect(invalidName.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.map((issue) => issue.message).join("\n")
+      ).toContain('readiness references unknown port "metrics"');
+    }
   });
 
   it("should accept agent configuration metadata", () => {

@@ -11,6 +11,14 @@ let setupPromise: Promise<void> | null = null;
 
 export const testDb = drizzle(sqlite, { schema });
 
+export const createDeferred = <T = void>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+};
+
 export async function setupTestDb() {
   if (!setupPromise) {
     setupPromise = (async () => {
@@ -19,6 +27,7 @@ export async function setupTestDb() {
       // Historical migrations still create these tables before the new drop migration removes them.
       sqlite.exec("DROP TABLE IF EXISTS cell_resource_rollups;");
       sqlite.exec("DROP TABLE IF EXISTS cell_resource_history;");
+      sqlite.exec("DROP TABLE IF EXISTS cell_service_ports;");
       sqlite.exec("DROP TABLE IF EXISTS cell_services;");
       sqlite.exec("DROP TABLE IF EXISTS cell_provisioning_state;");
       sqlite.exec("DROP TABLE IF EXISTS cells;");
@@ -28,6 +37,7 @@ export async function setupTestDb() {
       const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
       const migrationsFolder = join(packageRoot, "src", "migrations");
       await migrate(testDb, { migrationsFolder });
+      sqlite.exec("PRAGMA foreign_keys = ON;");
     })();
   }
 

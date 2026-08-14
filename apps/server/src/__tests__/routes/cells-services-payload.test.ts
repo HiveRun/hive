@@ -1,7 +1,7 @@
 import { createServer } from "node:net";
 
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-
+import type { ProcessService } from "../../config/schema";
 import type { ChatTerminalSession } from "../../services/chat-terminal";
 import type { ProcessResourceSnapshot } from "../../services/resource-snapshot";
 import type { ServiceTerminalSession } from "../../services/service-terminal";
@@ -12,7 +12,7 @@ import {
   createCellRouteTestDependencies,
   expectJsonPayload,
   handleRouteRequest,
-  seedRouteCellAndService,
+  seedRouteCellAndServiceWithPorts,
 } from "./cells-route-test-helpers";
 
 const TEST_WORKSPACE_ID = "test-workspace-services";
@@ -132,9 +132,11 @@ async function insertCellAndServiceRecords(
       | "needs_resume"
       | "stopped"
       | "error";
+    definition?: Partial<Omit<ProcessService, "type">>;
+    ports?: Array<{ name: string; port: number; primary?: boolean }>;
   }
 ) {
-  await seedRouteCellAndService({
+  await seedRouteCellAndServiceWithPorts({
     cell: {
       id: TEST_CELL_ID,
       name: "Test Cell Services",
@@ -153,11 +155,12 @@ async function insertCellAndServiceRecords(
       command: "echo test",
       cwd: "/tmp/test-workspace-services-root",
       env: { TEST_VAR: "test" },
-      definitionEnv: {},
+      definition: { env: {}, ...options?.definition },
       status: options?.status ?? "running",
       port: options?.port ?? null,
       pid: options?.pid ?? null,
     },
+    ports: options?.ports ?? [],
   });
 }
 
@@ -289,6 +292,71 @@ describe("GET /api/cells/:id/services payload", () => {
     expect(service.portReachable).toBe(true);
 
     await listener.close();
+  });
+
+  it("returns normalized ports while retaining the primary scalar aliases", async () => {
+    const primaryPort = 43_101;
+    const metricsPort = 43_102;
+    const securePort = 43_103;
+    await insertCellAndServiceRecords("server", {
+      port: primaryPort,
+      definition: {
+        ports: {
+          http: { primary: true, viewer: false },
+          metrics: { protocol: "tcp" },
+          secure: { protocol: "https" },
+        },
+      },
+      ports: [
+        { name: "http", port: primaryPort, primary: true },
+        { name: "metrics", port: metricsPort },
+        { name: "secure", port: securePort },
+      ],
+    });
+
+    const service = await readFirstServicePayload<{
+      port: number;
+      url: string;
+      ports: Array<{
+        name: string;
+        port: number;
+        primary: boolean;
+        protocol: "http" | "https" | "tcp";
+        viewer: boolean;
+        url?: string;
+        portReachable: boolean;
+      }>;
+    }>(app);
+    expect(service.port).toBe(primaryPort);
+    expect(service.url).toContain(String(primaryPort));
+    expect(service.ports).toEqual([
+      {
+        name: "http",
+        port: primaryPort,
+        primary: true,
+        protocol: "http",
+        viewer: false,
+        url: `http://localhost:${primaryPort}`,
+        portReachable: false,
+      },
+      {
+        name: "metrics",
+        port: metricsPort,
+        primary: false,
+        protocol: "tcp",
+        viewer: false,
+        portReachable: false,
+      },
+      {
+        name: "secure",
+        port: securePort,
+        primary: false,
+        protocol: "https",
+        viewer: true,
+        url: `https://localhost:${securePort}`,
+        portReachable: false,
+      },
+    ]);
   });
 
   it("returns resource snapshots when includeResources=true", async () => {

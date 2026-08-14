@@ -1,8 +1,8 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { Cell } from "../schema/cells";
 import { cells } from "../schema/cells";
-import type { CellService } from "../schema/services";
-import { cellServices } from "../schema/services";
+import type { CellService, CellServicePort } from "../schema/services";
+import { cellServicePorts, cellServices } from "../schema/services";
 
 type DbClient = typeof import("../db").db;
 
@@ -104,6 +104,58 @@ export function createServiceRepository(database: DbClient, now: () => Date) {
     return rows.map(mapRow);
   }
 
+  async function fetchPortsForService(
+    serviceId: string
+  ): Promise<CellServicePort[]> {
+    return await database
+      .select()
+      .from(cellServicePorts)
+      .where(eq(cellServicePorts.serviceId, serviceId));
+  }
+
+  async function fetchPortsForServices(
+    serviceIds: string[]
+  ): Promise<CellServicePort[]> {
+    if (serviceIds.length === 0) {
+      return [];
+    }
+    return await database
+      .select()
+      .from(cellServicePorts)
+      .where(inArray(cellServicePorts.serviceId, serviceIds));
+  }
+
+  async function fetchAllPorts(): Promise<CellServicePort[]> {
+    return await database.select().from(cellServicePorts);
+  }
+
+  async function reconcileServicePorts(args: {
+    serviceId: string;
+    primaryPort: number;
+    ports: Array<{ name: string; port: number; primary: boolean }>;
+  }): Promise<void> {
+    const timestamp = now();
+    await database.transaction(async (transaction) => {
+      await transaction
+        .delete(cellServicePorts)
+        .where(eq(cellServicePorts.serviceId, args.serviceId));
+      await transaction.insert(cellServicePorts).values(
+        args.ports.map((port) => ({
+          serviceId: args.serviceId,
+          name: port.name,
+          port: port.port,
+          primary: port.primary,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }))
+      );
+      await transaction
+        .update(cellServices)
+        .set({ port: args.primaryPort, updatedAt: timestamp })
+        .where(eq(cellServices.id, args.serviceId));
+    });
+  }
+
   return {
     findByCellAndName,
     insertService,
@@ -112,6 +164,10 @@ export function createServiceRepository(database: DbClient, now: () => Date) {
     fetchServiceRowById,
     fetchServicesForCell,
     fetchAllServices,
+    fetchPortsForService,
+    fetchPortsForServices,
+    fetchAllPorts,
+    reconcileServicePorts,
   };
 }
 

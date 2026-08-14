@@ -1,4 +1,7 @@
 // @ts-nocheck
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,12 +12,13 @@ import { createCellsRoutes, resumeSpawningCells } from "../../routes/cells";
 import { cellProvisioningStates } from "../../schema/cell-provisioning";
 import { cells } from "../../schema/cells";
 import { cellTimingEvents } from "../../schema/timing-events";
+import { ensureCellEnvironment } from "../../services/cell-environment";
 import type { ServiceSupervisorError } from "../../services/supervisor";
 import {
   CommandExecutionError,
   TemplateSetupError,
 } from "../../services/supervisor";
-import { setupTestDb, testDb } from "../test-db";
+import { createDeferred, setupTestDb, testDb } from "../test-db";
 import {
   createCellRouteTestDependencies,
   createJsonRequest,
@@ -58,6 +62,30 @@ const mockWorktree = () => ({
   branch: "cell-branch",
   baseCommit: "abc123",
 });
+
+const createDeferredWorktree = (onCreated?: () => void) => {
+  let started = false;
+  const deferred = createDeferred();
+  const createWorktree: CreateWorktreeFn = async () => {
+    started = true;
+    await deferred.promise;
+    onCreated?.();
+    return mockWorktree();
+  };
+  return {
+    createWorktree,
+    hasStarted: () => started,
+    release: deferred.resolve,
+  };
+};
+
+const restoreHiveHome = async (
+  originalHiveHome: string | undefined,
+  hiveHome: string
+) => {
+  process.env.HIVE_HOME = originalHiveHome;
+  await rm(hiveHome, { recursive: true, force: true });
+};
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -191,7 +219,15 @@ const hiveConfig: HiveConfig = {
 };
 
 type SendAgentMessageFn = (sessionId: string, content: string) => Promise<void>;
-type EnsureServicesForCellFn = (args: unknown) => Promise<void>;
+type EnsureServicesForCellFn = (args: {
+  onTimingEvent?: (event: {
+    step: string;
+    status: "error" | "ok";
+    durationMs: number;
+    error?: string;
+    metadata?: Record<string, unknown>;
+  }) => void;
+}) => Promise<void>;
 type CreateWorktreeFn = (
   cellId: string,
   options?: {
@@ -228,6 +264,15 @@ type DependencyFactoryOptions = {
     }
   ) => void;
   hiveConfigOverride?: HiveConfig;
+  runCellTeardown?: (args: {
+    reason: "delete" | "provisioning_rollback";
+  }) => Promise<void>;
+  stopServicesForCell?: (
+    cellId: string,
+    options?: { releasePorts?: boolean }
+  ) => Promise<void>;
+  onCreateWorktreeManager?: () => void;
+  onRemoveWorktree?: () => void;
 };
 type AgentSessionOverrides = {
   modelId?: string;
@@ -262,6 +307,7 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
   const removeWorktreeCall = () =>
     Promise.resolve().then(() => {
       removeWorktreeCalls += 1;
+      options.onRemoveWorktree?.();
     });
 
   const sendAgentMessageImpl =
@@ -274,13 +320,16 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
       resolveWorkspaceContext: (async () => ({
         workspace: workspaceRecord,
         loadConfig: loadWorkspaceConfig,
-        createWorktreeManager: async () => ({
-          createWorktree: (
-            cellId: string,
-            createOptions?: Parameters<CreateWorktreeFn>[1]
-          ) => buildWorktree(cellId, createOptions),
-          removeWorktree: (_cellId: string) => removeWorktreeCall(),
-        }),
+        createWorktreeManager: () => {
+          options.onCreateWorktreeManager?.();
+          return Promise.resolve({
+            createWorktree: (
+              cellId: string,
+              createOptions?: Parameters<CreateWorktreeFn>[1]
+            ) => buildWorktree(cellId, createOptions),
+            removeWorktree: (_cellId: string) => removeWorktreeCall(),
+          });
+        },
         createWorktree: (
           cellId: string,
           createOptions?: Parameters<CreateWorktreeFn>[1]
@@ -325,9 +374,12 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
       },
       startServicesForCell: async (_cellId: string) => Promise.resolve(),
       stopServicesForCell: (
-        _cellId: string,
-        _options?: { releasePorts?: boolean }
-      ) => Promise.resolve(),
+        cellId: string,
+        stopOptions?: { releasePorts?: boolean }
+      ) =>
+        options.stopServicesForCell?.(cellId, stopOptions) ?? Promise.resolve(),
+      runCellTeardown: (args: { reason: "delete" | "provisioning_rollback" }) =>
+        options.runCellTeardown?.(args) ?? Promise.resolve(),
       startServiceById: (_serviceId: string) => Promise.resolve(),
       stopServiceById: (
         _serviceId: string,
@@ -559,15 +611,10 @@ describe("POST /api/cells", () => {
   });
 
   it("continues provisioning when the initial prompt is slow", async () => {
-    let releasePrompt = () => {
-      // replaced once deferred prompt is created
-    };
-    const sendAgentMessage = vi.fn<SendAgentMessageFn>().mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          releasePrompt = resolve;
-        })
-    );
+    const prompt = createDeferred();
+    const sendAgentMessage = vi
+      .fn<SendAgentMessageFn>()
+      .mockImplementation(() => prompt.promise);
 
     const app = createTestApp({ sendAgentMessage });
 
@@ -588,7 +635,7 @@ describe("POST /api/cells", () => {
     expect(markReadyStep.status).toBe("ok");
     expect(sendAgentMessage).toHaveBeenCalledTimes(1);
 
-    releasePrompt();
+    prompt.resolve();
   });
 
   it("passes selected model overrides to agent provisioning", async () => {
@@ -763,9 +810,7 @@ describe("POST /api/cells", () => {
   });
 
   it("persists create_worktree timing sub-steps while provisioning is still running", async () => {
-    let releaseWorktree = () => {
-      // replaced when deferred worktree promise is created
-    };
+    const worktree = createDeferred();
 
     const createWorktree: CreateWorktreeFn = async (_cellId, createOptions) => {
       createOptions?.onTimingEvent?.({
@@ -773,9 +818,7 @@ describe("POST /api/cells", () => {
         durationMs: 0,
       });
 
-      await new Promise<void>((resolve) => {
-        releaseWorktree = resolve;
-      });
+      await worktree.promise;
 
       createOptions?.onTimingEvent?.({
         step: "include_copy_glob_match",
@@ -807,7 +850,7 @@ describe("POST /api/cells", () => {
       )
     ).toBe(false);
 
-    releaseWorktree();
+    worktree.resolve();
 
     await waitForTimingStep(
       payload.id,
@@ -816,43 +859,185 @@ describe("POST /api/cells", () => {
     await waitForCellStatus(payload.id, "ready");
   });
 
-  it("cancels provisioning when the cell enters deleting state", async () => {
-    let releaseWorktree = () => {
-      // replaced below once deferred promise is created
-    };
-    const createWorktree: CreateWorktreeFn = async () => {
-      await new Promise<void>((resolve) => {
-        releaseWorktree = resolve;
+  it("persists ensure_services timing sub-steps while provisioning is still running", async () => {
+    const services = createDeferred();
+    const ensureServicesForCell: EnsureServicesForCellFn = async (args) => {
+      args.onTimingEvent?.({
+        step: "setup_command_1",
+        status: "ok",
+        durationMs: 15,
       });
-
-      return mockWorktree();
+      await services.promise;
     };
-    const ensureServicesForCell = vi.fn(async () => Promise.resolve());
-
-    const app = createTestApp({
-      createWorktree,
-      ensureServicesForCell,
-    });
+    const app = createTestApp({ ensureServicesForCell });
 
     const payload = await createCellAndExpectSpawning({
       app,
-      body: defaultCreateBody("Cancel During Delete"),
+      body: defaultCreateBody("Streaming Service Timing"),
     });
 
-    const deleteResponse = await deleteCellById(app, payload.id);
-    expect(deleteResponse.status).toBe(OK_STATUS);
+    await waitForTimingStep(payload.id, "ensure_services:setup_command_1");
+    const spawningCell = await testDb.query.cells.findFirst({
+      where: eq(cells.id, payload.id),
+    });
+    expect(spawningCell?.status).toBe("spawning");
 
-    releaseWorktree();
+    services.resolve();
 
-    await waitForCondition(async () => {
-      const rows = await testDb
-        .select({ id: cells.id })
-        .from(cells)
+    await waitForCellStatus(payload.id, "ready");
+  });
+
+  it("waits for late worktree creation and removes the created worktree", async () => {
+    const originalHiveHome = process.env.HIVE_HOME;
+    const hiveHome = await mkdtemp(join(tmpdir(), "hive-rollback-runtime-"));
+    process.env.HIVE_HOME = hiveHome;
+    let worktreeExists = false;
+    let worktreeManagerCalls = 0;
+    const deferredWorktree = createDeferredWorktree(() => {
+      worktreeExists = true;
+    });
+    const ensureServicesForCell = vi.fn(async () => Promise.resolve());
+    const runCellTeardown = vi.fn(async () => Promise.resolve());
+
+    try {
+      const app = createTestApp({
+        createWorktree: deferredWorktree.createWorktree,
+        ensureServicesForCell,
+        runCellTeardown,
+        onCreateWorktreeManager: () => {
+          worktreeManagerCalls += 1;
+        },
+        onRemoveWorktree: () => {
+          worktreeExists = false;
+        },
+      });
+
+      const payload = await createCellAndExpectSpawning({
+        app,
+        body: defaultCreateBody("Cancel During Delete"),
+      });
+
+      await waitForCondition(deferredWorktree.hasStarted);
+      const deleteResponsePromise = deleteCellById(app, payload.id);
+      await waitForCondition(() => worktreeManagerCalls === 2);
+      expect(removeWorktreeCalls).toBe(0);
+
+      deferredWorktree.release();
+      const deleteResponse = await deleteResponsePromise;
+      expect(deleteResponse.status).toBe(OK_STATUS);
+
+      await waitForCondition(async () => {
+        const rows = await testDb
+          .select({ id: cells.id })
+          .from(cells)
+          .where(eq(cells.id, payload.id));
+        return rows.length === 0;
+      });
+
+      expect(ensureServicesForCell).not.toHaveBeenCalled();
+      expect(removeWorktreeCalls).toBe(1);
+      expect(worktreeExists).toBe(false);
+      await waitForCondition(() => runCellTeardown.mock.calls.length === 1);
+      expect(runCellTeardown.mock.calls.map(([args]) => args.reason)).toEqual([
+        "delete",
+      ]);
+      await sleep(WAIT_INTERVAL_MS * 2);
+      expect(runCellTeardown).toHaveBeenCalledOnce();
+    } finally {
+      await restoreHiveHome(originalHiveHome, hiveHome);
+    }
+  });
+
+  it("does not run rollback teardown when service stopping fails", async () => {
+    const deferredWorktree = createDeferredWorktree();
+    const stopServicesForCell = vi.fn(() =>
+      Promise.reject(new Error("service stop failed"))
+    );
+    const runCellTeardown = vi.fn(() => Promise.resolve());
+    const app = createTestApp({
+      createWorktree: deferredWorktree.createWorktree,
+      stopServicesForCell,
+      runCellTeardown,
+    });
+    const payload = await createCellAndExpectSpawning({
+      app,
+      body: defaultCreateBody("Rollback stop failure"),
+    });
+
+    await waitForCondition(deferredWorktree.hasStarted);
+    await testDb
+      .update(cells)
+      .set({ status: "deleting" })
+      .where(eq(cells.id, payload.id));
+    deferredWorktree.release();
+
+    await waitForCondition(() => stopServicesForCell.mock.calls.length === 1);
+    await waitForCellStatus(payload.id, "error");
+    expect(runCellTeardown).not.toHaveBeenCalled();
+    expect(removeWorktreeCalls).toBe(0);
+    const [retained] = await testDb
+      .select()
+      .from(cells)
+      .where(eq(cells.id, payload.id));
+    expect(retained?.lastSetupError).toContain("service stop failed");
+  });
+
+  it("removes runtime but preserves artifacts and worktree when rollback teardown fails", async () => {
+    const originalHiveHome = process.env.HIVE_HOME;
+    const hiveHome = await mkdtemp(join(tmpdir(), "hive-rollback-failure-"));
+    process.env.HIVE_HOME = hiveHome;
+    const deferredWorktree = createDeferredWorktree();
+    let rollbackEnvironment: ReturnType<typeof ensureCellEnvironment> | null =
+      null;
+    const runCellTeardown = vi.fn(async (args: { reason: string }) => {
+      if (args.reason === "provisioning_rollback") {
+        rollbackEnvironment = ensureCellEnvironment(payload.id, workspacePath);
+        await writeFile(
+          join(rollbackEnvironment.HIVE_CELL_RUNTIME_DIR, "rollback.txt"),
+          "runtime"
+        );
+        await writeFile(
+          join(rollbackEnvironment.HIVE_CELL_ARTIFACTS_DIR, "artifact.txt"),
+          "artifact"
+        );
+        throw new Error("rollback cleanup failed");
+      }
+    });
+    let payload: Awaited<ReturnType<typeof createCellAndExpectSpawning>>;
+
+    try {
+      const app = createTestApp({
+        createWorktree: deferredWorktree.createWorktree,
+        runCellTeardown,
+      });
+      payload = await createCellAndExpectSpawning({
+        app,
+        body: defaultCreateBody("Rollback teardown failure"),
+      });
+
+      await waitForCondition(deferredWorktree.hasStarted);
+      await testDb
+        .update(cells)
+        .set({ status: "deleting" })
         .where(eq(cells.id, payload.id));
-      return rows.length === 0;
-    });
+      deferredWorktree.release();
 
-    expect(ensureServicesForCell).not.toHaveBeenCalled();
+      await waitForCondition(() => runCellTeardown.mock.calls.length === 1);
+      await waitForCellStatus(payload.id, "error");
+      expect(runCellTeardown).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: "provisioning_rollback" })
+      );
+      expect(removeWorktreeCalls).toBe(0);
+      await expect(
+        access(rollbackEnvironment?.HIVE_CELL_RUNTIME_DIR ?? "")
+      ).rejects.toThrow();
+      await access(rollbackEnvironment?.HIVE_CELL_ARTIFACTS_DIR ?? "");
+      expect(
+        await testDb.select().from(cells).where(eq(cells.id, payload.id))
+      ).toHaveLength(1);
+    } finally {
+      await restoreHiveHome(originalHiveHome, hiveHome);
+    }
   });
 });
 
@@ -955,13 +1140,9 @@ describe("POST /api/cells/:id/setup/retry", () => {
   });
 
   it("returns 409 when a retry is already in progress", async () => {
-    let releaseEnsureServices = () => {
-      // replaced below once the deferred promise is created
-    };
+    const ensureServices = createDeferred();
     const ensureServicesForCell = vi.fn(async () => {
-      await new Promise<void>((resolve) => {
-        releaseEnsureServices = resolve;
-      });
+      await ensureServices.promise;
     });
 
     const app = createTestApp({ ensureServicesForCell });
@@ -987,7 +1168,7 @@ describe("POST /api/cells/:id/setup/retry", () => {
       message: "Provisioning retry already in progress",
     });
 
-    releaseEnsureServices();
+    ensureServices.resolve();
 
     const firstRetryResponse = await firstRetryPromise;
     expect(firstRetryResponse.status).toBe(OK_STATUS);
