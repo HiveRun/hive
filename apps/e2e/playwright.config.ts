@@ -3,12 +3,17 @@ import { join } from "node:path";
 import { defineConfig } from "@playwright/test";
 
 const isHeaded = process.env.HIVE_E2E_HEADED === "1";
+const isAndroidE2e = process.env.HIVE_E2E_ANDROID === "1";
 const baseURL = process.env.HIVE_E2E_BASE_URL ?? "http://127.0.0.1:3001";
 const artifactsDir =
   process.env.HIVE_E2E_ARTIFACTS_DIR ??
   join(process.cwd(), "reports", "latest");
 const FAST_WORKER_MIN = 2;
 const FAST_WORKER_MAX = 4;
+const DEFAULT_TEST_TIMEOUT_MS = 180_000;
+const ANDROID_TEST_TIMEOUT_MS = 1_200_000;
+const DEFAULT_VIEWPORT = { width: 1600, height: 900 };
+const ANDROID_VIEWPORT = { width: 1280, height: 720 };
 const workers = resolveWorkerCount({
   configuredValue: process.env.HIVE_E2E_WORKERS,
   isCi: Boolean(process.env.CI),
@@ -17,13 +22,14 @@ const videoMode = resolveVideoMode(process.env.HIVE_E2E_VIDEO_MODE);
 
 export default defineConfig({
   testDir: "./specs",
-  testMatch: ["**/*.e2e.ts"],
-  timeout: 180_000,
+  testMatch: isAndroidE2e ? ["**/*.android.e2e.ts"] : ["**/*.e2e.ts"],
+  testIgnore: isAndroidE2e ? [] : ["**/*.android.e2e.ts"],
+  timeout: isAndroidE2e ? ANDROID_TEST_TIMEOUT_MS : DEFAULT_TEST_TIMEOUT_MS,
   expect: {
     timeout: 30_000,
   },
   fullyParallel: false,
-  workers,
+  workers: isAndroidE2e ? 1 : workers,
   reporter: [
     ["list"],
     [
@@ -39,13 +45,23 @@ export default defineConfig({
     actionTimeout: 15_000,
     baseURL,
     headless: !isHeaded,
+    launchOptions: isAndroidE2e
+      ? {
+          args: [
+            "--use-fake-ui-for-media-stream",
+            "--use-fake-device-for-media-stream",
+            `--use-file-for-fake-audio-capture=${process.env.HIVE_E2E_BROWSER_SPEECH_PATH}`,
+          ],
+        }
+      : undefined,
+    permissions: isAndroidE2e ? ["microphone"] : [],
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
     video: {
       mode: videoMode,
-      size: { width: 1600, height: 900 },
+      size: isAndroidE2e ? ANDROID_VIEWPORT : DEFAULT_VIEWPORT,
     },
-    viewport: { width: 1600, height: 900 },
+    viewport: isAndroidE2e ? ANDROID_VIEWPORT : DEFAULT_VIEWPORT,
   },
   projects: [
     {

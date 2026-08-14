@@ -1,4 +1,5 @@
 const DEFAULT_API_BASE = "http://localhost:3000";
+const SAME_ORIGIN_API_BASE = "same-origin";
 
 const resolveApiBase = () => {
   const envUrl = import.meta.env.VITE_API_URL?.trim();
@@ -8,6 +9,10 @@ const resolveApiBase = () => {
 
   if (desktopApiUrl && desktopApiUrl !== "undefined") {
     return desktopApiUrl;
+  }
+
+  if (envUrl === SAME_ORIGIN_API_BASE && typeof window !== "undefined") {
+    return "hiveDesktop" in window ? DEFAULT_API_BASE : window.location.origin;
   }
 
   if (envUrl && envUrl !== "undefined") {

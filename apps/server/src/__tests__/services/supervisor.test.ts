@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +16,10 @@ import type {
   SpawnProcess,
   SpawnProcessOptions,
 } from "../../services/supervisor";
-import { createServiceSupervisor } from "../../services/supervisor";
+import {
+  createServiceSupervisor,
+  SERVICE_STOP_GRACE_PERIOD_MS,
+} from "../../services/supervisor";
 import { createDeferred, setupTestDb, testDb } from "../test-db";
 
 const silentLogger = {
@@ -37,6 +40,8 @@ const REUSED_SERVICE_PID = 4343;
 const READINESS_SUCCESS_TIMEOUT_MS = 500;
 const PERSISTED_MONITOR_SETTLE_MS = 150;
 const SERVICE_STATUS_POLL_INTERVAL_MS = 5;
+const EXPECTED_SERVICE_STOP_GRACE_PERIOD_MS = 15_000;
+const HIVE_CLI_SOURCE_PATH_PATTERN = /packages\/cli\/src\/index\.ts$/;
 const bracedPortReference = (suffix = "") => ["$", `{PORT${suffix}}`].join("");
 const originalHiveHome = process.env.HIVE_HOME;
 
@@ -75,7 +80,18 @@ describe("service supervisor", () => {
       templateId: "template-web",
       start: true,
       template: {
-        services: { web: serviceDefinition({ env: { NODE_ENV: "test" } }) },
+        env: { HIVE_CLI_BIN: "/workspace/hive" },
+        services: {
+          web: serviceDefinition({
+            audio: { input: true, output: false },
+            env: {
+              HIVE_CLI_BIN: "/service/hive",
+              HIVE_SERVICE_AUDIO_INPUT: "0",
+              HIVE_SERVICE_AUDIO_OUTPUT: "1",
+              NODE_ENV: "test",
+            },
+          }),
+        },
       },
     });
 
@@ -86,7 +102,10 @@ describe("service supervisor", () => {
     expect(call.options.env.WEB_PORT).toBeDefined();
     expect(call.options.env.PORT).toBe(call.options.env.WEB_PORT);
     expect(call.options.env.HIVE_CELL_ID).toBe(cell.id);
+    expect(call.options.env.HIVE_CLI_BIN).toMatch(HIVE_CLI_SOURCE_PATH_PATTERN);
     expect(call.options.env.HIVE_BROWSE_ROOT).toBe(workspace);
+    expect(call.options.env.HIVE_SERVICE_AUDIO_INPUT).toBe("1");
+    expect(call.options.env.HIVE_SERVICE_AUDIO_OUTPUT).toBe("0");
     expect(call.options.env.HIVE_HOME).toBe(join(workspace, ".hive", "home"));
     expect(call.options.env.HIVE_CELL_RUNTIME_DIR).toContain(
       `/runtime/cells/${cell.id}`
@@ -98,6 +117,19 @@ describe("service supervisor", () => {
     const [service] = await testDb.select().from(cellServices);
     expect(service?.status).toBe("running");
     expect(typeof service?.port).toBe("number");
+
+    await stopCellHarness(harness, cell.id);
+  });
+
+  it("defaults service audio input off and output on", async () => {
+    const { cell, harness } = await createScenario({
+      templateId: "template-audio-defaults",
+      start: true,
+    });
+
+    const call = firstProcess(harness, "Expected process to be recorded");
+    expect(call.options.env.HIVE_SERVICE_AUDIO_INPUT).toBe("0");
+    expect(call.options.env.HIVE_SERVICE_AUDIO_OUTPUT).toBe("1");
 
     await stopCellHarness(harness, cell.id);
   });
@@ -973,6 +1005,7 @@ describe("service supervisor", () => {
           readProcessEnvironment: async () => ({
             HIVE_SERVICE_INSTANCE_ID: "owned-instance",
           }),
+          stopTimeoutMs: 5,
         });
         await harness.supervisor.stopCellService("svc-stop-group");
       }
@@ -1034,17 +1067,36 @@ describe("service supervisor", () => {
     expect(service?.pid).toBe(pid);
   });
 
-  it("kills a surviving process group after the PTY leader exits", async () => {
+  it.each([
+    {
+      cleanupDelayMs: null,
+      expectedSignals: ["SIGTERM", "SIGKILL"],
+      label: "kills a surviving process group",
+      stopTimeoutMs: 5,
+    },
+    {
+      cleanupDelayMs: 10,
+      expectedSignals: ["SIGTERM"],
+      label: "lets descendants finish cleanup",
+      stopTimeoutMs: 100,
+    },
+  ])("$label after the PTY leader exits", async (scenario) => {
     let groupAlive = true;
     const signals: Array<number | string | undefined> = [];
     const { cell, harness } = await createScenario({
-      templateId: "template-active-group",
+      templateId: `template-process-group-${scenario.stopTimeoutMs}`,
       start: true,
       harnessOptions: {
+        stopTimeoutMs: scenario.stopTimeoutMs,
         processKill: (signal, exit) => {
           signals.push(signal);
           if (signal === "SIGTERM") {
             exit(0);
+            if (scenario.cleanupDelayMs !== null) {
+              setTimeout(() => {
+                groupAlive = false;
+              }, scenario.cleanupDelayMs);
+            }
           } else if (signal === "SIGKILL") {
             groupAlive = false;
           }
@@ -1068,8 +1120,31 @@ describe("service supervisor", () => {
       () => harness.supervisor.stopCellService(service.id)
     );
 
-    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(signals).toEqual(scenario.expectedSignals);
     expect(groupAlive).toBe(false);
+  });
+
+  it("defaults to a 15-second graceful stop before escalation", async () => {
+    const signals: Array<number | string | undefined> = [];
+    const { cell, harness } = await createScenario({
+      templateId: "template-graceful-stop-deadline",
+      start: true,
+      harnessOptions: {
+        stopTimeoutMs: 5,
+        processKill: (signal, exit) => {
+          signals.push(signal);
+          if (signal === "SIGKILL") {
+            exit(1);
+          }
+        },
+      },
+    });
+
+    expect(SERVICE_STOP_GRACE_PERIOD_MS).toBe(
+      EXPECTED_SERVICE_STOP_GRACE_PERIOD_MS
+    );
+    await harness.supervisor.stopCellServices(cell.id);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
   });
 
   it("restarts a stopped service even when its previous port is occupied", async () => {
@@ -1452,6 +1527,113 @@ describe("service supervisor", () => {
     );
   });
 
+  async function runTeardownScenario(args: {
+    templateId: string;
+    command: string;
+    directory: string;
+    baseCommit?: string;
+    prepare?: (workspacePath: string) => Promise<void>;
+  }): Promise<boolean> {
+    const { workspace, cell, harness, template } = await createScenario({
+      templateId: args.templateId,
+      template: { teardown: [args.command] },
+      cell: args.baseCommit ? { baseCommit: args.baseCommit } : undefined,
+    });
+    cell.workspacePath = join(workspace, args.directory);
+    await args.prepare?.(cell.workspacePath);
+
+    await harness.supervisor.runCellTeardown({
+      cell,
+      template,
+      reason: "delete",
+    });
+
+    return harness.processes.some(
+      (process) => process.options.command === args.command
+    );
+  }
+
+  it("skips teardown when the cell workspace has only runtime artifacts", async () => {
+    expect(
+      await runTeardownScenario({
+        templateId: "template-teardown-runtime-only",
+        command: "cleanup-never",
+        directory: "runtime-only-workspace",
+        prepare: async (workspacePath) => {
+          await mkdir(join(workspacePath, ".hive"), { recursive: true });
+        },
+      })
+    ).toBe(false);
+  });
+
+  it("skips teardown when the cell workspace is already missing", async () => {
+    expect(
+      await runTeardownScenario({
+        templateId: "template-teardown-missing-workspace",
+        command: "cleanup-never",
+        directory: "missing-cell-workspace",
+      })
+    ).toBe(false);
+  });
+
+  it("skips teardown when an incomplete workspace has only git metadata", async () => {
+    expect(
+      await runTeardownScenario({
+        templateId: "template-teardown-git-metadata-only",
+        command: "cleanup-never",
+        directory: "git-metadata-only",
+        prepare: async (workspacePath) => {
+          await mkdir(workspacePath);
+          await writeFile(join(workspacePath, ".git"), "gitdir: missing");
+        },
+      })
+    ).toBe(false);
+  });
+
+  it("runs teardown for a provisioned empty workspace", async () => {
+    expect(
+      await runTeardownScenario({
+        templateId: "template-teardown-empty-workspace",
+        command: "cleanup-empty-workspace",
+        directory: "empty-workspace",
+        baseCommit: "base-commit",
+        prepare: async (workspacePath) => {
+          await mkdir(workspacePath);
+          await writeFile(join(workspacePath, ".git"), "gitdir: valid");
+        },
+      })
+    ).toBe(true);
+  });
+
+  it("runs teardown for a nonempty workspace without git metadata", async () => {
+    expect(
+      await runTeardownScenario({
+        templateId: "template-teardown-without-git",
+        command: "cleanup-without-git",
+        directory: "workspace-without-git",
+        prepare: async (workspacePath) => {
+          await mkdir(workspacePath);
+          await writeFile(join(workspacePath, "package.json"), "{}");
+        },
+      })
+    ).toBe(true);
+  });
+
+  it("treats intentional OpenCode plugins as workspace source", async () => {
+    expect(
+      await runTeardownScenario({
+        templateId: "template-teardown-opencode-plugin",
+        command: "cleanup-opencode-plugin",
+        directory: "workspace-with-opencode-plugin",
+        prepare: async (workspacePath) => {
+          await mkdir(join(workspacePath, ".opencode", "plugin"), {
+            recursive: true,
+          });
+        },
+      })
+    ).toBe(true);
+  });
+
   it("resumes teardown after the last completed command", async () => {
     let cleanupTwoRuns = 0;
     const { cell, harness, template } = await createScenario({
@@ -1556,6 +1738,213 @@ describe("service supervisor", () => {
     );
     await harness.supervisor.stopCellServices(cell.id);
     expect(harness.runCommandCalls).toEqual(["stop-web", "stop-db"]);
+  });
+
+  it("starts independent services concurrently and preserves rollback order", async () => {
+    const { cell, harness, template } = await createScenario({
+      templateId: "template-dependency-waves",
+      template: {
+        services: {
+          db: serviceDefinition({
+            run: "start-db",
+            setup: ["prepare-db"],
+            stop: "stop-db",
+          }),
+          worker: serviceDefinition({
+            run: "start-worker",
+            setup: ["prepare-worker"],
+            stop: "stop-worker",
+          }),
+          app: serviceDefinition({
+            run: "start-app",
+            setup: ["prepare-app"],
+            dependsOn: ["db", "worker"],
+          }),
+        },
+      },
+    });
+
+    const starting = harness.supervisor.ensureCellServices({ cell, template });
+    const [dbSetup, workerSetup] = await Promise.all([
+      waitForSpawnedCommand(harness, "prepare-db"),
+      waitForSpawnedCommand(harness, "prepare-worker"),
+    ]);
+    expect(harness.processes.map((process) => process.options.command)).toEqual(
+      ["prepare-db", "prepare-worker"]
+    );
+
+    dbSetup.exit(0);
+    workerSetup.exit(0);
+    const appSetup = await waitForSpawnedCommand(harness, "prepare-app");
+    expect(
+      harness.processes.some(
+        (process) => process.options.command === "start-db"
+      )
+    ).toBe(true);
+    expect(
+      harness.processes.some(
+        (process) => process.options.command === "start-worker"
+      )
+    ).toBe(true);
+    appSetup.exit(1);
+
+    await expect(starting).rejects.toThrow('Command "prepare-app" failed');
+    await harness.supervisor.stopCellServices(cell.id);
+    expect(harness.runCommandCalls).toEqual(["stop-worker", "stop-db"]);
+  });
+
+  it("cancels sibling readiness when a concurrent service fails", async () => {
+    const { cell, harness, template } = await createScenario({
+      templateId: "template-failed-service-wave",
+      template: {
+        services: {
+          failing: serviceDefinition({
+            run: "run-failing",
+            setup: ["prepare-failing"],
+          }),
+          waiting: tcpReadinessService({
+            run: "run-waiting",
+            readyTimeoutMs: 30_000,
+            stop: "stop-waiting",
+          }),
+        },
+      },
+    });
+
+    const starting = harness.supervisor.ensureCellServices({ cell, template });
+    const [failingSetup, waitingProcess] = await Promise.all([
+      waitForSpawnedCommand(harness, "prepare-failing"),
+      waitForSpawnedCommand(harness, "run-waiting"),
+    ]);
+
+    failingSetup.exit(1);
+
+    await expect(starting).rejects.toThrow('Command "prepare-failing" failed');
+    await expect(waitingProcess.handle.exited).resolves.toBe(0);
+    expect(harness.runCommandCalls).toContain("stop-waiting");
+    await waitForNamedServiceStatus(cell.id, "waiting", "stopped");
+  });
+
+  it("stops a sibling that reached running before its wave failed", async () => {
+    const { cell, failingSetup, fastProcess, harness, starting } =
+      await startRunningSiblingFailureScenario({
+        templateId: "template-running-sibling-rollback",
+      });
+    failingSetup.exit(1);
+
+    await expect(starting).rejects.toThrow('Command "prepare-failing" failed');
+    await expect(fastProcess.handle.exited).resolves.toBe(0);
+    expect(harness.runCommandCalls).toContain("stop-fast");
+    await waitForNamedServiceStatus(cell.id, "fast", "stopped");
+  });
+
+  it("surfaces a running sibling rollback failure with the wave failure", async () => {
+    const { cell, failingSetup, fastProcess, starting } =
+      await startRunningSiblingFailureScenario({
+        harnessOptions: {
+          runCommand: (command) =>
+            command === "stop-fast"
+              ? Promise.reject(new Error("stop-fast failed"))
+              : Promise.resolve(),
+        },
+        templateId: "template-running-sibling-rollback-error",
+      });
+    failingSetup.exit(1);
+
+    await expect(starting).rejects.toThrow(
+      'Service start wave failed: Command "prepare-failing" failed'
+    );
+    await expect(starting).rejects.toThrow(
+      'sibling rollback failed: Service "fast" stop command failed: stop-fast failed'
+    );
+    await expect(fastProcess.handle.exited).resolves.toBe(0);
+    await waitForNamedServiceStatus(cell.id, "fast", "stopped");
+  });
+
+  it("runs rollback teardown after a completed sibling exits", async () => {
+    const { cell, failingSetup, fastProcess, harness, starting } =
+      await startRunningSiblingFailureScenario({
+        templateId: "template-exited-sibling-rollback",
+      });
+    fastProcess.exit(0);
+    await waitForNamedServiceStatus(cell.id, "fast", "stopped");
+    failingSetup.exit(1);
+
+    await expect(starting).rejects.toThrow('Command "prepare-failing" failed');
+    expect(harness.runCommandCalls).toContain("stop-fast");
+  });
+
+  it("runs teardown once when targeted stop cancels readiness", async () => {
+    const { cell, harness, template } = await createScenario({
+      templateId: "template-targeted-stop-during-readiness",
+      template: {
+        services: {
+          waiting: tcpReadinessService({
+            run: "run-waiting",
+            readyTimeoutMs: 30_000,
+            stop: "stop-waiting",
+          }),
+        },
+      },
+    });
+    const starting = harness.supervisor.ensureCellServices({ cell, template });
+    const waitingProcess = await waitForSpawnedCommand(harness, "run-waiting");
+    const service = await getOnlyService(cell.id);
+    const stopping = harness.supervisor.stopCellService(service.id);
+
+    await expect(starting).rejects.toThrow(
+      'Service "waiting" exited with code 0 before becoming ready'
+    );
+    await stopping;
+    await expect(waitingProcess.handle.exited).resolves.toBe(0);
+    expect(
+      harness.runCommandCalls.filter((command) => command === "stop-waiting")
+    ).toHaveLength(1);
+    await waitForNamedServiceStatus(cell.id, "waiting", "stopped");
+  });
+
+  it("rolls back other siblings during a concurrent targeted stop", async () => {
+    const { cell, harness, template } = await createScenario({
+      templateId: "template-targeted-stop-during-rollback",
+      template: {
+        services: {
+          first: serviceDefinition({ run: "run-first", stop: "stop-first" }),
+          second: serviceDefinition({
+            run: "run-second",
+            stop: "stop-second",
+          }),
+          failing: failingWaveServiceDefinition(),
+        },
+      },
+    });
+    const starting = harness.supervisor.ensureCellServices({ cell, template });
+    const [, , failingSetup] = await Promise.all([
+      waitForSpawnedCommand(harness, "run-first"),
+      waitForSpawnedCommand(harness, "run-second"),
+      waitForSpawnedCommand(harness, "prepare-failing"),
+    ]);
+    await waitForNamedServiceStatus(cell.id, "first", "running");
+    await waitForNamedServiceStatus(cell.id, "second", "running");
+    const services = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cell.id));
+    const first = services.find((service) => service.name === "first");
+    if (!first) {
+      throw new Error("Expected first service");
+    }
+    const stoppingFirst = harness.supervisor.stopCellService(first.id);
+    failingSetup.exit(1);
+
+    await expect(starting).rejects.toThrow('Command "prepare-failing" failed');
+    await stoppingFirst;
+    expect(
+      harness.runCommandCalls.filter((command) => command === "stop-first")
+    ).toHaveLength(1);
+    expect(
+      harness.runCommandCalls.filter((command) => command === "stop-second")
+    ).toHaveLength(1);
+    await waitForNamedServiceStatus(cell.id, "second", "stopped");
   });
 
   it("starts the dependency closure when a single service is started", async () => {
@@ -1892,17 +2281,85 @@ describe("service supervisor", () => {
     serviceId: string,
     status: typeof cellServices.$inferSelect.status
   ): Promise<void> {
+    await waitForServiceCondition(
+      () => getOnlyServiceById(serviceId).then((service) => service.status),
+      status,
+      serviceId
+    );
+  }
+
+  async function waitForNamedServiceStatus(
+    cellId: string,
+    serviceName: string,
+    status: typeof cellServices.$inferSelect.status
+  ): Promise<void> {
+    await waitForServiceCondition(
+      () =>
+        testDb
+          .select()
+          .from(cellServices)
+          .where(eq(cellServices.cellId, cellId))
+          .then(
+            (services) =>
+              services.find(
+                (service) =>
+                  service.name === serviceName && service.status === status
+              )?.status
+          ),
+      status,
+      serviceName
+    );
+  }
+
+  async function waitForServiceCondition(
+    readStatus: () => Promise<string | undefined>,
+    status: string,
+    serviceLabel: string
+  ) {
     const deadline = Date.now() + READINESS_SUCCESS_TIMEOUT_MS;
-    while ((await getOnlyServiceById(serviceId)).status !== status) {
+    while ((await readStatus()) !== status) {
       if (Date.now() >= deadline) {
         throw new Error(
-          `Timed out waiting for service ${serviceId} to ${status}`
+          `Timed out waiting for service ${serviceLabel} to ${status}`
         );
       }
       await new Promise((resolve) =>
         setTimeout(resolve, SERVICE_STATUS_POLL_INTERVAL_MS)
       );
     }
+  }
+
+  async function startRunningSiblingFailureScenario(options: {
+    harnessOptions?: Parameters<typeof createHarness>[0];
+    templateId: string;
+  }) {
+    const scenario = await createScenario({
+      templateId: options.templateId,
+      harnessOptions: options.harnessOptions,
+      template: {
+        services: {
+          fast: serviceDefinition({ run: "run-fast", stop: "stop-fast" }),
+          failing: failingWaveServiceDefinition(),
+        },
+      },
+    });
+    const starting = scenario.harness.supervisor.ensureCellServices({
+      cell: scenario.cell,
+      template: scenario.template,
+    });
+    const [fastProcess, failingSetup] = await Promise.all([
+      waitForSpawnedCommand(scenario.harness, "run-fast"),
+      waitForSpawnedCommand(scenario.harness, "prepare-failing"),
+    ]);
+    await waitForNamedServiceStatus(scenario.cell.id, "fast", "running");
+    return { ...scenario, failingSetup, fastProcess, starting };
+  }
+
+  function failingWaveServiceDefinition() {
+    return serviceDefinition({
+      run: "run-failing",
+      setup: ["prepare-failing"],
+    });
   }
 
   async function waitForSpawnedCommand(
@@ -2096,6 +2553,7 @@ describe("service supervisor", () => {
       readProcessEnvironment?: (
         pid: number
       ) => Promise<Record<string, string> | null>;
+      stopTimeoutMs?: number;
     } = {}
   ) {
     const processes: FakeProcess[] = [];
@@ -2164,6 +2622,9 @@ describe("service supervisor", () => {
       ...(harnessOptions.readProcessEnvironment
         ? { readProcessEnvironment: harnessOptions.readProcessEnvironment }
         : {}),
+      ...(harnessOptions.stopTimeoutMs
+        ? { stopTimeoutMs: harnessOptions.stopTimeoutMs }
+        : {}),
     });
 
     return {
@@ -2177,6 +2638,8 @@ describe("service supervisor", () => {
 
   async function createWorkspaceDir() {
     const dir = await mkdtemp(join(tmpdir(), "hive-services-"));
+    await mkdir(join(dir, ".git"));
+    await writeFile(join(dir, "package.json"), "{}");
     workspaceDirs.push(dir);
     return dir;
   }

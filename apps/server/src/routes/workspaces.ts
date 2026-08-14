@@ -285,7 +285,10 @@ export const workspacesRoutes = new Elysia({ prefix: "/api/workspaces" })
   )
   .delete(
     "/:id",
-    async ({ params, set }) => sendOutcome(set, await safeDelete(params.id)),
+    async ({ params, set, request, server }) => {
+      server?.timeout(request, 0);
+      return sendOutcome(set, await safeDelete(params.id));
+    },
     {
       params: t.Object({
         id: t.String(),

@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { ManagedProcess } from "./process";
 import { startManagedProcess, startProcessWithRetries } from "./process";
 import type { RuntimeContext } from "./runtime-context";
@@ -20,6 +21,14 @@ type StartE2eServerOptions = {
   logsDir: string;
   serverRoot: string;
   stopProcess: (managedProcess: ManagedProcess) => Promise<void>;
+};
+
+type StartCompiledE2eServerOptions = Omit<
+  StartE2eServerOptions,
+  "serverRoot"
+> & {
+  executablePath: string;
+  releaseDirectory: string;
 };
 
 export async function startHiveServerWithRetries(
@@ -90,6 +99,44 @@ export function startDesktopE2eServer(
   options: StartE2eServerOptions
 ): Promise<ManagedProcess> {
   return startE2eServer(options, { CORS_ORIGIN: "null" });
+}
+
+export async function startCompiledWebE2eServer(
+  options: StartCompiledE2eServerOptions
+): Promise<ManagedProcess> {
+  return await startProcessWithRetries({
+    attempts: 2,
+    retryDelayMs: 1000,
+    startProcess: () =>
+      startManagedProcess({
+        command: options.executablePath,
+        args: ["--foreground"],
+        cwd: options.releaseDirectory,
+        env: {
+          ...process.env,
+          CORS_ORIGIN: options.context.apiUrl,
+          DATABASE_URL: `file:${options.context.dbPath}`,
+          HIVE_BROWSE_ROOT: options.context.runRoot,
+          HIVE_FOREGROUND: "1",
+          HIVE_HOME: options.context.hiveHome,
+          HIVE_LOG_DIR: options.logsDir,
+          HIVE_MIGRATIONS_DIR: join(options.releaseDirectory, "migrations"),
+          HIVE_OPENCODE_START_TIMEOUT_MS: "120000",
+          HIVE_WORKSPACE_ROOT: options.context.workspaceRoot,
+          HOST: "127.0.0.1",
+          PORT: String(options.context.apiPort),
+          WEB_PORT: String(options.context.apiPort),
+        },
+        logsDir: options.logsDir,
+        name: "compiled-server",
+      }),
+    stopProcess: options.stopProcess,
+    waitUntilReady: async () => {
+      await waitForHttpOk(`${options.context.apiUrl}/health`, {
+        timeoutMs: 180_000,
+      });
+    },
+  });
 }
 
 async function startE2eServer(

@@ -7,6 +7,7 @@ import type {
 import type { MediaPermissionController } from "./media-permissions";
 
 type ViewerEntry = {
+  audioInput: boolean;
   rootUrl: string;
   view: BrowserView;
 };
@@ -33,7 +34,7 @@ export const createViewerController = (options: {
   window: BrowserWindow;
 }): ViewerController => {
   const entries = new Map<string, ViewerEntry>();
-  let serviceRootUrls = new Map<string, string>();
+  let serviceTabs = new Map<string, ViewerServiceTab>();
   let activeServiceId: string | null = null;
   let attachedServiceId: string | null = null;
   let disposed = false;
@@ -166,7 +167,8 @@ export const createViewerController = (options: {
     }
   };
 
-  const createEntry = (serviceId: string, rootUrl: string) => {
+  const createEntry = (tab: ViewerServiceTab) => {
+    const { audioInput, rootUrl, serviceId } = tab;
     const view = new BrowserView({
       webPreferences: {
         contextIsolation: true,
@@ -175,9 +177,13 @@ export const createViewerController = (options: {
       },
     });
 
-    const entry: ViewerEntry = { rootUrl, view };
+    const entry: ViewerEntry = { audioInput, rootUrl, view };
 
-    options.mediaPermissions.registerViewer(view.webContents, rootUrl);
+    options.mediaPermissions.registerViewer(
+      view.webContents,
+      rootUrl,
+      audioInput
+    );
     view.webContents.setWindowOpenHandler(({ url }) => {
       openExternalUrl(url).catch(() => {
         /* ignore open failures */
@@ -258,8 +264,8 @@ export const createViewerController = (options: {
 
   return {
     activateServiceTab: async (serviceId: string) => {
-      const rootUrl = serviceRootUrls.get(serviceId);
-      if (!rootUrl) {
+      const tab = serviceTabs.get(serviceId);
+      if (!tab) {
         throw new Error(`Unknown viewer service tab: ${serviceId}`);
       }
 
@@ -270,7 +276,7 @@ export const createViewerController = (options: {
           closeEntry(previousServiceId);
         }
       }
-      const entry = entries.get(serviceId) ?? createEntry(serviceId, rootUrl);
+      const entry = entries.get(serviceId) ?? createEntry(tab);
       attachServiceView(serviceId);
       if (!entry.view.webContents.getURL()) {
         await loadUrlSafely(entry, entry.rootUrl);
@@ -343,19 +349,23 @@ export const createViewerController = (options: {
       return emitState();
     },
     syncServiceTabs: (tabs: ViewerServiceTab[]) => {
-      const nextRootUrls = new Map(
-        tabs.map((tab) => [tab.serviceId, tab.rootUrl] as const)
+      const nextServiceTabs = new Map(
+        tabs.map((tab) => [tab.serviceId, tab] as const)
       );
 
       for (const [serviceId, entry] of entries) {
-        const nextRootUrl = nextRootUrls.get(serviceId);
-        if (!nextRootUrl || nextRootUrl !== entry.rootUrl) {
+        const nextTab = nextServiceTabs.get(serviceId);
+        if (
+          !nextTab ||
+          nextTab.rootUrl !== entry.rootUrl ||
+          nextTab.audioInput !== entry.audioInput
+        ) {
           closeEntry(serviceId);
         }
       }
-      serviceRootUrls = nextRootUrls;
+      serviceTabs = nextServiceTabs;
 
-      if (activeServiceId && !nextRootUrls.has(activeServiceId)) {
+      if (activeServiceId && !nextServiceTabs.has(activeServiceId)) {
         activeServiceId = tabs[0]?.serviceId ?? null;
       }
 

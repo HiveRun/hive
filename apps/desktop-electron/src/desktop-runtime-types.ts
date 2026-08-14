@@ -32,6 +32,7 @@ export type ViewerState = {
 };
 
 export type ViewerServiceTab = {
+  audioInput: boolean;
   serviceId: string;
   rootUrl: string;
 };

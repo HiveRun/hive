@@ -106,6 +106,10 @@
       "entry": ["package.json", "src/index.ts", "vitest.config.ts"],
       "project": ["src/**/*.ts"]
     },
+    "packages/android-runtime": {
+      "entry": ["package.json", "src/command.ts", "src/viewer-server.ts"],
+      "project": ["src/**/*.ts"]
+    },
     "packages/daemon-runtime": {
       "entry": ["package.json", "src/index.ts"],
       "project": ["src/**/*.ts"]

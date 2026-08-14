@@ -20,7 +20,7 @@
     "setup": "bun install && bun run ruler:apply && bun run setup:desktop-e2e && bun run config:generate && bun run tool:generate && bun run db:migrate",
     "setup:desktop-e2e": "./scripts/dev/setup-desktop-e2e.sh",
     "check": "bun run check:commit",
-    "check:commit": "bun run check:agent-context && bun run check:config && bun run check:tool-source && bun run check:no-disabled-tests && bun run check:migrations && bun run check:staged && bun run check:secrets && bun run check:audit && biome check --no-errors-on-unmatched --files-ignore-unknown=true && bun run check:dedupe && bun run test:run && turbo check check-types --ui=stream --force && bun run build",
+    "check:commit": "bun run check:agent-context && bun run check:config && bun run check:tool-source && bun run check:no-disabled-tests && bun run check:migrations && bun run check:staged && bun run check:secrets && bun run check:audit && bun run check:patches && biome check --no-errors-on-unmatched --files-ignore-unknown=true && bun run check:dedupe && bun run test:run && turbo check check-types --ui=stream --force && bun run build",
     "check:distribution": "bun run scripts/distribution/check-distribution.ts",
     "check:push": "bun run check:commit",
     "test": "turbo test --ui=stream --force",
@@ -37,6 +37,8 @@
     "test:e2e:report:serve": "bun run --cwd apps/e2e report:e2e:serve",
     "test:e2e:desktop": "bun run --cwd apps/e2e-desktop test:e2e",
     "test:e2e:desktop:spec": "bun run --cwd apps/e2e-desktop test:e2e -- --spec",
+    "test:e2e:android-audio": "bun run --cwd packages/android-runtime test:e2e:browser-microphone",
+    "test:e2e:android-service-audio": "bun run --cwd apps/e2e test:e2e:android-service-audio",
     "ab:shot": "bash scripts/agent-browser.sh shot",
     "ab:record:start": "bash scripts/agent-browser.sh record-start",
     "ab:record:stop": "bash scripts/agent-browser.sh record-stop",
@@ -49,6 +51,7 @@
     "check:tool-source": "bun run tool:generate && git diff --exit-code apps/server/src/agents/hive-opencode-tool-source.generated.ts",
     "check:biome": "biome check --write .",
     "check:no-disabled-tests": "bun scripts/dev/check-no-disabled-tests.ts",
+    "check:patches": "bun scripts/dev/check-stream-droid-patch.ts",
     "check:migrations": "bun scripts/dev/check-migration-journal.ts",
     "check:staged": "lint-staged --allow-empty",
     "check:secrets": "./scripts/check-secrets.sh",
@@ -62,7 +65,8 @@
     "dev": "bun scripts/dev/with-local-hive-home.ts -- turbo run dev --filter=web... --filter=@hive/server...",
     "dev:turbo": "bun scripts/dev/with-local-hive-home.ts -- turbo run dev --filter=web... --filter=@hive/server...",
     "build": "turbo build",
-    "build:installer": "bun run tool:generate && bun run scripts/distribution/build.ts",
+    "build:installer": "bun run check:patches && bun run tool:generate && bun run scripts/distribution/build.ts",
+    "build:android-viewer": "bun run --cwd packages/android-runtime compile:viewer",
     "local:install": "bun run scripts/distribution/local-install.ts",
     "changeset": "changeset",
     "version-packages": "changeset version",
@@ -103,7 +107,15 @@
     "typescript": "catalog:",
     "ultracite": "6.0.1"
   },
-  "packageManager": "bun@1.3.5",
+  "packageManager": "bun@1.3.11",
+  "overrides": {
+    "axios": "0.33.0",
+    "form-data": "4.0.6",
+    "ws": "8.21.1"
+  },
+  "patchedDependencies": {
+    "stream-droid@0.5.0": "patches/stream-droid@0.5.0.patch"
+  },
   "lint-staged": {
     "**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue,astro,svelte}": [
       "biome check --write --files-ignore-unknown=true --no-errors-on-unmatched"

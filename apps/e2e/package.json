@@ -7,6 +7,7 @@
     "test:e2e:fast": "bun run src/runtime/run-fast.ts",
     "test:e2e:tune": "HIVE_E2E_BENCH_REPEATS=2 bun run src/runtime/benchmark-workers.ts",
     "test:e2e:headed": "HIVE_E2E_HEADED=1 bun run src/runtime/e2e-runner.ts",
+    "test:e2e:android-service-audio": "HIVE_E2E_ANDROID=1 HIVE_E2E_WORKERS=1 bun run src/runtime/e2e-runner.ts --spec specs/android-service-audio.android.e2e.ts",
     "report:e2e": "playwright show-report reports/latest/playwright-report",
     "report:e2e:open": "playwright show-report reports/latest/playwright-report",
     "report:e2e:serve": "playwright show-report reports/latest/playwright-report",
@@ -15,6 +16,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.55.1",
+    "@types/bun": "^1.3.1",
     "typescript": "catalog:"
   }
 }

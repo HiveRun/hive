@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import {
   access,
   mkdir,
@@ -15,7 +16,9 @@ import {
   ensureCellEnvironment,
   removeCellRuntimeDir,
   resolveCellArtifactsDir,
+  resolveCellEnvironment,
   resolveCellRuntimeDir,
+  resolveHiveCliBin,
 } from "./cell-environment";
 
 const originalHiveHome = process.env.HIVE_HOME;
@@ -45,6 +48,7 @@ describe("cell environment directories", () => {
     const environment = ensureCellEnvironment("cell-safe", workspacePath);
 
     expect(environment.HIVE_HOME).toBe(join(workspacePath, ".hive", "home"));
+    expect(environment.HIVE_CLI_BIN).toBe(resolveHiveCliBin());
     expect(await readPermissionMode(environment.HIVE_HOME)).toBe("700");
     expect(environment.HIVE_CELL_RUNTIME_DIR).toBe(
       join(hiveHome, "runtime", "cells", "cell-safe")
@@ -57,6 +61,47 @@ describe("cell environment directories", () => {
     );
     expect(await readPermissionMode(environment.HIVE_CELL_ARTIFACTS_DIR)).toBe(
       PRIVATE_DIRECTORY_MODE
+    );
+  });
+
+  it("resolves source and compiled CLI entry paths centrally", () => {
+    expect(
+      resolveHiveCliBin({
+        execPath: "/opt/bun/bin/bun",
+        isCompiledRuntime: false,
+        sourceEntryPath: "/workspace/packages/cli/src/index.ts",
+      })
+    ).toBe("/workspace/packages/cli/src/index.ts");
+    expect(
+      resolveHiveCliBin({
+        execPath: "/opt/hive/hive",
+        isCompiledRuntime: true,
+        sourceEntryPath: "/workspace/packages/cli/src/index.ts",
+      })
+    ).toBe("/opt/hive/hive");
+  });
+
+  it("always emits the centrally resolved CLI path", () => {
+    expect(resolveCellEnvironment("cell-safe", "/workspace").HIVE_CLI_BIN).toBe(
+      resolveHiveCliBin()
+    );
+  });
+
+  it("executes the source HIVE_CLI_BIN directly", () => {
+    const cliPath = resolveCellEnvironment(
+      "cell-safe",
+      "/workspace"
+    ).HIVE_CLI_BIN;
+    const result = spawnSync(cliPath, ["android", "viewer"], {
+      encoding: "utf8",
+      env: process.env,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      process.platform === "linux" || process.platform === "darwin"
+        ? "--grpc-port requires a valid TCP port"
+        : "Hive Android commands are not supported"
     );
   });
 

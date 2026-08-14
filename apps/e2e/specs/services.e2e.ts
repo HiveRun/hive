@@ -2,7 +2,9 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
+  createCellViaApi,
   createRunningServicesCell,
+  readServicePortAssignments,
   requireApiUrl,
   requireCellPaths,
   waitForActivityTypes,
@@ -19,6 +21,11 @@ const EXPECTED_SERVICE_PORTS = {
   worker: [{ name: "control", primary: true, protocol: "tcp" }],
 } as const;
 const EXPECTED_SERVICE_COUNT = Object.keys(EXPECTED_SERVICE_PORTS).length;
+const EXPECTED_NAMED_PORTS = Object.entries(EXPECTED_SERVICE_PORTS)
+  .flatMap(([serviceName, ports]) =>
+    ports.map((port) => `${serviceName}:${port.name}`)
+  )
+  .sort();
 
 test.describe("service controls", () => {
   test("starts and stops services from the services panel", async ({
@@ -108,7 +115,7 @@ test.describe("service controls", () => {
     });
 
     await page.getByRole("button", { name: "Start all" }).click();
-    await waitForStatuses({
+    const restartedServices = await waitForStatuses({
       apiUrl,
       cellId,
       errorMessage: "Services did not restart after start-all",
@@ -120,6 +127,9 @@ test.describe("service controls", () => {
             service.ports.every((port) => port.portReachable)
         ),
     });
+    expect(readServicePortAssignments(restartedServices)).toEqual(
+      readServicePortAssignments(runningServices)
+    );
 
     const expectedActivityTypes = ["services.stop", "services.start"];
     const events = await waitForActivityTypes({
@@ -133,6 +143,44 @@ test.describe("service controls", () => {
     for (const type of expectedActivityTypes) {
       expect(eventTypes.has(type), type).toBe(true);
     }
+  });
+
+  test("allocates disjoint ports to concurrently provisioned cells", async () => {
+    const apiUrl = requireApiUrl();
+    const cellIds = await Promise.all(
+      ["A", "B"].map((suffix) =>
+        createCellViaApi({
+          apiUrl,
+          name: `E2E Concurrent Services ${suffix} ${Date.now()}`,
+          templateLabel: "E2E Services Template",
+        })
+      )
+    );
+    const servicesByCell = await Promise.all(
+      cellIds.map((cellId) =>
+        waitForStatuses({
+          apiUrl,
+          cellId,
+          errorMessage: `Services did not start for cell ${cellId}`,
+          predicate: (services) =>
+            services.length === EXPECTED_SERVICE_COUNT &&
+            services.every(
+              (service) =>
+                service.status.toLowerCase() === "running" &&
+                service.ports.every((port) => port.portReachable)
+            ),
+        })
+      )
+    );
+
+    const portAssignments = servicesByCell.map(readServicePortAssignments);
+    for (const assignments of portAssignments) {
+      expect(assignments.map(({ name }) => name)).toEqual(EXPECTED_NAMED_PORTS);
+    }
+    const allocatedPorts = portAssignments.flatMap((assignments) =>
+      assignments.map(({ port }) => port)
+    );
+    expect(new Set(allocatedPorts).size).toBe(allocatedPorts.length);
   });
 });
 

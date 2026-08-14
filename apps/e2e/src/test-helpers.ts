@@ -36,7 +36,9 @@ type ServicePortRecord = {
 };
 
 type ServiceRecord = {
+  audio?: { input?: boolean; output?: boolean };
   id: string;
+  lastKnownError?: string | null;
   name: string;
   status: string;
   pid?: number;
@@ -130,6 +132,17 @@ export function requireCellPaths(cellId: string) {
     artifactsDir: join(hiveHome, "artifacts", "cells", cellId),
     runtimeDir: join(hiveHome, "runtime", "cells", cellId),
   };
+}
+
+export function readServicePortAssignments(services: ServiceRecord[]) {
+  return services
+    .flatMap((service) =>
+      service.ports.map((port) => ({
+        name: `${service.name}:${port.name}`,
+        port: port.port,
+      }))
+    )
+    .sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export async function waitForCondition(options: {
@@ -756,7 +769,12 @@ export async function waitForServiceStatuses(options: {
     });
   } catch {
     const statusSnapshot = latest
-      .map((service) => `${service.name}:${service.status}`)
+      .map(
+        (service) =>
+          `${service.name}:${service.status}${
+            service.lastKnownError ? ` (${service.lastKnownError})` : ""
+          }`
+      )
       .join(", ");
     throw new Error(
       `${options.errorMessage}. Latest statuses: ${statusSnapshot || "none"}`

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { constants as osConstants } from "node:os";
 import { resolve as resolvePath } from "node:path";
@@ -49,12 +49,45 @@ const AUTO_RESTART_STATUSES: ReadonlySet<ServiceStatus> = new Set([
   "running",
   "needs_resume",
 ]);
+const CELL_WORKSPACE_RUNTIME_ENTRIES = new Set([".git", ".hive"]);
+const OPENCODE_RUNTIME_ENTRIES = new Set(["state", "themes", "tools"]);
+
+function readWorkspaceEntries(workspacePath: string): string[] {
+  try {
+    return readdirSync(workspacePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+}
+
+function cellWorkspaceHasSource(
+  workspacePath: string,
+  baseCommit: string | null
+): boolean {
+  const entries = readWorkspaceEntries(workspacePath);
+  if (baseCommit && entries.includes(".git")) {
+    return true;
+  }
+  return entries.some((entry) => {
+    if (CELL_WORKSPACE_RUNTIME_ENTRIES.has(entry)) {
+      return false;
+    }
+    if (entry !== ".opencode") {
+      return true;
+    }
+    return readWorkspaceEntries(resolvePath(workspacePath, entry)).some(
+      (opencodeEntry) => !OPENCODE_RUNTIME_ENTRIES.has(opencodeEntry)
+    );
+  });
+}
 
 const cellServiceLocks = new Map<string, Promise<void>>();
 const serviceStartLocks = new Map<string, Promise<void>>();
 
-const STOP_TIMEOUT_MS = 2000;
-const FORCE_KILL_DELAY_MS = 250;
+export const SERVICE_STOP_GRACE_PERIOD_MS = 15_000;
 const PROCESS_EXIT_POLL_INTERVAL_MS = 25;
 const PERSISTED_PROCESS_POLL_INTERVAL_MS = 100;
 const DEFAULT_TEMPLATE_SETUP_COMMAND_TIMEOUT_MS = 300_000;
@@ -284,21 +317,17 @@ async function waitUntilProcessExit(
   return true;
 }
 
-async function terminateProcessHandle(handle: ProcessHandle): Promise<void> {
+async function terminateProcessHandle(
+  handle: ProcessHandle,
+  timeoutMs = SERVICE_STOP_GRACE_PERIOD_MS
+): Promise<void> {
   try {
     handle.kill("SIGTERM");
   } catch {
     // Continue to process-group verification and forced termination.
   }
 
-  const leaderExited = await Promise.race([
-    handle.exited.then(
-      () => true,
-      () => true
-    ),
-    delay(STOP_TIMEOUT_MS).then(() => false),
-  ]);
-  if (leaderExited && !isProcessGroupAlive(handle.pid)) {
+  if (await waitForHandleAndGroupExit(handle, timeoutMs)) {
     return;
   }
 
@@ -307,7 +336,7 @@ async function terminateProcessHandle(handle: ProcessHandle): Promise<void> {
   } catch {
     // The process may have exited between verification and signaling.
   }
-  if (!(await waitForHandleAndGroupExit(handle, STOP_TIMEOUT_MS))) {
+  if (!(await waitForHandleAndGroupExit(handle, timeoutMs))) {
     throw new Error(`Process group ${handle.pid} did not exit after SIGKILL`);
   }
 }
@@ -402,6 +431,7 @@ type SupervisorDependencies = {
   readProcessEnvironment: (
     pid: number
   ) => Promise<Record<string, string> | null>;
+  stopTimeoutMs: number;
 };
 
 type ServiceLogger = {
@@ -433,7 +463,9 @@ type ServiceProcessOptions = {
   cwd: string;
   command: string;
   allocation: ServicePortAllocation;
+  onStarted?: () => void;
   portMap: CellPortMap;
+  signal?: AbortSignal;
 };
 
 type CellPortMap = Map<string, ServicePortAllocation>;
@@ -633,6 +665,7 @@ export function createServiceSupervisor(
     overrides.terminalRuntime ?? createServiceTerminalRuntime();
   const readProcessEnvironment =
     overrides.readProcessEnvironment ?? readDefaultProcessEnvironment;
+  const stopTimeoutMs = overrides.stopTimeoutMs ?? SERVICE_STOP_GRACE_PERIOD_MS;
 
   const activeServices = new Map<string, ActiveServiceHandle>();
   const activeServiceStarts = new Map<string, ProcessHandle>();
@@ -1073,7 +1106,9 @@ export function createServiceSupervisor(
         await restoreSkippedServiceState(args.row, args.previousState);
         return true;
       }
-      await startService(args.row, undefined, args.templateEnv, args.portMap);
+      await startService(args.row, undefined, args.templateEnv, {
+        portLookup: args.portMap,
+      });
       return true;
     } catch (error) {
       if (shuttingDown) {
@@ -1130,19 +1165,36 @@ export function createServiceSupervisor(
       const preparedByName = new Map(
         prepared.map((entry) => [entry.row.service.name, entry])
       );
-      for (const serviceName of serviceOrder) {
-        const entry = preparedByName.get(serviceName);
-        if (!entry) {
-          throw new Error(`Service "${serviceName}" was not prepared`);
-        }
-        const { row, definition } = entry;
-        await startOrFail({
-          row,
-          definition,
-          templateEnv,
-          portMap,
-          onTimingEvent,
-        });
+      const definitions = resolvedTemplate.services as Record<
+        string,
+        ProcessService
+      >;
+      for (const wave of groupServiceNamesByDependencyWave(
+        serviceOrder,
+        definitions
+      )) {
+        await runServiceStartWave(
+          wave.map((serviceName) => {
+            const entry = preparedByName.get(serviceName);
+            if (!entry) {
+              throw new Error(`Service "${serviceName}" was not prepared`);
+            }
+            const { row, definition } = entry;
+            return {
+              serviceId: row.service.id,
+              run: (signal, onStarted) =>
+                startOrFail({
+                  row,
+                  definition,
+                  templateEnv,
+                  portMap,
+                  onTimingEvent,
+                  onStarted,
+                  signal,
+                }),
+            };
+          })
+        );
       }
     });
   }
@@ -1170,10 +1222,15 @@ export function createServiceSupervisor(
       return;
     }
     if (
-      args.cell.status === "spawning" &&
-      !args.cell.baseCommit &&
-      !existsSync(args.cell.workspacePath)
+      !cellWorkspaceHasSource(args.cell.workspacePath, args.cell.baseCommit)
     ) {
+      logger.warn(
+        "Skipping template teardown because cell workspace source is missing",
+        {
+          cellId: args.cell.id,
+          workspacePath: args.cell.workspacePath,
+        }
+      );
       return;
     }
 
@@ -1312,17 +1369,174 @@ export function createServiceSupervisor(
     return prepared;
   }
 
+  type ServiceWaveStart = {
+    serviceId: string;
+    run: (signal: AbortSignal, onStarted: () => void) => Promise<boolean>;
+  };
+
+  type ServiceWaveFailure = {
+    cancellation?: Promise<void>;
+    cancellationError?: unknown;
+    firstFailure?: unknown;
+  };
+
+  async function runServiceWaveMember(args: {
+    completedWaveStarts: Set<string>;
+    controller: AbortController;
+    failure: ServiceWaveFailure;
+    serviceIds: string[];
+    start: ServiceWaveStart;
+  }): Promise<void> {
+    const { completedWaveStarts, controller, failure, serviceIds, start } =
+      args;
+    try {
+      await start.run(controller.signal, () =>
+        completedWaveStarts.add(start.serviceId)
+      );
+    } catch (error) {
+      if (!failure.cancellation) {
+        completedWaveStarts.delete(start.serviceId);
+        failure.firstFailure = error;
+        controller.abort();
+        failure.cancellation = cancelPreLockProcesses(serviceIds).catch(
+          (siblingCancellationError) => {
+            failure.cancellationError = siblingCancellationError;
+            logger.error("Failed to cancel sibling service starts", {
+              error: formatError(siblingCancellationError),
+              serviceIds,
+            });
+          }
+        );
+      }
+      await failure.cancellation;
+      throw error;
+    }
+  }
+
+  async function throwServiceWaveFailure(args: {
+    completedWaveStarts: Set<string>;
+    failure: ServiceWaveFailure;
+  }): Promise<never> {
+    const { completedWaveStarts, failure } = args;
+    let rollbackError: unknown;
+    try {
+      await rollbackCompletedWaveStarts(completedWaveStarts);
+    } catch (error) {
+      rollbackError = error;
+    }
+    if (
+      failure.cancellationError !== undefined ||
+      rollbackError !== undefined
+    ) {
+      throw new Error(
+        [
+          `Service start wave failed: ${formatError(failure.firstFailure)}`,
+          failure.cancellationError === undefined
+            ? null
+            : `sibling cancellation failed: ${formatError(failure.cancellationError)}`,
+          rollbackError === undefined
+            ? null
+            : `sibling rollback failed: ${formatError(rollbackError)}`,
+        ]
+          .filter(Boolean)
+          .join("; ")
+      );
+    }
+    throw failure.firstFailure;
+  }
+
+  async function runServiceStartWave(
+    starts: ServiceWaveStart[]
+  ): Promise<void> {
+    const controller = new AbortController();
+    const completedWaveStarts = new Set<string>();
+    const failure: ServiceWaveFailure = {};
+    const serviceIds = starts.map((start) => start.serviceId);
+    const results = await Promise.allSettled(
+      starts.map((start) =>
+        runServiceWaveMember({
+          completedWaveStarts,
+          controller,
+          failure,
+          serviceIds,
+          start,
+        })
+      )
+    );
+    if (failure.firstFailure !== undefined) {
+      await throwServiceWaveFailure({ completedWaveStarts, failure });
+    }
+    const rejectedResult = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected"
+    );
+    if (rejectedResult) {
+      throw rejectedResult.reason;
+    }
+  }
+
+  async function rollbackCompletedWaveStarts(
+    serviceIds: Set<string>
+  ): Promise<void> {
+    if (serviceIds.size === 0) {
+      return;
+    }
+    const firstServiceId = serviceIds.values().next().value;
+    if (!firstServiceId) {
+      return;
+    }
+    const firstRow = await repository.fetchServiceRowById(firstServiceId);
+    if (!firstRow) {
+      return;
+    }
+    if (shuttingDown || cellsStopping.has(firstRow.cell.id)) {
+      return;
+    }
+    const rows = await repository.fetchServicesForCell(firstRow.cell.id);
+    const portMap = await buildPersistedPortMap(rows);
+    await runAllCollectingFirstError(
+      sortServiceRows(
+        rows.filter(
+          (row) =>
+            serviceIds.has(row.service.id) &&
+            !servicesStopping.has(row.service.id)
+        ),
+        true
+      ),
+      (row) =>
+        stopService(row, {
+          forceStopCommand: true,
+          portMap,
+          releasePort: false,
+          statusAfterStop: "stopped",
+        })
+    );
+  }
+
   async function startOrFail(args: {
     row: ServiceRow;
     definition: ProcessService;
     templateEnv: Record<string, string>;
     portMap: CellPortMap;
     onTimingEvent?: (event: EnsureCellServicesTimingEvent) => void;
+    onStarted?: () => void;
+    signal?: AbortSignal;
   }) {
-    const { row, definition, templateEnv, portMap, onTimingEvent } = args;
+    const {
+      row,
+      definition,
+      templateEnv,
+      portMap,
+      onTimingEvent,
+      onStarted,
+      signal,
+    } = args;
     const startedAt = Date.now();
     try {
-      await startService(row, definition, templateEnv, portMap);
+      const started = await startService(row, definition, templateEnv, {
+        onStarted,
+        portLookup: portMap,
+        signal,
+      });
       const durationMs = Date.now() - startedAt;
       logger.info("Service startup completed", {
         serviceId: row.service.id,
@@ -1339,6 +1553,7 @@ export function createServiceSupervisor(
           serviceName: row.service.name,
         },
       });
+      return started;
     } catch (error) {
       const durationMs = Date.now() - startedAt;
       logger.error("Failed to start service", {
@@ -1717,8 +1932,32 @@ export function createServiceSupervisor(
     const templateEnv = template?.env ?? {};
     const portMap = await buildPortMap(rows);
 
-    for (const row of sortServiceRows(rows)) {
-      await startService(row, undefined, templateEnv, portMap);
+    const orderedRows = sortServiceRows(rows);
+    const rowsByName = new Map(
+      orderedRows.map((row) => [row.service.name, row])
+    );
+    const definitions = serviceDefinitionsForRows(rows);
+    for (const wave of groupServiceNamesByDependencyWave(
+      orderedRows.map((row) => row.service.name),
+      definitions
+    )) {
+      await runServiceStartWave(
+        wave.map((serviceName) => {
+          const row = rowsByName.get(serviceName);
+          if (!row) {
+            throw new Error(`Service "${serviceName}" not found`);
+          }
+          return {
+            serviceId: row.service.id,
+            run: (signal, onStarted) =>
+              startService(row, undefined, templateEnv, {
+                onStarted,
+                portLookup: portMap,
+                signal,
+              }),
+          };
+        })
+      );
     }
   }
 
@@ -1740,12 +1979,10 @@ export function createServiceSupervisor(
 
         for (const row of sortServiceRows(rows, true)) {
           try {
-            await stopService(
-              row,
-              options?.releasePorts ?? false,
-              "stopped",
-              portMap
-            );
+            await stopService(row, {
+              portMap,
+              releasePort: options?.releasePorts ?? false,
+            });
           } catch (error) {
             firstError ??= error;
           }
@@ -1853,16 +2090,34 @@ export function createServiceSupervisor(
     );
   }
 
+  function requireServiceStartNotCancelled(
+    row: ServiceRow,
+    signal?: AbortSignal
+  ): void {
+    if (signal?.aborted || servicesStopping.has(row.service.id)) {
+      throw new Error(`Service "${row.service.name}" startup cancelled`);
+    }
+  }
+
   async function startService(
     row: ServiceRow,
     definitionOverride?: ProcessService,
     templateEnv: Record<string, string> = {},
-    portLookup?: CellPortMap
-  ): Promise<void> {
+    options?: {
+      onStarted?: () => void;
+      portLookup?: CellPortMap;
+      signal?: AbortSignal;
+    }
+  ): Promise<boolean> {
+    const portLookup = options?.portLookup;
+    const signal = options?.signal;
+    let started = false;
     await runWithServiceLock(row.service.id, async () => {
       requireStartableSupervisor();
+      requireServiceStartNotCancelled(row, signal);
       const latestRow = await repository.fetchServiceRowById(row.service.id);
       const serviceRow = latestRow ?? row;
+      requireServiceStartNotCancelled(serviceRow, signal);
       const definition =
         definitionOverride ??
         (serviceRow.service.definition as ProcessService | null);
@@ -1882,6 +2137,7 @@ export function createServiceSupervisor(
         definition,
         portLookup
       );
+      requireServiceStartNotCancelled(serviceRow, signal);
       const port = getPrimaryPort(serviceRow.service.name, allocation);
       const cwd = resolveServiceCwd(
         serviceRow.cell.workspacePath,
@@ -1889,6 +2145,7 @@ export function createServiceSupervisor(
       );
 
       await ensureServiceDirectory(serviceRow, cwd);
+      requireServiceStartNotCancelled(serviceRow, signal);
 
       const resolvedPortMap = new Map(portLookup ?? []);
       resolvedPortMap.set(serviceRow.service.name, allocation);
@@ -1897,6 +2154,7 @@ export function createServiceSupervisor(
         port,
         templateEnv,
         serviceEnv: definition.env ?? {},
+        audio: definition.audio,
         cell: serviceRow.cell,
         portMap: resolvedPortMap,
       });
@@ -1922,9 +2180,13 @@ export function createServiceSupervisor(
           serviceRow.service.name
         ),
         allocation,
+        onStarted: options?.onStarted,
         portMap: resolvedPortMap,
+        signal,
       });
+      started = true;
     });
+    return started;
   }
 
   async function prepareServicePorts(
@@ -1965,7 +2227,9 @@ export function createServiceSupervisor(
     cwd,
     command,
     allocation,
+    onStarted,
     portMap,
+    signal: startSignal,
   }: ServiceProcessOptions) {
     try {
       await portManager.assertFixedPortsAvailable(
@@ -1973,6 +2237,7 @@ export function createServiceSupervisor(
         resolveNamedPortDefinitions(definition),
         allocation
       );
+      requireServiceStartNotCancelled(row, startSignal);
       const processEnvironment = {
         ...env,
         [SERVICE_INSTANCE_ENV_KEY]: randomUUID(),
@@ -1989,9 +2254,17 @@ export function createServiceSupervisor(
         `[service:${row.service.name}] Starting ${command}\n`
       );
 
-      await runServiceSetup({ row, definition, cwd, env, portMap });
+      await runServiceSetup({
+        row,
+        definition,
+        cwd,
+        env,
+        portMap,
+        signal: startSignal,
+      });
 
       requireStartableSupervisor();
+      requireServiceStartNotCancelled(row, startSignal);
       const handle = spawnProcess({
         command,
         cwd,
@@ -2020,6 +2293,7 @@ export function createServiceSupervisor(
 
       activeServices.set(row.service.id, { handle });
       activeServiceStarts.set(row.service.id, handle);
+      onStarted?.();
       row.service.env = processEnvironment;
 
       await repository.updateService(row.service.id, {
@@ -2081,9 +2355,26 @@ export function createServiceSupervisor(
     } catch (error) {
       const active = activeServices.get(row.service.id);
       if (active) {
-        await terminateHandle(active.handle);
-        activeServices.delete(row.service.id);
-        deleteTrackedHandle(activeServiceStarts, row.service.id, active.handle);
+        try {
+          await terminateHandle(active.handle);
+          activeServices.delete(row.service.id);
+          deleteTrackedHandle(
+            activeServiceStarts,
+            row.service.id,
+            active.handle
+          );
+        } catch (terminationError) {
+          const combinedError = new Error(
+            `${formatError(error)}; failed to terminate service process: ${formatError(terminationError)}`
+          );
+          await repository.updateService(row.service.id, {
+            status: "error",
+            pid: active.handle.pid,
+            lastKnownError: combinedError.message,
+          });
+          notifyServiceUpdate(row);
+          throw combinedError;
+        }
       }
       terminalRuntime.markServiceExit({
         serviceId: row.service.id,
@@ -2140,14 +2431,16 @@ export function createServiceSupervisor(
     cwd: string;
     env: Record<string, string>;
     portMap: CellPortMap;
+    signal?: AbortSignal;
   }) {
-    const { row, definition, cwd, env, portMap } = args;
+    const { row, definition, cwd, env, portMap, signal } = args;
     if (!definition.setup?.length) {
       return;
     }
 
     for (const rawSetupCommand of definition.setup) {
       requireStartableSupervisor();
+      requireServiceStartNotCancelled(row, signal);
       const setupCommand = interpolatePortReferences(
         rawSetupCommand,
         portMap,
@@ -2158,7 +2451,13 @@ export function createServiceSupervisor(
         row.service.id,
         `[service:${row.service.name}] setup: ${setupCommand}\n`
       );
-      await runServiceSetupCommand({ row, command: setupCommand, cwd, env });
+      await runServiceSetupCommand({
+        row,
+        command: setupCommand,
+        cwd,
+        env,
+        signal,
+      });
       logger.info("Service setup command completed", {
         serviceId: row.service.id,
         serviceName: row.service.name,
@@ -2174,7 +2473,9 @@ export function createServiceSupervisor(
     command: string;
     cwd: string;
     env: Record<string, string>;
+    signal?: AbortSignal;
   }): Promise<void> {
+    requireServiceStartNotCancelled(args.row, args.signal);
     const handle = spawnProcess({
       command: args.command,
       cwd: args.cwd,
@@ -2501,7 +2802,11 @@ export function createServiceSupervisor(
       const statusAfterStop =
         row.service.status === "stopped" ? "stopped" : "needs_resume";
       try {
-        await stopService(row, true, statusAfterStop, portMap);
+        await stopService(row, {
+          portMap,
+          releasePort: true,
+          statusAfterStop,
+        });
       } catch (error) {
         firstError ??= error;
       }
@@ -2539,10 +2844,11 @@ export function createServiceSupervisor(
     cwd: string;
     env: Record<string, string>;
     portMap: CellPortMap;
+    force?: boolean;
   }): Promise<unknown> {
     if (
       !(
-        shouldRunStopCommand(args.row, args.active) &&
+        (args.force || shouldRunStopCommand(args.row, args.active)) &&
         args.definition?.type === "process" &&
         args.definition.stop
       )
@@ -2572,10 +2878,19 @@ export function createServiceSupervisor(
 
   async function stopService(
     row: ServiceRow,
-    releasePort: boolean,
-    statusAfterStop: ServiceStatus = "stopped",
-    portMap: CellPortMap = new Map()
+    options: {
+      forceStopCommand?: boolean;
+      portMap?: CellPortMap;
+      releasePort: boolean;
+      statusAfterStop?: ServiceStatus;
+    }
   ): Promise<void> {
+    const {
+      forceStopCommand = false,
+      portMap = new Map(),
+      releasePort,
+      statusAfterStop = "stopped",
+    } = options;
     const definition = row.service.definition as ProcessService | null;
     const env = row.service.env;
     const cwd = resolveServiceCwd(row.cell.workspacePath, definition?.cwd);
@@ -2588,6 +2903,7 @@ export function createServiceSupervisor(
       cwd,
       env,
       portMap,
+      force: forceStopCommand,
     });
 
     await terminateServiceProcess(row, active);
@@ -2800,7 +3116,9 @@ export function createServiceSupervisor(
         if (!dependencyRow) {
           throw new Error(`Service "${serviceName}" not found`);
         }
-        await startService(dependencyRow, undefined, templateEnv, portMap);
+        await startService(dependencyRow, undefined, templateEnv, {
+          portLookup: portMap,
+        });
       }
     });
   }
@@ -2815,6 +3133,9 @@ export function createServiceSupervisor(
     }
 
     servicesStopping.add(serviceId);
+    const forceStopCommand =
+      row.service.status === "starting" ||
+      hasUnterminatedPreLockProcess(serviceId);
     try {
       await cancelPreLockProcesses([serviceId]);
       await runWithCellLock(row.cell.id, async () => {
@@ -2823,12 +3144,11 @@ export function createServiceSupervisor(
           return;
         }
         const siblings = await repository.fetchServicesForCell(row.cell.id);
-        await stopService(
-          currentRow,
-          options?.releasePorts ?? false,
-          "stopped",
-          await buildPersistedPortMap(siblings)
-        );
+        await stopService(currentRow, {
+          forceStopCommand,
+          portMap: await buildPersistedPortMap(siblings),
+          releasePort: options?.releasePorts ?? false,
+        });
       });
     } finally {
       servicesStopping.delete(serviceId);
@@ -2856,7 +3176,7 @@ export function createServiceSupervisor(
   }
 
   async function terminateHandle(handle: ProcessHandle): Promise<void> {
-    await terminateProcessHandle(handle);
+    await terminateProcessHandle(handle, stopTimeoutMs);
   }
 
   async function terminatePid(pid: number): Promise<void> {
@@ -2873,14 +3193,14 @@ export function createServiceSupervisor(
       return;
     }
 
-    if (await waitForProcessTreeExit(pid, FORCE_KILL_DELAY_MS)) {
+    if (await waitForProcessTreeExit(pid, stopTimeoutMs)) {
       return;
     }
 
     if (!signalProcess(-pid, "SIGKILL")) {
       signalProcess(pid, "SIGKILL");
     }
-    if (!(await waitForProcessTreeExit(pid, STOP_TIMEOUT_MS))) {
+    if (!(await waitForProcessTreeExit(pid, stopTimeoutMs))) {
       throw new Error(`Process group ${pid} did not exit after SIGKILL`);
     }
   }
@@ -2950,6 +3270,27 @@ function preflightTemplateServices(template: Template): string[] {
     throw new Error(issue.message);
   }
   return topologicallySortServiceNames(processServices);
+}
+
+function groupServiceNamesByDependencyWave(
+  serviceOrder: string[],
+  definitions: Record<string, ProcessService>
+): string[][] {
+  const waveIndexByName = new Map<string, number>();
+  const waves: string[][] = [];
+  for (const serviceName of serviceOrder) {
+    const dependencyWave = (definitions[serviceName]?.dependsOn ?? []).reduce(
+      (latestWave, dependencyName) =>
+        Math.max(latestWave, waveIndexByName.get(dependencyName) ?? 0),
+      -1
+    );
+    const waveIndex = dependencyWave + 1;
+    const wave = waves[waveIndex] ?? [];
+    wave.push(serviceName);
+    waves[waveIndex] = wave;
+    waveIndexByName.set(serviceName, waveIndex);
+  }
+  return waves;
 }
 
 function serviceDefinitionsForRows(
@@ -3079,6 +3420,7 @@ function buildServiceEnv({
   port,
   templateEnv,
   serviceEnv,
+  audio,
   cell,
   portMap,
 }: {
@@ -3086,6 +3428,7 @@ function buildServiceEnv({
   port: number;
   templateEnv: Record<string, string>;
   serviceEnv: Record<string, string>;
+  audio: ProcessService["audio"];
   cell: Cell;
   portMap?: CellPortMap;
 }): Record<string, string> {
@@ -3102,6 +3445,8 @@ function buildServiceEnv({
     PORT: portString,
     SERVICE_PORT: portString,
     [`${upper}_PORT`]: portString,
+    HIVE_SERVICE_AUDIO_INPUT: audio?.input === true ? "1" : "0",
+    HIVE_SERVICE_AUDIO_OUTPUT: audio?.output === false ? "0" : "1",
     FORCE_COLOR: "1",
   };
 

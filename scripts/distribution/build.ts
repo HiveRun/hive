@@ -21,6 +21,17 @@ const platform = process.platform;
 const arch = process.arch;
 const releaseName = `hive-${platform}-${arch}`;
 const releaseDir = join(releaseBaseDir, releaseName);
+const androidRuntimeRoot = join(repoRoot, "packages", "android-runtime");
+const androidViewerBinaryName =
+  platform === "win32"
+    ? "hive-android-viewer-server.exe"
+    : "hive-android-viewer-server";
+const androidViewerAssetsRelativeDir = join("android-runtime", "stream-droid");
+const streamDroidRoot = join(
+  androidRuntimeRoot,
+  "node_modules",
+  "stream-droid"
+);
 
 const desktopBinaryName = "hive-desktop";
 const desktopElectronRoot = join(repoRoot, "apps", "desktop-electron");
@@ -66,6 +77,7 @@ const buildFrontend = () =>
     env: {
       ...process.env,
       VITE_APP_BASE: "./",
+      VITE_API_URL: "same-origin",
     },
   });
 
@@ -88,6 +100,10 @@ const syncDesktopRendererAssets = async () => {
 const buildCli = () =>
   run(["bun", "run", "compile"], {
     cwd: join(repoRoot, "packages", "cli"),
+  });
+const buildAndroidViewer = () =>
+  run(["bun", "run", "compile:viewer"], {
+    cwd: androidRuntimeRoot,
   });
 const buildDesktopElectron = () =>
   run(["bun", "run", "package"], {
@@ -242,12 +258,54 @@ const copyDesktopBundle = async (destination: string) => {
   await copyLinuxElectronArtifacts(destination);
 };
 
+const copyAndroidViewerBundle = async (destination: string) => {
+  const binaryCandidates = [
+    join(androidRuntimeRoot, "hive-android-viewer-server"),
+    join(androidRuntimeRoot, "hive-android-viewer-server.exe"),
+  ];
+  const viewerBinary = binaryCandidates.find((candidate) =>
+    existsSync(candidate)
+  );
+  if (!viewerBinary) {
+    throw new Error(
+      "Compiled Android viewer binary not found. Did the build succeed?"
+    );
+  }
+
+  const publicDirectory = join(streamDroidRoot, "public");
+  const protoPath = join(
+    streamDroidRoot,
+    "src",
+    "grpc",
+    "emulator_controller.proto"
+  );
+  if (!(existsSync(publicDirectory) && existsSync(protoPath))) {
+    throw new Error("Patched stream-droid runtime assets are missing.");
+  }
+
+  const binaryDestination = join(destination, androidViewerBinaryName);
+  await copyFile(viewerBinary, binaryDestination);
+  await makeExecutable(binaryDestination);
+  const assetsDestination = join(destination, androidViewerAssetsRelativeDir);
+  await mkdir(assetsDestination, { recursive: true });
+  await cp(publicDirectory, join(assetsDestination, "public"), {
+    recursive: true,
+  });
+  await copyFile(
+    protoPath,
+    join(assetsDestination, "emulator_controller.proto")
+  );
+
+  return { binaryCandidates, binaryDestination, assetsDestination };
+};
+
 const main = async () => {
   await ensureDir(releaseDir);
 
   await buildFrontend();
   await syncDesktopRendererAssets();
   await buildCli();
+  await buildAndroidViewer();
   await buildDesktopElectron();
 
   const cliBinaryCandidates = [
@@ -289,6 +347,7 @@ const main = async () => {
   });
 
   await copyDesktopBundle(releaseDir);
+  const androidViewerBundle = await copyAndroidViewerBundle(releaseDir);
 
   const releaseVersion = await resolveReleaseVersion({
     envVersion: Bun.env.HIVE_VERSION,
@@ -311,6 +370,8 @@ const main = async () => {
     builtAt: new Date().toISOString(),
     binary: releaseBinaryName,
     assetsDir: "public",
+    androidViewerBinary: androidViewerBinaryName,
+    androidViewerAssetsDir: androidViewerAssetsRelativeDir,
   } satisfies Record<string, string>;
 
   await writeFile(
@@ -324,7 +385,9 @@ const main = async () => {
   await run(["tar", "-czf", tarballPath, "-C", releaseBaseDir, releaseName]);
 
   await Promise.all(
-    cliBinaryCandidates.map((candidate) => rm(candidate, { force: true }))
+    [...cliBinaryCandidates, ...androidViewerBundle.binaryCandidates].map(
+      (candidate) => rm(candidate, { force: true })
+    )
   );
 
   const sha256 = await computeSha256(tarballPath);
@@ -336,6 +399,10 @@ const main = async () => {
   console.log("\nDistribution ready:");
   console.log(`  Binary: ${binaryDestination}`);
   console.log(`  Public assets: ${join(releaseDir, "public")}`);
+  console.log(`  Android viewer: ${androidViewerBundle.binaryDestination}`);
+  console.log(
+    `  Android viewer assets: ${androidViewerBundle.assetsDestination}`
+  );
   console.log(`  Tarball: ${tarballPath}`);
   console.log(`  SHA256: ${sha256}`);
 };

@@ -61,7 +61,7 @@ const resolveRendererEntry = () => {
   return candidates.find((entry) => existsSync(entry)) ?? null;
 };
 
-const requestViewerMicrophoneAccess = async (origin: string) => {
+const requestMicrophoneAccess = async (origin: string) => {
   const window =
     BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
   if (!window) {
@@ -153,7 +153,7 @@ const bootstrap = async () => {
   await app.whenReady();
   const mediaPermissions = installMediaPermissionHandlers(
     session.defaultSession,
-    { requestViewerMicrophoneAccess }
+    { requestMicrophoneAccess }
   );
   const startupController = createDesktopStartupController();
   const ipcRegistry = registerIpcHandlers({

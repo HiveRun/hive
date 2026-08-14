@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   ArrowLeft,
   ArrowRight,
+  CircleAlert,
   ExternalLink,
   Maximize2,
   RefreshCw,
@@ -19,6 +20,11 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDesktopViewer } from "@/hooks/use-desktop-viewer";
 import { useServiceStream } from "@/hooks/use-service-stream";
+import {
+  addPreferredAudioInput,
+  isHiveMicrophoneStatusMessage,
+  usePreferredAudioInput,
+} from "@/lib/audio-input";
 import {
   type BrowserViewerAvailability,
   type BrowserViewerTarget,
@@ -199,6 +205,65 @@ export function useBrowserReachability({
   return result?.url === requestUrl ? result.reachability : null;
 }
 
+export function useViewerMicrophoneError(
+  browserViewerUrl: string | null,
+  audioInputEnabled: boolean
+) {
+  const [microphoneError, setMicrophoneError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setMicrophoneError(null);
+    if (!(browserViewerUrl && audioInputEnabled)) {
+      return;
+    }
+
+    const viewerOrigin = new URL(browserViewerUrl).origin;
+    const handleMessage = (event: MessageEvent) => {
+      const activeViewerWindow = document.querySelector<HTMLIFrameElement>(
+        '[data-testid="web-iframe-preview"]'
+      )?.contentWindow;
+      if (
+        event.origin !== viewerOrigin ||
+        event.source !== activeViewerWindow ||
+        !isHiveMicrophoneStatusMessage(event.data)
+      ) {
+        return;
+      }
+      setMicrophoneError(
+        event.data.status === "error"
+          ? (event.data.message ?? "Microphone forwarding failed.")
+          : null
+      );
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [audioInputEnabled, browserViewerUrl]);
+
+  return microphoneError;
+}
+
+export function resolvePreferredViewerUrl(
+  target: BrowserViewerTarget | undefined,
+  preferredAudioInput: string | null
+) {
+  const rootUrl = resolveLoopbackHttpViewerUrl(target?.url ?? null);
+  return target?.audioInput
+    ? addPreferredAudioInput(rootUrl, preferredAudioInput)
+    : rootUrl;
+}
+
+function resolveDesktopServiceTabs(
+  targets: BrowserViewerTarget[],
+  preferredAudioInput: string | null
+) {
+  return targets.flatMap((target) => {
+    const rootUrl = resolvePreferredViewerUrl(target, preferredAudioInput);
+    return rootUrl
+      ? [{ audioInput: target.audioInput, rootUrl, serviceId: target.id }]
+      : [];
+  });
+}
+
 function CellServiceViewerLive({ cellId }: { cellId: string }) {
   const { services, isLoading, error } = useServiceStream(cellId, {
     enabled: true,
@@ -210,18 +275,18 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
   );
   const { activeService, activeServiceId, activeServiceIdRef, selectService } =
     useActiveServiceTab(viewerTargets);
+  const preferredAudioInput = usePreferredAudioInput();
 
   const serviceTabs = useMemo(
-    () =>
-      viewerTargets.flatMap((target) => {
-        const rootUrl = resolveLoopbackHttpViewerUrl(target.url);
-        return rootUrl ? [{ rootUrl, serviceId: target.id }] : [];
-      }),
-    [viewerTargets]
+    () => resolveDesktopServiceTabs(viewerTargets, preferredAudioInput),
+    [preferredAudioInput, viewerTargets]
   );
 
   const previewUrl = activeService?.url ?? null;
-  const browserViewerUrl = resolveLoopbackHttpViewerUrl(previewUrl);
+  const browserViewerUrl = resolvePreferredViewerUrl(
+    activeService,
+    preferredAudioInput
+  );
   const nativeViewerAvailability = resolveViewerAvailability(activeService);
   const nativeViewerReady = nativeViewerAvailability === "ready";
   const nativeActiveServiceId = nativeViewerReady ? activeServiceId : null;
@@ -249,6 +314,11 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
   );
   const displayUrl = resolveDisplayUrl(state, activeServiceId, previewUrl);
   const controlsEnabled = Boolean(actions && nativeViewerReady && displayUrl);
+  const microphoneError = useViewerMicrophoneError(
+    browserViewerUrl,
+    activeService?.audioInput ?? false
+  );
+
   const runViewerAction = (
     callback: (viewer: DesktopViewer) => Promise<unknown>
   ) => runForActiveServiceTab(actions, activeServiceIdRef.current, callback);
@@ -355,6 +425,8 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
             </div>
           </div>
 
+          <MicrophoneErrorAlert error={microphoneError} />
+
           <div className="contents">
             <WebPreviewBody
               emptyState={
@@ -376,6 +448,36 @@ function CellServiceViewerLive({ cellId }: { cellId: string }) {
           </div>
         </WebPreview>
       </div>
+    </div>
+  );
+}
+
+function MicrophoneErrorAlert({ error }: { error: string | null }) {
+  if (!error) {
+    return null;
+  }
+
+  return (
+    <div
+      className="flex flex-wrap items-center justify-between gap-3 border-2 border-destructive bg-destructive/10 p-4 text-destructive"
+      data-testid="viewer-microphone-error"
+      role="alert"
+    >
+      <div className="flex min-w-0 items-start gap-3">
+        <CircleAlert className="mt-0.5 size-5 shrink-0" />
+        <div>
+          <p className="font-semibold text-xs uppercase tracking-[0.18em]">
+            Microphone unavailable
+          </p>
+          <p className="mt-1 text-sm">{error}</p>
+        </div>
+      </div>
+      <Link
+        className="border-2 border-destructive px-3 py-2 font-semibold text-xs uppercase tracking-[0.14em] hover:bg-destructive hover:text-destructive-foreground"
+        to="/settings"
+      >
+        Open settings
+      </Link>
     </div>
   );
 }
@@ -408,7 +510,7 @@ function ViewerSurface({
   if (availability === "ready" && url) {
     return (
       <iframe
-        allow="autoplay; microphone"
+        allow={target?.audioInput ? "autoplay; microphone" : "autoplay"}
         className="h-full min-h-[320px] w-full border-0 bg-background"
         data-testid="web-iframe-preview"
         referrerPolicy="no-referrer"

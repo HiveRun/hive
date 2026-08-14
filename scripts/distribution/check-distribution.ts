@@ -40,6 +40,30 @@ const ensureDesktopArtifact = (releaseDir: string) => {
   }
 };
 
+const ensureAndroidViewerArtifacts = (releaseDir: string) => {
+  const viewerBinary = join(
+    releaseDir,
+    platform === "win32"
+      ? "hive-android-viewer-server.exe"
+      : "hive-android-viewer-server"
+  );
+  const assetsDirectory = join(releaseDir, "android-runtime", "stream-droid");
+  const requiredPaths = [
+    viewerBinary,
+    join(assetsDirectory, "emulator_controller.proto"),
+    join(assetsDirectory, "public", "app.css"),
+    join(assetsDirectory, "public", "client.js"),
+    join(assetsDirectory, "public", "index.html"),
+  ];
+  const missing = requiredPaths.filter((path) => !existsSync(path));
+  if (missing.length > 0) {
+    throw new Error(
+      `Android viewer artifacts missing from installed release: ${missing.join(", ")}`
+    );
+  }
+  return { assetsDirectory, viewerBinary };
+};
+
 console.log("Building installer artifacts...");
 runDistributionCommand(["bun", "run", "build:installer"]);
 
@@ -76,6 +100,22 @@ try {
 
   const currentRelease = join(hiveHome, "current");
   ensureDesktopArtifact(currentRelease);
+  const androidViewer = ensureAndroidViewerArtifacts(currentRelease);
+
+  console.log("Validating installed Android viewer binary...");
+  runDistributionCommand([androidViewer.viewerBinary, "--help"], {
+    env: {
+      ...installEnv,
+      HIVE_ANDROID_EMULATOR_PROTO_PATH: join(
+        androidViewer.assetsDirectory,
+        "emulator_controller.proto"
+      ),
+      HIVE_ANDROID_STREAM_DROID_PUBLIC_DIR: join(
+        androidViewer.assetsDirectory,
+        "public"
+      ),
+    },
+  });
 
   console.log("Distribution check passed.");
 } finally {

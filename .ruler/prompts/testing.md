@@ -37,6 +37,7 @@ bun run test:e2e:fast:spec specs/cell-chat.e2e.ts
 - For layout/scroll/overflow fixes, always validate the actual rendered page in the affected viewport and runtime. Confirm the intended container scrolls and that surrounding panes do not accidentally overflow.
 - Use headless mode by default; only use headed mode for manual login/2FA/CAPTCHA or explicit live walkthrough requests.
 - Include verification evidence in your final response (key observed behavior and/or captured artifacts).
+- Android emulator/viewer/audio changes require `bun run test:e2e:android-service-audio` on a Linux/macOS host with the documented Android SDK and ffmpeg prerequisites. It is intentionally excluded from commit hooks and runs as a dedicated CI gate on merge queue, `main`, and manual dispatch.
 - If pre-push fails on the known flaky backend spec (`apps/server/src/__tests__/routes/cells.create.test.ts`), run `bun -C apps/server run test -- src/__tests__/routes/cells.create.test.ts -t "returns detailed payload when template setup fails"` once, then rerun `bun run check:push`.
 - Never commit `test.fixme`, `test.skip`, `it.skip`, or `describe.skip`. `bun run check:no-disabled-tests` enforces this; if coverage cannot be made reliable, fix the harness or remove the test instead of disabling it.
 

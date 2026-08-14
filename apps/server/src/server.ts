@@ -24,6 +24,7 @@ import {
   markAgentSessionsForResume,
   resumeAgentSessionsOnStartup,
 } from "./agents/service";
+import { createBundledWebHandler } from "./bundled-web";
 import { resolveWorkspaceRoot } from "./config/context";
 import { DatabaseService } from "./db";
 import { repairLegacyMigrationGaps } from "./legacy-migration-repairs";
@@ -34,6 +35,11 @@ import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
 import { chatTerminalService } from "./services/chat-terminal";
 import { createPortManager } from "./services/port-manager";
+import {
+  releaseServerPort,
+  reserveServerPort,
+  type ServerPortReservation,
+} from "./services/server-port-reservation";
 import { ServiceSupervisorService } from "./services/supervisor";
 import { cellTerminalService } from "./services/terminal";
 import {
@@ -42,11 +48,21 @@ import {
 } from "./workspaces/registry";
 
 const DEFAULT_SERVER_PORT = 3000;
-const DEFAULT_HOSTNAME = "localhost";
+const DEFAULT_HOSTNAME = "127.0.0.1";
 const STARTUP_RECOVERY_DELAY_MS = 1000;
 const NANOSECONDS_PER_MILLISECOND = 1_000_000;
 const PORT = Number(process.env.PORT ?? DEFAULT_SERVER_PORT);
 const HOSTNAME = process.env.HOST ?? process.env.HOSTNAME ?? DEFAULT_HOSTNAME;
+
+const serverRuntimeState = globalThis as typeof globalThis & {
+  __hiveServerOwnerPid?: number;
+  __hiveServerShutdown?: () => Promise<void>;
+  __hiveServerShuttingDown?: boolean;
+  __hiveServerSignalsRegistered?: boolean;
+  __hiveServerStartup?: Promise<void>;
+  __hiveStartupRecoveryGeneration?: number;
+  __hiveStartupRecoveryPromise?: Promise<void>;
+};
 
 function formatHostForLocalUrl(hostname: string) {
   if (hostname === "0.0.0.0") {
@@ -289,9 +305,6 @@ const createApp = () =>
 
 export type App = ReturnType<typeof createApp>;
 
-let shuttingDown = false;
-let signalsRegistered = false;
-
 const shutdown = async (): Promise<void> => {
   await ServiceSupervisorService.stopAll();
   chatTerminalService.stopAll();
@@ -307,30 +320,28 @@ const shutdown = async (): Promise<void> => {
   }
   await closeAllAgentSessions({ deleteRemote: false });
   await stopSharedOpencodeServer();
+  serverRuntimeState.__hiveServerOwnerPid = undefined;
   cleanupReadyFile();
   cleanupPidFile();
 };
 
 const registerSignalHandlers = () => {
-  if (signalsRegistered) {
+  serverRuntimeState.__hiveServerShutdown = shutdown;
+  if (serverRuntimeState.__hiveServerSignalsRegistered) {
     return;
   }
-  signalsRegistered = true;
-
-  const performShutdown = async () => {
-    await shutdown();
-  };
+  serverRuntimeState.__hiveServerSignalsRegistered = true;
 
   const handleShutdown = async (signal: string) => {
-    if (shuttingDown) {
+    if (serverRuntimeState.__hiveServerShuttingDown) {
       return;
     }
-    shuttingDown = true;
+    serverRuntimeState.__hiveServerShuttingDown = true;
 
     process.stderr.write(`\n${signal} received. Shutting down gracefully...\n`);
 
     try {
-      await performShutdown();
+      await serverRuntimeState.__hiveServerShutdown?.();
       process.stderr.write("Cleanup completed. Exiting.\n");
       process.exit(0);
     } catch (error) {
@@ -457,18 +468,29 @@ const runStartupRecoveryTasks = async (): Promise<void> => {
   }
 };
 
-export const startServer = async () => {
-  const serverStartTime = process.hrtime.bigint();
-  const app = createApp();
-  cleanupReadyFile();
+const reserveApiPort = async (): Promise<ServerPortReservation> => {
+  try {
+    return await reserveServerPort(PORT, HOSTNAME);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : JSON.stringify(error);
+    process.stderr.write(
+      `Failed to reserve API port ${PORT}: ${message}. Is another process using this port?\n`
+    );
+    process.exit(1);
+  }
+};
 
-  app.get("/", () => "OK");
-
-  const workspaceRoot = resolveWorkspaceRoot();
-
+const bootstrapServer = async (
+  workspaceRoot: string,
+  portReservation: ServerPortReservation | null
+): Promise<void> => {
   try {
     await bootstrapServerCore(workspaceRoot);
   } catch (error) {
+    if (portReservation) {
+      await releaseServerPort(portReservation);
+    }
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(
       `${message}\nStartup failed. Check the logs above for details; database issues may require rerunning migrations with ` +
@@ -477,13 +499,12 @@ export const startServer = async () => {
     cleanupPidFile();
     process.exit(1);
   }
+};
 
-  process.stderr.write(
-    `Startup timing: core bootstrap completed in ${formatElapsedMilliseconds(serverStartTime)}ms\n`
-  );
-
-  registerSignalHandlers();
-
+const listenForApiRequests = async (
+  app: ReturnType<typeof createApp>,
+  stopOpencodeOnFailure: boolean
+): Promise<void> => {
   try {
     app.listen({
       port: PORT,
@@ -491,6 +512,9 @@ export const startServer = async () => {
       reusePort: false,
     });
   } catch (error) {
+    if (stopOpencodeOnFailure) {
+      await stopSharedOpencodeServer();
+    }
     const message =
       error instanceof Error ? error.message : JSON.stringify(error);
     process.stderr.write(
@@ -499,28 +523,108 @@ export const startServer = async () => {
     cleanupPidFile();
     process.exit(1);
   }
+};
 
-  const boundPort = app.server?.port ?? PORT;
-  const boundHostname = app.server?.hostname ?? HOSTNAME;
-  process.stderr.write(
-    `API listening on http://${boundHostname}:${boundPort}\n`
-  );
-  process.stderr.write(
-    `Startup timing: server ready in ${formatElapsedMilliseconds(serverStartTime)}ms\n`
-  );
+const ignorePreviousStartupFailure = (): Promise<void> => Promise.resolve();
+
+const scheduleStartupRecovery = (generation: number): void => {
   markDaemonReady();
 
   // Recovery can sweep a large backlog of cells and sessions. Give external
   // clients a short window to connect before that background work begins.
   setTimeout(() => {
-    runStartupRecoveryTasks().catch((error) => {
-      process.stderr.write(
-        `Startup recovery tasks failed: ${
-          error instanceof Error ? error.message : String(error)
-        }\n`
-      );
-    });
+    if (serverRuntimeState.__hiveStartupRecoveryGeneration !== generation) {
+      return;
+    }
+    const previousRecovery =
+      serverRuntimeState.__hiveStartupRecoveryPromise ?? Promise.resolve();
+    serverRuntimeState.__hiveStartupRecoveryPromise = previousRecovery
+      .catch(ignorePreviousStartupFailure)
+      .then(runStartupRecoveryTasks)
+      .catch((error) => {
+        process.stderr.write(
+          `Startup recovery tasks failed: ${
+            error instanceof Error ? error.message : String(error)
+          }\n`
+        );
+      });
   }, STARTUP_RECOVERY_DELAY_MS);
+};
+
+const startServerGeneration = async () => {
+  const recoveryGeneration =
+    (serverRuntimeState.__hiveStartupRecoveryGeneration ?? 0) + 1;
+  serverRuntimeState.__hiveStartupRecoveryGeneration = recoveryGeneration;
+  const serverStartTime = process.hrtime.bigint();
+  const app = createApp();
+  const isHotReload = serverRuntimeState.__hiveServerOwnerPid === process.pid;
+  const portReservation = isHotReload ? null : await reserveApiPort();
+
+  if (portReservation) {
+    cleanupReadyFile();
+  }
+
+  const webDist = process.env.HIVE_WEB_DIST ?? join(binaryDirectory, "public");
+  const bundledWebHandler = isCompiledRuntime
+    ? createBundledWebHandler(webDist)
+    : undefined;
+  if (bundledWebHandler) {
+    app.get("/", ({ request }) => bundledWebHandler(request));
+    app.get("/*", ({ request }) => bundledWebHandler(request));
+  } else {
+    app.get("/", () => "OK");
+  }
+
+  const workspaceRoot = resolveWorkspaceRoot();
+  await bootstrapServer(workspaceRoot, portReservation);
+
+  process.stderr.write(
+    `Startup timing: core bootstrap completed in ${formatElapsedMilliseconds(serverStartTime)}ms\n`
+  );
+
+  registerSignalHandlers();
+
+  if (portReservation !== null) {
+    await releaseServerPort(portReservation);
+  }
+
+  await listenForApiRequests(app, !isHotReload);
+
+  const boundPort = app.server?.port ?? PORT;
+  const boundHostname = app.server?.hostname ?? HOSTNAME;
+  serverRuntimeState.__hiveServerOwnerPid = process.pid;
+  process.stderr.write(
+    `API listening on http://${formatHostForLocalUrl(boundHostname)}:${boundPort}\n`
+  );
+  process.stderr.write(
+    `Startup timing: server ready in ${formatElapsedMilliseconds(serverStartTime)}ms\n`
+  );
+  scheduleStartupRecovery(recoveryGeneration);
 
   return app;
+};
+
+export const startServer = async () => {
+  const previousStartup =
+    serverRuntimeState.__hiveServerStartup ?? Promise.resolve();
+  const previousRecovery =
+    serverRuntimeState.__hiveStartupRecoveryPromise ?? Promise.resolve();
+  const previousServerWork = Promise.all([
+    previousStartup.catch(ignorePreviousStartupFailure),
+    previousRecovery.catch(ignorePreviousStartupFailure),
+  ]);
+  let releaseStartup: (() => void) | undefined;
+  const currentStartup = new Promise<void>((resolve) => {
+    releaseStartup = resolve;
+  });
+  serverRuntimeState.__hiveServerStartup = previousServerWork.then(
+    () => currentStartup
+  );
+
+  await previousServerWork;
+  try {
+    return await startServerGeneration();
+  } finally {
+    releaseStartup?.();
+  }
 };

@@ -1,19 +1,48 @@
 import { chmodSync, lstatSync, mkdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { sanitizeServiceEnvironmentName } from "../config/service-graph";
 import { resolveHiveHome } from "../workspaces/registry";
 
 const CELL_DIRECTORY_MODE = 0o700;
+const PATH_SEPARATOR_PATTERN = /[\\/]/;
 
 type CellEnvironment = {
   HIVE_CELL_ID: string;
+  HIVE_CLI_BIN: string;
   HIVE_CELL_RUNTIME_DIR: string;
   HIVE_CELL_ARTIFACTS_DIR: string;
   HIVE_BROWSE_ROOT: string;
   HIVE_HOME: string;
 };
+
+type ResolveHiveCliBinOptions = {
+  execPath?: string;
+  isCompiledRuntime?: boolean;
+  sourceEntryPath?: string;
+};
+
+const hiveCliSourceEntryPath = fileURLToPath(
+  new URL("../../../../packages/cli/src/index.ts", import.meta.url)
+);
+
+export function resolveHiveCliBin(
+  options: ResolveHiveCliBinOptions = {}
+): string {
+  const execPath = options.execPath ?? process.execPath;
+  const compiled =
+    options.isCompiledRuntime ??
+    !execPath
+      .split(PATH_SEPARATOR_PATTERN)
+      .at(-1)
+      ?.toLowerCase()
+      .startsWith("bun");
+  return compiled
+    ? execPath
+    : (options.sourceEntryPath ?? hiveCliSourceEntryPath);
+}
 
 type PersistedCellPort = {
   serviceName: string;
@@ -49,6 +78,7 @@ export function resolveCellEnvironment(
 ): CellEnvironment {
   return {
     HIVE_CELL_ID: cellId,
+    HIVE_CLI_BIN: resolveHiveCliBin(),
     HIVE_CELL_RUNTIME_DIR: resolveCellRuntimeDir(cellId),
     HIVE_CELL_ARTIFACTS_DIR: resolveCellArtifactsDir(cellId),
     HIVE_BROWSE_ROOT: browseRoot,

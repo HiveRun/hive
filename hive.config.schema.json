@@ -109,6 +109,21 @@
                         "type": "string"
                       }
                     },
+                    "audio": {
+                      "description": "Host audio access for the service",
+                      "type": "object",
+                      "properties": {
+                        "input": {
+                          "description": "Allow the service to receive host audio (defaults to false)",
+                          "type": "boolean"
+                        },
+                        "output": {
+                          "description": "Allow the service to play audio on the host (defaults to true)",
+                          "type": "boolean"
+                        }
+                      },
+                      "additionalProperties": false
+                    },
                     "ports": {
                       "description": "Named ports allocated for the service",
                       "type": "object",

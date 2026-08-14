@@ -87,6 +87,12 @@ Environment variables:
 - The SQLite database defaults to `~/.hive/state/hive.db`; set `DATABASE_URL` if you need a different location.
 - High-frequency transport/polling request logs are muted by default to keep runtime logs readable. Re-enable per category with `HIVE_LOG_TERMINAL_TRAFFIC=1`, `HIVE_LOG_POLLING_TRAFFIC=1`, or `HIVE_LOG_OPTIONS_REQUESTS=1`.
 
+#### Android runtime support
+
+Hive Android emulator and viewer services require a Linux or macOS host with the Android SDK installed. Android commands fail immediately on Windows rather than starting a partial runtime.
+
+Host playback of emulator audio is Linux-only and requires PipeWire's `pw-cat`. Browser microphone injection is supported on Linux and macOS when the viewer service enables audio input. It starts and stops automatically with guest `AudioRecord` capture after the browser or OS grants microphone permission.
+
 #### OpenCode keybinds in Hive
 
 Hive applies browser-safe aliases for conflict-prone shortcuts in embedded chat terminals (web + desktop runtimes):
@@ -294,6 +300,42 @@ Set `"port": 42861` on a named port only when the service requires a stable brow
 
 Setup, services, cell terminals, chat terminals, and teardown receive `HIVE_CELL_ID`, `HIVE_CELL_RUNTIME_DIR`, `HIVE_CELL_ARTIFACTS_DIR`, cell-local `HIVE_HOME`, and named variables such as `API_HTTP_PORT`. Teardown runs only during cell deletion or destructive provisioning rollback. Successful deletion removes runtime data and preserves artifacts.
 
+Hive also injects `HIVE_CLI_BIN`, the absolute path to the exact source or installed Hive executable managing the cell. Templates can use it to start Hive-owned runtime providers without relying on the shell's `PATH` or another installed Hive version. The Android provider keeps product commands in the workspace while Hive owns the emulator lease, cell-local AVD, gRPC endpoint, viewer, and browser microphone bridge:
+
+```json
+{
+  "services": {
+    "app": {
+      "type": "process",
+      "run": "\"$HIVE_CLI_BIN\" android emulator --grpc-port \"$APP_ANDROID_GRPC_PORT\" -- bun run android:cell",
+      "ports": {
+        "http": { "primary": true, "protocol": "http" },
+        "android-grpc": { "protocol": "tcp", "viewer": false }
+      }
+    },
+    "android": {
+      "type": "process",
+      "run": "\"$HIVE_CLI_BIN\" android viewer --port \"$PORT\" --grpc-port \"${PORT:app:android-grpc}\"",
+      "audio": { "input": true, "output": true },
+      "ports": {
+        "viewer": {
+          "primary": true,
+          "port": 42861,
+          "protocol": "http",
+          "viewer": true
+        }
+      },
+      "readiness": {
+        "checks": [{ "type": "http", "port": "viewer", "path": "/api/health" }]
+      },
+      "readyTimeoutMs": 360000
+    }
+  }
+}
+```
+
+Independent services start concurrently; `dependsOn` edges create readiness waves. The Android viewer can therefore wait for the emulator while the product service performs a cold build. Process service audio output defaults to enabled, while input defaults to disabled and must be explicitly enabled with `"audio": { "input": true }`. Android microphone forwarding follows active guest capture automatically; there is no Hive microphone toggle. Android runtime support is intentionally limited to Linux and macOS. Browser microphone injection is available on both; host playback of emulator output currently requires Linux and `pw-cat`.
+
 Docker and Compose configuration shapes remain reserved but are not executable yet; Hive now fails these definitions explicitly rather than silently skipping them.
 
 
@@ -355,6 +397,36 @@ Install Playwright browsers on fresh environments or after Playwright upgrades:
 ```bash
 bun -C apps/e2e run install:browsers
 ```
+
+The production Android microphone test requires `ffmpeg` with `flite`,
+`drawtext`, H.264, and AAC support, plus an Android SDK on Linux or macOS. It
+injects a Calibrate interview response into the microphone, records the PCM
+received by Android, plays a distinct Calibrate coaching prompt through
+`AudioTrack`, captures the emulator's rendered gRPC audio stream, and combines
+both paths into a concise evidence video:
+
+```bash
+bun run test:e2e:android-service-audio
+```
+
+The trimmed MP4 is written to
+`apps/e2e/reports/latest/android-service-audio-evidence.mp4`. Microphone input
+uses a female voice in the left channel; rendered emulator output uses a
+different male voice in the right channel. On-screen banners identify each path
+and whether the chapter was captured before or after service restart. The test
+also verifies the complete payload accepted by `AudioTrack` before validating
+the encoded MP4 channels. The original full-length silent Playwright recording
+remains under `test-results/`.
+
+Local reruns reuse the production assembly only when its source fingerprint is
+unchanged; CI always rebuilds. Set `HIVE_E2E_REUSE_BUILD=0` to force a local
+rebuild. Per-phase durations are written to
+`apps/e2e/reports/latest/e2e-phase-timings.json`.
+
+This hardware-backed suite is intentionally not part of `check:commit`,
+`check:push`, or Husky because it requires Android/KVM and takes several
+minutes. CI runs it as a dedicated gate on merge queue, `main`, and manual
+dispatch, and uploads `apps/e2e/reports/latest` even when the test fails.
 
 Notes:
 - The E2E harness creates a dedicated temp workspace and SQLite database per run.
@@ -439,6 +511,7 @@ Notes:
 - `Workflow Lint` runs `actionlint`; `Quality Checks` runs `bun run check:commit`.
 - `E2E Runtime Suite` runs `bun run test:e2e` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), caches Playwright/OpenCode artifacts, and uploads reports from `apps/e2e/reports/latest`.
 - `Desktop Electron Smoke Suite` runs `bun run test:e2e:desktop` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), executes under `xvfb-run`, and uploads reports from `apps/e2e-desktop/reports/latest`.
+- `Android Service Audio E2E` runs `bun run test:e2e:android-service-audio` on merge queue, `main` pushes, and manual dispatch, provisions the Android SDK/KVM and ffmpeg, and uploads the evidence MP4 plus reports.
 - `Release` is a manual-dispatch workflow that bumps version + commits + tags in one run.
 - `Release Publish` builds installer artifacts on `v*` tags and publishes GitHub Releases.
 - `Security Audit` runs a strict `bun audit --audit-level high` job in non-blocking mode for visibility while dependency remediation is in progress.

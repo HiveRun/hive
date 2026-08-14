@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Home, Minus, Plus, Ticket } from "lucide-react";
+import { Home, Minus, Plus, Settings2, Ticket } from "lucide-react";
 import type { ComponentProps } from "react";
 import { ModeToggle } from "@/components/mode-toggle";
 import {
@@ -170,10 +170,30 @@ export function MainSidebar({
       <SidebarFooter className="border-border border-t bg-sidebar text-[0.55rem] text-muted-foreground uppercase tracking-[0.28em]">
         <div
           className={cn(
-            "flex items-center justify-end gap-3 px-2 py-2",
+            "flex items-center justify-between gap-3 px-2 py-2",
             sidebarState === "collapsed" && "justify-center px-0"
           )}
         >
+          <SidebarMenu
+            className={cn(sidebarState === "collapsed" ? "w-auto" : "flex-1")}
+          >
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                asChild
+                className={cn(
+                  "rounded-none border-2 border-transparent text-muted-foreground transition-none hover:bg-primary/5 hover:text-foreground",
+                  pathname === "/settings" &&
+                    "border-primary bg-primary/10 text-foreground"
+                )}
+                tooltip="Settings"
+              >
+                <Link aria-label="Settings" to="/settings">
+                  <Settings2 className="size-4" />
+                  <span>Settings</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
           <div className="shrink-0">
             <ModeToggle />
           </div>

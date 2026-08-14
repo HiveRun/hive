@@ -11,6 +11,16 @@ import {
 import { hiveConfigService } from "../config/context";
 import type { HiveConfig, Template } from "../config/schema";
 
+function formatHiveServerHostname(hostname: string): string {
+  if (hostname === "0.0.0.0") {
+    return "127.0.0.1";
+  }
+  if (hostname === "::") {
+    return "[::1]";
+  }
+  return hostname.includes(":") ? `[${hostname}]` : hostname;
+}
+
 /**
  * Resolves the Hive server URL for tool configuration.
  * This URL is written to .hive/config.json in each worktree so tools
@@ -18,9 +28,7 @@ import type { HiveConfig, Template } from "../config/schema";
  *
  * Uses HIVE_URL if set, otherwise constructs from PORT (defaulting to 3000).
  *
- * IMPORTANT: Uses "localhost" not "127.0.0.1" to handle IPv4/IPv6 binding.
- * The server may bind to IPv6 only, and "localhost" resolves correctly
- * for either protocol while "127.0.0.1" is IPv4-only.
+ * Defaults to the server's deterministic IPv4 loopback binding.
  */
 export function resolveHiveServerUrl(): string {
   if (process.env.HIVE_URL) {
@@ -28,7 +36,9 @@ export function resolveHiveServerUrl(): string {
   }
 
   const port = process.env.PORT ?? "3000";
-  const hostname = process.env.HOST ?? process.env.HOSTNAME ?? "localhost";
+  const configuredHostname =
+    process.env.HOST ?? process.env.HOSTNAME ?? "127.0.0.1";
+  const hostname = formatHiveServerHostname(configuredHostname);
   const protocol = process.env.HIVE_PROTOCOL ?? "http";
 
   return `${protocol}://${hostname}:${port}`;

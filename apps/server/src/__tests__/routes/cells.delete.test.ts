@@ -1,4 +1,4 @@
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -43,6 +43,18 @@ const createDeleteTestApp = (overrides: Record<string, unknown>) =>
   createCellRouteTestApp(
     createCellRouteTestDependencies({ cellId: CELL_ID, overrides })
   );
+
+const createMissingWorkspaceDeleteApp = () => {
+  const cleanup = createResolvedCleanupMocks();
+  return {
+    cleanup,
+    app: createDeleteTestApp({
+      ...cleanup,
+      resolveWorkspaceContext: () =>
+        Promise.reject(new Error("Workspace registry entry not found")),
+    }),
+  };
+};
 
 const seedDeleteCell = async (name: string, withArtifacts = false) => {
   await seedRouteCell({ id: CELL_ID, name });
@@ -169,6 +181,45 @@ describe("cell deletion teardown lifecycle", () => {
         .from(cellServicePorts)
         .where(eq(cellServicePorts.serviceId, "delete-service"))
     ).toHaveLength(0);
+  });
+
+  it("deletes a cell when its workspace registry entry is missing", async () => {
+    const workspacePath = join(hiveHome, "cells", CELL_ID);
+    await mkdir(workspacePath, { recursive: true });
+    await writeFile(join(workspacePath, "package.json"), "{}");
+    await seedRouteCell({
+      id: CELL_ID,
+      name: "Delete missing workspace registry",
+      workspacePath,
+    });
+    const { app, cleanup } = createMissingWorkspaceDeleteApp();
+
+    const response = await deleteRouteCellById(app, CELL_ID);
+
+    expect(response.status).toBe(HTTP_OK);
+    expect(cleanup.runCellTeardown).toHaveBeenCalledOnce();
+    expect(cleanup.removeWorktree).not.toHaveBeenCalled();
+    expect(
+      await testDb.select().from(cells).where(eq(cells.id, CELL_ID))
+    ).toHaveLength(0);
+    await expect(access(workspacePath)).rejects.toThrow();
+  });
+
+  it("retains a cell rather than deleting an unsafe fallback path", async () => {
+    await seedDeleteCell("Reject unsafe workspace path");
+    const { app } = createMissingWorkspaceDeleteApp();
+
+    const response = await deleteRouteCellById(app, CELL_ID);
+
+    expect(response.status).toBe(HTTP_INTERNAL_ERROR);
+    expect((await response.json()) as { message: string }).toEqual({
+      message:
+        "Failed to delete cell: Workspace removal failed during cell deletion: Refusing to remove unsafe cell workspace path: /tmp/mock-worktree",
+    });
+    expect(await loadDeleteCell()).toMatchObject({
+      id: CELL_ID,
+      status: "deleting",
+    });
   });
 
   it("does not run teardown or remove resources after service stop fails", async () => {

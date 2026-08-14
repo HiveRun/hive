@@ -45,7 +45,12 @@ import {
   type CellProvisioningState,
   cellProvisioningStates,
 } from "../schema/cell-provisioning";
-import { type CellStatus, cells, type NewCell } from "../schema/cells";
+import {
+  type Cell,
+  type CellStatus,
+  cells,
+  type NewCell,
+} from "../schema/cells";
 import { cellServicePorts, cellServices } from "../schema/services";
 import {
   type CellTimingStatus,
@@ -136,6 +141,7 @@ import { createWorkspaceContextPlugin } from "../workspaces/plugin";
 import { resolveCellsRoot, type WorkspaceRecord } from "../workspaces/registry";
 import {
   type AsyncWorktreeManager,
+  createWorktreeManager,
   describeWorktreeError,
   toAsyncWorktreeManager,
   type WorktreeCreateTimingEvent,
@@ -182,6 +188,47 @@ const createWorktreeManagerFetcher = (
     );
     managerCache.set(workspaceId, manager);
     return manager;
+  };
+};
+
+const resolveDeletionWorktreeService = async (
+  resolver: WorkspaceContextResolverLike,
+  cell: Cell
+): Promise<AsyncWorktreeManager> => {
+  try {
+    const workspaceContext = await resolveWorkspaceContextFromDeps(
+      resolver,
+      cell.workspaceId
+    );
+    return toAsyncWorktreeManager(
+      await workspaceContext.createWorktreeManager()
+    );
+  } catch (registryError) {
+    try {
+      return toAsyncWorktreeManager(
+        createWorktreeManager(cell.workspaceRootPath)
+      );
+    } catch {
+      throw registryError;
+    }
+  }
+};
+
+const createDeletionWorktreeServiceGetter = (
+  resolver: WorkspaceContextResolverLike,
+  cell: Cell
+): (() => Promise<AsyncWorktreeManager>) => {
+  const resolution = resolveDeletionWorktreeService(resolver, cell).then(
+    (service) => ({ service }) as const,
+    (error: unknown) => ({ error }) as const
+  );
+
+  return async () => {
+    const result = await resolution;
+    if ("error" in result) {
+      throw result.error;
+    }
+    return result.service;
   };
 };
 
@@ -1010,7 +1057,14 @@ const PROVISIONING_INTERRUPTED_MESSAGE =
 const PROVISIONING_CANCELLED_MESSAGE =
   "Provisioning cancelled because the cell no longer exists.";
 
-const activeProvisioningWorkflows = new Set<string>();
+const provisioningRuntimeState = globalThis as typeof globalThis & {
+  __hiveActiveProvisioningWorkflows?: Set<string>;
+};
+const activeProvisioningWorkflows =
+  provisioningRuntimeState.__hiveActiveProvisioningWorkflows ??
+  new Set<string>();
+provisioningRuntimeState.__hiveActiveProvisioningWorkflows =
+  activeProvisioningWorkflows;
 
 const LOGGER_CONFIG = {
   level: process.env.LOG_LEVEL || "info",
@@ -2125,13 +2179,15 @@ export function createCellsRoutes(
     set: RouteSet;
     log: RouteLog;
     request: Request;
+    server?: { timeout: (request: Request, seconds: number) => void } | null;
     type: ActivityEventType;
     metadata?: (row: ServiceRow) => Record<string, unknown>;
     action: ResolvedSingleServiceAction;
     queueAction?: boolean;
     waitForAction?: boolean;
-  }) =>
-    await withResolvedServiceAction(async (deps) =>
+  }) => {
+    args.server?.timeout(args.request, 0);
+    return await withResolvedServiceAction(async (deps) =>
       runSingleServiceAction({
         deps,
         cellId: args.cellId,
@@ -2146,6 +2202,7 @@ export function createCellsRoutes(
         waitForAction: args.waitForAction,
       })
     );
+  };
 
   const openTerminalWs = (args: {
     ws: TerminalRouteSocket;
@@ -3568,12 +3625,14 @@ export function createCellsRoutes(
 
     .post(
       "/:id/services/start",
-      async (context) =>
-        await handleBulkServiceRoute(context, {
+      async (context) => {
+        context.server?.timeout(context.request, 0);
+        return await handleBulkServiceRoute(context, {
           type: "services.start",
           run: (deps) => deps.startServicesForCell(context.params.id),
           queueAction: true,
-        }),
+        });
+      },
       {
         ...ServiceListRouteOptions,
       }
@@ -3581,12 +3640,14 @@ export function createCellsRoutes(
 
     .post(
       "/:id/services/stop",
-      async (context) =>
-        await handleBulkServiceRoute(context, {
+      async (context) => {
+        context.server?.timeout(context.request, 0);
+        return await handleBulkServiceRoute(context, {
           type: "services.stop",
           run: (deps) => deps.stopServicesForCell(context.params.id),
           queueAction: true,
-        }),
+        });
+      },
       {
         ...ServiceListRouteOptions,
       }
@@ -3634,13 +3695,14 @@ export function createCellsRoutes(
     .post(
       "/:id/services/:serviceId/start",
 
-      async ({ params, set, request, log }) =>
+      async ({ params, set, request, server, log }) =>
         await runResolvedSingleServiceAction({
           cellId: params.id,
           serviceId: params.serviceId,
           set,
           log,
           request,
+          server,
           type: "service.start",
           action: (deps, serviceId) => deps.startServiceById(serviceId),
           queueAction: true,
@@ -3651,11 +3713,18 @@ export function createCellsRoutes(
     )
     .post(
       "/:id/services/:serviceId/stop",
-      async function stopSingleServiceRoute({ params, set, request, log }) {
+      async function stopSingleServiceRoute({
+        params,
+        set,
+        request,
+        server,
+        log,
+      }) {
         return await runResolvedSingleServiceAction({
           action: (deps, serviceId) => deps.stopServiceById(serviceId),
           type: "service.stop",
           request,
+          server,
           set,
           log,
           queueAction: true,
@@ -3670,15 +3739,17 @@ export function createCellsRoutes(
 
     .post(
       "/:id/services/restart",
-      async (context) =>
-        await handleBulkServiceRoute(context, {
+      async (context) => {
+        context.server?.timeout(context.request, 0);
+        return await handleBulkServiceRoute(context, {
           type: "services.restart",
           run: async (deps) => {
             await deps.stopServicesForCell(context.params.id);
             await deps.startServicesForCell(context.params.id);
           },
           queueAction: true,
-        }),
+        });
+      },
       {
         ...ServiceListRouteOptions,
       }
@@ -3686,7 +3757,13 @@ export function createCellsRoutes(
 
     .post(
       "/:id/services/:serviceId/restart",
-      async function restartSingleServiceRoute({ params, set, request, log }) {
+      async function restartSingleServiceRoute({
+        params,
+        set,
+        request,
+        server,
+        log,
+      }) {
         return await runResolvedSingleServiceAction({
           action: async (deps, serviceId) => {
             await deps.stopServiceById(serviceId);
@@ -3695,6 +3772,7 @@ export function createCellsRoutes(
           metadata: (row) => ({ serviceName: row.service.name }),
           type: "service.restart",
           request,
+          server,
           serviceId: params.serviceId,
           cellId: params.id,
           set,
@@ -3756,10 +3834,11 @@ export function createCellsRoutes(
     )
     .delete(
       "/",
-      async ({ body, set, log }) => {
+      async ({ body, set, log, request, server }) => {
+        server?.timeout(request, 0);
         try {
-          const { resolveWorkspace, deletionDependencies } =
-            await resolveDeletionRuntime();
+          const deletionRuntime = await resolveDeletionRuntime();
+          const { resolveWorkspace, deletionDependencies } = deletionRuntime;
 
           const uniqueIds = [...new Set(body.ids)];
 
@@ -3773,16 +3852,18 @@ export function createCellsRoutes(
             return { message: "No cells found for provided ids" };
           }
 
-          const fetchManager = createWorktreeManagerFetcher(resolveWorkspace);
-
           const deletedIds: string[] = [];
 
           for (const cell of cellsToDelete) {
             try {
+              const getWorktreeService = createDeletionWorktreeServiceGetter(
+                resolveWorkspace,
+                cell
+              );
               await deleteCellWithLifecycle({
                 ...deletionDependencies,
                 cell,
-                getWorktreeService: fetchManager,
+                getWorktreeService,
                 log,
               });
               deletedIds.push(cell.id);
@@ -3826,7 +3907,8 @@ export function createCellsRoutes(
     )
     .delete(
       "/:id",
-      async ({ params, set, log }) => {
+      async ({ params, set, log, request, server }) => {
+        server?.timeout(request, 0);
         try {
           const { resolveWorkspace, deletionDependencies } =
             await resolveDeletionRuntime();
@@ -3840,17 +3922,13 @@ export function createCellsRoutes(
             return { message: "Cell not found" };
           }
 
-          const workspaceManager = await resolveWorkspaceContextFromDeps(
+          const getWorktreeService = createDeletionWorktreeServiceGetter(
             resolveWorkspace,
-            cell.workspaceId
+            cell
           );
-          const worktreeService = toAsyncWorktreeManager(
-            await workspaceManager.createWorktreeManager()
-          );
-
           await deleteCellWithLifecycle({
             ...deletionDependencies,
-            getWorktreeService: async () => worktreeService,
+            getWorktreeService,
             log,
             cell,
           });
@@ -4992,6 +5070,7 @@ async function removeWorktreeIfCreated(context: ProvisionContext) {
     {
       id: context.state.cellId,
       workspacePath: context.state.workspacePath,
+      workspaceRootPath: context.workspace.path,
     },
     context.log
   );
@@ -5952,6 +6031,7 @@ async function serializeService(
     logPath: null,
     lastKnownError: derivedLastKnownError,
     env: service.env,
+    audio: processDefinition?.audio,
     updatedAt: service.updatedAt.toISOString(),
     recentLogs: logResult.content,
     totalLogLines: logResult.totalLines,

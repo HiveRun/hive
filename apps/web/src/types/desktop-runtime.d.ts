@@ -52,6 +52,7 @@ declare global {
   };
 
   type DesktopViewerServiceTab = {
+    audioInput: boolean;
     serviceId: string;
     rootUrl: string;
   };

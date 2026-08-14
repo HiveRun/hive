@@ -31,6 +31,7 @@ describe("resolveLoopbackHttpViewerUrl", () => {
 
 describe("resolveViewerAvailability", () => {
   const readyTarget: BrowserViewerTarget = {
+    audioInput: false,
     id: "service-web",
     label: "web",
     port: 3000,
@@ -100,6 +101,7 @@ describe("resolveBrowserViewerTargets", () => {
         status: "running",
       },
       {
+        audio: { input: true },
         id: "service-web",
         name: "web",
         ports: [
@@ -161,7 +163,8 @@ describe("resolveBrowserViewerTargets", () => {
     ]);
 
     expect(
-      targets.map(({ id, portName, protocol, testId, url }) => ({
+      targets.map(({ audioInput, id, portName, protocol, testId, url }) => ({
+        audioInput,
         id,
         portName,
         protocol,
@@ -170,6 +173,7 @@ describe("resolveBrowserViewerTargets", () => {
       }))
     ).toEqual([
       {
+        audioInput: false,
         id: "service-api:admin",
         portName: "admin",
         protocol: "http",
@@ -177,6 +181,7 @@ describe("resolveBrowserViewerTargets", () => {
         url: "http://localhost:43102/",
       },
       {
+        audioInput: true,
         id: "service-web",
         portName: "http",
         protocol: "http",
@@ -184,6 +189,7 @@ describe("resolveBrowserViewerTargets", () => {
         url: "http://localhost:3000/",
       },
       {
+        audioInput: true,
         id: "service-web:secure",
         portName: "secure",
         protocol: "https",
@@ -191,6 +197,7 @@ describe("resolveBrowserViewerTargets", () => {
         url: "https://localhost:3443/",
       },
       {
+        audioInput: false,
         id: "service-docs",
         portName: "browser",
         protocol: "http",

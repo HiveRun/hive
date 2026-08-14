@@ -25,15 +25,8 @@ describe("resolveHiveServerUrl", () => {
     process.env = { ...originalEnv };
   });
 
-  it("returns http://localhost:3000 by default", () => {
-    expect(resolveHiveServerUrl()).toBe("http://localhost:3000");
-  });
-
-  it("uses localhost not 127.0.0.1 for IPv4/IPv6 compatibility", () => {
-    // Server may bind IPv6 only; localhost resolves correctly for either
-    const url = resolveHiveServerUrl();
-    expect(url).not.toContain("127.0.0.1");
-    expect(url).toContain("localhost");
+  it("returns the IPv4 loopback URL by default", () => {
+    expect(resolveHiveServerUrl()).toBe("http://127.0.0.1:3000");
   });
 
   it("uses HIVE_URL when set", () => {
@@ -43,7 +36,15 @@ describe("resolveHiveServerUrl", () => {
 
   it("respects PORT env var", () => {
     process.env.PORT = "4000";
-    expect(resolveHiveServerUrl()).toBe("http://localhost:4000");
+    expect(resolveHiveServerUrl()).toBe("http://127.0.0.1:4000");
+  });
+
+  it("uses loopback for wildcard bind addresses", () => {
+    process.env.HOST = "0.0.0.0";
+    expect(resolveHiveServerUrl()).toBe("http://127.0.0.1:3000");
+
+    process.env.HOST = "::";
+    expect(resolveHiveServerUrl()).toBe("http://[::1]:3000");
   });
 });
 
