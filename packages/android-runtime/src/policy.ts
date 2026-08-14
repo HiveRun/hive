@@ -169,7 +169,7 @@ export const buildAndroidEmulatorArgs = (options: {
   "-no-snapshot-load",
   "-no-snapshot-save",
   "-no-boot-anim",
-  "-qt-hide-window",
+  "-no-window",
   "-skin",
   "720x1600",
   "-prop",
