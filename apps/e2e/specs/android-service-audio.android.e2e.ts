@@ -29,6 +29,8 @@ import {
 import { readAndroidRuntimeLeaseForCell } from "../../../packages/android-runtime/src/lease";
 import {
   createCellViaApi,
+  fetchWorkspaceCells,
+  fetchWorkspaces,
   readServicePortAssignments,
   requireApiUrl,
   requireCellPaths,
@@ -59,6 +61,10 @@ const MILLISECONDS_PER_SECOND = 1000;
 const EMULATOR_OUTPUT_CAPTURE_FILENAME = "emulator-output-stereo.pcm";
 const PW_CAT_EVENTS_FILENAME = "pw-cat-events.jsonl";
 const STEREO_FRAME_BYTES = 4;
+const MAX_CONCURRENT_LEASE_START_SKEW_MS = 10_000;
+const ADB_DEVICE_LINE_BREAK_PATTERN = /\r?\n/;
+const WHITESPACE_PATTERN = /\s+/;
+const HTTP_NOT_FOUND = 404;
 
 type PwCatEvent = {
   bytes: number;
@@ -68,11 +74,28 @@ type PwCatEvent = {
 };
 
 test.describe("production Android service audio", () => {
+  test("starts concurrent cells with isolated Android emulators", async () => {
+    const apiUrl = requireApiUrl();
+    const { initialCellIds, workspaceId } = await readWorkspaceBaseline(apiUrl);
+    const hostState = prepareAndroidE2eHostState();
+    await runWithGuaranteedCleanup(
+      () => runConcurrentAndroidIsolation({ apiUrl, hostState, workspaceId }),
+      () =>
+        cleanupAndroidE2eToBaseline({
+          apiUrl,
+          hostState,
+          initialCellIds,
+          workspaceId,
+        })
+    );
+  });
+
   test("forwards browser microphone audio before and after a service restart", async ({
     page,
   }, testInfo) => {
     const videoStartedAt = await startPlaywrightVideoTimeline(page);
     const apiUrl = requireApiUrl();
+    const { initialCellIds, workspaceId } = await readWorkspaceBaseline(apiUrl);
     const artifactsDir = requireEnvironment("HIVE_E2E_ARTIFACTS_DIR");
     const outputSpeechPath = requireEnvironment(
       "HIVE_E2E_ANDROID_OUTPUT_SPEECH_PATH"
@@ -81,283 +104,541 @@ test.describe("production Android service audio", () => {
     const recorderDirectory = join(artifactsDir, "android-audio-recorder");
     await mkdir(recorderDirectory, { recursive: true });
     const recorderApk = await buildRecorderApk(recorderDirectory);
-    const preexistingSerials = readAttachedAndroidSerials();
-    const preexistingEmulators = new Map(
-      preexistingSerials
-        .filter((serial) => serial.startsWith("emulator-"))
-        .map((serial) => [
-          serial,
-          getRunningAndroidAvdName("adb", serial, process.env),
-        ])
-    );
-    const inheritedAndroidSerial = process.env.ANDROID_SERIAL;
-    process.env.ANDROID_SERIAL = undefined;
-    const ownedSerials = new Set<string>();
-    const cellIds = new Set<string>();
+    const hostState = prepareAndroidE2eHostState();
+    const { cellIds, ownedSerials, preexistingSerials, recorderSerials } =
+      hostState;
     let cellId: string | null = null;
 
-    try {
-      cellId = await createCellViaApi({
-        apiUrl,
-        name: `Android Audio E2E ${Date.now()}`,
-        templateLabel: ANDROID_TEMPLATE_LABEL,
-      });
-      cellIds.add(cellId);
-      const cellArtifactsDir = requireCellPaths(cellId).artifactsDir;
-      const emulatorOutputCapturePath = join(
-        cellArtifactsDir,
-        EMULATOR_OUTPUT_CAPTURE_FILENAME
-      );
-      const pwCatEventsPath = join(cellArtifactsDir, PW_CAT_EVENTS_FILENAME);
-      const initialServices = await waitForAndroidServices(apiUrl, cellId);
-      const initialPwCat = await startHostPlaybackProbe(pwCatEventsPath);
-      const initialAndroidLease = await waitForAndroidLease(cellId);
-      process.env.ANDROID_SERIAL = initialAndroidLease.owner.serial;
-      ownedSerials.add(initialAndroidLease.owner.serial);
-      expect(preexistingSerials).not.toContain(
-        initialAndroidLease.owner.serial
-      );
-      expect(initialAndroidLease.owner.consolePort).not.toBe(
-        LEGACY_ANDROID_CONSOLE_PORT
-      );
-      const initialPids = readServicePids(initialServices);
-      const initialPorts = readServicePortAssignments(initialServices);
-      expect(
-        initialServices.find((service) => service.name === "android")?.audio
-      ).toMatchObject({ input: true, output: true });
-
-      const secondaryCellId = await createCellViaApi({
-        apiUrl,
-        name: `Android Lease Isolation E2E ${Date.now()}`,
-        templateLabel: ANDROID_TEMPLATE_LABEL,
-      });
-      cellIds.add(secondaryCellId);
-      const secondaryServices = await waitForAndroidServices(
-        apiUrl,
-        secondaryCellId
-      );
-      const secondaryLease = await waitForAndroidLease(secondaryCellId);
-      ownedSerials.add(secondaryLease.owner.serial);
-      expect(secondaryLease.owner.serial).not.toBe(
-        initialAndroidLease.owner.serial
-      );
-      expect(secondaryLease.owner.consolePort).not.toBe(
-        initialAndroidLease.owner.consolePort
-      );
-      expect(secondaryLease.owner.grpcPort).not.toBe(
-        initialAndroidLease.owner.grpcPort
-      );
-      expect(readServicePortAssignments(secondaryServices)).not.toEqual(
-        initialPorts
-      );
-      expect(readAttachedAndroidSerials()).toEqual(
-        expect.arrayContaining([
-          initialAndroidLease.owner.serial,
-          secondaryLease.owner.serial,
-        ])
-      );
-
-      const secondaryDeleteResponse = await fetch(
-        `${apiUrl}/api/cells/${secondaryCellId}`,
-        { method: "DELETE" }
-      );
-      expect(secondaryDeleteResponse.ok, "secondary Android cell cleanup").toBe(
-        true
-      );
-      await expect
-        .poll(readAttachedAndroidSerials, {
-          message: "Secondary Android emulator survived isolated cleanup",
-          timeout: 30_000,
-        })
-        .not.toContain(secondaryLease.owner.serial);
-      cellIds.delete(secondaryCellId);
-      expect(readAttachedAndroidSerials()).toContain(
-        initialAndroidLease.owner.serial
-      );
-      expect((await waitForAndroidLease(cellId)).owner.token).toBe(
-        initialAndroidLease.owner.token
-      );
-
-      await installRecorder(recorderApk, outputSpeechPath);
-
-      await page.addInitScript(() => {
-        Object.defineProperty(globalThis, "MediaStreamTrackProcessor", {
-          configurable: true,
-          value: undefined,
+    await runWithGuaranteedCleanup(
+      async () => {
+        cellId = await createCellViaApi({
+          apiUrl,
+          name: `Android Audio E2E ${Date.now()}`,
+          templateLabel: ANDROID_TEMPLATE_LABEL,
+          workspaceId,
         });
-        const getUserMedia = navigator.mediaDevices.getUserMedia.bind(
-          navigator.mediaDevices
+        cellIds.add(cellId);
+        const cellArtifactsDir = requireCellPaths(cellId).artifactsDir;
+        const emulatorOutputCapturePath = join(
+          cellArtifactsDir,
+          EMULATOR_OUTPUT_CAPTURE_FILENAME
         );
-        navigator.mediaDevices.getUserMedia = async (...args) => {
-          const stream = await getUserMedia(...args);
-          Object.assign(window, {
-            hiveMicrophoneTrack: stream.getAudioTracks()[0],
+        const pwCatEventsPath = join(cellArtifactsDir, PW_CAT_EVENTS_FILENAME);
+        const initialServices = await waitForAndroidServices(apiUrl, cellId);
+        const initialPwCat = await startHostPlaybackProbe(pwCatEventsPath);
+        const initialAndroidLease = await waitForAndroidLease(cellId);
+        process.env.ANDROID_SERIAL = initialAndroidLease.owner.serial;
+        ownedSerials.add(initialAndroidLease.owner.serial);
+        expect(preexistingSerials).not.toContain(
+          initialAndroidLease.owner.serial
+        );
+        expect(initialAndroidLease.owner.consolePort).not.toBe(
+          LEGACY_ANDROID_CONSOLE_PORT
+        );
+        const initialPids = readServicePids(initialServices);
+        const initialPorts = readServicePortAssignments(initialServices);
+        expect(
+          initialServices.find((service) => service.name === "android")?.audio
+        ).toMatchObject({ input: true, output: true });
+
+        recorderSerials.add(initialAndroidLease.owner.serial);
+        await installRecorder(recorderApk, outputSpeechPath);
+
+        await page.addInitScript(() => {
+          Object.defineProperty(globalThis, "MediaStreamTrackProcessor", {
+            configurable: true,
+            value: undefined,
           });
-          return stream;
-        };
-        const send = WebSocket.prototype.send;
-        Object.assign(window, { hiveMicrophoneFrames: 0 });
-        WebSocket.prototype.send = function patchedSend(
-          this: WebSocket,
-          data: string | ArrayBufferLike | Blob | ArrayBufferView
-        ) {
-          if (data instanceof ArrayBuffer) {
+          const getUserMedia = navigator.mediaDevices.getUserMedia.bind(
+            navigator.mediaDevices
+          );
+          navigator.mediaDevices.getUserMedia = async (...args) => {
+            const stream = await getUserMedia(...args);
             Object.assign(window, {
-              hiveMicrophoneFrames:
-                ((window as Window & { hiveMicrophoneFrames?: number })
-                  .hiveMicrophoneFrames ?? 0) + 1,
+              hiveMicrophoneTrack: stream.getAudioTracks()[0],
             });
-          }
-          send.call(this, data);
-        };
-      });
-      await page.goto("/settings");
-      const preferredLabel = await selectFakeAudioInput(page);
-      await page.goto(`/cells/${cellId}/viewer`);
-      const firstViewer = await resolveAndroidViewer(page);
-      const firstViewerUrl = await firstViewer.iframe.getAttribute("src");
-      expect(
-        new URL(firstViewerUrl ?? "").searchParams.get("hiveMicrophone")
-      ).toBe(preferredLabel);
+            return stream;
+          };
+          const send = WebSocket.prototype.send;
+          Object.assign(window, { hiveMicrophoneFrames: 0 });
+          WebSocket.prototype.send = function patchedSend(
+            this: WebSocket,
+            data: string | ArrayBufferLike | Blob | ArrayBufferView
+          ) {
+            if (data instanceof ArrayBuffer) {
+              Object.assign(window, {
+                hiveMicrophoneFrames:
+                  ((window as Window & { hiveMicrophoneFrames?: number })
+                    .hiveMicrophoneFrames ?? 0) + 1,
+              });
+            }
+            send.call(this, data);
+          };
+        });
+        await page.goto("/settings");
+        const preferredLabel = await selectFakeAudioInput(page);
+        await page.goto(`/cells/${cellId}/viewer`);
+        const firstViewer = await resolveAndroidViewer(page);
+        const firstViewerUrl = await firstViewer.iframe.getAttribute("src");
+        expect(
+          new URL(firstViewerUrl ?? "").searchParams.get("hiveMicrophone")
+        ).toBe(preferredLabel);
 
-      const beforeCapture = await captureGuestAudio({
-        artifactsDir,
-        emulatorOutputCapturePath,
-        frame: firstViewer.frame,
-        hostPlaybackCapturePath: initialPwCat?.pcmPath,
-        label: "before-restart",
-        onMicrophoneCaptured: () =>
-          endFallbackMicrophoneTrack(page, firstViewer.frame),
-        page,
-        outputSpeechSource,
-        videoStartedAt,
-      });
-      assertPcmMetrics(beforeCapture.microphoneMetrics, "guest microphone");
-      assertPcmMetrics(beforeCapture.outputMetrics, "rendered emulator output");
-      assertHostPlaybackMetrics(
-        beforeCapture.hostPlaybackMetrics,
-        "host pw-cat playback"
-      );
-      const initialAndroidService = initialServices.find(
-        (service) => service.name === "android"
-      );
-      if (!initialAndroidService) {
-        throw new Error("Android viewer service was not found.");
-      }
-      const restartResponsePromise = fetch(
-        `${apiUrl}/api/cells/${cellId}/services/${initialAndroidService.id}/restart`,
-        { method: "POST" }
-      );
-      await expect
-        .poll(() => firstViewer.frame.isDetached(), {
-          message:
-            "Original Android viewer frame did not detach during restart",
-          timeout: SERVICE_READY_TIMEOUT_MS,
-        })
-        .toBe(true);
-      const restartResponse = await restartResponsePromise;
-      expect(restartResponse.ok).toBe(true);
-      await stopHostPlaybackProbe(pwCatEventsPath, initialPwCat);
-
-      const restartedServices = await waitForAndroidServices(apiUrl, cellId);
-      const restartedPwCat = await restartHostPlaybackProbe(
-        pwCatEventsPath,
-        initialPwCat
-      );
-      const restartedAndroidLease = await waitForAndroidLease(cellId);
-      process.env.ANDROID_SERIAL = restartedAndroidLease.owner.serial;
-      ownedSerials.add(restartedAndroidLease.owner.serial);
-      expect(readServicePortAssignments(restartedServices)).toEqual(
-        initialPorts
-      );
-      for (const service of restartedServices) {
-        const initialPid = initialPids.get(service.name);
-        if (service.name === "android") {
-          expect(service.pid, `${service.name} PID`).not.toBe(initialPid);
-        } else {
-          expect(service.pid, `${service.name} PID`).toBe(initialPid);
+        const beforeCapture = await captureGuestAudio({
+          artifactsDir,
+          emulatorOutputCapturePath,
+          frame: firstViewer.frame,
+          hostPlaybackCapturePath: initialPwCat?.pcmPath,
+          label: "before-restart",
+          onMicrophoneCaptured: () =>
+            endFallbackMicrophoneTrack(page, firstViewer.frame),
+          page,
+          outputSpeechSource,
+          videoStartedAt,
+        });
+        assertPcmMetrics(beforeCapture.microphoneMetrics, "guest microphone");
+        assertPcmMetrics(
+          beforeCapture.outputMetrics,
+          "rendered emulator output"
+        );
+        assertHostPlaybackMetrics(
+          beforeCapture.hostPlaybackMetrics,
+          "host pw-cat playback"
+        );
+        const initialAndroidService = initialServices.find(
+          (service) => service.name === "android"
+        );
+        if (!initialAndroidService) {
+          throw new Error("Android viewer service was not found.");
         }
-      }
-      expect(restartedAndroidLease.owner).toMatchObject({
-        serial: initialAndroidLease.owner.serial,
-        token: initialAndroidLease.owner.token,
-      });
-      await waitForActivityTypes({
-        apiUrl,
-        cellId,
-        types: ["service.restart"],
-        timeoutMs: 30_000,
-        errorMessage: "Service restart activity was not recorded",
-      });
+        const restartResponsePromise = fetch(
+          `${apiUrl}/api/cells/${cellId}/services/${initialAndroidService.id}/restart`,
+          { method: "POST" }
+        );
+        await expect
+          .poll(() => firstViewer.frame.isDetached(), {
+            message:
+              "Original Android viewer frame did not detach during restart",
+            timeout: SERVICE_READY_TIMEOUT_MS,
+          })
+          .toBe(true);
+        const restartResponse = await restartResponsePromise;
+        expect(restartResponse.ok).toBe(true);
+        await stopHostPlaybackProbe(pwCatEventsPath, initialPwCat);
 
-      const secondViewer = await resolveAndroidViewer(page);
-      expect(secondViewer.frame).not.toBe(firstViewer.frame);
-      expect(await secondViewer.iframe.getAttribute("src")).toBe(
-        firstViewerUrl
-      );
-      const afterCapture = await captureGuestAudio({
-        artifactsDir,
-        emulatorOutputCapturePath,
-        frame: secondViewer.frame,
-        hostPlaybackCapturePath: restartedPwCat?.pcmPath,
-        label: "after-restart",
-        page,
-        outputSpeechSource,
-        videoStartedAt,
-      });
-      assertPcmMetrics(afterCapture.microphoneMetrics, "guest microphone");
-      assertPcmMetrics(afterCapture.outputMetrics, "rendered emulator output");
-      assertHostPlaybackMetrics(
-        afterCapture.hostPlaybackMetrics,
-        "restarted host pw-cat playback"
-      );
+        const restartedServices = await waitForAndroidServices(apiUrl, cellId);
+        const restartedPwCat = await restartHostPlaybackProbe(
+          pwCatEventsPath,
+          initialPwCat
+        );
+        const restartedAndroidLease = await waitForAndroidLease(cellId);
+        process.env.ANDROID_SERIAL = restartedAndroidLease.owner.serial;
+        ownedSerials.add(restartedAndroidLease.owner.serial);
+        expect(readServicePortAssignments(restartedServices)).toEqual(
+          initialPorts
+        );
+        for (const service of restartedServices) {
+          const initialPid = initialPids.get(service.name);
+          if (service.name === "android") {
+            expect(service.pid, `${service.name} PID`).not.toBe(initialPid);
+          } else {
+            expect(service.pid, `${service.name} PID`).toBe(initialPid);
+          }
+        }
+        expect(restartedAndroidLease.owner).toMatchObject({
+          serial: initialAndroidLease.owner.serial,
+          token: initialAndroidLease.owner.token,
+        });
+        await waitForActivityTypes({
+          apiUrl,
+          cellId,
+          types: ["service.restart"],
+          timeoutMs: 30_000,
+          errorMessage: "Service restart activity was not recorded",
+        });
 
-      const audioVideoMetadata = {
-        segments: [beforeCapture.videoSegment, afterCapture.videoSegment],
-      } satisfies AndroidAudioVideoMetadata;
-      await writeFile(
-        join(artifactsDir, androidAudioVideoMetadataFilename),
-        JSON.stringify(audioVideoMetadata, null, 2)
-      );
+        const secondViewer = await resolveAndroidViewer(page);
+        expect(secondViewer.frame).not.toBe(firstViewer.frame);
+        expect(await secondViewer.iframe.getAttribute("src")).toBe(
+          firstViewerUrl
+        );
+        const afterCapture = await captureGuestAudio({
+          artifactsDir,
+          emulatorOutputCapturePath,
+          frame: secondViewer.frame,
+          hostPlaybackCapturePath: restartedPwCat?.pcmPath,
+          label: "after-restart",
+          page,
+          outputSpeechSource,
+          videoStartedAt,
+        });
+        assertPcmMetrics(afterCapture.microphoneMetrics, "guest microphone");
+        assertPcmMetrics(
+          afterCapture.outputMetrics,
+          "rendered emulator output"
+        );
+        assertHostPlaybackMetrics(
+          afterCapture.hostPlaybackMetrics,
+          "restarted host pw-cat playback"
+        );
 
-      await testInfo.attach("android-audio-metrics", {
-        body: Buffer.from(
-          JSON.stringify({ beforeCapture, afterCapture }, null, 2)
-        ),
-        contentType: "application/json",
-      });
-      await testInfo.attach("android-viewer-after-restart", {
-        body: await page.screenshot({ fullPage: true }),
-        contentType: "image/png",
-      });
-      const deleteResponse = await fetch(`${apiUrl}/api/cells/${cellId}`, {
-        method: "DELETE",
-      });
-      expect(deleteResponse.ok, "Android E2E cell cleanup").toBe(true);
-      await stopHostPlaybackProbe(pwCatEventsPath, restartedPwCat);
-      cellIds.delete(cellId);
-      cellId = null;
-    } finally {
-      await cleanupAndroidE2e({
-        apiUrl,
-        cellIds,
-        inheritedAndroidSerial,
-        ownedSerials,
-        preexistingEmulators,
-        preexistingSerials,
-      });
-    }
+        const audioVideoMetadata = {
+          segments: [beforeCapture.videoSegment, afterCapture.videoSegment],
+        } satisfies AndroidAudioVideoMetadata;
+        await writeFile(
+          join(artifactsDir, androidAudioVideoMetadataFilename),
+          JSON.stringify(audioVideoMetadata, null, 2)
+        );
+
+        await testInfo.attach("android-audio-metrics", {
+          body: Buffer.from(
+            JSON.stringify({ beforeCapture, afterCapture }, null, 2)
+          ),
+          contentType: "application/json",
+        });
+        await testInfo.attach("android-viewer-after-restart", {
+          body: await page.screenshot({ fullPage: true }),
+          contentType: "image/png",
+        });
+        const deleteResponse = await fetch(`${apiUrl}/api/cells/${cellId}`, {
+          method: "DELETE",
+        });
+        expect(deleteResponse.ok, "Android E2E cell cleanup").toBe(true);
+        cellIds.delete(cellId);
+        await stopHostPlaybackProbe(pwCatEventsPath, restartedPwCat);
+        cellId = null;
+      },
+      () =>
+        cleanupAndroidE2eToBaseline({
+          apiUrl,
+          hostState,
+          initialCellIds,
+          workspaceId,
+        })
+    );
   });
 });
 
-function readAttachedAndroidSerials() {
+async function readWorkspaceBaseline(apiUrl: string) {
+  const workspaces = await fetchWorkspaces(apiUrl);
+  const workspaceId =
+    workspaces.activeWorkspaceId ?? workspaces.workspaces[0]?.id;
+  if (!workspaceId) {
+    throw new Error("No workspace available for Android E2E.");
+  }
+  const initialCellIds = new Set(
+    (await fetchWorkspaceCells(apiUrl, workspaceId)).map((cell) => cell.id)
+  );
+  return { initialCellIds, workspaceId };
+}
+
+function readAndroidDevicesOutput() {
   const result = spawnSync("adb", ["devices"], { encoding: "utf8" });
   if (result.error || result.status !== 0) {
     throw new Error(
       result.error?.message || result.stderr || "adb devices failed"
     );
   }
-  return parseAttachedAndroidDevices(result.stdout);
+  return result.stdout;
+}
+
+const readAttachedAndroidSerials = () =>
+  parseAttachedAndroidDevices(readAndroidDevicesOutput());
+
+const parseAttachedAndroidDeviceStates = (output: string) =>
+  output
+    .split(ADB_DEVICE_LINE_BREAK_PATTERN)
+    .slice(1)
+    .map((line) => line.trim().split(WHITESPACE_PATTERN).slice(0, 2).join("\t"))
+    .filter(Boolean)
+    .sort();
+
+const readAttachedAndroidDeviceStates = () =>
+  parseAttachedAndroidDeviceStates(readAndroidDevicesOutput());
+
+function prepareAndroidE2eHostState() {
+  const androidDevicesOutput = readAndroidDevicesOutput();
+  const preexistingSerials = parseAttachedAndroidDevices(androidDevicesOutput);
+  const preexistingEmulators = new Map(
+    preexistingSerials
+      .filter((serial) => serial.startsWith("emulator-"))
+      .map((serial) => [
+        serial,
+        getRunningAndroidAvdName("adb", serial, process.env),
+      ])
+  );
+  const inheritedAndroidSerial = process.env.ANDROID_SERIAL;
+  process.env.ANDROID_SERIAL = undefined;
+  return {
+    cellIds: new Set<string>(),
+    inheritedAndroidSerial,
+    ownedSerials: new Set<string>(),
+    preexistingDeviceStates:
+      parseAttachedAndroidDeviceStates(androidDevicesOutput),
+    preexistingEmulators,
+    preexistingSerials,
+    recorderSerials: new Set<string>(),
+  };
+}
+
+type AndroidE2eHostState = ReturnType<typeof prepareAndroidE2eHostState>;
+
+async function runWithGuaranteedCleanup(
+  run: () => Promise<void>,
+  cleanup: () => Promise<void>
+) {
+  let runError: unknown;
+  let cleanupError: unknown;
+  try {
+    await run();
+  } catch (error) {
+    runError = error;
+  }
+  try {
+    await cleanup();
+  } catch (error) {
+    cleanupError = error;
+  }
+  if (runError && cleanupError) {
+    throw new AggregateError(
+      [runError, cleanupError],
+      "Android E2E failed and cleanup did not complete."
+    );
+  }
+  if (runError) {
+    throw runError;
+  }
+  if (cleanupError) {
+    throw cleanupError;
+  }
+}
+
+async function runConcurrentAndroidIsolation(options: {
+  apiUrl: string;
+  hostState: AndroidE2eHostState;
+  workspaceId: string;
+}) {
+  const cellTimestamp = Date.now();
+  const cellCreationResults = await Promise.allSettled([
+    createCellViaApi({
+      apiUrl: options.apiUrl,
+      name: `Android Concurrent A ${cellTimestamp}`,
+      templateLabel: ANDROID_TEMPLATE_LABEL,
+      workspaceId: options.workspaceId,
+    }),
+    createCellViaApi({
+      apiUrl: options.apiUrl,
+      name: `Android Concurrent B ${cellTimestamp}`,
+      templateLabel: ANDROID_TEMPLATE_LABEL,
+      workspaceId: options.workspaceId,
+    }),
+  ]);
+  for (const result of cellCreationResults) {
+    if (result.status === "fulfilled") {
+      options.hostState.cellIds.add(result.value);
+    }
+  }
+  const [primaryCellId, secondaryCellId] = cellCreationResults.map((result) => {
+    if (result.status === "rejected") {
+      throw result.reason;
+    }
+    return result.value;
+  });
+  const [primaryLease, secondaryLease] = await Promise.all([
+    waitForAndroidLease(primaryCellId),
+    waitForAndroidLease(secondaryCellId),
+  ]);
+  const [primaryLeaseStat, secondaryLeaseStat] = await Promise.all([
+    stat(join(primaryLease.leasePath, "token")),
+    stat(join(secondaryLease.leasePath, "token")),
+  ]);
+  expect(
+    Math.abs(primaryLeaseStat.mtimeMs - secondaryLeaseStat.mtimeMs),
+    "Concurrent Android emulator lease start skew"
+  ).toBeLessThan(MAX_CONCURRENT_LEASE_START_SKEW_MS);
+  options.hostState.ownedSerials.add(primaryLease.owner.serial);
+  options.hostState.ownedSerials.add(secondaryLease.owner.serial);
+  const [primaryServices, secondaryServices] = await Promise.all([
+    waitForAndroidServices(options.apiUrl, primaryCellId),
+    waitForAndroidServices(options.apiUrl, secondaryCellId),
+  ]);
+
+  assertAndroidRuntimeIsolation({
+    primaryLease,
+    primaryServices,
+    secondaryLease,
+    secondaryServices,
+  });
+  await deleteSecondaryAndroidCell({
+    apiUrl: options.apiUrl,
+    cellIds: options.hostState.cellIds,
+    primaryCellId,
+    primaryLease,
+    primaryServices,
+    secondaryCellId,
+    secondaryLease,
+  });
+}
+
+async function cleanupAndroidE2eToBaseline(options: {
+  apiUrl: string;
+  hostState: AndroidE2eHostState;
+  initialCellIds: Set<string>;
+  workspaceId: string;
+}) {
+  const cleanupFailures: unknown[] = [];
+  try {
+    await cleanupAndroidE2e({ apiUrl: options.apiUrl, ...options.hostState });
+  } catch (error) {
+    cleanupFailures.push(error);
+  }
+  try {
+    await cleanupWorkspaceCellsToBaseline(options);
+  } catch (error) {
+    cleanupFailures.push(error);
+  }
+  if (cleanupFailures.length > 0) {
+    throw new AggregateError(
+      cleanupFailures,
+      "Android E2E baseline cleanup failed."
+    );
+  }
+}
+
+async function cleanupWorkspaceCellsToBaseline(options: {
+  apiUrl: string;
+  hostState: AndroidE2eHostState;
+  initialCellIds: Set<string>;
+  workspaceId: string;
+}) {
+  let lastError: unknown;
+  try {
+    await waitForCondition({
+      check: async () => {
+        try {
+          const currentCells = await fetchWorkspaceCells(
+            options.apiUrl,
+            options.workspaceId
+          );
+          const unexpectedCells = currentCells.filter(
+            (cell) => !options.initialCellIds.has(cell.id)
+          );
+          if (unexpectedCells.length === 0) {
+            return true;
+          }
+          for (const cell of unexpectedCells) {
+            options.hostState.cellIds.add(cell.id);
+          }
+          await cleanupAndroidE2e({
+            apiUrl: options.apiUrl,
+            ...options.hostState,
+          });
+          for (const cell of unexpectedCells) {
+            options.hostState.cellIds.delete(cell.id);
+          }
+          return false;
+        } catch (error) {
+          lastError = error;
+          return false;
+        }
+      },
+      errorMessage: "Android E2E cells survived cleanup",
+      timeoutMs: 30_000,
+    });
+  } catch (error) {
+    throw new AggregateError(
+      lastError ? [error, lastError] : [error],
+      "Could not restore the workspace cell baseline."
+    );
+  }
+}
+
+function assertAndroidRuntimeIsolation(options: {
+  primaryLease: Awaited<ReturnType<typeof waitForAndroidLease>>;
+  primaryServices: Awaited<ReturnType<typeof waitForAndroidServices>>;
+  secondaryLease: Awaited<ReturnType<typeof waitForAndroidLease>>;
+  secondaryServices: Awaited<ReturnType<typeof waitForAndroidServices>>;
+}) {
+  expect(options.primaryLease.owner.serial).not.toBe(
+    options.secondaryLease.owner.serial
+  );
+  expect(options.primaryLease.owner.consolePort).not.toBe(
+    options.secondaryLease.owner.consolePort
+  );
+  expect(options.primaryLease.owner.grpcPort).not.toBe(
+    options.secondaryLease.owner.grpcPort
+  );
+  const assignedPorts = [
+    ...readServicePortAssignments(options.primaryServices),
+    ...readServicePortAssignments(options.secondaryServices),
+  ].map((assignment) => assignment.port);
+  assignedPorts.push(
+    options.primaryLease.owner.consolePort,
+    options.primaryLease.owner.consolePort + 1,
+    options.secondaryLease.owner.consolePort,
+    options.secondaryLease.owner.consolePort + 1
+  );
+  expect(
+    new Set(assignedPorts).size,
+    "Android cell service ports are fully disjoint"
+  ).toBe(assignedPorts.length);
+  expect(readAttachedAndroidSerials()).toEqual(
+    expect.arrayContaining([
+      options.primaryLease.owner.serial,
+      options.secondaryLease.owner.serial,
+    ])
+  );
+}
+
+async function deleteSecondaryAndroidCell(options: {
+  apiUrl: string;
+  cellIds: Set<string>;
+  primaryCellId: string;
+  primaryLease: Awaited<ReturnType<typeof waitForAndroidLease>>;
+  primaryServices: Awaited<ReturnType<typeof waitForAndroidServices>>;
+  secondaryCellId: string;
+  secondaryLease: Awaited<ReturnType<typeof waitForAndroidLease>>;
+}) {
+  const primaryPorts = readServicePortAssignments(options.primaryServices);
+  const primaryPids = readServicePids(options.primaryServices);
+  const response = await fetch(
+    `${options.apiUrl}/api/cells/${options.secondaryCellId}`,
+    { method: "DELETE" }
+  );
+  expect(response.ok, "secondary Android cell cleanup").toBe(true);
+  options.cellIds.delete(options.secondaryCellId);
+  await expect
+    .poll(readAttachedAndroidSerials, {
+      message: "Secondary Android emulator survived isolated cleanup",
+      timeout: 30_000,
+    })
+    .not.toContain(options.secondaryLease.owner.serial);
+  expect(readAttachedAndroidSerials()).toContain(
+    options.primaryLease.owner.serial
+  );
+  expect((await waitForAndroidLease(options.primaryCellId)).owner.token).toBe(
+    options.primaryLease.owner.token
+  );
+  await expect
+    .poll(
+      () =>
+        getRunningAndroidAvdName(
+          "adb",
+          options.primaryLease.owner.serial,
+          process.env
+        ),
+      {
+        message: "Primary Android emulator changed after secondary cleanup",
+        timeout: 30_000,
+      }
+    )
+    .toBe(options.primaryLease.owner.avdName);
+  const survivingServices = await waitForAndroidServices(
+    options.apiUrl,
+    options.primaryCellId
+  );
+  expect(readServicePortAssignments(survivingServices)).toEqual(primaryPorts);
+  expect(readServicePids(survivingServices)).toEqual(primaryPids);
 }
 
 async function startPlaywrightVideoTimeline(page: Page) {
@@ -377,73 +658,126 @@ async function startPlaywrightVideoTimeline(page: Page) {
 
 const monotonicEpochMs = () => performance.timeOrigin + performance.now();
 
+function collectRejectedResults(
+  results: PromiseSettledResult<unknown>[],
+  failures: unknown[]
+) {
+  for (const result of results) {
+    if (result.status === "rejected") {
+      failures.push(result.reason);
+    }
+  }
+}
+
+async function cleanupAndroidRecorders(serials: Set<string>) {
+  const failures: unknown[] = [];
+  for (const serial of serials) {
+    try {
+      if (!readAttachedAndroidSerials().includes(serial)) {
+        continue;
+      }
+      process.env.ANDROID_SERIAL = serial;
+      const packagePath = await adb(
+        "shell",
+        "pm",
+        "path",
+        audioRecorderPackageName
+      );
+      if (!packagePath.trim()) {
+        continue;
+      }
+      await adb("shell", "am", "force-stop", audioRecorderPackageName);
+      await adb("uninstall", audioRecorderPackageName);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(failures, "Android recorder cleanup failed.");
+  }
+}
+
 async function cleanupAndroidE2e(options: {
   apiUrl: string;
   cellIds: Set<string>;
   inheritedAndroidSerial: string | undefined;
   ownedSerials: Set<string>;
+  preexistingDeviceStates: string[];
   preexistingEmulators: Map<string, string>;
   preexistingSerials: string[];
+  recorderSerials: Set<string>;
 }) {
   const {
     apiUrl,
     cellIds,
     inheritedAndroidSerial,
     ownedSerials,
+    preexistingDeviceStates,
     preexistingEmulators,
-    preexistingSerials,
+    recorderSerials,
   } = options;
+  const cleanupFailures: unknown[] = [];
   try {
-    for (const pendingCellId of cellIds) {
-      const pendingLease = await readAndroidRuntimeLeaseForCell(pendingCellId);
-      if (pendingLease) {
-        ownedSerials.add(pendingLease.owner.serial);
-      }
-    }
-    for (const serial of ownedSerials) {
-      if (!readAttachedAndroidSerials().includes(serial)) {
-        continue;
-      }
-      process.env.ANDROID_SERIAL = serial;
-      await adb("shell", "am", "force-stop", audioRecorderPackageName).catch(
-        () => {
-          // The helper may not have reached installation.
-        }
-      );
-      await adb("uninstall", audioRecorderPackageName).catch(() => {
-        // The helper may not have reached installation.
-      });
-    }
-    await Promise.all(
-      [...cellIds].map((pendingCellId) =>
-        fetch(`${apiUrl}/api/cells/${pendingCellId}`, {
-          method: "DELETE",
-        }).catch(() => {
-          // The attached-device assertions below expose failed cleanup.
-        })
-      )
+    const leaseResults = await Promise.allSettled(
+      [...cellIds].map((cellId) => readAndroidRuntimeLeaseForCell(cellId))
     );
-    await expect
-      .poll(readAttachedAndroidSerials, {
-        message: "Preexisting Android emulators changed during E2E cleanup",
-        timeout: 30_000,
-      })
-      .toEqual(expect.arrayContaining(preexistingSerials));
-    for (const serial of ownedSerials) {
-      await expect
-        .poll(readAttachedAndroidSerials, {
-          message: `Android E2E emulator ${serial} survived cleanup`,
-          timeout: 30_000,
-        })
-        .not.toContain(serial);
+    collectRejectedResults(leaseResults, cleanupFailures);
+    for (const result of leaseResults) {
+      if (result.status === "fulfilled" && result.value) {
+        ownedSerials.add(result.value.owner.serial);
+      }
     }
-    for (const [serial, avdName] of preexistingEmulators) {
-      await expect
-        .poll(() => getRunningAndroidAvdName("adb", serial, process.env), {
-          message: `Preexisting Android emulator ${serial} changed identity`,
+    try {
+      await cleanupAndroidRecorders(recorderSerials);
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    const deletionResults = await Promise.allSettled(
+      [...cellIds].map(async (pendingCellId) => {
+        const response = await fetch(`${apiUrl}/api/cells/${pendingCellId}`, {
+          method: "DELETE",
+        });
+        if (!(response.ok || response.status === HTTP_NOT_FOUND)) {
+          throw new Error(
+            `Failed to delete Android E2E cell ${pendingCellId}: ${response.status}`
+          );
+        }
+        return pendingCellId;
+      })
+    );
+    for (const result of deletionResults) {
+      if (result.status === "fulfilled") {
+        cellIds.delete(result.value);
+      }
+    }
+    collectRejectedResults(deletionResults, cleanupFailures);
+    const verificationResults = await Promise.allSettled([
+      expect
+        .poll(readAttachedAndroidDeviceStates, {
+          message: "Preexisting Android devices changed during E2E cleanup",
           timeout: 30_000,
         })
-        .toBe(avdName);
+        .toEqual(preexistingDeviceStates),
+      ...[...ownedSerials].map((serial) =>
+        expect
+          .poll(readAttachedAndroidSerials, {
+            message: `Android E2E emulator ${serial} survived cleanup`,
+            timeout: 30_000,
+          })
+          .not.toContain(serial)
+      ),
+      ...[...preexistingEmulators].map(([serial, avdName]) =>
+        expect
+          .poll(() => getRunningAndroidAvdName("adb", serial, process.env), {
+            message: `Preexisting Android emulator ${serial} changed identity`,
+            timeout: 30_000,
+          })
+          .toBe(avdName)
+      ),
+    ]);
+    collectRejectedResults(verificationResults, cleanupFailures);
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(cleanupFailures, "Android E2E cleanup failed.");
     }
   } finally {
     process.env.ANDROID_SERIAL = inheritedAndroidSerial;
