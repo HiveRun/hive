@@ -14,6 +14,8 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { HIVE_ANDROID_CONSOLE_PORTS, resolveHiveAndroidSerial } from "./facts";
+
 type AndroidLeaseOwner = {
   cellId: string;
   fingerprint?: string;
@@ -60,20 +62,6 @@ type AcquireAndroidRuntimeLeaseOptions = {
 
 const RECOVERY_WAIT_TIMEOUT_MS = 45_000;
 const RECOVERY_POLL_INTERVAL_MS = 25;
-const ANDROID_CONSOLE_PORT_MIN = 5554;
-const ANDROID_CONSOLE_PORT_MAX = 5584;
-const ANDROID_CONSOLE_PORT_STEP = 2;
-const LEGACY_ANDROID_CONSOLE_PORT = 5580;
-const ANDROID_CONSOLE_PORTS = Array.from(
-  {
-    length:
-      (ANDROID_CONSOLE_PORT_MAX - ANDROID_CONSOLE_PORT_MIN) /
-        ANDROID_CONSOLE_PORT_STEP +
-      1,
-  },
-  (_, index) => ANDROID_CONSOLE_PORT_MIN + index * ANDROID_CONSOLE_PORT_STEP
-).filter((port) => port !== LEGACY_ANDROID_CONSOLE_PORT);
-
 export const defaultAndroidLeasePath = join(
   homedir(),
   ".hive",
@@ -133,7 +121,7 @@ const runtimeOwnerMatchesSlot = (
   entry: string
 ) =>
   owner.consolePort === Number(entry) &&
-  owner.serial === `emulator-${owner.consolePort}`;
+  owner.serial === resolveHiveAndroidSerial(owner.consolePort);
 
 export const readAndroidRuntimeLeaseForCell = async (
   cellId: string,
@@ -395,9 +383,9 @@ const reclaimInvalidRuntimeSlot = async (
   leasePath: string
 ) => {
   const consolePort = Number(entry);
-  const serial = `emulator-${consolePort}`;
+  const serial = resolveHiveAndroidSerial(consolePort);
   if (
-    ANDROID_CONSOLE_PORTS.includes(consolePort) &&
+    HIVE_ANDROID_CONSOLE_PORTS.includes(consolePort) &&
     context.isSerialAvailable(serial) &&
     (await context.checkConsolePorts(consolePort))
   ) {
@@ -520,7 +508,7 @@ const createRuntimeLease = async (
     );
   }
   const occupiedSlots = new Set(await readdir(slotsPath));
-  for (const consolePort of ANDROID_CONSOLE_PORTS) {
+  for (const consolePort of HIVE_ANDROID_CONSOLE_PORTS) {
     if (
       context.grpcPort === consolePort ||
       context.grpcPort === consolePort + 1
@@ -538,7 +526,7 @@ const createRuntimeLease = async (
       continue;
     }
     const leasePath = join(slotsPath, String(consolePort));
-    const serial = `emulator-${consolePort}`;
+    const serial = resolveHiveAndroidSerial(consolePort);
     if (
       !(
         context.isSerialAvailable(serial) &&

@@ -91,7 +91,11 @@ Environment variables:
 
 Hive Android emulator and viewer services require a Linux or macOS host with the Android SDK installed. Android commands fail immediately on Windows rather than starting a partial runtime.
 
+The runtime supports x64 and arm64 hosts and requires Android SDK platform tools, emulator, latest command-line tools, and the Android 34 Google APIs system image for the host ABI. Hive creates the AVD but does not install a missing system image.
+
 Host playback of emulator audio is Linux-only and requires PipeWire's `pw-cat`. Browser microphone injection is supported on Linux and macOS when the viewer service enables audio input. It starts and stops automatically with guest `AudioRecord` capture after the browser or OS grants microphone permission.
+
+See [Android Runtime Walkthrough](docs/android-runtime-walkthrough.md) for the complete lifecycle, process, media, permission, recovery, and security model.
 
 #### OpenCode keybinds in Hive
 
@@ -196,6 +200,7 @@ bun setup
 # Set up local database (create .env with DATABASE_URL="local.db")
 # Then run development servers
 bun dev
+```
 
 Source dev commands default `HIVE_HOME` to `<workspace>/.hive/home` when the
 environment variable is unset. This keeps local repo/worktree testing isolated
@@ -210,7 +215,6 @@ bun run dev:desktop:full
 
 This waits for `http://localhost:3001` by default before opening Electron.
 Override `HIVE_DESKTOP_URL` if your web dev server uses a different URL.
-```
 
 ### Manual Setup
 
@@ -221,6 +225,7 @@ bun setup
 # Set up local database (create .env with DATABASE_URL="local.db")  
 # Then run development servers
 bun dev
+```
 
 Source dev commands default `HIVE_HOME` to `<workspace>/.hive/home` when the
 environment variable is unset. This keeps local repo/worktree testing isolated
@@ -235,7 +240,6 @@ bun run dev:desktop:full
 
 This waits for `http://localhost:3001` by default before opening Electron.
 Override `HIVE_DESKTOP_URL` if your web dev server uses a different URL.
-```
 
 **URLs:**
 - Web: [http://localhost:3001](http://localhost:3001)
@@ -307,7 +311,7 @@ Hive also injects `HIVE_CLI_BIN`, the absolute path to the exact source or insta
   "services": {
     "app": {
       "type": "process",
-      "run": "\"$HIVE_CLI_BIN\" android emulator --grpc-port \"$APP_ANDROID_GRPC_PORT\" -- bun run android:cell",
+      "run": "\"$HIVE_CLI_BIN\" android emulator --grpc-port \"$APP_ANDROID_GRPC_PORT\" -- <workspace product command>",
       "ports": {
         "http": { "primary": true, "protocol": "http" },
         "android-grpc": { "protocol": "tcp", "viewer": false }
@@ -320,7 +324,6 @@ Hive also injects `HIVE_CLI_BIN`, the absolute path to the exact source or insta
       "ports": {
         "viewer": {
           "primary": true,
-          "port": 42861,
           "protocol": "http",
           "viewer": true
         }
@@ -334,7 +337,9 @@ Hive also injects `HIVE_CLI_BIN`, the absolute path to the exact source or insta
 }
 ```
 
-Independent services start concurrently; `dependsOn` edges create readiness waves. The Android viewer can therefore wait for the emulator while the product service performs a cold build. Process service audio output defaults to enabled, while input defaults to disabled and must be explicitly enabled with `"audio": { "input": true }`. Android microphone forwarding follows active guest capture automatically; there is no Hive microphone toggle. Android runtime support is intentionally limited to Linux and macOS. Browser microphone injection is available on both; host playback of emulator output currently requires Linux and `pw-cat`.
+Replace `<workspace product command>` with a command supplied by the workspace. It normally starts the Android app tooling and any product endpoint expected on `$PORT`.
+
+Independent services start concurrently; `dependsOn` edges create readiness waves. The Android viewer can therefore wait for the emulator while the product service performs a cold build. Process service audio output defaults to enabled, while input defaults to disabled and must be explicitly enabled with `"audio": { "input": true }`. Android microphone forwarding follows active guest capture automatically; there is no Hive microphone toggle. Android runtime support is intentionally limited to Linux and macOS. Browser microphone injection is available on both; host playback of emulator output currently requires Linux and `pw-cat`. Add an exact viewer `port` only when a stable browser permission origin is required; the same fixed host port cannot be used by parallel cells.
 
 Docker and Compose configuration shapes remain reserved but are not executable yet; Hive now fails these definitions explicitly rather than silently skipping them.
 
@@ -399,7 +404,10 @@ bun -C apps/e2e run install:browsers
 ```
 
 The production Android microphone test requires `ffmpeg` with `flite`,
-`drawtext`, H.264, and AAC support, plus an Android SDK on Linux or macOS. It
+`drawtext`, H.264, and AAC support; JDK 17 (`javac` and `keytool`); `zip`;
+Playwright Chromium; Android platform tools, emulator, platform 35/build tools,
+and the Android 34 Google APIs system image. Linux also requires usable KVM
+access through `/dev/kvm`. It
 injects a Calibrate interview response into the microphone, records the PCM
 received by Android, plays a distinct Calibrate coaching prompt through
 `AudioTrack`, captures the emulator's rendered gRPC audio stream, and combines

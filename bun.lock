@@ -84,6 +84,7 @@
       "name": "web",
       "dependencies": {
         "@elysiajs/eden": "^1.4.4",
+        "@hive/android-runtime": "workspace:*",
         "@hive/server": "workspace:*",
         "@pierre/precision-diffs": "^0.5.1",
         "@radix-ui/react-alert-dialog": "^1.1.15",

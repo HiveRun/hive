@@ -1,16 +1,15 @@
 import { describe, expect, it } from "vitest";
 
+import { HIVE_ANDROID_DEVICE_START_TIMEOUT_MS } from "./facts";
 import {
   buildAndroidEmulatorArgs,
   createAndroidSdkEnvironment,
   getHiveAndroidAbi,
   getHiveAndroidDeviceStartTimeoutMs,
   getHiveAndroidSystemImage,
-  HIVE_ANDROID_DEVICE_START_TIMEOUT_MS,
   resolveAndroidGraphics,
   resolveAndroidRuntimeDirectory,
   resolveAndroidSdkPath,
-  resolveHiveAndroidAvdName,
 } from "./policy";
 
 const SYSTEM_PATH_SUFFIX_PATTERN = /\/usr\/bin$/;
@@ -67,10 +66,6 @@ describe("Android runtime policy", () => {
       "system-images;android-34;google_apis;arm64-v8a"
     );
     expect(() => getHiveAndroidAbi("ia32")).toThrow("does not support ia32");
-  });
-
-  it("uses a deterministic cell-specific AVD name", () => {
-    expect(resolveHiveAndroidAvdName("cell:a/b")).toBe("Hive_Pixel_7_cell_a_b");
   });
 
   it("preserves the configurable Hive Android startup timeout", () => {
@@ -145,5 +140,18 @@ describe("Android runtime policy", () => {
         }
       )
     ).toBe("/run/user/1000");
+  });
+
+  it("uses offscreen Qt when Linux has no authenticated display", () => {
+    expect(resolveAndroidGraphics({}, { platform: "linux" })).toEqual({
+      gpuMode: "auto",
+      qtPlatform: "offscreen",
+    });
+    expect(
+      resolveAndroidGraphics(
+        { QT_QPA_PLATFORM: "minimal" },
+        { platform: "linux" }
+      )
+    ).toEqual({ gpuMode: "auto", qtPlatform: "minimal" });
   });
 });

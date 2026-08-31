@@ -2,12 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { delimiter, join } from "node:path";
 
-const HIVE_ANDROID_AVD_NAME = "Hive_Pixel_7";
-export const HIVE_ANDROID_DEVICE_PROFILE = "pixel_7";
-export const HIVE_ANDROID_DEVICE_START_TIMEOUT_MS = 300_000;
-
-export const resolveHiveAndroidAvdName = (cellId: string): string =>
-  `${HIVE_ANDROID_AVD_NAME}_${cellId.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}`;
+import { HIVE_ANDROID_DEVICE_START_TIMEOUT_MS } from "./facts";
 
 type AndroidSdkEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -32,6 +27,7 @@ type AndroidRuntimeDirectoryOptions = {
 
 type AndroidGraphicsConfiguration = {
   gpuMode: string;
+  qtPlatform?: string;
   xAuthority?: string;
 };
 
@@ -258,6 +254,7 @@ export function resolveAndroidGraphics(
   env: AndroidSdkEnvironment,
   options: AndroidGraphicsOptions = {}
 ): AndroidGraphicsConfiguration {
+  const platform = options.platform ?? process.platform;
   const display = env.DISPLAY?.trim();
   const userId = options.userId ?? process.getuid?.();
   const validateXAuthority =
@@ -284,11 +281,7 @@ export function resolveAndroidGraphics(
       ? configuredXAuthority
       : undefined;
 
-  if (
-    !xAuthority &&
-    display &&
-    (options.platform ?? process.platform) === "linux"
-  ) {
+  if (!xAuthority && display && platform === "linux") {
     const runtimeDirectory =
       env.XDG_RUNTIME_DIR?.trim() ||
       (userId === undefined ? undefined : `/run/user/${userId}`);
@@ -309,8 +302,13 @@ export function resolveAndroidGraphics(
   }
 
   const configuredGpuMode = env.ANDROID_EMULATOR_GPU_MODE?.trim();
+  let qtPlatform = env.QT_QPA_PLATFORM?.trim();
+  if (!qtPlatform && platform === "linux" && !(display && xAuthority)) {
+    qtPlatform = "offscreen";
+  }
   return {
     gpuMode: configuredGpuMode || (display && xAuthority ? "host" : "auto"),
+    ...(qtPlatform ? { qtPlatform } : {}),
     ...(xAuthority ? { xAuthority } : {}),
   };
 }

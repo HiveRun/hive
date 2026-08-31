@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Home, Minus, Plus, Settings2, Ticket } from "lucide-react";
+import { Cpu, Home, Minus, Plus, Settings2, Ticket } from "lucide-react";
 import type { ComponentProps } from "react";
 import { ModeToggle } from "@/components/mode-toggle";
 import {
@@ -132,6 +132,38 @@ export function MainSidebar({
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <WorkspaceTree collapsed={sidebarState === "collapsed"} />
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel
+            className={cn(
+              "text-[0.6rem] text-muted-foreground uppercase tracking-[0.32em]",
+              sidebarState === "collapsed" && "hidden"
+            )}
+          >
+            Tools
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  className={cn(
+                    "relative box-border w-full rounded-none border-2 border-transparent bg-transparent py-1.5 pr-4 pl-3 text-left text-muted-foreground text-xs tracking-normal transition-none",
+                    "hover:bg-primary/5 hover:text-foreground",
+                    pathname === "/android-runtime" &&
+                      "bg-primary/10 text-foreground shadow-[inset_3px_0_0_0_hsl(var(--primary))]"
+                  )}
+                  tooltip="Android Runtime Lab"
+                >
+                  <Link aria-label="Android Runtime Lab" to="/android-runtime">
+                    <Cpu className="size-4" />
+                    <span>Runtime Lab</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 

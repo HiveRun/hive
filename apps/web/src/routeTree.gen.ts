@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as LinearRouteImport } from './routes/linear'
 import { Route as CellsRouteImport } from './routes/cells'
+import { Route as AndroidRuntimeRouteImport } from './routes/android-runtime'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as CellsNewRouteImport } from './routes/cells/new'
 import { Route as CellsCellIdRouteImport } from './routes/cells/$cellId'
@@ -36,6 +37,11 @@ const LinearRoute = LinearRouteImport.update({
 const CellsRoute = CellsRouteImport.update({
   id: '/cells',
   path: '/cells',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AndroidRuntimeRoute = AndroidRuntimeRouteImport.update({
+  id: '/android-runtime',
+  path: '/android-runtime',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -91,6 +97,7 @@ const CellsCellIdChatRoute = CellsCellIdChatRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/android-runtime': typeof AndroidRuntimeRoute
   '/cells': typeof CellsRouteWithChildren
   '/linear': typeof LinearRoute
   '/settings': typeof SettingsRoute
@@ -106,6 +113,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/android-runtime': typeof AndroidRuntimeRoute
   '/cells': typeof CellsRouteWithChildren
   '/linear': typeof LinearRoute
   '/settings': typeof SettingsRoute
@@ -122,6 +130,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/android-runtime': typeof AndroidRuntimeRoute
   '/cells': typeof CellsRouteWithChildren
   '/linear': typeof LinearRoute
   '/settings': typeof SettingsRoute
@@ -139,6 +148,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/android-runtime'
     | '/cells'
     | '/linear'
     | '/settings'
@@ -154,6 +164,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/android-runtime'
     | '/cells'
     | '/linear'
     | '/settings'
@@ -169,6 +180,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/android-runtime'
     | '/cells'
     | '/linear'
     | '/settings'
@@ -185,6 +197,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AndroidRuntimeRoute: typeof AndroidRuntimeRoute
   CellsRoute: typeof CellsRouteWithChildren
   LinearRoute: typeof LinearRoute
   SettingsRoute: typeof SettingsRoute
@@ -211,6 +224,13 @@ declare module '@tanstack/react-router' {
       path: '/cells'
       fullPath: '/cells'
       preLoaderRoute: typeof CellsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/android-runtime': {
+      id: '/android-runtime'
+      path: '/android-runtime'
+      fullPath: '/android-runtime'
+      preLoaderRoute: typeof AndroidRuntimeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -324,6 +344,7 @@ const CellsRouteWithChildren = CellsRoute._addFileChildren(CellsRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AndroidRuntimeRoute: AndroidRuntimeRoute,
   CellsRoute: CellsRouteWithChildren,
   LinearRoute: LinearRoute,
   SettingsRoute: SettingsRoute,
