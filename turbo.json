@@ -64,6 +64,11 @@
         "**/package.json"
       ]
     },
+    "test:e2e:backend": {
+      "dependsOn": ["^test:e2e:backend"],
+      "cache": false,
+      "inputs": ["$TURBO_DEFAULT$", "package.json", "**/package.json"]
+    },
     "dev": {
       "cache": false,
       "persistent": true
