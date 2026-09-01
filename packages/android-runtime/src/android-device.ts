@@ -1,12 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { HIVE_ANDROID_DEVICE_START_TIMEOUT_MS } from "./facts";
+
 const LINE_BREAK_PATTERN = /\r?\n/;
 const WHITESPACE_PATTERN = /\s+/;
 const ADB_COMMAND_TIMEOUT_MS = 5000;
 const ADB_EMULATOR_COMMAND_TIMEOUT_MS = 1000;
 const DEVICE_POLL_INTERVAL_MS = 1000;
-const DEFAULT_DEVICE_WAIT_TIMEOUT_MS = 300_000;
 const MILLISECONDS_PER_SECOND = 1000;
 
 const runAdb = (
@@ -159,7 +160,7 @@ export const waitForAndroidDevice = async (
     timeoutMs?: number;
   } = {}
 ): Promise<void> => {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_DEVICE_WAIT_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs ?? HIVE_ANDROID_DEVICE_START_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (isAndroidDeviceReady(adbPath, serial, env)) {

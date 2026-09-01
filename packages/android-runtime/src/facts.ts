@@ -1,0 +1,37 @@
+export const HIVE_ANDROID_AVD_NAME_PREFIX = "Hive_Pixel_7";
+export const HIVE_ANDROID_DEVICE_PROFILE = "pixel_7";
+export const HIVE_ANDROID_DEVICE_START_TIMEOUT_MS = 300_000;
+
+export const HIVE_ANDROID_CONSOLE_PORT_MIN = 5554;
+export const HIVE_ANDROID_CONSOLE_PORT_MAX = 5584;
+export const HIVE_ANDROID_CONSOLE_PORT_STEP = 2;
+export const HIVE_ANDROID_RESERVED_CONSOLE_PORT = 5580;
+
+export const HIVE_ANDROID_AUDIO_SAMPLE_RATE_HZ = 48_000;
+export const HIVE_ANDROID_MICROPHONE_FRAME_SAMPLES = 960;
+export const HIVE_ANDROID_PCM_BYTES_PER_SAMPLE = 2;
+export const HIVE_ANDROID_MICROPHONE_FRAME_BYTES =
+  HIVE_ANDROID_MICROPHONE_FRAME_SAMPLES * HIVE_ANDROID_PCM_BYTES_PER_SAMPLE;
+const MILLISECONDS_PER_SECOND = 1000;
+export const HIVE_ANDROID_MICROPHONE_FRAME_DURATION_MS =
+  (HIVE_ANDROID_MICROPHONE_FRAME_SAMPLES / HIVE_ANDROID_AUDIO_SAMPLE_RATE_HZ) *
+  MILLISECONDS_PER_SECOND;
+
+export const resolveHiveAndroidAvdName = (cellId: string): string =>
+  `${HIVE_ANDROID_AVD_NAME_PREFIX}_${cellId.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}`;
+
+export const resolveHiveAndroidSerial = (consolePort: number): string =>
+  `emulator-${consolePort}`;
+
+export const HIVE_ANDROID_CONSOLE_PORTS = Object.freeze(
+  Array.from(
+    {
+      length:
+        (HIVE_ANDROID_CONSOLE_PORT_MAX - HIVE_ANDROID_CONSOLE_PORT_MIN) /
+          HIVE_ANDROID_CONSOLE_PORT_STEP +
+        1,
+    },
+    (_, index) =>
+      HIVE_ANDROID_CONSOLE_PORT_MIN + index * HIVE_ANDROID_CONSOLE_PORT_STEP
+  ).filter((port) => port !== HIVE_ANDROID_RESERVED_CONSOLE_PORT)
+);

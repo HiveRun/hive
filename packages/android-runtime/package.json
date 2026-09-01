@@ -6,6 +6,10 @@
     ".": {
       "types": "./src/command.ts",
       "default": "./src/command.ts"
+    },
+    "./facts": {
+      "types": "./src/facts.ts",
+      "default": "./src/facts.ts"
     }
   },
   "scripts": {

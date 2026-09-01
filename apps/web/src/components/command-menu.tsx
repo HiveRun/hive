@@ -11,6 +11,7 @@ import { useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Bot,
   Code2,
+  Cpu,
   GitCompareArrows,
   Home,
   Monitor,
@@ -766,6 +767,25 @@ const buildNavigationCommands = (args: {
 
           navigate({ to: "/linear" });
         }),
+    },
+    {
+      id: "nav-android-runtime",
+      label: "Go to Android Runtime Lab",
+      description: "Explore simulated Android lifecycle and isolation flows.",
+      group: "navigation",
+      icon: Cpu,
+      basePriority: PROVISIONING_COMMAND.basePriority - 1,
+      current: pathname === "/android-runtime",
+      keywords: [
+        "android",
+        "runtime",
+        "emulator",
+        "viewer",
+        "microphone",
+        "recovery",
+        "adb",
+      ],
+      onSelect: () => runCommand(() => navigate({ to: "/android-runtime" })),
     },
     {
       id: "action-create-cell",

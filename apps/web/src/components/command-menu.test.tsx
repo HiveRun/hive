@@ -203,6 +203,7 @@ describe("CommandMenu", () => {
     expect(menu).toBeInTheDocument();
     expect(screen.getByText("Go to Overview")).toBeInTheDocument();
     expect(screen.getByText("Go to Linear")).toBeInTheDocument();
+    expect(screen.getByText("Go to Android Runtime Lab")).toBeInTheDocument();
     expect(screen.getByText("Create Cell")).toBeInTheDocument();
     expect(screen.getByText("Manage Workspaces")).toBeInTheDocument();
     expect(screen.getByText("Register Workspace")).toBeInTheDocument();
@@ -296,6 +297,18 @@ describe("CommandMenu", () => {
     expect(navigateMock).toHaveBeenCalledWith(
       linearNavigationForWorkspace("workspace-1")
     );
+    expect(screen.queryByTestId("command-menu")).not.toBeInTheDocument();
+  });
+
+  it("navigates to the Android Runtime Lab", () => {
+    renderCommandMenu();
+    openCommandMenu();
+
+    fireEvent.click(
+      screen.getByTestId("command-menu-item-nav-android-runtime")
+    );
+
+    expect(navigateMock).toHaveBeenCalledWith({ to: "/android-runtime" });
     expect(screen.queryByTestId("command-menu")).not.toBeInTheDocument();
   });
 

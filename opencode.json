@@ -23,10 +23,10 @@
     }
   },
   "mcp": {
-    "linear": {
-      "type": "local",
+    "linear_hive": {
+      "type": "remote",
       "enabled": true,
-      "command": ["bunx", "mcp-remote", "https://mcp.linear.app/mcp"]
+      "url": "https://mcp.linear.app/mcp"
     }
   }
 }

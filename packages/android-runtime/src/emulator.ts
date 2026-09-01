@@ -12,6 +12,10 @@ import {
   waitForAndroidDeviceToStop,
 } from "./android-device";
 import {
+  HIVE_ANDROID_DEVICE_PROFILE,
+  resolveHiveAndroidAvdName,
+} from "./facts";
+import {
   type AndroidRuntimeLeaseOwner,
   acquireAndroidRuntimeLease,
   getAndroidProcessFingerprint,
@@ -22,10 +26,8 @@ import {
   getHiveAndroidAbi,
   getHiveAndroidDeviceStartTimeoutMs,
   getHiveAndroidSystemImage,
-  HIVE_ANDROID_DEVICE_PROFILE,
   resolveAndroidGraphics,
   resolveAndroidRuntimeDirectory,
-  resolveHiveAndroidAvdName,
   sanitizeAdbServerEnvironment,
 } from "./policy";
 import {
@@ -226,6 +228,7 @@ const prepareAndroidEnvironment = async (
   const androidEnvironment = {
     ...policyEnvironment,
     ...(graphics.xAuthority ? { XAUTHORITY: graphics.xAuthority } : {}),
+    ...(graphics.qtPlatform ? { QT_QPA_PLATFORM: graphics.qtPlatform } : {}),
     ANDROID_AVD_HOME: avdHome,
     ANDROID_EMU_CRASH_REPORTING_DATABASE: crashReportDirectory,
     HIVE_ANDROID_GPU_MODE: graphics.gpuMode,

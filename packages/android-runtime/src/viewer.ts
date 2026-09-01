@@ -26,11 +26,11 @@ import {
   grpcEndpointFor,
 } from "stream-droid/src/grpc/discovery.ts";
 import { createEmulatorClient } from "stream-droid/src/grpc/emulatorClient.ts";
-
 import {
   getRunningAndroidAvdName,
   waitForAndroidDevice,
 } from "./android-device";
+import { HIVE_ANDROID_AUDIO_SAMPLE_RATE_HZ } from "./facts";
 import {
   isAndroidLeaseOwnerAlive,
   readAndroidLeaseOwner,
@@ -52,7 +52,6 @@ import {
 const GRPC_WAIT_TIMEOUT_MS = 30_000;
 const GRPC_PROBE_TIMEOUT_MS = 5000;
 const GRPC_RETRY_INTERVAL_MS = 250;
-const AUDIO_SAMPLE_RATE = "48000";
 const EXECUTABLE_MODE = 0o755;
 const OWNERSHIP_POLL_INTERVAL_MS = 100;
 const noopAsync = (): Promise<void> => Promise.resolve();
@@ -199,7 +198,7 @@ const startPwCatPlayback = (
       "--format",
       "s16",
       "--rate",
-      AUDIO_SAMPLE_RATE,
+      String(HIVE_ANDROID_AUDIO_SAMPLE_RATE_HZ),
       "--channels",
       "2",
       "--latency",

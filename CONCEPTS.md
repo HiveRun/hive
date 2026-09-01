@@ -127,6 +127,12 @@ Cells provide **terminals** for running commands:
 
 Terminals stream output via WebSocket and persist history.
 
+### Android Runtime
+
+Hive can attach a cell-owned Android emulator and loopback viewer to process services. The app service owns the emulator lease, AVD, product process group, and authenticated gRPC endpoint; a separate viewer service verifies that ownership and provides video, controls, emulator audio output, and demand-driven browser microphone input.
+
+See [Android Runtime Walkthrough](docs/android-runtime-walkthrough.md) for the complete startup, shutdown, media, permission, recovery, and security model.
+
 ## Architecture Overview
 
 ```

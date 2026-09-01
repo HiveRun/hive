@@ -4769,7 +4769,7 @@ async function handleDeferredProvisionFailure(
   const payload = buildCellCreationErrorPayload(error);
   const lastSetupError = deriveSetupErrorDetails(payload);
 
-  await stopServicesIfStarted(context);
+  await stopServicesIfStarted(context, { preserveTerminal: true });
 
   const finishedAt = await updateCellProvisioningStatus(
     context.database,
@@ -5047,12 +5047,16 @@ async function assertCellStillExists(
   );
 }
 
-async function stopServicesIfStarted(context: ProvisionContext) {
+async function stopServicesIfStarted(
+  context: ProvisionContext,
+  options: { preserveTerminal?: boolean } = {}
+) {
   if (!(context.state.servicesStarted || context.state.worktreeCreated)) {
     return;
   }
 
   await context.stopCellServices(context.state.cellId, {
+    ...(options.preserveTerminal ? { preserveTerminal: true } : {}),
     releasePorts: true,
   });
   context.state.servicesStarted = false;
