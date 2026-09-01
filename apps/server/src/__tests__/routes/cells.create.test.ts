@@ -269,7 +269,7 @@ type DependencyFactoryOptions = {
   }) => Promise<void>;
   stopServicesForCell?: (
     cellId: string,
-    options?: { releasePorts?: boolean }
+    options?: { preserveTerminal?: boolean; releasePorts?: boolean }
   ) => Promise<void>;
   onCreateWorktreeManager?: () => void;
   onRemoveWorktree?: () => void;
@@ -375,7 +375,7 @@ function createDependencies(options: DependencyFactoryOptions = {}): any {
       startServicesForCell: async (_cellId: string) => Promise.resolve(),
       stopServicesForCell: (
         cellId: string,
-        stopOptions?: { releasePorts?: boolean }
+        stopOptions?: { preserveTerminal?: boolean; releasePorts?: boolean }
       ) =>
         options.stopServicesForCell?.(cellId, stopOptions) ?? Promise.resolve(),
       runCellTeardown: (args: { reason: "delete" | "provisioning_rollback" }) =>
@@ -536,7 +536,8 @@ describe("POST /api/cells", () => {
       cause,
     });
 
-    const app = createTestApp({ setupError });
+    const stopServicesForCell = vi.fn(async () => Promise.resolve());
+    const app = createTestApp({ setupError, stopServicesForCell });
 
     const payload = await createCellAndExpectSpawning({
       app,
@@ -552,6 +553,10 @@ describe("POST /api/cells", () => {
       "Template ID: failing-template"
     );
     expect(erroredRow.lastSetupError).toContain("exit code 42");
+    expect(stopServicesForCell).toHaveBeenCalledWith(payload.id, {
+      preserveTerminal: true,
+      releasePorts: true,
+    });
 
     const rows = await testDb.select().from(cells);
     expect(rows).toHaveLength(1);

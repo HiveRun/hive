@@ -100,6 +100,7 @@ const TERMINAL_NAME = "xterm-256color";
 const DEFAULT_TERMINAL_COLS = 120;
 const DEFAULT_TERMINAL_ROWS = 36;
 const SERVICE_INSTANCE_ENV_KEY = "HIVE_SERVICE_INSTANCE_ID";
+const SERVICE_WAVE_CANCELLATION_REASON = Symbol("service-wave-cancellation");
 const SIGNAL_CODES = osConstants?.signals ?? {};
 
 function resolvePositiveTimeout(
@@ -410,7 +411,7 @@ type ServiceSupervisor = {
   ): Promise<void>;
   stopCellServices(
     cellId: string,
-    options?: { releasePorts?: boolean }
+    options?: { preserveTerminal?: boolean; releasePorts?: boolean }
   ): Promise<void>;
   runCellTeardown(args: {
     cell: Cell;
@@ -448,6 +449,12 @@ type ServiceRow = {
 type ActiveServiceHandle = {
   handle: ProcessHandle;
   persisted?: boolean;
+};
+
+type ServiceExitObservation = {
+  exitCode: number;
+  signal: number | string | null;
+  supervisorTerminated: boolean;
 };
 
 type PersistedProcessIdentity =
@@ -674,6 +681,8 @@ export function createServiceSupervisor(
   const activePersistedRecoveries = new Map<string, ActiveServiceHandle>();
   const activeTemplateSetups = new Map<string, ProcessHandle>();
   const cancelledTemplateSetups = new WeakSet<ProcessHandle>();
+  const serviceExitObservations = new Map<string, ServiceExitObservation>();
+  const supervisorTerminatedServiceHandles = new WeakSet<ProcessHandle>();
   const cellsStopping = new Set<string>();
   const servicesStopping = new Set<string>();
   const repository = createServiceRepository(db, now);
@@ -1397,7 +1406,7 @@ export function createServiceSupervisor(
       if (!failure.cancellation) {
         completedWaveStarts.delete(start.serviceId);
         failure.firstFailure = error;
-        controller.abort();
+        controller.abort(SERVICE_WAVE_CANCELLATION_REASON);
         failure.cancellation = cancelPreLockProcesses(serviceIds).catch(
           (siblingCancellationError) => {
             failure.cancellationError = siblingCancellationError;
@@ -1506,6 +1515,7 @@ export function createServiceSupervisor(
         stopService(row, {
           forceStopCommand: true,
           portMap,
+          preserveTerminal: true,
           releasePort: false,
           statusAfterStop: "stopped",
         })
@@ -1963,7 +1973,7 @@ export function createServiceSupervisor(
 
   async function stopCellServices(
     cellId: string,
-    options?: { releasePorts?: boolean }
+    options?: { preserveTerminal?: boolean; releasePorts?: boolean }
   ): Promise<void> {
     cellsStopping.add(cellId);
     try {
@@ -1981,6 +1991,7 @@ export function createServiceSupervisor(
           try {
             await stopService(row, {
               portMap,
+              preserveTerminal: options?.preserveTerminal ?? false,
               releasePort: options?.releasePorts ?? false,
             });
           } catch (error) {
@@ -2231,6 +2242,7 @@ export function createServiceSupervisor(
     portMap,
     signal: startSignal,
   }: ServiceProcessOptions) {
+    serviceExitObservations.delete(row.service.id);
     try {
       await portManager.assertFixedPortsAvailable(
         row.service,
@@ -2265,13 +2277,21 @@ export function createServiceSupervisor(
 
       requireStartableSupervisor();
       requireServiceStartNotCancelled(row, startSignal);
-      const handle = spawnProcess({
+      serviceExitObservations.delete(row.service.id);
+      let handle: ProcessHandle;
+      handle = spawnProcess({
         command,
         cwd,
         env: processEnvironment,
         onData: (chunk) =>
           terminalRuntime.appendServiceOutput(row.service.id, chunk),
         onExit: ({ exitCode, signal }) => {
+          serviceExitObservations.set(row.service.id, {
+            exitCode,
+            signal,
+            supervisorTerminated:
+              supervisorTerminatedServiceHandles.has(handle),
+          });
           terminalRuntime.markServiceExit({
             serviceId: row.service.id,
             exitCode,
@@ -2353,41 +2373,56 @@ export function createServiceSupervisor(
       deleteTrackedHandle(activeServiceStarts, row.service.id, handle);
       notifyServiceUpdate(row);
     } catch (error) {
-      const active = activeServices.get(row.service.id);
-      if (active) {
-        try {
-          await terminateHandle(active.handle);
-          activeServices.delete(row.service.id);
-          deleteTrackedHandle(
-            activeServiceStarts,
-            row.service.id,
-            active.handle
-          );
-        } catch (terminationError) {
-          const combinedError = new Error(
-            `${formatError(error)}; failed to terminate service process: ${formatError(terminationError)}`
-          );
-          await repository.updateService(row.service.id, {
-            status: "error",
-            pid: active.handle.pid,
-            lastKnownError: combinedError.message,
-          });
-          notifyServiceUpdate(row);
-          throw combinedError;
-        }
+      return await handleServiceProcessFailure({ error, row, startSignal });
+    }
+  }
+
+  async function handleServiceProcessFailure(args: {
+    error: unknown;
+    row: ServiceRow;
+    startSignal?: AbortSignal;
+  }): Promise<never> {
+    const { error, row, startSignal } = args;
+    const active = activeServices.get(row.service.id);
+    if (active) {
+      try {
+        await terminateHandle(active.handle);
+        activeServices.delete(row.service.id);
+        deleteTrackedHandle(activeServiceStarts, row.service.id, active.handle);
+      } catch (terminationError) {
+        const combinedError = new Error(
+          `${formatError(error)}; failed to terminate service process: ${formatError(terminationError)}`
+        );
+        await repository.updateService(row.service.id, {
+          status: "error",
+          pid: active.handle.pid,
+          lastKnownError: combinedError.message,
+        });
+        notifyServiceUpdate(row);
+        throw combinedError;
       }
-      terminalRuntime.markServiceExit({
-        serviceId: row.service.id,
-        exitCode: 1,
-        signal: null,
+    }
+    const independentlyExited = serviceExitedIndependently(row.service.id);
+    if (isServiceWaveCancellation(startSignal) && !independentlyExited) {
+      terminalRuntime.clearServiceSession(row.service.id);
+      serviceExitObservations.delete(row.service.id);
+      await repository.updateService(row.service.id, {
+        status: "stopped",
+        pid: null,
+        lastKnownError: null,
       });
-      await markServiceError(
-        row.service.id,
-        row.cell.id,
-        error instanceof Error ? error.message : String(error)
-      );
+      notifyServiceUpdate(row);
       throw error;
     }
+    markObservedServiceExit(row.service.id);
+    markServiceTerminalFailure(row.service.id, independentlyExited);
+    serviceExitObservations.delete(row.service.id);
+    await markServiceError(
+      row.service.id,
+      row.cell.id,
+      error instanceof Error ? error.message : String(error)
+    );
+    throw error;
   }
 
   function deleteActiveServiceHandle(
@@ -2476,12 +2511,21 @@ export function createServiceSupervisor(
     signal?: AbortSignal;
   }): Promise<void> {
     requireServiceStartNotCancelled(args.row, args.signal);
-    const handle = spawnProcess({
+    serviceExitObservations.delete(args.row.service.id);
+    let handle: ProcessHandle;
+    handle = spawnProcess({
       command: args.command,
       cwd: args.cwd,
       env: args.env,
       onData: (chunk) =>
         terminalRuntime.appendServiceOutput(args.row.service.id, chunk),
+      onExit: ({ exitCode, signal }) => {
+        serviceExitObservations.set(args.row.service.id, {
+          exitCode,
+          signal,
+          supervisorTerminated: supervisorTerminatedServiceHandles.has(handle),
+        });
+      },
     });
     activeServiceSetups.set(args.row.service.id, { handle });
     if (isServiceStopRequested(args.row)) {
@@ -2530,7 +2574,7 @@ export function createServiceSupervisor(
     handle: ProcessHandle
   ): Promise<void> {
     try {
-      await terminateProcessHandle(handle);
+      await terminateHandle(handle);
     } catch (error) {
       retainServiceSetup(serviceId, handle);
       throw error;
@@ -2600,7 +2644,7 @@ export function createServiceSupervisor(
       return;
     }
     try {
-      await terminateProcessHandle(active.handle);
+      await terminateHandle(active.handle);
     } catch (error) {
       retainServiceSetup(serviceId, active.handle);
       throw error;
@@ -2738,7 +2782,7 @@ export function createServiceSupervisor(
       if (!handle) {
         return;
       }
-      await terminateProcessHandle(handle);
+      await terminateHandle(handle);
       deleteTrackedHandle(activeServiceStarts, serviceId, handle);
       if (activeServices.get(serviceId)?.handle === handle) {
         activeServices.delete(serviceId);
@@ -2881,6 +2925,7 @@ export function createServiceSupervisor(
     options: {
       forceStopCommand?: boolean;
       portMap?: CellPortMap;
+      preserveTerminal?: boolean;
       releasePort: boolean;
       statusAfterStop?: ServiceStatus;
     }
@@ -2888,6 +2933,7 @@ export function createServiceSupervisor(
     const {
       forceStopCommand = false,
       portMap = new Map(),
+      preserveTerminal = false,
       releasePort,
       statusAfterStop = "stopped",
     } = options;
@@ -2895,6 +2941,11 @@ export function createServiceSupervisor(
     const env = row.service.env;
     const cwd = resolveServiceCwd(row.cell.workspacePath, definition?.cwd);
     const active = activeServices.get(row.service.id);
+    const terminalAlreadyExited =
+      terminalRuntime.getServiceSession(row.service.id)?.status === "exited";
+    if (active) {
+      supervisorTerminatedServiceHandles.add(active.handle);
+    }
 
     const stopCommandError = await runServiceStopCommand({
       row,
@@ -2907,6 +2958,10 @@ export function createServiceSupervisor(
     });
 
     await terminateServiceProcess(row, active);
+    const preserveExitedTerminal =
+      preserveTerminal &&
+      (terminalAlreadyExited || serviceExitedIndependently(row.service.id));
+    markObservedServiceExit(row.service.id);
 
     await repository.updateService(row.service.id, {
       status: statusAfterStop,
@@ -2914,18 +2969,23 @@ export function createServiceSupervisor(
       lastKnownError: null,
     });
 
-    terminalRuntime.markServiceExit({
-      serviceId: row.service.id,
-      exitCode: 0,
-      signal: null,
-    });
+    if (!preserveExitedTerminal) {
+      terminalRuntime.markServiceExit({
+        serviceId: row.service.id,
+        exitCode: 0,
+        signal: null,
+      });
+    }
 
     notifyServiceUpdate(row);
 
     if (releasePort) {
       releasePortFor(row.service.id);
+    }
+    if (!preserveExitedTerminal) {
       terminalRuntime.clearServiceSession(row.service.id);
     }
+    serviceExitObservations.delete(row.service.id);
 
     if (stopCommandError) {
       throw new Error(
@@ -3175,7 +3235,42 @@ export function createServiceSupervisor(
     emitServiceUpdate({ cellId, serviceId });
   }
 
+  function markServiceTerminalFailure(
+    serviceId: string,
+    preserveExistingExit: boolean
+  ): void {
+    if (preserveExistingExit) {
+      return;
+    }
+    terminalRuntime.markServiceExit({
+      serviceId,
+      exitCode: 1,
+      signal: null,
+    });
+  }
+
+  function isServiceWaveCancellation(signal?: AbortSignal): boolean {
+    return (
+      signal?.aborted === true &&
+      signal.reason === SERVICE_WAVE_CANCELLATION_REASON
+    );
+  }
+
+  function serviceExitedIndependently(serviceId: string): boolean {
+    const exit = serviceExitObservations.get(serviceId);
+    return exit?.supervisorTerminated === false;
+  }
+
+  function markObservedServiceExit(serviceId: string): void {
+    const exit = serviceExitObservations.get(serviceId);
+    if (!(exit && serviceExitedIndependently(serviceId))) {
+      return;
+    }
+    terminalRuntime.markServiceExit({ serviceId, ...exit });
+  }
+
   async function terminateHandle(handle: ProcessHandle): Promise<void> {
+    supervisorTerminatedServiceHandles.add(handle);
     await terminateProcessHandle(handle, stopTimeoutMs);
   }
 
@@ -3553,7 +3648,7 @@ export type ServiceSupervisorService = {
   ) => Promise<void>;
   readonly stopCellServices: (
     cellId: string,
-    options?: { releasePorts?: boolean }
+    options?: { preserveTerminal?: boolean; releasePorts?: boolean }
   ) => Promise<void>;
   readonly runCellTeardown: (args: {
     cell: Cell;

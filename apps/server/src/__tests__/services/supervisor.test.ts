@@ -36,6 +36,7 @@ const silentLogger = {
 
 const EXPECTED_NAMED_PORT_CLAIMS = 3;
 const EXPECTED_PRIMARY_PORT_CLAIMS = 2;
+const FAILED_SERVICE_EXIT_CODE = 17;
 const REUSED_SERVICE_PID = 4343;
 const READINESS_SUCCESS_TIMEOUT_MS = 500;
 const PERSISTED_MONITOR_SETTLE_MS = 150;
@@ -167,6 +168,75 @@ describe("service supervisor", () => {
     expect(output).toContain("bun run dev");
   });
 
+  it("retains failed provisioning output after services stop", async () => {
+    const { cell, harness, template } = await createScenario({
+      templateId: "template-preserved-output",
+      harnessOptions: {
+        exitCodeForCommand: (command) =>
+          command === "bun run dev" ? FAILED_SERVICE_EXIT_CODE : undefined,
+      },
+      template: webServiceTemplate({
+        readiness: { checks: [{ type: "tcp", port: "default" }] },
+        readyTimeoutMs: READINESS_SUCCESS_TIMEOUT_MS,
+      }),
+    });
+
+    await expect(
+      harness.supervisor.ensureCellServices({ cell, template })
+    ).rejects.toThrow(`exited with code ${FAILED_SERVICE_EXIT_CODE}`);
+    const service = await getOnlyService(cell.id);
+
+    await stopCellServicesPreservingTerminal(harness, cell.id);
+
+    expect(harness.terminalRuntime.getServiceSession(service.id)?.status).toBe(
+      "exited"
+    );
+    expect(
+      harness.terminalRuntime.getServiceSession(service.id)?.exitCode
+    ).toBe(FAILED_SERVICE_EXIT_CODE);
+    expect(harness.terminalRuntime.readServiceOutput(service.id)).toContain(
+      `process exited with code ${FAILED_SERVICE_EXIT_CODE}`
+    );
+  });
+
+  it("does not retain a terminal stopped by provisioning rollback", async () => {
+    const { cell, harness } = await createScenario({
+      templateId: "template-running-output",
+      start: true,
+    });
+    const service = await getOnlyService(cell.id);
+
+    await stopCellServicesPreservingTerminal(harness, cell.id);
+
+    expect(harness.terminalRuntime.getServiceSession(service.id)).toBeNull();
+  });
+
+  it("does not replace readiness failure with rollback exit metadata", async () => {
+    const { cell, harness, template } = await createScenario({
+      templateId: "template-readiness-timeout-output",
+      harnessOptions: {
+        emitTerminalExitOnKill: true,
+        omitTerminalSignalOnKill: true,
+        processKill: (_signal, exit) => exit(1),
+      },
+      template: webServiceTemplate({
+        readiness: { checks: [{ type: "tcp", port: "default" }] },
+        readyTimeoutMs: 10,
+      }),
+    });
+
+    await expect(
+      harness.supervisor.ensureCellServices({ cell, template })
+    ).rejects.toThrow("readiness timed out");
+    const service = await getOnlyService(cell.id);
+
+    await stopCellServicesPreservingTerminal(harness, cell.id);
+
+    expect(
+      harness.terminalRuntime.getServiceSession(service.id)?.exitCode
+    ).toBe(1);
+  });
+
   it("does not start duplicate services when pid is alive", async () => {
     const { cell, harness, template } = await createScenario({
       templateId: "template-dup",
@@ -204,6 +274,7 @@ describe("service supervisor", () => {
     const service = await getOnlyService(cell.id);
 
     await harness.supervisor.stopCellService(service.id);
+    expect(harness.terminalRuntime.getServiceSession(service.id)).toBeNull();
 
     const startingCount = harness.processes.length;
 
@@ -975,6 +1046,9 @@ describe("service supervisor", () => {
 
     expect(service?.status).toBe("stopped");
     expect(service?.pid).toBeNull();
+    expect(
+      harness.terminalRuntime.getServiceSession(service?.id ?? "")
+    ).toBeNull();
   });
 
   it("signals process groups when stopping by pid", async () => {
@@ -1794,35 +1868,38 @@ describe("service supervisor", () => {
   });
 
   it("cancels sibling readiness when a concurrent service fails", async () => {
-    const { cell, harness, template } = await createScenario({
-      templateId: "template-failed-service-wave",
-      template: {
-        services: {
-          failing: serviceDefinition({
-            run: "run-failing",
-            setup: ["prepare-failing"],
-          }),
-          waiting: tcpReadinessService({
-            run: "run-waiting",
-            readyTimeoutMs: 30_000,
-            stop: "stop-waiting",
-          }),
-        },
+    const result = await observePendingSiblingOutcome({
+      harnessOptions: {
+        emitTerminalExitOnKill: true,
+        omitTerminalSignalOnKill: true,
+        processKill: (_signal, exit) => exit(1),
       },
+      templateId: "template-failed-service-wave",
+      waitingCommand: "run-waiting",
+      waitingDefinition: waitingReadinessDefinition(),
     });
+    expect(result).toEqual({
+      exitCode: 1,
+      failedAsExpected: true,
+      status: "stopped",
+      stopCalled: true,
+      terminalCleared: true,
+    });
+  });
 
-    const starting = harness.supervisor.ensureCellServices({ cell, template });
-    const [failingSetup, waitingProcess] = await Promise.all([
-      waitForSpawnedCommand(harness, "prepare-failing"),
-      waitForSpawnedCommand(harness, "run-waiting"),
-    ]);
-
-    failingSetup.exit(1);
-
-    await expect(starting).rejects.toThrow('Command "prepare-failing" failed');
-    await expect(waitingProcess.handle.exited).resolves.toBe(0);
-    expect(harness.runCommandCalls).toContain("stop-waiting");
-    await waitForNamedServiceStatus(cell.id, "waiting", "stopped");
+  it("clears a sibling setup cancelled by a concurrent failure", async () => {
+    const result = await observePendingSiblingOutcome({
+      templateId: "template-failed-setup-wave",
+      waitingCommand: "prepare-waiting",
+      waitingDefinition: waitingSetupDefinition(),
+    });
+    expect(result).toEqual({
+      exitCode: 0,
+      failedAsExpected: true,
+      status: "stopped",
+      stopCalled: false,
+      terminalCleared: true,
+    });
   });
 
   it("stops a sibling that reached running before its wave failed", async () => {
@@ -1836,6 +1913,43 @@ describe("service supervisor", () => {
     await expect(fastProcess.handle.exited).resolves.toBe(0);
     expect(harness.runCommandCalls).toContain("stop-fast");
     await waitForNamedServiceStatus(cell.id, "fast", "stopped");
+    const fast = await getNamedService(cell.id, "fast");
+    expect(harness.terminalRuntime.getServiceSession(fast.id)).toBeNull();
+  });
+
+  it("clears a sibling exited by its rollback stop command", async () => {
+    let exitFast: (() => void) | undefined;
+    const { cell, failingSetup, fastProcess, harness, starting } =
+      await startRunningSiblingFailureScenario({
+        harnessOptions: {
+          runCommand: (command) => {
+            if (command === "stop-fast") {
+              exitFast?.();
+            }
+            return Promise.resolve();
+          },
+        },
+        templateId: "template-stop-command-sibling-rollback",
+      });
+    exitFast = () => {
+      fastProcess.options.onExit?.({ exitCode: 1, signal: null });
+      fastProcess.exit(1);
+    };
+
+    failingSetup.exit(1);
+
+    const failure = await starting.then(
+      () => null,
+      (error: unknown) => error
+    );
+    const fast = await getNamedService(cell.id, "fast");
+    expect({
+      failedAsExpected:
+        failure instanceof Error &&
+        failure.message.includes('Command "prepare-failing" failed'),
+      terminalCleared:
+        harness.terminalRuntime.getServiceSession(fast.id) === null,
+    }).toEqual({ failedAsExpected: true, terminalCleared: true });
   });
 
   it("surfaces a running sibling rollback failure with the wave failure", async () => {
@@ -1861,18 +1975,31 @@ describe("service supervisor", () => {
     await waitForNamedServiceStatus(cell.id, "fast", "stopped");
   });
 
-  it("runs rollback teardown after a completed sibling exits", async () => {
-    const { cell, failingSetup, fastProcess, harness, starting } =
-      await startRunningSiblingFailureScenario({
-        templateId: "template-exited-sibling-rollback",
-      });
-    fastProcess.exit(0);
-    await waitForNamedServiceStatus(cell.id, "fast", "stopped");
-    failingSetup.exit(1);
+  it.each([
+    { exitCode: FAILED_SERVICE_EXIT_CODE, label: "nonzero exit", signal: null },
+    { exitCode: 0, label: "clean exit", signal: null },
+    { exitCode: 143, label: "signaled exit", signal: "SIGTERM" },
+  ])(
+    "preserves a sibling $label observed before rollback",
+    async ({ exitCode, signal }) => {
+      const { cell, failingSetup, fastProcess, harness, starting } =
+        await startRunningSiblingFailureScenario({
+          templateId: `template-exited-sibling-rollback-${exitCode}`,
+        });
+      failingSetup.exit(1);
+      fastProcess.options.onExit?.({ exitCode, signal });
+      fastProcess.exit(exitCode);
 
-    await expect(starting).rejects.toThrow('Command "prepare-failing" failed');
-    expect(harness.runCommandCalls).toContain("stop-fast");
-  });
+      await expect(starting).rejects.toThrow(
+        'Command "prepare-failing" failed'
+      );
+      expect(harness.runCommandCalls).toContain("stop-fast");
+      const fast = await getNamedService(cell.id, "fast");
+      expect(harness.terminalRuntime.getServiceSession(fast.id)?.exitCode).toBe(
+        exitCode
+      );
+    }
+  );
 
   it("runs teardown once when targeted stop cancels readiness", async () => {
     const { cell, harness, template } = await createScenario({
@@ -2277,6 +2404,20 @@ describe("service supervisor", () => {
     return service;
   }
 
+  async function getNamedService(cellId: string, serviceName: string) {
+    const services = await testDb
+      .select()
+      .from(cellServices)
+      .where(eq(cellServices.cellId, cellId));
+    const service = services.find(
+      (candidate) => candidate.name === serviceName
+    );
+    if (!service) {
+      throw new Error(`Expected service ${serviceName}`);
+    }
+    return service;
+  }
+
   async function waitForServiceStatus(
     serviceId: string,
     status: typeof cellServices.$inferSelect.status
@@ -2333,13 +2474,53 @@ describe("service supervisor", () => {
     harnessOptions?: Parameters<typeof createHarness>[0];
     templateId: string;
   }) {
+    const scenario = await startSiblingFailureScenario({
+      ...options,
+      siblingCommand: "run-fast",
+      siblingDefinition: serviceDefinition({
+        run: "run-fast",
+        stop: "stop-fast",
+      }),
+      siblingName: "fast",
+    });
+    await waitForNamedServiceStatus(scenario.cell.id, "fast", "running");
+    return { ...scenario, fastProcess: scenario.siblingProcess };
+  }
+
+  type PendingSiblingScenarioOptions = {
+    harnessOptions?: Parameters<typeof createHarness>[0];
+    templateId: string;
+    waitingCommand: string;
+    waitingDefinition: ProcessService;
+  };
+
+  async function startPendingSiblingFailureScenario(
+    options: PendingSiblingScenarioOptions
+  ) {
+    const scenario = await startSiblingFailureScenario({
+      harnessOptions: options.harnessOptions,
+      siblingCommand: options.waitingCommand,
+      siblingDefinition: options.waitingDefinition,
+      siblingName: "waiting",
+      templateId: options.templateId,
+    });
+    return { ...scenario, waitingProcess: scenario.siblingProcess };
+  }
+
+  async function startSiblingFailureScenario(options: {
+    harnessOptions?: Parameters<typeof createHarness>[0];
+    siblingCommand: string;
+    siblingDefinition: ProcessService;
+    siblingName: string;
+    templateId: string;
+  }) {
     const scenario = await createScenario({
       templateId: options.templateId,
       harnessOptions: options.harnessOptions,
       template: {
         services: {
-          fast: serviceDefinition({ run: "run-fast", stop: "stop-fast" }),
           failing: failingWaveServiceDefinition(),
+          [options.siblingName]: options.siblingDefinition,
         },
       },
     });
@@ -2347,12 +2528,37 @@ describe("service supervisor", () => {
       cell: scenario.cell,
       template: scenario.template,
     });
-    const [fastProcess, failingSetup] = await Promise.all([
-      waitForSpawnedCommand(scenario.harness, "run-fast"),
+    const [failingSetup, siblingProcess] = await Promise.all([
       waitForSpawnedCommand(scenario.harness, "prepare-failing"),
+      waitForSpawnedCommand(scenario.harness, options.siblingCommand),
     ]);
-    await waitForNamedServiceStatus(scenario.cell.id, "fast", "running");
-    return { ...scenario, failingSetup, fastProcess, starting };
+    return { ...scenario, failingSetup, siblingProcess, starting };
+  }
+
+  async function observePendingSiblingOutcome(
+    options: PendingSiblingScenarioOptions
+  ) {
+    const { cell, failingSetup, harness, starting, waitingProcess } =
+      await startPendingSiblingFailureScenario(options);
+    failingSetup.exit(1);
+    const [failure, processExitCode] = await Promise.all([
+      starting.then(
+        () => null,
+        (error: unknown) => error
+      ),
+      waitingProcess.handle.exited,
+    ]);
+    const waiting = await getNamedService(cell.id, "waiting");
+    const terminal = harness.terminalRuntime.getServiceSession(waiting.id);
+    return {
+      exitCode: terminal?.exitCode ?? processExitCode,
+      failedAsExpected:
+        failure instanceof Error &&
+        failure.message.includes('Command "prepare-failing" failed'),
+      status: waiting.status,
+      stopCalled: harness.runCommandCalls.includes("stop-waiting"),
+      terminalCleared: terminal === null,
+    };
   }
 
   function failingWaveServiceDefinition() {
@@ -2360,6 +2566,18 @@ describe("service supervisor", () => {
       run: "run-failing",
       setup: ["prepare-failing"],
     });
+  }
+
+  function waitingReadinessDefinition() {
+    return tcpReadinessService({
+      run: "run-waiting",
+      readyTimeoutMs: 30_000,
+      stop: "stop-waiting",
+    });
+  }
+
+  function waitingSetupDefinition() {
+    return serviceDefinition({ setup: ["prepare-waiting"] });
   }
 
   async function waitForSpawnedCommand(
@@ -2524,6 +2742,16 @@ describe("service supervisor", () => {
     await waitForProcesses(harness);
   }
 
+  async function stopCellServicesPreservingTerminal(
+    harness: ReturnType<typeof createHarness>,
+    cellId: string
+  ) {
+    await harness.supervisor.stopCellServices(cellId, {
+      preserveTerminal: true,
+      releasePorts: true,
+    });
+  }
+
   async function waitForProcesses(harness: ReturnType<typeof createHarness>) {
     await Promise.all(harness.processes.map((proc) => proc.handle.exited));
   }
@@ -2542,7 +2770,9 @@ describe("service supervisor", () => {
   function createHarness(
     harnessOptions: {
       autoExitTeardown?: boolean;
+      emitTerminalExitOnKill?: boolean;
       exitCodeForCommand?: (command: string) => number | undefined;
+      omitTerminalSignalOnKill?: boolean;
       processKill?: (
         signal: number | string | undefined,
         exit: (code: number) => void,
@@ -2569,11 +2799,22 @@ describe("service supervisor", () => {
       const handle: ProcessHandle = {
         pid: pidCounter++,
         kill: (signal) => {
+          const exit = (code: number) => {
+            if (harnessOptions.emitTerminalExitOnKill) {
+              options.onExit?.({
+                exitCode: code,
+                signal: harnessOptions.omitTerminalSignalOnKill
+                  ? null
+                  : (signal ?? null),
+              });
+            }
+            exited.resolve(code);
+          };
           if (harnessOptions.processKill) {
-            harnessOptions.processKill(signal, exited.resolve, handle.pid);
+            harnessOptions.processKill(signal, exit, handle.pid);
             return;
           }
-          exited.resolve(0);
+          exit(0);
         },
         exited: exited.promise,
       };
@@ -2586,6 +2827,9 @@ describe("service supervisor", () => {
       );
       if (configuredExitCode !== undefined) {
         queueMicrotask(() => {
+          options.onData?.(
+            `[mock] process exited with code ${configuredExitCode}\n`
+          );
           options.onExit?.({ exitCode: configuredExitCode, signal: null });
           exited.resolve(configuredExitCode);
         });
