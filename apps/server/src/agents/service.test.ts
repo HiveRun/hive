@@ -1,4 +1,4 @@
-import type { OpencodeClient, Event as OpencodeEvent } from "@opencode-ai/sdk";
+import type { OpenCodeClient, OpenCodeEvent } from "@opencode-ai/client";
 import { eq } from "drizzle-orm";
 
 import {
@@ -30,27 +30,45 @@ const CODEX_MODEL_PATH = `${TEST_PROVIDER_ID}/${CODEX_MODEL_ID}`;
 const INVALID_MODEL_ID = "gpt-5.2-xhigh";
 const FALLBACK_MODEL_ID = "minimax-m2.1";
 const RUNTIME_SESSION_ID = "session-runtime";
+const EVENT_STREAM_RECONNECT_DELAY_MS = 1000;
+const EXPECTED_RECONNECT_CLIENT_ACQUISITIONS = 3;
 
 type ClientStub = {
   session: {
+    active: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
-    delete: ReturnType<typeof vi.fn>;
     get: ReturnType<typeof vi.fn>;
-    messages: ReturnType<typeof vi.fn>;
+    interrupt: ReturnType<typeof vi.fn>;
     prompt: ReturnType<typeof vi.fn>;
+    remove: ReturnType<typeof vi.fn>;
+    switchModel: ReturnType<typeof vi.fn>;
+    inbox: { list: ReturnType<typeof vi.fn> };
   };
   event: {
     subscribe: ReturnType<typeof vi.fn>;
   };
-  config: {
-    providers: ReturnType<typeof vi.fn>;
+  message: {
+    list: ReturnType<typeof vi.fn>;
   };
-  postSessionIdPermissionsPermissionId: ReturnType<typeof vi.fn>;
+  model: {
+    default: ReturnType<typeof vi.fn>;
+    list: ReturnType<typeof vi.fn>;
+  };
+  form: { list: ReturnType<typeof vi.fn> };
+  permission: {
+    list: ReturnType<typeof vi.fn>;
+    reply: ReturnType<typeof vi.fn>;
+  };
+  plugin: { list: ReturnType<typeof vi.fn> };
+  provider: { list: ReturnType<typeof vi.fn> };
 };
+
+const ensureHiveOpencodePluginMock = vi.fn().mockResolvedValue(undefined);
+const ensureHiveToolConfigMock = vi.fn().mockResolvedValue(undefined);
 
 const sessionMessagesMock = vi
   .fn()
-  .mockResolvedValue({ data: [] as unknown[] });
+  .mockResolvedValue({ data: [] as unknown[], cursor: {} });
 
 const mockHiveConfig: HiveConfig = {
   opencode: {
@@ -76,9 +94,13 @@ import {
   closeAgentSession,
   closeAllAgentSessions,
   ensureAgentSession,
+  fetchAgentMessages,
   fetchAgentSession,
   fetchAgentSessionForCell,
   fetchCompactionStats,
+  interruptAgentSession,
+  prepareAgentSessionsForShutdown,
+  prepareSessionsForServiceReplacement,
   resetAgentRuntimeDependencies,
   resumeAgentSessionsOnStartup,
   sendAgentMessage,
@@ -101,27 +123,19 @@ describe("agent model selection", () => {
     vi.restoreAllMocks();
 
     clientStub = buildClientStub();
-    acquireOpencodeClientMock = vi.fn(
-      async () => clientStub as unknown as OpencodeClient
-    );
-
     loadHiveConfigMock = vi.fn(async () => mockHiveConfig);
     loadEffectiveOpencodeDefaultsSpy = vi
       .spyOn(OpencodeConfig, "loadEffectiveOpencodeDefaults")
       .mockResolvedValue({});
-
-    setAgentRuntimeDependencies({
-      db: testDb as unknown as AppDb,
-      loadHiveConfig: loadHiveConfigMock,
-      loadEffectiveOpencodeDefaults: loadEffectiveOpencodeDefaultsSpy,
-      acquireOpencodeClient: acquireOpencodeClientMock,
-    });
+    useClientStub(clientStub);
 
     await closeAllAgentSessions();
     await testDb.delete(cellProvisioningStates);
     await testDb.delete(cells);
     sessionMessagesMock.mockReset();
-    sessionMessagesMock.mockResolvedValue({ data: [] });
+    ensureHiveOpencodePluginMock.mockClear();
+    ensureHiveToolConfigMock.mockClear();
+    sessionMessagesMock.mockResolvedValue({ data: [], cursor: {} });
 
     await testDb.insert(cells).values({
       id: cellId,
@@ -136,7 +150,8 @@ describe("agent model selection", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await closeAllAgentSessions();
     resetAgentRuntimeDependencies();
     vi.restoreAllMocks();
   });
@@ -150,22 +165,26 @@ describe("agent model selection", () => {
       .mockImplementation((..._args) => null);
 
     failSeed();
-    clientStub.config.providers.mockResolvedValue(createCodexProviderCatalog());
+    mockProviderCatalog(clientStub, createCodexProviderCatalog());
 
     const session = await ensureCodexBuildSession();
 
-    expectSessionModel(session, TEST_PROVIDER_ID, CODEX_MODEL_ID);
+    expectSessionModel(session, TEST_PROVIDER_ID, CODEX_MODEL_PATH);
     expectSeedWarning(warnSpy, session.id, message);
   }
 
-  function useEventsClient(events: OpencodeEvent[]) {
+  function useEventsClient(events: OpenCodeEvent[]) {
     const clientStubWithEvents = buildClientStubWithEvents(events);
     useClientStub(clientStubWithEvents);
   }
 
-  function useClientStub(stub: ClientStub, published?: unknown[]) {
+  function useClientStub(
+    stub: ClientStub,
+    published?: unknown[],
+    onPublish?: (event: unknown) => void
+  ) {
     acquireOpencodeClientMock = vi.fn(
-      async () => stub as unknown as OpencodeClient
+      async () => stub as unknown as OpenCodeClient
     );
 
     setAgentRuntimeDependencies({
@@ -173,11 +192,14 @@ describe("agent model selection", () => {
       loadHiveConfig: loadHiveConfigMock,
       loadEffectiveOpencodeDefaults: loadEffectiveOpencodeDefaultsSpy,
       acquireOpencodeClient: acquireOpencodeClientMock,
+      ensureHiveOpencodePlugin: ensureHiveOpencodePluginMock,
+      ensureHiveToolConfig: ensureHiveToolConfigMock,
       ...(published
         ? {
             publishAgentEvent: (sessionId, event) => {
               if (sessionId === RUNTIME_SESSION_ID) {
                 published.push(event);
+                onPublish?.(event);
               }
             },
           }
@@ -208,7 +230,7 @@ describe("agent model selection", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
-  it("hydrates runtime model from the last user message", async () => {
+  it("hydrates runtime model from v2 model selection history", async () => {
     sessionMessagesMock.mockResolvedValueOnce({
       data: [
         createHistoryMessage({
@@ -218,6 +240,7 @@ describe("agent model selection", () => {
           modelId: "restored-model",
         }),
       ],
+      cursor: {},
     });
 
     const session = await ensureAgentSession(cellId);
@@ -248,12 +271,142 @@ describe("agent model selection", () => {
 
     await sendAgentMessage(session.id, "Run task with new model");
 
-    const promptPayload = getLastPromptBody<{
-      model?: { providerID: string; modelID: string };
-    }>(clientStub);
-    expect(promptPayload?.model).toEqual(
-      createModel(TEST_PROVIDER_ID, "big-pickle")
+    expect(clientStub.plugin.list).toHaveBeenCalledWith({
+      location: { directory: TEST_WORKSPACE_PATH },
+    });
+    expect(clientStub.session.switchModel).toHaveBeenLastCalledWith({
+      sessionID: session.id,
+      model: createModel(TEST_PROVIDER_ID, "big-pickle"),
+    });
+    expect(clientStub.session.prompt).toHaveBeenLastCalledWith({
+      sessionID: session.id,
+      text: "Run task with new model",
+    });
+  });
+
+  it("reconnects a runtime after its shared event stream closes", async () => {
+    vi.useFakeTimers();
+    try {
+      const replacementClient = buildClientStub();
+      acquireOpencodeClientMock
+        .mockResolvedValueOnce(clientStub as unknown as OpenCodeClient)
+        .mockResolvedValueOnce(clientStub as unknown as OpenCodeClient)
+        .mockResolvedValue(replacementClient as unknown as OpenCodeClient);
+
+      const session = await ensureAgentSession(cellId);
+      await Promise.resolve();
+      vi.advanceTimersByTime(EVENT_STREAM_RECONNECT_DELAY_MS);
+      await Promise.resolve();
+      await sendAgentMessage(session.id, "Continue after reconnect");
+
+      expect(acquireOpencodeClientMock).toHaveBeenCalledTimes(
+        EXPECTED_RECONNECT_CLIENT_ACQUISITIONS
+      );
+      expect(replacementClient.session.prompt).toHaveBeenCalledWith({
+        sessionID: session.id,
+        text: "Continue after reconnect",
+      });
+      await closeAllAgentSessions();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("starts the live event subscription before reconciling runtime state", async () => {
+    let subscriptionStarted = false;
+    clientStub.event.subscribe.mockImplementation(({ signal }) => ({
+      [Symbol.asyncIterator]() {
+        return {
+          next: () => {
+            subscriptionStarted = true;
+            return new Promise<IteratorResult<OpenCodeEvent>>((resolve) => {
+              signal?.addEventListener(
+                "abort",
+                () => resolve({ done: true, value: undefined }),
+                { once: true }
+              );
+            });
+          },
+        };
+      },
+    }));
+    clientStub.session.active.mockImplementation(() => {
+      expect(subscriptionStarted).toBe(true);
+      return Promise.resolve({});
+    });
+
+    await ensureAgentSession(cellId);
+  });
+
+  it("aborts the live subscription when initial reconciliation fails", async () => {
+    let subscriptionSignal: AbortSignal | undefined;
+    clientStub.event.subscribe.mockImplementation(({ signal }) => {
+      subscriptionSignal = signal;
+      return {
+        [Symbol.asyncIterator]() {
+          return {
+            next: () =>
+              new Promise<IteratorResult<OpenCodeEvent>>((resolve) => {
+                signal?.addEventListener(
+                  "abort",
+                  () => resolve({ done: true, value: undefined }),
+                  { once: true }
+                );
+              }),
+          };
+        },
+      };
+    });
+    clientStub.session.active.mockRejectedValue(
+      new Error("initial reconciliation failed")
     );
+
+    await expect(ensureAgentSession(cellId)).rejects.toThrow(
+      "initial reconciliation failed"
+    );
+    expect(subscriptionSignal?.aborted).toBe(true);
+  });
+
+  it("loads every page of remote messages in timeline order", async () => {
+    const session = await ensureAgentSession(cellId);
+    sessionMessagesMock.mockReset();
+    sessionMessagesMock
+      .mockResolvedValueOnce({
+        data: [createHistoryMessage({ id: "msg-1", role: "user" })],
+        cursor: { next: "page-2" },
+      })
+      .mockResolvedValueOnce({
+        data: [createHistoryMessage({ id: "msg-2", role: "assistant" })],
+        cursor: {},
+      });
+
+    const messages = await fetchAgentMessages(session.id);
+
+    expect(messages.map((message) => message.id)).toEqual(["msg-1", "msg-2"]);
+    expect(sessionMessagesMock).toHaveBeenNthCalledWith(1, {
+      sessionID: session.id,
+      limit: 200,
+      order: "asc",
+    });
+    expect(sessionMessagesMock).toHaveBeenNthCalledWith(2, {
+      sessionID: session.id,
+      limit: 200,
+      cursor: "page-2",
+    });
+  });
+
+  it("rejects repeated message cursors instead of looping", async () => {
+    const session = await ensureAgentSession(cellId);
+    sessionMessagesMock.mockReset();
+    sessionMessagesMock.mockResolvedValue({
+      data: [createHistoryMessage({ id: "msg-1", role: "user" })],
+      cursor: { next: "same-page" },
+    });
+
+    await expect(fetchAgentMessages(session.id)).rejects.toThrow(
+      'OpenCode message pagination repeated cursor "same-page"'
+    );
+    expect(sessionMessagesMock).toHaveBeenCalledTimes(2);
   });
 
   it("passes variants through when sending prompts", async () => {
@@ -270,15 +423,17 @@ describe("agent model selection", () => {
 
     await sendAgentMessage(session.id, "Run task with variant");
 
-    const promptPayload = getLastPromptBody<{
-      model?: { providerID: string; modelID: string };
-      variant?: string;
-    }>(clientStub);
-
-    expect(promptPayload?.model).toEqual(
-      createModel(TEST_PROVIDER_ID, "big-pickle")
-    );
-    expect(promptPayload?.variant).toBe("high");
+    expect(clientStub.session.switchModel).toHaveBeenLastCalledWith({
+      sessionID: session.id,
+      model: {
+        ...createModel(TEST_PROVIDER_ID, "big-pickle"),
+        variant: "high",
+      },
+    });
+    expect(clientStub.session.prompt).toHaveBeenLastCalledWith({
+      sessionID: session.id,
+      text: "Run task with variant",
+    });
   });
 
   it("prefers the template's agent configuration over opencode defaults", async () => {
@@ -286,7 +441,8 @@ describe("agent model selection", () => {
       defaultModel: { providerId: "openai", modelId: "gpt-5.1-codex-high" },
     });
 
-    clientStub.config.providers.mockResolvedValue(
+    mockProviderCatalog(
+      clientStub,
       createProviderCatalog(
         TEST_PROVIDER_ID,
         { [TEMPLATE_MODEL_ID]: TEMPLATE_MODEL_ID },
@@ -310,7 +466,8 @@ describe("agent model selection", () => {
       },
     });
 
-    clientStub.config.providers.mockResolvedValue(
+    mockProviderCatalog(
+      clientStub,
       createProviderCatalog(
         TEST_PROVIDER_ID,
         { "workspace-default": "workspace-default" },
@@ -335,7 +492,8 @@ describe("agent model selection", () => {
       defaultModel: { providerId: "openai", modelId: "gpt-5.4" },
     });
 
-    clientStub.config.providers.mockResolvedValue(
+    mockProviderCatalog(
+      clientStub,
       createMultiProviderCatalog(
         [
           { id: "openai", models: { "gpt-5.4": "gpt-5.4" } },
@@ -351,9 +509,11 @@ describe("agent model selection", () => {
     const session = await ensureAgentSession(cellId, { startMode: "build" });
     await sendAgentMessage(session.id, "Reply with ok");
 
-    const promptPayload = getLastPromptBody<{ model?: unknown }>(clientStub);
-
-    expect(promptPayload?.model).toBeUndefined();
+    expect(clientStub.session.switchModel).not.toHaveBeenCalled();
+    expect(clientStub.session.prompt).toHaveBeenLastCalledWith({
+      sessionID: session.id,
+      text: "Reply with ok",
+    });
   });
 
   it("passes file parts through when sending prompts", async () => {
@@ -371,19 +531,16 @@ describe("agent model selection", () => {
       ],
     });
 
-    const promptPayload = getLastPromptBody<{
-      parts?: Record<string, unknown>[];
-    }>(clientStub);
-
-    expect(promptPayload?.parts).toEqual([
-      { type: "text", text: "Inspect the screenshot" },
-      {
-        type: "file",
-        mime: "image/png",
-        filename: "cell.png",
-        url: "data:image/png;base64,aGVsbG8=",
-      },
-    ]);
+    expect(clientStub.session.prompt).toHaveBeenLastCalledWith({
+      sessionID: session.id,
+      text: "Inspect the screenshot",
+      files: [
+        {
+          uri: "data:image/png;base64,aGVsbG8=",
+          name: "cell.png",
+        },
+      ],
+    });
   });
 
   it("falls back to hive defaults when workspace defaults target another provider", async () => {
@@ -395,12 +552,12 @@ describe("agent model selection", () => {
   });
 
   it("accepts explicit model override when it matches provider model id", async () => {
-    clientStub.config.providers.mockResolvedValue(createCodexProviderCatalog());
+    mockProviderCatalog(clientStub, createCodexProviderCatalog());
 
     const session = await ensureCodexBuildSession();
 
-    expectSessionModel(session, TEST_PROVIDER_ID, CODEX_MODEL_ID);
-    expectSeedPromptForModel(clientStub, session.id, CODEX_MODEL_ID);
+    expectSessionModel(session, TEST_PROVIDER_ID, CODEX_MODEL_PATH);
+    expectSelectedModel(clientStub, session.id, CODEX_MODEL_PATH);
   });
 
   it("keeps explicit plan-mode model overrides when restored history reports another model", async () => {
@@ -414,7 +571,8 @@ describe("agent model selection", () => {
       )
     );
 
-    clientStub.config.providers.mockResolvedValue(
+    mockProviderCatalog(
+      clientStub,
       createProviderCatalog(
         TEST_PROVIDER_ID,
         {
@@ -431,54 +589,36 @@ describe("agent model selection", () => {
       startMode: "plan",
     });
 
-    expectSessionModel(session, TEST_PROVIDER_ID, "glm-5");
-    expect(clientStub.session.prompt).toHaveBeenNthCalledWith(1, {
-      path: { id: session.id },
-      query: { directory: TEST_WORKSPACE_PATH },
-      body: {
-        agent: "plan",
-        noReply: true,
-        model: createModel(TEST_PROVIDER_ID, "glm-5"),
-        parts: [
-          {
-            type: "text",
-            text: "",
-          },
-        ],
-      },
+    expectSessionModel(session, TEST_PROVIDER_ID, "opencode/glm-5");
+    expect(clientStub.session.create).toHaveBeenCalledWith({
+      title: "Model Test Cell",
+      agent: "plan",
+      location: { directory: TEST_WORKSPACE_PATH },
     });
-    expect(clientStub.session.prompt).toHaveBeenNthCalledWith(2, {
-      path: { id: session.id },
-      query: { directory: TEST_WORKSPACE_PATH },
-      body: {
-        noReply: true,
-        model: createModel(TEST_PROVIDER_ID, "glm-5"),
-        parts: [],
-      },
+    expect(clientStub.session.switchModel).toHaveBeenCalledWith({
+      sessionID: session.id,
+      model: createModel(TEST_PROVIDER_ID, "opencode/glm-5"),
     });
   });
 
-  it("keeps runtime startup available when model seeding returns rpc errors", async () => {
+  it("keeps runtime startup available when model selection rejects", async () => {
     await expectRuntimeStartupAfterSeedFailure("seed unavailable", () => {
-      clientStub.session.prompt.mockResolvedValueOnce({
-        error: { message: "seed unavailable" },
-      });
+      clientStub.session.switchModel.mockRejectedValueOnce(
+        new Error("seed unavailable")
+      );
     });
   });
 
   it("keeps runtime startup available when model seeding throws", async () => {
     await expectRuntimeStartupAfterSeedFailure("socket closed", () => {
-      clientStub.session.prompt.mockRejectedValueOnce(
+      clientStub.session.switchModel.mockRejectedValueOnce(
         new Error("socket closed")
       );
     });
   });
 
   it("skips stale provisioning overrides for restorable sessions", async () => {
-    await testDb
-      .update(cells)
-      .set({ opencodeSessionId: RUNTIME_SESSION_ID })
-      .where(eq(cells.id, cellId));
+    await persistRuntimeSession(cellId);
 
     await testDb.insert(cellProvisioningStates).values({
       cellId,
@@ -490,15 +630,68 @@ describe("agent model selection", () => {
       new Error("messages unavailable")
     );
 
-    clientStub.config.providers.mockResolvedValue(
-      createTemplateProviderCatalog()
-    );
+    mockProviderCatalog(clientStub, createTemplateProviderCatalog());
 
     const session = await ensureAgentSession(cellId);
 
     expectSessionModel(session, TEST_PROVIDER_ID, TEMPLATE_MODEL_ID);
     expect(clientStub.session.create).not.toHaveBeenCalled();
-    expect(clientStub.session.prompt).not.toHaveBeenCalled();
+    expect(clientStub.session.switchModel).not.toHaveBeenCalled();
+  });
+
+  it("preserves persisted session IDs when session lookup fails transiently", async () => {
+    await persistRuntimeSession(cellId);
+    clientStub.session.get.mockRejectedValue(new Error("connection reset"));
+
+    await expect(ensureAgentSession(cellId)).rejects.toThrow(
+      "connection reset"
+    );
+
+    expect(clientStub.session.create).not.toHaveBeenCalled();
+    await expectPersistedSessionId(cellId);
+  });
+
+  it("does not replace sessions for unrelated HTTP not-found failures", async () => {
+    await persistRuntimeSession(cellId);
+    clientStub.session.get.mockRejectedValue({
+      status: 404,
+      message: "workspace not found",
+    });
+
+    await expect(ensureAgentSession(cellId)).rejects.toMatchObject({
+      status: 404,
+      message: "workspace not found",
+    });
+
+    expect(clientStub.session.create).not.toHaveBeenCalled();
+    await expectPersistedSessionId(cellId);
+  });
+
+  it("refreshes the Hive plugin and server URL before restoring a cell runtime", async () => {
+    const originalHiveUrl = process.env.HIVE_URL;
+    process.env.HIVE_URL = "http://127.0.0.1:4100";
+    try {
+      await persistRuntimeSession(cellId);
+
+      await ensureAgentSession(cellId);
+
+      expect(ensureHiveOpencodePluginMock).toHaveBeenCalledWith(
+        TEST_WORKSPACE_PATH
+      );
+      expect(ensureHiveToolConfigMock).toHaveBeenCalledWith(
+        TEST_WORKSPACE_PATH,
+        {
+          cellId,
+          hiveUrl: "http://127.0.0.1:4100",
+        }
+      );
+    } finally {
+      if (originalHiveUrl === undefined) {
+        process.env.HIVE_URL = undefined;
+      } else {
+        process.env.HIVE_URL = originalHiveUrl;
+      }
+    }
   });
 
   it("reuses persisted provisioning model overrides before first message", async () => {
@@ -508,12 +701,12 @@ describe("agent model selection", () => {
       providerIdOverride: TEST_PROVIDER_ID,
     });
 
-    clientStub.config.providers.mockResolvedValue(createCodexProviderCatalog());
+    mockProviderCatalog(clientStub, createCodexProviderCatalog());
 
     const session = await ensureAgentSession(cellId);
 
-    expectSessionModel(session, TEST_PROVIDER_ID, CODEX_MODEL_ID);
-    expectSeedPromptForModel(clientStub, session.id, CODEX_MODEL_ID);
+    expectSessionModel(session, TEST_PROVIDER_ID, CODEX_MODEL_PATH);
+    expectSelectedModel(clientStub, session.id, CODEX_MODEL_PATH);
   });
 
   it("throws clear errors for invalid persisted model overrides", async () => {
@@ -523,9 +716,7 @@ describe("agent model selection", () => {
       providerIdOverride: TEST_PROVIDER_ID,
     });
 
-    clientStub.config.providers.mockResolvedValue(
-      createFallbackProviderCatalog()
-    );
+    mockProviderCatalog(clientStub, createFallbackProviderCatalog());
 
     await expectInvalidOverrideError(ensureAgentSession(cellId));
   });
@@ -533,9 +724,7 @@ describe("agent model selection", () => {
   it("throws clear errors for invalid explicit model overrides", async () => {
     mockTemplateAgentDefaults(TEST_PROVIDER_ID, INVALID_MODEL_ID);
 
-    clientStub.config.providers.mockResolvedValue(
-      createFallbackProviderCatalog()
-    );
+    mockProviderCatalog(clientStub, createFallbackProviderCatalog());
 
     await expectInvalidOverrideError(
       ensureAgentSession(cellId, {
@@ -546,9 +735,17 @@ describe("agent model selection", () => {
   });
 
   it("tracks compaction events and exposes stats", async () => {
-    const compactionEvent: OpencodeEvent = {
-      type: "session.compacted",
-      properties: { sessionID: RUNTIME_SESSION_ID },
+    const compactionEvent: OpenCodeEvent = {
+      id: "evt-compaction",
+      created: Date.now(),
+      type: "session.compaction.ended",
+      durable: createDurableEvent(),
+      data: {
+        sessionID: RUNTIME_SESSION_ID,
+        reason: "auto",
+        text: "summary",
+        recent: "recent",
+      },
     };
     const published: unknown[] = [];
     const clientStubWithEvents = buildClientStubWithEvents([compactionEvent]);
@@ -568,16 +765,18 @@ describe("agent model selection", () => {
   });
 
   it("tracks mode transitions from plan to build", async () => {
-    const modeEvent = {
-      type: "message.updated",
-      properties: {
-        info: {
-          sessionID: RUNTIME_SESSION_ID,
-          role: "assistant",
-          mode: "build",
-        },
+    const modeEvent: OpenCodeEvent = {
+      id: "evt-mode",
+      created: Date.now(),
+      type: "session.step.started",
+      durable: createDurableEvent(),
+      data: {
+        sessionID: RUNTIME_SESSION_ID,
+        assistantMessageID: "msg-mode",
+        agent: "build",
+        model: { id: "big-pickle", providerID: TEST_PROVIDER_ID },
       },
-    } as unknown as OpencodeEvent;
+    };
 
     const published: unknown[] = [];
     const clientStubWithEvents = buildClientStub();
@@ -585,12 +784,12 @@ describe("agent model selection", () => {
     const emitBuildEvent = new Promise<void>((resolve) => {
       releaseBuildEvent = resolve;
     });
-    clientStubWithEvents.event.subscribe = vi.fn(async () => ({
-      stream: (async function* () {
+    clientStubWithEvents.event.subscribe = vi.fn(() =>
+      (async function* () {
         await emitBuildEvent;
         yield modeEvent;
-      })(),
-    }));
+      })()
+    );
 
     useClientStub(clientStubWithEvents, published);
 
@@ -604,6 +803,8 @@ describe("agent model selection", () => {
     const updated = await ensureAgentSession(cellId);
     expect(updated.startMode).toBe("plan");
     expect(updated.currentMode).toBe("build");
+    expect(updated.modelId).toBe("big-pickle");
+    expect(updated.modelProviderId).toBe(TEST_PROVIDER_ID);
     expect(
       published.some(
         (event) =>
@@ -613,25 +814,29 @@ describe("agent model selection", () => {
     ).toBe(true);
   });
 
-  it("resyncs mode from message history on cell session fetch", async () => {
-    sessionMessagesMock.mockResolvedValue(
-      createMessagesResponse(
-        createHistoryMessage({
-          id: "msg-assistant",
-          role: "assistant",
-          mode: "build",
-          completed: true,
-        })
-      )
-    );
-
+  it("resyncs mode from v2 session metadata on cell session fetch", async () => {
     await ensureAgentSession(cellId, { startMode: "plan" });
+    await closeAllAgentSessions({ deleteRemote: false });
+    clientStub.session.get.mockResolvedValue({
+      ...createMockSession(),
+      agent: "build",
+      model: {
+        providerID: "openai",
+        id: "gpt-5.4",
+        variant: "high",
+      },
+    });
 
     const session = await fetchAgentSessionForCell(cellId);
 
     expect(session).not.toBeNull();
     expect(session?.currentMode).toBe("build");
-    expect(sessionMessagesMock).toHaveBeenCalled();
+    expect(session?.modelProviderId).toBe("openai");
+    expect(session?.modelId).toBe("gpt-5.4");
+    expect(session?.modelVariant).toBe("high");
+    expect(clientStub.session.get).toHaveBeenCalledWith({
+      sessionID: RUNTIME_SESSION_ID,
+    });
   });
 
   it("persists resumable working state when a plan question is answered", async () => {
@@ -660,10 +865,132 @@ describe("agent model selection", () => {
     await expectResumeOnStartup(cellId);
   });
 
+  it("does not enqueue duplicate resume work for an active session", async () => {
+    const session = await preparePersistedResumeSession();
+    clientStub.session.active.mockResolvedValue({
+      [session.id]: { type: "running" },
+    });
+    clientStub.session.prompt.mockClear();
+
+    await resumeAgentSessionsOnStartup();
+
+    expect(clientStub.session.prompt).not.toHaveBeenCalled();
+    await expectResumeOnStartup(cellId);
+  });
+
+  it("recovers pending permission input without enqueueing resume work", async () => {
+    await persistRuntimeSession(cellId);
+    const published: unknown[] = [];
+    useClientStub(clientStub, published);
+    clientStub.permission.list.mockResolvedValue([
+      {
+        id: "permission-1",
+        sessionID: RUNTIME_SESSION_ID,
+        action: "shell",
+        resources: ["bun test"],
+      },
+    ]);
+
+    await resumeAgentSessionsOnStartup();
+
+    expect(clientStub.session.prompt).not.toHaveBeenCalled();
+    expect(
+      published.some(
+        (event) => (event as { type?: string }).type === "permission.asked"
+      )
+    ).toBe(true);
+    await expectResumeOnStartup(cellId, false);
+  });
+
   it("keeps persisted resume state when shutting down without deleting the remote session", async () => {
     await startPlanAfterQuestionAnswer(cellId);
 
     await closeAllAgentSessions({ deleteRemote: false });
+
+    await expectResumeOnStartup(cellId);
+  });
+
+  it("interrupts active work for shutdown without clearing its resume marker", async () => {
+    let releaseInterruptEvent: (() => void) | undefined;
+    const emitInterruptEvent = new Promise<void>((resolve) => {
+      releaseInterruptEvent = resolve;
+    });
+    clientStub.event.subscribe = vi.fn(() =>
+      (async function* () {
+        await emitInterruptEvent;
+        yield createInterruptedEvent();
+      })()
+    );
+    const published: unknown[] = [];
+    let interruptionRequested = false;
+    let resolveInterruptedStatus: (() => void) | undefined;
+    const interruptedStatusPublished = new Promise<void>((resolve) => {
+      resolveInterruptedStatus = resolve;
+    });
+    useClientStub(clientStub, published, (event) => {
+      const status = event as { type?: string; status?: string };
+      if (
+        interruptionRequested &&
+        status.type === "status" &&
+        status.status === "awaiting_input"
+      ) {
+        resolveInterruptedStatus?.();
+      }
+    });
+    clientStub.session.interrupt.mockImplementation(() => {
+      interruptionRequested = true;
+      releaseInterruptEvent?.();
+      return Promise.resolve({ interrupted: true });
+    });
+    const session = await ensureAgentSession(cellId);
+    await sendAgentMessage(session.id, "Long-running work");
+    clientStub.session.active.mockResolvedValue({
+      [session.id]: { type: "running" },
+    });
+    published.length = 0;
+
+    await prepareAgentSessionsForShutdown();
+
+    await interruptedStatusPublished;
+    expect(published).toContainEqual({
+      type: "status",
+      status: "awaiting_input",
+    });
+    expect(clientStub.session.interrupt).toHaveBeenCalledWith({
+      sessionID: session.id,
+    });
+    await expectResumeOnStartup(cellId);
+  });
+
+  it("interrupts with the v2 contract and allows the next prompt to resume work", async () => {
+    const session = await ensureAgentSession(cellId);
+
+    await interruptAgentSession(session.id);
+
+    expect(clientStub.session.interrupt).toHaveBeenCalledWith({
+      sessionID: session.id,
+    });
+    await expectResumeOnStartup(cellId, false);
+
+    await sendAgentMessage(session.id, "Continue after interrupt");
+
+    expect(clientStub.session.prompt).toHaveBeenLastCalledWith({
+      sessionID: session.id,
+      text: "Continue after interrupt",
+    });
+    await expectResumeOnStartup(cellId);
+  });
+
+  it("clears pending interrupt state when the v2 interrupt rejects", async () => {
+    const session = await ensureAgentSession(cellId);
+    clientStub.session.interrupt.mockRejectedValueOnce(
+      new Error("interrupt unavailable")
+    );
+
+    await expect(interruptAgentSession(session.id)).rejects.toThrow(
+      "interrupt unavailable"
+    );
+    await sendAgentMessage(session.id, "Continue after interrupt failure");
 
     await expectResumeOnStartup(cellId);
   });
@@ -681,12 +1008,12 @@ describe("agent model selection", () => {
 
     await closeAllAgentSessions({ deleteRemote: false });
 
-    expect(clientStub.session.delete).not.toHaveBeenCalled();
+    expect(clientStub.session.remove).not.toHaveBeenCalled();
   });
 
   it("ignores missing session errors during runtime shutdown", async () => {
-    clientStub.session.delete.mockResolvedValue({
-      error: { message: "session not found" },
+    clientStub.session.remove.mockRejectedValue({
+      _tag: "SessionNotFoundError",
     });
 
     await ensureAgentSession(cellId);
@@ -694,61 +1021,130 @@ describe("agent model selection", () => {
     await expect(
       closeAllAgentSessions({ deleteRemote: true })
     ).resolves.toBeUndefined();
-    expect(clientStub.session.delete).toHaveBeenCalled();
+    expect(clientStub.session.remove).toHaveBeenCalled();
   });
 
   it("deletes persisted sessions after shutdown when runtime map is empty", async () => {
     const session = await ensureAgentSession(cellId);
 
     await closeAllAgentSessions({ deleteRemote: false });
-    clientStub.session.delete.mockClear();
+    clientStub.session.remove.mockClear();
 
     await closeAgentSession(cellId);
 
     expectRemoteSessionDelete(clientStub, session.id);
   });
+
+  it.each([
+    {
+      label: "shutdown",
+      prepare: () => prepareAgentSessionsForShutdown(),
+    },
+    {
+      label: "service replacement",
+      prepare: () =>
+        prepareSessionsForServiceReplacement(
+          clientStub as unknown as OpenCodeClient
+        ),
+    },
+  ])(
+    "marks and interrupts persisted Hive-owned active sessions for $label",
+    async ({ prepare }) => {
+      await persistRuntimeSession(cellId);
+      clientStub.session.active.mockResolvedValue({
+        [RUNTIME_SESSION_ID]: { type: "running" },
+        "session-external": { type: "running" },
+      });
+
+      await prepare();
+
+      await expectResumeOnStartup(cellId);
+      expect(clientStub.session.interrupt).toHaveBeenCalledTimes(1);
+      expect(clientStub.session.interrupt).toHaveBeenCalledWith({
+        sessionID: RUNTIME_SESSION_ID,
+      });
+    }
+  );
 });
 
 function buildClientStub(): ClientStub {
   const session = {
-    create: vi.fn(async () => ({ data: createMockSession() })),
-    delete: vi.fn(async () => ({ error: null })),
-    get: vi.fn(async () => ({ data: createMockSession() })),
-    messages: sessionMessagesMock,
-    prompt: vi.fn(async () => ({ error: null })),
+    active: vi.fn(async () => ({})),
+    create: vi.fn(async () => createMockSession()),
+    get: vi.fn(async () => createMockSession()),
+    interrupt: vi.fn(async () => ({ interrupted: true })),
+    prompt: vi.fn(async () => createPromptResult()),
+    remove: vi.fn(() => Promise.resolve()),
+    switchModel: vi.fn(() => Promise.resolve()),
+    inbox: { list: vi.fn(async () => []) },
   };
 
   return {
     session,
     event: {
-      subscribe: vi.fn(async () => ({
-        stream: (async function* () {
+      subscribe: vi.fn(() =>
+        (async function* () {
           // noop stream
-        })(),
+        })()
+      ),
+    },
+    message: { list: sessionMessagesMock },
+    model: {
+      default: vi.fn(async () => ({
+        location: createV2Location(),
+        data: null,
+      })),
+      list: vi.fn(async () => ({
+        location: createV2Location(),
+        data: [],
       })),
     },
-    config: {
-      providers: vi.fn(async () => ({
-        data: { providers: [], default: {} },
+    form: { list: vi.fn(async () => []) },
+    permission: createPermissionStub(),
+    plugin: {
+      list: vi.fn(async () => ({
+        location: createV2Location(),
+        data: [
+          {
+            id: "hive.cell.v2.r1.tools-context-shell-permission",
+            source: {
+              type: "local",
+              path: "/tmp/model-test/.opencode/plugins/hive/index.js",
+            },
+            features: {},
+            state: { status: "active" },
+          },
+        ],
       })),
     },
-    postSessionIdPermissionsPermissionId: vi.fn(async () => ({
-      error: null,
-    })),
+    provider: {
+      list: vi.fn(async () => ({
+        location: createV2Location(),
+        data: [],
+      })),
+    },
   };
 }
 
-function buildClientStubWithEvents(events: OpencodeEvent[]): ClientStub {
+function buildClientStubWithEvents(events: OpenCodeEvent[]): ClientStub {
   const stub = buildClientStub();
-  stub.event.subscribe = vi.fn(async () => ({
-    stream: (function* () {
+  stub.event.subscribe = vi.fn(() =>
+    (function* () {
       for (const event of events) {
         yield event;
       }
-    })(),
-  }));
+    })()
+  );
   return stub;
 }
+
+type TestProviderCatalog = {
+  providers: Array<{
+    id: string;
+    models: Record<string, { id: string }>;
+  }>;
+  default: Record<string, string>;
+};
 
 function createProviderCatalog(
   providerId: string,
@@ -756,17 +1152,15 @@ function createProviderCatalog(
   defaultModelId: string
 ) {
   return {
-    data: {
-      providers: [
-        {
-          id: providerId,
-          models: Object.fromEntries(
-            Object.entries(models).map(([modelId, id]) => [modelId, { id }])
-          ),
-        },
-      ],
-      default: { [providerId]: defaultModelId },
-    },
+    providers: [
+      {
+        id: providerId,
+        models: Object.fromEntries(
+          Object.entries(models).map(([modelId, id]) => [modelId, { id }])
+        ),
+      },
+    ],
+    default: { [providerId]: defaultModelId },
   };
 }
 
@@ -805,17 +1199,79 @@ function createMultiProviderCatalog(
   defaults: Record<string, string>
 ) {
   return {
-    data: {
-      providers: providers.map((provider) => ({
-        id: provider.id,
-        models: Object.fromEntries(
-          Object.entries(provider.models).map(([modelId, id]) => [
-            modelId,
-            { id },
-          ])
-        ),
-      })),
-      default: defaults,
+    providers: providers.map((provider) => ({
+      id: provider.id,
+      models: Object.fromEntries(
+        Object.entries(provider.models).map(([modelId, id]) => [
+          modelId,
+          { id },
+        ])
+      ),
+    })),
+    default: defaults,
+  };
+}
+
+function mockProviderCatalog(
+  client: ClientStub,
+  catalog: TestProviderCatalog
+): void {
+  const models = catalog.providers.flatMap((provider) =>
+    Object.entries(provider.models).map(([modelID, model]) =>
+      createV2Model(provider.id, modelID, model.id)
+    )
+  );
+  const [defaultProvider] = Object.keys(catalog.default);
+  const defaultModelID = defaultProvider
+    ? catalog.default[defaultProvider]
+    : undefined;
+  const defaultModel = models.find(
+    (model) =>
+      model.providerID === defaultProvider && model.modelID === defaultModelID
+  );
+
+  client.provider.list.mockResolvedValue({
+    location: createV2Location(),
+    data: catalog.providers.map((provider) => ({
+      id: provider.id,
+      name: provider.id,
+      activation: "enabled",
+      package: `@ai-sdk/${provider.id}`,
+    })),
+  });
+  client.model.list.mockResolvedValue({
+    location: createV2Location(),
+    data: models,
+  });
+  client.model.default.mockResolvedValue({
+    location: createV2Location(),
+    data: defaultModel ?? null,
+  });
+}
+
+function createV2Model(providerID: string, modelID: string, id: string) {
+  return {
+    id,
+    modelID,
+    providerID,
+    name: modelID,
+    capabilities: { tools: true, input: ["text"], output: ["text"] },
+    variants: [],
+    time: { released: 0 },
+    cost: [],
+    status: "active",
+    enabled: true,
+    limit: { context: 128_000, output: 16_000 },
+  };
+}
+
+function createV2Location() {
+  return {
+    directory: TEST_WORKSPACE_PATH,
+    project: {
+      id: "project-1",
+      directory: TEST_WORKSPACE_PATH,
+      canonical: TEST_WORKSPACE_PATH,
     },
   };
 }
@@ -852,46 +1308,54 @@ function createHistoryMessage(input: {
   completed?: boolean;
 }) {
   const now = Date.now();
-  return {
-    info: {
+  if (input.modelId) {
+    return {
       id: input.id,
-      sessionID: input.sessionId ?? RUNTIME_SESSION_ID,
-      role: input.role,
-      ...(input.mode ? { mode: input.mode } : {}),
+      type: "model-switched" as const,
+      time: { created: now },
+      model: {
+        providerID: input.providerId ?? TEST_PROVIDER_ID,
+        id: input.modelId,
+      },
+    };
+  }
+  if (input.role === "assistant") {
+    return {
+      id: input.id,
+      type: "assistant" as const,
+      agent: input.mode ?? "plan",
+      model: { providerID: TEST_PROVIDER_ID, id: TEMPLATE_MODEL_ID },
       time: {
         created: now,
-        updated: now,
         ...(input.completed ? { completed: now } : {}),
       },
-      ...(input.modelId
-        ? {
-            model: {
-              providerID: input.providerId ?? TEST_PROVIDER_ID,
-              modelID: input.modelId,
-            },
-          }
-        : {}),
-    },
-    parts: [],
+      content: [],
+    };
+  }
+  if (input.mode) {
+    return {
+      id: input.id,
+      type: "agent-switched" as const,
+      time: { created: now },
+      agent: input.mode,
+    };
+  }
+  return {
+    id: input.id,
+    type: "user" as const,
+    time: { created: now },
+    text: "Continue",
   };
 }
 
 function createMessagesResponse(
   ...messages: ReturnType<typeof createHistoryMessage>[]
 ) {
-  return { data: messages };
+  return { data: messages, cursor: {} };
 }
 
-function createModel(providerID: string, modelID: string) {
-  return { providerID, modelID };
-}
-
-function getLastPromptBody<TBody>(clientStub: ClientStub): TBody | undefined {
-  const promptCall = clientStub.session.prompt.mock.calls.at(-1);
-  if (!promptCall) {
-    throw new Error("Expected prompt call to be recorded");
-  }
-  return (promptCall?.[0] as { body?: TBody })?.body;
+function createModel(providerID: string, id: string) {
+  return { providerID, id };
 }
 
 function expectSessionModel(
@@ -906,49 +1370,32 @@ function expectSessionModel(
   }
 }
 
-function expectSeedPrompt(
-  clientStub: ClientStub,
-  sessionId: string,
-  body: Record<string, unknown>
-) {
-  // biome-ignore lint/suspicious/noMisplacedAssertion: shared test helper wraps repeated mock assertion.
-  expect(clientStub.session.prompt).toHaveBeenCalledWith({
-    path: { id: sessionId },
-    query: { directory: TEST_WORKSPACE_PATH },
-    body,
-  });
-}
-
-function expectSeedPromptForModel(
+function expectSelectedModel(
   clientStub: ClientStub,
   sessionId: string,
   modelId: string
 ) {
-  expectSeedPrompt(clientStub, sessionId, {
-    noReply: true,
+  // biome-ignore lint/suspicious/noMisplacedAssertion: shared test helper wraps repeated mock assertion.
+  expect(clientStub.session.switchModel).toHaveBeenCalledWith({
+    sessionID: sessionId,
     model: createModel(TEST_PROVIDER_ID, modelId),
-    parts: [],
   });
 }
 
 function expectRemoteSessionDelete(clientStub: ClientStub, sessionId: string) {
   // biome-ignore lint/suspicious/noMisplacedAssertion: shared test helper wraps repeated mock assertion.
-  expect(clientStub.session.delete).toHaveBeenCalledWith({
-    path: { id: sessionId },
-    query: { directory: TEST_WORKSPACE_PATH },
+  expect(clientStub.session.remove).toHaveBeenCalledWith({
+    sessionID: sessionId,
   });
 }
 
 function expectContinuePrompt(clientStub: ClientStub, sessionId: string) {
   // biome-ignore lint/suspicious/noMisplacedAssertion: shared test helper wraps repeated mock assertion.
-  expect(clientStub.session.prompt).toHaveBeenCalledWith(
-    expect.objectContaining({
-      path: { id: sessionId },
-      body: expect.objectContaining({
-        parts: [{ type: "text", text: "Please continue" }],
-      }),
-    })
-  );
+  expect(clientStub.session.prompt).toHaveBeenCalledWith({
+    sessionID: sessionId,
+    text: "",
+    resume: true,
+  });
 }
 
 async function expectInvalidOverrideError(result: Promise<unknown>) {
@@ -966,13 +1413,13 @@ function expectSeedWarning(warnSpy: Mock, sessionId: string, message: string) {
       cellId: TEST_CELL_ID,
       sessionId,
       providerId: TEST_PROVIDER_ID,
-      modelId: "gpt-5.3-codex",
+      modelId: CODEX_MODEL_PATH,
       message,
     })
   );
 }
 
-async function expectResumeOnStartup(cellId: string) {
+async function expectResumeOnStartup(cellId: string, expected = true) {
   const [cell] = await testDb
     .select({
       resumeAgentSessionOnStartup: cells.resumeAgentSessionOnStartup,
@@ -980,9 +1427,18 @@ async function expectResumeOnStartup(cellId: string) {
     .from(cells)
     .where(eq(cells.id, cellId));
 
-  if (cell?.resumeAgentSessionOnStartup !== true) {
-    throw new Error("Expected resumeAgentSessionOnStartup to be true");
+  if (cell?.resumeAgentSessionOnStartup !== expected) {
+    throw new Error(`Expected resumeAgentSessionOnStartup to be ${expected}`);
   }
+}
+
+async function expectPersistedSessionId(cellId: string) {
+  const [cell] = await testDb
+    .select({ sessionId: cells.opencodeSessionId })
+    .from(cells)
+    .where(eq(cells.id, cellId));
+  // biome-ignore lint/suspicious/noMisplacedAssertion: shared test helper verifies persisted state.
+  expect(cell?.sessionId).toBe(RUNTIME_SESSION_ID);
 }
 
 async function markResumeOnStartup(cellId: string) {
@@ -990,6 +1446,20 @@ async function markResumeOnStartup(cellId: string) {
     .update(cells)
     .set({ resumeAgentSessionOnStartup: true })
     .where(eq(cells.id, cellId));
+}
+
+async function persistRuntimeSession(cellId: string) {
+  await testDb
+    .update(cells)
+    .set({ opencodeSessionId: RUNTIME_SESSION_ID })
+    .where(eq(cells.id, cellId));
+}
+
+function createPermissionStub() {
+  return {
+    list: vi.fn(async () => []),
+    reply: vi.fn(() => Promise.resolve()),
+  };
 }
 
 function mockUserMessageHistory(sessionId: string) {
@@ -1014,16 +1484,27 @@ async function preparePersistedResumeSession() {
   return session;
 }
 
-function createQuestionRepliedEvent(): OpencodeEvent {
+function createQuestionRepliedEvent(): OpenCodeEvent {
   return {
-    type: "question.replied",
-    properties: {
+    id: "evt-question-replied",
+    created: Date.now(),
+    type: "form.replied",
+    data: {
       id: "question_123",
       sessionID: RUNTIME_SESSION_ID,
-      text: "Continue?",
-      answer: "Yes",
+      answer: { continue: true },
     },
-  } as unknown as OpencodeEvent;
+  };
+}
+
+function createInterruptedEvent(): OpenCodeEvent {
+  return {
+    id: "evt-execution-interrupted",
+    created: Date.now(),
+    type: "session.execution.interrupted",
+    durable: createDurableEvent(),
+    data: { sessionID: RUNTIME_SESSION_ID, reason: "shutdown" },
+  };
 }
 
 function createMockSession() {
@@ -1031,12 +1512,33 @@ function createMockSession() {
   return {
     id: RUNTIME_SESSION_ID,
     projectID: "project-1",
-    directory: TEST_WORKSPACE_PATH,
     title: "Mock Session",
-    version: "1",
+    location: { directory: TEST_WORKSPACE_PATH },
+    cost: 0,
+    tokens: {
+      input: 0,
+      output: 0,
+      reasoning: 0,
+      cache: { read: 0, write: 0 },
+    },
     time: {
       created: now,
       updated: now,
     },
   };
+}
+
+function createPromptResult() {
+  return {
+    id: "inbox-test",
+    sessionID: RUNTIME_SESSION_ID,
+    timeCreated: Date.now(),
+    type: "user" as const,
+    payload: { text: "" },
+    delivery: "queue" as const,
+  };
+}
+
+function createDurableEvent() {
+  return { aggregateID: RUNTIME_SESSION_ID, seq: 1, version: 1 as const };
 }

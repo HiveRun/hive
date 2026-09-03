@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { finishRuntimeRun } from "../../../e2e/src/runtime/artifacts";
+import { throwRunAndCleanupErrors } from "../../../e2e/src/runtime/errors";
 import { createFixtureWorkspace } from "../../../e2e/src/runtime/fixture-workspace";
 import {
   parseSpecArg,
@@ -14,7 +15,10 @@ import {
   stopManagedProcesses,
 } from "../../../e2e/src/runtime/process";
 import { createRuntimeContext } from "../../../e2e/src/runtime/runtime-context";
-import { startDesktopE2eServer } from "../../../e2e/src/runtime/server";
+import {
+  startDesktopE2eServer,
+  stopIsolatedOpencodeService,
+} from "../../../e2e/src/runtime/server";
 
 const KEEP_ARTIFACTS = process.env.HIVE_E2E_KEEP_ARTIFACTS === "1";
 const CLEANUP_TIMEOUT_MS = 15_000;
@@ -76,6 +80,8 @@ async function run() {
   const managedProcesses: ManagedProcess[] = [];
   let runSucceeded = false;
 
+  let runError: unknown;
+  let cleanupError: unknown;
   try {
     await createDesktopFixtureWorkspace(context.workspaceRoot);
 
@@ -126,19 +132,47 @@ async function run() {
 
     runSucceeded = true;
     process.stdout.write("Desktop E2E suite passed.\n");
+  } catch (error) {
+    runError = error;
   } finally {
-    await stopManagedProcesses(managedProcesses, stopManagedProcess);
+    const cleanupFailures: unknown[] = [];
+    const cleanupSteps = [
+      () => stopManagedProcesses(managedProcesses, stopManagedProcess),
+      () => stopIsolatedOpencodeService(context),
+    ];
+    for (const cleanup of cleanupSteps) {
+      try {
+        await cleanup();
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+    }
 
-    await finishRuntimeRun({
-      artifactsDir: context.artifactsDir,
-      keepArtifacts: KEEP_ARTIFACTS,
-      reportsLabel: "Desktop E2E reports",
-      runRoot: context.runRoot,
-      runSucceeded,
-      runArtifactsLabel: "Desktop E2E run artifacts",
-      stableArtifactsDir,
-    });
+    try {
+      await finishRuntimeRun({
+        artifactsDir: context.artifactsDir,
+        keepArtifacts: KEEP_ARTIFACTS,
+        reportsLabel: "Desktop E2E reports",
+        runRoot: context.runRoot,
+        runSucceeded: runSucceeded && cleanupFailures.length === 0,
+        runArtifactsLabel: "Desktop E2E run artifacts",
+        stableArtifactsDir,
+      });
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    if (cleanupFailures.length > 0) {
+      cleanupError = new AggregateError(
+        cleanupFailures,
+        "Desktop E2E cleanup and artifact finalization failed"
+      );
+    }
   }
+  throwRunAndCleanupErrors(
+    runError,
+    cleanupError,
+    "Desktop E2E run and cleanup failed"
+  );
 }
 
 async function createDesktopFixtureWorkspace(

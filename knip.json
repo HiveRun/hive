@@ -7,7 +7,6 @@
     ".opencode/plans/**",
     ".opencode/state/**",
     ".opencode/themes/**",
-    ".opencode/tools/**",
     ".ruler/01-readme.md",
     "**/*.generated.ts",
     "**/*.tsbuildinfo",
@@ -33,13 +32,13 @@
   "workspaces": {
     ".": {
       "entry": [
-        ".opencode/plugin/**/tools.ts",
+        ".opencode/plugins/**/index.ts",
         "*.config.{js,ts,mjs,cjs}",
         "package.json",
         "scripts/**/*.{js,ts,mjs,cjs}"
       ],
       "project": [
-        ".opencode/plugin/**/*.ts",
+        ".opencode/plugins/**/*.ts",
         "*.{js,ts,mjs,cjs,json}",
         "scripts/**/*.{js,ts,mjs,cjs}"
       ]

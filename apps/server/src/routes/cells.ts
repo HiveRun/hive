@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { logger } from "@bogeychan/elysia-logger";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { Elysia, type Static, sse, t } from "elysia";
+import { resolveOpencodeBinary } from "../agents/opencode-binary";
 import { loadEffectiveOpencodeDefaults } from "../agents/opencode-config";
-import { getSharedOpencodeServerBaseUrl } from "../agents/opencode-server";
+import { getSharedOpencodeServerConnection } from "../agents/opencode-server";
 import type { AgentPromptInput, AgentRuntimeService } from "../agents/service";
 import { agentRuntimeService } from "../agents/service";
 import type { AgentMode } from "../agents/types";
@@ -263,6 +264,7 @@ type CellRouteDependencies = {
     workspacePath: string;
     opencodeSessionId: string;
     opencodeServerUrl: string;
+    opencodeServerPassword?: string;
     opencodeThemeMode?: OpencodeThemeMode;
     preferredModel?: { providerId: string; modelId: string; variant?: string };
     startMode?: AgentMode;
@@ -1140,28 +1142,12 @@ function buildOpencodeCommand(
     return null;
   }
 
-  const serverUrl =
-    process.env.HIVE_OPENCODE_SERVER_URL ?? getSharedOpencodeServerBaseUrl();
-  if (!serverUrl) {
-    return [
-      "opencode",
-      shellQuote(cell.workspacePath),
-      "--session",
-      shellQuote(cell.opencodeSessionId),
-    ].join(" ");
-  }
-
-  const args = [
-    "opencode",
-    "attach",
-    shellQuote(serverUrl),
-    "--dir",
-    shellQuote(cell.workspacePath),
+  return [
+    shellQuote(resolveOpencodeBinary()),
     "--session",
     shellQuote(cell.opencodeSessionId),
-  ];
-
-  return args.join(" ");
+    shellQuote(cell.workspacePath),
+  ].join(" ");
 }
 
 function shellQuote(value: string): string {
@@ -1404,8 +1390,9 @@ async function ensureChatTerminalSessionForCell(
   cell: typeof cells.$inferSelect,
   themeMode: OpencodeThemeMode
 ) {
-  const serverUrl =
-    process.env.HIVE_OPENCODE_SERVER_URL ?? getSharedOpencodeServerBaseUrl();
+  const explicitServerUrl = process.env.HIVE_OPENCODE_SERVER_URL?.trim();
+  const sharedConnection = getSharedOpencodeServerConnection();
+  const serverUrl = explicitServerUrl || sharedConnection?.url;
 
   if (!serverUrl) {
     throw new Error("Shared OpenCode server is not running");
@@ -1437,6 +1424,9 @@ async function ensureChatTerminalSessionForCell(
       workspacePath: currentCell.workspacePath,
       opencodeSessionId: agentSession.id,
       opencodeServerUrl: serverUrl,
+      opencodeServerPassword: explicitServerUrl
+        ? process.env.OPENCODE_PASSWORD || process.env.OPENCODE_SERVER_PASSWORD
+        : sharedConnection?.password,
       opencodeThemeMode: themeMode,
       preferredModel,
       environment,

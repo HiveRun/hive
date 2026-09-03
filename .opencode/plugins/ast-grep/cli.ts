@@ -12,6 +12,7 @@ import { ensureAstGrepBinary } from "./downloader";
 import type { CliLanguage, CliMatch, SgResult } from "./types";
 
 export type RunOptions = {
+  cwd: string;
   pattern: string;
   lang: CliLanguage;
   paths?: string[];
@@ -101,14 +102,52 @@ type SpawnOutputs = {
   stdout: string;
   stderr: string;
   exitCode: number;
+  outputTruncated: boolean;
   timedOut: boolean;
 };
 
+async function readBoundedOutput(
+  stream: ReadableStream<Uint8Array>,
+  maximumBytes: number,
+  onLimit: () => void
+): Promise<{ output: string; truncated: boolean }> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let bytesRead = 0;
+  let truncated = false;
+
+  while (true) {
+    const next = await reader.read();
+    if (next.done) {
+      break;
+    }
+    const remaining = maximumBytes - bytesRead;
+    if (next.value.byteLength > remaining) {
+      if (remaining > 0) {
+        chunks.push(
+          decoder.decode(next.value.subarray(0, remaining), { stream: true })
+        );
+      }
+      truncated = true;
+      onLimit();
+      break;
+    }
+    bytesRead += next.value.byteLength;
+    chunks.push(decoder.decode(next.value, { stream: true }));
+  }
+
+  chunks.push(decoder.decode());
+  return { output: chunks.join(""), truncated };
+}
+
 const runWithTimeout = async (
   cliPath: string,
-  args: string[]
+  args: string[],
+  cwd: string
 ): Promise<SpawnOutputs> => {
   const proc = spawn([cliPath, ...args], {
+    cwd,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -120,13 +159,36 @@ const runWithTimeout = async (
     proc.kill();
   }, DEFAULT_TIMEOUT_MS);
 
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  const exitCode = await proc.exited;
+  let killedForOutputLimit = false;
+  const killForOutputLimit = () => {
+    if (!killedForOutputLimit) {
+      killedForOutputLimit = true;
+      proc.kill();
+    }
+  };
+  const [stdoutResult, stderrResult, exitCode] = await Promise.all([
+    readBoundedOutput(
+      proc.stdout as ReadableStream<Uint8Array>,
+      DEFAULT_MAX_OUTPUT_BYTES,
+      killForOutputLimit
+    ),
+    readBoundedOutput(
+      proc.stderr as ReadableStream<Uint8Array>,
+      DEFAULT_MAX_OUTPUT_BYTES,
+      killForOutputLimit
+    ),
+    proc.exited,
+  ]);
 
   clearTimeout(timeoutId);
 
-  return { stdout, stderr, exitCode, timedOut };
+  return {
+    stdout: stdoutResult.output,
+    stderr: stderrResult.output,
+    exitCode,
+    outputTruncated: stdoutResult.truncated || stderrResult.truncated,
+    timedOut,
+  };
 };
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: AST-grep CLI wrapper needs full error-handling logic
@@ -143,7 +205,7 @@ export const runSg = async (options: RunOptions): Promise<SgResult> => {
 
   let outputs: SpawnOutputs;
   try {
-    outputs = await runWithTimeout(cliPath, args);
+    outputs = await runWithTimeout(cliPath, args, options.cwd);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
@@ -154,7 +216,7 @@ export const runSg = async (options: RunOptions): Promise<SgResult> => {
     };
   }
 
-  const { stdout, stderr, exitCode, timedOut } = outputs;
+  const { stdout, stderr, exitCode, outputTruncated, timedOut } = outputs;
 
   if (timedOut) {
     return {
@@ -187,10 +249,7 @@ export const runSg = async (options: RunOptions): Promise<SgResult> => {
     return { matches: [], totalMatches: 0, truncated: false };
   }
 
-  const outputTruncated = stdout.length >= DEFAULT_MAX_OUTPUT_BYTES;
-  const jsonText = outputTruncated
-    ? stdout.substring(0, DEFAULT_MAX_OUTPUT_BYTES)
-    : stdout;
+  const jsonText = stdout;
 
   let rawMatches: CliMatch[];
 

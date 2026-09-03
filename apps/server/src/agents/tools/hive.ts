@@ -1,18 +1,46 @@
 /**
  * Hive OpenCode Custom Tools
  *
- * This file is written to .opencode/tools/hive.ts in each cell worktree.
- * OpenCode discovers and loads it at runtime, providing agents with
- * tools to monitor services and fetch logs.
+ * This file is embedded into each cell as a v2 OpenCode plugin. The plugin
+ * provides tools to monitor services and fetch logs, refreshes Hive context,
+ * injects the cell environment into shells, and enforces cell boundaries.
  *
  * NOTE: This file is type-checked during development but embedded as a
  * string at build time. Do not import runtime dependencies from the
  * server codebase - only use Node.js built-ins and @opencode-ai/plugin.
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { type ToolDefinition, tool } from "@opencode-ai/plugin";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
+import { Plugin } from "@opencode-ai/plugin";
+
+export const HIVE_PLUGIN_REVISION = "1";
+export const HIVE_PLUGIN_CAPABILITIES = [
+  "tools",
+  "fresh-context",
+  "shell-environment",
+  "worktree-boundary",
+] as const;
+export const HIVE_PLUGIN_ID = "hive.cell.v2.r1.tools-context-shell-permission";
+
+const HIVE_CONFIG_RELATIVE_PATH = join(".hive", "config.json");
+const HIVE_CONTEXT_TIMEOUT_MS = 10_000;
+const HIVE_TOOL_REQUEST_TIMEOUT_MS = 600_000;
+const TRAILING_GLOB_PATTERN = /[\\/]\*{1,2}$/u;
+const HIVE_INHERITED_SHELL_ENV_KEYS = [
+  "HIVE_CLI_BIN",
+  "HIVE_CELL_RUNTIME_DIR",
+  "HIVE_CELL_ARTIFACTS_DIR",
+] as const;
 
 type HiveService = {
   id: string;
@@ -48,6 +76,10 @@ type ServiceListResponse = {
 };
 
 type CellResponse = {
+  id: string;
+  name: string;
+  status: string;
+  workspacePath: string;
   setupLog?: string | null;
   setupLogPath?: string | null;
 };
@@ -75,7 +107,7 @@ type HiveConfig = {
  * the cell ID and Hive server URL.
  */
 function readHiveConfig(worktreePath: string): HiveConfig | Error {
-  const configPath = join(worktreePath, ".hive", "config.json");
+  const configPath = join(worktreePath, HIVE_CONFIG_RELATIVE_PATH);
 
   try {
     const content = readFileSync(configPath, "utf-8");
@@ -109,36 +141,14 @@ function readHiveConfig(worktreePath: string): HiveConfig | Error {
   }
 }
 
-/**
- * Resolves the worktree path from OpenCode context.
- * Prefers context.worktree (explicit worktree path) over context.directory.
- */
-function resolveWorktreePath(context: {
-  worktree?: string;
-  directory?: string;
-}): string | Error {
-  // Prefer explicit worktree path if available
-  if (context.worktree && context.worktree.length > 0) {
-    return context.worktree;
-  }
-
-  // Fall back to directory only if worktree is not set
-  if (context.directory && context.directory.length > 0) {
-    return context.directory;
-  }
-
-  return new Error(
-    "Could not determine worktree path from context. " +
-      "Ensure OpenCode is running in a Hive cell worktree."
-  );
-}
-
 async function fetchJson<T>(
   url: string,
-  signal: AbortSignal,
+  signal?: AbortSignal,
   init?: RequestInit
 ): Promise<T> {
-  const response = await fetch(url, { ...init, signal });
+  const requestSignal =
+    signal ?? init?.signal ?? AbortSignal.timeout(HIVE_TOOL_REQUEST_TIMEOUT_MS);
+  const response = await fetch(url, { ...init, signal: requestSignal });
   if (!response.ok) {
     const body = await response.text().catch(() => "");
     const details = body ? ` ${body}` : "";
@@ -161,9 +171,7 @@ function buildHiveToolHeaders(
 }
 
 type HiveToolContext = {
-  worktree?: string;
-  directory?: string;
-  abort: AbortSignal;
+  worktreePath: string;
 };
 
 type ServiceStatusArgs = {
@@ -178,12 +186,7 @@ function formatToolError(error: unknown): string {
 }
 
 function resolveHiveToolConfig(context: HiveToolContext): HiveConfig | Error {
-  const worktreePath = resolveWorktreePath(context);
-  if (worktreePath instanceof Error) {
-    return worktreePath;
-  }
-
-  return readHiveConfig(worktreePath);
+  return readHiveConfig(context.worktreePath);
 }
 
 function buildServiceStatusOptions(args: ServiceStatusArgs) {
@@ -234,47 +237,120 @@ async function executeWithHiveToolRequest(
   }
 }
 
+type HiveToolFetchOptions<T> = {
+  context: HiveToolContext;
+  args: { format?: "text" | "json" };
+  url: (config: HiveConfig) => string;
+  formatResponse: (payload: T, format: "text" | "json") => string;
+  init?: RequestInit;
+};
+
+async function fetchAndFormatHiveToolResult<T>(
+  options: HiveToolFetchOptions<T>
+): Promise<ReturnType<typeof toolResult>> {
+  const output = await executeWithHiveToolRequest(
+    options.context,
+    options.args,
+    async (request) => {
+      const payload = await fetchJson<T>(
+        options.url(request.config),
+        undefined,
+        options.init
+      );
+      return options.formatResponse(payload, request.format);
+    }
+  );
+  return toolResult(output);
+}
+
+async function fetchAndFormatServiceListToolResult(
+  options: Omit<HiveToolFetchOptions<ServiceListResponse>, "url"> & {
+    queryParams: string;
+  }
+): Promise<ReturnType<typeof toolResult>> {
+  return await fetchAndFormatHiveToolResult<ServiceListResponse>({
+    ...options,
+    url: (config) => cellServicesUrl(config, options.queryParams),
+  });
+}
+
 const cellServicesUrl = (config: HiveConfig, queryParams = "") =>
-  `${config.hiveUrl}/api/cells/${config.cellId}/services${queryParams}`;
+  `${config.hiveUrl}/api/cells/${encodeURIComponent(config.cellId)}/services${queryParams}`;
 
 const cellUrl = (config: HiveConfig, suffix = "") =>
-  `${config.hiveUrl}/api/cells/${config.cellId}${suffix}`;
+  `${config.hiveUrl}/api/cells/${encodeURIComponent(config.cellId)}${suffix}`;
 
-const outputFormatArg = tool.schema
-  .enum(["text", "json"])
-  .optional()
-  .describe(
-    "Output format. Use 'json' for programmatic parsing. Default: text."
-  );
+type JsonSchema = Readonly<Record<string, unknown>>;
 
-const statusIncludeLogsArg = tool.schema
-  .boolean()
-  .optional()
-  .describe(
-    "Include recent log output in the final status display. Default: false."
-  );
+type HiveV2Tool = {
+  name: string;
+  description: string;
+  input: JsonSchema;
+  options: { codemode: false };
+  execute: (
+    input: unknown,
+    context: unknown
+  ) => Promise<{ content: string; metadata: Record<string, unknown> }>;
+};
 
-const statusLogLinesArg = tool.schema
-  .number()
-  .optional()
-  .describe(
-    "Number of log lines to show in the final status display (1-2000). Default: 200."
-  );
+const stringArg = (description: string): JsonSchema => ({
+  type: "string",
+  description,
+});
 
-const statusLogOffsetArg = tool.schema
-  .number()
-  .optional()
-  .describe(
-    "Skip this many lines from the end in the final status display (pagination)."
-  );
+const numberArg = (description: string): JsonSchema => ({
+  type: "number",
+  description,
+});
+
+const booleanArg = (description: string): JsonSchema => ({
+  type: "boolean",
+  description,
+});
+
+const outputFormatArg: JsonSchema = {
+  type: "string",
+  enum: ["text", "json"],
+  description:
+    "Output format. Use 'json' for programmatic parsing. Default: text.",
+};
+
+const statusIncludeLogsArg = booleanArg(
+  "Include recent log output in the final status display. Default: false."
+);
+
+const statusLogLinesArg = numberArg(
+  "Number of log lines to show in the final status display (1-2000). Default: 200."
+);
+
+const statusLogOffsetArg = numberArg(
+  "Skip this many lines from the end in the final status display (pagination)."
+);
 
 const createConfirmArg = (action: string) =>
-  tool.schema
-    .boolean()
-    .optional()
-    .describe(
-      `Required. Set true to actually ${action}. This prevents accidental actions.`
-    );
+  booleanArg(
+    `Required. Set true to actually ${action}. This prevents accidental actions.`
+  );
+
+const objectInput = (
+  properties: Record<string, JsonSchema>,
+  required: string[] = []
+): JsonSchema => ({
+  type: "object",
+  properties,
+  required,
+  additionalProperties: false,
+});
+
+function toolResult(content: string) {
+  return {
+    content,
+    metadata: {
+      plugin: HIVE_PLUGIN_ID,
+      revision: HIVE_PLUGIN_REVISION,
+    },
+  };
+}
 
 async function executeServiceRestart(args: {
   context: HiveToolContext;
@@ -297,7 +373,7 @@ async function executeServiceRestart(args: {
 
     const final = await fetchJson<ServiceListResponse>(
       cellServicesUrl(config, queryParams),
-      args.context.abort
+      undefined
     );
 
     if (format === "json") {
@@ -327,7 +403,7 @@ async function executeServiceRestart(args: {
 
 async function restartAllCellServices(args: {
   config: HiveConfig;
-  signal: AbortSignal;
+  signal?: AbortSignal;
   headers: Record<string, string>;
 }) {
   await fetchJson<ServiceListResponse>(
@@ -339,7 +415,7 @@ async function restartAllCellServices(args: {
 
 async function resolveServiceIdByName(args: {
   config: HiveConfig;
-  signal: AbortSignal;
+  signal?: AbortSignal;
   serviceName: string;
 }): Promise<string> {
   const list = await fetchJson<ServiceListResponse>(
@@ -362,14 +438,14 @@ async function resolveServiceIdByName(args: {
 
 async function restartSingleService(args: {
   config: HiveConfig;
-  signal: AbortSignal;
+  signal?: AbortSignal;
   serviceName: string;
   headers: Record<string, string>;
 }): Promise<void> {
   const serviceId = await resolveServiceIdByName(args);
 
   await fetchJson<HiveService>(
-    cellServicesUrl(args.config, `/${serviceId}/restart`),
+    cellServicesUrl(args.config, `/${encodeURIComponent(serviceId)}/restart`),
     args.signal,
     { method: "POST", headers: args.headers }
   );
@@ -466,8 +542,11 @@ function formatSingleServiceText(
   return output.join("\n");
 }
 
-export const services: ToolDefinition = tool({
-  description: `Check the status of all services (backend, frontend, database, etc.) running in this cell.
+function createServicesTool(context: HiveToolContext): HiveV2Tool {
+  return {
+    name: "hive_services",
+    options: { codemode: false },
+    description: `Check the status of all services (backend, frontend, database, etc.) running in this cell.
 
 USE THIS TOOL WHEN:
 - You need to debug why something isn't working (check if services are running)
@@ -478,51 +557,47 @@ USE THIS TOOL WHEN:
 RETURNS: For each service: name, status (running/stopped/error), port, URL, process info, and recent log output.
 
 PAGINATION: By default returns last 200 log lines per service. Use logLines/logOffset to get more or paginate through history.`,
-  args: {
-    includeLogs: tool.schema
-      .boolean()
-      .optional()
-      .describe(
+    input: objectInput({
+      includeLogs: booleanArg(
         "Include recent log output for each service. Set to false for a quick status check without logs. Default: true."
       ),
-    logLines: tool.schema
-      .number()
-      .optional()
-      .describe(
+      logLines: numberArg(
         "Number of log lines to return per service (1-2000). Use higher values to see more history. Default: 200."
       ),
-    logOffset: tool.schema
-      .number()
-      .optional()
-      .describe(
+      logOffset: numberArg(
         "Skip this many lines from the end. Use with logLines to paginate: offset=0 gets newest, offset=200 gets the 200 lines before that."
       ),
-    format: outputFormatArg,
-  },
-  async execute(args, context) {
-    const includeLogs = args.includeLogs ?? true;
-    const queryParams = buildLogQueryParams(args.logLines, args.logOffset);
-    return await executeWithHiveToolRequest(context, args, async (request) => {
-      const payload = await fetchJson<ServiceListResponse>(
-        cellServicesUrl(request.config, queryParams),
-        context.abort
-      );
+      format: outputFormatArg,
+    }),
+    async execute(input) {
+      const args = input as ServiceStatusArgs;
+      const includeLogs = args.includeLogs ?? true;
+      const queryParams = buildLogQueryParams(args.logLines, args.logOffset);
+      return await fetchAndFormatServiceListToolResult({
+        context,
+        args,
+        queryParams,
+        formatResponse: (payload, format) => {
+          if (format === "json") {
+            const servicesPayload = formatServiceListPayload(
+              payload.services,
+              includeLogs
+            );
+            return JSON.stringify({ services: servicesPayload }, null, 2);
+          }
 
-      if (request.format === "json") {
-        const servicesPayload = formatServiceListPayload(
-          payload.services,
-          includeLogs
-        );
-        return JSON.stringify({ services: servicesPayload }, null, 2);
-      }
+          return formatServicesText(payload.services, includeLogs);
+        },
+      });
+    },
+  };
+}
 
-      return formatServicesText(payload.services, includeLogs);
-    });
-  },
-});
-
-export const service_logs: ToolDefinition = tool({
-  description: `Get log output for a specific service by name.
+function createServiceLogsTool(context: HiveToolContext): HiveV2Tool {
+  return {
+    name: "hive_service_logs",
+    options: { codemode: false },
+    description: `Get log output for a specific service by name.
 
 USE THIS TOOL WHEN:
 - You already know which service has the problem and want to focus on its logs
@@ -532,71 +607,73 @@ USE THIS TOOL WHEN:
 EXAMPLE: If hive_services shows "web" service has status "error", use this to get more detailed logs.
 
 TIP: If you don't know the service name, call hive_services first to see available services.`,
-  args: {
-    serviceName: tool.schema
-      .string()
-      .describe(
-        "The service name to get logs for. Must match exactly (e.g., 'web', 'api', 'db'). Call hive_services first if unsure of available names."
-      ),
-    logLines: tool.schema
-      .number()
-      .optional()
-      .describe(
-        "Number of log lines to return (1-2000). Use higher values like 500-1000 to see more context around errors. Default: 200."
-      ),
-    logOffset: tool.schema
-      .number()
-      .optional()
-      .describe(
-        "Skip this many lines from the end to see older logs. Example: logOffset=200, logLines=200 returns lines 201-400 from the end."
-      ),
-    format: outputFormatArg,
-  },
-  async execute(args, context) {
-    const queryParams = buildLogQueryParams(args.logLines, args.logOffset);
-    const headers = buildHiveToolHeaders("hive_service_logs", {
-      "x-hive-audit-event": "service.logs.read",
-      "x-hive-service-name": args.serviceName,
-    });
+    input: objectInput(
+      {
+        serviceName: stringArg(
+          "The service name to get logs for. Must match exactly (e.g., 'web', 'api', 'db'). Call hive_services first if unsure of available names."
+        ),
+        logLines: numberArg(
+          "Number of log lines to return (1-2000). Use higher values like 500-1000 to see more context around errors. Default: 200."
+        ),
+        logOffset: numberArg(
+          "Skip this many lines from the end to see older logs. Example: logOffset=200, logLines=200 returns lines 201-400 from the end."
+        ),
+        format: outputFormatArg,
+      },
+      ["serviceName"]
+    ),
+    async execute(input) {
+      const args = input as ServiceStatusArgs & { serviceName: string };
+      const queryParams = buildLogQueryParams(args.logLines, args.logOffset);
+      const headers = buildHiveToolHeaders("hive_service_logs", {
+        "x-hive-audit-event": "service.logs.read",
+        "x-hive-service-name": args.serviceName,
+      });
 
-    return await executeWithHiveToolRequest(context, args, async (request) => {
-      const payload = await fetchJson<ServiceListResponse>(
-        cellServicesUrl(request.config, queryParams),
-        context.abort,
-        { method: "GET", headers }
-      );
+      return await fetchAndFormatServiceListToolResult({
+        context,
+        args,
+        queryParams,
+        formatResponse: (payload, format) => {
+          const match = payload.services.find(
+            (service) => service.name === args.serviceName
+          );
 
-      const match = payload.services.find(
-        (service) => service.name === args.serviceName
-      );
+          if (!match) {
+            const names = payload.services
+              .map((service) => service.name)
+              .sort();
+            return `Error: Service "${args.serviceName}" not found. Available: ${names.join(", ")}`;
+          }
 
-      if (!match) {
-        const names = payload.services.map((service) => service.name).sort();
-        return `Error: Service "${args.serviceName}" not found. Available: ${names.join(", ")}`;
-      }
+          if (format === "json") {
+            return JSON.stringify(
+              {
+                name: match.name,
+                status: match.status,
+                recentLogs: match.recentLogs ?? "",
+                logPath: match.logPath ?? null,
+                totalLogLines: match.totalLogLines ?? null,
+                hasMoreLogs: match.hasMoreLogs ?? false,
+              },
+              null,
+              2
+            );
+          }
 
-      if (request.format === "json") {
-        return JSON.stringify(
-          {
-            name: match.name,
-            status: match.status,
-            recentLogs: match.recentLogs ?? "",
-            logPath: match.logPath ?? null,
-            totalLogLines: match.totalLogLines ?? null,
-            hasMoreLogs: match.hasMoreLogs ?? false,
-          },
-          null,
-          2
-        );
-      }
+          return formatServiceLogsText(match);
+        },
+        init: { method: "GET", headers },
+      });
+    },
+  };
+}
 
-      return formatServiceLogsText(match);
-    });
-  },
-});
-
-export const setup_logs: ToolDefinition = tool({
-  description: `Get logs from the cell's initial setup/provisioning phase.
+function createSetupLogsTool(context: HiveToolContext): HiveV2Tool {
+  return {
+    name: "hive_setup_logs",
+    options: { codemode: false },
+    description: `Get logs from the cell's initial setup/provisioning phase.
 
 USE THIS TOOL WHEN:
 - The cell failed during initial setup (before services started)
@@ -607,43 +684,46 @@ USE THIS TOOL WHEN:
 WHAT THIS SHOWS: Output from setup commands defined in the template (e.g., package installation, database migrations, build steps) that ran when the cell was first created.
 
 NOTE: This is different from service logs - setup runs once when the cell is created, services run continuously after.`,
-  args: {
-    format: outputFormatArg,
-  },
-  async execute(args, context) {
-    const headers = buildHiveToolHeaders("hive_setup_logs", {
-      "x-hive-audit-event": "setup.logs.read",
-    });
+    input: objectInput({ format: outputFormatArg }),
+    async execute(input) {
+      const args = input as { format?: "text" | "json" };
+      const headers = buildHiveToolHeaders("hive_setup_logs", {
+        "x-hive-audit-event": "setup.logs.read",
+      });
 
-    return await executeWithHiveToolRequest(context, args, async (request) => {
-      const payload = await fetchJson<CellResponse>(
-        cellUrl(request.config),
-        context.abort,
-        { method: "GET", headers }
-      );
+      return await fetchAndFormatHiveToolResult<CellResponse>({
+        context,
+        args,
+        url: (config) => cellUrl(config),
+        formatResponse: (payload, format) => {
+          if (format === "json") {
+            return JSON.stringify(
+              {
+                setupLog: payload.setupLog ?? "",
+                setupLogPath: payload.setupLogPath ?? null,
+              },
+              null,
+              2
+            );
+          }
 
-      if (request.format === "json") {
-        return JSON.stringify(
-          {
-            setupLog: payload.setupLog ?? "",
-            setupLogPath: payload.setupLogPath ?? null,
-          },
-          null,
-          2
-        );
-      }
+          return [
+            `Setup log path: ${payload.setupLogPath ?? "(unknown)"}`,
+            "Setup logs:",
+            payload.setupLog ?? "(no setup log output yet)",
+          ].join("\n");
+        },
+        init: { method: "GET", headers },
+      });
+    },
+  };
+}
 
-      return [
-        `Setup log path: ${payload.setupLogPath ?? "(unknown)"}`,
-        "Setup logs:",
-        payload.setupLog ?? "(no setup log output yet)",
-      ].join("\n");
-    });
-  },
-});
-
-export const restart_services: ToolDefinition = tool({
-  description: `Restart ALL services for this cell.
+function createRestartServicesTool(context: HiveToolContext): HiveV2Tool {
+  return {
+    name: "hive_restart_services",
+    options: { codemode: false },
+    description: `Restart ALL services for this cell.
 
 THIS IS A DESTRUCTIVE OPERATION:
 - Stops services and starts them again
@@ -657,32 +737,37 @@ IF YOU ONLY NEED ONE SERVICE: use hive_restart_service instead.
 SAFETY: You must pass confirm=true or the tool will refuse to run.
 
 TIP: Call hive_services after restarting to confirm everything is healthy.`,
-  args: {
-    includeLogs: statusIncludeLogsArg,
-    logLines: statusLogLinesArg,
-    logOffset: statusLogOffsetArg,
-    format: outputFormatArg,
-    confirm: createConfirmArg("restart services"),
-  },
-  async execute(args, context) {
-    if (args.confirm !== true) {
-      return "Refusing to restart services without confirm=true.";
-    }
+    input: objectInput({
+      includeLogs: statusIncludeLogsArg,
+      logLines: statusLogLinesArg,
+      logOffset: statusLogOffsetArg,
+      format: outputFormatArg,
+      confirm: createConfirmArg("restart services"),
+    }),
+    async execute(input) {
+      const args = input as ServiceStatusArgs & { confirm?: boolean };
+      if (args.confirm !== true) {
+        return toolResult("Refusing to restart services without confirm=true.");
+      }
 
-    const headers = buildHiveToolHeaders("hive_restart_services");
-    return await executeServiceRestart({
-      context,
-      serviceArgs: args,
-      restarted: "all",
-      title: formatRestartTitle(),
-      restart: (config) =>
-        restartAllCellServices({ config, signal: context.abort, headers }),
-    });
-  },
-});
+      const headers = buildHiveToolHeaders("hive_restart_services");
+      const output = await executeServiceRestart({
+        context,
+        serviceArgs: args,
+        restarted: "all",
+        title: formatRestartTitle(),
+        restart: (config) => restartAllCellServices({ config, headers }),
+      });
+      return toolResult(output);
+    },
+  };
+}
 
-export const restart_service: ToolDefinition = tool({
-  description: `Restart a SINGLE service for this cell.
+function createRestartServiceTool(context: HiveToolContext): HiveV2Tool {
+  return {
+    name: "hive_restart_service",
+    options: { codemode: false },
+    description: `Restart a SINGLE service for this cell.
 
 THIS IS A DESTRUCTIVE OPERATION:
 - Stops the service and starts it again
@@ -694,42 +779,53 @@ USE THIS TOOL WHEN:
 SAFETY: You must pass confirm=true or the tool will refuse to run.
 
 TIP: Call hive_services after restarting to confirm everything is healthy.`,
-  args: {
-    serviceName: tool.schema
-      .string()
-      .describe(
-        "The service name to restart (exact match). Call hive_services first if unsure of available names."
-      ),
-    includeLogs: statusIncludeLogsArg,
-    logLines: statusLogLinesArg,
-    logOffset: statusLogOffsetArg,
-    format: outputFormatArg,
-    confirm: createConfirmArg("restart the service"),
-  },
-  async execute(args, context) {
-    if (args.confirm !== true) {
-      return "Refusing to restart a service without confirm=true.";
-    }
+    input: objectInput(
+      {
+        serviceName: stringArg(
+          "The service name to restart (exact match). Call hive_services first if unsure of available names."
+        ),
+        includeLogs: statusIncludeLogsArg,
+        logLines: statusLogLinesArg,
+        logOffset: statusLogOffsetArg,
+        format: outputFormatArg,
+        confirm: createConfirmArg("restart the service"),
+      },
+      ["serviceName"]
+    ),
+    async execute(input) {
+      const args = input as ServiceStatusArgs & {
+        serviceName: string;
+        confirm?: boolean;
+      };
+      if (args.confirm !== true) {
+        return toolResult(
+          "Refusing to restart a service without confirm=true."
+        );
+      }
 
-    const headers = buildHiveToolHeaders("hive_restart_service");
-    return await executeServiceRestart({
-      context,
-      serviceArgs: args,
-      restarted: args.serviceName,
-      title: formatRestartTitle(args.serviceName),
-      restart: (config) =>
-        restartSingleService({
-          config,
-          signal: context.abort,
-          serviceName: args.serviceName,
-          headers,
-        }),
-    });
-  },
-});
+      const headers = buildHiveToolHeaders("hive_restart_service");
+      const output = await executeServiceRestart({
+        context,
+        serviceArgs: args,
+        restarted: args.serviceName,
+        title: formatRestartTitle(args.serviceName),
+        restart: (config) =>
+          restartSingleService({
+            config,
+            serviceName: args.serviceName,
+            headers,
+          }),
+      });
+      return toolResult(output);
+    },
+  };
+}
 
-export const rerun_setup: ToolDefinition = tool({
-  description: `Re-run cell setup/provisioning.
+function createRerunSetupTool(context: HiveToolContext): HiveV2Tool {
+  return {
+    name: "hive_rerun_setup",
+    options: { codemode: false },
+    description: `Re-run cell setup/provisioning.
 
 This re-executes the template setup commands (dependency installs, migrations, etc.) and re-ensures services.
 
@@ -738,43 +834,384 @@ USE THIS TOOL WHEN:
 - Dependencies or migrations are out of date and you want to re-run setup
 
 SAFETY: You must pass confirm=true or the tool will refuse to run.`,
-  args: {
-    format: outputFormatArg,
-    confirm: createConfirmArg("rerun setup"),
-  },
-  async execute(args, context) {
-    if (args.confirm !== true) {
-      return "Refusing to rerun setup without confirm=true.";
-    }
-
-    const headers = buildHiveToolHeaders("hive_rerun_setup");
-
-    return await executeWithHiveToolRequest(context, args, async (request) => {
-      const payload = await fetchJson<Record<string, unknown>>(
-        cellUrl(request.config, "/setup/retry"),
-        context.abort,
-        { method: "POST", headers }
-      );
-
-      if (request.format === "json") {
-        return JSON.stringify(payload, null, 2);
+    input: objectInput({
+      format: outputFormatArg,
+      confirm: createConfirmArg("rerun setup"),
+    }),
+    async execute(input) {
+      const args = input as { format?: "text" | "json"; confirm?: boolean };
+      if (args.confirm !== true) {
+        return toolResult("Refusing to rerun setup without confirm=true.");
       }
 
-      const status =
-        typeof payload.status === "string" ? payload.status : "(unknown)";
-      const setupLogPath =
-        typeof payload.setupLogPath === "string"
-          ? payload.setupLogPath
-          : "(unknown)";
-      const setupLog =
-        typeof payload.setupLog === "string" ? payload.setupLog : null;
+      const headers = buildHiveToolHeaders("hive_rerun_setup");
 
-      return [
-        `Setup rerun requested. Current cell status: ${status}`,
-        `Setup log path: ${setupLogPath}`,
-        "Setup logs:",
-        setupLog ?? "(no setup log output yet)",
-      ].join("\n");
+      return await fetchAndFormatHiveToolResult<Record<string, unknown>>({
+        context,
+        args,
+        url: (config) => cellUrl(config, "/setup/retry"),
+        formatResponse: (payload, format) => {
+          if (format === "json") {
+            return JSON.stringify(payload, null, 2);
+          }
+
+          const status =
+            typeof payload.status === "string" ? payload.status : "(unknown)";
+          const setupLogPath =
+            typeof payload.setupLogPath === "string"
+              ? payload.setupLogPath
+              : "(unknown)";
+          const setupLog =
+            typeof payload.setupLog === "string" ? payload.setupLog : null;
+
+          return [
+            `Setup rerun requested. Current cell status: ${status}`,
+            `Setup log path: ${setupLogPath}`,
+            "Setup logs:",
+            setupLog ?? "(no setup log output yet)",
+          ].join("\n");
+        },
+        init: { method: "POST", headers },
+      });
+    },
+  };
+}
+
+export function createHiveTools(worktreePath: string): HiveV2Tool[] {
+  const context = { worktreePath };
+  return [
+    createServicesTool(context),
+    createServiceLogsTool(context),
+    createSetupLogsTool(context),
+    createRestartServicesTool(context),
+    createRestartServiceTool(context),
+    createRerunSetupTool(context),
+  ];
+}
+
+type HiveHealth = {
+  config: HiveConfig;
+  cell: CellResponse;
+  services: HiveService[];
+  revision: string;
+};
+
+function canonicalizePath(path: string): string {
+  let current = resolve(path);
+  const missingSegments: string[] = [];
+
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) {
+      break;
+    }
+    missingSegments.unshift(basename(current));
+    current = parent;
+  }
+
+  return resolve(realpathSync(current), ...missingSegments);
+}
+
+function isWithin(root: string, target: string): boolean {
+  try {
+    const path = relative(canonicalizePath(root), canonicalizePath(target));
+    return (
+      path === "" ||
+      (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function validateCellLocation(
+  config: HiveConfig,
+  cell: CellResponse,
+  worktreePath: string
+): void {
+  if (cell.id !== config.cellId) {
+    throw new Error(
+      `Hive cell identity mismatch: expected ${config.cellId}, received ${cell.id}.`
+    );
+  }
+  if (resolve(cell.workspacePath) !== resolve(worktreePath)) {
+    throw new Error(
+      `Hive cell worktree mismatch: expected ${resolve(worktreePath)}, received ${resolve(cell.workspacePath)}.`
+    );
+  }
+}
+
+function buildHealthRevision(
+  cell: CellResponse,
+  services: HiveService[]
+): string {
+  const state = JSON.stringify({
+    cell: {
+      id: cell.id,
+      status: cell.status,
+      workspacePath: cell.workspacePath,
+    },
+    services: services
+      .map((service) => ({
+        id: service.id,
+        status: service.status,
+        updatedAt: service.updatedAt,
+        ports: service.ports?.map((port) => ({
+          name: port.name,
+          port: port.port,
+          primary: port.primary,
+          portReachable: port.portReachable,
+        })),
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+  });
+  return createHash("sha256").update(state).digest("hex");
+}
+
+async function loadHiveHealth(
+  worktreePath: string,
+  signal?: AbortSignal
+): Promise<HiveHealth> {
+  const config = readHiveConfig(worktreePath);
+  if (config instanceof Error) {
+    throw config;
+  }
+
+  const [cell, serviceList] = await Promise.all([
+    fetchJson<CellResponse>(cellUrl(config, "?includeSetupLog=false"), signal, {
+      headers: buildHiveToolHeaders("hive_plugin_context"),
+    }),
+    fetchJson<ServiceListResponse>(
+      cellServicesUrl(config, "?logLines=1"),
+      signal,
+      { headers: buildHiveToolHeaders("hive_plugin_context") }
+    ),
+  ]);
+  validateCellLocation(config, cell, worktreePath);
+  return {
+    config,
+    cell,
+    services: serviceList.services,
+    revision: buildHealthRevision(cell, serviceList.services),
+  };
+}
+
+function formatHiveContext(health: HiveHealth, worktreePath: string): string {
+  const services = health.services.length
+    ? health.services
+        .map((service) => {
+          const ports = (service.ports ?? [])
+            .map((port) => `${port.name}=${port.port}`)
+            .join(", ");
+          return `- ${service.name}: ${service.status}${ports ? ` (${ports})` : ""}`;
+        })
+        .join("\n")
+    : "- No services registered.";
+  return [
+    "# Fresh Hive Cell Context",
+    `- Plugin: ${HIVE_PLUGIN_ID}`,
+    `- Plugin revision: ${HIVE_PLUGIN_REVISION}`,
+    `- Cell: ${health.cell.name} (${health.cell.id})`,
+    `- Cell status: ${health.cell.status}`,
+    `- Worktree: ${worktreePath}`,
+    `- Health revision: ${health.revision}`,
+    "- Keep all mutations and shell working directories inside this worktree.",
+    "- Configured references may be read, but must not be modified.",
+    "## Current Services",
+    services,
+  ].join("\n");
+}
+
+function sanitizeEnvironmentName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9]/gu, "_").toUpperCase();
+}
+
+function buildPortEnvironment(services: HiveService[]): Record<string, string> {
+  const environment: Record<string, string> = {};
+  for (const service of services) {
+    const serviceKey = sanitizeEnvironmentName(service.name);
+    const ports = service.ports ?? [];
+    for (const port of ports) {
+      const value = String(port.port);
+      environment[`${serviceKey}_${sanitizeEnvironmentName(port.name)}_PORT`] =
+        value;
+      if (port.primary) {
+        environment[`${serviceKey}_PORT`] = value;
+      }
+    }
+    if (ports.length === 0 && service.port != null) {
+      environment[`${serviceKey}_PORT`] = String(service.port);
+    }
+  }
+  return environment;
+}
+
+function buildCellEnvironment(
+  worktreePath: string,
+  config: HiveConfig,
+  services: HiveService[]
+): Record<string, string> {
+  const inheritedCellId = process.env.HIVE_CELL_ID;
+  if (inheritedCellId && inheritedCellId !== config.cellId) {
+    throw new Error(
+      `Hive shell cell identity mismatch: expected ${config.cellId}, inherited ${inheritedCellId}.`
+    );
+  }
+
+  const environment: Record<string, string> = {
+    HIVE_CELL_ID: config.cellId,
+    HIVE_BROWSE_ROOT: worktreePath,
+    HIVE_HOME: join(worktreePath, ".hive", "home"),
+    SERVICE_HOST: process.env.SERVICE_HOST ?? "localhost",
+    SERVICE_PROTOCOL: process.env.SERVICE_PROTOCOL ?? "http",
+  };
+  for (const key of HIVE_INHERITED_SHELL_ENV_KEYS) {
+    const serviceValues = new Set(
+      services
+        .map((service) => service.env[key])
+        .filter((candidate): candidate is string => Boolean(candidate))
+    );
+    if (serviceValues.size > 1) {
+      throw new Error(`Hive services disagree on the cell environment ${key}.`);
+    }
+    const value = serviceValues.values().next().value ?? process.env[key];
+    if (value) {
+      environment[key] = value;
+    }
+  }
+  return environment;
+}
+
+async function loadReferenceRoots(context: Plugin.Context): Promise<string[]> {
+  try {
+    const response = await context.reference.list();
+    return response.data.map((reference) => resolve(reference.path));
+  } catch {
+    return [];
+  }
+}
+
+function permissionResourcePath(root: string, resource: string): string {
+  const withoutGlob = resource.replace(TRAILING_GLOB_PATTERN, "");
+  return resolve(root, withoutGlob);
+}
+
+function denyPermission(
+  event: { effect: string; message?: string },
+  message: string
+): void {
+  event.effect = "deny";
+  event.message = message;
+}
+
+const HIVE_MUTATION_ACTIONS = new Set([
+  "edit",
+  "write",
+  "patch",
+  "apply_patch",
+]);
+
+async function setupHivePlugin(context: Plugin.Context): Promise<void> {
+  const worktreePath = resolve(context.location.project.directory);
+  const configPath = join(worktreePath, HIVE_CONFIG_RELATIVE_PATH);
+  if (!existsSync(configPath)) {
+    return;
+  }
+
+  const config = readHiveConfig(worktreePath);
+  if (config instanceof Error) {
+    throw config;
+  }
+
+  const tools = createHiveTools(worktreePath);
+  await context.tool.transform((draft) => {
+    for (const definition of tools) {
+      draft.add(definition);
+    }
+  });
+
+  await context.session.hook("context", async (event) => {
+    const missingTools = tools
+      .map((tool) => tool.name)
+      .filter((name) => !event.tools[name]);
+    if (missingTools.length > 0) {
+      throw new Error(
+        `Hive plugin capability validation failed; missing tools: ${missingTools.join(", ")}`
+      );
+    }
+
+    const health = await loadHiveHealth(
+      worktreePath,
+      AbortSignal.timeout(HIVE_CONTEXT_TIMEOUT_MS)
+    );
+    event.system.push({
+      type: "text",
+      text: formatHiveContext(health, worktreePath),
+      metadata: {
+        hive: {
+          pluginId: HIVE_PLUGIN_ID,
+          pluginRevision: HIVE_PLUGIN_REVISION,
+          capabilities: [...HIVE_PLUGIN_CAPABILITIES],
+          cellId: health.cell.id,
+          cellStatus: health.cell.status,
+          healthRevision: health.revision,
+          ready: true,
+        },
+      },
     });
-  },
+  });
+
+  await context.shell.hook("create.before", async (event) => {
+    if (!isWithin(worktreePath, event.cwd)) {
+      throw new Error(
+        `Hive shell working directory is outside the cell worktree: ${event.cwd}`
+      );
+    }
+    const health = await loadHiveHealth(
+      worktreePath,
+      AbortSignal.timeout(HIVE_CONTEXT_TIMEOUT_MS)
+    );
+    Object.assign(
+      event.env,
+      buildCellEnvironment(worktreePath, health.config, health.services),
+      buildPortEnvironment(health.services)
+    );
+  });
+
+  await context.permission.hook("evaluate", async (event) => {
+    if (event.action === "external_directory") {
+      const referenceRoots = await loadReferenceRoots(context);
+      const allowedRoots = [worktreePath, ...referenceRoots];
+      const blocked = event.resources.find((resource) => {
+        const target = permissionResourcePath(worktreePath, resource);
+        return !allowedRoots.some((root) => isWithin(root, target));
+      });
+      if (blocked) {
+        denyPermission(
+          event,
+          `Hive denied access outside the cell worktree and configured references: ${blocked}`
+        );
+      }
+      return;
+    }
+
+    if (!HIVE_MUTATION_ACTIONS.has(event.action)) {
+      return;
+    }
+    const blocked = event.resources.find(
+      (resource) =>
+        !isWithin(worktreePath, permissionResourcePath(worktreePath, resource))
+    );
+    if (blocked) {
+      denyPermission(
+        event,
+        `Hive denied mutation outside the cell worktree: ${blocked}`
+      );
+    }
+  });
+}
+
+export default Plugin.define({
+  id: HIVE_PLUGIN_ID,
+  setup: setupHivePlugin,
 });

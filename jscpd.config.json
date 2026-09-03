@@ -18,7 +18,6 @@
     ".opencode/plans/**",
     ".opencode/state/**",
     ".opencode/themes/**",
-    ".opencode/tools/**",
     "tmp/**",
     "temp/**",
     "**/*.db",

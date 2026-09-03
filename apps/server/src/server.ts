@@ -14,14 +14,14 @@ import { logger } from "@bogeychan/elysia-logger";
 import { cors } from "@elysiajs/cors";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { Elysia } from "elysia";
-import { loadOpencodeConfig } from "./agents/opencode-config";
 import {
+  clearSharedOpencodeServerConnection,
   startSharedOpencodeServer,
-  stopSharedOpencodeServer,
 } from "./agents/opencode-server";
 import {
   closeAllAgentSessions,
-  markAgentSessionsForResume,
+  prepareAgentSessionsForShutdown,
+  prepareSessionsForServiceReplacement,
   resumeAgentSessionsOnStartup,
 } from "./agents/service";
 import { createBundledWebHandler } from "./bundled-web";
@@ -34,12 +34,12 @@ import { linearRoutes } from "./routes/linear";
 import { templatesRoutes } from "./routes/templates";
 import { workspacesRoutes } from "./routes/workspaces";
 import { chatTerminalService } from "./services/chat-terminal";
-import { createPortManager } from "./services/port-manager";
 import {
   releaseServerPort,
   reserveServerPort,
   type ServerPortReservation,
 } from "./services/server-port-reservation";
+import { runGracefulShutdown } from "./services/shutdown";
 import { ServiceSupervisorService } from "./services/supervisor";
 import { cellTerminalService } from "./services/terminal";
 import {
@@ -239,14 +239,10 @@ const runMigrations = async (): Promise<void> => {
   }
 };
 
-const startOpencodeServer = async (workspaceRoot: string): Promise<void> => {
-  const config = await loadOpencodeConfig(workspaceRoot);
-  const portManager = createPortManager({
-    db: DatabaseService.db,
-    now: () => new Date(),
+const startOpencodeServer = async (): Promise<void> => {
+  await startSharedOpencodeServer({
+    beforeReplace: prepareSessionsForServiceReplacement,
   });
-  const port = await portManager.findFreePort();
-  await startSharedOpencodeServer(config, { port });
 };
 
 export const cleanupPidFile = () => {
@@ -306,20 +302,14 @@ const createApp = () =>
 export type App = ReturnType<typeof createApp>;
 
 const shutdown = async (): Promise<void> => {
-  await ServiceSupervisorService.stopAll();
-  chatTerminalService.stopAll();
-  cellTerminalService.stopAll();
-  try {
-    await markAgentSessionsForResume();
-  } catch (failure) {
-    process.stderr.write(
-      `Failed to mark agent sessions for resume: ${
-        failure instanceof Error ? failure.message : String(failure)
-      }\n`
-    );
-  }
-  await closeAllAgentSessions({ deleteRemote: false });
-  await stopSharedOpencodeServer();
+  await runGracefulShutdown({
+    prepareAgentSessions: prepareAgentSessionsForShutdown,
+    closeAgentSessions: () => closeAllAgentSessions({ deleteRemote: false }),
+    stopCellServices: () => ServiceSupervisorService.stopAll(),
+    stopChatTerminals: () => chatTerminalService.stopAll(),
+    stopCellTerminals: () => cellTerminalService.stopAll(),
+    clearOpencodeConnection: clearSharedOpencodeServerConnection,
+  });
   serverRuntimeState.__hiveServerOwnerPid = undefined;
   cleanupReadyFile();
   cleanupPidFile();
@@ -380,16 +370,8 @@ const registerWorkspace = async (workspaceRoot: string): Promise<void> => {
 };
 
 const bootstrapSupervisor = async (): Promise<void> => {
-  try {
-    await ServiceSupervisorService.bootstrap();
-    process.stderr.write("Service supervisor initialized.\n");
-  } catch (failure) {
-    process.stderr.write(
-      `Failed to bootstrap service supervisor: ${
-        failure instanceof Error ? failure.message : String(failure)
-      }\n`
-    );
-  }
+  await ServiceSupervisorService.bootstrap();
+  process.stderr.write("Service supervisor initialized.\n");
 };
 
 const resumeProvisioning = async (): Promise<void> => {
@@ -421,19 +403,21 @@ const timeStartupStep = async <T>(label: string, run: () => Promise<T>) => {
 
 const runStartupRecoveryTask = async (
   task: StartupRecoveryTask
-): Promise<void> => {
+): Promise<boolean> => {
   const startedAt = process.hrtime.bigint();
   try {
     await task.run();
     process.stderr.write(
       `Startup timing: ${task.label} completed in ${formatElapsedMilliseconds(startedAt)}ms\n`
     );
+    return true;
   } catch (failure) {
     process.stderr.write(
       `Failed to ${task.label}: ${
         failure instanceof Error ? failure.message : String(failure)
       }\n`
     );
+    return false;
   }
 };
 
@@ -443,7 +427,7 @@ const bootstrapServerCore = async (workspaceRoot: string): Promise<void> => {
     await registerWorkspace(workspaceRoot);
   });
   await timeStartupStep("shared OpenCode bootstrap", async () => {
-    await startOpencodeServer(workspaceRoot);
+    await startOpencodeServer();
   });
 };
 
@@ -464,16 +448,20 @@ const runStartupRecoveryTasks = async (): Promise<void> => {
   ];
 
   for (const task of tasks) {
-    await runStartupRecoveryTask(task);
+    if (!(await runStartupRecoveryTask(task))) {
+      break;
+    }
   }
 };
+
+const describePortError = (error: unknown) =>
+  error instanceof Error ? error.message : JSON.stringify(error);
 
 const reserveApiPort = async (): Promise<ServerPortReservation> => {
   try {
     return await reserveServerPort(PORT, HOSTNAME);
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : JSON.stringify(error);
+    const message = describePortError(error);
     process.stderr.write(
       `Failed to reserve API port ${PORT}: ${message}. Is another process using this port?\n`
     );
@@ -501,9 +489,8 @@ const bootstrapServer = async (
   }
 };
 
-const listenForApiRequests = async (
-  app: ReturnType<typeof createApp>,
-  stopOpencodeOnFailure: boolean
+const listenForApiRequests = (
+  app: ReturnType<typeof createApp>
 ): Promise<void> => {
   try {
     app.listen({
@@ -512,17 +499,14 @@ const listenForApiRequests = async (
       reusePort: false,
     });
   } catch (error) {
-    if (stopOpencodeOnFailure) {
-      await stopSharedOpencodeServer();
-    }
-    const message =
-      error instanceof Error ? error.message : JSON.stringify(error);
+    const message = describePortError(error);
     process.stderr.write(
       `Failed to bind API port ${PORT}: ${message}. Is another process using this port?\n`
     );
     cleanupPidFile();
     process.exit(1);
   }
+  return Promise.resolve();
 };
 
 const ignorePreviousStartupFailure = (): Promise<void> => Promise.resolve();
@@ -588,7 +572,7 @@ const startServerGeneration = async () => {
     await releaseServerPort(portReservation);
   }
 
-  await listenForApiRequests(app, !isHotReload);
+  await listenForApiRequests(app);
 
   const boundPort = app.server?.port ?? PORT;
   const boundHostname = app.server?.hostname ?? HOSTNAME;

@@ -9,6 +9,7 @@ import {
   outputSpeechPilotFrequency,
 } from "../../../../packages/android-runtime/e2e/browser-microphone";
 import { finishRuntimeRun } from "./artifacts";
+import { throwRunAndCleanupErrors } from "./errors";
 import { createFixtureWorkspace } from "./fixture-workspace";
 import { parseSpecArg, resolveRuntimePaths } from "./paths";
 import { runPlaywrightSuite } from "./playwright";
@@ -23,7 +24,11 @@ import {
   terminateProcessIds,
 } from "./process";
 import { createRuntimeContext, type RuntimeContext } from "./runtime-context";
-import { startCompiledWebE2eServer, startWebE2eServer } from "./server";
+import {
+  startCompiledWebE2eServer,
+  startWebE2eServer,
+  stopIsolatedOpencodeService,
+} from "./server";
 import { waitForHttpOk } from "./wait";
 
 const KEEP_ARTIFACTS = process.env.HIVE_E2E_KEEP_ARTIFACTS === "1";
@@ -97,6 +102,61 @@ async function measurePhase<T>(phase: string, operation: () => Promise<T>) {
   }
 }
 
+async function finalizeRuntimeRun(
+  context: RuntimeContext,
+  managedProcesses: ManagedProcess[],
+  runSucceeded: boolean
+): Promise<unknown> {
+  const failures: unknown[] = [];
+  await measurePhase("process cleanup", async () => {
+    const cleanupSteps = [
+      () => stopManagedProcesses(managedProcesses, stopManagedProcess),
+      () => stopIsolatedOpencodeService(context),
+      () => cleanupOpencodeProcessesForRunRoot(context.runRoot),
+    ];
+    for (const cleanup of cleanupSteps) {
+      try {
+        await cleanup();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+  });
+
+  const finalizationSteps = [
+    () =>
+      writeFile(
+        join(context.artifactsDir, "e2e-phase-timings.json"),
+        JSON.stringify(phaseTimings, null, 2)
+      ),
+    () => preserveFailureRuntimeLogs({ context, runSucceeded }),
+    () =>
+      finishRuntimeRun({
+        artifactsDir: context.artifactsDir,
+        keepArtifacts: KEEP_ARTIFACTS,
+        reportsLabel: "E2E reports",
+        runRoot: context.runRoot,
+        runSucceeded: runSucceeded && failures.length === 0,
+        runArtifactsLabel: "E2E run artifacts",
+        stableArtifactsDir,
+      }),
+  ];
+  for (const finalize of finalizationSteps) {
+    try {
+      await finalize();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+
+  return failures.length > 0
+    ? new AggregateError(
+        failures,
+        "E2E cleanup and artifact finalization failed"
+      )
+    : undefined;
+}
+
 async function run() {
   const spec = parseSpecArg(process.argv.slice(2));
   const workspaceMode = resolveWorkspaceMode();
@@ -117,6 +177,8 @@ async function run() {
   );
   const managedProcesses: ManagedProcess[] = [];
   let runSucceeded = false;
+  let runError: unknown;
+  let processCleanupError: unknown;
 
   try {
     await cleanupOrphanedOpencodeProcesses({
@@ -239,27 +301,20 @@ async function run() {
 
     runSucceeded = true;
     process.stdout.write("E2E suite passed.\n");
+  } catch (error) {
+    runError = error;
   } finally {
-    await measurePhase("process cleanup", async () => {
-      await stopManagedProcesses(managedProcesses, stopManagedProcess);
-      await cleanupOpencodeProcessesForRunRoot(context.runRoot);
-    });
-    await writeFile(
-      join(context.artifactsDir, "e2e-phase-timings.json"),
-      JSON.stringify(phaseTimings, null, 2)
+    processCleanupError = await finalizeRuntimeRun(
+      context,
+      managedProcesses,
+      runSucceeded
     );
-    await preserveFailureRuntimeLogs({ context, runSucceeded });
-
-    await finishRuntimeRun({
-      artifactsDir: context.artifactsDir,
-      keepArtifacts: KEEP_ARTIFACTS,
-      reportsLabel: "E2E reports",
-      runRoot: context.runRoot,
-      runSucceeded,
-      runArtifactsLabel: "E2E run artifacts",
-      stableArtifactsDir,
-    });
   }
+  throwRunAndCleanupErrors(
+    runError,
+    processCleanupError,
+    "E2E run and cleanup failed"
+  );
 }
 
 async function preserveFailureRuntimeLogs(options: {

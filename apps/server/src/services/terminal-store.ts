@@ -298,9 +298,15 @@ export const createPtySessionController = <
       const pty = spawnPty(args);
       const record = createRecord(args, pty);
       pty.onData((chunk) => {
+        if (sessions.get(args.cellId) !== record) {
+          return;
+        }
         sessions.appendOutput(args.cellId, chunk);
       });
       pty.onExit(({ exitCode, signal }) => {
+        if (sessions.get(args.cellId) !== record) {
+          return;
+        }
         sessions.markExit(
           args.cellId,
           exitCode,

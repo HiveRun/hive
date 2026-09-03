@@ -1,104 +1,63 @@
-import type { Event } from "@opencode-ai/sdk";
+import type { OpenCodeEvent } from "@opencode-ai/client";
 import { describe, expect, it } from "vitest";
 import {
+  adaptOpencodeEvent,
   resolveRuntimeModeFromEvent,
   resolveRuntimeStatusFromEvent,
 } from "../agents/service";
+import type { AgentRuntimeEvent } from "../agents/types";
 
 describe("resolveRuntimeStatusFromEvent", () => {
-  it("returns null when user message updates", () => {
-    const event = buildMessageUpdatedEvent("user");
-    expect(resolveRuntimeStatusFromEvent(event)).toBeNull();
+  it("returns null when user agent selection updates", () => {
+    expect(resolveStatus(buildAgentSelectedEvent("build"))).toBeNull();
   });
 
-  it("returns working for assistant message updates", () => {
-    const event = buildMessageUpdatedEvent("assistant", {
-      time: { created: Date.now(), completed: Date.now() },
+  it("returns working for assistant step updates", () => {
+    expect(resolveStatus(buildStepStartedEvent("build"))).toEqual({
+      status: "working",
     });
-    expect(resolveRuntimeStatusFromEvent(event)).toEqual({ status: "working" });
   });
 
   it("returns awaiting_input for session idle events", () => {
-    assertResolvedStatus(agentEvent("session.idle"), "awaiting_input");
+    assertResolvedStatus(v2Event("session.idle"), "awaiting_input");
   });
 
   it("returns awaiting_input for session status idle updates", () => {
     assertResolvedStatus(
-      agentEvent("session.status", { status: { type: "idle" } }),
+      v2Event("session.status", { status: { type: "idle" } }),
       "awaiting_input"
     );
   });
 
   it("returns working for session status busy updates", () => {
     assertResolvedStatus(
-      agentEvent("session.status", { status: { type: "busy" } }),
+      v2Event("session.status", { status: { type: "busy" } }),
       "working"
     );
   });
 
   it("returns awaiting_input for permission prompts", () => {
-    assertResolvedStatus(
-      agentEvent("permission.asked", {
-        id: "perm_test",
-        permission: "plan_exit",
-        patterns: ["plan_exit"],
-        metadata: {},
-        always: [],
-      }),
-      "awaiting_input"
-    );
+    assertResolvedStatus(buildPermissionAskedEvent(), "awaiting_input");
   });
 
   it("returns working for permission replies", () => {
-    assertResolvedStatus(
-      agentEvent("permission.replied", {
-        permissionID: "perm_test",
-        response: "once",
-      }),
-      "working"
-    );
+    assertResolvedStatus(buildPermissionRepliedEvent(), "working");
   });
 
   it("returns awaiting_input for plan questions", () => {
-    assertResolvedStatus(
-      agentEvent("question.asked", {
-        id: "question_test",
-        text: "Continue?",
-      }),
-      "awaiting_input"
-    );
+    assertResolvedStatus(buildFormCreatedEvent(), "awaiting_input");
   });
 
   it("returns working for answered plan questions", () => {
-    assertResolvedStatus(
-      agentEvent("question.replied", {
-        id: "question_test",
-        text: "Continue?",
-        answer: "Yes",
-      }),
-      "working"
-    );
+    assertResolvedStatus(buildFormRepliedEvent(), "working");
   });
 
   it("returns awaiting_input for rejected plan questions", () => {
-    assertResolvedStatus(
-      agentEvent("question.rejected", {
-        id: "question_test",
-      }),
-      "awaiting_input"
-    );
+    assertResolvedStatus(buildFormCancelledEvent(), "awaiting_input");
   });
 
-  it("returns error info for session errors", () => {
-    const event: Event = {
-      type: "session.error",
-      properties: {
-        sessionID: "ses_test",
-        error: { data: { message: "boom" } },
-      },
-    } as unknown as Event;
-
-    expect(resolveRuntimeStatusFromEvent(event)).toEqual({
+  it("returns error info for failed executions", () => {
+    expect(resolveStatus(buildExecutionFailedEvent())).toEqual({
       status: "error",
       error: "boom",
     });
@@ -106,85 +65,156 @@ describe("resolveRuntimeStatusFromEvent", () => {
 });
 
 describe("resolveRuntimeModeFromEvent", () => {
-  it("uses user message mode updates for no-reply prompts", () => {
-    const event = buildMessageUpdatedEvent("user", { mode: "build" });
-    expect(resolveRuntimeModeFromEvent(event)).toBe("build");
+  it("uses session agent selections", () => {
+    expect(resolveMode(buildAgentSelectedEvent("build"))).toBe("build");
   });
 
-  it("uses assistant message mode updates", () => {
-    const event = buildMessageUpdatedEvent("assistant", { mode: "plan" });
-    expect(resolveRuntimeModeFromEvent(event)).toBe("plan");
+  it("uses assistant step agent updates", () => {
+    expect(resolveMode(buildStepStartedEvent("plan"))).toBe("plan");
   });
 });
 
-function buildMessageUpdatedEvent(
-  role: "user" | "assistant",
-  options?: {
-    mode?: "plan" | "build";
-    time?: { created: number; completed?: number };
+function adapt(event: OpenCodeEvent): AgentRuntimeEvent {
+  const adapted = adaptOpencodeEvent(event);
+  if (!adapted) {
+    throw new Error(`Expected ${event.type} to be adapted`);
   }
-): Event {
-  if (role === "assistant") {
-    const info = {
-      id: "msg_test",
-      sessionID: "ses_test",
-      role: "assistant" as const,
-      parentID: "msg_user",
-      time: {
-        created: Date.now(),
-        ...options?.time,
-      },
-      model: {
-        providerID: "provider_test",
-        modelID: "model_test",
-      },
-      ...(options?.mode ? { mode: options.mode } : {}),
-    };
-
-    return {
-      type: "message.updated",
-      properties: { info },
-    } as unknown as Event;
-  }
-
-  const info = {
-    id: "msg_test",
-    sessionID: "ses_test",
-    role: "user" as const,
-    time: {
-      created: Date.now(),
-      ...options?.time,
-    },
-    ...(options?.mode ? { mode: options.mode } : {}),
-  } as {
-    id: string;
-    sessionID: string;
-    role: "user";
-    time: { created: number; completed?: number };
-    mode?: "plan" | "build";
-  };
-
-  return {
-    type: "message.updated",
-    properties: { info },
-  } as unknown as Event;
+  return adapted;
 }
 
-function agentEvent(
-  type: string,
-  properties: Record<string, unknown> = {}
-): Event {
+function resolveStatus(event: OpenCodeEvent) {
+  return resolveRuntimeStatusFromEvent(adapt(event));
+}
+
+function resolveMode(event: OpenCodeEvent) {
+  return resolveRuntimeModeFromEvent(adapt(event));
+}
+
+function eventBase() {
+  return { id: "evt_test", created: Date.now() };
+}
+
+function durable() {
+  return { aggregateID: "ses_test", seq: 1, version: 1 as const };
+}
+
+function v2Event(
+  type: "session.idle" | "session.status",
+  data: Record<string, unknown> = {}
+): OpenCodeEvent {
+  if (type === "session.status") {
+    return {
+      ...eventBase(),
+      type,
+      data: {
+        sessionID: "ses_test",
+        status: data.status as { type: "idle" | "busy" },
+      },
+    };
+  }
+  return { ...eventBase(), type, data: { sessionID: "ses_test" } };
+}
+
+function buildAgentSelectedEvent(agent: "plan" | "build"): OpenCodeEvent {
   return {
-    type,
-    properties: { sessionID: "ses_test", ...properties },
-  } as unknown as Event;
+    ...eventBase(),
+    type: "session.agent.selected",
+    durable: durable(),
+    data: { sessionID: "ses_test", agent },
+  };
+}
+
+function buildStepStartedEvent(agent: "plan" | "build"): OpenCodeEvent {
+  return {
+    ...eventBase(),
+    type: "session.step.started",
+    durable: durable(),
+    data: {
+      sessionID: "ses_test",
+      assistantMessageID: "msg_test",
+      agent,
+      model: { id: "model_test", providerID: "provider_test" },
+    },
+  };
+}
+
+function buildPermissionAskedEvent(): OpenCodeEvent {
+  return {
+    ...eventBase(),
+    type: "permission.asked",
+    data: {
+      id: "perm_test",
+      sessionID: "ses_test",
+      action: "plan_exit",
+      resources: ["plan_exit"],
+    },
+  };
+}
+
+function buildPermissionRepliedEvent(): OpenCodeEvent {
+  return {
+    ...eventBase(),
+    type: "permission.replied",
+    data: {
+      sessionID: "ses_test",
+      requestID: "perm_test",
+      reply: "once",
+    },
+  };
+}
+
+function buildFormCreatedEvent(): OpenCodeEvent {
+  return {
+    ...eventBase(),
+    type: "form.created",
+    data: {
+      form: {
+        id: "question_test",
+        sessionID: "ses_test",
+        title: "Continue?",
+        fields: [{ key: "continue", type: "boolean" }],
+      },
+    },
+  };
+}
+
+function buildFormRepliedEvent(): OpenCodeEvent {
+  return {
+    ...eventBase(),
+    type: "form.replied",
+    data: {
+      id: "question_test",
+      sessionID: "ses_test",
+      answer: { continue: true },
+    },
+  };
+}
+
+function buildFormCancelledEvent(): OpenCodeEvent {
+  return {
+    ...eventBase(),
+    type: "form.cancelled",
+    data: { id: "question_test", sessionID: "ses_test" },
+  };
+}
+
+function buildExecutionFailedEvent(): OpenCodeEvent {
+  return {
+    ...eventBase(),
+    type: "session.execution.failed",
+    durable: durable(),
+    data: {
+      sessionID: "ses_test",
+      error: { type: "ProviderError", message: "boom" },
+    },
+  };
 }
 
 function assertResolvedStatus(
-  sourceEvent: Event,
+  sourceEvent: OpenCodeEvent,
   status: "awaiting_input" | "working"
 ) {
-  const actual = resolveRuntimeStatusFromEvent(sourceEvent);
+  const actual = resolveStatus(sourceEvent);
   if (actual?.status !== status || actual.error) {
     throw new Error(`Expected status ${status}, got ${JSON.stringify(actual)}`);
   }

@@ -13,7 +13,7 @@
       "zod": "^4.1.11",
       "typescript": "^5.8.2",
       "tsdown": "^0.15.5",
-      "@opencode-ai/sdk": "^1.4.3"
+      "@opencode-ai/client": "0.0.0-beta-18866"
     }
   },
   "scripts": {
@@ -92,12 +92,21 @@
   "dependencies": {
     "zod": "^4.1.13"
   },
+  "optionalDependencies": {
+    "@opencode-ai/cli-darwin-arm64": "0.0.0-beta-18866",
+    "@opencode-ai/cli-darwin-x64-baseline": "0.0.0-beta-18866",
+    "@opencode-ai/cli-linux-arm64": "0.0.0-beta-18866",
+    "@opencode-ai/cli-linux-x64-baseline": "0.0.0-beta-18866",
+    "@opencode-ai/cli-windows-arm64": "0.0.0-beta-18866",
+    "@opencode-ai/cli-windows-x64-baseline": "0.0.0-beta-18866"
+  },
   "devDependencies": {
     "@biomejs/biome": "2.3.0",
     "@changesets/cli": "^2.29.7",
     "@commitlint/cli": "^20.1.0",
     "@commitlint/config-conventional": "^20.0.0",
-    "@opencode-ai/plugin": "^1.4.3",
+    "@opencode-ai/cli": "0.0.0-beta-18866",
+    "@opencode-ai/plugin": "0.0.0-beta-18866",
     "@types/bun": "^1.2.6",
     "husky": "^9.1.7",
     "jscpd": "^4.0.9",
@@ -116,6 +125,9 @@
   "patchedDependencies": {
     "stream-droid@0.5.0": "patches/stream-droid@0.5.0.patch"
   },
+  "trustedDependencies": [
+    "@opencode-ai/cli"
+  ],
   "lint-staged": {
     "**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue,astro,svelte}": [
       "biome check --write --files-ignore-unknown=true --no-errors-on-unmatched"

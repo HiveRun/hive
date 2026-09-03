@@ -1,20 +1,16 @@
 import { rpc } from "@/lib/rpc";
 
-export type AgentSession = {
-  id: string;
-  cellId: string;
-  templateId: string;
+type AgentSessionResponse = NonNullable<
+  Awaited<
+    ReturnType<ReturnType<typeof rpc.api.agents.sessions.byCell>["get"]>
+  >["data"]
+>;
+
+export type AgentSession = Omit<
+  NonNullable<AgentSessionResponse["session"]>,
+  "provider"
+> & {
   provider: string;
-  status: string;
-  workspacePath: string;
-  createdAt: string;
-  updatedAt: string;
-  completedAt?: string;
-  modelId?: string;
-  modelProviderId?: string;
-  startMode?: "plan" | "build";
-  currentMode?: "plan" | "build";
-  modeUpdatedAt?: string;
 };
 
 export const agentQueries = {

@@ -2,36 +2,17 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { OpencodeClient, ServerOptions } from "@opencode-ai/sdk";
-import { mergeHiveBrowserSafeKeybinds } from "../opencode/browser-safe-keybinds";
+import type { ConfigEntry, OpenCodeClient } from "@opencode-ai/client";
 import { acquireSharedOpencodeClient } from "./opencode-server";
 
-const WORKSPACE_CONFIG_CANDIDATES = [
-  "@opencode.json",
-  "opencode.json",
-] as const;
-
-const HIVE_INSTRUCTIONS_PATH = ".hive/instructions.md";
-const HIVE_THEME_NAME = "hive-resonant";
-
-type OpencodeServerConfig = NonNullable<ServerOptions["config"]>;
+type ConfigDocument = Extract<ConfigEntry, { type: "document" }>;
+type OpencodeServerConfig = ConfigDocument["info"];
+type ModelConfig = NonNullable<OpencodeServerConfig["model"]>;
 
 type DefaultModel = {
   providerId?: string;
   modelId?: string;
   variant?: string;
-};
-
-type AgentScopedConfig = {
-  model?: unknown;
-  variant?: unknown;
-};
-
-export type LoadedOpencodeConfig = {
-  config: OpencodeServerConfig;
-  source: "workspace" | "default";
-  details?: string;
-  defaultModel?: DefaultModel;
 };
 
 export type EffectiveOpencodeDefaults = {
@@ -47,92 +28,79 @@ function normalizeStartMode(value: unknown): "plan" | "build" | undefined {
   return value === "plan" || value === "build" ? value : undefined;
 }
 
-function withHiveInstructions(
-  config: OpencodeServerConfig
-): OpencodeServerConfig {
-  const existing = Array.isArray(config.instructions)
-    ? config.instructions
-    : [];
-  if (existing.includes(HIVE_INSTRUCTIONS_PATH)) {
-    return config;
+function latestConfigValue<K extends keyof OpencodeServerConfig>(
+  entries: ConfigEntry[],
+  key: K
+): OpencodeServerConfig[K] | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.type === "document" && entry.info[key] !== undefined) {
+      return entry.info[key];
+    }
   }
-  return {
-    ...config,
-    instructions: [...existing, HIVE_INSTRUCTIONS_PATH],
-  };
+  return;
 }
 
-function withHiveTheme(config: OpencodeServerConfig): OpencodeServerConfig {
-  if (typeof config.theme === "string" && config.theme.trim().length > 0) {
-    return config;
+function parseModelConfig(
+  model: ModelConfig | undefined
+): DefaultModel | undefined {
+  if (!model) {
+    return;
   }
-
-  return {
-    ...config,
-    theme: HIVE_THEME_NAME,
-  };
-}
-
-function withHiveBrowserSafeKeybinds(
-  config: OpencodeServerConfig
-): OpencodeServerConfig {
-  const keybinds = (config as { keybinds?: unknown }).keybinds;
-
-  return {
-    ...config,
-    keybinds: mergeHiveBrowserSafeKeybinds(keybinds),
-  };
-}
-
-function withHiveDefaults(config: OpencodeServerConfig): OpencodeServerConfig {
-  return withHiveTheme(
-    withHiveInstructions(withHiveBrowserSafeKeybinds(config))
-  );
-}
-
-export async function loadOpencodeConfig(
-  workspaceRootPath: string
-): Promise<LoadedOpencodeConfig> {
-  const fileConfig = await readWorkspaceConfig(workspaceRootPath);
-  if (fileConfig) {
-    const configWithHive = withHiveDefaults(fileConfig);
-    const defaultModel = extractDefaultModel(configWithHive);
+  if (typeof model !== "string") {
     return {
-      config: configWithHive,
-      source: "workspace",
-      ...(defaultModel ? { defaultModel } : {}),
+      providerId: model.providerID,
+      modelId: model.model,
+      ...(model.variant ? { variant: model.variant } : {}),
     };
   }
 
-  const fallback: OpencodeServerConfig = withHiveDefaults({});
-  const fallbackDefaultModel = extractDefaultModel(fallback);
+  const [reference, variant] = model.trim().split("#", 2);
+  const separator = reference?.indexOf("/") ?? -1;
+  if (!reference || separator < 1 || separator === reference.length - 1) {
+    return;
+  }
   return {
-    config: fallback,
-    source: "default",
-    ...(fallbackDefaultModel ? { defaultModel: fallbackDefaultModel } : {}),
+    providerId: reference.slice(0, separator),
+    modelId: reference.slice(separator + 1),
+    ...(variant ? { variant } : {}),
   };
+}
+
+function resolveAgentModel(
+  entries: ConfigEntry[],
+  agentId: string | undefined
+): ModelConfig | undefined {
+  if (!agentId) {
+    return;
+  }
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.type !== "document") {
+      continue;
+    }
+    const model = entry.info.agents?.[agentId]?.model;
+    if (model !== undefined) {
+      return model;
+    }
+  }
+  return;
 }
 
 export async function loadEffectiveOpencodeDefaults(
   workspaceRootPath: string,
-  options?: { client?: Pick<OpencodeClient, "config"> }
+  options?: { client?: Pick<OpenCodeClient, "config"> }
 ): Promise<EffectiveOpencodeDefaults> {
   const client = options?.client ?? (await acquireSharedOpencodeClient());
-  const response = await client.config.get({
-    throwOnError: true,
-    query: { directory: workspaceRootPath },
+  const entries = await client.config.get({
+    location: { directory: workspaceRootPath },
   });
-
-  if (!response.data) {
-    throw new Error("OpenCode server returned an empty config response");
-  }
-
-  const config = response.data as OpencodeServerConfig & {
-    default_agent?: unknown;
-  };
-
-  const defaultModel = extractDefaultModel(config);
-  const startMode = normalizeStartMode(config.default_agent);
+  const defaultAgent = latestConfigValue(entries, "default_agent");
+  const model =
+    resolveAgentModel(entries, defaultAgent) ??
+    latestConfigValue(entries, "model");
+  const defaultModel = parseModelConfig(model);
+  const startMode = normalizeStartMode(defaultAgent);
 
   return {
     ...(defaultModel ? { defaultModel } : {}),
@@ -176,165 +144,5 @@ function resolveOpencodeStateDirectory(): string {
   if (stateHome) {
     return stateHome;
   }
-
   return join(homedir(), ".local", "state");
-}
-
-async function readWorkspaceConfig(
-  workspaceRootPath: string
-): Promise<OpencodeServerConfig | undefined> {
-  for (const filename of WORKSPACE_CONFIG_CANDIDATES) {
-    const configPath = join(workspaceRootPath, filename);
-    try {
-      const raw = await readFile(configPath, "utf8");
-      const parsed = JSON.parse(raw);
-      assertIsOpencodeConfig(parsed, configPath);
-      return parsed;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-        continue;
-      }
-      throw new Error(
-        `Failed to read OpenCode config from ${configPath}: ${error instanceof Error ? error.message : error}`
-      );
-    }
-  }
-
-  return;
-}
-
-function assertIsOpencodeConfig(
-  value: unknown,
-  source: string
-): asserts value is OpencodeServerConfig {
-  if (typeof value !== "object" || value === null) {
-    throw new Error(`OpenCode config at ${source} must be an object`);
-  }
-
-  const candidate = value as Record<string, unknown>;
-
-  if (candidate.model !== undefined && typeof candidate.model !== "string") {
-    throw new Error(
-      `OpenCode config at ${source} has invalid "model" (expected string)`
-    );
-  }
-
-  if (
-    candidate.provider !== undefined &&
-    (typeof candidate.provider !== "object" || candidate.provider === null)
-  ) {
-    throw new Error(
-      `OpenCode config at ${source} has invalid "provider" (expected object)`
-    );
-  }
-}
-
-function extractDefaultModel(
-  config: OpencodeServerConfig
-): DefaultModel | undefined {
-  const agentDefaultModel = extractAgentDefaultModel(config);
-  if (agentDefaultModel) {
-    return agentDefaultModel;
-  }
-
-  const raw = typeof config.model === "string" ? config.model.trim() : "";
-  if (!raw) {
-    return;
-  }
-
-  const [providerId, modelId] = raw.split("/", 2);
-  const variant = extractDefaultVariant(config);
-  if (modelId) {
-    const defaultModel: DefaultModel = { modelId };
-    if (providerId) {
-      defaultModel.providerId = providerId;
-    }
-    if (variant) {
-      defaultModel.variant = variant;
-    }
-    return defaultModel;
-  }
-
-  if (providerId) {
-    return variant ? { modelId: providerId, variant } : { modelId: providerId };
-  }
-
-  return;
-}
-
-function extractAgentDefaultModel(
-  config: OpencodeServerConfig & { default_agent?: unknown }
-): DefaultModel | undefined {
-  const defaultAgentId = readDefaultAgentId(config);
-  if (!defaultAgentId) {
-    return;
-  }
-
-  const agentConfig = readAgentConfig(config, defaultAgentId);
-  const rawModel =
-    typeof agentConfig?.model === "string" ? agentConfig.model.trim() : "";
-  if (!rawModel) {
-    return;
-  }
-
-  const [providerId, modelId] = rawModel.split("/", 2);
-  const variant = normalizeNonEmptyString(agentConfig?.variant);
-
-  if (modelId) {
-    return {
-      providerId,
-      modelId,
-      ...(variant ? { variant } : {}),
-    };
-  }
-
-  return {
-    modelId: providerId,
-    ...(variant ? { variant } : {}),
-  };
-}
-
-function extractDefaultVariant(
-  config: OpencodeServerConfig & { default_agent?: unknown }
-): string | undefined {
-  const defaultAgentId = readDefaultAgentId(config);
-  if (!defaultAgentId) {
-    return;
-  }
-
-  return normalizeNonEmptyString(readAgentVariant(config, defaultAgentId));
-}
-
-function readDefaultAgentId(config: { default_agent?: unknown }) {
-  return typeof config.default_agent === "string"
-    ? config.default_agent
-    : undefined;
-}
-
-function normalizeNonEmptyString(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return;
-  }
-
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function readAgentConfig(
-  config: OpencodeServerConfig,
-  agentId: string
-): AgentScopedConfig | undefined {
-  const candidate = config as {
-    agent?: Record<string, AgentScopedConfig>;
-    mode?: Record<string, AgentScopedConfig>;
-  };
-
-  return candidate.agent?.[agentId] ?? candidate.mode?.[agentId];
-}
-
-function readAgentVariant(
-  config: OpencodeServerConfig,
-  agentId: string
-): unknown {
-  return readAgentConfig(config, agentId)?.variant;
 }

@@ -6,6 +6,7 @@ import {
   fetchAgentMessages,
   fetchAgentSession,
   fetchAgentSessionForCell,
+  fetchPendingAgentInputEvents,
   fetchProviderCatalogForWorkspace,
   type ProviderEntry,
   type ProviderModel,
@@ -305,36 +306,25 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .get(
     "/sessions/:id/events",
     async ({ params, request, set }) => {
+      const { iterator, cleanup } = createEventIterator(
+        params.id,
+        request.signal
+      );
       let session: AgentSessionRecord;
+      let pendingInputEvents: AgentStreamEvent[];
       try {
         session = await fetchSessionOrThrow(
           params.id,
           "Failed to fetch session"
         );
+        pendingInputEvents = await fetchPendingAgentInputEvents(params.id);
       } catch (error) {
+        cleanup();
         return messageRouteErrorPayload(set, error, "Failed to fetch session");
       }
 
       setResponseStatus(set, HTTP_STATUS.OK);
-
-      const { iterator } = createEventIterator(params.id, request.signal);
-
-      async function* stream() {
-        yield sse({ event: "status", data: { status: session.status } });
-        const initialModeEvent = formatInitialModeSseEvent(session);
-        if (initialModeEvent) {
-          yield initialModeEvent;
-        }
-
-        for await (const event of iterator) {
-          const nextEvent = formatAgentStreamSseEvent(event);
-          if (nextEvent) {
-            yield nextEvent;
-          }
-        }
-      }
-
-      return stream();
+      return streamAgentEvents(session, pendingInputEvents, iterator);
     },
     {
       params: t.Object({ id: t.String() }),
@@ -461,6 +451,52 @@ function formatInputRequiredSseEvent(event: AgentStreamEvent) {
   }
 
   return null;
+}
+
+function getInputRequiredEventId(event: AgentStreamEvent): string | undefined {
+  const rawType = (event as { type: string }).type;
+  if (
+    rawType !== "permission.asked" &&
+    rawType !== "permission.updated" &&
+    rawType !== "question.asked"
+  ) {
+    return;
+  }
+  return (event as { properties?: InputRequiredProperties }).properties?.id;
+}
+
+async function* streamAgentEvents(
+  session: AgentSessionRecord,
+  pendingInputEvents: AgentStreamEvent[],
+  events: AsyncIterable<AgentStreamEvent>
+) {
+  const pendingInputIds = new Set(
+    pendingInputEvents
+      .map(getInputRequiredEventId)
+      .filter((id): id is string => Boolean(id))
+  );
+  yield sse({ event: "status", data: { status: session.status } });
+  const initialModeEvent = formatInitialModeSseEvent(session);
+  if (initialModeEvent) {
+    yield initialModeEvent;
+  }
+  for (const event of pendingInputEvents) {
+    const pendingEvent = formatAgentStreamSseEvent(event);
+    if (pendingEvent) {
+      yield pendingEvent;
+    }
+  }
+
+  for await (const event of events) {
+    const pendingInputId = getInputRequiredEventId(event);
+    if (pendingInputId && pendingInputIds.delete(pendingInputId)) {
+      continue;
+    }
+    const nextEvent = formatAgentStreamSseEvent(event);
+    if (nextEvent) {
+      yield nextEvent;
+    }
+  }
 }
 
 function formatAgentStreamSseEvent(event: AgentStreamEvent) {

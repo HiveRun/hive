@@ -7,6 +7,7 @@ import {
   cp,
   mkdir,
   readdir,
+  readFile,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -14,6 +15,13 @@ import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { resolveReleaseVersion } from "../release/release-version";
+import {
+  assertOpenCodeBinary,
+  OPENCODE_PACKAGE_NAME,
+  OPENCODE_VERSION,
+  openCodeNativePackageName,
+  openCodeReleaseBinaryName,
+} from "./common";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const releaseBaseDir = join(repoRoot, "dist", "install");
@@ -31,6 +39,29 @@ const streamDroidRoot = join(
   androidRuntimeRoot,
   "node_modules",
   "stream-droid"
+);
+const openCodePackageRoot = join(
+  repoRoot,
+  "node_modules",
+  "@opencode-ai",
+  "cli"
+);
+const openCodePackageManifestPath = join(openCodePackageRoot, "package.json");
+const openCodeNativePackage = openCodeNativePackageName(platform, arch);
+const openCodeNativePackageRoot = join(
+  repoRoot,
+  "node_modules",
+  ...openCodeNativePackage.split("/")
+);
+const openCodeNativePackageManifestPath = join(
+  openCodeNativePackageRoot,
+  "package.json"
+);
+const openCodeBinaryName = openCodeReleaseBinaryName(platform);
+const openCodeSourceBinaryPath = join(
+  openCodeNativePackageRoot,
+  "bin",
+  openCodeBinaryName
 );
 
 const desktopBinaryName = "hive-desktop";
@@ -299,6 +330,51 @@ const copyAndroidViewerBundle = async (destination: string) => {
   return { binaryCandidates, binaryDestination, assetsDestination };
 };
 
+const copyOpenCodeBundle = async (destination: string) => {
+  if (!existsSync(openCodePackageManifestPath)) {
+    throw new Error(
+      `${OPENCODE_PACKAGE_NAME} package manifest missing. Run bun install first.`
+    );
+  }
+
+  const packageManifest = JSON.parse(
+    await readFile(openCodePackageManifestPath, "utf8")
+  ) as { name?: string; version?: string };
+  if (
+    packageManifest.name !== OPENCODE_PACKAGE_NAME ||
+    packageManifest.version !== OPENCODE_VERSION
+  ) {
+    throw new Error(
+      `Expected ${OPENCODE_PACKAGE_NAME}@${OPENCODE_VERSION}, received ${packageManifest.name ?? "unknown"}@${packageManifest.version ?? "unknown"}`
+    );
+  }
+
+  if (!existsSync(openCodeSourceBinaryPath)) {
+    throw new Error(
+      `${openCodeNativePackage} native binary missing at ${openCodeSourceBinaryPath}. Run bun install first.`
+    );
+  }
+
+  const nativeManifest = JSON.parse(
+    await readFile(openCodeNativePackageManifestPath, "utf8")
+  ) as { name?: string; version?: string };
+  if (
+    nativeManifest.name !== openCodeNativePackage ||
+    nativeManifest.version !== OPENCODE_VERSION
+  ) {
+    throw new Error(
+      `Expected ${openCodeNativePackage}@${OPENCODE_VERSION}, received ${nativeManifest.name ?? "unknown"}@${nativeManifest.version ?? "unknown"}`
+    );
+  }
+
+  const binaryDestination = join(destination, openCodeBinaryName);
+  await copyFile(openCodeSourceBinaryPath, binaryDestination);
+  await makeExecutable(binaryDestination);
+  await assertOpenCodeBinary(binaryDestination);
+
+  return binaryDestination;
+};
+
 const main = async () => {
   await ensureDir(releaseDir);
 
@@ -348,6 +424,7 @@ const main = async () => {
 
   await copyDesktopBundle(releaseDir);
   const androidViewerBundle = await copyAndroidViewerBundle(releaseDir);
+  const openCodeBinaryDestination = await copyOpenCodeBundle(releaseDir);
 
   const releaseVersion = await resolveReleaseVersion({
     envVersion: Bun.env.HIVE_VERSION,
@@ -372,6 +449,10 @@ const main = async () => {
     assetsDir: "public",
     androidViewerBinary: androidViewerBinaryName,
     androidViewerAssetsDir: androidViewerAssetsRelativeDir,
+    opencodeBinary: openCodeBinaryName,
+    opencodePackage: OPENCODE_PACKAGE_NAME,
+    opencodeNativePackage: openCodeNativePackage,
+    opencodeVersion: OPENCODE_VERSION,
   } satisfies Record<string, string>;
 
   await writeFile(
@@ -403,6 +484,7 @@ const main = async () => {
   console.log(
     `  Android viewer assets: ${androidViewerBundle.assetsDestination}`
   );
+  console.log(`  OpenCode 2: ${openCodeBinaryDestination}`);
   console.log(`  Tarball: ${tarballPath}`);
   console.log(`  SHA256: ${sha256}`);
 };

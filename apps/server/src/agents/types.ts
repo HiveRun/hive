@@ -1,20 +1,17 @@
 /**
  * Application-layer types for agent sessions and messages.
  *
- * These types extend the OpenCode SDK types with Hive-specific concerns:
+ * These types adapt OpenCode runtime data with Hive-specific concerns:
  * - Track which cell owns a session (cellId, templateId)
- * - Add custom status tracking beyond SDK's session lifecycle
- * - Serialize SDK types into simplified API responses
+ * - Add custom status tracking beyond OpenCode's session lifecycle
+ * - Serialize runtime types into simplified API responses
  *
- * Note: These are NOT redundant with SDK types - they represent our domain model
- * on top of the OpenCode SDK primitives.
+ * Note: These are Hive's public domain types, not generated client types.
  */
-
-import type { Event as OpencodeEvent, Part } from "@opencode-ai/sdk";
 
 /**
  * Custom session statuses that track Hive-specific workflow states.
- * These are distinct from OpenCode SDK's internal session states.
+ * These are distinct from OpenCode's internal session states.
  */
 const agentSessionStatuses = [
   "starting",
@@ -32,7 +29,12 @@ export type AgentMode = (typeof agentModes)[number];
 /**
  * Message roles - subset of what OpenCode supports, focused on our use cases.
  */
-type AgentMessageRole = "user" | "assistant" | "system";
+export type AgentMessageRole = "user" | "assistant" | "system";
+
+export type AgentMessagePart = {
+  type: string;
+  [key: string]: unknown;
+};
 
 /**
  * Message states - our interpretation of OpenCode message lifecycle.
@@ -42,7 +44,7 @@ export type AgentMessageState = "pending" | "streaming" | "completed" | "error";
 /**
  * Application model for agent sessions.
  *
- * Extends OpenCode SDK's Session type with:
+ * Adapts OpenCode session data with:
  * - cellId: Links session to a Hive cell
  * - templateId: Tracks which template config was used
  * - provider: AI provider (anthropic, openai, etc.)
@@ -69,7 +71,7 @@ export type AgentSessionRecord = {
 /**
  * Serialized/normalized messages for API responses.
  *
- * Simplifies OpenCode SDK's Message type by:
+ * Simplifies OpenCode message data by:
  * - Extracting text content from parts for convenience
  * - Adding state interpretation (pending, streaming, completed, error)
  * - Keeping parts array for detailed access when needed
@@ -81,7 +83,7 @@ export type AgentMessageRecord = {
   content: string | null;
   state: AgentMessageState;
   createdAt: string;
-  parts: Part[]; // From OpenCode SDK
+  parts: AgentMessagePart[];
   parentId?: string | null;
   errorName?: string | null;
   errorMessage?: string | null;
@@ -94,8 +96,79 @@ type AgentCompactionStats = {
 
 /**
  * Stream events sent over SSE to clients.
- * Combines our custom events (history, status) with OpenCode SDK events.
+ * Combines Hive events with the stable event shapes adapted from OpenCode.
  */
+export type AgentRuntimeEvent =
+  | {
+      type: "message.updated";
+      properties: {
+        info: {
+          id: string;
+          sessionID: string;
+          role: "user" | "assistant";
+          time: { created: number; completed?: number };
+          mode?: string;
+          model?: { providerID: string; modelID: string; variant?: string };
+          error?: unknown;
+        };
+      };
+    }
+  | {
+      type: "permission.asked" | "permission.updated";
+      properties: {
+        id: string;
+        sessionID: string;
+        permission: string;
+        patterns: string[];
+        metadata: Record<string, unknown>;
+        always: string[];
+      };
+    }
+  | {
+      type: "permission.replied";
+      properties: {
+        sessionID: string;
+        permissionID: string;
+        response: "once" | "always" | "reject";
+      };
+    }
+  | {
+      type: "question.asked";
+      properties: {
+        id: string;
+        sessionID: string;
+        questions: Array<{ question: string }>;
+      };
+    }
+  | {
+      type: "question.replied";
+      properties: {
+        id: string;
+        sessionID: string;
+        answer: unknown;
+      };
+    }
+  | {
+      type: "question.rejected";
+      properties: { id: string; sessionID: string };
+    }
+  | {
+      type: "session.status";
+      properties: {
+        sessionID: string;
+        status: { type: "idle" | "busy" | "retry" };
+      };
+    }
+  | { type: "session.idle"; properties: { sessionID: string } }
+  | {
+      type: "session.error";
+      properties: { sessionID: string; error: unknown };
+    }
+  | {
+      type: "session.compacted";
+      properties: { sessionID: string; compacted?: number; count?: number };
+    };
+
 export type AgentStreamEvent =
   | { type: "history"; messages: AgentMessageRecord[] }
   | { type: "status"; status: AgentSessionStatus; error?: string }
@@ -106,4 +179,4 @@ export type AgentStreamEvent =
       modeUpdatedAt?: string;
     }
   | { type: "session.compaction"; properties: AgentCompactionStats }
-  | OpencodeEvent;
+  | AgentRuntimeEvent;
