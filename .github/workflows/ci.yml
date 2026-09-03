@@ -109,6 +109,9 @@ jobs:
       - name: Run pre-commit checks
         run: bun run check:commit
 
+      - name: Run packaging unit tests
+        run: bun test ./scripts/distribution ./scripts/install.test.ts
+
   desktop-installer:
     name: Desktop Installer Gate
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -194,22 +197,8 @@ jobs:
           restore-keys: |
             playwright-${{ runner.os }}-
 
-      - name: Cache OpenCode CLI
-        id: opencode-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.opencode/bin
-          key: opencode-${{ runner.os }}-1
-
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
-      - name: Install OpenCode CLI
-        if: steps.opencode-cache.outputs.cache-hit != 'true'
-        run: curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
-
-      - name: Add OpenCode CLI to PATH
-        run: echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
 
       - name: Install Playwright Chromium
         run: bun run --cwd apps/e2e install:browsers:ci
@@ -262,13 +251,6 @@ jobs:
           restore-keys: |
             playwright-${{ runner.os }}-
 
-      - name: Cache OpenCode CLI
-        id: opencode-cache-desktop
-        uses: actions/cache@v4
-        with:
-          path: ~/.opencode/bin
-          key: opencode-${{ runner.os }}-1
-
       - name: Install Linux desktop build dependencies
         run: |
           sudo apt-get update
@@ -286,13 +268,6 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
-      - name: Install OpenCode CLI
-        if: steps.opencode-cache-desktop.outputs.cache-hit != 'true'
-        run: curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
-
-      - name: Add OpenCode CLI to PATH
-        run: echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
 
       - name: Install Playwright Chromium
         run: bun run --cwd apps/e2e-desktop install:browsers:ci
@@ -354,13 +329,6 @@ jobs:
           restore-keys: |
             playwright-${{ runner.os }}-
 
-      - name: Cache OpenCode CLI
-        id: opencode-cache-android
-        uses: actions/cache@v4
-        with:
-          path: ~/.opencode/bin
-          key: opencode-${{ runner.os }}-1
-
       - name: Install Android and media dependencies
         run: |
           sudo apt-get update
@@ -385,13 +353,6 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
-      - name: Install OpenCode CLI
-        if: steps.opencode-cache-android.outputs.cache-hit != 'true'
-        run: curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
-
-      - name: Add OpenCode CLI to PATH
-        run: echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
 
       - name: Install Playwright Chromium
         run: bun run --cwd apps/e2e install:browsers:ci

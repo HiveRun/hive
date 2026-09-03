@@ -15,6 +15,7 @@
     "install:browsers:ci": "playwright install --with-deps chromium"
   },
   "devDependencies": {
+    "@opencode-ai/client": "catalog:",
     "@playwright/test": "^1.55.1",
     "@types/bun": "^1.3.1",
     "typescript": "catalog:"

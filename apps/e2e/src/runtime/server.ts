@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { Service } from "@opencode-ai/client/service";
 import type { ManagedProcess } from "./process";
 import { startManagedProcess, startProcessWithRetries } from "./process";
 import type { RuntimeContext } from "./runtime-context";
@@ -31,6 +32,26 @@ type StartCompiledE2eServerOptions = Omit<
   releaseDirectory: string;
 };
 
+function isolatedOpencodeEnvironment(context: RuntimeContext) {
+  const xdgRoot = join(context.hiveHome, "xdg");
+  return {
+    XDG_CACHE_HOME: join(xdgRoot, "cache"),
+    XDG_CONFIG_HOME: join(xdgRoot, "config"),
+    XDG_DATA_HOME: join(xdgRoot, "data"),
+    XDG_STATE_HOME: join(xdgRoot, "state"),
+    OPENCODE_DISABLE_AUTOUPDATE: "1",
+  };
+}
+
+export async function stopIsolatedOpencodeService(
+  context: RuntimeContext
+): Promise<void> {
+  await Service.stop({
+    file: join(context.hiveHome, "xdg", "state", "opencode", "service.json"),
+    pty: "clear",
+  });
+}
+
 export async function startHiveServerWithRetries(
   options: StartHiveServerOptions
 ): Promise<ManagedProcess> {
@@ -52,6 +73,7 @@ export async function startHiveServerWithRetries(
           HOST: "127.0.0.1",
           PORT: String(options.context.apiPort),
           ...options.extraEnv,
+          ...isolatedOpencodeEnvironment(options.context),
         },
         logsDir: options.logsDir,
         name: "server",
@@ -122,6 +144,7 @@ export async function startCompiledWebE2eServer(
           HIVE_LOG_DIR: options.logsDir,
           HIVE_MIGRATIONS_DIR: join(options.releaseDirectory, "migrations"),
           HIVE_OPENCODE_START_TIMEOUT_MS: "120000",
+          ...isolatedOpencodeEnvironment(options.context),
           HIVE_WORKSPACE_ROOT: options.context.workspaceRoot,
           HOST: "127.0.0.1",
           PORT: String(options.context.apiPort),

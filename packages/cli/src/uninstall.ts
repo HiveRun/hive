@@ -57,6 +57,7 @@ type ShellCleanupReport = {
 };
 
 const NEWLINE_PATTERN = /\r?\n/;
+const OPENCODE_LAUNCHER_MARKER = "# Managed by Hive: opencode2";
 
 const pathLivesInDirectory = (targetPath: string, baseDirectory: string) => {
   const normalizedTarget = resolve(targetPath);
@@ -78,6 +79,21 @@ const shouldRemoveHiveBinary = (binaryPath: string, hiveHome: string) => {
 
     const resolvedBinary = realpathSync(binaryPath);
     return pathLivesInDirectory(resolvedBinary, hiveHome);
+  } catch {
+    return false;
+  }
+};
+
+const shouldRemoveOpencodeLauncher = (binaryPath: string, hiveHome: string) => {
+  if (shouldRemoveHiveBinary(binaryPath, hiveHome)) {
+    return true;
+  }
+
+  try {
+    return (
+      readFileSync(binaryPath, "utf8").split(NEWLINE_PATTERN)[1] ===
+      OPENCODE_LAUNCHER_MARKER
+    );
   } catch {
     return false;
   }
@@ -184,19 +200,31 @@ const removeManagedBinaries = (
   logWarning: Logger
 ) => {
   for (const managedBinDir of managedBinDirs) {
-    const binaryPath = join(managedBinDir, "hive");
-    if (!shouldRemoveHiveBinary(binaryPath, hiveHome)) {
-      continue;
-    }
+    const managedCommands = [
+      {
+        path: join(managedBinDir, "hive"),
+        shouldRemove: shouldRemoveHiveBinary,
+      },
+      {
+        path: join(managedBinDir, "opencode2"),
+        shouldRemove: shouldRemoveOpencodeLauncher,
+      },
+    ];
 
-    try {
-      unlinkSync(binaryPath);
-    } catch (error) {
-      logWarning(
-        `Unable to remove binary symlink ${binaryPath}: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
+    for (const command of managedCommands) {
+      if (!command.shouldRemove(command.path, hiveHome)) {
+        continue;
+      }
+
+      try {
+        unlinkSync(command.path);
+      } catch (error) {
+        logWarning(
+          `Unable to remove managed command ${command.path}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
     }
   }
 };

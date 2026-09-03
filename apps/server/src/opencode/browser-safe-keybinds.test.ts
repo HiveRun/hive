@@ -13,11 +13,15 @@ describe("normalizeOpencodeKeybinds", () => {
     expect(
       normalizeOpencodeKeybinds({
         command_list: "<leader>p",
+        "session.delete": false,
         invalidArray: ["ctrl+p"],
         invalidBoolean: false,
         invalidNumber: 1,
       })
-    ).toEqual({ command_list: "<leader>p" });
+    ).toEqual({
+      "command.palette.show": "<leader>p",
+      "session.delete": false,
+    });
   });
 
   it("returns an empty map for non-object input", () => {
@@ -30,31 +34,31 @@ describe("normalizeOpencodeKeybinds", () => {
 describe("mergeHiveBrowserSafeKeybinds", () => {
   it("covers all known browser-conflicting defaults", () => {
     const knownBrowserConflicts = [
-      "app_exit",
-      "command_list",
-      "input_delete",
-      "input_delete_line",
-      "input_delete_to_line_end",
-      "input_delete_to_line_start",
-      "input_delete_word_backward",
-      "input_line_end",
-      "input_line_home",
-      "input_move_left",
-      "input_move_right",
-      "input_newline",
-      "input_undo",
-      "input_word_backward",
-      "input_word_forward",
-      "model_favorite_toggle",
-      "model_provider_list",
-      "session_delete",
-      "session_rename",
-      "stash_delete",
-      "variant_cycle",
+      "app.exit",
+      "command.palette.show",
+      "input.delete",
+      "input.delete.line",
+      "input.delete.to.line.end",
+      "input.delete.to.line.start",
+      "input.delete.word.backward",
+      "input.line.end",
+      "input.line.home",
+      "input.move.left",
+      "input.move.right",
+      "input.newline",
+      "input.undo",
+      "input.word.backward",
+      "input.word.forward",
+      "model.dialog.favorite",
+      "model.dialog.provider",
+      "session.delete",
+      "session.rename",
+      "stash.delete",
+      "variant.cycle",
     ];
 
     for (const key of knownBrowserConflicts) {
-      expect(HIVE_BROWSER_SAFE_KEYBINDS).toHaveProperty(key);
+      expect(key in HIVE_BROWSER_SAFE_KEYBINDS).toBe(true);
     }
   });
 
@@ -62,59 +66,72 @@ describe("mergeHiveBrowserSafeKeybinds", () => {
     const merged = mergeHiveBrowserSafeKeybinds();
 
     expect(merged.leader).toBe("ctrl+x");
-    expect(merged.app_exit).toBe("ctrl+c,ctrl+d,<leader>q");
-    expect(merged.variant_cycle).toBe("<leader>t");
-    expect(merged.theme_list).toBe("<leader>j");
-    expect(merged.command_list).toBe("<leader>p");
-    expect(merged.display_thinking).toBe("<leader>i");
-    expect(merged.input_newline).toBe("shift+return,alt+return,ctrl+return");
-    expect(merged.input_delete_word_backward).toBe(
+    expect(merged["app.exit"]).toBe("ctrl+c,ctrl+d,<leader>q");
+    expect(merged["variant.cycle"]).toBe("<leader>t");
+    expect(merged["theme.switch"]).toBe("<leader>j");
+    expect(merged["command.palette.show"]).toBe("<leader>p");
+    expect(merged["session.toggle.thinking"]).toBe("<leader>i");
+    expect(merged["input.newline"]).toBe("shift+return,alt+return,ctrl+return");
+    expect(merged["input.delete.word.backward"]).toBe(
       "ctrl+backspace,alt+backspace"
     );
   });
 
   it("lets later sources override defaults", () => {
     const merged = mergeHiveBrowserSafeKeybinds(
-      { command_list: "<leader>j" },
-      { command_list: "ctrl+space" }
+      { "command.palette.show": "<leader>j" },
+      { "command.palette.show": "ctrl+space" }
     );
 
-    expect(merged.command_list).toBe("ctrl+space,<leader>p");
-    expect(merged.variant_cycle).toBe(HIVE_BROWSER_SAFE_KEYBINDS.variant_cycle);
+    expect(merged["command.palette.show"]).toBe("ctrl+space,<leader>p");
+    expect(merged["variant.cycle"]).toBe(
+      HIVE_BROWSER_SAFE_KEYBINDS["variant.cycle"]
+    );
   });
 
   it("adds browser-safe aliases to custom bindings for risky actions", () => {
     const merged = mergeHiveBrowserSafeKeybinds({
-      variant_cycle: "ctrl+t",
-      theme_list: "ctrl+y",
+      "variant.cycle": "ctrl+t",
+      "theme.switch": "ctrl+y",
     });
 
-    expect(merged.variant_cycle).toBe("ctrl+t,<leader>t");
-    expect(merged.theme_list).toBe("ctrl+y,<leader>j");
+    expect(merged["variant.cycle"]).toBe("ctrl+t,<leader>t");
+    expect(merged["theme.switch"]).toBe("ctrl+y,<leader>j");
   });
 
   it("preserves explicit disabling with none", () => {
     const merged = mergeHiveBrowserSafeKeybinds({
-      variant_cycle: "none",
+      "variant.cycle": "none",
     });
 
-    expect(merged.variant_cycle).toBe("none");
+    expect(merged["variant.cycle"]).toBe("none");
   });
 
   it("does not duplicate aliases when already present", () => {
     const merged = mergeHiveBrowserSafeKeybinds({
-      variant_cycle: "ctrl+t,<leader>t",
+      "variant.cycle": "ctrl+t,<leader>t",
     });
 
-    expect(merged.variant_cycle).toBe("ctrl+t,<leader>t");
+    expect(merged["variant.cycle"]).toBe("ctrl+t,<leader>t");
+  });
+
+  it("preserves v2 binding objects and arrays when adding aliases", () => {
+    const binding = { key: "ctrl+t", preventDefault: false };
+    const merged = mergeHiveBrowserSafeKeybinds({
+      "variant.cycle": [binding, "<leader>t"],
+      "session.list": { name: "l", ctrl: true },
+    });
+
+    expect(merged["variant.cycle"]).toEqual([binding, "<leader>t"]);
+    expect(merged["session.list"]).toEqual({ name: "l", ctrl: true });
   });
 
   it("uses leader-only app exit for embedded terminals", () => {
-    expect(HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS.app_exit).toBe("<leader>q");
+    expect(HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS["app.exit"]).toBe("<leader>q");
 
     const merged = mergeHiveEmbeddedBrowserSafeKeybinds();
     expect(merged.leader).toBe("ctrl+x");
-    expect(merged.app_exit).toBe("<leader>q");
+    expect(merged["app.exit"]).toBe("<leader>q");
   });
 
   it("keeps explicit leader overrides unchanged", () => {
@@ -127,10 +144,22 @@ describe("mergeHiveBrowserSafeKeybinds", () => {
 
   it("preserves explicit custom app exit in embedded terminals", () => {
     const merged = mergeHiveEmbeddedBrowserSafeKeybinds({
-      app_exit: "ctrl+c",
+      "app.exit": "ctrl+c",
     });
 
-    expect(merged.app_exit).toBe("ctrl+c,<leader>q");
+    expect(merged["app.exit"]).toBe("ctrl+c,<leader>q");
+  });
+
+  it("maps legacy browser-safe IDs to their v2 command IDs", () => {
+    const merged = mergeHiveEmbeddedBrowserSafeKeybinds({
+      app_exit: "ctrl+c",
+      variant_cycle: "ctrl+t",
+    });
+
+    expect(merged["app.exit"]).toBe("ctrl+c,<leader>q");
+    expect(merged["variant.cycle"]).toBe("ctrl+t,<leader>t");
+    expect(merged).not.toHaveProperty("app_exit");
+    expect(merged).not.toHaveProperty("variant_cycle");
   });
 });
 
@@ -143,7 +172,7 @@ describe("allowsEmbeddedChatControlInput", () => {
 
   it("allows explicit ctrl+c overrides", () => {
     const merged = mergeHiveEmbeddedBrowserSafeKeybinds({
-      app_exit: "ctrl+c",
+      "app.exit": "ctrl+c",
     });
 
     expect(allowsEmbeddedChatControlInput(merged)).toBe(true);
@@ -151,7 +180,7 @@ describe("allowsEmbeddedChatControlInput", () => {
 
   it("allows explicit ctrl+d overrides", () => {
     const merged = mergeHiveEmbeddedBrowserSafeKeybinds({
-      app_exit: "ctrl+d",
+      "app.exit": "ctrl+d",
     });
 
     expect(allowsEmbeddedChatControlInput(merged)).toBe(true);
@@ -159,8 +188,8 @@ describe("allowsEmbeddedChatControlInput", () => {
 
   it("allows ctrl+c and ctrl+d bindings for non-exit actions", () => {
     const merged = mergeHiveEmbeddedBrowserSafeKeybinds({
-      command_list: "ctrl+c",
-      display_thinking: "ctrl+d",
+      "command.palette.show": "ctrl+c",
+      "session.toggle.thinking": "ctrl+d",
     });
 
     expect(allowsEmbeddedChatControlInput(merged)).toBe(true);
@@ -168,7 +197,7 @@ describe("allowsEmbeddedChatControlInput", () => {
 
   it("respects disabling app exit with none", () => {
     const merged = mergeHiveEmbeddedBrowserSafeKeybinds({
-      app_exit: "none",
+      "app.exit": "none",
     });
 
     expect(allowsEmbeddedChatControlInput(merged)).toBe(false);

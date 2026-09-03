@@ -15,9 +15,15 @@ Monorepo project with React + TanStack Start frontend and Elysia backend.
 curl -fsSL https://raw.githubusercontent.com/HiveRun/hive/main/scripts/install.sh | bash
 ```
 
-The installer downloads the latest published release for your platform, expands it into `~/.hive`, writes a local SQLite database path to `hive.env`, symlinks `hive` into `~/.hive/bin`, and updates your shell PATH so the CLI is immediately available. Run `hive` to start the bundled server + UI on the default ports.
+The installer downloads the latest published release for your platform, expands it into `~/.hive`, writes a local SQLite database path to `hive.env`, exposes `hive` and `opencode2` through `~/.hive/bin`, and updates your shell PATH so the CLIs are immediately available. Run `hive` to start the bundled server + UI on the default ports.
 
-During install, Hive also checks for the `opencode` CLI. If missing, it attempts to install OpenCode automatically via `https://opencode.ai/install` so cell chat sessions work out of the box.
+Every Hive release includes the exact `opencode2` native binary supplied by `@opencode-ai/cli@0.0.0-beta-18866`. Installation configures Hive to use that package-managed binary without downloading a separate OpenCode CLI. The installed `opencode2` launcher disables auto-update so preview releases cannot silently switch data directories or become incompatible with Hive.
+
+In a source checkout, use the pinned workspace binary when you need the standalone TUI:
+
+```bash
+OPENCODE_DISABLE_AUTOUPDATE=1 ./node_modules/.bin/opencode2
+```
 
 Environment variables:
 - `HIVE_VERSION`: install a specific tag (defaults to `latest`).
@@ -28,9 +34,7 @@ Environment variables:
 - `HIVE_LOG_DIR`: where background logs are written (defaults to `~/.hive/logs` for installed builds, or `<binary>/logs` when running from source).
 - `HIVE_PID_FILE`: override the pid file path (defaults to `~/.hive/hive.pid`).
 - `HIVE_INSTALL_COMMAND`: override the command executed by `hive upgrade` (defaults to the stored installer behavior).
-- `HIVE_SKIP_OPENCODE_INSTALL`: set to `1` to skip OpenCode auto-install.
-- `HIVE_OPENCODE_INSTALL_URL`: override the OpenCode installer URL.
-- `HIVE_OPENCODE_BIN`: pin the OpenCode executable path written to `hive.env`.
+- `HIVE_OPENCODE_BIN`: package-managed path to the bundled `opencode2` executable in installed releases.
 
 ### Using the installed binary
 
@@ -87,8 +91,10 @@ Environment variables:
   ```bash
   PORT=4100 hive
   ```
-- Embedded chat sessions inherit OpenCode config from workspace `@opencode.json` / `opencode.json`.
-- Keep `opencode.json` in version control. Hive also generates per-worktree runtime artifacts under `.hive/` and `.opencode/state/`, `.opencode/themes/`, and `.opencode/tools/` for embedded chat sessions; those machine-generated files should stay ignored in git. Hive still copies `.opencode/tools/` into spawned cells so OpenCode tools can propagate across nested cell spawns. Intentional OpenCode source under `.opencode/plugin/` remains trackable.
+- Hive and the Hive-installed `~/.hive/bin/opencode2` client share OpenCode's native user background service, configuration, credentials, and migrated session history. Independently installed preview versions may use a different data directory and are not compatible. Hive leaves its user service running during normal shutdown.
+- Embedded chat terminals attach to the shared session with isolated Hive-owned CLI keybinds and theme settings; they do not copy global or workspace CLI configuration.
+- The pinned OpenCode 2 service automatically migrates existing v1 sessions on first startup. Hive waits for migration completion before accepting agent work.
+- Keep `opencode.json` in version control. Hive generates per-worktree runtime artifacts under `.hive/`, `.opencode/state/`, and `.opencode/themes/`; those machine-generated files should stay ignored in git. Intentional OpenCode 2 source under `.opencode/plugins/` remains trackable, while Hive writes its cell integration to `.opencode/plugins/hive/index.js` in spawned cells.
 - The SQLite database defaults to `~/.hive/state/hive.db`; set `DATABASE_URL` if you need a different location.
 - High-frequency transport/polling request logs are muted by default to keep runtime logs readable. Re-enable per category with `HIVE_LOG_TERMINAL_TRAFFIC=1`, `HIVE_LOG_POLLING_TRAFFIC=1`, or `HIVE_LOG_OPTIONS_REQUESTS=1`.
 
@@ -107,11 +113,11 @@ See [Android Runtime Walkthrough](docs/android-runtime-walkthrough.md) for the c
 Hive applies browser-safe aliases for conflict-prone shortcuts in embedded chat terminals (web + desktop runtimes):
 
 - Leader defaults to `Ctrl+X` unless overridden in OpenCode config.
-- `display_thinking`: `leader + i`
-- `variant_cycle`: `leader + t`
-- `theme_list`: `leader + j`
-- `command_list`: `leader + p`
-- `app_exit` (embedded chat terminals): `leader + q`
+- `session.toggle.thinking`: `leader + i`
+- `variant.cycle`: `leader + t`
+- `theme.switch`: `leader + j`
+- `command.palette.show`: `leader + p`
+- `app.exit` (embedded chat terminals): `leader + q`
 
 Embedded chat terminals intentionally avoid `Ctrl+C` / `Ctrl+D` as app-exit shortcuts by default to reduce accidental session exits while you are typing in the browser/Electron UI.
 
@@ -121,14 +127,14 @@ Keybind merge behavior:
 - Workspace/inline custom keybinds are preserved and Hive appends the browser-safe alias for the same action.
 - Setting a keybind to `none` keeps it disabled (Hive does not append aliases in that case).
 - Explicit keybind overrides that use `ctrl+c` and/or `ctrl+d` are honored in embedded chat terminals.
-- External `opencode attach` sessions keep OpenCode's default exit combos (`Ctrl+C`, `Ctrl+D`, `leader + q`) unless you override them.
+- External `opencode2` sessions keep OpenCode's default exit combos (`Ctrl+C`, `Ctrl+D`, `leader + q`) unless you override them.
 
 Example:
 
 ```json
 {
   "keybinds": {
-    "variant_cycle": "ctrl+t"
+    "variant.cycle": "ctrl+t"
   }
 }
 ```
@@ -522,7 +528,7 @@ Notes:
 - CI runs on Blacksmith-hosted GitHub Actions runners (`blacksmith-2vcpu-ubuntu-2404` for lint/check jobs and `blacksmith-4vcpu-ubuntu-2404` for E2E runtime).
 - Workflow triggers on pull requests, merge queue (`merge_group`), pushes to `main`, and manual dispatch.
 - `Workflow Lint` runs `actionlint`; `Quality Checks` runs `bun run check:commit`.
-- `E2E Runtime Suite` runs `bun run test:e2e` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), caches Playwright/OpenCode artifacts, and uploads reports from `apps/e2e/reports/latest`.
+- `E2E Runtime Suite` runs `bun run test:e2e` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), caches Playwright artifacts, and uploads reports from `apps/e2e/reports/latest`.
 - `Desktop Electron Smoke Suite` runs `bun run test:e2e:desktop` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), executes under `xvfb-run`, and uploads reports from `apps/e2e-desktop/reports/latest`.
 - `Android Service Audio E2E` runs `bun run test:e2e:android-service-audio` on merge queue, `main` pushes, and manual dispatch, provisions the Android SDK/KVM and ffmpeg, and uploads the evidence MP4 plus reports.
 - `Release` is a manual-dispatch workflow that bumps version + commits + tags in one run.
@@ -645,7 +651,7 @@ If you add new tooling that writes important gitignored files, extend `.ignore` 
 - Keep authoring guidance in this directory so automated agents inherit updates without manual edits.
 - No Cursor or GitHub Copilot override files exist; Ruler prompts are the single source of truth for agent context.
 - When adding new workflows, prefer short, action-focused bullets so the generated handbook stays compact (~20 lines).
-- Use the published `@opencode-ai/sdk` package for runtime integrations.
+- Use the pinned `@opencode-ai/client` Promise API for OpenCode 2 runtime integrations.
 - Project documentation is distributed across several key locations:
   - `CONCEPTS.md` - High-level concepts (cells, templates, services, etc.)
   - `.ruler/prompts/` - AI agent guidance and coding standards  
@@ -661,7 +667,7 @@ If you add new tooling that writes important gitignored files, extend `.ignore` 
 - Keep working autonomously through production-only failures when the next diagnostic step is available. Stop only for destructive choices, missing credentials/hardware, or genuinely ambiguous product decisions.
 - For `apps/e2e` changes, prefer deterministic checks (session/message metadata + UI confirmation) instead of fixed sleeps.
 - Keep E2E fixtures/config in sync with runtime defaults (provider/model IDs, template labels) so test behavior matches production paths.
-- Treat `.hive/` and generated `.opencode/state/`, `.opencode/themes/`, and `.opencode/tools/` paths as runtime artifacts that should not be committed. Keep `.opencode/tools/` available for spawned-cell copies so OpenCode tools can propagate, and keep `opencode.json` plus intentional source under `.opencode/plugin/` trackable.
+- Treat `.hive/` and generated `.opencode/state/` and `.opencode/themes/` paths as runtime artifacts that should not be committed. Keep `opencode.json` plus intentional source under `.opencode/plugins/` trackable; Hive writes its cell plugin into spawned worktrees.
 - When the user requests a change to agent guidance or project docs, proactively locate the relevant file(s) and make the update without waiting for another reminder.
 - Update `.ruler/prompts/*.md` whenever guidance for agents changes; the prompt bundle is our source of truth for AI behavior.
 - Commit prompt changes like any other source code so CI and Husky enforce lint/type/build checks.

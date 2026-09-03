@@ -75,6 +75,10 @@ describe("uninstallHive", () => {
     const binDir = join(root, "bin");
     mkdirSync(binDir, { recursive: true });
     symlinkSync(join(hiveHome, "current", "hive"), join(binDir, "hive"));
+    writeFileSync(
+      join(binDir, "opencode2"),
+      "#!/usr/bin/env bash\n# Managed by Hive: opencode2\n"
+    );
 
     const stopRuntime = vi.fn(stopNotRunning);
     const closeDesktop = vi.fn();
@@ -92,6 +96,23 @@ describe("uninstallHive", () => {
     expect(closeDesktop).toHaveBeenCalledTimes(1);
     expect(existsSync(hiveHome)).toBe(false);
     expect(pathExists(join(binDir, "hive"))).toBe(false);
+    expect(pathExists(join(binDir, "opencode2"))).toBe(false);
+  });
+
+  it("preserves an unmanaged OpenCode command", () => {
+    const root = createTempRoot();
+    const hiveHome = createHiveHome(root);
+    const binDir = join(root, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const opencodeBinary = join(binDir, "opencode2");
+    writeFileSync(opencodeBinary, "#!/usr/bin/env bash\nexit 0\n");
+
+    const exitCode = uninstallHive(
+      createUninstallOptions(hiveHome, { hiveBinDir: binDir })
+    );
+
+    expect(exitCode).toBe(0);
+    expect(pathExists(opencodeBinary)).toBe(true);
   });
 
   it("requires --yes confirmation", () => {

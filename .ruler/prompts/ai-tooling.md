@@ -4,7 +4,7 @@
 - Keep authoring guidance in this directory so automated agents inherit updates without manual edits.
 - No Cursor or GitHub Copilot override files exist; Ruler prompts are the single source of truth for agent context.
 - When adding new workflows, prefer short, action-focused bullets so the generated handbook stays compact (~20 lines).
-- Use the published `@opencode-ai/sdk` package for runtime integrations.
+- Use the pinned `@opencode-ai/client` Promise API for OpenCode 2 runtime integrations.
 - Project documentation is distributed across several key locations:
   - `CONCEPTS.md` - High-level concepts (cells, templates, services, etc.)
   - `.ruler/prompts/` - AI agent guidance and coding standards  
@@ -20,7 +20,7 @@
 - Keep working autonomously through production-only failures when the next diagnostic step is available. Stop only for destructive choices, missing credentials/hardware, or genuinely ambiguous product decisions.
 - For `apps/e2e` changes, prefer deterministic checks (session/message metadata + UI confirmation) instead of fixed sleeps.
 - Keep E2E fixtures/config in sync with runtime defaults (provider/model IDs, template labels) so test behavior matches production paths.
-- Treat `.hive/` and generated `.opencode/state/`, `.opencode/themes/`, and `.opencode/tools/` paths as runtime artifacts that should not be committed. Keep `.opencode/tools/` available for spawned-cell copies so OpenCode tools can propagate, and keep `opencode.json` plus intentional source under `.opencode/plugin/` trackable.
+- Treat `.hive/` and generated `.opencode/state/` and `.opencode/themes/` paths as runtime artifacts that should not be committed. Keep `opencode.json` plus intentional source under `.opencode/plugins/` trackable; Hive writes its cell plugin into spawned worktrees.
 - When the user requests a change to agent guidance or project docs, proactively locate the relevant file(s) and make the update without waiting for another reminder.
 - Update `.ruler/prompts/*.md` whenever guidance for agents changes; the prompt bundle is our source of truth for AI behavior.
 - Commit prompt changes like any other source code so CI and Husky enforce lint/type/build checks.

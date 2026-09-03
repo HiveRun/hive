@@ -1,6 +1,10 @@
-import type { OpencodeClient, Event as OpencodeEvent } from "@opencode-ai/sdk";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { OpenCodeClient, OpenCodeEvent } from "@opencode-ai/client";
 import { Elysia } from "elysia";
 import {
+  afterAll as afterAllTests,
   afterEach as afterEachTest,
   beforeAll as beforeAllTests,
   beforeEach as beforeEachTest,
@@ -23,7 +27,7 @@ import { setupTestDb, testDb } from "../test-db";
 type AppDb = typeof import("../../db").db;
 
 const cellId = "cell-by-cell-model";
-const workspacePath = "/tmp/by-cell-model";
+let workspacePath = "";
 const HTTP_OK = 200;
 
 const hiveConfig: HiveConfig = {
@@ -50,69 +54,134 @@ function createMockSession() {
   const now = Date.now();
   return {
     id: "session-by-cell-model",
+    time: { created: now, updated: now },
     projectID: "project-by-cell-model",
-    directory: workspacePath,
+    location: { directory: workspacePath },
     title: "By-cell model session",
-    version: "1",
-    time: {
-      created: now,
-      updated: now,
-    },
+    cost: 0,
+    tokens: createEmptyTokenUsage(),
+  };
+}
+
+function createEmptyTokenUsage() {
+  return {
+    cache: { read: 0, write: 0 },
+    input: 0,
+    output: 0,
+    reasoning: 0,
   };
 }
 
 function createClientStub() {
-  const sessionMessages = vi.fn(async () => ({ data: [] as unknown[] }));
-  const prompt = vi.fn(async () => ({ error: null }));
+  const sessionMessages = vi.fn(async () => ({
+    data: [] as unknown[],
+    cursor: {},
+  }));
+  const prompt = vi.fn(async () => ({
+    id: "inbox-by-cell-model",
+    sessionID: "session-by-cell-model",
+    delivery: "queue" as const,
+    payload: { text: "" },
+    type: "user" as const,
+    timeCreated: Date.now(),
+  }));
+  const switchAgent = vi.fn(() => Promise.resolve());
+  const switchModel = vi.fn(() => Promise.resolve());
+  const createSession = vi.fn(async () => createMockSession());
+  const location = {
+    directory: workspacePath,
+    project: {
+      id: "project-by-cell-model",
+      directory: workspacePath,
+      canonical: workspacePath,
+    },
+  };
+  const models = [
+    createModelInfo("big-pickle", "opencode/big-pickle"),
+    createModelInfo("template-default", "template-default"),
+  ];
 
   const client = {
     session: {
-      create: vi.fn(async () => ({ data: createMockSession() })),
-      delete: vi.fn(async () => ({ error: null })),
-      get: vi.fn(async () => ({ data: createMockSession() })),
-      messages: sessionMessages,
+      active: vi.fn(async () => ({})),
+      create: createSession,
+      get: vi.fn(async () => createMockSession()),
+      inbox: { list: vi.fn(async () => []) },
+      interrupt: vi.fn(async () => ({ interrupted: true })),
       prompt,
+      remove: vi.fn(() => Promise.resolve()),
+      switchAgent,
+      switchModel,
     },
     event: {
-      subscribe: vi.fn(async () => ({
-        stream: (async function* () {
-          // no runtime events for this regression
-        })() as AsyncGenerator<OpencodeEvent, void, unknown>,
+      subscribe: vi.fn(
+        () =>
+          (async function* () {
+            // no runtime events for this regression
+          })() as AsyncGenerator<OpenCodeEvent, void, unknown>
+      ),
+    },
+    form: { list: vi.fn(async () => []) },
+    message: { list: sessionMessages },
+    model: {
+      default: vi.fn(async () => ({ location, data: models[1] })),
+      list: vi.fn(async () => ({ location, data: models })),
+    },
+    permission: {
+      list: vi.fn(async () => []),
+      reply: vi.fn(() => Promise.resolve()),
+    },
+    provider: {
+      list: vi.fn(async () => ({
+        location,
+        data: [
+          {
+            id: "opencode",
+            name: "OpenCode",
+            activation: "enabled" as const,
+            package: "@ai-sdk/opencode",
+          },
+        ],
       })),
     },
-    config: {
-      providers: vi.fn(async () => ({
-        data: {
-          providers: [
-            {
-              id: "opencode",
-              models: {
-                "big-pickle": { id: "opencode/big-pickle" },
-                "template-default": { id: "template-default" },
-              },
-            },
-          ],
-          default: { opencode: "template-default" },
-        },
-      })),
-    },
-    postSessionIdPermissionsPermissionId: vi.fn(async () => ({
-      error: null,
-    })),
   };
 
   return {
-    client: client as unknown as OpencodeClient,
+    client: client as unknown as OpenCodeClient,
     sessionMessages,
     prompt,
+    createSession,
+    switchAgent,
+    switchModel,
+  };
+}
+
+function createModelInfo(modelID: string, id: string) {
+  const identity = { id, modelID, name: modelID, providerID: "opencode" };
+  return {
+    ...identity,
+    enabled: true,
+    status: "active" as const,
+    capabilities: { tools: true, input: ["text"], output: ["text"] },
+    limit: { context: 128_000, output: 16_000 },
+    variants: [],
+    cost: [],
+    time: { released: 0 },
   };
 }
 
 describe("agents by-cell model capture", () => {
-  let promptSpy: ReturnType<typeof vi.fn>;
+  let switchAgentSpy: ReturnType<typeof vi.fn>;
+  let switchModelSpy: ReturnType<typeof vi.fn>;
+  let createSessionSpy: ReturnType<typeof vi.fn>;
 
   beforeAllTests(async () => {
     await setupTestDb();
+    workspacePath = await mkdtemp(join(tmpdir(), "hive-by-cell-model-"));
+  });
+
+  afterAllTests(async () => {
+    await rm(workspacePath, { force: true, recursive: true });
   });
 
   beforeEachTest(async () => {
@@ -121,16 +190,15 @@ describe("agents by-cell model capture", () => {
     await testDb.delete(cellProvisioningStates);
     await testDb.delete(cells);
 
-    const { client, prompt } = createClientStub();
-    promptSpy = prompt;
+    const { client, createSession, switchAgent, switchModel } =
+      createClientStub();
+    createSessionSpy = createSession;
+    switchAgentSpy = switchAgent;
+    switchModelSpy = switchModel;
 
     setAgentRuntimeDependencies({
       db: testDb as unknown as AppDb,
       loadHiveConfig: vi.fn(async () => hiveConfig),
-      loadOpencodeConfig: vi.fn(async () => ({
-        config: {},
-        source: "default" as const,
-      })),
       loadEffectiveOpencodeDefaults: vi.fn(async () => ({})),
       acquireOpencodeClient: vi.fn(async () => client),
     });
@@ -173,46 +241,29 @@ describe("agents by-cell model capture", () => {
       new Request(`http://localhost/api/agents/sessions/byCell/${cellId}`)
     );
 
-    expect(response.status).toBe(HTTP_OK);
     const payload = (await response.json()) as {
+      message?: string;
       session: {
         modelId?: string;
         modelProviderId?: string;
       } | null;
     };
+    expect(response.status, payload.message).toBe(HTTP_OK);
 
     expect(payload.session).not.toBeNull();
-    expect(payload.session?.modelId).toBe("big-pickle");
+    expect(payload.session?.modelId).toBe("opencode/big-pickle");
     expect(payload.session?.modelProviderId).toBe("opencode");
-    expect(promptSpy).toHaveBeenCalledTimes(2);
-    expect(promptSpy).toHaveBeenNthCalledWith(1, {
-      path: { id: "session-by-cell-model" },
-      query: { directory: workspacePath },
-      body: {
-        agent: "plan",
-        noReply: true,
-        model: {
-          providerID: "opencode",
-          modelID: "big-pickle",
-        },
-        parts: [
-          {
-            type: "text",
-            text: "",
-          },
-        ],
-      },
+    expect(createSessionSpy).toHaveBeenCalledWith({
+      title: "By-cell model capture",
+      agent: "plan",
+      location: { directory: workspacePath },
     });
-    expect(promptSpy).toHaveBeenNthCalledWith(2, {
-      path: { id: "session-by-cell-model" },
-      query: { directory: workspacePath },
-      body: {
-        noReply: true,
-        model: {
-          providerID: "opencode",
-          modelID: "big-pickle",
-        },
-        parts: [],
+    expect(switchAgentSpy).not.toHaveBeenCalled();
+    expect(switchModelSpy).toHaveBeenCalledWith({
+      sessionID: "session-by-cell-model",
+      model: {
+        providerID: "opencode",
+        id: "opencode/big-pickle",
       },
     });
   });
