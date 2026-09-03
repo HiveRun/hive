@@ -45,11 +45,7 @@ vi.mock("../../agents/opencode-binary", () => ({
   resolveOpencodeBinary: () => "/opt/hive/opencode2",
 }));
 
-const GLOBAL_STATE_KEY = "__hiveSharedOpencodeServerState";
 const originalMigrationTimeout = process.env.HIVE_OPENCODE_MIGRATION_TIMEOUT_MS;
-function clearGlobalState() {
-  delete (globalThis as Record<string, unknown>)[GLOBAL_STATE_KEY];
-}
 
 function createCurrentClient(healthGet = clientMocks.healthGet) {
   return {
@@ -58,8 +54,11 @@ function createCurrentClient(healthGet = clientMocks.healthGet) {
   };
 }
 
-beforeEach(() => {
-  clearGlobalState();
+beforeEach(async () => {
+  const { clearSharedOpencodeServerConnection } = await import(
+    "../../agents/opencode-server"
+  );
+  await clearSharedOpencodeServerConnection();
 });
 
 afterEach(async () => {
@@ -67,7 +66,6 @@ afterEach(async () => {
     "../../agents/opencode-server"
   );
   await clearSharedOpencodeServerConnection();
-  clearGlobalState();
   if (originalMigrationTimeout === undefined) {
     process.env.HIVE_OPENCODE_MIGRATION_TIMEOUT_MS = undefined;
   } else {
