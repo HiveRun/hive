@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:run": "bun test src/runtime/*.test.ts",
     "test:e2e": "HIVE_E2E_WORKERS=1 bun run src/runtime/e2e-runner.ts",
     "test:e2e:fast": "bun run src/runtime/run-fast.ts",
     "test:e2e:tune": "HIVE_E2E_BENCH_REPEATS=2 bun run src/runtime/benchmark-workers.ts",

@@ -13,3 +13,16 @@ export function throwRunAndCleanupErrors(
     throw cleanupError;
   }
 }
+
+export async function collectCleanupFailures(
+  cleanupSteps: Array<() => Promise<unknown>>,
+  failures: unknown[]
+): Promise<void> {
+  for (const cleanup of cleanupSteps) {
+    try {
+      await cleanup();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+}

@@ -45,13 +45,13 @@ describe("daemon runtime utilities", () => {
 
   it("accepts a ready file that matches the launched process", async () => {
     const readyFile = createReadyFileFixture();
-
-    setTimeout(() => {
+    const fetchImpl = vi.fn().mockImplementation(() => {
       writeFileSync(readyFile.file, "1234\n", "utf8");
-    }, 10);
+      return Promise.reject(new Error("unreachable"));
+    });
 
     const ready = await waitForServerReady({
-      fetchImpl: vi.fn().mockRejectedValue(new Error("unreachable")),
+      fetchImpl,
       intervalMs: 5,
       readyFileContents: "1234",
       readyFilePath: readyFile.file,

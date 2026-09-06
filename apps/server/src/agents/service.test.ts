@@ -453,6 +453,12 @@ describe("agent model selection", () => {
     const session = await ensureAgentSession(cellId);
 
     expectSessionModel(session, TEST_PROVIDER_ID, TEMPLATE_MODEL_ID);
+    expect(clientStub.session.create).toHaveBeenCalledWith({
+      title: "Model Test Cell",
+      agent: "plan",
+      model: createModel(TEST_PROVIDER_ID, TEMPLATE_MODEL_ID),
+      location: { directory: TEST_WORKSPACE_PATH },
+    });
   });
 
   it("defers to OpenCode defaults when template agents omit models and providers match", async () => {
@@ -593,6 +599,7 @@ describe("agent model selection", () => {
     expect(clientStub.session.create).toHaveBeenCalledWith({
       title: "Model Test Cell",
       agent: "plan",
+      model: createModel(TEST_PROVIDER_ID, "opencode/glm-5"),
       location: { directory: TEST_WORKSPACE_PATH },
     });
     expect(clientStub.session.switchModel).toHaveBeenCalledWith({

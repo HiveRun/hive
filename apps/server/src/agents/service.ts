@@ -1975,6 +1975,9 @@ async function startOpencodeRuntime({
     client,
     cell,
     directoryQuery,
+    providerId,
+    modelId,
+    variant,
     startMode,
     force,
   });
@@ -2058,6 +2061,9 @@ type ResolveSessionArgs = {
   client: OpenCodeClient;
   cell: Cell;
   directoryQuery: DirectoryQuery;
+  providerId?: string;
+  modelId?: string;
+  variant?: string;
   startMode: AgentMode;
   force: boolean;
 };
@@ -2066,6 +2072,9 @@ async function resolveOpencodeSession({
   client,
   cell,
   directoryQuery,
+  providerId,
+  modelId,
+  variant,
   startMode,
   force,
 }: ResolveSessionArgs): Promise<{ session: SessionInfo; created: boolean }> {
@@ -2083,6 +2092,15 @@ async function resolveOpencodeSession({
   const created = await client.session.create({
     title: cell.name,
     agent: startMode,
+    ...(providerId && modelId
+      ? {
+          model: {
+            id: modelId,
+            providerID: providerId,
+            ...(variant ? { variant } : {}),
+          },
+        }
+      : {}),
     location: { directory: directoryQuery.directory ?? cell.workspacePath },
   });
 

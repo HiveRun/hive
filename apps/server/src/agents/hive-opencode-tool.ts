@@ -6,7 +6,7 @@
  * is in ./tools/hive.ts which is type-checked during development. The source
  * string exported here is generated from that file via scripts/dev.
  */
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import { lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { HIVE_TOOL_SOURCE_EMBEDDED } from "./hive-opencode-tool-source.generated";
@@ -17,6 +17,7 @@ import { HIVE_TOOL_SOURCE_EMBEDDED } from "./hive-opencode-tool-source.generated
  */
 const HIVE_TOOL_SOURCE = HIVE_TOOL_SOURCE_EMBEDDED;
 const PRIVATE_FILE_MODE = 0o600;
+const FILE_MODE_BOUNDARY = 0o1000;
 
 function formatHiveServerHostname(hostname: string): string {
   if (hostname === "0.0.0.0") {
@@ -155,6 +156,10 @@ async function writeManagedFileAtomically(
   destination: string,
   content: string
 ): Promise<void> {
+  if (await managedFileMatches(destination, content)) {
+    return;
+  }
+
   const temporaryPath = `${destination}.${process.pid}.${crypto.randomUUID()}.tmp`;
   const openFlags =
     constants.O_WRONLY +
@@ -174,4 +179,52 @@ async function writeManagedFileAtomically(
     await unlink(temporaryPath).catch(() => null);
     throw error;
   }
+}
+
+async function managedFileMatches(
+  destination: string,
+  content: string
+): Promise<boolean> {
+  const destinationStats = await lstatIfExists(destination);
+  if (!(destinationStats && isPrivateRegularFile(destinationStats))) {
+    return false;
+  }
+
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(
+      destination,
+      constants.O_RDONLY + constants.O_NOFOLLOW + constants.O_NONBLOCK
+    );
+    const openedStats = await handle.stat();
+    if (
+      openedStats.dev !== destinationStats.dev ||
+      openedStats.ino !== destinationStats.ino ||
+      !isPrivateRegularFile(openedStats)
+    ) {
+      return false;
+    }
+    return (await handle.readFile("utf8")) === content;
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return false;
+    }
+    throw error;
+  } finally {
+    await handle?.close();
+  }
+}
+
+function isPrivateRegularFile(stats: Stats): boolean {
+  const currentUserId =
+    typeof process.getuid === "function" ? process.getuid() : undefined;
+  const permissionsArePrivate =
+    process.platform === "win32" ||
+    stats.mode % FILE_MODE_BOUNDARY === PRIVATE_FILE_MODE;
+  return (
+    stats.isFile() &&
+    stats.nlink === 1 &&
+    permissionsArePrivate &&
+    (currentUserId === undefined || stats.uid === currentUserId)
+  );
 }

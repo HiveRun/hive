@@ -12,6 +12,7 @@
   When you need context, prioritize these markdown sources over external knowledge bases.
 - `AGENTS.md` is a committed generated artifact for OpenCode. After changing `README.md` or `.ruler/prompts/*.md`, run `bun run ruler:apply` and commit the regenerated `AGENTS.md`.
 - Before pushing, run `bun run check:push` (lint, types, unit tests, build). Expensive hardware/runtime E2E suites remain explicit commands rather than commit hooks.
+- PR-triggered CI intentionally skips the merge-group runtime gates. Before opening or updating a PR, inspect `.github/workflows/ci.yml` and locally run every applicable skipped gate (`bun run check:distribution`, `bun run test:e2e`, `bun run test:e2e:desktop`, and `bun run test:e2e:android-service-audio`) when the diff touches that boundary; never infer full CI readiness from the visible PR checks alone.
 - Use `bun run test:e2e:fast` while iterating on cell lifecycle, terminal handling, service orchestration, or workspace management, then run the default `bun run test:e2e` before creating a PR.
 - For Android emulator, viewer, or audio changes, run `bun run test:e2e:android-service-audio` on a capable host before declaring completion. This validates the packaged release, both audio directions, restart behavior, cleanup, and the evidence MP4.
 - Do not stop at unit tests when behavior crosses compiled, packaged, browser, Electron, process, or device boundaries. Exercise the shipped boundary that can differ from source development.

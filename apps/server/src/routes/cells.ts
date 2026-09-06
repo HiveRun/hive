@@ -3,7 +3,7 @@ import { createConnection } from "node:net";
 import { join } from "node:path";
 
 import { logger } from "@bogeychan/elysia-logger";
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { Elysia, type Static, sse, t } from "elysia";
 import { resolveOpencodeBinary } from "../agents/opencode-binary";
 import { loadEffectiveOpencodeDefaults } from "../agents/opencode-config";
@@ -124,7 +124,7 @@ import type {
 } from "../services/supervisor";
 import {
   CommandExecutionError,
-  isProcessAlive,
+  isProcessTreeAlive,
   ServiceSupervisorService,
   TemplateSetupError,
 } from "../services/supervisor";
@@ -744,9 +744,9 @@ async function serializeServicesForCell(
   cellId: string
 ): Promise<CellServiceListResponse> {
   const rows = await fetchServiceRows(database, cellId);
-  const services = await Promise.all(
-    rows.map((row) => serializeService(deps, database, row))
-  );
+  const services = (
+    await Promise.all(rows.map((row) => serializeService(deps, database, row)))
+  ).filter((service): service is CellServiceResponse => service !== null);
   return { services };
 }
 
@@ -1001,7 +1001,16 @@ async function runSingleServiceAction(args: {
         return { message: "Service not found" } satisfies MessageResponse;
       }
 
-      return await serializeService(args.deps, args.deps.db, updated);
+      const serialized = await serializeService(
+        args.deps,
+        args.deps.db,
+        updated
+      );
+      if (!serialized) {
+        args.set.status = HTTP_STATUS.NOT_FOUND;
+        return { message: "Service not found" } satisfies MessageResponse;
+      }
+      return serialized;
     },
   });
 }
@@ -2697,14 +2706,18 @@ export function createCellsRoutes(
             const resourcesByPid = includeResources
               ? await sampleServiceResources(deps, rows)
               : new Map<number, ProcessResourceSnapshot>();
-            const services = await Promise.all(
-              rows.map((row) =>
-                serializeService(deps, database, row, {
-                  logOptions,
-                  includeResources,
-                  resourcesByPid,
-                })
+            const services = (
+              await Promise.all(
+                rows.map((row) =>
+                  serializeService(deps, database, row, {
+                    logOptions,
+                    includeResources,
+                    resourcesByPid,
+                  })
+                )
               )
+            ).filter(
+              (service): service is CellServiceResponse => service !== null
             );
 
             const audit = readHiveAuditHeaders(request);
@@ -2905,6 +2918,11 @@ export function createCellsRoutes(
 
             const encoder = new TextEncoder();
             let cleanup: (() => void) | undefined;
+            const serviceSnapshotSequence: ServiceSnapshotSequence = {
+              current: 0,
+              latestBulk: 0,
+              latestByService: new Map(),
+            };
 
             const body = new ReadableStream<Uint8Array>({
               start(controller) {
@@ -2914,6 +2932,10 @@ export function createCellsRoutes(
                 };
 
                 const pushSnapshot = async (serviceId: string) => {
+                  const generation = beginServiceSnapshot(
+                    serviceSnapshotSequence,
+                    serviceId
+                  );
                   try {
                     const row = await fetchServiceRow(
                       database,
@@ -2935,7 +2957,15 @@ export function createCellsRoutes(
                         resourcesByPid,
                       }
                     );
-                    sendEvent("service", JSON.stringify(payload));
+                    sendCurrentServiceSnapshot({
+                      bulk: false,
+                      generation,
+                      payload,
+                      sequence: serviceSnapshotSequence,
+                      send: (current) =>
+                        sendEvent("service", JSON.stringify(current)),
+                      serviceId,
+                    });
                   } catch (error) {
                     log.error(
                       { error, serviceId },
@@ -2960,6 +2990,9 @@ export function createCellsRoutes(
                 sendEvent("ready", JSON.stringify({ timestamp: Date.now() }));
 
                 const pushAllSnapshots = async () => {
+                  const generation = beginBulkServiceSnapshot(
+                    serviceSnapshotSequence
+                  );
                   try {
                     const rows = await fetchServiceRows(database, params.id);
                     const resourcesByPid = includeResources
@@ -2975,7 +3008,15 @@ export function createCellsRoutes(
                           resourcesByPid,
                         }
                       );
-                      sendEvent("service", JSON.stringify(payload));
+                      sendCurrentServiceSnapshot({
+                        bulk: true,
+                        generation,
+                        payload,
+                        sequence: serviceSnapshotSequence,
+                        send: (current) =>
+                          sendEvent("service", JSON.stringify(current)),
+                        serviceId: row.service.id,
+                      });
                     }
                     sendEvent(
                       "snapshot",
@@ -5840,7 +5881,7 @@ function deriveTrackedServiceProcess(
 ): ResourceTrackedProcess {
   const runtimeSession = deps.getServiceTerminalSession(row.service.id);
   const processAlive =
-    runtimeSession?.status === "running" || isProcessAlive(row.service.pid);
+    runtimeSession?.status === "running" || isProcessTreeAlive(row.service.pid);
 
   let status = row.service.status;
   if (row.service.status === "running" && !processAlive) {
@@ -5872,7 +5913,53 @@ type SerializeServiceOptions = {
   logOptions?: LogTailOptions;
   includeResources?: boolean;
   resourcesByPid?: Map<number, ProcessResourceSnapshot>;
+  reconciliationAttempt?: number;
+  skipRuntimeReconciliation?: boolean;
 };
+
+const MAX_SERVICE_RECONCILIATION_ATTEMPTS = 1;
+const PROCESS_EXITED_UNEXPECTEDLY_ERROR = "Process exited unexpectedly";
+
+type ServiceSnapshotSequence = {
+  current: number;
+  latestBulk: number;
+  latestByService: Map<string, number>;
+};
+
+function beginServiceSnapshot(
+  sequence: ServiceSnapshotSequence,
+  serviceId: string
+): number {
+  sequence.current += 1;
+  sequence.latestByService.set(serviceId, sequence.current);
+  return sequence.current;
+}
+
+function beginBulkServiceSnapshot(sequence: ServiceSnapshotSequence): number {
+  sequence.current += 1;
+  sequence.latestBulk = sequence.current;
+  return sequence.current;
+}
+
+function sendCurrentServiceSnapshot(args: {
+  bulk: boolean;
+  generation: number;
+  payload: CellServiceResponse | null;
+  sequence: ServiceSnapshotSequence;
+  send: (payload: CellServiceResponse) => void;
+  serviceId: string;
+}): void {
+  const latestServiceGeneration =
+    args.sequence.latestByService.get(args.serviceId) ?? 0;
+  const current = args.bulk
+    ? args.sequence.latestBulk === args.generation &&
+      latestServiceGeneration <= args.generation
+    : latestServiceGeneration === args.generation &&
+      args.sequence.latestBulk <= args.generation;
+  if (args.payload && current) {
+    args.send(args.payload);
+  }
+}
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: normalizes persisted service state against runtime process state.
 async function serializeService(
@@ -5880,7 +5967,7 @@ async function serializeService(
   database: DatabaseClient,
   row: ServiceRow,
   options?: SerializeServiceOptions
-) {
+): Promise<CellServiceResponse | null> {
   const includeResources = options?.includeResources ?? false;
   const { service } = row;
   const output = deps.readServiceTerminalOutput(service.id);
@@ -5888,9 +5975,12 @@ async function serializeService(
     output.length > 0 ? output : null,
     options?.logOptions
   );
-  const runtimeSession = deps.getServiceTerminalSession(service.id);
+  const reconcileRuntimeState = !options?.skipRuntimeReconciliation;
+  const runtimeSession = reconcileRuntimeState
+    ? deps.getServiceTerminalSession(service.id)
+    : null;
   const processAlive =
-    runtimeSession?.status === "running" || isProcessAlive(service.pid);
+    runtimeSession?.status === "running" || isProcessTreeAlive(service.pid);
   const persistedPorts = await database
     .select()
     .from(cellServicePorts)
@@ -5943,20 +6033,28 @@ async function serializeService(
   let derivedStatus = service.status;
   let derivedLastKnownError = service.lastKnownError;
 
-  if (service.status === "running" && !processAlive) {
+  if (reconcileRuntimeState && service.status === "running" && !processAlive) {
     derivedStatus = "error";
     derivedLastKnownError =
-      service.lastKnownError ?? "Process exited unexpectedly";
-  } else if (service.status === "error" && processAlive) {
+      service.lastKnownError ?? PROCESS_EXITED_UNEXPECTEDLY_ERROR;
+  } else if (
+    reconcileRuntimeState &&
+    service.status === "error" &&
+    processAlive &&
+    service.lastKnownError === PROCESS_EXITED_UNEXPECTEDLY_ERROR
+  ) {
     derivedStatus = "running";
     derivedLastKnownError = null;
   }
 
-  let derivedPid: number | null = null;
-  if (runtimeSession?.status === "running") {
-    derivedPid = runtimeSession.pid;
-  } else if (processAlive) {
-    derivedPid = service.pid;
+  let derivedPid: number | null = service.pid ?? null;
+  if (reconcileRuntimeState) {
+    derivedPid = null;
+    if (runtimeSession?.status === "running") {
+      derivedPid = runtimeSession.pid;
+    } else if (processAlive) {
+      derivedPid = service.pid;
+    }
   }
 
   const resourceSnapshot = includeResources
@@ -5998,9 +6096,10 @@ async function serializeService(
     derivedStatus !== service.status ||
     derivedLastKnownError !== service.lastKnownError ||
     derivedPid !== (service.pid ?? null);
+  let existenceConfirmed = false;
 
-  if (shouldPersist) {
-    await database
+  if (shouldPersist && reconcileRuntimeState) {
+    const persisted = await database
       .update(cellServices)
       .set({
         status: derivedStatus,
@@ -6008,7 +6107,44 @@ async function serializeService(
         pid: derivedPid,
         updatedAt: new Date(),
       })
-      .where(eq(cellServices.id, service.id));
+      .where(
+        and(
+          eq(cellServices.id, service.id),
+          eq(cellServices.status, service.status),
+          service.pid == null
+            ? isNull(cellServices.pid)
+            : eq(cellServices.pid, service.pid),
+          service.lastKnownError == null
+            ? isNull(cellServices.lastKnownError)
+            : eq(cellServices.lastKnownError, service.lastKnownError)
+        )
+      )
+      .returning({ id: cellServices.id });
+    const reconciliationAttempt = options?.reconciliationAttempt ?? 0;
+    if (persisted.length === 0) {
+      const latest = await fetchServiceRow(database, row.cell.id, service.id);
+      if (!latest) {
+        return null;
+      }
+      return await serializeService(deps, database, latest, {
+        ...options,
+        reconciliationAttempt: reconciliationAttempt + 1,
+        skipRuntimeReconciliation:
+          reconciliationAttempt >= MAX_SERVICE_RECONCILIATION_ATTEMPTS,
+      });
+    }
+    existenceConfirmed = true;
+  }
+
+  if (!existenceConfirmed) {
+    const [existing] = await database
+      .select({ id: cellServices.id })
+      .from(cellServices)
+      .where(eq(cellServices.id, service.id))
+      .limit(1);
+    if (!existing) {
+      return null;
+    }
   }
 
   return {

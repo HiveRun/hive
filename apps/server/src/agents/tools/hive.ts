@@ -1111,7 +1111,7 @@ const HIVE_MUTATION_ACTIONS = new Set([
   "apply_patch",
 ]);
 
-async function setupHivePlugin(context: Plugin.Context): Promise<void> {
+export async function setupHivePlugin(context: Plugin.Context): Promise<void> {
   const worktreePath = resolve(context.location.project.directory);
   const configPath = join(worktreePath, HIVE_CONFIG_RELATIVE_PATH);
   if (!existsSync(configPath)) {

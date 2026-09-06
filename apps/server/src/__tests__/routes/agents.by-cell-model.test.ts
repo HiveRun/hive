@@ -256,6 +256,10 @@ describe("agents by-cell model capture", () => {
     expect(createSessionSpy).toHaveBeenCalledWith({
       title: "By-cell model capture",
       agent: "plan",
+      model: {
+        id: "opencode/big-pickle",
+        providerID: "opencode",
+      },
       location: { directory: workspacePath },
     });
     expect(switchAgentSpy).not.toHaveBeenCalled();

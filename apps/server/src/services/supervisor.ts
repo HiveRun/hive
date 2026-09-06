@@ -226,7 +226,7 @@ export class TemplateSetupError extends Error {
   }
 }
 
-export function isProcessAlive(pid?: number | null): boolean {
+function isProcessAlive(pid?: number | null): boolean {
   if (!pid) {
     return false;
   }
@@ -237,6 +237,10 @@ export function isProcessAlive(pid?: number | null): boolean {
   } catch (error) {
     return isPermissionError(error);
   }
+}
+
+export function isProcessTreeAlive(pid?: number | null): boolean {
+  return Boolean(pid && (isProcessAlive(pid) || isProcessGroupAlive(pid)));
 }
 
 function createPersistedProcessHandle(
@@ -683,6 +687,9 @@ export function createServiceSupervisor(
   const cancelledTemplateSetups = new WeakSet<ProcessHandle>();
   const serviceExitObservations = new Map<string, ServiceExitObservation>();
   const supervisorTerminatedServiceHandles = new WeakSet<ProcessHandle>();
+  const supervisorStopRequestedServiceHandles = new WeakSet<ProcessHandle>();
+  const failedServiceTerminationHandles = new WeakSet<ProcessHandle>();
+  const failedTerminationMonitors = new WeakSet<ProcessHandle>();
   const cellsStopping = new Set<string>();
   const servicesStopping = new Set<string>();
   const repository = createServiceRepository(db, now);
@@ -2289,8 +2296,7 @@ export function createServiceSupervisor(
           serviceExitObservations.set(row.service.id, {
             exitCode,
             signal,
-            supervisorTerminated:
-              supervisorTerminatedServiceHandles.has(handle),
+            supervisorTerminated: isSupervisorServiceStop(handle),
           });
           terminalRuntime.markServiceExit({
             serviceId: row.service.id,
@@ -2327,20 +2333,13 @@ export function createServiceSupervisor(
       let startupComplete = false;
       handle.exited
         .then(async (code) => {
-          if (!clearActiveServiceProcess(row.service.id, handle)) {
+          if (isSupervisorServiceStop(handle)) {
             return;
           }
-
-          await repository.updateService(row.service.id, {
-            status: startupComplete && code === 0 ? "stopped" : "error",
-            pid: null,
-            lastKnownError:
-              startupComplete && code === 0
-                ? null
-                : `Exited with code ${code ?? -1}`,
-          });
-
-          notifyServiceUpdate(row);
+          await waitForTrackedProcessGroupExit(handle);
+          await runWithCellLock(row.cell.id, () =>
+            persistIndependentServiceExit(row, handle, code, startupComplete)
+          );
         })
         .catch((error) => {
           if (!clearActiveServiceProcess(row.service.id, handle)) {
@@ -2390,6 +2389,7 @@ export function createServiceSupervisor(
         activeServices.delete(row.service.id);
         deleteTrackedHandle(activeServiceStarts, row.service.id, active.handle);
       } catch (terminationError) {
+        trackFailedServiceTermination(row.service.id, active.handle);
         const combinedError = new Error(
           `${formatError(error)}; failed to terminate service process: ${formatError(terminationError)}`
         );
@@ -2447,6 +2447,28 @@ export function createServiceSupervisor(
     }
     deleteTrackedHandle(activeServiceStarts, serviceId, handle);
     return true;
+  }
+
+  async function persistIndependentServiceExit(
+    row: ServiceRow,
+    handle: ProcessHandle,
+    code: number,
+    startupComplete: boolean
+  ): Promise<void> {
+    if (
+      isSupervisorServiceStop(handle) ||
+      !clearActiveServiceProcess(row.service.id, handle)
+    ) {
+      return;
+    }
+
+    await repository.updateService(row.service.id, {
+      status: startupComplete && code === 0 ? "stopped" : "error",
+      pid: null,
+      lastKnownError:
+        startupComplete && code === 0 ? null : `Exited with code ${code ?? -1}`,
+    });
+    notifyServiceUpdate(row);
   }
 
   function requireActiveServiceHandle(
@@ -2523,7 +2545,7 @@ export function createServiceSupervisor(
         serviceExitObservations.set(args.row.service.id, {
           exitCode,
           signal,
-          supervisorTerminated: supervisorTerminatedServiceHandles.has(handle),
+          supervisorTerminated: isSupervisorServiceStop(handle),
         });
       },
     });
@@ -2782,7 +2804,12 @@ export function createServiceSupervisor(
       if (!handle) {
         return;
       }
-      await terminateHandle(handle);
+      try {
+        await terminateHandle(handle);
+      } catch (error) {
+        trackFailedServiceTermination(serviceId, handle);
+        throw error;
+      }
       deleteTrackedHandle(activeServiceStarts, serviceId, handle);
       if (activeServices.get(serviceId)?.handle === handle) {
         activeServices.delete(serviceId);
@@ -2943,9 +2970,7 @@ export function createServiceSupervisor(
     const active = activeServices.get(row.service.id);
     const terminalAlreadyExited =
       terminalRuntime.getServiceSession(row.service.id)?.status === "exited";
-    if (active) {
-      supervisorTerminatedServiceHandles.add(active.handle);
-    }
+    markSupervisorStopRequested(active);
 
     const stopCommandError = await runServiceStopCommand({
       row,
@@ -2957,7 +2982,7 @@ export function createServiceSupervisor(
       force: forceStopCommand,
     });
 
-    await terminateServiceProcess(row, active);
+    await terminateServiceForStop(row, active);
     const preserveExitedTerminal =
       preserveTerminal &&
       (terminalAlreadyExited || serviceExitedIndependently(row.service.id));
@@ -2968,6 +2993,7 @@ export function createServiceSupervisor(
       pid: null,
       lastKnownError: null,
     });
+    clearStoppedActiveService(row.service.id, active);
 
     if (!preserveExitedTerminal) {
       terminalRuntime.markServiceExit({
@@ -3010,6 +3036,75 @@ export function createServiceSupervisor(
     await terminatePersistedServicePid(row);
   }
 
+  async function terminateServiceForStop(
+    row: ServiceRow,
+    active: ActiveServiceHandle | undefined
+  ): Promise<void> {
+    try {
+      await terminateServiceProcess(row, active);
+    } catch (error) {
+      if (!(active && supervisorTerminatedServiceHandles.has(active.handle))) {
+        if (active) {
+          supervisorStopRequestedServiceHandles.delete(active.handle);
+        }
+        throw error;
+      }
+      const message = `Failed to stop service "${row.service.name}": ${formatError(error)}`;
+      trackFailedServiceTermination(row.service.id, active.handle);
+      await repository.updateService(row.service.id, {
+        status: "error",
+        pid: active.handle.pid,
+        lastKnownError: message,
+      });
+      notifyServiceUpdate(row);
+      throw new Error(message, { cause: error });
+    }
+  }
+
+  function markSupervisorStopRequested(
+    active: ActiveServiceHandle | undefined
+  ): void {
+    if (active) {
+      supervisorStopRequestedServiceHandles.add(active.handle);
+    }
+  }
+
+  function clearStoppedActiveService(
+    serviceId: string,
+    active: ActiveServiceHandle | undefined
+  ): void {
+    if (active) {
+      clearActiveServiceProcess(serviceId, active.handle);
+    }
+  }
+
+  function isSupervisorServiceStop(handle: ProcessHandle): boolean {
+    return (
+      supervisorStopRequestedServiceHandles.has(handle) ||
+      supervisorTerminatedServiceHandles.has(handle)
+    );
+  }
+
+  function trackFailedServiceTermination(
+    serviceId: string,
+    handle: ProcessHandle
+  ): void {
+    if (failedTerminationMonitors.has(handle)) {
+      return;
+    }
+    failedTerminationMonitors.add(handle);
+    const clearAfterProcessGroupExit = async () => {
+      await waitForTrackedProcessGroupExit(handle);
+      clearActiveServiceProcess(serviceId, handle);
+    };
+    clearAfterProcessGroupExit().catch((error) => {
+      logger.error("Failed service termination monitor failed", {
+        serviceId,
+        error: formatError(error),
+      });
+    });
+  }
+
   async function terminateActiveServiceProcess(
     row: ServiceRow,
     active: ActiveServiceHandle
@@ -3022,7 +3117,6 @@ export function createServiceSupervisor(
       return;
     }
     await terminateHandle(active.handle);
-    activeServices.delete(row.service.id);
   }
 
   async function terminatePersistedServicePid(row: ServiceRow): Promise<void> {
@@ -3270,8 +3364,18 @@ export function createServiceSupervisor(
   }
 
   async function terminateHandle(handle: ProcessHandle): Promise<void> {
+    if (failedServiceTerminationHandles.has(handle)) {
+      await terminateTrackedProcessGroup(handle.pid);
+      failedServiceTerminationHandles.delete(handle);
+      return;
+    }
     supervisorTerminatedServiceHandles.add(handle);
-    await terminateProcessHandle(handle, stopTimeoutMs);
+    try {
+      await terminateProcessHandle(handle, stopTimeoutMs);
+    } catch (error) {
+      failedServiceTerminationHandles.add(handle);
+      throw error;
+    }
   }
 
   async function terminatePid(pid: number): Promise<void> {
@@ -3296,6 +3400,45 @@ export function createServiceSupervisor(
       signalProcess(pid, "SIGKILL");
     }
     if (!(await waitForProcessTreeExit(pid, stopTimeoutMs))) {
+      throw new Error(`Process group ${pid} did not exit after SIGKILL`);
+    }
+  }
+
+  async function terminateTrackedProcessGroup(pid: number): Promise<void> {
+    const signalGroup = (signal: NodeJS.Signals) => {
+      try {
+        process.kill(-pid, signal);
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+          return false;
+        }
+        throw new Error(
+          `Failed to signal process group ${pid} with ${signal}`,
+          {
+            cause: error,
+          }
+        );
+      }
+    };
+
+    if (!signalGroup("SIGTERM")) {
+      return;
+    }
+    if (
+      await waitUntilProcessExit(() => !isProcessGroupAlive(pid), stopTimeoutMs)
+    ) {
+      return;
+    }
+    if (!signalGroup("SIGKILL")) {
+      return;
+    }
+    if (
+      !(await waitUntilProcessExit(
+        () => !isProcessGroupAlive(pid),
+        stopTimeoutMs
+      ))
+    ) {
       throw new Error(`Process group ${pid} did not exit after SIGKILL`);
     }
   }

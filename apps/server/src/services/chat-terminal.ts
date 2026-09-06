@@ -30,6 +30,24 @@ const HIVE_THEME_NAME = "hive-resonant";
 const DEFAULT_THEME_MODE = "dark";
 const ASCII_END_OF_TEXT = "\u0003";
 const ASCII_END_OF_TRANSMISSION = "\u0004";
+const ASCII_ESCAPE_CODE = 27;
+const AGENT_CYCLE_INPUT = "\x1b[Z";
+const MODE_ALIGNMENT_BUFFER_CHARS = 128_000;
+const MODE_ALIGNMENT_PENDING_INPUT_CHARS = 128_000;
+const MODE_ALIGNMENT_INPUT_TIMEOUT_MS = 10_000;
+const MODE_FOOTER_ROW_OFFSET = 3;
+const TUI_RENDER_START = `${String.fromCharCode(ASCII_ESCAPE_CODE)}[?2026h`;
+const TUI_RENDER_END = `${String.fromCharCode(ASCII_ESCAPE_CODE)}[?2026l`;
+const ANSI_CSI_PATTERN = new RegExp(
+  String.raw`${String.fromCharCode(ASCII_ESCAPE_CODE)}\[[0-?]*[ -/]*[@-~]`,
+  "g"
+);
+const CURSOR_POSITION_PATTERN = new RegExp(
+  String.raw`${String.fromCharCode(ASCII_ESCAPE_CODE)}\[(\d+);(\d+)H`,
+  "g"
+);
+const MODE_FOOTER_PATTERN = /\b(Plan|Build)\b\s*[·•]/;
+const LINE_END_PATTERN = /[\r\n]/;
 
 type ChatTerminalModelPreference = {
   providerId: string;
@@ -179,6 +197,11 @@ type ChatTerminalRecord = TerminalRecordFields & {
   opencodeThemeMode: "dark" | "light";
   preferredModel?: string;
   startMode?: AgentMode;
+  modeAlignmentBuffer: string;
+  modeAlignmentCycleSent: boolean;
+  modeAlignmentComplete: boolean;
+  modeAlignmentInputTimeout?: ReturnType<typeof setTimeout>;
+  pendingInput: string;
   allowEmbeddedControlInput: boolean;
   environment: Record<string, string>;
 };
@@ -216,6 +239,126 @@ const createSpawnErrorMessage = (binary: string, error: unknown): string => {
   const reason = error instanceof Error ? error.message : String(error);
   return `Failed to start OpenCode 2 chat terminal using '${binary}'. ${reason}. Reinstall Hive or set HIVE_OPENCODE_BIN to the opencode2 executable.`;
 };
+
+function resolveModeFromRender(
+  render: string,
+  terminalRows: number
+): AgentMode | undefined {
+  const footerRow = Math.max(1, terminalRows - MODE_FOOTER_ROW_OFFSET);
+  const cursorPositions = [...render.matchAll(CURSOR_POSITION_PATTERN)];
+  const renderedRows = new Map<number, string[]>();
+  for (const [index, match] of cursorPositions.entries()) {
+    const row = Number(match[1]);
+    if (row !== footerRow) {
+      continue;
+    }
+    const column = Number(match[2]);
+    const segmentEnd = cursorPositions[index + 1]?.index ?? render.length;
+    const segment = render
+      .slice((match.index ?? 0) + match[0].length, segmentEnd)
+      .replace(ANSI_CSI_PATTERN, "");
+    const cells = renderedRows.get(row) ?? [];
+    while (cells.length < column - 1) {
+      cells.push(" ");
+    }
+    const characters = [...(segment.split(LINE_END_PATTERN, 1)[0] ?? "")];
+    cells.splice(column - 1, characters.length, ...characters);
+    renderedRows.set(row, cells);
+  }
+
+  const label = [...renderedRows.values()]
+    .map((cells) => cells.join("").match(MODE_FOOTER_PATTERN)?.[1])
+    .find((candidate) => candidate !== undefined);
+  if (label === "Plan") {
+    return "plan";
+  }
+  if (label === "Build") {
+    return "build";
+  }
+  return;
+}
+
+function resolveRenderedMode(
+  output: string,
+  terminalRows: number
+): AgentMode | undefined {
+  const modes: AgentMode[] = [];
+  let searchFrom = 0;
+  while (searchFrom < output.length) {
+    const renderStart = output.indexOf(TUI_RENDER_START, searchFrom);
+    if (renderStart < 0) {
+      break;
+    }
+    const renderEnd = output.indexOf(
+      TUI_RENDER_END,
+      renderStart + TUI_RENDER_START.length
+    );
+    if (renderEnd < 0) {
+      return;
+    }
+    const mode = resolveModeFromRender(
+      output.slice(renderStart, renderEnd),
+      terminalRows
+    );
+    if (mode) {
+      modes.push(mode);
+    }
+    searchFrom = renderEnd + TUI_RENDER_END.length;
+  }
+  return modes.at(-1);
+}
+
+function completeModeAlignment(record: ChatTerminalRecord): void {
+  if (record.modeAlignmentComplete) {
+    return;
+  }
+
+  if (record.modeAlignmentInputTimeout) {
+    clearTimeout(record.modeAlignmentInputTimeout);
+    record.modeAlignmentInputTimeout = undefined;
+  }
+  record.modeAlignmentComplete = true;
+  if (record.pendingInput) {
+    record.pty.write(record.pendingInput);
+    record.pendingInput = "";
+  }
+}
+
+function disposeModeAlignment(record: ChatTerminalRecord): void {
+  if (record.modeAlignmentInputTimeout) {
+    clearTimeout(record.modeAlignmentInputTimeout);
+    record.modeAlignmentInputTimeout = undefined;
+  }
+  record.pendingInput = "";
+}
+
+function alignRenderedMode(record: ChatTerminalRecord, chunk: string): void {
+  if (!record.startMode || record.modeAlignmentComplete) {
+    return;
+  }
+
+  record.modeAlignmentBuffer = `${record.modeAlignmentBuffer}${chunk}`.slice(
+    -MODE_ALIGNMENT_BUFFER_CHARS
+  );
+  const renderedMode = resolveRenderedMode(
+    record.modeAlignmentBuffer,
+    record.rows
+  );
+  if (!renderedMode) {
+    return;
+  }
+
+  if (renderedMode !== record.startMode) {
+    if (record.modeAlignmentCycleSent) {
+      return;
+    }
+    record.modeAlignmentCycleSent = true;
+    record.pty.write(AGENT_CYCLE_INPUT);
+    return;
+  }
+
+  completeModeAlignment(record);
+}
 
 function resolveServerArgs(serverUrl: string): string[] {
   const explicitServerUrl = process.env.HIVE_OPENCODE_SERVER_URL?.trim();
@@ -329,10 +472,16 @@ const createChatTerminalService = (): ChatTerminalService => {
         opencodeThemeMode: prepared.opencodeThemeMode,
         preferredModel: prepared.preferredModelValue,
         startMode: prepared.normalizedStartMode,
+        modeAlignmentBuffer: "",
+        modeAlignmentCycleSent: false,
+        modeAlignmentComplete: false,
+        pendingInput: "",
         allowEmbeddedControlInput: prepared.allowEmbeddedControlInput,
         environment: args.environment,
       };
     },
+    onData: alignRenderedMode,
+    onClose: disposeModeAlignment,
     toSession,
     canReuse: (record, args) => {
       const prepared = prepareChatTerminalSpawn(args);
@@ -349,19 +498,75 @@ const createChatTerminalService = (): ChatTerminalService => {
     runningErrorMessage: "Chat terminal session is not running",
   });
 
-  return {
-    ...controller,
-    write(cellId, data) {
-      const record = controller.sessions.get(cellId);
-      if (!record || record.status !== "running") {
-        throw new Error("Chat terminal session is not running");
-      }
+  function canTransferPendingInput(
+    record: ChatTerminalRecord,
+    args: ChatTerminalEnsureArgs
+  ): boolean {
+    return (
+      record.status === "running" &&
+      record.cwd === args.workspacePath &&
+      record.opencodeSessionId === args.opencodeSessionId &&
+      record.opencodeServerUrl === args.opencodeServerUrl &&
+      record.opencodeServerPassword === args.opencodeServerPassword
+    );
+  }
 
-      if (!record.allowEmbeddedControlInput && isEmbeddedControlInput(data)) {
+  function write(cellId: string, data: string): void {
+    const record = controller.sessions.get(cellId);
+    if (!record || record.status !== "running") {
+      throw new Error("Chat terminal session is not running");
+    }
+
+    if (!record.allowEmbeddedControlInput && isEmbeddedControlInput(data)) {
+      return;
+    }
+    if (record.startMode && !record.modeAlignmentComplete) {
+      if (
+        record.pendingInput.length + data.length >
+        MODE_ALIGNMENT_PENDING_INPUT_CHARS
+      ) {
+        completeModeAlignment(record);
+        controller.write(cellId, data);
         return;
       }
-      controller.write(cellId, data);
+      record.pendingInput += data;
+      if (!record.modeAlignmentInputTimeout) {
+        record.modeAlignmentInputTimeout = setTimeout(() => {
+          if (
+            controller.sessions.get(cellId) === record &&
+            record.status === "running"
+          ) {
+            completeModeAlignment(record);
+          }
+        }, MODE_ALIGNMENT_INPUT_TIMEOUT_MS);
+        record.modeAlignmentInputTimeout.unref();
+      }
+      return;
+    }
+    controller.write(cellId, data);
+  }
+
+  return {
+    ...controller,
+    ensureSession(args) {
+      const existing = controller.sessions.get(args.cellId);
+      const pendingInput =
+        existing && canTransferPendingInput(existing, args)
+          ? existing.pendingInput
+          : "";
+      const session = controller.ensureSession(args);
+      const current = controller.sessions.get(args.cellId);
+      if (
+        pendingInput &&
+        current !== existing &&
+        current &&
+        canTransferPendingInput(current, args)
+      ) {
+        write(args.cellId, pendingInput);
+      }
+      return session;
     },
+    write,
   };
 };
 

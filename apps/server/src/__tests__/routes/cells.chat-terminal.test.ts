@@ -46,6 +46,8 @@ function createDependencies(
     updatedAt: new Date().toISOString(),
     modelId: "big-pickle",
     modelProviderId: "opencode",
+    startMode: "plan",
+    currentMode: "plan",
   }));
 
   return createChatRouteTestDependencies({
@@ -127,6 +129,7 @@ describe("Cell chat terminal routes", () => {
           providerId: "opencode",
           modelId: "big-pickle",
         },
+        startMode: "plan",
       })
     );
 
@@ -211,6 +214,7 @@ describe("Cell chat terminal routes", () => {
         opencodeServerUrl: SERVER_URL,
         opencodeThemeMode: "dark",
         preferredModel: { providerId: "opencode", modelId: "big-pickle" },
+        startMode: "plan",
       },
     });
   });

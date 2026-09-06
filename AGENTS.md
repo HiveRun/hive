@@ -659,6 +659,7 @@ If you add new tooling that writes important gitignored files, extend `.ignore` 
   When you need context, prioritize these markdown sources over external knowledge bases.
 - `AGENTS.md` is a committed generated artifact for OpenCode. After changing `README.md` or `.ruler/prompts/*.md`, run `bun run ruler:apply` and commit the regenerated `AGENTS.md`.
 - Before pushing, run `bun run check:push` (lint, types, unit tests, build). Expensive hardware/runtime E2E suites remain explicit commands rather than commit hooks.
+- PR-triggered CI intentionally skips the merge-group runtime gates. Before opening or updating a PR, inspect `.github/workflows/ci.yml` and locally run every applicable skipped gate (`bun run check:distribution`, `bun run test:e2e`, `bun run test:e2e:desktop`, and `bun run test:e2e:android-service-audio`) when the diff touches that boundary; never infer full CI readiness from the visible PR checks alone.
 - Use `bun run test:e2e:fast` while iterating on cell lifecycle, terminal handling, service orchestration, or workspace management, then run the default `bun run test:e2e` before creating a PR.
 - For Android emulator, viewer, or audio changes, run `bun run test:e2e:android-service-audio` on a capable host before declaring completion. This validates the packaged release, both audio directions, restart behavior, cleanup, and the evidence MP4.
 - Do not stop at unit tests when behavior crosses compiled, packaged, browser, Electron, process, or device boundaries. Exercise the shipped boundary that can differ from source development.
@@ -912,6 +913,7 @@ Use this document whenever designing or reviewing UI. If pixels drift from these
 
 - Translate substantial requests into explicit acceptance criteria before implementation. Keep every criterion open until it has fresh evidence or a clearly reported blocker.
 - Do not declare work complete because the code compiles, unit tests pass, or the happy path works. Verify the highest-risk shipped boundary affected by the change: compiled binary, installer, browser, Electron, process lifecycle, network, or device.
+- Before creating or updating a PR, inspect the CI workflow and run every merge-gating command affected by the diff. Jobs skipped on pull-request events are still mandatory local verification; if a required gate cannot run, report the exact blocker and do not describe the PR as ready or fully tested.
 - Never silently reduce scope to get a green result. Do not replace a packaged/runtime test with a dev server, mock the boundary under test, weaken assertions, remove coverage, skip cleanup, or substitute a partial workaround for the requested behavior.
 - Do not add retries, sleeps, broad catches, fallback paths, or compatibility layers merely to hide a failure. Use them only when the product requirement calls for them and the underlying failure mode is understood.
 - Treat each failed verification as diagnostic evidence. Read the complete error, inspect logs/screenshots/video/traces and persisted state, identify the violated invariant, fix the root cause, and rerun the exact failing path.
