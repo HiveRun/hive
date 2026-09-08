@@ -110,38 +110,16 @@ See [Android Runtime Walkthrough](docs/android-runtime-walkthrough.md) for the c
 
 #### OpenCode keybinds in Hive
 
-Hive applies browser-safe aliases for conflict-prone shortcuts in embedded chat terminals (web + desktop runtimes):
+Hive writes an isolated, static browser-safe keybind configuration for embedded chat terminals (web + desktop runtimes):
 
-- Leader defaults to `Ctrl+X` unless overridden in OpenCode config.
+- Leader: `Ctrl+X`
 - `session.toggle.thinking`: `leader + i`
 - `variant.cycle`: `leader + t`
 - `theme.switch`: `leader + j`
 - `command.palette.show`: `leader + p`
 - `app.exit` (embedded chat terminals): `leader + q`
 
-Embedded chat terminals intentionally avoid `Ctrl+C` / `Ctrl+D` as app-exit shortcuts by default to reduce accidental session exits while you are typing in the browser/Electron UI.
-
-Keybind merge behavior:
-
-- Hive starts with browser-safe aliases for conflict-prone actions.
-- Workspace/inline custom keybinds are preserved and Hive appends the browser-safe alias for the same action.
-- Setting a keybind to `none` keeps it disabled (Hive does not append aliases in that case).
-- Explicit keybind overrides that use `ctrl+c` and/or `ctrl+d` are honored in embedded chat terminals.
-- External `opencode2` sessions keep OpenCode's default exit combos (`Ctrl+C`, `Ctrl+D`, `leader + q`) unless you override them.
-
-Example:
-
-```json
-{
-  "keybinds": {
-    "variant.cycle": "ctrl+t"
-  }
-}
-```
-
-In Hive embedded terminals this resolves to `ctrl+t,<leader>t` so browser-safe fallback remains available.
-
-After changing keybind config, restart the chat terminal session (or restart Hive) to pick up updates.
+Embedded chat terminals intentionally ignore global, workspace, and inline CLI keybind settings. They also suppress `Ctrl+C` and `Ctrl+D` input so browser terminal keystrokes cannot accidentally exit the attached TUI. External `opencode2` sessions continue to use their own OpenCode CLI configuration and default exit combos.
 
 Open the printed UI link (default [http://localhost:3000](http://localhost:3000)) after the log shows “Service supervisor initialized.”
 

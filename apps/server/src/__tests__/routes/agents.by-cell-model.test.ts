@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { OpenCodeClient, OpenCodeEvent } from "@opencode-ai/client";
+import type { OpenCodeClient, V2Event } from "@opencode-ai/client";
 import { Elysia } from "elysia";
 import {
   afterAll as afterAllTests,
@@ -118,7 +118,7 @@ function createClientStub() {
         () =>
           (async function* () {
             // no runtime events for this regression
-          })() as AsyncGenerator<OpenCodeEvent, void, unknown>
+          })() as AsyncGenerator<V2Event, void, unknown>
       ),
     },
     form: { list: vi.fn(async () => []) },
@@ -164,7 +164,7 @@ function createModelInfo(modelID: string, id: string) {
     status: "active" as const,
     capabilities: { tools: true, input: ["text"], output: ["text"] },
     limit: { context: 128_000, output: 16_000 },
-    variants: [],
+    variants: modelID === "big-pickle" ? [{ id: "high" }] : [],
     cost: [],
     time: { released: 0 },
   };
@@ -223,6 +223,7 @@ describe("agents by-cell model capture", () => {
       cellId,
       modelIdOverride: "opencode/big-pickle",
       providerIdOverride: "opencode",
+      variantOverride: "high",
       startedAt: null,
       finishedAt: null,
       attemptCount: 0,
@@ -246,6 +247,7 @@ describe("agents by-cell model capture", () => {
       session: {
         modelId?: string;
         modelProviderId?: string;
+        modelVariant?: string;
       } | null;
     };
     expect(response.status, payload.message).toBe(HTTP_OK);
@@ -253,12 +255,14 @@ describe("agents by-cell model capture", () => {
     expect(payload.session).not.toBeNull();
     expect(payload.session?.modelId).toBe("opencode/big-pickle");
     expect(payload.session?.modelProviderId).toBe("opencode");
+    expect(payload.session?.modelVariant).toBe("high");
     expect(createSessionSpy).toHaveBeenCalledWith({
       title: "By-cell model capture",
       agent: "plan",
       model: {
         id: "opencode/big-pickle",
         providerID: "opencode",
+        variant: "high",
       },
       location: { directory: workspacePath },
     });
@@ -268,6 +272,7 @@ describe("agents by-cell model capture", () => {
       model: {
         providerID: "opencode",
         id: "opencode/big-pickle",
+        variant: "high",
       },
     });
   });

@@ -22,15 +22,16 @@ import {
   sep,
 } from "node:path";
 import { Plugin } from "@opencode-ai/plugin";
+import type { Info as ToolInfo } from "@opencode-ai/plugin/promise/tool";
 
-export const HIVE_PLUGIN_REVISION = "1";
-export const HIVE_PLUGIN_CAPABILITIES = [
+const HIVE_PLUGIN_REVISION = "1";
+const HIVE_PLUGIN_CAPABILITIES = [
   "tools",
   "fresh-context",
   "shell-environment",
   "worktree-boundary",
 ] as const;
-export const HIVE_PLUGIN_ID = "hive.cell.v2.r1.tools-context-shell-permission";
+const HIVE_PLUGIN_ID = "hive.cell.v2.r1.tools-context-shell-permission";
 
 const HIVE_CONFIG_RELATIVE_PATH = join(".hive", "config.json");
 const HIVE_CONTEXT_TIMEOUT_MS = 10_000;
@@ -280,35 +281,24 @@ const cellServicesUrl = (config: HiveConfig, queryParams = "") =>
 const cellUrl = (config: HiveConfig, suffix = "") =>
   `${config.hiveUrl}/api/cells/${encodeURIComponent(config.cellId)}${suffix}`;
 
-type JsonSchema = Readonly<Record<string, unknown>>;
+type ToolInput = ToolInfo["input"];
 
-type HiveV2Tool = {
-  name: string;
-  description: string;
-  input: JsonSchema;
-  options: { codemode: false };
-  execute: (
-    input: unknown,
-    context: unknown
-  ) => Promise<{ content: string; metadata: Record<string, unknown> }>;
-};
-
-const stringArg = (description: string): JsonSchema => ({
+const stringArg = (description: string): ToolInput => ({
   type: "string",
   description,
 });
 
-const numberArg = (description: string): JsonSchema => ({
+const numberArg = (description: string): ToolInput => ({
   type: "number",
   description,
 });
 
-const booleanArg = (description: string): JsonSchema => ({
+const booleanArg = (description: string): ToolInput => ({
   type: "boolean",
   description,
 });
 
-const outputFormatArg: JsonSchema = {
+const outputFormatArg: ToolInput = {
   type: "string",
   enum: ["text", "json"],
   description:
@@ -333,9 +323,9 @@ const createConfirmArg = (action: string) =>
   );
 
 const objectInput = (
-  properties: Record<string, JsonSchema>,
+  properties: Record<string, ToolInput>,
   required: string[] = []
-): JsonSchema => ({
+): ToolInput => ({
   type: "object",
   properties,
   required,
@@ -542,7 +532,7 @@ function formatSingleServiceText(
   return output.join("\n");
 }
 
-function createServicesTool(context: HiveToolContext): HiveV2Tool {
+function createServicesTool(context: HiveToolContext): ToolInfo {
   return {
     name: "hive_services",
     options: { codemode: false },
@@ -593,7 +583,7 @@ PAGINATION: By default returns last 200 log lines per service. Use logLines/logO
   };
 }
 
-function createServiceLogsTool(context: HiveToolContext): HiveV2Tool {
+function createServiceLogsTool(context: HiveToolContext): ToolInfo {
   return {
     name: "hive_service_logs",
     options: { codemode: false },
@@ -669,7 +659,7 @@ TIP: If you don't know the service name, call hive_services first to see availab
   };
 }
 
-function createSetupLogsTool(context: HiveToolContext): HiveV2Tool {
+function createSetupLogsTool(context: HiveToolContext): ToolInfo {
   return {
     name: "hive_setup_logs",
     options: { codemode: false },
@@ -719,7 +709,7 @@ NOTE: This is different from service logs - setup runs once when the cell is cre
   };
 }
 
-function createRestartServicesTool(context: HiveToolContext): HiveV2Tool {
+function createRestartServicesTool(context: HiveToolContext): ToolInfo {
   return {
     name: "hive_restart_services",
     options: { codemode: false },
@@ -763,7 +753,7 @@ TIP: Call hive_services after restarting to confirm everything is healthy.`,
   };
 }
 
-function createRestartServiceTool(context: HiveToolContext): HiveV2Tool {
+function createRestartServiceTool(context: HiveToolContext): ToolInfo {
   return {
     name: "hive_restart_service",
     options: { codemode: false },
@@ -821,7 +811,7 @@ TIP: Call hive_services after restarting to confirm everything is healthy.`,
   };
 }
 
-function createRerunSetupTool(context: HiveToolContext): HiveV2Tool {
+function createRerunSetupTool(context: HiveToolContext): ToolInfo {
   return {
     name: "hive_rerun_setup",
     options: { codemode: false },
@@ -877,7 +867,7 @@ SAFETY: You must pass confirm=true or the tool will refuse to run.`,
   };
 }
 
-export function createHiveTools(worktreePath: string): HiveV2Tool[] {
+function createHiveTools(worktreePath: string): ToolInfo[] {
   const context = { worktreePath };
   return [
     createServicesTool(context),
@@ -1111,7 +1101,7 @@ const HIVE_MUTATION_ACTIONS = new Set([
   "apply_patch",
 ]);
 
-export async function setupHivePlugin(context: Plugin.Context): Promise<void> {
+async function setupHivePlugin(context: Plugin.Context): Promise<void> {
   const worktreePath = resolve(context.location.project.directory);
   const configPath = join(worktreePath, HIVE_CONFIG_RELATIVE_PATH);
   if (!existsSync(configPath)) {

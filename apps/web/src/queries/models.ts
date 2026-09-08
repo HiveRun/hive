@@ -1,36 +1,18 @@
 import type { UseQueryOptions } from "@tanstack/react-query";
 import { rpc } from "@/lib/rpc";
 
-type AvailableModelVariant = {
-  id: string;
-};
+type ModelListResult = NonNullable<
+  Awaited<ReturnType<typeof rpc.api.agents.models.get>>["data"]
+>;
 
-export type AvailableModel = {
-  id: string;
-  name: string;
-  provider: string;
-  variants: AvailableModelVariant[];
-};
-
-type ProviderInfo = {
-  id: string;
-  name?: string;
-};
-
-export type ModelListResponse = {
-  models: AvailableModel[];
-  defaults: Record<string, string>;
-  stickyVariants: Record<string, string>;
-  providers: ProviderInfo[];
-};
+export type ModelListResponse = ModelListResult;
+export type AvailableModel = ModelListResponse["models"][number];
 
 type ModelsQueryOptions = UseQueryOptions<
   ModelListResponse,
   Error,
   ModelListResponse
 >;
-
-type ModelsRequest = () => Promise<{ data: unknown; error: unknown }>;
 
 const emptyModelList = (): ModelListResponse => ({
   models: [],
@@ -39,29 +21,29 @@ const emptyModelList = (): ModelListResponse => ({
   providers: [],
 });
 
-const fetchModelList = async (request: ModelsRequest) => {
-  const { data, error } = await request();
-  if (error) {
-    throw new Error("Failed to fetch models");
-  }
-  return (data as ModelListResponse | undefined) ?? emptyModelList();
-};
-
 export const modelQueries = {
   bySession: (sessionId: string): ModelsQueryOptions => ({
     queryKey: ["models", sessionId] as const,
-    queryFn: () =>
-      fetchModelList(() =>
-        rpc.api.agents.sessions({ id: sessionId }).models.get()
-      ),
+    queryFn: async () => {
+      const { data, error } = await rpc.api.agents
+        .sessions({ id: sessionId })
+        .models.get();
+      if (error) {
+        throw new Error("Failed to fetch models");
+      }
+      return data ?? emptyModelList();
+    },
   }),
   byWorkspace: (workspaceId: string): ModelsQueryOptions => ({
     queryKey: ["models", "workspace", workspaceId] as const,
-    queryFn: () =>
-      fetchModelList(() =>
-        rpc.api.agents.models.get({
-          query: { workspaceId },
-        })
-      ),
+    queryFn: async () => {
+      const { data, error } = await rpc.api.agents.models.get({
+        query: { workspaceId },
+      });
+      if (error) {
+        throw new Error("Failed to fetch models");
+      }
+      return data ?? emptyModelList();
+    },
   }),
 };

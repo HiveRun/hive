@@ -1,33 +1,18 @@
 import { realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import type { Info as ToolInfo } from "@opencode-ai/plugin/promise/tool";
 import type { RunOptions } from "./cli";
 import { runSg } from "./cli";
 import { CLI_LANGUAGES } from "./constants";
 import type { CliLanguage, SgResult } from "./types";
 import { formatReplaceResult, formatSearchResult } from "./utils";
 
-type JsonSchema = Readonly<Record<string, unknown>>;
-
-type AstGrepToolDefinition = {
-  name: string;
-  description: string;
-  input: JsonSchema;
-  options: { codemode: false };
-};
-
-type AstGrepToolExecutor = {
-  execute: (
-    input: unknown,
-    context: unknown
-  ) => Promise<{ content: string; metadata: { output: string } }>;
-};
-
-export type AstGrepV2Tool = AstGrepToolDefinition & AstGrepToolExecutor;
+type ToolInput = ToolInfo["input"];
 
 const FUNCTION_PATTERN_HINT_REGEX =
   /^(export\s+)?(async\s+)?function\s+\$[A-Z_]+\s*$/iu;
 
-const stringArg = (description: string): JsonSchema => ({
+const stringArg = (description: string): ToolInput => ({
   type: "string",
   description,
 });
@@ -51,9 +36,9 @@ const commonSearchProperties = () => ({
 });
 
 const objectInput = (
-  properties: Record<string, JsonSchema>,
+  properties: Record<string, ToolInput>,
   required: string[]
-): JsonSchema => ({
+): ToolInput => ({
   type: "object",
   properties,
   required,
@@ -179,7 +164,7 @@ const getEmptyResultHint = (
   return null;
 };
 
-function createSearchTool(cwd: string, readableRoots: string[]): AstGrepV2Tool {
+function createSearchTool(cwd: string, readableRoots: string[]): ToolInfo {
   return {
     name: "ast_grep_search",
     options: { codemode: false },
@@ -232,7 +217,7 @@ function createReplaceTool(
   cwd: string,
   readableRoots: string[],
   worktreeRoot: string
-): AstGrepV2Tool {
+): ToolInfo {
   return {
     name: "ast_grep_replace",
     options: { codemode: false },
@@ -283,7 +268,7 @@ export function createAstGrepTools(
   cwd: string,
   referenceRoots: string[] = [],
   worktreeRoot = cwd
-): AstGrepV2Tool[] {
+): ToolInfo[] {
   const readableRoots = [worktreeRoot, ...referenceRoots];
   return [
     createSearchTool(cwd, readableRoots),

@@ -19,7 +19,7 @@ import {
   assertOpenCodeBinary,
   OPENCODE_PACKAGE_NAME,
   OPENCODE_VERSION,
-  openCodeNativePackageName,
+  openCodePackageBinaryPath,
   openCodeReleaseBinaryName,
 } from "./common";
 
@@ -47,22 +47,7 @@ const openCodePackageRoot = join(
   "cli"
 );
 const openCodePackageManifestPath = join(openCodePackageRoot, "package.json");
-const openCodeNativePackage = openCodeNativePackageName(platform, arch);
-const openCodeNativePackageRoot = join(
-  repoRoot,
-  "node_modules",
-  ...openCodeNativePackage.split("/")
-);
-const openCodeNativePackageManifestPath = join(
-  openCodeNativePackageRoot,
-  "package.json"
-);
 const openCodeBinaryName = openCodeReleaseBinaryName(platform);
-const openCodeSourceBinaryPath = join(
-  openCodeNativePackageRoot,
-  "bin",
-  openCodeBinaryName
-);
 
 const desktopBinaryName = "hive-desktop";
 const desktopElectronRoot = join(repoRoot, "apps", "desktop-electron");
@@ -339,7 +324,7 @@ const copyOpenCodeBundle = async (destination: string) => {
 
   const packageManifest = JSON.parse(
     await readFile(openCodePackageManifestPath, "utf8")
-  ) as { name?: string; version?: string };
+  ) as { name?: string; version?: string; bin?: unknown };
   if (
     packageManifest.name !== OPENCODE_PACKAGE_NAME ||
     packageManifest.version !== OPENCODE_VERSION
@@ -349,21 +334,13 @@ const copyOpenCodeBundle = async (destination: string) => {
     );
   }
 
+  const openCodeSourceBinaryPath = openCodePackageBinaryPath(
+    openCodePackageRoot,
+    packageManifest.bin
+  );
   if (!existsSync(openCodeSourceBinaryPath)) {
     throw new Error(
-      `${openCodeNativePackage} native binary missing at ${openCodeSourceBinaryPath}. Run bun install first.`
-    );
-  }
-
-  const nativeManifest = JSON.parse(
-    await readFile(openCodeNativePackageManifestPath, "utf8")
-  ) as { name?: string; version?: string };
-  if (
-    nativeManifest.name !== openCodeNativePackage ||
-    nativeManifest.version !== OPENCODE_VERSION
-  ) {
-    throw new Error(
-      `Expected ${openCodeNativePackage}@${OPENCODE_VERSION}, received ${nativeManifest.name ?? "unknown"}@${nativeManifest.version ?? "unknown"}`
+      `${OPENCODE_PACKAGE_NAME} postinstall-selected binary missing at ${openCodeSourceBinaryPath}. Run bun install first.`
     );
   }
 
@@ -451,7 +428,6 @@ const main = async () => {
     androidViewerAssetsDir: androidViewerAssetsRelativeDir,
     opencodeBinary: openCodeBinaryName,
     opencodePackage: OPENCODE_PACKAGE_NAME,
-    opencodeNativePackage: openCodeNativePackage,
     opencodeVersion: OPENCODE_VERSION,
   } satisfies Record<string, string>;
 

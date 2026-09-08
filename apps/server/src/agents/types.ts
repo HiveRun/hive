@@ -1,13 +1,4 @@
-/**
- * Application-layer types for agent sessions and messages.
- *
- * These types adapt OpenCode runtime data with Hive-specific concerns:
- * - Track which cell owns a session (cellId, templateId)
- * - Add custom status tracking beyond OpenCode's session lifecycle
- * - Serialize runtime types into simplified API responses
- *
- * Note: These are Hive's public domain types, not generated client types.
- */
+import type { V2Event } from "@opencode-ai/client";
 
 /**
  * Custom session statuses that track Hive-specific workflow states.
@@ -89,94 +80,19 @@ export type AgentMessageRecord = {
   errorMessage?: string | null;
 };
 
-type AgentCompactionStats = {
-  count: number;
-  lastCompactionAt: string | null;
-};
-
-/**
- * Stream events sent over SSE to clients.
- * Combines Hive events with the stable event shapes adapted from OpenCode.
- */
-export type AgentRuntimeEvent =
-  | {
-      type: "message.updated";
-      properties: {
-        info: {
-          id: string;
-          sessionID: string;
-          role: "user" | "assistant";
-          time: { created: number; completed?: number };
-          mode?: string;
-          model?: { providerID: string; modelID: string; variant?: string };
-          error?: unknown;
-        };
-      };
-    }
-  | {
-      type: "permission.asked" | "permission.updated";
-      properties: {
-        id: string;
-        sessionID: string;
-        permission: string;
-        patterns: string[];
-        metadata: Record<string, unknown>;
-        always: string[];
-      };
-    }
-  | {
-      type: "permission.replied";
-      properties: {
-        sessionID: string;
-        permissionID: string;
-        response: "once" | "always" | "reject";
-      };
-    }
-  | {
-      type: "question.asked";
-      properties: {
-        id: string;
-        sessionID: string;
-        questions: Array<{ question: string }>;
-      };
-    }
-  | {
-      type: "question.replied";
-      properties: {
-        id: string;
-        sessionID: string;
-        answer: unknown;
-      };
-    }
-  | {
-      type: "question.rejected";
-      properties: { id: string; sessionID: string };
-    }
-  | {
-      type: "session.status";
-      properties: {
-        sessionID: string;
-        status: { type: "idle" | "busy" | "retry" };
-      };
-    }
-  | { type: "session.idle"; properties: { sessionID: string } }
-  | {
-      type: "session.error";
-      properties: { sessionID: string; error: unknown };
-    }
-  | {
-      type: "session.compacted";
-      properties: { sessionID: string; compacted?: number; count?: number };
-    };
-
 export type AgentStreamEvent =
-  | { type: "history"; messages: AgentMessageRecord[] }
   | { type: "status"; status: AgentSessionStatus; error?: string }
+  | {
+      type: "input_required";
+      sessionId: string;
+      permissionId: string;
+      title: string;
+      kind: "permission" | "question";
+    }
   | {
       type: "mode";
       startMode: AgentMode;
       currentMode: AgentMode;
       modeUpdatedAt?: string;
     }
-  | { type: "session.compaction"; properties: AgentCompactionStats }
-  | AgentRuntimeEvent;
+  | V2Event;

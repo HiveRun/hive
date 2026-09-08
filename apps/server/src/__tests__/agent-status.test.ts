@@ -1,11 +1,9 @@
-import type { OpenCodeEvent } from "@opencode-ai/client";
+import type { V2Event } from "@opencode-ai/client";
 import { describe, expect, it } from "vitest";
 import {
-  adaptOpencodeEvent,
   resolveRuntimeModeFromEvent,
   resolveRuntimeStatusFromEvent,
 } from "../agents/service";
-import type { AgentRuntimeEvent } from "../agents/types";
 
 describe("resolveRuntimeStatusFromEvent", () => {
   it("returns null when user agent selection updates", () => {
@@ -74,20 +72,12 @@ describe("resolveRuntimeModeFromEvent", () => {
   });
 });
 
-function adapt(event: OpenCodeEvent): AgentRuntimeEvent {
-  const adapted = adaptOpencodeEvent(event);
-  if (!adapted) {
-    throw new Error(`Expected ${event.type} to be adapted`);
-  }
-  return adapted;
+function resolveStatus(event: V2Event) {
+  return resolveRuntimeStatusFromEvent(event);
 }
 
-function resolveStatus(event: OpenCodeEvent) {
-  return resolveRuntimeStatusFromEvent(adapt(event));
-}
-
-function resolveMode(event: OpenCodeEvent) {
-  return resolveRuntimeModeFromEvent(adapt(event));
+function resolveMode(event: V2Event) {
+  return resolveRuntimeModeFromEvent(event);
 }
 
 function eventBase() {
@@ -101,7 +91,7 @@ function durable() {
 function v2Event(
   type: "session.idle" | "session.status",
   data: Record<string, unknown> = {}
-): OpenCodeEvent {
+): V2Event {
   if (type === "session.status") {
     return {
       ...eventBase(),
@@ -115,7 +105,7 @@ function v2Event(
   return { ...eventBase(), type, data: { sessionID: "ses_test" } };
 }
 
-function buildAgentSelectedEvent(agent: "plan" | "build"): OpenCodeEvent {
+function buildAgentSelectedEvent(agent: "plan" | "build"): V2Event {
   return {
     ...eventBase(),
     type: "session.agent.selected",
@@ -124,7 +114,7 @@ function buildAgentSelectedEvent(agent: "plan" | "build"): OpenCodeEvent {
   };
 }
 
-function buildStepStartedEvent(agent: "plan" | "build"): OpenCodeEvent {
+function buildStepStartedEvent(agent: "plan" | "build"): V2Event {
   return {
     ...eventBase(),
     type: "session.step.started",
@@ -138,7 +128,7 @@ function buildStepStartedEvent(agent: "plan" | "build"): OpenCodeEvent {
   };
 }
 
-function buildPermissionAskedEvent(): OpenCodeEvent {
+function buildPermissionAskedEvent(): V2Event {
   return {
     ...eventBase(),
     type: "permission.asked",
@@ -151,7 +141,7 @@ function buildPermissionAskedEvent(): OpenCodeEvent {
   };
 }
 
-function buildPermissionRepliedEvent(): OpenCodeEvent {
+function buildPermissionRepliedEvent(): V2Event {
   return {
     ...eventBase(),
     type: "permission.replied",
@@ -163,7 +153,7 @@ function buildPermissionRepliedEvent(): OpenCodeEvent {
   };
 }
 
-function buildFormCreatedEvent(): OpenCodeEvent {
+function buildFormCreatedEvent(): V2Event {
   return {
     ...eventBase(),
     type: "form.created",
@@ -178,7 +168,7 @@ function buildFormCreatedEvent(): OpenCodeEvent {
   };
 }
 
-function buildFormRepliedEvent(): OpenCodeEvent {
+function buildFormRepliedEvent(): V2Event {
   return {
     ...eventBase(),
     type: "form.replied",
@@ -190,7 +180,7 @@ function buildFormRepliedEvent(): OpenCodeEvent {
   };
 }
 
-function buildFormCancelledEvent(): OpenCodeEvent {
+function buildFormCancelledEvent(): V2Event {
   return {
     ...eventBase(),
     type: "form.cancelled",
@@ -198,7 +188,7 @@ function buildFormCancelledEvent(): OpenCodeEvent {
   };
 }
 
-function buildExecutionFailedEvent(): OpenCodeEvent {
+function buildExecutionFailedEvent(): V2Event {
   return {
     ...eventBase(),
     type: "session.execution.failed",
@@ -211,7 +201,7 @@ function buildExecutionFailedEvent(): OpenCodeEvent {
 }
 
 function assertResolvedStatus(
-  sourceEvent: OpenCodeEvent,
+  sourceEvent: V2Event,
   status: "awaiting_input" | "working"
 ) {
   const actual = resolveStatus(sourceEvent);

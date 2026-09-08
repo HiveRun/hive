@@ -1,12 +1,13 @@
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Info as ToolInfo } from "@opencode-ai/plugin/promise/tool";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import hivePlugin, {
-  HIVE_PLUGIN_CAPABILITIES,
-  HIVE_PLUGIN_ID,
-  HIVE_PLUGIN_REVISION,
-} from "../../agents/tools/hive";
+
+const hivePluginModulePath = "../../agents/tools/hive.ts?module";
+const { default: hivePlugin } = (await import(
+  hivePluginModulePath
+)) as typeof import("../../agents/tools/hive");
 
 const TEST_SERVICE_PORT = 39_993;
 const HTTP_OK = 200;
@@ -15,6 +16,8 @@ const RESTART_SINGLE_FETCH_CALLS = 3;
 const ORIGINAL_HIVE_CELL_ID = process.env.HIVE_CELL_ID;
 const ORIGINAL_HIVE_CELL_RUNTIME_DIR = process.env.HIVE_CELL_RUNTIME_DIR;
 const ORIGINAL_HIVE_HOME = process.env.HIVE_HOME;
+const HIVE_PLUGIN_ID = "hive.cell.v2.r1.tools-context-shell-permission";
+const HIVE_PLUGIN_REVISION = "1";
 const HIVE_TOOL_NAMES = [
   "hive_services",
   "hive_service_logs",
@@ -23,15 +26,6 @@ const HIVE_TOOL_NAMES = [
   "hive_restart_service",
   "hive_rerun_setup",
 ] as const;
-
-type RegisteredTool = {
-  name: string;
-  input: Record<string, unknown>;
-  execute: (
-    input: unknown,
-    context: unknown
-  ) => Promise<{ content?: string; metadata?: Record<string, unknown> }>;
-};
 
 type SessionContextHook = (event: {
   tools: Record<string, unknown>;
@@ -51,7 +45,7 @@ type PermissionHook = (event: {
 }) => Promise<void> | void;
 
 type PluginHarness = {
-  tools: Map<string, RegisteredTool>;
+  tools: Map<string, ToolInfo>;
   sessionContext?: SessionContextHook;
   shellCreate?: ShellCreateHook;
   permission?: PermissionHook;
@@ -112,12 +106,6 @@ describe("Hive OpenCode tools", () => {
 
     expect(hivePlugin.id).toBe(HIVE_PLUGIN_ID);
     expect(HIVE_PLUGIN_REVISION).toBe("1");
-    expect(HIVE_PLUGIN_CAPABILITIES).toEqual([
-      "tools",
-      "fresh-context",
-      "shell-environment",
-      "worktree-boundary",
-    ]);
     expect([...run.plugin.tools.keys()]).toEqual(HIVE_TOOL_NAMES);
     expect(run.plugin.sessionContext).toBeTypeOf("function");
     expect(run.plugin.shellCreate).toBeTypeOf("function");
@@ -277,6 +265,12 @@ describe("Hive OpenCode tools", () => {
       hive: {
         pluginId: HIVE_PLUGIN_ID,
         pluginRevision: HIVE_PLUGIN_REVISION,
+        capabilities: [
+          "tools",
+          "fresh-context",
+          "shell-environment",
+          "worktree-boundary",
+        ],
         ready: true,
       },
     });
@@ -400,7 +394,7 @@ async function createPluginHarness(
     },
     tool: {
       transform: (
-        callback: (draft: { add: (tool: RegisteredTool) => void }) => void
+        callback: (draft: { add: (tool: ToolInfo) => void }) => void
       ) => {
         callback({
           add: (tool) => {
@@ -528,10 +522,6 @@ async function executeTool(
   if (!tool) {
     throw new Error(`Tool not registered: ${toolName}`);
   }
-  const result = await tool.execute(input, {
-    sessionID: "session",
-    messageID: "message",
-    agent: "test",
-  });
+  const result = await tool.execute(input, {} as never);
   return result.content ?? "";
 }

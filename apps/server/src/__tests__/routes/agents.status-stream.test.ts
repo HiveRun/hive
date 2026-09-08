@@ -1,3 +1,4 @@
+import type { V2Event } from "@opencode-ai/client";
 import { Elysia } from "elysia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { publishAgentEvent } from "../../agents/events";
@@ -43,7 +44,7 @@ describe("agent status stream", () => {
   });
 
   it("emits initial status and forwards status updates", async () => {
-    const { response, reader, readChunk } =
+    const { response, close, readChunk } =
       await openOkStatusStream(TEST_SESSION);
     expect(response.headers.get("content-type")).toContain("text/event-stream");
 
@@ -60,7 +61,7 @@ describe("agent status stream", () => {
     expect(update).toContain("event: status");
     expect(update).toContain("working");
 
-    await reader.cancel();
+    close();
   });
 
   it("returns 404 when session cannot be found", async () => {
@@ -74,7 +75,7 @@ describe("agent status stream", () => {
   });
 
   it("emits working as the initial restored status", async () => {
-    const { response, reader, readChunk } =
+    const { response, close, readChunk } =
       await openStatusStream(TEST_WORKING_SESSION);
 
     expect(response.status).toBe(HTTP_OK);
@@ -84,11 +85,11 @@ describe("agent status stream", () => {
     expect(initial).toContain("event: status");
     expect(initial).toContain("working");
 
-    await reader.cancel();
+    close();
   });
 
   it("emits initial mode and forwards mode updates", async () => {
-    const { response, reader, readChunk } = await openStatusStream(
+    const { response, close, readChunk } = await openStatusStream(
       TEST_SESSION_WITH_MODE
     );
 
@@ -111,24 +112,21 @@ describe("agent status stream", () => {
     expect(update).toContain("event: mode");
     expect(update).toContain('"currentMode":"build"');
 
-    await reader.cancel();
+    close();
   });
 
   it("forwards input_required events from permission prompts", async () => {
-    const { reader, readChunk } = await openOkStatusStream(TEST_SESSION);
+    const { close, readChunk } = await openOkStatusStream(TEST_SESSION);
 
     await expectInitialStatus(readChunk);
 
-    publishAgentEvent(
-      TEST_SESSION.id,
-      createPermissionAskedEvent("perm_123") as never
-    );
+    publishAgentEvent(TEST_SESSION.id, createPermissionAskedEvent("perm_123"));
 
     const update = await readChunk();
     expect(update).toContain("event: input_required");
     expect(update).toContain("plan_exit");
 
-    await reader.cancel();
+    close();
   });
 
   it("subscribes before loading the initial session snapshot", async () => {
@@ -140,7 +138,11 @@ describe("agent status stream", () => {
       return Promise.resolve(TEST_SESSION);
     });
 
-    const response = await requestStatusStream(TEST_SESSION.id);
+    const controller = new AbortController();
+    const response = await requestStatusStream(
+      TEST_SESSION.id,
+      controller.signal
+    );
     const reader = response.body?.getReader();
     if (!reader) {
       throw new Error("Expected event stream body");
@@ -159,23 +161,23 @@ describe("agent status stream", () => {
     expect(initial).toContain("awaiting_input");
     expect(interleaved).toContain("working");
 
-    await reader.cancel();
+    controller.abort();
   });
 
   it("does not replay pending input already included in the initial snapshot", async () => {
-    const pendingInput = createPermissionAskedEvent("perm_interleaved");
+    const pendingInput = createPendingInputEvent("perm_interleaved");
     vi.spyOn(AgentService, "fetchPendingAgentInputEvents").mockImplementation(
       () => {
-        publishAgentEvent(TEST_SESSION.id, pendingInput as never);
+        publishAgentEvent(TEST_SESSION.id, pendingInput);
         publishAgentEvent(TEST_SESSION.id, {
           type: "status",
           status: "working",
         });
-        return Promise.resolve([pendingInput as never]);
+        return Promise.resolve([pendingInput]);
       }
     );
 
-    const { reader, readChunk } = await openOkStatusStream(TEST_SESSION);
+    const { close, readChunk } = await openOkStatusStream(TEST_SESSION);
     await expectInitialStatus(readChunk);
     const pending = await readChunk();
     const interleaved = await readChunk();
@@ -184,7 +186,7 @@ describe("agent status stream", () => {
     expect(interleaved).toContain('"status":"working"');
     expect(interleaved).not.toContain("perm_interleaved");
 
-    await reader.cancel();
+    close();
   });
 
   it("returns transport failures instead of reporting a missing session", async () => {
@@ -206,7 +208,8 @@ async function openStatusStream(session: AgentSessionRecord) {
     async (id: string) => (id === session.id ? session : null)
   );
 
-  const response = await requestStatusStream(session.id);
+  const controller = new AbortController();
+  const response = await requestStatusStream(session.id, controller.signal);
   const reader = response.body?.getReader() as
     | ReadableStreamDefaultReader<Uint8Array>
     | undefined;
@@ -226,7 +229,7 @@ async function openStatusStream(session: AgentSessionRecord) {
     return "";
   };
 
-  return { response, reader, readChunk };
+  return { response, readChunk, close: () => controller.abort() };
 }
 
 async function openOkStatusStream(session: AgentSessionRecord) {
@@ -246,23 +249,39 @@ async function expectInitialStatus(readChunk: () => Promise<string>) {
   }
 }
 
-function requestStatusStream(sessionId: string) {
+function requestStatusStream(sessionId: string, signal?: AbortSignal) {
   const app = new Elysia().use(agentsRoutes);
   return app.handle(
-    new Request(`http://localhost/api/agents/sessions/${sessionId}/events`)
+    new Request(`http://localhost/api/agents/sessions/${sessionId}/events`, {
+      signal,
+    })
   );
 }
 
-function createPermissionAskedEvent(id: string) {
+function createPermissionAskedEvent(
+  id: string
+): Extract<V2Event, { type: "permission.asked" }> {
   return {
+    id: `event-${id}`,
+    created: Date.now(),
     type: "permission.asked" as const,
-    properties: {
+    data: {
       id,
       sessionID: TEST_SESSION.id,
-      permission: "plan_exit",
-      patterns: ["plan_exit"],
+      action: "plan_exit",
+      resources: ["plan_exit"],
       metadata: {},
-      always: [],
+      save: [],
     },
+  };
+}
+
+function createPendingInputEvent(id: string) {
+  return {
+    type: "input_required" as const,
+    sessionId: TEST_SESSION.id,
+    permissionId: id,
+    title: "plan_exit",
+    kind: "permission" as const,
   };
 }

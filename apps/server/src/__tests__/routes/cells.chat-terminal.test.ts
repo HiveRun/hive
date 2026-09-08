@@ -125,10 +125,6 @@ describe("Cell chat terminal routes", () => {
         opencodeSessionId: AGENT_SESSION_ID,
         opencodeServerUrl: SERVER_URL,
         opencodeThemeMode: "light",
-        preferredModel: {
-          providerId: "opencode",
-          modelId: "big-pickle",
-        },
         startMode: "plan",
       })
     );
@@ -213,7 +209,6 @@ describe("Cell chat terminal routes", () => {
         opencodeSessionId: AGENT_SESSION_ID,
         opencodeServerUrl: SERVER_URL,
         opencodeThemeMode: "dark",
-        preferredModel: { providerId: "opencode", modelId: "big-pickle" },
         startMode: "plan",
       },
     });

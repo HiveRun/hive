@@ -17,7 +17,6 @@ import { runPlaywrightSuite } from "./playwright";
 import {
   createManagedProcessStopper,
   type ManagedProcess,
-  readProcessTable,
   runCommand,
   runCommandCapture,
   startManagedProcess,
@@ -176,11 +175,7 @@ async function run() {
   let processCleanupError: unknown;
 
   try {
-    await cleanupOrphanedOpencodeProcesses({
-      currentPid: process.pid,
-      e2eRunsRoot,
-      preserveRunRoot: context.runRoot,
-    });
+    await cleanupOrphanedOpencodeServices(context.runRoot);
 
     if (useSharedHiveHome) {
       process.stdout.write(`Using shared E2E HIVE_HOME: ${context.hiveHome}\n`);
@@ -696,34 +691,16 @@ async function createSpeechFixture(options: {
 
 const artifactsDirFor = (outputPath: string) => resolvePath(outputPath, "..");
 
-async function cleanupOrphanedOpencodeProcesses(options: {
-  currentPid: number;
-  e2eRunsRoot: string;
-  preserveRunRoot: string;
-}): Promise<void> {
-  const concurrentRunnerPids = readProcessTable()
-    .filter(
-      (entry) =>
-        entry.pid !== options.currentPid &&
-        entry.args.includes("src/runtime/e2e-runner.ts")
-    )
-    .map((entry) => entry.pid);
-
-  if (concurrentRunnerPids.length > 0) {
-    process.stdout.write(
-      `Skipping stale opencode cleanup while other e2e runners are active: ${concurrentRunnerPids.join(", ")}\n`
-    );
-    return;
-  }
-
-  const registeredServices = await cleanupRegisteredOpencodeServices({
-    preserveRunRoot: options.preserveRunRoot,
-    runsRoot: options.e2eRunsRoot,
+async function cleanupOrphanedOpencodeServices(
+  preserveRunRoot: string
+): Promise<void> {
+  const stopped = await cleanupRegisteredOpencodeServices({
+    preserveRunRoot,
+    runsRoot: e2eRunsRoot,
   });
-
-  if (registeredServices > 0) {
+  if (stopped > 0) {
     process.stdout.write(
-      `Cleaned ${String(registeredServices)} stale opencode service(s) from previous e2e runs\n`
+      `Cleaned ${String(stopped)} stale opencode service(s) from previous e2e runs\n`
     );
   }
 }

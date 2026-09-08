@@ -54,6 +54,28 @@ function createCurrentClient(healthGet = clientMocks.healthGet) {
   };
 }
 
+function mockDiscoveredService(
+  healthGet = vi.fn(() =>
+    Promise.resolve({ healthy: true, version: "1.4.3", pid: 122 })
+  )
+) {
+  const client = { health: { get: healthGet } };
+  clientMocks.make.mockReturnValueOnce(client);
+  serviceMocks.discover.mockResolvedValueOnce({
+    url: "http://127.0.0.1:4000",
+  });
+  return client;
+}
+
+async function startWithSuccessfulPreparation() {
+  const beforeReplace = vi.fn(() => Promise.resolve());
+  const { startSharedOpencodeServer } = await import(
+    "../../agents/opencode-server"
+  );
+  await startSharedOpencodeServer({ beforeReplace });
+  return beforeReplace;
+}
+
 beforeEach(async () => {
   const { clearSharedOpencodeServerConnection } = await import(
     "../../agents/opencode-server"
@@ -81,6 +103,7 @@ describe("shared OpenCode service", () => {
     const firstModule = await import("../../agents/opencode-server");
 
     await firstModule.startSharedOpencodeServer();
+    expect(clientMocks.healthGet).not.toHaveBeenCalled();
     const moduleUrl = new URL(
       "../../agents/opencode-server.ts?reload=1",
       import.meta.url
@@ -106,35 +129,63 @@ describe("shared OpenCode service", () => {
     expect(reloadedModule.getSharedOpencodeServerBaseUrl()).toBe(
       "http://127.0.0.1:43123"
     );
+    expect(clientMocks.healthGet).toHaveBeenCalledOnce();
   });
 
   it("prepares Hive sessions before replacing another service version", async () => {
-    const oldClient = {
-      health: {
-        get: vi.fn(() =>
-          Promise.resolve({ healthy: true, version: "1.4.3", pid: 122 })
-        ),
-      },
-    };
+    const oldClient = mockDiscoveredService();
     const currentClient = createCurrentClient();
-    clientMocks.make
-      .mockReturnValueOnce(oldClient)
-      .mockReturnValueOnce(currentClient);
-    serviceMocks.discover.mockResolvedValueOnce({
-      url: "http://127.0.0.1:4000",
-    });
-    const beforeReplace = vi.fn(() => Promise.resolve());
-    const { startSharedOpencodeServer } = await import(
-      "../../agents/opencode-server"
-    );
-
-    await startSharedOpencodeServer({ beforeReplace });
+    clientMocks.make.mockReturnValueOnce(currentClient);
+    const beforeReplace = await startWithSuccessfulPreparation();
 
     expect(beforeReplace).toHaveBeenCalledWith(oldClient);
     expect(beforeReplace.mock.invocationCallOrder[0]).toBeLessThan(
       serviceMocks.ensure.mock.invocationCallOrder[0] ??
         Number.POSITIVE_INFINITY
     );
+  });
+
+  it.each([
+    {
+      failure: "service discovery disappears",
+      arrange: () => {
+        serviceMocks.discover.mockRejectedValueOnce(
+          new Error("service vanished")
+        );
+        clientMocks.make.mockReturnValue(createCurrentClient());
+      },
+    },
+    {
+      failure: "discovered service health disappears",
+      arrange: () => {
+        mockDiscoveredService(
+          vi.fn(() => Promise.reject(new Error("service vanished")))
+        );
+        clientMocks.make.mockReturnValueOnce(createCurrentClient());
+      },
+    },
+  ])("lets ensure recover when $failure", async ({ arrange }) => {
+    arrange();
+    const beforeReplace = await startWithSuccessfulPreparation();
+
+    expect(serviceMocks.ensure).toHaveBeenCalledOnce();
+    expect(beforeReplace).not.toHaveBeenCalled();
+  });
+
+  it("propagates replacement preparation failures", async () => {
+    mockDiscoveredService();
+    const beforeReplace = vi.fn(() =>
+      Promise.reject(new Error("handoff failed"))
+    );
+    const { startSharedOpencodeServer } = await import(
+      "../../agents/opencode-server"
+    );
+
+    await expect(startSharedOpencodeServer({ beforeReplace })).rejects.toThrow(
+      "handoff failed"
+    );
+
+    expect(serviceMocks.ensure).not.toHaveBeenCalled();
   });
 
   it("clears Hive's connection without stopping the shared user service", async () => {
@@ -155,11 +206,6 @@ describe("shared OpenCode service", () => {
   it("reacquires the exact service after a cached client becomes stale", async () => {
     const firstHealth = vi
       .fn()
-      .mockResolvedValueOnce({
-        healthy: true as const,
-        version: "0.0.0-beta-18866",
-        pid: 123,
-      })
       .mockRejectedValueOnce(new Error("service stopped"));
     const firstClient = createCurrentClient(firstHealth);
     const replacementClient = createCurrentClient();

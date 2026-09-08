@@ -32,7 +32,6 @@ const originalEnvironment = Object.fromEntries(
 const temporaryDirectories: string[] = [];
 const EXECUTABLE_FILE_MODE = 0o755;
 const MODE_ALIGNMENT_TIMEOUT_MS = 10_000;
-const OVERSIZED_ALIGNMENT_INPUT_CHARS = 128_001;
 
 function createTemporaryDirectory(): string {
   const directory = mkdtempSync(join(tmpdir(), "hive-chat-terminal-"));
@@ -61,16 +60,13 @@ function createEnsureArgs(workspacePath: string) {
   };
 }
 
-function startModeAwarePty() {
+function startTerminalSession() {
   const workspacePath = createTemporaryDirectory();
   const pty = createPty();
-  const args = {
-    ...createEnsureArgs(workspacePath),
-    startMode: "plan" as const,
-  };
+  const args = createEnsureArgs(workspacePath);
   spawnMock.mockReturnValueOnce(pty);
   chatTerminalService.ensureSession(args);
-  return { args, onData: pty.onData.mock.calls[0]?.[0], pty };
+  return { args, pty };
 }
 
 function preparePtyReplacement() {
@@ -82,19 +78,13 @@ function preparePtyReplacement() {
   return { args, firstPty, secondPty };
 }
 
-function replacePtyWithPendingInput(
-  replacement: Partial<Parameters<typeof chatTerminalService.ensureSession>[0]>
-) {
-  const { args, firstPty, secondPty } = preparePtyReplacement();
-  chatTerminalService.ensureSession({ ...args, startMode: "plan" });
-  chatTerminalService.write(args.cellId, "stale input");
-  chatTerminalService.ensureSession({
-    ...args,
-    ...replacement,
-    startMode: "plan",
-  });
-  vi.advanceTimersByTime(MODE_ALIGNMENT_TIMEOUT_MS);
-  return { firstPty, secondPty };
+function withFakeTimers(run: () => void): void {
+  vi.useFakeTimers();
+  try {
+    run();
+  } finally {
+    vi.useRealTimers();
+  }
 }
 
 beforeEach(() => {
@@ -148,14 +138,7 @@ describe("OpenCode 2 chat terminal", () => {
       theme: "external-theme",
       default_agent: "build",
     });
-    chatTerminalService.ensureSession({
-      ...createEnsureArgs(workspacePath),
-      preferredModel: {
-        providerId: "gateway",
-        modelId: "anthropic/claude-sonnet-4-5",
-        variant: "high",
-      },
-    });
+    chatTerminalService.ensureSession(createEnsureArgs(workspacePath));
 
     expect(spawnMock).toHaveBeenCalledTimes(1);
     const [binary, args, options] = spawnMock.mock.calls[0] ?? [];
@@ -241,172 +224,99 @@ describe("OpenCode 2 chat terminal", () => {
     );
   });
 
-  it("keeps the attached PTY when session model and mode change", () => {
+  it("reuses the attached PTY when reconnecting to the same session", () => {
     const workspacePath = createTemporaryDirectory();
     const args = createEnsureArgs(workspacePath);
 
-    chatTerminalService.ensureSession({
-      ...args,
-      startMode: "plan",
-      preferredModel: { providerId: "opencode", modelId: "big-pickle" },
-    });
-    chatTerminalService.ensureSession({
-      ...args,
-      startMode: "build",
-      preferredModel: { providerId: "openai", modelId: "gpt-5" },
-    });
+    chatTerminalService.ensureSession(args);
+    chatTerminalService.ensureSession(args);
 
     expect(spawnMock).toHaveBeenCalledOnce();
   });
 
-  it("aligns a rendered build prompt to the requested plan mode once", () => {
-    const { args, onData, pty } = startModeAwarePty();
+  it("recreates an exited PTY when reconnecting to the same session", () => {
+    const workspacePath = createTemporaryDirectory();
+    const firstPty = createPty();
+    const secondPty = createPty();
+    const args = createEnsureArgs(workspacePath);
+    spawnMock.mockReturnValueOnce(firstPty).mockReturnValueOnce(secondPty);
+    chatTerminalService.ensureSession(args);
+    firstPty.onExit.mock.calls[0]?.[0]({ exitCode: 1, signal: null });
 
-    onData(
-      "\x1b]0;OC | Plan · workspace\x07\x1b[?2026h\x1b[33;6H\x1b[38;5;214mBu"
-    );
-    expect(pty.write).not.toHaveBeenCalled();
+    chatTerminalService.ensureSession(args);
 
-    onData("ild\x1b[0m\x1b[33;12H\x1b[38;5;214m·\x1b[0m Big Pickle\x1b[?2026l");
-    expect(pty.write).toHaveBeenCalledOnce();
-    expect(pty.write).toHaveBeenCalledWith("\x1b[Z");
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(chatTerminalService.getSession(args.cellId)?.status).toBe("running");
+  });
 
+  it("detects split and coalesced Build/Plan render chunks", () => {
+    const workspacePath = createTemporaryDirectory();
+    const pty = createPty();
+    const args = {
+      ...createEnsureArgs(workspacePath),
+      startMode: "plan" as const,
+    };
+    spawnMock.mockReturnValueOnce(pty);
+    chatTerminalService.ensureSession(args);
     chatTerminalService.write(args.cellId, "queued prompt");
-    expect(pty.write).toHaveBeenCalledOnce();
 
-    onData("\x1b[2KBuild · Big Pickle");
-    expect(pty.write).toHaveBeenCalledOnce();
+    const onData = pty.onData.mock.calls[0]?.[0];
+    onData("\x1b[?20");
+    onData("26h\x1b[33;6HBu");
+    expect(pty.write).not.toHaveBeenCalled();
+    onData("ild\x1b[33;12H · model\x1b[?2026l");
 
-    onData("\x1b[?2026h\x1b[33;6HPlan\x1b[33;12H · Big Pickle\x1b[?2026l");
+    expect(pty.write).toHaveBeenCalledOnce();
+    expect(pty.write).toHaveBeenCalledWith("\x1b[Z");
+
+    onData(
+      "\x1b[?2026h\x1b[33;6HBuild\x1b[33;12H · model\x1b[?2026l" +
+        "\x1b[?2026h\x1b[33;6HPlan\x1b[33;12H · model\x1b[?2026l"
+    );
     expect(pty.write).toHaveBeenNthCalledWith(2, "queued prompt");
+    expect(pty.write).toHaveBeenCalledTimes(2);
   });
 
-  it("does not cycle when the rendered prompt already uses the start mode", () => {
-    const { onData, pty } = startModeAwarePty();
-    onData(
-      "\x1b[?2026h\x1b[33;6H\x1b[2KPlan\x1b[33;12H · Big Pickle\x1b[?2026l"
-    );
-    onData(
-      "\x1b[?2026h\x1b[33;6H\x1b[2KBuild\x1b[33;12H · Big Pickle\x1b[?2026l"
-    );
+  it("preserves queued input across a compatible PTY replacement", () => {
+    withFakeTimers(() => {
+      const { args, firstPty, secondPty } = preparePtyReplacement();
+      chatTerminalService.ensureSession({ ...args, startMode: "plan" });
+      chatTerminalService.write(args.cellId, "queued prompt");
 
-    expect(pty.write).not.toHaveBeenCalled();
-  });
-
-  it("ignores footer-shaped text outside the terminal footer", () => {
-    const { onData, pty } = startModeAwarePty();
-    onData(
-      "\x1b[?2026h\x1b[33;1H\x1b[2K\x1b[34;6HPlan\x1b[34;12H · restored transcript\x1b[?2026l"
-    );
-
-    expect(pty.write).not.toHaveBeenCalled();
-
-    onData("\x1b[?2026h\x1b[33;6HBuild\x1b[33;12H · Big Pickle\x1b[?2026l");
-    expect(pty.write).toHaveBeenCalledOnce();
-    expect(pty.write).toHaveBeenCalledWith("\x1b[Z");
-  });
-
-  it("detects a footer before a later coalesced render frame", () => {
-    const { onData, pty } = startModeAwarePty();
-    onData(
-      "\x1b[?2026h\x1b[33;6HBuild\x1b[33;12H · Big Pickle\x1b[?2026l" +
-        "\x1b[?2026h\x1b[2;1Hunrelated update\x1b[?2026l"
-    );
-
-    expect(pty.write).toHaveBeenCalledOnce();
-    expect(pty.write).toHaveBeenCalledWith("\x1b[Z");
-  });
-
-  it("waits for the newest coalesced render frame to complete", () => {
-    const { onData, pty } = startModeAwarePty();
-    onData(
-      "\x1b[?2026h\x1b[33;6HBuild\x1b[33;12H · Big Pickle\x1b[?2026l" +
-        "\x1b[?2026h\x1b[33;6HPlan\x1b[33;12H · Big Pickle"
-    );
-
-    expect(pty.write).not.toHaveBeenCalled();
-
-    onData("\x1b[?2026l");
-    onData("\x1b[?2026h\x1b[33;6HBuild\x1b[33;12H · Big Pickle\x1b[?2026l");
-    expect(pty.write).not.toHaveBeenCalled();
-  });
-
-  it("releases pending input when the mode footer does not render", () => {
-    vi.useFakeTimers();
-    try {
-      const { args, pty } = startModeAwarePty();
-
-      chatTerminalService.write(args.cellId, "recover input");
-      expect(pty.write).not.toHaveBeenCalled();
-
-      vi.advanceTimersByTime(MODE_ALIGNMENT_TIMEOUT_MS);
-      expect(pty.write).toHaveBeenCalledWith("recover input");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("does not retain oversized input while waiting for mode alignment", () => {
-    const { args, pty } = startModeAwarePty();
-    const input = "x".repeat(OVERSIZED_ALIGNMENT_INPUT_CHARS);
-
-    chatTerminalService.write(args.cellId, input);
-
-    expect(pty.write).toHaveBeenCalledWith(input);
-  });
-
-  it("transfers pending input when the same conversation PTY is replaced", () => {
-    vi.useFakeTimers();
-    try {
-      const { firstPty, secondPty } = replacePtyWithPendingInput({
+      chatTerminalService.ensureSession({
+        ...args,
         opencodeThemeMode: "light",
+        startMode: "plan",
       });
-      expect(firstPty.kill).toHaveBeenCalledOnce();
+      vi.advanceTimersByTime(MODE_ALIGNMENT_TIMEOUT_MS);
+
       expect(firstPty.write).not.toHaveBeenCalled();
-      expect(secondPty.write).toHaveBeenCalledWith("stale input");
-    } finally {
-      vi.useRealTimers();
-    }
+      expect(secondPty.write).toHaveBeenCalledOnce();
+      expect(secondPty.write).toHaveBeenCalledWith("queued prompt");
+    });
   });
 
-  it("discards pending input when the replacement changes conversations", () => {
-    vi.useFakeTimers();
-    try {
-      const { firstPty, secondPty } = replacePtyWithPendingInput({
-        opencodeSessionId: "session-456",
-      });
-      expect(firstPty.kill).toHaveBeenCalledOnce();
-      expect(firstPty.write).not.toHaveBeenCalled();
-      expect(secondPty.write).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("does not transfer pending input after a reentrant conversation replacement", () => {
-    vi.useFakeTimers();
-    try {
+  it("writes queued input once after a reentrant compatible replacement", () => {
+    withFakeTimers(() => {
       const workspacePath = createTemporaryDirectory();
-      const firstPty = createPty();
-      const secondPty = createPty();
-      const thirdPty = createPty();
+      const ptys = [createPty(), createPty(), createPty()] as const;
       const args = {
         ...createEnsureArgs(workspacePath),
         startMode: "plan" as const,
       };
       spawnMock
-        .mockReturnValueOnce(firstPty)
-        .mockReturnValueOnce(secondPty)
-        .mockReturnValueOnce(thirdPty);
+        .mockReturnValueOnce(ptys[0])
+        .mockReturnValueOnce(ptys[1])
+        .mockReturnValueOnce(ptys[2]);
       chatTerminalService.ensureSession(args);
-      chatTerminalService.write(args.cellId, "stale input");
+      chatTerminalService.write(args.cellId, "queued prompt");
       let unsubscribe: (() => void) | undefined;
-      unsubscribe = chatTerminalService.subscribe(args.cellId, () => {
+      unsubscribe = chatTerminalService.subscribe(args.cellId, (event) => {
+        if (event.type !== "session") {
+          return;
+        }
         unsubscribe?.();
-        chatTerminalService.ensureSession({
-          ...args,
-          opencodeSessionId: "session-456",
-        });
+        chatTerminalService.ensureSession(args);
       });
 
       chatTerminalService.ensureSession({
@@ -415,34 +325,47 @@ describe("OpenCode 2 chat terminal", () => {
       });
       vi.advanceTimersByTime(MODE_ALIGNMENT_TIMEOUT_MS);
 
-      expect(firstPty.kill).toHaveBeenCalledOnce();
-      expect(secondPty.kill).toHaveBeenCalledOnce();
-      expect(thirdPty.write).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
+      expect(ptys[0].write).not.toHaveBeenCalled();
+      expect(ptys[1].write).not.toHaveBeenCalled();
+      expect(ptys[2].write).toHaveBeenCalledOnce();
+      expect(ptys[2].write).toHaveBeenCalledWith("queued prompt");
+    });
   });
 
-  it("does not align a PTY replaced by an output subscriber", () => {
-    const { args: baseArgs, firstPty } = preparePtyReplacement();
-    const args = { ...baseArgs, startMode: "plan" as const };
-    chatTerminalService.ensureSession(args);
-    let unsubscribe: (() => void) | undefined;
-    unsubscribe = chatTerminalService.subscribe(args.cellId, () => {
-      unsubscribe?.();
-      chatTerminalService.ensureSession({
-        ...args,
-        opencodeThemeMode: "light",
-      });
+  it("releases a queued prompt when the mode footer does not render", () => {
+    withFakeTimers(() => {
+      const workspacePath = createTemporaryDirectory();
+      const pty = createPty();
+      const args = {
+        ...createEnsureArgs(workspacePath),
+        startMode: "plan" as const,
+      };
+      spawnMock.mockReturnValueOnce(pty);
+      chatTerminalService.ensureSession(args);
+      chatTerminalService.write(args.cellId, "queued prompt");
+
+      vi.advanceTimersByTime(MODE_ALIGNMENT_TIMEOUT_MS);
+
+      expect(pty.write).toHaveBeenCalledWith("queued prompt");
     });
+  });
 
-    firstPty.onData.mock.calls[0]?.[0](
-      "\x1b[?2026h\x1b[33;6HBuild\x1b[33;12H · Big Pickle\x1b[?2026l"
-    );
+  it("writes ordinary terminal input immediately", () => {
+    const { args, pty } = startTerminalSession();
 
-    expect(firstPty.kill).toHaveBeenCalledOnce();
-    expect(firstPty.write).not.toHaveBeenCalled();
-    expect(spawnMock).toHaveBeenCalledTimes(2);
+    chatTerminalService.write(args.cellId, "hello\n");
+
+    expect(pty.write).toHaveBeenCalledOnce();
+    expect(pty.write).toHaveBeenCalledWith("hello\n");
+  });
+
+  it("suppresses embedded app-exit control input", () => {
+    const { args, pty } = startTerminalSession();
+
+    chatTerminalService.write(args.cellId, "\u0003");
+    chatTerminalService.write(args.cellId, "\u0004");
+
+    expect(pty.write).not.toHaveBeenCalled();
   });
 
   it("rejects an unauthenticated explicit server URL", () => {

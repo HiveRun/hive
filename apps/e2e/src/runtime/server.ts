@@ -49,18 +49,18 @@ type OpencodeServiceRegistration = {
 };
 
 const OPENCODE_SERVICE_COMMAND_PATTERN =
-  /(?:^|[/\\])opencode2?(?:\.exe)?(?:\s|$)/;
+  /(?:^|[/\\])opencode2?(?:\.exe)?["']?(?:\s|$)/;
 const SERVE_ARGUMENT_PATTERN = /(?:^|\s)serve(?:\s|$)/;
 const SERVICE_ARGUMENT_PATTERN = /(?:^|\s)--service(?:\s|$)/;
 const NEXT_ENVIRONMENT_ENTRY_PATTERN = /^ [A-Za-z_][A-Za-z0-9_]*=/;
+const SERVICE_HEALTH_TIMEOUT_MS = 2000;
 
 function isolatedOpencodeEnvironment(context: RuntimeContext) {
-  const sharedXdgRoot = join(context.hiveHome, "xdg");
   const isolatedXdgRoot = join(context.runRoot, "opencode-xdg");
   return {
-    XDG_CACHE_HOME: join(sharedXdgRoot, "cache"),
+    XDG_CACHE_HOME: join(isolatedXdgRoot, "cache"),
     XDG_CONFIG_HOME: join(isolatedXdgRoot, "config"),
-    XDG_DATA_HOME: join(sharedXdgRoot, "data"),
+    XDG_DATA_HOME: join(isolatedXdgRoot, "data"),
     XDG_STATE_HOME: join(isolatedXdgRoot, "state"),
     OPENCODE_DB: join(context.runRoot, "opencode.db"),
     OPENCODE_CLIENT: "hive",
@@ -207,6 +207,9 @@ async function registeredProcessBelongsToRun(
   ) {
     return false;
   }
+  if (process.platform === "win32") {
+    return await registeredServiceIsHealthy(registration);
+  }
   const environment = await readProcessEnvironment(registration.pid);
   return Boolean(
     environment &&
@@ -221,6 +224,40 @@ async function registeredProcessBelongsToRun(
         join(runRoot, "opencode-xdg", "state")
       )
   );
+}
+
+async function registeredServiceIsHealthy(
+  registration: OpencodeServiceRegistration
+): Promise<boolean> {
+  if (
+    typeof registration.pid !== "number" ||
+    !Number.isInteger(registration.pid) ||
+    typeof registration.url !== "string"
+  ) {
+    return false;
+  }
+  const authorization =
+    typeof registration.password === "string"
+      ? `Basic ${Buffer.from(`opencode:${registration.password}`).toString("base64")}`
+      : undefined;
+  try {
+    const response = await fetch(new URL("/api/health", registration.url), {
+      headers: authorization ? { authorization } : undefined,
+      signal: AbortSignal.timeout(SERVICE_HEALTH_TIMEOUT_MS),
+    });
+    const body = (await response.json()) as {
+      pid?: unknown;
+      version?: unknown;
+    };
+    return (
+      response.ok &&
+      body.pid === registration.pid &&
+      (registration.version === undefined ||
+        body.version === registration.version)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function sameRegistration(
@@ -361,8 +398,10 @@ export async function cleanupRegisteredOpencodeServices(options: {
     ) {
       continue;
     }
-    const file = opencodeServiceRegistrationPath(runRoot);
-    const result = await stopRegisteredOpencodeService(file, runRoot);
+    const result = await stopRegisteredOpencodeService(
+      opencodeServiceRegistrationPath(runRoot),
+      runRoot
+    );
     stopped += Number(result === "stopped");
   }
 
@@ -386,7 +425,6 @@ export async function startHiveServerWithRetries(
           HIVE_HOME: options.context.hiveHome,
           HIVE_WORKSPACE_ROOT: options.context.workspaceRoot,
           HIVE_BROWSE_ROOT: options.context.runRoot,
-          HIVE_OPENCODE_START_TIMEOUT_MS: "120000",
           HOST: "127.0.0.1",
           PORT: String(options.context.apiPort),
           ...options.extraEnv,
@@ -431,13 +469,17 @@ export function startWebE2eServer(
   return startE2eServer(options, {
     WEB_PORT: String(options.context.webPort),
     CORS_ORIGIN: options.context.webUrl,
+    HIVE_OPENCODE_BIN: options.opencodeBinaryPath,
   });
 }
 
 export function startDesktopE2eServer(
   options: StartE2eServerOptions
 ): Promise<ManagedProcess> {
-  return startE2eServer(options, { CORS_ORIGIN: "null" });
+  return startE2eServer(options, {
+    CORS_ORIGIN: "null",
+    HIVE_OPENCODE_BIN: options.opencodeBinaryPath,
+  });
 }
 
 export async function startCompiledWebE2eServer(
@@ -465,7 +507,7 @@ export async function startCompiledWebE2eServer(
           HIVE_HOME: options.context.hiveHome,
           HIVE_LOG_DIR: options.logsDir,
           HIVE_MIGRATIONS_DIR: join(options.releaseDirectory, "migrations"),
-          HIVE_OPENCODE_START_TIMEOUT_MS: "120000",
+          HIVE_OPENCODE_BIN: options.opencodeBinaryPath,
           ...isolatedOpencodeEnvironment(options.context),
           HIVE_WORKSPACE_ROOT: options.context.workspaceRoot,
           HOST: "127.0.0.1",

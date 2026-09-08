@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { resolveOpencodeBinary } from "../../apps/server/src/agents/opencode-binary";
 import {
   assertOpenCodeBinary,
   OPENCODE_VERSION_OUTPUT,
-  openCodeNativePackageName,
+  openCodePackageBinaryPath,
+  openCodeReleaseBinaryName,
 } from "./common";
 
 const EXECUTABLE_PERMISSIONS = 0o755;
@@ -105,25 +106,24 @@ describe("assertOpenCodeBinary", () => {
   });
 });
 
-describe("openCodeNativePackageName", () => {
-  test("uses baseline builds for x64 release targets", () => {
-    expect(openCodeNativePackageName("linux", "x64")).toBe(
-      "@opencode-ai/cli-linux-x64-baseline"
-    );
-    expect(openCodeNativePackageName("darwin", "x64")).toBe(
-      "@opencode-ai/cli-darwin-x64-baseline"
-    );
-    expect(openCodeNativePackageName("win32", "x64")).toBe(
-      "@opencode-ai/cli-windows-x64-baseline"
-    );
+describe("OpenCode package binary", () => {
+  test("uses the official package-selected binary", () => {
+    expect(
+      openCodePackageBinaryPath("/packages/cli", {
+        opencode2: "./bin/opencode2.exe",
+      })
+    ).toBe(join(resolve("/packages/cli"), "bin", "opencode2.exe"));
   });
 
-  test("uses native arm64 release targets", () => {
-    expect(openCodeNativePackageName("linux", "arm64")).toBe(
-      "@opencode-ai/cli-linux-arm64"
-    );
-    expect(openCodeNativePackageName("win32", "arm64")).toBe(
-      "@opencode-ai/cli-windows-arm64"
+  test("preserves platform release executable names", () => {
+    expect(openCodeReleaseBinaryName("linux")).toBe("opencode2");
+    expect(openCodeReleaseBinaryName("darwin")).toBe("opencode2");
+    expect(openCodeReleaseBinaryName("win32")).toBe("opencode2.exe");
+  });
+
+  test("rejects a package without the official command", () => {
+    expect(() => openCodePackageBinaryPath("/packages/cli", {})).toThrow(
+      "does not declare opencode2"
     );
   });
 });

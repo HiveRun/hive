@@ -1,15 +1,13 @@
 import { Elysia, sse, t } from "elysia";
 import { subscribeAgentEvents } from "../agents/events";
 import { loadOpencodeModelPreferences } from "../agents/opencode-config";
-import { normalizeProviderDefaults } from "../agents/provider-defaults";
 import {
   fetchAgentMessages,
   fetchAgentSession,
   fetchAgentSessionForCell,
   fetchPendingAgentInputEvents,
   fetchProviderCatalogForWorkspace,
-  type ProviderEntry,
-  type ProviderModel,
+  type ProviderCatalog,
 } from "../agents/service";
 import type { AgentSessionRecord, AgentStreamEvent } from "../agents/types";
 import {
@@ -67,13 +65,6 @@ type AgentRouteError = { status: number; message: string };
 
 type ResponseStatusSetter = { status?: number | string };
 
-type InputRequiredProperties = {
-  id?: string;
-  sessionID?: string;
-  permission?: string;
-  questions?: Array<{ question?: string }>;
-};
-
 type WorkspaceContextFetcher = (workspaceId?: string) => Promise<{
   workspace: { path: string };
 }>;
@@ -105,21 +96,23 @@ const toError = (status: number, message: string): AgentRouteError => ({
 const mapAgentError = (message: string, cause: unknown): AgentRouteError =>
   toError(HTTP_STATUS.BAD_REQUEST, formatUnknown(cause, message));
 
-const providerPayload = async (catalog: unknown) => {
-  const providerEntries = normalizeProviderEntries(
-    (catalog as { providers?: unknown }).providers
-  );
-  const models = flattenProviderModels(providerEntries);
-  const defaults = normalizeProviderDefaults(
-    (catalog as { default?: Record<string, string> }).default ?? {}
-  );
+const providerPayload = async (catalog: ProviderCatalog) => {
+  const models = catalog.models
+    .filter((model) => model.enabled)
+    .map((model) => ({
+      id: model.id,
+      name: model.name,
+      provider: model.providerID,
+      variants: model.variants.map((variant) => ({ id: variant.id })),
+    }));
+  const defaults = catalog.default
+    ? { [catalog.default.providerID]: catalog.default.id }
+    : {};
   const stickyVariants = filterStickyVariantsForModels(
     (await loadOpencodeModelPreferences()).stickyVariants,
     models
   );
-  const providers = providerEntries.map(({ id, name }) =>
-    name ? { id, name } : { id }
-  );
+  const providers = catalog.providers.map(({ id, name }) => ({ id, name }));
   return { models, defaults, providers, stickyVariants };
 };
 
@@ -290,7 +283,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
       try {
         const session = await fetchAgentSessionForCell(params.cellId);
         setResponseStatus(set, HTTP_STATUS.OK);
-        return { session: session ? formatSession(session) : null };
+        return { session };
       } catch (error) {
         return messageRouteErrorPayload(set, error, "Failed to fetch session");
       }
@@ -335,62 +328,6 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     }
   );
 
-function normalizeProviderEntries(input: unknown): ProviderEntry[] {
-  if (!Array.isArray(input)) {
-    return [];
-  }
-
-  const providers: ProviderEntry[] = [];
-  for (const candidate of input) {
-    if (
-      typeof candidate !== "object" ||
-      candidate === null ||
-      typeof (candidate as { id?: unknown }).id !== "string"
-    ) {
-      continue;
-    }
-
-    const { id, name, models } = candidate as {
-      id: string;
-      name?: string;
-      models?: Record<string, ProviderModel>;
-    };
-    const providerEntry: ProviderEntry = { id };
-    if (name) {
-      providerEntry.name = name;
-    }
-    if (models) {
-      providerEntry.models = models;
-    }
-    providers.push(providerEntry);
-  }
-
-  return providers;
-}
-
-function flattenProviderModels(providers: ProviderEntry[]) {
-  const models: {
-    id: string;
-    name: string;
-    provider: string;
-    variants: Array<{ id: string }>;
-  }[] = [];
-
-  for (const provider of providers) {
-    const providerModels = provider.models ?? {};
-    for (const [modelKey, model] of Object.entries(providerModels)) {
-      const id = model?.id ?? modelKey;
-      const name = model?.name ?? id;
-      const variants = Object.entries(model?.variants ?? {})
-        .filter(([, variant]) => !variant?.disabled)
-        .map(([variantId]) => ({ id: variantId }));
-      models.push({ id, name, provider: provider.id, variants });
-    }
-  }
-
-  return models;
-}
-
 function formatInitialModeSseEvent(session: AgentSessionRecord) {
   if (!(session.startMode && session.currentMode)) {
     return null;
@@ -409,15 +346,15 @@ function formatInitialModeSseEvent(session: AgentSessionRecord) {
 }
 
 function formatInputRequiredPropertiesSseEvent(
-  properties: InputRequiredProperties | undefined,
+  properties: { sessionId: string; id: string },
   title: string,
   kind: "permission" | "question"
 ) {
   return sse({
     event: "input_required",
     data: {
-      sessionId: properties?.sessionID ?? "",
-      permissionId: properties?.id ?? "",
+      sessionId: properties.sessionId,
+      permissionId: properties.id,
       title,
       kind,
     },
@@ -425,27 +362,30 @@ function formatInputRequiredPropertiesSseEvent(
 }
 
 function formatInputRequiredSseEvent(event: AgentStreamEvent) {
-  const rawType = (event as { type: string }).type;
+  if (event.type === "input_required") {
+    return sse({
+      event: "input_required",
+      data: {
+        sessionId: event.sessionId,
+        permissionId: event.permissionId,
+        title: event.title,
+        kind: event.kind,
+      },
+    });
+  }
 
-  if (rawType === "permission.asked" || rawType === "permission.updated") {
-    const properties = (event as { properties?: InputRequiredProperties })
-      .properties;
+  if (event.type === "permission.asked") {
     return formatInputRequiredPropertiesSseEvent(
-      properties,
-      properties?.permission ?? "Input required",
+      { sessionId: event.data.sessionID, id: event.data.id },
+      event.data.action,
       "permission"
     );
   }
 
-  if (rawType === "question.asked") {
-    const properties = (event as { properties?: InputRequiredProperties })
-      .properties;
-    const firstQuestion = properties?.questions?.[0]?.question;
+  if (event.type === "form.created") {
     return formatInputRequiredPropertiesSseEvent(
-      properties,
-      typeof firstQuestion === "string" && firstQuestion.length > 0
-        ? firstQuestion
-        : "Input required",
+      { sessionId: event.data.form.sessionID, id: event.data.form.id },
+      event.data.form.title,
       "question"
     );
   }
@@ -454,15 +394,13 @@ function formatInputRequiredSseEvent(event: AgentStreamEvent) {
 }
 
 function getInputRequiredEventId(event: AgentStreamEvent): string | undefined {
-  const rawType = (event as { type: string }).type;
-  if (
-    rawType !== "permission.asked" &&
-    rawType !== "permission.updated" &&
-    rawType !== "question.asked"
-  ) {
-    return;
+  if (event.type === "input_required") {
+    return event.permissionId;
   }
-  return (event as { properties?: InputRequiredProperties }).properties?.id;
+  if (event.type === "permission.asked") {
+    return event.data.id;
+  }
+  return event.type === "form.created" ? event.data.form.id : undefined;
 }
 
 async function* streamAgentEvents(
@@ -527,27 +465,6 @@ function formatAgentStreamSseEvent(event: AgentStreamEvent) {
   }
 
   return null;
-}
-
-function formatSession(session: AgentSessionRecord) {
-  return {
-    id: session.id,
-    cellId: session.cellId,
-    templateId: session.templateId,
-    provider: session.provider,
-    status: session.status,
-    workspacePath: session.workspacePath,
-    createdAt: session.createdAt,
-    updatedAt: session.updatedAt,
-    ...(session.completedAt ? { completedAt: session.completedAt } : {}),
-    ...(session.modelId ? { modelId: session.modelId } : {}),
-    ...(session.modelProviderId
-      ? { modelProviderId: session.modelProviderId }
-      : {}),
-    ...(session.startMode ? { startMode: session.startMode } : {}),
-    ...(session.currentMode ? { currentMode: session.currentMode } : {}),
-    ...(session.modeUpdatedAt ? { modeUpdatedAt: session.modeUpdatedAt } : {}),
-  };
 }
 
 function createEventIterator(sessionId: string, signal: AbortSignal) {

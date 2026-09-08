@@ -1,6 +1,6 @@
 import { constants, existsSync } from "node:fs";
 import { access } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -12,23 +12,18 @@ export const OPENCODE_VERSION_OUTPUT = `opencode2 v${OPENCODE_VERSION}`;
 export const openCodeReleaseBinaryName = (platform = process.platform) =>
   platform === "win32" ? "opencode2.exe" : "opencode2";
 
-export const openCodeNativePackageName = (
-  platform = process.platform,
-  arch = process.arch
+export const openCodePackageBinaryPath = (
+  packageRoot: string,
+  packageBin: unknown
 ) => {
-  let platformName: string | null = null;
-  if (platform === "win32") {
-    platformName = "windows";
-  } else if (platform === "darwin" || platform === "linux") {
-    platformName = platform;
+  const binaryEntry =
+    typeof packageBin === "string"
+      ? packageBin
+      : (packageBin as Record<string, unknown> | undefined)?.opencode2;
+  if (typeof binaryEntry !== "string") {
+    throw new Error(`${OPENCODE_PACKAGE_NAME} does not declare opencode2`);
   }
-  if (!(platformName && (arch === "x64" || arch === "arm64"))) {
-    throw new Error(
-      `Unsupported OpenCode distribution target: ${platform}-${arch}`
-    );
-  }
-  const baseline = arch === "x64" ? "-baseline" : "";
-  return `@opencode-ai/cli-${platformName}-${arch}${baseline}`;
+  return resolve(packageRoot, binaryEntry);
 };
 
 const decodeOutput = (value: Uint8Array) => new TextDecoder().decode(value);

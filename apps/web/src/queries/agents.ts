@@ -6,12 +6,7 @@ type AgentSessionResponse = NonNullable<
   >["data"]
 >;
 
-export type AgentSession = Omit<
-  NonNullable<AgentSessionResponse["session"]>,
-  "provider"
-> & {
-  provider: string;
-};
+export type AgentSession = NonNullable<AgentSessionResponse["session"]>;
 
 export const agentQueries = {
   sessionByCell: (cellId: string) => ({
@@ -27,7 +22,7 @@ export const agentQueries = {
         throw new Error("Failed to load agent session");
       }
 
-      return data.session as AgentSession | null;
+      return data.session;
     },
   }),
 };

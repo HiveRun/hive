@@ -2,10 +2,12 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type {
+  ModelInfo,
   OpenCodeClient,
-  OpenCodeEvent,
+  ProviderInfo,
   SessionInfo,
   SessionMessageInfo,
+  V2Event,
 } from "@opencode-ai/client";
 import { isSessionNotFoundError } from "@opencode-ai/client";
 import { eq, inArray, isNotNull } from "drizzle-orm";
@@ -26,16 +28,15 @@ import {
 } from "./hive-opencode-tool";
 import { loadEffectiveOpencodeDefaults } from "./opencode-config";
 import { acquireSharedOpencodeClient } from "./opencode-server";
-import { normalizeProviderDefaults } from "./provider-defaults";
 import type {
   AgentMessagePart,
   AgentMessageRecord,
   AgentMessageRole,
   AgentMessageState,
   AgentMode,
-  AgentRuntimeEvent,
   AgentSessionRecord,
   AgentSessionStatus,
+  AgentStreamEvent,
 } from "./types";
 
 const runtimeRegistry = new Map<string, RuntimeHandle>();
@@ -45,10 +46,6 @@ const DEFAULT_SERVICE_HOST = process.env.SERVICE_HOST ?? "localhost";
 const DEFAULT_SERVICE_PROTOCOL = process.env.SERVICE_PROTOCOL ?? "http";
 const HIVE_INSTRUCTIONS_RELATIVE_PATH = ".hive/instructions.md";
 const HIVE_PLUGIN_ID = "hive.cell.v2.r1.tools-context-shell-permission";
-
-type DirectoryQuery = {
-  directory?: string;
-};
 
 type HiveSessionInstructionsService = Pick<
   CellService,
@@ -274,11 +271,6 @@ async function writeHiveSessionInstructions(
   await writeFile(instructionsPath, content, "utf8");
 }
 
-type RuntimeCompactionState = {
-  count: number;
-  lastCompactionAt: string | null;
-};
-
 type UserPromptPartInput =
   | { type: "text"; text: string }
   | {
@@ -335,13 +327,11 @@ type RuntimeHandle = {
   providerId?: string;
   modelId?: string;
   variant?: string;
-  directoryQuery: DirectoryQuery;
   client: OpenCodeClient;
   abortController: AbortController;
   status: AgentSessionStatus;
   pendingInterrupt: boolean;
   preserveResumeOnInterrupt: boolean;
-  compaction: RuntimeCompactionState;
   startMode: AgentMode;
   currentMode: AgentMode;
   modeUpdatedAt: string;
@@ -361,25 +351,10 @@ type StopRuntimeOptions = {
   deleteRemote?: boolean;
 };
 
-type ProviderVariant = {
-  disabled?: boolean;
-};
-
-export type ProviderModel = {
-  id?: string;
-  name?: string;
-  variants?: Record<string, ProviderVariant>;
-};
-
-export type ProviderEntry = {
-  id: string;
-  name?: string;
-  models?: Record<string, ProviderModel>;
-};
-
-type ProviderCatalogResponse = {
-  providers: ProviderEntry[];
-  default: Record<string, string>;
+export type ProviderCatalog = {
+  providers: ProviderInfo[];
+  models: ModelInfo[];
+  default: ModelInfo | null;
 };
 
 type AgentRuntimeDependencies = {
@@ -641,12 +616,8 @@ async function shouldApplyProvisioningModelOverride(args: {
 
   try {
     const client = await args.acquireOpencodeClient();
-    const directoryQuery: DirectoryQuery = {
-      directory: args.cell.workspacePath,
-    };
     const existingSession = await getRemoteSession(
       client,
-      directoryQuery,
       args.cell.opencodeSessionId
     );
 
@@ -700,54 +671,10 @@ async function resolveRuntimeModelSelectionOptions(args: {
   });
 }
 
-type ProviderCatalogInfo = {
-  providers: ProviderEntry[];
-  defaults: Record<string, string>;
-};
-
-function buildProviderCatalogInfo(
-  catalog: ProviderCatalogResponse | undefined
-): ProviderCatalogInfo {
-  const providers: ProviderEntry[] = [];
-  const candidates = catalog?.providers;
-
-  if (Array.isArray(candidates)) {
-    for (const candidate of candidates) {
-      if (
-        typeof candidate !== "object" ||
-        candidate === null ||
-        typeof (candidate as { id?: unknown }).id !== "string"
-      ) {
-        continue;
-      }
-
-      const { id, name, models } = candidate as {
-        id: string;
-        name?: string;
-        models?: Record<string, ProviderModel>;
-      };
-      const providerEntry: ProviderEntry = { id };
-      if (name) {
-        providerEntry.name = name;
-      }
-      if (models) {
-        providerEntry.models = models;
-      }
-      providers.push(providerEntry);
-    }
-  }
-
-  const defaults = normalizeProviderDefaults(
-    (catalog as { default?: unknown } | undefined)?.default
-  );
-
-  return { providers, defaults };
-}
-
 function findProviderById(
-  providers: ProviderEntry[],
+  providers: ProviderInfo[],
   providerId: string | undefined
-): ProviderEntry | undefined {
+): ProviderInfo | undefined {
   if (!providerId) {
     return;
   }
@@ -764,17 +691,15 @@ function formatListPreview(items: string[], limit = 10): string {
   return `${preview}, ... (+${items.length - limit} more)`;
 }
 
-function listProviderModelIdentifiers(provider: ProviderEntry): string[] {
-  const models = provider.models;
-  if (!models) {
-    return [];
-  }
-
+function listProviderModelIdentifiers(
+  models: ModelInfo[],
+  providerId: string
+): string[] {
   const unique = new Set<string>();
-  for (const [modelKey, model] of Object.entries(models)) {
-    unique.add(modelKey);
-    if (model.id) {
+  for (const model of models) {
+    if (model.enabled && model.providerID === providerId) {
       unique.add(model.id);
+      unique.add(model.modelID);
     }
   }
 
@@ -782,26 +707,23 @@ function listProviderModelIdentifiers(provider: ProviderEntry): string[] {
 }
 
 function listProviderModelVariantIdentifiers(args: {
-  provider: ProviderEntry;
+  models: ModelInfo[];
+  providerId: string;
   modelId: string;
 }): string[] {
-  const model = args.provider.models?.[args.modelId];
-  if (!model?.variants) {
-    return [];
-  }
-
-  return Object.entries(model.variants)
-    .filter(([, variant]) => !variant?.disabled)
-    .map(([variantId]) => variantId)
+  const model = findModel(args.models, args.providerId, args.modelId);
+  return (model?.variants ?? [])
+    .map((variant) => variant.id)
     .sort((a, b) => a.localeCompare(b));
 }
 
 function buildInvalidModelOverrideMessage(args: {
   modelId: string;
   providerId?: string;
-  providers: ProviderEntry[];
+  providers: ProviderInfo[];
+  models: ModelInfo[];
 }): string {
-  const { modelId, providerId, providers } = args;
+  const { modelId, providerId, providers, models } = args;
 
   if (providerId) {
     const provider = findProviderById(providers, providerId);
@@ -813,7 +735,7 @@ function buildInvalidModelOverrideMessage(args: {
       return `Selected model override is invalid: provider "${providerId}" was not found. Available providers: ${availableProviders}. Refresh the model catalog and try again.`;
     }
 
-    const availableModels = listProviderModelIdentifiers(provider);
+    const availableModels = listProviderModelIdentifiers(models, provider.id);
     const availableModelSummary = availableModels.length
       ? formatListPreview(availableModels)
       : "none";
@@ -831,15 +753,17 @@ function buildInvalidVariantOverrideMessage(args: {
   providerId: string;
   modelId: string;
   variant: string;
-  providers: ProviderEntry[];
+  providers: ProviderInfo[];
+  models: ModelInfo[];
 }): string {
   const provider = findProviderById(args.providers, args.providerId);
-  if (!provider?.models?.[args.modelId]) {
+  if (!(provider && findModel(args.models, args.providerId, args.modelId))) {
     return `Selected model variant override is invalid: model "${args.modelId}" is unavailable for provider "${args.providerId}".`;
   }
 
   const availableVariants = listProviderModelVariantIdentifiers({
-    provider,
+    models: args.models,
+    providerId: provider.id,
     modelId: args.modelId,
   });
   const variantSummary = availableVariants.length
@@ -849,83 +773,56 @@ function buildInvalidVariantOverrideMessage(args: {
   return `Selected model variant override is invalid: variant "${args.variant}" is unavailable for model "${args.modelId}" on provider "${args.providerId}". Available variants: ${variantSummary}. Refresh the model catalog and try again.`;
 }
 
-function resolveProviderModelMatch(
-  provider: ProviderEntry,
-  candidateModelId: string
-): string | undefined {
-  const models = provider.models;
-  if (!models) {
-    return;
-  }
-
-  if (models[candidateModelId]) {
-    return candidateModelId;
-  }
-
-  const match = Object.entries(models).find(
-    ([, model]) => model.id === candidateModelId
+function findModel(
+  models: ModelInfo[],
+  providerId: string,
+  modelId: string
+): ModelInfo | undefined {
+  return models.find(
+    (model) =>
+      model.enabled &&
+      model.providerID === providerId &&
+      (model.id === modelId || model.modelID === modelId)
   );
-
-  return match?.[0];
 }
 
 function resolveProviderVariantMatch(args: {
-  provider: ProviderEntry;
-  modelId: string;
+  model: ModelInfo;
   candidateVariant: string | undefined;
 }): string | undefined | null {
   if (!args.candidateVariant) {
     return;
   }
 
-  const variants = args.provider.models?.[args.modelId]?.variants;
-  if (!variants) {
-    return null;
-  }
-
-  const variant = variants[args.candidateVariant];
-  if (variant && !variant.disabled) {
+  if (
+    args.model.variants.some((variant) => variant.id === args.candidateVariant)
+  ) {
     return args.candidateVariant;
   }
 
   return null;
 }
 
-function getFirstModelId(
-  models: Record<string, ProviderModel> | undefined
-): string | undefined {
-  if (!models) {
-    return;
-  }
-
-  const [firstModel] = Object.values(models);
-  if (firstModel?.id) {
-    return firstModel.id;
-  }
-
-  const modelIds = Object.keys(models);
-  return modelIds.length ? modelIds[0] : undefined;
-}
-
 function resolveCandidateModelForProvider(args: {
-  provider: ProviderEntry;
+  provider: ProviderInfo;
+  models: ModelInfo[];
   candidate: ModelSelectionCandidate;
 }): ModelSelectionCandidate | null {
   if (!args.candidate.modelId) {
     return null;
   }
 
-  const resolvedModelId = resolveProviderModelMatch(
-    args.provider,
+  const model = findModel(
+    args.models,
+    args.provider.id,
     args.candidate.modelId
   );
-  if (!resolvedModelId) {
+  if (!model) {
     return null;
   }
 
   const resolvedVariant = resolveProviderVariantMatch({
-    provider: args.provider,
-    modelId: resolvedModelId,
+    model,
     candidateVariant: args.candidate.variant,
   });
   if (args.candidate.variant && !resolvedVariant) {
@@ -934,7 +831,7 @@ function resolveCandidateModelForProvider(args: {
 
   return {
     providerId: args.provider.id,
-    modelId: resolvedModelId,
+    modelId: model.id,
     ...(resolvedVariant ? { variant: resolvedVariant } : {}),
   };
 }
@@ -942,9 +839,11 @@ function resolveCandidateModelForProvider(args: {
 function resolveCandidateModel({
   candidate,
   providers,
+  models,
 }: {
   candidate: ModelSelectionCandidate;
-  providers: ProviderEntry[];
+  providers: ProviderInfo[];
+  models: ModelInfo[];
 }): ModelSelectionCandidate | null {
   if (!candidate.modelId) {
     return null;
@@ -953,13 +852,17 @@ function resolveCandidateModel({
   if (candidate.providerId) {
     const provider = findProviderById(providers, candidate.providerId);
     if (provider) {
-      return resolveCandidateModelForProvider({ provider, candidate });
+      return resolveCandidateModelForProvider({ provider, models, candidate });
     }
     return null;
   }
 
   for (const provider of providers) {
-    const resolved = resolveCandidateModelForProvider({ provider, candidate });
+    const resolved = resolveCandidateModelForProvider({
+      provider,
+      models,
+      candidate,
+    });
     if (resolved) {
       return resolved;
     }
@@ -976,31 +879,36 @@ function resolveCandidateModel({
 function resolveModelFallback({
   candidates,
   providers,
-  defaults,
+  models,
+  defaultModel,
 }: {
   candidates: ModelSelectionCandidate[];
-  providers: ProviderEntry[];
-  defaults: Record<string, string>;
+  providers: ProviderInfo[];
+  models: ModelInfo[];
+  defaultModel: ModelInfo | null;
 }): ModelSelectionCandidate | null {
   for (const candidate of candidates) {
-    const resolved = resolveCandidateModel({ candidate, providers });
+    const resolved = resolveCandidateModel({ candidate, providers, models });
     if (resolved) {
       return resolved;
     }
   }
 
   const [provider] = providers;
-  if (!provider?.models) {
+  if (!provider) {
     return null;
   }
 
-  const defaultModelId = defaults[provider.id];
-  if (defaultModelId && provider.models[defaultModelId]) {
-    return { providerId: provider.id, modelId: defaultModelId };
+  if (defaultModel?.enabled && defaultModel.providerID === provider.id) {
+    return { providerId: provider.id, modelId: defaultModel.id };
   }
 
-  const modelId = getFirstModelId(provider.models);
-  return modelId ? { providerId: provider.id, modelId } : null;
+  const firstModel = models.find(
+    (model) => model.enabled && model.providerID === provider.id
+  );
+  return firstModel
+    ? { providerId: provider.id, modelId: firstModel.id }
+    : null;
 }
 
 type ModelSelectionContext = {
@@ -1013,8 +921,9 @@ type ModelSelectionContext = {
   };
   configDefaultProvider?: string;
   configDefaultModel?: string;
-  providers: ProviderEntry[];
-  defaults: Record<string, string>;
+  providers: ProviderInfo[];
+  models: ModelInfo[];
+  defaultModel: ModelInfo | null;
 };
 
 function resolveModelSelection({
@@ -1024,7 +933,8 @@ function resolveModelSelection({
   configDefaultProvider,
   configDefaultModel,
   providers,
-  defaults,
+  models,
+  defaultModel,
 }: ModelSelectionContext): ResolvedModelSelection {
   const overrideModel = resolveCandidateModel({
     candidate: {
@@ -1033,6 +943,7 @@ function resolveModelSelection({
       variant: options?.variant,
     },
     providers,
+    models,
   });
 
   if (options?.modelId && !overrideModel) {
@@ -1044,6 +955,7 @@ function resolveModelSelection({
           modelId: options.modelId,
         },
         providers,
+        models,
       })?.providerId;
 
     if (options.variant && resolvedProviderId) {
@@ -1054,6 +966,7 @@ function resolveModelSelection({
             modelId: options.modelId,
           },
           providers,
+          models,
         })?.modelId ?? options.modelId;
 
       throw new Error(
@@ -1062,6 +975,7 @@ function resolveModelSelection({
           modelId: resolvedModelId,
           variant: options.variant,
           providers,
+          models,
         })
       );
     }
@@ -1071,6 +985,7 @@ function resolveModelSelection({
         modelId: options.modelId,
         providerId: options.providerId,
         providers,
+        models,
       })
     );
   }
@@ -1082,6 +997,7 @@ function resolveModelSelection({
       variant: agentConfig?.variant,
     },
     providers,
+    models,
   });
 
   const validOpencodeDefault = resolveCandidateModel({
@@ -1091,6 +1007,7 @@ function resolveModelSelection({
       variant: defaultOpencodeModel?.variant,
     },
     providers,
+    models,
   });
 
   const configFallback = resolveCandidateModel({
@@ -1099,12 +1016,14 @@ function resolveModelSelection({
       modelId: configDefaultModel,
     },
     providers,
+    models,
   });
 
   const providerFallback = resolveModelFallback({
     candidates: [],
     providers,
-    defaults,
+    models,
+    defaultModel,
   });
 
   const resolvedSelection = pickResolvedSelection({
@@ -1188,7 +1107,6 @@ async function fetchSynchronizedSessionRecord(
 ): Promise<AgentSessionRecord | null> {
   const runtime = await resolveRuntime();
   await synchronizeRuntimeSessionInfo(runtime);
-  await synchronizeRuntimeMode(runtime);
   await synchronizeRuntimeStatus(runtime);
   return toSessionRecord(runtime);
 }
@@ -1205,6 +1123,10 @@ async function synchronizeRuntimeSessionInfo(
     runtime.modelId = session.model.id;
     runtime.variant = session.model.variant;
   }
+  const mode = normalizeAgentMode(session.agent);
+  if (mode) {
+    setRuntimeMode(runtime, mode);
+  }
 }
 
 export async function fetchAgentMessages(
@@ -1212,13 +1134,6 @@ export async function fetchAgentMessages(
 ): Promise<AgentMessageRecord[]> {
   const runtime = await ensureRuntimeForSession(sessionId);
   return loadRemoteMessages(runtime);
-}
-
-export async function fetchCompactionStats(
-  sessionId: string
-): Promise<RuntimeCompactionState> {
-  const runtime = await ensureRuntimeForSession(sessionId);
-  return runtime.compaction;
 }
 
 export async function updateAgentSessionModel(
@@ -1241,6 +1156,11 @@ export async function updateAgentSessionModel(
   runtime.providerId = nextProviderId;
   runtime.modelId = model.modelId;
   runtime.variant = model.variant;
+  runtime.session.model = {
+    providerID: nextProviderId,
+    id: model.modelId,
+    ...(model.variant ? { variant: model.variant } : {}),
+  };
   return toSessionRecord(runtime);
 }
 
@@ -1296,7 +1216,6 @@ export async function closeAgentSession(cellId: string): Promise<void> {
 
   await deleteRemoteOpencodeSession({
     sessionId: cell.opencodeSessionId,
-    directoryQuery: { directory: cell.workspacePath },
   });
   cellSessionMap.delete(cellId);
 }
@@ -1466,7 +1385,7 @@ async function recoverPersistedCell(
     return;
   }
 
-  if (await shouldResumeRuntime(runtime)) {
+  if (shouldResumeRuntime(runtime)) {
     await assertHivePluginReady(runtime.client, runtime.cell.workspacePath);
     await runtime.client.session.prompt({
       sessionID: runtime.session.id,
@@ -1507,44 +1426,11 @@ async function assertHivePluginReady(
   }
 }
 
-async function shouldResumeRuntime(runtime: RuntimeHandle): Promise<boolean> {
-  const messages = await fetchRuntimeMessages(runtime, {
-    requireMessages: true,
-  });
-  if (!messages) {
-    return Boolean(runtime.cell.resumeAgentSessionOnStartup);
-  }
-
-  const lastMessage = messages.at(-1);
-  if (!lastMessage) {
-    return Boolean(runtime.cell.resumeAgentSessionOnStartup);
-  }
-
-  if (shouldResumeFromMessage(lastMessage)) {
-    return true;
-  }
-
-  if (!runtime.cell.resumeAgentSessionOnStartup) {
-    return false;
-  }
-
-  return !isCompletedAssistantMessage(lastMessage);
-}
-
-function shouldResumeFromMessage(message: RuntimeMessage): boolean {
-  if (message.role !== "assistant") {
-    return false;
-  }
-  if (message.error) {
-    return false;
-  }
-  return !message.time.completed;
-}
-
-function isCompletedAssistantMessage(message: RuntimeMessage): boolean {
+function shouldResumeRuntime(runtime: RuntimeHandle): boolean {
   return (
-    message.role === "assistant" &&
-    (Boolean(message.error) || Boolean(message.time.completed))
+    runtime.cell.resumeAgentSessionOnStartup &&
+    runtime.session.outcome !== "succeeded" &&
+    runtime.session.outcome !== "failed"
   );
 }
 
@@ -1582,9 +1468,7 @@ export type AgentRuntimeService = {
   readonly fetchAgentMessages: (
     sessionId: string
   ) => Promise<AgentMessageRecord[]>;
-  readonly fetchCompactionStats: (
-    sessionId: string
-  ) => Promise<RuntimeCompactionState>;
+  readonly fetchCompactionStats?: (sessionId: string) => Promise<never>;
   readonly updateAgentSessionModel: (
     sessionId: string,
     model: { modelId: string; providerId?: string; variant?: string }
@@ -1609,7 +1493,7 @@ export type AgentRuntimeService = {
   ) => Promise<void>;
   readonly fetchProviderCatalogForWorkspace: (
     workspaceRootPath: string
-  ) => Promise<ProviderCatalogResponse>;
+  ) => Promise<ProviderCatalog>;
 };
 
 const makeAgentRuntimeService = (): AgentRuntimeService => ({
@@ -1621,8 +1505,6 @@ const makeAgentRuntimeService = (): AgentRuntimeService => ({
     wrapAgentRuntime(fetchAgentSessionForCell)(cellId),
   fetchAgentMessages: (sessionId) =>
     wrapAgentRuntime(fetchAgentMessages)(sessionId),
-  fetchCompactionStats: (sessionId) =>
-    wrapAgentRuntime(fetchCompactionStats)(sessionId),
   updateAgentSessionModel: (sessionId, model) =>
     wrapAgentRuntime(updateAgentSessionModel)(sessionId, model),
   sendAgentMessage: (sessionId, content) =>
@@ -1772,7 +1654,6 @@ async function ensureRuntimeForCellUnlocked(
 
   const providerCatalog =
     await fetchProviderCatalogForWorkspace(workspaceRootPath);
-  const { providers, defaults } = buildProviderCatalogInfo(providerCatalog);
 
   const selectionOptions = await resolveRuntimeModelSelectionOptions({
     cell,
@@ -1794,8 +1675,9 @@ async function ensureRuntimeForCellUnlocked(
     defaultOpencodeModel,
     configDefaultProvider,
     configDefaultModel,
-    providers,
-    defaults,
+    providers: providerCatalog.providers,
+    models: providerCatalog.models,
+    defaultModel: providerCatalog.default,
   });
   const shouldDeferToOpencodeDefault = selection.source === "opencode-default";
 
@@ -1828,15 +1710,15 @@ async function ensureRuntimeForCellUnlocked(
   await startEventStream({
     runtime,
     abortController,
-    beforeInitialReconciliation: async () => {
-      restoredModel = await resolveSessionModelPreference(runtime);
+    beforeInitialReconciliation: () => {
+      restoredModel = resolveSessionModelPreference(runtime);
       if (restoredModel && !options?.modelId) {
         runtime.providerId = restoredModel.providerId;
         runtime.modelId = restoredModel.modelId;
         runtime.variant = restoredModel.variant;
       }
 
-      const restoredMode = await resolveSessionModePreference(runtime);
+      const restoredMode = resolveSessionModePreference(runtime);
       if (restoredMode) {
         setRuntimeMode(runtime, restoredMode);
       }
@@ -1886,7 +1768,7 @@ function shouldSeedModelPreference(args: {
 
 export async function fetchProviderCatalogForWorkspace(
   workspaceRootPath: string
-): Promise<ProviderCatalogResponse> {
+): Promise<ProviderCatalog> {
   const { acquireOpencodeClient: acquireClient } =
     getAgentRuntimeDependencies();
   const client = await acquireClient();
@@ -1898,39 +1780,11 @@ export async function fetchProviderCatalogForWorkspace(
       client.model.list(location),
       client.model.default(location),
     ]);
-    const providersById = new Map<string, ProviderEntry>();
-
-    for (const provider of providerResult.data) {
-      providersById.set(provider.id, {
-        id: provider.id,
-        name: provider.name,
-        models: {},
-      });
-    }
-
-    for (const model of modelResult.data) {
-      if (!model.enabled) {
-        continue;
-      }
-      const provider = providersById.get(model.providerID) ?? {
-        id: model.providerID,
-        models: {},
-      };
-      provider.models ??= {};
-      provider.models[model.id] = {
-        id: model.id,
-        name: model.name,
-        variants: Object.fromEntries(
-          model.variants.map((variant) => [variant.id, {}])
-        ),
-      };
-      providersById.set(provider.id, provider);
-    }
-
-    const defaults = defaultResult.data
-      ? { [defaultResult.data.providerID]: defaultResult.data.id }
-      : {};
-    return { providers: Array.from(providersById.values()), default: defaults };
+    return {
+      providers: providerResult.data,
+      models: modelResult.data,
+      default: defaultResult.data,
+    };
   } catch (error) {
     // biome-ignore lint/suspicious/noConsole: server-side diagnostic logging
     console.error("[opencode] provider catalog error", {
@@ -1970,11 +1824,9 @@ async function startOpencodeRuntime({
   abortController: AbortController;
 }> {
   const client = await deps.acquireOpencodeClient();
-  const directoryQuery: DirectoryQuery = { directory: cell.workspacePath };
   const { session, created } = await resolveOpencodeSession({
     client,
     cell,
-    directoryQuery,
     providerId,
     modelId,
     variant,
@@ -2003,13 +1855,11 @@ async function startOpencodeRuntime({
     providerId,
     modelId,
     variant,
-    directoryQuery,
     client,
     abortController,
     status: "awaiting_input",
     pendingInterrupt: false,
     preserveResumeOnInterrupt: false,
-    compaction: { count: 0, lastCompactionAt: null },
     startMode,
     currentMode: startMode,
     modeUpdatedAt: new Date().toISOString(),
@@ -2042,7 +1892,6 @@ async function startOpencodeRuntime({
       if (options.deleteRemote === true) {
         await deleteRemoteOpencodeSession({
           sessionId: session.id,
-          directoryQuery,
           client: runtime.client,
         });
       }
@@ -2060,7 +1909,6 @@ async function startOpencodeRuntime({
 type ResolveSessionArgs = {
   client: OpenCodeClient;
   cell: Cell;
-  directoryQuery: DirectoryQuery;
   providerId?: string;
   modelId?: string;
   variant?: string;
@@ -2071,7 +1919,6 @@ type ResolveSessionArgs = {
 async function resolveOpencodeSession({
   client,
   cell,
-  directoryQuery,
   providerId,
   modelId,
   variant,
@@ -2079,11 +1926,7 @@ async function resolveOpencodeSession({
   force,
 }: ResolveSessionArgs): Promise<{ session: SessionInfo; created: boolean }> {
   if (!force && cell.opencodeSessionId) {
-    const existing = await getRemoteSession(
-      client,
-      directoryQuery,
-      cell.opencodeSessionId
-    );
+    const existing = await getRemoteSession(client, cell.opencodeSessionId);
     if (existing) {
       return { session: existing, created: false };
     }
@@ -2101,7 +1944,7 @@ async function resolveOpencodeSession({
           },
         }
       : {}),
-    location: { directory: directoryQuery.directory ?? cell.workspacePath },
+    location: { directory: cell.workspacePath },
   });
 
   return { session: created, created: true };
@@ -2109,7 +1952,6 @@ async function resolveOpencodeSession({
 
 async function getRemoteSession(
   client: OpenCodeClient,
-  _directoryQuery: DirectoryQuery,
   sessionId: string
 ): Promise<SessionInfo | null> {
   try {
@@ -2129,7 +1971,7 @@ function startEventStream({
 }: {
   runtime: RuntimeHandle;
   abortController: AbortController;
-  beforeInitialReconciliation: () => Promise<void>;
+  beforeInitialReconciliation: () => Promise<void> | void;
 }): Promise<void> {
   const initialReconciliation = Promise.withResolvers<void>();
   runEventStream({
@@ -2152,7 +1994,7 @@ async function runEventStream({
 }: {
   runtime: RuntimeHandle;
   abortController: AbortController;
-  beforeInitialReconciliation: () => Promise<void>;
+  beforeInitialReconciliation: () => Promise<void> | void;
   resolveInitialReconciliation: () => void;
   rejectInitialReconciliation: (error: unknown) => void;
 }): Promise<void> {
@@ -2201,12 +2043,10 @@ async function consumeEventStream(
   runtime: RuntimeHandle,
   signal: AbortSignal,
   onReconciled: () => void,
-  beforeReconcile?: () => Promise<void>
+  beforeReconcile?: () => Promise<void> | void
 ): Promise<void> {
   const events = runtime.client.event.subscribe({ signal });
-  const iterator =
-    (events as AsyncIterable<OpenCodeEvent>)[Symbol.asyncIterator]?.() ??
-    (events as unknown as Iterable<OpenCodeEvent>)[Symbol.iterator]();
+  const iterator = events[Symbol.asyncIterator]();
   let nextEvent = iterator.next();
   const { publishAgentEvent: publish } = getAgentRuntimeDependencies();
   await beforeReconcile?.();
@@ -2219,35 +2059,18 @@ async function consumeEventStream(
       return;
     }
     nextEvent = iterator.next();
-    const sourceEvent = next.value;
-    const event = adaptOpencodeEvent(sourceEvent);
-    if (!event) {
-      continue;
-    }
+    const event = next.value;
     const eventSessionId = getEventSessionId(event);
-    if (eventSessionId && eventSessionId !== runtime.session.id) {
+    if (eventSessionId !== runtime.session.id) {
       continue;
     }
 
     updateRuntimeModeFromEvent(runtime, event);
     updateRuntimeModelFromEvent(runtime, event);
-    recordCompactionEvent(runtime, event);
     publish(runtime.session.id, event);
     await updateRuntimeStatusFromEvent(runtime, event);
   }
 }
-
-type RuntimeMessage = {
-  id: string;
-  sessionID: string;
-  role: AgentMessageRole;
-  time: { created: number; completed?: number };
-  parts: AgentMessagePart[];
-  model?: { providerID: string; modelID: string; variant?: string };
-  mode?: string;
-  parentID?: string;
-  error?: unknown;
-};
 
 function toRuntimeFilePart(
   file: NonNullable<
@@ -2266,42 +2089,21 @@ function toRuntimeFilePart(
   };
 }
 
-function adaptOpencodeMessage(
-  sessionId: string,
-  message: SessionMessageInfo
-): RuntimeMessage {
+function getMessageParts(message: SessionMessageInfo): AgentMessagePart[] {
   if (message.type === "user") {
     const parts: AgentMessagePart[] = message.text
       ? [{ type: "text", text: message.text }]
       : [];
     parts.push(...(message.files ?? []).map(toRuntimeFilePart));
-    return {
-      id: message.id,
-      sessionID: sessionId,
-      role: "user",
-      time: { created: message.time.created, completed: message.time.created },
-      parts,
-    };
+    return parts;
   }
 
   if (message.type === "assistant") {
-    return {
-      id: message.id,
-      sessionID: sessionId,
-      role: "assistant",
-      time: message.time,
-      parts: message.content.map((part) => ({ ...part })),
-      model: {
-        providerID: message.model.providerID,
-        modelID: message.model.id,
-        ...(message.model.variant ? { variant: message.model.variant } : {}),
-      },
-      mode: message.agent,
-      ...(message.error ? { error: message.error } : {}),
-    };
+    return message.content.map((part) => ({ ...part }));
   }
 
-  return adaptOpencodeSystemMessage(sessionId, message);
+  const text = getOpencodeSystemMessageText(message);
+  return text ? [{ type: "text", text }] : [];
 }
 
 type OpencodeSystemMessage = Exclude<
@@ -2310,96 +2112,40 @@ type OpencodeSystemMessage = Exclude<
 >;
 
 function getOpencodeSystemMessageText(message: OpencodeSystemMessage): string {
-  if ("text" in message && typeof message.text === "string") {
-    return message.text;
+  switch (message.type) {
+    case "synthetic":
+    case "system":
+    case "skill":
+      return message.text;
+    case "shell":
+      return message.output?.output ?? message.command;
+    case "compaction":
+      return message.status === "failed" ? "" : message.summary;
+    default:
+      return "";
   }
-  if (message.type === "shell") {
-    return message.output?.output ?? message.command;
-  }
-  if (message.type === "compaction" && message.status !== "failed") {
-    return message.summary;
-  }
-  return "";
 }
 
-function adaptOpencodeSystemMessage(
-  sessionId: string,
-  message: OpencodeSystemMessage
-): RuntimeMessage {
-  const text = getOpencodeSystemMessageText(message);
-  const model =
-    message.type === "model-switched"
-      ? {
-          providerID: message.model.providerID,
-          modelID: message.model.id,
-          ...(message.model.variant ? { variant: message.model.variant } : {}),
-        }
-      : undefined;
-  const mode = message.type === "agent-switched" ? message.agent : undefined;
+function resolveSessionModelPreference(
+  runtime: RuntimeHandle
+): { providerId: string; modelId: string; variant?: string } | null {
+  if (!runtime.session.model) {
+    return null;
+  }
 
   return {
-    id: message.id,
-    sessionID: sessionId,
-    role: "system",
-    time: { created: message.time.created, completed: message.time.created },
-    parts: text ? [{ type: "text", text }] : [],
-    ...(model ? { model } : {}),
-    ...(mode ? { mode } : {}),
-    ...(message.type === "compaction" && message.status === "failed"
-      ? { error: message.error }
+    providerId: runtime.session.model.providerID,
+    modelId: runtime.session.model.id,
+    ...(runtime.session.model.variant
+      ? { variant: runtime.session.model.variant }
       : {}),
   };
 }
 
-async function resolveSessionModelPreference(
+function resolveSessionModePreference(
   runtime: RuntimeHandle
-): Promise<{ providerId: string; modelId: string; variant?: string } | null> {
-  if (runtime.session.model) {
-    return {
-      providerId: runtime.session.model.providerID,
-      modelId: runtime.session.model.id,
-      ...(runtime.session.model.variant
-        ? { variant: runtime.session.model.variant }
-        : {}),
-    };
-  }
-
-  try {
-    const info = await findLatestMessageInfo(runtime, (message) => {
-      const modelSelection = extractMessageModelSelection(message);
-      return Boolean(modelSelection);
-    });
-    const modelSelection = info ? extractMessageModelSelection(info) : null;
-    if (!modelSelection) {
-      return null;
-    }
-
-    return {
-      providerId: modelSelection.providerId,
-      modelId: modelSelection.modelId,
-      ...(modelSelection.variant ? { variant: modelSelection.variant } : {}),
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function resolveSessionModePreference(
-  runtime: RuntimeHandle
-): Promise<AgentMode | null> {
-  const sessionMode = normalizeAgentMode(runtime.session.agent);
-  if (sessionMode) {
-    return sessionMode;
-  }
-
-  try {
-    const info = await findLatestMessageInfo(runtime, (message) =>
-      Boolean(resolveMessageMode(message))
-    );
-    return info ? (resolveMessageMode(info) ?? null) : null;
-  } catch {
-    return null;
-  }
+): AgentMode | null {
+  return normalizeAgentMode(runtime.session.agent) ?? null;
 }
 
 async function* iterateRemoteMessages(
@@ -2434,81 +2180,6 @@ async function* iterateRemoteMessages(
   } while (cursor);
 }
 
-async function findLatestMessageInfo(
-  runtime: RuntimeHandle,
-  matches: (message: RuntimeMessage) => boolean
-): Promise<RuntimeMessage | null> {
-  for await (const source of iterateRemoteMessages(runtime, {
-    limit: 100,
-    order: "desc",
-  })) {
-    const message = adaptOpencodeMessage(runtime.session.id, source);
-    if (matches(message)) {
-      return message;
-    }
-  }
-
-  return null;
-}
-
-async function synchronizeRuntimeMode(runtime: RuntimeHandle): Promise<void> {
-  const resolvedMode = await resolveSessionModePreference(runtime);
-  if (!resolvedMode) {
-    return;
-  }
-
-  setRuntimeMode(runtime, resolvedMode);
-}
-
-async function resolveSessionStatusPreference(
-  runtime: RuntimeHandle
-): Promise<AgentSessionStatus | null> {
-  try {
-    const messages = await fetchRuntimeMessages(runtime, {
-      requireMessages: true,
-    });
-    if (!messages) {
-      return runtime.cell.resumeAgentSessionOnStartup ? "working" : null;
-    }
-
-    const lastMessage = messages.at(-1);
-    if (!lastMessage) {
-      return runtime.cell.resumeAgentSessionOnStartup ? "working" : null;
-    }
-
-    if (shouldResumeFromMessage(lastMessage)) {
-      return "working";
-    }
-
-    if (
-      runtime.cell.resumeAgentSessionOnStartup &&
-      !isCompletedAssistantMessage(lastMessage)
-    ) {
-      return "working";
-    }
-
-    return null;
-  } catch {
-    return runtime.cell.resumeAgentSessionOnStartup ? "working" : null;
-  }
-}
-
-async function fetchRuntimeMessages(
-  runtime: RuntimeHandle,
-  options: { requireMessages?: boolean } = {}
-) {
-  const page = await runtime.client.message.list({
-    sessionID: runtime.session.id,
-    limit: 1,
-    order: "desc",
-  });
-
-  const messages = page.data.map((message) =>
-    adaptOpencodeMessage(runtime.session.id, message)
-  );
-  return options.requireMessages && messages.length === 0 ? null : messages;
-}
-
 async function synchronizeRuntimeStatus(runtime: RuntimeHandle): Promise<void> {
   const liveState = await loadRuntimeLiveState(
     runtime.client,
@@ -2519,12 +2190,17 @@ async function synchronizeRuntimeStatus(runtime: RuntimeHandle): Promise<void> {
     return;
   }
 
-  const resolvedStatus = await resolveSessionStatusPreference(runtime);
-  if (!resolvedStatus) {
+  if (runtime.session.outcome === "failed") {
+    await applyRuntimeStatus(runtime, "error");
     return;
   }
-
-  await applyRuntimeStatus(runtime, resolvedStatus);
+  if (
+    runtime.session.outcome === "succeeded" ||
+    (runtime.session.outcome === "interrupted" &&
+      !runtime.cell.resumeAgentSessionOnStartup)
+  ) {
+    await applyRuntimeStatus(runtime, "awaiting_input");
+  }
 }
 
 type RuntimeLiveState = {
@@ -2593,29 +2269,24 @@ async function applyRuntimeLiveState(
 
 function createPendingInputEvents(
   state: PendingRuntimeInputs
-): AgentRuntimeEvent[] {
+): Extract<AgentStreamEvent, { type: "input_required" }>[] {
   return [
     ...state.permissions.map(
-      (permission): AgentRuntimeEvent => ({
-        type: "permission.asked",
-        properties: {
-          id: permission.id,
-          sessionID: permission.sessionID,
-          permission: permission.action,
-          patterns: permission.resources,
-          metadata: permission.metadata ?? {},
-          always: permission.save ?? [],
-        },
+      (permission): Extract<AgentStreamEvent, { type: "input_required" }> => ({
+        type: "input_required",
+        sessionId: permission.sessionID,
+        permissionId: permission.id,
+        title: permission.action,
+        kind: "permission",
       })
     ),
     ...state.forms.map(
-      (form): AgentRuntimeEvent => ({
-        type: "question.asked",
-        properties: {
-          id: form.id,
-          sessionID: form.sessionID,
-          questions: [{ question: form.title }],
-        },
+      (form): Extract<AgentStreamEvent, { type: "input_required" }> => ({
+        type: "input_required",
+        sessionId: form.sessionID,
+        permissionId: form.id,
+        title: form.title,
+        kind: "question",
       })
     ),
   ];
@@ -2623,7 +2294,7 @@ function createPendingInputEvents(
 
 export async function fetchPendingAgentInputEvents(
   sessionId: string
-): Promise<AgentRuntimeEvent[]> {
+): Promise<Extract<AgentStreamEvent, { type: "input_required" }>[]> {
   const runtime = runtimeRegistry.get(sessionId);
   if (!runtime) {
     throw new Error("Agent session not found");
@@ -2667,232 +2338,58 @@ function logModelSeedWarning(runtime: RuntimeHandle, message: string) {
   });
 }
 
-type MessageModelSelection = {
-  providerId: string;
-  modelId: string;
-  variant?: string;
-};
-
-function extractMessageModelSelection(
-  info: RuntimeMessage
-): MessageModelSelection | null {
-  const candidate = (info as { model?: unknown }).model;
-  if (
-    candidate &&
-    typeof candidate === "object" &&
-    candidate !== null &&
-    typeof (candidate as { providerID?: unknown }).providerID === "string" &&
-    typeof (candidate as { modelID?: unknown }).modelID === "string"
-  ) {
-    const { providerID, modelID, variant } = candidate as {
-      providerID: string;
-      modelID: string;
-      variant?: string;
-    };
-    return {
-      providerId: providerID,
-      modelId: modelID,
-      ...(typeof variant === "string" ? { variant } : {}),
-    };
-  }
-  return null;
-}
-
-function getMessageParentId(info: RuntimeMessage): string | null {
-  if (info.role !== "assistant") {
-    return null;
-  }
-  return info.parentID ?? null;
-}
-
-function getAssistantErrorDetails(info: RuntimeMessage): unknown | null {
-  if (info.role !== "assistant") {
-    return null;
-  }
-  return info.error ?? null;
-}
-
-type MessageUpdatedEvent = Extract<
-  AgentRuntimeEvent,
-  { type: "message.updated" }
->;
-
-function createMessageUpdatedEvent(input: {
-  id: string;
-  sessionID: string;
-  role: "user" | "assistant";
-  created: number;
-  completed?: boolean;
-  mode?: string;
-  model?: { providerID: string; id: string; variant?: string };
-}): MessageUpdatedEvent {
-  const { id, sessionID, role, created, completed, mode, model } = input;
-  return {
-    type: "message.updated",
-    properties: {
-      info: {
-        id,
-        sessionID,
-        role,
-        time: completed ? { created, completed: created } : { created },
-        ...(mode ? { mode } : {}),
-        ...(model
-          ? {
-              model: {
-                providerID: model.providerID,
-                modelID: model.id,
-                ...(model.variant ? { variant: model.variant } : {}),
-              },
-            }
-          : {}),
-      },
-    },
-  };
-}
-
-function createSelectionMessageUpdatedEvent(
-  event: Extract<
-    OpenCodeEvent,
-    { type: "session.agent.selected" | "session.model.selected" }
-  >
-): MessageUpdatedEvent {
-  return createMessageUpdatedEvent({
-    id: event.id,
-    sessionID: event.data.sessionID,
-    role: "user",
-    created: event.created,
-    completed: true,
-    ...(event.type === "session.agent.selected"
-      ? { mode: event.data.agent }
-      : { model: event.data.model }),
-  });
-}
-
-export function adaptOpencodeEvent(
-  event: OpenCodeEvent
-): AgentRuntimeEvent | null {
+function getEventSessionId(event: V2Event): string | undefined {
   switch (event.type) {
     case "session.status":
-      return { type: "session.status", properties: event.data };
     case "session.idle":
-      return { type: "session.idle", properties: event.data };
     case "session.execution.started":
-      return {
-        type: "session.status",
-        properties: {
-          sessionID: event.data.sessionID,
-          status: { type: "busy" },
-        },
-      };
     case "session.execution.succeeded":
-    case "session.execution.interrupted":
-      return {
-        type: "session.idle",
-        properties: { sessionID: event.data.sessionID },
-      };
     case "session.execution.failed":
-      return {
-        type: "session.error",
-        properties: {
-          sessionID: event.data.sessionID,
-          error: event.data.error,
-        },
-      };
+    case "session.execution.interrupted":
     case "session.agent.selected":
     case "session.model.selected":
-      return createSelectionMessageUpdatedEvent(event);
     case "session.step.started":
-      return createMessageUpdatedEvent({
-        id: event.data.assistantMessageID,
-        sessionID: event.data.sessionID,
-        role: "assistant",
-        created: event.created,
-        mode: event.data.agent,
-        model: event.data.model,
-      });
     case "permission.asked":
-      return {
-        type: "permission.asked",
-        properties: {
-          id: event.data.id,
-          sessionID: event.data.sessionID,
-          permission: event.data.action,
-          patterns: event.data.resources,
-          metadata: event.data.metadata ?? {},
-          always: event.data.save ?? [],
-        },
-      };
     case "permission.replied":
-      return {
-        type: "permission.replied",
-        properties: {
-          sessionID: event.data.sessionID,
-          permissionID: event.data.requestID,
-          response: event.data.reply,
-        },
-      };
-    case "form.created":
-      return {
-        type: "question.asked",
-        properties: {
-          id: event.data.form.id,
-          sessionID: event.data.form.sessionID,
-          questions: [{ question: event.data.form.title }],
-        },
-      };
     case "form.replied":
-      return {
-        type: "question.replied",
-        properties: {
-          id: event.data.id,
-          sessionID: event.data.sessionID,
-          answer: event.data.answer,
-        },
-      };
     case "form.cancelled":
-      return {
-        type: "question.rejected",
-        properties: {
-          id: event.data.id,
-          sessionID: event.data.sessionID,
-        },
-      };
-    case "session.compaction.ended":
-      return {
-        type: "session.compacted",
-        properties: { sessionID: event.data.sessionID },
-      };
+      return event.data.sessionID;
+    case "form.created":
+      return event.data.form.sessionID;
     default:
-      return null;
+      return;
   }
-}
-
-function getEventSessionId(event: AgentRuntimeEvent): string {
-  if (event.type === "message.updated") {
-    return event.properties.info.sessionID;
-  }
-  return event.properties.sessionID;
 }
 
 async function updateRuntimeStatusFromEvent(
   runtime: RuntimeHandle,
-  event: AgentRuntimeEvent
+  event: V2Event
 ): Promise<void> {
+  if (event.type === "session.execution.started") {
+    runtime.session.outcome = undefined;
+  } else if (event.type === "session.execution.succeeded") {
+    runtime.session.outcome = "succeeded";
+  } else if (event.type === "session.execution.failed") {
+    runtime.session.outcome = "failed";
+  } else if (event.type === "session.execution.interrupted") {
+    runtime.session.outcome = "interrupted";
+  }
+
   if (
-    event.type === "session.error" &&
+    event.type === "session.execution.failed" &&
     runtime.pendingInterrupt &&
-    isSessionErrorAborted(event)
+    isMessageAbortedError(event.data.error)
   ) {
     runtime.pendingInterrupt = false;
     await applyRuntimeStatus(runtime, "awaiting_input");
     return;
   }
 
-  if (runtime.pendingInterrupt && event.type === "message.updated") {
-    return;
-  }
-
-  if (runtime.pendingInterrupt && event.type === "session.idle") {
+  if (
+    runtime.pendingInterrupt &&
+    (event.type === "session.idle" ||
+      event.type === "session.execution.interrupted")
+  ) {
     runtime.pendingInterrupt = false;
   }
 
@@ -2907,55 +2404,32 @@ async function updateRuntimeStatusFromEvent(
 }
 
 export function resolveRuntimeStatusFromEvent(
-  event: AgentRuntimeEvent
+  event: V2Event
 ): { status: AgentSessionStatus; error?: string } | null {
-  if (event.type === "session.error") {
-    const message = extractErrorMessage(event);
-    return { status: "error", error: message };
-  }
-
-  if (event.type === "session.idle") {
-    return { status: "awaiting_input" };
-  }
-
-  if (event.type === "session.status") {
-    if (event.properties.status.type === "idle") {
+  switch (event.type) {
+    case "session.execution.failed":
+      return { status: "error", error: event.data.error.message };
+    case "session.idle":
+    case "session.execution.succeeded":
+    case "session.execution.interrupted":
+    case "form.cancelled":
       return { status: "awaiting_input" };
-    }
-    return { status: "working" };
+    case "session.status":
+      return {
+        status:
+          event.data.status.type === "idle" ? "awaiting_input" : "working",
+      };
+    case "permission.asked":
+    case "form.created":
+      return { status: "awaiting_input" };
+    case "permission.replied":
+    case "form.replied":
+    case "session.execution.started":
+    case "session.step.started":
+      return { status: "working" };
+    default:
+      return null;
   }
-
-  const rawType = (event as { type: string }).type;
-  if (rawType === "permission.asked" || rawType === "permission.updated") {
-    return { status: "awaiting_input" };
-  }
-
-  if (rawType === "permission.replied") {
-    return { status: "working" };
-  }
-
-  if (rawType === "question.asked") {
-    return { status: "awaiting_input" };
-  }
-
-  if (rawType === "question.replied") {
-    return { status: "working" };
-  }
-
-  if (rawType === "question.rejected") {
-    return { status: "awaiting_input" };
-  }
-
-  if (event.type !== "message.updated") {
-    return null;
-  }
-
-  const info = event.properties.info;
-  if (info.role === "assistant") {
-    return { status: "working" };
-  }
-
-  return null;
 }
 
 async function loadRemoteMessages(
@@ -2969,42 +2443,45 @@ async function loadRemoteMessages(
     messages.push(message);
   }
 
-  return messages
-    .map((message) => adaptOpencodeMessage(runtime.session.id, message))
-    .map(serializeMessage);
+  return messages.map((message) =>
+    serializeMessage(runtime.session.id, message)
+  );
 }
 
-function serializeMessage(info: RuntimeMessage): AgentMessageRecord {
-  const contentText = extractTextFromParts(info.parts);
-  const parentId = getMessageParentId(info);
-  const errorDetails = getAssistantErrorDetails(info);
-  const isAborted = isMessageAbortedError(errorDetails);
-  const abortedErrorPayload = isAborted
-    ? extractRpcErrorPayload(errorDetails)
-    : null;
-  const errorName =
-    isAborted && errorDetails && typeof errorDetails === "object"
-      ? ((errorDetails as { name?: string; type?: string }).name ??
-        (errorDetails as { type?: string }).type ??
-        null)
-      : null;
+function serializeMessage(
+  sessionId: string,
+  message: SessionMessageInfo
+): AgentMessageRecord {
+  const parts = getMessageParts(message);
+  const contentText = extractTextFromParts(parts);
+  const role: AgentMessageRole =
+    message.type === "user" || message.type === "assistant"
+      ? message.type
+      : "system";
+  const error = getMessageError(message);
+  const isAborted = isMessageAbortedError(error);
 
   return {
-    id: info.id,
-    sessionId: info.sessionID,
-    role: info.role,
+    id: message.id,
+    sessionId,
+    role,
     content: contentText.length ? contentText : null,
-    parts: info.parts,
-    state: determineMessageState(info),
-    createdAt: new Date(info.time.created).toISOString(),
-    parentId,
-    errorName,
-    errorMessage: isAborted
-      ? (abortedErrorPayload?.data?.message ??
-        abortedErrorPayload?.message ??
-        null)
-      : null,
+    parts,
+    state: determineMessageState(message),
+    createdAt: new Date(message.time.created).toISOString(),
+    parentId: null,
+    errorName: isAborted ? (error?.type ?? null) : null,
+    errorMessage: isAborted ? (error?.message ?? null) : null,
   };
+}
+
+function getMessageError(message: SessionMessageInfo) {
+  if (message.type === "assistant") {
+    return message.error;
+  }
+  return message.type === "compaction" && message.status === "failed"
+    ? message.error
+    : undefined;
 }
 
 function extractTextFromParts(parts: AgentMessagePart[] | undefined): string {
@@ -3027,11 +2504,14 @@ function extractTextFromParts(parts: AgentMessagePart[] | undefined): string {
     .join("\n");
 }
 
-function determineMessageState(message: RuntimeMessage): AgentMessageState {
-  if (message.role === "assistant" && message.error) {
+function determineMessageState(message: SessionMessageInfo): AgentMessageState {
+  if (
+    (message.type === "assistant" && message.error) ||
+    (message.type === "compaction" && message.status === "failed")
+  ) {
     return "error";
   }
-  if (message.role === "assistant" && !message.time.completed) {
+  if (message.type === "assistant" && !message.time.completed) {
     return "streaming";
   }
   return "completed";
@@ -3122,18 +2602,16 @@ async function persistRuntimeResumeState(
 }
 
 export function resolveRuntimeModeFromEvent(
-  event: AgentRuntimeEvent
+  event: V2Event
 ): AgentMode | undefined {
-  if (event.type !== "message.updated") {
-    return;
+  switch (event.type) {
+    case "session.agent.selected":
+      return normalizeAgentMode(event.data.agent);
+    case "session.step.started":
+      return normalizeAgentMode(event.data.agent);
+    default:
+      return;
   }
-
-  return resolveMessageMode(event.properties.info);
-}
-
-function resolveMessageMode(info: { mode?: unknown }): AgentMode | undefined {
-  const mode = (info as { mode?: unknown }).mode;
-  return typeof mode === "string" ? normalizeAgentMode(mode) : undefined;
 }
 
 function setRuntimeMode(runtime: RuntimeHandle, mode: AgentMode): void {
@@ -3154,7 +2632,7 @@ function setRuntimeMode(runtime: RuntimeHandle, mode: AgentMode): void {
 
 function updateRuntimeModeFromEvent(
   runtime: RuntimeHandle,
-  event: AgentRuntimeEvent
+  event: V2Event
 ): void {
   const nextMode = resolveRuntimeModeFromEvent(event);
   if (!nextMode) {
@@ -3162,168 +2640,51 @@ function updateRuntimeModeFromEvent(
   }
 
   setRuntimeMode(runtime, nextMode);
+  runtime.session.agent = nextMode;
 }
 
 function updateRuntimeModelFromEvent(
   runtime: RuntimeHandle,
-  event: AgentRuntimeEvent
+  event: V2Event
 ): void {
-  if (event.type !== "message.updated" || !event.properties.info.model) {
+  const model =
+    event.type === "session.model.selected" ||
+    event.type === "session.step.started"
+      ? event.data.model
+      : undefined;
+  if (!model) {
     return;
   }
-  const model = event.properties.info.model;
   runtime.providerId = model.providerID;
-  runtime.modelId = model.modelID;
+  runtime.modelId = model.id;
   runtime.variant = model.variant;
-  runtime.session.model = {
-    providerID: model.providerID,
-    id: model.modelID,
-    ...(model.variant ? { variant: model.variant } : {}),
-  };
-}
-
-function resolveCompactionCount(
-  event: AgentRuntimeEvent,
-  previousCount: number
-): number {
-  if (event.type !== "session.compacted") {
-    return previousCount;
-  }
-
-  const properties = (event as { properties?: unknown }).properties;
-  if (properties && typeof properties === "object") {
-    const candidate = properties as {
-      compacted?: unknown;
-      count?: unknown;
-    };
-    if (typeof candidate.compacted === "number") {
-      return candidate.compacted;
-    }
-    if (typeof candidate.count === "number") {
-      return candidate.count;
-    }
-  }
-
-  return previousCount + 1;
-}
-
-function publishCompactionStats(runtime: RuntimeHandle): void {
-  const { publishAgentEvent: publish } = getAgentRuntimeDependencies();
-  publish(runtime.session.id, {
-    type: "session.compaction",
-    properties: {
-      count: runtime.compaction.count,
-      lastCompactionAt: runtime.compaction.lastCompactionAt,
-    },
-  });
-}
-
-function recordCompactionEvent(
-  runtime: RuntimeHandle,
-  event: AgentRuntimeEvent
-): void {
-  if (event.type !== "session.compacted") {
-    return;
-  }
-  const nextCount = resolveCompactionCount(event, runtime.compaction.count);
-  const timestamp = new Date().toISOString();
-  runtime.compaction = { count: nextCount, lastCompactionAt: timestamp };
-  publishCompactionStats(runtime);
-}
-
-type RpcErrorPayload = {
-  message?: string;
-  data?: { message?: string };
-};
-
-function extractRpcErrorPayload(error: unknown): RpcErrorPayload | null {
-  if (typeof error !== "object" || error === null) {
-    return null;
-  }
-
-  const candidate = error as { message?: unknown; data?: unknown };
-  const payload: RpcErrorPayload = {};
-
-  if (typeof candidate.message === "string") {
-    payload.message = candidate.message;
-  }
-
-  if (candidate.data && typeof candidate.data === "object") {
-    const dataMessage = (candidate.data as { message?: unknown }).message;
-    if (typeof dataMessage === "string") {
-      payload.data = { message: dataMessage };
-    }
-  }
-
-  return payload.message || payload.data ? payload : null;
-}
-
-function extractErrorMessage(event: AgentRuntimeEvent): string {
-  if (event.type !== "session.error") {
-    return "Agent session error";
-  }
-  const rpcError = extractRpcErrorPayload(event.properties.error);
-  if (rpcError?.data?.message) {
-    return rpcError.data.message;
-  }
-  if (rpcError?.message) {
-    return rpcError.message;
-  }
-  return "Agent session error";
-}
-
-function isSessionErrorAborted(event: AgentRuntimeEvent): boolean {
-  if (event.type !== "session.error") {
-    return false;
-  }
-  return isMessageAbortedError(event.properties.error);
+  runtime.session.model = model;
 }
 
 function isMessageAbortedError(error: unknown): boolean {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-  const candidate = error as {
-    name?: string;
-    type?: string;
-    data?: { name?: string; message?: string };
-    errors?: Array<{ name?: string }>;
-  };
-  if (candidate.name === "MessageAbortedError") {
-    return true;
-  }
-  if (candidate.type === "MessageAbortedError") {
-    return true;
-  }
-  if (candidate.data?.name === "MessageAbortedError") {
-    return true;
-  }
-  if (
-    Array.isArray(candidate.errors) &&
-    candidate.errors.some((item) => item?.name === "MessageAbortedError")
-  ) {
-    return true;
-  }
-  return false;
+  return (
+    (error instanceof Error && error.name === "MessageAbortedError") ||
+    (typeof error === "object" &&
+      error !== null &&
+      "type" in error &&
+      error.type === "MessageAbortedError")
+  );
 }
 
 function getRpcErrorMessage(error: unknown, fallback: string): string {
-  const rpcError = extractRpcErrorPayload(error);
-  if (!rpcError) {
-    return fallback;
+  if (error instanceof Error) {
+    return error.message;
   }
-  if (rpcError.data?.message) {
-    return rpcError.data.message;
-  }
-  if (rpcError.message) {
-    return rpcError.message;
-  }
-  return fallback;
+  return typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+    ? error.message
+    : fallback;
 }
 
 async function deleteRemoteOpencodeSession(args: {
   sessionId: string;
-  directoryQuery: DirectoryQuery;
   client?: OpenCodeClient;
 }): Promise<void> {
   const client =

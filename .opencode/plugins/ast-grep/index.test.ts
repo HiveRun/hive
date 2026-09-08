@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import type { Info as ToolInfo } from "@opencode-ai/plugin/promise/tool";
 import astGrepPlugin, { AST_GREP_PLUGIN_ID } from "./index";
-import type { AstGrepV2Tool } from "./tools";
 
 describe("ast-grep v2 plugin", () => {
   it("registers the existing search and replace tools", async () => {
@@ -41,7 +41,7 @@ describe("ast-grep v2 plugin", () => {
 });
 
 async function registerTools(cwd: string) {
-  const tools = new Map<string, AstGrepV2Tool>();
+  const tools = new Map<string, ToolInfo>();
   await astGrepPlugin.setup({
     location: {
       directory: cwd,
@@ -52,9 +52,14 @@ async function registerTools(cwd: string) {
     },
     tool: {
       transform: (
-        callback: (draft: { add: (tool: AstGrepV2Tool) => void }) => void
+        register: (draft: { add: (tool: ToolInfo) => void }) => void
       ) => {
-        callback({ add: (tool) => tools.set(tool.name, tool) });
+        const draft = {
+          add(tool: ToolInfo) {
+            tools.set(tool.name, tool);
+          },
+        };
+        register(draft);
         return Promise.resolve({ dispose: () => Promise.resolve() });
       },
     },

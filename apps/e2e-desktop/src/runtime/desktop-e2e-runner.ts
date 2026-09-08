@@ -14,7 +14,6 @@ import { runPlaywrightSuite } from "../../../e2e/src/runtime/playwright";
 import {
   createManagedProcessStopper,
   type ManagedProcess,
-  readProcessTable,
   runCommand,
   stopManagedProcesses,
 } from "../../../e2e/src/runtime/process";
@@ -183,20 +182,6 @@ async function run() {
 async function cleanupOrphanedOpencodeServices(
   preserveRunRoot: string
 ): Promise<void> {
-  const concurrentRunnerPids = readProcessTable()
-    .filter(
-      (entry) =>
-        entry.pid !== process.pid &&
-        entry.args.includes("src/runtime/desktop-e2e-runner.ts")
-    )
-    .map((entry) => entry.pid);
-  if (concurrentRunnerPids.length > 0) {
-    process.stdout.write(
-      `Skipping stale opencode cleanup while other desktop e2e runners are active: ${concurrentRunnerPids.join(", ")}\n`
-    );
-    return;
-  }
-
   const stopped = await cleanupRegisteredOpencodeServices({
     preserveRunRoot,
     runsRoot: desktopRunsRoot,

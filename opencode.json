@@ -8,11 +8,13 @@
       "description": "Calibrate application repository; use for cross-repository development and architecture context"
     }
   },
-  "permission": {
-    "external_directory": {
-      "~/dev/projects/calibrate/**": "allow"
+  "permissions": [
+    {
+      "action": "external_directory",
+      "resource": "~/dev/projects/calibrate/**",
+      "effect": "allow"
     }
-  },
+  ],
   "mcp": {
     "servers": {
       "linear_hive": {

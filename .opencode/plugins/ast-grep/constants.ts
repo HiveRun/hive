@@ -1,9 +1,10 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { getCachedBinaryPath } from "./downloader";
 
 const MIN_BINARY_SIZE_BYTES = 10_000;
+const AST_GREP_VERSION = "0.40.0";
+const AST_GREP_PACKAGE = "@ast-grep/cli";
 const BYTES_PER_KIB = 1024;
 const BYTES_PER_MIB = BYTES_PER_KIB * BYTES_PER_KIB;
 
@@ -15,36 +16,29 @@ const isValidBinary = (filePath: string): boolean => {
   }
 };
 
-const getPlatformPackageName = (): string | null => {
-  const platform = process.platform;
-  const arch = process.arch;
+const unavailableError = (details: string): Error =>
+  new Error(
+    `Pinned ${AST_GREP_PACKAGE}@${AST_GREP_VERSION} binary is unavailable (${details}); PATH and network fallbacks are disabled.`
+  );
 
-  const platformMap: Record<string, string> = {
-    "darwin-arm64": "@ast-grep/cli-darwin-arm64",
-    "darwin-x64": "@ast-grep/cli-darwin-x64",
-    "linux-arm64": "@ast-grep/cli-linux-arm64-gnu",
-    "linux-x64": "@ast-grep/cli-linux-x64-gnu",
-    "win32-x64": "@ast-grep/cli-win32-x64-msvc",
-    "win32-arm64": "@ast-grep/cli-win32-arm64-msvc",
-    "win32-ia32": "@ast-grep/cli-win32-ia32-msvc",
-  };
-
-  return platformMap[`${platform}-${arch}`] ?? null;
+const resolvePackageManifest = (): string => {
+  const require = createRequire(import.meta.url);
+  return require.resolve(`${AST_GREP_PACKAGE}/package.json`);
 };
 
-const resolveFromCache = (): string | null => {
-  const cachedPath = getCachedBinaryPath();
-  if (cachedPath && isValidBinary(cachedPath)) {
-    return cachedPath;
-  }
-
-  return null;
-};
-
-const resolveFromCliPackage = (): string | null => {
+export const resolveSgCliPath = (
+  packageManifestResolver: () => string = resolvePackageManifest
+): string => {
   try {
-    const require = createRequire(import.meta.url);
-    const cliPkgPath = require.resolve("@ast-grep/cli/package.json");
+    const cliPkgPath = packageManifestResolver();
+    const manifest = JSON.parse(readFileSync(cliPkgPath, "utf8")) as {
+      version?: string;
+    };
+    if (manifest.version !== AST_GREP_VERSION) {
+      throw unavailableError(
+        `resolved package version ${manifest.version ?? "unknown"}`
+      );
+    }
     const cliDir = dirname(cliPkgPath);
     const binaryName = process.platform === "win32" ? "sg.exe" : "sg";
     const sgPath = join(cliDir, binaryName);
@@ -52,74 +46,14 @@ const resolveFromCliPackage = (): string | null => {
     if (existsSync(sgPath) && isValidBinary(sgPath)) {
       return sgPath;
     }
-  } catch {
-    /* @ast-grep/cli not installed */
-  }
-
-  return null;
-};
-
-const resolveFromPlatformPackage = (): string | null => {
-  const platformPkg = getPlatformPackageName();
-  if (!platformPkg) {
-    return null;
-  }
-
-  try {
-    const require = createRequire(import.meta.url);
-    const pkgPath = require.resolve(`${platformPkg}/package.json`);
-    const pkgDir = dirname(pkgPath);
-    const astGrepName =
-      process.platform === "win32" ? "ast-grep.exe" : "ast-grep";
-    const binaryPath = join(pkgDir, astGrepName);
-
-    if (existsSync(binaryPath) && isValidBinary(binaryPath)) {
-      return binaryPath;
+    throw unavailableError(`missing package binary at ${sgPath}`);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Pinned ")) {
+      throw error;
     }
-  } catch {
-    /* platform-specific package not installed */
+    const message = error instanceof Error ? error.message : String(error);
+    throw unavailableError(message);
   }
-
-  return null;
-};
-
-const resolveFromHomebrew = (): string | null => {
-  if (process.platform !== "darwin") {
-    return null;
-  }
-
-  const homebrewPaths = ["/opt/homebrew/bin/sg", "/usr/local/bin/sg"];
-  for (const path of homebrewPaths) {
-    if (existsSync(path) && isValidBinary(path)) {
-      return path;
-    }
-  }
-
-  return null;
-};
-
-export const findSgCliPathSync = (): string | null => {
-  const fromCache = resolveFromCache();
-  if (fromCache) {
-    return fromCache;
-  }
-
-  const fromCliPackage = resolveFromCliPackage();
-  if (fromCliPackage) {
-    return fromCliPackage;
-  }
-
-  const fromPlatformPackage = resolveFromPlatformPackage();
-  if (fromPlatformPackage) {
-    return fromPlatformPackage;
-  }
-
-  const fromHomebrew = resolveFromHomebrew();
-  if (fromHomebrew) {
-    return fromHomebrew;
-  }
-
-  return null;
 };
 
 let resolvedCliPath: string | null = null;
@@ -129,20 +63,17 @@ export const getSgCliPath = (): string => {
     return resolvedCliPath;
   }
 
-  const syncPath = findSgCliPathSync();
-  if (syncPath) {
-    resolvedCliPath = syncPath;
-    return syncPath;
-  }
-
-  return "sg";
+  resolvedCliPath = resolveSgCliPath();
+  return resolvedCliPath;
 };
 
 export const setSgCliPath = (path: string): void => {
   resolvedCliPath = path;
 };
 
-export const SG_CLI_PATH = getSgCliPath();
+export const resetSgCliPath = (): void => {
+  resolvedCliPath = null;
+};
 
 export const CLI_LANGUAGES = [
   "bash",
@@ -170,14 +101,6 @@ export const CLI_LANGUAGES = [
   "typescript",
   "tsx",
   "yaml",
-] as const;
-
-export const NAPI_LANGUAGES = [
-  "html",
-  "javascript",
-  "tsx",
-  "css",
-  "typescript",
 ] as const;
 
 export const DEFAULT_TIMEOUT_MS = 300_000;
@@ -210,100 +133,4 @@ export const LANG_EXTENSIONS: Record<string, string[]> = {
   typescript: [".ts", ".cts", ".mts"],
   tsx: [".tsx"],
   yaml: [".yml", ".yaml"],
-};
-
-export type EnvironmentCheckResult = {
-  cli: {
-    available: boolean;
-    path: string;
-    error?: string;
-  };
-  napi: {
-    available: boolean;
-    error?: string;
-  };
-};
-
-export const checkEnvironment = (): EnvironmentCheckResult => {
-  const result: EnvironmentCheckResult = {
-    cli: {
-      available: false,
-      path: SG_CLI_PATH,
-    },
-    napi: {
-      available: false,
-    },
-  };
-
-  if (existsSync(SG_CLI_PATH)) {
-    result.cli.available = true;
-  } else if (SG_CLI_PATH === "sg") {
-    try {
-      const { spawnSync } =
-        require("node:child_process") as typeof import("node:child_process");
-      const whichResult = spawnSync(
-        process.platform === "win32" ? "where" : "which",
-        ["sg"],
-        {
-          encoding: "utf8",
-          timeout: 5000,
-        }
-      );
-      result.cli.available =
-        whichResult.status === 0 && Boolean(whichResult.stdout?.trim());
-      if (!result.cli.available) {
-        result.cli.error = "sg binary not found in PATH";
-      }
-    } catch {
-      result.cli.error = "Failed to check sg availability";
-    }
-  } else {
-    result.cli.error = `Binary not found: ${SG_CLI_PATH}`;
-  }
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-    require("@ast-grep/napi");
-    result.napi.available = true;
-  } catch (error) {
-    result.napi.available = false;
-    const err = error as Error;
-    result.napi.error = `@ast-grep/napi not installed: ${err.message}`;
-  }
-
-  return result;
-};
-
-export const formatEnvironmentCheck = (
-  result: EnvironmentCheckResult
-): string => {
-  const lines: string[] = ["ast-grep Environment Status:", ""];
-
-  if (result.cli.available) {
-    lines.push(`CLI: Available (${result.cli.path})`);
-  } else {
-    lines.push("CLI: Not available");
-    if (result.cli.error) {
-      lines.push(`  Error: ${result.cli.error}`);
-    }
-    lines.push("  Install: bun add -D @ast-grep/cli");
-  }
-
-  if (result.napi.available) {
-    lines.push("NAPI: Available");
-  } else {
-    lines.push("NAPI: Not available");
-    if (result.napi.error) {
-      lines.push(`  Error: ${result.napi.error}`);
-    }
-    lines.push("  Install: bun add -D @ast-grep/napi");
-  }
-
-  lines.push("");
-  lines.push(`CLI supports ${CLI_LANGUAGES.length} languages`);
-  lines.push(
-    `NAPI supports ${NAPI_LANGUAGES.length} languages: ${NAPI_LANGUAGES.join(", ")}`
-  );
-
-  return lines.join("\n");
 };

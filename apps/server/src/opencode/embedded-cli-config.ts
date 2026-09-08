@@ -1,10 +1,7 @@
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import {
-  allowsEmbeddedChatControlInput,
-  mergeHiveEmbeddedBrowserSafeKeybinds,
-} from "./browser-safe-keybinds";
+import { HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS } from "./browser-safe-keybinds";
 
 const CLI_SCHEMA_URL = "https://opencode.ai/v2/cli.json";
 const EMBEDDED_CONFIG_HOME = [".opencode", "state", "xdg", "config"] as const;
@@ -34,7 +31,6 @@ export function prepareEmbeddedOpencodeCliConfig({
   themeMode,
   themeContent,
 }: EmbeddedCliConfigOptions): EmbeddedCliConfig {
-  const keybinds = mergeHiveEmbeddedBrowserSafeKeybinds();
   const configHome = join(workspacePath, ...EMBEDDED_CONFIG_HOME);
   const configDirectory = join(configHome, "opencode");
   const themeDirectory = join(configDirectory, "themes");
@@ -46,7 +42,7 @@ export function prepareEmbeddedOpencodeCliConfig({
       {
         $schema: CLI_SCHEMA_URL,
         theme: { name: themeName, mode: themeMode },
-        keybinds,
+        keybinds: HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS,
       },
       null,
       2
@@ -57,6 +53,6 @@ export function prepareEmbeddedOpencodeCliConfig({
   return {
     configHome,
     configDirectory,
-    allowEmbeddedControlInput: allowsEmbeddedChatControlInput(keybinds),
+    allowEmbeddedControlInput: false,
   };
 }

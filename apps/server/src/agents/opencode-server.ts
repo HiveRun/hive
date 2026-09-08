@@ -63,13 +63,18 @@ const serviceRequestOptions = (timeoutMs = SERVICE_REQUEST_TIMEOUT_MS) => ({
 async function prepareServiceReplacement(
   options: SharedOpencodeServerStartOptions
 ): Promise<void> {
-  const current = await Service.discover();
+  const current = await Service.discover().catch(() => null);
   if (!current) {
     return;
   }
 
   const client = createClient(current);
-  const health = await client.health.get(serviceRequestOptions());
+  const health = await client.health
+    .get(serviceRequestOptions())
+    .catch(() => null);
+  if (!health) {
+    return;
+  }
   if (health.version === OPENCODE_VERSION) {
     return;
   }
@@ -147,13 +152,6 @@ async function createSharedServer(
     onStart: logServiceStart,
   });
   const client = createClient(endpoint);
-  const health = await client.health.get(serviceRequestOptions());
-  if (health.version !== OPENCODE_VERSION) {
-    throw new Error(
-      `OpenCode service version mismatch: expected ${OPENCODE_VERSION}, received ${health.version}`
-    );
-  }
-
   await waitForV1Migration(client);
 
   const handle = { endpoint, client };

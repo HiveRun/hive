@@ -8,7 +8,6 @@
     ".opencode/state/**",
     ".opencode/themes/**",
     ".ruler/01-readme.md",
-    "**/*.generated.ts",
     "**/*.tsbuildinfo",
     "apps/desktop-electron/out/**",
     "apps/desktop-electron/public/**",
@@ -26,9 +25,7 @@
     "temp/**",
     "tmp/**"
   ],
-  "ignoreIssues": {
-    "apps/server/src/agents/tools/hive.ts": ["exports"]
-  },
+  "ignoreDependencies": ["@ast-grep/cli"],
   "workspaces": {
     ".": {
       "entry": [

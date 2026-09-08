@@ -266,7 +266,6 @@ type CellRouteDependencies = {
     opencodeServerUrl: string;
     opencodeServerPassword?: string;
     opencodeThemeMode?: OpencodeThemeMode;
-    preferredModel?: { providerId: string; modelId: string; variant?: string };
     startMode?: AgentMode;
     environment: Record<string, string>;
   }) => ChatTerminalSession;
@@ -1409,19 +1408,7 @@ async function ensureChatTerminalSessionForCell(
 
   const chatTerminal = getChatTerminalDependencies(deps);
   const agentSession = await deps.ensureAgentSession(cell.id);
-  const preferredProviderId =
-    agentSession.modelProviderId ?? agentSession.provider;
   const startMode = agentSession.currentMode ?? agentSession.startMode;
-  const preferredModel =
-    agentSession.modelId && preferredProviderId
-      ? {
-          modelId: agentSession.modelId,
-          providerId: preferredProviderId,
-          ...(agentSession.modelVariant
-            ? { variant: agentSession.modelVariant }
-            : {}),
-        }
-      : undefined;
   const session = await runWithCellCleanupLock(cell.id, async () => {
     const currentCell = await requireCellAvailableForRuntime(deps.db, cell.id);
     const environment = await resolveCellTerminalEnvironment(
@@ -1437,7 +1424,6 @@ async function ensureChatTerminalSessionForCell(
         ? process.env.OPENCODE_PASSWORD || process.env.OPENCODE_SERVER_PASSWORD
         : sharedConnection?.password,
       opencodeThemeMode: themeMode,
-      preferredModel,
       environment,
       ...(startMode ? { startMode } : {}),
     });

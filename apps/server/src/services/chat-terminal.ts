@@ -49,12 +49,6 @@ const CURSOR_POSITION_PATTERN = new RegExp(
 const MODE_FOOTER_PATTERN = /\b(Plan|Build)\b\s*[·•]/;
 const LINE_END_PATTERN = /[\r\n]/;
 
-type ChatTerminalModelPreference = {
-  providerId: string;
-  modelId: string;
-  variant?: string;
-};
-
 const HIVE_THEME_CONTENT = `${JSON.stringify(
   {
     $schema: "https://opencode.ai/theme.json",
@@ -137,21 +131,6 @@ const HIVE_THEME_CONTENT = `${JSON.stringify(
   2
 )}\n`;
 
-function toOpencodeModelValue(
-  preference: ChatTerminalModelPreference | undefined
-): string | undefined {
-  if (!preference) {
-    return;
-  }
-
-  const providerPrefix = `${preference.providerId}/`;
-  const modelId = preference.modelId.startsWith(providerPrefix)
-    ? preference.modelId.slice(providerPrefix.length)
-    : preference.modelId;
-  const model = `${providerPrefix}${modelId}`;
-  return preference.variant ? `${model}#${preference.variant}` : model;
-}
-
 const isEmbeddedControlInput = (data: string): boolean =>
   data === ASCII_END_OF_TEXT || data === ASCII_END_OF_TRANSMISSION;
 
@@ -195,7 +174,6 @@ type ChatTerminalRecord = TerminalRecordFields & {
   opencodeServerUrl: string;
   opencodeServerPassword?: string;
   opencodeThemeMode: "dark" | "light";
-  preferredModel?: string;
   startMode?: AgentMode;
   modeAlignmentBuffer: string;
   modeAlignmentCycleSent: boolean;
@@ -217,7 +195,6 @@ type ChatTerminalService = TerminalSessionService<
     opencodeServerUrl: string;
     opencodeServerPassword?: string;
     opencodeThemeMode?: "dark" | "light";
-    preferredModel?: ChatTerminalModelPreference;
     startMode?: AgentMode;
     environment: Record<string, string>;
   }): ChatTerminalSession;
@@ -312,7 +289,6 @@ function completeModeAlignment(record: ChatTerminalRecord): void {
   if (record.modeAlignmentComplete) {
     return;
   }
-
   if (record.modeAlignmentInputTimeout) {
     clearTimeout(record.modeAlignmentInputTimeout);
     record.modeAlignmentInputTimeout = undefined;
@@ -336,7 +312,6 @@ function alignRenderedMode(record: ChatTerminalRecord, chunk: string): void {
   if (!record.startMode || record.modeAlignmentComplete) {
     return;
   }
-
   record.modeAlignmentBuffer = `${record.modeAlignmentBuffer}${chunk}`.slice(
     -MODE_ALIGNMENT_BUFFER_CHARS
   );
@@ -347,16 +322,13 @@ function alignRenderedMode(record: ChatTerminalRecord, chunk: string): void {
   if (!renderedMode) {
     return;
   }
-
   if (renderedMode !== record.startMode) {
-    if (record.modeAlignmentCycleSent) {
-      return;
+    if (!record.modeAlignmentCycleSent) {
+      record.modeAlignmentCycleSent = true;
+      record.pty.write(AGENT_CYCLE_INPUT);
     }
-    record.modeAlignmentCycleSent = true;
-    record.pty.write(AGENT_CYCLE_INPUT);
     return;
   }
-
   completeModeAlignment(record);
 }
 
@@ -382,7 +354,6 @@ const prepareChatTerminalSpawn = ({
   workspacePath,
   opencodeSessionId,
   opencodeThemeMode = DEFAULT_THEME_MODE,
-  preferredModel,
   startMode,
   opencodeServerUrl,
   opencodeServerPassword,
@@ -395,7 +366,6 @@ const prepareChatTerminalSpawn = ({
 
   return {
     normalizedStartMode,
-    preferredModelValue: toOpencodeModelValue(preferredModel),
     opencodeThemeMode,
     allowEmbeddedControlInput: terminalConfig.allowEmbeddedControlInput,
     spawnOptions: {
@@ -470,7 +440,6 @@ const createChatTerminalService = (): ChatTerminalService => {
         opencodeServerUrl: args.opencodeServerUrl,
         opencodeServerPassword: args.opencodeServerPassword,
         opencodeThemeMode: prepared.opencodeThemeMode,
-        preferredModel: prepared.preferredModelValue,
         startMode: prepared.normalizedStartMode,
         modeAlignmentBuffer: "",
         modeAlignmentCycleSent: false,
