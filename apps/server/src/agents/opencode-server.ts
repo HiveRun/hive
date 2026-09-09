@@ -201,10 +201,6 @@ export async function acquireSharedOpencodeClient(): Promise<OpenCodeClient> {
   return (await ensureSharedHandle()).client;
 }
 
-export function getSharedOpencodeServerBaseUrl(): string | null {
-  return sharedState.handle?.endpoint.url ?? null;
-}
-
 export function getSharedOpencodeServerConnection(): {
   url: string;
   password?: string;

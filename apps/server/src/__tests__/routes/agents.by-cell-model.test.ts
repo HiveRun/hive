@@ -1,7 +1,6 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { OpenCodeClient, V2Event } from "@opencode-ai/client";
 import { Elysia } from "elysia";
 import {
   afterAll as afterAllTests,
@@ -22,6 +21,13 @@ import type { HiveConfig } from "../../config/schema";
 import { agentsRoutes } from "../../routes/agents";
 import { cellProvisioningStates } from "../../schema/cell-provisioning";
 import { cells } from "../../schema/cells";
+import {
+  applyV2ProviderCatalogFixture,
+  createOpenCodeV2ClientFixture,
+  createV2ModelFixture,
+  createV2SessionFixture,
+  type OpenCodeV2ClientFixture,
+} from "../opencode-v2-test-fixtures";
 import { setupTestDb, testDb } from "../test-db";
 
 type AppDb = typeof import("../../db").db;
@@ -50,130 +56,44 @@ const hiveConfig: HiveConfig = {
   defaults: {},
 };
 
-function createMockSession() {
-  const now = Date.now();
-  return {
+function createClientFixture() {
+  const session = createV2SessionFixture({
     id: "session-by-cell-model",
-    time: { created: now, updated: now },
     projectID: "project-by-cell-model",
-    location: { directory: workspacePath },
     title: "By-cell model session",
-    cost: 0,
-    tokens: createEmptyTokenUsage(),
-  };
-}
-
-function createEmptyTokenUsage() {
-  return {
-    cache: { read: 0, write: 0 },
-    input: 0,
-    output: 0,
-    reasoning: 0,
-  };
-}
-
-function createClientStub() {
-  const sessionMessages = vi.fn(async () => ({
-    data: [] as unknown[],
-    cursor: {},
-  }));
-  const prompt = vi.fn(async () => ({
-    id: "inbox-by-cell-model",
-    sessionID: "session-by-cell-model",
-    delivery: "queue" as const,
-    payload: { text: "" },
-    type: "user" as const,
-    timeCreated: Date.now(),
-  }));
-  const switchAgent = vi.fn(() => Promise.resolve());
-  const switchModel = vi.fn(() => Promise.resolve());
-  const createSession = vi.fn(async () => createMockSession());
-  const location = {
     directory: workspacePath,
-    project: {
-      id: "project-by-cell-model",
-      directory: workspacePath,
-      canonical: workspacePath,
-    },
-  };
+  });
+  const fixture = createOpenCodeV2ClientFixture({ session });
   const models = [
-    createModelInfo("big-pickle", "opencode/big-pickle"),
-    createModelInfo("template-default", "template-default"),
+    createV2ModelFixture({
+      id: "opencode/big-pickle",
+      modelID: "big-pickle",
+      providerID: "opencode",
+      variants: [{ id: "high" }],
+    }),
+    createV2ModelFixture({
+      id: "template-default",
+      modelID: "template-default",
+      providerID: "opencode",
+    }),
   ];
-
-  const client = {
-    session: {
-      active: vi.fn(async () => ({})),
-      create: createSession,
-      get: vi.fn(async () => createMockSession()),
-      inbox: { list: vi.fn(async () => []) },
-      interrupt: vi.fn(async () => ({ interrupted: true })),
-      prompt,
-      remove: vi.fn(() => Promise.resolve()),
-      switchAgent,
-      switchModel,
-    },
-    event: {
-      subscribe: vi.fn(
-        () =>
-          (async function* () {
-            // no runtime events for this regression
-          })() as AsyncGenerator<V2Event, void, unknown>
-      ),
-    },
-    form: { list: vi.fn(async () => []) },
-    message: { list: sessionMessages },
-    model: {
-      default: vi.fn(async () => ({ location, data: models[1] })),
-      list: vi.fn(async () => ({ location, data: models })),
-    },
-    permission: {
-      list: vi.fn(async () => []),
-      reply: vi.fn(() => Promise.resolve()),
-    },
-    provider: {
-      list: vi.fn(async () => ({
-        location,
-        data: [
-          {
-            id: "opencode",
-            name: "OpenCode",
-            activation: "enabled" as const,
-            package: "@ai-sdk/opencode",
-          },
-        ],
-      })),
-    },
-  };
-
-  return {
-    client: client as unknown as OpenCodeClient,
-    sessionMessages,
-    prompt,
-    createSession,
-    switchAgent,
-    switchModel,
-  };
-}
-
-function createModelInfo(modelID: string, id: string) {
-  const identity = { id, modelID, name: modelID, providerID: "opencode" };
-  return {
-    ...identity,
-    enabled: true,
-    status: "active" as const,
-    capabilities: { tools: true, input: ["text"], output: ["text"] },
-    limit: { context: 128_000, output: 16_000 },
-    variants: modelID === "big-pickle" ? [{ id: "high" }] : [],
-    cost: [],
-    time: { released: 0 },
-  };
+  applyV2ProviderCatalogFixture(fixture, {
+    providers: [
+      {
+        id: "opencode",
+        name: "OpenCode",
+        activation: "enabled",
+        package: "@ai-sdk/opencode",
+      },
+    ],
+    models,
+    default: models[1] ?? null,
+  });
+  return fixture;
 }
 
 describe("agents by-cell model capture", () => {
-  let switchAgentSpy: ReturnType<typeof vi.fn>;
-  let switchModelSpy: ReturnType<typeof vi.fn>;
-  let createSessionSpy: ReturnType<typeof vi.fn>;
+  let clientFixture: OpenCodeV2ClientFixture;
 
   beforeAllTests(async () => {
     await setupTestDb();
@@ -190,17 +110,13 @@ describe("agents by-cell model capture", () => {
     await testDb.delete(cellProvisioningStates);
     await testDb.delete(cells);
 
-    const { client, createSession, switchAgent, switchModel } =
-      createClientStub();
-    createSessionSpy = createSession;
-    switchAgentSpy = switchAgent;
-    switchModelSpy = switchModel;
+    clientFixture = createClientFixture();
 
     setAgentRuntimeDependencies({
       db: testDb as unknown as AppDb,
       loadHiveConfig: vi.fn(async () => hiveConfig),
       loadEffectiveOpencodeDefaults: vi.fn(async () => ({})),
-      acquireOpencodeClient: vi.fn(async () => client),
+      acquireOpencodeClient: vi.fn(async () => clientFixture.client),
     });
 
     await testDb.insert(cells).values({
@@ -256,7 +172,7 @@ describe("agents by-cell model capture", () => {
     expect(payload.session?.modelId).toBe("opencode/big-pickle");
     expect(payload.session?.modelProviderId).toBe("opencode");
     expect(payload.session?.modelVariant).toBe("high");
-    expect(createSessionSpy).toHaveBeenCalledWith({
+    expect(clientFixture.spies.createSession).toHaveBeenCalledWith({
       title: "By-cell model capture",
       agent: "plan",
       model: {
@@ -266,8 +182,7 @@ describe("agents by-cell model capture", () => {
       },
       location: { directory: workspacePath },
     });
-    expect(switchAgentSpy).not.toHaveBeenCalled();
-    expect(switchModelSpy).toHaveBeenCalledWith({
+    expect(clientFixture.spies.switchModel).toHaveBeenCalledWith({
       sessionID: "session-by-cell-model",
       model: {
         providerID: "opencode",

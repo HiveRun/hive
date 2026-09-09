@@ -119,7 +119,6 @@ import type {
 } from "../services/service-terminal";
 import type {
   EnsureCellServicesTimingEvent,
-  ServiceSupervisorError,
   ServiceSupervisorService as ServiceSupervisorServiceType,
 } from "../services/supervisor";
 import {
@@ -757,32 +756,6 @@ function rejectDeletingCell(status: string, set: RouteSet) {
   return { message: "Cell is being deleted" } satisfies MessageResponse;
 }
 
-const isServiceSupervisorError = (
-  error: unknown
-): error is ServiceSupervisorError =>
-  typeof error === "object" &&
-  error !== null &&
-  (error as { _tag?: string })._tag === "ServiceSupervisorError";
-
-const unwrapSupervisorError = (error: unknown): unknown => {
-  if (isServiceSupervisorError(error)) {
-    return error.cause;
-  }
-
-  if (error instanceof Error) {
-    try {
-      const parsed = JSON.parse(error.message);
-      if (isServiceSupervisorError(parsed)) {
-        return parsed.cause;
-      }
-    } catch {
-      // no-op
-    }
-  }
-
-  return error;
-};
-
 async function recordServiceActivity(args: {
   deps: CellRouteDependencies;
   cellId: string;
@@ -844,11 +817,11 @@ function handleRouteActionError(args: {
   logContext: Record<string, unknown>;
   errorMessage: string;
 }) {
-  const error = unwrapSupervisorError(args.error);
   args.set.status = HTTP_STATUS.INTERNAL_ERROR;
   args.log.error({ error: args.error, ...args.logContext }, args.errorMessage);
   return {
-    message: error instanceof Error ? error.message : args.errorMessage,
+    message:
+      args.error instanceof Error ? args.error.message : args.errorMessage,
   } satisfies MessageResponse;
 }
 
@@ -5479,88 +5452,10 @@ export async function resumeSpawningCells(
   await resumeDeletingCells(deps);
 }
 
-const reviveTemplateSetupError = (
-  error: unknown
-): TemplateSetupError | null => {
-  if (error instanceof TemplateSetupError) {
-    return error;
-  }
-
-  if (
-    isNamedErrorLike(error, "TemplateSetupError") &&
-    typeof (error as { command?: unknown }).command === "string" &&
-    typeof (error as { templateId?: unknown }).templateId === "string" &&
-    typeof (error as { workspacePath?: unknown }).workspacePath === "string"
-  ) {
-    const templateLike = error as {
-      command: string;
-      templateId: string;
-      workspacePath: string;
-      cause?: unknown;
-      exitCode?: number;
-    };
-
-    return new TemplateSetupError({
-      command: templateLike.command,
-      templateId: templateLike.templateId,
-      workspacePath: templateLike.workspacePath,
-      cause: templateLike.cause,
-      exitCode:
-        typeof templateLike.exitCode === "number"
-          ? templateLike.exitCode
-          : undefined,
-    });
-  }
-
-  return null;
-};
-
-const isNamedErrorLike = (error: unknown, name: string) =>
-  Boolean(
-    error &&
-      typeof error === "object" &&
-      (error as { name?: string }).name === name
-  );
-
-const reviveCommandExecutionError = (
-  error: unknown
-): CommandExecutionError | null => {
-  if (error instanceof CommandExecutionError) {
-    return error;
-  }
-
-  if (
-    isNamedErrorLike(error, "CommandExecutionError") &&
-    typeof (error as { command?: unknown }).command === "string" &&
-    typeof (error as { cwd?: unknown }).cwd === "string" &&
-    typeof (error as { exitCode?: unknown }).exitCode === "number"
-  ) {
-    const commandLike = error as {
-      command: string;
-      cwd: string;
-      exitCode: number;
-    };
-
-    return new CommandExecutionError(commandLike);
-  }
-
-  return null;
-};
-
-const normalizeFailureError = (error: unknown): unknown => {
-  const unwrapped = unwrapSupervisorError(error);
-  return (
-    reviveTemplateSetupError(unwrapped) ??
-    reviveCommandExecutionError(unwrapped) ??
-    unwrapped
-  );
-};
-
 function shouldPreserveCellWorkspace(
   error: unknown
 ): error is TemplateSetupError {
-  const underlying = normalizeFailureError(error);
-  return underlying instanceof TemplateSetupError;
+  return error instanceof TemplateSetupError;
 }
 
 function deriveSetupErrorDetails(payload: ErrorPayload): string {
@@ -5626,22 +5521,7 @@ const buildTemplateSetupErrorPayload = (
     `Command: ${error.command}`,
   ];
 
-  let exitCode: number | undefined;
-  if (typeof error.exitCode === "number") {
-    exitCode = error.exitCode;
-  } else {
-    const causeError = unwrapSupervisorError(error.cause);
-    const nestedCommandError = reviveCommandExecutionError(causeError);
-    if (nestedCommandError) {
-      exitCode = nestedCommandError.exitCode;
-    } else if (
-      causeError &&
-      typeof causeError === "object" &&
-      typeof (causeError as { exitCode?: unknown }).exitCode === "number"
-    ) {
-      exitCode = (causeError as { exitCode: number }).exitCode;
-    }
-  }
+  const exitCode = error.exitCode;
 
   if (typeof exitCode === "number") {
     details.push(`exit code ${exitCode}`);
@@ -5691,23 +5571,21 @@ const buildCommandExecutionErrorPayload = (
 };
 
 function buildCellCreationErrorPayload(error: unknown): ErrorPayload {
-  const underlyingError = normalizeFailureError(error);
-
-  const templatePayload = buildTemplateSetupErrorPayload(underlyingError);
+  const templatePayload = buildTemplateSetupErrorPayload(error);
   if (templatePayload) {
     return templatePayload;
   }
 
-  const commandPayload = buildCommandExecutionErrorPayload(underlyingError);
+  const commandPayload = buildCommandExecutionErrorPayload(error);
   if (commandPayload) {
     return commandPayload;
   }
 
-  if (underlyingError instanceof Error) {
-    const stack = formatStackTrace(underlyingError);
+  if (error instanceof Error) {
+    const stack = formatStackTrace(error);
     return stack
-      ? { message: underlyingError.message, details: stack }
-      : { message: underlyingError.message };
+      ? { message: error.message, details: stack }
+      : { message: error.message };
   }
 
   return { message: "Failed to create cell" };

@@ -9,11 +9,13 @@
       "packages/*"
     ],
     "catalog": {
+      "@opencode-ai/cli": "0.0.0-beta-18866",
+      "@opencode-ai/client": "0.0.0-beta-18866",
+      "@opencode-ai/plugin": "0.0.0-beta-18866",
       "dotenv": "^17.2.2",
       "zod": "^4.1.11",
       "typescript": "^5.8.2",
-      "tsdown": "^0.15.5",
-      "@opencode-ai/client": "0.0.0-beta-18866"
+      "tsdown": "^0.15.5"
     }
   },
   "scripts": {
@@ -96,8 +98,8 @@
     "@changesets/cli": "^2.29.7",
     "@commitlint/cli": "^20.1.0",
     "@commitlint/config-conventional": "^20.0.0",
-    "@opencode-ai/cli": "0.0.0-beta-18866",
-    "@opencode-ai/plugin": "0.0.0-beta-18866",
+    "@opencode-ai/cli": "catalog:",
+    "@opencode-ai/plugin": "catalog:",
     "@types/bun": "^1.2.6",
     "husky": "^9.1.7",
     "jscpd": "^4.0.9",

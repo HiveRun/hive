@@ -4,208 +4,101 @@ import {
   resolveRuntimeModeFromEvent,
   resolveRuntimeStatusFromEvent,
 } from "../agents/service";
+import { createV2EventFixtures } from "./opencode-v2-test-fixtures";
+
+const events = createV2EventFixtures("ses-test");
+
+type StatusCase = {
+  name: string;
+  event: V2Event;
+  expected: ReturnType<typeof resolveRuntimeStatusFromEvent>;
+};
+
+const statusCases = [
+  {
+    name: "ignores user agent selection updates",
+    event: events.agentSelected("build"),
+    expected: null,
+  },
+  {
+    name: "returns working for assistant step updates",
+    event: events.stepStarted("build"),
+    expected: { status: "working" },
+  },
+  {
+    name: "returns awaiting_input for session idle events",
+    event: events.sessionIdle(),
+    expected: { status: "awaiting_input" },
+  },
+  {
+    name: "returns awaiting_input for session status idle updates",
+    event: events.sessionStatus({ type: "idle" }),
+    expected: { status: "awaiting_input" },
+  },
+  {
+    name: "returns working for session status busy updates",
+    event: events.sessionStatus({ type: "busy" }),
+    expected: { status: "working" },
+  },
+  {
+    name: "returns awaiting_input for permission prompts",
+    event: events.permissionAsked(),
+    expected: { status: "awaiting_input" },
+  },
+  {
+    name: "returns working for permission replies",
+    event: events.permissionReplied(),
+    expected: { status: "working" },
+  },
+  {
+    name: "returns awaiting_input for plan questions",
+    event: events.formCreated(),
+    expected: { status: "awaiting_input" },
+  },
+  {
+    name: "returns working for answered plan questions",
+    event: events.formReplied(),
+    expected: { status: "working" },
+  },
+  {
+    name: "returns awaiting_input for rejected plan questions",
+    event: events.formCancelled(),
+    expected: { status: "awaiting_input" },
+  },
+  {
+    name: "returns error info for failed executions",
+    event: events.executionFailed({
+      type: "ProviderError",
+      message: "boom",
+      status: 503,
+    }),
+    expected: { status: "error", error: "boom" },
+  },
+] satisfies readonly StatusCase[];
 
 describe("resolveRuntimeStatusFromEvent", () => {
-  it("returns null when user agent selection updates", () => {
-    expect(resolveStatus(buildAgentSelectedEvent("build"))).toBeNull();
-  });
-
-  it("returns working for assistant step updates", () => {
-    expect(resolveStatus(buildStepStartedEvent("build"))).toEqual({
-      status: "working",
-    });
-  });
-
-  it("returns awaiting_input for session idle events", () => {
-    assertResolvedStatus(v2Event("session.idle"), "awaiting_input");
-  });
-
-  it("returns awaiting_input for session status idle updates", () => {
-    assertResolvedStatus(
-      v2Event("session.status", { status: { type: "idle" } }),
-      "awaiting_input"
-    );
-  });
-
-  it("returns working for session status busy updates", () => {
-    assertResolvedStatus(
-      v2Event("session.status", { status: { type: "busy" } }),
-      "working"
-    );
-  });
-
-  it("returns awaiting_input for permission prompts", () => {
-    assertResolvedStatus(buildPermissionAskedEvent(), "awaiting_input");
-  });
-
-  it("returns working for permission replies", () => {
-    assertResolvedStatus(buildPermissionRepliedEvent(), "working");
-  });
-
-  it("returns awaiting_input for plan questions", () => {
-    assertResolvedStatus(buildFormCreatedEvent(), "awaiting_input");
-  });
-
-  it("returns working for answered plan questions", () => {
-    assertResolvedStatus(buildFormRepliedEvent(), "working");
-  });
-
-  it("returns awaiting_input for rejected plan questions", () => {
-    assertResolvedStatus(buildFormCancelledEvent(), "awaiting_input");
-  });
-
-  it("returns error info for failed executions", () => {
-    expect(resolveStatus(buildExecutionFailedEvent())).toEqual({
-      status: "error",
-      error: "boom",
-    });
+  it.each(statusCases)("$name", ({ event, expected }) => {
+    expect(resolveRuntimeStatusFromEvent(event)).toEqual(expected);
   });
 });
 
 describe("resolveRuntimeModeFromEvent", () => {
-  it("uses session agent selections", () => {
-    expect(resolveMode(buildAgentSelectedEvent("build"))).toBe("build");
-  });
-
-  it("uses assistant step agent updates", () => {
-    expect(resolveMode(buildStepStartedEvent("plan"))).toBe("plan");
+  it.each([
+    {
+      name: "uses session agent selections",
+      event: events.agentSelected("build"),
+      expected: "build",
+    },
+    {
+      name: "uses assistant step agent updates",
+      event: events.stepStarted("plan"),
+      expected: "plan",
+    },
+  ] satisfies readonly {
+    name: string;
+    event: V2Event;
+    expected: ReturnType<typeof resolveRuntimeModeFromEvent>;
+  }[])("$name", ({ event, expected }) => {
+    expect(resolveRuntimeModeFromEvent(event)).toBe(expected);
   });
 });
-
-function resolveStatus(event: V2Event) {
-  return resolveRuntimeStatusFromEvent(event);
-}
-
-function resolveMode(event: V2Event) {
-  return resolveRuntimeModeFromEvent(event);
-}
-
-function eventBase() {
-  return { id: "evt_test", created: Date.now() };
-}
-
-function durable() {
-  return { aggregateID: "ses_test", seq: 1, version: 1 as const };
-}
-
-function v2Event(
-  type: "session.idle" | "session.status",
-  data: Record<string, unknown> = {}
-): V2Event {
-  if (type === "session.status") {
-    return {
-      ...eventBase(),
-      type,
-      data: {
-        sessionID: "ses_test",
-        status: data.status as { type: "idle" | "busy" },
-      },
-    };
-  }
-  return { ...eventBase(), type, data: { sessionID: "ses_test" } };
-}
-
-function buildAgentSelectedEvent(agent: "plan" | "build"): V2Event {
-  return {
-    ...eventBase(),
-    type: "session.agent.selected",
-    durable: durable(),
-    data: { sessionID: "ses_test", agent },
-  };
-}
-
-function buildStepStartedEvent(agent: "plan" | "build"): V2Event {
-  return {
-    ...eventBase(),
-    type: "session.step.started",
-    durable: durable(),
-    data: {
-      sessionID: "ses_test",
-      assistantMessageID: "msg_test",
-      agent,
-      model: { id: "model_test", providerID: "provider_test" },
-    },
-  };
-}
-
-function buildPermissionAskedEvent(): V2Event {
-  return {
-    ...eventBase(),
-    type: "permission.asked",
-    data: {
-      id: "perm_test",
-      sessionID: "ses_test",
-      action: "plan_exit",
-      resources: ["plan_exit"],
-    },
-  };
-}
-
-function buildPermissionRepliedEvent(): V2Event {
-  return {
-    ...eventBase(),
-    type: "permission.replied",
-    data: {
-      sessionID: "ses_test",
-      requestID: "perm_test",
-      reply: "once",
-    },
-  };
-}
-
-function buildFormCreatedEvent(): V2Event {
-  return {
-    ...eventBase(),
-    type: "form.created",
-    data: {
-      form: {
-        id: "question_test",
-        sessionID: "ses_test",
-        title: "Continue?",
-        fields: [{ key: "continue", type: "boolean" }],
-      },
-    },
-  };
-}
-
-function buildFormRepliedEvent(): V2Event {
-  return {
-    ...eventBase(),
-    type: "form.replied",
-    data: {
-      id: "question_test",
-      sessionID: "ses_test",
-      answer: { continue: true },
-    },
-  };
-}
-
-function buildFormCancelledEvent(): V2Event {
-  return {
-    ...eventBase(),
-    type: "form.cancelled",
-    data: { id: "question_test", sessionID: "ses_test" },
-  };
-}
-
-function buildExecutionFailedEvent(): V2Event {
-  return {
-    ...eventBase(),
-    type: "session.execution.failed",
-    durable: durable(),
-    data: {
-      sessionID: "ses_test",
-      error: { type: "ProviderError", message: "boom" },
-    },
-  };
-}
-
-function assertResolvedStatus(
-  sourceEvent: V2Event,
-  status: "awaiting_input" | "working"
-) {
-  const actual = resolveStatus(sourceEvent);
-  if (actual?.status !== status || actual.error) {
-    throw new Error(`Expected status ${status}, got ${JSON.stringify(actual)}`);
-  }
-}

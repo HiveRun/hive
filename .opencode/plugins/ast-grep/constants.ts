@@ -106,31 +106,3 @@ export const CLI_LANGUAGES = [
 export const DEFAULT_TIMEOUT_MS = 300_000;
 export const DEFAULT_MAX_OUTPUT_BYTES = BYTES_PER_MIB;
 export const DEFAULT_MAX_MATCHES = 500;
-
-export const LANG_EXTENSIONS: Record<string, string[]> = {
-  bash: [".bash", ".sh", ".zsh", ".bats"],
-  c: [".c", ".h"],
-  cpp: [".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".h"],
-  csharp: [".cs"],
-  css: [".css"],
-  elixir: [".ex", ".exs"],
-  go: [".go"],
-  haskell: [".hs", ".lhs"],
-  html: [".html", ".htm"],
-  java: [".java"],
-  javascript: [".js", ".jsx", ".mjs", ".cjs"],
-  json: [".json"],
-  kotlin: [".kt", ".kts"],
-  lua: [".lua"],
-  nix: [".nix"],
-  php: [".php"],
-  python: [".py", ".pyi"],
-  ruby: [".rb", ".rake"],
-  rust: [".rs"],
-  scala: [".scala", ".sc"],
-  solidity: [".sol"],
-  swift: [".swift"],
-  typescript: [".ts", ".cts", ".mts"],
-  tsx: [".tsx"],
-  yaml: [".yml", ".yaml"],
-};

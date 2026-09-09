@@ -1,17 +1,9 @@
 import { rpc } from "@/lib/rpc";
 
-type AgentSessionResponse = NonNullable<
-  Awaited<
-    ReturnType<ReturnType<typeof rpc.api.agents.sessions.byCell>["get"]>
-  >["data"]
->;
-
-export type AgentSession = NonNullable<AgentSessionResponse["session"]>;
-
 export const agentQueries = {
   sessionByCell: (cellId: string) => ({
     queryKey: ["agent-session", cellId] as const,
-    queryFn: async (): Promise<AgentSession | null> => {
+    queryFn: async () => {
       const { data, error } = await rpc.api.agents.sessions
         .byCell({
           cellId,
@@ -26,3 +18,7 @@ export const agentQueries = {
     },
   }),
 };
+
+export type AgentSession = NonNullable<
+  Awaited<ReturnType<ReturnType<typeof agentQueries.sessionByCell>["queryFn"]>>
+>;

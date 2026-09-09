@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { resolveOpencodeBinary } from "../../apps/server/src/agents/opencode-binary";
+import { createTempDirFixture } from "../dev/test-temp-dir";
 import {
   assertOpenCodeBinary,
   OPENCODE_VERSION_OUTPUT,
@@ -11,14 +11,8 @@ import {
 } from "./common";
 
 const EXECUTABLE_PERMISSIONS = 0o755;
-const tempDirectories: string[] = [];
 const originalConfiguredBinary = process.env.HIVE_OPENCODE_BIN;
-
-const createTempDirectory = () => {
-  const directory = mkdtempSync(join(tmpdir(), "hive-opencode-binary-"));
-  tempDirectories.push(directory);
-  return directory;
-};
+const createTempDirectory = createTempDirFixture("hive-opencode-binary-");
 
 const writeExecutable = (contents: string) => {
   const binaryPath = join(createTempDirectory(), "opencode2");
@@ -29,9 +23,6 @@ const writeExecutable = (contents: string) => {
 
 afterEach(() => {
   process.env.HIVE_OPENCODE_BIN = originalConfiguredBinary;
-  for (const directory of tempDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
-  }
 });
 
 describe("resolveOpencodeBinary", () => {

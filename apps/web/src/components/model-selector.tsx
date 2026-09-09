@@ -46,11 +46,6 @@ const PROVIDER_LABEL_OVERRIDES: Record<string, string> = {
 const DEFAULT_VARIANT_VALUE = "__default_variant__";
 const MAX_INLINE_VARIANT_OPTIONS = 4;
 
-type ProviderGroup = {
-  provider: string;
-  models: AvailableModel[];
-};
-
 function getVariantPreferenceKey(model: {
   providerId: string;
   modelId: string;
@@ -89,12 +84,16 @@ function LoadedModelSelector({
 }: LoadedModelSelectorProps) {
   const [open, setOpen] = useState(false);
 
-  const providerNames = useMemo(() => {
-    const providers = modelsData?.providers ?? [];
-    return new Map<string, string>(
-      providers.map((provider) => [provider.id, provider.name ?? provider.id])
-    );
-  }, [modelsData?.providers]);
+  const providerNames = useMemo(
+    () =>
+      new Map<string, string>(
+        modelsData.providers.map((provider) => [
+          provider.id,
+          provider.name ?? provider.id,
+        ])
+      ),
+    [modelsData.providers]
+  );
 
   const resolveProviderLabel = useCallback(
     (providerKey: string) =>
@@ -105,7 +104,7 @@ function LoadedModelSelector({
   );
 
   const defaultSelection = useMemo(() => {
-    const defaults = modelsData?.defaults ?? {};
+    const defaults = modelsData.defaults;
     if (providerId && defaults[providerId]) {
       return { providerId, modelId: defaults[providerId] };
     }
@@ -115,15 +114,11 @@ function LoadedModelSelector({
       return { providerId: defaultProviderId, modelId };
     }
     return null;
-  }, [modelsData?.defaults, providerId]);
+  }, [modelsData.defaults, providerId]);
 
   const prioritizedProviderId = providerId ?? defaultSelection?.providerId;
 
   const groupedModels = useMemo(() => {
-    if (!modelsData?.models) {
-      return [] as ProviderGroup[];
-    }
-
     const map = new Map<string, AvailableModel[]>();
 
     for (const model of modelsData.models) {
@@ -159,7 +154,7 @@ function LoadedModelSelector({
       const nameB = resolveProviderLabel(b.provider);
       return nameA.localeCompare(nameB);
     });
-  }, [modelsData?.models, prioritizedProviderId, resolveProviderLabel]);
+  }, [modelsData.models, prioritizedProviderId, resolveProviderLabel]);
 
   const flattenedModels = useMemo(
     () => groupedModels.flatMap((group) => group.models),
@@ -486,7 +481,10 @@ export function ModelSelector({
     data: modelsData,
     isLoading,
     isError,
-  } = useQuery<ModelListResponse>(queryOptions);
+  } = useQuery({
+    queryKey: queryOptions.queryKey,
+    queryFn: queryOptions.queryFn,
+  });
 
   useEffect(() => {
     onLoadingChange?.(isLoading);

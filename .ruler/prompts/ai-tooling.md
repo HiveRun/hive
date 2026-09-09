@@ -21,7 +21,6 @@
 - Keep working autonomously through production-only failures when the next diagnostic step is available. Stop only for destructive choices, missing credentials/hardware, or genuinely ambiguous product decisions.
 - For `apps/e2e` changes, prefer deterministic checks (session/message metadata + UI confirmation) instead of fixed sleeps.
 - Keep E2E fixtures/config in sync with runtime defaults (provider/model IDs, template labels) so test behavior matches production paths.
-- Treat `.hive/` and generated `.opencode/state/` and `.opencode/themes/` paths as runtime artifacts that should not be committed. Keep `opencode.json` plus intentional source under `.opencode/plugins/` trackable; Hive writes its cell plugin into spawned worktrees.
 - When the user requests a change to agent guidance or project docs, proactively locate the relevant file(s) and make the update without waiting for another reminder.
 - Update `.ruler/prompts/*.md` whenever guidance for agents changes; the prompt bundle is our source of truth for AI behavior.
 - Commit prompt changes like any other source code so CI and Husky enforce lint/type/build checks.

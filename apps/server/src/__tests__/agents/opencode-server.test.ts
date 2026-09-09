@@ -126,9 +126,10 @@ describe("shared OpenCode service", () => {
       baseUrl: "http://127.0.0.1:43123",
       headers: { authorization: "Basic token" },
     });
-    expect(reloadedModule.getSharedOpencodeServerBaseUrl()).toBe(
-      "http://127.0.0.1:43123"
-    );
+    expect(reloadedModule.getSharedOpencodeServerConnection()).toEqual({
+      url: "http://127.0.0.1:43123",
+      password: "secret",
+    });
     expect(clientMocks.healthGet).toHaveBeenCalledOnce();
   });
 
@@ -192,14 +193,14 @@ describe("shared OpenCode service", () => {
     clientMocks.make.mockReturnValue(createCurrentClient());
     const {
       clearSharedOpencodeServerConnection,
-      getSharedOpencodeServerBaseUrl,
+      getSharedOpencodeServerConnection,
       startSharedOpencodeServer,
     } = await import("../../agents/opencode-server");
 
     await startSharedOpencodeServer();
     await clearSharedOpencodeServerConnection();
 
-    expect(getSharedOpencodeServerBaseUrl()).toBeNull();
+    expect(getSharedOpencodeServerConnection()).toBeNull();
     expect(serviceMocks.stop).not.toHaveBeenCalled();
   });
 

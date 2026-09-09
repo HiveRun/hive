@@ -538,48 +538,43 @@ function normalizeAgentMode(value: string | undefined): AgentMode | undefined {
   return;
 }
 
-async function loadProvisioningModelOverride(args: {
+async function loadProvisioningAgentOptions(args: {
   runtimeDb: AgentRuntimeDependencies["db"];
   cellId: string;
-}): Promise<ModelSelectionCandidate | undefined> {
+}): Promise<{
+  modelSelection?: ModelSelectionCandidate;
+  startMode?: AgentMode;
+}> {
   const [provisioningState] = await args.runtimeDb
     .select({
       modelId: cellProvisioningStates.modelIdOverride,
       providerId: cellProvisioningStates.providerIdOverride,
       variant: cellProvisioningStates.variantOverride,
-    })
-    .from(cellProvisioningStates)
-    .where(eq(cellProvisioningStates.cellId, args.cellId))
-    .limit(1);
-
-  if (!provisioningState?.modelId) {
-    return;
-  }
-
-  return {
-    modelId: provisioningState.modelId,
-    ...(provisioningState.providerId
-      ? { providerId: provisioningState.providerId }
-      : {}),
-    ...(provisioningState.variant
-      ? { variant: provisioningState.variant }
-      : {}),
-  };
-}
-
-async function loadProvisioningStartMode(args: {
-  runtimeDb: AgentRuntimeDependencies["db"];
-  cellId: string;
-}): Promise<AgentMode | undefined> {
-  const [provisioningState] = await args.runtimeDb
-    .select({
       startMode: cellProvisioningStates.startMode,
     })
     .from(cellProvisioningStates)
     .where(eq(cellProvisioningStates.cellId, args.cellId))
     .limit(1);
+  const startMode = normalizeAgentMode(
+    provisioningState?.startMode ?? undefined
+  );
 
-  return normalizeAgentMode(provisioningState?.startMode ?? undefined);
+  return {
+    ...(provisioningState?.modelId
+      ? {
+          modelSelection: {
+            modelId: provisioningState.modelId,
+            ...(provisioningState.providerId
+              ? { providerId: provisioningState.providerId }
+              : {}),
+            ...(provisioningState.variant
+              ? { variant: provisioningState.variant }
+              : {}),
+          },
+        }
+      : {}),
+    ...(startMode ? { startMode } : {}),
+  };
 }
 
 function resolveConfigDefaultMode(args: {
@@ -645,13 +640,17 @@ function resolveExplicitModelSelection(options?: {
 
 async function resolveRuntimeModelSelectionOptions(args: {
   cell: Cell;
-  cellId: string;
   options?: EnsureAgentSessionOptions;
+  persistedModelSelection?: ModelSelectionCandidate;
   deps: AgentRuntimeDependencies;
 }): Promise<ModelSelectionCandidate | undefined> {
   const explicitModelSelection = resolveExplicitModelSelection(args.options);
   if (explicitModelSelection) {
     return explicitModelSelection;
+  }
+
+  if (!args.persistedModelSelection) {
+    return;
   }
 
   const shouldApplyPersistedModelOverride =
@@ -665,10 +664,7 @@ async function resolveRuntimeModelSelectionOptions(args: {
     return;
   }
 
-  return loadProvisioningModelOverride({
-    runtimeDb: args.deps.db,
-    cellId: args.cellId,
-  });
+  return args.persistedModelSelection;
 }
 
 function findProviderById(
@@ -871,29 +867,16 @@ function resolveCandidateModel({
   return null;
 }
 
-/**
- * Mirrors the OpenCode TUI model fallback order:
- * 1) CLI override, 2) opencode.json model, 3) recent model,
- * 4) provider default, 5) first available model.
- */
+/** Falls back to the first provider's default or first enabled model. */
 function resolveModelFallback({
-  candidates,
   providers,
   models,
   defaultModel,
 }: {
-  candidates: ModelSelectionCandidate[];
   providers: ProviderInfo[];
   models: ModelInfo[];
   defaultModel: ModelInfo | null;
 }): ModelSelectionCandidate | null {
-  for (const candidate of candidates) {
-    const resolved = resolveCandidateModel({ candidate, providers, models });
-    if (resolved) {
-      return resolved;
-    }
-  }
-
   const [provider] = providers;
   if (!provider) {
     return null;
@@ -1020,7 +1003,6 @@ function resolveModelSelection({
   });
 
   const providerFallback = resolveModelFallback({
-    candidates: [],
     providers,
     models,
     defaultModel,
@@ -1033,24 +1015,22 @@ function resolveModelSelection({
     configFallback,
     providerFallback,
   });
-  const resolvedModel = resolvedSelection;
-  const effectiveOptions = options;
   const effectiveAgentConfig =
     agentConfig?.modelId && !agentModel ? undefined : agentConfig;
 
   const providerId =
-    resolvedModel?.providerId ??
+    resolvedSelection.providerId ??
     resolveProviderId(
-      effectiveOptions,
+      options,
       effectiveAgentConfig,
       validOpencodeDefault ?? undefined,
       configDefaultProvider
     );
 
   const modelId =
-    resolvedModel?.modelId ??
+    resolvedSelection.modelId ??
     resolveModelId({
-      options: effectiveOptions,
+      options,
       agentConfig: effectiveAgentConfig,
       configDefaultModel,
       defaultOpencodeModel: validOpencodeDefault ?? undefined,
@@ -1061,7 +1041,9 @@ function resolveModelSelection({
     source: resolvedSelection.source,
     providerId,
     modelId,
-    ...(resolvedModel?.variant ? { variant: resolvedModel.variant } : {}),
+    ...(resolvedSelection.variant
+      ? { variant: resolvedSelection.variant }
+      : {}),
   };
 }
 
@@ -1434,26 +1416,6 @@ function shouldResumeRuntime(runtime: RuntimeHandle): boolean {
   );
 }
 
-type AgentRuntimeError = {
-  readonly _tag: "AgentRuntimeError";
-  readonly cause: unknown;
-};
-
-const makeAgentRuntimeError = (cause: unknown): AgentRuntimeError => ({
-  _tag: "AgentRuntimeError",
-  cause,
-});
-
-const wrapAgentRuntime =
-  <Args extends unknown[], Result>(fn: (...args: Args) => Promise<Result>) =>
-  async (...args: Args): Promise<Result> => {
-    try {
-      return await fn(...args);
-    } catch (cause) {
-      throw makeAgentRuntimeError(cause);
-    }
-  };
-
 export type AgentRuntimeService = {
   readonly ensureAgentSession: (
     cellId: string,
@@ -1468,7 +1430,6 @@ export type AgentRuntimeService = {
   readonly fetchAgentMessages: (
     sessionId: string
   ) => Promise<AgentMessageRecord[]>;
-  readonly fetchCompactionStats?: (sessionId: string) => Promise<never>;
   readonly updateAgentSessionModel: (
     sessionId: string,
     model: { modelId: string; providerId?: string; variant?: string }
@@ -1496,33 +1457,20 @@ export type AgentRuntimeService = {
   ) => Promise<ProviderCatalog>;
 };
 
-const makeAgentRuntimeService = (): AgentRuntimeService => ({
-  ensureAgentSession: (cellId, options) =>
-    wrapAgentRuntime(ensureAgentSession)(cellId, options),
-  fetchAgentSession: (sessionId) =>
-    wrapAgentRuntime(fetchAgentSession)(sessionId),
-  fetchAgentSessionForCell: (cellId) =>
-    wrapAgentRuntime(fetchAgentSessionForCell)(cellId),
-  fetchAgentMessages: (sessionId) =>
-    wrapAgentRuntime(fetchAgentMessages)(sessionId),
-  updateAgentSessionModel: (sessionId, model) =>
-    wrapAgentRuntime(updateAgentSessionModel)(sessionId, model),
-  sendAgentMessage: (sessionId, content) =>
-    wrapAgentRuntime(sendAgentMessage)(sessionId, content),
-  interruptAgentSession: (sessionId) =>
-    wrapAgentRuntime(interruptAgentSession)(sessionId),
-  stopAgentSession: (sessionId, options) =>
-    wrapAgentRuntime(stopAgentSession)(sessionId, options),
-  closeAgentSession: (cellId) => wrapAgentRuntime(closeAgentSession)(cellId),
-  closeAllAgentSessions: (options) =>
-    wrapAgentRuntime(closeAllAgentSessions)(options),
-  respondAgentPermission: (sessionId, permissionId, response) =>
-    wrapAgentRuntime(respondAgentPermission)(sessionId, permissionId, response),
-  fetchProviderCatalogForWorkspace: (workspaceRootPath) =>
-    wrapAgentRuntime(fetchProviderCatalogForWorkspace)(workspaceRootPath),
-});
-
-export const agentRuntimeService = makeAgentRuntimeService();
+export const agentRuntimeService: AgentRuntimeService = {
+  ensureAgentSession,
+  fetchAgentSession,
+  fetchAgentSessionForCell,
+  fetchAgentMessages,
+  updateAgentSessionModel,
+  sendAgentMessage,
+  interruptAgentSession,
+  stopAgentSession,
+  closeAgentSession,
+  closeAllAgentSessions,
+  respondAgentPermission,
+  fetchProviderCatalogForWorkspace,
+};
 
 export async function respondAgentPermission(
   sessionId: string,
@@ -1568,13 +1516,6 @@ function getExistingRuntimeForCell(
   return runtimeRegistry.get(currentSessionId) ?? null;
 }
 
-function loadHiveConfigForWorkspace(
-  deps: AgentRuntimeDependencies,
-  workspaceRootPath: string
-): Promise<HiveConfig> {
-  return deps.loadHiveConfig(workspaceRootPath);
-}
-
 function resolveTemplateForCell(hiveConfig: HiveConfig, templateId: string) {
   const template = hiveConfig.templates[templateId];
   if (!template) {
@@ -1592,7 +1533,7 @@ async function hydrateInstructionsForCell(
   services: HiveSessionInstructionsService[];
 }> {
   const workspaceRootPath = cell.workspaceRootPath || cell.workspacePath;
-  const hiveConfig = await loadHiveConfigForWorkspace(deps, workspaceRootPath);
+  const hiveConfig = await deps.loadHiveConfig(workspaceRootPath);
   const template = resolveTemplateForCell(hiveConfig, cell.templateId);
 
   const serviceRows = await deps.db
@@ -1655,19 +1596,20 @@ async function ensureRuntimeForCellUnlocked(
   const providerCatalog =
     await fetchProviderCatalogForWorkspace(workspaceRootPath);
 
-  const selectionOptions = await resolveRuntimeModelSelectionOptions({
-    cell,
-    cellId,
-    options,
-    deps,
-  });
-
-  const persistedStartMode = await loadProvisioningStartMode({
+  const provisioningOptions = await loadProvisioningAgentOptions({
     runtimeDb: deps.db,
     cellId,
   });
+
+  const selectionOptions = await resolveRuntimeModelSelectionOptions({
+    cell,
+    options,
+    persistedModelSelection: provisioningOptions.modelSelection,
+    deps,
+  });
+
   const startMode =
-    options?.startMode ?? persistedStartMode ?? configDefaultMode;
+    options?.startMode ?? provisioningOptions.startMode ?? configDefaultMode;
 
   const selection = resolveModelSelection({
     options: selectionOptions,
@@ -2067,7 +2009,10 @@ async function consumeEventStream(
 
     updateRuntimeModeFromEvent(runtime, event);
     updateRuntimeModelFromEvent(runtime, event);
-    publish(runtime.session.id, event);
+    const inputRequiredEvent = resolveInputRequiredEvent(event);
+    if (inputRequiredEvent) {
+      publish(runtime.session.id, inputRequiredEvent);
+    }
     await updateRuntimeStatusFromEvent(runtime, event);
   }
 }
@@ -2211,6 +2156,7 @@ type RuntimeLiveState = {
 };
 
 type PendingRuntimeInputs = Pick<RuntimeLiveState, "permissions" | "forms">;
+type InputRequiredEvent = Extract<AgentStreamEvent, { type: "input_required" }>;
 
 async function loadPendingRuntimeInputs(
   client: OpenCodeClient,
@@ -2269,10 +2215,10 @@ async function applyRuntimeLiveState(
 
 function createPendingInputEvents(
   state: PendingRuntimeInputs
-): Extract<AgentStreamEvent, { type: "input_required" }>[] {
+): InputRequiredEvent[] {
   return [
     ...state.permissions.map(
-      (permission): Extract<AgentStreamEvent, { type: "input_required" }> => ({
+      (permission): InputRequiredEvent => ({
         type: "input_required",
         sessionId: permission.sessionID,
         permissionId: permission.id,
@@ -2281,7 +2227,7 @@ function createPendingInputEvents(
       })
     ),
     ...state.forms.map(
-      (form): Extract<AgentStreamEvent, { type: "input_required" }> => ({
+      (form): InputRequiredEvent => ({
         type: "input_required",
         sessionId: form.sessionID,
         permissionId: form.id,
@@ -2292,9 +2238,33 @@ function createPendingInputEvents(
   ];
 }
 
+function resolveInputRequiredEvent(
+  event: V2Event
+): InputRequiredEvent | undefined {
+  if (event.type === "permission.asked") {
+    return {
+      type: "input_required",
+      sessionId: event.data.sessionID,
+      permissionId: event.data.id,
+      title: event.data.action,
+      kind: "permission",
+    };
+  }
+
+  if (event.type === "form.created") {
+    return {
+      type: "input_required",
+      sessionId: event.data.form.sessionID,
+      permissionId: event.data.form.id,
+      title: event.data.form.title,
+      kind: "question",
+    };
+  }
+}
+
 export async function fetchPendingAgentInputEvents(
   sessionId: string
-): Promise<Extract<AgentStreamEvent, { type: "input_required" }>[]> {
+): Promise<InputRequiredEvent[]> {
   const runtime = runtimeRegistry.get(sessionId);
   if (!runtime) {
     throw new Error("Agent session not found");
@@ -2467,7 +2437,7 @@ function serializeMessage(
     role,
     content: contentText.length ? contentText : null,
     parts,
-    state: determineMessageState(message),
+    state: determineMessageState(message, error),
     createdAt: new Date(message.time.created).toISOString(),
     parentId: null,
     errorName: isAborted ? (error?.type ?? null) : null,
@@ -2485,30 +2455,22 @@ function getMessageError(message: SessionMessageInfo) {
 }
 
 function extractTextFromParts(parts: AgentMessagePart[] | undefined): string {
-  if (!parts?.length) {
-    return "";
-  }
-
-  return parts
-    .filter((part) => part.type === "text" || part.type === "reasoning")
-    .map((part) => {
-      if (
-        (part.type === "text" || part.type === "reasoning") &&
-        typeof part.text === "string"
-      ) {
-        return part.text;
-      }
-      return "";
-    })
+  return (parts ?? [])
+    .map((part) =>
+      (part.type === "text" || part.type === "reasoning") &&
+      typeof part.text === "string"
+        ? part.text
+        : ""
+    )
     .filter(Boolean)
     .join("\n");
 }
 
-function determineMessageState(message: SessionMessageInfo): AgentMessageState {
-  if (
-    (message.type === "assistant" && message.error) ||
-    (message.type === "compaction" && message.status === "failed")
-  ) {
+function determineMessageState(
+  message: SessionMessageInfo,
+  error: ReturnType<typeof getMessageError>
+): AgentMessageState {
+  if (error || (message.type === "compaction" && message.status === "failed")) {
     return "error";
   }
   if (message.type === "assistant" && !message.time.completed) {

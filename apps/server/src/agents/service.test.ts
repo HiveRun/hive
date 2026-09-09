@@ -1,4 +1,4 @@
-import type { OpenCodeClient, V2Event } from "@opencode-ai/client";
+import type { V2Event } from "@opencode-ai/client";
 import { eq } from "drizzle-orm";
 
 import {
@@ -11,12 +11,22 @@ import {
   type Mock,
   vi,
 } from "vitest";
+import {
+  applyV2ProviderCatalogFixture,
+  createOpenCodeV2ClientFixture,
+  createV2EventFixtures,
+  createV2ProviderCatalogFixture,
+  createV2SessionFixture,
+  type OpenCodeV2ClientFixture,
+  type V2ProviderCatalogFixture,
+} from "../__tests__/opencode-v2-test-fixtures";
 import { setupTestDb, testDb } from "../__tests__/test-db";
 import type { HiveConfig } from "../config/schema";
 import { cellProvisioningStates } from "../schema/cell-provisioning";
 import { cells } from "../schema/cells";
 // biome-ignore lint/performance/noNamespaceImport: tests need namespace import for spies
 import * as OpencodeConfig from "./opencode-config";
+import type { AgentStreamEvent } from "./types";
 
 type AppDb = typeof import("../db").db;
 
@@ -33,42 +43,12 @@ const RUNTIME_SESSION_ID = "session-runtime";
 const EVENT_STREAM_RECONNECT_DELAY_MS = 1000;
 const EXPECTED_RECONNECT_CLIENT_ACQUISITIONS = 3;
 
-type ClientStub = {
-  session: {
-    active: ReturnType<typeof vi.fn>;
-    create: ReturnType<typeof vi.fn>;
-    get: ReturnType<typeof vi.fn>;
-    interrupt: ReturnType<typeof vi.fn>;
-    prompt: ReturnType<typeof vi.fn>;
-    remove: ReturnType<typeof vi.fn>;
-    switchModel: ReturnType<typeof vi.fn>;
-    inbox: { list: ReturnType<typeof vi.fn> };
-  };
-  event: {
-    subscribe: ReturnType<typeof vi.fn>;
-  };
-  message: {
-    list: ReturnType<typeof vi.fn>;
-  };
-  model: {
-    default: ReturnType<typeof vi.fn>;
-    list: ReturnType<typeof vi.fn>;
-  };
-  form: { list: ReturnType<typeof vi.fn> };
-  permission: {
-    list: ReturnType<typeof vi.fn>;
-    reply: ReturnType<typeof vi.fn>;
-  };
-  plugin: { list: ReturnType<typeof vi.fn> };
-  provider: { list: ReturnType<typeof vi.fn> };
-};
+type ClientStub = OpenCodeV2ClientFixture;
 
 const ensureHiveOpencodePluginMock = vi.fn().mockResolvedValue(undefined);
 const ensureHiveToolConfigMock = vi.fn().mockResolvedValue(undefined);
 
-const sessionMessagesMock = vi
-  .fn()
-  .mockResolvedValue({ data: [] as unknown[], cursor: {} });
+const v2Events = createV2EventFixtures(RUNTIME_SESSION_ID);
 
 const mockHiveConfig: HiveConfig = {
   opencode: {
@@ -131,10 +111,8 @@ describe("agent model selection", () => {
     await closeAllAgentSessions();
     await testDb.delete(cellProvisioningStates);
     await testDb.delete(cells);
-    sessionMessagesMock.mockReset();
     ensureHiveOpencodePluginMock.mockClear();
     ensureHiveToolConfigMock.mockClear();
-    sessionMessagesMock.mockResolvedValue({ data: [], cursor: {} });
 
     await testDb.insert(cells).values({
       id: cellId,
@@ -180,11 +158,9 @@ describe("agent model selection", () => {
   function useClientStub(
     stub: ClientStub,
     published?: unknown[],
-    onPublish?: (event: unknown) => void
+    onPublish?: (event: AgentStreamEvent) => void
   ) {
-    acquireOpencodeClientMock = vi.fn(
-      async () => stub as unknown as OpenCodeClient
-    );
+    acquireOpencodeClientMock = vi.fn(async () => stub.client);
 
     setAgentRuntimeDependencies({
       db: testDb as unknown as AppDb,
@@ -232,7 +208,7 @@ describe("agent model selection", () => {
   }
 
   async function startPlanAfterQuestionAnswer(targetCellId: string) {
-    useEventsClient([createQuestionRepliedEvent()]);
+    useEventsClient([v2Events.formReplied()]);
     await ensureAgentSession(targetCellId, { startMode: "plan" });
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
@@ -248,7 +224,7 @@ describe("agent model selection", () => {
 
     expect(session.modelId).toBe("restored-model");
     expect(session.modelProviderId).toBe(TEST_PROVIDER_ID);
-    expect(sessionMessagesMock).not.toHaveBeenCalled();
+    expect(clientStub.spies.listSessionMessages).not.toHaveBeenCalled();
   });
 
   it("sends prompts using the updated provider/model selection", async () => {
@@ -276,9 +252,9 @@ describe("agent model selection", () => {
     try {
       const replacementClient = buildClientStub();
       acquireOpencodeClientMock
-        .mockResolvedValueOnce(clientStub as unknown as OpenCodeClient)
-        .mockResolvedValueOnce(clientStub as unknown as OpenCodeClient)
-        .mockResolvedValue(replacementClient as unknown as OpenCodeClient);
+        .mockResolvedValueOnce(clientStub.client)
+        .mockResolvedValueOnce(clientStub.client)
+        .mockResolvedValue(replacementClient.client);
 
       const session = await ensureAgentSession(cellId);
       await Promise.resolve();
@@ -301,22 +277,11 @@ describe("agent model selection", () => {
 
   it("starts the live event subscription before reconciling runtime state", async () => {
     let subscriptionStarted = false;
-    clientStub.event.subscribe.mockImplementation(({ signal }) => ({
-      [Symbol.asyncIterator]() {
-        return {
-          next: () => {
-            subscriptionStarted = true;
-            return new Promise<IteratorResult<V2Event>>((resolve) => {
-              signal?.addEventListener(
-                "abort",
-                () => resolve({ done: true, value: undefined }),
-                { once: true }
-              );
-            });
-          },
-        };
-      },
-    }));
+    clientStub.event.subscribe.mockImplementation((options) =>
+      createAbortableEventStream(options?.signal, () => {
+        subscriptionStarted = true;
+      })
+    );
     clientStub.session.active.mockImplementation(() => {
       expect(subscriptionStarted).toBe(true);
       return Promise.resolve({});
@@ -327,22 +292,10 @@ describe("agent model selection", () => {
 
   it("aborts the live subscription when initial reconciliation fails", async () => {
     let subscriptionSignal: AbortSignal | undefined;
-    clientStub.event.subscribe.mockImplementation(({ signal }) => {
+    clientStub.event.subscribe.mockImplementation((options) => {
+      const signal = options?.signal;
       subscriptionSignal = signal;
-      return {
-        [Symbol.asyncIterator]() {
-          return {
-            next: () =>
-              new Promise<IteratorResult<V2Event>>((resolve) => {
-                signal?.addEventListener(
-                  "abort",
-                  () => resolve({ done: true, value: undefined }),
-                  { once: true }
-                );
-              }),
-          };
-        },
-      };
+      return createAbortableEventStream(signal);
     });
     clientStub.session.active.mockRejectedValue(
       new Error("initial reconciliation failed")
@@ -356,8 +309,8 @@ describe("agent model selection", () => {
 
   it("loads every page of remote messages in timeline order", async () => {
     const session = await ensureAgentSession(cellId);
-    sessionMessagesMock.mockReset();
-    sessionMessagesMock
+    clientStub.spies.listSessionMessages.mockReset();
+    clientStub.spies.listSessionMessages
       .mockResolvedValueOnce({
         data: [createHistoryMessage({ id: "msg-1", role: "user" })],
         cursor: { next: "page-2" },
@@ -370,12 +323,12 @@ describe("agent model selection", () => {
     const messages = await fetchAgentMessages(session.id);
 
     expect(messages.map((message) => message.id)).toEqual(["msg-1", "msg-2"]);
-    expect(sessionMessagesMock).toHaveBeenNthCalledWith(1, {
+    expect(clientStub.spies.listSessionMessages).toHaveBeenNthCalledWith(1, {
       sessionID: session.id,
       limit: 200,
       order: "asc",
     });
-    expect(sessionMessagesMock).toHaveBeenNthCalledWith(2, {
+    expect(clientStub.spies.listSessionMessages).toHaveBeenNthCalledWith(2, {
       sessionID: session.id,
       limit: 200,
       cursor: "page-2",
@@ -384,8 +337,8 @@ describe("agent model selection", () => {
 
   it("rejects repeated message cursors instead of looping", async () => {
     const session = await ensureAgentSession(cellId);
-    sessionMessagesMock.mockReset();
-    sessionMessagesMock.mockResolvedValue({
+    clientStub.spies.listSessionMessages.mockReset();
+    clientStub.spies.listSessionMessages.mockResolvedValue({
       data: [createHistoryMessage({ id: "msg-1", role: "user" })],
       cursor: { next: "same-page" },
     });
@@ -393,13 +346,13 @@ describe("agent model selection", () => {
     await expect(fetchAgentMessages(session.id)).rejects.toThrow(
       'OpenCode message pagination repeated cursor "same-page"'
     );
-    expect(sessionMessagesMock).toHaveBeenCalledTimes(2);
+    expect(clientStub.spies.listSessionMessages).toHaveBeenCalledTimes(2);
   });
 
   it("serializes native v2 assistant messages and structured errors", async () => {
     const session = await ensureAgentSession(cellId);
     const created = Date.now();
-    sessionMessagesMock.mockResolvedValue({
+    clientStub.spies.listSessionMessages.mockResolvedValue({
       data: [
         {
           id: "msg-aborted",
@@ -751,18 +704,10 @@ describe("agent model selection", () => {
   });
 
   it("tracks mode transitions from plan to build", async () => {
-    const modeEvent: V2Event = {
-      id: "evt-mode",
-      created: Date.now(),
-      type: "session.step.started",
-      durable: createDurableEvent(),
-      data: {
-        sessionID: RUNTIME_SESSION_ID,
-        assistantMessageID: "msg-mode",
-        agent: "build",
-        model: { id: "big-pickle", providerID: TEST_PROVIDER_ID },
-      },
-    };
+    const modeEvent = v2Events.stepStarted("build", {
+      id: "big-pickle",
+      providerID: TEST_PROVIDER_ID,
+    });
 
     const published: unknown[] = [];
     const clientStubWithEvents = buildClientStub();
@@ -800,6 +745,59 @@ describe("agent model selection", () => {
     ).toBe(true);
   });
 
+  it("translates native permission and form events before publishing", async () => {
+    const published: AgentStreamEvent[] = [];
+    const formPublished = Promise.withResolvers<void>();
+    useClientStub(
+      buildClientStubWithEvents([
+        v2Events.permissionAsked({
+          id: "permission-stream",
+          action: "shell",
+          resources: ["bun test"],
+        }),
+        v2Events.formCreated({
+          id: "form-stream",
+          title: "Choose a target",
+        }),
+      ]),
+      published,
+      (event) => {
+        if (
+          event.type === "input_required" &&
+          event.permissionId === "form-stream"
+        ) {
+          formPublished.resolve();
+        }
+      }
+    );
+
+    await ensureAgentSession(cellId);
+    await formPublished.promise;
+
+    expect(
+      published.filter((event) => event.type === "input_required")
+    ).toEqual([
+      {
+        type: "input_required",
+        sessionId: RUNTIME_SESSION_ID,
+        permissionId: "permission-stream",
+        title: "shell",
+        kind: "permission",
+      },
+      {
+        type: "input_required",
+        sessionId: RUNTIME_SESSION_ID,
+        permissionId: "form-stream",
+        title: "Choose a target",
+        kind: "question",
+      },
+    ]);
+    expect(published.map((event) => event.type)).not.toContain(
+      "permission.asked"
+    );
+    expect(published.map((event) => event.type)).not.toContain("form.created");
+  });
+
   it("resyncs mode from v2 session metadata on cell session fetch", async () => {
     await ensureAgentSession(cellId, { startMode: "plan" });
     await closeAllAgentSessions({ deleteRemote: false });
@@ -835,7 +833,7 @@ describe("agent model selection", () => {
     const failed = await fetchAgentSession(session.id);
 
     expect(failed?.status).toBe("error");
-    expect(sessionMessagesMock).not.toHaveBeenCalled();
+    expect(clientStub.spies.listSessionMessages).not.toHaveBeenCalled();
   });
 
   it("persists resumable working state when a plan question is answered", async () => {
@@ -944,7 +942,7 @@ describe("agent model selection", () => {
     clientStub.event.subscribe = vi.fn(() =>
       (async function* () {
         await emitInterruptEvent;
-        yield createInterruptedEvent();
+        yield v2Events.executionInterrupted("shutdown");
       })()
     );
     const published: unknown[] = [];
@@ -1068,10 +1066,7 @@ describe("agent model selection", () => {
     },
     {
       label: "service replacement",
-      prepare: () =>
-        prepareSessionsForServiceReplacement(
-          clientStub as unknown as OpenCodeClient
-        ),
+      prepare: () => prepareSessionsForServiceReplacement(clientStub.client),
     },
   ])(
     "marks and interrupts persisted Hive-owned active sessions for $label",
@@ -1094,112 +1089,47 @@ describe("agent model selection", () => {
 });
 
 function buildClientStub(): ClientStub {
-  const session = {
-    active: vi.fn(async () => ({})),
-    create: vi.fn(async () => createMockSession()),
-    get: vi.fn(async () => createMockSession()),
-    interrupt: vi.fn(async () => ({ interrupted: true })),
-    prompt: vi.fn(async () => createPromptResult()),
-    remove: vi.fn(() => Promise.resolve()),
-    switchModel: vi.fn(() => Promise.resolve()),
-    inbox: { list: vi.fn(async () => []) },
-  };
+  return createOpenCodeV2ClientFixture({ session: createMockSession() });
+}
 
+function createAbortableEventStream(
+  signal: AbortSignal | undefined,
+  onNext?: () => void
+): AsyncIterable<V2Event> {
   return {
-    session,
-    event: {
-      subscribe: vi.fn(() =>
-        (async function* () {
-          // noop stream
-        })()
-      ),
-    },
-    message: { list: sessionMessagesMock },
-    model: {
-      default: vi.fn(async () => ({
-        location: createV2Location(),
-        data: null,
-      })),
-      list: vi.fn(async () => ({
-        location: createV2Location(),
-        data: [],
-      })),
-    },
-    form: { list: vi.fn(async () => []) },
-    permission: createPermissionStub(),
-    plugin: {
-      list: vi.fn(async () => ({
-        location: createV2Location(),
-        data: [
-          {
-            id: "hive.cell.v2.r1.tools-context-shell-permission",
-            source: {
-              type: "local",
-              path: "/tmp/model-test/.opencode/plugins/hive/index.js",
-            },
-            features: {},
-            state: { status: "active" },
-          },
-        ],
-      })),
-    },
-    provider: {
-      list: vi.fn(async () => ({
-        location: createV2Location(),
-        data: [],
-      })),
+    [Symbol.asyncIterator]() {
+      return {
+        next: () => {
+          onNext?.();
+          return new Promise<IteratorResult<V2Event>>((resolve) => {
+            signal?.addEventListener(
+              "abort",
+              () => resolve({ done: true, value: undefined }),
+              { once: true }
+            );
+          });
+        },
+      };
     },
   };
 }
 
 function buildClientStubWithEvents(events: V2Event[]): ClientStub {
-  const stub = buildClientStub();
-  stub.event.subscribe = vi.fn(() =>
-    (async function* () {
-      await Promise.resolve();
-      for (const event of events) {
-        yield event;
-      }
-    })()
-  );
-  return stub;
+  return createOpenCodeV2ClientFixture({
+    session: createMockSession(),
+    events,
+  });
 }
-
-type TestProviderCatalog = {
-  providers: Array<{
-    id: string;
-    name: string;
-    activation: "enabled";
-    package: string;
-  }>;
-  models: ReturnType<typeof createV2Model>[];
-  default: ReturnType<typeof createV2Model> | null;
-};
 
 function createProviderCatalog(
   providerId: string,
   models: Record<string, string>,
   defaultModelId: string
 ) {
-  const modelEntries = Object.entries(models).map(([modelID, id]) =>
-    createV2Model(providerId, modelID, id)
-  );
-  return {
-    providers: [
-      {
-        id: providerId,
-        name: providerId,
-        activation: "enabled" as const,
-        package: `@ai-sdk/${providerId}`,
-      },
-    ],
-    models: modelEntries,
-    default:
-      modelEntries.find(
-        (model) =>
-          model.modelID === defaultModelId || model.id === defaultModelId
-      ) ?? null,
-  };
+  return createV2ProviderCatalogFixture({
+    providers: [{ id: providerId, models }],
+    defaults: { [providerId]: defaultModelId },
+  });
 }
 
 function createCodexProviderCatalog(defaultModelId = TEMPLATE_MODEL_ID) {
@@ -1236,69 +1166,14 @@ function createMultiProviderCatalog(
   }>,
   defaults: Record<string, string>
 ) {
-  const modelEntries = providers.flatMap((provider) =>
-    Object.entries(provider.models).map(([modelID, id]) =>
-      createV2Model(provider.id, modelID, id)
-    )
-  );
-  return {
-    providers: providers.map((provider) => ({
-      id: provider.id,
-      name: provider.id,
-      activation: "enabled" as const,
-      package: `@ai-sdk/${provider.id}`,
-    })),
-    models: modelEntries,
-    default:
-      modelEntries.find(
-        (model) => defaults[model.providerID] === model.modelID
-      ) ?? null,
-  };
+  return createV2ProviderCatalogFixture({ providers, defaults });
 }
 
 function mockProviderCatalog(
   client: ClientStub,
-  catalog: TestProviderCatalog
+  catalog: V2ProviderCatalogFixture
 ): void {
-  client.provider.list.mockResolvedValue({
-    location: createV2Location(),
-    data: catalog.providers,
-  });
-  client.model.list.mockResolvedValue({
-    location: createV2Location(),
-    data: catalog.models,
-  });
-  client.model.default.mockResolvedValue({
-    location: createV2Location(),
-    data: catalog.default,
-  });
-}
-
-function createV2Model(providerID: string, modelID: string, id: string) {
-  return {
-    id,
-    modelID,
-    providerID,
-    name: modelID,
-    capabilities: { tools: true, input: ["text"], output: ["text"] },
-    variants: [],
-    time: { released: 0 },
-    cost: [],
-    status: "active",
-    enabled: true,
-    limit: { context: 128_000, output: 16_000 },
-  };
-}
-
-function createV2Location() {
-  return {
-    directory: TEST_WORKSPACE_PATH,
-    project: {
-      id: "project-1",
-      directory: TEST_WORKSPACE_PATH,
-      canonical: TEST_WORKSPACE_PATH,
-    },
-  };
+  applyV2ProviderCatalogFixture(client, catalog);
 }
 
 function createHiveConfigWithTemplateAgent(
@@ -1444,13 +1319,6 @@ async function persistRuntimeSession(cellId: string) {
     .where(eq(cells.id, cellId));
 }
 
-function createPermissionStub() {
-  return {
-    list: vi.fn(async () => []),
-    reply: vi.fn(() => Promise.resolve()),
-  };
-}
-
 async function preparePersistedResumeSession() {
   const session = await ensureAgentSession(TEST_CELL_ID, { startMode: "plan" });
 
@@ -1468,61 +1336,11 @@ async function prepareActivePersistedResumeSession(clientStub: ClientStub) {
   return session;
 }
 
-function createQuestionRepliedEvent(): V2Event {
-  return {
-    id: "evt-question-replied",
-    created: Date.now(),
-    type: "form.replied",
-    data: {
-      id: "question_123",
-      sessionID: RUNTIME_SESSION_ID,
-      answer: { continue: true },
-    },
-  };
-}
-
-function createInterruptedEvent(): V2Event {
-  return {
-    id: "evt-execution-interrupted",
-    created: Date.now(),
-    type: "session.execution.interrupted",
-    durable: createDurableEvent(),
-    data: { sessionID: RUNTIME_SESSION_ID, reason: "shutdown" },
-  };
-}
-
 function createMockSession() {
-  const now = Date.now();
-  return {
+  return createV2SessionFixture({
     id: RUNTIME_SESSION_ID,
     projectID: "project-1",
     title: "Mock Session",
-    location: { directory: TEST_WORKSPACE_PATH },
-    cost: 0,
-    tokens: {
-      input: 0,
-      output: 0,
-      reasoning: 0,
-      cache: { read: 0, write: 0 },
-    },
-    time: {
-      created: now,
-      updated: now,
-    },
-  };
-}
-
-function createPromptResult() {
-  return {
-    id: "inbox-test",
-    sessionID: RUNTIME_SESSION_ID,
-    timeCreated: Date.now(),
-    type: "user" as const,
-    payload: { text: "" },
-    delivery: "queue" as const,
-  };
-}
-
-function createDurableEvent() {
-  return { aggregateID: RUNTIME_SESSION_ID, seq: 1, version: 1 as const };
+    directory: TEST_WORKSPACE_PATH,
+  });
 }

@@ -1,10 +1,9 @@
-import type { V2Event } from "@opencode-ai/client";
 import { Elysia } from "elysia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { publishAgentEvent } from "../../agents/events";
 // biome-ignore lint/performance/noNamespaceImport: vi.spyOn requires a module namespace reference
 import * as AgentService from "../../agents/service";
-import type { AgentSessionRecord } from "../../agents/types";
+import type { AgentSessionRecord, AgentStreamEvent } from "../../agents/types";
 import { agentsRoutes } from "../../routes/agents";
 
 const TEST_SESSION: AgentSessionRecord = {
@@ -43,23 +42,24 @@ describe("agent status stream", () => {
     );
   });
 
-  it("emits initial status and forwards status updates", async () => {
-    const { response, close, readChunk } =
-      await openOkStatusStream(TEST_SESSION);
-    expect(response.headers.get("content-type")).toContain("text/event-stream");
+  it.each([
+    {
+      name: "awaiting input",
+      session: TEST_SESSION,
+      expected: "awaiting_input",
+    },
+    {
+      name: "working",
+      session: TEST_WORKING_SESSION,
+      expected: "working",
+    },
+  ])("emits $name as the initial status", async ({ session, expected }) => {
+    const { response, close, readChunk } = await openOkStatusStream(session);
 
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
     const initial = await readChunk();
     expect(initial).toContain("event: status");
-    expect(initial).toContain("awaiting_input");
-
-    publishAgentEvent(TEST_SESSION.id, {
-      type: "status",
-      status: "working",
-    });
-
-    const update = await readChunk();
-    expect(update).toContain("event: status");
-    expect(update).toContain("working");
+    expect(initial).toContain(expected);
 
     close();
   });
@@ -74,60 +74,67 @@ describe("agent status stream", () => {
     expect(payload.message).toBe("Agent session not found");
   });
 
-  it("emits working as the initial restored status", async () => {
-    const { response, close, readChunk } =
-      await openStatusStream(TEST_WORKING_SESSION);
+  it.each([
+    {
+      name: "status updates",
+      session: TEST_SESSION,
+      initialMode: undefined,
+      event: { type: "status", status: "working" },
+      expected: ["event: status", '"status":"working"'],
+    },
+    {
+      name: "mode updates",
+      session: TEST_SESSION_WITH_MODE,
+      initialMode: "plan",
+      event: {
+        type: "mode",
+        startMode: "plan",
+        currentMode: "build",
+        modeUpdatedAt: new Date().toISOString(),
+      },
+      expected: ["event: mode", '"currentMode":"build"'],
+    },
+    {
+      name: "input-required updates",
+      session: TEST_SESSION,
+      initialMode: undefined,
+      event: createPendingInputEvent("perm_123"),
+      expected: [
+        "event: input_required",
+        `"sessionId":"${TEST_SESSION.id}"`,
+        '"permissionId":"perm_123"',
+        '"title":"plan_exit"',
+        '"kind":"permission"',
+      ],
+    },
+  ] satisfies readonly {
+    name: string;
+    session: AgentSessionRecord;
+    initialMode: "plan" | undefined;
+    event: AgentStreamEvent;
+    expected: string[];
+  }[])(
+    "forwards $name using the Hive stream contract",
+    async ({ session, initialMode, event, expected }) => {
+      const { close, readChunk } = await openOkStatusStream(session);
 
-    expect(response.status).toBe(HTTP_OK);
+      await expectInitialStatus(readChunk);
+      if (initialMode) {
+        const initial = await readChunk();
+        expect(initial).toContain("event: mode");
+        expect(initial).toContain(`"currentMode":"${initialMode}"`);
+      }
 
-    const initial = await readChunk();
+      publishAgentEvent(TEST_SESSION.id, event);
 
-    expect(initial).toContain("event: status");
-    expect(initial).toContain("working");
+      const update = await readChunk();
+      for (const fragment of expected) {
+        expect(update).toContain(fragment);
+      }
 
-    close();
-  });
-
-  it("emits initial mode and forwards mode updates", async () => {
-    const { response, close, readChunk } = await openStatusStream(
-      TEST_SESSION_WITH_MODE
-    );
-
-    expect(response.status).toBe(HTTP_OK);
-
-    await expectInitialStatus(readChunk);
-
-    const initialMode = await readChunk();
-    expect(initialMode).toContain("event: mode");
-    expect(initialMode).toContain('"currentMode":"plan"');
-
-    publishAgentEvent(TEST_SESSION.id, {
-      type: "mode",
-      startMode: "plan",
-      currentMode: "build",
-      modeUpdatedAt: new Date().toISOString(),
-    });
-
-    const update = await readChunk();
-    expect(update).toContain("event: mode");
-    expect(update).toContain('"currentMode":"build"');
-
-    close();
-  });
-
-  it("forwards input_required events from permission prompts", async () => {
-    const { close, readChunk } = await openOkStatusStream(TEST_SESSION);
-
-    await expectInitialStatus(readChunk);
-
-    publishAgentEvent(TEST_SESSION.id, createPermissionAskedEvent("perm_123"));
-
-    const update = await readChunk();
-    expect(update).toContain("event: input_required");
-    expect(update).toContain("plan_exit");
-
-    close();
-  });
+      close();
+    }
+  );
 
   it("subscribes before loading the initial session snapshot", async () => {
     vi.spyOn(AgentService, "fetchAgentSession").mockImplementation(() => {
@@ -258,25 +265,9 @@ function requestStatusStream(sessionId: string, signal?: AbortSignal) {
   );
 }
 
-function createPermissionAskedEvent(
+function createPendingInputEvent(
   id: string
-): Extract<V2Event, { type: "permission.asked" }> {
-  return {
-    id: `event-${id}`,
-    created: Date.now(),
-    type: "permission.asked" as const,
-    data: {
-      id,
-      sessionID: TEST_SESSION.id,
-      action: "plan_exit",
-      resources: ["plan_exit"],
-      metadata: {},
-      save: [],
-    },
-  };
-}
-
-function createPendingInputEvent(id: string) {
+): Extract<AgentStreamEvent, { type: "input_required" }> {
   return {
     type: "input_required" as const,
     sessionId: TEST_SESSION.id,

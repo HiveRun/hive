@@ -62,23 +62,11 @@ const SessionRouteErrorResponseSchema = {
 const MODEL_LIST_ERROR_MESSAGE = "Failed to list models";
 
 type AgentRouteError = { status: number; message: string };
+type InputRequiredEvent = Extract<AgentStreamEvent, { type: "input_required" }>;
 
 type ResponseStatusSetter = { status?: number | string };
 
-type WorkspaceContextFetcher = (workspaceId?: string) => Promise<{
-  workspace: { path: string };
-}>;
-
 const formatUnknown = (error: unknown, fallback: string) => {
-  if (error && typeof error === "object") {
-    const { cause } = error as { cause?: unknown };
-    if (cause instanceof Error) {
-      return cause.message;
-    }
-    if (typeof cause === "string") {
-      return cause;
-    }
-  }
   if (error instanceof Error) {
     return error.message;
   }
@@ -116,14 +104,6 @@ const providerPayload = async (catalog: ProviderCatalog) => {
   return { models, defaults, providers, stickyVariants };
 };
 
-const emptyProviderPayload = (message: string) => ({
-  models: [],
-  defaults: {},
-  providers: [],
-  stickyVariants: {},
-  message,
-});
-
 function filterStickyVariantsForModels(
   stickyVariants: Record<string, string>,
   models: Array<{ provider: string; id: string }>
@@ -138,14 +118,6 @@ function filterStickyVariantsForModels(
     )
   );
 }
-
-const resolveWorkspaceCatalog = async (
-  getWorkspaceContext: WorkspaceContextFetcher,
-  workspaceId: string | undefined
-) => {
-  const context = await getWorkspaceContext(workspaceId);
-  return await fetchProviderCatalogForWorkspace(context.workspace.path);
-};
 
 const fetchSessionOrThrow = async (
   id: string,
@@ -196,7 +168,13 @@ const providerRouteErrorPayload = (
 ) => {
   const routeError = asAgentRouteError(error, MODEL_LIST_ERROR_MESSAGE);
   setResponseStatus(set, routeError.status);
-  return emptyProviderPayload(routeError.message);
+  return {
+    models: [],
+    defaults: {},
+    providers: [],
+    stickyVariants: {},
+    message: routeError.message,
+  };
 };
 
 const messageRouteErrorPayload = (
@@ -209,24 +187,16 @@ const messageRouteErrorPayload = (
   return { message: routeError.message };
 };
 
-const fetchSessionProviderPayload = async (id: string) => {
-  const session = await fetchSessionOrThrow(id, MODEL_LIST_ERROR_MESSAGE);
-  const catalog = await fetchProviderCatalogForWorkspace(session.workspacePath);
-  return await providerPayload(catalog);
-};
-
 export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
   .use(createWorkspaceContextPlugin())
   .get(
     "/models",
     async ({ query, set, getWorkspaceContext }) => {
       try {
-        const catalog = await resolveWorkspaceCatalog(
-          getWorkspaceContext,
-          query.workspaceId
+        const context = await getWorkspaceContext(query.workspaceId);
+        return await providerPayload(
+          await fetchProviderCatalogForWorkspace(context.workspace.path)
         );
-        setResponseStatus(set, HTTP_STATUS.OK);
-        return await providerPayload(catalog);
       } catch (error) {
         return providerRouteErrorPayload(set, error);
       }
@@ -242,9 +212,14 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
     "/sessions/:id/models",
     async ({ params, set }) => {
       try {
-        const payload = await fetchSessionProviderPayload(params.id);
-        setResponseStatus(set, HTTP_STATUS.OK);
-        return payload;
+        const session = await fetchSessionOrThrow(
+          params.id,
+          MODEL_LIST_ERROR_MESSAGE
+        );
+        const catalog = await fetchProviderCatalogForWorkspace(
+          session.workspacePath
+        );
+        return await providerPayload(catalog);
       } catch (error) {
         return providerRouteErrorPayload(set, error);
       }
@@ -304,7 +279,7 @@ export const agentsRoutes = new Elysia({ prefix: "/api/agents" })
         request.signal
       );
       let session: AgentSessionRecord;
-      let pendingInputEvents: AgentStreamEvent[];
+      let pendingInputEvents: InputRequiredEvent[];
       try {
         session = await fetchSessionOrThrow(
           params.id,
@@ -345,73 +320,13 @@ function formatInitialModeSseEvent(session: AgentSessionRecord) {
   });
 }
 
-function formatInputRequiredPropertiesSseEvent(
-  properties: { sessionId: string; id: string },
-  title: string,
-  kind: "permission" | "question"
-) {
-  return sse({
-    event: "input_required",
-    data: {
-      sessionId: properties.sessionId,
-      permissionId: properties.id,
-      title,
-      kind,
-    },
-  });
-}
-
-function formatInputRequiredSseEvent(event: AgentStreamEvent) {
-  if (event.type === "input_required") {
-    return sse({
-      event: "input_required",
-      data: {
-        sessionId: event.sessionId,
-        permissionId: event.permissionId,
-        title: event.title,
-        kind: event.kind,
-      },
-    });
-  }
-
-  if (event.type === "permission.asked") {
-    return formatInputRequiredPropertiesSseEvent(
-      { sessionId: event.data.sessionID, id: event.data.id },
-      event.data.action,
-      "permission"
-    );
-  }
-
-  if (event.type === "form.created") {
-    return formatInputRequiredPropertiesSseEvent(
-      { sessionId: event.data.form.sessionID, id: event.data.form.id },
-      event.data.form.title,
-      "question"
-    );
-  }
-
-  return null;
-}
-
-function getInputRequiredEventId(event: AgentStreamEvent): string | undefined {
-  if (event.type === "input_required") {
-    return event.permissionId;
-  }
-  if (event.type === "permission.asked") {
-    return event.data.id;
-  }
-  return event.type === "form.created" ? event.data.form.id : undefined;
-}
-
 async function* streamAgentEvents(
   session: AgentSessionRecord,
-  pendingInputEvents: AgentStreamEvent[],
+  pendingInputEvents: InputRequiredEvent[],
   events: AsyncIterable<AgentStreamEvent>
 ) {
   const pendingInputIds = new Set(
-    pendingInputEvents
-      .map(getInputRequiredEventId)
-      .filter((id): id is string => Boolean(id))
+    pendingInputEvents.map((event) => event.permissionId)
   );
   yield sse({ event: "status", data: { status: session.status } });
   const initialModeEvent = formatInitialModeSseEvent(session);
@@ -419,21 +334,17 @@ async function* streamAgentEvents(
     yield initialModeEvent;
   }
   for (const event of pendingInputEvents) {
-    const pendingEvent = formatAgentStreamSseEvent(event);
-    if (pendingEvent) {
-      yield pendingEvent;
-    }
+    yield formatAgentStreamSseEvent(event);
   }
 
   for await (const event of events) {
-    const pendingInputId = getInputRequiredEventId(event);
-    if (pendingInputId && pendingInputIds.delete(pendingInputId)) {
+    if (
+      event.type === "input_required" &&
+      pendingInputIds.delete(event.permissionId)
+    ) {
       continue;
     }
-    const nextEvent = formatAgentStreamSseEvent(event);
-    if (nextEvent) {
-      yield nextEvent;
-    }
+    yield formatAgentStreamSseEvent(event);
   }
 }
 
@@ -459,12 +370,15 @@ function formatAgentStreamSseEvent(event: AgentStreamEvent) {
     });
   }
 
-  const inputRequiredEvent = formatInputRequiredSseEvent(event);
-  if (inputRequiredEvent) {
-    return inputRequiredEvent;
-  }
-
-  return null;
+  return sse({
+    event: "input_required",
+    data: {
+      sessionId: event.sessionId,
+      permissionId: event.permissionId,
+      title: event.title,
+      kind: event.kind,
+    },
+  });
 }
 
 function createEventIterator(sessionId: string, signal: AbortSignal) {

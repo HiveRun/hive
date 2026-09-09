@@ -28,14 +28,18 @@ function normalizeStartMode(value: unknown): "plan" | "build" | undefined {
   return value === "plan" || value === "build" ? value : undefined;
 }
 
-function latestConfigValue<K extends keyof OpencodeServerConfig>(
+function selectLatestConfigValue<Value>(
   entries: ConfigEntry[],
-  key: K
-): OpencodeServerConfig[K] | undefined {
+  select: (config: OpencodeServerConfig) => Value | undefined
+): Value | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
-    if (entry?.type === "document" && entry.info[key] !== undefined) {
-      return entry.info[key];
+    if (entry?.type !== "document") {
+      continue;
+    }
+    const value = select(entry.info);
+    if (value !== undefined) {
+      return value;
     }
   }
   return;
@@ -74,17 +78,10 @@ function resolveAgentModel(
   if (!agentId) {
     return;
   }
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index];
-    if (entry?.type !== "document") {
-      continue;
-    }
-    const model = entry.info.agents?.[agentId]?.model;
-    if (model !== undefined) {
-      return model;
-    }
-  }
-  return;
+  return selectLatestConfigValue(
+    entries,
+    (config) => config.agents?.[agentId]?.model
+  );
 }
 
 export async function loadEffectiveOpencodeDefaults(
@@ -95,10 +92,13 @@ export async function loadEffectiveOpencodeDefaults(
   const entries = await client.config.get({
     location: { directory: workspaceRootPath },
   });
-  const defaultAgent = latestConfigValue(entries, "default_agent");
+  const defaultAgent = selectLatestConfigValue(
+    entries,
+    (config) => config.default_agent
+  );
   const model =
     resolveAgentModel(entries, defaultAgent) ??
-    latestConfigValue(entries, "model");
+    selectLatestConfigValue(entries, (config) => config.model);
   const defaultModel = parseModelConfig(model);
   const startMode = normalizeStartMode(defaultAgent);
 

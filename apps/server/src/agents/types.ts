@@ -1,5 +1,3 @@
-import type { V2Event } from "@opencode-ai/client";
-
 /**
  * Custom session statuses that track Hive-specific workflow states.
  * These are distinct from OpenCode's internal session states.
@@ -94,5 +92,4 @@ export type AgentStreamEvent =
       startMode: AgentMode;
       currentMode: AgentMode;
       modeUpdatedAt?: string;
-    }
-  | V2Event;
+    };

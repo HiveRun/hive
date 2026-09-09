@@ -34,27 +34,22 @@ describe("embedded browser-safe keybinds", () => {
     }
   });
 
-  it("uses fixed Hive-owned bindings without app-exit control bytes", () => {
-    expect(HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS.leader).toBe("ctrl+x");
-    expect(HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS["app.exit"]).toBe("<leader>q");
-    expect(HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS["variant.cycle"]).toBe(
-      "<leader>t"
-    );
-    expect(HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS["theme.switch"]).toBe(
-      "<leader>j"
-    );
-    expect(HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS["command.palette.show"]).toBe(
-      "<leader>p"
-    );
-    expect(HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS["session.toggle.thinking"]).toBe(
-      "<leader>i"
-    );
-    expect(HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS["input.newline"]).toBe(
-      "shift+return,alt+return,ctrl+return"
-    );
-    expect(
-      HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS["input.delete.word.backward"]
-    ).toBe("ctrl+backspace,alt+backspace");
+  it.each([
+    ["leader", "ctrl+x"],
+    ["app.exit", "<leader>q"],
+    ["variant.cycle", "<leader>t"],
+    ["theme.switch", "<leader>j"],
+    ["command.palette.show", "<leader>p"],
+    ["session.toggle.thinking", "<leader>i"],
+    ["input.newline", "shift+return,alt+return,ctrl+return"],
+    ["input.delete.word.backward", "ctrl+backspace,alt+backspace"],
+  ] satisfies ReadonlyArray<
+    readonly [keyof typeof HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS, string]
+  >)("uses the fixed Hive-owned %s binding", (key, expected) => {
+    expect(HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS[key]).toBe(expected);
+  });
+
+  it("does not emit app-exit control bytes", () => {
     expect(
       Object.values(HIVE_EMBEDDED_BROWSER_SAFE_KEYBINDS).join(",")
     ).not.toMatch(CONTROL_EXIT_KEYBIND_PATTERN);

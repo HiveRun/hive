@@ -57,6 +57,27 @@ describe("Hive OpenCode plugin writer", () => {
     expect(await readFile(pluginPath, "utf8")).toBe(customSource);
   });
 
+  it("upgrades a persisted pre-marker Hive plugin", async () => {
+    const worktree = await mkdtemp(join(tmpdir(), "hive-plugin-legacy-"));
+    const pluginDirectory = join(worktree, ".opencode", "plugins", "hive");
+    const pluginPath = join(pluginDirectory, "index.js");
+    await mkdir(pluginDirectory, { recursive: true });
+    await writeFile(
+      pluginPath,
+      [
+        'import { createHash } from "node:crypto";',
+        'const HIVE_PLUGIN_ID = "hive.cell.v2.r1.tools-context-shell-permission";',
+        "export default Plugin.define({",
+      ].join("\n")
+    );
+
+    await ensureHiveOpencodePlugin(worktree);
+
+    expect(await readFile(pluginPath, "utf8")).toMatch(
+      HIVE_PLUGIN_OWNERSHIP_MARKER_PATTERN
+    );
+  });
+
   it("refuses a plugin file symlink without changing its target", async () => {
     const worktree = await mkdtemp(join(tmpdir(), "hive-plugin-symlink-"));
     const pluginDirectory = join(worktree, ".opencode", "plugins", "hive");
@@ -71,27 +92,6 @@ describe("Hive OpenCode plugin writer", () => {
       "Refusing to write Hive plugin through symlink"
     );
     expect(await readFile(targetPath, "utf8")).toBe(customSource);
-  });
-
-  it("updates a legacy generated plugin and adds its ownership marker", async () => {
-    const worktree = await mkdtemp(join(tmpdir(), "hive-plugin-legacy-"));
-    const pluginDirectory = join(worktree, ".opencode", "plugins", "hive");
-    const pluginPath = join(pluginDirectory, "index.js");
-    await mkdir(pluginDirectory, { recursive: true });
-    await writeFile(
-      pluginPath,
-      [
-        'import { createHash } from "node:crypto";',
-        'const HIVE_PLUGIN_ID = "hive.cell.v2.r1.tools-context-shell-permission";',
-        "export default Plugin.define({ id: HIVE_PLUGIN_ID });",
-      ].join("\n")
-    );
-
-    await ensureHiveOpencodePlugin(worktree);
-
-    expect(await readFile(pluginPath, "utf8")).toMatch(
-      HIVE_PLUGIN_OWNERSHIP_MARKER_PATTERN
-    );
   });
 
   it("leaves an unchanged generated plugin in place", async () => {

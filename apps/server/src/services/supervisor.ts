@@ -3754,28 +3754,6 @@ function interpolatePortReferences(
   );
 }
 
-export type ServiceSupervisorError = {
-  readonly _tag: "ServiceSupervisorError";
-  readonly cause: unknown;
-};
-
-const makeServiceSupervisorError = (
-  cause: unknown
-): ServiceSupervisorError => ({
-  _tag: "ServiceSupervisorError",
-  cause,
-});
-
-const wrapSupervisorPromise =
-  <Args extends unknown[]>(fn: (...args: Args) => Promise<void>) =>
-  async (...args: Args): Promise<void> => {
-    try {
-      await fn(...args);
-    } catch (cause) {
-      throw makeServiceSupervisorError(cause);
-    }
-  };
-
 export type ServiceSupervisorService = {
   readonly bootstrap: () => Promise<void>;
   readonly ensureCellServices: (args: {
@@ -3831,39 +3809,22 @@ export type ServiceSupervisorService = {
   readonly clearSetupTerminal: (cellId: string) => void;
 };
 
-const makeServiceSupervisorService = (
-  supervisor: ServiceSupervisor,
-  terminalRuntime: ServiceTerminalRuntime
-): ServiceSupervisorService => ({
-  bootstrap: wrapSupervisorPromise(supervisor.bootstrap),
-  ensureCellServices: (args) =>
-    wrapSupervisorPromise(supervisor.ensureCellServices)(args),
-  startCellService: (serviceId) =>
-    wrapSupervisorPromise(supervisor.startCellService)(serviceId),
-  startCellServices: (cellId) =>
-    wrapSupervisorPromise(supervisor.startCellServices)(cellId),
-  stopCellService: (serviceId, options) =>
-    wrapSupervisorPromise(supervisor.stopCellService)(serviceId, options),
-  stopCellServices: (cellId, options) =>
-    wrapSupervisorPromise(supervisor.stopCellServices)(cellId, options),
-  runCellTeardown: (args) =>
-    wrapSupervisorPromise(supervisor.runCellTeardown)(args),
-  stopAll: wrapSupervisorPromise(supervisor.stopAll),
-  getServiceTerminalSession: terminalRuntime.getServiceSession,
-  readServiceTerminalOutput: terminalRuntime.readServiceOutput,
-  subscribeToServiceTerminal: terminalRuntime.subscribeToService,
-  resizeServiceTerminal: terminalRuntime.resizeService,
-  writeServiceTerminalInput: terminalRuntime.writeService,
-  clearServiceTerminal: terminalRuntime.clearServiceSession,
-  getSetupTerminalSession: terminalRuntime.getSetupSession,
-  readSetupTerminalOutput: terminalRuntime.readSetupOutput,
-  subscribeToSetupTerminal: terminalRuntime.subscribeToSetup,
-  resizeSetupTerminal: terminalRuntime.resizeSetup,
-  writeSetupTerminalInput: terminalRuntime.writeSetup,
-  clearSetupTerminal: terminalRuntime.clearSetupSession,
+const serviceSupervisor = createServiceSupervisor({
+  terminalRuntime: serviceTerminalRuntime,
 });
 
-export const ServiceSupervisorService = makeServiceSupervisorService(
-  createServiceSupervisor({ terminalRuntime: serviceTerminalRuntime }),
-  serviceTerminalRuntime
-);
+export const ServiceSupervisorService: ServiceSupervisorService = {
+  ...serviceSupervisor,
+  getServiceTerminalSession: serviceTerminalRuntime.getServiceSession,
+  readServiceTerminalOutput: serviceTerminalRuntime.readServiceOutput,
+  subscribeToServiceTerminal: serviceTerminalRuntime.subscribeToService,
+  resizeServiceTerminal: serviceTerminalRuntime.resizeService,
+  writeServiceTerminalInput: serviceTerminalRuntime.writeService,
+  clearServiceTerminal: serviceTerminalRuntime.clearServiceSession,
+  getSetupTerminalSession: serviceTerminalRuntime.getSetupSession,
+  readSetupTerminalOutput: serviceTerminalRuntime.readSetupOutput,
+  subscribeToSetupTerminal: serviceTerminalRuntime.subscribeToSetup,
+  resizeSetupTerminal: serviceTerminalRuntime.resizeSetup,
+  writeSetupTerminalInput: serviceTerminalRuntime.writeSetup,
+  clearSetupTerminal: serviceTerminalRuntime.clearSetupSession,
+};

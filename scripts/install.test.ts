@@ -1,36 +1,19 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
   chmodSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   realpathSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTempDirFixture } from "./dev/test-temp-dir";
 
 const installScript = fileURLToPath(new URL("./install.sh", import.meta.url));
 const expectedVersion = "opencode2 v0.0.0-beta-18866";
 const EXECUTABLE_PERMISSIONS = 0o755;
-const tempDirectoryFixture = (() => {
-  const directories = new Set<string>();
-  return {
-    create: () => {
-      const directory = mkdtempSync(join(tmpdir(), "hive-installer-"));
-      directories.add(directory);
-      return directory;
-    },
-    cleanup: () => {
-      for (const directory of directories) {
-        rmSync(directory, { recursive: true, force: true });
-      }
-      directories.clear();
-    },
-  };
-})();
+const createTempDirectory = createTempDirFixture("hive-installer-");
 
 const run = (cmd: string[], env?: Record<string, string>) =>
   Bun.spawnSync({
@@ -41,7 +24,7 @@ const run = (cmd: string[], env?: Record<string, string>) =>
   });
 
 const createArchive = (opencodeContents?: string) => {
-  const fixtureRoot = tempDirectoryFixture.create();
+  const fixtureRoot = createTempDirectory();
   const releaseName = `hive-${process.platform}-${process.arch}`;
   const releaseDirectory = join(fixtureRoot, releaseName);
   mkdirSync(join(releaseDirectory, "public"), { recursive: true });
@@ -92,7 +75,7 @@ const installArchive = (
   archivePath: string,
   prepare?: (paths: { binDirectory: string; installRoot: string }) => void
 ) => {
-  const installRoot = tempDirectoryFixture.create();
+  const installRoot = createTempDirectory();
   const binDirectory = join(installRoot, "bin");
   mkdirSync(binDirectory, { recursive: true });
   prepare?.({ binDirectory, installRoot });
@@ -101,8 +84,6 @@ const installArchive = (
 
   return { binDirectory, installRoot, result };
 };
-
-afterEach(tempDirectoryFixture.cleanup);
 
 describe("install.sh bundled OpenCode 2 handling", () => {
   test("installs, configures, and exposes the bundled exact binary", () => {
