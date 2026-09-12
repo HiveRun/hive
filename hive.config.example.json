@@ -64,7 +64,7 @@
               }
             ]
           },
-          "readyTimeoutMs": 5000
+          "readyTimeoutMs": 30000
         }
       },
       "teardown": ["bun run dev:teardown"]
