@@ -18,6 +18,7 @@ import type {
 } from "../../services/supervisor";
 import {
   createServiceSupervisor,
+  DEFAULT_TEMPLATE_SETUP_COMMAND_TIMEOUT_MS,
   SERVICE_STOP_GRACE_PERIOD_MS,
 } from "../../services/supervisor";
 import { createDeferred, setupTestDb, testDb } from "../test-db";
@@ -48,6 +49,7 @@ const READINESS_SUCCESS_TIMEOUT_MS = 500;
 const PERSISTED_MONITOR_SETTLE_MS = 150;
 const SERVICE_STATUS_POLL_INTERVAL_MS = 5;
 const EXPECTED_SERVICE_STOP_GRACE_PERIOD_MS = 15_000;
+const MINIMUM_COLD_TEMPLATE_SETUP_TIMEOUT_MS = 600_000;
 const HIVE_CLI_SOURCE_PATH_PATTERN = /packages\/cli\/src\/index\.ts$/;
 const bracedPortReference = (suffix = "") => ["$", `{PORT${suffix}}`].join("");
 const originalHiveHome = process.env.HIVE_HOME;
@@ -59,6 +61,12 @@ type FakeProcess = {
 };
 
 describe("service supervisor", () => {
+  it("allows template setup enough time for a cold dependency install", () => {
+    expect(DEFAULT_TEMPLATE_SETUP_COMMAND_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      MINIMUM_COLD_TEMPLATE_SETUP_TIMEOUT_MS
+    );
+  });
+
   beforeAll(async () => {
     await setupTestDb();
   });

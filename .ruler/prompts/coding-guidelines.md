@@ -4,7 +4,7 @@
 
 - Install dependencies from the repo root with `bun install`; workspace-aware scripts resolve packages automatically.
 - Start dev servers using `bun run dev`, or target `bun run dev:web` / `bun run dev:server` when you only need one side.
-- Run `bun run check:commit` before committing and `bun run check:push` before pushing; the latter enforces the Playwright E2E suite (`bun run test:e2e`).
+- Run `bun run check:commit` before committing and `bun run check:push` before pushing. Runtime E2E suites remain explicit commands; choose them based on the affected shipped boundary.
 - Build the workspace with `bun run build` and rely on package-level `bun -C apps/* run build` only for scoped verifications.
 - Lint/format via `bun run check:biome` or each package's `bun -C <dir> run check` script; Biome applies fixes in place.
 - Husky hooks enforce the check pipeline automatically—do not skip or rewrite them.

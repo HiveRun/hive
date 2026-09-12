@@ -21,6 +21,7 @@ The opt-in true end-to-end flow lives under `apps/e2e` and validates cell creati
 
 ```bash
 bun run test:e2e
+bun run test:e2e:hive-dev
 bun run test:e2e:fast
 bun run test:e2e:headed
 bun run test:e2e:spec specs/cell-chat.e2e.ts
@@ -29,10 +30,11 @@ bun run test:e2e:fast:spec specs/cell-chat.e2e.ts
 
 - Use `bun run test:e2e:fast` or `bun run test:e2e:fast:spec <spec>` while iterating on cell creation, terminal handling, service orchestration, or workspace management.
 - Run the default `bun run test:e2e` before creating a PR for those areas; it is the CI-parity path with serialized workers, fresh runtime state, headless browser execution, and retained artifacts.
+- Run `bun run test:e2e:hive-dev` for changes to default templates, setup, generated config, or process readiness. This dedicated smoke clones the current committed branch and provisions the real default services; the standard suite uses lightweight fixtures instead.
 - Prefer deterministic assertions (session/messages/metadata) over timing-only waits.
 - Keep fixture defaults aligned with runtime providers/models (currently `opencode/big-pickle`).
 - Use `HIVE_E2E_KEEP_ARTIFACTS=1` when debugging failures; inspect screenshots/video/trace in `tmp/e2e-runs/`.
-- Use `HIVE_E2E_WORKSPACE_MODE=clone` for dev-parity debugging without mutating your real workspace.
+- Use `HIVE_E2E_WORKSPACE_SOURCE=/abs/path/to/repo bun run test:e2e:hive-dev` to override the source cloned by the parity smoke without mutating your real workspace.
 - For user-facing browser changes, verify with `agent-browser` when practical.
 - For layout/scroll/overflow fixes, always validate the actual rendered page in the affected viewport and runtime. Confirm the intended container scrolls and that surrounding panes do not accidentally overflow.
 - Use headless mode by default; only use headed mode for manual login/2FA/CAPTCHA or explicit live walkthrough requests.

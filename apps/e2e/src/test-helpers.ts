@@ -23,8 +23,10 @@ const INITIAL_CHAT_ROUTE_TIMEOUT_MS = 45_000;
 type CellRecord = {
   id: string;
   workspaceId: string;
+  workspacePath: string;
   status: string;
   lastSetupError?: string | null;
+  setupLog?: string;
 };
 
 type ServicePortRecord = {
@@ -166,6 +168,20 @@ export async function waitForCondition(options: {
   }
 
   throw new Error(options.errorMessage);
+}
+
+export function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ESRCH"
+    );
+  }
 }
 
 function parseCellIdFromUrl(url: string): string {
@@ -860,9 +876,12 @@ function formatCellDiagnostic(diagnostic: {
       diagnostic.error ? ` (${diagnostic.error})` : ""
     }.`;
   }
+  const setupOutput = diagnostic.cell.setupLog
+    ?.trim()
+    .slice(-SERVICE_DIAGNOSTIC_LOG_LENGTH);
   return ` Cell status: ${diagnostic.cell.status}${
     diagnostic.cell.lastSetupError ? ` (${diagnostic.cell.lastSetupError})` : ""
-  }.`;
+  }${setupOutput ? ` Setup output: ${setupOutput}` : ""}.`;
 }
 
 export async function ensureTerminalReady(

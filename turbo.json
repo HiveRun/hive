@@ -78,6 +78,7 @@
     },
     "db:migrate": {
       "cache": false,
+      "env": ["DATABASE_URL"],
       "persistent": true
     },
     "db:generate": {

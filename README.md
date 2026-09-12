@@ -365,6 +365,9 @@ True end-to-end browser testing runs with Playwright (Chromium only for now).
 # Run CI-parity true E2E flow with serialized workers
 bun run test:e2e
 
+# Provision the real default hive-dev template from a clean clone
+bun run test:e2e:hive-dev
+
 # Run faster local iteration with parallel workers
 bun run test:e2e:fast
 
@@ -424,10 +427,11 @@ Notes:
 - The E2E harness creates a dedicated temp workspace and SQLite database per run.
 - Local dev DB/state are not reused.
 - Use `bun run test:e2e:fast` while iterating locally; run the default `bun run test:e2e` before creating a PR that touches cell lifecycle, terminal handling, service orchestration, or workspace management.
+- Run `bun run test:e2e:hive-dev` when changing default templates, setup, configuration generation, or process readiness. It clones the current committed branch, provisions the real `hive-dev` template, probes both services, and verifies deletion cleanup.
 - `HIVE_HOME` is ephemeral per run by default; set `HIVE_E2E_SHARED_HOME=1` to opt into a shared cache at `tmp/e2e-shared/hive-home` when debugging startup behavior.
-- `HIVE_E2E_WORKSPACE_MODE=clone` clones a source repo into the run sandbox (default source is this repo) and registers it as `hive` for closer dev parity.
+- `HIVE_E2E_WORKSPACE_MODE=clone` selects the dedicated clone-parity specs. It clones a source repo into the run sandbox (default source is this repo) and registers it as `hive`.
 - `HIVE_E2E_WORKSPACE_SOURCE=/abs/path/to/repo` overrides the clone source when using `HIVE_E2E_WORKSPACE_MODE=clone`.
-- By default, the chat spec prefers lightweight templates (`E2E Template`, then `Basic Template`) to avoid heavy setup commands in test runs; set `HIVE_E2E_USE_DEFAULT_TEMPLATE=1` to keep each workspace's configured default template for strict parity debugging.
+- The standard suite uses lightweight fixture templates; it does not substitute for `test:e2e:hive-dev` when changing shipped provisioning behavior.
 - Playwright artifacts are copied to `apps/e2e/reports/latest/` (including per-test videos and `playwright-report`).
 - Set `HIVE_E2E_KEEP_ARTIFACTS=1` to also keep raw run logs/artifacts under `tmp/e2e-runs/`.
 
@@ -501,6 +505,7 @@ Notes:
 - CI runs on Blacksmith-hosted GitHub Actions runners (`blacksmith-2vcpu-ubuntu-2404` for lint/check jobs and `blacksmith-4vcpu-ubuntu-2404` for E2E runtime).
 - Workflow triggers on pull requests, merge queue (`merge_group`), pushes to `main`, and manual dispatch.
 - `Workflow Lint` runs `actionlint`; `Quality Checks` runs `bun run check:commit`.
+- `Hive Dev Provisioning Smoke` runs `bun run test:e2e:hive-dev` on pull requests; the E2E runtime job repeats it before the standard suite on merge queue, `main`, and manual dispatch.
 - `E2E Runtime Suite` runs `bun run test:e2e` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), caches Playwright artifacts, and uploads reports from `apps/e2e/reports/latest`.
 - `Desktop Electron Smoke Suite` runs `bun run test:e2e:desktop` on merge queue (`merge_group`), `main` pushes, and manual dispatch (non-PR), executes under `xvfb-run`, and uploads reports from `apps/e2e-desktop/reports/latest`.
 - `Android Service Audio E2E` runs `bun run test:e2e:android-service-audio` on merge queue, `main` pushes, and manual dispatch, provisions the Android SDK/KVM and ffmpeg, and uploads the evidence MP4 plus reports.
@@ -535,6 +540,7 @@ Notes:
 - `bun test`: Run unit tests in watch mode
 - `bun test:run`: Run unit tests once (CI mode)
 - `bun test:e2e`: Run Playwright true E2E suite (opt-in)
+- `bun test:e2e:hive-dev`: Provision the real default Hive development template from a clean clone
 - `bun test:e2e:headed`: Run Playwright in headed Chromium mode
 - `bun test:e2e:report`: Open the latest Playwright HTML report
 - `bun test:e2e:report:open`: Alias for opening the Playwright report
